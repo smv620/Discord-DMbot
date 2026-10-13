@@ -2770,6 +2770,22 @@ once. The new-campaign form's link is saved in the same step as the campaign.
     campaign; can be turned back on from 📜 My character sheet).
   - **Cost:** FAST tier, one call per player at most every 2 minutes, only while in combat. It
     counts toward the hours meter's AI cost like every other job.
+  - **How it runs (built in #1129):**
+    - A loop per running session looks every 30 seconds; it does nothing outside combat
+      (#1127). For each player with a sheet (any kind) who agreed to be recorded and hasn't
+      said Never, it makes at most one AI call every 2 minutes, and only if something changed
+      since the last (the round, hit points, a condition).
+    - The prompt holds only: that player's own allow-listed sheet facts, the round, and the
+      last few table lines of people who still agree, without any line that mentions a secret
+      name. If the secret names can't be loaded, nothing is sent. It is told to use only names
+      from the sheet and to answer NOTHING when nothing clearly helps.
+    - Every message is a private message to that player with **Snooze 10 min**, **Quiet until
+      next session** and **Never**. Snooze and Quiet are kept in memory for the session; Never
+      is kept on the player's sheet row (per player per campaign) and undone with **FightBot:
+      on/off** on 📜 My character sheet.
+    - **Spell slots:** the sheet snapshot (D1) does not keep slot counts, so a reminder can name
+      spells and features but not how many slots are left. Adding slots to the sheet is a
+      follow-up.
 *Built, part D1: the fields and the import status (2026-10-13, #1124):* the D&D Beyond snapshot (still version 1; a
 kept snapshot without the new fields reads them as unknown) now also holds hit points now (`hp`: the maximum minus the
 damage taken, never below 0) and temporary hit points, active conditions with the exhaustion level, resistances,

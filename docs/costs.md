@@ -60,3 +60,15 @@ No discount, credit or volume plan is counted. Core sends each piece of speech a
 2. The AI tokens the service really counted, from the usage line in the log, against the estimates above.
 3. How many sidebar questions a DM really asks in an hour (once it is on).
 4. The server's real monthly cost and the table-hours it serves a month.
+
+## FightBot (#1129)
+
+FightBot is the one AI job that scales with players, not with speech. Its limit is one call per player every 2 minutes, and only while the table is in combat and something changed (a new round, hit points, a condition).
+
+| Case | Calls an hour | Tokens in / out each | Cost an hour (FAST tier, list price) |
+|---|---|---|---|
+| 5 players, a full hour of combat, every call made (the ceiling) | 5 × 30 = 150 | about 700 / 60 | about $0.15 |
+| the same table where half the calls find nothing to say ("NOTHING") and a quarter are skipped because nothing changed | about 56 | about 700 / 40 | about $0.05 |
+| 5 players, no combat | 0 | none | $0 |
+
+Per call: 700 tokens in at $1.0 per million is $0.0007, and 60 tokens out at $5.0 per million is $0.0003, so about $0.001 a call. The prompt is the player's sheet facts (about 150 tokens), the round, and at most 8 short table lines (at most 1200 characters). Tokens are estimates (size by about 3.5 characters each), like the rest of this file; the usage line in the log gives the real ones. It is counted in the AI cost like every other job: every call goes through the same client and watch.

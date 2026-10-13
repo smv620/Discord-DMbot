@@ -28,6 +28,7 @@ class CharacterSheet:
     sheet: dict[str, Any] | None  # sheets.clean()'s shape
     fetched_at: int | None
     asks: bool = True  # may DMbot ask the player when a re-read doesn't match (#1128)
+    fightbot: bool = True  # may FightBot send this player reminders in combat (#1129)
 
     @property
     def character(self) -> int | None:
@@ -132,6 +133,17 @@ class SheetStore:
             )
             return cur.rowcount == 1
 
+    async def set_fightbot(self, guild_id: int, campaign_id: str, player: int, on: bool) -> int:
+        """FightBot on or off for this player in this campaign (#1129): every sheet of theirs
+        here. Only their own, scoped to the campaign; returns how many sheets changed."""
+        async with self._db.guild(guild_id) as conn:
+            cur = await conn.execute(
+                "UPDATE character_sheets SET fightbot = %s"
+                " WHERE guild_id = %s AND campaign_id = %s AND player_id = %s",
+                (on, guild_id, campaign_id, player),
+            )
+            return cur.rowcount
+
     async def unlink(
         self, guild_id: int, campaign_id: str, entity_id: str, *, player: int | None = None
     ) -> bool:
@@ -157,7 +169,7 @@ class SheetStore:
         async with self._db.guild(guild_id) as conn:
             cur = await conn.execute(
                 "SELECT s.entity_id, e.name, e.played_by, s.url, s.sheet, s.fetched_at,"
-                " s.ask_mismatch"
+                " s.ask_mismatch, s.fightbot"
                 " FROM character_sheets s JOIN memory_entities e"
                 "  ON e.guild_id = s.guild_id AND e.campaign_id = s.campaign_id"
                 "  AND e.id = s.entity_id"
@@ -179,6 +191,7 @@ class SheetStore:
                 sheet=None if r["sheet"] is None else sheets.clean(r["sheet"]),
                 fetched_at=row_int(r, "fetched_at"),
                 asks=bool(r["ask_mismatch"]),
+                fightbot=bool(r["fightbot"]),
             )
             for r in rows
         ]

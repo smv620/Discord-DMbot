@@ -1648,6 +1648,14 @@ SHEET_QUESTIONS = """
     ALTER TABLE character_sheets ADD COLUMN ask_mismatch BOOLEAN NOT NULL DEFAULT TRUE;
 """
 
+FIGHTBOT = """
+    -- FightBot (#1129; docs/PLAN.md, "FightBot"): whether DMbot may send this player private
+    -- reminders in combat. On unless the player chose "Never" (or turns it off from their
+    -- character sheet panel). Kept with the sheet, so per player per campaign; defaulted
+    -- column: no row changes, so no backfill policy.
+    ALTER TABLE character_sheets ADD COLUMN fightbot BOOLEAN NOT NULL DEFAULT TRUE;
+"""
+
 OWNER_CAMPAIGNS = (
     _setting("dmbot_owner_sync", "dmbot.owner_sync", "TEXT")
     + """
@@ -1985,6 +1993,7 @@ MIGRATIONS: tuple[Migration, ...] = (
     ("0052_table_chat", TABLE_CHAT),
     ("0053_combat_state", COMBAT_STATE),
     ("0054_sheet_questions", SHEET_QUESTIONS),
+    ("0055_fightbot", FIGHTBOT),
 )
 
 # Tables that must have row-level security. A test checks every table in the schema

@@ -56,6 +56,10 @@ QUESTIONS_NOW_ON = (
     "✅ DMbot may ask you, privately, when your D&D Beyond sheet doesn't show what was said at "
     "the table."
 )
+FIGHTBOT_ON = "FightBot: on"  # private reminders of your own options during combat (#1129)
+FIGHTBOT_OFF = "FightBot: off"
+FIGHTBOT_NOW_ON = "✅ FightBot may remind you of your own options during a fight, privately."
+FIGHTBOT_NOW_OFF = "✅ FightBot won't send you reminders any more."
 QUESTIONS_NOW_OFF = "✅ DMbot won't ask you about your D&D Beyond sheet any more."
 NO_CHARACTER = (
     "DMbot doesn't know your character in this server yet. Ask your DM to add it: "
@@ -575,7 +579,8 @@ async def show_panel(
     if note:
         text = f"{note}\n\n{text}"
     asks = sheet.asks if sheet is not None and sheet.url is not None else None
-    view = SheetPanel(guild_id, character, has_sheet=sheet is not None, asks=asks)
+    fight = sheet.fightbot if sheet is not None else None
+    view = SheetPanel(guild_id, character, has_sheet=sheet is not None, asks=asks, fight=fight)
     if replace:
         await _replace(interaction, text, view)
     else:
@@ -590,10 +595,12 @@ class SheetPanel(_Menu):
         *,
         has_sheet: bool,
         asks: bool | None = None,
+        fight: bool | None = None,
     ) -> None:
         super().__init__()
         self.guild_id, self.character = guild_id, character
         self.asks = asks
+        self.fight = fight
         if has_sheet:  # the player's own view of it, one part at a time (#1126)
             self.add_item(_Button(self._show, label=SHOW_LABEL, style=discord.ButtonStyle.success))
         self.add_item(_Button(self._link, label=LINK_LABEL, style=discord.ButtonStyle.primary))
@@ -606,6 +613,14 @@ class SheetPanel(_Menu):
                 _Button(
                     self._questions,
                     label=QUESTIONS_ON if asks else QUESTIONS_OFF,
+                    style=discord.ButtonStyle.secondary,
+                )
+            )
+        if fight is not None:  # any kind of sheet: FightBot's reminders in combat (#1129)
+            self.add_item(
+                _Button(
+                    self._fightbot,
+                    label=FIGHTBOT_ON if fight else FIGHTBOT_OFF,
                     style=discord.ButtonStyle.secondary,
                 )
             )
@@ -661,6 +676,22 @@ class SheetPanel(_Menu):
             note = QUESTIONS_NOW_ON if turn_on else QUESTIONS_NOW_OFF
         else:
             note = NOT_YOURS
+        await show_panel(interaction, self.guild_id, c, replace=True, note=note)
+
+    async def _fightbot(self, interaction: discord.Interaction) -> None:
+        """Turn FightBot's private reminders in combat on or off for this player (#1129)."""
+        store = _store(interaction)
+        assert store is not None
+        self.stop()
+        await _answer_first(interaction, in_place=True)
+        if not await _still_member(interaction, self.guild_id):
+            return
+        c = self.character
+        turn_on = not self.fight
+        changed = await store.set_fightbot(
+            self.guild_id, c.campaign_id, interaction.user.id, turn_on
+        )
+        note = (FIGHTBOT_NOW_ON if turn_on else FIGHTBOT_NOW_OFF) if changed else NOT_YOURS
         await show_panel(interaction, self.guild_id, c, replace=True, note=note)
 
     async def _forget(self, interaction: discord.Interaction) -> None:
