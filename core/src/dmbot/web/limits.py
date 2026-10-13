@@ -119,6 +119,7 @@ LIMITS: dict[str, Group] = {
     "billing": Group(10, 10 * 60, ("/billing/checkout", "/billing/portal", "/billing/extra-hours")),
     "delete": Group(5, 60 * 60, ("/account/delete/request",)),
     # Ending every sign-in is safe (signing in again is one click) but is still a write per
-    # call, so a few a minute is far above real use (#1163).
+    # call, so a few a minute is far above real use (#1163). Like the other groups it counts
+    # a call before the sign-in is checked, so a shared address shares the five.
     "sign-out-everywhere": Group(5, 60, ("/me/sign-out-everywhere",)),
 }

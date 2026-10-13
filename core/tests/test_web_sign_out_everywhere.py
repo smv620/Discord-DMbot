@@ -101,10 +101,26 @@ class SignOutEverywhere(DatabaseTest):
     async def test_it_is_limited_to_a_few_a_minute(self) -> None:
         phone = await self.browser(ALICE)
         try:
-            codes = [
-                (await phone.post("/me/sign-out-everywhere", headers=HEADERS)).status_code
-                for _ in range(LIMITS["sign-out-everywhere"].count + 1)
+            tries = LIMITS["sign-out-everywhere"].count + 1
+            answers = [
+                await phone.post("/me/sign-out-everywhere", headers=HEADERS) for _ in range(tries)
             ]
+            codes = [a.status_code for a in answers]
+            # The first call ends the sign-in (and the cookie goes), the next ones are 401, and
+            # the one over the limit is told to wait.
+            self.assertEqual(codes[0], 204)
+            self.assertEqual(codes[1:-1], [401] * (tries - 2))
             self.assertEqual(codes[-1], 429)
+            self.assertIn("retry-after", answers[-1].headers)
         finally:
             await phone.aclose()
+
+    async def test_a_raw_delete_for_someone_else_removes_nothing(self) -> None:
+        # The database, not the code, holds the role: as Alice, a delete aimed at Bob's rows
+        # finds none to remove.
+        await sessions.sign_in(self.web, ALICE, [THURSDAY], now=self.now, days=30)
+        b = await sessions.sign_in(self.web, BOB, [THURSDAY], now=self.now, days=30)
+        async with self.web.user(ALICE.id) as conn:
+            cur = await conn.execute("DELETE FROM web_sessions WHERE user_id = %s", (BOB.id,))
+            self.assertEqual(cur.rowcount, 0)
+        self.assertIsNotNone(await sessions.find(self.web, b, now=self.now))
