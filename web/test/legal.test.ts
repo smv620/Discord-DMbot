@@ -189,7 +189,7 @@ describe("the facts #433 asks for", () => {
   });
 
   it("points to the Download my data button for a copy (#1150)", () => {
-    expect(privacy()).toContain("Press Download my data in My Account to get one file with your account");
+    expect(privacy()).toContain("Press Download my data in My Account. You get one file with your account, plan and payments");
     const link = doc("privacy").querySelector('a[href="/account"]');
     expect(link?.textContent).toBe("My Account");
   });
