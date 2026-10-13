@@ -75,6 +75,9 @@ class Line:
     # NARRATING, or the confirmed, non-secret name of an NPC the DM was voicing. Never a
     # secret name: whatever sets it checks (the transcript is open to the whole server).
     entity: str = ""
+    # Typed in the table's chat rather than said (#1118): only in the as-heard transcript,
+    # tagged "(typed)", never the cleaned one.
+    typed: bool = False
 
     def __post_init__(self) -> None:
         if self.sidebar not in ("", SIDEBAR_QUESTION, SIDEBAR_ANSWER):  # not at the database

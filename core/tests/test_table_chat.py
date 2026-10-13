@@ -1,0 +1,246 @@
+"""Typed chat at the table (#1118): which messages DMbot reads (only the table's chat, only
+while listening, only from people who agreed, never a bot or a command), that a typed
+"we take a long rest" does what the spoken one does, that a typed line is tagged (typed) in
+the as-heard transcript and absent from the cleaned one, the Settings panel, and the consent
+version bump."""
+
+from __future__ import annotations
+
+import asyncio
+import datetime as dt
+import unittest
+from types import SimpleNamespace
+from typing import Any, cast
+from unittest.mock import AsyncMock, MagicMock
+
+import discord
+
+from dmbot import table_chat
+from dmbot.audio.segmenter import Segmenter
+from dmbot.bot import Table
+from dmbot.consent import TERMS_VERSION
+from dmbot.dm_screen import table_chat_panel as panel
+from dmbot.transcript import export
+from dmbot.transcript.models import Line, TranscriptSession
+from tests.test_timebot import (
+    DM,
+    GUILD_A,
+    GUILD_B,
+    NOON4,
+    OTHER_DM,
+    PLAYER,
+    AtTheTable,
+)
+
+VOICE, EXTRA, OTHER = 700, 701, 702
+
+
+class Rules(unittest.TestCase):
+    def test_only_the_voice_channel_and_the_one_extra_channel(self) -> None:
+        self.assertTrue(table_chat.is_table_chat(VOICE, VOICE, None))
+        self.assertTrue(table_chat.is_table_chat(EXTRA, VOICE, EXTRA))
+        self.assertFalse(table_chat.is_table_chat(OTHER, VOICE, EXTRA))
+        self.assertFalse(table_chat.is_table_chat(OTHER, VOICE, None))
+
+    def test_an_empty_or_enormous_message_is_nothing_to_read(self) -> None:
+        self.assertIsNone(table_chat.clean(""))
+        self.assertIsNone(table_chat.clean("   \n "))
+        self.assertIsNone(table_chat.clean("x" * (table_chat.MAX_CHARS + 1)))
+        self.assertEqual(table_chat.clean("we  take\na long rest"), "we take a long rest")
+
+    def test_consent_terms_went_up(self) -> None:
+        self.assertGreaterEqual(TERMS_VERSION, 5)
+
+
+def message(
+    text: str,
+    *,
+    author: int = DM,
+    channel: int = VOICE,
+    bot: bool = False,
+    webhook: int | None = None,
+    kind: discord.MessageType = discord.MessageType.default,
+    guild: int | None = GUILD_A,
+) -> Any:
+    return SimpleNamespace(
+        content=text,
+        author=SimpleNamespace(id=author, bot=bot),
+        channel=SimpleNamespace(id=channel),
+        guild=None if guild is None else SimpleNamespace(id=guild),
+        webhook_id=webhook,
+        type=kind,
+        interaction_metadata=None,
+        created_at=dt.datetime(2026, 10, 13, 12, 0, tzinfo=dt.UTC),
+    )
+
+
+class AtTheTableTyped(AtTheTable):
+    async def asyncSetUp(self) -> None:
+        await super().asyncSetUp()
+        # A real table, so the typed path touches what a live one has.
+        self.live = Table(
+            guild_id=GUILD_A,
+            voice_channel_id=VOICE,
+            screen_channel_id=555,
+            dm_user_id=DM,
+            segmenter=Segmenter(GUILD_A),
+            campaign_id=self.a.id,
+            campaign_name="Alpha",
+            dm_user_ids=frozenset({DM, OTHER_DM}),
+            listening=True,
+        )
+        self.live.chat_channel_id = EXTRA
+        self.table = cast(Any, self.live)  # the base tests' table is this one
+        self.bot.tables[GUILD_A] = self.live
+        self.bot.transcripts = cast(Any, object())  # lines wait in the buffer to be saved
+
+    async def hear(self, msg: Any) -> None:
+        self.bot._hear_typed(msg)
+        await asyncio.gather(*list(self.bot._asking))
+
+    async def minute(self) -> int:
+        stored = await self.clocks.get(GUILD_A, self.a.id)
+        assert stored is not None
+        return stored.clock.minute
+
+    async def test_a_typed_rest_from_the_dm_moves_the_clock_like_speech(self) -> None:
+        await self.press("set", set_to=NOON4)
+        await self.hear(message("we take a long rest"))
+        self.assertEqual(await self.minute(), NOON4 + 480)
+        self.assertTrue(any("Long rest" in text for text in self.posted))
+
+    async def test_the_extra_channel_is_read_too(self) -> None:
+        await self.press("set", set_to=NOON4)
+        await self.hear(message("we take a short rest", channel=EXTRA))
+        self.assertEqual(await self.minute(), NOON4 + 60)
+
+    async def test_nothing_else_is_ever_read(self) -> None:
+        await self.press("set", set_to=NOON4)
+        for msg in (
+            message("we take a long rest", channel=OTHER),  # another channel
+            message("we take a long rest", author=PLAYER + 99, bot=True),  # a bot
+            message("we take a long rest", webhook=5),  # a webhook
+            message("we take a long rest", kind=discord.MessageType.chat_input_command),
+            message("we take a long rest", guild=GUILD_B),  # a server with no session
+            message("   "),  # nothing typed (a file only)
+        ):
+            await self.hear(msg)
+        self.assertEqual(await self.minute(), NOON4)
+        self.assertEqual(len(self.live.unsaved), 0)
+
+    async def test_nobody_who_did_not_agree_is_read(self) -> None:
+        await self.press("set", set_to=NOON4)
+        self.bot.consent.has_consent = lambda guild_id, user_id: user_id != DM  # type: ignore[method-assign]
+        await self.hear(message("we take a long rest"))
+        self.assertEqual(await self.minute(), NOON4)
+        self.assertEqual(len(self.live.unsaved), 0)
+
+    async def test_not_while_not_listening_and_not_when_the_dm_turned_it_off(self) -> None:
+        await self.press("set", set_to=NOON4)
+        self.live.listening = False
+        await self.hear(message("we take a long rest"))
+        self.live.listening = True
+        self.live.chat_on = False
+        await self.hear(message("we take a long rest"))
+        self.assertEqual(await self.minute(), NOON4)
+        self.assertEqual(len(self.live.unsaved), 0)
+
+    async def test_a_player_typing_a_suggestion_only_asks_the_dm(self) -> None:
+        await self.press("set", set_to=NOON4)
+        await self.hear(message("let's take a short rest", author=PLAYER))
+        self.assertEqual(await self.minute(), NOON4)
+        self.assertTrue(any("suggests a short rest" in text for text in self.posted))
+
+    async def test_a_typed_line_is_saved_as_typed_with_what_was_typed(self) -> None:
+        await self.hear(message("The door is locked", author=PLAYER))
+        [line] = self.live.unsaved.take(lambda _user: True)
+        self.assertTrue(line.typed)
+        self.assertEqual(
+            (line.user_id, line.heard, line.text), (PLAYER,) + ("The door is locked",) * 2
+        )
+        self.assertEqual(line.started_ms, 1_791_892_800_000)
+
+    async def test_the_dm_screen_changes_reach_a_running_session(self) -> None:
+        saved = await self.campaigns.set_table_chat(GUILD_A, self.a.id, on=False, channel_id=OTHER)
+        self.bot.after_chat_change(saved)
+        self.assertEqual((self.live.chat_on, self.live.chat_channel_id), (False, OTHER))
+
+
+class Transcript(unittest.TestCase):
+    def test_typed_lines_are_tagged_in_the_raw_transcript_and_absent_from_the_cleaned(self) -> None:
+        session = MagicMock(spec=TranscriptSession)
+        session.started_at = 1_000
+        session.ended_at = None
+        session.number = 1
+        session.engines = []
+        lines = [
+            Line(1_000_000 + 5_000, 1, "we take a long rest", "we take a long rest", 0, typed=True),
+            Line(1_000_000 + 9_000, 2, "Hello there", "Hello there", 2000),
+        ]
+        names = {1: "Dee", 2: "Mia"}
+        raw = export.render("Alpha", session, lines, names, version=export.AS_HEARD)
+        cleaned = export.render("Alpha", session, lines, names, version=export.CLEANED)
+        self.assertIn("(Dee) (typed): we take a long rest", raw)
+        self.assertIn("Hello there", raw)
+        self.assertNotIn("we take a long rest", cleaned)
+        self.assertNotIn("(typed)", cleaned.split("\n\n", 1)[1])
+        self.assertIn("Hello there", cleaned)
+
+
+class Panel(unittest.IsolatedAsyncioTestCase):
+    def interaction(self, store: Any, user: int = DM) -> Any:
+        guild = MagicMock()
+        guild.id = GUILD_A
+        guild.get_channel = MagicMock(return_value=MagicMock(spec=discord.TextChannel, id=EXTRA))
+        it = MagicMock()
+        it.guild, it.guild_id = guild, GUILD_A
+        it.user = SimpleNamespace(id=user, guild_permissions=SimpleNamespace(manage_guild=False))
+        it.client = SimpleNamespace(campaigns=store, after_chat_change=MagicMock())
+        it.response.edit_message = AsyncMock()
+        it.response.send_message = AsyncMock()
+        return it
+
+    def campaign(self, **kw: Any) -> Any:
+        base = dict(
+            id="c" * 32,
+            guild_id=GUILD_A,
+            dm_user_ids=frozenset({DM}),
+            table_chat=True,
+            table_chat_channel_id=None,
+        )
+        return SimpleNamespace(**{**base, **kw})
+
+    def test_the_panel_says_exactly_which_channels_are_read(self) -> None:
+        self.assertIn("voice channel chat. No other channel", panel.panel_text(self.campaign()))
+        self.assertIn(f"<#{EXTRA}>", panel.panel_text(self.campaign(table_chat_channel_id=EXTRA)))
+        self.assertIn("off", panel.panel_text(self.campaign(table_chat=False)).lower())
+        self.assertIn("Off", panel.line(self.campaign(table_chat=False)))
+
+    async def test_a_dm_turns_it_off_and_a_player_cannot(self) -> None:
+        saved = self.campaign(table_chat=False)
+        store = SimpleNamespace(
+            get=AsyncMock(return_value=self.campaign()),
+            set_table_chat=AsyncMock(return_value=saved),
+        )
+        view = panel.TableChatPanel(self.campaign())
+        it = self.interaction(store)
+        await view.save(it, turn_on=False)
+        store.set_table_chat.assert_awaited_once()
+        self.assertEqual(store.set_table_chat.await_args.kwargs["on"], False)
+        it.client.after_chat_change.assert_called_once_with(saved)
+        stranger = self.interaction(store, user=PLAYER)
+        store.set_table_chat.reset_mock()
+        await view.save(stranger, turn_on=False)
+        store.set_table_chat.assert_not_awaited()
+        self.assertIn("Only this campaign's DM", stranger.response.send_message.await_args.args[0])
+
+    async def test_the_extra_channel_is_saved_and_can_be_cleared(self) -> None:
+        store = SimpleNamespace(
+            get=AsyncMock(return_value=self.campaign(table_chat_channel_id=EXTRA)),
+            set_table_chat=AsyncMock(return_value=self.campaign()),
+        )
+        view = panel.TableChatPanel(self.campaign(table_chat_channel_id=EXTRA))
+        await view.save(self.interaction(store), channel_id=EXTRA)
+        self.assertEqual(store.set_table_chat.await_args.kwargs["channel_id"], EXTRA)
+        await view.save(self.interaction(store), clear_channel=True)
+        self.assertIsNone(store.set_table_chat.await_args.kwargs["channel_id"])

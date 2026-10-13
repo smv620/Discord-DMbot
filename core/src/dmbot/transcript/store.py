@@ -63,15 +63,15 @@ class TranscriptStore:
                 "INSERT INTO transcript_lines"
                 " (guild_id, session_id, started_ms, user_id, heard, text, duration_ms, topic,"
                 " entity, sidebar, sidebar_ref, sidebar_reply_to, sidebar_via, sidebar_stt,"
-                " sidebar_model, sidebar_prompt, sidebar_sources)"
+                " sidebar_model, sidebar_prompt, sidebar_sources, typed)"
                 " SELECT %s, %s, l.started_ms, l.user_id, l.heard, l.text, l.duration_ms,"
                 " l.topic, l.entity, l.sidebar, l.ref, l.reply_to, l.via, l.stt, l.model, l.prompt,"
-                " l.sources::jsonb"
+                " l.sources::jsonb, l.typed"
                 " FROM unnest(%s::bigint[], %s::bigint[], %s::text[], %s::text[], %s::int[],"
                 " %s::text[], %s::text[], %s::text[], %s::text[], %s::text[], %s::text[],"
-                " %s::text[], %s::text[], %s::text[], %s::text[])"
+                " %s::text[], %s::text[], %s::text[], %s::text[], %s::boolean[])"
                 " AS l(started_ms, user_id, heard, text, duration_ms, topic, entity, sidebar, ref,"
-                " reply_to, via, stt, model, prompt, sources)"
+                " reply_to, via, stt, model, prompt, sources, typed)"
                 " RETURNING id",
                 (
                     guild_id,
@@ -86,6 +86,7 @@ class TranscriptStore:
                     [line.entity or None for line in lines],
                     [line.sidebar or None for line in lines],
                     *_lineage_columns(lines),
+                    [line.typed for line in lines],
                 ),
             )
             ids = [int(r["id"]) for r in await cur.fetchall()]
@@ -230,7 +231,7 @@ class TranscriptStore:
                 "SELECT started_ms, user_id, heard, coalesce(text, heard) AS text, duration_ms,"
                 " topic, coalesce(entity, '') AS entity, coalesce(sidebar, '') AS sidebar,"
                 " sidebar_ref, sidebar_reply_to,"
-                " sidebar_via, sidebar_stt, sidebar_model, sidebar_prompt, sidebar_sources"
+                " sidebar_via, sidebar_stt, sidebar_model, sidebar_prompt, sidebar_sources, typed"
                 " FROM transcript_lines"
                 " WHERE session_id = %s ORDER BY started_ms, id",
                 (session_id,),
@@ -246,6 +247,7 @@ class TranscriptStore:
                     r["sidebar"],
                     _lineage(r),
                     r["entity"],
+                    bool(r["typed"]),
                 )
                 for r in await cur.fetchall()
             ]

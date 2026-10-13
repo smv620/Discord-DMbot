@@ -46,6 +46,27 @@ class StoreTests(DatabaseTest):
         lines = await self.store.lines(GUILD, sid)
         self.assertEqual([(x.heard, x.text) for x in lines], [("first",) * 2, ("second",) * 2])
 
+    async def test_a_typed_line_is_saved_and_read_back_as_typed(self) -> None:
+        # Typed chat at the table (#1118): the flag survives the database.
+        sid = await self.store.open_session(GUILD, self.campaign.id, START)
+        typed = Line(
+            START * 1000 + 1000, DM, "we take a long rest", "we take a long rest", typed=True
+        )
+        await self.store.add_lines(GUILD, sid, [typed, line(9, PLAYER, "said")])
+        [first, second] = await self.store.lines(GUILD, sid)
+        self.assertEqual((first.typed, second.typed), (True, False))
+
+    async def test_table_chat_defaults_on_and_is_kept_per_campaign(self) -> None:
+        self.assertEqual(
+            (self.campaign.table_chat, self.campaign.table_chat_channel_id), (True, None)
+        )
+        saved = await self.campaigns.set_table_chat(
+            GUILD, self.campaign.id, on=False, channel_id=77
+        )
+        self.assertEqual((saved.table_chat, saved.table_chat_channel_id), (False, 77))
+        other = await self.campaigns.create(GUILD, "Other", DM)
+        self.assertEqual((other.table_chat, other.table_chat_channel_id), (True, None))
+
     async def test_sidebar_lines_are_kept_apart_and_never_edited(self) -> None:
         sid = await self.store.open_session(GUILD, self.campaign.id, START)
         asked_from = Lineage(ref="a1b2c3", via=VIA_VOICE, stt="deepgram nova-3 host")

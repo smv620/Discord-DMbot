@@ -27,7 +27,16 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 
-from dmbot import campaign_cap, entitlements, hours, install, plan_rules, retention, usage
+from dmbot import (
+    campaign_cap,
+    entitlements,
+    hours,
+    install,
+    plan_rules,
+    retention,
+    table_chat,
+    usage,
+)
 from dmbot.ai import FEATURE_TIERS, AnthropicClient, Feature
 from dmbot.ai_watch import AIWatch
 from dmbot.audio.segmenter import Segmenter, Utterance
@@ -103,6 +112,7 @@ from dmbot.dm_screen.settings import (
     RulesCardsButton,
     SettingsButton,
     SettingsVisibilityButton,
+    TableChatButton,
 )
 from dmbot.dm_screen.site_offers import SiteOffers
 from dmbot.dm_screen.speaker_question import SpeakerQuestionButton
@@ -373,6 +383,10 @@ class Table:
     # rest" or "an hour later" that it already covers adds nothing (#1117). Dropped when the
     # clock is no longer where the rest left it (a button, an Undo, another phrase).
     clock_spoken_rest: tuple[str, int, int, float] | None = None
+    # Typed chat at the table (#1118): whether it is read this session, and the DM's one
+    # extra text channel (the voice channel's own chat is always read when it is on).
+    chat_on: bool = True
+    chat_channel_id: int | None = None
     # The campaign's D&D Beyond invite link, for the Join button on the messages players see
     # this session (#1119); None when the DM set none.
     dndbeyond_invite: str | None = None
@@ -505,6 +519,11 @@ class DMBot(commands.AutoShardedBot):
         # Messages sent to DMbot in a private chat (the DM sidebar, #935); not privileged,
         # and DMs are the one place message content needs no special permission.
         intents.dm_messages = True
+        # Typed chat at the table (#1118): messages in servers, and their text (the privileged
+        # Message Content intent). DMbot reads only the table voice channel's chat and the one
+        # extra channel the DM picked, and drops every other message first.
+        intents.guild_messages = True
+        intents.message_content = True
         silence_voice_warnings()  # before super().__init__, which logs them
         super().__init__(
             command_prefix=commands.when_mentioned,
@@ -683,6 +702,7 @@ class DMBot(commands.AutoShardedBot):
             RulesCardsButton,
             HouseFileButton,
             InviteButton,
+            TableChatButton,
         )
         # Hand-over (#437): on ⚙️ Settings, in private messages, and after /dmbot start.
         self.add_dynamic_items(
@@ -1971,6 +1991,8 @@ class DMBot(commands.AutoShardedBot):
             rules_rulesets=(campaign.target_ruleset, campaign.fallback_ruleset),
             transcript_channel_id=transcript_id,
             dndbeyond_invite=campaign.dndbeyond_invite,
+            chat_on=campaign.table_chat,
+            chat_channel_id=campaign.table_chat_channel_id,
             started_at=started_at,
         )
         if table.rules_on:
@@ -2307,6 +2329,8 @@ class DMBot(commands.AutoShardedBot):
             announce_resume=not recently,
             transcript_channel_id=self._usable_transcript(guild, campaign),
             dndbeyond_invite=campaign.dndbeyond_invite,
+            chat_on=campaign.table_chat,
+            chat_channel_id=campaign.table_chat_channel_id,
             started_at=saved.started_at,
         )
         if table.rules_on:
@@ -2550,7 +2574,14 @@ class DMBot(commands.AutoShardedBot):
     # ---- the DM sidebar (#935; dmbot.sidebar.service) -----------------------------------
 
     async def on_message(self, message: discord.Message) -> None:
-        """Only private messages reach here (the DM intent); the sidebar reads them."""
+        """A private message goes to the DM sidebar. A message in a server is typed chat at
+        the table (#1118): read only if it is in the table's chat and passes the checks."""
+        if message.guild is not None:
+            try:
+                self._hear_typed(message)
+            except Exception:
+                log.exception("Couldn't handle a typed message")
+            return
         try:
             await self.sidebar.on_dm_message(message)
         except Exception:
@@ -2686,20 +2717,7 @@ class DMBot(commands.AutoShardedBot):
             # couldn't be loaded, a word said in lower case is a real word next time.
             table.vocabulary.note(utterance.user_id, text)
         if text:
-            try:  # a card is never worth a lost line: nothing below may be skipped
-                self._note_rules(table, utterance.user_id, str(cleaned or text))
-            except Exception:
-                log.exception("Rules cards: couldn't look at a line")
-            try:
-                if utterance.user_id in table.dm_user_ids:  # only a DM can start a proposal
-                    self._note_house_rule(table, utterance.user_id, str(cleaned or text))
-            except Exception:
-                log.exception("House rules by voice: couldn't look at a line")
-            if self.clocks is not None:
-                self._track(  # a DM's words move the clock; a player's only ask the DM
-                    self._note_clock_phrase(table, utterance.user_id, str(cleaned or text)),
-                    "clock-phrase",
-                )
+            self._act_on_line(table, utterance.user_id, str(cleaned or text))
         if text and self.transcripts is not None:
             duration_ms = int(utterance.duration_s * 1000)
             table.unsaved.add(
@@ -2746,6 +2764,76 @@ class DMBot(commands.AutoShardedBot):
                 cleaned or text,
                 utterance.start_ms,
             )
+
+    def _act_on_line(self, table: Table, user_id: int, line: str) -> None:
+        """What a line of table talk can set off, said or typed (#1118): a rules card, a house
+        rule, the game clock. The one place both ways in share, so a typed "we take a long
+        rest" does what the spoken one does. Consent was checked by the caller."""
+        try:  # a card is never worth a lost line: nothing below may be skipped
+            self._note_rules(table, user_id, line)
+        except Exception:
+            log.exception("Rules cards: couldn't look at a line")
+        try:
+            if user_id in table.dm_user_ids:  # only a DM can start a proposal
+                self._note_house_rule(table, user_id, line)
+        except Exception:
+            log.exception("House rules by voice: couldn't look at a line")
+        if self.clocks is not None:
+            self._track(  # a DM's words move the clock; a player's only ask the DM
+                self._note_clock_phrase(table, user_id, line), "clock-phrase"
+            )
+
+    def _hear_typed(self, message: discord.Message) -> None:
+        """A message typed in a server (#1118). Only the table voice channel's chat and the
+        DM's one extra channel, only while listening, only from someone who agreed, never a
+        bot or a command: everything else is dropped before any work is done."""
+        guild = message.guild
+        table = self.tables.get(guild.id) if guild is not None else None
+        if table is None or table.campaign_id is None or not table.listening or not table.chat_on:
+            return
+        if not table_chat.is_table_chat(
+            message.channel.id, table.voice_channel_id, table.chat_channel_id
+        ):
+            return
+        author = message.author
+        if (
+            author.bot
+            or (self.user is not None and author.id == self.user.id)
+            or message.webhook_id is not None
+            or message.type not in table_chat.READ_TYPES
+            or getattr(message, "interaction_metadata", None) is not None
+        ):
+            return
+        text = table_chat.clean(message.content)
+        if text is None or not self.consent.has_consent(table.guild_id, author.id):
+            return
+        self._deliver_typed(table, author.id, text, int(message.created_at.timestamp() * 1000))
+
+    def _deliver_typed(self, table: Table, user_id: int, text: str, start_ms: int) -> None:
+        """A typed line goes where a spoken one goes (clock phrases, house rules, names heard,
+        the "Hey DMbot" sidebar, the transcript), minus what only audio has: no cleaning, no
+        off-topic filter, no audio check. In the transcript it is tagged (typed) and only in
+        the as-heard version, never the cleaned one."""
+        table.vocabulary.note(user_id, text)
+        if table.name_lookup is not None:
+            named = mentions(table.name_lookup, text)
+            table.scene.note(named, user_id, time.monotonic())
+            table.heard_counts.update((entity_id, user_id) for entity_id in named)
+        self._act_on_line(table, user_id, text)
+        if self.transcripts is not None:
+            table.unsaved.add(Line(start_ms, user_id, text, text, typed=True))
+        table.recent.add(user_id, text, time.monotonic())
+        if self.tables.get(table.guild_id) is table:
+            self.sidebar.ask_at_table(table, user_id, text)
+        if len(table.heard) < HEARD_MAX:
+            table.heard.append((user_id, text))
+
+    def after_chat_change(self, campaign: Campaign) -> None:
+        """A running session reads typed chat from now on as the DM just set it (#1118)."""
+        table = self.tables.get(campaign.guild_id)
+        if table is not None and table.campaign_id == campaign.id:
+            table.chat_on = campaign.table_chat
+            table.chat_channel_id = campaign.table_chat_channel_id
 
     def _note_rules(self, table: Table, user_id: int, line: str) -> None:
         """A spell, condition or creature named at the table (#931): a short card for the DM

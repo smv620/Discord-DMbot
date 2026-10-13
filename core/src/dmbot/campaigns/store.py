@@ -284,6 +284,8 @@ _SETTABLE = frozenset(
         "gametime_channel_id",
         "dndbeyond_invite",
         "rules_cards",
+        "table_chat",
+        "table_chat_channel_id",
     }
 )
 
@@ -584,6 +586,15 @@ class CampaignStore:
     ) -> Campaign:
         """Store the campaign's game-time channel (#1116): not part of a backup."""
         return await self._set(guild_id, campaign_id, "gametime_channel_id", channel_id)
+
+    async def set_table_chat(
+        self, guild_id: int, campaign_id: str, *, on: bool, channel_id: int | None
+    ) -> Campaign:
+        """Typed chat at the table (#1118): the DM's switch and the one extra text channel
+        (None = only the voice channel's own chat). Not part of a backup: a channel ID means
+        nothing in another server."""
+        await self._set(guild_id, campaign_id, "table_chat", on)
+        return await self._set(guild_id, campaign_id, "table_chat_channel_id", channel_id)
 
     async def set_dndbeyond_invite(
         self, guild_id: int, campaign_id: str, invite: str | None
@@ -1341,6 +1352,11 @@ def _to_campaign(row: dict[str, Any], dms: set[int]) -> Campaign:
         else None,
         # Absent in a schema older than #1119, for the same reason.
         dndbeyond_invite=row.get("dndbeyond_invite"),
+        # Absent before #1118: the default is on, with no extra channel.
+        table_chat=bool(row.get("table_chat", True)),
+        table_chat_channel_id=row_int(row, "table_chat_channel_id")
+        if "table_chat_channel_id" in row
+        else None,
         dm_screen_level=row["dm_screen_level"],
         owner_user_id=row_int(row, "owner_user_id"),
         rules_cards=bool(row.get("rules_cards", False)),  # older schemas (tests) have none
