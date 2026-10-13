@@ -1,6 +1,6 @@
 DMbot - TESTING STATUS (current testing only)
 =============================================
-Last updated: 2026-10-13 06:20 UTC by dev1 (core + web-api 042ca8d deployed, migration 0048)
+Last updated: 2026-10-13 07:00 UTC by dev1 (Test G passed; the timer fix waits for the owner go to deploy)
 
 **For the people at the table: docs/next-test-step.md has the one next small test (#569).**
 Short by design: see CLAUDE.md "Testing logs". Full record: docs/testing-history.log.
@@ -28,10 +28,10 @@ DMBOT_SIDEBAR is 1 (ON since 2026-10-10 05:47 UTC: Supervisor said "sidebar may 
 private (no install link) until the website launches.
 
 ------------------------------------------------------------------------------
-NEXT TEST: the sidebar by voice (docs/next-test-step.md)
+NEXT TEST: the game clock and timers again (docs/next-test-step.md)
 ------------------------------------------------------------------------------
-Test G: the sidebar by voice, "Hey DMbot, ..." (docs/next-test-step.md). Test F (clock and timer) worked; faults in #1112.
-Test E (sidebar) result is in the history.
+Test F again, after the timer fix (docs/next-test-step.md; needs #1123 and #1130 deployed). Test G (sidebar by voice)
+PASSED on 2026-10-13. Test F first run worked except the two timer faults (#1112, fixed in #1123).
 
 SMALL TESTS AFTER THAT (one at a time; each one's "Check:" note is in the history log,
 entry "Status log as it stood before it was trimmed"):
