@@ -970,7 +970,8 @@ function saveFile(file: Blob, name: string): void {
   link.href = address;
   link.download = name;
   link.click();
-  URL.revokeObjectURL(address);
+  // Some browsers start the download after the click returns, so the address lives a moment.
+  setTimeout(() => URL.revokeObjectURL(address), 1000);
 }
 
 /** Download my data (#1150): one file with what DMbot holds about this person. Fetched here, so

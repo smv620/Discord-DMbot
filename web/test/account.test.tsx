@@ -708,7 +708,7 @@ describe("safety", () => {
     const { api } = show("table");
     fireEvent.click(await screen.findByRole("button", { name: text.exportButton }));
     await waitFor(() => expect(api.calls).toContain("export"));
-    await waitFor(() => expect(saved).toEqual(["blob:pretend"]));
+    await waitFor(() => expect(saved).toEqual(["blob:pretend"]), { timeout: 3000 });
     expect(screen.getByText(text.exportWhat)).toBeTruthy();
   });
 
