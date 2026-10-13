@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import re
 import unittest
+from dataclasses import replace
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -420,3 +421,33 @@ class Refreshing(unittest.IsolatedAsyncioTestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class QuestionSwitch(unittest.IsolatedAsyncioTestCase):
+    """The sheet questions button flips what is stored now, not what the panel showed (#1171)."""
+
+    async def press(self, shown: bool, stored: bool) -> Any:
+        current = sheet(url=sheets.sheet_url(1))
+        current = replace(current, asks=stored)
+        it = interaction([PlayerCharacter(CAMPAIGN, "Alpha", ENTITY, "Testa")], current)
+        it.client.sheets.set_questions = AsyncMock(return_value=True)
+        it.guild = None
+        panel = ui.SheetPanel(
+            GUILD, PlayerCharacter(CAMPAIGN, "Alpha", ENTITY, "Testa"), has_sheet=True, asks=shown
+        )
+        with patch("dmbot.ui.sheets._still_member", AsyncMock(return_value=True)):
+            await panel._questions(it)
+        return it
+
+    async def test_it_turns_off_what_is_on_now_even_if_the_panel_was_old(self) -> None:
+        it = await self.press(shown=False, stored=True)  # an old panel says off; it is on
+        self.assertIs(it.client.sheets.set_questions.await_args.args[-1], False)
+
+    async def test_and_the_other_way(self) -> None:
+        it = await self.press(shown=True, stored=False)
+        self.assertIs(it.client.sheets.set_questions.await_args.args[-1], True)
+
+    def test_the_button_says_what_it_does(self) -> None:
+        self.assertEqual(ui.QUESTIONS_ON, "Turn sheet questions off")
+        self.assertEqual(ui.QUESTIONS_OFF, "Turn sheet questions on")
+        self.assertLessEqual(len(ui.QUESTIONS_ON), 80)

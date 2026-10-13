@@ -19,6 +19,7 @@ from dmbot.memory import sheet_changes as changes
 from dmbot.memory import sheet_checks, sheets
 from dmbot.memory import sheet_watch as watch
 from dmbot.memory.sheet_changes import Heard
+from dmbot.memory.sheet_questions import Questions
 from dmbot.memory.sheet_store import CharacterSheet, PlayerCharacter
 from dmbot.memory.sheet_watch import SheetWatch
 from tests.test_memory_store import GUILD_A
@@ -41,7 +42,7 @@ class Phrases(unittest.TestCase):
             "Belleros takes eight points of fire damage": [Heard("damage", 8)],
             "8 damage to Belleros": [Heard("damage", 8)],
             "Belleros is hit for 12": [Heard("damage", 12)],
-            "Mira heals 5": [Heard("heal", 5)],
+            "Mira is healed for 5": [Heard("heal", 5)],
             "Mira regains twenty-two hit points": [Heard("heal", 22)],
             "Belleros is poisoned": [Heard("condition", condition="Poisoned")],
             "that uses a level-2 slot": [Heard("slot")],
@@ -135,7 +136,9 @@ class Schedule(unittest.TestCase):
         w.note("e0", [Heard("heal", 5)], 130.0)  # inside the minute
         self.assertEqual(w.due(159.0, in_combat=True), [])
         self.assertEqual(w.due(160.0, in_combat=True), ["e0"])  # one read, 60 s after the first
-        self.assertEqual(w.take("e0", 160.0), [Heard("damage", 8), Heard("heal", 5)])
+        self.assertEqual(
+            [n.heard for n in w.take("e0", 160.0)], [Heard("damage", 8), Heard("heal", 5)]
+        )
         self.assertEqual(w.waiting("e0"), 0)
         self.assertEqual(w.due(161.0, in_combat=True), [])
 
@@ -215,6 +218,25 @@ class Schedule(unittest.TestCase):
         self.assertGreater(len({round(t) for t in due_times}), 1)  # and spread out again
         self.assertEqual(w.due(late + 1, in_combat=False), [])
 
+    def test_a_speaker_who_stops_being_recorded_takes_their_changes_with_them(self) -> None:
+        w = self.fresh()
+        w.note("e0", [Heard("damage", 8)], 0.0, 7)
+        w.note("e0", [Heard("heal", 3)], 1.0, 8)
+        w.drop_speaker(7)
+        self.assertEqual(w.waiting("e0"), 1)
+        w.drop_speaker(8)
+        self.assertEqual(w.waiting("e0"), 0)
+        self.assertEqual(w.due(100.0, in_combat=True), [])  # nothing waits for a read
+
+    def test_a_held_read_loses_nothing_and_is_not_penalised(self) -> None:
+        w = self.fresh(1)
+        w.note("e0", [Heard("damage", 8)], 0.0, 7)
+        taken = w.take("e0", 60.0)
+        w.defer("e0", taken)
+        self.assertEqual(w.waiting("e0"), 1)
+        self.assertEqual(w._sheets["e0"].backoff, 0.0)
+        self.assertEqual(w.due(61.0, in_combat=True), ["e0"])  # tried again at once
+
     def test_a_busy_table_never_starts_more_than_two_reads_a_pass(self) -> None:
         w = self.fresh(8)
         for i in range(8):
@@ -278,6 +300,7 @@ class Runner(unittest.IsolatedAsyncioTestCase):
             listening=listening,
             sheet_links={},
             sheet_watch=SheetWatch(),
+            sheet_questions=Questions(),
         )
         sheet_reread.track(table, list(found))
         return table
@@ -289,6 +312,7 @@ class Runner(unittest.IsolatedAsyncioTestCase):
         asks: bool = True,
         in_combat: bool = False,
         played_by: int | None = PLAYER,
+        withdrawn: frozenset[int] = frozenset(),
     ) -> Any:
         user = SimpleNamespace(send=AsyncMock())
         sent_to: list[int] = []
@@ -303,11 +327,14 @@ class Runner(unittest.IsolatedAsyncioTestCase):
 
         return SimpleNamespace(
             tables={GUILD: table},
+            consent=SimpleNamespace(has_consent=lambda g, u: u not in withdrawn),
             sheets=SimpleNamespace(save=AsyncMock(return_value=True), sheet=stored),
             clocks=SimpleNamespace(in_combat=AsyncMock(return_value=in_combat)),
             campaigns=SimpleNamespace(
                 get=AsyncMock(
-                    return_value=SimpleNamespace(target_ruleset="2024", fallback_ruleset="2014")
+                    return_value=SimpleNamespace(
+                        name="Alpha", target_ruleset="2024", fallback_ruleset="2014"
+                    )
                 )
             ),
             sheets_changed=MagicMock(),
@@ -422,7 +449,7 @@ class Runner(unittest.IsolatedAsyncioTestCase):
             await self.read(bot, table)
         bot.campaigns.get.assert_not_awaited()
 
-    async def test_a_character_given_to_someone_else_gets_nothing(self) -> None:
+    async def test_a_message_goes_to_whoever_plays_the_character_now(self) -> None:
         table = self.table(snapshot_sheet())
         bot = self.bot(table, played_by=777)  # the DM reassigned it during the session
         self.say(table, "Belleros takes 8 damage")
@@ -456,6 +483,123 @@ class Runner(unittest.IsolatedAsyncioTestCase):
             return True
 
         bot.sheets.save = ended
+        with self.fetching(base()), patch("time.monotonic", return_value=1e6):
+            await self.read(bot, table)
+        bot.user.send.assert_not_awaited()
+
+    async def test_a_speaker_who_withdrew_makes_no_read_and_no_question(self) -> None:
+        table = self.table(snapshot_sheet())
+        bot = self.bot(table, withdrawn=frozenset({5}))
+        self.say(table, "Belleros takes 8 damage", user_id=5)
+        table.sheet_watch._sheets["e1"].due_at = 0.0
+        table.sheet_watch._sheets["e1"].next_periodic = 1e12  # the schedule isn't asking
+        with self.fetching(base()) as fetched, patch("time.monotonic", return_value=1e6):
+            await self.read(bot, table)  # (the hook drops them too; this is the re-check)
+        fetched.assert_not_awaited()
+        bot.user.send.assert_not_awaited()
+
+    async def test_the_withdrawal_hook_clears_what_they_said(self) -> None:
+        table = self.table(snapshot_sheet())
+        self.say(table, "Belleros takes 8 damage", user_id=5)
+        table.sheet_watch.drop_speaker(5)
+        table.sheet_questions.drop_speaker(5)
+        self.assertEqual(table.sheet_watch.waiting("e1"), 0)
+
+    async def test_a_held_back_read_waits_for_every_sheet_and_costs_no_one(self) -> None:
+        table = self.table(snapshot_sheet())
+        bot = self.bot(table)
+        self.say(table, "Belleros takes 8 damage")
+        table.sheet_watch._sheets["e1"].due_at = 0.0
+        limited = sheets.SheetError("D&D Beyond answered 429", limited=True, status=429)
+        with self.fetching(limited), patch("time.monotonic", return_value=1e6):
+            await self.read(bot, table)
+        self.assertEqual(table.sheet_watch.waiting("e1"), 1)  # still to be read
+        self.assertEqual(table.sheet_watch._sheets["e1"].backoff, 0.0)  # no penalty
+        bot.user.send.assert_not_awaited()
+
+    async def test_a_save_that_fails_keeps_the_changes_for_another_try(self) -> None:
+        table = self.table(snapshot_sheet())
+        bot = self.bot(table)
+        bot.sheets.save = AsyncMock(side_effect=RuntimeError("db down"))
+        self.say(table, "Belleros takes 8 damage")
+        table.sheet_watch._sheets["e1"].due_at = 0.0
+        with self.fetching(base()), patch("time.monotonic", return_value=1e6):
+            await self.read(bot, table)  # no exception
+        self.assertEqual(table.sheet_watch.waiting("e1"), 1)
+
+    async def test_questions_are_one_merged_message_naming_the_campaign(self) -> None:
+        table = self.table(snapshot_sheet())
+        bot = self.bot(table)
+        self.say(table, "Belleros takes 8 damage")
+        self.say(table, "Belleros is poisoned")
+        table.sheet_watch._sheets["e1"].due_at = 0.0
+        with self.fetching(base()), patch("time.monotonic", return_value=1e6):
+            await self.read(bot, table)
+        bot.user.send.assert_awaited_once()
+        text = bot.user.send.await_args.args[0]
+        self.assertIn("in **Alpha**", text)
+        self.assertIn("took 8 damage", text)
+        self.assertIn("poisoned", text)
+
+    async def test_no_question_in_combat_and_one_after_the_fight(self) -> None:
+        table = self.table(snapshot_sheet())
+        bot = self.bot(table, in_combat=True)
+        self.say(table, "Belleros takes 8 damage")
+        table.sheet_watch._sheets["e1"].due_at = 0.0
+        with self.fetching(base()), patch("time.monotonic", return_value=1e6):
+            await self.read(bot, table)
+            bot.user.send.assert_not_awaited()  # held through the fight
+            self.assertTrue(table.sheet_questions.any_waiting())
+            bot.clocks.in_combat = AsyncMock(return_value=False)  # the fight is over
+            await sheet_reread.tick(bot, table)
+        bot.user.send.assert_awaited_once()
+        self.assertIn("took 8 damage", bot.user.send.await_args.args[0])
+
+    async def test_at_most_one_message_in_fifteen_minutes_and_never_twice_for_one_value(
+        self,
+    ) -> None:
+        table = self.table(snapshot_sheet())
+        bot = self.bot(table)
+        with self.fetching(base()):
+            for at, line in ((1e6, "Belleros takes 8 damage"), (1e6 + 60, "Belleros is poisoned")):
+                with patch("time.monotonic", return_value=at):
+                    self.say(table, line)
+                    table.sheet_watch._sheets["e1"].due_at = 0.0
+                    table.sheet_watch._sheets["e1"].last_read = -1e9
+                    await self.read(bot, table)
+            self.assertEqual(bot.user.send.await_count, 1)  # the second waits
+            with patch("time.monotonic", return_value=1e6 + 16 * 60):
+                await sheet_reread.tick(bot, table)
+            self.assertEqual(bot.user.send.await_count, 2)
+            # The same damage again, with the sheet still showing the same number: not asked.
+            with patch("time.monotonic", return_value=1e6 + 40 * 60):
+                self.say(table, "Belleros takes 8 damage")
+                table.sheet_watch._sheets["e1"].due_at = 0.0
+                table.sheet_watch._sheets["e1"].last_read = -1e9
+                await self.read(bot, table)
+                await sheet_reread.tick(bot, table)
+        self.assertEqual(bot.user.send.await_count, 2)
+
+    async def test_a_question_the_player_already_answered_by_updating_is_dropped(self) -> None:
+        table = self.table(snapshot_sheet())
+        bot = self.bot(table, in_combat=True)
+        self.say(table, "Belleros takes 8 damage")
+        table.sheet_watch._sheets["e1"].due_at = 0.0
+        with self.fetching(base()), patch("time.monotonic", return_value=1e6):
+            await self.read(bot, table)  # held (combat)
+            table.sheet_links["e1"] = replace(
+                table.sheet_links["e1"], sheet={**base(), "hp": 18}
+            )  # they updated their sheet meanwhile
+            bot.clocks.in_combat = AsyncMock(return_value=False)
+            await sheet_reread.tick(bot, table)
+        bot.user.send.assert_not_awaited()
+
+    async def test_damage_and_healing_that_cancel_out_ask_nothing(self) -> None:
+        table = self.table(snapshot_sheet())
+        bot = self.bot(table)
+        self.say(table, "Belleros takes 8 damage")
+        self.say(table, "Belleros is healed for 8")
+        table.sheet_watch._sheets["e1"].due_at = 0.0
         with self.fetching(base()), patch("time.monotonic", return_value=1e6):
             await self.read(bot, table)
         bot.user.send.assert_not_awaited()
