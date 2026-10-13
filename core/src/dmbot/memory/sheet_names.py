@@ -32,8 +32,7 @@ SRD: dict[str, tuple[str, ...]] = {
         "Great Weapon Fighting", "Magic Initiate", "Savage Attacker", "Skilled",
         "Two-Weapon Fighting", "Boon of Combat Prowess", "Boon of Dimensional Travel",
         "Boon of Fate", "Boon of Irresistible Offense", "Boon of Spell Recall",
-        "Boon of the Night Spirit", "Boon of Skill", "Boon of Speed", "Boon of Energy Resistance",
-        "Boon of Fortitude", "Boon of Recovery", "Boon of Truesight",
+        "Boon of the Night Spirit",
     ),
 }  # fmt: skip
 OFFICIAL: dict[str, tuple[str, ...]] = {
@@ -56,7 +55,9 @@ OFFICIAL: dict[str, tuple[str, ...]] = {
         "Piercer", "Poisoner", "Polearm Master", "Resilient", "Ritual Caster", "Sentinel",
         "Shadow Touched", "Sharpshooter", "Shield Master", "Skill Expert", "Skulker", "Slasher",
         "Speedy", "Spell Sniper", "Tavern Brawler", "Telekinetic", "Telepathic", "Tough",
-        "War Caster", "Weapon Master",
+        "War Caster", "Weapon Master", "Boon of Skill", "Boon of Speed",
+        "Boon of Energy Resistance", "Boon of Fortitude", "Boon of Recovery",
+        "Boon of Truesight",
     ),
 }  # fmt: skip
 

@@ -119,6 +119,26 @@ class Parsing(unittest.TestCase):
         self.assertEqual(snapshot["feats"], ["Test Feat"])
         self.assertIsNone(snapshot["species"])
 
+    def test_odd_modifier_shapes_never_break_the_full_fields(self) -> None:
+        data = answer()
+        data["data"]["modifiers"]["class"] += [
+            {"type": "expertise"},
+            {"type": "expertise", "subType": ["x"]},
+            {"type": "proficiency", "subType": {}},
+            {"type": "proficiency", "subType": ["light-armor"], "friendlySubtypeName": "X"},
+            {"type": "resistance", "friendlySubtypeName": 5},
+            {"type": "proficiency"},
+        ]
+        data["data"]["inventory"] += [
+            "nonsense",
+            {"quantity": "5", "definition": "nonsense"},
+            {"quantity": True, "definition": {"weight": float("nan"), "rarity": 7}},
+        ]
+        data["data"]["conditions"] = [None, {"id": "x"}, {"id": 4, "level": "high"}]
+        snapshot = sheets.parse(data)
+        self.assertEqual((snapshot["expertise"], snapshot["armor_profs"]), (["history"], []))
+        self.assertEqual(snapshot["exhaustion"], 0)
+
     def test_odd_shapes_never_break_it(self) -> None:
         data = answer()
         data["data"]["classes"] = "nonsense"

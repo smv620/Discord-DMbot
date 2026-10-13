@@ -209,20 +209,22 @@ def _full(
         "immunities": _modifier_names(modifiers, "immunity"),
         "vulnerabilities": _modifier_names(modifiers, "vulnerability"),
         "expertise": sorted(
-            {str(m["subType"]) for m in modifiers if m.get("type") == "expertise"} & set(_SKILLS)
+            {
+                str(m["subType"])
+                for m in modifiers
+                if m.get("type") == "expertise" and m.get("subType") in _SKILLS
+            }
         ),
         "tools": _names(
-            m.get("friendlySubtypeName")
-            for m in proficiencies
-            if str(m.get("subType", "")).endswith(_TOOL_ENDINGS)
+            m.get("friendlySubtypeName") for m in proficiencies if _sub(m).endswith(_TOOL_ENDINGS)
         ),
         "weapon_profs": _names(
             m.get("friendlySubtypeName")
             for m in proficiencies
-            if m.get("subType") in _WEAPON_KINDS or str(m.get("subType", "")).endswith("-weapons")
+            if _sub(m) in _WEAPON_KINDS or _sub(m).endswith("-weapons")
         ),
         "armor_profs": _names(
-            m.get("friendlySubtypeName") for m in proficiencies if m.get("subType") in _ARMOR_KINDS
+            m.get("friendlySubtypeName") for m in proficiencies if _sub(m) in _ARMOR_KINDS
         ),
         "background": _name(
             _get(data, "background", "definition", "name")
@@ -230,6 +232,12 @@ def _full(
         ),
         "inventory": _inventory(data),
     }
+
+
+def _sub(modifier: Mapping[str, Any]) -> str:
+    """A modifier's subtype as text, "" if it isn't text (an odd shape never breaks a read)."""
+    value = modifier.get("subType")
+    return value if isinstance(value, str) else ""
 
 
 def _flags(data: Mapping[str, Any]) -> list[str]:
@@ -244,10 +252,16 @@ def _flags(data: Mapping[str, Any]) -> list[str]:
     if any(
         negative(data.get(k)) for k in ("removedHitPoints", "temporaryHitPoints", "baseHitPoints")
     ) or any(
-        negative(_get(c, "level")) or _get(c, "level") == 0 for c in _list(data.get("classes"))
+        negative(_get(c, "level"))
+        or (_get(c, "level") == 0 and not isinstance(_get(c, "level"), bool))
+        for c in _list(data.get("classes"))
     ):
         flags.add("basic")
-    if any(negative(_get(s, "value")) for s in _list(data.get("stats"))):
+    if any(
+        negative(_get(s, "value"))
+        for key in ("stats", "bonusStats", "overrideStats")
+        for s in _list(data.get(key))
+    ):
         flags.add("abilities")
     if any(
         negative(i.get("quantity")) for i in _list(data.get("inventory")) if isinstance(i, Mapping)

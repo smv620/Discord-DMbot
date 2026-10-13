@@ -55,7 +55,7 @@ def interaction(found: list[PlayerCharacter], current: CharacterSheet | None = N
     return it
 
 
-CARD = "here is what DMbot read"  # the import status card's heading (#1124)
+CARD = "DMbot read your sheet"  # the import status card's heading (#1124)
 
 
 def cards(it: Any) -> list[str]:
@@ -81,7 +81,7 @@ class Words(unittest.TestCase):
         self.assertIn(f"[D&D Beyond](<{URL}>)", linked)
         self.assertIn("read <t:1700000000:R>", linked)
         self.assertIn("Test Species · Test Class 3 / Second Class 2", linked)
-        self.assertIn("HP 33 + 0, AC 17", linked)  # the DM's card shows the basics only
+        self.assertIn("max HP 33, AC 17", linked)  # the DM's card shows the basics only
         self.assertIn("not read yet", ui.sheet_status(sheet(read=False), link=True))
         self.assertIn(
             "told DMbot about this character", ui.sheet_status(sheet(url=None), link=True)
@@ -318,7 +318,7 @@ class Linking(unittest.IsolatedAsyncioTestCase):
         with patch.object(sheets, "fetch", AsyncMock(return_value=sheets.parse(answer()))):
             await self.form(URL).on_submit(it)
         [card] = cards(it)
-        self.assertIn("Basic: Testa Placeholder", card)
+        self.assertIn("Character: Testa Placeholder", card)
         sent = [c for c in it.followup.send.await_args_list if CARD in str(c.args[0])]
         self.assertTrue(sent[0].kwargs["ephemeral"])  # only the player sees it
 
@@ -368,7 +368,7 @@ class Typing(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(snapshot["features"], ["Misty Step", "Shield"])
         self.assertIn("DMbot now listens for those names", said(it))
         [card] = cards(it)  # a typed sheet is only checked for what the form asked
-        self.assertIn("✅ Basic: Testa, Wizard 5", card.replace("**", ""))
+        self.assertIn("✅ Character: Testa, Wizard 5", card)
         self.assertNotIn("Inventory", card)
 
     async def test_names_left_out_are_counted(self) -> None:

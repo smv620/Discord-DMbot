@@ -187,14 +187,14 @@ class Statuses(unittest.TestCase):
         basic = self.by_part(self.s)["basic"]
         self.assertEqual(
             basic.line.split(" (")[0],
-            "✅ Basic: Belleros, Ranger 3 + Druid 3, HP 11 / 26 + 0, AC 18",
+            "✅ Character: Belleros, Ranger 3 + Druid 3, HP 11 / 26 + 0, AC 18",
         )
 
     def test_a_clean_sheet_has_a_warning_only_for_names_outside_the_free_rules(self) -> None:
         parts = self.by_part(self.s)
         self.assertEqual(parts["spells"].status, checks.WARN)  # Absorb Elements
         self.assertIn("'Absorb Elements'", parts["spells"].text)
-        self.assertIn("2 others checked", parts["spells"].text)
+        self.assertIn("2 others fine", parts["spells"].text)
         self.assertEqual(parts["feats"].status, checks.WARN)  # Sharpshooter: a book feat
         self.assertEqual(
             {p: c.status for p, c in parts.items() if p not in ("spells", "feats", "basic")},
@@ -221,13 +221,13 @@ class Statuses(unittest.TestCase):
                            {"name": "Druid", "level": 9, "subclass": None}]  # fmt: skip
         basic = self.by_part(snap)["basic"]
         self.assertEqual(basic.status, checks.BAD)
-        self.assertIn("levels add up to 24", basic.text)
+        self.assertIn("class levels add up to 24", basic.text)
 
     def test_hit_points_over_max_plus_temporary_do_not_add_up(self) -> None:
         snap = {**self.s, "hp": 40, "temp_hp": 3}
         basic = self.by_part(snap)["basic"]
         self.assertEqual(basic.status, checks.BAD)
-        self.assertIn("HP 40 is more than the maximum 26 + 3", basic.text)
+        self.assertIn("HP 40 is above the maximum 26 + 3", basic.text)
         self.assertEqual(
             self.by_part({**self.s, "hp": 29, "temp_hp": 3})["basic"].status, checks.OK
         )
@@ -273,7 +273,11 @@ class Statuses(unittest.TestCase):
             lambda n: checks._kind_of({"source": "document"}, "feat", n)[0],
         )
         self.assertEqual(doc.status, checks.BAD)
-        self.assertEqual(doc.line, "⛔ Feats: 'Clowning' not recognized; 4 others checked")
+        self.assertEqual(
+            doc.line,
+            "⛔ Feats: 'Clowning' not recognized; 4 others checked. "
+            "Check the spelling on your sheet.",
+        )
         near = checks._named(
             "feats",
             "Feats",
@@ -296,29 +300,66 @@ class Statuses(unittest.TestCase):
 
 
 class Card(unittest.TestCase):
-    def test_the_card_is_one_line_per_part_and_one_message(self) -> None:
+    def test_the_card_is_a_summary_one_line_per_part_and_one_message(self) -> None:
         text = checks.card(sheets.parse(belleros()))
         lines = text.split("\n")
         self.assertIn("Belleros", lines[0])
-        self.assertEqual(len(lines[1:-1]), 11)  # between the heading and the footer
-        self.assertTrue(all(ln[:1] in "✅⚠⛔" for ln in lines[1:-1]))
-        self.assertLess(len(text), 2000)
+        self.assertIn("2 names to glance at", lines[0])  # the feat and the spell list
         self.assertIn("Only you see this", lines[0])
-        self.assertTrue(lines[-1].startswith("⚠️ means DMbot doesn't know a name"))
+        parts = [ln for ln in lines[1:] if ln[:1] in "✅⚠⛔" and not ln.startswith("⚠️ is not")]
+        self.assertEqual(len(parts), 11)
+        self.assertEqual([ln[0] for ln in parts[:2]], ["⚠", "⚠"])  # the ones to look at first
+        self.assertLess(len(text), 2000)
+        self.assertTrue(lines[-1].startswith("⚠️ is not a problem."))
 
-    def test_a_huge_sheet_still_fits_one_message(self) -> None:
+    def test_a_clean_sheet_says_what_it_does_not_know(self) -> None:
+        snap = {**sheets.parse(belleros()), "spells": ["Fireball"], "feats": ["Alert"]}
+        snap["classes"] = [{"name": "Ranger", "level": 3, "subclass": None}]
+        snap["species"] = "Elf"
+        text = checks.card(snap)
+        self.assertIn("Nothing to fix that DMbot can see", text)
+        self.assertTrue(text.endswith("You know your character best."))
+
+    def test_a_huge_sheet_still_fits_one_message_with_its_footer(self) -> None:
         snap = sheets.parse(belleros())
         snap["spells"] = [f"Homebrew Spell Number {i}" for i in range(100)]
         snap["feats"] = [f"Odd Feat {i}" for i in range(100)]
+        snap["hp"] = 999
+        snap["features"] = ["F" * 59] * 3
         text = checks.card(snap)
         self.assertLessEqual(len(text), checks.CARD_MAX)
         self.assertIn(" more", text)
+        self.assertTrue(text.endswith("DMbot has changed nothing."))  # the footer is never cut
 
-    def test_the_card_for_a_sheet_with_a_problem_says_what_to_check(self) -> None:
+    def test_the_card_for_a_sheet_with_a_problem_says_what_to_do(self) -> None:
         snap = {**sheets.parse(belleros()), "hp": 99}
         text = checks.card(snap)
-        self.assertIn("⛔", text)
-        self.assertTrue(text.endswith("Check that part on your sheet."))
+        lines = text.split("\n")
+        self.assertIn("1 thing to check", lines[0])
+        self.assertTrue(lines[1].startswith("⛔ Character:"))  # first
+        self.assertIn("Check HP on your sheet", lines[1])
+        self.assertIn("⚠️ is not a problem", text)  # a warning's meaning still shows with a ⛔
+        self.assertTrue(text.endswith("DMbot has changed nothing."))
+
+    def test_the_names_are_escaped(self) -> None:
+        text = checks.card({**sheets.parse(belleros()), "name": "Bel*le_ros"})
+        self.assertIn("Bel\\*le\\_ros", text.split("\n")[0])
+
+    def test_plurals_and_no_languages(self) -> None:
+        snap = {**sheets.parse(belleros()), "languages": [], "tools": ["Herbalism Kit"]}
+        parts = {c.part: c.text for c in checks.checks(snap)}
+        self.assertIn("1 tool,", parts["proficiencies"])
+        self.assertIn("no languages found", parts["more"])
+        self.assertIn("1 sense", parts["more"])
+
+    def test_a_typo_near_a_known_feat_is_asked_about(self) -> None:
+        snap = {**sheets.parse(belleros()), "feats": ["Sharpshoter"]}
+        feats = {c.part: c.text for c in checks.checks(snap)}["feats"]
+        self.assertIn("did you mean Sharpshooter?", feats)
+
+    def test_hit_points_with_no_damage_known_are_not_shown_as_current(self) -> None:
+        snap = {**sheets.parse(belleros()), "hp": None}
+        self.assertEqual(checks.vitals(snap), "max HP 26, AC 18")
 
     def test_a_reread_sends_a_card_only_if_something_changed(self) -> None:
         old = sheets.parse(belleros())
