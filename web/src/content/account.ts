@@ -130,7 +130,7 @@ export const text = {
   fixPayment: "Fix my payment",
   // A first payment has no grace: nothing started, so there is nothing to fix, only to retry (#922).
   firstPaymentFailed:
-    "Your first payment didn't go through, so no plan has started. Pick a plan below to try again.",
+    "Your first payment didn't go through, so you have no plan yet. Pick a plan below to try again.",
   // Free access (#806): never why someone has it.
   freeAccess: "Free access",
   freeAccessUntil: (iso: string): string => `Free access until ${shortDate(iso)}`,
