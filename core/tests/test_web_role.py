@@ -96,7 +96,11 @@ class WebRole(DatabaseTest):
         await drop_schema(TEST_URL, self.schema)
         before = [m for m in schema.MIGRATIONS if m[0] < "0029"]
         self.db = await Database.open(TEST_URL, schema=self.schema, migrations=before)
-        self.web = await Database.open(web_url(), schema=self.schema, max_size=2, migrate=False)
+        # Checked against the same older list: the website's connection refuses a schema that
+        # is older than the code it is told to expect.
+        self.web = await Database.open(
+            web_url(), schema=self.schema, max_size=2, migrate=False, migrations=before
+        )
         async with self.web.unscoped() as conn:
             with self.assertRaises(errors.InsufficientPrivilege):
                 await conn.execute("SELECT 1 FROM character_sheets")
