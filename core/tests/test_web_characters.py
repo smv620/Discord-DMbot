@@ -82,7 +82,8 @@ class Characters(DatabaseTest):
 
     async def test_she_sees_only_her_own_sheets_never_bobs_in_the_same_campaign(self) -> None:
         cards = await build_characters(self.web, self.alice)
-        self.assertEqual(sorted(str(c["name"]) for c in cards), ["None", "Testa"])  # the linked one has no name
+        # The linked sheet has no name yet, so it shows as None.
+        self.assertEqual(sorted(str(c["name"]) for c in cards), ["None", "Testa"])
         text = json.dumps(cards)
         for other in ("Cameo", "Secretus", "Monk", "Rogue", str(BOB.id)):
             self.assertNotIn(other, text)
