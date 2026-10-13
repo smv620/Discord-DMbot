@@ -432,9 +432,8 @@ TEST_SESSION = (
 # ---- the players' game-time channel (#1116) ----------------------------------------
 
 GAMETIME_FAILED = (
-    "⚠️ **DMbot couldn't set up the game-time channel** ({cause}). The session goes on; "
-    "players just don't have their own clock channel yet. It is tried again at the next "
-    "`/dmbot start`."
+    "⚠️ **Couldn't make the game-time channel** ({cause}). The game goes on; players just "
+    "have no clock channel yet. To retry, fix that and run `/dmbot start`."
 )
 
 
@@ -443,7 +442,4 @@ def gametime_failed(cause: str) -> str:
 
 
 def gametime_topic(campaign_name: str) -> str:
-    return (
-        f"The game's day and time for {campaign_name}, in rough words. Anyone in this server "
-        "can read it; only DMbot posts here."
-    )
+    return f"{campaign_name}: the day and a rough time of day. Posted by DMbot, view only."

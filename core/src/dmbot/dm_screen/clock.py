@@ -46,20 +46,15 @@ SET_FIRST = (
 GONE = "That campaign isn't here any more."
 FAILED = "Sorry, that didn't save. Please try again."
 BAD_TIME = "Couldn't read that time. Press **Set time…** again and try day 4, time 14 (or 14:30)."
-ALREADY_SHOWN = (
-    "The clock is already pinned in the DM screen: {where}\n"
-    "Players see the day and a rough time in their game-time channel."
-)
-PANEL_TEXT = "Move the clock. Only you see this."
+ALREADY_SHOWN = "The clock is already pinned in the DM screen: {where}"
+PANEL_TEXT = "Rest, skip ahead, or type a time. Only you see this."
+PLAYERS_SEE = "\nPlayers see the day and a rough time in <#{channel}>."
 NEEDS_SCREEN = "This campaign has no DM screen yet. Run `/dmbot start` once first."
 OFF_SCREEN = (
     "I can't post in the DM screen. Give DMbot **Send Messages** there, then press "
     "**Game clock** again."
 )
-SET_DONE = (
-    "🕰️ Clock set to {label}. It's pinned here: {where}\n"
-    "Players see the day and a rough time in their game-time channel."
-)
+SET_DONE = "🕰️ Clock set to {label}. It's pinned here: {where}"
 
 ACTIONS: dict[str, tuple[str, str, discord.ButtonStyle, int]] = {
     # id: (label, emoji, style, row)
@@ -234,18 +229,33 @@ async def show(client: Any, campaign: Campaign, stored: Stored) -> discord.Messa
     return cast(discord.Message, message)
 
 
+def players_see(campaign: Campaign) -> str:
+    """Where the players see the clock: said only when that channel exists."""
+    if campaign.gametime_channel_id is None:
+        return ""
+    return PLAYERS_SEE.format(channel=campaign.gametime_channel_id)
+
+
 def players_text(clock: Clock) -> str:
     """The players' clock: the day and a rough time of day, nothing else (no exact time, no
     timer, no button; those are the DM's)."""
     return f"🕰️ **{game.short_label(clock.minute)}**"
 
 
-async def show_players(client: Any, campaign: Campaign, stored: Stored) -> None:
+_players_locks: dict[str, asyncio.Lock] = {}  # one players' clock update at a time per campaign
+
+
+async def show_players(client: Any, campaign: Campaign, stored: Stored | None = None) -> None:
     """Keep the players' pinned clock in the game-time channel in step: edited in place,
-    posted (and pinned) if it is missing. Never raises and never holds anything up: the DM's
-    clock is the one that matters at the table."""
+    posted (and pinned) if it is missing. One at a time per campaign, and the clock is read
+    again inside the lock, so two updates (a press, a spoken rest, the start) can neither
+    post two clocks nor leave older words over newer ones. Never raises and never holds
+    anything up: the DM's clock is the one that matters at the table."""
     try:
-        await _show_players(client, campaign, stored)
+        async with _players_locks.setdefault(campaign.id, asyncio.Lock()):
+            current = await client.clocks.get(campaign.guild_id, campaign.id)
+            if current is not None:
+                await _show_players(client, campaign, current)
     except Exception:
         log.exception("Couldn't update the players' clock")
 
@@ -257,25 +267,33 @@ async def _show_players(client: Any, campaign: Campaign, stored: Stored) -> None
     text = players_text(stored.clock)
     if stored.players_channel_id == channel_id and stored.players_message_id:
         channel = client.get_channel(channel_id)
-        if isinstance(channel, discord.abc.Messageable):
-            try:
-                message = await channel.fetch_message(stored.players_message_id)
-                if message.content != text:
-                    await message.edit(content=text, allowed_mentions=NO_PINGS)
-                return
-            except discord.NotFound:
-                pass  # deleted: post a new one below
-            except discord.HTTPException:
-                log.warning("Couldn't edit the players' clock message")
-                return  # a hiccup: don't pile a second clock beside it
+        if not isinstance(channel, discord.abc.Messageable):
+            # Not in the cache (just after a restart or a new channel): that is not "the
+            # message is gone", so post nothing rather than a second clock.
+            log.warning("The game-time channel isn't available to DMbot right now")
+            return
+        try:
+            message = await channel.fetch_message(stored.players_message_id)
+            if message.content != text:
+                await message.edit(content=text, allowed_mentions=NO_PINGS)
+            return
+        except discord.NotFound:
+            pass  # deleted: post a new one below
+        except discord.HTTPException:
+            log.warning("Couldn't edit the players' clock message")
+            return  # a hiccup: don't pile a second clock beside it
     message = await client.post_message(channel_id, text)
     if message is None:
         return
     with contextlib.suppress(discord.HTTPException):  # pinning needs a permission DMbot may lack
         await message.pin()
-    await client.clocks.set_players_message(
-        campaign.guild_id, campaign.id, message.channel.id, message.id
-    )
+    try:
+        await client.clocks.set_players_message(
+            campaign.guild_id, campaign.id, message.channel.id, message.id
+        )
+    except Exception:
+        # Posted but not remembered: the next update would post another, so say so.
+        log.exception("Couldn't remember the players' clock message")
 
 
 def players_line(action: str, before: Clock | None, after: Clock) -> str | None:
@@ -303,7 +321,8 @@ async def update_players(
             return
         fresh = await client.campaigns.get(campaign.guild_id, campaign.id) or campaign
         await show_players(client, fresh, stored)
-        line = players_line(action, result.before, stored.clock) if announce else None
+        after = result.after or stored.clock
+        line = players_line(action, result.before, after) if announce else None
         if line is not None and fresh.gametime_channel_id is not None:
             await client.post_message(fresh.gametime_channel_id, line)
     except Exception:
@@ -402,14 +421,15 @@ async def _run_press(
     message = await _show_here(interaction, client, campaign, stored)
     if message is None:
         await _reply(interaction, OFF_SCREEN)
-    elif action == "set" and interaction.message is None:
+    elif action == "set":
         # The form saved: the DM's own screen shows nothing else, so say where the clock is.
         await _reply(
             interaction,
-            SET_DONE.format(label=game.short_label(result.after.minute), where=message.jump_url),
+            SET_DONE.format(label=game.short_label(result.after.minute), where=message.jump_url)
+            + players_see(campaign),
         )
-    await say(client, campaign, result.lines)  # dawn, noon, dusk, tired: on the DM screen
     await update_players(client, campaign, action, result)  # the game-time channel (#1116)
+    await say(client, campaign, result.lines)  # dawn, noon, dusk, tired: on the DM screen
     from dmbot.dm_screen import effects as timers
 
     await timers.announce_due(client, campaign, result.after.minute)
@@ -548,7 +568,9 @@ class ClockButton(
                 interaction, NEEDS_SCREEN if campaign.dm_screen_channel_id is None else OFF_SCREEN
             )
             return
-        await _reply(interaction, ALREADY_SHOWN.format(where=message.jump_url))
+        await _reply(
+            interaction, ALREADY_SHOWN.format(where=message.jump_url) + players_see(campaign)
+        )
 
 
 class SimpleGuild:
@@ -631,6 +653,13 @@ class ClockUndoButton(
         if stored is not None:
             await show(client, campaign, stored)
             await show_players(client, campaign, stored)
+            fresh = await client.campaigns.get(guild.id, campaign.id) or campaign
+            if fresh.gametime_channel_id is not None:
+                # The players may have been told a rest finished: say it was taken back.
+                await client.post_message(
+                    fresh.gametime_channel_id,
+                    f"Correction: {game.short_label(stored.clock.minute)}.",
+                )
         with contextlib.suppress(discord.HTTPException):
             await interaction.edit_original_response(
                 content=f"↩️ Undone. Back to {game.short_label(self.before)}.", view=None

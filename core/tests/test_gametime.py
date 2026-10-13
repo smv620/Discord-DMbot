@@ -10,10 +10,11 @@ import re
 import unittest
 from types import SimpleNamespace
 from typing import Any, cast
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import discord
 
+import dmbot.bot as bot_module
 from dmbot.bot import DMBot
 from dmbot.campaigns import Campaign, CampaignStore
 from dmbot.config import Settings
@@ -186,7 +187,7 @@ class ChannelSetup(DatabaseTest):
         self.assertFalse(everyone.send_messages)
         self.assertFalse(everyone.add_reactions)
         self.assertTrue(next(ow for key, ow in created.items() if key.id == BOT).send_messages)
-        self.assertIn("only DMbot posts", self.guild.create_text_channel.call_args.kwargs["topic"])
+        self.assertIn("view only", self.guild.create_text_channel.call_args.kwargs["topic"])
         saved = await self.store.get(GUILD, self.campaign.id)
         assert saved is not None and saved.gametime_channel_id == NEW
         self.assertIsNone(saved.transcript_channel_id)  # the transcript's own id is separate
@@ -235,7 +236,9 @@ class ChannelSetup(DatabaseTest):
     async def test_its_id_is_not_in_a_backup(self) -> None:
         await self.store.set_gametime_channel(GUILD, self.campaign.id, NEW)
         data = await self.store.export(GUILD, self.campaign.id)
-        self.assertNotIn(str(NEW), str(data))
+        self.assertNotIn(
+            "gametime", str(data)
+        )  # no key, so no id (a bare number could match anything)
         restored = await self.store.import_backup(OTHER_GUILD, data, DM)
         self.assertIsNone(restored.gametime_channel_id)
 
@@ -258,19 +261,13 @@ class StartNeverBlocks(DatabaseTest):
         )
 
     async def test_a_refusal_or_a_crash_is_a_note_not_an_exception(self) -> None:
-        import dmbot.bot as bot_module
-
         guild = MagicMock(spec=discord.Guild)
         for error in (GametimeChannelError("Discord won't let DMbot"), RuntimeError("boom")):
-            original = bot_module.setup_gametime_channel
-            bot_module.setup_gametime_channel = AsyncMock(side_effect=error)  # type: ignore[assignment]
-            try:
+            with patch.object(bot_module, "setup_gametime_channel", AsyncMock(side_effect=error)):
                 note = await self.bot._gametime_channel(guild, self.a, object())
-            finally:
-                bot_module.setup_gametime_channel = original  # type: ignore[assignment]
             assert note is not None
             self.assertIn("game-time channel", note)
-            self.assertIn("session goes on", note)
+            self.assertIn("game goes on", note)
 
 
 class Msg:
@@ -500,7 +497,7 @@ class SetTimePanel(PlayersClock):
     """Pressing **Set time…** opens the private panel (once a clock exists)."""
 
     def interaction(self, message: Any = None) -> Any:
-        self.discord.campaigns.get = self.campaigns.get  # type: ignore[assignment]
+        self.discord.campaigns.get = self.campaigns.get
         it = SimpleNamespace(
             client=self.discord,
             guild=SimpleNamespace(id=GUILD),
@@ -546,12 +543,12 @@ class SetTimePanel(PlayersClock):
         assert stored is not None
         campaign = await self.campaign()
         await ui.show(self.discord, campaign, stored)  # the DM's pinned message
-        await ui.show_players(self.discord, campaign, await self.clocks.get(GUILD, self.a.id))  # type: ignore[arg-type]
+        await ui.show_players(self.discord, campaign, await self.clocks.get(GUILD, self.a.id))
         stored = await self.clocks.get(GUILD, self.a.id)
         assert stored is not None
         dm_message = self.discord.messages[stored.message_id or 0]
         players_message = self.discord.messages[stored.players_message_id or 0]
-        panel = Msg(1, SCREEN, "Move the clock. Only you see this.")  # the ephemeral panel
+        panel = Msg(1, SCREEN, ui.PANEL_TEXT)  # the ephemeral panel
         it = self.interaction(message=panel)
         await ui.ClockButton(self.a.id, "long").callback(cast(Any, it))
         self.assertEqual(dm_message.content.splitlines()[0], "🕰️ **Day 4, evening (20:00)**")
@@ -566,7 +563,7 @@ class SetTimePanel(PlayersClock):
         assert stored is not None
         campaign = await self.campaign()
         await ui.show(self.discord, campaign, stored)
-        await ui.show_players(self.discord, campaign, await self.clocks.get(GUILD, self.a.id))  # type: ignore[arg-type]
+        await ui.show_players(self.discord, campaign, await self.clocks.get(GUILD, self.a.id))
         stored = await self.clocks.get(GUILD, self.a.id)
         assert stored is not None
         dm_message = self.discord.messages[stored.message_id or 0]
@@ -608,3 +605,77 @@ class Migration0050(DatabaseTest):
         again = await clocks.get(GUILD, made.id)
         assert again is not None
         self.assertEqual((again.players_channel_id, again.players_message_id), (7, 8))
+
+
+class SayingWhereAndTakingBack(SetTimePanel):
+    async def test_the_players_sentence_is_only_said_when_the_channel_exists(self) -> None:
+        campaign = await self.campaign()
+        self.assertIn(f"<#{PLAYERS_CHANNEL}>", ui.players_see(campaign))
+        await self.campaigns.set_gametime_channel(GUILD, self.a.id, None)
+        self.assertEqual(ui.players_see(await self.campaign()), "")
+
+    async def test_an_undone_rest_is_corrected_for_the_players(self) -> None:
+        await self.press("set", set_to=NOON4)
+        result = await self.press("long")
+        assert result.before is not None and result.after is not None
+        it = self.interaction()
+        await ui.ClockUndoButton(self.a.id, ui.undo_id(result.before, result.after)).callback(
+            cast(Any, it)
+        )
+        self.assertEqual((await self.players_posts())[-1], "Correction: Day 4, about noon.")
+        # Nothing to take back (the clock moved since): nothing is said.
+        before = len(await self.players_posts())
+        await ui.ClockUndoButton(self.a.id, ui.undo_id(result.before, result.after)).callback(
+            cast(Any, it)
+        )
+        self.assertEqual(len(await self.players_posts()), before)
+
+
+class NoSecondClock(PlayersClock):
+    async def test_two_updates_at_once_post_one_clock(self) -> None:
+        import asyncio
+
+        await self.press("set", set_to=NOON4)
+        campaign = await self.campaign()
+        await asyncio.gather(
+            ui.show_players(self.discord, campaign),
+            ui.show_players(self.discord, campaign),
+            ui.show_players(self.discord, campaign),
+        )
+        self.assertEqual(len(await self.players_posts()), 1)
+
+    async def test_a_channel_missing_from_the_cache_is_not_a_missing_message(self) -> None:
+        await self.press("set", set_to=NOON4)
+        campaign = await self.campaign()
+        await ui.show_players(self.discord, campaign)
+        del self.discord.channels[PLAYERS_CHANNEL]  # not cached for a moment
+        await self.press("h1")
+        await ui.show_players(self.discord, campaign)
+        self.assertEqual(len(await self.players_posts()), 1)  # nothing new posted
+
+    async def test_older_words_never_land_over_newer(self) -> None:
+        await self.press("set", set_to=NOON4)
+        campaign = await self.campaign()
+        stale = await self.clocks.get(GUILD, self.a.id)
+        await ui.show_players(self.discord, campaign)
+        await self.press("h1")
+        await self.press("h1")  # now afternoon... and later
+        await ui.show_players(self.discord, campaign, stale)  # a caller holding old state
+        message = next(iter(self.discord.messages.values()))
+        self.assertEqual(message.content, "🕰️ **Day 4, afternoon**")
+
+    async def test_a_typed_time_from_the_panel_gets_its_reply(self) -> None:
+        panel = Msg(1, SCREEN, ui.PANEL_TEXT)
+        it = SimpleNamespace(
+            client=self.discord,
+            guild=SimpleNamespace(id=GUILD),
+            user=SimpleNamespace(id=DM),
+            message=panel,
+            response=SimpleNamespace(defer=AsyncMock(), is_done=lambda: True),
+            followup=SimpleNamespace(send=AsyncMock()),
+            edit_original_response=AsyncMock(),
+        )
+        await ui.run_press(cast(Any, it), self.a.id, "set", set_to=NOON4)
+        sent = it.followup.send.await_args
+        self.assertIn("Clock set to Day 4, about noon", sent.args[0])
+        self.assertIn(f"<#{PLAYERS_CHANNEL}>", sent.args[0])

@@ -4647,6 +4647,8 @@ class DMBot(commands.AutoShardedBot):
             fresh = await self.campaigns.get(guild.id, campaign.id)
             if stored is not None and fresh is not None and fresh.gametime_channel_id == channel.id:
                 await clock_screen.show_players(self, fresh, stored)
+                # Redraws the DM's pinned clock too, so an older one loses its rest buttons.
+                await clock_screen.show(self, fresh, stored)
         except Exception:
             log.exception("Couldn't put the players' clock in the game-time channel")
         return None
