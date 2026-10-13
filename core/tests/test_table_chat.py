@@ -265,7 +265,7 @@ class AtTheTableTyped(AtTheTable):
     async def test_the_chat_channel_hears_about_it_once(self) -> None:
         posts: list[tuple[int, str]] = []
 
-        async def post(channel_id: int, text: str, **_kw: Any) -> bool:
+        async def post(channel_id: int, text: str, view: Any = None) -> bool:
             posts.append((channel_id, text))
             return True
 
@@ -282,9 +282,9 @@ class AtTheTableTyped(AtTheTable):
         await self.press("set", set_to=NOON4)
         original = self.bot._less_what_a_rest_covers
 
-        async def revoke_then_answer(*args: Any) -> Any:
-            self.bot.consent.has_consent = lambda g, u: False  # type: ignore[method-assign]
-            return await original(*args)
+        async def revoke_then_answer(table: Any, campaign: Any, said: Any, now: float) -> Any:
+            self.bot.consent.has_consent = lambda guild_id, user_id: False  # type: ignore[method-assign]
+            return await original(table, campaign, said, now)
 
         self.bot._less_what_a_rest_covers = revoke_then_answer  # type: ignore[method-assign]
         await self.hear(message("we take a long rest"))
