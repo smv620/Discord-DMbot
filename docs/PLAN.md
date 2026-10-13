@@ -2112,6 +2112,14 @@ messages use the same ones.
 | Pro | 217 ("about 50 hours a week"); needs the bigger server | 20 | coming soon |
 | Extra hours | +10 this month | — | $4.99 |
 
+*The hours rules, replayed offline (2026-10-11, #437):* `python -m dmbot.devtools.replay --session
+FOLDER --plan PLAN --hours-used N [--grace] [--session-minutes N] [--hours-only]` puts a made-up owner
+on a plan with some hours used, in a throwaway schema (never the live one) with enforcement on, and
+runs the session through the bot's own hours rules and meter. It shows the 80% and 90% warnings, the
+cap finish (the 2-hour grace, once), the stop and the refusal at the next start, in the bot's exact
+words; Try It at the cap is refused at start. dev1 runs it once before the go-live switch (#498). How
+to run it: docs/test-scripts/README.md.
+
 *How extra hours are bought (2026-10-11, #1089):* an **Add 10 hours ($4.99)** button on the account
 page, under the hours left, shown only over a paid plan that works now (active, or in the 7-day
 grace). It calls `POST /billing/extra-hours`, which answers `{url}` like checkout, from the payment
@@ -2447,7 +2455,7 @@ takes the offer back (and tells the owner); any other Discord error lets the cla
 for a later try, and a claim left by a process that stopped lapses. It sweeps for unsent
 offers each time it starts listening, when a server becomes available or is joined, and
 hourly. Offers made in Discord are saved as delivered. The website's role, when it
-offers, must only be able to insert unsent, unclaimed offers from the signed-in owner.
+offers, must only be able to insert unsent, unclaimed offers from the signed-in owner. *Built (2026-10-11, #728):* the rule is in the database now, ahead of the route: a restrictive policy `web_new_offer` on the website's role requires an inserted offer to be the signed-in person's own, open, undecided and with no `delivered_at`, `claimed_at`, `message_id` or `end_told_at`; and `schema.OFFER_INSERT_COLUMNS` lists the only columns a future `INSERT` grant may name. The role has no INSERT on offers today; a test grants it to prove both the column limit and the rule hold, and that a mistaken whole-table grant is still held by the rule.
 *When an offer's 7 days are up (#690, part 2):* the same hourly sweep marks it expired
 (also catching ones already marked expired quietly) and announces it once
 (`end_told_at`): the owner hears "they didn't answer within 7 days … the campaign stays

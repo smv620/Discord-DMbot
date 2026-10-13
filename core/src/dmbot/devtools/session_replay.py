@@ -42,6 +42,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from dmbot.devtools import hours_twin
+from dmbot.devtools.hours_twin import PLAN_IDS
 from dmbot.devtools.replay import audio
 from dmbot.devtools.replay.run import ConsentChange, Replay, replay
 from dmbot.devtools.replay.score import align, words
@@ -388,11 +390,68 @@ def parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
     parser.add_argument("--session", type=Path, required=True, help="a saved session's folder")
     parser.add_argument("--transcriber", help="overrides TRANSCRIBER")
     parser.add_argument(
+        "--plan",
+        choices=PLAN_IDS,
+        help="also replay the hours rules for an owner on this plan (#437): the warnings at "
+        "80% and 90%, the cap and its grace, and the next start, in a throwaway database "
+        "schema made from DATABASE_URL",
+    )
+    parser.add_argument(
+        "--hours-used",
+        type=float,
+        metavar="N",
+        help="hours the owner has already used this month (with --plan)",
+    )
+    parser.add_argument(
+        "--grace",
+        action="store_true",
+        help="the plan is in its 7-day payment grace (with --plan, a paid plan)",
+    )
+    parser.add_argument(
+        "--session-minutes",
+        type=int,
+        metavar="N",
+        help="how long the session listens, for the hours replay (default: the saved "
+        "session's length rounded up)",
+    )
+    parser.add_argument(
+        "--hours-only",
+        action="store_true",
+        help="with --plan: skip the speech replay and only replay the hours",
+    )
+    parser.add_argument(
         "--no-timing",
         action="store_true",
         help="queue everything at once instead of at the recorded times (the diff is the same)",
     )
     return parser.parse_args(argv)
+
+
+async def _hours(args: argparse.Namespace, session: Session) -> int:
+    """The hours rules for an owner on --plan, in a throwaway schema (#437)."""
+    url = os.environ.get("DATABASE_URL", "")
+    if not url:
+        print(
+            "replay: --plan needs DATABASE_URL (any database you may create a schema in; a "
+            "throwaway schema is made and dropped, and nothing in the live schema is touched)",
+            file=sys.stderr,
+        )
+        return 2
+    longest = max((u.end_ms for u in session.utterances), default=0)
+    minutes = (
+        args.session_minutes if args.session_minutes is not None else max(1, -(-longest // 60_000))
+    )
+    scenario = hours_twin.Scenario(
+        args.plan, args.hours_used if args.hours_used is not None else 0.0, args.grace, minutes
+    )
+    try:
+        scenario.check()  # before any connection is made
+        result = await hours_twin.run(url, scenario, site_url=os.environ.get("WEB_SITE_URL", ""))
+    except hours_twin.TwinError as exc:
+        print(f"replay: {exc}", file=sys.stderr)
+        return 2
+    print("\n".join(hours_twin.report(result)))
+    return 0
 
 
 async def main_async(args: argparse.Namespace) -> int:
@@ -407,23 +466,39 @@ async def main_async(args: argparse.Namespace) -> int:
     if args.transcriber:
         env["TRANSCRIBER"] = args.transcriber
     try:
-        settings = load_transcription_settings(env)
         session = load(args.session)
+        settings = None if args.hours_only else load_transcription_settings(env)
     except (TranscriptionConfigError, SessionError) as exc:
         print(f"replay: {exc}", file=sys.stderr)
-        return 2
-    if settings.sends_audio_out and args.transcriber != settings.engine:
-        print(
-            f"replay: TRANSCRIBER={settings.engine} sends audio to an outside company and "
-            f"costs money; say so with --transcriber {settings.engine}",
-            file=sys.stderr,
-        )
         return 2
     if not session.complete:
         from dmbot.devtools.test_library import why_incomplete
 
         print(
             f"replay: {session.folder.name} can't be replayed: {why_incomplete(session)}",
+            file=sys.stderr,
+        )
+        return 2
+    if args.plan:
+        code = await _hours(args, session)
+        if code or args.hours_only:
+            return code
+    elif (
+        args.hours_used is not None
+        or args.grace
+        or args.session_minutes is not None
+        or args.hours_only
+    ):
+        print(
+            "replay: --hours-used, --grace, --session-minutes and --hours-only need --plan",
+            file=sys.stderr,
+        )
+        return 2
+    assert settings is not None
+    if settings.sends_audio_out and args.transcriber != settings.engine:
+        print(
+            f"replay: TRANSCRIBER={settings.engine} sends audio to an outside company and "
+            f"costs money; say so with --transcriber {settings.engine}",
             file=sys.stderr,
         )
         return 2

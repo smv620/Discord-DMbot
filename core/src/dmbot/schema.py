@@ -1072,6 +1072,22 @@ WEB_ROLE_POLICIES = """
                     AND dmbot_current_user() IN (from_user_id, to_user_id));
     """
 
+# Applied only once the offers table has all four bot-only columns (an older schema, as in a test
+# of a backfill, doesn't, and a rule can't name a column that isn't there).
+WEB_ROLE_OFFER_POLICY = """
+    -- Creating an offer (#728, #690 follow-up). The website's role has no INSERT on offers
+    -- today (#625 only answers them). Whoever adds a route that creates offers must grant
+    -- exactly OFFER_INSERT_COLUMNS, never the whole table, and this rule stays on top: an offer
+    -- from the website is the signed-in person's own, still open, and not marked as sent,
+    -- claimed or announced. Otherwise the site could save an offer as already delivered and the
+    -- bot's check that the person is still in the server would be skipped.
+    DROP POLICY IF EXISTS web_new_offer ON campaign_handover_offers;
+    CREATE POLICY web_new_offer ON campaign_handover_offers AS RESTRICTIVE FOR INSERT TO dmbot_web
+        WITH CHECK (delivered_at IS NULL AND claimed_at IS NULL AND message_id IS NULL
+                    AND end_told_at IS NULL AND status = 'open' AND decided_at IS NULL
+                    AND from_user_id = dmbot_current_user());
+"""
+
 ACCESS_GRANTS = (
     _setting("dmbot_grant_writer", "dmbot.grant_writer", "TEXT")
     + """
@@ -1811,6 +1827,21 @@ WEB_ROLE_FUNCTIONS: tuple[tuple[str, str], ...] = (
     ("dmbot_owned_campaigns", "dmbot_owned_campaigns()"),
     ("dmbot_orphan_owned_campaigns", "dmbot_orphan_owned_campaigns(BIGINT)"),
     ("dmbot_hours_used", "dmbot_hours_used(BIGINT)"),
+)
+# The columns the website may fill when it creates a hand-over offer (#728): who, where and the
+# two names. Left out on purpose, so they take their defaults: status and decided_at (an offer
+# starts open), and delivered_at, claimed_at, message_id and end_told_at, which only the bot
+# sets (a writer that leaves delivered_at empty gets its offer sent by the bot). Not granted
+# yet: no website route creates offers. The grant, when it comes, is
+# `INSERT (<these>)` on campaign_handover_offers; the policy `web_new_offer` above backs it.
+OFFER_INSERT_COLUMNS: tuple[str, ...] = (
+    "guild_id",
+    "campaign_id",
+    "from_user_id",
+    "to_user_id",
+    "created_at",
+    "from_name",
+    "to_name",
 )
 WEB_ROLE_GRANTS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("SELECT", ("schema_migrations",)),
