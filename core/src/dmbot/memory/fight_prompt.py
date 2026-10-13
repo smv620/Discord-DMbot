@@ -121,14 +121,38 @@ def sheet_names(snapshot: Mapping[str, Any]) -> list[str]:
     ]
 
 
+_URL = re.compile(r"https?://\S+|www\.\S+|\bdiscord\.gg/\S+", re.IGNORECASE)
+_MD_LINK = re.compile(r"\[([^\]]*)\]\([^)]*\)")
+# Words that turn a reminder into advice or a ruling. The prompt forbids them; they are checked
+# here too, because the table's words reach the prompt and the reply must be cleaned on our side.
+_ADVICE = re.compile(
+    r"\b(?:should|shouldn't|must|try|best|better|ought|need to|have to|use|using)\b",
+    re.IGNORECASE,
+)
+
+
+def _name_in(text: str, name: str) -> bool:
+    """The whole name, not a piece of a longer word."""
+    return re.search(rf"(?<!\w){re.escape(name)}(?!\w)", text, re.IGNORECASE) is not None
+
+
 def clean_reply(text: str, names: Iterable[str]) -> str | None:
-    """The reminder to send, or None when the AI had nothing (or something unfit): nothing for
-    NOTHING, an empty answer, one too long to be a quick reminder, or one that names nothing
-    from the player's own sheet (it is only ever a reminder of their own options)."""
-    reply = " ".join(text.split())
+    """The reminder to send, or None when the AI had nothing or something unfit: NOTHING, an
+    empty answer, one too long to be a quick reminder, one that names no whole name from the
+    player's own sheet, or one that gives advice or a ruling ("should", "try", "use"...). Links
+    are taken out first. (A name on the sheet may itself contain such a word: names are not
+    counted when the advice words are looked for.)"""
+    reply = _MD_LINK.sub(r"\1", text)
+    reply = " ".join(_URL.sub("", reply).split())
     if not reply or reply.upper().startswith(NOTHING) or len(reply) > REPLY_MAX:
         return None
-    low = reply.lower()
-    if not any(n.lower() in low for n in names if n.strip()):
+    known = [n for n in names if n.strip()]
+    mentioned = [n for n in known if _name_in(reply, n)]
+    if not mentioned:
+        return None
+    bare = reply
+    for n in sorted(mentioned, key=len, reverse=True):
+        bare = re.sub(rf"(?<!\w){re.escape(n)}(?!\w)", " ", bare, flags=re.IGNORECASE)
+    if _ADVICE.search(bare):
         return None
     return reply

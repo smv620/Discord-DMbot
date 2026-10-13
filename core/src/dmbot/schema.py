@@ -1648,13 +1648,27 @@ SHEET_QUESTIONS = """
     ALTER TABLE character_sheets ADD COLUMN ask_mismatch BOOLEAN NOT NULL DEFAULT TRUE;
 """
 
-FIGHTBOT = """
-    -- FightBot (#1129; docs/PLAN.md, "FightBot"): whether DMbot may send this player private
-    -- reminders in combat. On unless the player chose "Never" (or turns it off from their
-    -- character sheet panel). Kept with the sheet, so per player per campaign; defaulted
-    -- column: no row changes, so no backfill policy.
-    ALTER TABLE character_sheets ADD COLUMN fightbot BOOLEAN NOT NULL DEFAULT TRUE;
-"""
+FIGHTBOT = f"""
+    -- FightBot (#1129; docs/PLAN.md, "FightBot"): one row per player per campaign, in that
+    -- campaign's own server scope, deleted with the campaign. Kept on its own (not on a
+    -- character's sheet row) so that forgetting a sheet, or having a second character, never
+    -- turns reminders back on.
+    --   never          the player chose Never, or turned FightBot off: no reminders at all
+    --   quiet_since    the start (Unix seconds) of the session they said "Quiet until next
+    --                  session" in: quiet for that session only, restarts included
+    --   snoozed_until  Unix seconds: no reminders before then
+    --   last_call_at   Unix seconds of the last reminder DMbot worked out for them, so a
+    --                  restart cannot send another within two minutes
+    CREATE TABLE fightbot_players (
+        {_memory_scope()}
+        player_id     BIGINT NOT NULL,
+        never         BOOLEAN NOT NULL DEFAULT FALSE,
+        quiet_since   BIGINT,
+        snoozed_until BIGINT,
+        last_call_at  BIGINT,
+        PRIMARY KEY (guild_id, campaign_id, player_id)
+    );
+    """ + _isolate("fightbot_players")
 
 OWNER_CAMPAIGNS = (
     _setting("dmbot_owner_sync", "dmbot.owner_sync", "TEXT")
@@ -2018,6 +2032,7 @@ ISOLATED_TABLES = (
     "game_clocks",
     "game_effects",
     "memory_rule_links",
+    "fightbot_players",
 )
 # A person's own rows (the website, #435): row-level security on `user_id`, set by
 # Database.user(). Sessions can also be found by their cookie hash (Database.session()),

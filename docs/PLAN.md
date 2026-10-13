@@ -2785,21 +2785,32 @@ once. The new-campaign form's link is saved in the same step as the campaign.
     campaign; can be turned back on from 📜 My character sheet).
   - **Cost:** FAST tier, one call per player at most every 2 minutes, only while in combat. It
     counts toward the hours meter's AI cost like every other job.
-  - **How it runs (built in #1129):**
+  - **How it runs (built in #1129, changed after Supervisor's review):**
     - A loop per running session looks every 30 seconds; it does nothing outside combat
-      (#1127). For each player with a sheet (any kind) who agreed to be recorded and hasn't
-      said Never, it makes at most one AI call every 2 minutes, and only if something changed
-      since the last (the round, hit points, a condition).
+      (#1127). It reminds only **people in the table's voice channel right now** (not bots;
+      consent and a sheet carry over from earlier sessions, but an absent player is not
+      reminded), who agreed to be recorded and have a sheet (any kind), at most **two** AI
+      calls per pass.
+    - Per player, at most one AI call (and so one message) every **2 minutes**, and only if
+      something changed since the last (the round, hit points, a condition).
     - The prompt holds only: that player's own allow-listed sheet facts, the round, and the
-      last few table lines of people who still agree, without any line that mentions a secret
-      name. If the secret names can't be loaded, nothing is sent. It is told to use only names
-      from the sheet and to answer NOTHING when nothing clearly helps.
+      last few things *said aloud* in the last three minutes by people who still agree (the
+      cleaned lines, never typed chat), without any line that mentions a secret name. If the
+      secret names can't be loaded, nothing is sent. It is told to use only names from the
+      sheet, to treat the table talk as untrusted, and to answer NOTHING when nothing clearly
+      helps. On our side the reply must name a whole name from the player's own sheet, has
+      links taken out, and is dropped if it gives advice or a ruling ("should", "try",
+      "use"...).
     - Every message is a private message to that player with **Snooze 10 min**, **Quiet until
-      next session** and **Never**. Snooze and Quiet are kept in memory for the session; Never
-      is kept on the player's sheet row (per player per campaign) and undone with **FightBot:
-      on/off** on 📜 My character sheet.
-    - Forgetting a sheet deletes its row, so **Never** is forgotten with it (the switch lives on
-      the sheet row); pressing **Forget my sheet** and linking again starts with reminders on.
+      next session** and **Never**. Everything a player chooses is kept in the database, one
+      row per player per campaign (`fightbot_players`): Never, the session Quiet applies to
+      (the session's start), the end of a Snooze, and the time of the last call. So a restart
+      forgets none of it, and **Forget my sheet** or a second character never turns reminders
+      back on. Never is undone with **Turn FightBot on** on 📜 My character sheet.
+    - **One private-message cap in a fight (rule, Supervisor 2026-10-13):** a player gets **at
+      most one DMbot private message per two minutes during combat**, counting everything DMbot
+      sends them. In practice that is FightBot's own gap, because the sheet questions and cards
+      of #1128 are held until the fight ends. Later features keep to this rule.
     - **Spell slots:** the sheet snapshot (D1) does not keep slot counts, so a reminder can name
       spells and features but not how many slots are left. Adding slots to the sheet is a
       follow-up.

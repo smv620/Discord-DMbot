@@ -27,45 +27,47 @@ import discord
 
 from dmbot.ai import AIError
 from dmbot.memory import fight_prompt
-from dmbot.memory.sheet_store import CharacterSheet
+from dmbot.memory.sheet_store import CharacterSheet, FightPlayer
+from dmbot.sidebar.service import SCENE_SECONDS
 
 log = logging.getLogger(__name__)
 
 REMIND_GAP_S = 120.0  # per player, between one call (and so one message) and the next
-SNOOZE_S = 600.0
+SNOOZE_S = 600
+MAX_CALLS_PER_TICK = 2  # a table never gets a burst of AI calls
 TICK_S = 30
 MAX_TOKENS = 120
 _ID = r"(?P<campaign>[0-9a-f]{32})"
 SNOOZED = "😴 Okay, back in 10 minutes."
 QUIET = "🤫 Okay, quiet until the next session."
+NO_SESSION = "There is no game running just now, so there is nothing to quiet."
 NEVER = "🚫 FightBot is off. Turn it back on in 📜 My character sheet."
+NOT_SAVED = "Sorry, that didn't save. Please try again."
 FOOTER = "FightBot reminder. Only you see this. It's your call."
 INTRO = (
     "FightBot reminds you of your own spells and features during a fight. "
-    "Tap **Stop FightBot** to turn it off.\n"
+    "Tap **Never** to turn it off.\n"
 )
 
 
 @dataclass(slots=True)
 class FightState:
-    """One session's FightBot memory: lost with the session, never shared between campaigns."""
+    """What one session remembers in memory only: the last state each player was reminded
+    about (so nothing is said twice for the same thing) and who has been told what FightBot is.
+    Everything that must survive a restart is in the database (`fightbot_players`)."""
 
-    last_try: dict[int, float] = field(default_factory=dict)
     last_fp: dict[int, tuple[Any, ...]] = field(default_factory=dict)
-    snoozed_until: dict[int, float] = field(default_factory=dict)
-    quiet: set[int] = field(default_factory=set)  # "quiet until next session"
-    introduced: set[int] = field(default_factory=set)  # told once what FightBot is
+    introduced: set[int] = field(default_factory=set)
 
 
-def silenced(state: FightState, user_id: int, now: float) -> bool:
-    return user_id in state.quiet or now < state.snoozed_until.get(user_id, 0.0)
-
-
-def due(state: FightState, user_id: int, now: float) -> bool:
-    """Not silenced, and at least two minutes since the last call for this player."""
-    return not silenced(state, user_id, now) and (
-        now - state.last_try.get(user_id, -1e9) >= REMIND_GAP_S
-    )
+def may_remind(state: FightPlayer, session_started: int, now: float) -> bool:
+    """Not Never, not quiet for this session, not snoozed, and at least two minutes since the
+    last call for this player: all kept in the database, so a restart forgets none of it."""
+    if state.never or state.quiet_since == session_started:
+        return False
+    if state.snoozed_until is not None and now < state.snoozed_until:
+        return False
+    return state.last_call_at is None or now - state.last_call_at >= REMIND_GAP_S
 
 
 async def run(bot: Any, table: Any) -> None:
@@ -84,12 +86,20 @@ async def _secret_texts(bot: Any, table: Any) -> list[str] | None:
     """The campaign's secret names as text, or None if they can't be known (then nothing is
     sent: a reminder must never be built without being able to leave them out)."""
     if bot.lookup is None:
-        return []
+        return None
     try:
         lookup = await bot.lookup.get(table.guild_id, table.campaign_id)
     except Exception:
         return None
     return [n.text for n in lookup.names if n.secret]
+
+
+def _present(bot: Any, table: Any) -> set[int]:
+    """The people in the table's voice channel right now, not counting bots: only they are at
+    the table tonight (consent and a sheet carry over, but an absent player is not reminded)."""
+    guild = bot.get_guild(table.guild_id)
+    channel = guild.get_channel(table.voice_channel_id) if guild is not None else None
+    return {m.id for m in getattr(channel, "members", []) if not m.bot}
 
 
 async def tick(bot: Any, table: Any) -> None:
@@ -101,19 +111,28 @@ async def tick(bot: Any, table: Any) -> None:
         fight.last_fp.clear()  # out of combat: the next fight starts fresh
         return
     round_number: int = stored.clock.combat_round
-    now = time.monotonic()
+    present = _present(bot, table)
+    if not present:
+        return
     found: list[CharacterSheet] = await bot.sheets.sheets(table.guild_id, table.campaign_id)
+    players = await bot.sheets.fight_players(table.guild_id, table.campaign_id)
+    wall = time.time()
     secrets: list[str] | None = None
     allowed: bool | None = None
+    calls = 0
     for sheet in found:
         user = sheet.played_by
-        if user is None or sheet.sheet is None or not sheet.fightbot:
+        if user is None or sheet.sheet is None or user not in present:
             continue
-        if not due(fight, user, now) or not bot.consent.has_consent(table.guild_id, user):
+        if not may_remind(players.get(user, FightPlayer()), table.started_at, wall):
+            continue
+        if not bot.consent.has_consent(table.guild_id, user):
             continue
         fp = fight_prompt.fingerprint(sheet.sheet, round_number)
         if fight.last_fp.get(user) == fp:
             continue  # nothing new since the last reminder
+        if calls >= MAX_CALLS_PER_TICK:
+            break  # the rest next time
         if secrets is None:
             secrets = await _secret_texts(bot, table)
             if secrets is None:
@@ -130,9 +149,10 @@ async def tick(bot: Any, table: Any) -> None:
             or not bot.consent.has_consent(table.guild_id, user)
         ):
             return
-        fight.last_try[user] = now
+        calls += 1
         fight.last_fp[user] = fp
-        said = fight_prompt.safe_lines(_table_lines(bot, table, now), secrets)
+        await bot.sheets.fight_called(table.guild_id, table.campaign_id, user, int(wall))
+        said = fight_prompt.safe_lines(_table_lines(bot, table, time.monotonic()), secrets)
         try:
             reply = await bot.fight_ai.complete(
                 fight_prompt.PROMPT,
@@ -144,31 +164,41 @@ async def tick(bot: Any, table: Any) -> None:
             continue
         text = fight_prompt.clean_reply(reply.text, fight_prompt.sheet_names(sheet.sheet))
         # (A failed or empty answer still uses up this change: no retry until something new.)
-        if text is not None and _may_send(bot, table, user):
+        if text is not None and await _may_send(bot, table, user):
             first = user not in fight.introduced
             fight.introduced.add(user)
             await _send(bot, table, user, text, intro=first)
 
 
-def _may_send(bot: Any, table: Any, user_id: int) -> bool:
+async def _may_send(bot: Any, table: Any, user_id: int) -> bool:
     """Checked again right before a message goes out: the AI call takes seconds, and the
-    session may have ended, the table paused, the player withdrawn their consent or silenced
-    FightBot meanwhile."""
-    return (
+    session may have ended, the table paused, the player withdrawn their consent, left the
+    voice channel or silenced FightBot meanwhile."""
+    if not (
         bot.tables.get(table.guild_id) is table
         and table.listening
         and bot.consent.has_consent(table.guild_id, user_id)
-        and not silenced(table.fight, user_id, time.monotonic())
+        and user_id in _present(bot, table)
+    ):
+        return False
+    players = await bot.sheets.fight_players(table.guild_id, table.campaign_id)
+    state = players.get(user_id, FightPlayer())
+    now = time.time()
+    # (The gap is not checked here: this very call has just recorded itself.)
+    return not (
+        state.never
+        or state.quiet_since == table.started_at
+        or (state.snoozed_until is not None and now < state.snoozed_until)
     )
 
 
 def _table_lines(bot: Any, table: Any, now: float) -> list[tuple[str, str]]:
-    """The last few lines said at the table by people who still agree to be recorded: the same
-    lines the shared transcript shows. (Recent holds nothing else: the DM sidebar and the DM
-    screen are elsewhere.)"""
+    """The last few things *said aloud* at the table, by people who still agree to be recorded
+    and no longer ago than the sidebar's scene: the cleaned lines the shared transcript shows.
+    Typed chat is raw text anyone can write anything in, so it is not used."""
     lines: list[tuple[str, str]] = []
-    for _at, speaker, text in list(table.recent.lines)[-40:]:
-        if bot.consent.has_consent(table.guild_id, speaker):
+    for at, speaker, text in list(table.recent.spoken)[-40:]:
+        if now - at <= SCENE_SECONDS and bot.consent.has_consent(table.guild_id, speaker):
             lines.append((bot.name_of(table.guild_id, speaker), text))
     return lines
 
@@ -184,7 +214,7 @@ async def _send(bot: Any, table: Any, user_id: int, text: str, *, intro: bool = 
     try:
         user = bot.get_user(user_id) or await bot.fetch_user(user_id)
         await user.send(
-            f"⚔️ {text}\n{INTRO if intro else ''}{FOOTER}",
+            f"⚔️ {discord.utils.escape_markdown(text)}\n{INTRO if intro else ''}{FOOTER}",
             view=buttons(table.guild_id, table.campaign_id),
             allowed_mentions=discord.AllowedMentions.none(),
         )
@@ -194,8 +224,8 @@ async def _send(bot: Any, table: Any, user_id: int, text: str, *, intro: bool = 
 
 _LABELS = {
     "snooze": ("Snooze 10 min", "😴", discord.ButtonStyle.secondary),
-    "quiet": ("Quiet this session", "🤫", discord.ButtonStyle.secondary),
-    "never": ("Stop FightBot", "🚫", discord.ButtonStyle.secondary),
+    "quiet": ("Quiet until next session", "🤫", discord.ButtonStyle.secondary),
+    "never": ("Never", "🚫", discord.ButtonStyle.secondary),
 }
 
 
@@ -227,22 +257,27 @@ class FightButton(
     async def callback(self, interaction: discord.Interaction) -> Any:
         bot: Any = interaction.client
         user = interaction.user.id
+        # Only ever the presser's own settings, saved whether or not a session is running.
         try:
             if self.action == "never":
-                kept = await bot.sheets.set_fightbot(self.guild_id, self.campaign_id, user, False)
-                said = NEVER if kept else "Sorry, that didn't save. Please try again."
+                await bot.sheets.set_fightbot(self.guild_id, self.campaign_id, user, False)
+                said = NEVER
+            elif self.action == "snooze":
+                until = int(time.time() + SNOOZE_S)
+                await bot.sheets.fight_snooze(self.guild_id, self.campaign_id, user, until)
+                said = SNOOZED
             else:
                 table = bot.tables.get(self.guild_id)
-                if table is not None and table.campaign_id == self.campaign_id:
-                    if self.action == "snooze":
-                        table.fight.snoozed_until[user] = time.monotonic() + SNOOZE_S
-                    else:
-                        table.fight.quiet.add(user)
-                said = SNOOZED if self.action == "snooze" else QUIET
+                if table is None or table.campaign_id != self.campaign_id:
+                    said = NO_SESSION  # the next session starts fresh anyway
+                else:
+                    await bot.sheets.fight_quiet(
+                        self.guild_id, self.campaign_id, user, table.started_at
+                    )
+                    said = QUIET
         except Exception:
             log.exception("FightBot: a silence button failed")
-            said = "Sorry, that didn't save. Please try again."
-            await interaction.response.send_message(said, ephemeral=True)
+            await interaction.response.send_message(NOT_SAVED, ephemeral=True)
             return
         text = interaction.message.content if interaction.message is not None else ""
         await interaction.response.edit_message(content=f"{text}\n\n{said}", view=None)

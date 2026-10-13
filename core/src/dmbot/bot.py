@@ -2930,7 +2930,7 @@ class DMBot(commands.AutoShardedBot):
             table.unsaved.add(
                 Line(start_ms, user_id, text, text, typed=True, message_id=message_id)
             )
-        table.recent.add(user_id, text, time.monotonic())
+        table.recent.add(user_id, text, time.monotonic(), typed=True)
         if self.tables.get(table.guild_id) is table:
             self.sidebar.ask_at_table(table, user_id, text, typed=True)
         if len(table.heard) < HEARD_MAX:

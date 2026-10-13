@@ -57,10 +57,11 @@ QUESTIONS_NOW_ON = (
     "✅ DMbot may ask you, privately, when your D&D Beyond sheet doesn't show what was said at "
     "the table."
 )
-FIGHTBOT_ON = "Fight reminders: on"  # private reminders of your own options during combat (#1129)
-FIGHTBOT_OFF = "Fight reminders: off"
-FIGHTBOT_NOW_ON = "✅ FightBot may remind you of your own options during a fight, privately."
-FIGHTBOT_NOW_OFF = "✅ No more fight reminders for you."
+# The button says what it does (#1129): the spec's words, FightBot on / off.
+FIGHTBOT_ON = "Turn FightBot off"  # shown while FightBot may remind this player
+FIGHTBOT_OFF = "Turn FightBot on"
+FIGHTBOT_NOW_ON = "✅ FightBot is on: it may remind you of your own options in a fight, privately."
+FIGHTBOT_NOW_OFF = "✅ FightBot is off for you."
 QUESTIONS_NOW_OFF = "✅ DMbot won't ask you about your D&D Beyond sheet any more."
 NO_CHARACTER = (
     "DMbot doesn't know your character in this server yet. Ask your DM to add it: "
@@ -580,7 +581,10 @@ async def show_panel(
     if note:
         text = f"{note}\n\n{text}"
     asks = sheet.asks if sheet is not None and sheet.url is not None else None
-    fight = sheet.fightbot if sheet is not None else None
+    fight: bool | None = None
+    if sheet is not None:  # FightBot's switch is per player per campaign, kept apart from sheets
+        mine = (await store.fight_players(guild_id, character.campaign_id)).get(interaction.user.id)
+        fight = not (mine is not None and mine.never)
     view = SheetPanel(guild_id, character, has_sheet=sheet is not None, asks=asks, fight=fight)
     if replace:
         await _replace(interaction, text, view)
@@ -692,11 +696,11 @@ class SheetPanel(_Menu):
         if not await _still_member(interaction, self.guild_id):
             return
         c = self.character
-        turn_on = not self.fight
-        changed = await store.set_fightbot(
-            self.guild_id, c.campaign_id, interaction.user.id, turn_on
-        )
-        note = (FIGHTBOT_NOW_ON if turn_on else FIGHTBOT_NOW_OFF) if changed else NOT_YOURS
+        # The stored value, not what the panel showed when it was drawn: it may have changed.
+        mine = (await store.fight_players(self.guild_id, c.campaign_id)).get(interaction.user.id)
+        turn_on = mine is not None and mine.never
+        await store.set_fightbot(self.guild_id, c.campaign_id, interaction.user.id, turn_on)
+        note = FIGHTBOT_NOW_ON if turn_on else FIGHTBOT_NOW_OFF
         await show_panel(interaction, self.guild_id, c, replace=True, note=note)
 
     async def _forget(self, interaction: discord.Interaction) -> None:

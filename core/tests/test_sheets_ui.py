@@ -38,6 +38,7 @@ def interaction(found: list[PlayerCharacter], current: CharacterSheet | None = N
     store.save = AsyncMock(return_value=True)
     store.unlink = AsyncMock(return_value=True)
     store.sheets = AsyncMock(return_value=[current] if current else [])
+    store.fight_players = AsyncMock(return_value={})  # FightBot is on for everyone by default
     it = MagicMock()
     it.user = MagicMock(id=PLAYER)
     it.guild = None  # in a private message
