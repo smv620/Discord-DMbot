@@ -30,15 +30,25 @@ class Field:
     long: bool = False  # a paragraph box
 
 
+def skill_name(key: str) -> str:
+    """ "sleight-of-hand" as a player writes it: "Sleight of Hand"."""
+    return " ".join(w if w == "of" else w.capitalize() for w in key.split("-"))
+
+
 @dataclass(frozen=True, slots=True)
 class Section:
     key: str
-    label: str  # the button
+    label: str  # the heading
     show: Callable[[Mapping[str, Any]], str]
     fields: tuple[Field, ...]
     # (snapshot, {field key: text}) -> (changes to the snapshot, a problem in plain words).
     apply: Callable[[Mapping[str, Any], Mapping[str, str]], tuple[dict[str, Any], str | None]]
     fill: Callable[[Mapping[str, Any]], dict[str, str]]  # what each field holds now
+    short: str = ""  # a shorter button label, where the heading is too long for a phone
+
+    @property
+    def button(self) -> str:
+        return self.short or self.label
 
 
 def _list(snapshot: Mapping[str, Any], key: str) -> list[str]:
@@ -61,7 +71,7 @@ def _int(text: str, low: int, high: int, what: str) -> tuple[int | None, str | N
     if not raw:
         return None, None
     if not raw.lstrip("-").isdecimal():
-        return None, f"{what} should be a number."
+        return None, f"{what}: type digits only, like 30."
     number = int(raw)
     if not low <= number <= high:
         return None, f"{what} should be from {low} to {high}."
@@ -122,7 +132,10 @@ def _show_skills(s: Mapping[str, Any]) -> str:
     skills, expert = _list(s, "skills"), _list(s, "expertise")
     if not skills:
         return "No trained skills yet."
-    return f"Trained: {', '.join(skills)}" + (f"\nExpert: {', '.join(expert)}" if expert else "")
+    shown = ", ".join(skill_name(k) for k in skills)
+    return f"Trained: {shown}" + (
+        f"\nExpert: {', '.join(skill_name(k) for k in expert)}" if expert else ""
+    )
 
 
 def _show_proficiencies(s: Mapping[str, Any]) -> str:
@@ -173,7 +186,7 @@ def _show_inventory(s: Mapping[str, Any]) -> str:
         rarity = inv.get("rarity") if isinstance(inv.get("rarity"), Mapping) else {}
         counts = [f"{rarity[r]} {r}" for r in reversed(sheets.RARITIES) if rarity.get(r)]
         rows.append(
-            f"{inv.get('count', 0)} items, {inv.get('weight', 0):.2f} lb"
+            f"{inv.get('count', 0)} items, {inv.get('weight', 0):g} lb"
             + (f": {', '.join(counts)}" if counts else "")
         )
     if items:
@@ -199,12 +212,11 @@ def _apply_abilities(
     if len(words) != 6 or not all(w.isdecimal() for w in words):
         return (
             {},
-            "Give six numbers in order: strength, dexterity, constitution, intelligence, "
-            "wisdom, charisma.",
+            "Type six numbers in this order: STR DEX CON INT WIS CHA. Example: 10 14 12 8 10 13.",
         )
     numbers = [int(w) for w in words]
     if not all(1 <= n <= sheets.SCORE_MAX for n in numbers):
-        return {}, f"Each score should be from 1 to {sheets.SCORE_MAX}."
+        return {}, f"Each score should be a whole number from 1 to {sheets.SCORE_MAX}."
     return {"abilities": dict(zip(sheets.ABILITIES, numbers, strict=True))}, None
 
 
@@ -229,9 +241,10 @@ def _apply_conditions(
     level, problem = _int(v["exhaustion"], 0, sheets.EXHAUSTION_MAX, "Exhaustion")
     if problem:
         return {}, problem
-    if level and "Exhaustion" not in names:
+    names = [n for n in names if n != "Exhaustion"]
+    if level:  # a level brings the condition; level 0 means none
         names.append("Exhaustion")
-    return {"conditions": names, "exhaustion": level or 0 if "Exhaustion" in names else 0}, None
+    return {"conditions": names, "exhaustion": level or 0}, None
 
 
 def _fill_defenses(s: Mapping[str, Any]) -> dict[str, str]:
@@ -260,7 +273,10 @@ def _skills_from(text: str) -> tuple[list[str], str | None]:
 
 
 def _fill_skills(s: Mapping[str, Any]) -> dict[str, str]:
-    return {"trained": ", ".join(_list(s, "skills")), "expert": ", ".join(_list(s, "expertise"))}
+    return {
+        "trained": ", ".join(skill_name(k) for k in _list(s, "skills")),
+        "expert": ", ".join(skill_name(k) for k in _list(s, "expertise")),
+    }
 
 
 def _apply_skills(s: Mapping[str, Any], v: Mapping[str, str]) -> tuple[dict[str, Any], str | None]:
@@ -277,7 +293,7 @@ def _apply_skills(s: Mapping[str, Any], v: Mapping[str, str]) -> tuple[dict[str,
             f"'{bad}' isn't a skill DMbot knows. Use names like Perception or Sleight of Hand.",
         )
     if stray := [e for e in expert if e not in trained]:
-        return {}, f"Expert in {stray[0]} needs it in the trained box too."
+        return {}, f"Expert in {skill_name(stray[0])}: add it to Trained skills too."
     return {"skills": sorted(set(trained)), "expertise": sorted(set(expert))}, None
 
 
@@ -362,15 +378,18 @@ def _apply_inventory(
     for part in split_names(v["rarity"]):
         match = re.fullmatch(r"(very rare|[a-z]+)\s*[: ]\s*(\d{1,4})", part.strip().casefold())
         if match is None or match[1] not in rarity:
-            return {}, "Write the rarities like: common 14, uncommon 3, rare 1."
+            return {}, (
+                f"'{part}' isn't a rarity. Use {', '.join(sheets.RARITIES)}, like: "
+                "common 14, uncommon 3."
+            )
         rarity[match[1]] = int(match[2])
     weight_text = v["weight"].strip()
     try:
         weight = float(weight_text) if weight_text else 0.0
     except ValueError:
-        return {}, "The weight should be a number of pounds."
+        return {}, "Weight: type just the number of pounds, like 45.5."
     if not 0 <= weight <= sheets.WEIGHT_MAX:
-        return {}, "The weight should be a number of pounds."
+        return {}, f"Weight should be from 0 to {sheets.WEIGHT_MAX:g} pounds."
     count = sum(rarity.values())
     inventory = {"count": count, "weight": weight, "rarity": rarity} if (count or weight) else None
     return {"items": split_names(v["items"]), "inventory": inventory}, None
@@ -381,7 +400,7 @@ SECTIONS: tuple[Section, ...] = (
         "abilities",
         "Abilities",
         _show_abilities,
-        (Field("scores", "Six scores: STR DEX CON INT WIS CHA", "10 14 12 8 10 13"),),
+        (Field("scores", "Scores in order: STR DEX CON INT WIS CHA", "10 14 12 8 10 13"),),
         _apply_abilities,
         _fill_abilities,
     ),
@@ -414,7 +433,7 @@ SECTIONS: tuple[Section, ...] = (
         _show_skills,
         (
             Field("trained", "Trained skills", "Perception, Stealth", True),
-            Field("expert", "Expert skills (also trained)", "Stealth"),
+            Field("expert", "Expert skills (must also be trained)", "Stealth"),
         ),
         _apply_skills,
         _fill_skills,
@@ -441,6 +460,7 @@ SECTIONS: tuple[Section, ...] = (
         ),
         _apply_features,
         _fill_features,
+        "Features",
     ),
     Section(
         "background",
@@ -456,13 +476,14 @@ SECTIONS: tuple[Section, ...] = (
         _show_speed,
         (
             Field("speed", "Speed (feet)", "30"),
-            Field("darkvision", "Darkvision (feet)"),
-            Field("blindsight", "Blindsight (feet)"),
-            Field("tremorsense", "Tremorsense (feet)"),
-            Field("truesight", "Truesight (feet)"),
+            Field("darkvision", "Darkvision (feet, blank if none)"),
+            Field("blindsight", "Blindsight (feet, blank if none)"),
+            Field("tremorsense", "Tremorsense (feet, blank if none)"),
+            Field("truesight", "Truesight (feet, blank if none)"),
         ),
         _apply_speed,
         _fill_speed,
+        "Speed",
     ),
     Section(
         "languages",
@@ -477,9 +498,9 @@ SECTIONS: tuple[Section, ...] = (
         "Inventory",
         _show_inventory,
         (
-            Field("items", "Item names", "Rope, Longsword", True),
+            Field("items", "Item names (optional)", "Rope, Longsword", True),
             Field("weight", "Total weight (pounds)", "45.5"),
-            Field("rarity", "Items by rarity", "common 14, uncommon 3"),
+            Field("rarity", "How many of each rarity", "common 14, uncommon 3, rare 1"),
         ),
         _apply_inventory,
         _fill_inventory,

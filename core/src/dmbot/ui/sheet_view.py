@@ -39,12 +39,18 @@ from dmbot.ui.dmbot_commands import (
 log = logging.getLogger(__name__)
 
 SHOW_LABEL = "Show my sheet"
-EDIT_LABEL = "Edit this part"
+EDIT_LABEL = "Edit"  # the button says which part: "Edit Skills"
 DDB_LABEL = "Open on D&D Beyond"
-NO_SHEET = "DMbot has no sheet for this character yet. Link or type it in first."
+NO_SHEET = (
+    "DMbot has no sheet for this character yet. Press **Link my D&D Beyond sheet** or **Type in "
+    "my character** first."
+)
 SAVED = "✏️ Saved. Changed: {what}."
 SAME = "Nothing changed."
-DDB_NOTE = "This sheet comes from D&D Beyond, so change it there. DMbot reads it again later."
+DDB_NOTE = (
+    "This sheet comes from D&D Beyond, so change it there. DMbot reads it again when a "
+    "session starts."
+)
 
 
 def view_text(character: PlayerCharacter, sheet: CharacterSheet, open_key: str | None) -> str:
@@ -56,7 +62,11 @@ def view_text(character: PlayerCharacter, sheet: CharacterSheet, open_key: str |
     if section is not None:
         lines += [f"**{section.label}**", ui._md(section.show(snapshot))]
     else:
-        lines.append("Press a button to see that part of your sheet.")
+        lines.append(
+            "Tap a part to see it."
+            if sheet.url is not None
+            else "Tap a part to see it. Tap Edit to change it."
+        )
     if sheet.url is not None:
         lines.append(DDB_NOTE)
     lines.append(ui.ONLY_YOU)
@@ -77,7 +87,7 @@ class SheetView(_Menu):
             self.add_item(
                 _Button(
                     self._opener(section.key),
-                    label=section.label,
+                    label=section.button,
                     style=discord.ButtonStyle.primary
                     if section.key == open_key
                     else discord.ButtonStyle.secondary,
@@ -92,7 +102,12 @@ class SheetView(_Menu):
             )
         elif open_key in sheet_view.BY_KEY:
             self.add_item(
-                _Button(self._edit, label=EDIT_LABEL, style=discord.ButtonStyle.success, row=2)
+                _Button(
+                    self._edit,
+                    label=f"{EDIT_LABEL} {sheet_view.BY_KEY[open_key].label}",
+                    style=discord.ButtonStyle.success,
+                    row=2,
+                )
             )
 
     def _opener(self, key: str) -> Any:
@@ -198,7 +213,9 @@ class SectionForm(discord.ui.Modal):
         old = sheet.sheet or {}
         new, problem = sheet_view.edit(old, self.section, values)
         if new is None:
-            await _tell(interaction, problem or "That didn't save.")
+            await _tell(
+                interaction, problem or "That didn't save. Check what you typed and try again."
+            )
             return
         changed = sheet_view.changed_sections(old, new)
         if not changed:

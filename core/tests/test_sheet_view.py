@@ -55,14 +55,31 @@ class Showing(unittest.TestCase):
         self.assertIn("Poisoned", shown["conditions"])
         self.assertIn("Exhaustion 2", shown["conditions"])
         self.assertIn("Fire", shown["defenses"])
-        self.assertIn("Expert: perception", shown["skills"])
+        self.assertIn("Expert: Perception", shown["skills"])
         self.assertIn("Herbalism Kit", shown["proficiencies"])
         self.assertIn("Favored Enemy", shown["features"])
         self.assertEqual(shown["background"], "Outlander")
         self.assertIn("Speed 35 ft", shown["speed"])
         self.assertIn("Darkvision 60 ft", shown["speed"])
         self.assertIn("Elvish", shown["languages"])
-        self.assertIn("5 items, 21.00 lb", shown["inventory"])
+        self.assertIn("5 items, 21 lb", shown["inventory"])
+
+    def test_skills_read_as_a_player_writes_them_and_buttons_fit_a_phone(self) -> None:
+        snap = {**typed(), "skills": ["sleight-of-hand", "animal-handling"], "expertise": []}
+        text = {s.key: s.show(snap) for s in sheet_view.SECTIONS}["skills"]
+        self.assertEqual(text, "Trained: Sleight of Hand, Animal Handling")
+        self.assertEqual(
+            sheet_view.BY_KEY["skills"].fill(snap)["trained"], "Sleight of Hand, Animal Handling"
+        )
+        self.assertEqual([s.button for s in sheet_view.SECTIONS if s.short], ["Features", "Speed"])
+
+    def test_exhaustion_level_zero_means_no_exhaustion(self) -> None:
+        snap = typed()
+        new, _ = sheet_view.edit(
+            snap, sheet_view.BY_KEY["conditions"], {"names": "Exhaustion, Prone", "exhaustion": "0"}
+        )
+        assert new is not None
+        self.assertEqual((new["conditions"], new["exhaustion"]), (["Prone"], 0))
 
     def test_empty_parts_say_so_in_plain_words(self) -> None:
         empty = sheets.typed("Mira", species="Elf", class_name="Wizard", level=3, names=[])
@@ -133,8 +150,8 @@ class Editing(unittest.TestCase):
             ("conditions", {"names": "Sleepy", "exhaustion": "0"}, "isn't a condition"),
             ("conditions", {"names": "", "exhaustion": "9"}, "from 0 to 6"),
             ("skills", {"trained": "Juggling", "expert": ""}, "isn't a skill"),
-            ("skills", {"trained": "Stealth", "expert": "Arcana"}, "needs it in the trained"),
-            ("speed", {**NO_SENSES, "speed": "fast"}, "number"),
+            ("skills", {"trained": "Stealth", "expert": "Arcana"}, "add it to Trained skills"),
+            ("speed", {**NO_SENSES, "speed": "fast"}, "digits"),
             ("inventory", {"items": "", "weight": "heavy", "rarity": ""}, "pounds"),
             ("inventory", {"items": "", "weight": "1", "rarity": "shiny 3"}, "rarities"),
         ):  # fmt: skip
@@ -199,12 +216,12 @@ class Views(unittest.IsolatedAsyncioTestCase):
         text, view = self.sent(it)
         self.assertIn("Belleros, Ranger 3 + Druid 3, HP 11 / 26 + 0, AC 18", text)
         self.assertEqual(len(view.children), 10)  # one button per part, no Edit yet
-        self.assertNotIn(ui.EDIT_LABEL, labels_of(view))
+        self.assertFalse([b for b in labels_of(view) if b.startswith(ui.EDIT_LABEL + " ")])
         self.assertFalse(has_link(view))
         await view.children[3]._handler(it)  # Skills  # type: ignore[attr-defined]
         edited = it.response.edit_message.await_args or it.edit_original_response.await_args
-        self.assertIn("Trained: perception, survival", edited.kwargs["content"])
-        self.assertIn(ui.EDIT_LABEL, labels_of(edited.kwargs["view"]))
+        self.assertIn("Trained: Perception, Survival", edited.kwargs["content"])
+        self.assertIn("Edit Skills", labels_of(edited.kwargs["view"]))
 
     async def test_a_dndbeyond_sheet_has_a_link_and_no_edit_anywhere(self) -> None:
         it = self.it(sheet_of(ddb(), linked=True))
@@ -212,11 +229,13 @@ class Views(unittest.IsolatedAsyncioTestCase):
         text, view = self.sent(it)
         self.assertTrue(has_link(view))
         self.assertIn(ui.DDB_LABEL, labels_of(view))
-        self.assertNotIn(ui.EDIT_LABEL, labels_of(view))
+        self.assertFalse([b for b in labels_of(view) if b.startswith(ui.EDIT_LABEL + " ")])
         self.assertIn("change it there", text)
         await view.children[3]._handler(it)  # type: ignore[attr-defined]
         edited = it.response.edit_message.await_args or it.edit_original_response.await_args
-        self.assertNotIn(ui.EDIT_LABEL, labels_of(edited.kwargs["view"]))
+        self.assertFalse(
+            [b for b in labels_of(edited.kwargs["view"]) if b.startswith(ui.EDIT_LABEL + " ")]
+        )
         self.assertTrue(has_link(edited.kwargs["view"]))
 
     async def test_someone_who_no_longer_plays_it_sees_nothing(self) -> None:
