@@ -1,5 +1,6 @@
 ---
 import Base from "../layouts/Base.astro";
+import { features, featuresHeading } from "../content/features";
 ---
 
 <Base
@@ -19,26 +20,20 @@ import Base from "../layouts/Base.astro";
     </p>
   </section>
 
-  <section class="features" aria-label="What DMbot does">
-    <article class="surface feature">
-      <h2>Writes it down</h2>
-      <p class="muted">
-        Turns what was said at the table into text. Only players who said yes are recorded.
-      </p>
-    </article>
-    <article class="surface feature">
-      <h2>Remembers who's who</h2>
-      <p class="muted">The people and places your table makes up, from one game to the next.</p>
-    </article>
-    <article class="surface feature">
-      <h2>Quiet tips for the DM</h2>
-      <p class="muted">
-        Just for the game master, unless the DM lets players peek. DMbot never makes up the story or
-        decides.
-      </p>
-    </article>
+  <section aria-labelledby="does-heading" class="does">
+    <h2 id="does-heading">{featuresHeading}</h2>
+    <div class="features">
+      {
+        features.map((f) => (
+          <article class="surface feature">
+            <h3>{f.title}</h3>
+            <p>{f.what}</p>
+            <p class="muted example">{f.example}</p>
+          </article>
+        ))
+      }
+    </div>
   </section>
-  <p class="note muted">This page is being written. Check back soon.</p>
 </Base>
 
 <style>
@@ -84,7 +79,11 @@ import Base from "../layouts/Base.astro";
     padding: var(--space-6);
   }
 
-  .feature h2 {
+  .does h2 {
+    margin-top: var(--space-8);
+  }
+
+  .feature h3 {
     font-size: var(--text-lg);
     margin-bottom: var(--space-2);
   }
@@ -93,8 +92,8 @@ import Base from "../layouts/Base.astro";
     margin: 0;
   }
 
-  .note {
-    margin-top: var(--space-8);
+  .example {
+    margin-top: var(--space-2);
     font-size: var(--text-sm);
   }
 </style>
