@@ -123,6 +123,7 @@ class Campaign:
     channel_number: int | None = None
     # The live transcript channel (#124); None until the first session.
     transcript_channel_id: int | None = None
+    gametime_channel_id: int | None = None  # the players' game-time channel (#1116)
     # How much DMbot says in the DM screen (#504): quiet, normal or chatty.
     dm_screen_level: str = DEFAULT_DM_SCREEN_LEVEL
     # Whose plan the campaign uses (#437): its creator or restorer; None for campaigns

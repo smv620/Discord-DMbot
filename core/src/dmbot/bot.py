@@ -77,6 +77,7 @@ from dmbot.dm_screen import effects as timer_screen
 from dmbot.dm_screen import house_voice as house_voice_screen
 from dmbot.dm_screen import levels as screen_levels
 from dmbot.dm_screen import messages as screen_messages
+from dmbot.dm_screen.gametime_channel import GametimeChannelError, setup_gametime_channel
 from dmbot.dm_screen.handover import (
     AcceptOfferButton,
     DeclineOfferButton,
@@ -1931,6 +1932,7 @@ class DMBot(commands.AutoShardedBot):
         if problems:
             return False, join_blocked_message(problems)
         transcript_id, transcript_problem = await self._transcript_channel(guild, campaign, screen)
+        gametime_problem = await self._gametime_channel(guild, campaign, screen)
 
         await self.campaigns.set_dm_screen(guild.id, campaign.id, screen_id)
         await self.campaigns.set_last_voice_channel(guild.id, campaign.id, voice.id)
@@ -1980,6 +1982,8 @@ class DMBot(commands.AutoShardedBot):
             return False, SAVE_FAILED
         if transcript_problem:
             await self.post(screen_id, transcript_problem)
+        if gametime_problem:
+            await self.post(screen_id, gametime_problem)
         self._check_house_file(campaign, screen_id)
         transcript_line = (
             f"📜 Transcript (anyone in the server can read it): <#{transcript_id}>\n"
@@ -2767,6 +2771,7 @@ class DMBot(commands.AutoShardedBot):
         if stored is None:
             return
         await clock_screen.show(self, campaign, stored)
+        await clock_screen.update_players(self, campaign, rest, result)  # #1116
         await timer_screen.announce_due(self, campaign, stored.clock.minute)
         await clock_screen.say(
             self,
@@ -4617,6 +4622,34 @@ class DMBot(commands.AutoShardedBot):
             log.exception("Couldn't set up the transcript channel")
             return None, screen_messages.transcript_failed(screen_messages.TRANSCRIPT_NO_ANSWER)
         return channel.id, None
+
+    async def _gametime_channel(
+        self, guild: discord.Guild, campaign: Campaign, screen: object
+    ) -> str | None:
+        """The players' game-time channel (#1116), made or repaired at every start, with the
+        players' pinned clock in it if the game clock is set. Returns a note for the DM if it
+        couldn't be set up; a failure here never stops a session."""
+        category = getattr(screen, "category", None)
+        try:
+            channel = await setup_gametime_channel(
+                guild,
+                campaign.id,
+                self.campaigns,
+                category=category if isinstance(category, discord.CategoryChannel) else None,
+            )
+        except GametimeChannelError as exc:
+            return screen_messages.gametime_failed(str(exc))
+        except Exception:
+            log.exception("Couldn't set up the game-time channel")
+            return screen_messages.gametime_failed(screen_messages.TRANSCRIPT_NO_ANSWER)
+        try:
+            stored = await self.clocks.get(guild.id, campaign.id) if self.clocks else None
+            fresh = await self.campaigns.get(guild.id, campaign.id)
+            if stored is not None and fresh is not None and fresh.gametime_channel_id == channel.id:
+                await clock_screen.show_players(self, fresh, stored)
+        except Exception:
+            log.exception("Couldn't put the players' clock in the game-time channel")
+        return None
 
     def _usable_transcript(self, guild: discord.Guild, campaign: Campaign) -> int | None:
         """After a restart: the campaign's transcript channel, if it's still one and

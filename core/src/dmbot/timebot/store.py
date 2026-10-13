@@ -27,6 +27,9 @@ class Stored:
     clock: Clock
     channel_id: int | None
     message_id: int | None
+    # The players' pinned clock in the game-time channel (#1116): where, so it is edited in place.
+    players_channel_id: int | None = None
+    players_message_id: int | None = None
 
 
 def _stored(row: dict[str, Any]) -> Stored:
@@ -37,6 +40,8 @@ def _stored(row: dict[str, Any]) -> Stored:
         ),
         None if row["channel_id"] is None else int(row["channel_id"]),
         None if row["message_id"] is None else int(row["message_id"]),
+        None if row["players_channel_id"] is None else int(row["players_channel_id"]),
+        None if row["players_message_id"] is None else int(row["players_message_id"]),
     )
 
 
@@ -103,6 +108,17 @@ class ClockStore:
                 (channel_id, message_id, guild_id, campaign_id),
             )
 
+    async def set_players_message(
+        self, guild_id: int, campaign_id: str, channel_id: int | None, message_id: int | None
+    ) -> None:
+        """Remember the players' pinned clock message in the game-time channel (#1116)."""
+        async with self._db.guild(guild_id) as conn:
+            await conn.execute(
+                "UPDATE game_clocks SET players_channel_id = %s, players_message_id = %s"
+                " WHERE guild_id = %s AND campaign_id = %s",
+                (channel_id, message_id, guild_id, campaign_id),
+            )
+
     @staticmethod
     async def _is_dm(conn: Conn, guild_id: int, campaign_id: str, user_id: int) -> bool:
         cur = await conn.execute(
@@ -114,7 +130,8 @@ class ClockStore:
     @staticmethod
     async def _read(conn: Conn, guild_id: int, campaign_id: str, *, lock: bool) -> Stored | None:
         cur = await conn.execute(
-            "SELECT minute, last_long_rest, tired_told_for, channel_id, message_id"
+            "SELECT minute, last_long_rest, tired_told_for, channel_id, message_id,"
+            " players_channel_id, players_message_id"
             " FROM game_clocks WHERE guild_id = %s AND campaign_id = %s"
             + (" FOR UPDATE" if lock else ""),
             (guild_id, campaign_id),
@@ -161,7 +178,8 @@ class ClockSection:
             " tired_told_for, updated_at) VALUES (%s, %s, %s, %s, NULL, %s)"
             " ON CONFLICT (guild_id, campaign_id) DO UPDATE SET minute = EXCLUDED.minute,"
             " last_long_rest = EXCLUDED.last_long_rest, tired_told_for = NULL,"
-            " channel_id = NULL, message_id = NULL, updated_at = EXCLUDED.updated_at",
+            " channel_id = NULL, message_id = NULL, players_channel_id = NULL,"
+            " players_message_id = NULL, updated_at = EXCLUDED.updated_at",
             (guild_id, campaign_id, clock.minute, clock.last_long_rest, int(time.time())),
         )
 

@@ -1,8 +1,12 @@
 """🕰️ The game clock on the DM screen (#965; docs/PLAN.md, "TimeBot"): one pinned message,
-"🕰️ Day 4, afternoon (14:30)", edited in place, with the DM's buttons: +10 min, +1 hour,
-Short rest, Long rest, It's dawn and Set time…. Only the campaign's DMs can press them
-(checked on every press, in the database transaction that changes the clock), and the
-buttons keep working after a restart (their IDs carry the campaign).
+"🕰️ Day 4, afternoon (14:30)", edited in place, with the DM's buttons: +10 min, +1 hour, Set
+time… and Start a timer. Short rest, Long rest and Skip to dawn are in the private panel that
+**Set time…** opens (rests are rare buttons, because DMbot hears them, and players who peek
+behind the DM screen could take them for D&D Beyond sheet links). The players see only the
+day and a rough time of day, "🕰️ Day 4, afternoon", in their own game-time channel (#1116).
+Only the campaign's DMs can press the buttons (checked on every press, in the database
+transaction that changes the clock), and the buttons keep working after a restart (their
+IDs carry the campaign).
 
 The clock only moves when a DM presses a button or clearly says a rest happened (see
 `DMBot.note_clock_phrase`); nothing is guessed from the story. It speaks up only for dawn,
@@ -42,24 +46,35 @@ SET_FIRST = (
 GONE = "That campaign isn't here any more."
 FAILED = "Sorry, that didn't save. Please try again."
 BAD_TIME = "Couldn't read that time. Press **Set time…** again and try day 4, time 14 (or 14:30)."
-ALREADY_SHOWN = "The clock is already pinned in the DM screen: {where}"
+ALREADY_SHOWN = (
+    "The clock is already pinned in the DM screen: {where}\n"
+    "Players see the day and a rough time in their game-time channel."
+)
+PANEL_TEXT = "Move the clock. Only you see this."
 NEEDS_SCREEN = "This campaign has no DM screen yet. Run `/dmbot start` once first."
 OFF_SCREEN = (
     "I can't post in the DM screen. Give DMbot **Send Messages** there, then press "
     "**Game clock** again."
 )
-SET_DONE = "🕰️ Clock set to {label}. It's pinned here: {where}"
+SET_DONE = (
+    "🕰️ Clock set to {label}. It's pinned here: {where}\n"
+    "Players see the day and a rough time in their game-time channel."
+)
 
 ACTIONS: dict[str, tuple[str, str, discord.ButtonStyle, int]] = {
     # id: (label, emoji, style, row)
     "m10": ("+10 min", "⏱️", discord.ButtonStyle.primary, 0),
     "h1": ("+1 hour", "⏱️", discord.ButtonStyle.secondary, 0),
     "set": ("Set time…", "🕰️", discord.ButtonStyle.secondary, 0),
-    "short": ("Short rest", "🛌", discord.ButtonStyle.secondary, 1),
-    "long": ("Long rest", "🌙", discord.ButtonStyle.secondary, 1),
-    "dawn": ("Skip to dawn", "🌅", discord.ButtonStyle.secondary, 1),
-    "timer": ("Start a timer", "⏳", discord.ButtonStyle.secondary, 2),
+    "short": ("Short rest", "🛌", discord.ButtonStyle.secondary, 0),
+    "long": ("Long rest", "🌙", discord.ButtonStyle.secondary, 0),
+    "dawn": ("Skip to dawn", "🌅", discord.ButtonStyle.secondary, 0),
+    "typed": ("Type the time…", "🕰️", discord.ButtonStyle.secondary, 1),
+    "timer": ("Start a timer", "⏳", discord.ButtonStyle.secondary, 1),
 }
+# On the pinned DM-screen message: no rests, which are in the private Set time… panel.
+PINNED = ("m10", "h1", "set", "timer")
+PANEL = ("short", "long", "dawn", "typed")
 MARK_LINES = {"dawn": "🌅 Dawn", "noon": "☀️ Noon", "dusk": "🌇 Dusk"}
 
 
@@ -178,7 +193,16 @@ async def _tired_rule_on(client: Any, guild_id: int, campaign_id: str) -> bool:
 
 def clock_view(campaign_id: str) -> discord.ui.View:
     view = discord.ui.View(timeout=None)
-    for action in ACTIONS:
+    for action in PINNED:
+        view.add_item(ClockButton(campaign_id, action))
+    return view
+
+
+def panel_view(campaign_id: str) -> discord.ui.View:
+    """What **Set time…** answers with, privately: the rests, skipping to dawn and typing a
+    time. An ephemeral answer, so only the DM who pressed it sees it."""
+    view = discord.ui.View(timeout=600)
+    for action in PANEL:
         view.add_item(ClockButton(campaign_id, action))
     return view
 
@@ -208,6 +232,82 @@ async def show(client: Any, campaign: Campaign, stored: Stored) -> discord.Messa
         await message.pin()
     await client.clocks.set_message(campaign.guild_id, campaign.id, message.channel.id, message.id)
     return cast(discord.Message, message)
+
+
+def players_text(clock: Clock) -> str:
+    """The players' clock: the day and a rough time of day, nothing else (no exact time, no
+    timer, no button; those are the DM's)."""
+    return f"🕰️ **{game.short_label(clock.minute)}**"
+
+
+async def show_players(client: Any, campaign: Campaign, stored: Stored) -> None:
+    """Keep the players' pinned clock in the game-time channel in step: edited in place,
+    posted (and pinned) if it is missing. Never raises and never holds anything up: the DM's
+    clock is the one that matters at the table."""
+    try:
+        await _show_players(client, campaign, stored)
+    except Exception:
+        log.exception("Couldn't update the players' clock")
+
+
+async def _show_players(client: Any, campaign: Campaign, stored: Stored) -> None:
+    channel_id = campaign.gametime_channel_id
+    if channel_id is None:
+        return
+    text = players_text(stored.clock)
+    if stored.players_channel_id == channel_id and stored.players_message_id:
+        channel = client.get_channel(channel_id)
+        if isinstance(channel, discord.abc.Messageable):
+            try:
+                message = await channel.fetch_message(stored.players_message_id)
+                if message.content != text:
+                    await message.edit(content=text, allowed_mentions=NO_PINGS)
+                return
+            except discord.NotFound:
+                pass  # deleted: post a new one below
+            except discord.HTTPException:
+                log.warning("Couldn't edit the players' clock message")
+                return  # a hiccup: don't pile a second clock beside it
+    message = await client.post_message(channel_id, text)
+    if message is None:
+        return
+    with contextlib.suppress(discord.HTTPException):  # pinning needs a permission DMbot may lack
+        await message.pin()
+    await client.clocks.set_players_message(
+        campaign.guild_id, campaign.id, message.channel.id, message.id
+    )
+
+
+def players_line(action: str, before: Clock | None, after: Clock) -> str | None:
+    """The one short line the players get: a rest finishing, or a new day beginning. Only
+    for time moving forward by the DM's buttons or words; setting the time is a correction
+    and says nothing."""
+    if before is None or after.minute <= before.minute or action == "set":
+        return None
+    when = game.short_label(after.minute)
+    if action in ("short", "long"):
+        return f"{'Short' if action == 'short' else 'Long'} rest done. {when}."
+    if game.day_of(after.minute) > game.day_of(before.minute):
+        return f"A new day begins. {when}."
+    return None
+
+
+async def update_players(
+    client: Any, campaign: Campaign, action: str, result: Result, *, announce: bool = True
+) -> None:
+    """After a change: redraw the players' clock and, once, say a finished rest or a new
+    day there. Best effort."""
+    try:
+        stored = await client.clocks.get(campaign.guild_id, campaign.id)
+        if stored is None:
+            return
+        fresh = await client.campaigns.get(campaign.guild_id, campaign.id) or campaign
+        await show_players(client, fresh, stored)
+        line = players_line(action, result.before, stored.clock) if announce else None
+        if line is not None and fresh.gametime_channel_id is not None:
+            await client.post_message(fresh.gametime_channel_id, line)
+    except Exception:
+        log.exception("Couldn't tell the players about the clock")
 
 
 async def say(client: Any, campaign: Campaign, lines: list[str], undo: str | None = None) -> None:
@@ -309,6 +409,7 @@ async def _run_press(
             SET_DONE.format(label=game.short_label(result.after.minute), where=message.jump_url),
         )
     await say(client, campaign, result.lines)  # dawn, noon, dusk, tired: on the DM screen
+    await update_players(client, campaign, action, result)  # the game-time channel (#1116)
     from dmbot.dm_screen import effects as timers
 
     await timers.announce_due(client, campaign, result.after.minute)
@@ -364,7 +465,7 @@ async def _reply(interaction: discord.Interaction, text: str) -> None:
 
 class ClockButton(
     discord.ui.DynamicItem[discord.ui.Button[discord.ui.View]],
-    template=rf"dmbot:clock:{_ID}:(?P<action>m10|h1|short|long|dawn|set|timer|open)",
+    template=rf"dmbot:clock:{_ID}:(?P<action>m10|h1|short|long|dawn|set|typed|timer|open)",
 ):
     """One of the clock's buttons (`open` is the ⚙️ Settings button that starts or shows it)."""
 
@@ -407,7 +508,7 @@ class ClockButton(
                         return
                 await interaction.response.send_modal(timers.TimerForm(self.campaign_id))
                 return
-            if self.action in ("set", "open"):
+            if self.action in ("set", "typed", "open"):
                 await self._form_or_show(interaction, client, guild.id)
                 return
             await interaction.response.defer()  # the press edits the clock message
@@ -429,7 +530,13 @@ class ClockButton(
                 await _reply(interaction, "Only this campaign's DMs can use the clock.")
                 return
             stored = await client.clocks.get(guild_id, campaign.id)
-        if self.action == "set" or stored is None:
+        if self.action == "set" and stored is not None:
+            # The private panel: rests, skipping to dawn, typing a time. Only this DM sees it.
+            await interaction.response.send_message(
+                PANEL_TEXT, view=panel_view(campaign.id), ephemeral=True
+            )
+            return
+        if self.action == "typed" or stored is None:
             await interaction.response.send_modal(
                 SetTimeForm(campaign.id, None if stored is None else stored.clock)
             )
@@ -523,6 +630,7 @@ class ClockUndoButton(
         stored = await client.clocks.get(guild.id, campaign.id)
         if stored is not None:
             await show(client, campaign, stored)
+            await show_players(client, campaign, stored)
         with contextlib.suppress(discord.HTTPException):
             await interaction.edit_original_response(
                 content=f"↩️ Undone. Back to {game.short_label(self.before)}.", view=None
