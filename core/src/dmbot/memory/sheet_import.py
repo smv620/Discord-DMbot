@@ -115,7 +115,7 @@ def _flags(data: Mapping[str, Any]) -> list[str]:
     can hold (STR 45, AC 99, max HP 0, a level over 20). The allow list would just drop it and
     the card would say "not found", so the part is flagged and shows ⛔."""
 
-    def outside(value: Any, low: int, high: int) -> bool:
+    def outside(value: Any, low: float, high: float) -> bool:
         return (
             isinstance(value, (int, float))
             and not isinstance(value, bool)
