@@ -1598,6 +1598,16 @@ GAMETIME_CHANNEL = """
     ALTER TABLE game_clocks ADD COLUMN players_message_id BIGINT;
 """
 
+DNDBEYOND_INVITE = """
+    -- The DM's own D&D Beyond campaign invite link (#1119; docs/PLAN.md, "The D&D Beyond
+    -- campaign invite"), passed on to players on a button. Only the one standard form is
+    -- kept (dmbot.campaigns.invite checks it too). A nullable column: no row changes, so no
+    -- backfill policy.
+    ALTER TABLE campaigns ADD COLUMN dndbeyond_invite TEXT
+        CHECK (dndbeyond_invite IS NULL OR dndbeyond_invite ~
+            '^https://www[.]dndbeyond[.]com/campaigns/join/[A-Za-z0-9]{4,64}$');
+"""
+
 OWNER_CAMPAIGNS = (
     _setting("dmbot_owner_sync", "dmbot.owner_sync", "TEXT")
     + """
@@ -1931,6 +1941,7 @@ MIGRATIONS: tuple[Migration, ...] = (
     ("0048_plan_ends", PLAN_ENDS),
     ("0049_game_effects_extended", GAME_EFFECTS_EXTENDED),
     ("0050_gametime_channel", GAMETIME_CHANNEL),
+    ("0051_dndbeyond_invite", DNDBEYOND_INVITE),
 )
 
 # Tables that must have row-level security. A test checks every table in the schema
