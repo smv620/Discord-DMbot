@@ -2588,6 +2588,71 @@ add people to one (there is no official API), so it passes on the DM's own invit
   character yet, DMbot adds it from the sheet's name, as that player's character, and tells the
   DM on the DM screen. The DM can rename, merge or remove it there.
 - **Part C (the browser extension in the DM's own D&D Beyond session) stays later.**
+
+**Character sheets, part D: any sheet, an import status, live checks; combat and FightBot (owner, 2026-10-13).**
+
+- **Any sheet a player has.** There are three ways in, all reaching the same allow-listed snapshot:
+  - a D&D Beyond link, as today;
+  - a public document link (Google Docs or Drive, or a PDF address);
+  - an uploaded file (Word, PDF or text, at most 5 MB).
+
+  For a document or a file, the AI (CAREFUL tier, once per import) reads the character into the
+  same fields. The file itself is never kept: only the snapshot is. It is the player's own sheet,
+  so there is no IP question, but only the allowed fields are kept, never rules text.
+- **The fields.**
+  - **Basic:** name, species, class(es) and level(s), AC, and HP (current / max + temporary).
+    "Species" is the 2024 word, so DMbot says it instead of "race".
+  - **Full:** also ability scores, active conditions, defenses and immunities, skills
+    (proficient / expertise), proficiencies, features, feats, background, speed, senses,
+    languages, tools, weapon and armor proficiencies, and inventory (count, weight, rarity
+    counts).
+- **The import status.** After every import, and after a re-read that changed something, the
+  player gets one private card, one line per part:
+  - ✅ read and checked;
+  - ⚠️ read, but not in DMbot's rules list (content outside the SRD, a homebrew feat: it may be
+    fine, and DMbot says so plainly);
+  - ⛔ couldn't be read or doesn't add up (a level total over 20, HP over max + temp, an
+    unrecognized name with no close match).
+
+  For example "⛔ Feats: 'clowning' not recognized; 2 others checked". Checks use DMbot's rules
+  index and simple arithmetic, never a guess.
+- **The player's sheet view.** **📜 My character sheet**, then **Show my sheet**, shows the
+  sheet privately, one button per section, which expands it.
+  - A typed or document sheet has **Edit** on each section.
+  - A D&D Beyond sheet has no Edit: a **Open on D&D Beyond** link button instead, since D&D
+    Beyond is the record.
+- **Re-reading D&D Beyond.**
+  - **Change heard:** about **1 minute** after something said or typed changes a character
+    (damage, healing, a condition, a spell slot), DMbot re-reads that sheet once. Several
+    changes within that minute share one read.
+  - **Schedule:** while listening and **out of combat**, every sheet is also read every
+    **15 minutes**. During combat only the change-heard reads run.
+  - **Limits:** at most one read per sheet per minute, and a pause with back-off when D&D Beyond
+    refuses. D&D Beyond has no official API, and more reads raise the risk that the unofficial
+    address is limited.
+  - **A mismatch:** if a sheet doesn't show what was said (the DM said 8 damage, and HP didn't
+    move), DMbot asks the player privately and politely, at most once per change: "The DM
+    mentioned 8 damage to Belleros. Your D&D Beyond sheet still shows 26 HP. Want to update it?"
+    It never changes a D&D Beyond sheet itself, and never tells the DM or the table.
+- **Combat state.**
+  - DMbot knows whether the table is **in combat** and which **round** it is.
+  - From what the DM says ("roll initiative", "round three", "the fight's over") and from DM-screen
+    buttons (**Start combat**, **Next round**, **End combat**) that correct it.
+  - With **side-based initiative** (a campaign setting) it tracks rounds only, not turn order.
+  - Combat state goes on the DM screen. Players see "⚔️ Combat, round 3" in the game-time channel.
+- **FightBot** (one per player character, only while in combat).
+  - **What it says:** private messages to that player only, reminding them of their own character:
+    spell slots left, features and items that could help now ("You still have Hunter's Mark and
+    2 level-1 slots").
+  - **What it uses:** that player's sheet, and what the players can already know (the transcript).
+    Never the DM screen, monster stats or secret names.
+  - **What it never does:** rule on anything, or post publicly.
+  - **How often:** at most one message per **2 minutes** per player, and only when it has
+    something new.
+  - **Silencing:** **Snooze 10 min**, **Quiet until next session**, **Never** (kept per player per
+    campaign; can be turned back on from 📜 My character sheet).
+  - **Cost:** FAST tier, one call per player at most every 2 minutes, only while in combat. It
+    counts toward the hours meter's AI cost like every other job.
 *Decided 2026-10-08 on #781:* a sheet belongs to the player who linked or typed it, not
 just to the character: if the DM gives the character to someone else, the old sheet is
 never shown to the new player (it shows only while that player still plays it). The
