@@ -581,6 +581,7 @@ class ClockButton(
         )
 
 
+_answered: set[int] = set()  # suggestion messages already answered (bounded below)
 SUGGEST_GAP_S = 300  # at most one rest suggestion per campaign in this long (#1117)
 NOT_A_DM = "Only this campaign's DMs can use the clock."
 
@@ -606,7 +607,7 @@ class SuggestionButton(
         super().__init__(
             discord.ui.Button(
                 label=f"{kind.capitalize()} rest" if yes else "Not now",
-                emoji="🛌" if yes else "🙅",
+                emoji="🛌" if yes else None,
                 style=discord.ButtonStyle.primary if yes else discord.ButtonStyle.secondary,
                 custom_id=f"dmbot:clocksuggest:{campaign_id}:{kind}:{answer}",
             )
@@ -633,15 +634,30 @@ class SuggestionButton(
             if interaction.user.id not in campaign.dm_user_ids:
                 await _reply(interaction, NOT_A_DM)
                 return
+            message_id = interaction.message.id if interaction.message is not None else 0
+            if message_id in _answered:
+                return  # a second press (or a second DM) on a question already answered
+            if message_id:
+                _answered.add(message_id)  # before any await below: one answer per question
+                if len(_answered) > 500:
+                    _answered.clear()
+            if self.answer == "yes" and await client.clocks.get(guild.id, campaign.id) is None:
+                _answered.discard(message_id)  # nothing happened: the question stays open
+                await _reply(interaction, SET_FIRST)
+                return
             asked = interaction.message.content if interaction.message is not None else ""
-            ended = "Not now." if self.answer == "no" else f"✅ {self.kind.capitalize()} rest."
-            # The question is closed first, so a second press can't take the rest twice.
+            who = discord.utils.escape_markdown(getattr(interaction.user, "display_name", "a DM"))
+            ended = (
+                f"Dismissed by {who}."
+                if self.answer == "no"
+                else f"✅ {self.kind.capitalize()} rest, chosen by {who}."
+            )
+            if self.answer == "yes":
+                await run_press(interaction, campaign.id, self.kind)
             with contextlib.suppress(discord.HTTPException):
                 await interaction.edit_original_response(
                     content=f"{asked}\n{ended}", view=None, allowed_mentions=NO_PINGS
                 )
-            if self.answer == "yes":
-                await run_press(interaction, campaign.id, self.kind)
         except Exception:
             log.exception("A rest suggestion's button failed")
             await _reply(interaction, FAILED)
@@ -721,7 +737,11 @@ class ClockUndoButton(
             await _reply(interaction, str(exc))
             return
         if moved or after is None:
-            await _reply(interaction, "The clock has moved since, so there is nothing to undo.")
+            await _reply(
+                interaction,
+                "The clock has moved since, so there is nothing to undo. "
+                "Use **Set time…** to fix it.",
+            )
             return
         stored = await client.clocks.get(guild.id, campaign.id)
         if stored is not None:

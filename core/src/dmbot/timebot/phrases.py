@@ -51,7 +51,11 @@ _FINISHES = re.compile(
     r"|(?:the|your)\s+(short|long)\s+rest\s+(?:is over|is done|ends|has ended|finishes))\b",
     re.IGNORECASE,
 )
-_AFTER = re.compile(r"^(?:and\s+)?after\s+(?:your|the|a)\s+(short|long)\s+rest\b", re.IGNORECASE)
+# "After your short rest." as the whole line: "after your long rest you hear a noise" is a story
+# beat, not the rest finishing.
+_AFTER = re.compile(
+    r"^(?:and\s+)?after\s+(?:your|the|a)\s+(short|long)\s+rest[.,!]?$", re.IGNORECASE
+)
 # Words that make it a question, a wish, a condition or a refusal: not something that happened.
 _NOT_A_THING = (
     r"if|can|can't|cannot|couldn't|could|can not|don't|do not|won't|will not|unless|"
@@ -109,11 +113,16 @@ _NUMBER_WORD = "|".join(
         *sorted(_ONES, key=len, reverse=True),
     ]
 )
+# A time cut is how a scene starts: "Two hours later, the guards come." The words must open the
+# line (after "and", "then" or "so"), because anywhere else they tell the story ("he left the
+# next morning", "the guard returned ten minutes later"), which is not the clock moving.
+_OPENS = r"^(?:(?:and|then|so|okay|ok|alright)[, ]+)?"
 _AMOUNT = re.compile(
-    rf"\b(?P<n>\d{{1,4}}|{_NUMBER_WORD}|an|a|half an)\s+(?P<unit>hours?|minutes?|mins?)\s+later\b",
+    rf"{_OPENS}(?P<n>\d{{1,4}}|{_NUMBER_WORD}|an|a|half an)\s+"
+    r"(?P<unit>hours?|minutes?|mins?)\s+later\b",
     re.IGNORECASE,
 )
-_DAWN = re.compile(r"\b(?:the\s+)?next\s+morning\b|\bat\s+dawn\b", re.IGNORECASE)
+_DAWN = re.compile(rf"{_OPENS}(?:(?:the\s+)?next\s+morning|at\s+dawn)\b", re.IGNORECASE)
 _SUGGESTS = re.compile(
     r"\b(?:let'?s|lets|can we|could we|should we|we should|we could|shall we|how about|"
     r"why don'?t we|why not|we need|i think we (?:should|need)|can i get|i'?d like)\b"
@@ -170,13 +179,13 @@ def _amount(text: str) -> int | None:
     later"; None when it isn't one or is out of range (0, or more than 24 hours)."""
     if _NOT_THE_TIME.search(text):
         return None
-    found = _AMOUNT.search(text)
+    found = _AMOUNT.match(text)
     if found is None:
         return None
-    if re.search(r"\b(?:hours?|minutes?)\s+and\s*$", text[: found.start()], re.IGNORECASE):
-        return None  # "an hour and ten minutes later": two amounts, not guessed at
     word, unit = found.group("n").lower(), found.group("unit").lower()
     hours = unit.startswith("hour")
+    if word in ("a", "an") and unit.endswith("s"):
+        return None  # "a hours later" is not English
     if word == "half an":
         if not hours:
             return None
@@ -200,7 +209,7 @@ def find_clock(line: str) -> Said | None:
     rest = find(text) or _finished(text)
     if rest is not None:
         return Said(rest)
-    if not _NOT_THE_TIME.search(text) and _DAWN.search(text):
+    if not _NOT_THE_TIME.search(text) and _DAWN.match(text):
         return Said("dawn")
     minutes = _amount(text)
     return None if minutes is None else Said("advance", minutes)
@@ -213,7 +222,11 @@ def suggested_rest(line: str) -> Rest | None:
     text = " ".join(line.split())
     if not text or len(text.split()) > MAX_WORDS:
         return None
-    if re.search(r"\b(?:yesterday|ago|last|took|had|said|says|told|tells)\b", text, re.I):
+    if re.search(
+        r"\b(?:yesterday|ago|last|took|had|said|says|told|tells|not|never|don'?t|no|later|tomorrow)\b",
+        text,
+        re.I,
+    ):
         return None
     found = _SUGGESTS.search(text)
     if found is None:

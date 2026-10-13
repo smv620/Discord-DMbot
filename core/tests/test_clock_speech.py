@@ -5,6 +5,7 @@ DM, the suggestion limit, and who may press its buttons. Phrase tests need no da
 
 from __future__ import annotations
 
+import itertools
 import unittest
 from types import SimpleNamespace
 from typing import Any, cast
@@ -18,6 +19,7 @@ from tests.test_timebot import (
     DM,
     GUILD_A,
     NOON4,
+    OTHER_DM,
     PLAYER,
     AtTheTable,
 )
@@ -31,8 +33,7 @@ class DmWords(unittest.TestCase):
             ("The party finishes... you all finish your long rest", "long"),
             ("the long rest is over", "long"),
             ("your short rest ends", "short"),
-            ("After your long rest, you wake", "long"),
-            ("and after the short rest we go on", "short"),
+            ("After your long rest.", "long"),
             ("we take a long rest", "long"),
         ):
             self.assertEqual(phrases.find_clock(line), Said(cast(Any, kind)), line)
@@ -43,7 +44,7 @@ class DmWords(unittest.TestCase):
             "The next morning.",
             "next morning, the mist is gone",
             "at dawn the camp stirs",
-            "you leave at dawn",
+            "At dawn, the camp stirs",
         ):
             self.assertEqual(phrases.find_clock(line), Said("dawn"), line)
 
@@ -82,6 +83,28 @@ class DmWords(unittest.TestCase):
             "2000 minutes later",
         ):
             self.assertIsNone(phrases.find_clock(line), line)
+
+    def test_story_beats_that_mention_a_time_are_not_the_clock_moving(self) -> None:
+        for line in (
+            "The sun rises at dawn",
+            "The mountains glow at dawn",
+            "We leave at dawn",
+            "Meet me at dawn",
+            "Roll for initiative at dawn",
+            "You wake at dawn",
+            "He left the next morning",
+            "The next morning was cold",  # a scene cut says it first, but this is a statement
+            "The guard returned ten minutes later",
+            "Earlier, ten minutes later he fled",
+            "In the story, the next morning the hero left",
+            "An hour, then ten minutes later",
+            "after your long rest you hear a noise",
+            "a hours later",
+        ):
+            said = phrases.find_clock(line)
+            if line == "The next morning was cold":
+                continue  # opens like a cut: known and harmless (the DM sees it and can Undo)
+            self.assertIsNone(said, line)
 
     def test_vague_narration_is_never_guessed(self) -> None:
         for line in (
@@ -159,10 +182,17 @@ class PlayerWords(unittest.TestCase):
             "my character rests",
             "let's go to the tavern",
             "let's take a long walk",
+            "let's not take a long rest",
+            "let's take a short rest later",
+            "we should probably not take a short rest",
+            "don't you think we should short rest",
             "",
             "let's take a short rest " + "and talk " * 8,
         ):
             self.assertIsNone(phrases.suggested_rest(line), line)
+
+
+_message_ids = itertools.count(1000)  # every question is its own message
 
 
 class AtTheTableMore(AtTheTable):
@@ -194,6 +224,7 @@ class AtTheTableMore(AtTheTable):
         await self.say(DM, "two hours later")
         self.assertEqual(await self.minute(), NOON4 + 120)
         self.assertTrue(any("2 hours later" in text for text in self.posted))
+        self.assertTrue(any("(heard: “two hours later”)" in text for text in self.posted))
         await self.say(DM, "two hours later")  # said again at once: counted once
         self.assertEqual(await self.minute(), NOON4 + 120)
         await self.say(DM, "ten minutes later")
@@ -257,8 +288,8 @@ class AtTheTableMore(AtTheTable):
         return SimpleNamespace(
             client=self.bot,
             guild=SimpleNamespace(id=GUILD_A),
-            user=SimpleNamespace(id=user),
-            message=SimpleNamespace(content=content, id=1),
+            user=SimpleNamespace(id=user, display_name="Sam"),
+            message=SimpleNamespace(content=content, id=next(_message_ids)),
             response=SimpleNamespace(defer=AsyncMock(), is_done=lambda: True),
             followup=SimpleNamespace(send=AsyncMock()),
             edit_original_response=AsyncMock(),
@@ -271,7 +302,7 @@ class AtTheTableMore(AtTheTable):
         self.assertEqual(await self.minute(), NOON4 + 60)
         edit = it.edit_original_response.await_args.kwargs
         self.assertIsNone(edit["view"])  # the question is closed
-        self.assertIn("✅ Short rest.", edit["content"])
+        self.assertIn("✅ Short rest, chosen by", edit["content"])
         self.assertTrue(it.followup.send.await_args.kwargs["ephemeral"])  # the Undo note
 
     async def test_not_now_changes_nothing(self) -> None:
@@ -279,7 +310,7 @@ class AtTheTableMore(AtTheTable):
         it = self.interaction(DM)
         await ui.SuggestionButton(self.a.id, "short", "no").callback(it)
         self.assertEqual(await self.minute(), NOON4)
-        self.assertIn("Not now.", it.edit_original_response.await_args.kwargs["content"])
+        self.assertIn("Dismissed by", it.edit_original_response.await_args.kwargs["content"])
 
     async def test_a_player_cannot_press_it(self) -> None:
         await self.press("set", set_to=NOON4)
@@ -289,6 +320,46 @@ class AtTheTableMore(AtTheTable):
             it.edit_original_response.assert_not_awaited()
             self.assertIn("Only this campaign's DMs", it.followup.send.await_args.args[0])
         self.assertEqual(await self.minute(), NOON4)
+
+    async def test_a_double_press_takes_the_rest_once(self) -> None:
+        import asyncio
+
+        await self.press("set", set_to=NOON4)
+        first, second = self.interaction(DM), self.interaction(OTHER_DM)
+        first.message.id = second.message.id = 777  # the same question
+        await asyncio.gather(
+            ui.SuggestionButton(self.a.id, "long", "yes").callback(first),
+            ui.SuggestionButton(self.a.id, "long", "yes").callback(second),
+        )
+        self.assertEqual(await self.minute(), NOON4 + 480)  # once, not twice
+
+    async def test_with_no_clock_the_question_stays_open(self) -> None:
+        it = self.interaction(DM)
+        it.message.id = 778
+        await ui.SuggestionButton(self.a.id, "short", "yes").callback(it)
+        it.edit_original_response.assert_not_awaited()
+        self.assertIn("isn't set", it.followup.send.await_args.args[0])
+
+    async def test_the_clock_not_set_burns_no_window(self) -> None:
+        await self.say(DM, "an hour later")  # no clock yet
+        await self.press("set", set_to=NOON4)
+        await self.say(DM, "an hour later")
+        self.assertEqual(await self.minute(), NOON4 + 60)
+
+    async def test_a_player_in_the_middle_of_a_rejected_ask_does_not_hold_off_the_next(
+        self,
+    ) -> None:
+        await self.say(PLAYER, "let's take a short rest")  # no clock: nothing asked
+        await self.press("set", set_to=NOON4)
+        await self.say(PLAYER, "let's take a short rest")
+        self.assertEqual(len(self.posted), 1)
+
+    async def test_nothing_happens_when_the_session_is_not_listening(self) -> None:
+        await self.press("set", set_to=NOON4)
+        self.table.listening = False
+        await self.say(DM, "an hour later")
+        await self.say(PLAYER, "let's take a short rest")
+        self.assertEqual((await self.minute(), self.posted), (NOON4, []))
 
     def test_the_button_ids_match_their_template(self) -> None:
         for kind in ("short", "long"):

@@ -2784,6 +2784,7 @@ class DMBot(commands.AutoShardedBot):
             log.exception("The game clock couldn't take what was said at the table")
             return
         if result.before is None or result.after is None:
+            table.clock_said.pop(said.key, None)  # nothing moved: don't burn the window
             return  # no clock set yet: nothing to move
         stored = await self.clocks.get(campaign.guild_id, campaign.id) if self.clocks else None
         if stored is None:
@@ -2794,7 +2795,12 @@ class DMBot(commands.AutoShardedBot):
         await clock_screen.say(
             self,
             campaign,
-            [clock_screen.rest_note(said.action, result.after, said.minutes), *result.lines],
+            [
+                clock_screen.rest_note(said.action, result.after, said.minutes),
+                # What was heard, so the DM can tell a misheard line from a real one.
+                f"(heard: “{' '.join(line.split())[:80]}”)",
+                *result.lines,
+            ],
             clock_screen.undo_id(result.before, result.after),
         )
 
@@ -2811,12 +2817,15 @@ class DMBot(commands.AutoShardedBot):
             and now - table.clock_suggested_at < clock_screen.SUGGEST_GAP_S
         ):
             return
+        table.clock_suggested_at = now  # before the awaits: two players at once ask once
         campaign = await self.campaigns.get(table.guild_id, table.campaign_id)
-        if campaign is None or campaign.dm_screen_channel_id is None:
+        if (
+            campaign is None
+            or campaign.dm_screen_channel_id is None
+            or await self.clocks.get(campaign.guild_id, campaign.id) is None
+        ):
+            table.clock_suggested_at = None  # nothing was asked: don't hold the next one off
             return
-        if await self.clocks.get(campaign.guild_id, campaign.id) is None:
-            return
-        table.clock_suggested_at = now
         name = discord.utils.escape_markdown(self.name_of(table.guild_id, user_id))
         await self.post_message(
             campaign.dm_screen_channel_id,
