@@ -4,7 +4,7 @@ as a document.
 
 - The basic line is on top; pressing a section opens it (one at a time, so the message stays
   short).
-- A typed or document sheet has **Edit this part** on the open section: a form with that
+- A typed or document sheet has **Edit <part>** on the open section: a form with that
   section's fields, checked like an import, with a card that says what changed.
 - A D&D Beyond sheet has no Edit anywhere: D&D Beyond is the record, so there is an **Open on
   D&D Beyond** link button to the player's own sheet instead.
@@ -38,7 +38,6 @@ from dmbot.ui.dmbot_commands import (
 
 log = logging.getLogger(__name__)
 
-SHOW_LABEL = "Show my sheet"
 EDIT_LABEL = "Edit"  # the button says which part: "Edit Skills"
 DDB_LABEL = "Open on D&D Beyond"
 NO_SHEET = (
@@ -47,6 +46,9 @@ NO_SHEET = (
 )
 SAVED = "✏️ Saved. Changed: {what}."
 SAME = "Nothing changed."
+ONLY_YOU = "Only you see this."  # a sheet-view line: the link line in ui.sheets is about links
+MESSAGE_MAX = 2000  # Discord's limit for one message
+MORE = "… and more"
 DDB_NOTE = (
     "This sheet comes from D&D Beyond, so change it there. DMbot reads it again when a "
     "session starts."
@@ -54,23 +56,26 @@ DDB_NOTE = (
 
 
 def view_text(character: PlayerCharacter, sheet: CharacterSheet, open_key: str | None) -> str:
+    """The message: always within Discord's limit, ending an overlong section with "and more"
+    (a full list of names would otherwise be refused and the player told it broke)."""
     snapshot = sheet.sheet or {}
-    lines = [
-        f"📜 **{ui._md(character.name)}**: {ui._md(sheet_view.basic_line(snapshot))}",
-    ]
+    head = f"📜 **{ui._md(character.name)}**: {ui._md(sheet_view.basic_line(snapshot))}"
+    tail = [DDB_NOTE] if sheet.url is not None else []
+    tail.append(ONLY_YOU)
     section = sheet_view.BY_KEY.get(open_key or "")
-    if section is not None:
-        lines += [f"**{section.label}**", ui._md(section.show(snapshot))]
-    else:
-        lines.append(
+    if section is None:
+        middle = [
             "Tap a part to see it."
             if sheet.url is not None
             else "Tap a part to see it. Tap Edit to change it."
-        )
-    if sheet.url is not None:
-        lines.append(DDB_NOTE)
-    lines.append(ui.ONLY_YOU)
-    return "\n".join(lines)
+        ]
+        return "\n".join([head, *middle, *tail])[:MESSAGE_MAX]
+    heading = f"**{section.label}**"
+    room = MESSAGE_MAX - len("\n".join([head, heading, "", *tail])) - 1
+    body = ui._md(section.show(snapshot))
+    if len(body) > room:
+        body = body[: max(room - len(MORE), 0)].rstrip("\\ ,\n") + MORE
+    return "\n".join([head, heading, body, *tail])[:MESSAGE_MAX]
 
 
 class SheetView(_Menu):
@@ -83,6 +88,9 @@ class SheetView(_Menu):
     ) -> None:
         super().__init__()
         self.guild_id, self.character, self.open_key = guild_id, character, open_key
+        self.snapshot: dict[str, Any] = (
+            sheet.sheet or {}
+        )  # fills the edit form (checked again on save)
         for i, section in enumerate(sheet_view.SECTIONS):
             self.add_item(
                 _Button(
@@ -117,10 +125,11 @@ class SheetView(_Menu):
         return press
 
     async def open(self, interaction: discord.Interaction, key: str) -> None:
-        self.stop()
+        await _answer_first(interaction, in_place=True)
         sheet = await mine(interaction, self.guild_id, self.character)
         if sheet is None:
-            return
+            return  # the buttons stay: nothing here was replaced
+        self.stop()
         await _replace(
             interaction,
             view_text(self.character, sheet, key),
@@ -128,13 +137,12 @@ class SheetView(_Menu):
         )
 
     async def _edit(self, interaction: discord.Interaction) -> None:
-        sheet = await mine(interaction, self.guild_id, self.character)
-        if sheet is None or sheet.url is not None or self.open_key not in sheet_view.BY_KEY:
+        # No lookup before the form (Discord gives 3 seconds): `on_submit` looks again.
+        if self.open_key not in sheet_view.BY_KEY:
             return
         section = sheet_view.BY_KEY[self.open_key]
-        self.origin = None
         await interaction.response.send_modal(
-            SectionForm(self.guild_id, self.character, section, sheet.sheet or {})
+            SectionForm(self.guild_id, self.character, section, self.snapshot)
         )
 
 
@@ -143,6 +151,8 @@ async def mine(
 ) -> CharacterSheet | None:
     """The sheet, if this person still plays the character and has one; else they are told
     why. Looked up again on every press: the character may have been given to someone else."""
+    if not await ui._still_member(interaction, guild_id):
+        return None
     store = ui._store(interaction)
     assert store is not None
     found = await store.characters_of(guild_id, interaction.user.id, character.campaign_id)
@@ -181,12 +191,17 @@ class SectionForm(discord.ui.Modal):
         super().__init__(title=f"Edit: {section.label}"[:45], timeout=VIEW_TIMEOUT_S)
         self.guild_id, self.character, self.section = guild_id, character, section
         now = section.fill(snapshot)
+        # Names a box can't hold are kept here and added back on submit (never cut).
+        self._kept: dict[str, list[str]] = {}
         self._inputs: dict[str, discord.ui.TextInput[SectionForm]] = {}
         for field in section.fields:
+            shown, left_out = sheet_view.fit(now.get(field.key, ""))
+            if left_out:
+                self._kept[field.key] = left_out
             box: discord.ui.TextInput[SectionForm] = discord.ui.TextInput(
                 label=field.label[:45],
                 placeholder=field.placeholder[:100] or None,
-                default=now.get(field.key, "")[: sheet_view.FIELD_MAX] or None,
+                default=shown or None,
                 style=discord.TextStyle.paragraph if field.long else discord.TextStyle.short,
                 required=False,
                 max_length=sheet_view.FIELD_MAX,
@@ -202,8 +217,6 @@ class SectionForm(discord.ui.Modal):
     async def on_submit(self, interaction: discord.Interaction) -> None:
         values = {key: box.value for key, box in self._inputs.items()}
         await _answer_first(interaction)
-        if not await ui._still_member(interaction, self.guild_id):
-            return
         sheet = await mine(interaction, self.guild_id, self.character)
         if sheet is None:
             return
@@ -211,10 +224,11 @@ class SectionForm(discord.ui.Modal):
             await _tell(interaction, DDB_NOTE)
             return
         old = sheet.sheet or {}
-        new, problem = sheet_view.edit(old, self.section, values)
+        new, problem = sheet_view.edit(old, self.section, values, kept=self._kept)
         if new is None:
             await _tell(
-                interaction, problem or "That didn't save. Check what you typed and try again."
+                interaction,
+                ui._md(problem or "That didn't save. Check what you typed and try again."),
             )
             return
         changed = sheet_view.changed_sections(old, new)

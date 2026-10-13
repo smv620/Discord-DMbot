@@ -159,13 +159,129 @@ class Editing(unittest.TestCase):
             self.assertIsNone(new, key)
             self.assertIn(word, problem or "", key)
 
-    def test_text_in_a_name_box_is_still_only_a_name(self) -> None:
+    def test_text_in_a_name_box_is_refused_in_plain_words(self) -> None:
+        new, problem = sheet_view.edit(
+            typed(),
+            sheet_view.BY_KEY["features"],
+            {"features": "word " * 40 + ", Rage", "feats": ""},
+        )
+        self.assertIsNone(new)
+        self.assertIn("is too long for a name", problem or "")
+
+    def test_a_sign_before_a_sign_is_a_mistake_not_a_crash(self) -> None:
+        new, problem = sheet_view.edit(
+            typed(),
+            sheet_view.BY_KEY["speed"],
+            {
+                "speed": "--5",
+                "darkvision": "",
+                "blindsight": "",
+                "tremorsense": "",
+                "truesight": "",
+            },
+        )
+        self.assertIsNone(new)
+        self.assertIn("digits only", problem or "")
+
+    def test_a_rarity_amount_over_the_limit_is_said_not_dropped(self) -> None:
+        new, problem = sheet_view.edit(
+            typed(),
+            sheet_view.BY_KEY["inventory"],
+            {"items": "", "weight": "1", "rarity": "common 9999"},
+        )
+        self.assertIsNone(new)
+        self.assertIn("at most", problem or "")
+
+    def test_a_full_size_sheet_submitted_as_filled_keeps_every_stored_value(self) -> None:
+        names = [f"Name {i:02d} " + "x" * 50 for i in range(sheets.LIST_MAX)]  # 100 long names
         snap = typed()
+        for key in ("features", "feats", "languages", "items", "tools", "weapon_profs"):
+            snap[key] = list(names)
+        snap = sheets.clean(snap) or {}
+        self.assertGreater(
+            len(", ".join(snap["features"])), sheet_view.FIELD_MAX
+        )  # overflows a box
+        for section in sheet_view.SECTIONS:
+            form = ui.SectionForm(GUILD, CHARACTER, section, snap)
+            values = {k: str(box.default or "") for k, box in form._inputs.items()}
+            for box in form._inputs.values():
+                self.assertLessEqual(len(box.default or ""), sheet_view.FIELD_MAX)
+            new, problem = sheet_view.edit(snap, section, values, kept=form._kept)
+            assert new is not None, (section.key, problem)
+            for key in sheet_view.OWNS[section.key]:
+                self.assertEqual(new.get(key), snap.get(key), (section.key, key))
+
+    def test_a_name_after_the_25th_is_a_change(self) -> None:
+        names = [f"Feature {i:02d}" for i in range(40)]
+        old = sheets.clean({**typed(), "features": names}) or {}
+        renamed = [*names[:28], "Renamed", *names[29:]]
         new, _ = sheet_view.edit(
-            snap, sheet_view.BY_KEY["features"], {"features": "word " * 40 + ", Rage", "feats": ""}
+            old,
+            sheet_view.BY_KEY["features"],
+            {"features": ", ".join(renamed), "feats": ", ".join(old.get("feats", []))},
         )
         assert new is not None
-        self.assertEqual(new["features"], ["Rage"])
+        self.assertEqual(sheet_view.changed_sections(old, new), ["Features and feats"])
+
+    def test_an_item_count_with_no_rarities_is_kept_on_a_document_sheet(self) -> None:
+        old = sheets.clean(
+            {
+                **typed(),
+                "origin": sheets.ORIGIN_DOCUMENT,
+                "inventory": {
+                    "count": 40,
+                    "weight": 12.0,
+                    "rarity": dict.fromkeys(sheets.RARITIES, 0),
+                },
+            }
+        )
+        assert old is not None
+        new, _ = sheet_view.edit(
+            old, sheet_view.BY_KEY["inventory"], {"items": "Rope", "weight": "15", "rarity": ""}
+        )
+        assert new is not None
+        self.assertEqual(new["inventory"]["count"], 40)
+        self.assertEqual(new["inventory"]["weight"], 15.0)
+
+    def test_a_fixed_part_loses_its_flag(self) -> None:
+        old = {**typed(), "flags": ["abilities", "basic"]}
+        new, _ = sheet_view.edit(
+            old, sheet_view.BY_KEY["abilities"], {"scores": "10 14 12 8 10 13"}
+        )
+        assert new is not None
+        self.assertNotIn("abilities", new.get("flags") or [])
+        self.assertIn("basic", new.get("flags") or [])  # the part not edited stays flagged
+
+    def test_the_message_never_goes_over_discords_limit(self) -> None:
+        names = [f"Name {i:02d} " + "x" * 50 for i in range(sheets.LIST_MAX)]
+        full = (
+            sheets.clean(
+                {
+                    **typed(),
+                    **{
+                        k: list(names)
+                        for k in (
+                            "features",
+                            "feats",
+                            "languages",
+                            "items",
+                            "tools",
+                            "weapon_profs",
+                            "armor_profs",
+                            "resistances",
+                            "immunities",
+                            "vulnerabilities",
+                        )
+                    },
+                }
+            )
+            or {}
+        )
+        for section in sheet_view.SECTIONS:
+            text = ui.view_text(CHARACTER, sheet_of(full, linked=False), section.key)
+            self.assertLessEqual(len(text), 2000, section.key)
+        text = ui.view_text(CHARACTER, sheet_of(full, linked=False), "proficiencies")
+        self.assertIn("and more", text)
 
     def test_a_dndbeyond_snapshot_is_never_edited(self) -> None:
         new, problem = sheet_view.edit(
@@ -245,6 +361,34 @@ class Views(unittest.IsolatedAsyncioTestCase):
             sheets_ui.NOT_YOURS,
             str(it.followup.send.await_args or it.response.send_message.await_args),
         )
+
+    async def test_every_press_checks_the_person_is_still_in_the_server(self) -> None:
+        it = self.it(sheet_of(typed(), linked=False))
+        await ui.show_my_sheet(it, GUILD, CHARACTER)
+        _, view = self.sent(it)
+        gone = self.it(sheet_of(typed(), linked=False))
+        guild = MagicMock(get_member=MagicMock(return_value=None))
+        guild.fetch_member = AsyncMock(
+            side_effect=discord.NotFound(MagicMock(status=404), "unknown member")
+        )
+        gone.client.get_guild = MagicMock(return_value=guild)
+        await cast(Any, view.children[3]).callback(gone)  # Skills
+        self.assertIn(sheets_ui.NOT_A_MEMBER, self.told(gone))
+        self.assertFalse(view.is_finished())  # a refusal leaves the buttons as they were
+
+    async def test_a_part_opens_after_answering_discord_and_edit_asks_nothing_first(self) -> None:
+        it = self.it(sheet_of(typed(), linked=False))
+        await ui.show_my_sheet(it, GUILD, CHARACTER)
+        _, view = self.sent(it)
+        press = self.it(sheet_of(typed(), linked=False))
+        await cast(Any, view.children[3]).callback(press)
+        press.response.defer.assert_awaited()  # answered before the look-ups
+        edited = press.edit_original_response.await_args or press.response.edit_message.await_args
+        opened = edited.kwargs["view"]
+        again = self.it(sheet_of(typed(), linked=False))
+        edit = next(b for b in opened.children if str(b.label).startswith(ui.EDIT_LABEL + " "))
+        await cast(Any, edit).callback(again)
+        again.response.send_modal.assert_awaited_once()
 
     async def test_no_sheet_says_so(self) -> None:
         it = self.it(None)

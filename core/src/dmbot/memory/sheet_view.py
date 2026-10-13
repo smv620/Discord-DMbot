@@ -19,7 +19,7 @@ from dmbot.memory import sheets
 from dmbot.memory.sheet_checks import class_line, vitals
 
 SHOWN = 25  # names listed in a section before "and N more"
-FIELD_MAX = 600  # characters in one form field
+FIELD_MAX = 4000  # characters in one form box: Discord's own limit, so a long list fits
 
 
 @dataclass(frozen=True, slots=True)
@@ -28,6 +28,7 @@ class Field:
     label: str  # 45 characters at most (Discord)
     placeholder: str = ""
     long: bool = False  # a paragraph box
+    names: bool = False  # a list of names (cut only between names, checked for length)
 
 
 def skill_name(key: str) -> str:
@@ -66,11 +67,28 @@ def split_names(text: str) -> list[str]:
     return [part.strip() for part in re.split(r"[,;\n]", text) if part.strip()]
 
 
+def fit(text: str) -> tuple[str, list[str]]:
+    """(what a form box can hold, the names left out). A list is cut between names, never in
+    the middle of one, and the names left out are kept by the caller and added back on submit,
+    so pressing Submit on an unchanged form changes nothing (#1126)."""
+    if len(text) <= FIELD_MAX:
+        return text, []
+    names = split_names(text)
+    shown: list[str] = []
+    size = 0
+    for i, name in enumerate(names):
+        size += len(name) + 2
+        if size > FIELD_MAX:
+            return ", ".join(shown), names[i:]
+        shown.append(name)
+    return ", ".join(shown), []
+
+
 def _int(text: str, low: int, high: int, what: str) -> tuple[int | None, str | None]:
     raw = text.strip()
     if not raw:
         return None, None
-    if not raw.lstrip("-").isdecimal():
+    if re.fullmatch(r"-?\d+", raw) is None:
         return None, f"{what}: type digits only, like 30."
     number = int(raw)
     if not low <= number <= high:
@@ -383,6 +401,8 @@ def _apply_inventory(
                 f"'{part}' isn't a rarity. Use {', '.join(sheets.RARITIES)}, like: "
                 "common 14, uncommon 3."
             )
+        if int(match[2]) > sheets.INVENTORY_MAX:
+            return {}, f"'{part}': {match[1]} should be at most {sheets.INVENTORY_MAX}."
         rarity[match[1]] = int(match[2])
     weight_text = v["weight"].strip()
     try:
@@ -392,6 +412,11 @@ def _apply_inventory(
     if not 0 <= weight <= sheets.WEIGHT_MAX:
         return {}, f"Weight should be from 0 to {sheets.WEIGHT_MAX:g} pounds."
     count = sum(rarity.values())
+    old = s.get("inventory") if isinstance(s.get("inventory"), Mapping) else {}
+    assert isinstance(old, Mapping)
+    if not count and s.get("origin") == sheets.ORIGIN_DOCUMENT:
+        # A document seldom gives rarities, so its item count isn't their sum: leave it.
+        count = old.get("count") if isinstance(old.get("count"), int) else 0
     inventory = {"count": count, "weight": weight, "rarity": rarity} if (count or weight) else None
     return {"items": split_names(v["items"]), "inventory": inventory}, None
 
@@ -410,7 +435,7 @@ SECTIONS: tuple[Section, ...] = (
         "Conditions",
         _show_conditions,
         (
-            Field("names", "Conditions", "Poisoned, Prone"),
+            Field("names", "Conditions", "Poisoned, Prone", names=True),
             Field("exhaustion", "Exhaustion level (0 to 6)", "0"),
         ),
         _apply_conditions,
@@ -421,9 +446,9 @@ SECTIONS: tuple[Section, ...] = (
         "Defenses",
         _show_defenses,
         (
-            Field("resistances", "Resistant to", "Fire, Cold"),
-            Field("immunities", "Immune to", "Poison"),
-            Field("vulnerabilities", "Weak to", "Radiant"),
+            Field("resistances", "Resistant to", "Fire, Cold", names=True),
+            Field("immunities", "Immune to", "Poison", names=True),
+            Field("vulnerabilities", "Weak to", "Radiant", names=True),
         ),
         _apply_defenses,
         _fill_defenses,
@@ -433,8 +458,8 @@ SECTIONS: tuple[Section, ...] = (
         "Skills",
         _show_skills,
         (
-            Field("trained", "Trained skills", "Perception, Stealth", True),
-            Field("expert", "Expert skills (must also be trained)", "Stealth"),
+            Field("trained", "Trained skills", "Perception, Stealth", True, names=True),
+            Field("expert", "Expert skills (must also be trained)", "Stealth", names=True),
         ),
         _apply_skills,
         _fill_skills,
@@ -444,9 +469,9 @@ SECTIONS: tuple[Section, ...] = (
         "Proficiencies",
         _show_proficiencies,
         (
-            Field("tools", "Tools", "Thieves' tools"),
-            Field("weapon_profs", "Weapons", "Simple weapons"),
-            Field("armor_profs", "Armor", "Light armor, Shields"),
+            Field("tools", "Tools", "Thieves' tools", names=True),
+            Field("weapon_profs", "Weapons", "Simple weapons", names=True),
+            Field("armor_profs", "Armor", "Light armor, Shields", names=True),
         ),
         _apply_proficiencies,
         _fill_proficiencies,
@@ -456,8 +481,8 @@ SECTIONS: tuple[Section, ...] = (
         "Features and feats",
         _show_features,
         (
-            Field("features", "Features", "Rage, Danger Sense", True),
-            Field("feats", "Feats", "Alert", True),
+            Field("features", "Features", "Rage, Danger Sense", True, names=True),
+            Field("feats", "Feats", "Alert", True, names=True),
         ),
         _apply_features,
         _fill_features,
@@ -490,7 +515,7 @@ SECTIONS: tuple[Section, ...] = (
         "languages",
         "Languages",
         _show_languages,
-        (Field("languages", "Languages", "Common, Elvish", True),),
+        (Field("languages", "Languages", "Common, Elvish", True, names=True),),
         _apply_languages,
         _fill_languages,
     ),
@@ -499,7 +524,7 @@ SECTIONS: tuple[Section, ...] = (
         "Inventory",
         _show_inventory,
         (
-            Field("items", "Item names (optional)", "Rope, Longsword", True),
+            Field("items", "Item names (optional)", "Rope, Longsword", True, names=True),
             Field("weight", "Total weight (pounds)", "45.5"),
             Field("rarity", "How many of each rarity", "common 14, uncommon 3, rare 1"),
         ),
@@ -510,22 +535,58 @@ SECTIONS: tuple[Section, ...] = (
 BY_KEY = {section.key: section for section in SECTIONS}
 
 
+# The snapshot keys each section owns, so "what changed" looks at the stored values, not at
+# the shortened text a section shows (a name after the 25th is a change too).
+OWNS: dict[str, tuple[str, ...]] = {
+    "abilities": ("abilities",),
+    "conditions": ("conditions", "exhaustion"),
+    "defenses": ("resistances", "immunities", "vulnerabilities"),
+    "skills": ("skills", "expertise"),
+    "proficiencies": ("tools", "weapon_profs", "armor_profs"),
+    "features": ("features", "feats"),
+    "background": ("background",),
+    "speed": ("speed", "senses"),
+    "languages": ("languages",),
+    "inventory": ("items", "inventory"),
+}
+# A part that was flagged as out of range is fine once its form has been saved.
+FLAG_OF = {"abilities": "abilities", "inventory": "inventory"}
+
+
 def edit(
-    snapshot: Mapping[str, Any], section: Section, values: Mapping[str, str]
+    snapshot: Mapping[str, Any],
+    section: Section,
+    values: Mapping[str, str],
+    *,
+    kept: Mapping[str, list[str]] | None = None,
 ) -> tuple[dict[str, Any] | None, str | None]:
     """(the new snapshot, a problem). A problem means nothing is to be saved. The result
-    always went back through `sheets.clean`."""
+    always went back through `sheets.clean`. `kept`: names a form box couldn't show (see
+    `fit`), added back to that box's names."""
     if snapshot.get("source") == sheets.SOURCE_DNDBEYOND:
         return None, "Sheets from D&D Beyond are changed on D&D Beyond."
+    values = dict(values)
+    for field in section.fields:
+        if not field.names:
+            continue
+        too_long = next((n for n in split_names(values[field.key]) if len(n) > sheets.NAME_MAX), "")
+        if too_long:
+            return None, f"'{too_long[:20]}…' is too long for a name."
+        if kept and kept.get(field.key):
+            values[field.key] = ", ".join([values[field.key], *kept[field.key]]).strip(", ")
     changes, problem = section.apply(snapshot, values)
     if problem:
         return None, problem
-    cleaned = sheets.clean({**snapshot, **changes})
+    merged = {**snapshot, **changes}
+    flag = FLAG_OF.get(section.key)
+    if flag and snapshot.get("flags"):
+        merged["flags"] = [f for f in snapshot["flags"] if f != flag]
+    cleaned = sheets.clean(merged)
     if cleaned is None:
         return None, "That didn't save. Check what you typed and try again."
     return cleaned, None
 
 
 def changed_sections(old: Mapping[str, Any], new: Mapping[str, Any]) -> list[str]:
-    """The labels of the sections whose text differs, for "Changed: Skills"."""
-    return [s.label for s in SECTIONS if s.show(old) != s.show(new)]
+    """The labels of the sections whose stored values differ, for "Changed: Skills"."""
+    return [s.label for s in SECTIONS if any(old.get(k) != new.get(k) for k in OWNS[s.key])]
