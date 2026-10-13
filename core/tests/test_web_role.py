@@ -134,7 +134,7 @@ class WebRole(DatabaseTest):
     async def test_it_cannot_touch_other_tables_or_change_the_schema(self) -> None:
         async with self.web.unscoped() as conn:
             with self.assertRaises(errors.InsufficientPrivilege):
-                await conn.execute("SELECT 1 FROM consent")
+                await conn.execute("SELECT 1 FROM transcript_lines")  # consent is open since #1150
         async with self.web.unscoped() as conn:
             with self.assertRaises(errors.InsufficientPrivilege):
                 await conn.execute("SELECT 1 FROM house_rules")  # #865: the bot's only

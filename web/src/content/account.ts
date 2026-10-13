@@ -228,6 +228,13 @@ export const text = {
   addTo: "Add DMbot",
   alreadyThere: "Already added",
 
+  // Download my data (#1150)
+  exportHeading: "Download my data",
+  exportWhat:
+    "One file with what DMbot holds about you: your account, your plan and payments, where DMbot may record you, your campaign names and your character sheets. It does not hold what was said at the table.",
+  exportButton: "Download my data",
+  exportWait: "You can download it once a minute.",
+
   // Delete
   deleteHeading: "Delete my account and data",
   deleteStart: "Start deleting",

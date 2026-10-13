@@ -643,6 +643,20 @@ describe("safety", () => {
     expect(screen.queryByText(text.firstPaymentFailed)).toBeNull();
   });
 
+  it("offers Download my data as a link to the API's export (#1150)", async () => {
+    show("table");
+    const link = await screen.findByRole("link", { name: text.exportButton });
+    expect(link.getAttribute("href")).toBe("#demo-export");
+    expect(link.hasAttribute("download")).toBe(true);
+    expect(screen.getByText(text.exportWhat)).toBeTruthy();
+  });
+
+  it("does not offer Download my data to someone signed out", async () => {
+    show("signed-out");
+    await screen.findByRole("link", { name: text.signIn });
+    expect(screen.queryByRole("link", { name: text.exportButton })).toBeNull();
+  });
+
   it("signed out: Start Try It is the main button, with the plans under it", async () => {
     show("signed-out");
     const links = await screen.findAllByRole("link");

@@ -188,6 +188,12 @@ describe("the facts #433 asks for", () => {
     }
   });
 
+  it("points to the Download my data button for a copy (#1150)", () => {
+    expect(privacy()).toContain("Press Download my data in My Account to get one file with your account");
+    const link = doc("privacy").querySelector('a[href="/account"]');
+    expect(link?.textContent).toBe("My Account");
+  });
+
   it("tells people how to ask about their information, with a 30-day answer", () => {
     expect(privacy()).toContain(
       "You can ask us to show you, correct, send you a copy of, or delete the information we hold about you, by emailing dmbot.admin@gmail.com. We answer within 30 days.",

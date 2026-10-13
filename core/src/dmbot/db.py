@@ -35,6 +35,7 @@ from dmbot.schema import (
     WEB_ROLE_GRANTS,
     WEB_ROLE_OFFER_POLICY,
     WEB_ROLE_POLICIES,
+    WEB_ROLE_SHEET_POLICY,
     Migration,
 )
 
@@ -378,6 +379,14 @@ async def _grant_web_role(conn: AsyncConnection[Any]) -> None:
     columns = await cur.fetchone()
     if columns is not None and columns["n"] == 4:
         await conn.execute(WEB_ROLE_OFFER_POLICY)  # #728
+    cur = await conn.execute(
+        "SELECT count(*) AS n FROM information_schema.columns"
+        " WHERE table_schema = current_schema() AND table_name = 'character_sheets'"
+        " AND column_name = 'player_id'"
+    )
+    sheets = await cur.fetchone()
+    if sheets is not None and sheets["n"] == 1:
+        await conn.execute(WEB_ROLE_SHEET_POLICY)  # #1150
     # Only tables that exist yet: a database brought up to an older migration (a test of a
     # backfill, say) doesn't have the newer tables the list names. Each gets its rights
     # once its own migration has run, since this runs after every migration.

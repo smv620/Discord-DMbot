@@ -137,6 +137,8 @@ export interface AccountApi {
   billingPortalUrl(): Promise<string>;
   /** The payment company's page to buy more hours for this month (a paid, working plan). */
   extraHoursUrl(): Promise<string>;
+  /** Where "Download my data" goes: the API sends one file with the person's own data (#1150). */
+  exportUrl(): string;
   /** Where "Add DMbot" goes: the API, which sends the browser on to Discord. */
   installUrl(serverId: string): string;
   /** Say you added DMbot to a server it joined through a plain link. */
@@ -233,6 +235,7 @@ export function httpApi(base: string, fetcher: typeof fetch = fetch): AccountApi
     checkoutUrl: (plan) => url("/billing/checkout", { plan }),
     billingPortalUrl: () => url("/billing/portal"),
     extraHoursUrl: () => url("/billing/extra-hours"),
+    exportUrl: () => `${root}/me/export`,
     installUrl: (serverId) => `${root}/install?server_id=${encodeURIComponent(serverId)}`,
     linkServer: async (serverId) => {
       await call("POST", `/servers/${encodeURIComponent(serverId)}/link`);

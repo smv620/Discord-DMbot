@@ -341,6 +341,7 @@ function SignedIn({
       <PlanSection me={me} />
       <CampaignsSection me={me} />
       <ServersSection me={me} />
+      <ExportSection />
       <DeleteSection
         paidPlan={me.plan !== null && me.plan.id !== "try-it" && me.plan.status !== "lapsed"}
         free={me.access?.kind === "free"}
@@ -877,6 +878,22 @@ function ServerRow({ server: s, api }: { server: Me["servers"][number]; api: Acc
       {s.hasDmbot && s.canLink && <p class="muted small row-note">{text.linkNote}</p>}
       <Notice message={notice} />
     </li>
+  );
+}
+
+/** Download my data (#1150): one file with what DMbot holds about this person. A plain link, so
+ * the browser downloads it with the sign-in cookie; the API refuses a second one inside a minute. */
+function ExportSection() {
+  const { api } = useShared();
+  return (
+    <section aria-labelledby="export-heading" class="panel">
+      <h2 id="export-heading">{text.exportHeading}</h2>
+      <p>{text.exportWhat}</p>
+      <a class="button secondary" href={api.exportUrl()} download>
+        {text.exportButton}
+      </a>
+      <p class="muted small">{text.exportWait}</p>
+    </section>
   );
 }
 
