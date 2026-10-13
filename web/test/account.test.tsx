@@ -684,6 +684,7 @@ describe("safety", () => {
     show("table");
     const testa = (await screen.findByText("Testa")).closest("li") as HTMLElement;
     expect(within(testa).getByText("Bard 2")).toBeTruthy();
+    expect(within(testa).getByText(`${text.characterTyped} ${text.characterRead("2026-10-02T19:30:00Z")}`)).toBeTruthy();
     expect(within(testa).getByText(text.characterWhere("Thursday Table", "The Brynwater Crossing"))).toBeTruthy();
     for (const fact of [text.characterLevel(2), text.characterHp(14), text.characterAc(13)]) {
       expect(within(testa).getByText(fact)).toBeTruthy();
@@ -720,6 +721,7 @@ describe("safety", () => {
     ];
     render(<Account api={linked} go={vi.fn()} />);
     expect(await screen.findByText(text.characterUnread)).toBeTruthy();
+    expect(screen.getByText(text.characterUnreadNote)).toBeTruthy();
     expect(screen.getByRole("link", { name: text.characterOpen })).toBeTruthy();
   });
 

@@ -11,6 +11,9 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from typing import Any
 
+from psycopg import AsyncCursor
+from psycopg.rows import DictRow
+
 from dmbot.db import Conn, Database
 from dmbot.web.discord import DiscordGuild
 from dmbot.web.me import MAX_GUILDS
@@ -23,29 +26,35 @@ def _iso(seconds: int | None) -> str | None:
     return datetime.fromtimestamp(seconds, UTC).isoformat().replace("+00:00", "Z")
 
 
+# One statement per server (so a caller may queue many in a pipeline): the person's own sheets,
+# each with the name of its campaign. The campaign is joined by id from the person's own rows,
+# never read as a list of the server's campaigns (they may play there without being a DM).
+SHEETS_SQL = (
+    "SELECT s.campaign_id, s.entity_id, s.url, s.sheet, s.source, s.fetched_at, c.name AS campaign"
+    " FROM character_sheets s LEFT JOIN campaigns c"
+    "   ON c.id = s.campaign_id AND c.guild_id = s.guild_id"
+    " WHERE s.guild_id = %s AND s.player_id = %s"
+)
+
+
+async def start_sheet_rows(conn: Conn, guild_id: int, user_id: int) -> AsyncCursor[DictRow]:
+    """Queue the person's own sheets in one server. The server must already be set on the
+    connection: row-level security shows only that server's rows, only the person's own, and
+    only if the server is in this session's list. Read the rows with order_sheet_rows."""
+    return await conn.execute(SHEETS_SQL, (guild_id, user_id))
+
+
+def order_sheet_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """By campaign name, then as stored: campaign ids are random, so their order means
+    nothing."""
+    return sorted(rows, key=lambda r: (r["campaign"] or "", r["campaign_id"], r["entity_id"]))
+
+
 async def read_sheet_rows(conn: Conn, guild_id: int, user_id: int) -> list[dict[str, Any]]:
-    """The person's own character sheets in one server, each with the name of its campaign
-    (the export, #1150, and the account page's My characters, #1164, read them here). The
-    server must already be set on the connection: row-level security shows only that server's
-    rows, only the person's own, and only if the server is in this session's list. A campaign
-    is named by id from the person's own rows, never from a list of the server's campaigns
-    (they may play there without being a DM)."""
-    cur = await conn.execute(
-        "SELECT campaign_id, url, sheet, source, fetched_at FROM character_sheets"
-        " WHERE guild_id = %s AND player_id = %s ORDER BY campaign_id, entity_id",
-        (guild_id, user_id),
-    )
-    rows = await cur.fetchall()
-    names: dict[str, str] = {}
-    if rows:
-        cur = await conn.execute(
-            "SELECT id, name FROM campaigns WHERE guild_id = %s AND id = ANY(%s)",
-            (guild_id, [r["campaign_id"] for r in rows]),
-        )
-        names = {r["id"]: r["name"] for r in await cur.fetchall()}
-    named = [{**r, "campaign": names.get(r["campaign_id"])} for r in rows]
-    # By campaign name, then as stored: campaign ids are random, so their order means nothing.
-    return sorted(named, key=lambda r: (r["campaign"] or "", r["campaign_id"]))
+    """The person's own character sheets in one server (the export, #1150, and the account
+    page's My characters, #1164, read them here)."""
+    cursor = await start_sheet_rows(conn, guild_id, user_id)
+    return order_sheet_rows(list(await cursor.fetchall()))
 
 
 async def _read_server(

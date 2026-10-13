@@ -908,35 +908,43 @@ function CharactersSection() {
         <>
           <p class="muted small">{text.characterChange}</p>
           <ul class="campaigns">
-          {list.map((c, i) => {
-            const facts = [
-              c.level !== null ? text.characterLevel(c.level) : null,
-              c.maxHp !== null ? text.characterHp(c.maxHp) : null,
-              c.ac !== null ? text.characterAc(c.ac) : null,
-            ].filter((part) => part !== null);
-            return (
-              <li key={`${c.serverName}-${c.campaign}-${c.name}-${i}`} data-character>
-                <p class="plan-name">{c.name ?? text.characterUnread}</p>
-                {c.classLine && <p>{c.classLine}</p>}
-                <p class="muted small">{text.characterWhere(c.serverName, c.campaign)}</p>
-                {facts.length > 0 && (
-                  <p class="small facts">
-                    {facts.map((fact, n) => (
-                      <span key={fact}>
-                        {n > 0 && " · "}
-                        <span class="nowrap">{fact}</span>
-                      </span>
-                    ))}
-                  </p>
-                )}
-                {c.sheetLink && (
-                  <a href={c.sheetLink} target="_blank" rel="noopener noreferrer">
-                    {text.characterOpen}
-                  </a>
-                )}
-              </li>
-            );
-          })}
+            {list.map((c, i) => {
+              const facts = [
+                c.level !== null ? text.characterLevel(c.level) : null,
+                c.maxHp !== null ? text.characterHp(c.maxHp) : null,
+                c.ac !== null ? text.characterAc(c.ac) : null,
+              ].filter((part) => part !== null);
+              return (
+                <li key={`${c.serverName}-${c.campaign}-${c.name}-${i}`} data-character>
+                  <p class="plan-name">{c.name ?? text.characterUnread}</p>
+                  {c.name === null && <p class="muted small">{text.characterUnreadNote}</p>}
+                  {c.classLine && <p>{c.classLine}</p>}
+                  <p class="muted small">{text.characterWhere(c.serverName, c.campaign)}</p>
+                  {facts.length > 0 && (
+                    <p class="small facts">
+                      {facts.map((fact, n) => (
+                        <span key={fact}>
+                          {n > 0 && " · "}
+                          <span class="nowrap">{fact}</span>
+                        </span>
+                      ))}
+                    </p>
+                  )}
+                  {(c.typedIn || c.readAt) && (
+                    <p class="muted small">
+                      {[c.typedIn ? text.characterTyped : null, c.readAt ? text.characterRead(c.readAt) : null]
+                        .filter((part) => part !== null)
+                        .join(" ")}
+                    </p>
+                  )}
+                  {c.sheetLink && (
+                    <a href={c.sheetLink} target="_blank" rel="noopener noreferrer">
+                      {text.characterOpen}
+                    </a>
+                  )}
+                </li>
+              );
+            })}
           </ul>
         </>
       )}

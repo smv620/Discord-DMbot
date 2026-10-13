@@ -16,7 +16,7 @@ from __future__ import annotations
 from typing import Any
 
 from dmbot.db import Database
-from dmbot.web.export import _iso, read_sheet_rows
+from dmbot.web.export import _iso, order_sheet_rows, start_sheet_rows
 from dmbot.web.me import MAX_GUILDS
 from dmbot.web.sessions import Session
 
@@ -32,15 +32,22 @@ def class_line(snapshot: dict[str, Any] | None) -> str | None:
 
 
 async def build_characters(db: Database, session: Session) -> list[dict[str, Any]]:
+    """The signed-in person's own sheets as cards, server by server in the session's list.
+    The servers' reads go out in one pipeline, as /me reads them, so a person in many servers
+    costs one round trip; each statement follows its own server switch, so row-level security
+    still shows only that server's rows."""
     cards: list[dict[str, Any]] = []
     async with db.user(session.user_id, session=session.id_hash) as conn:
-        for guild in session.guilds[:MAX_GUILDS]:
-            await conn.execute(
-                "SELECT set_config('dmbot.guild_id', %s, true)", (str(int(guild.id)),)
-            )
-            for row in await read_sheet_rows(conn, guild.id, session.user_id):
+        pending = []
+        async with conn.pipeline():
+            for guild in session.guilds[:MAX_GUILDS]:
+                await conn.execute(
+                    "SELECT set_config('dmbot.guild_id', %s, true)", (str(int(guild.id)),)
+                )
+                pending.append((guild, await start_sheet_rows(conn, guild.id, session.user_id)))
+        for guild, cursor in pending:
+            for row in order_sheet_rows(list(await cursor.fetchall())):
                 snapshot = row["sheet"] if isinstance(row["sheet"], dict) else None
-                level = (snapshot or {}).get("level")
                 cards.append(
                     {
                         "serverName": guild.name,
@@ -48,7 +55,7 @@ async def build_characters(db: Database, session: Session) -> list[dict[str, Any
                         # A sheet that is linked but not read yet has no name to show.
                         "name": (snapshot or {}).get("name"),
                         "classLine": class_line(snapshot),
-                        "level": level or None,
+                        "level": (snapshot or {}).get("level") or None,
                         "maxHp": (snapshot or {}).get("max_hp"),
                         "ac": (snapshot or {}).get("ac"),
                         "sheetLink": row["url"],

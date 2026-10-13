@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import json
 import unittest
+from typing import Any
 from urllib.parse import parse_qs, urlsplit
 
 import httpx
@@ -19,7 +20,7 @@ from dmbot.web import sessions
 from dmbot.web.app import create_app
 from dmbot.web.characters import build_characters, class_line
 from dmbot.web.discord import DiscordUser
-from dmbot.web.export import read_sheet_rows
+from dmbot.web.export import order_sheet_rows, read_sheet_rows
 from dmbot.web.payments import FakeProvider
 from tests.pg import REQUIRE_DB, SUPERUSER_URL, DatabaseTest
 from tests.test_web_api import ALICE, API, GORRAK, QUILLON, SITE, THURSDAY, FakeDiscord, settings
@@ -148,9 +149,18 @@ class Characters(DatabaseTest):
             names = {r["campaign"] for r in await read_sheet_rows(conn, THURSDAY.id, ALICE.id)}
             self.assertEqual(names, {self.mine.name})
 
-    async def test_cards_come_in_campaign_name_order(self) -> None:
-        cards = await build_characters(self.web, self.bob)
-        self.assertEqual([c["campaign"] for c in cards], sorted(c["campaign"] for c in cards))
+
+class Order(unittest.TestCase):
+    def test_cards_come_in_campaign_name_order_whatever_the_ids_are(self) -> None:
+        # Ids in the reverse of name order: only a sort by name puts these right.
+        rows: list[dict[str, Any]] = [
+            {"campaign": "Zed's Game", "campaign_id": "a" * 32, "entity_id": "e1"},
+            {"campaign": "Alpha Game", "campaign_id": "z" * 32, "entity_id": "e2"},
+            {"campaign": None, "campaign_id": "m" * 32, "entity_id": "e3"},
+            {"campaign": "Alpha Game", "campaign_id": "z" * 32, "entity_id": "e0"},
+        ]
+        ordered = order_sheet_rows(rows)
+        self.assertEqual([r["entity_id"] for r in ordered], ["e3", "e0", "e2", "e1"])
 
 
 class Words(unittest.TestCase):
