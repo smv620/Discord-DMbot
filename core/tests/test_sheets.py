@@ -104,6 +104,10 @@ class Parsing(unittest.TestCase):
                 "v", "source", "name", "species", "classes", "level", "abilities", "max_hp",
                 "ac", "speed", "proficiency_bonus", "saves", "skills", "senses",
                 "languages", "spells", "features", "feats", "items",
+                # the full part (#1124)
+                "hp", "temp_hp", "conditions", "exhaustion", "resistances", "immunities",
+                "vulnerabilities", "expertise", "tools", "weapon_profs", "armor_profs",
+                "background", "inventory", "flags",
             },
         )  # fmt: skip
 

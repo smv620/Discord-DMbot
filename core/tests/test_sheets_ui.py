@@ -55,8 +55,17 @@ def interaction(found: list[PlayerCharacter], current: CharacterSheet | None = N
     return it
 
 
+CARD = "here is what DMbot read"  # the import status card's heading (#1124)
+
+
+def cards(it: Any) -> list[str]:
+    return [str(c.args[0]) for c in it.followup.send.await_args_list if CARD in str(c.args[0])]
+
+
 def said(it: Any) -> str:
-    call = it.followup.send.await_args or it.response.send_message.await_args
+    """What was said last, apart from the import status card that follows a link or typing."""
+    calls = [c for c in it.followup.send.await_args_list if CARD not in str(c.args[0])]
+    call = calls[-1] if calls else it.response.send_message.await_args
     return str(call.args[0])
 
 
@@ -72,6 +81,7 @@ class Words(unittest.TestCase):
         self.assertIn(f"[D&D Beyond](<{URL}>)", linked)
         self.assertIn("read <t:1700000000:R>", linked)
         self.assertIn("Test Species · Test Class 3 / Second Class 2", linked)
+        self.assertIn("HP 33 + 0, AC 17", linked)  # the DM's card shows the basics only
         self.assertIn("not read yet", ui.sheet_status(sheet(read=False), link=True))
         self.assertIn(
             "told DMbot about this character", ui.sheet_status(sheet(url=None), link=True)
@@ -302,6 +312,23 @@ class Linking(unittest.IsolatedAsyncioTestCase):
         self.assertIn("✅ Linked. DMbot read **Testa Placeholder**'s sheet", said(it))
         it.client.sheets_changed.assert_called_once_with(GUILD, CAMPAIGN)
 
+    async def test_the_import_status_card_follows_a_link_privately_once(self) -> None:
+        it = interaction([TESTA])
+        it.client.sheets_changed = MagicMock()
+        with patch.object(sheets, "fetch", AsyncMock(return_value=sheets.parse(answer()))):
+            await self.form(URL).on_submit(it)
+        [card] = cards(it)
+        self.assertIn("Basic: Testa Placeholder", card)
+        sent = [c for c in it.followup.send.await_args_list if CARD in str(c.args[0])]
+        self.assertTrue(sent[0].kwargs["ephemeral"])  # only the player sees it
+
+    async def test_no_card_when_the_sheet_could_not_be_read(self) -> None:
+        it = interaction([TESTA])
+        refused = sheets.SheetError(sheets.NOT_PUBLIC, refused=True)
+        with patch.object(sheets, "fetch", AsyncMock(side_effect=refused)):
+            await self.form(URL).on_submit(it)
+        self.assertEqual(cards(it), [])
+
     async def test_a_private_sheet_says_how_to_make_it_public(self) -> None:
         it = interaction([TESTA])
         refused = sheets.SheetError(sheets.NOT_PUBLIC, refused=True)
@@ -340,6 +367,9 @@ class Typing(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(sheets.who(snapshot), "Elf · Wizard 5")
         self.assertEqual(snapshot["features"], ["Misty Step", "Shield"])
         self.assertIn("DMbot now listens for those names", said(it))
+        [card] = cards(it)  # a typed sheet is only checked for what the form asked
+        self.assertIn("✅ Basic: Testa, Wizard 5", card.replace("**", ""))
+        self.assertNotIn("Inventory", card)
 
     async def test_names_left_out_are_counted(self) -> None:
         it = interaction([TESTA])
