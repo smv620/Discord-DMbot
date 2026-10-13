@@ -340,6 +340,134 @@ class AnswerBeforeTheLock(unittest.IsolatedAsyncioTestCase):
         self.assertIn("Restored", it.edit_original_response.await_args.kwargs["content"])
 
 
+class StartAnswersWithStarting(unittest.IsolatedAsyncioTestCase):
+    """#1115: pressing Start listening answers with a "Starting…" message that cannot be
+    pressed again; the picker only comes back once the outcome is known."""
+
+    def press(self, start: Any) -> tuple[Any, Any, list[tuple[str, bool]]]:
+        """A picker, its press, and what the message showed at each step."""
+        seen: list[tuple[str, bool]] = []
+        bot = SimpleNamespace(start_campaign_session=start)
+        it = fake_interaction(bot)  # type: ignore[arg-type]
+        campaign = SimpleNamespace(id="c" * 32, dm_user_ids=(DM,))
+        picker = cmds.VoicePicker(campaign, 55)  # type: ignore[arg-type]
+        picker.text = "Which voice channel is the table in?"
+
+        def note(label: str) -> Any:
+            async def record(**kw: Any) -> None:
+                it.response.done = True
+                view = kw.get("view")
+                seen.append((label, view is not None and not picker.start_button.disabled))
+
+            return record
+
+        it.response.edit_message = AsyncMock(side_effect=note("edit_message"))
+        it.edit_original_response = AsyncMock(side_effect=note("edit_original"))
+        return picker, it, seen
+
+    async def test_the_press_is_answered_with_starting_not_a_bare_defer(self) -> None:
+        gate = asyncio.Event()
+
+        async def start(*_: Any, **__: Any) -> tuple[bool, str]:
+            await gate.wait()
+            return True, "🎙️ Listening to <#55>."
+
+        picker, it, seen = self.press(start)
+        pressing = asyncio.create_task(picker._start(it))
+        for _ in range(5):
+            await asyncio.sleep(0)
+        # Answered by editing the message, never by defer().
+        self.assertFalse(it.response.deferred)
+        call = it.response.edit_message.await_args
+        self.assertIn("Starting", call.kwargs["content"])
+        self.assertIn("<#55>", call.kwargs["content"])
+        self.assertIs(call.kwargs["view"], picker)
+        # Nothing pressable and nothing that says "Start listening" while it works.
+        self.assertTrue(picker.start_button.disabled)
+        self.assertTrue(picker.pick.disabled)
+        self.assertNotIn("Start listening", str(picker.start_button.label))
+        self.assertIs(picker.origin, it)  # a timeout can still edit this message
+        self.assertEqual(seen, [("edit_message", False)])
+        gate.set()
+        await pressing
+        # Success ends with no view at all.
+        self.assertIsNone(it.edit_original_response.await_args.kwargs["view"])
+        self.assertTrue(picker.is_finished())
+
+    async def test_a_refused_start_shows_the_picker_again_only_after_the_outcome(self) -> None:
+        start = AsyncMock(return_value=(False, "You've used all your hours this month."))
+        picker, it, seen = self.press(start)
+        await picker._start(it)
+        self.assertEqual([label for label, _ in seen], ["edit_message", "edit_original"])
+        self.assertEqual(seen[-1], ("edit_original", True))  # enabled again, after the outcome
+        self.assertEqual(picker.start_button.label, "▶ Start listening")
+        self.assertFalse(picker.pick.disabled)
+        self.assertEqual(
+            it.edit_original_response.await_args.kwargs["content"],
+            "Which voice channel is the table in?",
+        )
+        self.assertEqual(
+            it.followup.send.await_args.args[0], "You've used all your hours this month."
+        )
+        self.assertFalse(picker.is_finished())
+
+    async def test_a_double_press_cannot_bring_the_picker_back_over_listening(self) -> None:
+        gate = asyncio.Event()
+        calls = 0
+
+        async def start(*_: Any, **__: Any) -> tuple[bool, str]:
+            nonlocal calls
+            calls += 1
+            await gate.wait()
+            return True, "🎙️ Listening to <#55>."
+
+        picker, first, _ = self.press(start)
+        second = fake_interaction(SimpleNamespace(start_campaign_session=start))  # type: ignore[arg-type]
+        second.edit_original_response = AsyncMock()
+        pressing = asyncio.create_task(picker._start(first))
+        for _ in range(5):
+            await asyncio.sleep(0)
+        await picker._start(second)  # the second press while the first is starting
+        gate.set()
+        await pressing
+        self.assertEqual(calls, 1)  # only one start
+        self.assertTrue(second.response.deferred)
+        second.edit_original_response.assert_not_awaited()
+        # And a later failure on a finished picker puts nothing back.
+        await picker._show_picker_again(first)
+        self.assertIsNone(first.edit_original_response.await_args.kwargs["view"])
+
+    async def test_a_failed_first_edit_leaves_the_picker_usable(self) -> None:
+        picker, it, _ = self.press(AsyncMock())
+        it.response.edit_message = AsyncMock(side_effect=discord.NotFound(MagicMock(), "gone"))
+        with self.assertRaises(discord.NotFound):
+            await picker._start(it)
+        self.assertFalse(picker.start_button.disabled)
+        self.assertEqual(picker.start_button.label, "▶ Start listening")
+
+    async def test_a_picker_that_cannot_be_shown_again_is_logged_not_swallowed(self) -> None:
+        picker, it, _ = self.press(AsyncMock(return_value=(False, "No.")))
+        it.edit_original_response = AsyncMock(side_effect=discord.HTTPException(MagicMock(), "x"))
+        with self.assertLogs("dmbot.ui.dmbot_commands", "WARNING"):
+            await picker._start(it)
+
+    async def test_an_error_never_leaves_it_on_starting(self) -> None:
+        picker, it, seen = self.press(AsyncMock(side_effect=RuntimeError("voice down")))
+        with self.assertLogs("dmbot.ui.dmbot_commands", "ERROR"):
+            await picker._start(it)
+        self.assertEqual(seen[-1], ("edit_original", True))
+        self.assertFalse(picker.start_button.disabled)
+        self.assertEqual(picker.start_button.label, "▶ Start listening")
+        self.assertEqual(it.followup.send.await_args.args[0], cmds.START_FAILED)
+
+    async def test_without_a_channel_it_asks_for_one_and_changes_nothing(self) -> None:
+        picker, it, seen = self.press(AsyncMock())
+        picker.channel_id = None
+        await picker._start(it)
+        self.assertEqual(seen, [])
+        self.assertIn("Pick a voice channel", it.response.sent[0][0])
+
+
 class RestoreEndsWithAnOutcome(unittest.IsolatedAsyncioTestCase):
     """#88: after "Restoring…", every path ends with the menu saying what happened."""
 

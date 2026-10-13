@@ -1,6 +1,6 @@
 DMbot - TESTING STATUS (current testing only)
 =============================================
-Last updated: 2026-10-13 03:50 UTC by dev1 (Test F done: works, two small timer faults in #1112)
+Last updated: 2026-10-13 06:20 UTC by dev1 (core + web-api 042ca8d deployed, migration 0048)
 
 **For the people at the table: docs/next-test-step.md has the one next small test (#569).**
 Short by design: see CLAUDE.md "Testing logs". Full record: docs/testing-history.log.
@@ -9,12 +9,12 @@ Never put tokens, .env contents or players' personal data here (public repo).
 ------------------------------------------------------------------------------
 READY TO DEPLOY (merged into development, not on the server yet; dev1 deploys)
 ------------------------------------------------------------------------------
-(nothing waiting; core and web-api 6c26108 (2026-10-11 20:52 UTC) are deployed: see the history)
+(nothing waiting; core and web-api 042ca8d (2026-10-13 06:11 UTC) are deployed: see the history)
 
 ------------------------------------------------------------------------------
 LIVE NOW
 ------------------------------------------------------------------------------
-core + web-api 6c26108 (2026-10-11 20:52 UTC, migration 0047 owner_left #1099: account deletion keeps campaigns; DM "Who was speaking just now?" question #1100; before that 8391df7 19:30 UTC, speaker labels on DM lines #1093/#1095, payments adapter and extra hours #1086/#1097 in web-api, payments still off; before that e8fe8e3 18:11 UTC, migration 0046 transcript entity #1090; before that 383470a 17:01 UTC, migration 0045 campaign_guilds, retention follow-ups #1080, transcript table-talk tags #1079; before that 0f39e35 05:55 UTC, "confident / uncertain" #1072; before that 4f2a957 05:03 UTC, entry facts #1064; before that 5383938 04:44 UTC, migrations through 0044 memory kinds #1053; before that 4904c12 04:08 UTC; sidebar header facts #1045, fixes #1039; before that ccb8f47 03:31 UTC; wake phrase "Hey DMbot" #1048, consent age line #1044; before that 02:38 UTC, migrations through 0043: retention, house-rules file, TimeBot, test voice
+core + web-api 042ca8d (2026-10-13 06:11 UTC, migration 0048 plan end date #1106); before that 6c26108 (2026-10-11 20:52 UTC, migration 0047 owner_left #1099: account deletion keeps campaigns; DM "Who was speaking just now?" question #1100; before that 8391df7 19:30 UTC, speaker labels on DM lines #1093/#1095, payments adapter and extra hours #1086/#1097 in web-api, payments still off; before that e8fe8e3 18:11 UTC, migration 0046 transcript entity #1090; before that 383470a 17:01 UTC, migration 0045 campaign_guilds, retention follow-ups #1080, transcript table-talk tags #1079; before that 0f39e35 05:55 UTC, "confident / uncertain" #1072; before that 4f2a957 05:03 UTC, entry facts #1064; before that 5383938 04:44 UTC, migrations through 0044 memory kinds #1053; before that 4904c12 04:08 UTC; sidebar header facts #1045, fixes #1039; before that ccb8f47 03:31 UTC; wake phrase "Hey DMbot" #1048, consent age line #1044; before that 02:38 UTC, migrations through 0043: retention, house-rules file, TimeBot, test voice
 consent, AI tiers, the 16-or-older consent words), web-api from 383470a (2026-10-11 17:27 UTC, per-address limits #1084), ears 21c5ff1, web-api
 and the Cloudflare Tunnel (api.getdmbot.com, /admin only; the admin page is
 https://dev.getdmbot.com/admin). DMBOT_ENFORCE_PLANS is off (turned on only at the

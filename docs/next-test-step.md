@@ -4,28 +4,28 @@
 
 ---
 
-## Test F: the game clock and a timer
+## Test G: ask the DM sidebar by voice
 
 **People:** 1 (you, as the DM)
 **Time:** about 5 minutes
-**Why:** DMbot now keeps your game's clock and can time a spell like Bless. Check that you can start a timer and that DMbot tells you, only on your DM screen, when it has likely ended. It never ends one by itself.
+**Why:** you can now call DMbot out loud by starting with **"Hey DMbot"**. Check that it hears you and answers only you, privately, and that it doesn't answer when you don't say the call words.
 
 ### Steps
 1. Join your voice channel. Type `/dmbot start`, press **▶ Continue last campaign**, then **▶ Start listening**.
-2. Open **⚙️ Settings** and press **Game clock**. Set a day and a time. A clock message appears in **dmb-dm-screen** with buttons.
-3. On the clock message press **Start a timer**. In the form write **Bless**, who it is on (a name), and **1 minute** for how long. Press submit.
-4. The clock message now lists the timer. Press **+10 min**.
-5. The DM screen should say "⏳ Bless on (the name) has likely ended" with two buttons: **Ended** and **Still going +10 min**. Press **Still going +10 min**, then press **+10 min** twice more and see it say so again. Press **Ended** this time.
-6. Type `/dmbot stop`.
+2. Say clearly: **"Hey DMbot, do you need line of sight for fireball?"** Wait for the answer in your private chat with DMbot.
+3. Say a normal game line without the call words, like **"The goblins run into the cave."** Nothing should come back.
+4. Say a second question: **"Hey DMbot, how much damage does fireball do?"** Then ask again right away: **"Hey DMbot, what is the range of fireball?"**
+5. Type `/dmbot stop`.
 
 ### It worked if
-- The clock shows the time you set and moves with the buttons.
-- The "has likely ended" line shows **only** on the DM screen (never in the transcript or a public channel) and only after you pressed a button that passed the time.
+- Each "Hey DMbot" question got a short answer in your private chat that ends with **confident** or **uncertain**.
+- The normal line in step 3 got no answer.
+- Nothing was posted in a public channel.
 
 **If not:** type `/dmbot stop`, then tell dev1 what you saw at the step where it went wrong.
 
 ### Tell dev1
-- **Worked** or **didn't work**, and anything that felt confusing.
+- **Worked** or **didn't work**, and whether the quick second question (step 4) was answered or ignored.
 
 ---
 

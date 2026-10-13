@@ -1579,6 +1579,14 @@ GAME_EFFECTS = f"""
     );
     """ + _isolate("game_effects")
 
+GAME_EFFECTS_EXTENDED = """
+    -- The minutes the DM added with "Still going" (#1112), kept apart from `minutes` (how long
+    -- it was timed for) so the "has likely ended" line can show the total and say it was
+    -- extended. A column with a default: no existing row changes, so no backfill policy.
+    ALTER TABLE game_effects ADD COLUMN extended INTEGER NOT NULL DEFAULT 0
+        CHECK (extended >= 0);
+"""
+
 GAMETIME_CHANNEL = """
     -- The players' game-time channel (docs/PLAN.md, "TimeBot"; #1116): `dmb-gametime-<slug>`,
     -- everyone reads, only DMbot posts, with the players' pinned clock ("Day 5, morning")
@@ -1921,6 +1929,7 @@ MIGRATIONS: tuple[Migration, ...] = (
     ("0046_transcript_entity", TRANSCRIPT_ENTITY),
     ("0047_owner_left", OWNER_LEFT),
     ("0048_plan_ends", PLAN_ENDS),
+    ("0049_game_effects_extended", GAME_EFFECTS_EXTENDED),
     ("0050_gametime_channel", GAMETIME_CHANNEL),
 )
 

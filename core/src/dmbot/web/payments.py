@@ -1,6 +1,6 @@
 """Payments through a merchant-of-record hosted checkout (#435).
 
-The payment company (Paddle or Lemon Squeezy: the owner picks) is the seller and holds
+The payment company (Stripe: the owner's choice, 2026-10-13) is the seller and holds
 all card details; DMbot never sees them. DMbot only:
 - asks it for a checkout page for a plan, passing our Discord user id as custom data,
 - asks it for the customer's billing page (change plan, fix a payment, stop),
