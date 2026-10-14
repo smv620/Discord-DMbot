@@ -36,7 +36,11 @@ def _stored(row: dict[str, Any]) -> Stored:
     tired = row["tired_told_for"]
     return Stored(
         Clock(
-            int(row["minute"]), int(row["last_long_rest"]), None if tired is None else int(tired)
+            int(row["minute"]),
+            int(row["last_long_rest"]),
+            None if tired is None else int(tired),
+            None if row["combat_round"] is None else int(row["combat_round"]),
+            int(row["combat_secs"]),
         ),
         None if row["channel_id"] is None else int(row["channel_id"]),
         None if row["message_id"] is None else int(row["message_id"]),
@@ -74,16 +78,21 @@ class ClockStore:
                 return before, before
             await conn.execute(
                 "INSERT INTO game_clocks (guild_id, campaign_id, minute, last_long_rest,"
-                " tired_told_for, updated_at) VALUES (%s, %s, %s, %s, %s, %s)"
+                " tired_told_for, combat_round, combat_secs, updated_at)"
+                " VALUES (%s, %s, %s, %s, %s, %s, %s, %s)"
                 " ON CONFLICT (guild_id, campaign_id) DO UPDATE SET minute = EXCLUDED.minute,"
                 " last_long_rest = EXCLUDED.last_long_rest,"
-                " tired_told_for = EXCLUDED.tired_told_for, updated_at = EXCLUDED.updated_at",
+                " tired_told_for = EXCLUDED.tired_told_for,"
+                " combat_round = EXCLUDED.combat_round, combat_secs = EXCLUDED.combat_secs,"
+                " updated_at = EXCLUDED.updated_at",
                 (
                     guild_id,
                     campaign_id,
                     after.minute,
                     after.last_long_rest,
                     after.tired_told_for,
+                    after.combat_round,
+                    after.combat_secs,
                     int(self._now()),
                 ),
             )
@@ -96,6 +105,12 @@ class ClockStore:
                     (guild_id, campaign_id, after.minute),
                 )
             return before, after
+
+    async def in_combat(self, guild_id: int, campaign_id: str) -> bool:
+        """Is this campaign's table in combat? The one question other parts ask (#1127): the
+        15-minute sheet reads pause in combat, and FightBot runs only in combat."""
+        stored = await self.get(guild_id, campaign_id)
+        return stored is not None and game.in_combat(stored.clock)
 
     async def set_message(
         self, guild_id: int, campaign_id: str, channel_id: int, message_id: int
@@ -130,8 +145,8 @@ class ClockStore:
     @staticmethod
     async def _read(conn: Conn, guild_id: int, campaign_id: str, *, lock: bool) -> Stored | None:
         cur = await conn.execute(
-            "SELECT minute, last_long_rest, tired_told_for, channel_id, message_id,"
-            " players_channel_id, players_message_id"
+            "SELECT minute, last_long_rest, tired_told_for, combat_round, combat_secs,"
+            " channel_id, message_id, players_channel_id, players_message_id"
             " FROM game_clocks WHERE guild_id = %s AND campaign_id = %s"
             + (" FOR UPDATE" if lock else ""),
             (guild_id, campaign_id),
@@ -178,6 +193,7 @@ class ClockSection:
             " tired_told_for, updated_at) VALUES (%s, %s, %s, %s, NULL, %s)"
             " ON CONFLICT (guild_id, campaign_id) DO UPDATE SET minute = EXCLUDED.minute,"
             " last_long_rest = EXCLUDED.last_long_rest, tired_told_for = NULL,"
+            " combat_round = NULL, combat_secs = 0,"  # a restored campaign starts out of combat
             " channel_id = NULL, message_id = NULL, players_channel_id = NULL,"
             " players_message_id = NULL, updated_at = EXCLUDED.updated_at",
             (guild_id, campaign_id, clock.minute, clock.last_long_rest, int(time.time())),

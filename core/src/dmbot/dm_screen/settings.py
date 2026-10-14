@@ -83,6 +83,15 @@ def _tick(label: str, current: bool) -> str:
     return f"✓ {label}" if current else label
 
 
+def _combat_line(campaign: Campaign) -> str:
+    """The combat setting (#1127): DMbot follows rounds either way, never turn order."""
+    way = "on" if campaign.side_initiative else "off"
+    return (
+        f"• **Combat:** DMbot counts the rounds, never whose turn it is. Side-based initiative "
+        f"(each side acts together) is {way}."
+    )
+
+
 def _rules_cards_line(campaign: Campaign, viewer: int | None) -> str:
     if not campaign.rules_cards:
         return RULES_CARDS_OFF
@@ -115,6 +124,7 @@ def settings_text(
             _rules_cards_line(campaign, viewer),
             *([INVITE_SET if campaign.dndbeyond_invite else INVITE_NOT_SET] if rules else []),
             table_chat_panel.line(campaign),
+            _combat_line(campaign),
             handover.owner_line(campaign, offer),
             pause_line(campaign, viewer),
             "Tap a button to change it. If DMbot is listening now, it follows the change from "
@@ -143,6 +153,7 @@ def settings_view(campaign: Campaign, offer: HandoverOffer | None, viewer: int) 
         view.add_item(HouseFileButton(campaign.id))  # the house-rules file (#969)
         view.add_item(InviteButton(campaign.id))  # the D&D Beyond invite (#1119)
         view.add_item(TableChatButton(campaign.id))  # which typed chat is read (#1118)
+        view.add_item(SideInitiativeButton(campaign.id, campaign.side_initiative))  # #1127
     return view
 
 
@@ -484,6 +495,58 @@ class RulesCardsButton(
             saved: Campaign = await save(campaign.guild_id, campaign.id, self.turn_on)
         except Exception:
             log.exception("Couldn't change rules cards")
+            await interaction.followup.send(FAILED, ephemeral=True)
+            return
+        await _redraw(interaction, saved)
+
+
+class SideInitiativeButton(
+    discord.ui.DynamicItem[discord.ui.Button[discord.ui.View]],
+    template=rf"dmbot:sideinit:{_ID}:(?P<to>on|off)",
+):
+    """⚔️ Side-based initiative: On or Off, one tap changes it (#1127). Only the campaign's
+    DMs have it. DMbot tracks rounds only either way; this records how the table runs a fight."""
+
+    def __init__(self, campaign_id: str, on: bool) -> None:
+        super().__init__(
+            discord.ui.Button(
+                label=f"Turn side initiative {'off' if on else 'on'}",
+                emoji="⚔️",
+                style=discord.ButtonStyle.primary if on else discord.ButtonStyle.secondary,
+                row=4,
+                custom_id=f"dmbot:sideinit:{campaign_id}:{'off' if on else 'on'}",
+            )
+        )
+        self.campaign_id = campaign_id
+        self.turn_on = not on  # what a press does
+
+    @classmethod
+    async def from_custom_id(
+        cls, interaction: discord.Interaction, item: discord.ui.Item[Any], match: re.Match[str]
+    ) -> SideInitiativeButton:
+        return cls(match["campaign"], on=match["to"] == "off")  # "to off" means it is on now
+
+    async def callback(self, interaction: discord.Interaction) -> Any:
+        set_log_context(guild_id=interaction.guild_id)
+        store = getattr(interaction.client, "campaigns", None)
+        guild = interaction.guild
+        if store is None or guild is None:
+            await interaction.response.send_message(GONE, ephemeral=True)
+            return
+        await interaction.response.defer()  # saving may take a moment
+        try:
+            campaign: Campaign | None = await store.get(guild.id, self.campaign_id)
+            if campaign is None:
+                await interaction.followup.send(GONE, ephemeral=True)
+                return
+            if interaction.user.id not in campaign.dm_user_ids:  # the campaign's DMs only
+                await interaction.followup.send(RULES_CARDS_ONLY_DMS, ephemeral=True)
+                return
+            saved: Campaign = await store.set_side_initiative(
+                campaign.guild_id, campaign.id, self.turn_on
+            )
+        except Exception:
+            log.exception("Couldn't change side-based initiative")
             await interaction.followup.send(FAILED, ephemeral=True)
             return
         await _redraw(interaction, saved)

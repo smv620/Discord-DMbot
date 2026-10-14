@@ -113,6 +113,7 @@ from dmbot.dm_screen.settings import (
     RulesCardsButton,
     SettingsButton,
     SettingsVisibilityButton,
+    SideInitiativeButton,
 )
 from dmbot.dm_screen.site_offers import SiteOffers
 from dmbot.dm_screen.speaker_question import SpeakerQuestionButton
@@ -163,7 +164,7 @@ from dmbot.test_recording import files as test_files
 from dmbot.test_recording import library as test_library
 from dmbot.test_recording.session import TestSession
 from dmbot.test_recording.store import TestVoiceStore
-from dmbot.timebot import durations
+from dmbot.timebot import combat_phrases, durations
 from dmbot.timebot import phrases as clock_phrases
 from dmbot.timebot.effects import EffectsSection, EffectStore
 from dmbot.timebot.store import ClockSection, ClockStore
@@ -240,6 +241,7 @@ NAMES_WAIT_S = 1.0  # the sidebar waits this long for a campaign's names, then a
 GATE_TIMEOUT_S = 2  # a button press must be answered within Discord's 3 s: fail open sooner
 CHAT_BLOCKED_TTL_S = 60  # how long the list of channels never read as chat is kept (#1118)
 CLOCK_PHRASE_GAP_S = 300  # the same rest said twice within this is counted once (#965)
+COMBAT_PHRASE_GAP_S = 15  # the same combat words twice (voice and chat) within this: once (#1127)
 METER_CALL_TIMEOUT_S = 8  # one write of minutes; a stuck database must not hold the loop
 RECORDED_CHECK_S = 2.0  # the ⚙️ Menu's database check: well inside Discord's 3 s
 NO_PINGS = discord.AllowedMentions.none()
@@ -723,6 +725,7 @@ class DMBot(commands.AutoShardedBot):
             SettingsVisibilityButton,
             RuleLookupButton,
             RulesCardsButton,
+            SideInitiativeButton,
             HouseFileButton,
             InviteButton,
             TableChatButton,
@@ -744,6 +747,7 @@ class DMBot(commands.AutoShardedBot):
         self.add_dynamic_items(  # #965, #1117
             clock_screen.ClockButton, clock_screen.ClockUndoButton, clock_screen.SuggestionButton
         )
+        self.add_dynamic_items(clock_screen.CombatUndoButton)  # #1127
         self.add_dynamic_items(timer_screen.EffectButton)  # timed effects (#998)
         # Undo after forgetting a name (its card), after a restart too.
         self.add_dynamic_items(UndoButton, UndoListButton)
@@ -2993,6 +2997,10 @@ class DMBot(commands.AutoShardedBot):
         if user_id not in table.dm_user_ids:
             await self._suggest_rest(table, user_id, line)
             return
+        fight = combat_phrases.find_combat(line)
+        if fight is not None:  # combat words are never also a clock phrase
+            await self._note_combat_phrase(table, user_id, line, fight)
+            return
         said = clock_phrases.find_clock(line)
         if said is None:
             return
@@ -3054,6 +3062,61 @@ class DMBot(commands.AutoShardedBot):
                 *result.lines,
             ],
             clock_screen.undo_id(result.before, result.after),
+        )
+
+    async def _note_combat_phrase(
+        self, table: Table, user_id: int, line: str, fight: combat_phrases.CombatSaid
+    ) -> None:
+        """A DM clearly saying combat starts, which round it is, or that it is over (#1127):
+        the combat state follows, with one DM-screen line and an Undo. Only the campaign's DMs
+        (checked here and again where the state is changed); a player's words never reach
+        this. Nothing happens when no clock is set up yet or the state already matches."""
+        now = time.monotonic()
+        last = table.clock_said.get(fight.key)
+        if last is not None and now - last < COMBAT_PHRASE_GAP_S:
+            return
+        assert table.campaign_id is not None
+        campaign = await self.campaigns.get(table.guild_id, table.campaign_id)
+        if campaign is None or user_id not in campaign.dm_user_ids:
+            return
+        # Consent and the session are checked again after the await above, as for a voice line.
+        if (
+            self.tables.get(table.guild_id) is not table
+            or not table.listening
+            or not self.consent.has_consent(table.guild_id, user_id)
+        ):
+            return
+        action = {"start": "cstart", "next": "cnext", "round": "cround", "end": "cend"}[fight.kind]
+        table.clock_said[fight.key] = now
+        try:
+            result = await clock_screen.press(
+                self, campaign.guild_id, campaign.id, user_id, action, set_to=fight.number
+            )
+        except CampaignError:
+            table.clock_said.pop(fight.key, None)  # no longer a DM: said quietly, not an error
+            return
+        except Exception:
+            log.exception("Combat couldn't take what was said at the table")
+            table.clock_said.pop(fight.key, None)
+            return
+        if result.before is None or result.after is None or result.after == result.before:
+            table.clock_said.pop(fight.key, None)  # nothing changed: don't burn the window
+            return
+        stored = await self.clocks.get(campaign.guild_id, campaign.id) if self.clocks else None
+        if stored is None:
+            return
+        await clock_screen.show(self, campaign, stored)
+        await clock_screen.update_players(self, campaign, action, result, announce=False)
+        await timer_screen.announce_due(self, campaign, stored.clock.minute)
+        await clock_screen.say(
+            self,
+            campaign,
+            [
+                clock_screen.combat_note(action, result.before, result.after),
+                f"(heard: “{discord.utils.escape_markdown(' '.join(line.split())[:80])}”)",
+                *result.lines,
+            ],
+            combat_undo=clock_screen.combat_undo_id(result.before, result.after),
         )
 
     async def _less_what_a_rest_covers(

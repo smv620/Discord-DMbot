@@ -469,7 +469,10 @@ class Buttons(unittest.TestCase):
 
     def test_the_pinned_dm_clock_has_no_rest_buttons(self) -> None:
         view = ui.clock_view(self.CID)
-        self.assertEqual(self.labels(view), ["+10 min", "+1 hour", "Set time…", "Start a timer"])
+        self.assertEqual(
+            self.labels(view),
+            ["+10 min", "+1 hour", "Set time…", "Start a timer", "Start combat"],  # #1127
+        )
         for banned in ("rest", "dawn"):
             self.assertFalse(any(banned in label.lower() for label in self.labels(view)))
 

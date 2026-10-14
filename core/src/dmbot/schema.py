@@ -1645,6 +1645,20 @@ TABLE_CHAT = """
         CHECK (sidebar_via IN ('voice-memo', 'typed', 'table-trigger', 'table-chat'));
 """
 
+COMBAT_STATE = """
+    -- Combat state (#1127; docs/PLAN.md, "Combat state"): in combat or not, and which round,
+    -- kept with the game clock so it survives a restart. `combat_round` is NULL out of combat.
+    -- `combat_secs` is the game seconds already spent toward the next whole minute (a round
+    -- is 6 seconds; the clock itself counts whole minutes). `side_initiative` is a campaign
+    -- switch (off): DMbot tracks rounds only, never turn order, either way. Nullable or
+    -- defaulted columns: no row changes, so no backfill policy.
+    ALTER TABLE game_clocks
+        ADD COLUMN combat_round INTEGER
+            CHECK (combat_round IS NULL OR combat_round BETWEEN 1 AND 99),
+        ADD COLUMN combat_secs INTEGER NOT NULL DEFAULT 0 CHECK (combat_secs BETWEEN 0 AND 59);
+    ALTER TABLE campaigns ADD COLUMN side_initiative BOOLEAN NOT NULL DEFAULT FALSE;
+"""
+
 OWNER_CAMPAIGNS = (
     _setting("dmbot_owner_sync", "dmbot.owner_sync", "TEXT")
     + """
@@ -1986,6 +2000,7 @@ MIGRATIONS: tuple[Migration, ...] = (
     ("0050_gametime_channel", GAMETIME_CHANNEL),
     ("0051_dndbeyond_invite", DNDBEYOND_INVITE),
     ("0052_table_chat", TABLE_CHAT),
+    ("0053_combat_state", COMBAT_STATE),
 )
 
 # Tables that must have row-level security. A test checks every table in the schema

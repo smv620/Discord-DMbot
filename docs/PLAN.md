@@ -2852,6 +2852,21 @@ once. The new-campaign form's link is saved in the same step as the campaign.
     buttons (**Start combat**, **Next round**, **End combat**) that correct it.
   - With **side-based initiative** (a campaign setting) it tracks rounds only, not turn order.
   - Combat state goes on the DM screen. Players see "⚔️ Combat, round 3" in the game-time channel.
+  - **How it runs (built in #1127):**
+    - **Kept with the game clock** (`combat_round`, plus the seconds already spent toward the
+      next minute), so it survives a restart. A backup does not carry it: a restored campaign
+      starts out of combat. The side-initiative switch is a campaign setting and is in backups.
+    - **Heard from a DM only** (voice or typed), whole lines only: "roll initiative" or "combat
+      starts" begins round 1; "round two" or "next round" sets or moves the round; "combat's
+      over" or "the fight ends" ends it. Questions, wishes, conditions and stories ("the goblin
+      dies next round") never count, and a player's words never change it. Each change posts one
+      DM-screen line with Undo.
+    - **Time:** every round is 6 seconds. The clock counts whole minutes, so it moves every
+      tenth round, and **End combat** counts the last round and rounds up to the next minute
+      (at least one). Going back a round is a correction and spends nothing.
+    - **Buttons** on the pinned clock: **Start combat** out of a fight, **Next round** and
+      **End combat** in one. Only the campaign's DMs.
+    - **One question for other parts:** `ClockStore.in_combat(guild, campaign)`.
 - **FightBot** (one per player character, only while in combat).
   - **What it says:** private messages to that player only, reminding them of their own character:
     spell slots left, features and items that could help now ("You still have Hunter's Mark and

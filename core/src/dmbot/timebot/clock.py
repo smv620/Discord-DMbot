@@ -7,7 +7,7 @@ from narration: every change comes from a DM's button or a clear phrase the DM s
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Literal
 
 MINUTES_PER_DAY = 1440
@@ -32,6 +32,11 @@ class Clock:
     minute: int
     last_long_rest: int
     tired_told_for: int | None = None
+    # Combat (#1127): the round (None out of combat) and the game seconds already spent toward
+    # the next whole minute. The clock counts whole minutes and a round is 6 seconds, so the
+    # minute moves every tenth round and when combat ends.
+    combat_round: int | None = None
+    combat_secs: int = 0
 
 
 def from_day_and_time(day: int, hour: int, minute: int = 0) -> int:
@@ -107,16 +112,14 @@ def short_label(minute: int) -> str:
 
 def advance(clock: Clock, delta: int) -> Clock:
     """Move forward (never back past the start or beyond the limit)."""
-    return Clock(
-        min(MAX_MINUTE, max(0, clock.minute + delta)), clock.last_long_rest, clock.tired_told_for
-    )
+    return replace(clock, minute=min(MAX_MINUTE, max(0, clock.minute + delta)))
 
 
 def long_rest(clock: Clock) -> Clock:
     """Eight hours pass and the party has rested: the 24-hour count starts again from the
     end of the rest."""
     end = min(MAX_MINUTE, clock.minute + LONG_REST_MIN)
-    return Clock(end, end, None)
+    return replace(clock, minute=end, last_long_rest=end, tired_told_for=None)
 
 
 def next_dawn(minute: int) -> int:
@@ -129,7 +132,7 @@ def set_to(clock: Clock, minute: int) -> Clock:
     """The DM says what time it is. If that is earlier than the last long rest the rest
     can't be in the future, so it moves back with it."""
     minute = min(MAX_MINUTE, max(0, minute))
-    return Clock(minute, min(clock.last_long_rest, minute), clock.tired_told_for)
+    return replace(clock, minute=minute, last_long_rest=min(clock.last_long_rest, minute))
 
 
 def crossings(before: int, after: int) -> list[tuple[int, Mark]]:
@@ -156,4 +159,62 @@ def tired_due(clock: Clock) -> bool:
 
 
 def told_tired(clock: Clock) -> Clock:
-    return Clock(clock.minute, clock.last_long_rest, clock.last_long_rest)
+    return replace(clock, tired_told_for=clock.last_long_rest)
+
+
+# ---- combat (#1127) ----------------------------------------------------------------------
+
+ROUND_SECONDS = 6
+MAX_ROUND = 99
+
+
+def in_combat(clock: Clock | None) -> bool:
+    """The one question other parts ask: is the table in combat? (The 15-minute sheet reads
+    pause in combat; FightBot runs only in combat.)"""
+    return clock is not None and clock.combat_round is not None
+
+
+def _spend(clock: Clock, seconds: int) -> Clock:
+    """Game seconds pass: whole minutes move the clock, the rest wait for the next round."""
+    total = clock.combat_secs + seconds
+    return replace(advance(clock, total // 60), combat_secs=total % 60)
+
+
+def combat_start(clock: Clock) -> Clock | None:
+    """Round 1. None if combat is already on: saying "roll initiative" twice is one fight."""
+    if clock.combat_round is not None:
+        return None
+    return replace(clock, combat_round=1, combat_secs=0)
+
+
+def combat_round_to(clock: Clock, number: int) -> Clock | None:
+    """Set the round ("round three"). Going forward spends 6 seconds for every round passed;
+    going back is a correction and spends nothing. None if not in combat, already there, or
+    out of range."""
+    current = clock.combat_round
+    if current is None or number == current or not 1 <= number <= MAX_ROUND:
+        return None
+    moved = _spend(clock, (number - current) * ROUND_SECONDS) if number > current else clock
+    return replace(moved, combat_round=number)
+
+
+def combat_next(clock: Clock) -> Clock | None:
+    """The next round (at most round 99); None if not in combat."""
+    if clock.combat_round is None:
+        return None
+    return combat_round_to(clock, clock.combat_round + 1)
+
+
+def combat_end(clock: Clock) -> Clock | None:
+    """Combat is over: the round just played counts, and the clock rounds up to the next
+    whole minute. None if not in combat."""
+    if clock.combat_round is None:
+        return None
+    total = clock.combat_secs + ROUND_SECONDS
+    ended = advance(clock, -(-total // 60))  # rounded up: never less than a minute
+    return replace(ended, combat_round=None, combat_secs=0)
+
+
+def combat_label(clock: Clock) -> str | None:
+    """ "⚔️ Combat, round 3" while in combat; the players' line and the DM's."""
+    return None if clock.combat_round is None else f"⚔️ Combat, round {clock.combat_round}"
