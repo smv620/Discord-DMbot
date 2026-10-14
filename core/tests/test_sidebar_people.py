@@ -80,7 +80,7 @@ class Lines(unittest.TestCase):
         self.assertEqual(got, ["Mia plays Cerric and Quin, is also called Mike", "Ana is the DM"])
 
     def test_someone_who_stopped_or_has_no_name_is_left_out(self) -> None:
-        rows = [(1, ["Cerric"], []), (3, ["Tosta"], [])]
+        rows: list[tuple[int, list[str], list[str]]] = [(1, ["Cerric"], []), (3, ["Tosta"], [])]
         self.assertEqual(self.make(rows, agreed=(3,)), [])
         self.assertEqual(self.make(rows, agreed=(1,)), ["Mia plays Cerric"])
 
