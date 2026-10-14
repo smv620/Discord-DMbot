@@ -13,6 +13,7 @@ from dmbot.consent import ConsentStore
 from dmbot.memory.backup import MemorySection
 from dmbot.memory.store import MemoryStore
 from dmbot.web import entitlements_writer
+from dmbot.web.payments import PaymentEvent
 from tests.pg import DatabaseTest
 from tests.test_web_accounts_db import INSERT_PLAN, PLAN_ROW
 
@@ -165,6 +166,27 @@ class Moves(DatabaseTest):
         notice = await self.moves.take_moved_notice(OLD)
         self.assertIn("moved to another Discord account on", notice or "")
         self.assertIsNone(await self.moves.take_moved_notice(OLD))  # once
+
+    async def test_a_payment_for_the_old_id_lands_on_the_new_account(self) -> None:
+        await self.moves.move(OLD, NEW, await self.code())
+        event = PaymentEvent(
+            provider="stripe", event_id="evt_1", kind="subscription_renewed", user_id=OLD,
+            occurred_at=NOW + 50, plan="table", period_start=NOW, period_end=NOW + 30 * 86400,
+            customer_id="cus_old1", subscription_id="sub_old1",
+        )  # fmt: skip
+        self.assertEqual(
+            await entitlements_writer.apply_event(self.db, event, now=NOW + 60), "applied"
+        )
+        async with self.db.user(NEW) as conn:
+            cur = await conn.execute("SELECT period_end FROM entitlements")
+            rows = await cur.fetchall()
+        self.assertEqual([r["period_end"] for r in rows], [NOW + 30 * 86400])
+        self.assertEqual(
+            await self.scalar(
+                "SELECT count(*) FROM entitlements WHERE user_id = %s", OLD, person=OLD
+            ),
+            0,
+        )
 
     async def test_an_account_that_never_paid_cannot_ask(self) -> None:
         with self.assertRaises(MoveError) as err:

@@ -1,0 +1,228 @@
+"""`/dmbot migrate`: move a paid account to a new Discord account (#1230).
+
+Two buttons. **Get a move code** (on the old account) emails a code to the address on file and
+says only that it did; **Import from another Discord account** (on the new account) asks for
+the code, shows what will move and asks to confirm. The rules are in `dmbot.account_move`; the
+move is one database transaction. Recording consent does not move: the new account says yes
+for itself the first time it joins a table. Nothing here is shown to anyone else.
+"""
+
+from __future__ import annotations
+
+import logging
+
+import discord
+
+from dmbot import account_move
+from dmbot.account_move import MoveError, Preview
+from dmbot.ui.dmbot_commands import (
+    _answer_first,
+    _bot,
+    _Button,
+    _Menu,
+    _send,
+    _tell,
+    dmbot_group,
+)
+
+log = logging.getLogger(__name__)
+
+INTRO = (
+    "**Move to a new Discord account**\n"
+    "Moves your plan, its hours and the campaigns you own. Your card moves too, and your old "
+    "account is left empty. You can move once every 30 days.\n"
+    "Recording agreements don't move. Your new account says yes again at its first table.\n"
+    "1. Old account: tap **Get a move code**. We email it to the address you pay with.\n"
+    "2. New account: run `/dmbot migrate`, tap **I have a code**, and type it.\n"
+    "Want to give campaigns to someone else? Use **Hand over** in ⚙️ Settings. It doesn't "
+    "move your plan."
+)
+EMAILED = (
+    "We've emailed a code to the address you pay with. It works once, for 30 minutes. "
+    "Check your spam too."
+)
+NO_EMAIL = "We have no email for you yet. Sign in on the website with Discord, then try again."
+NOT_READY = (
+    "Something went wrong and nothing moved. Try again in a minute. If it keeps happening, "
+    "tell us on the website."
+)
+EMAIL_FAILED = "The code couldn't be emailed just now. Try again in a few minutes."
+GET_LABEL = "📧 Get a move code"
+IMPORT_LABEL = "📥 I have a code"
+CONFIRM_LABEL = "Yes, move it here"
+CANCEL_LABEL = "Cancel"
+
+
+def old_told(when: str) -> str:
+    """What the old account hears, right away and again the first time it uses DMbot."""
+    return (
+        f"Your DMbot plan, hours and campaigns moved to another Discord account on {when}. "
+        "Was that not you? Tell us now on the website's hello page."
+    )
+
+
+CAMPAIGNS_SHOWN = 8
+
+
+def confirm_text(preview: Preview, old_user_id: int) -> str:
+    from dmbot import plans
+
+    plan = next((p for p in plans.load().by_id.values() if p.id == preview.plan), None)
+    plan_name = plan.name if plan is not None else preview.plan
+    shown = preview.campaigns[:CAMPAIGNS_SHOWN]
+    names = "\n".join(f"• {discord.utils.escape_markdown(n)}" for n in shown) or "• (none)"
+    more = len(preview.campaigns) - len(shown)
+    if more > 0:
+        names += f"\n…and {more} more"
+    return (
+        "Move this to your account?\n"
+        f"From: <@{old_user_id}>\n"
+        f"Plan: **{discord.utils.escape_markdown(plan_name)}**, with its hours. The card that "
+        "pays for it moves too.\n"
+        f"Campaigns:\n{names}\n"
+        "The old account is left empty. You can't move again for 30 days. Recording "
+        "agreements don't move."
+    )
+
+
+@dmbot_group.command(
+    name="migrate", description="Move your plan and campaigns to a new Discord account"
+)
+async def dmbot_migrate(interaction: discord.Interaction) -> None:
+    await _send(interaction, INTRO, MigrateMenu())
+
+
+class MigrateMenu(_Menu):
+    def __init__(self) -> None:
+        super().__init__()
+        self.add_item(_Button(self._get, label=GET_LABEL, style=discord.ButtonStyle.primary))
+        self.add_item(_Button(self._import, label=IMPORT_LABEL))
+
+    async def _get(self, interaction: discord.Interaction) -> None:
+        await get_code(interaction)
+
+    async def _import(self, interaction: discord.Interaction) -> None:
+        await interaction.response.send_modal(CodeForm())
+
+
+async def _payment_email(interaction: discord.Interaction) -> str | None:
+    bot = _bot(interaction)
+    if bot.meter is None:
+        return None
+    async with bot.meter.db.user(interaction.user.id) as conn:
+        cur = await conn.execute(
+            "SELECT email FROM web_users WHERE user_id = %s", (interaction.user.id,)
+        )
+        row = await cur.fetchone()
+    return None if row is None else row["email"]
+
+
+async def get_code(interaction: discord.Interaction) -> None:
+    """Make a code and email it. The screen never shows the code or the address."""
+    await _answer_first(interaction)
+    bot = _bot(interaction)
+    if bot.account_moves is None or bot.mailer is None:
+        await _tell(interaction, NOT_READY)
+        return
+    try:
+        why = await bot.account_moves.can_move(interaction.user.id)
+        if why is not None:
+            await _tell(interaction, why)
+            return
+        email = await _payment_email(interaction)
+        if not email:
+            await _tell(interaction, NO_EMAIL)
+            return
+        code = await bot.account_moves.make_code(interaction.user.id)
+        result = await bot.mailer.send(
+            user_id=interaction.user.id,
+            kind=f"move-code:{code}",  # one email for each code, so a new code is never hidden
+            to=email,
+            subject="Your DMbot move code",
+            body=(
+                f"Your DMbot move code: {code[:4]}-{code[4:]}\n\n"
+                "It works once and lasts 30 minutes.\n"
+                'Type it on your NEW Discord account: run /dmbot migrate, tap "I have a '
+                'code", and enter it.\n'
+                "The code moves your plan, its hours and your campaigns. Never give it to "
+                "anyone else.\n"
+                "Didn't ask for this? Ignore this email. Nothing changes."
+            ),
+        )
+    except MoveError as exc:
+        await _tell(interaction, str(exc))
+        return
+    except Exception:
+        log.exception("Couldn't make a move code")
+        await _tell(interaction, NOT_READY)
+        return
+    await _tell(interaction, EMAILED if result in ("sent", "already_sent") else EMAIL_FAILED)
+
+
+class CodeForm(discord.ui.Modal, title="Import from another account"):
+    code: discord.ui.TextInput[CodeForm] = discord.ui.TextInput(
+        label="The move code from your email",  # 45 characters at most
+        placeholder="For example: ABCD-2345",
+        max_length=20,
+    )
+
+    async def on_submit(self, interaction: discord.Interaction) -> None:
+        await look_up(interaction, self.code.value)
+
+
+async def look_up(interaction: discord.Interaction, code: str) -> None:
+    """Check the code and show what would move, before anything does."""
+    await _answer_first(interaction)
+    bot = _bot(interaction)
+    if bot.account_moves is None:
+        await _tell(interaction, NOT_READY)
+        return
+    try:
+        old = await bot.account_moves.find(interaction.user.id, code)
+        preview = await bot.account_moves.preview(old)
+    except MoveError as exc:
+        await _tell(interaction, str(exc))
+        return
+    except Exception:
+        log.exception("Couldn't check a move code")
+        await _tell(interaction, NOT_READY)
+        return
+    await _send(interaction, confirm_text(preview, old), ConfirmMove(old, code))
+
+
+class ConfirmMove(_Menu):
+    def __init__(self, old_user_id: int, code: str) -> None:
+        super().__init__()
+        self.old, self.code = old_user_id, code
+        self.add_item(_Button(self._yes, label=CONFIRM_LABEL, style=discord.ButtonStyle.danger))
+        self.add_item(_Button(self._no, label=CANCEL_LABEL))
+
+    async def _yes(self, interaction: discord.Interaction) -> None:
+        await _answer_first(interaction)
+        bot = _bot(interaction)
+        if bot.account_moves is None:
+            await _tell(interaction, NOT_READY)
+            return
+        self.stop()  # one press only
+        try:
+            await bot.account_moves.move(self.old, interaction.user.id, self.code)
+        except MoveError as exc:
+            await _tell(interaction, f"{exc} Start again with `/dmbot migrate`.")
+            return
+        except Exception:
+            log.exception("An account move failed")
+            await _tell(interaction, f"{NOT_READY} Start again with `/dmbot migrate`.")
+            return
+        await _tell(
+            interaction,
+            "✅ Moved. Your plan, hours and campaigns are on this account now. You'll be asked "
+            "to agree to recording again the first time you join a table.",
+        )
+        await bot.after_account_move(self.old, interaction.user.id)
+
+    async def _no(self, interaction: discord.Interaction) -> None:
+        self.stop()
+        await _tell(interaction, "Okay, nothing moved.")
+
+
+__all__ = ["account_move", "dmbot_migrate"]

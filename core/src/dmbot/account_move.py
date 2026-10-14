@@ -36,18 +36,19 @@ GUESS_WINDOW_S = 10 * 60  # ...in this long
 ASKS = 3  # codes an account may ask for...
 ASK_WINDOW_S = 60 * 60  # ...in this long
 
-NOT_PAID = (
-    "Moving needs an active paid plan. Try It, a free trial and other free access can't be moved."
+NOT_PAID = "Only paid plans can move. Try It and free access can't."
+TOO_SOON = "You can move once every 30 days, and this account moved less than 30 days ago."
+BAD_CODE = (
+    "That code didn't work. Codes last 30 minutes and work once. Check it, or tap Get a move "
+    "code again on the old account."
 )
-TOO_SOON = "This account moved less than 30 days ago. Try again after that."
-BAD_CODE = "That code didn't work. Check it, or ask for a new one on the old account."
-TOO_MANY = "Too many tries. Wait a few minutes, then try again."
-TOO_MANY_ASKS = "A code was asked for a few times already. Wait an hour, then ask again."
-SAME = "That's the same account. Use the code on the new Discord account."
-NEW_HAS_PLAN = "This account already has a paid plan. A move needs an account without one."
-NEW_MOVED_AWAY = "This account moved away before, so it can't be the new one."
-LISTENING = "A session is running. Stop it first, then try the move again."
-NO_ACCOUNT = "There's no DMbot account to move on that Discord account."
+TOO_MANY = "Too many tries. Wait 10 minutes, then try again."
+TOO_MANY_ASKS = "You've asked for 3 codes this hour. Wait an hour, or use the last email."
+SAME = "This is the old account. Open Discord on your new account and run `/dmbot migrate` there."
+NEW_HAS_PLAN = "This account already has a paid plan. Use an account without one."
+NEW_MOVED_AWAY = "This account moved its plan away before. Use a different account."
+LISTENING = "DMbot is recording a session for the old account. End it, then try again."
+NO_ACCOUNT = "We can't find a DMbot account for that code. Ask for a new one on the old account."
 
 _REFUSALS = {
     "same": SAME,
@@ -224,4 +225,6 @@ class AccountMoves:
         from datetime import UTC, datetime
 
         when = datetime.fromtimestamp(int(row["moved_at"]), UTC).strftime("%B %-d, %Y")
-        return f"Your DMbot account moved to another Discord account on {when}."
+        from dmbot.ui.migrate import old_told
+
+        return old_told(when)

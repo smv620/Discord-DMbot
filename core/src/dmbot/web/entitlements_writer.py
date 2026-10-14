@@ -17,6 +17,7 @@ Payment events:
 
 from __future__ import annotations
 
+import dataclasses
 import logging
 from dataclasses import dataclass
 from typing import Any, Literal
@@ -130,8 +131,27 @@ def _same_subscription(row: dict[str, Any], event: PaymentEvent) -> bool:
     return known is None or event.subscription_id is None or known == event.subscription_id
 
 
+async def _current_owner(db: Database, user_id: int) -> int:
+    """Who holds the subscription an event names now. The payment company's records carry
+    the Discord ID the plan was bought with; if that account moved (#1230), the plan is the
+    new account's. Follows a chain of moves (a few at most)."""
+    for _ in range(5):
+        async with db.unscoped() as conn:
+            cur = await conn.execute(
+                "SELECT new_user_id FROM account_moves WHERE old_user_id = %s", (user_id,)
+            )
+            row = await cur.fetchone()
+        if row is None:
+            break
+        user_id = int(row["new_user_id"])
+    return user_id
+
+
 async def apply_event(db: Database, event: PaymentEvent, *, now: int) -> Outcome:
     loaded = plans.load()
+    owner = await _current_owner(db, event.user_id)
+    if owner != event.user_id:
+        event = dataclasses.replace(event, user_id=owner)
     async with db.plan_writer(event.user_id) as conn:  # one change per person at a time
         if not await _known_person(conn, event.user_id):
             # Nothing to attach the plan to. The company still has the payment; ids only.

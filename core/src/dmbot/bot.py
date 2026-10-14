@@ -40,6 +40,7 @@ from dmbot import (
     trial_jobs,
     usage,
 )
+from dmbot.account_move import AccountMoves
 from dmbot.ai import FEATURE_TIERS, AnthropicClient, Feature
 from dmbot.ai_watch import AIWatch
 from dmbot.audio.segmenter import Segmenter, Utterance
@@ -205,6 +206,7 @@ from dmbot.ui import logic as ui_logic
 from dmbot.ui import rule_card
 from dmbot.ui.dmbot_commands import _failed, dmbot_group
 from dmbot.ui.house_rules import dmbot_house_rules  # noqa: F401 (registers it)
+from dmbot.ui.migrate import dmbot_migrate  # noqa: F401 (registers it)
 from dmbot.ui.name_card import UndoButton
 from dmbot.ui.name_lists import UndoListButton
 from dmbot.ui.names import ReviewButton, after_session_text, review_view
@@ -603,15 +605,19 @@ class DMBot(commands.AutoShardedBot):
         # The last day of Try It and the extension (#1229): only with a database, and the mail
         # sender (which sends nothing until SMTP is set up) for the emails.
         self.trial_jobs: trial_jobs.TrialJobs | None = None
+        self.mailer: Mailer | None = None
+        self.account_moves: AccountMoves | None = None  # moving to a new Discord account (#1230)
         if meter is not None:
+            self.account_moves = AccountMoves(meter.db)
+            self.mailer = Mailer(
+                meter.db,
+                settings.mail,
+                site_url=settings.site_url,
+                link_secret=settings.link_token_secret,
+            )
             self.trial_jobs = trial_jobs.TrialJobs(
                 meter.db,
-                Mailer(
-                    meter.db,
-                    settings.mail,
-                    site_url=settings.site_url,
-                    link_secret=settings.link_token_secret,
-                ),
+                self.mailer,
                 enforce_plans=settings.enforce_plans,
                 site_url=settings.site_url,
                 link_secret=settings.link_token_secret,
@@ -2217,6 +2223,9 @@ class DMBot(commands.AutoShardedBot):
                     await trial_jobs.take_extension_notice(self.meter.db, user.id, int(time.time()))
                     or ""
                 )
+                if self.account_moves is not None:  # an old account that moved (#1230)
+                    moved = await self.account_moves.take_moved_notice(user.id)
+                    trial_line = "\n\n".join(x for x in (trial_line, moved) if x)
             except Exception:
                 log.exception("Couldn't check for a Try It extension notice")
         transcript_line = (
@@ -5040,6 +5049,21 @@ class DMBot(commands.AutoShardedBot):
         except Exception:
             return "retry"
         return "sent"
+
+    async def after_account_move(self, old_user_id: int, new_user_id: int) -> None:
+        """After an account has moved (#1230): tell the old account privately, if it still
+        exists. The payment company's records are brought up to date when its next event
+        arrives (the website's webhook finds a moved person through the marker). Never
+        raises."""
+        from datetime import UTC, datetime
+
+        from dmbot.ui.migrate import old_told
+
+        try:
+            when = datetime.now(UTC).strftime("%B %-d, %Y")
+            await self._dm_trial_user(old_user_id, old_told(when))
+        except Exception:
+            log.exception("Couldn't tell the old account about a move")
 
     async def _discord_name(self, user_id: int) -> str:
         try:
