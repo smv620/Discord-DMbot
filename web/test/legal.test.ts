@@ -116,8 +116,8 @@ describe("the facts #433 asks for", () => {
 
   it("says DMbot learns the names people are called, from people who said yes, and what stop removes (#1210)", () => {
     expect(privacy()).toContain("Names at the table.");
-    expect(privacy()).toContain("only from people who said yes");
-    expect(privacy()).toContain("Names your game master typed in by hand stay.");
+    expect(privacy()).toContain("only from people who said yes to being recorded");
+    expect(privacy()).toContain("Names your game master typed in themselves stay.");
   });
 
   it("sets the minimum age at 16, with no 'older where local law requires' marker", () => {

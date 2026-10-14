@@ -40,7 +40,7 @@ export const dmSteps: Step[] = [
     names: [{ name: "Table chat", file: "dm_screen/table_chat_panel.py" }],
   },
   {
-    text: "After a game, press 🧑 Check who is who. If someone answered to a name a few times (\"Mike, what do you do?\" then \"I run with my sword\"), DMbot asks you to check who plays whom. Nothing is saved until you say yes.",
+    text: "After a game, press 🧑 Check who is who. DMbot notices when someone answers to a name several times (\"Mike, what do you do?\" then \"I run with my sword\"). You see who it thinks plays whom and say yes or no. Nothing is saved until you say yes.",
     names: [{ name: "Check who is who", file: "ui/people_review.py" }],
   },
   {
@@ -86,7 +86,7 @@ export const playerSteps: Step[] = [
     names: [{ name: "dmb-chat", file: "dm_screen/dmbchat_channel.py" }],
   },
   {
-    text: "When someone asks DMbot a question, it shows the character you play once your game master has checked it, and your server nickname until then.",
+    text: "When you ask DMbot a question in dmb-chat, it shows the name of the character you play once your game master has said yes to it. Until then it shows your server nickname.",
   },
   {
     text: "Everyone in the server can read a game's transcript. To read or download one, type /transcript.",
