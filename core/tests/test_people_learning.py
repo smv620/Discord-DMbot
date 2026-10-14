@@ -1,0 +1,132 @@
+"""What DMbot learns about who is who (#1188 part 2): waiting questions from the names
+people answered to, the DM's answers, and Stop recording me taking the learned ones away.
+Names are made up."""
+
+from __future__ import annotations
+
+from dmbot.memory.models import MemoryRuleError
+from dmbot.ui.people_review import question_text, waiting_text
+from tests.test_memory_store import DM as SRC_DM
+from tests.test_memory_store import GUILD_A, MemoryTest
+from tests.test_people import OTHER, PLAYER
+
+
+class Learning(MemoryTest):
+    async def waiting(self, campaign: str | None = None) -> list[tuple[str, str, int]]:
+        found = await self.memory.people_suggestions(GUILD_A, campaign or self.c)
+        return [(s.kind, s.name, s.user_id) for s in found]
+
+    async def test_a_name_nothing_knows_waits_on_the_person_who_answered(self) -> None:
+        made = await self.memory.learn_people(GUILD_A, self.c, [("Mike", PLAYER, 3)], limit=10)
+        self.assertEqual([(s.kind, s.name, s.times) for s in made.value], [("name", "Mike", 3)])
+        self.assertEqual(await self.waiting(), [("name", "Mike", PLAYER)])
+        # Nothing is true yet: the person's own names don't include it.
+        got = await self.memory.aliases(GUILD_A, self.c)
+        self.assertNotIn("Mike", {a.text for a in got if a.status == "confirmed"})
+
+    async def test_a_character_nobody_plays_waits_as_a_link(self) -> None:
+        await self.add("Cerric")
+        made = await self.memory.learn_people(GUILD_A, self.c, [("Cerric", PLAYER, 2)], limit=10)
+        self.assertEqual([s.kind for s in made.value], ["plays"])
+        rels = await self.memory.relations(GUILD_A, self.c)
+        self.assertEqual([r.status for r in rels if r.predicate == "plays"], ["proposed"])
+
+    async def test_a_character_someone_else_plays_changes_nothing(self) -> None:
+        await self.add("Cerric", type="player_character", played_by=OTHER)
+        made = await self.memory.learn_people(GUILD_A, self.c, [("Cerric", PLAYER, 5)], limit=10)
+        self.assertEqual(made.value, [])
+        self.assertEqual(await self.waiting(), [])
+
+    async def test_a_name_already_known_for_a_person_changes_nothing(self) -> None:
+        await self.memory.learn_people(GUILD_A, self.c, [("Mike", PLAYER, 2)], limit=10)
+        again = await self.memory.learn_people(GUILD_A, self.c, [("Mike", OTHER, 2)], limit=10)
+        self.assertEqual(again.value, [])
+
+    async def test_at_most_the_limit(self) -> None:
+        rows = [(f"Name{chr(97 + i)}", PLAYER, 2) for i in range(6)]
+        made = await self.memory.learn_people(GUILD_A, self.c, rows, limit=3)
+        self.assertEqual(len(made.value), 3)
+
+    async def test_the_dm_words_are_never_learned(self) -> None:
+        made = await self.memory.learn_people(GUILD_A, self.c, [("GM", PLAYER, 4)], limit=10)
+        self.assertEqual(made.value, [])
+
+    async def test_yes_makes_it_the_dms_own(self) -> None:
+        made = await self.memory.learn_people(GUILD_A, self.c, [("Mike", PLAYER, 2)], limit=10)
+        await self.memory.accept_person_name(GUILD_A, self.c, made.value[0].row_id)
+        self.assertEqual(await self.waiting(), [])
+        # Stop recording me no longer removes it.
+        self.assertEqual(await self.memory.forget_learned(GUILD_A, PLAYER), 0)
+        got = await self.memory.aliases(GUILD_A, self.c)
+        self.assertIn("mike", {a.key for a in got if a.status == "confirmed"})
+
+    async def test_someone_else_moves_the_name(self) -> None:
+        made = await self.memory.learn_people(GUILD_A, self.c, [("Mike", PLAYER, 2)], limit=10)
+        await self.memory.accept_person_name(GUILD_A, self.c, made.value[0].row_id, user_id=OTHER)
+        people = {
+            e.played_by: e.id
+            for e in await self.memory.entities(GUILD_A, self.c)
+            if e.type == "person"
+        }
+        owners = {
+            a.entity_id for a in await self.memory.aliases(GUILD_A, self.c) if a.key == "mike"
+        }
+        self.assertEqual(owners, {people[OTHER]})
+
+    async def test_not_a_player_is_never_asked_again(self) -> None:
+        made = await self.memory.learn_people(GUILD_A, self.c, [("Mike", PLAYER, 2)], limit=10)
+        await self.memory.reject_person_name(GUILD_A, self.c, made.value[0].row_id)
+        again = await self.memory.learn_people(GUILD_A, self.c, [("Mike", PLAYER, 9)], limit=10)
+        self.assertEqual(again.value, [])
+        with self.assertRaises(MemoryRuleError):
+            await self.memory.reject_person_name(GUILD_A, self.c, made.value[0].row_id)
+
+    async def test_yes_to_a_link_sets_the_player_and_no_is_not_asked_again(self) -> None:
+        cerric = await self.add("Cerric")
+        made = await self.memory.learn_people(GUILD_A, self.c, [("Cerric", PLAYER, 2)], limit=10)
+        await self.memory.decide_plays(GUILD_A, self.c, made.value[0].row_id, yes=True)
+        found = {e.id: e for e in await self.memory.entities(GUILD_A, self.c)}
+        self.assertEqual(found[cerric].played_by, PLAYER)
+        self.assertTrue(found[cerric].is_player_character)
+        # A second character, answered "no": never asked again.
+        belleros = await self.add("Belleros")
+        two = await self.memory.learn_people(GUILD_A, self.c, [("Belleros", OTHER, 2)], limit=10)
+        await self.memory.decide_plays(GUILD_A, self.c, two.value[0].row_id, yes=False)
+        again = await self.memory.learn_people(GUILD_A, self.c, [("Belleros", OTHER, 2)], limit=10)
+        self.assertEqual(again.value, [])
+        self.assertTrue(belleros)
+
+    async def test_stop_recording_me_removes_what_was_learned_for_them_everywhere(self) -> None:
+        other = (await self.campaigns.create(GUILD_A, "Another", SRC_DM)).id
+        await self.add("Cerric")
+        await self.memory.learn_people(
+            GUILD_A, self.c, [("Mike", PLAYER, 2), ("Cerric", PLAYER, 2)], limit=10
+        )
+        await self.memory.learn_people(GUILD_A, other, [("Mikey", PLAYER, 2)], limit=10)
+        await self.memory.learn_people(GUILD_A, self.c, [("Vera", OTHER, 2)], limit=10)
+        self.assertEqual(await self.memory.forget_learned(GUILD_A, PLAYER), 3)
+        self.assertEqual(await self.waiting(), [("name", "Vera", OTHER)])
+        self.assertEqual(await self.waiting(other), [])
+        # Not even the change log keeps it.
+        async with self.db.guild(GUILD_A) as conn:
+            cur = await conn.execute(
+                "SELECT count(*) AS n FROM memory_changes WHERE after::text LIKE '%Mike%'"
+            )
+            self.assertEqual((await cur.fetchone() or {})["n"], 0)
+
+    async def test_a_person_and_their_names_stay_in_their_campaign(self) -> None:
+        other = (await self.campaigns.create(GUILD_A, "Another", SRC_DM)).id
+        await self.memory.learn_people(GUILD_A, self.c, [("Mike", PLAYER, 2)], limit=10)
+        self.assertEqual(await self.waiting(other), [])
+        found = await self.memory.entities(GUILD_A, other)
+        self.assertEqual([e for e in found if e.type == "person"], [])
+
+
+class Words(MemoryTest):
+    async def test_the_questions_are_in_plain_words(self) -> None:
+        made = await self.memory.learn_people(GUILD_A, self.c, [("Mike", PLAYER, 2)], limit=10)
+        text = question_text(made.value[0], "Mia", 2)
+        self.assertIn("Someone said **Mike**, and **Mia** answered", text)
+        self.assertIn("1 more after this", text)
+        self.assertIn("2 quick questions", waiting_text(2))
+        self.assertNotIn("Mike", waiting_text(1))  # the screen says how many, never who

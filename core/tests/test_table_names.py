@@ -1,0 +1,127 @@
+"""Learning who answers to which name from "a name, then an answer" (#1188): pure rules,
+no Discord and no database. The names are made up."""
+
+from __future__ import annotations
+
+import unittest
+
+from dmbot.memory.table_names import NameThenAnswer, called_names, is_answer
+
+DM, MIA, BEN = 1, 2, 3
+
+
+def run(*lines: tuple[int, int, str], agreed: set[int] | None = None) -> NameThenAnswer:
+    tracker = NameThenAnswer()
+    for speaker, at_ms, text in lines:
+        tracker.feed(speaker, at_ms, text, consented=agreed is None or speaker in agreed)
+    return tracker
+
+
+class Names(unittest.TestCase):
+    def test_a_name_at_the_start_or_end_next_to_a_comma(self) -> None:
+        self.assertEqual(called_names("Mike, what do you do?"), ["Mike"])
+        self.assertEqual(called_names("Okay, your turn, Cerric."), ["Cerric"])
+        self.assertEqual(called_names("Mike Stone, you're up"), ["Mike Stone"])
+
+    def test_ordinary_openers_are_not_names(self) -> None:
+        for text in ("Okay, let's go", "So, we walk in", "Well, I think", "Yes, I do"):
+            self.assertEqual(called_names(text), [], text)
+
+    def test_the_dm_words_are_never_a_name_to_learn(self) -> None:
+        self.assertEqual(called_names("DM, can I roll?"), [])
+        self.assertEqual(called_names("Thanks, GM"), [])
+        self.assertEqual(called_names("Hey, Dungeon Master"), [])
+        self.assertEqual(called_names("Ok, Game Master"), [])
+
+    def test_answers(self) -> None:
+        for text in ("I run with my sword", "Ok, I'll do that", "sure", "Cast fireball"):
+            self.assertTrue(is_answer(text), text)
+        self.assertFalse(is_answer("The door creaks open"))
+
+
+class Pairs(unittest.TestCase):
+    TWICE = (
+        (DM, 0, "Mike, what do you do?"),
+        (MIA, 3000, "I run with my sword"),
+        (DM, 20_000, "Mike, you're up"),
+        (MIA, 22_000, "Ok, I'll do that"),
+    )
+
+    def test_twice_by_the_same_person_is_worth_asking_about(self) -> None:
+        found = run(*self.TWICE).answered()
+        self.assertEqual([(a.name, a.speaker, a.times) for a in found], [("Mike", MIA, 2)])
+
+    def test_once_is_not(self) -> None:
+        self.assertEqual(run(*self.TWICE[:2]).answered(), [])
+
+    def test_a_third_speaker_in_between_breaks_it(self) -> None:
+        tracker = run(
+            (DM, 0, "Mike, what do you do?"),
+            (BEN, 1000, "Heh"),
+            (MIA, 2000, "I run with my sword"),
+            (DM, 20_000, "Mike, you're up"),
+            (BEN, 21_000, "Hm"),
+            (MIA, 22_000, "I run"),
+        )
+        self.assertEqual(tracker.answered(), [])
+
+    def test_more_than_ten_seconds_later_is_nothing(self) -> None:
+        tracker = run(
+            (DM, 0, "Mike, what do you do?"),
+            (MIA, 10_500, "I run with my sword"),
+            (DM, 30_000, "Mike, you're up"),
+            (MIA, 41_000, "I run"),
+        )
+        self.assertEqual(tracker.answered(), [])
+
+    def test_the_same_person_answering_themselves_is_nothing(self) -> None:
+        tracker = run(
+            (DM, 0, "Mike, up"), (DM, 1000, "I think"), (DM, 5000, "Mike, up"), (DM, 6000, "I")
+        )
+        self.assertEqual(tracker.answered(), [])
+
+    def test_two_different_people_answering_never_add_up(self) -> None:
+        tracker = run(
+            (DM, 0, "Mike, what do you do?"),
+            (MIA, 1000, "I run"),
+            (DM, 20_000, "Mike, what do you do?"),
+            (BEN, 21_000, "I run"),
+        )
+        self.assertEqual(tracker.answered(), [])
+
+    def test_someone_who_did_not_agree_is_never_read_and_breaks_the_pair(self) -> None:
+        tracker = run(*self.TWICE, agreed={DM})
+        self.assertEqual(tracker.answered(), [])
+        tracker = run(
+            (DM, 0, "Mike, what do you do?"),
+            (BEN, 500, "hmm"),
+            (MIA, 1000, "I run"),
+            agreed={DM, MIA},
+        )
+        self.assertEqual(tracker.answered(minimum=1), [])
+
+    def test_stop_recording_me_drops_their_part(self) -> None:
+        tracker = run(*self.TWICE)
+        tracker.drop_speaker(MIA)
+        self.assertEqual(tracker.answered(), [])
+        self.assertEqual(
+            [a.speaker for a in run(*self.TWICE).answered()], [MIA]
+        )  # and the DM's side alone never named anyone
+
+    def test_a_name_only_a_stopped_speaker_answered_is_forgotten_entirely(self) -> None:
+        tracker = run(*self.TWICE)
+        tracker.drop_speaker(MIA)
+        self.assertEqual(tracker._display, {})
+
+    def test_a_line_calling_two_names_counts_both(self) -> None:
+        tracker = run(
+            (DM, 0, "Mike, you are up, Vera"),
+            (MIA, 1000, "I go"),
+            (DM, 20_000, "Mike, you are up, Vera"),
+            (MIA, 21_000, "I go"),
+        )
+        self.assertEqual({a.name for a in tracker.answered()}, {"Mike", "Vera"})
+
+
+if __name__ == "__main__":
+    unittest.main()

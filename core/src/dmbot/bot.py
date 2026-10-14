@@ -155,6 +155,7 @@ from dmbot.memory.sheet_refresh import refresh as refresh_sheets
 from dmbot.memory.sheet_store import CharacterSheet, SheetStore
 from dmbot.memory.sheet_watch import SheetWatch
 from dmbot.memory.store import MemoryStore
+from dmbot.memory.table_names import NameThenAnswer
 from dmbot.retention import RetentionJob
 from dmbot.rules import house_voice
 from dmbot.rules import index as rules_index
@@ -205,6 +206,7 @@ from dmbot.ui.name_card import UndoButton
 from dmbot.ui.name_lists import UndoListButton
 from dmbot.ui.names import ReviewButton, after_session_text, review_view
 from dmbot.ui.optional_rules import dmbot_optional_rules  # noqa: F401 (registers it)
+from dmbot.ui.people_review import PeopleReviewButton, people_review_view, waiting_text
 from dmbot.ui.rule_lookup import dmbot_rule  # noqa: F401 (registers it)
 from dmbot.ui.sheets import MySheetButton, OpenCardButton
 from dmbot.ui.transcripts import (
@@ -241,6 +243,7 @@ TRANSCRIPT_PARALLEL = 10  # campaigns posting at once (one rate-limited channel 
 STOP_DRAIN_TIMEOUT_S = 120.0  # at stop, wait this long for the last words to be written
 FINAL_FLUSH_TIMEOUT_S = 15.0  # at stop or shutdown, give up on posting after this
 IDLE_SWEEP_INTERVAL_S = 1
+FORGET_TIMEOUT_S = 10  # removing learned names must not hold up stopping a recording
 METER_INTERVAL_S = 60  # how often listening minutes are written to the hours meter (#437)
 METER_FINAL_TRIES = 3  # at a stop: the last minutes are written nowhere else
 METER_FINAL_RETRY_S = 2
@@ -431,6 +434,9 @@ class Table:
     # What was heard this session (speaker, text as heard), for the after-session scan
     # that suggests new names to the DM (#126). Kept in memory only, capped.
     heard: list[tuple[int, str]] = field(default_factory=list)
+    # Who answered to which name this session ("a name, then an answer", #1188); in memory
+    # only, and nothing a speaker said stays once they stop being recorded.
+    name_answers: NameThenAnswer = field(default_factory=NameThenAnswer)
     # How many lines of each speaker named each known name, kept at the end of the
     # session so hints can rank names by how often and when they come up. Bounded by
     # names times speakers.
@@ -775,7 +781,7 @@ class DMBot(commands.AutoShardedBot):
         # Consent buttons in private messages, likewise.
         self.add_dynamic_items(*CONSENT_BUTTONS)
         # "Check new names" on the DM screen after a session.
-        self.add_dynamic_items(ReviewButton)
+        self.add_dynamic_items(ReviewButton, PeopleReviewButton)
         self.add_dynamic_items(  # #965, #1117
             clock_screen.ClockButton, clock_screen.ClockUndoButton, clock_screen.SuggestionButton
         )
@@ -973,6 +979,7 @@ class DMBot(commands.AutoShardedBot):
             table.capture_log.forget(user_id)  # their lines and counts go now (#699)
             table.transcript.drop_speaker(user_id)  # words not posted yet are discarded
             table.heard = [h for h in table.heard if h[0] != user_id]  # and never scanned
+            table.name_answers.drop_speaker(user_id)  # nor part of who answers to what
             table.topics.drop_speaker(user_id)  # and never sent to the off-topic filter
             table.held = {k: v for k, v in table.held.items() if k[0] != user_id}
             table.unsaved.drop_speaker(user_id)  # and never saved
@@ -1155,6 +1162,13 @@ class DMBot(commands.AutoShardedBot):
         log.info("Consent withdrawn: user %s", user_id)
         with contextlib.suppress(Exception):
             await self.push_allowlist(guild_id)
+        if self.memory is not None:  # the names learned for them go too (#1188)
+            try:
+                async with asyncio.timeout(FORGET_TIMEOUT_S):
+                    await self.memory.forget_learned(guild_id, user_id)
+            except Exception:
+                # Never blocks stopping; the learned names are only waiting questions.
+                log.exception("Could not remove the names learned for a stopped speaker")
         try:
             return await self.consent.revoke(guild_id, user_id)
         finally:
@@ -1621,6 +1635,7 @@ class DMBot(commands.AutoShardedBot):
             ("summary", lambda: self.post_session_summary(table, ended_at, caught_up, sent)),
             ("names heard", lambda: self.keep_heard_names(table)),
             ("name scan", lambda: self.suggest_names(table)),
+            ("who is who", lambda: self.learn_people(table)),
             ("people check", lambda: self.check_people(table)),
             ("stale flags", lambda: self.close_stale_flags(table)),
             ("old undo history", lambda: self.prune_old_changes(table)),
@@ -2946,6 +2961,9 @@ class DMBot(commands.AutoShardedBot):
         if text:
             table.recent.add(utterance.user_id, str(cleaned or text), time.monotonic())
             if self.tables.get(table.guild_id) is table:
+                table.name_answers.feed(
+                    utterance.user_id, utterance.start_ms, str(cleaned or text), consented=True
+                )
                 # Only the DM's own lines can start it; consent was just re-checked. Lines
                 # the Cleaner tags as in character are not told apart yet (in_character).
                 self.sidebar.ask_at_table(table, utterance.user_id, str(cleaned or text))
@@ -4822,6 +4840,32 @@ class DMBot(commands.AutoShardedBot):
             if self.lookup is not None:
                 self.lookup.drop([cid])
             log.info("Kept how often %d name(s) were said", kept)
+
+    async def learn_people(self, table: Table) -> None:
+        """After a session: turn the names people answered to at least twice into waiting
+        questions for the DM (#1188). Only people who still agree; the questions are saved
+        as waiting, and the DM screen only says how many."""
+        answers = table.name_answers.answered()
+        table.name_answers = NameThenAnswer()  # the session is over; free it
+        if self.memory is None or table.campaign_id is None or not answers:
+            return
+        gid, cid = table.guild_id, table.campaign_id
+        with log_context(guild_id=gid, campaign_id=cid):
+            agreed = await self.consent.consenting(gid)
+            rows = [(a.name, a.speaker, a.times) for a in answers if a.speaker in agreed]
+            if not rows:
+                return
+            written = await self.memory.learn_people(gid, cid, rows, limit=MAX_SUGGESTIONS)
+            # Again: someone may have stopped recording while this was written.
+            agreed = await self.consent.consenting(gid)
+            for gone in {s.user_id for s in written.value if s.user_id not in agreed}:
+                await self.memory.forget_learned(gid, gone)
+            kept = [s for s in written.value if s.user_id in agreed]
+            log.info("Who is who: %d question(s) from this session", len(kept))
+            if kept:
+                await self.post(
+                    table.screen_channel_id, waiting_text(len(kept)), view=people_review_view(cid)
+                )
 
     async def check_people(self, table: Table) -> None:
         """After a session: every player has their entry and link to a character, and a
