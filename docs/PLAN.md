@@ -636,11 +636,12 @@ never does.
     at their table, it goes into **their own** house rules, which win over the set. The publisher never sees
     it and is never affected. **"Suggest it to <set>"** sends it to the publisher's DMs as a suggestion
     ([Accept] [No thanks]); nothing changes until they accept.
-  - **The document of record can be edited outside DMbot** by anyone with edit access, and DMbot can't see
-    who. So a change DMbot finds in a shared house-rules document (at any following campaign's session
-    start) is **held as pending** and shown to the publisher's DMs as a diff ([See changes] [Accept] [Not
-    these]). Until they accept, every campaign keeps the last accepted version; followers see "New changes
-    are waiting for the <set> DM."
+  - **The document of record can be edited outside DMbot** by anyone with edit access. Its changes reach the
+    publisher's **own** house rules through the usual document sync (the DM confirms them), and reach
+    followers only when the publisher presses **🔄 Publish my changes** (Supervisor, 2026-10-14, #1259; no
+    separate pending-changes screen and no write-back to followers' files).
+  - **Suggestions** (#1259): the publisher's note says "A table that uses <set> house rules suggests: …" and
+    never names the other campaign, server or DM; Accept makes the next version.
 - **Updates reach followers at their next session start, never mid-game.** DMbot takes the update then
   (Follow, the default) and posts a note on the DM screen: "The Frostmaiden house rules were updated to v4:
   2 rules. [See changes] [Pick changes] [Undo]".
