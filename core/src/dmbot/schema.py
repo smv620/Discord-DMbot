@@ -656,6 +656,42 @@ PEOPLE = """
         WHERE type = 'person' AND status IN ('proposed', 'confirmed');
     """
 
+DEFINITIONS = """
+    -- The official relationships, traceable (#1189). The definitions the code ships are kept
+    -- here by version, written at every start (a key and version already here are never
+    -- rewritten), so a fact can say which definition it was written under. Shared by every
+    -- campaign and holding no campaign data: no guild_id, so no row-level security (like
+    -- schema_migrations).
+    CREATE TABLE ontology_predicate_versions (
+        key             TEXT NOT NULL CHECK (key ~ '^[a-z][a-z0-9_]{1,39}$'),
+        version         INTEGER NOT NULL CHECK (version >= 1),
+        label           TEXT NOT NULL,
+        inverse_label   TEXT NOT NULL,
+        description     TEXT NOT NULL,
+        covers          TEXT[] NOT NULL,
+        not_this        TEXT[] NOT NULL,
+        examples        TEXT[] NOT NULL,
+        synonyms        TEXT[] NOT NULL,
+        subject_types   TEXT[] NOT NULL,
+        object_types    TEXT[] NOT NULL,
+        is_symmetric    BOOLEAN NOT NULL,
+        created_at      BIGINT NOT NULL,
+        PRIMARY KEY (key, version)
+    );
+    -- A campaign's own relationships carry the same fields, with a version.
+    ALTER TABLE memory_predicates
+        ADD COLUMN covers        TEXT[] NOT NULL DEFAULT '{}',
+        ADD COLUMN not_this      TEXT[] NOT NULL DEFAULT '{}',
+        ADD COLUMN inverse_label TEXT NOT NULL DEFAULT '',
+        ADD COLUMN synonyms      TEXT[] NOT NULL DEFAULT '{}',
+        ADD COLUMN version       INTEGER NOT NULL DEFAULT 1 CHECK (version >= 1);
+    -- Every fact says which version of its relationship's definition it was written under.
+    -- Facts from before were all written under version 1: the column's default gives them
+    -- that without an UPDATE, so no row-level security has to be opened for it.
+    ALTER TABLE memory_relations
+        ADD COLUMN definition_version INTEGER NOT NULL DEFAULT 1 CHECK (definition_version >= 1);
+    """
+
 RULE_SETS = (
     f"""
     -- Shared rulesets (#1190; docs/PLAN.md, "Shared rulesets"): the one place rules cross from
@@ -801,6 +837,7 @@ RULE_SETS = (
     REVOKE ALL ON FUNCTION dmbot_set_by_code(TEXT) FROM PUBLIC;
 """
 )
+
 
 SHARED_CONFIRMATIONS = f"""
     -- Who confirmed the right to use shared material, and when (CLAUDE.md, IP rule:
@@ -2254,6 +2291,7 @@ MIGRATIONS: tuple[Migration, ...] = (
     ("0056_dmbchat_channel", DMBCHAT_CHANNEL),
     ("0057_table_questions", TABLE_QUESTIONS),
     ("0058_people", PEOPLE),
+    ("0059_definitions", DEFINITIONS),
     ("0061_rule_sets", RULE_SETS),
 )
 
@@ -2309,4 +2347,4 @@ USER_ISOLATED_TABLES = (
 WRITE_ONLY_TABLES = ("feedback",)
 # Hold only server IDs (see the rules at the top of this file).
 ROUTING_TABLES = ("live_session_guilds", "campaign_guilds")
-UNSCOPED_TABLES = ("schema_migrations", *ROUTING_TABLES)
+UNSCOPED_TABLES = ("schema_migrations", "ontology_predicate_versions", *ROUTING_TABLES)
