@@ -2382,7 +2382,7 @@ RULE_SUGGESTIONS = (
         set_id      TEXT NOT NULL,
         rule        TEXT NOT NULL CHECK (char_length(rule) BETWEEN 1 AND 500),
         instead     TEXT CHECK (instead IS NULL OR char_length(instead) BETWEEN 1 AND 500),
-        status      TEXT NOT NULL CHECK (status IN ('open', 'accepted', 'declined')),
+        status      TEXT NOT NULL CHECK (status IN ('open', 'accepted', 'declined', 'present')),
         created_at  BIGINT NOT NULL,
         resolved_at BIGINT,
         resolved_by BIGINT,

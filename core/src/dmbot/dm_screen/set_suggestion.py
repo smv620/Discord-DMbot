@@ -32,6 +32,7 @@ ONLY_DMS = "Only this campaign's DMs can answer this."
 GONE = "That campaign isn't here any more."
 COULDNT = "That didn't work, and nothing changed. Press the button again in a moment."
 ANSWERED = "Someone already answered this suggestion."
+EXPIRED = "That suggestion is too old to add. The table was told it can send it again."
 TEXT_MAX = 1800
 SHOWN_MAX = 120  # a rule quoted in a one-line message
 
@@ -123,6 +124,9 @@ async def press(
         await _tell(interaction, ONLY_DMS)
         return
     asked = await sets.suggestion(campaign.guild_id, campaign.id, suggestion_id)
+    if asked is not None and asked.status == "expired":
+        await _tell(interaction, EXPIRED)
+        return
     if asked is None or asked.status != "open":
         await _tell(interaction, ANSWERED)
         return
@@ -183,18 +187,15 @@ async def _accept(
     if refused is not None:
         await _tell(interaction, refused)
         return
-    shared = await sets.current_content(campaign.guild_id, campaign.id)
-    if shared is None:
-        await _tell(interaction, rule_sets.NOT_SHARED)
-        return
     try:
+        # No expected version: the store adds the rule to whichever version is newest under its
+        # lock, so a publish in between is never overwritten, and the DM saw one rule, not a set.
         made = await sets.accept_suggestion(
             campaign.guild_id,
             campaign.id,
             interaction.user.id,
             asked.id,
             plan_ok=True,  # checked just above with plan_gate
-            expected_version=shared[0].version,  # and again under the lock, in the store
         )
     except HouseRuleError as exc:
         await _tell(interaction, str(exc))
@@ -271,6 +272,10 @@ def answer_line(sent: rule_sets.Sent) -> str:
         words = words[: SHOWN_MAX - 1] + "…"
     if sent.status == "accepted":
         return f"💡 The **{name}** DM added your suggestion (now version {sent.version}): {words}"
+    if sent.status == "present":
+        return f"💡 The **{name}** DM already had that rule, so nothing was added: {words}"
+    if sent.status == "gone":
+        return f"💡 **{name}** isn't being shared any more, so your suggestion wasn't used: {words}"
     if sent.status == "expired":
         return f"💡 No answer yet from the **{name}** DM. You can send it again: {words}"
     return f"💡 The **{name}** DM said no thanks to your suggestion: {words}"

@@ -122,7 +122,7 @@ class TheNote(unittest.IsolatedAsyncioTestCase):
         await set_suggestion.press(it, CAMPAIGN, "accept", SID)
         kwargs = s.accept_suggestion.await_args.kwargs
         self.assertTrue(kwargs["plan_ok"])
-        self.assertEqual(kwargs["expected_version"], 4)
+        self.assertNotIn("expected_version", kwargs)  # the store adds to the newest under its lock
         self.assertIn("next session start", it.sent[0][0])
         closed = it.message.edit.await_args.kwargs["content"]
         self.assertIn("version 5", closed)
@@ -152,6 +152,14 @@ class TheNote(unittest.IsolatedAsyncioTestCase):
         await set_suggestion.press(it, CAMPAIGN, "accept", SID)
         self.assertEqual(it.sent[0][0], rule_sets.CHANGED_AGAIN)
         it.message.edit.assert_not_called()
+
+    async def test_an_expired_suggestion_cannot_be_pressed(self) -> None:
+        old = rule_sets.Suggestion(SID, "s", "Old", None, "expired", 1)
+        s = store(suggestion=AsyncMock(return_value=old))
+        it = interaction(DM, bot_with(s))
+        await set_suggestion.press(it, CAMPAIGN, "accept", SID)
+        self.assertEqual(it.sent[0][0], set_suggestion.EXPIRED)
+        s.accept_suggestion.assert_not_called()
 
     async def test_no_thanks_closes_it_and_changes_nothing_else(self) -> None:
         s = store()
@@ -205,6 +213,15 @@ class TheSendersLine(unittest.IsolatedAsyncioTestCase):
         )
         self.assertIn("added your suggestion (now version 6)", used)
         self.assertIn("said no thanks to your suggestion", no)
+
+    def test_already_in_the_set_and_set_gone_have_their_own_lines(self) -> None:
+        present = set_suggestion.answer_line(
+            rule_sets.Sent(SID, "Red Table", "Flank", "present", None)
+        )
+        gone = set_suggestion.answer_line(rule_sets.Sent(SID, "Red Table", "Flank", "gone", None))
+        self.assertIn("already had that rule", present)
+        self.assertIn("isn't being shared any more", gone)
+        self.assertNotIn("no thanks", present + gone)
 
     async def test_each_answer_is_told_once_and_open_ones_wait(self) -> None:
         sent = [
@@ -262,7 +279,7 @@ class TheButtons(unittest.IsolatedAsyncioTestCase):
         bot = bot_with(s)
         it = interaction(DM, bot)
         await house_rules.ConfirmSuggest(campaign(), rule(1, "Mine"), 0, "Red Table")._yes(it)
-        s.suggest.assert_awaited_once_with(1, CAMPAIGN, DM, 1)
+        s.suggest.assert_awaited_once_with(1, CAMPAIGN, DM, 1, 1)  # the version the DM was shown
         await asyncio.gather(*bot.tasks)
         bot.post_message.assert_awaited_once()
         refused = store(
