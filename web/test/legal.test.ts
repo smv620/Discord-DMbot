@@ -223,9 +223,9 @@ describe("the facts #433 asks for", () => {
   it("says a campaign whose owner's Discord account is gone can be taken on, in terms and privacy (#1220)", () => {
     for (const name of ["terms", "privacy"]) {
       const body = text(doc(name).querySelector("main"));
-      expect(body, name).toContain("If the owner's Discord account is gone, or they have");
+      expect(body, name).toContain("If the owner's Discord account is gone, or the owner has");
       expect(body, name).toContain("out of the server for 7 days");
-      expect(body, name).toContain("button to take it on");
+      expect(body, name).toContain("button to take the campaign on. Only a game master who presses it takes over.");
     }
   });
 
