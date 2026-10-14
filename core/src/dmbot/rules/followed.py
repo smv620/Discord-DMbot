@@ -84,4 +84,9 @@ async def followed_rules(
 
 
 def own_first(own: Sequence[HouseRule], followed: Sequence[HouseRule]) -> list[HouseRule]:
-    return [*own, *followed]
+    """The campaign's own rules, then rules merged in from a set (marked `from_set`), then the
+    set it follows: the order in which they win. A merged rule is an ordinary house rule in
+    every other way, but a rule the campaign wrote itself always comes before it."""
+    mine = [r for r in own if not getattr(r, "from_set", None)]
+    merged = [r for r in own if getattr(r, "from_set", None)]
+    return [*mine, *merged, *followed]

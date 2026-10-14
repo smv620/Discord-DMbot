@@ -84,6 +84,7 @@ from dmbot.dm_screen import (
     house_sync,
     peek_view,
     rules_cards,
+    set_update,
 )
 from dmbot.dm_screen import clock as clock_screen
 from dmbot.dm_screen import effects as timer_screen
@@ -810,6 +811,7 @@ class DMBot(commands.AutoShardedBot):
             NameQuestionButton, NameAnswerUndoButton, FixUndoButton, SpeakerQuestionButton
         )
         self.add_dynamic_items(PutBackButton)  # lines left out as off-topic (#677)
+        self.add_dynamic_items(set_update.SetUpdateButton)  # shared rules changed (#1191)
         self.add_dynamic_items(house_sync.HouseSyncButton)  # the house-rules file (#969)
         self.add_dynamic_items(rules_cards.RulesCardButton)  # rules cards from the table (#931)
         self.add_dynamic_items(house_voice_screen.HouseVoiceButton)  # house rules said aloud (#953)
@@ -2276,6 +2278,7 @@ class DMBot(commands.AutoShardedBot):
         if dmbchat_problem:
             await self.post(screen_id, dmbchat_problem)
         self._check_house_file(campaign, screen_id)
+        self._track(set_update.check_update(self, campaign, screen_id), "shared-rules-update")
         transcript_line = (
             f"📜 Transcript (anyone in the server can read it): <#{transcript_id}>\n"
             if transcript_id
