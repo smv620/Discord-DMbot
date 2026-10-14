@@ -299,8 +299,8 @@ def _computed_totals(data: Mapping[str, Any]) -> dict[int, int]:
             -(-level // divisor) if divisor == 2 else level // divisor
             for _, level, divisor, _ in casters
         )
-        row = _FULL_CASTER[min(effective, LEVEL_MAX)]
-        return {i + 1: n for i, n in enumerate(row)}
+        table = _FULL_CASTER[min(effective, LEVEL_MAX)]
+        return {i + 1: n for i, n in enumerate(table)}
     return {}
 
 
