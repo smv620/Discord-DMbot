@@ -7,7 +7,14 @@ import { join, relative } from "node:path";
 import { effectiveApiBase, htmlFiles, inlineScriptHashes, mockLeaks, TURNSTILE_ORIGIN } from "./csp.mjs";
 
 // pricing.html: the greeting for a personal link (#1231), the only script on that page.
-const SCRIPTED = new Set(["account.html", "hello.html", "admin.html", "pricing.html"]);
+// unsubscribe.html: an offer email's unsubscribe link (#1229).
+const SCRIPTED = new Set([
+  "account.html",
+  "hello.html",
+  "admin.html",
+  "pricing.html",
+  "unsubscribe.html",
+]);
 const dist = process.argv[2] ?? new URL("../dist/", import.meta.url).pathname;
 const policy = readFileSync(join(dist, "_headers"), "utf8").match(
   /^\s*Content-Security-Policy:[^\n]*?script-src ([^;\n]*);/m,
@@ -46,4 +53,4 @@ if (problems.length > 0) {
   console.error(problems.join("\n"));
   process.exit(1);
 }
-console.log("Every inline script is allowed by its hash; only /account, /hello, /admin and /pricing have scripts.");
+console.log("Every inline script is allowed by its hash; only /account, /hello, /admin, /pricing and /unsubscribe have scripts.");
