@@ -1,5 +1,11 @@
 // The pricing page (#432): the owner's numbers, the words built from them, and the page.
+import { readdirSync, readFileSync, statSync } from "node:fs";
+import { join } from "node:path";
+import { fileURLToPath } from "node:url";
+
+import { getContainerRenderer } from "@astrojs/preact/container-renderer";
 import { experimental_AstroContainer as AstroContainer } from "astro/container";
+import { loadRenderers } from "astro:container";
 import { beforeAll, describe, expect, it } from "vitest";
 
 import { parsePage } from "./dom";
@@ -38,7 +44,6 @@ describe("the owner's plan facts (#432, #437)", () => {
       ["Pro", null, 217, 50, 20],
     ]);
     expect([extraHours.priceCents, extraHours.hours]).toEqual([499, 10]);
-    expect(byId.table.firstMonthAfterTrialCents).toBe(199);
     expect(tryIt.trialDays).toBe(30);
   });
 
@@ -88,7 +93,8 @@ describe("the plan file's shape", () => {
     expect(Object.keys(facts.plans).sort()).toEqual([...facts.order].sort());
     for (const id of facts.order) {
       const plan = facts.plans[id as keyof typeof facts.plans];
-      expect(Object.keys(plan).sort(), id).toEqual(
+      // `firstMonthAfterTrialCents` may be in the file until #1228 takes it out; the site ignores it.
+      expect(Object.keys(plan).filter((k) => k !== "firstMonthAfterTrialCents").sort(), id).toEqual(
         [
           "name",
           "priceCents",
@@ -98,7 +104,6 @@ describe("the plan file's shape", () => {
           "trialDays",
           "backups",
           "keepAfterLastSession",
-          "firstMonthAfterTrialCents",
         ].sort(),
       );
       expect(Number.isInteger(plan.hoursPerMonth) && plan.hoursPerMonth > 0, id).toBe(true);
@@ -114,7 +119,6 @@ describe("the plan file's shape", () => {
       expect(whole(p.campaigns) && p.campaigns > 0, `${id} campaigns`).toBe(true);
       expect(wholeOrNull(p.trialDays), `${id} trialDays`).toBe(true);
       expect(wholeOrNull(p.aboutHoursPerWeek), `${id} aboutHoursPerWeek`).toBe(true);
-      expect(wholeOrNull(p.firstMonthAfterTrialCents), `${id} firstMonth`).toBe(true);
       expect(typeof p.backups, `${id} backups`).toBe("boolean");
       expect(whole(p.keepAfterLastSession.count), `${id} keep`).toBe(true);
     }
@@ -137,7 +141,20 @@ describe("the words match the numbers", () => {
 
   it("says the owner's Try It and Table notes", () => {
     expect(tryItLine).toBe("8 hours a month, 1 campaign. Free for 30 days. No backups or downloads.");
-    expect(byId.table.note).toBe("First month $1.99 after Try It.");
+    expect(byId.table.note).toBeNull(); // no introductory price any more (2026-10-14)
+  });
+
+  it("has no $1.99 first month anywhere on the site (2026-10-14)", () => {
+    const src = fileURLToPath(new URL("../src/", import.meta.url));
+    const files = (dir: string): string[] =>
+      readdirSync(dir).flatMap((name) => {
+        const full = join(dir, name);
+        return statSync(full).isDirectory() ? files(full) : [full];
+      });
+    for (const file of files(src).filter((f) => /\.(ts|tsx|astro)$/.test(f))) {
+      const source = readFileSync(file, "utf8");
+      expect(source, file).not.toMatch(/\$1\.99|first month/i);
+    }
   });
 
   it("offers no button for Pro and one for every other plan", () => {
@@ -217,7 +234,10 @@ describe("the pricing page", () => {
   const text = (el: Element): string => (el.textContent ?? "").replace(/\s+/g, " ").trim();
 
   beforeAll(async () => {
-    const container = await AstroContainer.create();
+    // The page holds the greeting island (#1231), which needs the Preact renderer.
+    const container = await AstroContainer.create({
+      renderers: await loadRenderers([getContainerRenderer()]),
+    });
     const html = await container.renderToString(Pricing, {
       request: new Request("https://dmbot.example/pricing"),
     });

@@ -1208,3 +1208,122 @@ describe("free access (#806)", () => {
     expect(await screen.findByText(text.planEnds("Table", "2026-10-14"))).toBeTruthy();
   });
 });
+
+describe("sign in by email, DMbot ID, experience points and move code (#1231)", () => {
+  it("signed out: an email form that always answers in the same words", async () => {
+    const api = mockApi("signed-out");
+    render(<Account api={api} go={vi.fn()} />);
+    fireEvent.input(await screen.findByLabelText(text.emailLabel), {
+      target: { value: "  belleros@example.com " },
+    });
+    fireEvent.click(screen.getByRole("button", { name: text.emailButton }));
+    expect(await screen.findByText(text.emailAnswer)).toBeTruthy();
+    expect(api.calls).toContain("email-request:belleros@example.com"); // trimmed
+  });
+
+  it("signed out: a blank email is asked for, and nothing is sent", async () => {
+    const api = mockApi("signed-out");
+    render(<Account api={api} go={vi.fn()} />);
+    fireEvent.click(await screen.findByRole("button", { name: text.emailButton }));
+    expect((await screen.findByRole("alert")).textContent).toBe(text.emailMissing);
+    expect(api.calls.some((c) => c.startsWith("email-request"))).toBe(false);
+  });
+
+  it("signed out: too many tries says to wait", async () => {
+    const api = mockApi("signed-out");
+    api.emailSignInRequest = async () => {
+      throw new ApiError("slow-down");
+    };
+    render(<Account api={api} go={vi.fn()} />);
+    fireEvent.input(await screen.findByLabelText(text.emailLabel), {
+      target: { value: "a@example.com" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: text.emailButton }));
+    expect((await screen.findByRole("alert")).textContent).toBe(text.emailWait);
+  });
+
+  it("no email form from an API older than this", async () => {
+    const api = mockApi("signed-out");
+    delete api.emailSignInRequest;
+    render(<Account api={api} go={vi.fn()} />);
+    await screen.findByRole("link", { name: text.signIn });
+    expect(screen.queryByLabelText(text.emailLabel)).toBeNull();
+  });
+
+  it("an emailed link in the address signs in once and is taken out of the address bar", async () => {
+    window.history.replaceState(null, "", "/account#email-link=good-link");
+    const api = mockApi("signed-out");
+    render(<Account api={api} go={vi.fn()} hash="#email-link=good-link" />);
+    expect(await screen.findByText(text.greeting(scenarioMe("table")?.user.name ?? ""))).toBeTruthy();
+    expect(api.calls).toContain("email-use:good-link");
+    expect(window.location.hash).toBe(""); // not left to a reload or a screenshot
+  });
+
+  it("a wrong or used link says so, stays signed out, and offers a new one", async () => {
+    const api = mockApi("signed-out");
+    render(<Account api={api} go={vi.fn()} hash="#email-link=old-link" />);
+    expect((await screen.findByRole("alert")).textContent).toBe(text.emailLinkBad);
+    expect(screen.getByRole("button", { name: text.emailButton })).toBeTruthy();
+  });
+
+  it("anything else in the address is ignored", async () => {
+    const api = mockApi("signed-out");
+    render(<Account api={api} go={vi.fn()} hash="#something-else" />);
+    await screen.findByRole("link", { name: text.signIn });
+    expect(api.calls.some((c) => c.startsWith("email-use"))).toBe(false);
+  });
+
+  it("shows the DMbot ID and the experience points", async () => {
+    show("table");
+    const section = (await screen.findByRole("heading", { name: text.idHeading })).closest(
+      "section",
+    ) as HTMLElement;
+    const me = scenarioMe("table");
+    expect(within(section).getByText(text.idLine(me?.dmbotId ?? ""))).toBeTruthy();
+    expect(within(section).getByText(text.pointsLine(me?.experiencePoints ?? 0))).toBeTruthy();
+  });
+
+  it("no ID section from an API older than this", async () => {
+    const api = mockApi("table");
+    const original = api.me;
+    api.me = async () => {
+      const me = await original();
+      if (!me) return me;
+      const { dmbotId: _id, experiencePoints: _points, canMove: _move, ...rest } = me;
+      return rest;
+    };
+    render(<Account api={api} go={vi.fn()} />);
+    await screen.findByText(text.greeting("Belleros"));
+    expect(screen.queryByRole("heading", { name: text.idHeading })).toBeNull();
+    expect(screen.queryByRole("button", { name: text.moveButton })).toBeNull();
+  });
+
+  it("a paid plan can ask for a move code; the steps show only after it was sent", async () => {
+    const { api } = show("table");
+    expect(await screen.findByText(text.moveText)).toBeTruthy();
+    expect(screen.queryByText(text.moveSent)).toBeNull(); // no steps before the code exists
+    fireEvent.click(screen.getByRole("button", { name: text.moveButton }));
+    expect(await screen.findByText(text.moveSent)).toBeTruthy();
+    expect(api.calls).toContain("move-code");
+  });
+
+  it("the move advice names Hand over for giving campaigns to someone else", async () => {
+    show("table");
+    expect((await screen.findByText(text.moveText)).textContent).toContain("Hand over");
+  });
+
+  it("a move code that isn't open yet says so", async () => {
+    const { api } = show("table");
+    api.getMoveCode = async () => {
+      throw new ApiError("not-ready");
+    };
+    fireEvent.click(await screen.findByRole("button", { name: text.moveButton }));
+    expect(await screen.findByText(text.moveNotReady)).toBeTruthy();
+  });
+
+  it("no move code for Try It or no plan", async () => {
+    show("try-it");
+    await screen.findByText(text.greeting("Belleros"));
+    expect(screen.queryByRole("button", { name: text.moveButton })).toBeNull();
+  });
+});

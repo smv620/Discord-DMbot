@@ -1,12 +1,13 @@
 // After `npm run build`: every inline script in dist/ must be allowed by its hash in
 // dist/_headers (or the browser blocks it and the page stops working), and only /account
-// /hello (its forms, #665) and /admin (#772) may have scripts at all. Usage: node scripts/check-csp.mjs [dist-dir]
+// /hello (its forms, #665), /admin (#772) and /pricing (a personal link's greeting, #1231) may have scripts at all. Usage: node scripts/check-csp.mjs [dist-dir]
 import { readFileSync } from "node:fs";
 import { join, relative } from "node:path";
 
 import { effectiveApiBase, htmlFiles, inlineScriptHashes, mockLeaks, TURNSTILE_ORIGIN } from "./csp.mjs";
 
-const SCRIPTED = new Set(["account.html", "hello.html", "admin.html"]);
+// pricing.html: the greeting for a personal link (#1231), the only script on that page.
+const SCRIPTED = new Set(["account.html", "hello.html", "admin.html", "pricing.html"]);
 const dist = process.argv[2] ?? new URL("../dist/", import.meta.url).pathname;
 const policy = readFileSync(join(dist, "_headers"), "utf8").match(
   /^\s*Content-Security-Policy:[^\n]*?script-src ([^;\n]*);/m,
@@ -45,4 +46,4 @@ if (problems.length > 0) {
   console.error(problems.join("\n"));
   process.exit(1);
 }
-console.log("Every inline script is allowed by its hash; only /account, /hello and /admin have scripts.");
+console.log("Every inline script is allowed by its hash; only /account, /hello, /admin and /pricing have scripts.");

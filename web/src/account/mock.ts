@@ -153,7 +153,16 @@ export const recording: RecordingEntry[] = [
 ];
 
 export function scenarioMe(scenario: Scenario): Me | null {
-  const base = { user, campaigns, servers, recording, offers: { incoming: [], outgoing: [] } };
+  const base = {
+    user,
+    campaigns,
+    servers,
+    recording,
+    dmbotId: "1P0Z4F6N2K9",
+    experiencePoints: 1245,
+    canMove: false,
+    offers: { incoming: [], outgoing: [] },
+  };
   switch (scenario) {
     case "signed-out":
     case "down":
@@ -176,6 +185,7 @@ export function scenarioMe(scenario: Scenario): Me | null {
     case "table":
       return {
         ...base,
+        canMove: true,
         plan: {
           id: "table",
           status: "active",
@@ -270,6 +280,18 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
     async signOut() {
       calls.push("signOut");
       me = null;
+    },
+    async emailSignInRequest(email) {
+      calls.push(`email-request:${email}`);
+    },
+    async emailSignInUse(token) {
+      calls.push(`email-use:${token}`);
+      if (token !== "good-link") throw new ApiError("bad-link");
+      me = scenarioMe("table");
+    },
+    async getMoveCode() {
+      calls.push("move-code");
+      signedIn();
     },
     async startTryIt() {
       calls.push("startTryIt");

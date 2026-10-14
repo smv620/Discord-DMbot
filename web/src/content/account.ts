@@ -67,6 +67,19 @@ export const text = {
   signInFailed: "You didn't finish signing in. Tap Sign in with Discord to try again.",
   tooManyTries: "Too many tries. Wait about 10 minutes, then tap Sign in with Discord again.",
 
+  // Sign in by an emailed link (#1231)
+  emailHeading: "Or get a sign-in link by email",
+  emailLabel: "Your email address",
+  emailButton: "Email me a sign-in link",
+  emailSending: "One moment…",
+  emailNote:
+    "The link works once and ends after 15 minutes. Adding DMbot to a server needs Discord, so for that, sign in with Discord.",
+  emailMissing: "Type your email address first.",
+  emailAnswer: "If that email belongs to a DMbot account, we've sent a link",
+  emailWait: "Too many tries. Wait about 10 minutes, then try again.",
+  emailLinkBad:
+    "That sign-in link didn't work. It may have been used already, or it ended. Ask for a new one below.",
+
   // Errors
   down: "DMbot isn't answering right now. Tap Try again in a minute.",
   tryAgain: "Try again",
@@ -258,6 +271,21 @@ export const text = {
   stopKeep: "Keep recording",
   stoppedRecording: (server: string): string =>
     `Stopped. DMbot is not recording you in ${server}. To start again, press ⚙️ Menu in DMbot's private message in Discord.`,
+
+  // My DMbot ID and experience points, and moving to a new Discord account (#1231)
+  idHeading: "Your DMbot ID",
+  idLine: (id: string): string => `Your DMbot ID: ${id}`,
+  idNote: "It is your account number, and it shows on your invoices. It is not a password.",
+  pointsLine: (n: number): string => `Experience points: ${n}`,
+  pointsNote: "The minutes DMbot has run for you, all time.",
+  moveHeading: "Moving to a new Discord account?",
+  moveText:
+    "Get a move code. We email it to your payment email. Your plan, hours and campaigns move with it. If you only want to give campaigns to another game master, use Hand over on each campaign instead: they pay with their own plan.",
+  moveButton: "Get a move code",
+  moveSent:
+    "We've emailed a move code to your payment email. It works once, for 30 minutes. On your new Discord account, type /dmbot migrate, press Import from another Discord account, and type the code. Your new account says yes to being recorded again.",
+  moveNotReady: "Moving to a new Discord account isn't open yet. Please try again soon.",
+  moveWait: "Too many tries. Wait an hour, then try again.",
 
   // Download my data (#1150)
   exportHeading: "Download my data",
