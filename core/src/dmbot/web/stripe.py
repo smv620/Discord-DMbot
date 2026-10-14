@@ -359,6 +359,7 @@ class StripeProvider:
             user_id=user_id,
             occurred_at=when,
             customer_id=_text(session.get("customer")),
+            email=_email((session.get("customer_details") or {}).get("email")),
         )
 
     def _invoice(
@@ -378,6 +379,7 @@ class StripeProvider:
             "occurred_at": when,
             "customer_id": _text(invoice.get("customer")),
             "subscription_id": subscription_id,
+            "email": _email(invoice.get("customer_email")),
         }
         if name == "invoice.payment_failed":
             return PaymentEvent(kind="payment_failed", user_id=user_id, **common)
@@ -590,6 +592,17 @@ def _price_id(line: dict[str, Any]) -> str | None:
     pricing = line.get("pricing")
     details = pricing.get("price_details") if isinstance(pricing, dict) else None
     return _text(details.get("price")) if isinstance(details, dict) else None
+
+
+def _email(value: object) -> str | None:
+    """The payer's address as Stripe gives it, or None if it is missing or not one address.
+    Kept as the account's payment email; never logged."""
+    if not isinstance(value, str):
+        return None
+    text = value.strip()
+    if not 3 <= len(text) <= 254 or text.count("@") != 1 or any(c.isspace() for c in text):
+        return None
+    return text
 
 
 def _text(value: object) -> str | None:

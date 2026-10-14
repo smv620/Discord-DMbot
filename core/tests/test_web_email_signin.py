@@ -207,6 +207,29 @@ class EmailSignIn(DatabaseTest):
         self.assertEqual([to for to, _ in self.mailer.sent], ["belleros@example.com"])
         self.assertTrue(self.mailer.sent[0][1].startswith(f"{SITE}/account#email-link="))
 
+    async def set_payment_email(self, user: DiscordUser, address: str) -> None:
+        async with self.db.user(user.id) as conn:
+            await conn.execute(
+                "UPDATE web_users SET payment_email = %s WHERE user_id = %s", (address, user.id)
+            )
+
+    async def test_the_payment_email_signs_in_too(self) -> None:
+        # The address the payment company has may differ from Discord's (#1242).
+        await self.account(ALICE)
+        await self.set_payment_email(ALICE, "pays@example.org")
+        async with self.browser() as client:
+            answer = await self.ask(client, "Pays@Example.org")
+        self.assertEqual(answer.json(), SAME_ANSWER)
+        self.assertEqual([to for to, _ in self.mailer.sent], ["pays@example.org"])
+
+    async def test_a_discord_email_that_is_anothers_payment_email_finds_neither(self) -> None:
+        await self.account(ALICE)
+        await self.account(BOB)
+        await self.set_payment_email(BOB, email_of(ALICE))
+        async with self.browser() as client:
+            await self.ask(client, email_of(ALICE))
+        self.assertEqual(self.mailer.sent, [])  # two accounts: no link to the wrong person
+
     async def test_an_address_two_accounts_share_gets_no_link(self) -> None:
         await self.account(ALICE)
         await self.account(DiscordUser(id=3003, name="Twin", email=email_of(ALICE)))

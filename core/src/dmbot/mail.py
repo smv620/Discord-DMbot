@@ -161,6 +161,14 @@ class Mailer:
             )
             return await cur.fetchone() is not None
 
+    async def already_sent(self, user_id: int, kind: str) -> bool:
+        async with self._db.unscoped() as conn:
+            cur = await conn.execute(
+                "SELECT 1 AS ok FROM sent_emails WHERE user_id = %s AND kind = %s",
+                (user_id, kind),
+            )
+            return await cur.fetchone() is not None
+
     async def send(
         self,
         *,
@@ -175,7 +183,13 @@ class Mailer:
         something that may repeat). Never raises: the result says what happened. An offer
         is refused without a postal address, to someone who unsubscribed, or when the daily
         cap is spent."""
-        if not _one_address(to) or not 0 < len(kind) <= KIND_MAX or user_id <= 0:
+        # "dm:" kinds are the private-message records the Try It jobs keep in the same table.
+        if (
+            not _one_address(to)
+            or not 0 < len(kind) <= KIND_MAX
+            or kind.startswith("dm:")
+            or user_id <= 0
+        ):
             return "no_address"
         if not self._s.configured:
             return "not_ready"
@@ -243,8 +257,8 @@ class Mailer:
         if offer:
             link = self.unsubscribe_link(dmbot_id)
             text += (
-                f"\n\n--\nYou get this because you tried DMbot. To stop emails like this, "
-                f"use this link:\n{link}\n{self._s.postal_address}"
+                f"\n\n--\nYou get this email because you tried DMbot. To stop emails like this, "
+                f"open:\n{link}\n{self._s.postal_address}"
             )
             message["List-Unsubscribe"] = f"<{link}>"
         message.set_content(text)
