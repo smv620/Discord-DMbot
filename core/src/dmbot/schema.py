@@ -2111,6 +2111,73 @@ MAIL = """
     );
     """
 
+TRIAL = """
+    -- Try It's last-day message and automatic extension (#1229; docs/PLAN.md, "Accounts").
+    --   trial_extensions   one row for each 30 days added after Try It ended, so the bot can
+    --                      tell the person at their next /dmbot start (told_at) and the next
+    --                      extension counts from this one. Ids and times only.
+    -- And two doors for the bot's daily job, which acts for no one person: it may list who is
+    -- in Try It (with the facts the rules need) and extend one person's Try It. Both are
+    -- SECURITY DEFINER, granted to the bot's role only, never the website's.
+    CREATE TABLE trial_extensions (
+        user_id     BIGINT NOT NULL CHECK (user_id > 0),
+        extended_at BIGINT NOT NULL,
+        told_at     BIGINT,
+        PRIMARY KEY (user_id, extended_at)
+    );
+    CREATE FUNCTION dmbot_trial_people(since BIGINT)
+        RETURNS TABLE (user_id BIGINT, dmbot_id TEXT, email TEXT, period_end BIGINT,
+                       minutes BIGINT, paid BOOLEAN, extensions INTEGER)
+        LANGUAGE sql STABLE SECURITY DEFINER
+        AS $fn$
+        SELECT e.user_id, u.dmbot_id, u.email, e.period_end,
+               COALESCE((SELECT sum(h.minutes) FROM owner_hours h
+                         WHERE h.owner_user_id = e.user_id), 0)::BIGINT,
+               EXISTS (SELECT 1 FROM payment_events p WHERE p.user_id = e.user_id
+                       AND (p.kind IS NULL OR p.kind = ANY(
+                            ARRAY['subscription_started', 'subscription_renewed',
+                                  'extra_hours_bought']))),
+               (SELECT count(*)::INTEGER FROM trial_extensions t WHERE t.user_id = e.user_id)
+        FROM entitlements e JOIN web_users u ON u.user_id = e.user_id
+        WHERE e.plan = 'try-it' AND e.status = 'active' AND e.period_end >= since
+    $fn$;
+    CREATE FUNCTION dmbot_extend_trial(who BIGINT, now BIGINT, days INTEGER, hours INTEGER)
+        RETURNS BOOLEAN
+        LANGUAGE plpgsql SECURITY DEFINER
+        AS $fn$
+    DECLARE
+        changed INTEGER;
+    BEGIN
+        -- Only a Try It that has ended and is still the person's plan; the hours are what is
+        -- left of Try It's 8 in all (the caller works that out), never more.
+        UPDATE entitlements
+           SET period_start = now, period_end = now + days * 86400, hours_cap = hours,
+               extra_hours = 0, plan_changed_at = now, updated_at = now
+         WHERE entitlements.user_id = who AND plan = 'try-it' AND status = 'active'
+           AND period_end <= now;
+        GET DIAGNOSTICS changed = ROW_COUNT;
+        IF changed = 0 THEN
+            RETURN FALSE;
+        END IF;
+        INSERT INTO trial_extensions (user_id, extended_at) VALUES (who, now);
+        RETURN TRUE;
+    END
+    $fn$;
+    DO $do$
+    BEGIN
+        EXECUTE format(
+            'ALTER FUNCTION dmbot_trial_people(BIGINT) SET search_path = pg_catalog, %I, pg_temp',
+            current_schema());
+        EXECUTE format(
+            'ALTER FUNCTION dmbot_extend_trial(BIGINT, BIGINT, INTEGER, INTEGER)'
+            ' SET search_path = pg_catalog, %I, pg_temp',
+            current_schema());
+    END
+    $do$;
+    REVOKE ALL ON FUNCTION dmbot_trial_people(BIGINT) FROM PUBLIC;
+    REVOKE ALL ON FUNCTION dmbot_extend_trial(BIGINT, BIGINT, INTEGER, INTEGER) FROM PUBLIC;
+    """
+
 # Numbered 0063 on purpose: 0060 to 0062 belong to pull requests still waiting to merge
 # (owner gone, shared rulesets, their updates). A migration list may have gaps.
 DMBOT_ID = """
@@ -2253,6 +2320,7 @@ MIGRATIONS: tuple[Migration, ...] = (
     ("0059_definitions", DEFINITIONS),
     ("0063_dmbot_id", DMBOT_ID),
     ("0064_mail", MAIL),
+    ("0065_trial", TRIAL),
 )
 
 # Tables that must have row-level security. A test checks every table in the schema
@@ -2308,5 +2376,6 @@ UNSCOPED_TABLES = (
     "ontology_predicate_versions",
     "sent_emails",
     "email_unsubscribed",
+    "trial_extensions",
     *ROUTING_TABLES,
 )
