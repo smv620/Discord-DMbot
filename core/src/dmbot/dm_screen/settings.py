@@ -152,10 +152,10 @@ def settings_view(campaign: Campaign, offer: HandoverOffer | None, viewer: int) 
         view.add_item(RulesCardsButton(campaign.id, campaign.rules_cards))
         view.add_item(ClockButton(campaign.id, "open"))  # the game clock (#965)
         view.add_item(HouseFileButton(campaign.id))  # the house-rules file (#969)
-        view.add_item(SharedRulesButton(campaign.id))  # shared house rules (#1190)
         view.add_item(InviteButton(campaign.id))  # the D&D Beyond invite (#1119)
         view.add_item(TableChatButton(campaign.id))  # which typed chat is read (#1118)
         view.add_item(SideInitiativeButton(campaign.id, campaign.side_initiative))  # #1127
+        view.add_item(SharedRulesButton(campaign.id))  # shared house rules (#1190)
     return view
 
 
