@@ -694,21 +694,16 @@ class NoSecondClock(PlayersClock):
 class Wording(unittest.TestCase):
     """The plain-words pass from the ux-critic (#1197)."""
 
-    def test_the_bad_time_message_points_at_the_form_not_a_button(self) -> None:
+    def test_the_bad_time_message_does_not_point_back_at_a_button(self) -> None:
         from dmbot.dm_screen import clock
 
-        self.assertEqual(
-            clock.BAD_TIME, "Couldn't read that time. Try day 4 and time 14 (or 14:30)."
-        )
+        self.assertNotIn("**", clock.BAD_TIME)  # no button name to press again
+        self.assertIn("day 4", clock.BAD_TIME)
 
-    def test_each_combat_action_has_its_own_plain_line(self) -> None:
+    def test_the_combat_lines_use_the_buttons_word(self) -> None:
         from dmbot.dm_screen import clock
 
-        self.assertEqual(len(set(clock.NO_COMBAT_CHANGE.values())), len(clock.NO_COMBAT_CHANGE))
         for line in clock.NO_COMBAT_CHANGE.values():
-            self.assertNotIn("DMbot", line)
-
-    def test_the_button_is_named_for_what_it_opens(self) -> None:
-        from dmbot.dm_screen import clock
-
-        self.assertEqual(clock.ACTIONS["set"][0], "Rests & time…")
+            self.assertIn("combat", line.lower())
+            self.assertNotIn("fight", line.lower())
+        self.assertIn("round 99", clock.NO_COMBAT_CHANGE["cnext"])

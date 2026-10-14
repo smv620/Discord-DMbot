@@ -1,9 +1,10 @@
 """🕰️ The game clock on the DM screen (#965; docs/PLAN.md, "TimeBot"): one pinned message,
-"🕰️ Day 4, afternoon (14:30)", edited in place, with the DM's buttons: +10 min, +1 hour, Set
-time… and Start a timer. Short rest, Long rest and Skip to dawn are in the private panel that
-**Rests & time…** opens (rests are rare buttons, because DMbot hears them, and players who peek
-behind the DM screen could take them for D&D Beyond sheet links). The players see only the
-day and a rough time of day, "🕰️ Day 4, afternoon", in their own game-time channel (#1116).
+"🕰️ Day 4, afternoon (14:30)", edited in place, with the DM's buttons: +10 min, +1 hour,
+Rests & time… and Start a timer. Short rest, Long rest and Skip to dawn are in the private
+panel that **Rests & time…** opens (rests are rare buttons, because DMbot hears them, and
+players who peek behind the DM screen could take them for D&D Beyond sheet links). The players
+see only the day and a rough time of day, "🕰️ Day 4, afternoon", in their own game-time
+channel (#1116).
 Only the campaign's DMs can press the buttons (checked on every press, in the database
 transaction that changes the clock), and the buttons keep working after a restart (their
 IDs carry the campaign).
@@ -512,9 +513,9 @@ async def _run_press(
 
 NO_COMBAT_CHANGE = {
     "cstart": "Combat is already running.",
-    "cnext": "There is no fight running, or it is on round 99, the last one counted.",
-    "cend": "There is no fight running.",
-    "cround": "There is no fight running, or it is already on that round.",
+    "cnext": "There is no combat running, or it has reached round 99, the most DMbot counts.",
+    "cend": "There is no combat running.",
+    "cround": "There is no combat running, or it is already on that round.",
 }
 
 
