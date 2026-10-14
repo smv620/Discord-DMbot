@@ -254,7 +254,110 @@ def _full(
         "background": _name(_get(data, "background", "definition", "name"))
         or _name(_get(data, "background", "customBackground", "name")),
         "inventory": _inventory(data),
-        "slots": clean_slots(_list(data.get("spellSlots"))),
+        "slots": _slots(data),
+        "pact": _pact(data),
+    }
+
+
+# Spell slots a character has by caster level (the multiclass spellcaster table, SRD 5.2):
+# the slots for levels 1 to 9. D&D Beyond's `available` may be 0 for an ordinary caster, whose
+# total it works out from the class (`spellRules.levelSpellSlots`), so the total is worked out
+# here from the same data when `available` has none (#1176).
+_FULL_CASTER = (
+    (), (2,), (3,), (4, 2), (4, 3), (4, 3, 2), (4, 3, 3), (4, 3, 3, 1), (4, 3, 3, 2),
+    (4, 3, 3, 3, 1), (4, 3, 3, 3, 2), (4, 3, 3, 3, 2, 1), (4, 3, 3, 3, 2, 1),
+    (4, 3, 3, 3, 2, 1, 1), (4, 3, 3, 3, 2, 1, 1), (4, 3, 3, 3, 2, 1, 1, 1),
+    (4, 3, 3, 3, 2, 1, 1, 1), (4, 3, 3, 3, 2, 1, 1, 1, 1), (4, 3, 3, 3, 3, 1, 1, 1, 1),
+    (4, 3, 3, 3, 3, 2, 1, 1, 1), (4, 3, 3, 3, 3, 2, 2, 1, 1),
+)  # fmt: skip
+
+
+def _class_rows(data: Mapping[str, Any]) -> list[tuple[str, int, int, list[Any]]]:
+    """(name, level, multiclass divisor, slot rows) for each class that has a slot table."""
+    out = []
+    for entry in _list(data.get("classes")):
+        rows = _list(_get(entry, "definition", "spellRules", "levelSpellSlots"))
+        level = _int(_get(entry, "level"), 1, LEVEL_MAX)
+        if not rows or level is None:
+            continue
+        divisor = _int(_get(entry, "definition", "spellRules", "multiClassSpellSlotDivisor"), 0, 3)
+        out.append((str(_get(entry, "definition", "name") or ""), level, divisor or 1, rows))
+    return out
+
+
+def _computed_totals(data: Mapping[str, Any]) -> dict[int, int]:
+    """The slots the character's classes give, by spell level: one casting class uses its own
+    table; two or more use the multiclass table. A warlock's pact slots are counted apart."""
+    casters = [c for c in _class_rows(data) if c[0].casefold() != "warlock"]
+    if len(casters) == 1:
+        _, level, _, rows = casters[0]
+        row = _list(rows[level]) if level < len(rows) else []
+        return {i + 1: n for i, v in enumerate(row[:9]) if (n := _int(v, 1, SLOT_MAX))}
+    if len(casters) > 1:
+        # The 2024 rule: half casters round up, third casters down; full casters count all.
+        effective = sum(
+            -(-level // divisor) if divisor == 2 else level // divisor
+            for _, level, divisor, _ in casters
+        )
+        row = _FULL_CASTER[min(effective, LEVEL_MAX)]
+        return {i + 1: n for i, n in enumerate(row)}
+    return {}
+
+
+def _slots(data: Mapping[str, Any]) -> list[dict[str, int]]:
+    """Spell slots for levels 1 to 9: how many there are and how many are used. The total is
+    D&D Beyond's `available` when it has one, else worked out from the classes."""
+    used: dict[int, int] = {}
+    reported: dict[int, int] = {}
+    for entry in _list(data.get("spellSlots")):
+        level = _int(_get(entry, "level"), 1, SLOT_LEVEL_MAX)
+        if level is None:
+            continue
+        reported[level] = _int(_get(entry, "available"), 0, SLOT_MAX) or 0
+        used[level] = _int(_get(entry, "used"), 0, SLOT_MAX) or 0
+    totals = _computed_totals(data)
+    return clean_slots(
+        [
+            {
+                "level": level,
+                "max": reported.get(level) or totals.get(level, 0),
+                "used": used.get(level, 0),
+            }
+            for level in range(1, SLOT_LEVEL_MAX + 1)
+        ]
+    )
+
+
+def _pact(data: Mapping[str, Any]) -> dict[str, int] | None:
+    """A warlock's pact slots (kept apart: they come back on a short rest): the level they
+    are cast at, how many there are and how many are used. Worked out from the warlock's
+    own table when D&D Beyond's `pactMagic` has no total."""
+    used = 0
+    level = total = None
+    for entry in _list(data.get("pactMagic")):
+        available = _int(_get(entry, "available"), 0, SLOT_MAX) or 0
+        used = max(used, _int(_get(entry, "used"), 0, SLOT_MAX) or 0)
+        if available:
+            level, total = _int(_get(entry, "level"), 1, SLOT_LEVEL_MAX), available
+    if total is None:
+        for name, class_level, _, rows in _class_rows(data):
+            row = _list(rows[class_level]) if class_level < len(rows) else []
+            if name.casefold() == "warlock":
+                for i, v in enumerate(row[:9]):
+                    if _int(v, 1, SLOT_MAX):
+                        level, total = i + 1, _int(v, 1, SLOT_MAX)
+    return clean_pact({"level": level, "max": total, "used": used})
+
+
+def clean_pact(value: Any) -> dict[str, int] | None:
+    level = _int(_get(value, "level"), 1, SLOT_LEVEL_MAX)
+    top = _int(_get(value, "max"), 1, SLOT_MAX)
+    if level is None or top is None:
+        return None
+    return {
+        "level": level,
+        "max": top,
+        "used": min(_int(_get(value, "used"), 0, SLOT_MAX) or 0, top),
     }
 
 
@@ -608,6 +711,7 @@ def _clean_full(snapshot: Mapping[str, Any]) -> dict[str, Any]:
     out["armor_profs"] = _names(_list(snapshot.get("armor_profs")))
     out["expertise"] = sorted({s for s in _list(snapshot.get("expertise")) if s in SKILLS})
     out["slots"] = clean_slots(snapshot.get("slots"))
+    out["pact"] = clean_pact(snapshot.get("pact"))
     inventory = snapshot.get("inventory")
     if isinstance(inventory, Mapping):
         rarity_in = inventory.get("rarity")

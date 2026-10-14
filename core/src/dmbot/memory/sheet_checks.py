@@ -366,6 +366,17 @@ def _typed_names(snapshot: Mapping[str, Any], target: str, fallback: str) -> Che
     return _named("features", "Names you typed", _list(snapshot, "features"), status, near)
 
 
+def _pact_numbers(snapshot: Mapping[str, Any]) -> tuple[int, int, int] | None:
+    """(level, how many, how many used) of a warlock's pact slots, if the sheet has them."""
+    pact = snapshot.get("pact")
+    if not isinstance(pact, Mapping):
+        return None
+    level, top, used = pact.get("level"), pact.get("max"), pact.get("used")
+    if isinstance(level, int) and isinstance(top, int) and isinstance(used, int):
+        return level, top, used
+    return None
+
+
 def slot_line(snapshot: Mapping[str, Any]) -> str:
     """ "level 1: 2 of 3 left, level 2: 1 of 2 left" (#1176), or "" when the sheet has no
     spell slots (a character who casts nothing, or a sheet read before slots were kept)."""
@@ -378,6 +389,10 @@ def slot_line(snapshot: Mapping[str, Any]) -> str:
         if isinstance(e, Mapping) and isinstance(e.get("level"), int)
         and isinstance(e.get("max"), int) and isinstance(e.get("used"), int)
     ]  # fmt: skip
+    pact = _pact_numbers(snapshot)
+    if pact is not None:
+        level, top, used = pact
+        parts.append(f"pact slots (level {level}): {top - used} of {top} left")
     return ", ".join(parts)
 
 
@@ -394,6 +409,10 @@ def slots_left(snapshot: Mapping[str, Any]) -> str:
         if isinstance(top, int) and isinstance(used, int) and top - used > 0:
             left = top - used
             parts.append(f"{left} level {e['level']} slot{'' if left == 1 else 's'}")
+    pact = _pact_numbers(snapshot)
+    if pact is not None and pact[1] - pact[2] > 0:
+        left = pact[1] - pact[2]
+        parts.append(f"{left} pact slot{'' if left == 1 else 's'} (level {pact[0]})")
     return ", ".join(parts)
 
 
