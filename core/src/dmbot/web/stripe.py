@@ -354,6 +354,20 @@ class StripeProvider:
         # someone is asked to look at.
         if name in ("checkout.session.completed", "checkout.session.async_payment_succeeded"):
             return self._extra_hours(obj, event_id, when)
+        if name == "customer.updated":
+            user_id = _person(obj.get("metadata"))
+            email = _email(obj.get("email"))
+            if user_id is None or email is None:  # a customer DMbot didn't make, or no address
+                return None
+            return PaymentEvent(
+                provider=self.name,
+                event_id=event_id,
+                kind="email_updated",
+                user_id=user_id,
+                occurred_at=when,
+                customer_id=_text(obj.get("id")),
+                email=email,
+            )
         if name.startswith("invoice."):
             return self._invoice(name, obj, event_id, when)
         return self._subscription(name, obj, raw.get("data", {}), event_id, when)
@@ -529,6 +543,8 @@ _USED = (
     "customer.subscription.updated",
     "customer.subscription.deleted",
     "checkout.session.completed",
+    # The payer changed their address (the billing page): kept as the payment email (#1242).
+    "customer.updated",
     # A payment method that settles later (a bank debit): paid only when this arrives.
     "checkout.session.async_payment_succeeded",
 )

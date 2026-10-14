@@ -3102,7 +3102,11 @@ stays, and so does the meaning of each event kind:
   payment). `customer.subscription.updated` that sets `cancel_at_period_end` is
   `subscription_cancelled` (#824), and clearing it is a resume. `customer.subscription.deleted` is
   `subscription_ended`. A paid `checkout.session.completed` in payment mode for the +10 hours
-  price is `extra_hours_bought`. Everything else is ignored.
+  price is `extra_hours_bought`. `customer.updated` for a customer DMbot made (its metadata has
+  `user_id`) is `email_updated`: it only keeps the payer's address as the account's payment email
+  (#1242). The Stripe dashboard's webhook endpoint (https://dashboard.stripe.com/webhooks) must
+  list `customer.updated` too, or a changed address arrives with the next invoice instead.
+  Everything else is ignored.
 - **Ids, times and periods:** an event's id is Stripe's own event `id`, and `occurred_at` is its
   `created`. The billing period is the subscription's current period start and end.
 - **Who it is:** the person is the `user_id` in the checkout's metadata, copied to the

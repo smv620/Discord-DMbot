@@ -183,6 +183,14 @@ async def _apply_once(db: Database, event: PaymentEvent, *, now: int) -> Outcome
                     event.user_id,
                 )
             return "ignored"
+        if event.kind == "email_updated":
+            # Only the address changes: nothing to record or order, and writing it again is
+            # harmless, so a repeated or late event needs no ledger row.
+            await conn.execute(
+                "UPDATE web_users SET payment_email = %s WHERE user_id = %s",
+                (event.email, event.user_id),
+            )
+            return "applied"
         if await _seen(conn, event):
             return "duplicate"
         if event.email:
