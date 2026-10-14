@@ -114,7 +114,14 @@ class Export(DatabaseTest):
         data = await build_export(self.web, self.alice, now=self.now)
         self.assertEqual(data["account"]["discordId"], str(ALICE.id))
         self.assertEqual(data["account"]["dmbotId"], to_dmbot_id(ALICE.id))
-        self.assertIn("paymentEmail", data["account"])  # None until a payment has come
+        self.assertIsNone(data["account"]["paymentEmail"])  # None until a payment has come
+        async with self.db.user(ALICE.id) as conn:
+            await conn.execute(
+                "UPDATE web_users SET payment_email = 'payer@example.com' WHERE user_id = %s",
+                (ALICE.id,),
+            )
+        again = await build_export(self.web, self.alice, now=self.now)
+        self.assertEqual(again["account"]["paymentEmail"], "payer@example.com")
         self.assertEqual(data["account"]["name"], ALICE.name)
         self.assertEqual(
             sorted(c["serverName"] for c in data["recordingConsent"]),
