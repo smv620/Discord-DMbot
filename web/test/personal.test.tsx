@@ -26,6 +26,21 @@ describe("personal greeting", () => {
     expect(url).not.toContain("Belleros"); // the name is never in the address
   });
 
+  it("takes uid and t out of the address bar once it has used them, keeping the rest", async () => {
+    window.history.replaceState(null, "", "/pricing?uid=ABC&t=1.2&utm=x#questions");
+    render(
+      <Greeting
+        search="?uid=ABC&t=1.2&utm=x"
+        base="https://api.example"
+        fetcher={answer(200, { name: "Belleros", experiencePoints: 1 })}
+      />,
+    );
+    await screen.findByText(personal.hello("Belleros"));
+    expect(window.location.pathname + window.location.search + window.location.hash).toBe(
+      "/pricing?utm=x#questions",
+    );
+  });
+
   it("shows only the points when the account has no name", async () => {
     render(
       <Greeting

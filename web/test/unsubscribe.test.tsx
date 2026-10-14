@@ -27,6 +27,13 @@ describe("unsubscribe page", () => {
     expect(JSON.parse(String(init.body))).toEqual({ uid: "ABC", t: "xyz" });
   });
 
+  it("takes uid and t out of the address bar after using them", async () => {
+    window.history.replaceState(null, "", "/unsubscribe?uid=ABC&t=xyz");
+    render(<Unsubscribe search="?uid=ABC&t=xyz" base="https://api.example" fetcher={reply(200)} />);
+    await screen.findByText(unsubscribe.done);
+    expect(window.location.search).toBe("");
+  });
+
   it("says the link didn't work when the API refuses it", async () => {
     render(<Unsubscribe search="?uid=ABC&t=bad" base="https://api.example" fetcher={reply(400)} />);
     expect(await screen.findByText(unsubscribe.bad)).toBeTruthy();

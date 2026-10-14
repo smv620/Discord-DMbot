@@ -244,6 +244,10 @@ describe("the pricing page", () => {
     document = parsePage(html);
   });
 
+  it("says nothing of a $1.99 or first-month price on the rendered page (2026-10-14)", () => {
+    expect(document.body.textContent ?? "").not.toMatch(/\$1\.99|first month/i);
+  });
+
   it("shows the headline as the page heading", () => {
     expect(text(one("h1"))).toBe(headline.title);
   });

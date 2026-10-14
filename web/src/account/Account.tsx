@@ -160,7 +160,7 @@ export default function Account({ api, go = defaultGo, search = "", hash = "" }:
   const load = useCallback(async () => {
     try {
       const link = emailLinkToken(hash);
-      let linkFailed = false;
+      let linkNotice: string | null = null;
       if (link && api.emailSignInUse && !linkTried.current) {
         linkTried.current = true;
         forgetEmailLink();
@@ -169,14 +169,17 @@ export default function Account({ api, go = defaultGo, search = "", hash = "" }:
         } catch (error) {
           // A wrong, used or ended link is said in words. Anything else (the API down) falls
           // through to the page's own "down" answer from api.me() below.
-          if (error instanceof ApiError && error.kind === "bad-link") linkFailed = true;
-          else if (error instanceof ApiError && error.kind === "slow-down") linkFailed = true;
-          else throw error;
+          // A refusal for too many tries did not spend the link, so it says to wait, not that the
+          // link was used.
+          if (error instanceof ApiError && error.kind === "bad-link") linkNotice = text.emailLinkBad;
+          else if (error instanceof ApiError && error.kind === "slow-down") {
+            linkNotice = text.emailLinkWait;
+          } else throw error;
         }
       }
       const me = await api.me();
-      if (!me && linkFailed) {
-        setState({ kind: "signed-out", notice: text.emailLinkBad });
+      if (!me && linkNotice) {
+        setState({ kind: "signed-out", notice: linkNotice });
         return;
       }
       const params = new URLSearchParams(search);

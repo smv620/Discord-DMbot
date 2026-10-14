@@ -1266,6 +1266,15 @@ describe("sign in by email, DMbot ID, experience points and move code (#1231)", 
     expect(screen.getByRole("button", { name: text.emailButton })).toBeTruthy();
   });
 
+  it("too many tries on a link says to wait, not that the link was used", async () => {
+    const api = mockApi("signed-out");
+    api.emailSignInUse = async () => {
+      throw new ApiError("slow-down");
+    };
+    render(<Account api={api} go={vi.fn()} hash="#email-link=good-link" />);
+    expect((await screen.findByRole("alert")).textContent).toBe(text.emailLinkWait);
+  });
+
   it("anything else in the address is ignored", async () => {
     const api = mockApi("signed-out");
     render(<Account api={api} go={vi.fn()} hash="#something-else" />);

@@ -78,6 +78,7 @@ export const text = {
   emailAnswer:
     "If that email belongs to a DMbot account, we've sent a link. Check your inbox (and spam). It ends in 15 minutes.",
   emailWait: "Too many tries. Wait about 10 minutes, then try again.",
+  emailLinkWait: "Too many tries. Wait a minute, then open the link in your email again.",
   emailLinkBad:
     "That sign-in link didn't work. It may have been used already, or it ran out of time. Ask for a new one below.",
 

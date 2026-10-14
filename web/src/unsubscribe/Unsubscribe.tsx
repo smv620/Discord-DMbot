@@ -5,6 +5,7 @@
 import { useEffect, useState } from "preact/hooks";
 
 import { unsubscribe } from "../content/unsubscribe";
+import { forgetPersonalLink } from "../personal/Greeting";
 
 type State = "working" | "done" | "bad";
 
@@ -46,7 +47,11 @@ export function Unsubscribe({
       return;
     }
     let live = true;
-    void stopEmails(base, uid, token, fetcher).then((ok) => live && setState(ok ? "done" : "bad"));
+    void stopEmails(base, uid, token, fetcher).then((ok) => {
+      if (!live) return;
+      setState(ok ? "done" : "bad");
+      forgetPersonalLink(); // the code has been used; it needn't stay in the address bar
+    });
     return () => {
       live = false;
     };

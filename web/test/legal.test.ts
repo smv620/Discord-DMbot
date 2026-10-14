@@ -88,6 +88,8 @@ describe("retention and warnings", () => {
       "kept for 120 days. We message the game master on Discord 14 days and 3 days before",
     );
     expect(text(doc("terms").querySelector("main"))).toContain("campaigns are kept for 120 days");
+    // No $1.99 first month any more (2026-10-14): not on the rendered terms either.
+    expect(text(doc("terms").querySelector("main"))).not.toMatch(/\$1\.99|first month/i);
     expect(text(doc("refunds").querySelector("main"))).toContain("kept for 120 days");
   });
 });
