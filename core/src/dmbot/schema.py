@@ -1063,7 +1063,7 @@ WEB_ROLE_POLICIES = """
                                   AND o.to_user_id = dmbot_current_user() AND o.status = 'open'
                                   AND o.created_at + 7 * 86400 > dmbot_now()));
     -- The person's own consent, in the session's servers (#1150: the data export; #1151: where
-    -- DMbot may record them). Read-only here; the right to stop is granted with #1151.
+    -- DMbot may record them). It may read and delete (stop) its own row, never add or change one.
     DROP POLICY IF EXISTS web_own_rows ON consent;
     CREATE POLICY web_own_rows ON consent AS RESTRICTIVE TO dmbot_web
         USING (user_id = dmbot_current_user()
@@ -1926,8 +1926,11 @@ OFFER_INSERT_COLUMNS: tuple[str, ...] = (
 WEB_ROLE_GRANTS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("SELECT", ("schema_migrations",)),
     # The person's own consent and character sheets, for the data export (#1150); the
-    # restrictive web_own_rows policies hold it to their own rows in their servers.
-    ("SELECT", ("consent", "character_sheets")),
+    # restrictive web_own_rows policies hold it to their own rows in their servers. The right
+    # to stop (DELETE) on consent is the website's Stop recording me (#1151): the same
+    # policies hold it to the person's own row; it can never add or change a yes.
+    ("SELECT", ("character_sheets",)),
+    ("SELECT, DELETE", ("consent",)),
     # Accepting a hand-over (#614) makes the person the owner and one of the DMs; the
     # store locks the campaign row first (FOR UPDATE needs an UPDATE right), and answering
     # changes only an offer's status.

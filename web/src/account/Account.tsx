@@ -14,6 +14,7 @@ import {
   type Me,
   type Offer,
   type Person,
+  type RecordingEntry,
 } from "./api";
 import { isSafeRedirect } from "./redirect";
 
@@ -318,6 +319,23 @@ function SignedIn({
         >
           {text.signOut}
         </button>
+        <button
+          type="button"
+          class="link"
+          disabled={busy}
+          onClick={() =>
+            void run(
+              async () => {
+                await api.signOutEverywhere();
+                onSignedOutByChoice();
+              },
+              (error) => (error.kind === "slow-down" ? text.signOutEverywhereWait : null),
+            )
+          }
+        >
+          {text.signOutEverywhere}
+        </button>
+        <p class="muted small">{text.signOutEverywhereNote}</p>
       </div>
       <Notice message={notice} />
       {installMessage && <ForgetInstallResult />}
@@ -341,6 +359,7 @@ function SignedIn({
       <PlanSection me={me} />
       <CampaignsSection me={me} />
       <ServersSection me={me} />
+      <RecordingSection entries={me.recording ?? []} />
       <ExportSection />
       <DeleteSection
         paidPlan={me.plan !== null && me.plan.id !== "try-it" && me.plan.status !== "lapsed"}
@@ -877,6 +896,86 @@ function ServerRow({ server: s, api }: { server: Me["servers"][number]; api: Acc
       )}
       {s.hasDmbot && s.canLink && <p class="muted small row-note">{text.linkNote}</p>}
       <Notice message={notice} />
+    </li>
+  );
+}
+
+/** Where DMbot may record you (#1151): each server with Stop recording me, the same one short
+ * warning and one confirmation as the bot's Menu. Starting again stays in Discord. */
+function RecordingSection({ entries }: { entries: RecordingEntry[] }) {
+  const [done, setDone] = useState<string[]>([]);
+  // The row goes with the refresh after a stop, so what was done is said here, above the list.
+  if (entries.length === 0 && done.length === 0) return null;
+  return (
+    <section aria-labelledby="recording-heading" class="panel">
+      <h2 id="recording-heading">{text.recordingHeading}</h2>
+      {done.map((line) => (
+        <p key={line} class="ok" role="status">
+          {line}
+        </p>
+      ))}
+      <ul class="campaigns">
+        {entries.map((e) => (
+          <RecordingRow
+            key={e.serverId}
+            entry={e}
+            onStopped={() => setDone((now) => [...now, text.stoppedRecording(e.serverName)])}
+          />
+        ))}
+      </ul>
+    </section>
+  );
+}
+
+function RecordingRow({ entry, onStopped }: { entry: RecordingEntry; onStopped: () => void }) {
+  const { api, refresh } = useShared();
+  const { busy, notice, run, clear } = useAction();
+  const [asking, setAsking] = useState(false);
+  if (!entry.on) {
+    return (
+      <li data-recording={entry.serverId}>
+        <p>{text.recordingOld(entry.serverName)}</p>
+      </li>
+    );
+  }
+  return (
+    <li data-recording={entry.serverId}>
+      <p>{text.recordingLine(entry.serverName, entry.agreedOn)}</p>
+      <Notice message={notice} />
+      {asking ? (
+        <>
+          <p role="alert">{text.stopWarning(entry.serverName)}</p>
+          <div class="row">
+            <ActionButton
+              busy={busy}
+              onClick={() =>
+                void run(async () => {
+                  await api.stopRecording(entry.serverId);
+                  onStopped();
+                  await refresh();
+                })
+              }
+            >
+              {text.stopYes}
+            </ActionButton>
+            <button
+              type="button"
+              class="button secondary"
+              disabled={busy}
+              onClick={() => {
+                clear();
+                setAsking(false);
+              }}
+            >
+              {text.stopKeep}
+            </button>
+          </div>
+        </>
+      ) : (
+        <button type="button" class="button secondary" onClick={() => setAsking(true)}>
+          {text.stopRecording}
+        </button>
+      )}
     </li>
   );
 }

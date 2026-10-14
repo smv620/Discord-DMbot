@@ -43,7 +43,7 @@ import re
 import time
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Protocol
 from urllib.parse import urlsplit
 
 import aiohttp
@@ -64,10 +64,22 @@ TOLERANCE_SECONDS = 300
 # the events. Checkout Sessions with Managed Payments are supported from this release.
 API_VERSION = "2026-04-22.dahlia"
 
+
 # (method, path, form fields or None) -> (HTTP status, parsed JSON or None). Faked in tests.
 # Stripe takes form-encoded bodies; nested fields are written the way it reads them
 # ("line_items[0][price]").
-Transport = Callable[[str, str, "dict[str, str] | None"], Awaitable["tuple[int, Any]"]]
+class Transport(Protocol):
+    """The calls to Stripe. A checkout also passes an idempotency key (see
+    `StripeProvider._checkout`); other calls don't."""
+
+    def __call__(
+        self,
+        method: str,
+        path: str,
+        form: dict[str, str] | None,
+        idempotency_key: str | None = None,
+    ) -> Awaitable[tuple[int, Any]]: ...
+
 
 _CUSTOMER = re.compile(r"cus_[A-Za-z0-9]+")
 _SUBSCRIPTION = re.compile(r"sub_[A-Za-z0-9]+")
@@ -111,13 +123,20 @@ class HttpTransport:
             self._http = None
 
     async def __call__(
-        self, method: str, path: str, form: dict[str, str] | None
+        self,
+        method: str,
+        path: str,
+        form: dict[str, str] | None,
+        idempotency_key: str | None = None,
     ) -> tuple[int, Any]:
         if self._http is None:
             self._http = aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=6, connect=3))
+        headers = self._headers
+        if idempotency_key is not None:
+            headers = {**headers, "Idempotency-Key": idempotency_key}
         try:
             async with self._http.request(
-                method, self._base + path, data=form, headers=self._headers, allow_redirects=False
+                method, self._base + path, data=form, headers=headers, allow_redirects=False
             ) as response:
                 try:
                     parsed = await response.json(content_type=None)
@@ -172,7 +191,18 @@ class StripeProvider:
             form["managed_payments[enabled]"] = "true"
         if email:
             form["customer_email"] = email  # server-side only: never in the address returned
-        status, answer = await self._http("POST", "/v1/checkout/sessions", form)
+        # A double-click, or a retry after a timeout, must not make a second live checkout
+        # (two completed ones would be two subscriptions). Within one five-minute window the
+        # same request carries the same idempotency key, so Stripe answers with the session it
+        # already made. The expiry is the window's end plus Stripe's 30-minute minimum, so it
+        # is the same for every call in the window (a different one under the same key would be
+        # refused) and an abandoned page stops working soon after.
+        # (Stripe keeps the first answer under a key, a failure too: a retry in the same window
+        # gets the same failure, and one in the next window starts afresh.)
+        window = int(self._clock() // IDEMPOTENCY_WINDOW_S)
+        form["expires_at"] = str((window + 1) * IDEMPOTENCY_WINDOW_S + CHECKOUT_LIFETIME_S)
+        key = _idempotency_key(form)
+        status, answer = await self._http("POST", "/v1/checkout/sessions", form, key)
         if status != 200:
             raise PaymentError(f"Stripe answered {status} to a checkout")
         url = answer.get("url") if isinstance(answer, dict) else None
@@ -415,9 +445,17 @@ class StripeProvider:
         if not isinstance(changed, dict):
             changed = {}
         cancel_at = _int(subscription.get("cancel_at"))
-        # (Known limit: a plan change made while a cancel is pending shows as the cancel only;
-        # the writer stores the end date and the new plan applies when they resubscribe.)
         if subscription.get("cancel_at_period_end") is True or cancel_at is not None:
+            if _price_changed(changed, price):
+                # Decided on #1122 (not two events): a plan change made while a cancel is
+                # pending arrives as this one event, so only the end date is stored, and the
+                # new plan applies if they resume or resubscribe. Said in the log so the
+                # owner can see it happened; PLAN notes it too.
+                log.info(
+                    "Stripe event %.60s changes the plan of a subscription that is set to"
+                    " cancel: only the end date is stored",
+                    event_id,
+                )
             # Cancelled on the payment page: the plan works to the end of the paid period and
             # then ends (stored so the page can say so, #824). The portal sets either
             # `cancel_at_period_end` or a `cancel_at` date, depending on the API version.
@@ -449,6 +487,20 @@ class StripeProvider:
 
 
 EXTRA_HOURS_ITEM = "extra_hours"
+
+IDEMPOTENCY_WINDOW_S = 300  # one checkout request, however many times it is sent in this long
+# Stripe's minimum for a Checkout Session's expiry is 30 minutes from when it gets the request, by
+# its clock: two minutes more, so a request in the last second of a window, network time and a
+# little clock difference never land under it.
+CHECKOUT_LIFETIME_S = 1800 + 120
+
+
+def _idempotency_key(form: Mapping[str, str]) -> str:
+    """The same request (same person, plan, address, expiry...) gives the same key. A hash, so
+    nothing personal is in a header or a log, and under Stripe's 255 characters."""
+    canonical = json.dumps(sorted(form.items()), separators=(",", ":"))
+    return "dmbot-checkout-" + hashlib.sha256(canonical.encode()).hexdigest()
+
 
 _USED = (
     "invoice.paid",
