@@ -1994,7 +1994,7 @@ background.
   on by default, adjustable by house rules).
 - **Split party:** keeps a separate clock for each group, and warns when one group gets too
   far ahead of the other.
-- The DM can correct the clock with buttons ([+1 hour] [It's dawn] [Set time…]).
+- The DM can correct the clock with buttons ([+1 hour] [It's dawn] [Rests & time…]).
 
 *Built, part 1: the clock and the DM's buttons (2026-10-10, #965):* no AI, and no guessing time
 from narration. `game_clocks` (migration 0041): one row per campaign, in its own server scope,
@@ -2003,7 +2003,7 @@ until a DM sets it. **Game time** is minutes since the start of Day 1; dawn is 0
 dusk 18:00 (`dmbot.timebot.clock`, pure). A DM presses ⚙️ Settings, then **Game clock**, gives a
 day and an hour, and DMbot posts and pins one message, "🕰️ Day 4, afternoon (14:30)", edited in
 place, with **+10 min**, **+1 hour**, **Short rest** (+1 h), **Long rest** (+8 h), **Skip to dawn**
-and **Set time…**. Only the campaign's DMs can press them: checked on every press, in the same
+and **Rests & time…**. Only the campaign's DMs can press them: checked on every press, in the same
 database transaction as the change; the buttons survive a restart. **Said at the table:** a
 DM's clear "we take a short rest" / "you take a long rest" (a strict phrase list: a question, a
 wish, an "if", a "can't" or a long ramble never counts; the same rest twice in five minutes is
@@ -2039,8 +2039,10 @@ clocks, reading time from narration, AI.
   day begins, and nothing else.
 - **The DM's clock.** The DM screen keeps the exact time ("Day 5, morning (6:20)") and the
   controls. **Short rest, Long rest and Skip to dawn leave the pinned DM-screen message** for the
-  private Set time… panel. Rests are rare buttons, because DMbot hears them, and players who peek
-  behind the DM screen could take them for D&D Beyond character-sheet links.
+  private **Rests & time…** panel (an ephemeral form only the DM sees). Rests are rare buttons,
+  because DMbot hears them, and players who peek behind the DM screen could take rest *buttons* for
+  D&D Beyond character-sheet links. The label **Rests & time…** itself is fine on the pinned message
+  (Supervisor, #1197): it opens that private panel and is not a rest button.
 - **Approximate times** (game time, fixed hours, no seasons yet):
 
   | Time | Word |
@@ -2122,8 +2124,8 @@ backup. The players' pinned message is "🕰️ Day 5, morning": the day and one
 time, a timer or a button; it is edited in place wherever the DM's clock changes (a button, a rest
 said at the table, Undo). One short line is posted there when a rest finishes ("Long rest done. Day
 6, dawn.") or a new day begins, and nothing else (no tired line, no effect or dawn/noon/dusk lines).
-The DM's pinned clock reads "Day 5, morning (6:20)" and keeps +10 min, +1 hour, Set time… and Start a
-timer; **Short rest, Long rest and Skip to dawn** moved into the private panel **Set time…** opens
+The DM's pinned clock reads "Day 5, morning (6:20)" and keeps +10 min, +1 hour, Rests & time… and Start a
+timer; **Short rest, Long rest and Skip to dawn** moved into the private panel **Rests & time…** opens
 (an ephemeral message with them and "Type the time…").
 *Built, part 4: the clock follows what is said (2026-10-13, #1117):* still phrases only, no AI, only consented
 speakers' transcript lines, only while listening. **The DM's words that move the clock by themselves**,
