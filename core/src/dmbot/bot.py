@@ -142,7 +142,7 @@ from dmbot.ears.protocol import (
 from dmbot.ears.server import EarsServer
 from dmbot.fightbot import FightState
 from dmbot.logs import log_context, set_log_context
-from dmbot.memory import document_reader
+from dmbot.memory import definitions, document_reader
 from dmbot.memory.backup import MemorySection
 from dmbot.memory.lookup import CampaignLookup, LookupCache
 from dmbot.memory.models import DM, FIX, KEEP, Heard, MemoryRuleError, name_key
@@ -1638,6 +1638,7 @@ class DMBot(commands.AutoShardedBot):
             ("name scan", lambda: self.suggest_names(table)),
             ("who is who", lambda: self.learn_people(table)),
             ("people check", lambda: self.check_people(table)),
+            ("definitions", lambda: self.recheck_definitions(table)),
             ("stale flags", lambda: self.close_stale_flags(table)),
             ("old undo history", lambda: self.prune_old_changes(table)),
         ]
@@ -4907,6 +4908,14 @@ class DMBot(commands.AutoShardedBot):
                     table.screen_channel_id, waiting_text(len(kept)), view=people_review_view(cid)
                 )
 
+    async def recheck_definitions(self, table: Table) -> None:
+        """After a session: facts written under an older meaning of a relationship are looked
+        at again; ones that no longer fit become flags for the DM (#1189)."""
+        if self.memory is None or table.campaign_id is None:
+            return
+        with log_context(guild_id=table.guild_id, campaign_id=table.campaign_id):
+            await self.memory.recheck_definitions(table.guild_id, table.campaign_id)
+
     async def check_people(self, table: Table) -> None:
         """After a session: every player has their entry and link to a character, and a
         person who plays nothing and isn't a DM is marked "needs a look" (#1188)."""
@@ -5751,6 +5760,7 @@ async def run(settings: Settings) -> None:
     entitlements.configure_free_users(settings.free_users)  # #771
     db = await Database.open(settings.database_url)
     try:
+        await definitions.seed(db)  # the official relationships, by version (#1189)
         transcriber = build_transcriber(settings.transcription)
         await transcriber.warm_up()  # load the Whisper model now, not on the first word
         # With plans enforced, a hand-over, take-over or restore also needs room under the
