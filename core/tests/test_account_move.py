@@ -504,10 +504,32 @@ class Moves(DatabaseTest):
                 raise PaymentError("Stripe answered 500")
 
         down = Down(b"s" * 32, "https://site.example.com")
-        backoff = move_sync.Backoff()
-        self.assertEqual(await move_sync.sync_moves(web, down, backoff, now=0), 0)
-        # It waits a minute before trying again, then goes through.
-        self.assertEqual(await move_sync.sync_moves(web, fake, backoff, now=30), 0)
-        self.assertEqual(await move_sync.sync_moves(web, fake, backoff, now=61), 1)
+        self.assertEqual(await move_sync.sync_moves(web, down), 0)  # fails: marked tried
+        # It waits (a minute after the first failure) before it is handed out again.
+        self.assertEqual(await move_sync.sync_moves(web, fake), 0)
+        async with self.db.unscoped() as conn:
+            await conn.execute("UPDATE account_moves SET stripe_last_try_at = 0")  # long ago
+        self.assertEqual(await move_sync.sync_moves(web, fake), 1)
         self.assertEqual(fake.retargeted, [("cus_old1", "sub_old1", NEW)])
         self.assertEqual(await move_sync.sync_moves(web, fake), 0)  # done once
+
+    async def test_twenty_stuck_moves_do_not_crowd_out_a_new_one(self) -> None:
+        web = await self.web()
+        async with self.db.unscoped() as conn:
+            await conn.execute(
+                "INSERT INTO account_moves (old_user_id, new_user_id, dmbot_id, moved_at,"
+                " customer_id, stripe_attempts, stripe_last_try_at)"
+                " SELECT 1000 + g, 2000 + g, 'X' || g, 1, 'cus_' || g, 3,"
+                " extract(epoch FROM now())::BIGINT - 10 FROM generate_series(1, 20) g"
+            )
+        await self.moves.move(OLD, NEW, await self.code())  # the 21st, never tried
+        async with web.unscoped() as conn:
+            cur = await conn.execute("SELECT old_user_id FROM dmbot_moves_to_sync()")
+            handed = [r["old_user_id"] for r in await cur.fetchall()]
+        self.assertEqual(handed, [OLD])  # the 20 are waiting out their backoff
+        async with self.db.unscoped() as conn:
+            await conn.execute("UPDATE account_moves SET stripe_last_try_at = 0")
+        async with web.unscoped() as conn:
+            cur = await conn.execute("SELECT old_user_id FROM dmbot_moves_to_sync()")
+            handed = [r["old_user_id"] for r in await cur.fetchall()]
+        self.assertEqual(len(handed), 20)  # never more than 20 a pass

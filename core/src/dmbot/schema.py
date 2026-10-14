@@ -2055,14 +2055,12 @@ WEB_ROLE_FUNCTIONS: tuple[tuple[str, str], ...] = (
     ("dmbot_hours_used", "dmbot_hours_used(BIGINT)"),
     ("dmbot_claim_email", "dmbot_claim_email(BIGINT, TEXT, BOOLEAN, INTEGER, INTEGER)"),
     ("dmbot_minutes_total", "dmbot_minutes_total()"),
-<<<<<<< HEAD
     ("dmbot_user_of", "dmbot_user_of(TEXT)"),  # links made before a move (#1230)
     ("dmbot_moved_to", "dmbot_moved_to(BIGINT, TEXT, TEXT)"),  # payments after a move (#1230)
     ("dmbot_moves_to_sync", "dmbot_moves_to_sync()"),  # the job that updates Stripe (#1230)
     ("dmbot_move_synced", "dmbot_move_synced(BIGINT)"),
-=======
+    ("dmbot_move_failed", "dmbot_move_failed(BIGINT)"),
     ("dmbot_set_payment_email", "dmbot_set_payment_email(TEXT, TEXT, BIGINT)"),  # #1242
->>>>>>> origin/clouddev-1242-1
 )
 # The columns the website may fill when it creates a hand-over offer (#728): who, where and the
 # two names. Left out on purpose, so they take their defaults: status and decided_at (an offer
@@ -2444,7 +2442,11 @@ MOVES = """
         -- new Discord ID after the commit (stripe_done_at NULL = still to do).
         customer_id        TEXT,
         subscription_id    TEXT,
-        stripe_done_at     BIGINT
+        stripe_done_at     BIGINT,
+        -- Backoff for the update, kept here so it survives a restart and every web process
+        -- agrees: tries so far, and when the last one was (database time).
+        stripe_attempts    INTEGER NOT NULL DEFAULT 0,
+        stripe_last_try_at BIGINT
     );
     CREATE INDEX account_moves_by_id ON account_moves (dmbot_id, moved_at);
     CREATE INDEX account_moves_to_sync ON account_moves (moved_at) WHERE stripe_done_at IS NULL;
@@ -2742,8 +2744,23 @@ MOVES = """
                        subscription_id TEXT)
         LANGUAGE sql SECURITY DEFINER
         AS $fn$
+        -- Never tried first, then the longest ago; one that failed waits a minute, two,
+        -- four... up to an hour, so a few stuck moves can't crowd out a new one.
         SELECT m.old_user_id, m.new_user_id, m.customer_id, m.subscription_id
-            FROM account_moves m WHERE m.stripe_done_at IS NULL ORDER BY m.moved_at LIMIT 20;
+            FROM account_moves m
+            WHERE m.stripe_done_at IS NULL
+              AND (m.stripe_last_try_at IS NULL
+                   OR m.stripe_last_try_at + LEAST(60 * (2 ^ LEAST(m.stripe_attempts, 6))::BIGINT,
+                                                   3600) <= extract(epoch FROM now())::BIGINT)
+            ORDER BY m.stripe_last_try_at NULLS FIRST, m.moved_at
+            LIMIT 20;
+    $fn$;
+    CREATE FUNCTION dmbot_move_failed(who BIGINT) RETURNS VOID
+        LANGUAGE sql SECURITY DEFINER
+        AS $fn$
+        UPDATE account_moves SET stripe_attempts = stripe_attempts + 1,
+                                 stripe_last_try_at = extract(epoch FROM now())::BIGINT
+            WHERE old_user_id = who AND stripe_done_at IS NULL;
     $fn$;
     CREATE FUNCTION dmbot_move_synced(who BIGINT) RETURNS VOID
         LANGUAGE sql SECURITY DEFINER
@@ -2759,10 +2776,14 @@ MOVES = """
         EXECUTE format(
             'ALTER FUNCTION dmbot_move_synced(BIGINT) SET search_path = pg_catalog, %I, pg_temp',
             current_schema());
+        EXECUTE format(
+            'ALTER FUNCTION dmbot_move_failed(BIGINT) SET search_path = pg_catalog, %I, pg_temp',
+            current_schema());
     END
     $do$;
     REVOKE ALL ON FUNCTION dmbot_moves_to_sync() FROM PUBLIC;
     REVOKE ALL ON FUNCTION dmbot_move_synced(BIGINT) FROM PUBLIC;
+    REVOKE ALL ON FUNCTION dmbot_move_failed(BIGINT) FROM PUBLIC;
     -- What a move would take, for the confirmation screen: the plan and the name of each
     -- campaign. Names only; nothing else of a campaign leaves.
     CREATE FUNCTION dmbot_move_preview(old BIGINT) RETURNS TABLE (kind TEXT, label TEXT)

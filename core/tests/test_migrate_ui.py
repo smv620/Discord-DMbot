@@ -3,6 +3,7 @@ interaction: no Discord, no database."""
 
 from __future__ import annotations
 
+import asyncio
 import unittest
 from contextlib import asynccontextmanager
 from types import SimpleNamespace
@@ -186,6 +187,40 @@ class Importing(unittest.IsolatedAsyncioTestCase):
     async def test_the_help_says_how_to_give_campaigns_to_someone_else(self) -> None:
         self.assertIn("Hand over", migrate.INTRO)
         self.assertIn("card", migrate.INTRO)
+
+
+class TheCommandHook(unittest.IsolatedAsyncioTestCase):
+    """Every command starts the "your account moved" check without waiting for it, once per
+    person, until their account moves (#1244)."""
+
+    async def test_the_check_runs_in_the_background_once_per_person(self) -> None:
+        from dmbot.bot import DMBot, DMBotTree
+
+        calls: list[int] = []
+        release = asyncio.Event()
+
+        async def tell(user_id: int) -> None:
+            await release.wait()  # slow: the command must not wait for it
+            calls.append(user_id)
+            client._moved_checked.add(user_id)
+
+        client: Any = SimpleNamespace(
+            account_moves=object(), _moved_checked=set(), _moved_tasks=set(), tell_if_moved=tell
+        )
+        client.tell_if_moved_later = lambda uid: DMBot.tell_if_moved_later(client, uid)
+        tree: Any = SimpleNamespace(client=client)
+        it: Any = SimpleNamespace(user=SimpleNamespace(id=7), guild_id=1)
+        self.assertTrue(await DMBotTree.interaction_check(tree, it))  # returns at once
+        self.assertEqual(calls, [])  # the check has not finished, and nobody waited
+        release.set()
+        await asyncio.gather(*client._moved_tasks)
+        self.assertTrue(await DMBotTree.interaction_check(tree, it))
+        await asyncio.gather(*client._moved_tasks)
+        self.assertEqual(calls, [7])  # asked once, then remembered
+        client._moved_checked.discard(7)  # an account that moved is checked again
+        await DMBotTree.interaction_check(tree, it)
+        await asyncio.gather(*client._moved_tasks)
+        self.assertEqual(calls, [7, 7])
 
 
 if __name__ == "__main__":

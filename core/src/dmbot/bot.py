@@ -255,6 +255,7 @@ OWNER_CHECK_GAP_S = 0.5  # between campaigns in the daily look
 OWNER_START_WAIT_S = 2  # at a start the table is waiting
 OWNER_ASK_EVERY_S = 3600  # Discord is asked about one campaign's owner at most this often
 OWNER_LOOK_TIMEOUT_S = 6  # asking Discord about an owner must not hold up a start
+MOVED_CHECKED_MAX = 100_000  # people remembered as checked; cleared past this
 FORGET_TIMEOUT_S = 10  # removing learned names must not hold up stopping a recording
 METER_INTERVAL_S = 60  # how often listening minutes are written to the hours meter (#437)
 METER_FINAL_TRIES = 3  # at a stop: the last minutes are written nowhere else
@@ -616,6 +617,10 @@ class DMBot(commands.AutoShardedBot):
         self.mailer: Mailer | None = None
         self.account_moves: AccountMoves | None = None  # moving to a new Discord account (#1230)
         self._moved_tasks: set[asyncio.Task[None]] = set()
+        # People already checked for a "your account moved" notice since this process
+        # started: a command from them costs nothing more. An account that moves is taken
+        # out (after_account_move), so it is checked again.
+        self._moved_checked: set[int] = set()
         if meter is not None:
             self.account_moves = AccountMoves(meter.db)
             self.mailer = Mailer(
@@ -5138,6 +5143,7 @@ class DMBot(commands.AutoShardedBot):
         raises."""
         from dmbot.account_move import long_date, old_told
 
+        self._moved_checked.discard(old_user_id)  # its next command is checked again
         try:
             await self._dm_trial_user(old_user_id, old_told(long_date(int(time.time()))))
         except Exception:
@@ -5145,7 +5151,7 @@ class DMBot(commands.AutoShardedBot):
 
     def tell_if_moved_later(self, user_id: int) -> None:
         """Start the "your account moved" check without making the command wait for it."""
-        if self.account_moves is None:
+        if self.account_moves is None or user_id in self._moved_checked:
             return
         task = asyncio.create_task(self.tell_if_moved(user_id))
         self._moved_tasks.add(task)  # a reference, or the task could be dropped mid-way
@@ -5159,6 +5165,9 @@ class DMBot(commands.AutoShardedBot):
             return
         try:
             notice = await self.account_moves.take_moved_notice(user_id)
+            if len(self._moved_checked) >= MOVED_CHECKED_MAX:
+                self._moved_checked.clear()
+            self._moved_checked.add(user_id)
             if notice:
                 await self._dm_trial_user(user_id, notice)
         except Exception:

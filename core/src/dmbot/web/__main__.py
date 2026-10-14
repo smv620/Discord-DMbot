@@ -54,10 +54,9 @@ async def _sweep(db: Database) -> None:
 async def _sync_moves(db: Database, payments: PaymentProvider) -> None:
     """Every minute: bring the payment company's records up to date for accounts that moved
     (#1230). Cheap when nothing waits (a small partial index)."""
-    backoff = move_sync.Backoff()
     while True:
         try:
-            done = await move_sync.sync_moves(db, payments, backoff)
+            done = await move_sync.sync_moves(db, payments)
             if done:
                 log.info("Updated the payment records of %d moved accounts", done)
         except Exception:
