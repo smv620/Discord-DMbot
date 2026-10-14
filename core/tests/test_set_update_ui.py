@@ -35,7 +35,8 @@ class Wording(unittest.TestCase):
 
     def test_three_buttons_that_survive_a_restart(self) -> None:
         view = set_update.note_view("a" * 32)
-        labels = [i.item.label for i in view.children]  # type: ignore[attr-defined]
+        children: list[Any] = list(view.children)  # dynamic items: typed loosely on purpose
+        labels = [i.item.label for i in children]
         self.assertEqual(labels, ["Use all changes", "Pick changes", "See changes"])
 
     def test_the_change_list_is_cut_to_discords_limit(self) -> None:
@@ -45,9 +46,10 @@ class Wording(unittest.TestCase):
 class Picking(unittest.TestCase):
     def test_every_change_starts_kept_and_a_page_holds_25(self) -> None:
         view = set_update.PickView(campaign(), update(60))
-        select = next(c for c in view.children if hasattr(c, "options"))
-        self.assertEqual(len(select.options), 25)  # type: ignore[attr-defined]
-        self.assertTrue(all(o.default for o in select.options))  # type: ignore[attr-defined]
+        children: list[Any] = list(view.children)
+        select = next(c for c in children if hasattr(c, "options"))
+        self.assertEqual(len(select.options), 25)
+        self.assertTrue(all(o.default for o in select.options))
         self.assertEqual(len(view.accepted), 60)
         self.assertLessEqual(len(view.children), 4)  # menu, back, more, apply: rows are enough
         self.assertIn("page 1 of 3", view.text())
