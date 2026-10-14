@@ -93,8 +93,20 @@ export interface Me {
   // already says "You added DMbot here", so the page doesn't use it (#497).
   /** A first payment failed and none has gone through since (#922): the page says to try again. */
   firstPaymentFailed?: boolean;
+  /** Where DMbot may record you. Missing from an API older than #1151. */
+  recording?: RecordingEntry[];
   /** Hand-overs offered to you, and the ones you offered (#614). */
   offers: { incoming: Offer[]; outgoing: Offer[] };
+}
+
+/** A server where this person said yes to recording (#1151). `on` is false when their yes was
+ * given under older wording: DMbot records nobody until they say yes again in Discord. */
+export interface RecordingEntry {
+  serverId: string;
+  serverName: string;
+  /** ISO date they said yes. */
+  agreedOn: string;
+  on: boolean;
 }
 
 /** Why a call failed, in a form the page can turn into plain words. */
@@ -129,6 +141,8 @@ export interface AccountApi {
   /** Where the "Sign in with Discord" button goes. */
   signInUrl(): string;
   signOut(): Promise<void>;
+  /** End every sign-in this person has, this one too (#1163). */
+  signOutEverywhere(): Promise<void>;
   /** Start the free Try It plan (no card). */
   startTryIt(): Promise<void>;
   /** The payment company's checkout page for a paid plan. */
@@ -137,6 +151,11 @@ export interface AccountApi {
   billingPortalUrl(): Promise<string>;
   /** The payment company's page to buy more hours for this month (a paid, working plan). */
   extraHoursUrl(): Promise<string>;
+  /** The file for "Download my data": the person's own data as JSON (#1150). Fetched from the
+   * page, so a refusal (once a minute, or signed out) can be said in words. */
+  downloadExport(): Promise<Blob>;
+  /** Stop recording me in one server (#1151). Starting again stays in Discord. */
+  stopRecording(serverId: string): Promise<void>;
   /** Where "Add DMbot" goes: the API, which sends the browser on to Discord. */
   installUrl(serverId: string): string;
   /** Say you added DMbot to a server it joined through a plain link. */
@@ -181,7 +200,12 @@ const errorKinds: Record<string, ApiErrorKind> = {
 export function httpApi(base: string, fetcher: typeof fetch = fetch): AccountApi {
   const root = base.replace(/\/+$/, "");
 
-  async function call(method: "GET" | "POST", path: string, body?: unknown): Promise<unknown> {
+  async function call(
+    method: "GET" | "POST",
+    path: string,
+    body?: unknown,
+    asFile = false,
+  ): Promise<unknown> {
     let response: Response;
     try {
       const init: RequestInit = {
@@ -208,7 +232,7 @@ export function httpApi(base: string, fetcher: typeof fetch = fetch): AccountApi
       throw new ApiError(errorKinds[code] ?? (response.status === 403 ? "not-allowed" : "server"));
     }
     if (response.status === 204) return null;
-    return response.json();
+    return asFile ? response.blob() : response.json();
   }
 
   const url = async (path: string, body?: unknown): Promise<string> =>
@@ -227,12 +251,16 @@ export function httpApi(base: string, fetcher: typeof fetch = fetch): AccountApi
     signOut: async () => {
       await call("POST", "/auth/logout");
     },
+    signOutEverywhere: async () => {
+      await call("POST", "/me/sign-out-everywhere");
+    },
     startTryIt: async () => {
       await call("POST", "/plan/try-it");
     },
     checkoutUrl: (plan) => url("/billing/checkout", { plan }),
     billingPortalUrl: () => url("/billing/portal"),
     extraHoursUrl: () => url("/billing/extra-hours"),
+    downloadExport: async () => (await call("GET", "/me/export", undefined, true)) as Blob,
     installUrl: (serverId) => `${root}/install?server_id=${encodeURIComponent(serverId)}`,
     linkServer: async (serverId) => {
       await call("POST", `/servers/${encodeURIComponent(serverId)}/link`);
@@ -247,6 +275,9 @@ export function httpApi(base: string, fetcher: typeof fetch = fetch): AccountApi
     },
     withdrawOffer: async (offerId) => {
       await call("POST", `/offers/${encodeURIComponent(offerId)}/withdraw`);
+    },
+    stopRecording: async (serverId) => {
+      await call("POST", `/me/recording/${encodeURIComponent(serverId)}/stop`);
     },
     requestDelete: async () =>
       ((await call("POST", "/account/delete/request")) as { confirm_token: string })

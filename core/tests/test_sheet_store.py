@@ -316,6 +316,40 @@ class Backups(SheetTest):
         (copy,) = await self.sheets.sheets(GUILD_B, restored.id)
         self.assertNotIn("LEAK", json.dumps(copy.sheet))
 
+    async def test_the_full_fields_survive_and_smuggled_text_in_them_is_dropped(self) -> None:
+        snapshot = json.loads(json.dumps(self.sheet_data))
+        snapshot.update(
+            hp=11,
+            temp_hp=2,
+            conditions=["Poisoned", "LEAK " * 40],
+            exhaustion=2,
+            resistances=["Fire", "LEAK " * 40],
+            inventory={
+                "count": 3,
+                "weight": 12.5,
+                "rarity": {"common": 3, "LEAK": 9},
+                "notes": "LEAK",
+            },
+            background="Outlander",
+        )
+        backup = await self.edited({"sheet": snapshot})
+        restored = await self.campaigns.import_backup(GUILD_B, backup, DM)
+        (copy,) = await self.sheets.sheets(GUILD_B, restored.id)
+        assert copy.sheet is not None
+        self.assertNotIn("LEAK", json.dumps(copy.sheet))
+        self.assertEqual(
+            (
+                copy.sheet["hp"],
+                copy.sheet["temp_hp"],
+                copy.sheet["conditions"],
+                copy.sheet["exhaustion"],
+            ),
+            (11, 2, ["Poisoned"], 2),
+        )
+        self.assertEqual(copy.sheet["inventory"]["count"], 3)
+        self.assertEqual(copy.sheet["inventory"]["rarity"]["common"], 3)
+        self.assertEqual(copy.sheet["background"], "Outlander")
+
     async def test_a_snapshot_from_another_version_keeps_the_link(self) -> None:
         backup = await self.edited({"sheet": {"v": 99, "name": "From the future"}})
         restored = await self.campaigns.import_backup(GUILD_B, backup, DM)

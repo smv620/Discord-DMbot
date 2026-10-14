@@ -1,6 +1,6 @@
 DMbot - TESTING STATUS (current testing only)
 =============================================
-Last updated: 2026-10-13 07:20 UTC by dev1 (core + web-api fc09d9c deployed, migrations 0049 and 0050)
+Last updated: 2026-10-13 17:15 UTC by dev1 (big-deploy checklist prepared, #1180)
 
 **For the people at the table: docs/next-test-step.md has the one next small test (#569).**
 Short by design: see CLAUDE.md "Testing logs". Full record: docs/testing-history.log.
@@ -9,12 +9,33 @@ Never put tokens, .env contents or players' personal data here (public repo).
 ------------------------------------------------------------------------------
 READY TO DEPLOY (merged into development, not on the server yet; dev1 deploys)
 ------------------------------------------------------------------------------
-- core + web-api, merged 2026-10-13 (#1120, #1123, #1130): deploy runs migration 0049 (a column on game_effects for #1112).
-  Check: Test F again, the Still going +10 min steps: the next "has likely ended" line shows the total ("11 minutes,
-  extended by the DM") and pressing it edits the DM-screen note; /dmbot start and press Start listening: the message
-  says "Starting in ..." and the button cannot be pressed until it is done (#1115). #1110 (Stripe adapter replaces
-  Lemon Squeezy): payments stay off; nothing to change in .env until the owner has made the Stripe account (#1096),
-  then replace the LEMONSQUEEZY_* values with the STRIPE_* ones (.env.example) through scripts/set-key.
+(nothing: #1120, #1123, #1130 and #1131 are all live in fc09d9c)
+- #1157 (WebDev, merged): website "Stop recording me" per server. Deploy core (the bot) AND web-api; no migration (the migrate
+  step applies the new rights). Check: on the account page press Stop recording me for a test server; the bot tells the DM and
+  ears stops that person within seconds. Rides with the big deploy (#1180).
+- PREPARED, not merged yet (#1180): the big deploy, once RepoManager has merged the queue on #516 (#1139, #1140,
+  #1152, #1166, #1168, #1171, #1174 and the web PRs). Dry run PASSED on a throwaway copy of the database, 2026-10-13.
+  0. OWNER FIRST, or DMbot will not come online at all (Discord refuses the connection, close code 4014): switch on
+     Message Content Intent at https://discord.com/developers/applications > DMbot > Bot > Privileged Gateway Intents
+     > Message Content Intent > Save Changes. Do NOT press Reset Token on that page. dev1 asks the owner to confirm
+     it is on before deploying #1152 (dev1 cannot check it without reading the token).
+  1. No game running (active_sessions = 0) and no table test due; tell the owner.
+  2. Backup: pg_dumpall to ~/db-backups/dmbot-before-<sha>-<UTC time>.sql, chmod 600.
+  3. Build, then up, as two steps: core first (it runs the migrations), then web-api (it only checks the schema and
+     refuses to start if core has not migrated yet). ears and cloudflared: only if their files changed.
+  4. Migrations, in one transaction (all five or none): 0051 dndbeyond_invite (campaigns: the DM's invite link)
+     -> 0052 table_chat (campaigns.table_chat on by default, table_chat_channel_id; transcript_lines.typed; the
+     sidebar_via check gains 'table-chat') -> 0053 combat_state (game_clocks.combat_round, combat_secs;
+     campaigns.side_initiative) -> 0054 sheet_questions (character_sheets.ask_mismatch) -> 0055 fightbot (new
+     table fightbot_players, server-scoped). No rows change. Expect "Database updated: 0051_..., 0055_fightbot".
+  5. Check: "ears connected", "Connected to 1 server(s)", 0 ERROR in core and web-api; web-api healthy.
+  6. Consent wording goes from version 4 to 5: everyone, the owner too, is asked again and is NOT recorded
+     until they press yes. Say so in the next test's steps.
+  Rollback: a failed migration changes nothing (one transaction): go back to the last image (git checkout
+  fc09d9c, build, up). If the code misbehaves after migrating, rolling the code back alone is safe: today's code
+  ran cleanly on the migrated copy. Restore the backup only if data was damaged, with the bot stopped.
+- Waiting on the owner, not a deploy: once the Stripe account exists (#1096), replace the LEMONSQUEEZY_* values in .env
+  with the STRIPE_* ones (.env.example) through scripts/set-key (#1110). Payments stay off until then.
 
 ------------------------------------------------------------------------------
 LIVE NOW
@@ -64,6 +85,10 @@ entry "Status log as it stood before it was trimmed"):
  19. TimeBot (#994, #1008): as a DM, ⚙️ Settings > Game clock; set a time; Start a timer (or Time it on
      a spell card); +1 hour: the DM screen says "has likely ended" with Ended / Still going +10 min.
  20. At a table: the new consent words (#670, #695), the off-topic filter (#678), run 8.
+ 21. #148 (1 person, ~2 min): take Speak away from DMbot's role (Server Settings > Roles > DMbot), /dmbot start,
+     talk for a minute: DMbot still hears you and ears logs no voice errors.
+ 22. #147 (1 person, ~5 min): /dmbot start, press Start listening twice, Stop listening, start again, then dev1
+     restarts core mid-session: it resumes, and the core log names every save and removal of the saved session.
 
 ------------------------------------------------------------------------------
 LATEST RESULTS

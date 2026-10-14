@@ -643,6 +643,119 @@ describe("safety", () => {
     expect(screen.queryByText(text.firstPaymentFailed)).toBeNull();
   });
 
+  it("lists where DMbot may record you, with one warning and one confirmation to stop (#1151)", async () => {
+    const { api } = show("table");
+    const first = await screen.findByText(text.recordingLine("Thursday Table", "2026-09-20"));
+    expect(first).toBeTruthy();
+    expect(screen.getByText(text.recordingLine("Gorrak's Hall", "2026-08-02"))).toBeTruthy();
+    // Nothing is stopped by the first press: it shows the warning and a way back.
+    const row = first.closest("li") as HTMLElement;
+    fireEvent.click(within(row).getByRole("button", { name: text.stopRecording }));
+    expect(within(row).getByText(text.stopWarning("Thursday Table"))).toBeTruthy();
+    expect(api.calls.some((c) => c.startsWith("stop-recording"))).toBe(false);
+    fireEvent.click(within(row).getByRole("button", { name: text.stopKeep }));
+    expect(within(row).queryByText(text.stopWarning("Thursday Table"))).toBeNull();
+    expect(api.calls.some((c) => c.startsWith("stop-recording"))).toBe(false);
+    // The one confirmation stops it, and the page says so.
+    fireEvent.click(within(row).getByRole("button", { name: text.stopRecording }));
+    fireEvent.click(within(row).getByRole("button", { name: text.stopYes }));
+    expect(await screen.findByText(text.stoppedRecording("Thursday Table"))).toBeTruthy();
+    expect(api.calls).toContain("stop-recording:srv-thursday");
+    await waitFor(() =>
+      expect(screen.queryByText(text.recordingLine("Thursday Table", "2026-09-20"))).toBeNull(),
+    );
+    // The other server is untouched.
+    expect(screen.getByText(text.recordingLine("Gorrak's Hall", "2026-08-02"))).toBeTruthy();
+  });
+
+  it("says a yes under older wording is not recording anyone (#1151)", async () => {
+    const api = mockApi("table");
+    const realMe = api.me.bind(api);
+    api.me = async () => {
+      const me = await realMe();
+      return me
+        ? {
+            ...me,
+            recording: [
+              { serverId: "srv-x", serverName: "Old Hall", agreedOn: "2026-01-01", on: false },
+            ],
+          }
+        : me;
+    };
+    render(<Account api={api} go={vi.fn()} />);
+    expect(await screen.findByText(text.recordingOld("Old Hall"))).toBeTruthy();
+    expect(screen.queryByRole("button", { name: text.stopRecording })).toBeNull();
+  });
+
+  it("shows no recording card to someone who never agreed, or from an older API (#1151)", async () => {
+    const api = mockApi("table");
+    const realMe = api.me.bind(api);
+    api.me = async () => {
+      const me = await realMe();
+      if (!me) return me;
+      const { recording: _gone, ...older } = me;
+      return older;
+    };
+    render(<Account api={api} go={vi.fn()} />);
+    await screen.findByRole("heading", { name: text.exportHeading });
+    expect(screen.queryByText(text.recordingHeading)).toBeNull();
+  });
+
+  it("downloads the person's data from the page, as a file (#1150)", async () => {
+    const saved: string[] = [];
+    URL.createObjectURL = vi.fn(() => "blob:pretend");
+    URL.revokeObjectURL = vi.fn((a: string) => void saved.push(a));
+    const { api } = show("table");
+    fireEvent.click(await screen.findByRole("button", { name: text.exportButton }));
+    await waitFor(() => expect(api.calls).toContain("export"));
+    await waitFor(() => expect(saved).toEqual(["blob:pretend"]), { timeout: 3000 });
+    expect(screen.getByText(text.exportWhat)).toBeTruthy();
+  });
+
+  it("says to wait a minute when the API refuses a second download (#1150)", async () => {
+    const api = mockApi("table");
+    api.downloadExport = async () => {
+      throw new ApiError("slow-down");
+    };
+    render(<Account api={api} go={vi.fn()} />);
+    fireEvent.click(await screen.findByRole("button", { name: text.exportButton }));
+    expect(await screen.findByText(text.exportTooSoon)).toBeTruthy();
+  });
+
+  it("goes back to signed out when the download finds the sign-in has ended (#1150)", async () => {
+    const api = mockApi("table");
+    api.downloadExport = async () => {
+      throw new ApiError("signed-out");
+    };
+    render(<Account api={api} go={vi.fn()} />);
+    fireEvent.click(await screen.findByRole("button", { name: text.exportButton }));
+    expect(await screen.findByRole("link", { name: text.signIn })).toBeTruthy();
+  });
+
+  it("does not offer Download my data to someone signed out", async () => {
+    show("signed-out");
+    await screen.findByRole("link", { name: text.signIn });
+    expect(screen.queryByRole("button", { name: text.exportButton })).toBeNull();
+  });
+
+  it("Sign out everywhere calls the API and then shows signed out (#1163)", async () => {
+    const { api } = show("table");
+    expect(await screen.findByText(text.signOutEverywhereNote)).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: text.signOutEverywhere }));
+    await waitFor(() => expect(api.calls).toContain("signOutEverywhere"));
+    expect(await screen.findByRole("link", { name: text.signIn })).toBeTruthy();
+  });
+
+  it("Sign out everywhere says to wait a minute on a 429 (#1163)", async () => {
+    const api = mockApi("table");
+    api.signOutEverywhere = async () => {
+      throw new ApiError("slow-down");
+    };
+    render(<Account api={api} go={vi.fn()} />);
+    fireEvent.click(await screen.findByRole("button", { name: text.signOutEverywhere }));
+    expect(await screen.findByText(text.signOutEverywhereWait)).toBeTruthy();
+  });
+
   it("signed out: Start Try It is the main button, with the plans under it", async () => {
     show("signed-out");
     const links = await screen.findAllByRole("link");
@@ -767,6 +880,22 @@ describe("the HTTP client", () => {
     expect(call?.init.credentials).toBe("include");
     expect((call?.init.headers as Record<string, string>)["X-DMbot-Request"]).toBe("1");
     expect(call?.url).not.toMatch(/token|code=/i);
+  });
+
+  it("fetches the export as a file, and names a refusal in words (#1150)", async () => {
+    const ok = fakeFetch(200, { about: "x" });
+    const file = await httpApi("https://api.example", ok.fetcher).downloadExport();
+    expect(JSON.parse(await file.text())).toEqual({ about: "x" });
+    expect(ok.calls[0]?.url).toBe("https://api.example/me/export");
+    expect(ok.calls[0]?.init.credentials).toBe("include");
+    const soon = fakeFetch(429, { error: "slow_down" });
+    await expect(httpApi("https://api.example", soon.fetcher).downloadExport()).rejects.toMatchObject({
+      kind: "slow-down",
+    });
+    const out = fakeFetch(401);
+    await expect(httpApi("https://api.example", out.fetcher).downloadExport()).rejects.toMatchObject({
+      kind: "signed-out",
+    });
   });
 
   it("treats 401 on /me as signed out", async () => {

@@ -49,6 +49,11 @@ def kind_of_file(filename: str) -> str:
     return "unknown"
 
 
+SCANNED_PDF = (
+    "That PDF is pictures of pages (scanned), so DMbot can't read its words. Type the "
+    "names into the template instead: /dmbot names > 📥 Add many > 📄 Get the template."
+)
+NO_TEXT = "DMbot found no text in that file. Check it's the right file."
 UNREADABLE = "DMbot couldn't open that file. It may be damaged: save it again and try."
 TYPES_HELP = (
     "DMbot can read PDF, Word (.docx), text (.txt) and web page (.html) files. Save it as "
@@ -85,7 +90,7 @@ def text_of(filename: str, raw: bytes) -> str:
         raise DocumentError(UNREADABLE) from exc
     text = text.replace("\x00", "")
     if not text.strip():
-        raise DocumentError("DMbot found no text in that file. Check it's the right file.")
+        raise DocumentError(NO_TEXT)
     if len(text) > MAX_DOCUMENT_CHARS:
         raise DocumentError(
             "That document is too long for one go (about 100 pages at most). Split it into "
@@ -125,10 +130,7 @@ def _pdf_text(raw: bytes) -> str:
             break  # too long anyway: text_of says so
     text = "\n".join(parts)
     if not text.strip():
-        raise DocumentError(
-            "That PDF is pictures of pages (scanned), so DMbot can't read its words. Type the "
-            "names into the template instead: /dmbot names > 📥 Add many > 📄 Get the template."
-        )
+        raise DocumentError(SCANNED_PDF)
     return text
 
 

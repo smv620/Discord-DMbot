@@ -27,6 +27,9 @@ from dmbot.memory.models import name_key
 
 SOURCE_DNDBEYOND = "dndbeyond"
 SOURCE_TYPED = "typed"
+# A typed sheet whose fields were read from the player's own document by the AI (#1125). It is
+# "typed" for editing (no link), but is checked like a full sheet.
+ORIGIN_DOCUMENT = "document"
 SNAPSHOT_VERSION = 1
 
 API = "https://character-service.dndbeyond.com/character/v5/character/{id}"
@@ -48,13 +51,36 @@ LEVEL_MAX = 20
 SCORE_MAX = 30
 ABILITIES = ("str", "dex", "con", "int", "wis", "cha")
 _ABILITY_NAMES = ("strength", "dexterity", "constitution", "intelligence", "wisdom", "charisma")
-_SKILLS = (
+SKILLS = (
     "acrobatics", "animal-handling", "arcana", "athletics", "deception", "history",
     "insight", "intimidation", "investigation", "medicine", "nature", "perception",
     "performance", "persuasion", "religion", "sleight-of-hand", "stealth", "survival",
 )  # fmt: skip
-_SENSES = ("darkvision", "blindsight", "tremorsense", "truesight")
+SENSES = ("darkvision", "blindsight", "tremorsense", "truesight")
 _NAME_LISTS = ("spells", "features", "feats", "items")
+# The "full" part of the sheet (#1124): more lists of names, kept as names only (never
+# descriptions or rules text). They are trimmed with the others when a snapshot is too big.
+_FULL_LISTS = (
+    "conditions", "resistances", "immunities", "vulnerabilities", "expertise", "tools",
+    "weapon_profs", "armor_profs",
+)  # fmt: skip
+# D&D Beyond's numbers for the conditions (its own `conditions` list on a character).
+CONDITION_IDS = {
+    1: "Blinded", 2: "Charmed", 3: "Deafened", 4: "Exhaustion", 5: "Frightened", 6: "Grappled",
+    7: "Incapacitated", 8: "Invisible", 9: "Paralyzed", 10: "Petrified", 11: "Poisoned",
+    12: "Prone", 13: "Restrained", 14: "Stunned", 15: "Unconscious",
+}  # fmt: skip
+CONDITIONS = tuple(CONDITION_IDS.values())
+EXHAUSTION_MAX = 6
+RARITIES = ("common", "uncommon", "rare", "very rare", "legendary", "artifact")
+_ARMOR_KINDS = frozenset(["light-armor", "medium-armor", "heavy-armor", "shields"])
+_WEAPON_KINDS = frozenset(["simple-weapons", "martial-weapons"])
+# Tools are proficiency modifiers whose subtype ends like this ("thieves-tools",
+# "herbalism-kit", "dice-set", "navigators-tools", "land-vehicles", "lute").
+_TOOL_ENDINGS = ("-tools", "-supplies", "-kit", "-set", "-vehicles", "-instrument", "-utensils")
+FLAG_PARTS = ("basic", "abilities", "inventory")  # parts a bad number can be reported for
+INVENTORY_MAX = 5000  # items; a number outside this is not a count of items
+WEIGHT_MAX = 100_000.0
 
 NOT_A_LINK = (
     "That doesn't look like a D&D Beyond character link. Open your character on D&D "
@@ -129,7 +155,7 @@ def parse(answer: Mapping[str, Any]) -> dict[str, Any]:
             {
                 str(m["subType"])
                 for m in modifiers
-                if m.get("type") in ("proficiency", "expertise") and m.get("subType") in _SKILLS
+                if m.get("type") in ("proficiency", "expertise") and m.get("subType") in SKILLS
             }
         ),
         "senses": _senses(modifiers),
@@ -151,10 +177,145 @@ def parse(answer: Mapping[str, Any]) -> dict[str, Any]:
         "items": _names(_get(i, "definition", "name") for i in _list(data.get("inventory"))),
     }
     snapshot["ac"] = _armour_class(data, scores, modifiers)
+    snapshot.update(_full(data, modifiers, snapshot["max_hp"]))
+    snapshot["flags"] = _flags(data)
     cleaned = clean(snapshot)
     if cleaned is None:
         raise SheetError("The character service's answer had no character in it.")
     return cleaned
+
+
+def _full(
+    data: Mapping[str, Any], modifiers: list[Mapping[str, Any]], max_hp: int | None
+) -> dict[str, Any]:
+    """The rest of the allow list (#1124): hit points now, conditions, defenses, skill
+    expertise, proficiencies, background and the inventory's size. Names and numbers only."""
+    # D&D Beyond keeps damage taken (`removedHitPoints`), not the hit points left: what is
+    # left is the maximum minus the damage, never below 0.
+    removed = _int(data.get("removedHitPoints"), 0, 99999)
+    hp = None if max_hp is None or removed is None else max(0, max_hp - removed)
+    conditions: list[str] = []
+    exhaustion = 0
+    for entry in _list(data.get("conditions")):
+        name = CONDITION_IDS.get(_int(_get(entry, "id"), 1, 99) or 0)
+        if name is not None and name not in conditions:
+            conditions.append(name)
+        if name == "Exhaustion":
+            exhaustion = _int(_get(entry, "level"), 0, EXHAUSTION_MAX) or 0
+    proficiencies = [m for m in modifiers if m.get("type") == "proficiency"]
+    return {
+        "hp": hp,
+        "temp_hp": _int(data.get("temporaryHitPoints"), 0, 9999) or 0,
+        "conditions": conditions,
+        "exhaustion": exhaustion,
+        "resistances": _modifier_names(modifiers, "resistance"),
+        "immunities": _modifier_names(modifiers, "immunity"),
+        "vulnerabilities": _modifier_names(modifiers, "vulnerability"),
+        "expertise": sorted(
+            {
+                str(m["subType"])
+                for m in modifiers
+                if m.get("type") == "expertise" and m.get("subType") in SKILLS
+            }
+        ),
+        "tools": _names(
+            m.get("friendlySubtypeName") for m in proficiencies if _sub(m).endswith(_TOOL_ENDINGS)
+        ),
+        "weapon_profs": _names(
+            m.get("friendlySubtypeName")
+            for m in proficiencies
+            if _sub(m) in _WEAPON_KINDS or _sub(m).endswith("-weapons")
+        ),
+        "armor_profs": _names(
+            m.get("friendlySubtypeName") for m in proficiencies if _sub(m) in _ARMOR_KINDS
+        ),
+        "background": _name(_get(data, "background", "definition", "name"))
+        or _name(_get(data, "background", "customBackground", "name")),
+        "inventory": _inventory(data),
+    }
+
+
+def _sub(modifier: Mapping[str, Any]) -> str:
+    """A modifier's subtype as text, "" if it isn't text (an odd shape never breaks a read)."""
+    value = modifier.get("subType")
+    return value if isinstance(value, str) else ""
+
+
+def _flags(data: Mapping[str, Any]) -> list[str]:
+    """Which parts had a number that can't be right (a negative score, damage or amount, a
+    class level under 1), so the import status can say ⛔ for them even though `clean` drops
+    the bad number. Part names only."""
+
+    def negative(value: Any) -> bool:
+        return isinstance(value, (int, float)) and not isinstance(value, bool) and value < 0
+
+    flags: set[str] = set()
+    if any(
+        negative(data.get(k)) for k in ("removedHitPoints", "temporaryHitPoints", "baseHitPoints")
+    ) or any(
+        negative(_get(c, "level"))
+        or (_get(c, "level") == 0 and not isinstance(_get(c, "level"), bool))
+        for c in _list(data.get("classes"))
+    ):
+        flags.add("basic")
+    if any(
+        negative(_get(s, "value"))
+        for key in ("stats", "bonusStats", "overrideStats")
+        for s in _list(data.get(key))
+    ):
+        flags.add("abilities")
+    if any(
+        negative(i.get("quantity")) for i in _list(data.get("inventory")) if isinstance(i, Mapping)
+    ):
+        flags.add("inventory")
+    return sorted(flags)
+
+
+def _weight(value: Any) -> float | None:
+    """A weight in pounds, or None. The range is checked before the number is made a float:
+    a huge integer would raise OverflowError and lose the whole sheet."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    if isinstance(value, float) and not math.isfinite(value):
+        return None
+    if not 0 <= value <= WEIGHT_MAX:
+        return None
+    return float(value)
+
+
+def _modifier_names(modifiers: list[Mapping[str, Any]], kind: str) -> list[str]:
+    return _names(
+        str(m["friendlySubtypeName"]).capitalize()
+        for m in modifiers
+        if m.get("type") == kind and isinstance(m.get("friendlySubtypeName"), str)
+    )
+
+
+def _inventory(data: Mapping[str, Any]) -> dict[str, Any]:
+    """How many things, what they weigh and how many of each rarity, from the sheet's
+    inventory. Counted per line of the inventory (20 arrows are one item). The weight is
+    quantity times weight, divided by the bundle size, per line (arrows are weighed per
+    bundle). A line with no rarity is common (D&D Beyond says "Common" for ordinary gear)."""
+    count, weight = 0, 0.0
+    rarity = dict.fromkeys(RARITIES, 0)
+    for item in _list(data.get("inventory")):
+        if not isinstance(item, Mapping):
+            continue
+        count += 1
+        quantity = _int(item.get("quantity"), 0, 100_000)
+        quantity = 1 if quantity is None else quantity  # no amount given: one
+        each = _weight(_get(item, "definition", "weight"))
+        bundle = _int(_get(item, "definition", "bundleSize"), 1, 1000) or 1
+        if each is not None:
+            weight += each * quantity / bundle
+        word = _get(item, "definition", "rarity")
+        key = word.strip().lower() if isinstance(word, str) else "common"
+        rarity[key if key in rarity else "common"] += 1
+    return {
+        "count": min(count, INVENTORY_MAX),
+        "weight": round(min(weight, WEIGHT_MAX), 2),
+        "rarity": rarity,
+    }
 
 
 def _get(value: Any, *path: str) -> Any:
@@ -266,7 +427,7 @@ def _senses(modifiers: list[Mapping[str, Any]]) -> dict[str, int]:
     senses: dict[str, int] = {}
     for m in modifiers:
         sense = m.get("subType")
-        if m.get("type") == "set-base" and sense in _SENSES:
+        if m.get("type") == "set-base" and sense in SENSES:
             feet = _int(m.get("value"), 1, 1000)
             if feet is not None:
                 senses[str(sense)] = max(feet, senses.get(str(sense), 0))
@@ -345,7 +506,7 @@ def clean(snapshot: Any) -> dict[str, Any] | None:
     senses_in = snapshot.get("senses")
     senses = {
         s: v
-        for s in _SENSES
+        for s in SENSES
         if isinstance(senses_in, Mapping) and (v := _int(senses_in.get(s), 1, 1000)) is not None
     }
     out: dict[str, Any] = {
@@ -362,23 +523,63 @@ def clean(snapshot: Any) -> dict[str, Any] | None:
         "proficiency_bonus": _int(snapshot.get("proficiency_bonus"), 2, 6),
         "saves": [a for a in ABILITIES if a in _list(snapshot.get("saves"))],
         "skills": sorted(
-            {s for s in _list(snapshot.get("skills")) if isinstance(s, str) and s in _SKILLS}
+            {s for s in _list(snapshot.get("skills")) if isinstance(s, str) and s in SKILLS}
         ),
         "senses": senses,
         "languages": _names(_list(snapshot.get("languages"))),
     }
     for key in _NAME_LISTS:
         out[key] = _names(_list(snapshot.get(key)))
+    out.update(_clean_full(snapshot))
+    if source == SOURCE_TYPED and snapshot.get("origin") == ORIGIN_DOCUMENT:
+        out["origin"] = ORIGIN_DOCUMENT  # read from a document by the AI (#1125): the full checks
+    out["flags"] = sorted(f for f in _list(snapshot.get("flags")) if f in FLAG_PARTS)
     # Never bigger than SNAPSHOT_MAX_BYTES as Postgres stores it (UTF-8, not \u escapes):
     # the longest lists lose their last entries. Each pass shrinks a list or returns, so
     # this always ends. With UTF-8 measured, allow-listed content can't reach the None
     # (it fits once the lists are empty): it stays as the guard that ends the loop.
-    trimmable = (*_NAME_LISTS, "languages", "classes")
+    trimmable = (*_NAME_LISTS, *_FULL_LISTS, "languages", "classes")
     while len(json.dumps(out, ensure_ascii=False).encode()) > SNAPSHOT_MAX_BYTES:
         longest = max(trimmable, key=lambda k: len(out[k]))
         if not out[longest]:
             return None
         out[longest] = out[longest][: len(out[longest]) * 3 // 4]
+    return out
+
+
+def _clean_full(snapshot: Mapping[str, Any]) -> dict[str, Any]:
+    """The full part of a snapshot (#1124), each the right shape. A snapshot kept before
+    these fields existed has none of them: that reads as unknown (None, empty, 0), never as
+    a wrong value."""
+    out: dict[str, Any] = {
+        "hp": _int(snapshot.get("hp"), 0, 99999),
+        "temp_hp": _int(snapshot.get("temp_hp"), 0, 9999) or 0,
+        "exhaustion": _int(snapshot.get("exhaustion"), 0, EXHAUSTION_MAX) or 0,
+        "background": _name(snapshot.get("background")),
+    }
+    conditions = {str(c).casefold() for c in _list(snapshot.get("conditions"))}
+    out["conditions"] = [c for c in CONDITIONS if c.casefold() in conditions]
+    for key in ("resistances", "immunities", "vulnerabilities", "tools"):
+        out[key] = _names(_list(snapshot.get(key)))
+    out["weapon_profs"] = _names(_list(snapshot.get("weapon_profs")))
+    out["armor_profs"] = _names(_list(snapshot.get("armor_profs")))
+    out["expertise"] = sorted({s for s in _list(snapshot.get("expertise")) if s in SKILLS})
+    inventory = snapshot.get("inventory")
+    if isinstance(inventory, Mapping):
+        rarity_in = inventory.get("rarity")
+        weight = _weight(inventory.get("weight"))
+        out["inventory"] = {
+            "count": _int(inventory.get("count"), 0, INVENTORY_MAX) or 0,
+            "weight": round(weight, 2) if weight is not None else 0.0,
+            "rarity": {
+                r: (_int(rarity_in.get(r), 0, INVENTORY_MAX) or 0)
+                if isinstance(rarity_in, Mapping)
+                else 0
+                for r in RARITIES
+            },
+        }
+    else:
+        out["inventory"] = None
     return out
 
 
