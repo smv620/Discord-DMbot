@@ -17,7 +17,7 @@ export const features: Feature[] = [
   },
   {
     title: "Only people who said yes",
-    what: "Nobody is recorded until they say yes. Anyone can stop at any time.",
+    what: "Nobody is recorded until they say yes. That covers what you say and what you type in the table's chat. Anyone can stop at any time.",
     example: "To stop, press ⚙️ Menu in DMbot's private message, then Stop recording me.",
   },
   {
@@ -26,8 +26,8 @@ export const features: Feature[] = [
     example: "Missed last week? Read what was said before the game starts.",
   },
   {
-    title: 'Say "Hey DMbot"',
-    what: "The game master asks a quick question out loud and gets a short, private answer. The question and answer go in the written record.",
+    title: 'Ask "Hey DMbot"',
+    what: "Anyone at the table who said yes can ask a quick rules question out loud or in the dmb-chat channel. The short answer is posted there, and the game master has the final say. Questions and answers go in the written record.",
     example: '"Hey DMbot, how long does Bless last?" The answer says how sure DMbot is.',
   },
   {
