@@ -120,5 +120,42 @@ class Following(unittest.IsolatedAsyncioTestCase):
         self.assertIn("Now using", it.sent[0][0])
 
 
+class Robustness(unittest.IsolatedAsyncioTestCase):
+    async def test_an_unexpected_store_error_still_gets_an_answer(self) -> None:
+        store = MagicMock()
+        store.make_code = AsyncMock(side_effect=RuntimeError("db down"))
+        it = interaction(7, bot_with(store))
+        await shared_rules.new_code(it, campaign())
+        self.assertEqual(it.sent[0][0], shared_rules.COULDNT)
+
+    async def test_a_missing_store_is_told_not_left_thinking(self) -> None:
+        for call in (shared_rules.new_code, shared_rules.stop_sharing):
+            it = interaction(7, bot_with(None))
+            await call(it, campaign())
+            self.assertEqual(it.sent[0][0], shared_rules.NOT_READY)
+
+    async def test_a_non_dm_is_refused_on_every_handler(self) -> None:
+        store = MagicMock()
+        for call in (shared_rules.new_code, shared_rules.stop_sharing, shared_rules.open_menu):
+            it = interaction(99, bot_with(store))
+            await call(it, campaign())
+            self.assertEqual(it.sent[0][0], shared_rules.ONLY_DMS)
+        store.make_code.assert_not_called()
+
+    async def test_undo_rechecks_the_person(self) -> None:
+        store = MagicMock()
+        store.restore = AsyncMock()
+        follow = rule_sets.Follow("s", "house_rules", "Red", "T", 1, {}, True, 5)
+        await shared_rules.UndoUnfollow(campaign(), follow)._undo(interaction(99, bot_with(store)))
+        store.restore.assert_not_called()
+
+    def test_the_name_box_matches_the_limit(self) -> None:
+        self.assertEqual(shared_rules.ShareForm.name.max_length, rule_sets.NAME_MAX)
+
+    def test_the_confirm_quotes_a_few_rules(self) -> None:
+        content = {"rules": [{"number": i, "rule": f"rule {i}", "instead": None} for i in range(9)]}
+        self.assertEqual(shared_rules._preview(content).count("\n"), 2)
+
+
 if __name__ == "__main__":
     unittest.main()

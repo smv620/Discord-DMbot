@@ -9,7 +9,9 @@ nothing changes without a press.
 
 from __future__ import annotations
 
+import functools
 import logging
+from collections.abc import Awaitable, Callable
 from typing import Any
 
 import discord
@@ -18,7 +20,6 @@ from dmbot.campaigns import Campaign
 from dmbot.rules import rule_sets
 from dmbot.rules.house import HouseRuleError
 from dmbot.ui.dmbot_commands import _answer_first, _bot, _Button, _Menu, _send, _tell
-from dmbot.ui.house_file import GONE, NOT_READY, ONLY_DMS, _dm_campaign
 
 log = logging.getLogger(__name__)
 
@@ -36,9 +37,62 @@ INTRO = (
     "another DM. Only rules are shared. Never your story, names or notes."
 )
 CODE_NOTE = (
-    "Give this code to a DM who should use your rules. Anyone with the code can use them. "
-    "Old codes still work; use Stop sharing to turn them all off."
+    "Give this code to a DM who should use your rules. Anyone with the code can read them, "
+    "with your rules document link if you added one. Old codes still work; use Stop sharing "
+    "to turn them all off."
 )
+
+
+ONLY_DMS = "Only this campaign's DMs can share house rules. Ask your DM."
+GONE = "That campaign isn't here any more. Use `/dmbot start` to begin again."
+NOT_READY = "Shared rules aren't available right now. Please try again in a moment."
+COULDNT = "That didn't work. Please try again in a moment."
+
+
+def _guarded[F: Callable[..., Awaitable[None]]](handler: F) -> F:
+    """A press must always get an answer: after Discord is told "thinking", a failure the
+    store didn't expect would leave the DM waiting for ever."""
+
+    @functools.wraps(handler)
+    async def run(*args: Any, **kwargs: Any) -> None:
+        interaction = next(a for a in args if hasattr(a, "followup"))
+        try:
+            await handler(*args, **kwargs)
+        except HouseRuleError as exc:
+            await _tell(interaction, str(exc))
+        except Exception:
+            log.exception("Shared house rules failed")
+            await _tell(interaction, COULDNT)
+
+    return run  # type: ignore[return-value]
+
+
+async def _dm_campaign(interaction: discord.Interaction, campaign: Campaign) -> Campaign | None:
+    """The campaign as it is now, if this person is one of its DMs; else they are told."""
+    current = await _bot(interaction).campaigns.get(campaign.guild_id, campaign.id)
+    if current is None:
+        await _tell(interaction, GONE)
+        return None
+    if interaction.user.id not in current.dm_user_ids:
+        await _tell(interaction, ONLY_DMS)
+        return None
+    return current
+
+
+async def _ready(
+    interaction: discord.Interaction, campaign: Campaign
+) -> tuple[Campaign, Any] | None:
+    """Answer Discord, then check this person is a DM of the campaign right now and the
+    store is there. Anyone who can't go on is told why."""
+    await _answer_first(interaction)
+    current = await _dm_campaign(interaction, campaign)
+    if current is None:
+        return None
+    store = _store(interaction)
+    if store is None:
+        await _tell(interaction, NOT_READY)
+        return None
+    return current, store
 
 
 def _escape(text: str) -> str:
@@ -58,28 +112,20 @@ def _store(interaction: discord.Interaction) -> Any:
     return getattr(_bot(interaction), "rule_sets", None)
 
 
+@_guarded
 async def open_menu(interaction: discord.Interaction, campaign: Campaign) -> None:
     """📚 Shared house rules: what this campaign shares and follows, and the ways to change
     it. The campaign's DMs only; the answer is private."""
-    await _answer_first(interaction)
-    current = await _dm_campaign(interaction, campaign)
-    if current is None:
+    ready = await _ready(interaction, campaign)
+    if ready is None:
         return
-    store = _store(interaction)
-    if store is None:
-        await _tell(interaction, NOT_READY)
-        return
-    try:
-        mine = await store.published(current.guild_id, current.id)
-        follows = [
-            f
-            for f in await store.following(current.guild_id, current.id)
-            if f.kind == rule_sets.HOUSE_RULES
-        ]
-    except Exception:
-        log.exception("Couldn't read the shared house rules")
-        await _tell(interaction, NOT_READY)
-        return
+    current, store = ready
+    mine = await store.published(current.guild_id, current.id)
+    follows = [
+        f
+        for f in await store.following(current.guild_id, current.id)
+        if f.kind == rule_sets.HOUSE_RULES
+    ]
     lines = [INTRO]
     sharing = mine is not None and mine.shared
     if sharing and mine is not None:
@@ -119,7 +165,7 @@ class ShareForm(discord.ui.Modal, title="Share your house rules"):
         await share(interaction, self.campaign, self.name.value)
 
 
-class CodeForm(discord.ui.Modal, title="Use a shared set"):
+class CodeForm(discord.ui.Modal, title="Use shared rules"):
     code: discord.ui.TextInput[CodeForm] = discord.ui.TextInput(
         label="The share code",  # 45 characters at most
         placeholder="Paste the code here",
@@ -134,16 +180,13 @@ class CodeForm(discord.ui.Modal, title="Use a shared set"):
         await look_up(interaction, self.campaign, self.code.value)
 
 
+@_guarded
 async def share(interaction: discord.Interaction, campaign: Campaign, name: str) -> None:
     """Share the campaign's house rules as a set, then give its first code. Paid plans only."""
-    await _answer_first(interaction)
-    current = await _dm_campaign(interaction, campaign)
-    store = _store(interaction)
-    if current is None:
+    ready = await _ready(interaction, campaign)
+    if ready is None:
         return
-    if store is None:
-        await _tell(interaction, NOT_READY)
-        return
+    current, store = ready
     bot = _bot(interaction)
     refused = await bot.plan_gate("share", current.guild_id, current, interaction.user.id)
     if refused is not None:
@@ -152,53 +195,43 @@ async def share(interaction: discord.Interaction, campaign: Campaign, name: str)
     if bot.house_rules is None:
         await _tell(interaction, NOT_READY)
         return
-    try:
-        rules = await bot.house_rules.list(current.guild_id, current.id)
-        links = getattr(bot, "house_file_links", None)
-        link = await links.get(current.guild_id, current.id) if links is not None else None
-        shared = await store.publish(
-            current.guild_id,
-            current.id,
-            interaction.user.id,
-            name,
-            rules,
-            getattr(link, "link", None),
-        )
-        code = await store.make_code(current.guild_id, current.id, interaction.user.id)
-    except HouseRuleError as exc:
-        await _tell(interaction, str(exc))
-        return
+    rules = await bot.house_rules.list(current.guild_id, current.id)
+    links = getattr(bot, "house_file_links", None)
+    link = await links.get(current.guild_id, current.id) if links is not None else None
+    # The DM's rules document link travels with the set, as docs/PLAN.md says; CODE_NOTE
+    # tells them. Only house rules are listed here: nothing from a shared rulebook.
+    shared = await store.publish(
+        current.guild_id,
+        current.id,
+        interaction.user.id,
+        name,
+        rules,
+        getattr(link, "link", None),
+    )
+    code = await store.make_code(current.guild_id, current.id, interaction.user.id)
     await _tell(
         interaction,
         f"✅ Sharing **{_escape(shared.name)}**.\n`{code}`\n{CODE_NOTE}",
     )
 
 
+@_guarded
 async def new_code(interaction: discord.Interaction, campaign: Campaign) -> None:
-    await _answer_first(interaction)
-    current = await _dm_campaign(interaction, campaign)
-    store = _store(interaction)
-    if current is None or store is None:
+    ready = await _ready(interaction, campaign)
+    if ready is None:
         return
-    try:
-        code = await store.make_code(current.guild_id, current.id, interaction.user.id)
-    except HouseRuleError as exc:
-        await _tell(interaction, str(exc))
-        return
+    current, store = ready
+    code = await store.make_code(current.guild_id, current.id, interaction.user.id)
     await _tell(interaction, f"`{code}`\n{CODE_NOTE}")
 
 
+@_guarded
 async def stop_sharing(interaction: discord.Interaction, campaign: Campaign) -> None:
-    await _answer_first(interaction)
-    current = await _dm_campaign(interaction, campaign)
-    store = _store(interaction)
-    if current is None or store is None:
+    ready = await _ready(interaction, campaign)
+    if ready is None:
         return
-    try:
-        had = await store.stop_sharing(current.guild_id, current.id, interaction.user.id)
-    except HouseRuleError as exc:
-        await _tell(interaction, str(exc))
-        return
+    current, store = ready
+    had = await store.stop_sharing(current.guild_id, current.id, interaction.user.id)
     await _tell(
         interaction,
         "Done. Your rules aren't shared now and their codes stopped working. Tables using "
@@ -208,28 +241,39 @@ async def stop_sharing(interaction: discord.Interaction, campaign: Campaign) -> 
     )
 
 
+PREVIEW_RULES = 3  # how many rules the confirm step quotes, so the DM sees what they get
+PREVIEW_CHARS = 120
+
+
+def _preview(content: dict[str, Any]) -> str:
+    rules = content.get("rules")
+    if not isinstance(rules, list):
+        return ""
+    lines = []
+    for rule in rules[:PREVIEW_RULES]:
+        if isinstance(rule, dict) and isinstance(rule.get("rule"), str):
+            text = " ".join(rule["rule"].split())[:PREVIEW_CHARS]
+            lines.append(f"> {_escape(text)}")
+    return "\n".join(lines)
+
+
+@_guarded
 async def look_up(interaction: discord.Interaction, campaign: Campaign, code: str) -> None:
     """Find the set a code opens and show what it holds, before anything is copied."""
-    await _answer_first(interaction)
-    current = await _dm_campaign(interaction, campaign)
-    store = _store(interaction)
-    if current is None:
+    ready = await _ready(interaction, campaign)
+    if ready is None:
         return
-    if store is None:
-        await _tell(interaction, NOT_READY)
-        return
-    try:
-        offer = await store.by_code(current.guild_id, interaction.user.id, code)
-    except HouseRuleError as exc:
-        await _tell(interaction, str(exc))
-        return
-    await _tell(
+    current, store = ready
+    offer = await store.by_code(current.guild_id, interaction.user.id, code)
+    preview = _preview(offer.content)
+    await _send(
         interaction,
         f"**{_escape(offer.name)}** from {_escape(offer.publisher)}: "
         f"{_rules(_count(offer.content))} (version {offer.version}).\n"
-        "If you use it, DMbot will check these rules too. Your own rules win if they "
+        + (f"{preview}\n" if preview else "")
+        + "If you use it, DMbot will check these rules too. Your own rules win if they "
         "disagree. You can stop any time.",
-        view=ConfirmFollow(current, offer),
+        ConfirmFollow(current, offer),
     )
 
 
@@ -241,20 +285,14 @@ class ConfirmFollow(_Menu):
         self.add_item(_Button(self._yes, label=CONFIRM_LABEL, style=discord.ButtonStyle.primary))
         self.add_item(_Button(self._no, label=CANCEL_LABEL))
 
+    @_guarded
     async def _yes(self, interaction: discord.Interaction) -> None:
-        await _answer_first(interaction)
-        current = await _dm_campaign(interaction, self.campaign)  # still a DM, still here
-        store = _store(interaction)
-        if current is None or store is None:
+        ready = await _ready(interaction, self.campaign)  # still a DM, still here
+        if ready is None:
             return
-        try:
-            follow = await store.follow(
-                current.guild_id, current.id, interaction.user.id, self.offer
-            )
-        except HouseRuleError as exc:
-            await _tell(interaction, str(exc))
-            return
-        self.stop()
+        current, store = ready
+        follow = await store.follow(current.guild_id, current.id, interaction.user.id, self.offer)
+        self.stop()  # one press only
         await _tell(
             interaction,
             f"✅ Now using **{_escape(follow.name)}**. DMbot checks it along with your own rules.",
@@ -290,17 +328,13 @@ class UndoUnfollow(_Menu):
         self.follow = follow
         self.add_item(_Button(self._undo, label=UNDO_LABEL))
 
+    @_guarded
     async def _undo(self, interaction: discord.Interaction) -> None:
-        await _answer_first(interaction)
-        current = await _dm_campaign(interaction, self.campaign)
-        store = _store(interaction)
-        if current is None or store is None:
+        ready = await _ready(interaction, self.campaign)
+        if ready is None:
             return
-        try:
-            await store.restore(current.guild_id, current.id, interaction.user.id, self.follow)
-        except HouseRuleError as exc:
-            await _tell(interaction, str(exc))
-            return
+        current, store = ready
+        await store.restore(current.guild_id, current.id, interaction.user.id, self.follow)
         self.stop()
         await _tell(interaction, f"Back to using **{_escape(self.follow.name)}**.")
 
@@ -344,29 +378,22 @@ class SharedMenu(_Menu):
 
     async def _stop(self, interaction: discord.Interaction) -> None:
         # Stopping turns off every code handed out, so it asks first.
-        await _tell(
+        await _send(
             interaction,
             "Stop sharing? Every share code will stop working. Tables already using your "
             "rules keep their copy.",
-            view=ConfirmStop(self.campaign),
+            ConfirmStop(self.campaign),
         )
 
+    @_guarded
     async def _unfollow(self, interaction: discord.Interaction) -> None:
-        await _answer_first(interaction)
-        current = await _dm_campaign(interaction, self.campaign)
-        store = _store(interaction)
-        if current is None or store is None:
+        ready = await _ready(interaction, self.campaign)
+        if ready is None:
             return
-        try:
-            follow = await store.unfollow(current.guild_id, current.id, interaction.user.id)
-        except HouseRuleError as exc:
-            await _tell(interaction, str(exc))
-            return
-        await _tell(
+        current, store = ready
+        follow = await store.unfollow(current.guild_id, current.id, interaction.user.id)
+        await _send(
             interaction,
             f"Stopped using **{_escape(follow.name)}**. Your own rules are unchanged.",
-            view=UndoUnfollow(current, follow),
+            UndoUnfollow(current, follow),
         )
-
-
-__all__ = ["GONE", "ONLY_DMS", "open_menu"]
