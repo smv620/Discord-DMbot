@@ -482,7 +482,8 @@ class Migration0044(MemoryTest):
             )
         await self.db.migrate()
         memory = MemoryStore(self.db, clock=lambda: 1)
-        got = {e.name: e for e in await memory.entities(GUILD_A, c)}
+        # 0058 gave Testa's player an entry of their own (#1188): that is its own test.
+        got = {e.name: e for e in await memory.entities(GUILD_A, c) if e.type != "person"}
         self.assertEqual(
             {n: (e.type, e.role, e.needs_look, e.played_by) for n, e in got.items()},
             {
