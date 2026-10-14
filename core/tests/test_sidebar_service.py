@@ -600,6 +600,13 @@ class SaidAtTheTable(unittest.IsolatedAsyncioTestCase):
         asked = self.host.saved[0].lineage
         self.assertEqual((asked.via, asked.stt), ("table-trigger", self.host.sidebar_stt()))
 
+    async def test_asked_by_typing_in_the_table_chat_says_so_and_has_no_speech_engine(self) -> None:
+        said = "Hold on, I need to find if you need line of sight for fireball."
+        self.assertTrue(self.sidebar.ask_at_table(self.table, DM, said, typed=True))
+        await self.settle()
+        asked = self.host.saved[0].lineage
+        self.assertEqual((asked.via, asked.stt), ("table-chat", ""))
+
     async def test_a_player_saying_the_same_words_starts_nothing(self) -> None:
         said = "Hold on, I need to find if you need line of sight for fireball."
         self.assertFalse(self.sidebar.ask_at_table(self.table, PLAYER, said))

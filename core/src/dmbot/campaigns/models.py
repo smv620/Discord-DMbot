@@ -124,6 +124,12 @@ class Campaign:
     # The live transcript channel (#124); None until the first session.
     transcript_channel_id: int | None = None
     gametime_channel_id: int | None = None  # the players' game-time channel (#1116)
+    # The DM's D&D Beyond campaign invite link, shown to players on a button (#1119).
+    dndbeyond_invite: str | None = None
+    # Typed chat at the table (#1118): whether DMbot reads it, and the one extra text channel
+    # the DM picked (the voice channel's own chat is always the first place).
+    table_chat: bool = True
+    table_chat_channel_id: int | None = None
     # How much DMbot says in the DM screen (#504): quiet, normal or chatty.
     dm_screen_level: str = DEFAULT_DM_SCREEN_LEVEL
     # Whose plan the campaign uses (#437): its creator or restorer; None for campaigns
