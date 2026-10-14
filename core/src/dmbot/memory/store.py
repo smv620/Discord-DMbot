@@ -1417,11 +1417,13 @@ class MemoryStore:
         confirmed for them. Names only, no secret names. Not the person's own (placeholder)
         name: the caller shows the Discord name."""
         async with self._read(guild_id, campaign_id, snapshot=True) as scope:
+            # Two people made in the same second keep a fixed order: ties fall to the Discord id,
+            # never to a random entry id (#1241).
             people = {
                 str(r["id"]): r
                 for r in await scope.select(
                     ENTITIES,
-                    " AND type = 'person' AND status = 'confirmed' ORDER BY created_at, played_by, id",  # ties (same second) fall to the Discord id, never to a random entry id
+                    " AND type = 'person' AND status = 'confirmed' ORDER BY created_at, played_by, id",
                 )
             }
             if not people:
