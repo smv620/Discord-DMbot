@@ -1406,12 +1406,13 @@ class MemoryStore:
     ) -> list[tuple[int, list[str], list[str]]]:
         """Who is who at this table (#1188): for each person, their Discord user, the
         characters they play (the confirmed `plays` links) and the other names the DM
-        confirmed for them. Names only, no secret names; the placeholder name is left out."""
+        confirmed for them. Names only, no secret names. Not the person's own (placeholder)
+        name: the caller shows the Discord name."""
         async with self._read(guild_id, campaign_id, snapshot=True) as scope:
             people = {
                 str(r["id"]): r
                 for r in await scope.select(
-                    ENTITIES, " AND type = 'person' AND status IN ('proposed', 'confirmed')"
+                    ENTITIES, " AND type = 'person' AND status = 'confirmed'"
                 )
             }
             if not people:
