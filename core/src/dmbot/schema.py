@@ -656,6 +656,42 @@ PEOPLE = """
         WHERE type = 'person' AND status IN ('proposed', 'confirmed');
     """
 
+DEFINITIONS = """
+    -- The official relationships, traceable (#1189). The definitions the code ships are kept
+    -- here by version, written at every start (a key and version already here are never
+    -- rewritten), so a fact can say which definition it was written under. Shared by every
+    -- campaign and holding no campaign data: no guild_id, so no row-level security (like
+    -- schema_migrations).
+    CREATE TABLE ontology_predicate_versions (
+        key             TEXT NOT NULL CHECK (key ~ '^[a-z][a-z0-9_]{1,39}$'),
+        version         INTEGER NOT NULL CHECK (version >= 1),
+        label           TEXT NOT NULL,
+        inverse_label   TEXT NOT NULL,
+        description     TEXT NOT NULL,
+        covers          TEXT[] NOT NULL,
+        not_this        TEXT[] NOT NULL,
+        examples        TEXT[] NOT NULL,
+        synonyms        TEXT[] NOT NULL,
+        subject_types   TEXT[] NOT NULL,
+        object_types    TEXT[] NOT NULL,
+        is_symmetric    BOOLEAN NOT NULL,
+        created_at      BIGINT NOT NULL,
+        PRIMARY KEY (key, version)
+    );
+    -- A campaign's own relationships carry the same fields, with a version.
+    ALTER TABLE memory_predicates
+        ADD COLUMN covers        TEXT[] NOT NULL DEFAULT '{}',
+        ADD COLUMN not_this      TEXT[] NOT NULL DEFAULT '{}',
+        ADD COLUMN inverse_label TEXT NOT NULL DEFAULT '',
+        ADD COLUMN synonyms      TEXT[] NOT NULL DEFAULT '{}',
+        ADD COLUMN version       INTEGER NOT NULL DEFAULT 1 CHECK (version >= 1);
+    -- Every fact says which version of its relationship's definition it was written under.
+    -- Facts from before were all written under version 1: the column's default gives them
+    -- that without an UPDATE, so no row-level security has to be opened for it.
+    ALTER TABLE memory_relations
+        ADD COLUMN definition_version INTEGER NOT NULL DEFAULT 1 CHECK (definition_version >= 1);
+    """
+
 SHARED_CONFIRMATIONS = f"""
     -- Who confirmed the right to use shared material, and when (CLAUDE.md, IP rule:
     -- "Record who confirmed and when"; #252): one row per confirmation, what it was for
@@ -2075,27 +2111,14 @@ EMAIL_SIGN_IN = (
             current_user);
     END
     $do$;
-    -- All the minutes a person has used, all time, across plan months, for "Experience points"
-    -- on the account page (the website's role has no grant on owner_hours). Like
-    -- dmbot_hours_used it takes no person: it uses the one set for the transaction.
-    CREATE FUNCTION dmbot_total_minutes() RETURNS BIGINT
-        LANGUAGE sql STABLE SECURITY DEFINER
-        AS $fn$
-        SELECT COALESCE((SELECT sum(minutes) FROM owner_hours
-            WHERE owner_user_id = dmbot_current_user()), 0)::BIGINT
-    $fn$;
     DO $do$
     BEGIN
         EXECUTE format(
             'ALTER FUNCTION dmbot_user_by_email(TEXT) SET search_path = pg_catalog, %I, pg_temp',
             current_schema());
-        EXECUTE format(
-            'ALTER FUNCTION dmbot_total_minutes() SET search_path = pg_catalog, %I, pg_temp',
-            current_schema());
     END
     $do$;
     REVOKE ALL ON FUNCTION dmbot_user_by_email(TEXT) FROM PUBLIC;
-    REVOKE ALL ON FUNCTION dmbot_total_minutes() FROM PUBLIC;
     """
 )
 
@@ -2108,9 +2131,10 @@ WEB_ROLE_FUNCTIONS: tuple[tuple[str, str], ...] = (
     ("dmbot_owned_campaigns", "dmbot_owned_campaigns()"),
     ("dmbot_orphan_owned_campaigns", "dmbot_orphan_owned_campaigns(BIGINT)"),
     ("dmbot_hours_used", "dmbot_hours_used(BIGINT)"),
-    # Sign-in by emailed link and "Experience points" (#1231).
+    # Sign-in by emailed link (#1231).
     ("dmbot_user_by_email", "dmbot_user_by_email(TEXT)"),
-    ("dmbot_total_minutes", "dmbot_total_minutes()"),
+    # Experience points (#1228): the one door to the person's all-time minutes.
+    ("dmbot_minutes_total", "dmbot_minutes_total()"),
 )
 # The columns the website may fill when it creates a hand-over offer (#728): who, where and the
 # two names. Left out on purpose, so they take their defaults: status and decided_at (an offer
@@ -2143,6 +2167,11 @@ WEB_ROLE_GRANTS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("SELECT, UPDATE (status, decided_at)", ("campaign_handover_offers",)),
     ("SELECT, INSERT, UPDATE", ("installs", "entitlements")),
     ("SELECT, INSERT", ("payment_events", "try_it_used")),
+    ("SELECT, INSERT", ("email_unsubscribed",)),  # the unsubscribe link (#1229)
+    # Account emails sent from the website (sign-in links, #1231): the sender writes one row per
+    # email and counts the day's rows for its cap. No DELETE: a failed send keeps its row
+    # (an account email is repeatable by its own kind, so nothing is lost by that).
+    ("SELECT, INSERT", ("sent_emails",)),
     ("INSERT, DELETE", ("feedback",)),
     ("SELECT, INSERT, UPDATE, DELETE", ("web_users", "web_sessions")),
     # Emailed sign-in links (#1231): made and used by the website, never read by anyone else.
@@ -2154,6 +2183,110 @@ WEB_ROLE_GRANTS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("SELECT, INSERT, UPDATE, DELETE", ("access_grants",)),
     ("SELECT, INSERT", ("access_log",)),
 )
+
+MAIL = """
+    -- Sending email (#1229; docs/PLAN.md, "Accounts"). Two small tables of ids and times, never
+    -- an address or any text:
+    --   sent_emails         who was sent which kind of email and when, so a one-off email goes
+    --                       once and the daily cap can be counted (a kind that may repeat has
+    --                       a round number in its name)
+    --   email_unsubscribed  people who asked for no offer emails; written by the website's
+    --                       unsubscribe link (which proves it with a signed token) and read by
+    --                       the sender
+    -- Like the routing tables they belong to no server, and they are written by jobs with no
+    -- person set, so there is no row-level security to open.
+    CREATE TABLE sent_emails (
+        user_id BIGINT NOT NULL CHECK (user_id > 0),
+        kind    TEXT   NOT NULL CHECK (char_length(kind) BETWEEN 1 AND 60),
+        sent_at BIGINT NOT NULL,
+        PRIMARY KEY (user_id, kind)
+    );
+    CREATE INDEX sent_emails_by_day ON sent_emails (sent_at);
+    CREATE TABLE email_unsubscribed (
+        user_id BIGINT PRIMARY KEY CHECK (user_id > 0),
+        at      BIGINT NOT NULL
+    );
+    """
+
+# Numbered 0063 on purpose: 0060 to 0062 belong to pull requests still waiting to merge
+# (owner gone, shared rulesets, their updates). A migration list may have gaps.
+DMBOT_ID = """
+    -- The DMbot ID (#1228; docs/PLAN.md, "Accounts"): a Discord ID in base 36, the Stripe invoice
+    -- prefix, fixed for the life of the account. The database makes it (one source of truth for
+    -- every account, including the ones made before this), a trigger fills it on insert whatever
+    -- the caller says, and another refuses any later change. dmbot.account_id is the same
+    -- function in Python, and a test holds the two together.
+    CREATE FUNCTION dmbot_base36(n BIGINT) RETURNS TEXT
+        LANGUAGE plpgsql IMMUTABLE
+        SET search_path = pg_catalog
+        AS $fn$
+    DECLARE
+        digits CONSTANT TEXT := '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ';
+        rest BIGINT := n;
+        out TEXT := '';
+    BEGIN
+        IF n IS NULL OR n <= 0 THEN
+            RAISE EXCEPTION 'A Discord ID is a positive number';
+        END IF;
+        WHILE rest > 0 LOOP
+            out := substr(digits, (rest % 36)::INTEGER + 1, 1) || out;
+            rest := rest / 36;
+        END LOOP;
+        IF char_length(out) > 12 THEN
+            RAISE EXCEPTION 'That ID is too big for a DMbot ID';
+        END IF;
+        RETURN out;
+    END
+    $fn$;
+    ALTER TABLE web_users ADD COLUMN dmbot_id TEXT;
+    -- Migrations run with no server or person set, so row-level security hides every row:
+    -- open the table to this one UPDATE, dropped again inside the migration's transaction.
+    CREATE POLICY migrate_backfill ON web_users FOR ALL USING (true) WITH CHECK (true);
+    UPDATE web_users SET dmbot_id = dmbot_base36(user_id);
+    DROP POLICY migrate_backfill ON web_users;
+    ALTER TABLE web_users
+        ALTER COLUMN dmbot_id SET NOT NULL,
+        ADD CONSTRAINT web_users_dmbot_id_form CHECK (dmbot_id ~ '^[1-9A-Z][0-9A-Z]{0,11}$'),
+        ADD CONSTRAINT web_users_dmbot_id_unique UNIQUE (dmbot_id);
+    CREATE FUNCTION dmbot_web_users_id() RETURNS trigger
+        LANGUAGE plpgsql
+        AS $fn$
+    BEGIN
+        IF TG_OP = 'INSERT' THEN
+            NEW.dmbot_id := dmbot_base36(NEW.user_id);
+        ELSIF NEW.dmbot_id IS DISTINCT FROM OLD.dmbot_id OR NEW.user_id <> OLD.user_id THEN
+            RAISE EXCEPTION 'A DMbot ID never changes';
+        END IF;
+        RETURN NEW;
+    END
+    $fn$;
+    -- Experience points (#1228): all-time minutes of the person set for the transaction. The
+    -- website's role has no grant on owner_hours, so, like dmbot_hours_used, this is the one
+    -- door: it takes no person, uses the one set for the transaction, and returns one number.
+    CREATE FUNCTION dmbot_minutes_total() RETURNS BIGINT
+        LANGUAGE sql STABLE SECURITY DEFINER
+        AS $fn$
+        SELECT COALESCE((SELECT sum(minutes) FROM owner_hours
+            WHERE owner_user_id = dmbot_current_user()), 0)::BIGINT
+    $fn$;
+    DO $do$
+    BEGIN
+        EXECUTE format(
+            'ALTER FUNCTION dmbot_minutes_total() SET search_path = pg_catalog, %I, pg_temp',
+            current_schema());
+    END
+    $do$;
+    REVOKE ALL ON FUNCTION dmbot_minutes_total() FROM PUBLIC;
+    CREATE TRIGGER web_users_dmbot_id BEFORE INSERT OR UPDATE ON web_users
+        FOR EACH ROW EXECUTE FUNCTION dmbot_web_users_id();
+    DO $do$
+    BEGIN
+        EXECUTE format(
+            'ALTER FUNCTION dmbot_web_users_id() SET search_path = pg_catalog, %I, pg_temp',
+            current_schema());
+    END
+    $do$;
+    """
 
 MIGRATIONS: tuple[Migration, ...] = (
     ("0001_initial", INITIAL),
@@ -2214,7 +2347,10 @@ MIGRATIONS: tuple[Migration, ...] = (
     ("0056_dmbchat_channel", DMBCHAT_CHANNEL),
     ("0057_table_questions", TABLE_QUESTIONS),
     ("0058_people", PEOPLE),
-    ("0059_email_sign_in", EMAIL_SIGN_IN),
+    ("0059_definitions", DEFINITIONS),
+    ("0063_dmbot_id", DMBOT_ID),
+    ("0064_mail", MAIL),
+    ("0066_email_sign_in", EMAIL_SIGN_IN),
 )
 
 # Tables that must have row-level security. A test checks every table in the schema
@@ -2266,4 +2402,10 @@ USER_ISOLATED_TABLES = (
 WRITE_ONLY_TABLES = ("feedback",)
 # Hold only server IDs (see the rules at the top of this file).
 ROUTING_TABLES = ("live_session_guilds", "campaign_guilds")
-UNSCOPED_TABLES = ("schema_migrations", *ROUTING_TABLES)
+UNSCOPED_TABLES = (
+    "schema_migrations",
+    "ontology_predicate_versions",
+    "sent_emails",
+    "email_unsubscribed",
+    *ROUTING_TABLES,
+)

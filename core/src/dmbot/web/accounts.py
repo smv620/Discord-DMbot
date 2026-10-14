@@ -28,6 +28,15 @@ async def customer_id(db: Database, user_id: int) -> str | None:
     return None if row is None else row["provider_customer_id"]
 
 
+async def dmbot_id(db: Database, user_id: int) -> str | None:
+    """The account's DMbot ID (base 36, fixed for life), or None if they have no account on
+    the website yet."""
+    async with db.user(user_id) as conn:
+        cur = await conn.execute("SELECT dmbot_id FROM web_users WHERE user_id = %s", (user_id,))
+        row = await cur.fetchone()
+    return None if row is None else str(row["dmbot_id"])
+
+
 async def first_paid_month_after_trial(db: Database, user_id: int) -> bool:
     """Used Try It and never paid before: the first month of Table is $1.99 (#432)."""
     async with db.user(user_id) as conn:

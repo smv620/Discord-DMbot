@@ -15,8 +15,8 @@ from dmbot import consent, entitlements, hours
 from dmbot.campaigns.models import HANDOVER_SECONDS
 from dmbot.db import Database
 from dmbot.web.entitlements_writer import PAID_EVENT_SQL, PAID_KINDS
+from dmbot.web.moving import can_move
 from dmbot.web.offers import offer_ref
-from dmbot.web.personal import to_dmbot_id
 from dmbot.web.sessions import Session
 
 # A person in many servers: read at most this many (Discord's own list stops at 200).
@@ -160,10 +160,16 @@ async def build_me(db: Database, session: Session, *, now: int) -> dict[str, Any
                     }
                 )
 
-        # "Experience points": every minute DMbot has run for this account, all time (#1231).
-        cur = await conn.execute("SELECT dmbot_total_minutes() AS minutes")
+        # "Experience points": every minute DMbot has run for this account, all time, through the
+        # one door the website's role has to the hours meter (#1228, #1231). And the account's
+        # stored DMbot ID, which is kept for life (a move to a new Discord account keeps it).
+        cur = await conn.execute("SELECT dmbot_minutes_total() AS minutes")
         total_row = await cur.fetchone()
         experience = int(total_row["minutes"]) if total_row else 0
+        cur = await conn.execute(
+            "SELECT dmbot_id FROM web_users WHERE user_id = %s", (session.user_id,)
+        )
+        id_row = await cur.fetchone()
         if month is not None:
             cur = await conn.execute("SELECT dmbot_hours_used(%s) AS minutes", (month.start,))
             hours_row = await cur.fetchone()
@@ -204,12 +210,9 @@ async def build_me(db: Database, session: Session, *, now: int) -> dict[str, Any
         "user": {"id": str(session.user_id), "name": session.display_name},
         # The account number (the Discord ID in base 36) and the minutes DMbot has run (#1231).
         # A move code is for an active paid plan only (not Try It, a grant or the free list).
-        "dmbotId": to_dmbot_id(session.user_id),
+        **({"dmbotId": str(id_row["dmbot_id"])} if id_row else {}),
         "experiencePoints": experience,
-        "canMove": plan is not None
-        and plan.plan != "try-it"
-        and plan.status == "active"
-        and plan.usable(now),
+        "canMove": can_move(plan, now),
         # A first payment that failed and no payment since: the page says "try again" (#922).
         # Left out otherwise, so the common reply is unchanged.
         **({"firstPaymentFailed": True} if first_failed else {}),
