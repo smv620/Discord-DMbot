@@ -3,12 +3,13 @@ Test addresses are example.com only."""
 
 from __future__ import annotations
 
+import json
 import unittest
 
 from dmbot import trial_jobs
 from dmbot.web import accounts, entitlements_writer
 from dmbot.web.payments import PaymentEvent
-from dmbot.web.stripe import _email
+from dmbot.web.stripe import StripeConfig, StripeProvider, _email
 from tests.pg import DatabaseTest
 
 USER = 1_111_111_111
@@ -63,6 +64,52 @@ class Stored(DatabaseTest):
             )
         people = await trial_jobs.people(self.db, NOW)
         self.assertEqual([p.email for p in people], ["payer@example.com"])
+
+    async def test_a_customer_update_changes_only_the_address(self) -> None:
+        await entitlements_writer.apply_event(
+            self.db, self.event("e1", "payer@example.com"), now=NOW
+        )
+        changed = PaymentEvent(
+            provider="stripe", event_id="evt_c", kind="email_updated", user_id=USER,
+            occurred_at=NOW + 5, customer_id="cus_1", email="moved@example.com",
+        )  # fmt: skip
+        self.assertEqual(
+            await entitlements_writer.apply_event(self.db, changed, now=NOW), "applied"
+        )
+        self.assertEqual(await accounts.payment_email(self.db, USER), "moved@example.com")
+        # A repeat is harmless, and the plan was not touched.
+        await entitlements_writer.apply_event(self.db, changed, now=NOW)
+        self.assertEqual((await accounts.customer_id(self.db, USER)), "cus_1")
+
+
+class Parsing(unittest.TestCase):
+    def provider(self) -> StripeProvider:
+        return StripeProvider(
+            StripeConfig(
+                secret_key="sk_test_not_real", prices={"table": "price_table"},
+                extra_hours_price="p", first_month_coupons={},
+            ),
+            b"w" * 32,
+        )  # fmt: skip
+
+    def test_customer_updated_becomes_an_address_change_for_our_customers_only(self) -> None:
+        def raw(obj: dict[str, object]) -> bytes:
+            return json.dumps(
+                {"id": "evt_1", "type": "customer.updated", "created": 5, "livemode": False,
+                 "data": {"object": obj}}
+            ).encode()  # fmt: skip
+
+        got = self.provider().parse(
+            raw({"id": "cus_1", "email": "new@example.com", "metadata": {"user_id": str(USER)}})
+        )
+        assert got is not None
+        self.assertEqual(
+            (got.kind, got.user_id, got.email), ("email_updated", USER, "new@example.com")
+        )
+        self.assertIsNone(self.provider().parse(raw({"id": "cus_2", "email": "a@example.com"})))
+        self.assertIsNone(
+            self.provider().parse(raw({"id": "cus_3", "metadata": {"user_id": str(USER)}}))
+        )
 
 
 if __name__ == "__main__":

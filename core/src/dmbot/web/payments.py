@@ -52,6 +52,7 @@ EventKind = Literal[
     "subscription_cancelled",  # cancelled: works to the period's end (period_end), then ends
     "subscription_ended",  # stopped paying, or cancelled at the period's end
     "extra_hours_bought",  # +10 hours for this period
+    "email_updated",  # the payer changed their address at the company (no plan change)
 ]
 
 
