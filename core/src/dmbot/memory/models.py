@@ -262,6 +262,22 @@ class Flag:
 
 
 @dataclass(frozen=True, slots=True)
+class PeopleSuggestion:
+    """One question for the DM from "a name, then an answer" (#1188): `name`, a new name
+    for the person `user_id` (kind "name", `row_id` the waiting name), or `name`, a
+    character that person may play (kind "plays", `row_id` the waiting link). `times` is
+    how often they answered to it; `shown` the person's name as the DM knows it."""
+
+    kind: str
+    user_id: int
+    name: str
+    row_id: str
+    character_id: str | None = None
+    times: int = 0
+    shown: str = ""
+
+
+@dataclass(frozen=True, slots=True)
 class Written[T]:
     """A write's result, with the change-log batch to pass to `undo` (None: nothing
     changed, for example the fact was already known)."""
