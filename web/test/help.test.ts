@@ -36,7 +36,7 @@ describe("Help", () => {
     expect(links).toEqual(["https://discord.com/login", "/account"]);
     const section = help.querySelector("#account-heading")?.parentElement?.textContent ?? "";
     expect(section).toContain("Forgot your password?");
-    expect(section).toContain("DMbot never has your password.");
+    expect(section).toContain("DMbot has no password.");
   });
 
   it("names only buttons and commands that are in the bot's code", () => {

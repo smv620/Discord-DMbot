@@ -97,14 +97,14 @@ export const playerSteps: Step[] = [
 /** Your account (#1215): DMbot has no password of its own, and a new Discord account starts clean. */
 export const accountSteps: Step[] = [
   {
-    text: "Forgot your password or username? DMbot uses your Discord account, so use Discord's own reset: open the Discord sign-in page and press Forgot your password? DMbot never has your password.",
+    text: "Forgot your password? DMbot has no password. It uses your Discord account, so use Discord's own reset: open the Discord sign-in page and press Forgot your password?",
   },
   {
-    text: "Getting a new Discord account? First press ⚙️ Settings, then Hand over, for each campaign you own, and give it to your new account or to another game master. Then cancel your plan on your account page. Your new account says yes to being recorded again.",
+    text: "Moving to a new Discord account? Do this for each campaign you own: press ⚙️ Settings, then press Hand over, and pick your new account or another game master. When all are handed over, cancel your plan on your account page. On the new account, say yes to being recorded again.",
     names: [{ name: "Hand over", file: "dm_screen/handover.py" }],
   },
   {
-    text: "Is the old account already gone? Another game master of the campaign can press Take it on. If there is none, a backup of a paid campaign can be loaded with your new account.",
+    text: "Can't reach your old account any more? Another game master of the campaign can press Take it on. If there is no other game master, load your campaign's backup with your new account. This works for paid campaigns only.",
     names: [{ name: "Take it on", file: "dm_screen/handover.py" }],
   },
 ];
