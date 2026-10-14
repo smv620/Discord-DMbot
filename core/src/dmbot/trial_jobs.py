@@ -86,18 +86,17 @@ def last_day_text(name: str, pricing: str, hello: str) -> str:
 def extension_text(name: str, hours_left: int, pricing: str, hello: str) -> str:
     plural = "" if hours_left == 1 else "s"
     return (
-        f"Hi {name}! We've given you 30 more days of Try It, because we want you to have the "
-        "chance to really try DMbot at your table. It has the same limits as before: 8 hours "
-        f"of DMbot time in all (you have {hours_left} hour{plural} left), one campaign, and no "
-        f"backups or downloads. If you'd like to keep using DMbot after that, the plans are at "
-        f"{pricing}. Tell us how we can make DMbot better at {hello}."
+        f"Hi {name}! You have 30 more days of Try It, so you get a real chance to try DMbot "
+        "at your table. Same limits as before: one campaign, no backups or downloads, and 8 "
+        f"hours of DMbot time in all. You have about {hours_left} hour{plural} of that left. "
+        f"To keep using DMbot after the 30 days, see the plans at {pricing}. Tell us how to "
+        f"make DMbot better at {hello}."
     )
 
 
 EXTENSION_NOTICE = (
-    "Good news: your Try It of DMbot has 30 more days, because we want you to have the "
-    "chance to really try it at your table. It has the same limits: 8 hours in all, one "
-    "campaign, and no backups or downloads."
+    "Good news: your Try It has 30 more days. Same limits as before: the 8 hours in all "
+    "still count, one campaign, no backups or downloads."
 )
 
 
@@ -228,7 +227,7 @@ class TrialJobs:
             user_id=person.user_id,
             kind=f"trial-end:{person.period_end}",
             to=person.email,
-            subject="Thanks for trying DMbot",
+            subject="Your DMbot Try It ends today",
             body=text,
             offer=True,
         )
@@ -252,7 +251,7 @@ class TrialJobs:
             user_id=person.user_id,
             kind=f"trial-extension:{person.extensions + 1}",
             to=person.email,
-            subject="30 more days of DMbot",
+            subject="30 more days of DMbot Try It, free",
             body=extension_text(name, hours, pricing, hello),
             offer=True,
         )

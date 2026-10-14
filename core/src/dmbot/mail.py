@@ -239,8 +239,8 @@ class Mailer:
         if offer:
             link = self.unsubscribe_link(dmbot_id)
             text += (
-                f"\n\n--\nYou get this because you tried DMbot. To stop emails like this, "
-                f"use this link:\n{link}\n{self._s.postal_address}"
+                f"\n\n--\nYou get this email because you tried DMbot. To stop emails like this, "
+                f"open:\n{link}\n{self._s.postal_address}"
             )
             message["List-Unsubscribe"] = f"<{link}>"
         message.set_content(text)
