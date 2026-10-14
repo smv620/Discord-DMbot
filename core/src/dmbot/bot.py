@@ -509,7 +509,7 @@ class DMBotTree(app_commands.CommandTree["DMBot"]):
 
     async def interaction_check(self, interaction: discord.Interaction) -> bool:
         set_log_context(guild_id=interaction.guild_id)
-        await self.client.tell_if_moved(interaction.user.id)
+        self.client.tell_if_moved_later(interaction.user.id)
         return True
 
     async def on_error(
@@ -609,6 +609,7 @@ class DMBot(commands.AutoShardedBot):
         self.trial_jobs: trial_jobs.TrialJobs | None = None
         self.mailer: Mailer | None = None
         self.account_moves: AccountMoves | None = None  # moving to a new Discord account (#1230)
+        self._moved_tasks: set[asyncio.Task[None]] = set()
         if meter is not None:
             self.account_moves = AccountMoves(meter.db)
             self.mailer = Mailer(
@@ -5066,6 +5067,14 @@ class DMBot(commands.AutoShardedBot):
             await self._dm_trial_user(old_user_id, old_told(long_date(int(time.time()))))
         except Exception:
             log.exception("Couldn't tell the old account about a move")
+
+    def tell_if_moved_later(self, user_id: int) -> None:
+        """Start the "your account moved" check without making the command wait for it."""
+        if self.account_moves is None:
+            return
+        task = asyncio.create_task(self.tell_if_moved(user_id))
+        self._moved_tasks.add(task)  # a reference, or the task could be dropped mid-way
+        task.add_done_callback(self._moved_tasks.discard)
 
     async def tell_if_moved(self, user_id: int) -> None:
         """An old account whose DMbot account moved (#1230) hears so, privately, the first time

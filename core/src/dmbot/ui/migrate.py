@@ -10,11 +10,12 @@ for itself the first time it joins a table. Nothing here is shown to anyone else
 from __future__ import annotations
 
 import logging
+import secrets
 
 import discord
 
 from dmbot import account_move
-from dmbot.account_move import MoveError, Preview, hash_code
+from dmbot.account_move import MoveError, Preview
 from dmbot.ui.dmbot_commands import (
     _answer_first,
     _bot,
@@ -129,8 +130,8 @@ async def get_code(interaction: discord.Interaction) -> None:
         result = await bot.mailer.send(
             user_id=interaction.user.id,
             # One email for each code, so a new code is never hidden. The kind is stored and
-            # logged, so it carries a short hash of the code, never the code.
-            kind=f"move-code:{hash_code(code)[:8]}",
+            # logged, so it holds a random nonce and nothing derived from the code.
+            kind=f"move-code:{secrets.token_hex(6)}",
             to=email,
             subject="Your DMbot move code",
             body=(

@@ -504,7 +504,10 @@ class Moves(DatabaseTest):
                 raise PaymentError("Stripe answered 500")
 
         down = Down(b"s" * 32, "https://site.example.com")
-        self.assertEqual(await move_sync.sync_moves(web, down), 0)  # nothing marked done
-        self.assertEqual(await move_sync.sync_moves(web, fake), 1)
+        backoff = move_sync.Backoff()
+        self.assertEqual(await move_sync.sync_moves(web, down, backoff, now=0), 0)
+        # It waits a minute before trying again, then goes through.
+        self.assertEqual(await move_sync.sync_moves(web, fake, backoff, now=30), 0)
+        self.assertEqual(await move_sync.sync_moves(web, fake, backoff, now=61), 1)
         self.assertEqual(fake.retargeted, [("cus_old1", "sub_old1", NEW)])
         self.assertEqual(await move_sync.sync_moves(web, fake), 0)  # done once

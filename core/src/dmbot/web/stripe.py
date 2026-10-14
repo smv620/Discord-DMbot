@@ -302,6 +302,8 @@ class StripeProvider:
             )
         for path in paths:
             status, _ = await self._http("POST", path, form)
+            if status == 404:
+                continue  # gone at the company (deleted): nothing left to point
             if status != 200:
                 raise PaymentError(f"Stripe answered {status} to a metadata update")
 

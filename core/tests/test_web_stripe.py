@@ -610,6 +610,10 @@ class Provider(unittest.IsolatedAsyncioTestCase):
         self.http.answers[("POST", "/v1/customers/cus_777")] = (500, {})
         with self.assertRaises(PaymentError):
             await self.provider.retarget(customer_id="cus_777", subscription_id=None, user_id=99)
+        self.http.answers[("POST", "/v1/customers/cus_777")] = (404, {})
+        await self.provider.retarget(
+            customer_id="cus_777", subscription_id=None, user_id=99
+        )  # gone
         with self.assertRaises(PaymentError):  # an id is checked before it goes into a path
             await self.provider.retarget(customer_id="../x", subscription_id=None, user_id=99)
 

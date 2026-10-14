@@ -80,6 +80,9 @@ class GettingACode(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(kind.startswith("move-code:"))
         self.assertNotIn("ABCD", kind)  # stored and logged: the code itself is in neither
         self.assertNotIn("2345", kind)
+        from dmbot.account_move import hash_code
+
+        self.assertNotIn(hash_code("ABCD2345")[:8], kind)  # nothing derived from the code
         self.assertNotIn("example.com", it.sent[0][0])
 
     async def test_an_unpaid_account_is_told_why(self) -> None:
