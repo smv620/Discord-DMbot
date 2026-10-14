@@ -161,6 +161,7 @@ from dmbot.rules.house import HouseRule, HouseRulesSection, HouseRuleStore
 from dmbot.rules.house_file_link import HouseFileLinkStore
 from dmbot.rules.spotter import Mention
 from dmbot.sessions import SavedSession, SessionStore
+from dmbot.sidebar import knowledge
 from dmbot.sidebar.answer import PROMPT_VERSION as SIDEBAR_PROMPT_VERSION
 from dmbot.sidebar.answer import Sidebar
 from dmbot.sidebar.ask import AskLimiter
@@ -735,6 +736,8 @@ class DMBot(commands.AutoShardedBot):
         # list of names, which Discord gives 3 seconds) then finds them ready (#908). Broken
         # packaged data stops start-up here, on purpose: better now than at the table.
         await asyncio.to_thread(rules_index.srd)
+        # DMbot's knowledge of itself (#1195): read its documents now, not on the first question.
+        await asyncio.to_thread(knowledge.load)
         self.tree.add_command(dmbot_group)
         self.tree.add_command(consent_group)
         self.tree.add_command(transcript_command)

@@ -378,7 +378,7 @@ class AccuracyPart3(unittest.TestCase):
         self.assertIn("not in DMbot's rules", got.text)
 
     def test_the_prompt_version_moved_on(self) -> None:
-        self.assertEqual(sidebar.PROMPT_VERSION, "sidebar-5")
+        self.assertEqual(sidebar.PROMPT_VERSION, "sidebar-6")
 
 
 class CarefulSecondTry(unittest.TestCase):
@@ -690,6 +690,31 @@ class Isolation(unittest.TestCase):
         self.assertIn("ABOUT DMBOT", ai.prompts[1])
         self.assertIn("Stop recording me", ai.prompts[1])
 
+    def test_an_answer_about_dmbot_ends_with_one_link_at_the_build_commit(self) -> None:
+        commit = "0123456789abcdef0123456789abcdef01234567"
+        ai = FakeAI([reply("It keeps the game's time.", "DMbot help", in_game="no")])
+        with patch.dict("os.environ", {"GIT_COMMIT": commit}):
+            got = run(engine(ai).answer(campaign(), "what does the game clock do"))
+        self.assertEqual(got.text.count("https://"), 1)
+        self.assertIn(f"/blob/{commit}/", got.text)
+        self.assertTrue(got.text.startswith("It keeps the game's time."))
+        self.assertIn("More: https://", got.text)
+
+    def test_no_link_when_the_answer_is_that_it_is_not_built(self) -> None:
+        ai = FakeAI([reply("Not built yet. It's planned.", "DMbot help", in_game="no")])
+        with patch.dict("os.environ", {"GIT_COMMIT": "0123456789abcdef"}):
+            got = run(engine(ai).answer(campaign(), "what is a share code in dmbot"))
+        self.assertNotIn("https://", got.text)
+
+    def test_no_link_without_the_build_commit_or_for_a_game_answer(self) -> None:
+        ai = FakeAI([reply("It keeps the game's time.", "DMbot help", in_game="no"), reply("Yes.")])
+        with patch.dict("os.environ", {"GIT_COMMIT": ""}):
+            plain = run(engine(ai).answer(campaign(), "what does the game clock do"))
+        self.assertNotIn("https://", plain.text)
+        with patch.dict("os.environ", {"GIT_COMMIT": "0123456789abcdef"}):
+            game = run(engine(ai).answer(campaign(), "does fireball hurt"))
+        self.assertNotIn("https://", game.text)
+
     def test_the_scene_is_cut_to_its_last_part_and_labelled_as_information(self) -> None:
         scene = "old " * 1000 + "the dragon lands"
         ai = FakeAI([reply("Yes.")])
@@ -704,7 +729,7 @@ class Lineage(unittest.TestCase):
         ai = FakeAI([reply("No.", "SRD 5.2.1 p. 131")])
         got = run(engine(ai).answer(campaign(), "do you need line of sight for fireball"))
         self.assertEqual(got.model, "fake-fast-model")
-        self.assertEqual(got.prompt_version, "sidebar-5")
+        self.assertEqual(got.prompt_version, "sidebar-6")
         self.assertEqual(got.sources, ("SRD 5.2.1 p. 131",))
         self.assertGreaterEqual(got.seconds, 0)
 
@@ -916,7 +941,8 @@ class PromptSize(unittest.TestCase):
         question = "does fireball and grappled and prone and stunned hurt the goblin in DMbot? " * 8
         run(engine(ai, houses=houses).answer(campaign(mine), question, scene="s " * 20000))
         self.assertLessEqual(len(ai.prompts[0]), 12000)
-        self.assertLessEqual(ai.prompts[0].count("House rule"), 5)
+        # (DMbot's own documents also say "house rule", so count only the campaign's)
+        self.assertLessEqual(ai.prompts[0].split("ABOUT DMBOT")[0].count("House rule"), 5)
 
     def test_a_long_question_is_cut(self) -> None:
         ai = FakeAI([reply("Yes.")])

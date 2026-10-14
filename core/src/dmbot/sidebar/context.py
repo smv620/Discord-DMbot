@@ -31,6 +31,7 @@ from dmbot.memory.lookup import CampaignLookup
 from dmbot.memory.models import CONFIRMED
 from dmbot.rules.house import HouseRule
 from dmbot.rules.index import Hit, Index, edition_tag, normalize
+from dmbot.sidebar import knowledge
 
 LEGACY_TAG = "[Legacy 2014]"  # the owner's rule: the older ruleset is always tagged
 ENTRY_TEXT_MAX = 1200  # characters of one rules entry sent to the AI
@@ -104,11 +105,6 @@ _STOP = frozenset(
         "got",
     }
 )
-_ABOUT_DMBOT = re.compile(
-    r"(\b(dmbot|discord|commands?|slash|consent|record(ing|ed)?|transcripts?|backups?|restore|"
-    r"dm screen|sidebar)\b|(^|\s)/\w+)",
-    re.IGNORECASE,
-)
 # A question that names an edition or compares them wants both editions' entries.
 _EDITIONS = re.compile(
     r"\b(2014|2024|legacy|old|older|new|newer|versus|vs|compare|compared|comparison|"
@@ -131,7 +127,7 @@ def about_dmbot() -> str:
 
 
 def asks_about_dmbot(question: str) -> bool:
-    return bool(_ABOUT_DMBOT.search(question))
+    return knowledge.names_dmbot(question)
 
 
 def wants_both_editions(question: str) -> bool:
@@ -264,6 +260,7 @@ class Context:
     sources: tuple[str, ...]
     hits: tuple[Hit, ...]
     house_rules: tuple[HouseRule, ...]
+    about_link: str | None = None  # the DMbot section the answer may point to, at this build
 
 
 def build(
@@ -311,7 +308,19 @@ def build(
             f"<scene>{scene}</scene>"
         )
         sources.append("the scene")
-    if asks_about_dmbot(question):
-        sections.append(f"ABOUT DMBOT:\n{about_dmbot()}")
+    # Ranked against DMbot's own documents for every question, not gated by a word pattern: a
+    # question worded another way still finds its section, and a game question finds nothing
+    # (#1195). The short digest always comes with it.
+    rules_named = bool(hits)  # a question naming a rules entry is a rules question
+    docs = knowledge.retrieve(question, rules_named=rules_named)
+    about_link = None
+    if docs or knowledge.opens_gate(question, rules_named=rules_named):
+        shown = "FROM DMBOT'S DOCUMENTS (each marked how far it is built):\n" + knowledge.render(
+            docs
+        )
+        sections.append("ABOUT DMBOT:\n" + about_dmbot() + ("\n" + shown if docs else ""))
         sources.append("DMbot help")
-    return Context("\n".join(sections), tuple(sources), tuple(hits), tuple(rules))
+        about_link = next((u for c in docs if (u := knowledge.link(c))), None)
+    return Context(
+        "\n".join(sections), tuple(sources), tuple(hits), tuple(rules), about_link=about_link
+    )
