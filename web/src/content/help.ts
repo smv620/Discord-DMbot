@@ -40,7 +40,7 @@ export const dmSteps: Step[] = [
     names: [{ name: "Table chat", file: "dm_screen/table_chat_panel.py" }],
   },
   {
-    text: "After a game, press 🧑 Check who is who. DMbot notices when someone answers to a name several times (\"Mike, what do you do?\" then \"I run with my sword\"). You see who it thinks plays whom and say yes or no. Nothing is saved until you say yes.",
+    text: "After a game, press 🧑 Check who is who. DMbot notices when someone answers to a name several times (\"Mike, what do you do?\" then \"I run with my sword\"). You see who it thinks plays whom and say yes or no. Nothing is used until you say yes.",
     names: [{ name: "Check who is who", file: "ui/people_review.py" }],
   },
   {
