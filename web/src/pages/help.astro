@@ -1,6 +1,6 @@
 ---
 import Base from "../layouts/Base.astro";
-import { dmSteps, helpHeading, helpIntro, playerNote, playerSteps } from "../content/help";
+import { accountSteps, dmSteps, helpHeading, helpIntro, playerNote, playerSteps } from "../content/help";
 ---
 
 <Base
@@ -35,6 +35,33 @@ import { dmSteps, helpHeading, helpIntro, playerNote, playerSteps } from "../con
       {playerSteps.map((s) => <li>{s.text}</li>)}
     </ol>
     <p class="muted">{playerNote}</p>
+  </section>
+
+  <section aria-labelledby="account-heading">
+    <h2 id="account-heading">Your account</h2>
+    <ol>
+      {
+        accountSteps.map((s) => (
+          <li>
+            {s.text.startsWith("Forgot") ? (
+              <>
+                {s.text.split("open the Discord sign-in page")[0]}open the{" "}
+                <a href="https://discord.com/login" rel="noopener noreferrer">Discord sign-in page</a>
+                {s.text.split("open the Discord sign-in page")[1]}
+              </>
+            ) : s.text.includes("your account page") ? (
+              <>
+                {s.text.split("your account page")[0]}
+                <a href="/account">your account page</a>
+                {s.text.split("your account page")[1]}
+              </>
+            ) : (
+              s.text
+            )}
+          </li>
+        ))
+      }
+    </ol>
   </section>
 
   <p class="muted">

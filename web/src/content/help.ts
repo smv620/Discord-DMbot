@@ -40,6 +40,10 @@ export const dmSteps: Step[] = [
     names: [{ name: "Table chat", file: "dm_screen/table_chat_panel.py" }],
   },
   {
+    text: "After a game, press 🧑 Check who is who. DMbot notices when someone answers to a name several times (\"Mike, what do you do?\" then \"I run with my sword\"). You see who it thinks plays whom and say yes or no. Nothing is used until you say yes.",
+    names: [{ name: "Check who is who", file: "ui/people_review.py" }],
+  },
+  {
     text: 'Ask a quick question out loud: "Hey DMbot, how long does Bless last?" The short answer is posted in the table\'s dmb-chat channel and says how sure DMbot is. You have the final say.',
     names: [{ name: "dmb-chat", file: "dm_screen/dmbchat_channel.py" }],
   },
@@ -82,6 +86,9 @@ export const playerSteps: Step[] = [
     names: [{ name: "dmb-chat", file: "dm_screen/dmbchat_channel.py" }],
   },
   {
+    text: "When you ask DMbot a question in dmb-chat, it shows the name of the character you play once your game master has said yes to it. Until then it shows your server nickname.",
+  },
+  {
     text: "Everyone in the server can read a game's transcript. To read or download one, type /transcript.",
     names: [{ name: "/transcript", file: "ui/transcripts.py" }],
   },
@@ -91,6 +98,24 @@ export const playerSteps: Step[] = [
   },
   {
     text: "A linked sheet must be set to Public on the sheet's own site, so anyone with the link can open it. Your game master sees it on your character's card.",
+  },
+];
+
+/** Your account (#1215): DMbot has no password of its own, and a new Discord account starts clean. */
+export const accountSteps: Step[] = [
+  {
+    text: "Forgot your password? DMbot has no password. It uses your Discord account, so use Discord's own reset: open the Discord sign-in page and press Forgot your password?",
+  },
+  {
+    text: "Moving to a new Discord account? Do this for each campaign you own: press ⚙️ Settings, then press Hand over, and pick your new account or another game master. When all are handed over, cancel your plan on your account page. On the new account, say yes to being recorded again.",
+    names: [{ name: "Hand over", file: "dm_screen/handover.py" }],
+  },
+  {
+    text: "Can't reach your old account any more? If you kept a backup (type /dmbot backup before you leave, paid campaigns only), type /dmbot restore on your new account. That needs a plan with a free campaign slot.",
+    names: [
+      { name: "/dmbot backup", file: "ui/dmbot_commands.py" },
+      { name: "/dmbot restore", file: "ui/dmbot_commands.py" },
+    ],
   },
 ];
 

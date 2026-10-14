@@ -22,7 +22,7 @@ from tests.test_dm_screen_setup import BOT, BOT_PERMS, GENERAL, text_channel
 
 GUILD = 111
 DM = 7
-NEW = 61
+NEW = 680000000000000061  # long: a short id turns up inside timestamps (#1213)
 
 
 class Setup(DatabaseTest):
