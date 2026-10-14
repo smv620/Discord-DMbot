@@ -2890,6 +2890,16 @@ as a typed sheet (`source: typed`, no link) marked `origin: document`, which is 
 document doesn't say is "not found in your document", not an error. Limits: one read a person every 30 seconds, one at
 a time per server, 20 a day per server, and the owner's plan must allow the AI (`plan_gate("ai")`).
 The documents read at once are limited to two across the whole bot (`document_reader.READING`, shared with the names screen), and every refusal (a link, a size, a scanned PDF, an empty file) is worded for the sheet panel, ending with **Type in my character**. A document's own rarity counts are not held to the item total, and any value outside a sheet field's range (STR 45, AC 99, max HP 0) shows ⛔.
+*Built, part D3: the player's sheet view (2026-10-13, #1126):* **Show my sheet** on the 📜 panel (when there is a sheet)
+opens a private view with the basic line on top and one button per section (Abilities, Conditions, Defenses, Skills,
+Proficiencies, Features and feats, Background, Speed and senses, Languages, Inventory); pressing one opens it, one at a
+time. A typed or document sheet shows **Edit <part>** (for example **Edit Skills**) on the open section: a form with that section's fields (names
+and numbers only; abilities are six numbers in order), checked in plain words before anything is saved, run through the
+same allow list as an import, and answered with a card that names what changed. A D&D Beyond sheet has no Edit anywhere:
+an **Open on D&D Beyond** link button to the player's own sheet instead, because D&D Beyond is the record. Every part opened and every save
+looks up again that the person still plays the character and is still in the server (the Edit button itself looks
+up nothing, to answer within Discord's 3 seconds), and the save is refused for anyone else, or if the sheet changed since the form
+was opened (`memory/sheet_view.py`, `ui/sheet_view.py`).
 *Decided 2026-10-08 on #781:* a sheet belongs to the player who linked or typed it, not
 just to the character: if the DM gives the character to someone else, the old sheet is
 never shown to the new player (it shows only while that player still plays it). The
