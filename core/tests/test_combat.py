@@ -294,6 +294,31 @@ class Stored(Clocks):
         assert stored is not None
         self.assertEqual((stored.clock.combat_round, stored.clock.minute), (1, NOON4))
 
+    async def test_undo_of_a_rest_that_ended_the_fight_brings_the_fight_back(self) -> None:
+        await self.press("set", set_to=NOON4)
+        await self.press("cstart")
+        await self.press("cround", set_to=4)
+        result = await self.press("long")
+        assert result.before is not None and result.after is not None
+        self.assertFalse(await self.clocks.in_combat(GUILD_A, self.a.id))  # the rest ended it
+        interaction = SimpleNamespace(
+            guild=SimpleNamespace(id=GUILD_A),
+            user=SimpleNamespace(id=DM),
+            client=self.client(),
+            response=SimpleNamespace(defer=AsyncMock(), is_done=lambda: True),
+            followup=SimpleNamespace(send=AsyncMock()),
+            edit_original_response=AsyncMock(),
+        )
+        interaction.client.post_message = AsyncMock(return_value=None)
+        button = ui.ClockUndoButton(self.a.id, ui.undo_id(result.before, result.after))
+        await button.callback(cast(Any, interaction))
+        stored = await self.clocks.get(GUILD_A, self.a.id)
+        assert stored is not None
+        self.assertEqual((stored.clock.combat_round, stored.clock.minute), (4, NOON4))
+        # An old button with only the three parts still works, and starts no fight.
+        old = ui.ClockUndoButton(self.a.id, "1:0:2")
+        self.assertEqual((old.round, old.secs), (0, 0))
+
     async def test_undo_lets_the_24_hour_line_be_said_again(self) -> None:
         await self.press("set", set_to=NOON4)
         await self.press("cstart")
@@ -517,7 +542,7 @@ class RacesAndConsent(AtTheTable):
 
         async def withdraw(*args: Any, **kwargs: Any) -> Any:
             result = await real(*args, **kwargs)
-            self.bot.consent.has_consent = lambda g, u: False  # type: ignore[method-assign]
+            self.bot.consent.has_consent = lambda guild_id, user_id: False  # type: ignore[method-assign]
             return result
 
         for line, check in (("roll initiative", "combat"), ("we take a long rest", "clock")):
@@ -527,7 +552,7 @@ class RacesAndConsent(AtTheTable):
             self.posted.clear()
             with patch.object(ui, "press", withdraw):
                 await self.bot._note_clock_phrase(table, DM, line)
-            self.bot.consent.has_consent = lambda g, u: True  # type: ignore[method-assign]
+            self.bot.consent.has_consent = lambda guild_id, user_id: True  # type: ignore[method-assign]
             stored = await self.clocks.get(GUILD_A, self.a.id)
             assert stored is not None
             if check == "combat":

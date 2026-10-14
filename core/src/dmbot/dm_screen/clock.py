@@ -191,7 +191,7 @@ async def press(
         and before.combat_round is not None
         and after.combat_round is None
     ):
-        # Undo puts back the time only, not the fight: the DM starts combat again if needed.
+        # (Undo of this rest brings the fight back: the round rides in the Undo button.)
         result.lines.insert(0, f"🏁 Combat is over (round {before.combat_round}).")
     if before is not None and after is not None and _speaks(action):
         marks = game.crossings(before.minute, after.minute)
@@ -860,13 +860,19 @@ class SimpleGuild:
 
 def undo_id(before: Clock, after: Clock) -> str:
     """What Undo needs, in the button's own ID so it works after a restart: the clock to go
-    back to, and the minute it must still be at (if the DM moved it since, Undo does nothing)."""
-    return f"{before.minute}:{before.last_long_rest}:{after.minute}"
+    back to, and the minute it must still be at (if the DM moved it since, Undo does nothing).
+    The fight's round and seconds ride along, so a rest that ended a fight can bring it back."""
+    return (
+        f"{before.minute}:{before.last_long_rest}:{after.minute}"
+        f":{before.combat_round or 0}:{before.combat_secs}"
+    )
 
 
 class ClockUndoButton(
     discord.ui.DynamicItem[discord.ui.Button[discord.ui.View]],
-    template=rf"dmbot:clockundo:{_ID}:(?P<before>\d+):(?P<rest>\d+):(?P<after>\d+)",
+    # (the round and seconds are optional: buttons made before #1173 carry only the first three)
+    template=rf"dmbot:clockundo:{_ID}:(?P<before>\d+):(?P<rest>\d+):(?P<after>\d+)"
+    rf"(?::(?P<round>\d+):(?P<secs>\d+))?",
 ):
     """↩️ Undo on a rest said at the table: back to the time before, if nothing has moved
     the clock since."""
@@ -881,14 +887,18 @@ class ClockUndoButton(
             )
         )
         self.campaign_id = campaign_id
-        before, rest, after = (int(x) for x in spec.split(":"))
+        before, rest, after, *fight = (int(x) for x in spec.split(":"))
         self.before, self.rest, self.after = before, rest, after
+        self.round, self.secs = (fight[0], fight[1]) if len(fight) == 2 else (0, 0)
 
     @classmethod
     async def from_custom_id(
         cls, interaction: discord.Interaction, item: discord.ui.Item[Any], match: re.Match[str]
     ) -> ClockUndoButton:
-        return cls(match["campaign"], f"{match['before']}:{match['rest']}:{match['after']}")
+        spec = f"{match['before']}:{match['rest']}:{match['after']}"
+        if match["round"] is not None:
+            spec += f":{match['round']}:{match['secs']}"
+        return cls(match["campaign"], spec)
 
     async def callback(self, interaction: discord.Interaction) -> Any:
         guild = interaction.guild
@@ -915,12 +925,16 @@ class ClockUndoButton(
             if current is None or current.minute != self.after:
                 moved = True  # the DM moved the clock since: leave it
                 return None
-            return replace(
+            clock = replace(
                 current,
                 minute=self.before,
                 last_long_rest=min(self.rest, self.before),
                 tired_told_for=None,
             )
+            if current.combat_round is None and self.round:
+                # The rest ended a fight: Undo brings it back, round included (#1173).
+                clock = replace(clock, combat_round=self.round, combat_secs=self.secs)
+            return clock
 
         try:
             _, after = await client.clocks.change(
