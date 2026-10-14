@@ -15,8 +15,8 @@ from dmbot.ui.logic import HELP_TEXT
 # may a change to a version nobody can have agreed to yet (not deployed).
 # The "What's new" note for people asked again (consent_dm.RENEWED) explains a change
 # rather than adding terms, so it isn't part of the fingerprint.
-PINNED_VERSION = 4  # #1018: "You must be 16 or older to be recorded." and the button says so
-PINNED_FINGERPRINT = "297682882bac77d772afdb77d6f46169d1f1d67864d82037366227dcc3f71f69"
+PINNED_VERSION = 5  # #1118: DMbot also reads the table's typed chat while it's listening
+PINNED_FINGERPRINT = "379a7c5bb036cdaeb6db1de741341ab85dd49e9b6ff8194196d18fa3e2b1bf1d"
 
 
 def fingerprint() -> str:
@@ -73,7 +73,7 @@ class TermsVersion(unittest.TestCase):
     def test_the_age_is_written_once(self) -> None:
         # Every line that names the age is built from MIN_AGE, so a later change can't leave
         # one behind (the Supervisor's note on #1023).
-        for line in (AGE_LINE, UNDER_LINE, CONSENT_LABEL, RENEWED):
+        for line in (AGE_LINE, UNDER_LINE, CONSENT_LABEL):
             self.assertIn(str(MIN_AGE), line)
         self.assertEqual(AGE_LINE, f"You must be {MIN_AGE} or older to be recorded.")
         self.assertEqual(
@@ -81,10 +81,17 @@ class TermsVersion(unittest.TestCase):
         )
 
     def test_the_note_for_people_asked_again_says_why(self) -> None:
-        self.assertIn("16 or older", RENEWED)
+        self.assertIn("type in the voice channel's chat", RENEWED)
         self.assertIn("asking you again", RENEWED)
-        self.assertIn("won't record you until you press the button", RENEWED)
-        self.assertIn("Younger than 16? Press **No thanks** and keep playing.", RENEWED)
+        self.assertIn("it records nothing from you", RENEWED)
+        self.assertIn("Press **No thanks** and keep playing.", RENEWED)
+
+    def test_the_request_says_typed_chat_is_read(self) -> None:
+        text = request_text("Server", voice="Table", dm="Dee", cloud=False)
+        self.assertIn("reads what you type in the voice channel's chat", text)
+        self.assertIn("one more channel if your DM picks one", text)
+        self.assertIn("Anyone in this server can read and download that text", text)
+        self.assertIn("ignores your voice and your typing", text)
 
     def test_no_age_or_birthdate_is_kept_anywhere(self) -> None:
         # Pressing the button is the confirmation (#1018): no column for it.

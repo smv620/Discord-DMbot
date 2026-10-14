@@ -149,7 +149,7 @@ class TermsVersionTests(DatabaseTest):
         async with self.db.guild(1) as conn:
             await conn.execute("UPDATE consent SET terms_version = 3 WHERE user_id = 2")
         fresh = ConsentStore(self.db)
-        self.assertEqual(TERMS_VERSION, 4)
+        self.assertEqual(TERMS_VERSION, 5)
         self.assertEqual(await fresh.consenting(1), frozenset())
         self.assertEqual(await fresh.outdated(1, [2]), {2})  # the join asks again
         await fresh.grant(1, 2)  # presses "I'm 16 or older, record me"

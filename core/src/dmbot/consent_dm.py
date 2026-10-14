@@ -29,7 +29,7 @@ from typing import Any, Literal, Protocol
 import discord
 
 from dmbot.consent import CONSENT_COMMAND, PRIVATE_MESSAGE, TERMS_VERSION, ConsentMethod
-from dmbot.consent_words import AGE_LINE, CONSENT_LABEL, MIN_AGE, UNDER_LINE
+from dmbot.consent_words import AGE_LINE, CONSENT_LABEL, UNDER_LINE
 from dmbot.logs import log_context
 
 log = logging.getLogger(__name__)
@@ -108,9 +108,10 @@ def _date(timestamp: int) -> str:
 # Says what changed in the current consent.TERMS_VERSION; rewrite it when that goes up.
 # It explains rather than adds terms, so it isn't part of the pinned wording.
 RENEWED = (
-    f"**What's new:** DMbot now only records people who are {MIN_AGE} or older, so it is "
-    "asking you again. It won't record you until you press the button below. "
-    f"Younger than {MIN_AGE}? Press **{DECLINE_LABEL}** and keep playing."
+    "**What's new:** DMbot now also reads what you type in the voice channel's chat while it "
+    "is listening. That is why it is asking you again. Until you press "
+    f"**{CONSENT_LABEL}**, it records nothing from you. Don't want that? Press "
+    f"**{DECLINE_LABEL}** and keep playing."
 )
 # The AI that reads the text, said once for every helper (#52; TERMS_VERSION 3).
 AI_NOTE = (
@@ -160,10 +161,13 @@ def request_text(
         "decides anything. Your DM does.",
         AGE_LINE,
         UNDER_LINE,
-        f"• Press **{CONSENT_LABEL}** and DMbot records what you say and turns it into text. "
+        f"• Press **{CONSENT_LABEL}** and DMbot records what you say, and reads what you type in "
+        "the voice channel's chat (and one more channel if your DM picks one), while it is "
+        "listening. It turns both into text. "
         "Anyone in this server can read and download that text. It stays there even if you "
         f"stop later. {AI_NOTE}",
-        f"• Press **{DECLINE_LABEL}** and DMbot ignores your voice. You can still play as normal.",
+        f"• Press **{DECLINE_LABEL}** and DMbot ignores your voice and your typing. "
+        "You can still play as normal.",
         "DMbot is just for your game. Please don't use it or its text for anything else.",
         "A yes is remembered for this server. If you say no, DMbot asks again next session.",
     ]
