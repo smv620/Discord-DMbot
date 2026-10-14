@@ -272,6 +272,7 @@ def build(
     house_rules: Sequence[HouseRule],
     lookup: CampaignLookup | None,
     scene: str,
+    table: bool = False,
 ) -> Context:
     """The AI's message for one question about one campaign. `house_rules` and `lookup`
     must already be this campaign's; nothing else is read here."""
@@ -281,6 +282,8 @@ def build(
     names = mentioned_names(question, lookup)
     sources: list[str] = []
     sections = [f"QUESTION: {question}"]
+    if table:  # everyone at the table reads the answer (#1187): see rule 11
+        sections.insert(0, "AUDIENCE: THE TABLE")
     if rules:
         sections.append("HOUSE RULES (they come first):")
         for rule in rules:

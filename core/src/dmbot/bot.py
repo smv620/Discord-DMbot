@@ -2704,6 +2704,8 @@ class DMBot(commands.AutoShardedBot):
         the table (#1118): read only if it is in the table's chat and passes the checks."""
         if message.guild is not None:
             try:
+                if self._hear_dmbchat(message):
+                    return
                 if await self._chat_channel_allowed(message):
                     self._hear_typed(message)
             except Exception:
@@ -2713,6 +2715,82 @@ class DMBot(commands.AutoShardedBot):
             await self.sidebar.on_dm_message(message)
         except Exception:
             log.exception("Couldn't handle a private message")
+
+    def _hear_dmbchat(self, message: discord.Message) -> bool:
+        """A message in this session's DMbot chat channel (#1187): True if it was one (read or
+        not), so no other path looks at it. Every message there is a question for DMbot, from
+        anyone who agreed to be recorded; bots, DMbot itself and commands are never answered.
+        Only this campaign's channel counts: another campaign's chat in the same server has a
+        different id and is never read."""
+        guild = message.guild
+        table = self.tables.get(guild.id) if guild is not None else None
+        if table is None or message.channel.id != table.dmbchat_channel_id:
+            return False
+        author = message.author
+        if (
+            not table.listening
+            or author.bot
+            or (self.user is not None and author.id == self.user.id)
+            or message.webhook_id is not None
+            or message.type not in table_chat.READ_TYPES
+            or getattr(message, "interaction_metadata", None) is not None
+        ):
+            return True
+        text = table_chat.clean(message.clean_content)  # names, not <@123> markup
+        if text is not None:
+            self.sidebar.ask_in_chat(table, author.id, text)
+        return True
+
+    async def sidebar_post_chat(self, table: Table, text: str) -> bool:
+        """Post in the session's DMbot chat channel (#1187); False if there is none."""
+        if table.dmbchat_channel_id is None:
+            return False
+        return await self.post(table.dmbchat_channel_id, text)
+
+    async def sidebar_table_name(self, table: Table, user_id: int) -> str:
+        """How the table's answer names someone: their linked character's name when a sheet is
+        linked, else their server nickname (#1187)."""
+        name = self.name_of(table.guild_id, user_id)
+        if self.sheets is not None and table.campaign_id is not None:
+            try:
+                for sheet in await self.sheets.sheets(table.guild_id, table.campaign_id):
+                    if sheet.played_by == user_id:
+                        return str(sheet.name)
+            except Exception:
+                log.exception("Couldn't look up a character name; using the nickname")
+        return name
+
+    async def sidebar_links(self, table: Table) -> tuple[str | None, tuple[str, ...]]:
+        """The links this campaign has shared (#1187), and only this campaign's: its house-rules
+        file of record, which the table's answers may show (the owner's decision, 2026-10-14),
+        and nothing else yet. dndbeyond.com is allowed without being listed."""
+        house = None
+        if self.house_file_links is not None and table.campaign_id is not None:
+            try:
+                found = await self.house_file_links.get(table.guild_id, table.campaign_id)
+                house = found.link if found is not None else None
+            except Exception:
+                log.exception("Couldn't read the house-rules link; showing no link")
+        return house, ()
+
+    async def sidebar_nudge_chat(self, table: Table, user_id: int) -> None:
+        """Someone typed in the DMbot chat before agreeing to be recorded: one short reply with
+        the agree button, once a session. What they typed is not kept or sent anywhere."""
+        if table.dmbchat_channel_id is None:
+            return
+        view = request_view(
+            table.guild_id,
+            outside=self.outside_engine,
+            test_voice=self.test_voice_listed(table.guild_id),
+            invite=table.dndbeyond_invite,
+        )
+        await self.post(
+            table.dmbchat_channel_id,
+            f"{discord.utils.escape_markdown(self.name_of(table.guild_id, user_id))}: DMbot "
+            "answers people who agreed to be recorded. Press the button if you agree. "
+            "It didn't keep what you typed.",
+            view,
+        )
 
     def sidebar_has_consent(self, guild_id: int, user_id: int) -> bool:
         return self.consent.has_consent(guild_id, user_id)

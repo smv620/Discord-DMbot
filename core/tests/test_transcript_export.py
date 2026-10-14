@@ -11,6 +11,7 @@ from dmbot.transcript.models import (
     NO_LINEAGE,
     SIDEBAR_ANSWER,
     SIDEBAR_QUESTION,
+    SIDEBAR_TABLE_QUESTION,
     VIA_TYPED,
     VIA_VOICE,
     Line,
@@ -329,6 +330,50 @@ class SidebarKinds(unittest.TestCase):
             Line(1, DM, "x", "x", sidebar="memo")
         with self.assertRaises(ValueError):
             Lineage(via="carrier-pigeon")
+
+
+class TableQuestionLines(unittest.TestCase):
+    """A player's question to DMbot, tagged apart from the DM's (#1187): raw transcript only."""
+
+    asked = Lineage(ref="d4e5f6", via="chat")
+    lines: ClassVar[list[Line]] = [
+        Line(
+            10_000 + int(START * 1000),
+            MIA,
+            "does fireball need line of sight",
+            "does fireball need line of sight",
+            sidebar=SIDEBAR_TABLE_QUESTION,
+            lineage=Lineage(ref="d4e5f6", via="chat"),
+        ),
+        Line(
+            12_000 + int(START * 1000),
+            MIA,
+            "No. A point you choose.",
+            "No. A point you choose.",
+            sidebar=SIDEBAR_ANSWER,
+            lineage=Lineage(reply_to="d4e5f6", model="m", prompt="sidebar-7", sources=("SRD",)),
+        ),
+        line(20, DEE, "Run!"),
+    ]
+    names: ClassVar[dict[int, str]] = {MIA: "Mia", DEE: "Dee"}
+
+    def test_the_raw_transcript_has_a_table_q_tag_and_the_asker_by_name(self) -> None:
+        text = export.render("X", session(), self.lines, self.names, version=export.AS_HEARD)
+        self.assertIn(
+            "[0:00:10] (Mia) [Table Q id=d4e5f6 via=chat]: does fireball need line of sight", text
+        )
+        self.assertIn("(DMbot) [DM Sidebar reply-to=d4e5f6 model=m prompt=sidebar-7", text)
+
+    def test_the_cleaned_transcript_never_has_them(self) -> None:
+        text = export.render("X", session(), self.lines, self.names, version=export.CLEANED)
+        for word in ("Table Q", "fireball", "DMbot)", "d4e5f6"):
+            self.assertNotIn(word, text)
+        self.assertIn("Run!", text)
+
+    def test_a_player_chat_via_is_known_and_an_unknown_one_is_not(self) -> None:
+        self.assertEqual(Lineage(via="chat").via, "chat")
+        with self.assertRaises(ValueError):
+            Lineage(via="smoke-signal")
 
 
 class SidebarLinesInTheBuffer(unittest.TestCase):

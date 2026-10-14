@@ -41,7 +41,7 @@ from dmbot.ui import rule_card
 log = logging.getLogger(__name__)
 T = TypeVar("T")
 
-PROMPT_VERSION = "sidebar-6"  # bump when SYSTEM or the reply form changes (it is recorded)
+PROMPT_VERSION = "sidebar-7"  # bump when SYSTEM or the reply form changes (it is recorded)
 MAX_TOKENS = 150  # 200 characters of answer and the four fields fit in ~100
 CALL_TIMEOUT_S = 6  # one AI call; a Haiku answer of ~80 tokens takes 1 to 3 s
 TOTAL_BUDGET_S = 8  # everything after the plan check, retry included (the target is ~5 s)
@@ -104,6 +104,11 @@ planned." For DECIDED (described, but nothing says it is built), say "I don't kn
 ready yet." Never invent a feature, button or command: if the documents do not cover it, say \
 "I don't have that." Never mention issue numbers, session names or who decided what.
 
+11. If the message starts with AUDIENCE: THE TABLE, everyone at the table reads your answer. Use \
+only the rules, DMbot help and the scene given. If the question needs anything else (a secret, \
+the story, a name not given) or asks you to decide or invent something, set ANSWER to exactly \
+"That's one for your DM." and SOURCE to none.
+
 Reply in exactly this form, one item per line:
 ANSWER: <the answer>
 SOURCE: <a few words, like "SRD 5.2.1 p. 131", "House rule 3" or "DMbot help"; or none>
@@ -112,6 +117,8 @@ IN_GAME: <yes if it is about the campaign or the game's rules or content; no for
 Discord help>
 ON_TOPIC: <yes or no>"""
 
+ONE_FOR_DM = "That's one for your DM."  # a table question that needs the DM's secrets or call
+_ONE_FOR_DM = re.compile(r"that['’]s one for your dm", re.IGNORECASE)
 NOT_IN_RULES = "(not in DMbot's rules, check your book)"
 # An answer whose first sentence says there is nothing to go on ("The free rules don't say.",
 # "I don't have that.", "Your call."). Narrow on purpose: ordinary rules prose such as "Creatures
@@ -131,6 +138,10 @@ _OLD_WORDS = {"sure": "confident", "not sure": "uncertain"}
 _FIELD = re.compile(
     r"^\s*(ANSWER|SOURCE|CONFIDENCE|SURE|IN_GAME|ON_TOPIC)\s*:\s*(.*)$", re.IGNORECASE
 )
+
+
+async def _nothing() -> None:
+    return None
 
 
 class AIClient(Protocol):
@@ -155,6 +166,7 @@ class Answer:
     text: str  # already short; the source and "confident" or "uncertain" are in it
     in_game: bool  # about the campaign or the game: goes in the raw transcript as DMbot
     refused: bool = False  # the plan check said no; `text` holds the plain words
+    one_for_dm: bool = False  # a table question that needs the DM: answered ONE_FOR_DM (#1187)
     model: str = ""  # "" when no AI was used (a refusal, a rule card)
     prompt_version: str = PROMPT_VERSION
     sources: tuple[str, ...] = ()  # everything the AI was given, in short words
@@ -391,11 +403,18 @@ class Sidebar:
         self._clock = clock
 
     async def answer(
-        self, campaign: Campaign, question: str, *, asker_id: int, scene: str = ""
+        self,
+        campaign: Campaign,
+        question: str,
+        *,
+        asker_id: int,
+        scene: str = "",
+        table: bool = False,
     ) -> Answer:
         """The answer to one question about `campaign`. `scene` is the last few minutes of
-        its cleaned transcript. `asker_id` is the DM asking; it decides the wording of a refusal,
-        so it has no default.
+        its cleaned transcript. `table`: the whole table reads the answer (#1187), so the
+        prompt holds nothing from the DM's side (no campaign names or notes). `asker_id` is
+        who is asking; it decides the wording of a refusal, so it has no default.
         Raises `AIError` (plain words) when the AI can't be reached or takes too long; #935
         then tells the DM. The whole answer, after the plan check, has `TOTAL_BUDGET_S`."""
         started = self._clock()
@@ -404,18 +423,21 @@ class Sidebar:
             return Answer(refusal, in_game=False, refused=True, parts=(refusal,))
         try:
             async with asyncio.timeout(TOTAL_BUDGET_S):
-                return await self._answer(campaign, question, scene, started)
+                return await self._answer(campaign, question, scene, started, table)
         except TimeoutError as exc:
             log.warning("The sidebar took over %d seconds in all", TOTAL_BUDGET_S)
             raise AIError(TOO_SLOW) from exc
 
     async def _answer(
-        self, campaign: Campaign, question: str, scene: str, started: float
+        self, campaign: Campaign, question: str, scene: str, started: float, table: bool = False
     ) -> Answer:
         question = " ".join(question.split())[: context.QUESTION_MAX]
+        # The names are the DM screen's memory (secret names, NPC and plot facts the players
+        # may not have heard), so a table question never reads them: left out of the prompt
+        # rather than asking the model to hide them (#1187).
         houses, lookup = await asyncio.gather(
             self._safely(self._houses(campaign), [], "house rules"),
-            self._safely(self._names(campaign), None, "names"),
+            self._safely(self._names(campaign), None, "names") if not table else _nothing(),
         )
         index = self._index() if callable(self._index) else self._index
         ctx = context.build(
@@ -426,6 +448,7 @@ class Sidebar:
             house_rules=houses,
             lookup=lookup,
             scene=scene,
+            table=table,
         )
         # Asked for the whole text, and the rule is one DMbot has: no AI call at all. If it
         # isn't, the question is answered like any other, short (a paragraph is never sent).
@@ -448,6 +471,18 @@ class Sidebar:
         if not fields.on_topic:
             return self._done(
                 Answer(OFF_TOPIC, in_game=False, model=self._ai.model, parts=(OFF_TOPIC,)),
+                started,
+            )
+        if table and _ONE_FOR_DM.match(fields.answer.strip()):
+            return self._done(
+                Answer(
+                    ONE_FOR_DM,
+                    in_game=False,
+                    one_for_dm=True,
+                    model=reply.model or self._ai.model,
+                    sources=ctx.sources,
+                    parts=(ONE_FOR_DM,),
+                ),
                 started,
             )
         text = brevity.strip_padding(_NOTE_ANYWHERE.sub("", fields.answer).strip())
@@ -512,6 +547,7 @@ class Sidebar:
             and ctx.about_link
             and not _NOT_THERE.search(text)
             and not says_no_info(text)
+            and not table  # (a GitHub page is not a link the hard rules allow in the chat)
         ):
             # One link, at this build's commit (#1195); none for "not built yet" or "I don't
             # have that", which it would not help.

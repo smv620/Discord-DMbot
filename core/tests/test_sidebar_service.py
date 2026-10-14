@@ -12,7 +12,12 @@ from dmbot.ai import AIError
 from dmbot.sidebar import service
 from dmbot.sidebar.ask import ASK_PER_MINUTE, AskLimiter
 from dmbot.sidebar.service import Recent, SidebarService
-from dmbot.transcript.models import SIDEBAR_ANSWER, SIDEBAR_QUESTION, Line
+from dmbot.transcript.models import (
+    SIDEBAR_ANSWER,
+    SIDEBAR_QUESTION,
+    SIDEBAR_TABLE_QUESTION,
+    Line,
+)
 from tests.test_sidebar_memo import ogg_opus
 
 GUILD, OTHER_GUILD, DM, CO_DM, PLAYER, STARTER = 1, 2, 7, 70, 8, 99
@@ -28,6 +33,7 @@ class FakeAnswer:
     prompt_version: str = "prompt-1"
     sources: tuple[str, ...] = ("SRD 5.2.1 p. 241",)
     parts: tuple[str, ...] = ()
+    one_for_dm: bool = False
 
 
 class FakeAnswerer:
@@ -35,14 +41,16 @@ class FakeAnswerer:
         self.answer_to_give = answer or FakeAnswer()
         self.asked: list[tuple[Any, str, str]] = []
         self.askers: list[int] = []
+        self.table_modes: list[bool] = []  # whether each question was a table's (#1187)
         self.error: Exception | None = None
         self.gate: asyncio.Event | None = None
 
     async def answer(
-        self, campaign: Any, question: str, *, asker_id: int, scene: str = ""
+        self, campaign: Any, question: str, *, asker_id: int, scene: str = "", table: bool = False
     ) -> FakeAnswer:
         self.asked.append((campaign, question, scene))
         self.askers.append(asker_id)
+        self.table_modes.append(table)
         if self.gate is not None:
             await self.gate.wait()
         if self.error is not None:
@@ -50,7 +58,9 @@ class FakeAnswerer:
         return self.answer_to_give
 
 
-def make_table(guild: int = GUILD, campaign: str = "c1", name: str = "Frostmaiden") -> Any:
+def make_table(
+    guild: int = GUILD, campaign: str = "c1", name: str = "Frostmaiden", chat: int | None = None
+) -> Any:
     return SimpleNamespace(
         guild_id=guild,
         campaign_id=campaign,
@@ -60,6 +70,9 @@ def make_table(guild: int = GUILD, campaign: str = "c1", name: str = "Frostmaide
         segmenter=SimpleNamespace(session=5),
         recent=Recent.new(),
         sidebar_limiter=AskLimiter(),
+        dmbchat_channel_id=chat,
+        dmbchat_nudged=set(),
+        person_limits={},
     )
 
 
@@ -77,6 +90,10 @@ class FakeHost:
     withdraw_during_transcribe: bool = False
     house_rules: list[tuple[int, int, str]] = field(default_factory=list)
     house_rule_result: str = "started"
+    chat: list[str] = field(default_factory=list)  # posts in the DMbot chat (#1187)
+    nudged: list[int] = field(default_factory=list)
+    house_link: str | None = None
+    character_names: dict[int, str] = field(default_factory=dict)
 
     def sidebar_has_consent(self, guild_id: int, user_id: int) -> bool:
         return (guild_id, user_id) in self.agreed
@@ -118,6 +135,19 @@ class FakeHost:
     def sidebar_house_rule(self, table: Any, user_id: int, text: str) -> str:
         self.house_rules.append((table.guild_id, user_id, text))
         return self.house_rule_result
+
+    async def sidebar_post_chat(self, table: Any, text: str) -> bool:
+        self.chat.append(text)
+        return True
+
+    async def sidebar_table_name(self, table: Any, user_id: int) -> str:
+        return self.character_names.get(user_id) or self.name_of(table.guild_id, user_id)
+
+    async def sidebar_links(self, table: Any) -> tuple[str | None, tuple[str, ...]]:
+        return self.house_link, ()
+
+    async def sidebar_nudge_chat(self, table: Any, user_id: int) -> None:
+        self.nudged.append(user_id)
 
 
 def dm_message(
@@ -908,3 +938,220 @@ def memo_limit() -> int:
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TableQuestions(unittest.IsolatedAsyncioTestCase):
+    """Anyone at the table may ask; the answer is posted in the DMbot chat (#1187)."""
+
+    CHAT = 555
+
+    def setUp(self) -> None:
+        self.table = make_table(chat=self.CHAT)
+        self.host = FakeHost(
+            tables={GUILD: self.table},
+            agreed={(GUILD, DM), (GUILD, PLAYER)},
+            character_names={PLAYER: "Mira"},
+        )
+        self.answerer = FakeAnswerer(FakeAnswer(text="No. You pick a point within 150 feet."))
+        self.sidebar = SidebarService(self.host)
+        self.sidebar.answerer = self.answerer
+        self.now = [1000.0]
+        self.sidebar._clock = lambda: self.now[0]
+
+    async def settle(self) -> None:
+        await asyncio.gather(*self.sidebar._tasks)
+
+    async def test_a_players_hey_dmbot_is_answered_in_the_chat_in_the_owners_form(self) -> None:
+        said = "Hey DMbot, does fireball need line of sight?"
+        self.assertTrue(self.sidebar.ask_at_table(self.table, PLAYER, said))
+        await self.settle()
+        self.assertEqual(
+            self.host.chat,
+            [
+                "Q (Mira): Does fireball need line of sight?\n"
+                "Answer: No. You pick a point within 150 feet."
+            ],
+        )
+        self.assertEqual(self.host.dms, [])  # nothing private
+        self.assertEqual(self.answerer.table_modes, [True])  # a table's prompt (no DM side)
+
+    async def test_the_name_is_the_nickname_without_a_linked_character(self) -> None:
+        self.host.character_names.clear()
+        self.sidebar.ask_at_table(self.table, PLAYER, "Hey DMbot, how does grappling work?")
+        await self.settle()
+        self.assertTrue(self.host.chat[0].startswith("Q (Mia): "))
+
+    async def test_what_people_said_cannot_format_the_message_or_ping(self) -> None:
+        self.host.character_names[PLAYER] = "**Mira** <@123456789012345678>"
+        self.sidebar.ask_at_table(
+            self.table,
+            PLAYER,
+            "Hey DMbot, is @everyone <@&123456789012345678> *bold* a thing in grappling?",
+        )
+        await self.settle()
+        line = self.host.chat[0]
+        self.assertNotIn("<@", line.replace("<@\u200b", ""))
+        self.assertNotIn("@everyone", line.replace("@​everyone", ""))
+        self.assertIn("\\*\\*Mira\\*\\*", line)
+
+    async def test_a_long_question_is_cut_to_one_short_line(self) -> None:
+        self.sidebar.ask_at_table(self.table, PLAYER, "Hey DMbot, " + "grapple rules " * 60)
+        await self.settle()
+        first = self.host.chat[0].splitlines()[0]
+        self.assertLessEqual(len(first), service.Q_CHARS + 20)
+        self.assertTrue(first.endswith("…"), first)
+
+    async def test_a_players_hold_on_i_need_to_find_does_nothing(self) -> None:
+        said = "Hold on, I need to find if you need line of sight for fireball."
+        self.assertFalse(self.sidebar.ask_at_table(self.table, PLAYER, said))
+        self.assertEqual((self.host.chat, self.host.dms, self.answerer.asked), ([], [], []))
+
+    async def test_the_dms_hold_on_stays_private_and_their_hey_dmbot_goes_to_the_chat(self) -> None:
+        self.sidebar.ask_at_table(self.table, DM, "Hold on, I need to check how grappling works.")
+        await self.settle()
+        self.assertEqual((len(self.host.dms), self.host.chat), (1, []))
+        self.sidebar.ask_at_table(self.table, DM, "Hey DMbot, how does grappling work?")
+        await self.settle()
+        self.assertEqual(len(self.host.chat), 1)
+
+    async def test_without_a_chat_channel_a_players_question_has_nowhere_to_go(self) -> None:
+        self.table.dmbchat_channel_id = None
+        self.assertFalse(
+            self.sidebar.ask_at_table(self.table, PLAYER, "Hey DMbot, how does grappling work?")
+        )
+
+    async def test_a_message_typed_in_the_chat_from_someone_who_agreed_is_a_question(self) -> None:
+        self.assertTrue(
+            self.sidebar.ask_in_chat(self.table, PLAYER, "does fireball need line of sight?")
+        )
+        await self.settle()
+        self.assertEqual(len(self.host.chat), 1)
+        self.assertEqual(self.answerer.asked[0][1], "does fireball need line of sight?")
+
+    async def test_someone_who_has_not_agreed_is_shown_the_button_once_and_nothing_is_asked(
+        self,
+    ) -> None:
+        for _ in range(3):
+            self.assertFalse(self.sidebar.ask_in_chat(self.table, 31, "does fireball hurt?"))
+        await self.settle()
+        self.assertEqual((self.host.nudged, self.answerer.asked, self.host.saved), ([31], [], []))
+        self.assertEqual(self.host.chat, [])
+
+    async def test_two_questions_a_minute_for_each_person(self) -> None:
+        for n in range(2):
+            self.assertTrue(self.sidebar.ask_in_chat(self.table, PLAYER, f"question number {n}"))
+            await self.settle()
+            self.now[0] += 2
+        self.assertFalse(self.sidebar.ask_in_chat(self.table, PLAYER, "one more question"))
+        await self.settle()
+        self.assertIn(service.TOO_MANY, self.host.chat)  # the existing over-limit line
+        # another person is not held back by theirs
+        self.host.agreed.add((GUILD, 31))
+        self.assertTrue(self.sidebar.ask_in_chat(self.table, 31, "a question from another"))
+        await self.settle()
+        self.now[0] += 60
+        self.assertTrue(self.sidebar.ask_in_chat(self.table, PLAYER, "and now again"))
+
+    async def test_the_table_wide_limit_still_holds_for_everyone_together(self) -> None:
+        for n in range(ASK_PER_MINUTE):
+            user = 40 + n
+            self.host.agreed.add((GUILD, user))
+            self.assertTrue(self.sidebar.ask_in_chat(self.table, user, f"question number {n}"))
+            await self.settle()
+            self.now[0] += 1
+        self.host.agreed.add((GUILD, 99))
+        self.assertFalse(self.sidebar.ask_in_chat(self.table, 99, "one too many for the table"))
+
+    async def test_withdrawing_consent_meanwhile_posts_and_keeps_nothing(self) -> None:
+        self.answerer.gate = asyncio.Event()
+        self.sidebar.ask_in_chat(self.table, PLAYER, "does fireball need line of sight?")
+        await asyncio.sleep(0)
+        self.host.agreed.discard((GUILD, PLAYER))
+        self.answerer.gate.set()
+        await self.settle()
+        self.assertEqual((self.host.chat, self.host.saved), ([], []))
+
+    async def test_a_players_lines_are_table_q_lines_and_the_dms_stay_sidebar_lines(self) -> None:
+        self.sidebar.ask_in_chat(self.table, PLAYER, "does fireball need line of sight?")
+        await self.settle()
+        question, answer = self.host.saved
+        self.assertEqual((question.sidebar, question.lineage.via), (SIDEBAR_TABLE_QUESTION, "chat"))
+        self.assertEqual(question.lineage.stt, "")  # typed: no speech engine
+        self.assertEqual(answer.sidebar, SIDEBAR_ANSWER)
+        self.assertEqual(answer.lineage.reply_to, question.lineage.ref)
+        self.assertEqual((answer.lineage.model, answer.lineage.prompt), ("model-1", "prompt-1"))
+        self.host.saved.clear()
+        self.sidebar.ask_at_table(self.table, PLAYER, "Hey DMbot, how does grappling work?")
+        await self.settle()
+        self.assertEqual(self.host.saved[0].lineage.via, "table-trigger")
+        self.assertEqual(self.host.saved[0].lineage.stt, self.host.sidebar_stt())
+        self.host.saved.clear()
+        self.now[0] += 60
+        self.sidebar.ask_at_table(self.table, DM, "Hey DMbot, how does grappling work?")
+        await self.settle()
+        self.assertEqual(self.host.saved[0].sidebar, SIDEBAR_QUESTION)  # the DM's keep their tag
+
+    async def test_a_players_question_that_needs_the_dm_gets_the_fixed_line(self) -> None:
+        self.answerer.answer_to_give = FakeAnswer(text="That's one for your DM.", one_for_dm=True)
+        self.sidebar.ask_in_chat(self.table, PLAYER, "what is behind the door?")
+        await self.settle()
+        self.assertEqual(
+            self.host.chat, ["Q (Mira): What is behind the door?\nAnswer: That's one for your DM."]
+        )
+        self.assertEqual(self.host.dms, [])
+
+    async def test_a_dms_question_that_needs_their_side_is_answered_privately(self) -> None:
+        public = FakeAnswer(text="That's one for your DM.", one_for_dm=True)
+        private = FakeAnswer(text="Lord Veyn in disguise.")
+        answerer = self.answerer
+        original = answerer.answer
+
+        async def by_mode(*args: Any, table: bool = False, **kwargs: Any) -> FakeAnswer:
+            answerer.answer_to_give = public if table else private
+            return await original(*args, table=table, **kwargs)
+
+        answerer.answer = by_mode  # type: ignore[method-assign]
+        self.sidebar.ask_in_chat(self.table, DM, "who is the masked stranger?")
+        await self.settle()
+        self.assertEqual(self.answerer.table_modes, [True, False])
+        self.assertEqual(self.host.dms, [(DM, "Lord Veyn in disguise.")])
+        self.assertEqual(
+            self.host.chat,
+            ["Q (Sam): Who is the masked stranger?\nAnswer: Sent to the DM privately."],
+        )
+        self.assertNotIn("Veyn", " ".join(self.host.chat))
+
+    async def test_the_house_rules_link_is_preferred_and_other_links_are_dropped(self) -> None:
+        self.host.house_link = "https://docs.example.org/our-house-rules"
+        self.answerer.answer_to_give = FakeAnswer(
+            text="Yes, crits are maximum. https://evil.example.net/x",
+            sources=("house rule 3",),
+        )
+        self.sidebar.ask_in_chat(self.table, PLAYER, "do crits do maximum damage?")
+        await self.settle()
+        answer = self.host.chat[0].split("Answer: ", 1)[1]
+        self.assertIn("https://docs.example.org/our-house-rules", answer)
+        self.assertNotIn("evil.example.net", answer)
+        self.assertEqual(answer.count("http"), 1)
+
+    async def test_a_dndbeyond_link_is_kept_and_a_second_link_is_not(self) -> None:
+        self.answerer.answer_to_give = FakeAnswer(
+            text="Yes. https://www.dndbeyond.com/sources/basic-rules and https://www.dndbeyond.com/x"
+        )
+        self.sidebar.ask_in_chat(self.table, PLAYER, "does grappling need a free hand?")
+        await self.settle()
+        self.assertEqual(self.host.chat[0].count("http"), 1)
+        self.assertIn("www.dndbeyond.com/sources/basic-rules", self.host.chat[0])
+
+    async def test_a_link_from_another_campaign_never_shows(self) -> None:
+        self.host.house_link = None  # this campaign has none; another's is not offered
+        self.answerer.answer_to_give = FakeAnswer(
+            text="Yes. https://docs.example.org/other-campaign"
+        )
+        self.sidebar.ask_in_chat(self.table, PLAYER, "do crits do maximum damage?")
+        await self.settle()
+        self.assertNotIn("http", self.host.chat[0])
+
+    async def test_another_campaigns_chat_in_the_same_server_is_not_this_tables(self) -> None:
+        other = make_table(chat=777)  # a different campaign's channel, never this table's id
+        self.assertNotEqual(other.dmbchat_channel_id, self.table.dmbchat_channel_id)

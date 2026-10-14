@@ -25,10 +25,16 @@ class TranscriptSession:
 
 NARRATING = "narrating"  # a line's `entity` when the DM was narrating (#53)
 SIDEBAR_QUESTION, SIDEBAR_ANSWER = "question", "answer"
+# A player's question to DMbot (#1187), apart from the DM's: it has its own tag in the raw
+# transcript. DMbot's answer to either is a SIDEBAR_ANSWER line.
+SIDEBAR_TABLE_QUESTION = "table_question"
+QUESTION_KINDS = (SIDEBAR_QUESTION, SIDEBAR_TABLE_QUESTION)
 VIA_VOICE, VIA_TYPED, VIA_TABLE = "voice-memo", "typed", "table-trigger"
 # Typed in the table's chat (#1118): not speech, so no speech-to-text in its lineage.
 VIA_TABLE_CHAT = "table-chat"
-VIAS = (VIA_VOICE, VIA_TYPED, VIA_TABLE, VIA_TABLE_CHAT)
+# Typed in the campaign's DMbot chat channel (#1187).
+VIA_CHAT = "chat"
+VIAS = (VIA_VOICE, VIA_TYPED, VIA_TABLE, VIA_TABLE_CHAT, VIA_CHAT)
 
 
 @dataclass(frozen=True, slots=True)
@@ -85,7 +91,7 @@ class Line:
     message_id: int = 0
 
     def __post_init__(self) -> None:
-        if self.sidebar not in ("", SIDEBAR_QUESTION, SIDEBAR_ANSWER):  # not at the database
+        if self.sidebar not in ("", SIDEBAR_ANSWER, *QUESTION_KINDS):  # not at the database
             raise ValueError(f"unknown sidebar kind {self.sidebar!r}")
         tidy = " ".join(self.entity.split())[:ENTITY_MAX].strip()
         if tidy != self.entity:  # one line, never blank, never too long for the database

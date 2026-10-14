@@ -17,7 +17,12 @@ import time
 import unicodedata
 from collections.abc import Iterable, Mapping, Sequence
 
-from dmbot.transcript.models import SIDEBAR_QUESTION, Line, TranscriptSession
+from dmbot.transcript.models import (
+    QUESTION_KINDS,
+    SIDEBAR_TABLE_QUESTION,
+    Line,
+    TranscriptSession,
+)
 from dmbot.transcript.topics import GAME, OFF_TOPIC, TABLE_TALK, Spoken, collapse
 
 UNKNOWN_SPEAKER = "Someone"
@@ -41,7 +46,8 @@ SIDEBAR_NOTE = (
     "[DM Sidebar] lines are the DM's questions to DMbot and its answers, with where each "
     "came from. They are left out of the Cleaned version."
 )
-SIDEBAR_TAG, DMBOT_NAME = "[DM Sidebar]", "DMbot"
+DMBOT_NAME = "DMbot"
+TABLE_Q_NAME = "Table Q"  # a player's question to DMbot (#1187), apart from the DM's sidebar
 TYPED_TAG = "(typed)"
 TYPED_NOTE = (
     "(typed) lines were typed in the table's chat, not said. They are left out of the Cleaned "
@@ -149,7 +155,7 @@ def sidebar_tag(line: Line) -> str:
     each line came from (owner, #933). Only what is known is shown."""
     info = line.lineage
     parts: list[tuple[str, str]]
-    if line.sidebar == SIDEBAR_QUESTION:
+    if line.sidebar in QUESTION_KINDS:
         engine, _, rest = info.stt.partition(" ")  # the company's host stays private
         stt = f"{engine}/{rest.split(' ')[0]}" if rest else engine
         parts = [("id", info.ref), ("via", info.via), ("stt", stt)]
@@ -163,7 +169,8 @@ def sidebar_tag(line: Line) -> str:
     shown = " ".join(
         f"{key}={_value(value) if key != 'sources' else value}" for key, value in parts if value
     )
-    return f"[DM Sidebar {shown}]" if shown else SIDEBAR_TAG
+    name = TABLE_Q_NAME if line.sidebar == SIDEBAR_TABLE_QUESTION else "DM Sidebar"
+    return f"[{name} {shown}]" if shown else f"[{name}]"
 
 
 def label(
@@ -249,7 +256,9 @@ def render(
             timed.append((item.started_ms, f"{who}: {' '.join(item.text.split())}"))
     for line in shown_sidebar:  # "[0:12:04] (Sam) [DM Sidebar]: …", "[0:12:09] (DMbot) …"
         asker = (
-            DMBOT_NAME if line.sidebar != SIDEBAR_QUESTION else clean_name(names.get(line.user_id))
+            DMBOT_NAME
+            if line.sidebar not in QUESTION_KINDS
+            else clean_name(names.get(line.user_id))
         )
         when = clock((line.started_ms - start_ms) / 1000)
         said = " ".join(line.heard.split())
