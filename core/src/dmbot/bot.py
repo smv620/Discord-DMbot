@@ -17,7 +17,7 @@ import shutil
 import signal
 import time
 from collections import Counter
-from collections.abc import Awaitable, Callable, Coroutine
+from collections.abc import Awaitable, Callable, Coroutine, Sequence
 from dataclasses import dataclass, field
 from functools import partial
 from pathlib import Path
@@ -45,8 +45,16 @@ from dmbot.ai_watch import AIWatch
 from dmbot.audio.segmenter import Segmenter, Utterance
 from dmbot.audio_check import AudioChecker, Verdict
 from dmbot.campaigns import Campaign, CampaignStore
-from dmbot.campaigns.models import DEFAULT_DM_SCREEN_LEVEL
+from dmbot.campaigns.models import DEFAULT_DM_SCREEN_LEVEL, CampaignError
 from dmbot.capture_log import FRAMES_PER_S, CaptureLog, Due, SessionTotals
+from dmbot.channel_access import (
+    SAME_CHANNEL,
+    STARTING_UP,
+    join_blocked_message,
+    missing_post_permissions,
+    notice_failed_message,
+    post_problems,
+)
 from dmbot.config import Settings
 from dmbot.consent import ConsentMethod, ConsentStatus, ConsentStore
 from dmbot.consent_dm import (
@@ -67,16 +75,20 @@ from dmbot.consent_dm import (
 from dmbot.consent_site import SiteStops
 from dmbot.db import Database
 from dmbot.dm_screen import (
+    DMScreenError,
     HideButton,
     PeekButton,
     StopListeningButton,
     VisibilityButton,
+    ensure_dm_screen,
     house_sync,
+    peek_view,
     rules_cards,
 )
 from dmbot.dm_screen import clock as clock_screen
 from dmbot.dm_screen import effects as timer_screen
 from dmbot.dm_screen import house_voice as house_voice_screen
+from dmbot.dm_screen import levels as screen_levels
 from dmbot.dm_screen import messages as screen_messages
 from dmbot.dm_screen.dmbchat_channel import DmbchatChannelError, setup_dmbchat_channel
 from dmbot.dm_screen.gametime_channel import GametimeChannelError, setup_gametime_channel
@@ -88,11 +100,13 @@ from dmbot.dm_screen.handover import (
     TakeOnButton,
     WithdrawOfferButton,
 )
-from dmbot.dm_screen.left_out import PutBackButton
+from dmbot.dm_screen.left_out import PutBackButton, left_out_view
 from dmbot.dm_screen.name_questions import (
     FixUndoButton,
     NameAnswerUndoButton,
     NameQuestionButton,
+    fix_notes_view,
+    question_view,
 )
 from dmbot.dm_screen.pause import PauseButton
 from dmbot.dm_screen.settings import (
@@ -107,13 +121,21 @@ from dmbot.dm_screen.settings import (
 )
 from dmbot.dm_screen.site_offers import SiteOffers
 from dmbot.dm_screen.speaker_question import SpeakerQuestionButton
+from dmbot.dm_screen.speaker_question import question_view as speaker_question_view
 from dmbot.dm_screen.table_chat_panel import TableChatButton
 from dmbot.dm_screen.transcript_channel import (
     TranscriptChannelError,
     is_transcript_name,
+    refresh_card,
     setup_transcript_channel,
 )
 from dmbot.ears.protocol import (
+    AudioFrame,
+    EarsMessage,
+    Health,
+    Hello,
+    Speaking,
+    Status,
     allowlist_command,
     join_command,
     leave_command,
@@ -125,8 +147,10 @@ from dmbot.mail import Mailer
 from dmbot.memory import definitions, document_reader
 from dmbot.memory.backup import MemorySection
 from dmbot.memory.lookup import CampaignLookup, LookupCache
-from dmbot.memory.models import name_key
-from dmbot.memory.scene import HintParts, SceneTracker
+from dmbot.memory.models import DM, FIX, KEEP, Heard, MemoryRuleError, name_key
+from dmbot.memory.scan import MAX_SUGGESTIONS, find_new_names, group_alike
+from dmbot.memory.scene import HintParts, SceneTracker, mentions, scene_hints
+from dmbot.memory.scene import prepare as prepare_hints
 from dmbot.memory.sheet_questions import Questions as SheetQuestions
 from dmbot.memory.sheet_refresh import hint_names as sheet_hint_names
 from dmbot.memory.sheet_refresh import refresh as refresh_sheets
@@ -137,17 +161,22 @@ from dmbot.memory.table_names import NameThenAnswer
 from dmbot.retention import RetentionJob
 from dmbot.rules import house_voice
 from dmbot.rules import index as rules_index
-from dmbot.rules.house import HouseRulesSection, HouseRuleStore
+from dmbot.rules.house import HouseRule, HouseRulesSection, HouseRuleStore
 from dmbot.rules.house_file_link import HouseFileLinkStore
-from dmbot.sessions import SessionStore
+from dmbot.rules.spotter import Mention
+from dmbot.sessions import SavedSession, SessionStore
 from dmbot.sidebar import knowledge
 from dmbot.sidebar.answer import PROMPT_VERSION as SIDEBAR_PROMPT_VERSION
+from dmbot.sidebar.answer import Sidebar
 from dmbot.sidebar.ask import AskLimiter
+from dmbot.sidebar.people import lines as people_lines
 from dmbot.sidebar.service import Recent, SidebarService
 from dmbot.test_recording import files as test_files
 from dmbot.test_recording import library as test_library
 from dmbot.test_recording.session import TestSession
 from dmbot.test_recording.store import TestVoiceStore
+from dmbot.timebot import combat_phrases, durations
+from dmbot.timebot import phrases as clock_phrases
 from dmbot.timebot.effects import EffectsSection, EffectStore
 from dmbot.timebot.store import ClockSection, ClockStore
 from dmbot.transcript import fix_notes, left_out, speaker_ai
@@ -155,22 +184,32 @@ from dmbot.transcript import questions as name_questions
 from dmbot.transcript import speaker_question as speaker_q
 from dmbot.transcript import stream as transcript_lines
 from dmbot.transcript.cleaner import (
+    Cleaned,
     Vocabulary,
+    clean,
+    own_name,
+    safe_answer,
+    with_ending,
 )
-from dmbot.transcript.models import TranscriptBuffer
+from dmbot.transcript.export import clock
+from dmbot.transcript.models import NARRATING, Line, TranscriptBuffer
 from dmbot.transcript.store import TranscriptStore
 from dmbot.transcript.stream import TranscriptStream
-from dmbot.transcript.topics import TopicWindow
-from dmbot.transcription.base import PlaceholderTranscriber, Transcriber
+from dmbot.transcript.topic_ai import classify
+from dmbot.transcript.topics import GAME, OFF_TOPIC, TopicWindow, Waiting, obviously_game
+from dmbot.transcript.topics import marker as topic_marker
+from dmbot.transcription.base import PlaceholderTranscriber, Transcriber, confidence_of
 from dmbot.transcription.factory import build_transcriber
-from dmbot.transcription.pipeline import TranscriptionPipeline, speech_sent_line
+from dmbot.transcription.pipeline import TranscriptionPipeline, clip_budget_s, speech_sent_line
+from dmbot.ui import logic as ui_logic
+from dmbot.ui import rule_card
 from dmbot.ui.dmbot_commands import _failed, dmbot_group
 from dmbot.ui.house_rules import dmbot_house_rules  # noqa: F401 (registers it)
 from dmbot.ui.name_card import UndoButton
 from dmbot.ui.name_lists import UndoListButton
-from dmbot.ui.names import ReviewButton
+from dmbot.ui.names import ReviewButton, after_session_text, review_view
 from dmbot.ui.optional_rules import dmbot_optional_rules  # noqa: F401 (registers it)
-from dmbot.ui.people_review import PeopleReviewButton
+from dmbot.ui.people_review import PeopleReviewButton, people_review_view, waiting_text
 from dmbot.ui.rule_lookup import dmbot_rule  # noqa: F401 (registers it)
 from dmbot.ui.sheets import MySheetButton, OpenCardButton
 from dmbot.ui.transcripts import (
@@ -576,7 +615,7 @@ class DMBot(commands.AutoShardedBot):
                 enforce_plans=settings.enforce_plans,
                 site_url=settings.site_url,
                 link_secret=settings.link_token_secret,
-                send_dm=self._dm_user,
+                send_dm=self._dm_trial_user,
                 name_of=self._discord_name,
                 skip=settings.free_users,
             )
@@ -1687,7 +1726,3307 @@ class DMBot(commands.AutoShardedBot):
         saved = await self.sessions.get(guild_id)
         return saved is not None and saved.campaign_id == campaign_id
 
-    async def _dm_user(self, user_id: int, text: str) -> trial_jobs.DmResult:
+    async def _dm_user(self, user_id: int, text: str) -> bool:
+        """A private message that may fail (messages off, left Discord): False if it did."""
+        try:
+            async with asyncio.timeout(GATE_TIMEOUT_S * 2):
+                user = self.get_user(user_id) or await self.fetch_user(user_id)
+                await user.send(text, allowed_mentions=discord.AllowedMentions.none())
+        except Exception:
+            return False
+        return True
+
+    async def _retention_loop(self) -> None:
+        """Once a day, after hours (UTC), warn about and delete campaigns past their keep
+        date (#964). Safe to run twice; a failed run is logged and tried again tomorrow."""
+        assert self.retention is not None
+        state_dir = self.settings.data_dir
+        # A bot that was down at 03:00 would skip that day: if the last run was over a day
+        # ago, run once shortly after start-up (#989).
+        if retention.catch_up_due(retention.read_last_run(state_dir), int(time.time())):
+            await self.wait_until_ready()
+            await asyncio.sleep(retention.CATCH_UP_DELAY_S)
+            await self._retention_once(state_dir)
+        while True:
+            now = int(time.time())
+            await asyncio.sleep(max(60, retention.next_run_after(now) - now))
+            await self._retention_once(state_dir)
+
+    async def _retention_once(self, state_dir: Path) -> None:
+        assert self.retention is not None
+        try:
+            await self.retention.run_once(int(time.time()))
+        except Exception:
+            log.exception("The daily retention job failed")
+            return
+        retention.write_last_run(state_dir, int(time.time()))
+
+    async def _tell_admin(self, user_id: int, text: str) -> None:
+        """A private message to one of DMbot's admins (#972). Raises if it can't be sent, so
+        the watch tries again later and doesn't count it as told."""
+        user = self.get_user(user_id) or await self.fetch_user(user_id)
+        await user.send(text, allowed_mentions=discord.AllowedMentions.none())
+
+    def session_lock(self, guild_id: int) -> asyncio.Lock:
+        """Held while a session starts or stops, or a campaign is replaced, per server."""
+        return self._session_locks.setdefault(guild_id, asyncio.Lock())
+
+    def start_blocker(self, guild_id: int) -> str | None:
+        """Why `/dmbot start` can't begin right now, or None if it can."""
+        if not self.ears.connected:
+            # Logged here too: if ears never connected, nothing else says so (#636).
+            log.warning("Can't start in server %s: ears isn't connected", guild_id)
+            return EARS_DOWN
+        table = self.tables.get(guild_id)
+        if table is not None:
+            name = f"**{table.campaign_name}** " if table.campaign_name else ""
+            return (
+                f"DMbot is already running {name}in <#{table.voice_channel_id}>. "
+                "Its DM can stop it with `/dmbot stop`."
+            )
+        return None
+
+    async def plan_refusal(self, guild_id: int, campaign: Campaign, starter_id: int) -> str | None:
+        """Why the campaign's owner's plan, hours or campaign count don't allow a start, in
+        plain words for the person starting it, or None (#437). A paused campaign is refused
+        whatever the plan; the rest only when DMBOT_ENFORCE_PLANS is on. Fails open: a
+        database hiccup must never lock a table out of its game."""
+        owner = campaign.owner_user_id
+        if owner is not None and self.settings.enforce_plans and self.meter is not None:
+            # A plan that shrank pauses the campaigns over its cap first, so this one may
+            # just have been paused (#957).
+            await self._settle_cap(guild_id, owner)
+            try:
+                campaign = await self.campaigns.get(guild_id, campaign.id) or campaign
+            except Exception:
+                log.exception("Couldn't reload the campaign after settling the cap")
+        if campaign.paused:  # the owner's choice, or the plan's: not a plan check, so always
+            return hours.PAUSED_OWNER if starter_id == owner else hours.PAUSED_OTHER
+        if not self.settings.enforce_plans or self.meter is None:
+            return None
+        if owner is None:
+            # A DM of the campaign gets a Take it on button with this (see the Start button).
+            return hours.NO_OWNER_ASK if starter_id in campaign.dm_user_ids else hours.NO_OWNER
+        try:
+            async with asyncio.timeout(METER_CALL_TIMEOUT_S):
+                check = await self.meter.check(guild_id, owner, int(time.time()))
+        except Exception:  # a slow database (TimeoutError) too
+            log.exception("Couldn't check the plan; starting anyway")
+            return None
+        refused = hours.refusal(
+            check.verdict,
+            is_owner=starter_id == owner,
+            site_url=self.settings.site_url,
+            can_change_plan=check.can_change_plan,
+            renews=check.renews,
+            extra_hours=check.extra_hours,
+        )
+        if refused is not None:
+            return refused
+        # The owner's plan and hours are fine; do they own more campaigns than the plan
+        # covers? (They can always start one they own within the cap: `fits(0)`.)
+        try:
+            async with asyncio.timeout(METER_CALL_TIMEOUT_S):
+                room = await self.meter.campaign_room(guild_id, owner, int(time.time()))
+        except Exception:
+            log.exception("Couldn't count the owner's campaigns; starting anyway")
+            return None
+        if room.fits(0) or room.cap is None:
+            return None
+        return hours.campaigns_refusal(
+            room.cap,
+            room.owned,
+            is_owner=starter_id == owner,
+            site_url=self.settings.site_url,
+            can_change_plan=room.can_change_plan,
+        )
+
+    async def create_refusal(self, guild_id: int, user_id: int) -> str | None:
+        """Why this person may not make one more campaign, or None (#437 part 2c). Only when
+        DMBOT_ENFORCE_PLANS is on, and only for a plan that works and has a cap they are
+        already at: someone with no plan can make a campaign (they pick a plan to start it),
+        and making one past the cap would lock all their campaigns out of starting. Fails
+        open, like the start check. (Two made at the same instant could both pass; the start
+        check still refuses them until one is paused.)"""
+        if not self.settings.enforce_plans or self.meter is None:
+            return None
+        await self._settle_cap(guild_id, user_id, 1.0)  # shrunk plan: pause extras (3 s deadline)
+        try:
+            async with asyncio.timeout(GATE_TIMEOUT_S):
+                room = await self.meter.campaign_room(guild_id, user_id, int(time.time()))
+        except Exception:
+            log.exception("Couldn't count the person's campaigns; allowing it")
+            return None
+        if not room.works or room.cap is None or room.fits(1):
+            return None
+        return hours.campaigns_refusal(
+            room.cap,
+            room.owned,
+            is_owner=True,
+            site_url=self.settings.site_url,
+            can_change_plan=room.can_change_plan,
+            creating=True,
+        )
+
+    async def unpause_refusal(self, guild_id: int, user_id: int) -> str | None:
+        """Why this owner can't unpause a campaign: their plan has no room for one more
+        running campaign (#957), in the same words as the start refusal. Same switch and
+        fail-open as `create_refusal`; the store checks again as the backstop."""
+        if not self.settings.enforce_plans or self.meter is None:
+            return None
+        await self._settle_cap(guild_id, user_id, GATE_TIMEOUT_S)
+        try:
+            async with asyncio.timeout(GATE_TIMEOUT_S):
+                room = await self.meter.campaign_room(guild_id, user_id, int(time.time()))
+        except Exception:
+            log.exception("Couldn't count the person's campaigns; allowing the unpause")
+            return None
+        if not room.works or room.cap is None or room.fits(1):
+            return None
+        return hours.campaigns_refusal(
+            room.cap,
+            room.owned,
+            is_owner=True,
+            site_url=self.settings.site_url,
+            can_change_plan=room.can_change_plan,
+            unpausing=True,
+        )
+
+    async def set_paused(
+        self, guild_id: int, campaign_id: str, user_id: int, paused: bool
+    ) -> Campaign:
+        """Pause or unpause a campaign for its owner (#957). A campaign DMbot is listening
+        to can't be paused (stop it first); an unpause that would go over the plan's cap
+        says so in the plan's words. Raises CampaignError in plain words."""
+        # Under the session lock, like a start, so a start can't slip in between the
+        # check and the save.
+        async with self.session_lock(guild_id):
+            table = self.tables.get(guild_id)
+            if paused and table is not None and table.campaign_id == campaign_id:
+                raise CampaignError(
+                    "DMbot is listening to this campaign now. Stop it with `/dmbot stop`, "
+                    "then pause it."
+                )
+            if not paused:
+                refused = await self.unpause_refusal(guild_id, user_id)
+                if refused:
+                    raise CampaignError(refused)
+            return await self.campaigns.set_paused(
+                guild_id, campaign_id, user_id, paused, int(time.time())
+            )
+
+    async def _settle_cap(
+        self, guild_id: int, owner_id: int, wait: float = METER_CALL_TIMEOUT_S
+    ) -> None:
+        """Pause the owner's campaigns over their plan's cap, and tell them once in a
+        private message which and how to change it (#957). Done when the bot next reads the
+        plan (a start, a new campaign, an unpause) rather than from the website's webhook:
+        the bot is the one that can message the owner, and a change that lands while it is
+        down is still settled. Best effort and fail-open: a database hiccup never blocks."""
+        if not self.settings.enforce_plans or self.meter is None:
+            return
+        try:
+            async with asyncio.timeout(wait):
+                live = [t.campaign_id for t in self.tables.values() if t.campaign_id]
+                settled = await self.meter.settle_cap(guild_id, owner_id, int(time.time()), live)
+        except Exception:
+            log.exception("Couldn't settle the owner's campaign cap")
+            return
+        if settled is None or not settled.paused:
+            return
+        text = hours.paused_told(
+            [discord.utils.escape_markdown(p.name) for p in settled.paused],
+            settled.cap,
+            site_url=self.settings.site_url,
+            can_change_plan=settled.can_change_plan,
+        )
+        try:
+            async with asyncio.timeout(GATE_TIMEOUT_S):
+                user = self.get_user(owner_id) or await self.fetch_user(owner_id)
+                await user.send(text, allowed_mentions=discord.AllowedMentions.none())
+        except Exception:  # never let a note break a start (private messages off, slow, ...)
+            # The pause is saved and the start refusal says it too.
+            log.info("Couldn't tell an owner their campaigns were paused", exc_info=True)
+
+    def _make_sidebar_answers(self) -> Sidebar | None:
+        if self.ai_client is None:
+            return None
+
+        async def gate(campaign: Campaign, user_id: int) -> str | None:
+            return await self.plan_gate("ai", campaign.guild_id, campaign, user_id)
+
+        async def houses(campaign: Campaign) -> Sequence[HouseRule]:
+            if self.house_rules is None:
+                return []
+            return await self.house_rules.list(campaign.guild_id, campaign.id)
+
+        async def names(campaign: Campaign) -> CampaignLookup | None:
+            if self.lookup is None:
+                return None
+            return await self.lookup.get_within(campaign.guild_id, campaign.id, NAMES_WAIT_S)
+
+        async def people(campaign: Campaign) -> list[str]:
+            # Optional context: a slow database must not eat the answer's time (#1188).
+            async with asyncio.timeout(NAMES_WAIT_S):
+                return await self.sidebar_people(campaign)
+
+        ai = self.ai_client.tier(FEATURE_TIERS[Feature.SIDEBAR])
+        careful = self.ai_client.tier(FEATURE_TIERS[Feature.SIDEBAR_RETRY])
+        return Sidebar(
+            ai,
+            rules_index.srd,
+            gate=gate,
+            houses=houses,
+            names=names,
+            people=people,
+            second_try=careful,
+        )
+
+    async def sidebar_people(self, campaign: Campaign) -> list[str]:
+        """Who is who at this table, as short lines of names (never Discord IDs) for the
+        sidebar's answers (#1188). Only people who still agree to be recorded, checked after
+        the read so no one is named after they stopped."""
+        if self.memory is None:
+            return []
+        rows = await self.memory.table_people(campaign.guild_id, campaign.id)
+        agreed = await self.consent.consenting(campaign.guild_id)
+        return people_lines(
+            rows,
+            agreed,
+            campaign.dm_user_ids,
+            lambda user_id: self.name_of(campaign.guild_id, user_id),
+        )
+
+    async def plan_gate(
+        self, action: plan_rules.Action, guild_id: int, campaign: Campaign, user_id: int
+    ) -> str | None:
+        """Why `user_id` may not do `action` (use the AI, make a copy or transcript, replace
+        the campaign from a copy) with this campaign, in plain words for them, or None
+        (#437 part 3). Judged by the campaign's owner's plan, so the whole table stops or goes
+        together. Only when DMBOT_ENFORCE_PLANS is on. Fails open like `plan_refusal`: a
+        database hiccup, or one slower than Discord's 3 seconds allow, must not lock the table
+        out."""
+        if not self.settings.enforce_plans or self.meter is None:
+            return None
+        owner = campaign.owner_user_id
+        access = None
+        if owner is not None:
+            try:
+                async with asyncio.timeout(GATE_TIMEOUT_S):
+                    access = await self.meter.access(guild_id, owner, int(time.time()))
+            except Exception:  # a slow database (TimeoutError) too
+                log.exception("Couldn't check the plan; allowing it")
+                return None
+        return plan_rules.refusal(
+            action,
+            access,
+            is_owner=user_id == owner,
+            owner_known=owner is not None,
+            site_url=self.settings.site_url,
+        )
+
+    async def plan_allows(
+        self, action: plan_rules.Action, guild_id: int, campaign: Campaign
+    ) -> bool:
+        """Does the campaign's owner's plan allow `action`, as a plain yes or no (no words, so
+        no question of who is asking)? Fails open (True) like `plan_gate`, and is True when
+        plans aren't enforced. A campaign with no owner has no plan to allow anything."""
+        if not self.settings.enforce_plans or self.meter is None:
+            return True
+        owner = campaign.owner_user_id
+        access = None
+        if owner is not None:
+            try:
+                async with asyncio.timeout(GATE_TIMEOUT_S):
+                    access = await self.meter.access(guild_id, owner, int(time.time()))
+            except Exception:
+                log.exception("Couldn't check the plan; allowing it")
+                return True
+        return plan_rules.allowed(plan_rules.RULE_OF[action], access)
+
+    async def restore_gate(
+        self, guild_id: int, user_id: int, replacing: Campaign | None = None
+    ) -> str | None:
+        """Why this person may not load a copy, or None (#437 part 3). A copy loaded as a new
+        campaign makes them its owner, so it is their own plan that has to include copies
+        (the free slot is the store's check, `restore_needs_slot`), and they hear about it
+        since it is theirs. A copy loaded over a campaign that has an owner keeps that owner
+        (#609), so it is the campaign's owner's plan that counts, as for any copy: a co-DM
+        with no plan may restore their paid owner's campaign. Over a campaign with no owner
+        the restorer becomes it, which is the first case."""
+        if not self.settings.enforce_plans or self.meter is None:
+            return None
+        if replacing is not None and replacing.owner_user_id is not None:
+            return await self.plan_gate("restore", guild_id, replacing, user_id)
+        try:
+            async with asyncio.timeout(GATE_TIMEOUT_S):
+                access = await self.meter.access(guild_id, user_id, int(time.time()))
+        except Exception:
+            log.exception("Couldn't check the plan; allowing it")
+            return None
+        return plan_rules.refusal("restore", access, is_owner=True, site_url=self.settings.site_url)
+
+    async def start_campaign_session(
+        self, interaction: discord.Interaction, campaign_id: str, voice_id: int
+    ) -> tuple[bool, str]:
+        """Start listening for a campaign. Returns (started, message for the DM).
+
+        Runs under the server's session lock, so two people pressing Start at the same
+        moment can't both start a session.
+        """
+        guild = interaction.guild
+        if guild is None:
+            return False, "Use this in a server."
+        async with self.session_lock(guild.id):
+            with log_context(guild_id=guild.id, campaign_id=campaign_id):
+                return await self._start_locked(interaction, guild, campaign_id, voice_id)
+
+    async def _start_locked(
+        self,
+        interaction: discord.Interaction,
+        guild: discord.Guild,
+        campaign_id: str,
+        voice_id: int,
+    ) -> tuple[bool, str]:
+        problem = self.start_blocker(guild.id)
+        if problem:
+            return False, problem
+        campaign = await self.campaigns.get(guild.id, campaign_id)
+        if campaign is None:
+            return False, "That campaign isn't here any more. Run `/dmbot start` again."
+        user = interaction.user
+        if not isinstance(user, discord.Member):
+            return False, "Use this in a server."
+        if not ui_logic.can_run(campaign, user.id, user.guild_permissions.manage_guild):
+            return False, ui_logic.NO_CAMPAIGN_ACCESS
+        refused = await self.plan_refusal(guild.id, campaign, user.id)
+        if refused:
+            return False, refused
+        me = cast(discord.Member | None, guild.me)  # None while the guild is still loading
+        if me is None:
+            return False, STARTING_UP
+        voice = guild.get_channel(voice_id)
+        if not isinstance(voice, discord.VoiceChannel | discord.StageChannel):
+            return False, "I can't find that voice channel. Pick another one."
+        # The DM must be able to join the channel too, so nobody can point DMbot at a
+        # private voice channel they aren't allowed in.
+        user_perms = voice.permissions_for(user)
+        if not (user_perms.view_channel and user_perms.connect):
+            return False, (
+                f"You can't join {voice.mention} yourself, so DMbot can't use it for your "
+                "table. Pick a voice channel you can join."
+            )
+        voice_perms = voice.permissions_for(me)
+        if not (voice_perms.view_channel and voice_perms.connect):
+            return False, (
+                f"I can't join {voice.mention}. Give me **View Channel** and **Connect** "
+                "there (Edit Channel → Permissions), then press Start again."
+            )
+
+        try:
+            screen_id = await ensure_dm_screen(self, interaction, campaign)
+        except DMScreenError as exc:
+            return False, str(exc)
+        if screen_id == voice.id:
+            return False, SAME_CHANNEL
+        screen = self.get_channel(screen_id)
+        screen_perms: discord.Permissions | None
+        if screen is None:
+            screen_perms = None
+        elif screen_id == interaction.channel_id:
+            # Discord's own resolved view of the invoking channel (threads too).
+            screen_perms = interaction.app_permissions
+        elif isinstance(screen, discord.abc.GuildChannel | discord.Thread):
+            screen_perms = screen.permissions_for(me)
+        else:
+            screen_perms = None
+        problems = post_problems(
+            screen_id=screen_id,
+            screen_perms=screen_perms,
+            screen_in_thread=isinstance(screen, discord.Thread),
+            voice_id=voice.id,
+            voice_perms=voice_perms,
+        )
+        if problems:
+            return False, join_blocked_message(problems)
+        transcript_id, transcript_problem = await self._transcript_channel(guild, campaign, screen)
+        gametime_problem = await self._gametime_channel(guild, campaign, screen)
+        dmbchat_id, dmbchat_problem = await self._dmbchat_channel(guild, campaign, screen)
+
+        await self.campaigns.set_dm_screen(guild.id, campaign.id, screen_id)
+        await self.campaigns.set_last_voice_channel(guild.id, campaign.id, voice.id)
+        campaign = await self.campaigns.mark_played(guild.id, campaign.id)
+        started_at = int(time.time())
+        table = Table(
+            guild_id=guild.id,
+            voice_channel_id=voice.id,
+            screen_channel_id=screen_id,
+            dm_user_id=user.id,
+            segmenter=Segmenter(guild.id),
+            campaign_id=campaign.id,
+            campaign_name=campaign.name,
+            dm_user_ids=campaign.dm_user_ids,
+            screen_level=campaign.dm_screen_level,
+            rules_on=campaign.rules_cards,
+            rules_rulesets=(campaign.target_ruleset, campaign.fallback_ruleset),
+            transcript_channel_id=transcript_id,
+            dndbeyond_invite=campaign.dndbeyond_invite,
+            chat_on=campaign.table_chat,
+            chat_channel_id=campaign.table_chat_channel_id,
+            dmbchat_channel_id=dmbchat_id,
+            started_at=started_at,
+        )
+        if table.rules_on:
+            self._warm_rules(table.rules_rulesets)
+        # Save before joining, so a restart can always pick the session up again.
+        try:
+            await self.sessions.save(
+                SavedSession(
+                    guild_id=guild.id,
+                    campaign_id=campaign.id,
+                    voice_channel_id=voice.id,
+                    screen_channel_id=screen_id,
+                    started_by=user.id,
+                    started_at=started_at,
+                    notice_posted=False,
+                )
+            )
+        except Exception:
+            log.exception("Couldn't save the new session")
+            return False, SAVE_FAILED
+        try:
+            await self.start_table(table)
+        except Exception:
+            log.exception("Couldn't start the session")
+            try:
+                await self.sessions.clear(guild.id, "the session couldn't start")
+            except Exception:
+                log.exception("Couldn't forget the session that failed to start")
+            return False, SAVE_FAILED
+        if transcript_problem:
+            await self.post(screen_id, transcript_problem)
+        if gametime_problem:
+            await self.post(screen_id, gametime_problem)
+        if dmbchat_problem:
+            await self.post(screen_id, dmbchat_problem)
+        self._check_house_file(campaign, screen_id)
+        trial_line = ""
+        if self.meter is not None:  # told once, privately, at their next start (#1229)
+            try:
+                trial_line = (
+                    await trial_jobs.take_extension_notice(self.meter.db, user.id, int(time.time()))
+                    or ""
+                )
+            except Exception:
+                log.exception("Couldn't check for a Try It extension notice")
+        transcript_line = (
+            f"📜 Transcript (anyone in the server can read it): <#{transcript_id}>\n"
+            if transcript_id
+            else f"⚠️ No live transcript this time. See <#{screen_id}> for why.\n"
+        )
+        return True, (
+            f"▶ Listening to **{campaign.name}** in {voice.mention}.\n"
+            f"{transcript_line}🛡️ Notes for the DM: <#{screen_id}>"
+            f"{ui_logic.screen_note(campaign.dm_screen_visibility)}\n"
+            "Only people who said yes are recorded, the DM included."
+            + (f"\n\n{trial_line}" if trial_line else "")
+        )
+
+    async def stop_session(
+        self,
+        guild_id: int,
+        user_id: int,
+        is_server_manager: bool,
+        *,
+        campaign_id: str | None = None,
+        session: int | None = None,
+    ) -> str:
+        """`campaign_id`: only stop if this campaign is the one being listened to (a Stop
+        button on an older message must never end a newer session). `session`: only stop
+        that very session (the Stop button's question, #554)."""
+        async with self.session_lock(guild_id):
+            table = self.tables.get(guild_id)
+            if campaign_id is not None and (table is None or table.campaign_id != campaign_id):
+                return screen_messages.NOT_LISTENING_NOW
+            if session is not None and (table is None or table.segmenter.session != session):
+                return screen_messages.STOP_STALE
+            if table is None:
+                # Maybe a saved session that hasn't been picked up again yet (DMbot is
+                # restarting): stopping must still end it, or it would come back.
+                return await self._stop_saved(guild_id, user_id, is_server_manager)
+            if not (table.is_dm(user_id) or is_server_manager):
+                return screen_messages.ONLY_DM_STOPS
+            # Forget the saved session first: if that fails, keep listening rather than
+            # stop now and come back by surprise after the next restart.
+            try:
+                was_saved = await self.sessions.clear(guild_id, f"/dmbot stop by user {user_id}")
+            except Exception:
+                log.exception("Couldn't clear the saved session")
+                return STOP_FAILED
+            if not was_saved:
+                # DMbot was listening, so this session should have been saved (#147).
+                with log_context(guild_id=guild_id, campaign_id=table.campaign_id):
+                    log.warning("Stopped a session that wasn't saved: it couldn't have resumed")
+            await self.stop_table(guild_id, f"/dmbot stop by user {user_id}")
+        name = f" to **{table.campaign_name}**" if table.campaign_name else ""
+        saved = self.transcripts is not None and (
+            table.transcript_session_id is not None or bool(table.unsaved)
+        )
+        download = (
+            " Everyone recorded will get a private message with a button to download the "
+            "transcript. Anyone in the server can also use `/transcript`."
+            if saved
+            else ""
+        )
+        return (
+            f"Stopped listening{name}.{download} A short summary follows in the DM screen. "
+            "See you next session! 👋"
+        )
+
+    async def status_lines(self, guild_id: int) -> list[str]:
+        """Plain-language status for the Status button. Raw counters go to the log."""
+        table = self.tables.get(guild_id)
+        lines: list[str] = []
+        if not self.ears.connected:
+            lines.append(
+                "⚠️ DMbot's listening part isn't running. Whoever hosts DMbot needs to restart it."
+            )
+        if table is None:
+            lines.append("🎙 Not listening. Use `/dmbot start` to begin.")
+        else:
+            campaign = f" to **{table.campaign_name}**" if table.campaign_name else ""
+            joining = "" if table.listening else " (joining…)"
+            lines.append(
+                f"🎙 Listening{campaign} in <#{table.voice_channel_id}>{joining} · "
+                f"DM notes go to <#{table.screen_channel_id}>"
+            )
+        users = await self.consent.consenting(guild_id)
+        if users:
+            names = ", ".join(sorted(self.name_of(guild_id, u) for u in users))
+            lines.append(f"Recording only: {names} (people who said yes)")
+        else:
+            lines.append("Nobody has said yes to recording yet.")
+        p = self.pipeline
+        if table is not None:
+            lines.append(
+                ui_logic.writing_status(  # this server's own queue (#173)
+                    self.settings.transcription.engine,
+                    p.backlog_of(guild_id),
+                    p.latency_of.get(guild_id),
+                )
+            )
+        if p.dropped or self.ears.rejected_frames or p.total_failures:
+            log.info(
+                "Status for guild %s: dropped=%d failures=%d bad_frames=%d backlog=%d",
+                guild_id,
+                p.dropped,
+                p.total_failures,
+                self.ears.rejected_frames,
+                p.backlog_of(guild_id),
+            )
+            lines.append(
+                "⚠️ Some speech was missed. If this keeps happening, use `/dmbot stop` "
+                "then `/dmbot start`."
+            )
+        return lines
+
+    # ---- resuming after a restart ------------------------------------------
+
+    async def _stop_saved(self, guild_id: int, user_id: int, is_server_manager: bool) -> str:
+        """`/dmbot stop` for a session that's saved but not running in this process."""
+        try:
+            saved = await self.sessions.get(guild_id)
+            if saved is None:
+                return "DMbot isn't listening right now."
+            campaign = await self.campaigns.get(guild_id, saved.campaign_id)
+            dms = campaign.dm_user_ids if campaign else frozenset()
+            if not (user_id == saved.started_by or user_id in dms or is_server_manager):
+                return screen_messages.ONLY_DM_STOPS
+            await self.sessions.clear(guild_id, f"/dmbot stop by user {user_id} before it resumed")
+        except Exception:
+            log.exception("Couldn't stop a saved session")
+            return STOP_FAILED
+        self._resume_when_available.discard(guild_id)
+        # In case an ears from before the restart is still in the channel.
+        await self.ears.send(leave_command(guild_id))
+        return "Stopped. DMbot won't rejoin. See you next session! 👋"
+
+    async def on_ready(self) -> None:
+        # on_ready fires again after Discord reconnects; start resuming only once.
+        if self._resume_started:
+            return
+        self._resume_started = True
+        # A count, never names: answers "who has DMbot?" from the log (#426).
+        log.info("Connected to %d server(s)", len(self.guilds))
+        # Log (don't post: restarts would spam) servers where DMbot lacks something.
+        for guild in self.guilds:
+            me = cast(discord.Member | None, guild.me)  # None while the guild is loading
+            with log_context(guild_id=guild.id):
+                if me is None:
+                    log.debug("Not checking permissions: server still loading")
+                    continue
+                gaps = install.missing(me.guild_permissions)
+                if gaps:
+                    log.warning("Missing permissions here: %s", ", ".join(gaps))
+        self._background.append(asyncio.create_task(self._resume_with_retries(), name="resume"))
+
+    async def _resume_with_retries(self) -> None:
+        """Resume saved sessions, retrying servers that failed (database or Discord not
+        ready yet). Gives up after the last delay; those sessions stay saved and a later
+        restart tries again."""
+        pending: set[int] | None = None  # None: all servers on this process's shards
+        for delay in (0, *RESUME_RETRY_DELAYS_S):
+            await asyncio.sleep(delay)
+            try:
+                pending = await self.resume_sessions(only=pending)
+            except Exception:
+                log.exception("Couldn't look up saved sessions; will retry")
+                continue
+            if not pending:
+                return
+        log.error("Gave up resuming %d session(s) for now", len(pending or ()))
+
+    async def resume_sessions(self, only: set[int] | None = None) -> set[int]:
+        """Rejoin the sessions that were running on this process's shards.
+
+        Returns the servers that failed in a way worth retrying. Raises if the list of
+        saved sessions can't be read at all.
+        """
+        guild_ids = await self.sessions.guilds_to_resume(self.settings.shards)
+        if only is not None:
+            guild_ids = [g for g in guild_ids if g in only]
+        failed: set[int] = set()
+        resumed = 0
+        for guild_id in guild_ids:
+            async with self.session_lock(guild_id):
+                with log_context(guild_id=guild_id):
+                    try:
+                        started = await self._resume_one(guild_id)
+                    except Exception:
+                        log.exception("Couldn't resume this server's session; will retry")
+                        failed.add(guild_id)
+                        continue
+            if started:
+                resumed += 1
+                await asyncio.sleep(RESUME_SPACING_S)
+        if resumed:
+            log.info("Resumed %d session(s)", resumed)
+        return failed
+
+    async def on_guild_join(self, guild: discord.Guild) -> None:
+        """DMbot was just added to a server: say hello, or say what it still needs."""
+        with log_context(guild_id=guild.id):
+            log.info("Joined a server; %s", await install.post_welcome(guild))
+        # A hand-over offer made on the website may be waiting for this server (#690).
+        self._track(self.site_offers.sweep_server(guild.id), "offer-sweep")
+
+    async def on_guild_available(self, guild: discord.Guild) -> None:
+        """Discord made a server available again: resume its session if one was waiting."""
+        if self.is_ready():  # offers made on the website while it was out (#690)
+            self._track(self.site_offers.sweep_server(guild.id), "offer-sweep")
+        if guild.id not in self._resume_when_available:
+            return
+        self._resume_when_available.discard(guild.id)
+        async with self.session_lock(guild.id):
+            with log_context(guild_id=guild.id):
+                try:
+                    await self._resume_one(guild.id)
+                except Exception:
+                    log.exception("Couldn't resume this server's session")
+
+    async def _resume_one(self, guild_id: int) -> bool:
+        """Resume one server's saved session. Returns True if it was started again."""
+        if guild_id in self.tables:
+            return False  # already started again (e.g. by /dmbot start)
+        saved = await self.sessions.get(guild_id)
+        if saved is None:
+            # Only the routing entry was left (e.g. the campaign was deleted, which
+            # deletes its session). Nothing to say to anyone.
+            await self.sessions.clear(guild_id, "nothing saved to resume")
+            return False
+        guild = self.get_guild(guild_id)
+        if guild is None:
+            await self.sessions.clear(guild_id, "not resumed: DMbot is no longer in this server")
+            return False
+        if guild.unavailable:
+            # A Discord outage: channels aren't known yet. Keep the session; resume it
+            # when Discord says the server is back (on_guild_available).
+            log.info("Server unavailable; will resume when Discord makes it available")
+            self._resume_when_available.add(guild_id)
+            return False
+        campaign = await self.campaigns.get(guild_id, saved.campaign_id)
+        if campaign is None:  # can't normally happen: deleting a campaign deletes this
+            await self.sessions.clear(guild_id, "not resumed: the campaign is gone")
+            return False
+        with log_context(campaign_id=campaign.id):
+            return await self._resume_campaign(guild, saved, campaign)
+
+    async def _resume_campaign(
+        self, guild: discord.Guild, saved: SavedSession, campaign: Campaign
+    ) -> bool:
+        now = int(time.time())
+        screen_id = self._usable_screen(guild, saved.screen_channel_id, campaign)
+        if screen_id is None:
+            # Nowhere to tell the DM anything, so don't record without them knowing.
+            await self.sessions.clear(guild.id, "not resumed: no DM screen DMbot can post in")
+            return False
+        if campaign.paused:
+            # Paused (by the owner, or by a shrunk plan) while a session was saved: a paused
+            # campaign never listens (#957), so a restart must not bring it back to life.
+            await self.sessions.clear(guild.id, "not resumed: the campaign is paused")
+            await self.post(screen_id, hours.paused_resume(campaign.name))
+            return False
+        if now - saved.started_at > MAX_RESUME_AGE_S:
+            await self.sessions.clear(
+                guild.id, f"not resumed: started over {MAX_RESUME_AGE_S // 3600} hours ago"
+            )
+            await self.post(screen_id, resume_too_old_message(campaign.name))
+            return False
+        me = cast(discord.Member | None, guild.me)
+        voice = guild.get_channel(saved.voice_channel_id)
+        can_join = (
+            me is not None
+            and isinstance(voice, discord.VoiceChannel | discord.StageChannel)
+            and voice.permissions_for(me).view_channel
+            and voice.permissions_for(me).connect
+        )
+        if not can_join:
+            await self.sessions.clear(guild.id, "not resumed: can't rejoin the voice channel")
+            await self.post(
+                screen_id, resume_no_voice_message(campaign.name, saved.voice_channel_id)
+            )
+            return False
+        streak = await self.sessions.note_resume(guild.id, now, RESUME_STREAK_WINDOW_S)
+        if streak > MAX_RESUMES_IN_A_ROW:
+            log.error("Not resuming: restarted %d times in a row", streak - 1)
+            await self.sessions.clear(guild.id, "not resumed: too many restarts in a row")
+            await self.post(screen_id, resume_gave_up_message(campaign.name))
+            return False
+        recently = (
+            saved.last_resumed_at is not None and now - saved.last_resumed_at < RESUME_QUIET_S
+        )
+        table = Table(
+            guild_id=guild.id,
+            voice_channel_id=saved.voice_channel_id,
+            screen_channel_id=screen_id,
+            dm_user_id=saved.started_by,
+            segmenter=Segmenter(guild.id),
+            notice_posted=saved.notice_posted,
+            campaign_id=campaign.id,
+            campaign_name=campaign.name,
+            dm_user_ids=campaign.dm_user_ids,
+            screen_level=campaign.dm_screen_level,
+            rules_on=campaign.rules_cards,
+            rules_rulesets=(campaign.target_ruleset, campaign.fallback_ruleset),
+            resumed=True,
+            announce_resume=not recently,
+            transcript_channel_id=self._usable_transcript(guild, campaign),
+            dndbeyond_invite=campaign.dndbeyond_invite,
+            chat_on=campaign.table_chat,
+            chat_channel_id=campaign.table_chat_channel_id,
+            # After a restart: still there, or the next /dmbot start makes it again.
+            dmbchat_channel_id=(
+                campaign.dmbchat_channel_id
+                if campaign.dmbchat_channel_id is not None
+                and self.get_channel(campaign.dmbchat_channel_id) is not None
+                else None
+            ),
+            started_at=saved.started_at,
+        )
+        if table.rules_on:
+            self._warm_rules(table.rules_rulesets)
+        if campaign.transcript_channel_id is not None and table.transcript_channel_id is None:
+            await self.post(
+                screen_id, screen_messages.transcript_stopped(campaign.transcript_channel_id)
+            )
+        # Sends the allowlist, then the join. If ears isn't connected yet, it gets both
+        # when it connects (_on_ears_link_change).
+        await self.start_table(table)
+        log.info("Resuming session (restart %d in a row)", streak)
+        return True
+
+    def _usable_screen(self, guild: discord.Guild, saved_id: int, campaign: Campaign) -> int | None:
+        """The saved DM screen if DMbot can still post there, else the campaign's own."""
+        me = guild.me
+        for channel_id in (saved_id, campaign.dm_screen_channel_id):
+            if channel_id is None:
+                continue
+            channel = self.get_channel(channel_id)
+            if (
+                me is not None
+                and isinstance(channel, discord.abc.GuildChannel | discord.Thread)
+                and not missing_post_permissions(
+                    channel.permissions_for(me), in_thread=isinstance(channel, discord.Thread)
+                )
+            ):
+                return channel_id
+        return None
+
+    async def _remember_notice(self, guild_id: int) -> None:
+        try:
+            await self.sessions.mark_notice_posted(guild_id)
+        except Exception:
+            # Worst case after a restart: players see the notice once more.
+            log.exception("Couldn't save that the recording notice was posted")
+
+    def name_of(self, guild_id: int, user_id: int) -> str:
+        guild = self.get_guild(guild_id)
+        member = guild.get_member(user_id) if guild else None
+        return member.display_name if member else f"<@{user_id}>"
+
+    async def post(self, channel_id: int, text: str, view: discord.ui.View | None = None) -> bool:
+        """Send a message; returns False (and logs) if it could not be posted."""
+        return await self.post_message(channel_id, text, view) is not None
+
+    async def post_message(
+        self, channel_id: int, text: str, view: discord.ui.View | None = None
+    ) -> discord.Message | None:
+        """Send a message; returns it, or None (and logs) if it could not be posted."""
+        channel = self.get_channel(channel_id)
+        if not isinstance(channel, discord.abc.Messageable):
+            log.warning("Could not post to channel %s: channel not found", channel_id)
+            return None
+        try:
+            # discord.py's types don't accept view=None, so only pass a real view.
+            if view is None:
+                return await channel.send(text, allowed_mentions=NO_PINGS)
+            return await channel.send(text, allowed_mentions=NO_PINGS, view=view)
+        except discord.HTTPException as exc:
+            log.warning("Could not post to channel %s: %s", channel_id, exc)
+            return None
+
+    async def after_invite_change(self, campaign: Campaign) -> None:
+        """A running session shows the DM's new D&D Beyond invite link from now on, and the
+        transcript channel's pinned card follows (#1119). A removed link must not linger: a DM
+        removes one because it leaked or the table is full."""
+        table = self.tables.get(campaign.guild_id)
+        if table is not None and table.campaign_id == campaign.id:
+            table.dndbeyond_invite = campaign.dndbeyond_invite
+        guild = self.get_guild(campaign.guild_id)
+        if guild is not None and campaign.transcript_channel_id is not None:
+            try:
+                await refresh_card(guild, campaign)
+            except Exception:
+                log.exception("Couldn't refresh the transcript channel's card")
+
+    async def after_screen_change(self, campaign: Campaign, channel: discord.TextChannel) -> None:
+        """Keep a live session in step after the DM changes who can see the DM screen."""
+        table = self.tables.get(campaign.guild_id)
+        if table is None or table.campaign_id != campaign.id:
+            return
+        table.screen_channel_id = channel.id  # the screen may have been re-created
+        table.dm_user_ids = campaign.dm_user_ids
+        if campaign.dm_screen_visibility == "peek" and not table.peek_offered:
+            # Players got no Peek button if the notice was posted under another setting.
+            # Once per session, so switching back and forth doesn't spam them.
+            table.peek_offered = await self.post(
+                table.voice_channel_id, screen_messages.peek_invite(), view=peek_view(campaign.id)
+            )
+
+    async def _peek_view(self, table: Table) -> discord.ui.View | None:
+        """The Peek button for the players' notice, when the campaign allows peeking."""
+        if table.campaign_id is None:
+            return None
+        campaign = await self.campaigns.get(table.guild_id, table.campaign_id)
+        if campaign is None or campaign.dm_screen_visibility != "peek":
+            return None
+        return peek_view(campaign.id)
+
+    # ---- ears events -------------------------------------------------------
+
+    async def _on_ears_link_change(self, connected: bool) -> None:
+        # Runs in the ears connection's task, which lives on: scope the IDs per table.
+        for table in list(self.tables.values()):
+            with log_context(guild_id=table.guild_id, campaign_id=table.campaign_id):
+                if connected:
+                    # ears (re)started: restore its state for every active table.
+                    await self.push_allowlist(table.guild_id)
+                    await self.ears.send(join_command(table.guild_id, table.voice_channel_id))
+                else:
+                    table.listening = False
+                    await self.post(
+                        table.screen_channel_id,
+                        "⚠️ Lost contact with the voice service. I'll rejoin automatically "
+                        "when it's back.",
+                    )
+
+    async def _on_ears_message(self, message: EarsMessage) -> None:
+        guild_id = None if isinstance(message, Hello) else message.guild_id
+        table = self.tables.get(guild_id) if guild_id is not None else None
+        if table is None:
+            return
+        with log_context(guild_id=table.guild_id, campaign_id=table.campaign_id):
+            if isinstance(message, Status):
+                await self._on_status(table, message)
+            elif isinstance(message, Speaking) and message.event == "end":
+                utterance = table.segmenter.end(message.user_id)
+                if utterance is not None:
+                    self.pipeline.enqueue(utterance)
+            elif isinstance(message, Health):
+                table.capture_log.add_health(
+                    message.user_id,
+                    message.frames_received,
+                    message.frames_expected,
+                    time.monotonic(),
+                    decrypt_failures=message.decrypt_failures,
+                    decode_errors=message.decode_errors,
+                    link_dropped=message.link_dropped,
+                )
+                table.totals.add_health(
+                    message.user_id, message.frames_received, message.frames_expected
+                )
+
+    async def _on_status(self, table: Table, status: Status) -> None:
+        if status.state == "joined":
+            # A repeat "joined" (ears confirming again) has nothing new to say, but the
+            # recording notice below is still retried if it hasn't been posted yet.
+            repeat = table.listening
+            table.listening = True
+            # Ask everyone in the channel once, when a session starts. Not after a
+            # restart: they were asked before it, and newcomers are asked as they join.
+            first_join = not repeat and not table.resumed
+            resumed_now = not repeat and table.resumed
+            if (
+                not repeat
+                and table.transcript_channel_id is not None
+                and (first_join or table.announce_resume)
+            ):  # only once DMbot is really in voice
+                table.transcript.add_divider(
+                    transcript_lines.started(
+                        table.campaign_name, int(time.time()), resumed=resumed_now
+                    ),
+                    at_ms=_now_ms(),
+                )
+            agreed = await self.consent.consenting(table.guild_id)
+            here = self._people_in_voice(table)
+            recorded = [uid for uid in here if uid in agreed]
+            if not repeat:
+                log.info("In the voice channel; %d of %d there opted in", len(recorded), len(here))
+            if repeat:
+                pass
+            elif table.resumed:
+                table.resumed = False
+                if table.announce_resume:
+                    await self._post_listening(
+                        table, resumed_message(table.campaign_name, table.voice_channel_id)
+                    )
+            else:
+                await self._post_listening(
+                    table,
+                    screen_messages.listening_message(
+                        table.voice_channel_id,
+                        table.campaign_name,
+                        sorted(self.name_of(table.guild_id, uid) for uid in recorded),
+                        sorted(
+                            self.name_of(table.guild_id, uid) for uid in here if uid not in recorded
+                        ),
+                    ),
+                )
+            if not table.notice_posted:
+                # Players learn they're being recorded from this notice, so a failure
+                # must reach the DM; it is retried on the next join.
+                peek = await self._peek_view(table)
+                typed = " (what they say, and what they type in this chat)" if table.chat_on else ""
+                table.notice_posted = await self.post(
+                    table.voice_channel_id,
+                    "🔴 **DMbot is listening in this channel.** It gives the DM private "
+                    "notes and never decides anything.\n"
+                    "Everyone here gets a private message from DMbot asking if they agree "
+                    f"to be recorded. Only people who say yes are recorded{typed}.\n"
+                    "No message from DMbot? Check your DMs and Message Requests, or type "
+                    "`/consent give`. Change your mind any time with `/consent revoke`.",
+                    view=peek,
+                )
+                table.peek_offered = table.notice_posted and peek is not None
+                if table.notice_posted:
+                    log.info("Recording notice posted in the voice channel's chat")
+                    await self._remember_notice(table.guild_id)
+                    await self._tell_chat_channel(table)
+                else:
+                    log.warning("Recording notice NOT posted; telling the DM")
+                    await self.post(
+                        table.screen_channel_id, notice_failed_message(table.voice_channel_id)
+                    )
+            if first_join:
+                self._ask_everyone_in_voice(table)
+            elif not repeat and resumed_now:
+                # After a restart only people whose yes no longer counts (the consent
+                # wording changed) need asking: everyone else was asked before it.
+                self._ask_everyone_in_voice(table, only_renewals=True)
+        elif status.state == "warning" and status.user_id is not None:
+            # One speaker's audio failed; the session goes on (#631). IDs only in the log.
+            log.warning("Voice warning for user %s: %s", status.user_id, status.detail or "")
+            now = time.monotonic()
+            last = table.voice_lost_told.get(status.user_id)
+            if table.listening and (last is None or now - last >= VOICE_LOST_TELL_EVERY_S):
+                table.voice_lost_told[status.user_id] = now
+                name = self.name_of(table.guild_id, status.user_id)
+                await self.post(table.screen_channel_id, screen_messages.voice_lost_message(name))
+        elif status.state in ("left", "error"):
+            table.listening = False
+            # The detail comes from ears' own fixed messages, never from users.
+            log.warning("Voice %s: %s", status.state, status.detail or "no detail")
+            detail = status.detail or "The voice connection ended."
+            await self.post(table.screen_channel_id, f"⚠️ {detail}")
+
+    def _all_tables(self) -> list[Table]:
+        """Running sessions and stopped ones still finishing."""
+        return [*self.tables.values(), *(t for ts in self._ending.values() for t in ts)]
+
+    # ---- the DM sidebar (#935; dmbot.sidebar.service) -----------------------------------
+
+    async def on_message(self, message: discord.Message) -> None:
+        """A private message goes to the DM sidebar. A message in a server is typed chat at
+        the table (#1118): read only if it is in the table's chat and passes the checks."""
+        if message.guild is not None:
+            try:
+                if self._hear_dmbchat(message):
+                    return
+                if await self._chat_channel_allowed(message):
+                    self._hear_typed(message)
+            except Exception:
+                log.exception("Couldn't handle a typed message")
+            return
+        try:
+            await self.sidebar.on_dm_message(message)
+        except Exception:
+            log.exception("Couldn't handle a private message")
+
+    def _hear_dmbchat(self, message: discord.Message) -> bool:
+        """A message in this session's DMbot chat channel (#1187): True if it was one (read or
+        not), so no other path looks at it. Every message there is a question for DMbot, from
+        anyone who agreed to be recorded; bots, DMbot itself and commands are never answered.
+        Only this campaign's channel counts: another campaign's chat in the same server has a
+        different id and is never read."""
+        guild = message.guild
+        table = self.tables.get(guild.id) if guild is not None else None
+        if table is None or message.channel.id != table.dmbchat_channel_id:
+            return False
+        author = message.author
+        if (
+            not table.listening
+            or author.bot
+            or (self.user is not None and author.id == self.user.id)
+            or message.webhook_id is not None
+            or message.type not in table_chat.READ_TYPES
+            or getattr(message, "interaction_metadata", None) is not None
+        ):
+            return True
+        text = table_chat.clean(message.clean_content)  # names, not <@123> markup
+        if text is not None:
+            self.sidebar.ask_in_chat(table, author.id, text)
+        return True
+
+    async def sidebar_post_chat(self, table: Table, text: str) -> bool:
+        """Post in the session's DMbot chat channel (#1187); False if there is none."""
+        if table.dmbchat_channel_id is None:
+            return False
+        return await self.post(table.dmbchat_channel_id, text)
+
+    async def sidebar_table_name(self, table: Table, user_id: int) -> str:
+        """How the table's answer names someone: their linked character's name when a sheet is
+        linked, else their server nickname (#1187)."""
+        name = self.name_of(table.guild_id, user_id)
+        if self.sheets is not None and table.campaign_id is not None:
+            try:
+                for sheet in await self.sheets.sheets(table.guild_id, table.campaign_id):
+                    if sheet.played_by == user_id:
+                        return str(sheet.name)
+            except Exception:
+                log.exception("Couldn't look up a character name; using the nickname")
+        # A DM keeps the nickname: a DM may "play" an NPC, and the table must not learn which
+        # one the DM is voicing from the name on their question (#1188).
+        if self.memory is not None and table.campaign_id is not None and not table.is_dm(user_id):
+            try:  # the character they play (the `plays` link), even with no sheet linked
+                async with asyncio.timeout(NAMES_WAIT_S):
+                    people = await self.memory.table_people(table.guild_id, table.campaign_id)
+                for played, characters, _ in people:
+                    if played == user_id and characters:
+                        return characters[-1]
+            except Exception:
+                log.exception("Couldn't look up who plays whom; using the nickname")
+        return name
+
+    async def sidebar_links(self, table: Table) -> tuple[str | None, tuple[str, ...]]:
+        """The links this campaign has shared (#1187), and only this campaign's: its house-rules
+        file of record, which the table's answers may show (the owner's decision, 2026-10-14;
+        the file's own docstring says the link is otherwise private), and nothing else yet.
+        dndbeyond.com is allowed without being listed."""
+        house = None
+        if self.house_file_links is not None and table.campaign_id is not None:
+            try:
+                found = await self.house_file_links.get(table.guild_id, table.campaign_id)
+                house = found.link if found is not None else None
+            except Exception:
+                log.exception("Couldn't read the house-rules link; showing no link")
+        return house, ()
+
+    async def sidebar_nudge_chat(self, table: Table, user_id: int) -> None:
+        """Someone typed in the DMbot chat before agreeing to be recorded: one short reply with
+        the agree button, once a session. What they typed is not kept or sent anywhere."""
+        if table.dmbchat_channel_id is None:
+            return
+        view = request_view(
+            table.guild_id,
+            outside=self.outside_engine,
+            test_voice=self.test_voice_listed(table.guild_id),
+            invite=table.dndbeyond_invite,
+        )
+        await self.post(
+            table.dmbchat_channel_id,
+            f"{discord.utils.escape_markdown(self.name_of(table.guild_id, user_id))}: to ask "
+            "DMbot, first say yes to being recorded with the button below. No pressure, you can "
+            "still play. DMbot did not keep what you typed.",
+            view,
+        )
+
+    def sidebar_has_consent(self, guild_id: int, user_id: int) -> bool:
+        return self.consent.has_consent(guild_id, user_id)
+
+    async def sidebar_campaign(self, guild_id: int, campaign_id: str) -> Campaign | None:
+        return await self.campaigns.get(guild_id, campaign_id)
+
+    def sidebar_server_name(self, guild_id: int) -> str:
+        guild = self.get_guild(guild_id)
+        return guild.name if guild else "another server"
+
+    def consent_request(self, table: Table) -> tuple[str, discord.ui.View]:
+        """The question about recording, for someone who hasn't agreed yet."""
+        guild = self.get_guild(table.guild_id)
+        voice = self.get_channel(table.voice_channel_id)
+        text = request_text(
+            guild.name if guild else "your server",
+            voice=voice.name if isinstance(voice, discord.abc.GuildChannel) else None,
+            dm=self.name_of(table.guild_id, table.dm_user_id),
+            cloud=self.sends_audio_out,
+            company=self.company,
+            test_voice=self.test_voice_listed(table.guild_id),
+        )
+        return text, request_view(
+            table.guild_id,
+            outside=self.outside_engine,
+            test_voice=self.test_voice_listed(table.guild_id),
+            invite=table.dndbeyond_invite,
+        )
+
+    async def sidebar_transcribe(self, table: Table, utterance: Utterance) -> str | None:
+        """A voice message written down by the table's speech-to-text, with the
+        campaign's names as hints. Consent was checked by the caller, and is again."""
+        hints = await self._name_hints(utterance)
+        if self.settings.transcription.sends_audio_out:  # billed by the outside company
+            self.pipeline.sent_s_in[utterance.session] += utterance.duration_s
+        text = await asyncio.wait_for(
+            self.pipeline.transcriber.transcribe(utterance, hints),
+            clip_budget_s(utterance.duration_s),
+        )
+        return str(text) if text else None
+
+    def sidebar_clean(self, table: Table, text: str) -> str:
+        """Names fixed the way table speech is (only the ones DMbot is sure of)."""
+        if table.name_lookup is None:
+            return text
+        return self._clean(table, text, unsure=False).text
+
+    async def sidebar_send_dm(self, user_id: int, text: str) -> str:
+        """ "sent", "forbidden" (their messages from DMbot are closed) or "failed"."""
+        try:
+            user = self.get_user(user_id) or await self.fetch_user(user_id)
+            await user.send(text, allowed_mentions=NO_PINGS)
+        except discord.Forbidden as exc:
+            log.info("Couldn't message user %s privately: %s", user_id, exc)
+            return "forbidden"
+        except discord.HTTPException as exc:
+            log.info("Couldn't message user %s privately: %s", user_id, exc)
+            return "failed"
+        return "sent"
+
+    async def sidebar_tell_screen(self, table: Table, text: str) -> None:
+        await self.post(table.screen_channel_id, text)
+
+    def sidebar_stt(self) -> str:
+        return self.settings.transcription.source
+
+    def sidebar_save(self, table: Table, line: Line) -> None:
+        """A sidebar line for the stored (raw) transcript; never the live channel."""
+        if self.transcripts is not None and self.tables.get(table.guild_id) is table:
+            table.unsaved.add(line)
+        if table.test_session is not None and line.sidebar:  # what the session produced
+            # Only for a speaker who said yes to saving (the session checks).
+            table.test_session.shown(
+                line.user_id, f"sidebar {line.sidebar}", line.started_ms, line.heard
+            )
+
+    def _table_for(self, utterance: Utterance) -> Table | None:
+        for table in [
+            self.tables.get(utterance.guild_id),
+            *self._ending.get(utterance.guild_id, []),
+        ]:
+            if table is not None and table.segmenter.session == utterance.session:
+                return table
+        return None
+
+    def _on_audio(self, frame: AudioFrame) -> None:
+        table = self.tables.get(frame.guild_id)
+        # Defence in depth: ears enforces consent too, but core re-checks every frame.
+        if table is None or not self.consent.has_consent(frame.guild_id, frame.user_id):
+            return
+        utterance = table.segmenter.add(frame)
+        if utterance is not None:
+            self.pipeline.enqueue(utterance)
+
+    # ---- background loops --------------------------------------------------
+
+    def _deliver_transcript(self, utterance: Utterance, text: str | None) -> None:
+        """A piece of speech, written down. The pipeline has just re-checked consent."""
+        # Only the session that heard it (a stopped one still finishing counts): speech
+        # from one session must never land in the next (perhaps another campaign's).
+        table = self._table_for(utterance)
+        if table is None:
+            return
+        table.capture_log.add_utterance(utterance)
+        table.totals.add_utterance(utterance)
+        cleaned = text
+        if text and table.name_lookup is not None:
+            # Fixes DMbot isn't sure of are never silent: made only when the DM screen
+            # shows them with Undo (a running session, not quiet; #296, #504).
+            noted = self.tables.get(table.guild_id) is table and screen_levels.allows(
+                table.screen_level, screen_levels.FIX_NOTE
+            )
+            result = self._clean(table, text, unsure=noted)
+            cleaned = result.text
+            self._offer_question(table, utterance.user_id, utterance.start_ms, text, result)
+            if noted and table.fix_notes.add(
+                utterance.user_id, utterance.start_ms, text, result.fixes
+            ):
+                self._redraw_fix_notes(table)
+            named = mentions(table.name_lookup, cleaned)  # once per name per line
+            table.scene.note(named, utterance.user_id, time.monotonic())
+            table.heard_counts.update((entity_id, utterance.user_id) for entity_id in named)
+            names_said = len(named)
+        else:
+            names_said = 0
+        if text:
+            # After cleaning, so a line is never evidence about itself; even when the names
+            # couldn't be loaded, a word said in lower case is a real word next time.
+            table.vocabulary.note(utterance.user_id, text)
+        if text:
+            self._act_on_line(table, utterance.user_id, str(cleaned or text))
+        if text and self.transcripts is not None:
+            duration_ms = int(utterance.duration_s * 1000)
+            table.unsaved.add(
+                Line(utterance.start_ms, utterance.user_id, text, cleaned or text, duration_ms)
+            )
+            self._speaker_pending(table, utterance, str(cleaned or text))
+        saving = (
+            table.test_session is not None
+            and self.test_voice is not None
+            # Said yes to saving; _save_test_audio's allowed() re-checks this and the
+            # recording consent before and after every step.
+            and self.test_voice.has(table.guild_id, utterance.user_id)
+        )
+        if saving:
+            self._track(
+                self._save_test_audio(table, utterance, str(cleaned) if cleaned else None),
+                "test-audio",
+            )
+        if text:
+            table.recent.add(utterance.user_id, str(cleaned or text), time.monotonic())
+            if self.tables.get(table.guild_id) is table:
+                table.name_answers.feed(
+                    utterance.user_id, utterance.start_ms, str(cleaned or text), consented=True
+                )
+                # Only the DM's own lines can start it; consent was just re-checked. Lines
+                # the Cleaner tags as in character are not told apart yet (in_character).
+                self.sidebar.ask_at_table(table, utterance.user_id, str(cleaned or text))
+        if text and self._topic_pending(table, utterance, cleaned or text, names_said):
+            pass  # held for the off-topic filter: the names scan gets it once labelled
+        elif text and len(table.heard) < HEARD_MAX:
+            # The cleaned line: a known name misheard and fixed live isn't new (#394).
+            table.heard.append((utterance.user_id, cleaned or text))
+            if len(table.heard) == HEARD_MAX:
+                log.info("Name scan: kept the first %d lines of this session", HEARD_MAX)
+        if text:
+            # What the audio check reads if their audio rule fires (#699): the line as the
+            # transcript has it (before the off-topic filter, which may hide it later),
+            # with the engine's confidence; kept as plain text.
+            table.capture_log.add_line(utterance.user_id, str(cleaned or text), confidence_of(text))
+        if text and table.transcript_channel_id is not None:
+            guild = self.get_guild(utterance.guild_id)
+            member = guild.get_member(utterance.user_id) if guild else None
+            name = member.display_name if member else None
+            table.transcript.add(
+                utterance.user_id,
+                transcript_lines.speaker_name(name),
+                cleaned or text,
+                utterance.start_ms,
+            )
+
+    def _act_on_line(self, table: Table, user_id: int, line: str, *, typed: bool = False) -> None:
+        """What a line of table talk can set off, said or typed (#1118): a rules card, a house
+        rule, the game clock. The one place both ways in share, so a typed "we take a long
+        rest" does what the spoken one does. Consent was checked by the caller."""
+        try:  # a change at the table that D&D Beyond should show: read that sheet again (#1128)
+            sheet_reread.note_line(table, user_id, line)
+        except Exception:
+            log.exception("Sheet re-reads: couldn't look at a line")
+        try:  # a card is never worth a lost line: nothing below may be skipped
+            self._note_rules(table, user_id, line)
+        except Exception:
+            log.exception("Rules cards: couldn't look at a line")
+        try:
+            if user_id in table.dm_user_ids:  # only a DM can start a proposal
+                self._note_house_rule(table, user_id, line)
+        except Exception:
+            log.exception("House rules by voice: couldn't look at a line")
+        if self.clocks is not None:
+            if typed and table.clock_waiting >= table_chat.CLOCK_WAITING_MAX:
+                return  # typed flood: skip this clock phrase, never speech (#1154)
+            table.clock_waiting += 1
+            task = self._track(  # a DM's words move the clock; a player's only ask the DM
+                self._note_clock_phrase(table, user_id, line), "clock-phrase"
+            )
+            if task is None:
+                table.clock_waiting -= 1
+            else:
+                task.add_done_callback(
+                    lambda _t: setattr(table, "clock_waiting", table.clock_waiting - 1)
+                )
+
+    async def _chat_channel_allowed(self, message: discord.Message) -> bool:
+        """False for a message in the DM's extra chat channel when that channel is any
+        campaign's DM screen, transcript or game-time channel in this server (#1118). Only the
+        extra channel is asked about (the voice channel's own chat can't be one), and the
+        answer is kept for a minute, so most messages cost nothing here."""
+        guild = message.guild
+        table = self.tables.get(guild.id) if guild is not None else None
+        if (
+            guild is None
+            or table is None
+            or table.chat_channel_id is None
+            or message.channel.id != table.chat_channel_id
+            or message.channel.id == table.voice_channel_id
+        ):
+            return True
+        now = time.monotonic()
+        cached = self._chat_blocked.get(guild.id)
+        if cached is None or cached[0] < now:
+            blocked = await self.campaigns.special_channel_ids(guild.id)
+            cached = (now + CHAT_BLOCKED_TTL_S, blocked)
+            self._chat_blocked[guild.id] = cached
+        return message.channel.id not in cached[1]
+
+    def _hear_typed(self, message: discord.Message) -> None:
+        """A message typed in a server (#1118). Only the table voice channel's chat and the
+        DM's one extra channel, only while listening, only from someone who agreed, never a
+        bot or a command: everything else is dropped before any work is done."""
+        guild = message.guild
+        table = self.tables.get(guild.id) if guild is not None else None
+        if table is None or table.campaign_id is None or not table.listening or not table.chat_on:
+            return
+        if not table_chat.is_table_chat(
+            message.channel.id, table.voice_channel_id, table.chat_channel_id
+        ) or message.channel.id in (table.screen_channel_id, table.transcript_channel_id):
+            return  # this campaign's DM screen and transcript channel are never read as chat
+        # (any other campaign's are refused when the DM picks the channel and by
+        # `_chat_channel_allowed`, which asks the database)
+        author = message.author
+        if (
+            author.bot
+            or (self.user is not None and author.id == self.user.id)
+            or message.webhook_id is not None
+            or message.type not in table_chat.READ_TYPES
+            or getattr(message, "interaction_metadata", None) is not None
+        ):
+            return
+        text = table_chat.clean(message.clean_content)  # names, not <@123> markup
+        if text is None or not self.consent.has_consent(table.guild_id, author.id):
+            return
+        self._deliver_typed(
+            table, author.id, text, int(message.created_at.timestamp() * 1000), message.id
+        )
+
+    def _deliver_typed(
+        self, table: Table, user_id: int, text: str, start_ms: int, message_id: int = 0
+    ) -> None:
+        """A typed line goes where a spoken one goes (clock phrases, house rules, names heard,
+        the "Hey DMbot" sidebar, the transcript), minus what only audio has: no cleaning, no
+        off-topic filter, no audio check. In the transcript it is tagged (typed) and only in
+        the as-heard version, never the cleaned one."""
+        now = time.monotonic()
+        listeners = table.typed_rate.allow(user_id, now)
+        if not listeners and table.typed_rate.should_log(now):
+            # No text, no names: only that it happened (#1154).
+            log.info("Typed chat: a flood of lines; extra lines skip the listeners")
+        if listeners:
+            table.vocabulary.note(user_id, text)
+            if table.name_lookup is not None:
+                named = mentions(table.name_lookup, text)
+                table.scene.note(named, user_id, now)
+                table.heard_counts.update((entity_id, user_id) for entity_id in named)
+            self._act_on_line(table, user_id, text, typed=True)
+        if self.transcripts is not None:
+            table.unsaved.add(
+                Line(start_ms, user_id, text, text, typed=True, message_id=message_id)
+            )
+        if not listeners:
+            return  # raw transcript only: no recent lines, sidebar or name scan (#1154)
+        table.recent.add(user_id, text, time.monotonic(), typed=True)
+        if self.tables.get(table.guild_id) is table:
+            # Same clock as the spoken path (Unix milliseconds); consent was just checked.
+            table.name_answers.feed(user_id, start_ms, text, consented=True)
+            self.sidebar.ask_at_table(table, user_id, text, typed=True)
+        if len(table.heard) < HEARD_MAX:
+            table.heard.append((user_id, text))
+
+    async def _tell_chat_channel(self, table: Table) -> None:
+        """One line in the DM's extra Table chat channel when listening starts, so nobody finds
+        out later that it is read (#1118). The voice channel's own chat has the recording
+        notice. Once a session; a failure is only logged."""
+        extra = table.chat_channel_id
+        if not table.chat_on or extra is None or extra == table.voice_channel_id:
+            return
+        if table.chat_notice_posted:
+            return
+        table.chat_notice_posted = bool(
+            await self.post(
+                extra,
+                "💬 DMbot is reading this chat for the game while it listens. "
+                "Only people who agreed are read.",
+            )
+        )
+
+    async def on_raw_bulk_message_delete(self, payload: discord.RawBulkMessageDeleteEvent) -> None:
+        """Several typed messages deleted at once (a moderator's purge): the same as one."""
+        table = self.tables.get(payload.guild_id) if payload.guild_id is not None else None
+        if table is not None:
+            for message_id in payload.message_ids:
+                table.unsaved.drop_message(message_id)
+
+    async def on_raw_message_delete(self, payload: discord.RawMessageDeleteEvent) -> None:
+        """A typed message deleted before its line was saved is taken back (#1118). A line
+        already saved stays in the raw transcript, as PLAN says."""
+        table = self.tables.get(payload.guild_id) if payload.guild_id is not None else None
+        if table is not None:
+            table.unsaved.drop_message(payload.message_id)
+
+    def after_chat_change(self, campaign: Campaign) -> None:
+        """A running session reads typed chat from now on as the DM just set it (#1118)."""
+        table = self.tables.get(campaign.guild_id)
+        if table is not None and table.campaign_id == campaign.id:
+            changed = (table.chat_on, table.chat_channel_id) != (
+                campaign.table_chat,
+                campaign.table_chat_channel_id,
+            )
+            table.chat_on = campaign.table_chat
+            table.chat_channel_id = campaign.table_chat_channel_id
+            if changed and table.listening:
+                # Turned on, or a different channel: that channel hasn't been told yet.
+                table.chat_notice_posted = False
+                self._track(self._tell_chat_channel(table), "chat-notice")
+
+    def _note_rules(self, table: Table, user_id: int, line: str) -> None:
+        """A spell, condition or creature named at the table (#931): a short card for the DM
+        screen, if the campaign turned that on. Names only, no AI. Limits: one card a name a
+        session, one a minute (the rest are dropped), and nothing once the session is over.
+        The card is posted in the background; the speech pipeline never waits for it."""
+        if (
+            not table.rules_on
+            or not table.listening
+            or self.tables.get(table.guild_id) is not table
+        ):
+            return
+        mentions = rules_cards.spotter_for(*table.rules_rulesets).find(line)
+        if mentions and table.name_lookup is not None:
+            # A character, NPC or place of this campaign called Sprite or Raven is a name
+            # the table uses, not a rules question.
+            known = table.name_lookup.by_key
+            mentions = [
+                m
+                for m in mentions
+                if name_key(m.said) not in known and name_key(m.entry.name) not in known
+            ]
+        mention = table.rules.pick(mentions, time.monotonic()) if mentions else None
+        if mention is None:
+            return
+        before = table.rules.last_at  # given back if the card can't be shown
+        card_id = table.rules.remember(mention, time.monotonic())
+        self._track(self._post_rules_card(table, user_id, mention, card_id, before), "rules-card")
+
+    async def _note_clock_phrase(self, table: Table, user_id: int, line: str) -> None:
+        """What is said at the table that bears on the game clock (#965, #1117): no AI, and
+        only people who agreed to be recorded. A campaign's DM clearly saying a rest starts or
+        finishes, that the next morning has come, or how much time has passed ("an hour
+        later") moves the clock, with a short note on the DM screen and an Undo button. A
+        player suggesting a rest moves nothing: it asks the DM, with one button, at most once
+        every few minutes. Vague narration is ignored."""
+        if table.campaign_id is None or not table.listening:
+            return
+        if self.tables.get(table.guild_id) is not table:
+            return
+        if not self.consent.has_consent(table.guild_id, user_id):
+            return
+        if user_id not in table.dm_user_ids:
+            await self._suggest_rest(table, user_id, line)
+            return
+        fight = combat_phrases.find_combat(line)
+        if fight is not None:  # combat words are never also a clock phrase
+            await self._note_combat_phrase(table, user_id, line, fight)
+            return
+        said = clock_phrases.find_clock(line)
+        if said is None:
+            return
+        now = time.monotonic()
+        last = table.clock_said.get(said.key)
+        if last is not None and now - last < CLOCK_PHRASE_GAP_S:
+            return  # a rest said as starting and finishing, or the same words twice: once
+        # Marked at once, before any await: the same words arriving by voice and by chat a
+        # moment apart must count once (#1173). Taken back on every path that changes nothing.
+        table.clock_said[said.key] = now
+        marked = [said.key]  # grows if a rest's amount changes the key (taken back with it)
+        moved = False
+        try:
+            moved = await self._clock_phrase_moves(table, user_id, line, said, now, marked)
+        finally:
+            if not moved:
+                for key in marked:
+                    table.clock_said.pop(key, None)
+
+    async def _clock_phrase_moves(
+        self,
+        table: Table,
+        user_id: int,
+        line: str,
+        said: clock_phrases.Said,
+        now: float,
+        marked: list[str],
+    ) -> bool:
+        """The rest of `_note_clock_phrase`: True once the clock was moved. `marked` lists
+        the window keys set so far, so the caller can take them all back."""
+        assert table.campaign_id is not None
+        campaign = await self.campaigns.get(table.guild_id, table.campaign_id)
+        if campaign is None or user_id not in campaign.dm_user_ids:
+            return False
+        covered = await self._less_what_a_rest_covers(table, campaign, said, now)
+        if covered is None:
+            return False
+        said = covered
+        # Consent and the session are checked again after the awaits above, as for a voice line.
+        if (
+            self.tables.get(table.guild_id) is not table
+            or not table.listening
+            or not self.consent.has_consent(table.guild_id, user_id)
+        ):
+            return False
+        table.clock_said[said.key] = now  # (the amount a rest covered may have changed the key)
+        marked.append(said.key)
+        try:
+            result = await clock_screen.press(
+                self,
+                campaign.guild_id,
+                campaign.id,
+                user_id,
+                said.action,
+                minutes=said.minutes,
+            )
+        except Exception:
+            log.exception("The game clock couldn't take what was said at the table")
+            return False
+        if (
+            result.before is None
+            or result.after is None
+            or result.after.minute == result.before.minute
+        ):
+            return False  # no clock set yet, or already there ("at dawn" at dawn): nothing to say
+        table.clock_spoken_rest = (
+            (said.action, result.after.minute - result.before.minute, result.after.minute, now)
+            if said.action in ("short", "long")
+            else None
+        )
+        stored = await self.clocks.get(campaign.guild_id, campaign.id) if self.clocks else None
+        if stored is None:
+            return True
+        await clock_screen.show(self, campaign, stored)
+        await clock_screen.update_players(self, campaign, said.action, result)  # #1116
+        await timer_screen.announce_due(self, campaign, stored.clock.minute)
+        await clock_screen.say(
+            self,
+            campaign,
+            [
+                clock_screen.rest_note(said.action, result.after, said.minutes),
+                # What was heard, so the DM can tell a misheard line from a real one: dropped
+                # (the clock change stays) if consent was withdrawn during the awaits (#1173).
+                *self._heard_quote(table, user_id, line),
+                *result.lines,
+            ],
+            clock_screen.undo_id(result.before, result.after),
+        )
+        return True
+
+    def _heard_quote(self, table: Table, user_id: int, line: str) -> list[str]:
+        """The "(heard: …)" line for a DM-screen note, or nothing if the speaker no longer
+        agrees to be recorded or the session is over: checked right before it is said."""
+        if self.tables.get(table.guild_id) is not table or not self.consent.has_consent(
+            table.guild_id, user_id
+        ):
+            return []
+        return [f"(heard: “{discord.utils.escape_markdown(' '.join(line.split())[:80])}”)"]
+
+    async def _note_combat_phrase(
+        self, table: Table, user_id: int, line: str, fight: combat_phrases.CombatSaid
+    ) -> None:
+        """A DM clearly saying combat starts, which round it is, or that it is over (#1127):
+        the combat state follows, with one DM-screen line and an Undo. Only the campaign's DMs
+        (checked here and again where the state is changed); a player's words never reach
+        this. Nothing happens when no clock is set up yet or the state already matches."""
+        now = time.monotonic()
+        last = table.clock_said.get(fight.key)
+        if last is not None and now - last < COMBAT_PHRASE_GAP_S:
+            return
+        # Marked before any await, so the same words by voice and by chat count once (#1173);
+        # taken back on every path that changes nothing.
+        table.clock_said[fight.key] = now
+        changed = False
+        try:
+            changed = await self._combat_phrase_changes(table, user_id, line, fight, now)
+        finally:
+            if not changed:
+                table.clock_said.pop(fight.key, None)
+
+    async def _combat_phrase_changes(
+        self,
+        table: Table,
+        user_id: int,
+        line: str,
+        fight: combat_phrases.CombatSaid,
+        now: float,
+    ) -> bool:
+        """The rest of `_note_combat_phrase`: True once the combat state was changed."""
+        assert table.campaign_id is not None
+        campaign = await self.campaigns.get(table.guild_id, table.campaign_id)
+        if campaign is None or user_id not in campaign.dm_user_ids:
+            return False
+        # Consent and the session are checked again after the await above, as for a voice line.
+        if (
+            self.tables.get(table.guild_id) is not table
+            or not table.listening
+            or not self.consent.has_consent(table.guild_id, user_id)
+        ):
+            return False
+        action = {"start": "cstart", "next": "cnext", "round": "cround", "end": "cend"}[fight.kind]
+        try:
+            result = await clock_screen.press(
+                self, campaign.guild_id, campaign.id, user_id, action, set_to=fight.number
+            )
+        except CampaignError:
+            return False  # no longer a DM: said quietly, not an error
+        except Exception:
+            log.exception("Combat couldn't take what was said at the table")
+            return False
+        if result.before is None or result.after is None or result.after == result.before:
+            return False  # nothing changed: don't burn the window
+        stored = await self.clocks.get(campaign.guild_id, campaign.id) if self.clocks else None
+        if stored is None:
+            return True
+        await clock_screen.show(self, campaign, stored)
+        await clock_screen.update_players(self, campaign, action, result, announce=False)
+        await timer_screen.announce_due(self, campaign, stored.clock.minute)
+        await clock_screen.say(
+            self,
+            campaign,
+            [
+                clock_screen.combat_note(action, result.before, result.after),
+                *self._heard_quote(table, user_id, line),
+                *result.lines,
+            ],
+            combat_undo=clock_screen.combat_undo_id(result.before, result.after),
+        )
+        return True
+
+    async def _less_what_a_rest_covers(
+        self, table: Table, campaign: Campaign, said: clock_phrases.Said, now: float
+    ) -> clock_phrases.Said | None:
+        """A rest said at the table, then its finish or an amount that it already covers, must
+        not move the clock twice (#1117). If the last clock change was a spoken rest and the
+        clock is still where it left it: a finish of the same kind adds nothing, however long
+        ago; an amount said soon after adds only what is more than the rest took. Anything
+        else, or a clock that has since moved, is taken as said."""
+        spoken = table.clock_spoken_rest
+        if spoken is None:
+            return said
+        kind, took, minute, at = spoken
+        stored = await self.clocks.get(campaign.guild_id, campaign.id) if self.clocks else None
+        if stored is None or stored.clock.minute != minute:
+            table.clock_spoken_rest = None  # a button, an Undo or another phrase moved it
+            return said
+        if said.ends and said.action == kind:
+            return None
+        if said.action == "advance" and said.minutes is not None and now - at < CLOCK_PHRASE_GAP_S:
+            extra = said.minutes - took
+            if extra <= 0:
+                return None
+            return clock_phrases.Said("advance", extra)
+        return said
+
+    async def _suggest_rest(self, table: Table, user_id: int, line: str) -> None:
+        """A player's "let's take a short rest": one line on the DM screen with **Short rest**
+        and **Not now**. Nothing moves until a DM presses, and only if the DM has set a clock
+        (otherwise there is nothing for the button to move)."""
+        kind = clock_phrases.suggested_rest(line)
+        if kind is None or table.campaign_id is None or self.clocks is None:
+            return
+        now = time.monotonic()
+        if (
+            table.clock_suggested_at is not None
+            and now - table.clock_suggested_at < clock_screen.SUGGEST_GAP_S
+        ):
+            return
+        table.clock_suggested_at = now  # before the awaits: two players at once ask once
+        campaign = await self.campaigns.get(table.guild_id, table.campaign_id)
+        if (
+            campaign is None
+            or campaign.dm_screen_channel_id is None
+            or await self.clocks.get(campaign.guild_id, campaign.id) is None
+        ):
+            table.clock_suggested_at = None  # nothing was asked: don't hold the next one off
+            return
+        name = discord.utils.escape_markdown(self.name_of(table.guild_id, user_id))
+        posted = await self.post_message(
+            campaign.dm_screen_channel_id,
+            f"🛌 {name} suggests a {kind} rest.",
+            clock_screen.suggestion_view(campaign.id, kind),
+        )
+        if posted is None:
+            table.clock_suggested_at = None  # the DM never saw it: don't hold the next one off
+
+    def _check_house_file(self, campaign: Campaign, screen_id: int) -> None:
+        """At a session start: read the campaign's linked house-rules file, if any, and put
+        what differs on the DM screen (#969). In the background; it never holds up the
+        session, and says nothing when there is no link or nothing to change."""
+        if self.house_file_links is None:
+            return
+
+        async def send(text: str, view: discord.ui.View) -> bool:
+            posted = await self.post_message(screen_id, text, view if view.children else None)
+            return posted is not None
+
+        self._track(
+            house_sync.check_linked(self, campaign, send, quiet_if_same=True), "house-file-check"
+        )
+
+    def sidebar_house_rule(self, table: Table, user_id: int, text: str) -> str:
+        """A house rule typed to DMbot in the DM's private chat (#960): the same proposal,
+        limits and checks as one said aloud. Says what happened (`house_voice.STARTED`,
+        TOO_SOON, REPEAT or NOT_NOW)."""
+        return self._note_house_rule(table, user_id, text, typed=True)
+
+    def _note_house_rule(
+        self, table: Table, user_id: int, line: str, *, typed: bool = False
+    ) -> str:
+        """A DM's line that starts "house rule: …" and the like (#953): offer to write it
+        down, on the DM screen only. No AI. Nothing is saved without a DM pressing Save.
+        One proposal a minute; the same words once a session. Says if one was started."""
+        if not table.listening or self.tables.get(table.guild_id) is not table:
+            return house_voice.NOT_NOW
+        if user_id not in table.dm_user_ids or table.campaign_id is None:
+            return house_voice.NOT_NOW
+        found = house_voice.find(line)
+        if found is None:  # (too few words to be a rule)
+            return house_voice.NOT_NOW
+        now_s = time.monotonic()
+        said = table.house_voice.pick(found, now_s)
+        if said is None:
+            return table.house_voice.why_not(found, now_s)
+        proposal_id, now, before = (
+            house_voice_screen.new_id(),
+            time.monotonic(),
+            table.house_voice.last_at,
+        )
+        proposal = house_voice.Proposal(
+            said,
+            (),
+            house_voice_screen.scenario_for(time.time(), typed=typed),
+            table.transcript_session_id,
+        )
+        table.house_voice.remember(said, now, proposal_id, proposal)
+        self._track(
+            self._post_house_proposal(table, user_id, proposal_id, proposal, before, now),
+            "house-rule-voice",
+        )
+        return house_voice.STARTED
+
+    async def _post_house_proposal(
+        self,
+        table: Table,
+        user_id: int,
+        proposal_id: str,
+        proposal: house_voice.Proposal,
+        before: float | None,
+        now: float,
+    ) -> None:
+        """Post the proposal in the DM screen only. A proposal that can't be shown gives its
+        words and its minute back."""
+        rules: list[HouseRule] = []
+        unchecked = True
+        if self.house_rules is not None and table.campaign_id is not None:
+            try:  # this campaign's own house rules and no other's
+                async with asyncio.timeout(RULES_CARD_DB_S):
+                    rules = await self.house_rules.list(table.guild_id, table.campaign_id)
+                unchecked = False
+            except TimeoutError:
+                log.warning("Reading house rules for a proposal took too long")
+            except Exception:
+                log.exception("Couldn't read house rules for a proposal")
+        clashing = await asyncio.to_thread(  # the first build of the names takes ~0.15 s
+            house_voice_screen.clashes, proposal.said, rules, *table.rules_rulesets
+        )
+        proposal = house_voice.Proposal(
+            proposal.said, clashing, proposal.scenario, proposal.session_id, unchecked
+        )
+        # After the awaits: the DM's words are shown, so they must still be recorded and the
+        # session still running.
+        if (
+            not self.consent.has_consent(table.guild_id, user_id)
+            or not table.listening
+            or self.tables.get(table.guild_id) is not table
+        ):
+            table.house_voice.forget(proposal_id, before, now)
+            return
+        table.house_voice.proposals[proposal_id] = proposal
+        try:
+            posted = await self.post_message(
+                table.screen_channel_id,
+                house_voice_screen.proposal_text(proposal),
+                house_voice_screen.proposal_view(table.guild_id, proposal_id, proposal),
+            )
+        except Exception:
+            log.exception("Couldn't post a house rule proposal")
+            posted = None
+        if posted is None:
+            table.house_voice.forget(proposal_id, before, now)
+
+    def _warm_rules(self, rulesets: tuple[str, str]) -> None:
+        """Build the names to look for off the event loop (about 0.15 s), so the first line
+        of a session with rules cards on doesn't wait for it."""
+        self._track(asyncio.to_thread(rules_cards.spotter_for, *rulesets), "rules-cards-warm")
+
+    async def _post_rules_card(
+        self, table: Table, user_id: int, mention: Mention, card_id: str, before: float | None
+    ) -> None:
+        """Post the card in the DM screen only (never the transcript, never to players).
+        A card that can't be shown gives its name and its minute back."""
+        target, fallback = table.rules_rulesets
+        srd = rules_index.srd()
+        entry = mention.entry
+        hit = srd.lookup(mention.said, target, fallback, kind=entry.kind)
+        if hit is None or hit.entry != entry:  # the entry spotted is the entry shown
+            hit = srd.lookup(entry.name, target, fallback, kind=entry.kind)
+        rules: list[HouseRule] = []
+        if hit is None:
+            table.rules.forget(card_id, before)
+            return
+        if self.house_rules is not None and table.campaign_id is not None:
+            try:  # this campaign's own house rules and no other's
+                async with asyncio.timeout(RULES_CARD_DB_S):
+                    rules = await self.house_rules.list(table.guild_id, table.campaign_id)
+            except Exception:
+                log.exception("Couldn't read house rules for a rules card")
+        # After the awaits: the words heard are shown, so the speaker must still be recorded,
+        # and the session must still be running with the setting on.
+        if (
+            not self.consent.has_consent(table.guild_id, user_id)
+            or not table.rules_on
+            or not table.listening
+            or self.tables.get(table.guild_id) is not table
+        ):
+            table.rules.forget(card_id, before)
+            return
+        text = rule_card.alert_text(hit, mention.said, mention.heard, rules)
+        timed = (
+            hit.entry.kind == "spell"
+            and durations.parse(str(hit.entry.details.get("duration", ""))).timed
+        )  # a spell with a length gets Time it (#998)
+        posted = await self.post_message(
+            table.screen_channel_id,
+            text,
+            rules_cards.card_view(table.guild_id, card_id, timed=timed),
+        )
+        if posted is None:
+            table.rules.forget(card_id, before)
+
+    async def set_rules_cards(self, guild_id: int, campaign_id: str, on: bool) -> Campaign:
+        """Turn rules cards on or off for a campaign (#931): saved, and a running session
+        (or one still finishing) follows from now on. Under the session lock, like the
+        level, so a session starting meanwhile can't miss it."""
+        campaign = await self.campaigns.set_rules_cards(guild_id, campaign_id, on)
+        async with self.session_lock(guild_id):
+            for table in [self.tables.get(guild_id), *self._ending.get(guild_id, [])]:
+                if table is not None and table.campaign_id == campaign_id:
+                    table.rules_on = campaign.rules_cards
+                    if table.rules_on:
+                        self._warm_rules(table.rules_rulesets)
+        return campaign
+
+    def _topic_pending(self, table: Table, utterance: Utterance, text: str, named: int) -> bool:
+        """The off-topic filter (#52): a line not plainly about the game waits for the
+        AI, a window at a time; True if it's waiting. No AI key, or a session still
+        finishing: no filter, nothing is hidden."""
+        if self.topic_ai is None or self.tables.get(table.guild_id) is not table:
+            return False
+        if time.monotonic() < table.topic_paused_until or obviously_game(text, named):
+            return False
+        key = (utterance.user_id, utterance.start_ms)
+        table.held[key] = text
+        first = not table.topics.lines
+        waiting = Waiting(utterance.user_id, utterance.start_ms, text, utterance.duration_s)
+        if table.topics.add(waiting, time.monotonic()):
+            self._topic_task(table, self._label_topics(table, table.topics.take()))
+        elif first:
+            later = self._label_topics_later(table, table.topics.opened_at)
+            self._topic_task(table, later, timer=True)
+        return True
+
+    def _topic_task(self, table: Table, work: Awaitable[None], *, timer: bool = False) -> None:
+        """Labelling runs in the background; the end of the session waits for it. A
+        timer (a window that may not fill) is only cancelled then: the last window is
+        labelled anyway."""
+        task = self._track(work, "topics")
+        if task is not None:
+            tasks = table.topic_timers if timer else table.topic_tasks
+            tasks.add(task)
+            task.add_done_callback(tasks.discard)
+
+    async def _finish_topics(self, table: Table) -> None:
+        """At the end of a session: wait (bounded) for windows still being labelled,
+        then label the last one, so the names scan and the saved transcript see them.
+        On shutdown there's no time: the waiting lines are kept as game talk."""
+        for timer in list(table.topic_timers):
+            timer.cancel()
+        pending = [t for t in table.topic_tasks if not t.done()]
+        if pending:
+            await asyncio.wait(pending, timeout=TOPIC_CALL_TIMEOUT_S + 2)
+        lines = table.topics.take()
+        if lines and not self._closing:
+            await self._label_topics(table, lines)
+        for waiting in lines if self._closing else []:
+            said = table.held.pop((waiting.speaker, waiting.started_ms), None)
+            recorded = self.consent.has_consent(table.guild_id, waiting.speaker)
+            if said is not None and recorded and len(table.heard) < HEARD_MAX:
+                table.heard.append((waiting.speaker, said))
+
+    async def _label_topics_later(self, table: Table, opened_at: float | None) -> None:
+        """A window that doesn't fill is asked about once its first line has waited."""
+        await asyncio.sleep(table.topics.window_s)
+        if table.topics.lines and table.topics.opened_at == opened_at:
+            await self._label_topics(table, table.topics.take())
+
+    async def _label_topics(self, table: Table, lines: list[Waiting]) -> None:
+        """Ask the AI about a window (one call, bounded) and act on its answer: the
+        names scan gets the lines that aren't off-topic, lines that aren't game talk are
+        saved so, and off-topic ones still in the channel's edit window become markers
+        (each message edited once). If the call fails or is slow, every line counts as
+        game talk (when unsure, keep it); after a few failures in a row the filter rests.
+        Consent is checked again after every wait."""
+        if not lines or self.topic_ai is None:
+            return
+        # Right before anything is sent: the lines may have waited a while, and a stop
+        # can reach the consent cache from elsewhere (CLAUDE.md: after every wait).
+        stopped = [w for w in lines if not self.consent.has_consent(table.guild_id, w.speaker)]
+        for waiting in stopped:
+            table.held.pop((waiting.speaker, waiting.started_ms), None)
+        lines = [w for w in lines if w not in stopped]
+        if not lines:
+            return
+        try:
+            topics, reply = await asyncio.wait_for(
+                classify(self.topic_ai, [w.text for w in lines]), TOPIC_CALL_TIMEOUT_S
+            )
+            table.topic_calls += 1
+            table.topic_tokens[0] += reply.input_tokens
+            table.topic_tokens[1] += reply.output_tokens
+            table.topic_failures = 0
+        except Exception as exc:
+            table.topic_failures += 1
+            if table.topic_failures >= TOPIC_FAILURES_BEFORE_REST:
+                table.topic_paused_until = time.monotonic() + TOPIC_REST_S
+                table.topic_failures = 0
+                log.warning("Off-topic filter: resting after failures (%s)", type(exc).__name__)
+            else:
+                log.info("Off-topic filter: couldn't ask (%s); kept the lines", type(exc).__name__)
+            topics = [GAME] * len(lines)
+        hide: list[Waiting] = []
+        for waiting, topic in zip(lines, topics, strict=True):
+            said = table.held.pop((waiting.speaker, waiting.started_ms), None)
+            if not self.consent.has_consent(table.guild_id, waiting.speaker):
+                continue  # stopped meanwhile: nothing about their words
+            if topic != OFF_TOPIC and said is not None and len(table.heard) < HEARD_MAX:
+                table.heard.append((waiting.speaker, said))
+            if topic != GAME:
+                await self._save_topic(table, waiting, topic)
+            if topic == OFF_TOPIC:
+                hide.append(waiting)
+        if hide:
+            await self._hide_lines(table, hide, lines)
+
+    def _speaker_pending(self, table: Table, utterance: Utterance, text: str) -> None:
+        """Who the DM was speaking as (#53): the DM's own lines, not other people's, wait
+        for the AI a window at a time. No AI key, no names to choose from, a session
+        already finishing, or a resting helper: no label (never a guess in the file)."""
+        if (
+            self.topic_ai is None
+            or utterance.user_id not in table.dm_user_ids
+            or table.name_lookup is None
+            or self.tables.get(table.guild_id) is not table
+            or time.monotonic() < table.speaker_paused_until
+            or not table.speaker_book.allowed(table.name_lookup)
+        ):
+            return
+        first = not table.speakers.lines
+        waiting = Waiting(utterance.user_id, utterance.start_ms, text, utterance.duration_s)
+        if table.speakers.add(waiting, time.monotonic()):
+            self._speaker_task(table, self._label_speakers(table, table.speakers.take()))
+        elif first:
+            later = self._label_speakers_later(table, table.speakers.opened_at)
+            self._speaker_task(table, later, timer=True)
+
+    def _speaker_task(self, table: Table, work: Awaitable[None], *, timer: bool = False) -> None:
+        task = self._track(work, "speakers")
+        if task is not None:
+            tasks = table.speaker_timers if timer else table.speaker_tasks
+            tasks.add(task)
+            task.add_done_callback(tasks.discard)
+
+    async def _finish_speakers(self, table: Table) -> None:
+        """At the end of a session: wait (bounded) for windows being labelled, then label
+        the last one. On shutdown there's no time: those lines get no label."""
+        for timer in list(table.speaker_timers):
+            timer.cancel()
+        pending = [t for t in table.speaker_tasks if not t.done()]
+        if pending:
+            await asyncio.wait(pending, timeout=TOPIC_CALL_TIMEOUT_S + 2)
+        lines = table.speakers.take()
+        if lines and not self._closing:
+            await self._label_speakers(table, lines)
+
+    async def _label_speakers_later(self, table: Table, opened_at: float | None) -> None:
+        await asyncio.sleep(table.speakers.window_s)
+        if table.speakers.lines and table.speakers.opened_at == opened_at:
+            lines = table.speakers.take()
+            # Awake and working: the end of the session waits for it like any window
+            # instead of cancelling it mid-call with the other timers.
+            this = asyncio.current_task()
+            if this is not None and this in table.speaker_timers:
+                table.speaker_timers.discard(this)
+                table.speaker_tasks.add(this)
+                this.add_done_callback(table.speaker_tasks.discard)
+            await self._label_speakers(table, lines)
+
+    async def _current_names(self, table: Table) -> CampaignLookup | None:
+        """The campaign's names as they are now (a name may just have been made secret), or
+        None if they can't be had quickly."""
+        if self.lookup is None or table.campaign_id is None:
+            return None
+        try:
+            return await self.lookup.get_within(table.guild_id, table.campaign_id, SPEAKER_WAIT_S)
+        except Exception:
+            log.warning("Speaker labels: couldn't load the names", exc_info=True)
+            return None
+
+    async def _label_speakers(self, table: Table, lines: list[Waiting]) -> None:
+        """Ask the AI about a window of the DM's lines (one call, bounded) and save the
+        labels it is sure of. A "maybe", a slow or failed call, or a name that is no longer
+        allowed when the answer comes back: no label. Consent is checked again after every
+        wait, and so are the names, right before a label is saved."""
+        if not lines or self.topic_ai is None:
+            return
+        lines = [w for w in lines if self.consent.has_consent(table.guild_id, w.speaker)]
+        lookup = await self._current_names(table)
+        if not lines or lookup is None:
+            return
+        last_said = {e: times[-1][0] for e, times in table.scene.said.items() if times}
+        try:
+            guesses, reply = await asyncio.wait_for(
+                speaker_ai.identify(
+                    self.topic_ai, lookup, [w.text for w in lines], last_said, table.speaker_book
+                ),
+                TOPIC_CALL_TIMEOUT_S,
+            )
+            table.speaker_calls += 1
+            table.speaker_tokens[0] += reply.input_tokens
+            table.speaker_tokens[1] += reply.output_tokens
+            table.speaker_failures = 0
+        except Exception as exc:
+            table.speaker_failures += 1
+            if table.speaker_failures >= TOPIC_FAILURES_BEFORE_REST:
+                table.speaker_paused_until = time.monotonic() + TOPIC_REST_S
+                table.speaker_failures = 0
+                log.warning("Speaker labels: resting after failures (%s)", type(exc).__name__)
+            else:
+                log.info("Speaker labels: couldn't ask (%s); no labels", type(exc).__name__)
+            return
+        now = await self._current_names(table)  # the DM may have made a name secret meanwhile
+        if now is None:
+            return
+        for waiting, guess in zip(lines, guesses, strict=True):
+            entity = speaker_ai.check_entity(now, guess.entity) if guess.sure else ""
+            if entity:
+                await self._save_entity(table, waiting, entity)
+            elif not guess.sure:  # no label in the file; the DM may say who it was
+                self._offer_speaker_question(table, waiting, guess, now, last_said)
+
+    def _offer_speaker_question(
+        self,
+        table: Table,
+        waiting: Waiting,
+        guess: speaker_ai.Guess,
+        lookup: CampaignLookup,
+        last_said: dict[str, float],
+    ) -> None:
+        """Ask the DM "Who was speaking just now?" about a line the AI wasn't sure of (#53),
+        in the DM screen only: see `SpeakerBook` for the limits. The guess, if any, is the
+        first button, then the NPCs said most lately. Not asked when the DM screen is quiet,
+        or the session is finishing."""
+        if (
+            self.tables.get(table.guild_id) is not table
+            or not screen_levels.allows(table.screen_level, screen_levels.QUESTION)
+            or not self.consent.has_consent(table.guild_id, waiting.speaker)
+        ):
+            return
+        now = time.monotonic()
+        if table.speaker_questions.expire(now) is not None:
+            self._track(
+                self._close_speaker_question(table, speaker_q.not_answered_text()), "speaker-q"
+            )
+        guessed = speaker_ai.check_entity(lookup, guess.entity)
+        said = speaker_ai.offered(lookup, last_said, table.speaker_book)
+        options = list(dict.fromkeys(n for n in [guessed, *said] if n and n != NARRATING))
+        asked = table.speaker_questions.offer(
+            waiting.speaker, waiting.started_ms, waiting.text, options, now
+        )
+        if asked is not None:
+            self._track(self._ask_speaker(table, asked), "speaker-question")
+
+    async def _ask_speaker(self, table: Table, asked: speaker_q.Asked) -> None:
+        """Post the question to the DM screen. Consent is checked again first: this runs
+        after the line was delivered."""
+        book = table.speaker_questions
+        if not self.consent.has_consent(table.guild_id, asked.speaker):
+            if book.is_open(asked.id):
+                book.close(speaker_q.STOPPED, time.monotonic())
+            return
+        text = speaker_q.question_text(discord.utils.escape_markdown(asked.context))
+        message = await self.post_message(
+            table.screen_channel_id, text, speaker_question_view(table.guild_id, asked)
+        )
+        if message is None:
+            if book.is_open(asked.id):  # not posted: free the slot, ask again later
+                book.close(speaker_q.NOT_POSTED, time.monotonic())
+            return
+        if book.is_open(asked.id):
+            table.speaker_message = message
+            return
+        closed = (  # closed while posting: say how
+            speaker_q.GONE
+            if book.why_closed(asked.id) == speaker_q.STOPPED
+            else speaker_q.not_answered_text()
+        )
+        with contextlib.suppress(discord.HTTPException):
+            await message.edit(content=closed, view=None)
+
+    async def _close_speaker_question(self, table: Table, text: str) -> None:
+        """Take the question's buttons down, saying why."""
+        message, table.speaker_message = table.speaker_message, None
+        if message is not None:
+            with contextlib.suppress(discord.HTTPException):
+                await message.edit(content=text, view=None)
+
+    def _speaker_table(self, guild_id: int, question_id: str) -> Table | None:
+        for table in [self.tables.get(guild_id), *self._ending.get(guild_id, [])]:
+            if table is not None and (
+                table.speaker_questions.is_open(question_id)
+                or table.speaker_questions.why_closed(question_id) is not None
+            ):
+                return table
+        return None
+
+    async def answer_speaker_question(
+        self, guild_id: int, question_id: str, pick: str, user_id: int, typed: str | None = None
+    ) -> tuple[str, bool]:
+        """The DM answered "Who was speaking just now?" (#53): what to tell them, and
+        whether the question is now closed (its message then shows the answer). The name
+        is checked against the names a label may take, as they are now, so a secret name
+        is never written; consent is checked before and after every wait."""
+        table = self._speaker_table(guild_id, question_id)
+        book = table.speaker_questions if table is not None else None
+        asked = book.open if book is not None else None
+        if table is None or book is None or asked is None or asked.id != question_id:
+            gone = book is not None and book.why_closed(question_id) == speaker_q.STOPPED
+            return (speaker_q.GONE if gone else speaker_q.EXPIRED), True
+        if not table.is_dm(user_id):
+            return speaker_q.ONLY_DM, False
+        if not self.consent.has_consent(guild_id, asked.speaker):
+            book.close(speaker_q.STOPPED, time.monotonic())
+            return speaker_q.GONE, True
+        began = book.begin(question_id)
+        if began is speaker_q.Begin.BUSY:
+            return speaker_q.BUSY, False
+        if began is speaker_q.Begin.GONE:
+            return speaker_q.EXPIRED, True
+        try:
+            if pick == speaker_q.SKIP:
+                book.close(speaker_q.ANSWERED, time.monotonic())
+                return speaker_q.SKIPPED, True
+            wanted = typed if pick == speaker_q.TYPE else speaker_q.pick_to_name(asked, pick)
+            # As they are now (a name may have been made secret since), and never waited on
+            # for long: the question can't be answered meanwhile.
+            lookup = await self._current_names(table)
+            if lookup is None:
+                book.failed(question_id)
+                return speaker_q.CANT_CHECK, False
+            name = speaker_ai.check_entity(lookup, wanted or "")
+            if not name:
+                book.failed(question_id)
+                return speaker_q.NOT_ALLOWED, False
+            if not self.consent.has_consent(guild_id, asked.speaker) or not book.is_open(
+                question_id
+            ):
+                book.close(speaker_q.STOPPED, time.monotonic())
+                return speaker_q.GONE, True
+            await self._save_entity(
+                table, Waiting(asked.speaker, asked.started_ms, asked.context, 0.0), name
+            )
+        except BaseException:
+            book.failed(question_id)
+            raise
+        if book.is_open(question_id):
+            book.close(speaker_q.ANSWERED, time.monotonic())
+        return speaker_q.answered_text(discord.utils.escape_markdown(name)), True
+
+    async def _save_entity(self, table: Table, waiting: Waiting, entity: str) -> None:
+        """Save who a line was said as, waiting or saved. Only while its speaker is recorded."""
+        guild_id, speaker, started = table.guild_id, waiting.speaker, waiting.started_ms
+        async with table.save_lock:
+            if self.consent.has_consent(guild_id, speaker):
+                found = table.unsaved.set_entity(speaker, started, entity)
+                session_id = table.transcript_session_id
+                if not found and self.transcripts is not None and session_id is not None:
+                    try:
+                        await self.transcripts.set_entity(
+                            guild_id, session_id, speaker, started, entity
+                        )
+                    except Exception:
+                        log.exception("Couldn't save who a line was said as")
+
+    async def _save_topic(self, table: Table, waiting: Waiting, topic: str) -> None:
+        """Save a line's topic, waiting or saved. Only while its speaker is recorded."""
+        guild_id, speaker, started = table.guild_id, waiting.speaker, waiting.started_ms
+        async with table.save_lock:
+            if self.consent.has_consent(guild_id, speaker):
+                found = table.unsaved.set_topic(speaker, started, topic)
+                session_id = table.transcript_session_id
+                if not found and self.transcripts is not None and session_id is not None:
+                    try:
+                        await self.transcripts.set_topic(
+                            guild_id, session_id, speaker, started, topic
+                        )
+                    except Exception:
+                        log.exception("Couldn't save a line's topic")
+
+    async def _hide_lines(
+        self, table: Table, lines: list[Waiting], checked: list[Waiting] | None = None
+    ) -> None:
+        """Off-topic lines in the live channel become their markers: every line first,
+        then each message edited once (one window could otherwise edit one message six
+        times, while new lines wait for this lock). The DM screen lists them, with Put
+        it back (#677), while the session runs. `checked`: all the lines of that check,
+        so another line said in between ends a run."""
+        async with table.transcript_lock:
+            edits: dict[int, tuple[transcript_lines.Editable, str]] = {}
+            hidden = []
+            for waiting in lines:
+                if not self.consent.has_consent(table.guild_id, waiting.speaker):
+                    continue
+                hidden.append(waiting)
+                key = (waiting.speaker, waiting.started_ms)
+                if table.transcript.can_change(*key, time.monotonic()):
+                    table.hidden.add(key)  # a marker in the channel (too late: its words)
+                edit = table.transcript.relabel(
+                    waiting.speaker,
+                    waiting.started_ms,
+                    topic_marker(waiting.seconds),
+                    time.monotonic(),
+                )
+                if edit is not None:
+                    edits[id(edit[0])] = edit  # the latest content has every change
+            # Before any await: a Stop now finds them listed, and takes them down.
+            running = self.tables.get(table.guild_id) is table and not table.fix_ended
+            # Listed only with a transcript store: else there's no cleaned transcript to
+            # put lines back into.
+            stored = self.transcripts is not None
+            if hidden and running and stored and table.left_out.add(hidden, checked or lines):
+                self._redraw_left_out(table)
+            for message, content in edits.values():
+                with contextlib.suppress(discord.HTTPException, TimeoutError):
+                    await asyncio.wait_for(
+                        message.edit(content=content, allowed_mentions=NO_PINGS),
+                        EDIT_TIMEOUT_S,
+                    )
+
+    def _clean(self, table: Table, heard: str, *, unsure: bool) -> Cleaned:
+        """The line with misheard names fixed (#127), from the campaign's names as last
+        loaded; as heard if cleaning fails. `unsure`: also fixes from names DMbot only
+        suggested and close look-alikes (shown with Undo). No await: the consent check just
+        made still holds."""
+        assert table.name_lookup is not None
+        try:
+            result = clean(
+                table.name_lookup,
+                heard,
+                vocabulary=table.vocabulary,
+                people=table.people,
+                scene=table.scene.scene(time.monotonic()).keys(),
+                unsure=unsure,
+            )
+        except Exception:
+            now = time.monotonic()
+            if now - self._clean_failed_at > HINTS_FAIL_LOG_S:
+                self._clean_failed_at = now
+                log.exception("Couldn't fix names in a line; kept it as heard")
+            return Cleaned(heard, ())
+        if result.fixes:
+            log.debug("Fixed %d misheard name(s) in a line", len(result.fixes))
+        return result
+
+    def _offer_question(
+        self, table: Table, speaker: int, started_ms: int, heard: str, result: Cleaned
+    ) -> None:
+        """Ask the DM "Did they mean…?" about this line, if there's something worth
+        asking (#296): see `QuestionBook` for the limits. An unanswered one expires
+        first. Only for the running session: a stopped one still finishing can't be
+        answered any more."""
+        if self.tables.get(table.guild_id) is not table or table.name_lookup is None:
+            return
+        now = time.monotonic()
+        expired = table.questions.expire(now)
+        if expired is not None:
+            self._track(self._close_question(table, self._not_answered(table, expired)), "q")
+        if not screen_levels.allows(table.screen_level, screen_levels.QUESTION):
+            return  # quiet: the words stay as heard (after expiring any still open)
+        if not result.questions:
+            return
+        lookup, scene = table.name_lookup, table.scene.scene(now)
+        matters = {
+            entity_id
+            for question in result.questions
+            for entity_id, _ in question.options
+            if entity_id in scene
+            or getattr(lookup.entities.get(entity_id), "is_player_character", False)
+        }
+        asked = table.questions.offer(
+            speaker,
+            result.questions,
+            now,
+            matters,
+            started_ms=started_ms,
+            line=heard,
+            fixes=result.fixes,
+        )
+        if asked is not None:
+            self._track(self._ask_dm(table, asked), "name-question")
+
+    def _not_answered(self, table: Table, asked: name_questions.Asked) -> str:
+        """The one line an unanswered question shrinks to: their words only while they
+        are still recorded."""
+        if not self.consent.has_consent(table.guild_id, asked.speaker):
+            return name_questions.GONE
+        return name_questions.not_answered_text(discord.utils.escape_markdown(asked.heard))
+
+    async def _ask_dm(self, table: Table, asked: name_questions.Asked) -> None:
+        """Post "Did they mean…?" to the DM screen (#296). Consent is checked again
+        first: this runs after the line was delivered."""
+        book = table.questions
+        if not self.consent.has_consent(table.guild_id, asked.speaker):
+            if book.is_open(asked.id):
+                book.close(name_questions.STOPPED, time.monotonic())
+            return
+        name = self.name_of(table.guild_id, asked.speaker)
+        speaker = "Someone" if name.startswith("<@") else discord.utils.escape_markdown(name)
+        md = discord.utils.escape_markdown
+        text = name_questions.question_text(speaker, md(asked.heard), md(asked.context))
+        message = await self.post_message(
+            table.screen_channel_id, text, question_view(table.guild_id, asked)
+        )
+        if message is None:
+            if book.is_open(asked.id):  # not posted: free the slot, and ask again later
+                book.close(name_questions.NOT_POSTED, time.monotonic())
+            return
+        if book.is_open(asked.id):
+            table.question_message = message
+            return
+        # Closed while posting: say how, without their words if they stopped.
+        closed = (
+            name_questions.GONE
+            if book.why_closed(asked.id) == name_questions.STOPPED
+            else self._not_answered(table, asked)
+        )
+        with contextlib.suppress(discord.HTTPException):
+            await message.edit(content=closed, view=None)
+
+    async def _close_question(self, table: Table, text: str = name_questions.GONE) -> None:
+        """Take the open question's buttons down, saying why (they stopped being
+        recorded, nobody answered, or the session ended)."""
+        message, table.question_message = table.question_message, None
+        if message is not None:
+            with contextlib.suppress(discord.HTTPException):
+                await message.edit(content=text, view=None)
+
+    def _redraw_fix_notes(self, table: Table) -> None:
+        """Bring the "✏️ Name fixes to check" message up to date, soon. One redraw at a
+        time and at most one waiting: a burst of fixes is one edit, not one each."""
+        if table.fix_queued:
+            return
+        table.fix_queued = True
+        self._track(self._show_fix_notes(table), "fix-notes")
+
+    async def _show_fix_notes(self, table: Table) -> None:
+        """Post or update the fixes message (#296): only in the DM screen, never the
+        transcript channel; only lines of people still recorded (checked as it's drawn,
+        after waiting for the last redraw); no Undo buttons once the session ended."""
+        async with table.fix_lock:
+            table.fix_queued = False
+            notes = [
+                n
+                for n in table.fix_notes.shown()
+                if self.consent.has_consent(table.guild_id, n.speaker)
+            ]
+            if not notes and table.fix_message is None:
+                return
+            names = {}
+            for note in notes:
+                name = self.name_of(table.guild_id, note.speaker)
+                names[note.speaker] = (
+                    "Someone" if name.startswith("<@") else discord.utils.escape_markdown(name)
+                )
+            text, shown = fix_notes.message_text(notes, names, transcript_lines.escape)
+            view = None if table.fix_ended else fix_notes_view(table.guild_id, shown)
+            if table.fix_message is not None:
+                try:
+                    await table.fix_message.edit(content=text, view=view, allowed_mentions=NO_PINGS)
+                    return
+                except discord.NotFound:
+                    table.fix_message = None  # deleted, or a new DM screen: post again
+                except discord.HTTPException:
+                    return
+            if not table.fix_ended:
+                table.fix_message = await self.post_message(table.screen_channel_id, text, view)
+
+    async def undo_fix(
+        self, guild_id: int, note_id: str, user_id: int
+    ) -> tuple[str, tuple[str, int] | None]:
+        """The DM pressed Undo on a name fix (#296): the heard words go back in that line
+        (saved, waiting, or posted in the last ~30 s), and a "keep as heard" rule is
+        saved so they aren't fixed again. What to tell them, and what "Allow again"
+        takes back (campaign, change). Consent is checked after every await."""
+        table = next(
+            (
+                t
+                for t in [self.tables.get(guild_id), *self._ending.get(guild_id, [])]
+                if t is not None and t.fix_notes.find(note_id) is not None
+            ),
+            None,
+        )
+        if table is None or table.campaign_id is None or self.memory is None:
+            return fix_notes.EXPIRED, None
+        if not table.is_dm(user_id):
+            return fix_notes.ONLY_DM, None
+        note = table.fix_notes.find(note_id)
+        assert note is not None
+        if not self.consent.has_consent(guild_id, note.speaker):
+            self._redraw_fix_notes(table)  # their line shouldn't be listed any more
+            return fix_notes.STOPPED, None
+        undone = table.fix_notes.undo(note_id)  # before any await: undone once
+        if not undone:
+            return fix_notes.ALREADY, None
+        try:
+            written = await self.memory.add_correction(
+                guild_id, table.campaign_id, note.fix.heard, action=KEEP, source=DM
+            )
+        except Exception:
+            for n in undone:
+                n.undone = False  # not saved: can be pressed again
+            raise
+        if self.lookup is not None:
+            self.lookup.mark_stale(guild_id, table.campaign_id)
+        allow = (table.campaign_id, written.batch) if written.batch is not None else None
+        self._redraw_fix_notes(table)
+        if not self.consent.has_consent(guild_id, note.speaker):
+            return fix_notes.STOPPED, allow  # their words aren't put back anywhere
+        changed = await self._rewrite_line(
+            table, note.speaker, note.started_ms, table.fix_notes.line_text(note)
+        )
+        if not self.consent.has_consent(guild_id, note.speaker):
+            return fix_notes.STOPPED, allow  # stopped meanwhile: nothing about their line
+        md = discord.utils.escape_markdown
+        text = fix_notes.done_text(md(note.fix.heard), md(note.fix.written), line_kept=not changed)
+        return text, allow
+
+    async def _rewrite_line(self, table: Table, speaker: int, started_ms: int, text: str) -> bool:
+        """Change a line's words (#296, #503): saved, waiting to be saved, and in the
+        transcript channel if it was posted in the last ~30 s. Only while the speaker is
+        still recorded, checked again after every wait. True if the line changed: saved
+        or waiting, or the channel message. All or nothing: if the saved line can't be
+        changed (a database error, logged), the channel isn't either, so "That line stays
+        as heard" is true everywhere."""
+        guild_id, found, edited = table.guild_id, False, False
+        # The saved line: hold the save lock, so a batch being saved can't miss this.
+        async with table.save_lock:
+            if self.consent.has_consent(guild_id, speaker):
+                found = table.unsaved.relabel(speaker, started_ms, text)
+                session_id = table.transcript_session_id
+                if not found and self.transcripts is not None and session_id is not None:
+                    try:
+                        found = bool(
+                            await self.transcripts.relabel_line(
+                                guild_id, session_id, speaker, started_ms, text
+                            )
+                        )
+                    except Exception:
+                        log.exception("Couldn't change a saved line's words")
+                        return False
+                    if not found:
+                        log.warning("A name change found no saved line to change")
+        # The channel: hold its lock, so a message being posted can't miss this either.
+        async with table.transcript_lock:
+            # A line shown as an off-topic marker stays one (#52): an Undo never brings
+            # the chat back into the channel.
+            hidden = (speaker, started_ms) in table.hidden
+            if self.consent.has_consent(guild_id, speaker) and not hidden:
+                edit = table.transcript.relabel(speaker, started_ms, text, time.monotonic())
+                if edit is not None:
+                    message, content = edit
+                    # Bounded: new lines wait for this lock (Discord may be slow). The saved
+                    # line is already right, so a failure here doesn't change the answer.
+                    try:
+                        await asyncio.wait_for(
+                            message.edit(content=content, allowed_mentions=NO_PINGS),
+                            EDIT_TIMEOUT_S,
+                        )
+                        edited = True
+                    except (discord.HTTPException, TimeoutError):
+                        pass
+                    except Exception:
+                        log.exception("Couldn't edit a transcript message with a name change")
+        return found or edited
+
+    async def allow_fix_again(
+        self, guild_id: int, campaign_id: str, batch: int, user_id: int
+    ) -> str:
+        """Take back the "keep as heard" rule an Undo saved (a press by mistake)."""
+        campaign = await self.campaigns.get(guild_id, campaign_id)
+        if campaign is None or self.memory is None:
+            return fix_notes.EXPIRED
+        if user_id not in campaign.dm_user_ids:
+            return fix_notes.ONLY_DM
+        try:
+            await self.memory.undo(guild_id, campaign_id, batch)
+        except MemoryRuleError:
+            return name_questions.UNDO_FAILED
+        if self.lookup is not None:
+            self.lookup.mark_stale(guild_id, campaign_id)
+        return fix_notes.ALLOWED
+
+    def _redraw_left_out(self, table: Table) -> None:
+        """Bring the "🙈 Left out as off-topic" message up to date, soon (#677): one
+        redraw at a time and at most one waiting, as for the name fixes."""
+        if table.left_out_queued:
+            return
+        table.left_out_queued = True
+        self._track(self._show_left_out(table), "left-out")
+
+    async def _show_left_out(self, table: Table) -> None:
+        """Post or update the left-out message (#677): only in the DM screen, at every
+        level (it's the DM's only chance to undo; edited in place, it never pings); only
+        lines of people still recorded (checked as it's drawn); no buttons once the
+        session ended."""
+        async with table.left_out_lock:
+            table.left_out_queued = False
+            runs = [
+                r
+                for r in table.left_out.shown()
+                if self.consent.has_consent(table.guild_id, r.speaker)
+            ]
+            if not runs and table.left_out_message is None:
+                return
+            names = {}
+            for run in runs:
+                name = self.name_of(table.guild_id, run.speaker)
+                names[run.speaker] = (
+                    "Someone" if name.startswith("<@") else discord.utils.escape_markdown(name)
+                )
+            start_ms = table.started_at * 1000
+
+            def when(started_ms: int) -> str:
+                return clock((started_ms - start_ms) / 1000)
+
+            text, shown = left_out.message_text(
+                runs, names, when, transcript_lines.escape, ended=table.fix_ended
+            )
+            view = None if table.fix_ended else left_out_view(table.guild_id, shown)
+            if table.left_out_message is not None:
+                try:
+                    await table.left_out_message.edit(
+                        content=text, view=view, allowed_mentions=NO_PINGS
+                    )
+                    return
+                except discord.NotFound:
+                    table.left_out_message = None  # deleted, or a new DM screen: post again
+                except discord.HTTPException:
+                    return
+            if not table.fix_ended:
+                table.left_out_message = await self.post_message(
+                    table.screen_channel_id, text, view
+                )
+
+    async def put_back(self, guild_id: int, run_id: str, user_id: int) -> str:
+        """The DM pressed Put it back (#677): that run's lines are game talk again, saved
+        or waiting to be saved, in the live channel if still recent, and in the names
+        scan (once). Only for the running session; what to tell them. Consent is
+        checked after every await."""
+        table = self.tables.get(guild_id)
+        run = table.left_out.find(run_id) if table is not None and not table.fix_ended else None
+        if table is None or run is None:
+            return left_out.EXPIRED
+        if not table.is_dm(user_id):
+            return left_out.ONLY_DM
+        if not self.consent.has_consent(guild_id, run.speaker):
+            self._redraw_left_out(table)  # their lines shouldn't be listed any more
+            return left_out.STOPPED
+        if run.put_back:
+            return left_out.ALREADY
+        run.put_back = True  # before any await: put back once
+        if not await self._restore_topics(table, run.lines):
+            run.put_back = False  # not saved: can be pressed again
+            return left_out.NOT_SAVED
+        self._redraw_left_out(table)
+        if not self.consent.has_consent(guild_id, run.speaker):
+            return left_out.STOPPED  # stopped meanwhile: nothing about their lines
+        # What the names scan would have had (#52), now: before the channel's awaits, so
+        # a /dmbot stop meanwhile still scans them (it reads these at the end).
+        for line in run.lines:
+            if len(table.heard) < HEARD_MAX:
+                table.heard.append((line.speaker, self._words_now(table, line)))
+        name = self.name_of(guild_id, run.speaker)
+        who = "Someone" if name.startswith("<@") else discord.utils.escape_markdown(name)
+        if self.tables.get(guild_id) is not table or table.fix_ended:
+            # Stopped meanwhile: the saved lines are right; the channel is winding down.
+            return left_out.done_text(run.number, who, in_channel=None)
+        in_channel = await self._show_lines_again(table, run.lines)
+        if not self.consent.has_consent(guild_id, run.speaker):
+            return left_out.STOPPED
+        return left_out.done_text(run.number, who, in_channel=in_channel)
+
+    async def _restore_topics(self, table: Table, lines: list[Waiting]) -> bool:
+        """One person's lines left out become game talk again, waiting or saved (one
+        statement, bounded: it holds the save lock). False if saving failed or was too
+        slow (logged); if some were saved first, pressing again is harmless. A speaker
+        who stopped meanwhile: nothing is changed, and True (`put_back` says why)."""
+        guild_id, speaker = table.guild_id, lines[0].speaker
+        async with table.save_lock:
+            if not self.consent.has_consent(guild_id, speaker):
+                return True
+            saved = [
+                line.started_ms
+                for line in lines
+                if not table.unsaved.set_topic(speaker, line.started_ms, GAME)
+            ]
+            session_id = table.transcript_session_id  # under the lock: a save may set it
+            if not saved:
+                return True
+            if self.transcripts is None or session_id is None:
+                # Out of the waiting buffer, but no stored transcript to change: never
+                # say they're back.
+                log.warning("Put it back found no stored transcript for %d lines", len(saved))
+                return False
+            try:
+                changed = await asyncio.wait_for(
+                    self.transcripts.set_topics(guild_id, session_id, speaker, saved, GAME),
+                    PUT_BACK_TIMEOUT_S,
+                )
+            except Exception:
+                log.exception("Couldn't put lines left out as off-topic back")
+                return False
+            if changed < len(saved):
+                log.warning("Put it back found %d of %d saved lines", changed, len(saved))
+        return True
+
+    async def _show_lines_again(self, table: Table, lines: list[Waiting]) -> bool | None:
+        """The live channel shows one person's lines again instead of their markers,
+        each message edited once. True if every marker could be changed (only possible
+        about 30 s after a line is posted); None if none of them was a marker there (too
+        late when hidden, or no channel). Consent is checked before every edit: a Stop
+        meanwhile leaves the rest as markers."""
+        speaker = lines[0].speaker
+        markers = [x for x in lines if (x.speaker, x.started_ms) in table.hidden]
+        if not markers:
+            return None
+        changed = True
+        async with table.transcript_lock:
+            if not self.consent.has_consent(table.guild_id, speaker):
+                return False
+            now = time.monotonic()
+            edits: dict[int, tuple[transcript_lines.Editable, str, list[Waiting]]] = {}
+            for line in markers:
+                table.hidden.discard((line.speaker, line.started_ms))
+                if not table.transcript.can_change(line.speaker, line.started_ms, now):
+                    changed = False
+                    continue
+                words = self._words_now(table, line)
+                edit = table.transcript.relabel(line.speaker, line.started_ms, words, now)
+                if edit is not None:  # None: still waiting, it goes out with its words
+                    its = edits.get(id(edit[0]), (edit[0], "", []))[2]
+                    edits[id(edit[0])] = (edit[0], edit[1], [*its, line])
+            pending = list(edits.values())
+            for i, (message, content, _) in enumerate(pending):
+                if not self.consent.has_consent(table.guild_id, speaker):
+                    for _, _, rest in pending[i:]:  # never shown again: markers they stay
+                        for line in rest:
+                            table.transcript.relabel(
+                                line.speaker, line.started_ms, topic_marker(line.seconds), now
+                            )
+                    return False
+                try:
+                    await asyncio.wait_for(
+                        message.edit(content=content, allowed_mentions=NO_PINGS),
+                        EDIT_TIMEOUT_S,
+                    )
+                except (discord.HTTPException, TimeoutError):
+                    changed = False
+        return changed
+
+    @staticmethod
+    def _words_now(table: Table, line: Waiting) -> str:
+        """A line's words now: as cleaned, with any name fix the DM undid or answered
+        since (#296, #503)."""
+        notes, key = table.fix_notes, (line.speaker, line.started_ms)
+        note = next((n for n in notes.notes if n.line == key), None)
+        if note is not None:
+            return notes.line_text(note)
+        answer = next((a for a in notes.answers if a.line == key), None)
+        if answer is not None:
+            return notes.words_now(line.speaker, line.started_ms, answer.heard, answer.fixes)
+        return line.text
+
+    def _session_table(self, guild_id: int, question_id: str) -> Table | None:
+        """The table, running or still finishing, whose question this is."""
+        for table in [self.tables.get(guild_id), *self._ending.get(guild_id, [])]:
+            if table is not None and (
+                table.questions.is_open(question_id)
+                or table.questions.why_closed(question_id) is not None
+            ):
+                return table
+        return None
+
+    def can_type_answer(
+        self, guild_id: int, question_id: str, user_id: int
+    ) -> tuple[str | None, str]:
+        """Before the "Type it…" form opens: why it can't (closed, or not the DM), and
+        the words heard, to start the form with (one letter to fix on a phone)."""
+        table = self._session_table(guild_id, question_id)
+        asked = table.questions.open if table is not None else None
+        if table is None or asked is None or asked.id != question_id:
+            return name_questions.EXPIRED, ""
+        if not table.is_dm(user_id):
+            return name_questions.ONLY_DM, ""
+        if not self.consent.has_consent(guild_id, asked.speaker):
+            return name_questions.GONE, ""  # their words aren't shown again
+        return None, asked.heard
+
+    async def _names_now(self, table: Table) -> CampaignLookup | None:
+        """The campaign's names as they are now (a name may have been made secret since
+        the session's copy), or None if they can't be loaded."""
+        if self.lookup is None:
+            return table.name_lookup
+        if table.campaign_id is None:
+            return None
+        try:
+            return await self.lookup.get(table.guild_id, table.campaign_id)
+        except Exception:
+            log.exception("Couldn't load the campaign's names to check an answer")
+            return None
+
+    def _typed_name(
+        self, lookup: CampaignLookup | None, asked: name_questions.Asked, typed: str
+    ) -> tuple[str | None, str] | str:
+        """A name the DM typed (#503): (the known name's entry, how it's written), (None,
+        the typed name) for a name DMbot doesn't know yet, or why it can't be used. A
+        secret name, or one that would stand next to a secret in the line, is refused:
+        the transcript is shared with the whole server."""
+        why = name_questions.typed_problem(typed)
+        if why is not None:
+            return why
+        if lookup is None:
+            return name_questions.TYPED_CANT_CHECK
+        chosen = self._known_typed(lookup, typed)
+        if isinstance(chosen, str):
+            return chosen
+        written = with_ending(asked.heard, chosen[1])
+        if asked.line and not safe_answer(
+            lookup, asked.line, asked.fixes, asked.start, asked.end, written
+        ):
+            return name_questions.TYPED_SECRET
+        return chosen
+
+    def _known_typed(self, lookup: CampaignLookup, typed: str) -> tuple[str | None, str] | str:
+        entries = lookup.by_key.get(name_key(typed), ())
+        if any(e.secret for e in entries):  # never written in the transcript
+            return name_questions.TYPED_SECRET
+        ids = {e.entity_id for e in entries if e.entity_id in lookup.entities}
+        if len(ids) > 1:
+            return name_questions.TYPED_TWO
+        if not ids:
+            return None, typed
+        (entity_id,) = ids
+        name = own_name(lookup, entity_id, typed=True)
+        return (entity_id, name) if name is not None else name_questions.TYPED_SECRET
+
+    async def answer_name_question(
+        self, guild_id: int, question_id: str, pick: str, user_id: int, typed: str | None = None
+    ) -> tuple[str, bool, tuple[str, int] | None]:
+        """The DM answered "Did they mean…?": save it for the campaign, so the same words
+        are handled silently from now on, and fix the line that was asked about (#503).
+        `typed`: the name typed in the "Type it…" form. What to tell them, whether the
+        question is now closed (its message then shows the answer), and what Undo takes
+        back (campaign, change). The question stays open while saving, so it can still
+        be taken down if its speaker stops being recorded; consent is checked before and
+        after every wait. A correction the DM made stays if the speaker later stops
+        being recorded: the DM wrote it, and it names no one."""
+        typed = " ".join((typed or "").split()) if pick == name_questions.TYPE else None
+        closed = name_questions.EXPIRED
+        if typed and name_questions.typed_problem(typed) is None:  # what they typed isn't lost
+            closed = name_questions.too_late_text(discord.utils.escape_markdown(typed))
+        table = self._session_table(guild_id, question_id)
+        if table is None or table.campaign_id is None or self.memory is None:
+            return closed, True, None
+        book = table.questions
+        if not book.is_open(question_id) or book.open is None:
+            return closed, True, None
+        if not table.is_dm(user_id):
+            return name_questions.ONLY_DM, False, None
+        chosen: tuple[str | None, str] | None = None
+        if typed is not None and name_key(typed) == name_key(book.open.heard):
+            pick = name_questions.KEEP  # typed just as heard: keep it
+        elif typed is not None:
+            lookup = await self._names_now(table)
+            if not book.is_open(question_id) or book.open is None:  # closed meanwhile
+                return closed, True, None
+            found = self._typed_name(lookup, book.open, typed)
+            if isinstance(found, str):  # can't be used: the question stays open
+                return found, False, None
+            chosen = found
+        begun = book.begin(question_id)
+        if begun is name_questions.Begin.BUSY:
+            return name_questions.BUSY, False, None
+        asked = book.open
+        if begun is not name_questions.Begin.OK or asked is None:
+            return name_questions.EXPIRED, True, None
+        now = time.monotonic
+        if not self.consent.has_consent(guild_id, asked.speaker):
+            book.close(name_questions.STOPPED, now())
+            table.question_message = None
+            return name_questions.GONE, True, None
+        keep = pick == name_questions.KEEP
+        if chosen is None and not keep:
+            if not (pick.isdigit() and int(pick) < len(asked.options)):
+                book.close(name_questions.ANSWERED, now())
+                table.question_message = None
+                return name_questions.EXPIRED, True, None
+            chosen = asked.options[int(pick)]
+        campaign_id, name = table.campaign_id, ""
+        try:
+            if chosen is None:
+                kept = await self.memory.add_correction(
+                    guild_id, campaign_id, asked.heard, action=KEEP, source=DM
+                )
+                batch = kept.batch
+            elif chosen[0] is None:  # a new name, to check in 📝 Check new names
+                name = chosen[1]
+                added = await self.memory.add_typed_name(guild_id, campaign_id, asked.heard, name)
+                batch = added.batch
+            else:
+                entity_id, name = chosen
+                fixed = await self.memory.add_correction(
+                    guild_id, campaign_id, asked.heard, action=FIX, source=DM, entity_id=entity_id
+                )
+                batch = fixed.batch
+        except MemoryRuleError:
+            if chosen is not None and chosen[0] is None:  # a typed name it won't add
+                book.failed(question_id)
+                return name_questions.TYPED_REFUSED, False, None
+            # The name was removed since: asking again won't help.
+            if book.is_open(question_id):
+                book.close(name_questions.ANSWERED, now())
+                table.question_message = None
+            return name_questions.NAME_GONE, True, None
+        except Exception:
+            book.failed(question_id)  # open again for another try, if still theirs
+            raise
+        if self.lookup is not None:
+            self.lookup.mark_stale(guild_id, campaign_id)  # the next line uses the answer
+        # No batch: it was already saved before, so there's nothing for Undo to take back.
+        undo = (campaign_id, batch) if batch is not None else None
+        if book.is_open(question_id):
+            book.close(name_questions.ANSWERED, now())
+            table.question_message = None
+        # After the save: if they stopped being recorded meanwhile, their words stay down
+        # (Stop already took the message down). A session that ended meanwhile is fine.
+        if book.why_closed(question_id) == name_questions.STOPPED or not self.consent.has_consent(
+            guild_id, asked.speaker
+        ):
+            return name_questions.GONE, True, undo
+        heard = discord.utils.escape_markdown(asked.heard)
+        if chosen is None:
+            return name_questions.kept_text(heard), True, undo
+        line = await self._fix_asked_line(table, asked, name, undo)
+        if not self.consent.has_consent(guild_id, asked.speaker):
+            return name_questions.GONE, True, undo
+        md = discord.utils.escape_markdown
+        answer = name_questions.fixed_text(
+            heard, md(name), line_fixed=line is True, line_kept=line is False, new=chosen[0] is None
+        )
+        return answer, True, undo
+
+    async def _fix_asked_line(
+        self, table: Table, asked: name_questions.Asked, name: str, undo: tuple[str, int] | None
+    ) -> bool | None:
+        """Write the answer into the line that was asked about (#503); Undo of the answer
+        puts it back (`answer_undone`). Never if that would put a secret name in the line
+        (checked with the names as they are now). True if the line was fixed, False if it
+        stays as heard, None if there's no line to fix. A failure here never loses the
+        answer: it's saved already, and its message still gets its Undo."""
+        if not asked.line:
+            return None
+        lookup = await self._names_now(table)
+        notes, speaker, started = table.fix_notes, asked.speaker, asked.started_ms
+        written = with_ending(asked.heard, name)
+        fixes = notes.still_fixed(speaker, started, asked.fixes)
+        if lookup is None or not safe_answer(
+            lookup, asked.line, fixes, asked.start, asked.end, written
+        ):
+            return False  # the rule is saved; this line stays as heard
+        batch = undo[1] if undo is not None else None  # None: nothing to undo
+        answer = fix_notes.Answer(
+            batch, speaker, started, asked.line, fixes, asked.start, asked.end, written
+        )
+        notes.answered(answer)
+        text = notes.words_now(speaker, started, asked.line, asked.fixes)
+        try:
+            changed = await self._rewrite_line(table, speaker, started, text)
+        except Exception:
+            log.exception("Couldn't write an answer into the line it was about")
+            changed = False
+        if not changed:
+            # The DM is told the line stays as heard: a later rewrite of it (a fix's
+            # Undo) mustn't bring the answer in.
+            with contextlib.suppress(ValueError):
+                notes.answers.remove(answer)
+        return changed
+
+    async def answer_undone(self, guild_id: int, campaign_id: str, batch: int) -> bool | None:
+        """The DM undid an answer to "Did they mean…?" (the saved change is already taken
+        back): put its line back, if this session still has it (#503). True if it was put
+        back; False if it couldn't be (#589: the save failed, or no copy of it was left to
+        change); None if there's nothing to say: no line this session knows (too old, or
+        after a restart), or its speaker stopped being recorded (checked again after the
+        wait, on every path)."""
+        for table in [self.tables.get(guild_id), *self._ending.get(guild_id, [])]:
+            if table is None or table.campaign_id != campaign_id:
+                continue
+            answer = table.fix_notes.take_back(batch)
+            if answer is None:
+                continue
+            text = table.fix_notes.words_now(
+                answer.speaker, answer.started_ms, answer.heard, answer.fixes
+            )
+            try:
+                changed = await self._rewrite_line(table, answer.speaker, answer.started_ms, text)
+            except Exception:
+                log.exception("Couldn't put a line back after undoing an answer")
+                changed = False
+            if not self.consent.has_consent(guild_id, answer.speaker):
+                return None  # nothing about their line
+            return changed
+        return None
+
+    async def set_screen_level(
+        self, guild_id: int, campaign_id: str, level: str, *, was: str
+    ) -> Campaign:
+        """How much DMbot says in this campaign's DM screen (#504, #515): saved, and a
+        running session (or one still finishing) follows the change from now on. Under
+        the session lock, so a session starting meanwhile can't miss it (#553). A change
+        from `was` (the level the DM saw) is noted in the DM screen, so a co-DM knows why
+        DMbot went quiet."""
+        campaign = await self.campaigns.set_dm_screen_level(guild_id, campaign_id, level)
+        async with self.session_lock(guild_id):
+            for table in [self.tables.get(guild_id), *self._ending.get(guild_id, [])]:
+                if table is not None and table.campaign_id == campaign_id:
+                    table.screen_level = campaign.dm_screen_level
+        if was != campaign.dm_screen_level and campaign.dm_screen_channel_id is not None:
+            # Always posted: a note about the level, not something the level governs.
+            await self.post(
+                campaign.dm_screen_channel_id,
+                screen_messages.level_changed(campaign.dm_screen_level),
+            )
+        return campaign
+
+    async def _alert_dm(self, guild_id: int, message: str) -> None:
+        table = self.tables.get(guild_id)
+        if table is not None:
+            await self.post(table.screen_channel_id, message)
+
+    async def _name_hints(self, utterance: Utterance) -> list[str]:
+        """Names speech-to-text should expect for this clip, most useful first, from the
+        session that heard it (a stopped one still finishing keeps its own campaign's
+        names): characters, the players, names said lately, names connected to them,
+        then the rest (dmbot.memory.scene). Never secret names."""
+        guild_id = utterance.guild_id
+        table = self._table_for(utterance)
+        people, absent = await self._hint_people(guild_id, table)
+        if self.lookup is None or table is None or table.campaign_id is None:
+            return [*people, *absent]
+        try:
+            # Never held up for long (every clip of the session waits here): while the
+            # names reload, the clip goes with people-only hints and the load carries on.
+            found = await self.lookup.get_within(guild_id, table.campaign_id, HINTS_WAIT_S)
+            if found is None:  # still loading, or failed (logged by the cache)
+                table.name_lookup = None  # never fix names from an old copy
+                table.hint_parts = None
+                return [*people, *absent]
+            lookup = found
+            if table.hint_parts is None or table.hint_parts.version != lookup.version:
+                # Up to ~150 ms for a big campaign: off the event loop, once per change.
+                table.hint_parts = await asyncio.to_thread(prepare_hints, lookup, time.time())
+        except Exception:
+            # Asked for every connection to speech-to-text: say so at most once a minute.
+            now = time.monotonic()
+            if now - self._hints_failed_at > HINTS_FAIL_LOG_S:
+                self._hints_failed_at = now
+                log.exception("Couldn't load the campaign's names for hints")
+            # Never fix names from an old copy: a name may have just been made secret.
+            table.name_lookup = None
+            return [*people, *absent]
+        table.name_lookup = lookup  # for matching written-down lines to the scene
+        # Never "fixed" into a name, whether at the table or not.
+        table.people = self._everyone_at_table(table, [*people, *absent])
+        return scene_hints(
+            lookup,
+            table.hint_parts,
+            table.scene,
+            time.monotonic(),
+            people=people,
+            absent=absent,
+            sheet=table.sheet_hints,
+        )
+
+    async def _hint_people(self, guild_id: int, table: Table | None) -> HintPeople:
+        """Display names of people who agreed: (in the table's voice channel, not there).
+        Kept for HINT_PEOPLE_S per server, and made again at once when anyone agrees or
+        stops, so a revoked name is never sent as a hint (#173)."""
+        users = await self.consent.consenting(guild_id)
+        now = time.monotonic()
+        voice_id = table.voice_channel_id if table is not None else None
+        cached = self._hint_people_cache.get(guild_id)
+        fresh = cached is not None and now - cached[0] < HINT_PEOPLE_S
+        if cached is not None and fresh and cached[1:3] == (users, voice_id):
+            return cached[3]
+        voice = self.get_channel(voice_id) if voice_id is not None else None
+        here = (
+            {m.id for m in voice.members}
+            if isinstance(voice, discord.VoiceChannel | discord.StageChannel)
+            else set()
+        )
+        present: list[str] = []
+        away: list[str] = []
+        for user_id in sorted(users):
+            name = self.name_of(guild_id, user_id)
+            # A member DMbot can't look up comes back as "<@id>": no use as a hint, and
+            # an outside service shouldn't get IDs.
+            if not name.startswith("<@"):
+                (present if user_id in here else away).append(name)
+        split = (tuple(present), tuple(away))
+        self._hint_people_cache[guild_id] = (now, users, voice_id, split)
+        return split
+
+    def _everyone_at_table(self, table: Table, consenting: list[str]) -> tuple[str, ...]:
+        """Display names the name fixes must never change: people who agreed, the DM(s),
+        and everyone in the voice channel (their names get said too), as of the last
+        connection to speech-to-text. Used here only, never sent anywhere."""
+        names = dict.fromkeys(consenting)
+        voice = self.get_channel(table.voice_channel_id)
+        members: list[discord.Member | None] = []
+        if isinstance(voice, discord.VoiceChannel | discord.StageChannel):
+            members += voice.members
+        guild = self.get_guild(table.guild_id)
+        if guild is not None:
+            members += [guild.get_member(uid) for uid in {table.dm_user_id, *table.dm_user_ids}]
+        for member in members:
+            if member is not None and not member.bot:
+                names.setdefault(member.display_name)
+        return tuple(names)
+
+    async def close_stale_flags(self, table: Table) -> None:
+        """After a session: close memory flags whose problem is gone (#164), so the DM
+        isn't asked about clashes an undo, a merge, an edit or a rejection ended."""
+        if self.memory is None or table.campaign_id is None:
+            return
+        with log_context(guild_id=table.guild_id, campaign_id=table.campaign_id):
+            closed = await self.memory.resolve_stale_flags(table.guild_id, table.campaign_id)
+            if closed.value:
+                log.info("Closed %d memory flag(s) that no longer apply", len(closed.value))
+
+    async def prune_old_changes(self, table: Table) -> None:
+        """After a session: forget undo history older than MEMORY_CHANGELOG_KEEP_DAYS
+        (#164), so the change log doesn't grow forever. Last, after anything that
+        writes: those writes are new, so they're kept anyway."""
+        if self.memory is None or table.campaign_id is None:
+            return
+        with log_context(guild_id=table.guild_id, campaign_id=table.campaign_id):
+            gone = await self.memory.prune_changes(table.guild_id, table.campaign_id)
+            if gone:
+                log.info("Deleted %d change-log row(s) too old to undo", gone)
+
+    async def keep_heard_names(self, table: Table) -> None:
+        """After a session: keep how often each known name was said, for ranking hints
+        next time. Only lines of people who still agree, checked again right before
+        writing; then the campaign's copy reloads before next use, to see the counts."""
+        if self.memory is None or table.campaign_id is None or not table.heard_counts:
+            return
+        gid, cid = table.guild_id, table.campaign_id
+        with log_context(guild_id=gid, campaign_id=cid):
+            agreed = await self.consent.consenting(gid)
+            rows = [
+                Heard(entity_id, speaker, times)
+                for (entity_id, speaker), times in table.heard_counts.items()
+                if speaker in agreed and self.consent.has_consent(gid, speaker)
+            ]
+            table.heard_counts.clear()
+            started = table.started_at or int(time.time())
+            kept = await self.memory.add_session_heard(gid, cid, started, rows)
+            if self.lookup is not None:
+                self.lookup.drop([cid])
+            log.info("Kept how often %d name(s) were said", kept)
+
+    async def learn_people(self, table: Table) -> None:
+        """After a session: turn the names people answered to at least twice into waiting
+        questions for the DM (#1188). Only people who still agree; the questions are saved
+        as waiting, and the DM screen only says how many."""
+        answers = table.name_answers.answered()
+        table.name_answers = NameThenAnswer()  # the session is over; free it
+        if self.memory is None or table.campaign_id is None or not answers:
+            return
+        gid, cid = table.guild_id, table.campaign_id
+        with log_context(guild_id=gid, campaign_id=cid):
+            agreed = await self.consent.consenting(gid)
+            rows = [(a.name, a.speaker, a.times) for a in answers if a.speaker in agreed]
+            if not rows:
+                return
+            written = await self.memory.learn_people(gid, cid, rows, limit=MAX_SUGGESTIONS)
+            # Again: someone may have stopped recording while this was written.
+            agreed = await self.consent.consenting(gid)
+            for gone in {s.user_id for s in written.value if s.user_id not in agreed}:
+                await self.memory.forget_learned(gid, gone)
+            kept = [s for s in written.value if s.user_id in agreed]
+            log.info("Who is who: %d question(s) from this session", len(kept))
+            if kept:
+                await self.post(
+                    table.screen_channel_id, waiting_text(len(kept)), view=people_review_view(cid)
+                )
+
+    async def recheck_definitions(self, table: Table) -> None:
+        """After a session: facts written under an older meaning of a relationship are looked
+        at again; ones that no longer fit become flags for the DM (#1189)."""
+        if self.memory is None or table.campaign_id is None:
+            return
+        with log_context(guild_id=table.guild_id, campaign_id=table.campaign_id):
+            await self.memory.recheck_definitions(table.guild_id, table.campaign_id)
+
+    async def check_people(self, table: Table) -> None:
+        """After a session: every player has their entry and link to a character, and a
+        person who plays nothing and isn't a DM is marked "needs a look" (#1188)."""
+        if self.memory is None or table.campaign_id is None:
+            return
+        gid, cid = table.guild_id, table.campaign_id
+        with log_context(guild_id=gid, campaign_id=cid):
+            dms = {table.dm_user_id, *table.dm_user_ids}
+            await self.memory.check_people(gid, cid, dms)
+
+    async def suggest_names(self, table: Table) -> None:
+        """After a session: suggest names DMbot heard but doesn't know, for the DM to
+        check. Only lines from people who still agree; never anything DMbot already has
+        an answer for (including names the DM said aren't names)."""
+        if self.memory is None or table.campaign_id is None or not table.heard:
+            return
+        gid, cid = table.guild_id, table.campaign_id
+        with log_context(guild_id=gid, campaign_id=cid):
+            agreed = await self.consent.consenting(gid)
+            lines = [text for uid, text in table.heard if uid in agreed]
+            speakers = {uid for uid, _ in table.heard}
+            table.heard = []  # the session is over; free it
+            if not lines:
+                return
+            # People at the table aren't story names: skip their whole display names and
+            # each word of them ("Mia Stone" → "Mia", "Stone").
+            users = speakers | agreed | {table.dm_user_id}
+            users |= table.dm_user_ids
+            skip = set(await self.memory.known_keys(gid, cid))
+            for uid in users:
+                name = self.name_of(gid, uid)
+                if not name.startswith("<@"):
+                    skip.add(name_key(name))
+                    skip.update(name_key(word) for word in name.split())
+            # One question per thing ("Oskar Vane", also "Vane"), grouped before the cap
+            # (#394). Which known name each sounds like is worked out when the DM looks,
+            # never saved: names can change, or be made secret, before then.
+            found = group_alike(find_new_names(lines, skip, unlimited=True))[:MAX_SUGGESTIONS]
+            added: list[str] = []
+            for suggestion in found:
+                try:
+                    written = await self.memory.add_entity(
+                        gid,
+                        cid,
+                        type="concept",
+                        name=suggestion.name,
+                        source="scan",
+                        description=f"Heard {suggestion.times} times",
+                    )
+                except MemoryRuleError as exc:
+                    log.info("Skipped a suggested name: %s", exc)
+                    continue
+                added.append(suggestion.name)
+                for other in suggestion.also:  # suggested with it, confirmed with it
+                    part = name_key(other) in name_key(suggestion.name)
+                    try:
+                        await self.memory.add_alias(
+                            gid,
+                            cid,
+                            written.value.id,
+                            other,
+                            kind="short" if part else "misheard",
+                            source="scan",
+                        )
+                    except MemoryRuleError as exc:
+                        log.info("Skipped a name heard with a suggestion: %s", exc)
+            log.info("After-session scan: %d line(s), %d new name(s)", len(lines), len(added))
+            if self.lookup is not None and not any(
+                t.campaign_id == cid for t in self.tables.values()
+            ):
+                self.lookup.drop([cid])  # the session's copy isn't needed any more
+            if added:
+                await self.post(
+                    table.screen_channel_id,
+                    after_session_text(added),
+                    view=review_view(cid),
+                )
+
+    async def _dm_trial_user(self, user_id: int, text: str) -> trial_jobs.DmResult:
         """A private message to a person who is not at a table now. "closed" when Discord
         refuses for good (messages closed, no shared server); "retry" for anything that may
         pass. Never raises."""
