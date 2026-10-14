@@ -8,7 +8,7 @@ from typing import Any
 
 from dmbot.campaigns import CampaignStore
 from dmbot.rules import rule_sets
-from dmbot.rules.house import HouseRuleError, HouseRuleStore
+from dmbot.rules.house import HOUSE_RULES_MAX, HouseRuleError, HouseRuleStore
 from dmbot.rules.rule_sets import RuleSetError, RuleSetStore
 from tests.pg import DatabaseTest
 
@@ -210,7 +210,7 @@ class Updates(DatabaseTest):
 
     async def test_a_full_campaign_gets_a_clear_message_and_nothing_changes(self) -> None:
         await self.follow_far()
-        for i in range(rule_sets.HOUSE_RULES_MAX):
+        for i in range(HOUSE_RULES_MAX):
             await self.houses.add(GUILD_B, self.far, DM_B, f"Own rule {i}")
         await self.sets.save_version(GUILD_A, self.pub, DM_A, V2)
         with self.assertRaises(RuleSetError) as err:

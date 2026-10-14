@@ -150,6 +150,9 @@ async def take(
     accepted: set[int] | None,
 ) -> None:
     sets = _bot(interaction).rule_sets
+    if sets is None:
+        await _tell(interaction, COULDNT)
+        return
     try:
         taken = await sets.take_update(
             campaign.guild_id,
@@ -189,6 +192,9 @@ class UndoView(_Menu):
         current = await bot.campaigns.get(self.campaign.guild_id, self.campaign.id)
         if current is None or interaction.user.id not in current.dm_user_ids:
             await _tell(interaction, ONLY_DMS)
+            return
+        if bot.rule_sets is None:
+            await _tell(interaction, COULDNT)
             return
         try:
             await bot.rule_sets.undo_take(
@@ -312,7 +318,7 @@ async def check_update(bot: Any, campaign: Campaign, screen_id: int) -> None:
                 )
             return
         if update.follow.notified is not None and update.follow.notified >= update.offer.version:
-            await sets.take_update(campaign.guild_id, campaign.id, campaign.dm_user_ids[0])
+            await sets.take_update(campaign.guild_id, campaign.id, min(campaign.dm_user_ids))
             await bot.post(
                 screen_id,
                 f"📚 **{discord.utils.escape_markdown(update.offer.name)}** house rules "

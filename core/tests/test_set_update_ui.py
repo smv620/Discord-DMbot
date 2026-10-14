@@ -13,7 +13,7 @@ from dmbot.rules import rule_sets, set_diff
 
 
 def update(n: int, notified: int | None = None) -> rule_sets.Update:
-    old = {"rules": [], "link": None}
+    old: dict[str, Any] = {"rules": [], "link": None}
     new = {"rules": [{"number": i, "rule": f"Rule {i}", "instead": None} for i in range(1, n + 1)]}
     follow = rule_sets.Follow(
         "s", "house_rules", "Red Table", "Red", 3, old, True, 1, None, notified
