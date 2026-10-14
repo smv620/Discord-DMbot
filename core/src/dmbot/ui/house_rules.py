@@ -392,8 +392,8 @@ class ConfirmSuggest(_Menu):
         c = self.campaign
         try:
             sid, pub_guild, pub_campaign = await sets.suggest(
-                c.guild_id, c.id, interaction.user.id, self.rule.number
-            )
+                c.guild_id, c.id, interaction.user.id, self.rule.number, self.rule.version
+            )  # the version the DM was shown: what goes out is what they confirmed
         except HouseRuleError as exc:
             await _redraw(interaction, c, note=str(exc), page=self.page)
             return

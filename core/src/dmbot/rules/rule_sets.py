@@ -68,6 +68,7 @@ TOO_MANY_SUGGESTIONS = (
 )
 SET_HAS_ENOUGH = "That set has plenty of suggestions waiting. Try again next week."
 ALREADY_SUGGESTED = "This campaign already sent that rule. The answer comes at your next session."
+RULE_CHANGED = "That rule was changed since you looked, so nothing was sent. Look at it again."
 NOT_YOURS_TO_SEND = "Only rules your campaign wrote can be suggested. This one came from the set."
 ALREADY_IN_SET = "The set already has that rule, so nothing was added. The suggestion is closed."
 SUGGESTION_GONE = "Someone already answered that suggestion."
@@ -173,7 +174,7 @@ class Sent:
     id: str
     set_name: str
     rule: str
-    status: str  # 'open', 'accepted', 'declined' or 'expired'
+    status: str  # 'open', 'accepted', 'declined', 'present', 'gone' or 'expired'
     version: int | None
 
 
@@ -681,8 +682,8 @@ class RuleSetStore:
                 cur = await conn.execute(
                     "SELECT rule, instead FROM rule_set_suggestions WHERE guild_id = %s"
                     " AND campaign_id = %s AND id = %s AND set_id = %s AND status = 'open'"
-                    " FOR UPDATE",
-                    (guild_id, campaign_id, suggestion, set_id),
+                    " AND created_at > %s FOR UPDATE",  # past the wait, the sender was told
+                    (guild_id, campaign_id, suggestion, set_id, now - SUGGEST_WAIT_S),
                 )
                 asked = await cur.fetchone()
                 if asked is None:
@@ -735,13 +736,15 @@ class RuleSetStore:
     # ---- suggestions: a follower's rule sent to the publisher (#1259) ------------------
 
     async def suggest(
-        self, guild_id: int, campaign_id: str, user_id: int, number: int
+        self, guild_id: int, campaign_id: str, user_id: int, number: int, shown_version: int
     ) -> tuple[str, int, str]:
         """A DM of a following campaign sends one of the campaign's own house rules to the set's
         publisher. Returns (the suggestion's id, the publisher's server, its campaign): the
         last two are for DMbot to post the note and are never shown. A rule that came from a set
-        is not the campaign's to send. Limits: `SUGGEST_FOLLOWER_MAX` waiting from this campaign,
-        `SUGGEST_SET_MAX` open on the set."""
+        is not the campaign's to send. `shown_version`: the rule's version as the DM was shown it;
+        if it was edited since, nothing is sent (what goes out is what they confirmed).
+        Limits: `SUGGEST_FOLLOWER_MAX` waiting from this campaign, `SUGGEST_SET_MAX` open on
+        the set."""
         now = self._now()
         sid = secrets.token_hex(16)
         async with self._db.guild(guild_id) as conn:
@@ -755,7 +758,7 @@ class RuleSetStore:
                 raise RuleSetError(NOT_FOLLOWING)
             follow = follows[0]
             cur = await conn.execute(
-                "SELECT rule, supersedes, from_set FROM house_rules WHERE guild_id = %s"
+                "SELECT rule, supersedes, from_set, version FROM house_rules WHERE guild_id = %s"
                 " AND campaign_id = %s AND number = %s",
                 (guild_id, campaign_id, number),
             )
@@ -764,6 +767,8 @@ class RuleSetStore:
                 raise RuleSetError(NO_SUCH_RULE)
             if row["from_set"]:
                 raise RuleSetError(NOT_YOURS_TO_SEND)
+            if row["version"] != shown_version:
+                raise RuleSetError(RULE_CHANGED)
             cur = await conn.execute(
                 "SELECT count(*) AS n, count(*) FILTER (WHERE rule = %s) AS same"
                 " FROM rule_set_suggestions_sent WHERE guild_id = %s AND campaign_id = %s"
@@ -809,9 +814,12 @@ class RuleSetStore:
             row = await cur.fetchone()
         if row is None:
             return None
+        status = str(row["status"])
+        if status == "open" and self._now() - int(row["created_at"]) > SUGGEST_WAIT_S:
+            status = "expired"  # the sender was told they may send it again; it can't be added
         return Suggestion(
             str(row["id"]), str(row["set_id"]), str(row["rule"]), row["instead"],
-            str(row["status"]), int(row["created_at"]),
+            status, int(row["created_at"]),
         )  # fmt: skip
 
     async def unnoted_suggestions(
@@ -825,8 +833,9 @@ class RuleSetStore:
                 " FROM rule_set_suggestions q JOIN rule_sets s ON s.guild_id = q.guild_id"
                 " AND s.campaign_id = q.campaign_id AND s.id = q.set_id"
                 " WHERE q.guild_id = %s AND q.campaign_id = %s AND q.status = 'open'"
-                " AND q.noted_at IS NULL ORDER BY q.created_at",
-                (guild_id, campaign_id),
+                " AND q.noted_at IS NULL AND s.status = 'shared' AND q.created_at > %s"
+                " ORDER BY q.created_at",
+                (guild_id, campaign_id, self._now() - SUGGEST_WAIT_S),
             )
             rows = await cur.fetchall()
         return [
@@ -871,7 +880,7 @@ class RuleSetStore:
                 # before this was raised): close it, so no dead button or slot is left behind.
                 async with self._db.guild(guild_id) as conn:
                     await conn.execute(
-                        "UPDATE rule_set_suggestions SET status = 'declined', resolved_at = %s,"
+                        "UPDATE rule_set_suggestions SET status = 'present', resolved_at = %s,"
                         " resolved_by = %s WHERE guild_id = %s AND campaign_id = %s AND id = %s"
                         " AND status = 'open'",
                         (self._now(), user_id, guild_id, campaign_id, suggestion_id),
@@ -915,9 +924,9 @@ class RuleSetStore:
         out = []
         for r in sent:
             a = answers.get(str(r["id"]))
-            # No row back: the publisher's set is gone, so there will be no answer. Treated as
-            # declined so the DM is told once and the slot is freed.
-            status = str(a["status"]) if a else "declined"
+            # No row back: the publisher's set is gone, so there will be no answer. Told once
+            # ("gone"), which frees the slot.
+            status = str(a["status"]) if a else "gone"
             if status == "open" and self._now() - int(r["sent_at"]) > SUGGEST_WAIT_S:
                 status = "expired"  # told once, so the slot is freed
             out.append(
