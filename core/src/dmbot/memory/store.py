@@ -89,6 +89,7 @@ from dmbot.memory.models import (
 )
 from dmbot.memory.ontology import (
     ACTIVE,
+    CORE_PREDICATES,
     DEPRECATED,
     DM_WORD_REFUSED,
     MAX_NEW_TERMS_PER_SESSION,
@@ -106,6 +107,8 @@ from dmbot.memory.sounds import sound_codes
 
 PERSON = "person"
 PLAYS = "plays"
+# The version of the core `plays` definition, so a link made by DMbot is never behind (#1189).
+PLAYS_VERSION = next(p.version for p in CORE_PREDICATES if p.key == PLAYS)
 NOT_HERE = "That campaign doesn't exist in this server."
 INT64_MAX = 2**63 - 1
 # For a lookup of a few rows (one key). Reads of a whole campaign's names or facts use
@@ -1349,7 +1352,7 @@ class MemoryStore:
                     person = await _ensure_person(w, user_id)
                     link = Relation(
                         new_id(), person, PLAYS, character, "", 0.5, PROPOSED, w.source,
-                        (), None, None, None, None, False, w.now,
+                        (), None, None, None, None, False, w.now, PLAYS_VERSION,
                     )  # fmt: skip
                     await w.insert(RELATIONS, _relation_row(link))
                     played.add(character)
@@ -2178,7 +2181,7 @@ async def _sync_plays(w: Changes, character_id: str) -> None:
     if person is not None and not kept:
         link = Relation(
             new_id(), person, PLAYS, character_id, "", 1.0, CONFIRMED, w.source,
-            (), None, None, None, None, False, w.now,
+            (), None, None, None, None, False, w.now, PLAYS_VERSION,
         )  # fmt: skip
         await w.insert(RELATIONS, _relation_row(link))
 

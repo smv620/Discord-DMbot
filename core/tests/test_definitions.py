@@ -78,6 +78,10 @@ class Definitions(unittest.TestCase):
         with self.assertRaises(MemoryRuleError):
             onto.check_new_term("pact_with", "pact with", "d", ["e"], "r")
 
+    def test_a_synonym_belongs_to_one_relationship_only(self) -> None:
+        words = [w for p in CORE_PREDICATES for w in p.synonyms]
+        self.assertEqual(len(words), len(set(words)))
+
     def test_no_synonym_is_also_a_relationship(self) -> None:
         keys = {p.key for p in CORE_PREDICATES}
         self.assertFalse(keys & set(SYNONYMS))
@@ -122,6 +126,33 @@ class OldBackups(unittest.TestCase):
 
 
 class Stored(MemoryTest):
+    async def test_undo_works_across_the_migration_for_relations_and_predicates(self) -> None:
+        a, b = await self.add("Cerric"), await self.add("Belleros")
+        added = await self.relate(a, "ally_of", b)
+        assert added.batch is not None
+        # The change log as it was written before 0059: no definition_version in its snapshots.
+        async with self.db.guild(GUILD_A) as conn:
+            await conn.execute(
+                "UPDATE memory_changes SET after = after - 'definition_version'"
+                " WHERE table_name = 'memory_relations'"
+            )
+        await self.memory.undo(GUILD_A, self.c, added.batch)
+        self.assertEqual(await self.memory.relations(GUILD_A, self.c), [])
+        # And an update from before: undoing it puts the fact back as it was.
+        again = await self.relate(a, "ally_of", b)
+        changed = await self.memory.update_relation(
+            GUILD_A, self.c, again.value[0].id, source="dm", status="confirmed"
+        )
+        assert changed.batch is not None
+        async with self.db.guild(GUILD_A) as conn:
+            await conn.execute(
+                "UPDATE memory_changes SET before = before - 'definition_version',"
+                " after = after - 'definition_version' WHERE table_name = 'memory_relations'"
+            )
+        await self.memory.undo(GUILD_A, self.c, changed.batch)
+        facts = await self.memory.relations(GUILD_A, self.c)
+        self.assertEqual([(f.status, f.definition_version) for f in facts], [("proposed", 1)])
+
     async def test_a_start_fills_the_table_and_a_second_start_adds_nothing(self) -> None:
         self.assertEqual(await definitions.seed(self.db), len(CORE_PREDICATES))
         self.assertEqual(await definitions.seed(self.db), 0)

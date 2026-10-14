@@ -5719,8 +5719,8 @@ async def consent_revoke(interaction: discord.Interaction) -> None:
 async def run(settings: Settings) -> None:
     entitlements.configure_free_users(settings.free_users)  # #771
     db = await Database.open(settings.database_url)
-    await definitions.seed(db)  # the official relationships, by version (#1189)
     try:
+        await definitions.seed(db)  # the official relationships, by version (#1189)
         transcriber = build_transcriber(settings.transcription)
         await transcriber.warm_up()  # load the Whisper model now, not on the first word
         # With plans enforced, a hand-over, take-over or restore also needs room under the
