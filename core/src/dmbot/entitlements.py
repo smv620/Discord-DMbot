@@ -55,6 +55,9 @@ class Entitlement:
     # The payment company knows this person (a customer id is stored), so its billing page
     # can open; a plan set by hand has none (#824).
     has_customer: bool = False
+    # Minutes of the hours already used before this period began: a Try It that was extended
+    # keeps "8 hours in all", so its new period has the hours cap less these (#1229).
+    minutes_taken: int = 0
 
     @property
     def hours_this_period(self) -> int:
@@ -131,6 +134,7 @@ class Access:
     # The same, but cancelled: the paid plan's name and the moment it ends (#824).
     ending_plan: str | None = None
     ending_at: int | None = None
+    minutes_taken: int = 0  # taken off the hours cap, in minutes (see Entitlement)
 
     @property
     def works(self) -> bool:
@@ -195,6 +199,7 @@ def access_for(user_id: int, plan: Entitlement | None, grant: Grant | None, now:
             plan.hours_this_period,
             plan.campaign_cap,
             bool(known and known.backups),
+            minutes_taken=plan.minutes_taken,
         )
     if grant is not None and grant.active(now):
         if grant.level == "unlimited":
@@ -329,6 +334,7 @@ async def _read_plan(conn: Conn, user_id: int) -> Entitlement | None:
         grace_ends_at=row["grace_ends_at"],
         lapsed_at=row["lapsed_at"],
         plan_changed_at=row["plan_changed_at"],
+        minutes_taken=row.get("minutes_taken") or 0,
         ends_at=row.get("ends_at"),  # older schemas (tests of a backfill) have none
         has_customer=row.get("provider_customer_id") is not None,
     )
