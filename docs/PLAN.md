@@ -639,10 +639,13 @@ never does.
     start) is **held as pending** and shown to the publisher's DMs as a diff ([See changes] [Accept] [Not
     these]). Until they accept, every campaign keeps the last accepted version; followers see "New changes
     are waiting for the <set> DM."
-- **Updates reach followers at their next session start, never mid-game**, as a note on their DM screen:
-  "The Frostmaiden house rules changed (v4): 2 rules. **[Follow]** **[Cherry pick]** [See changes]".
-  - **Follow** (the default, also what happens if the DM does nothing): take the changes and keep following.
-  - **Cherry pick:** decide change by change, Accept or Reject. **If every change is accepted, it is the same
+- **Updates reach followers at their next session start, never mid-game.** DMbot takes the update then
+  (Follow, the default) and posts a note on the DM screen: "The Frostmaiden house rules were updated to v4:
+  2 rules. [See changes] [Pick changes] [Undo]".
+  - **Follow** (the default, also what happens if the DM does nothing): the changes are taken and the campaign
+    keeps following. **Undo** goes back to the earlier version and keeps it: DMbot does not take that same
+    version again at the next session, only a newer one.
+  - **Pick changes** (cherry pick): undo the take and decide change by change. **If every change is accepted, it is the same
     as Follow.** **If any change is rejected,** the set as the campaign had it, plus the accepted changes and
     without the rejected ones, is **merged into the campaign's own house rules** (or its own homebrew), and
     the campaign stops following that set. Its own rules still win over what was merged. The merged rules
@@ -655,6 +658,11 @@ never does.
 - **Isolation:** shared sets live in their own tables, readable only by the campaigns that follow them
   (row-level security through the follow record), and never readable by anything else of the publishing
   campaign. A follow, a share code and every change are visible and can be undone by the DM.
+- *How updates are taken (Supervisor, 2026-10-14, #1233):* at the session's start the update is taken at once
+  (Follow), credited to DMbot, and the DM-screen note offers [See changes] [Pick changes] [Undo]. Pick changes
+  undoes the take and opens the picker, and a choice is checked against the version the DM was shown. A share
+  code that is turned off still answers updates for follows made before it was turned off; only Stop sharing
+  ends updates. After a merge, the merged rules rank below the campaign's own and are cited "from <set>".
 - **Build:** #1190 (sets, publishing, following, precedence, share codes) and #1191 (updates: Follow and Cherry
   pick, pending document changes, suggestions), CloudDev.
 
@@ -2407,7 +2415,7 @@ messages use the same ones.
 | Plan | Hours a month | Campaigns | Price |
 |---|---|---|---|
 | Try It | 8, for 30 days, one per Discord account | 1 | free |
-| Table | 18 ("about 4 hours a week") | 1 | $8.99 (first month $1.99 after Try It) |
+| Table | 18 ("about 4 hours a week") | 1 | $8.99 (no $1.99 first month since 2026-10-14) |
 | Two Tables | 43 ("about 10 hours a week") | 2 | $17.99 |
 | Guild | 87 ("about 20 hours a week") | 5 | $34.99 |
 | Pro | 217 ("about 50 hours a week"); needs the bigger server | 20 | coming soon |
@@ -3070,8 +3078,8 @@ and is still in the server. The log lists only names read from D&D Beyond, never
 ones.
 
 **Website (decided 2026-10-07).** `web/` in this repo, Astro + TypeScript, static pages
-with one signed-in area; Cloudflare Pages; sign-in with Discord only (scopes `identify
-email guilds`); payments through a hosted checkout, **Stripe** (owner's
+with one signed-in area; Cloudflare Pages; sign-in with Discord (scopes `identify
+email guilds`) or, since 2026-10-14, an emailed sign-in link (see "Accounts" below); payments through a hosted checkout, **Stripe** (owner's
 choice, 2026-10-13, replacing Lemon Squeezy, chosen 2026-10-09, #498) with its customer portal
 for plan changes; the API is FastAPI in
 `core/src/dmbot/web/`, its own container, the only writer of the `entitlements` table via
@@ -3110,9 +3118,8 @@ stays, and so does the meaning of each event kind:
 - **Test and live:** an event whose `livemode` does not match the key's mode is ignored. Test mode
   is Stripe's test keys, so no separate test switch.
 - **Checkout** is a Checkout Session made by an API call (email server-side, never in the
-  address), with the plan's Price id. The $1.99 first month of Table is a once-only coupon made
-  in Stripe, and a first-month checkout with no coupon set is refused rather than charged in
-  full. Each checkout request carries an **idempotency key** (a hash of the request) and the same
+  address), with the plan's Price id. (The $1.99 first month of Table and its once-only coupon were removed by the
+  owner on 2026-10-14; see "Accounts" below.) Each checkout request carries an **idempotency key** (a hash of the request) and the same
   expiry for every request in a five-minute window, so a double-click or a retry after a timeout
   gets the same session instead of a second live one (two completed checkouts would be two
   subscriptions). The session expires 32 to 37 minutes after it is made (#1122).
@@ -3158,6 +3165,116 @@ DMbot already wrote down stays, and anyone in this server can still read it." (W
 "Delete my past transcripts" ships, that message must also say how to use it.)
 
 **Bots are never transcribed** (music bots etc.) — enforced in ears by an allowlist.
+
+**Accounts: the DMbot ID, email sign-in, moving to a new Discord account, trial emails,
+experience points and the trial extension (owner, 2026-10-14; Supervisor's details marked).**
+- **DMbot ID.** Every account gets a DMbot ID: its Discord user ID written in **base 36**
+  (digits and capital letters, `0-9A-Z`). It is the Stripe customer's `invoice_prefix`, so
+  invoices read `<DMbot ID>-0001`. *Why base 36 and not base 56 (Supervisor):* Stripe's
+  invoice prefix must be 3 to 12 **capital letters or digits**, and base 56 needs lower case.
+  Base 36 fits today's Discord IDs (about 1.5×10^18) in 12 characters until about 2050
+  (36^12 ≈ 4.7×10^18), and a test pins that today's largest IDs fit. **The ID is fixed when the
+  account is made and kept for life**, stored, not worked out again: after a move to a new
+  Discord account (below) the account keeps its DMbot ID and its invoice history. It is an
+  account number, not a secret. Anyone who knows a Discord ID can work it out, so it is never
+  enough on its own to see anything about the account.
+- **Personal links (`uid`).** Links DMbot sends to one person (the trial-end message and the
+  emails below) carry `?uid=<DMbot ID>&t=<token>`, where the token is a signed, expiring
+  (30 days) code made by the web API. *Why the token (Supervisor):* the pricing and hello pages
+  greet the person by Discord name and show their experience points, and a bare `uid` would let
+  anyone show anyone's name and minutes by guessing IDs. With no token, or an expired or wrong
+  one, the page shows its plain version and nothing personal.
+- **Experience points:** the account's total DMbot minutes, all time, on every plan (the hours
+  meter already counts them). Shown as "Experience points: <minutes>" on the account page, and on
+  the pricing and hello pages when a valid personal link is used.
+- **Signing in to the website:** with Discord (as before), **or by typing an email address**.
+  If an account's email matches, a sign-in link is emailed (one use, 15 minutes); the page
+  always says "If that email belongs to a DMbot account, we've sent a link", so it never tells
+  anyone whether an address has an account. Wrong or repeated requests are rate-limited per
+  address and per connection. No passwords, ever. *The account's email* is the one Stripe has
+  for its payments (Checkout and the customer portal keep it up to date); an account that never
+  paid has the email Discord gave the website, if it signed in there.
+- **Moving to a new Discord account ("migrate").** Only for an **active paid subscription**
+  (not Try It, a trial extension, a grant or the free list).
+  1. Get a move code: `/dmbot migrate` in Discord (from the old account), or My Account on the
+     website (signed in with the old Discord account or by email link, so it works when the old
+     Discord account is gone). The code is **emailed to the account's payment email**, never
+     shown on screen. It is 8 letters and digits, works once, and lasts 30 minutes.
+  2. On the new Discord account: `/dmbot migrate`, then **Import from another Discord account**,
+     and type the code.
+  3. Then, in one database change: the plan, its hours, the Stripe customer (its metadata
+     updated to the new Discord ID), every campaign the old account owned, and its DM place in
+     those campaigns (and its `played_by` and person entries there) move to the new Discord ID.
+     The old account is left as a **moved** marker: who it moved to and when. Transcripts keep
+     the names they were written with.
+  4. **Recording consent does not move.** The new account says yes for itself the first time
+     it joins a table. Consent belongs to the Discord account whose voice is recorded.
+  - *Limits (Supervisor):* one move per 30 days. A moved account can never start a new Try It
+    (one trial per person). Codes are rate-limited like sign-in links. The confirmation names
+    the plan and the campaigns that will move, and the old account is told by private message if
+    it still exists.
+  - **If the old Discord account shows up again** where DMbot is installed (owner's question):
+    it is an ordinary Discord user with no plan and no campaigns. The first time it uses DMbot
+    it is told once, privately: "Your DMbot account moved to another Discord account on <date>."
+    It can't run the moved campaigns, take them on or restore them, because ownership is a
+    Discord ID check and that ID no longer owns anything. To move back, it needs a new code from
+    the payment email, like any move. Players who never moved are unaffected.
+  - **Giving campaigns to a different person (Supervisor):** a move takes the whole account,
+    *including the subscription and the card that pays for it*. A retired DM handing campaigns to
+    a new DM should use **Hand over** (#614) for each campaign. The new DM then pays with their
+    own plan. Help says so next to `/dmbot migrate`.
+- **When neither Discord nor the email can be reached** (owner's question; Stripe's answer):
+  Stripe has no way for a customer to stop a subscription without the customer portal, which
+  needs the website sign-in or a link sent to the payment email. Such a person writes to us at
+  the hello page or the contact email. The admin checks who they are (the card's brand and last
+  four digits, the billing name and postal code, the invoice numbers), then cancels the
+  subscription in the Stripe Dashboard. Their bank can also stop the payments, which Stripe
+  sees as a failed payment or a dispute, and the plan ends by the usual unpaid rules.
+- **Plan change: no $1.99 first month** (owner, 2026-10-14). Table is $8.99 from its first
+  month; the once-only coupon and its checkout check are removed.
+- **The last day of Try It:** a private message on Discord and, when DMbot has an email for the
+  person, an email, both with this text: "Hi <Discord name>! Thanks for trying DMbot. We hope you
+  love it. Free samples are nice, but we do have to pay other companies for the AI models
+  DMbot uses. If you'd like to keep using DMbot, please look at the plans at
+  https://getdmbot.com/pricing. If you're still unsure, please tell us how we can make DMbot
+  better at https://getdmbot.com/hello." Both links are personal links (above), so the pages
+  greet the person ("Hello, <Discord name>") and show their experience points. *Note:* the bot
+  never sees a Discord user's email; DMbot has one only if the person signed in to the website
+  or paid.
+- **Trial extension** (owner, 2026-10-14): a person who **has never paid**, has used DMbot for
+  **less than 4 hours in all**, and whose Try It (or last extension) **ended 3 days ago** gets
+  **30 more days** of Try It, and an email that says so and why: "we want you to have the chance
+  to really try DMbot at your table." It keeps every Try It limit: 8 hours of DMbot time in all
+  (not 8 more), one campaign, no backups or downloads, no hand-overs, no moves. It repeats each
+  time an extension ends while the total stays under 4 hours. It happens on its own: nothing to
+  click. Only people DMbot has an email for get the email, but the extension applies to everyone
+  who qualifies, and the bot says so privately at their next `/dmbot start`.
+  *Details (Supervisor, 2026-10-14, #1240):* the 8 hours in all are counted in minutes and enforced
+  by the database itself (480 minus the minutes used). The daily job looks back 40 days: at its
+  first run it reaches people whose trial ended up to 40 days ago, who may still come back,
+  and never emails people long gone. The last-day message goes again at the end of each
+  extension. Experience points are the minutes on campaigns the account owns.
+- **Sending email:** for now from the owner's `dmbot.admin@gmail.com` (SMTP with a Google app
+  password, kept in the server's `.env`, never in the repository; dev1 adds it). Later from the
+  owner's own email account. One small sending module in core with a daily cap (Gmail allows
+  about 500 a day) and a log of what was sent to whom (never the email's text), so a person
+  gets each email once. Sign-in links and move codes are account emails. The trial-end and
+  extension emails are offers, so each has an unsubscribe link (honoured at once, kept in the
+  database) and **a postal address** (US CAN-SPAM requires one in commercial email): **that
+  address is the owner's call** (`needs: owner`; a PO box or a mail service is fine), and the
+  offer emails don't go out until it is set. The privacy policy and terms get a line each on
+  these emails, which is legal wording for the owner to sign off.
+- **An owner gone from Discord** (Supervisor, 2026-10-14, #1185, built in #1214): when DMbot sees a
+  campaign's owner isn't in the server (asked only at a start, on opening Settings and once a day;
+  no new intent), the campaign becomes ownerless after 7 days, or at once if Discord says the
+  account was deleted. Its DMs then get **Take it on**, and the 120 days apply as for a deleted
+  DMbot account.
+- **Pause from the website: no** (Supervisor, 2026-10-14, #435): pausing a campaign stays in
+  Discord (⏸️ on ⚙️ Settings), where the bot holds the session lock and knows whether it is
+  listening.
+- **Build:** #1228 (DMbot ID, link tokens, experience points, no $1.99), #1229 (email, trial-end
+  message, extension), #1230 (moves), all CloudDev; #1231 (website sign-in by email, My Account,
+  personal pages, WebDev); #1232 (owner: postal address, Gmail app password).
 
 **License (decided 2026-10-03).** Public repository under PolyForm Strict 1.0.0.
 
