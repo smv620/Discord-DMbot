@@ -104,8 +104,11 @@ export const accountSteps: Step[] = [
     names: [{ name: "Hand over", file: "dm_screen/handover.py" }],
   },
   {
-    text: "Can't reach your old account any more? Another game master of the campaign can press Take it on. If there is no other game master, load your campaign's backup with your new account. This works for paid campaigns only.",
-    names: [{ name: "Take it on", file: "dm_screen/handover.py" }],
+    text: "Can't reach your old account any more? If you kept a backup (type /dmbot backup before you leave, paid campaigns only), type /dmbot restore on your new account. That needs a plan with a free campaign slot.",
+    names: [
+      { name: "/dmbot backup", file: "ui/dmbot_commands.py" },
+      { name: "/dmbot restore", file: "ui/dmbot_commands.py" },
+    ],
   },
 ];
 
