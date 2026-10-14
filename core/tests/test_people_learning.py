@@ -104,8 +104,15 @@ class Learning(MemoryTest):
         )
         await self.memory.learn_people(GUILD_A, other, [("Mikey", PLAYER, 2)], limit=10)
         await self.memory.learn_people(GUILD_A, self.c, [("Vera", OTHER, 2)], limit=10)
-        self.assertEqual(await self.memory.forget_learned(GUILD_A, PLAYER), 3)
+        # Three learned names and links, and the two placeholder entries (one per campaign)
+        # nothing else hangs on.
+        self.assertEqual(await self.memory.forget_learned(GUILD_A, PLAYER), 5)
         self.assertEqual(await self.waiting(), [("name", "Vera", OTHER)])
+        for campaign in (self.c, other):
+            gone = [
+                e for e in await self.memory.entities(GUILD_A, campaign) if e.played_by == PLAYER
+            ]
+            self.assertEqual(gone, [])
         self.assertEqual(await self.waiting(other), [])
         # Not even the change log keeps it.
         async with self.db.guild(GUILD_A) as conn:
@@ -113,6 +120,34 @@ class Learning(MemoryTest):
                 "SELECT count(*) AS n FROM memory_changes WHERE after::text LIKE '%Mike%'"
             )
             self.assertEqual((await cur.fetchone() or {})["n"], 0)
+
+    async def test_a_person_with_something_hanging_on_it_stays(self) -> None:
+        await self.add("Testa", type="player_character", played_by=PLAYER)  # a confirmed link
+        await self.memory.learn_people(GUILD_A, self.c, [("Mike", PLAYER, 2)], limit=10)
+        await self.memory.forget_learned(GUILD_A, PLAYER)
+        mine = [e for e in await self.memory.entities(GUILD_A, self.c) if e.played_by == PLAYER]
+        self.assertEqual([e.type for e in mine if e.type == "person"], ["person"])
+
+    async def test_a_removed_placeholder_cannot_come_back_by_undo(self) -> None:
+        await self.memory.learn_people(GUILD_A, self.c, [("Mike", PLAYER, 2)], limit=10)
+        await self.memory.forget_learned(GUILD_A, PLAYER)
+        async with self.db.guild(GUILD_A) as conn:
+            cur = await conn.execute(
+                "SELECT count(*) AS n FROM memory_changes WHERE after::text LIKE '%Player 1234%'"
+                " OR before::text LIKE '%Player 1234%'"
+            )
+            self.assertEqual((await cur.fetchone() or {})["n"], 0)
+
+    async def test_who_is_who_is_kept_until_the_memory_changes(self) -> None:
+        pc = await self.add("Testa", type="player_character", played_by=PLAYER)
+        first = await self.memory.table_people(GUILD_A, self.c)
+        first[0][1].append("tampered")  # a caller changing its copy can't change the cache
+        self.assertEqual((await self.memory.table_people(GUILD_A, self.c))[0][1], ["Testa"])
+        # A change to the campaign's memory is seen at once.
+        await self.memory.rename_entity(GUILD_A, self.c, pc, "Testa the Bold", source="dm")
+        self.assertEqual(
+            (await self.memory.table_people(GUILD_A, self.c))[0][1], ["Testa the Bold"]
+        )
 
     async def test_a_person_and_their_names_stay_in_their_campaign(self) -> None:
         other = (await self.campaigns.create(GUILD_A, "Another", SRC_DM)).id
