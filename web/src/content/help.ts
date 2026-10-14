@@ -56,7 +56,7 @@ export const dmSteps: Step[] = [
     names: [{ name: "/dmbot backup", file: "ui/dmbot_commands.py" }],
   },
   {
-    text: "To share your house rules with another table, press ⚙️ Settings, then 📚 Shared rules, then 📤 Share my house rules (paid campaigns only). DMbot gives you a share code. Anyone with the code can read your rules, so give it only to a game master you trust. Press 🔑 New share code to get another one.",
+    text: "To share your house rules with another table, press ⚙️ Settings, then 📚 Shared rules, then 📤 Share my house rules (paid campaigns only). DMbot gives you a share code. Anyone with the code can read your rules, so give it only to a game master you trust. Press 🔑 New share code to get another one. Old codes keep working; Stop sharing turns them all off.",
     names: [
       { name: "Shared rules", file: "dm_screen/settings.py" },
       { name: "📤 Share my house rules", file: "ui/shared_rules.py" },
@@ -71,11 +71,11 @@ export const dmSteps: Step[] = [
     ],
   },
   {
-    text: "When shared rules change, DMbot adds the new version at your next session and tells you. Press See changes to look, Pick changes to choose which to keep, or ↩️ Undo to put your old copy back.",
+    text: "When shared rules change, DMbot adds the new version at your next session and tells you. Press See changes to look, Pick changes to choose which to keep, or Undo to put your old copy back.",
     names: [
       { name: "See changes", file: "dm_screen/set_update.py" },
       { name: "Pick changes", file: "dm_screen/set_update.py" },
-      { name: "↩️ Undo", file: "dm_screen/set_update.py" },
+      { name: "Undo", file: "dm_screen/set_update.py" },
     ],
   },
   {
@@ -83,7 +83,7 @@ export const dmSteps: Step[] = [
     names: [{ name: "Stop using shared rules", file: "ui/shared_rules.py" }],
   },
   {
-    text: "To stop sharing your own rules, press ⚙️ Settings, then 📚 Shared rules, then Stop sharing, then Yes, stop sharing. Every share code stops working. Tables already using your rules keep their copy.",
+    text: "To stop sharing your own rules, press ⚙️ Settings, then 📚 Shared rules, then Stop sharing, then Yes, stop sharing. Every share code stops working. Tables already using your rules keep their copy, but it won't be updated any more.",
     names: [
       { name: "Stop sharing", file: "ui/shared_rules.py" },
       { name: "Yes, stop sharing", file: "ui/shared_rules.py" },
