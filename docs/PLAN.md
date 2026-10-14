@@ -655,6 +655,11 @@ never does.
 - **Isolation:** shared sets live in their own tables, readable only by the campaigns that follow them
   (row-level security through the follow record), and never readable by anything else of the publishing
   campaign. A follow, a share code and every change are visible and can be undone by the DM.
+- *How updates are taken (Supervisor, 2026-10-14, #1233):* at the session's start the update is taken at once
+  (Follow), credited to DMbot, and the DM-screen note offers [See changes] [Pick changes] [Undo]. Pick changes
+  undoes the take and opens the picker, and a choice is checked against the version the DM was shown. A share
+  code that is turned off still answers updates for follows made before it was turned off; only Stop sharing
+  ends updates. After a merge, the merged rules rank below the campaign's own and are cited "from <set>".
 - **Build:** #1190 (sets, publishing, following, precedence, share codes) and #1191 (updates: Follow and Cherry
   pick, pending document changes, suggestions), CloudDev.
 
