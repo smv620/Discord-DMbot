@@ -5,7 +5,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from psycopg import errors
+from psycopg import AsyncConnection, errors
 
 from dmbot import account_move
 from dmbot.account_id import to_dmbot_id
@@ -572,3 +572,81 @@ class Moves(DatabaseTest):
             await sessions.sign_in(
                 web, DiscordUser(id=OLD, name="Old", email=None), [], now=NOW, days=1
             )
+
+    async def test_every_move_leaves_one_history_row_a_b_a_b_gives_three(self) -> None:
+        async with self.db.user(OLD) as conn:
+            await conn.execute(
+                "UPDATE web_users SET payment_email = 'payer@example.com' WHERE user_id = %s",
+                (OLD,),
+            )
+        await self.moves.move(OLD, NEW, await self.code())
+        self.now = NOW + 31 * 86400
+        await self.moves.move(NEW, OLD, await self.moves.make_code(NEW))
+        self.now = NOW + 62 * 86400
+        await self.moves.move(OLD, NEW, await self.moves.make_code(OLD))
+        async with self.db.user(NEW) as conn:
+            cur = await conn.execute(
+                "SELECT old_user_id, new_user_id, email_used FROM account_id_history ORDER BY id"
+            )
+            rows = [
+                (r["old_user_id"], r["new_user_id"], r["email_used"]) for r in await cur.fetchall()
+            ]
+        self.assertEqual(
+            rows,
+            [(OLD, NEW, "payer@example.com"), (NEW, OLD, "payer@example.com"),
+             (OLD, NEW, "payer@example.com")],
+        )  # fmt: skip
+        # Another account sees none of them, and the history is never changed or deleted.
+        async with self.db.user(THIRD) as conn:
+            cur = await conn.execute("SELECT count(*) AS n FROM account_id_history")
+            self.assertEqual((await cur.fetchone() or {})["n"], 0)
+        async with self.db.user(NEW) as conn:
+            for statement in (
+                "UPDATE account_id_history SET email_used = 'x@example.com'",
+                "DELETE FROM account_id_history",
+            ):
+                cur = await conn.execute(statement)
+                self.assertEqual(cur.rowcount, 0, statement)
+
+    async def test_the_website_reads_only_its_own_history_and_account_deletion_removes_it(
+        self,
+    ) -> None:
+        web = await self.web()
+        await self.moves.move(OLD, NEW, await self.code())
+        async with web.user(NEW) as conn:
+            cur = await conn.execute("SELECT old_user_id FROM dmbot_previous_ids()")
+            self.assertEqual([r["old_user_id"] for r in await cur.fetchall()], [OLD])
+            with self.assertRaises(errors.InsufficientPrivilege):
+                await conn.execute("SELECT * FROM account_id_history")
+        async with web.user(THIRD) as conn:
+            cur = await conn.execute("SELECT old_user_id FROM dmbot_previous_ids()")
+            self.assertEqual(await cur.fetchall(), [])  # someone else's history is not theirs
+        await accounts.delete_person(web, NEW)
+        # Physically gone (read as the database's administrator, who bypasses row security).
+        async with await AsyncConnection.connect(SUPERUSER_URL, autocommit=True) as admin:
+            await admin.execute(f"SET search_path TO {self.schema}")
+            cur = await admin.execute("SELECT count(*) FROM account_id_history")
+            row = await cur.fetchone()
+            self.assertEqual(row[0] if row else None, 0)
+
+    async def test_the_export_lists_earlier_discord_accounts(self) -> None:
+        from dmbot.web.export import build_export
+
+        web = await self.web()
+        async with self.db.user(OLD) as conn:
+            await conn.execute(
+                "UPDATE web_users SET payment_email = 'payer@example.com' WHERE user_id = %s",
+                (OLD,),
+            )
+        await self.moves.move(OLD, NEW, await self.code())
+        self.now = NOW + 31 * 86400
+        await self.moves.move(NEW, OLD, await self.moves.make_code(NEW))
+        token = await sessions.sign_in(
+            web, DiscordUser(id=OLD, name="Old", email=None), [], now=NOW, days=1
+        )
+        session = await sessions.find(web, token, now=NOW)
+        assert session is not None
+        data = await build_export(web, session, now=NOW)
+        earlier = data["account"]["previousDiscordIds"]
+        self.assertEqual([e["discordId"] for e in earlier], [str(OLD), str(NEW)])
+        self.assertEqual({e["email"] for e in earlier}, {"payer@example.com"})

@@ -2060,6 +2060,8 @@ WEB_ROLE_FUNCTIONS: tuple[tuple[str, str], ...] = (
     ("dmbot_moves_to_sync", "dmbot_moves_to_sync()"),  # the job that updates Stripe (#1230)
     ("dmbot_move_synced", "dmbot_move_synced(BIGINT)"),
     ("dmbot_move_failed", "dmbot_move_failed(BIGINT)"),
+    ("dmbot_previous_ids", "dmbot_previous_ids()"),  # the export's earlier Discord accounts
+    ("dmbot_forget_account_history", "dmbot_forget_account_history()"),  # account deletion
     ("dmbot_set_payment_email", "dmbot_set_payment_email(TEXT, TEXT, BIGINT)"),  # #1242
 )
 # The columns the website may fill when it creates a hand-over offer (#728): who, where and the
@@ -2454,6 +2456,39 @@ MOVES = """
     );
     CREATE INDEX account_moves_by_id ON account_moves (dmbot_id, moved_at);
     CREATE INDEX account_moves_by_new ON account_moves (new_user_id);
+    -- Every Discord account a DMbot account has used (owner request, 2026-10-14): ONE row for
+    -- each move, written inside dmbot_move_account in the same transaction, and never
+    -- changed. The only deletion is the account's own deletion (dmbot_forget_account_history).
+    -- email_used is the payment email at the time of the move (where the move code went).
+    -- account_moves stays the routing marker; this is the record. Row-level security by
+    -- person: a row is visible to the account that holds its DMbot ID; the website reads
+    -- through dmbot_previous_ids(), and has no grant on the table.
+    CREATE TABLE account_id_history (
+        id          BIGSERIAL PRIMARY KEY,
+        dmbot_id    TEXT   NOT NULL,
+        old_user_id BIGINT NOT NULL CHECK (old_user_id > 0),
+        new_user_id BIGINT NOT NULL CHECK (new_user_id > 0),
+        moved_at    BIGINT NOT NULL,
+        email_used  TEXT
+    );
+    CREATE INDEX account_id_history_by_id ON account_id_history (dmbot_id, id);
+    ALTER TABLE account_id_history ENABLE ROW LEVEL SECURITY;
+    ALTER TABLE account_id_history FORCE ROW LEVEL SECURITY;
+    CREATE POLICY user_isolation ON account_id_history FOR SELECT
+        USING (dmbot_id IN (SELECT u.dmbot_id FROM web_users u
+                            WHERE u.user_id = dmbot_current_user()));
+    DO $do$
+    BEGIN
+        EXECUTE format(
+            'CREATE POLICY move_insert ON account_id_history FOR INSERT TO %I'
+            ' WITH CHECK (dmbot_owner_sync() = ''move'')',
+            current_user);
+        EXECUTE format(
+            'CREATE POLICY forget_delete ON account_id_history FOR DELETE TO %I'
+            ' USING (dmbot_owner_sync() = ''forget_history'')',
+            current_user);
+    END
+    $do$;
     CREATE INDEX account_moves_to_sync ON account_moves (moved_at) WHERE stripe_done_at IS NULL;
     -- Rows that point at the account follow its Discord ID when the move changes it.
     ALTER TABLE entitlements DROP CONSTRAINT entitlements_user_id_fkey,
@@ -2659,6 +2694,8 @@ MOVES = """
             ON CONFLICT DO NOTHING;
         -- Moving back: the earlier marker for this Discord ID ends, it is the account again.
         DELETE FROM account_moves WHERE old_user_id = new;
+        INSERT INTO account_id_history (dmbot_id, old_user_id, new_user_id, moved_at, email_used)
+            VALUES (acct.dmbot_id, old, new, now, acct.payment_email);
         INSERT INTO account_moves (old_user_id, new_user_id, dmbot_id, moved_at, customer_id,
                                    subscription_id, stripe_done_at)
             VALUES (old, new, acct.dmbot_id, now, ent.provider_customer_id,
@@ -2790,6 +2827,48 @@ MOVES = """
     REVOKE ALL ON FUNCTION dmbot_moves_to_sync() FROM PUBLIC;
     REVOKE ALL ON FUNCTION dmbot_move_synced(BIGINT) FROM PUBLIC;
     REVOKE ALL ON FUNCTION dmbot_move_failed(BIGINT) FROM PUBLIC;
+    -- The signed-in person's earlier Discord accounts, oldest first, for the data export. The
+    -- function runs as the table's owner, whose row-level security is the same person-only
+    -- policy, so it can only ever return the caller's own rows.
+    CREATE FUNCTION dmbot_previous_ids()
+        RETURNS TABLE (old_user_id BIGINT, moved_at BIGINT, email_used TEXT)
+        LANGUAGE sql STABLE SECURITY DEFINER
+        AS $fn$
+        SELECT h.old_user_id, h.moved_at, h.email_used FROM account_id_history h ORDER BY h.id;
+    $fn$;
+    -- Account deletion takes the history with it: the person's own DMbot ID only.
+    CREATE FUNCTION dmbot_forget_account_history() RETURNS INTEGER
+        LANGUAGE plpgsql SECURITY DEFINER
+        AS $fn$
+    DECLARE
+        before TEXT := COALESCE(current_setting('dmbot.owner_sync', true), '');
+        mine TEXT;
+        gone INTEGER;
+    BEGIN
+        SELECT u.dmbot_id INTO mine FROM web_users u WHERE u.user_id = dmbot_current_user();
+        IF mine IS NULL THEN
+            RETURN 0;
+        END IF;
+        PERFORM set_config('dmbot.owner_sync', 'forget_history', true);
+        DELETE FROM account_id_history h WHERE h.dmbot_id = mine;
+        GET DIAGNOSTICS gone = ROW_COUNT;
+        PERFORM set_config('dmbot.owner_sync', before, true);
+        RETURN gone;
+    END
+    $fn$;
+    DO $do$
+    BEGIN
+        EXECUTE format(
+            'ALTER FUNCTION dmbot_previous_ids() SET search_path = pg_catalog, %I, pg_temp',
+            current_schema());
+        EXECUTE format(
+            'ALTER FUNCTION dmbot_forget_account_history()'
+            ' SET search_path = pg_catalog, %I, pg_temp',
+            current_schema());
+    END
+    $do$;
+    REVOKE ALL ON FUNCTION dmbot_previous_ids() FROM PUBLIC;
+    REVOKE ALL ON FUNCTION dmbot_forget_account_history() FROM PUBLIC;
     -- What a move would take, for the confirmation screen: the plan and the name of each
     -- campaign. Names only; nothing else of a campaign leaves.
     CREATE FUNCTION dmbot_move_preview(old BIGINT) RETURNS TABLE (kind TEXT, label TEXT)
@@ -2998,6 +3077,8 @@ USER_ISOLATED_TABLES = (
     "payment_events",
     "web_sessions",
     "installs",
+    # Every Discord account a DMbot account used; keyed by its DMbot ID (#1230).
+    "account_id_history",
     # Keyed by Discord account (#771): the person's own grant, or the grant writer.
     "access_grants",
     # Not per person: only the grant writer adds or reads a row (#771).

@@ -114,6 +114,7 @@ class Export(DatabaseTest):
         data = await build_export(self.web, self.alice, now=self.now)
         self.assertEqual(data["account"]["discordId"], str(ALICE.id))
         self.assertEqual(data["account"]["dmbotId"], to_dmbot_id(ALICE.id))
+        self.assertEqual(data["account"]["previousDiscordIds"], [])  # never moved
         self.assertIsNone(data["account"]["paymentEmail"])  # None until a payment has come
         async with self.db.user(ALICE.id) as conn:
             await conn.execute(
