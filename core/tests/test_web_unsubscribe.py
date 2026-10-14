@@ -101,17 +101,18 @@ class WebRoleAndEmailTable(UnsubscribeRoute):
 
         async with self.web.unscoped() as conn:
             cur = await conn.execute(
-                "SELECT dmbot_claim_email(%s, %s, false) AS ok", (USER, "sign-in:1")
+                "SELECT dmbot_claim_email(%s, %s, false, 400, 300) AS status", (USER, "sign-in:1")
             )
             row = await cur.fetchone()
-            self.assertTrue((row or {})["ok"])
+            self.assertEqual((row or {})["status"], "sent")
             cur = await conn.execute(
-                "SELECT dmbot_claim_email(%s, %s, false) AS ok", (USER, "sign-in:1")
+                "SELECT dmbot_claim_email(%s, %s, false, 400, 300) AS status", (USER, "sign-in:1")
             )
             row = await cur.fetchone()
-            self.assertFalse((row or {})["ok"])  # a kind goes once
+            self.assertEqual((row or {})["status"], "duplicate")  # a kind goes once
         for statement in (
             "SELECT * FROM sent_emails",
+            "SELECT dmbot_release_email(1, 'x')",  # the bot's door, not the website's
             "INSERT INTO sent_emails (user_id, kind, sent_at) VALUES (1, 'x', 0)",
             "DELETE FROM sent_emails",
             "SELECT * FROM email_unsubscribed",
@@ -119,3 +120,17 @@ class WebRoleAndEmailTable(UnsubscribeRoute):
             with self.assertRaises(psycopg.errors.InsufficientPrivilege, msg=statement):
                 async with self.web.unscoped() as conn:
                     await conn.execute(statement)
+
+
+class MailerOnTheWebsiteRole(UnsubscribeRoute):
+    async def test_a_sign_in_email_sent_through_the_mailer_on_the_websites_role(self) -> None:
+        from dmbot.mail import Mailer, load_mail_settings
+        from tests.test_mail import ENV, Fake
+
+        out = Fake()
+        made = Mailer(self.web, load_mail_settings(ENV), transport=out, clock=lambda: 1_800_000_000)
+        result = await made.send(
+            user_id=USER, kind="sign-in:9", to="p@example.com", subject="Hi", body="Hello"
+        )
+        self.assertEqual(result, "sent")
+        self.assertEqual(len(out.sent), 1)

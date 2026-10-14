@@ -2045,7 +2045,7 @@ WEB_ROLE_FUNCTIONS: tuple[tuple[str, str], ...] = (
     ("dmbot_owned_campaigns", "dmbot_owned_campaigns()"),
     ("dmbot_orphan_owned_campaigns", "dmbot_orphan_owned_campaigns(BIGINT)"),
     ("dmbot_hours_used", "dmbot_hours_used(BIGINT)"),
-    ("dmbot_claim_email", "dmbot_claim_email(BIGINT, TEXT, BOOLEAN)"),
+    ("dmbot_claim_email", "dmbot_claim_email(BIGINT, TEXT, BOOLEAN, INTEGER, INTEGER)"),
     ("dmbot_minutes_total", "dmbot_minutes_total()"),
 )
 # The columns the website may fill when it creates a hand-over offer (#728): who, where and the
@@ -2114,13 +2114,17 @@ MAIL = """
         at      BIGINT NOT NULL
     );
     -- The one door for sending an email, for the bot and the website alike (the website's
-    -- role has no grant on sent_emails: the table is everyone's email history). It counts
-    -- today's rows, applies the cap (400 in all; offers stop at 300, so the sign-in links and
-    -- move codes people ask for always have room), writes the row (ON CONFLICT DO NOTHING:
-    -- an email of this kind goes once) and says whether the email may go. A failed send keeps
-    -- its row. The day and the time are the database's own. Kinds starting "dm:" are private
+    -- role has no grant on sent_emails: the table is everyone's email history). Under one
+    -- lock it counts today's rows, applies the caps the caller passes (never above 400 in
+    -- all and 300 for offers, so the sign-in links and move codes people ask for always have
+    -- room), writes the row (an email of this kind goes once) and answers with a status:
+    -- 'sent' (go ahead), 'duplicate' (already sent), 'capped' (the day is full) or 'refused'
+    -- (not an email kind). The day and the time are the database's own. A failed send keeps
+    -- its row (at most once), except an offer, which the bot gives back with
+    -- dmbot_release_email so one hiccup doesn't lose it. Kinds starting "dm:" are private
     -- message records, not emails, and are refused here.
-    CREATE FUNCTION dmbot_claim_email(who BIGINT, kind TEXT, offer BOOLEAN) RETURNS BOOLEAN
+    CREATE FUNCTION dmbot_claim_email(who BIGINT, what TEXT, offer BOOLEAN, cap INTEGER,
+                                      offer_cap INTEGER) RETURNS TEXT
         LANGUAGE plpgsql SECURITY DEFINER
         AS $fn$
     #variable_conflict use_column
@@ -2128,31 +2132,49 @@ MAIL = """
         stamp BIGINT := extract(epoch FROM now())::BIGINT;
         today BIGINT;
         added INTEGER;
+        most INTEGER := LEAST(COALESCE(cap, 400), 400);
+        most_offers INTEGER := LEAST(COALESCE(offer_cap, 300), 300, most);
     BEGIN
-        IF who IS NULL OR who <= 0 OR kind IS NULL OR char_length(kind) NOT BETWEEN 1 AND 60
-           OR kind LIKE 'dm:%' THEN
-            RETURN FALSE;
+        IF who IS NULL OR who <= 0 OR what IS NULL OR char_length(what) NOT BETWEEN 1 AND 60
+           OR what LIKE 'dm:%' THEN
+            RETURN 'refused';
         END IF;
+        PERFORM pg_advisory_xact_lock(hashtextextended('dmbot.email_day', 0));
         SELECT count(*) INTO today FROM sent_emails s
             WHERE s.sent_at >= stamp - stamp % 86400 AND s.kind NOT LIKE 'dm:%';
-        IF today >= 400 OR (offer AND today >= 300) THEN
-            RETURN FALSE;
+        IF EXISTS (SELECT 1 FROM sent_emails s WHERE s.user_id = who AND s.kind = what) THEN
+            RETURN 'duplicate';
         END IF;
-        INSERT INTO sent_emails (user_id, kind, sent_at) VALUES (who, kind, stamp)
+        IF today >= most OR (offer AND today >= most_offers) THEN
+            RETURN 'capped';
+        END IF;
+        INSERT INTO sent_emails (user_id, kind, sent_at) VALUES (who, what, stamp)
             ON CONFLICT DO NOTHING;
         GET DIAGNOSTICS added = ROW_COUNT;
-        RETURN added = 1;
+        RETURN CASE WHEN added = 1 THEN 'sent' ELSE 'duplicate' END;
     END
+    $fn$;
+    -- Gives back the claim of an email that did not go (bot only: the website's role has no
+    -- EXECUTE), so the next run tries again.
+    CREATE FUNCTION dmbot_release_email(who BIGINT, what TEXT) RETURNS VOID
+        LANGUAGE sql SECURITY DEFINER
+        AS $fn$
+        DELETE FROM sent_emails s WHERE s.user_id = who AND s.kind = what;
     $fn$;
     DO $do$
     BEGIN
         EXECUTE format(
-            'ALTER FUNCTION dmbot_claim_email(BIGINT, TEXT, BOOLEAN)'
+            'ALTER FUNCTION dmbot_claim_email(BIGINT, TEXT, BOOLEAN, INTEGER, INTEGER)'
+            ' SET search_path = pg_catalog, %I, pg_temp',
+            current_schema());
+        EXECUTE format(
+            'ALTER FUNCTION dmbot_release_email(BIGINT, TEXT)'
             ' SET search_path = pg_catalog, %I, pg_temp',
             current_schema());
     END
     $do$;
-    REVOKE ALL ON FUNCTION dmbot_claim_email(BIGINT, TEXT, BOOLEAN) FROM PUBLIC;
+    REVOKE ALL ON FUNCTION dmbot_claim_email(BIGINT, TEXT, BOOLEAN, INTEGER, INTEGER) FROM PUBLIC;
+    REVOKE ALL ON FUNCTION dmbot_release_email(BIGINT, TEXT) FROM PUBLIC;
     """
 
 # Numbered 0063 on purpose: 0060 to 0062 belong to pull requests still waiting to merge
