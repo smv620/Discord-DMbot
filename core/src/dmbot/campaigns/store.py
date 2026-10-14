@@ -1044,7 +1044,7 @@ class CampaignStore:
                 " WHERE guild_id = %s AND id = %s AND owner_user_id = %s",
                 (missing_since, guild_id, campaign_id, owner_id),
             )
-            return cur.rowcount > 0
+            return bool(cur.rowcount > 0)
 
     async def orphan_missing_owner(
         self, guild_id: int, campaign_id: str, owner_id: int, now: int
@@ -1059,7 +1059,7 @@ class CampaignStore:
                 " WHERE guild_id = %s AND id = %s AND owner_user_id = %s",
                 (now, guild_id, campaign_id, owner_id),
             )
-            return cur.rowcount > 0
+            return bool(cur.rowcount > 0)
 
     async def _close_offer(
         self,

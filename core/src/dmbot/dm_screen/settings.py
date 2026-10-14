@@ -251,8 +251,9 @@ class SettingsButton(
         # Then, without making the card wait, see whether the owner is still in the server
         # (#1214); if not, the DMs are told and the card's Take it on appears next time.
         check = getattr(interaction.client, "check_owner_present", None)
-        if check is not None:
-            asyncio.create_task(check(campaign), name="owner-check")  # noqa: RUF006
+        looking = check(campaign) if callable(check) else None
+        if asyncio.iscoroutine(looking):
+            asyncio.create_task(looking, name="owner-check")  # noqa: RUF006
 
 
 class RuleLookupButton(
