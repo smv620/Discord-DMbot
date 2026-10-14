@@ -6,7 +6,7 @@ from __future__ import annotations
 import unittest
 from collections.abc import Sequence
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, cast
 from unittest.mock import MagicMock, patch
 
 import discord
@@ -244,7 +244,7 @@ class TheChatHook(unittest.TestCase):
         self.asked.assert_called_once_with(self.table, PLAYER, "does fireball need line of sight")
 
     def test_bots_webhooks_and_dmbot_itself_are_never_answered(self) -> None:
-        self.bot._connection.user = SimpleNamespace(id=999)
+        cast(Any, self.bot._connection).user = SimpleNamespace(id=999)
         for msg in (message(bot=True), message(webhook=5), message(author=999)):
             self.assertTrue(self.bot._hear_dmbchat(msg))  # (handled: nothing else reads it)
         self.asked.assert_not_called()
