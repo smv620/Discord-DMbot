@@ -4,6 +4,7 @@ does NOT cross: the publisher's side never holds who sent a suggestion."""
 
 from __future__ import annotations
 
+import asyncio
 from unittest import mock
 
 from dmbot.campaigns import CampaignStore
@@ -16,7 +17,7 @@ GUILD_A, GUILD_B, GUILD_C = 1001, 2002, 3003
 DM_A, DM_B, DM_C, PLAYER = 11, 22, 55, 33
 
 
-class Suggestions(DatabaseTest):
+class _Base(DatabaseTest):
     async def asyncSetUp(self) -> None:
         await super().asyncSetUp()
         self.campaigns = CampaignStore(self.db, clock=lambda: 1_700_000_000)
@@ -36,6 +37,8 @@ class Suggestions(DatabaseTest):
         rule = await self.houses.add(GUILD_B, self.far, DM_B, text, instead)
         return rule.number
 
+
+class Suggestions(_Base):
     async def test_a_suggestion_lands_on_the_publisher_and_names_nobody(self) -> None:
         number = await self.own_rule("Potions are a bonus action")
         sid, guild, campaign = await self.sets.suggest(GUILD_B, self.far, DM_B, number)
@@ -48,9 +51,10 @@ class Suggestions(DatabaseTest):
         async with self.db.guild(GUILD_A) as conn:
             cur = await conn.execute("SELECT * FROM rule_set_suggestions")
             rows = await cur.fetchall()
-        text = repr(rows)
-        for secret in (str(GUILD_B), self.far, str(DM_B), "Far Away"):
-            self.assertNotIn(secret, text)
+        values = list(rows[0].values())
+        for secret in (GUILD_B, self.far, DM_B, "Far Away"):
+            self.assertNotIn(secret, values)
+        self.assertFalse(any(isinstance(v, str) and "Far Away" in v for v in values))
         # And the publisher's server can't see the follower's own record.
         async with self.db.guild(GUILD_A) as conn:
             cur = await conn.execute("SELECT count(*) AS n FROM rule_set_suggestions_sent")
@@ -130,7 +134,7 @@ class Suggestions(DatabaseTest):
         assert published is not None
         async with self.db.guild(GUILD_C) as conn:
             cur = await conn.execute(
-                "SELECT outcome FROM dmbot_suggest_rule(%s, %s, %s, %s, NULL, 1, 20)",
+                "SELECT outcome FROM dmbot_suggest_rule(%s, %s, %s, %s, NULL, 1, 20, 2592000)",
                 ("a" * 32, published.id, other, "Sneaky rule"),
             )
             self.assertEqual((await cur.fetchone())["outcome"], "gone")  # type: ignore[index]
@@ -197,3 +201,123 @@ class Suggestions(DatabaseTest):
             await conn.execute("DELETE FROM rule_sets WHERE guild_id = %s", (GUILD_A,))
         answers = await self.sets.sent_answers(GUILD_B, self.far)
         self.assertEqual([s.status for s in answers], ["declined"])
+
+
+class AtTheSameTime(_Base):
+    """Two presses or two tables at once take turns (the lock is on the campaign / the set)."""
+
+    async def test_the_same_suggestion_accepted_twice_is_added_once(self) -> None:
+        number = await self.own_rule("Potions are a bonus action")
+        sid, _, _ = await self.sets.suggest(GUILD_B, self.far, DM_B, number)
+        results = await asyncio.gather(
+            self.sets.accept_suggestion(GUILD_A, self.pub, DM_A, sid, plan_ok=True),
+            self.sets.accept_suggestion(GUILD_A, self.pub, DM_A, sid, plan_ok=True),
+            return_exceptions=True,
+        )
+        self.assertEqual(sum(isinstance(r, rule_sets.SharedSet) for r in results), 1)
+        self.assertEqual(sum(isinstance(r, RuleSetError) for r in results), 1)
+        got = await self.sets.current_content(GUILD_A, self.pub)
+        assert got is not None
+        self.assertEqual(got[0].version, 2)
+        words = [r["rule"] for r in got[1]["rules"]]
+        self.assertEqual(words.count("Potions are a bonus action"), 1)
+
+    async def test_two_different_suggestions_make_two_versions(self) -> None:
+        a = await self.own_rule("Rule from a")
+        b = await self.own_rule("Rule from b")
+        sa, _, _ = await self.sets.suggest(GUILD_B, self.far, DM_B, a)
+        sb, _, _ = await self.sets.suggest(GUILD_B, self.far, DM_B, b)
+        await asyncio.gather(
+            self.sets.accept_suggestion(GUILD_A, self.pub, DM_A, sa, plan_ok=True),
+            self.sets.accept_suggestion(GUILD_A, self.pub, DM_A, sb, plan_ok=True),
+        )
+        got = await self.sets.current_content(GUILD_A, self.pub)
+        assert got is not None
+        self.assertEqual(got[0].version, 3)
+        words = {r["rule"] for r in got[1]["rules"]}
+        self.assertTrue({"Rule from a", "Rule from b"} <= words)
+
+    async def test_accept_and_no_thanks_together_leave_one_answer(self) -> None:
+        number = await self.own_rule("Potions are a bonus action")
+        sid, _, _ = await self.sets.suggest(GUILD_B, self.far, DM_B, number)
+        await asyncio.gather(
+            self.sets.accept_suggestion(GUILD_A, self.pub, DM_A, sid, plan_ok=True),
+            self.sets.decline_suggestion(GUILD_A, self.pub, DM_A, sid),
+            return_exceptions=True,
+        )
+        got = await self.sets.suggestion(GUILD_A, self.pub, sid)
+        assert got is not None
+        current = await self.sets.current_content(GUILD_A, self.pub)
+        assert current is not None
+        added = any(r["rule"] == "Potions are a bonus action" for r in current[1]["rules"])
+        self.assertEqual(got.status == "accepted", added)  # what it says is what happened
+
+    async def test_two_tables_at_once_cannot_pass_the_set_cap(self) -> None:
+        second = (await self.campaigns.create(GUILD_C, "Elsewhere", DM_C)).id
+        await self.sets.follow(
+            GUILD_C, second, DM_C, await self.sets.by_code(GUILD_C, DM_C, self.code)
+        )
+        first_number = await self.own_rule("From the first table")
+        await self.houses.add(GUILD_C, second, DM_C, "From the second table")
+        with mock.patch.object(rule_sets, "SUGGEST_SET_MAX", 1):
+            results = await asyncio.gather(
+                self.sets.suggest(GUILD_B, self.far, DM_B, first_number),
+                self.sets.suggest(GUILD_C, second, DM_C, 1),
+                return_exceptions=True,
+            )
+        self.assertEqual(sum(isinstance(r, tuple) for r in results), 1)
+        self.assertEqual(sum(isinstance(r, RuleSetError) for r in results), 1)
+
+
+class Edges(_Base):
+    async def test_a_third_server_cannot_read_answers_it_did_not_ask_for(self) -> None:
+        number = await self.own_rule("Potions are a bonus action")
+        await self.sets.suggest(GUILD_B, self.far, DM_B, number)
+        async with self.db.guild(GUILD_C) as conn:
+            cur = await conn.execute("SELECT count(*) AS n FROM rule_set_suggestions")
+            self.assertEqual((await cur.fetchone())["n"], 0)  # type: ignore[index]
+        # Anyone who holds the id can ask for its answer (it is the key), but gets only that.
+        async with self.db.guild(GUILD_C) as conn:
+            cur = await conn.execute("SELECT * FROM dmbot_suggestion_answers(%s)", ("0" * 32,))
+            self.assertEqual(await cur.fetchall(), [])
+
+    async def test_an_unanswered_suggestion_is_told_after_thirty_days(self) -> None:
+        number = await self.own_rule("Potions are a bonus action")
+        await self.sets.suggest(GUILD_B, self.far, DM_B, number)
+        later = RuleSetStore(self.db, clock=lambda: 1_700_000_000 + 31 * 86400)
+        self.assertEqual(
+            [s.status for s in await later.sent_answers(GUILD_B, self.far)], ["expired"]
+        )
+
+    async def test_a_slot_frees_once_the_answer_is_told(self) -> None:
+        numbers = [await self.own_rule(f"Rule number {n}") for n in range(6)]
+        sids = [(await self.sets.suggest(GUILD_B, self.far, DM_B, n))[0] for n in numbers[:5]]
+        await self.sets.decline_suggestion(GUILD_A, self.pub, DM_A, sids[0])
+        await self.sets.mark_told(GUILD_B, self.far, [sids[0]])
+        await self.sets.suggest(GUILD_B, self.far, DM_B, numbers[5])  # no longer refused
+
+    async def test_a_suggestion_the_set_already_holds_is_closed(self) -> None:
+        number = await self.own_rule("No flanking")
+        sid, _, _ = await self.sets.suggest(GUILD_B, self.far, DM_B, number)
+        with self.assertRaises(RuleSetError) as err:
+            await self.sets.accept_suggestion(GUILD_A, self.pub, DM_A, sid, plan_ok=True)
+        self.assertEqual(str(err.exception), rule_sets.ALREADY_IN_SET)
+        closed = await self.sets.suggestion(GUILD_A, self.pub, sid)
+        assert closed is not None
+        self.assertEqual(closed.status, "declined")  # no dead button, no slot held
+
+    async def test_a_changed_set_leaves_the_suggestion_open(self) -> None:
+        number = await self.own_rule("Potions are a bonus action")
+        sid, _, _ = await self.sets.suggest(GUILD_B, self.far, DM_B, number)
+        with self.assertRaises(RuleSetError):
+            await self.sets.accept_suggestion(
+                GUILD_A, self.pub, DM_A, sid, plan_ok=True, expected_version=9
+            )
+        still = await self.sets.suggestion(GUILD_A, self.pub, sid)
+        assert still is not None
+        self.assertEqual(still.status, "open")
+
+    async def test_a_rule_removed_before_sending_is_said(self) -> None:
+        with self.assertRaises(RuleSetError) as err:
+            await self.sets.suggest(GUILD_B, self.far, DM_B, 99)
+        self.assertEqual(str(err.exception), rule_sets.NO_SUCH_RULE)

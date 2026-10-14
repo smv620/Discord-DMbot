@@ -57,7 +57,10 @@ UNDO_LABEL = "↩️ Undo"
 LINK_ONLY = "only the rules document link changed"
 
 
-OVERRIDDEN = "A shared rule you changed was updated. Yours still applies."
+OVERRIDDEN = (
+    "The set changed a rule your table has its own version of. Yours still applies. "
+    "Press Compare to see both."
+)
 
 
 def overrides(
@@ -112,7 +115,7 @@ def note_text(
 
 def note_view(campaign_id: str, version: int, compare: bool = False) -> discord.ui.View:
     view = discord.ui.View(timeout=None)
-    for action in ("see", "pick", "undo") + (("compare",) if compare else ()):
+    for action in ("see", "pick") + (("compare",) if compare else ()) + ("undo",):
         view.add_item(SetUpdateButton(campaign_id, action, version))
     return view
 
@@ -278,10 +281,10 @@ def changes_text(
 async def _own_rules(bot: Any, campaign: Campaign) -> list[HouseRule]:
     """The campaign's house rules, or none if they can't be read (a note is worth posting
     without its Compare line)."""
-    store = bot.house_rules
-    if store is None:
-        return []
     try:
+        store = bot.house_rules
+        if store is None:
+            return []
         return list(await store.list(campaign.guild_id, campaign.id))
     except Exception:
         log.warning("Couldn't read house rules for a Compare line", exc_info=True)

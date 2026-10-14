@@ -350,7 +350,7 @@ class RuleMenu(_Menu):
             self.add_item(
                 _Button(
                     partial(ask_suggest, campaign, rule, page, suggest_to),
-                    label=logic.shorten(f"{SUGGEST_LABEL} to {suggest_to}", logic.PHONE_LABEL_MAX),
+                    label=f"{SUGGEST_LABEL} {rule.number}",
                 )
             )
         self.add_item(_Button(self._back, label=BACK_LABEL))
@@ -368,9 +368,9 @@ async def ask_suggest(
 ) -> None:
     """Never send at once: say where it goes, that nobody is named, and that nothing changes."""
     text = (
-        f"Send house rule {rule.number} to the DM of **{_md(set_name)}**?\n{entry_text(rule)}\n"
-        "They won't see who sent it. They decide whether to use it, and your table's rules "
-        "don't change. You'll hear their answer when your next session starts."
+        f"Send house rule {rule.number} to the **{_md(set_name)}** DM?\n{entry_text(rule)}\n"
+        "It goes exactly as written, with nobody named. Check it names no one. Your table's "
+        "rules stay as they are. If they add it, you'll hear at your next session."
     )
     await _show(interaction, text, ConfirmSuggest(campaign, rule, page, set_name))
 
@@ -398,13 +398,11 @@ class ConfirmSuggest(_Menu):
             await _redraw(interaction, c, note=str(exc), page=self.page)
             return
         self.stop()
-        sent = await sets.suggestion(pub_guild, pub_campaign, sid)
-        if sent is not None:  # a failed post is tried again at the publisher's next session
-            await set_suggestion.post_note(bot, pub_guild, pub_campaign, sent, self.set_name)
+        set_suggestion.send_note(bot, pub_guild, pub_campaign, sid, self.set_name)
         await _redraw(
             interaction,
             c,
-            note=f"💡 Sent to the {_md(self.set_name)} DM. You'll hear the answer next session.",
+            note="💡 Sent, with no name. You'll hear the answer at your next session.",
             page=self.page,
         )
 

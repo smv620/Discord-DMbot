@@ -66,6 +66,8 @@ def bot_with(**sets: Any) -> Any:
         following=AsyncMock(return_value=[follow_at(4)]),
         take_update=AsyncMock(),
         undo_last_take=AsyncMock(),
+        sent_answers=AsyncMock(return_value=[]),
+        unnoted_suggestions=AsyncMock(return_value=[]),
     )
     for name, value in sets.items():
         setattr(store, name, value)
@@ -74,6 +76,7 @@ def bot_with(**sets: Any) -> Any:
         campaigns=SimpleNamespace(get=AsyncMock(return_value=campaign())),
         post=AsyncMock(return_value=object()),
         post_message=AsyncMock(return_value=object()),
+        house_rules=SimpleNamespace(list=AsyncMock(return_value=[])),
     )
 
 

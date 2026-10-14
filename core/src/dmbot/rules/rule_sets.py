@@ -60,14 +60,16 @@ NOT_FOLLOWING = "This campaign isn't following a set of house rules."
 NO_SUCH_RULE = "That house rule isn't here any more."
 SUGGEST_FOLLOWER_MAX = 5  # a following campaign's suggestions waiting for an answer
 SUGGEST_SET_MAX = 20  # open suggestions on one set, from every table that follows it
+SUGGEST_WAIT_S = 30 * 86400  # after this long with no answer, the sender is told and may resend
 TOO_MANY_SUGGESTIONS = (
-    f"You already have {SUGGEST_FOLLOWER_MAX} suggestions waiting for an answer. "
-    "Wait for those first."
+    f"Your campaign already has {SUGGEST_FOLLOWER_MAX} suggestions waiting for an answer. "
+    "Try again after you hear back."
 )
-SET_HAS_ENOUGH = "That set has a lot of suggestions waiting already. Try again another day."
-ALREADY_SUGGESTED = "You already suggested that rule, and it is waiting for an answer."
-NOT_YOURS_TO_SEND = "Only rules your campaign wrote itself can be suggested, not ones from a set."
-SUGGESTION_GONE = "That suggestion was already answered, or is gone."
+SET_HAS_ENOUGH = "That set has plenty of suggestions waiting. Try again next week."
+ALREADY_SUGGESTED = "This campaign already sent that rule. The answer comes at your next session."
+NOT_YOURS_TO_SEND = "Only rules your campaign wrote can be suggested. This one came from the set."
+ALREADY_IN_SET = "The set already has that rule, so nothing was added. The suggestion is closed."
+SUGGESTION_GONE = "Someone already answered that suggestion."
 SET_FULL = "The set already has {n} rules, so there is no room for another."
 NO_CHANGES = "Nothing is different from the last version, so no new version was made."
 NOT_EDITOR = "Only this campaign's DMs can change the set."
@@ -170,7 +172,7 @@ class Sent:
     id: str
     set_name: str
     rule: str
-    status: str  # 'open', 'accepted' or 'declined'
+    status: str  # 'open', 'accepted', 'declined' or 'expired'
     version: int | None
 
 
@@ -256,6 +258,11 @@ def same_words(a: str | None, b: str | None) -> bool:
     return " ".join((a or "").lower().split()) == " ".join((b or "").lower().split())
 
 
+def replaced_rule(rules: Sequence[dict[str, Any]], instead: str | None) -> dict[str, Any] | None:
+    """The set's own rule a suggestion says it is instead of, if it names one."""
+    return next((r for r in rules if instead and same_words(r["rule"], instead)), None)
+
+
 def suggested_content(content: dict[str, Any], rule: str, instead: str | None) -> dict[str, Any]:
     """The set's content with a suggested rule in it. A suggestion that says it is instead of
     one of the set's own rules replaces that rule (keeping its number and what IT replaces);
@@ -264,7 +271,7 @@ def suggested_content(content: dict[str, Any], rule: str, instead: str | None) -
     rules = [dict(r) for r in content["rules"]]
     if any(same_words(r["rule"], rule) for r in rules):
         raise RuleSetError(NO_CHANGES)
-    target = next((r for r in rules if instead and same_words(r["rule"], instead)), None)
+    target = replaced_rule(rules, instead)
     if target is not None:
         target["rule"] = rule
     else:
@@ -770,9 +777,9 @@ class RuleSetStore:
                 raise RuleSetError(TOO_MANY_SUGGESTIONS)
             cur = await conn.execute(
                 "SELECT outcome, pub_guild, pub_campaign FROM dmbot_suggest_rule("
-                "%s, %s, %s, %s, %s, %s, %s)",
+                "%s, %s, %s, %s, %s, %s, %s, %s)",
                 (sid, follow.set_id, campaign_id, row["rule"], row["supersedes"], now,
-                 SUGGEST_SET_MAX),
+                 SUGGEST_SET_MAX, SUGGEST_WAIT_S),
             )  # fmt: skip
             door = await cur.fetchone()
             assert door is not None
@@ -852,10 +859,24 @@ class RuleSetStore:
     ) -> SharedSet:
         """The publisher's DMs make the suggested rule part of the set as its next version
         (the same checks as any change: paid plan, a DM, the version they saw)."""
-        return await self._save(
-            guild_id, campaign_id, user_id, None, "suggestion",
-            plan_ok=plan_ok, expected_version=expected_version, suggestion=suggestion_id,
-        )  # fmt: skip
+        try:
+            return await self._save(
+                guild_id, campaign_id, user_id, None, "suggestion",
+                plan_ok=plan_ok, expected_version=expected_version, suggestion=suggestion_id,
+            )  # fmt: skip
+        except RuleSetError as exc:
+            if str(exc) == NO_CHANGES:
+                # The set already holds those words (so the DM was already a DM here, checked
+                # before this was raised): close it, so no dead button or slot is left behind.
+                async with self._db.guild(guild_id) as conn:
+                    await conn.execute(
+                        "UPDATE rule_set_suggestions SET status = 'declined', resolved_at = %s,"
+                        " resolved_by = %s WHERE guild_id = %s AND campaign_id = %s AND id = %s"
+                        " AND status = 'open'",
+                        (self._now(), user_id, guild_id, campaign_id, suggestion_id),
+                    )
+                raise RuleSetError(ALREADY_IN_SET) from exc
+            raise
 
     async def decline_suggestion(
         self, guild_id: int, campaign_id: str, user_id: int, suggestion_id: str
@@ -878,8 +899,8 @@ class RuleSetStore:
         answers the publisher has given (asked by their random ids; nothing else is reachable)."""
         async with self._db.guild(guild_id) as conn:
             cur = await conn.execute(
-                "SELECT id, set_name, rule FROM rule_set_suggestions_sent WHERE guild_id = %s"
-                " AND campaign_id = %s AND told_at IS NULL ORDER BY sent_at",
+                "SELECT id, set_name, rule, sent_at FROM rule_set_suggestions_sent"
+                " WHERE guild_id = %s AND campaign_id = %s AND told_at IS NULL ORDER BY sent_at",
                 (guild_id, campaign_id),
             )
             sent = await cur.fetchall()
@@ -895,10 +916,12 @@ class RuleSetStore:
             a = answers.get(str(r["id"]))
             # No row back: the publisher's set is gone, so there will be no answer. Treated as
             # declined so the DM is told once and the slot is freed.
+            status = str(a["status"]) if a else "declined"
+            if status == "open" and self._now() - int(r["sent_at"]) > SUGGEST_WAIT_S:
+                status = "expired"  # told once, so the slot is freed
             out.append(
                 Sent(
-                    str(r["id"]), str(r["set_name"]), str(r["rule"]),
-                    str(a["status"]) if a else "declined",
+                    str(r["id"]), str(r["set_name"]), str(r["rule"]), status,
                     int(a["version"]) if a and a["version"] is not None else None,
                 )
             )  # fmt: skip

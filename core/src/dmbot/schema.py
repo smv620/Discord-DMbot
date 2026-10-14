@@ -2393,6 +2393,7 @@ RULE_SUGGESTIONS = (
         FOREIGN KEY (guild_id, campaign_id, set_id)
             REFERENCES rule_sets (guild_id, campaign_id, id) ON DELETE CASCADE
     );
+    CREATE INDEX rule_set_suggestions_open ON rule_set_suggestions (set_id) WHERE status = 'open';
     CREATE TABLE rule_set_suggestions_sent (
         {_memory_scope()}
         id          TEXT NOT NULL CHECK (id ~ '^[0-9a-f]{{32}}$'),
@@ -2440,7 +2441,7 @@ RULE_SUGGESTIONS = (
     -- or it is not shared any more).
     CREATE FUNCTION dmbot_suggest_rule(
         sid TEXT, wanted_set TEXT, follower_campaign TEXT, new_rule TEXT, new_instead TEXT,
-        now_at BIGINT, set_cap INTEGER)
+        now_at BIGINT, set_cap INTEGER, wait_s INTEGER)
         RETURNS TABLE (outcome TEXT, pub_guild BIGINT, pub_campaign TEXT)
         LANGUAGE plpgsql SECURITY DEFINER
         AS $fn$
@@ -2468,8 +2469,11 @@ RULE_SUGGESTIONS = (
             RETURN QUERY SELECT 'gone'::TEXT, NULL::BIGINT, NULL::TEXT;
             RETURN;
         END IF;
+        -- Two tables suggesting at once take turns, so the cap holds.
+        PERFORM pg_advisory_xact_lock(hashtext(wanted_set));
         SELECT count(*) INTO waiting FROM rule_set_suggestions q
-            WHERE q.set_id = wanted_set AND q.status = 'open';
+            WHERE q.set_id = wanted_set AND q.status = 'open'
+              AND q.created_at > now_at - wait_s;  -- an unanswered one stops counting
         IF waiting >= set_cap THEN
             PERFORM set_config('dmbot.owner_sync', before, true);
             PERFORM set_config('dmbot.set_id', before_set, true);
@@ -2507,7 +2511,8 @@ RULE_SUGGESTIONS = (
     DO $do$
     BEGIN
         EXECUTE format(
-            'ALTER FUNCTION dmbot_suggest_rule(TEXT, TEXT, TEXT, TEXT, TEXT, BIGINT, INTEGER)'
+            'ALTER FUNCTION dmbot_suggest_rule('
+            'TEXT, TEXT, TEXT, TEXT, TEXT, BIGINT, INTEGER, INTEGER)'
             ' SET search_path = pg_catalog, %I, pg_temp',
             current_schema());
         EXECUTE format(
@@ -2516,8 +2521,8 @@ RULE_SUGGESTIONS = (
             current_schema());
     END
     $do$;
-    REVOKE ALL ON FUNCTION dmbot_suggest_rule(TEXT, TEXT, TEXT, TEXT, TEXT, BIGINT, INTEGER)
-        FROM PUBLIC;
+    REVOKE ALL ON FUNCTION dmbot_suggest_rule(
+        TEXT, TEXT, TEXT, TEXT, TEXT, BIGINT, INTEGER, INTEGER) FROM PUBLIC;
     REVOKE ALL ON FUNCTION dmbot_suggestion_answers(TEXT) FROM PUBLIC;
     """
 )

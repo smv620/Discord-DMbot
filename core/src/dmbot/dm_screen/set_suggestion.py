@@ -21,13 +21,14 @@ from typing import Any
 import discord
 
 from dmbot.campaigns import Campaign
+from dmbot.logs import set_log_context
 from dmbot.rules import rule_sets, set_diff
 from dmbot.rules.house import HouseRuleError
 from dmbot.ui.dmbot_commands import _answer_first, _bot, _tell
 
 log = logging.getLogger(__name__)
 
-ONLY_DMS = "Only this campaign's DMs can do that."
+ONLY_DMS = "Only this campaign's DMs can answer this."
 GONE = "That campaign isn't here any more."
 COULDNT = "That didn't work, and nothing changed. Press the button again in a moment."
 ANSWERED = "Someone already answered this suggestion."
@@ -36,22 +37,26 @@ SHOWN_MAX = 120  # a rule quoted in a one-line message
 
 _LABELS = {
     "see": ("See", discord.ButtonStyle.secondary),
-    "accept": ("Accept", discord.ButtonStyle.primary),
+    "accept": ("Add to set", discord.ButtonStyle.primary),
     "no": ("No thanks", discord.ButtonStyle.secondary),
 }
 
 
-def _words(rule: str, instead: str | None, limit: int = 400) -> str:
+def _words(rule: str, instead: str | None, replaces: bool = False, limit: int = 400) -> str:
     text = discord.utils.escape_markdown(rule)
     if instead:
-        text += f" (instead of: {discord.utils.escape_markdown(instead)})"
+        what = "replaces this set rule" if replaces else "instead of"
+        text += f" ({what}: {discord.utils.escape_markdown(instead)})"
     return text if len(text) <= limit else text[: limit - 1] + "…"
 
 
-def note_text(set_name: str, rule: str, instead: str | None) -> str:
+def note_text(set_name: str, rule: str, instead: str | None, replaces: bool = False) -> str:
     """The publisher's note: the words and the set, nothing about the sender."""
     name = discord.utils.escape_markdown(set_name)
-    return f"💡 A table that uses **{name} house rules** suggests: {_words(rule, instead)}"
+    return (
+        f"💡 A table using **{name} house rules** suggests (sender not shown):\n"
+        f"{_words(rule, instead, replaces)}\nAdd to set puts it in for every table that uses it."
+    )
 
 
 def note_view(campaign_id: str, suggestion_id: str) -> discord.ui.View:
@@ -139,7 +144,6 @@ async def press(
             f"{interaction.message.content if interaction.message else ''}\n"
             "↩️ No thanks. Nothing changed.",
         )
-        await _tell(interaction, "Okay, nothing changed.")
     else:
         await _accept(interaction, campaign, asked)
 
@@ -164,7 +168,7 @@ async def _see(
     name = discord.utils.escape_markdown(mine.name[:60])
     await _tell(
         interaction,
-        f"If you press Accept, **{name}** becomes version {mine.version + 1}:\n"
+        f"If you press Add to set, **{name}** becomes version {mine.version + 1}:\n"
         + "\n".join(lines)[:TEXT_MAX],
     )
 
@@ -200,7 +204,7 @@ async def _accept(
     await _close_note(
         interaction, f"{interaction.message.content if interaction.message else ''}\n{done}"
     )
-    await _tell(interaction, f"{done} Tables using it get it at their next session start.")
+    await _tell(interaction, "Tables using it get it at their next session start.")
 
 
 async def post_note(
@@ -213,9 +217,13 @@ async def post_note(
         campaign = await bot.campaigns.get(guild_id, campaign_id)
         if campaign is None or campaign.dm_screen_channel_id is None:
             return False
+        replaces = False
+        shared = await sets.current_content(guild_id, campaign_id)
+        if shared is not None:  # say whether Add to set would replace one of its rules or add
+            replaces = rule_sets.replaced_rule(shared[1]["rules"], suggestion.instead) is not None
         posted = await bot.post_message(
             campaign.dm_screen_channel_id,
-            note_text(set_name, suggestion.rule, suggestion.instead),
+            note_text(set_name, suggestion.rule, suggestion.instead, replaces),
             note_view(campaign_id, suggestion.id),
         )
         if posted is None:
@@ -227,6 +235,22 @@ async def post_note(
         return False
 
 
+def send_note(bot: Any, guild_id: int, campaign_id: str, suggestion_id: str, set_name: str) -> None:
+    """Post the note for a suggestion just sent, in a task of its own. The sender's button press
+    tags its logs with the SENDER's server; the note is the publisher's business, so the task
+    re-tags its logs with the publisher's server and campaign, and a failed post can never put
+    the two in one log line."""
+
+    async def apart() -> None:
+        set_log_context(guild_id=guild_id, campaign_id=campaign_id)
+        sets = bot.rule_sets
+        found = await sets.suggestion(guild_id, campaign_id, suggestion_id)
+        if found is not None:  # a failed post is tried again at the publisher's next session
+            await post_note(bot, guild_id, campaign_id, found, set_name)
+
+    bot.track(apart(), "suggestion-note")
+
+
 async def post_waiting(bot: Any, campaign: Campaign) -> None:
     """At a session's start: notes that never reached the DM screen are posted now."""
     sets = bot.rule_sets
@@ -234,7 +258,8 @@ async def post_waiting(bot: Any, campaign: Campaign) -> None:
         return
     try:
         for suggestion, set_name in await sets.unnoted_suggestions(campaign.guild_id, campaign.id):
-            await post_note(bot, campaign.guild_id, campaign.id, suggestion, set_name)
+            if not await post_note(bot, campaign.guild_id, campaign.id, suggestion, set_name):
+                return  # no screen, or Discord is down: the rest would fail the same way
     except Exception:
         log.exception("Couldn't post waiting suggestion notes")
 
@@ -245,8 +270,10 @@ def answer_line(sent: rule_sets.Sent) -> str:
     if len(words) > SHOWN_MAX:
         words = words[: SHOWN_MAX - 1] + "…"
     if sent.status == "accepted":
-        return f"💡 The **{name}** DM used your suggestion (now in v{sent.version}): {words}"
-    return f"💡 The **{name}** DM didn't use your suggestion: {words}"
+        return f"💡 The **{name}** DM added your suggestion (now version {sent.version}): {words}"
+    if sent.status == "expired":
+        return f"💡 No answer yet from the **{name}** DM. You can send it again: {words}"
+    return f"💡 The **{name}** DM said no thanks to your suggestion: {words}"
 
 
 async def tell_answers(bot: Any, campaign: Campaign, screen_id: int) -> None:

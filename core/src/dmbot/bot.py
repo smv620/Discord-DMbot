@@ -1209,6 +1209,10 @@ class DMBot(commands.AutoShardedBot):
         task.add_done_callback(ended)
         return task
 
+    def track(self, work: Awaitable[Any], name: str) -> asyncio.Task[None] | None:
+        """`_track` for code outside the bot class (a button's own follow-up work)."""
+        return self._track(work, name)
+
     def _track(self, work: Awaitable[Any], name: str) -> asyncio.Task[None] | None:
         """Run `work` in the background; close() cancels it. Failures are logged. The
         task, or None when DMbot is shutting down (the work is dropped)."""

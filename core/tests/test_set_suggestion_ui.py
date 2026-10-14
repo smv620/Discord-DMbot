@@ -3,6 +3,7 @@ the sender hears, and the buttons on the house rules list. Fake stores, no Disco
 
 from __future__ import annotations
 
+import asyncio
 import re
 import unittest
 from types import SimpleNamespace
@@ -55,14 +56,18 @@ def store(**kw: Any) -> Any:
 
 def bot_with(s: Any, *, refusal: str | None = None, camp: Any = None, rules: Any = None) -> Any:
     camp = camp or campaign()
-    return SimpleNamespace(
+    bot = SimpleNamespace(
         rule_sets=s,
         campaigns=SimpleNamespace(get=AsyncMock(return_value=camp)),
         plan_gate=AsyncMock(return_value=refusal),
         post=AsyncMock(return_value=True),
         post_message=AsyncMock(return_value=object()),
         house_rules=SimpleNamespace(list=AsyncMock(return_value=rules or [])),
+        tasks=[],
     )
+    # Background work (the note's own task) runs on the loop; tests await bot.tasks.
+    bot.track = lambda work, name: bot.tasks.append(asyncio.ensure_future(work))
+    return bot
 
 
 def interaction(user: int, bot: Any) -> Any:
@@ -94,9 +99,12 @@ class TheNote(unittest.IsolatedAsyncioTestCase):
     async def test_the_note_has_the_words_and_the_set_and_nobody_else(self) -> None:
         text = set_suggestion.note_text("Red Table", OPEN.rule, OPEN.instead)
         self.assertIn("Red Table house rules", text)
-        self.assertIn("Potions are a bonus action", text)
+        self.assertIn("sender not shown", text)
         self.assertIn("instead of: Potions take an action", text)
-        self.assertIn("A table that uses", text)
+        replacing = set_suggestion.note_text("Red Table", "New", "Old rule", True)
+        self.assertIn("replaces this set rule: Old rule", replacing)
+        self.assertIn("Potions are a bonus action", text)
+        self.assertIn("A table using", text)
 
     async def test_the_buttons_survive_a_restart(self) -> None:
         view = set_suggestion.note_view(CAMPAIGN, SID)
@@ -115,8 +123,9 @@ class TheNote(unittest.IsolatedAsyncioTestCase):
         kwargs = s.accept_suggestion.await_args.kwargs
         self.assertTrue(kwargs["plan_ok"])
         self.assertEqual(kwargs["expected_version"], 4)
-        self.assertIn("version 5", it.sent[0][0])
-        it.message.edit.assert_awaited_once()
+        self.assertIn("next session start", it.sent[0][0])
+        closed = it.message.edit.await_args.kwargs["content"]
+        self.assertIn("version 5", closed)
 
     async def test_a_refused_plan_a_player_and_an_answered_note_change_nothing(self) -> None:
         s = store()
@@ -150,7 +159,7 @@ class TheNote(unittest.IsolatedAsyncioTestCase):
         await set_suggestion.press(it, CAMPAIGN, "no", SID)
         s.decline_suggestion.assert_awaited_once()
         s.accept_suggestion.assert_not_called()
-        self.assertIn("nothing changed", it.sent[0][0].lower())
+        it.message.edit.assert_awaited_once()
 
     async def test_see_shows_the_line_that_would_be_added(self) -> None:
         it = interaction(DM, bot_with(store()))
@@ -194,8 +203,8 @@ class TheSendersLine(unittest.IsolatedAsyncioTestCase):
         no = set_suggestion.answer_line(
             rule_sets.Sent(SID, "Red Table", "Flank twice", "declined", None)
         )
-        self.assertIn("used your suggestion (now in v6)", used)
-        self.assertIn("didn't use your suggestion", no)
+        self.assertIn("added your suggestion (now version 6)", used)
+        self.assertIn("said no thanks to your suggestion", no)
 
     async def test_each_answer_is_told_once_and_open_ones_wait(self) -> None:
         sent = [
@@ -235,7 +244,7 @@ class TheButtons(unittest.IsolatedAsyncioTestCase):
 
     async def test_the_rule_menu_names_the_set(self) -> None:
         menu = house_rules.RuleMenu(campaign(), rule(1, "Mine"), 0, "Red Table")
-        self.assertIn("💡 Suggest to Red Table", self.labels(menu))
+        self.assertIn("💡 Suggest 1", self.labels(menu))
         merged = house_rules.RuleMenu(campaign(), rule(1, "M", from_set="x"), 0, "Red Table")
         self.assertFalse([x for x in self.labels(merged) if "Suggest" in x])
 
@@ -244,7 +253,7 @@ class TheButtons(unittest.IsolatedAsyncioTestCase):
         it = interaction(DM, bot_with(s))
         await house_rules.ask_suggest(campaign(), rule(1, "Mine"), 0, "Red Table", it)
         shown = it.response.edit_message.await_args.kwargs["content"]
-        self.assertIn("won't see who sent it", shown)
+        self.assertIn("with nobody named", shown)
         s.suggest.assert_not_called()
 
     async def test_sending_posts_the_note_and_a_refusal_is_said(self) -> None:
@@ -254,6 +263,7 @@ class TheButtons(unittest.IsolatedAsyncioTestCase):
         it = interaction(DM, bot)
         await house_rules.ConfirmSuggest(campaign(), rule(1, "Mine"), 0, "Red Table")._yes(it)
         s.suggest.assert_awaited_once_with(1, CAMPAIGN, DM, 1)
+        await asyncio.gather(*bot.tasks)
         bot.post_message.assert_awaited_once()
         refused = store(
             suggest=AsyncMock(side_effect=HouseRuleError(rule_sets.TOO_MANY_SUGGESTIONS))
@@ -261,9 +271,30 @@ class TheButtons(unittest.IsolatedAsyncioTestCase):
         bot2 = bot_with(refused)
         it2 = interaction(DM, bot2)
         await house_rules.ConfirmSuggest(campaign(), rule(1, "Mine"), 0, "Red Table")._yes(it2)
+        await asyncio.gather(*bot2.tasks)
         bot2.post_message.assert_not_called()
         redrawn = it2.edit_original_response.await_args.kwargs["content"]
         self.assertIn(rule_sets.TOO_MANY_SUGGESTIONS[:60], redrawn)
+
+
+class LogsStayApart(unittest.IsolatedAsyncioTestCase):
+    async def test_the_note_is_posted_under_the_publishers_log_tags_not_the_senders(self) -> None:
+        from dmbot import logs
+
+        seen: list[int | None] = []
+
+        async def post_message(*_: Any) -> None:
+            seen.append(logs._guild.get())  # what a failed-post warning would be tagged with
+            return None
+
+        s = store(suggest=AsyncMock(return_value=(SID, 5, "c" * 32)))
+        bot = bot_with(s, camp=campaign())
+        bot.post_message = post_message
+        it = interaction(DM, bot)
+        logs.set_log_context(guild_id=1)  # the sender's press is tagged with the sender's server
+        await house_rules.ConfirmSuggest(campaign(), rule(1, "Mine"), 0, "Red Table")._yes(it)
+        await asyncio.gather(*bot.tasks)
+        self.assertEqual(seen, [5])  # the publisher's server, never the sender's
 
 
 class Compare(unittest.IsolatedAsyncioTestCase):
@@ -309,10 +340,11 @@ class Compare(unittest.IsolatedAsyncioTestCase):
     def test_the_note_says_so_and_gets_a_compare_button(self) -> None:
         self.assertNotIn("Yours still applies", set_update.note_text("Red", 5, 1))
         self.assertIn("Yours still applies", set_update.note_text("Red", 5, 1, False, True))
+        self.assertIn("Press Compare", set_update.OVERRIDDEN)
         plain = [c.custom_id for c in set_update.note_view(CAMPAIGN, 5).children]  # type: ignore[attr-defined]
         more = [c.custom_id for c in set_update.note_view(CAMPAIGN, 5, True).children]  # type: ignore[attr-defined]
         self.assertEqual((len(plain), len(more)), (3, 4))
-        self.assertTrue(more[-1].startswith("dmbot:setupd:compare:"))
+        self.assertTrue(more[2].startswith("dmbot:setupd:compare:"))  # before Undo, the riskier one
 
     async def test_pressing_compare_shows_the_three_texts(self) -> None:
         follow = rule_sets.Follow(
