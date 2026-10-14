@@ -107,6 +107,13 @@ describe("the facts #433 asks for", () => {
     expect(privacy()).toContain("everyone in the Discord server");
   });
 
+  it("says typed chat is read only from people who said yes and kept as typed (#1155)", () => {
+    expect(privacy()).toContain("What was typed.");
+    expect(privacy()).toContain("people who said yes type in the table's chat");
+    expect(privacy()).toContain("dmb-chat");
+    expect(privacy()).toContain("marked as typed");
+  });
+
   it("sets the minimum age at 16, with no 'older where local law requires' marker", () => {
     expect(terms()).toContain("at least 16");
     expect(privacy()).toContain("at least 16");

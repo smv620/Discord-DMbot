@@ -36,7 +36,12 @@ export const dmSteps: Step[] = [
     names: [{ name: "Settings", file: "dm_screen/settings.py" }],
   },
   {
-    text: 'Ask a quick question out loud: "Hey DMbot, how long does Bless last?" You get a short private answer that says how sure DMbot is.',
+    text: "To let DMbot read what people type, press ⚙️ Settings, then Table chat. It reads the voice channel's chat and one more channel you pick, only from people who said yes.",
+    names: [{ name: "Table chat", file: "dm_screen/table_chat_panel.py" }],
+  },
+  {
+    text: 'Ask a quick question out loud: "Hey DMbot, how long does Bless last?" The short answer is posted in the table\'s dmb-chat channel and says how sure DMbot is. You have the final say.',
+    names: [{ name: "dmb-chat", file: "dm_screen/dmbchat_channel.py" }],
   },
   {
     text: "When the game is over, type /dmbot stop.",
@@ -68,6 +73,13 @@ export const playerSteps: Step[] = [
       { name: "Stop recording me", file: "consent_dm.py" },
       { name: "Yes, stop recording me", file: "consent_dm.py" },
     ],
+  },
+  {
+    text: "While DMbot is listening, it also reads what you type in the table's chat, if you said yes. Nobody who said no is read.",
+  },
+  {
+    text: 'Anyone can ask DMbot a quick rules question: say "Hey DMbot" or type it in the dmb-chat channel. Your question is posted there with your name. Your game master has the final say.',
+    names: [{ name: "dmb-chat", file: "dm_screen/dmbchat_channel.py" }],
   },
   {
     text: "Everyone in the server can read a game's transcript. To read or download one, type /transcript.",
