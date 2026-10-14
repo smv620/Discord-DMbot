@@ -1421,7 +1421,7 @@ class MemoryStore:
                 str(r["id"]): r
                 for r in await scope.select(
                     ENTITIES,
-                    " AND type = 'person' AND status = 'confirmed' ORDER BY created_at, id",
+                    " AND type = 'person' AND status = 'confirmed' ORDER BY created_at, played_by, id",  # ties (same second) fall to the Discord id, never to a random entry id
                 )
             }
             if not people:
