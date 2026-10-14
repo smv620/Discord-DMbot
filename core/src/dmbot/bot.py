@@ -611,6 +611,10 @@ class DMBot(commands.AutoShardedBot):
         )
         # AI text calls (a document into a names list).
         self.ai = self.ai_client.tier(FEATURE_TIERS[Feature.NAMES]) if self.ai_client else None
+        # A player's sheet document read into the sheet fields (#1125).
+        self.sheet_ai = (
+            self.ai_client.tier(FEATURE_TIERS[Feature.SHEET]) if self.ai_client else None
+        )
         # The off-topic filter (#52), the audio check and the DM sidebar.
         self.topic_ai = (
             self.ai_client.tier(FEATURE_TIERS[Feature.TOPIC]) if self.ai_client else None
