@@ -75,10 +75,10 @@ export const playerSteps: Step[] = [
     ],
   },
   {
-    text: "While DMbot is listening, it also reads what you type in the table's chat, if you said yes. Nobody who said no is read.",
+    text: "While DMbot is listening, it also reads what you type in the table's chat, if you said yes. Nothing is read from anyone who said no.",
   },
   {
-    text: 'Anyone can ask DMbot a quick rules question: say "Hey DMbot" or type it in the dmb-chat channel. Your question is posted there with your name. Your game master has the final say.',
+    text: 'Anyone at the table who said yes can ask DMbot a quick rules question: say "Hey DMbot" or type it in the dmb-chat channel. Your question is posted there with your name. Your game master has the final say.',
     names: [{ name: "dmb-chat", file: "dm_screen/dmbchat_channel.py" }],
   },
   {
