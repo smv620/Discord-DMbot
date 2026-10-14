@@ -16,13 +16,14 @@ import asyncio
 import logging
 import re
 import time
+from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any, cast
 
 import discord
 
 from dmbot.consent_dm import SHEET_LABEL
 from dmbot.logs import log_context
-from dmbot.memory import sheets
+from dmbot.memory import sheet_checks, sheets
 from dmbot.memory.sheet_store import CharacterSheet, PlayerCharacter, SheetRefused, SheetStore
 from dmbot.ui import logic
 from dmbot.ui.dmbot_commands import (
@@ -175,7 +176,9 @@ def sheet_status(sheet: CharacterSheet | None, *, link: bool, mine: bool = False
             f"Beyond? Press **{TELL_LABEL}** instead."
         )
     who = sheets.who(sheet.sheet) if sheet.sheet else ""
+    basic = sheet_checks.vitals(sheet.sheet) if sheet.sheet else ""  # the DM's card: basics only
     who = f" · {_md(who)}" if who else ""
+    who += f" · {basic}" if basic else ""
     if sheet.url is None:
         return f"{'you' if mine else 'the player'} told DMbot about this character{who}."
     where = f"[D&D Beyond](<{sheet.url}>)" if link else "D&D Beyond"
@@ -202,9 +205,12 @@ async def link_and_read(
     character: int,
     *,
     player: int | None = None,
+    report: list[str] | None = None,
 ) -> str:
     """Link the sheet and read it once, now. The words to show whoever linked it.
-    Raises SheetRefused if it's no longer `player`'s character (or a player's at all)."""
+    Raises SheetRefused if it's no longer `player`'s character (or a player's at all).
+    `report`: if given, the import status card (#1124) is added to it once the sheet is read
+    and kept; it is for the player alone, so only the player's own link asks for it."""
     store = bot.sheets
     assert store is not None
     await store.link(guild_id, campaign_id, entity_id, character, player=player)
@@ -224,8 +230,36 @@ async def link_and_read(
         bot.sheets_changed(guild_id, campaign_id)  # a new link drops the old names too
     if not saved:  # forgotten or linked again while it was read
         return LINK_CHANGED if player is not None else DM_NOT_LINKED
+    if report is not None:
+        report.append(await status_card(bot, guild_id, campaign_id, snapshot))
     who = sheets.who(snapshot)
     return LINKED_READ.format(name=_md(snapshot["name"]), who=f" ({_md(who)})" if who else "")
+
+
+async def status_card(
+    bot: DMBot, guild_id: int, campaign_id: str, snapshot: Mapping[str, Any]
+) -> str:
+    """The import status card for this campaign (#1124): names are checked against its own
+    rulesets (a campaign with no fallback never sees an older-edition-only spell as ✅), and
+    escaped for Discord."""
+    campaign = await bot.campaigns.get(guild_id, campaign_id)
+    target, fallback = (
+        (campaign.target_ruleset, campaign.fallback_ruleset)
+        if campaign is not None
+        else ("2024", "none")
+    )
+    return sheet_checks.card(snapshot, target=target, fallback=fallback, escape=_md)
+
+
+async def _send_card(interaction: discord.Interaction, report: list[str]) -> None:
+    """The import status card, privately, after the panel (#1124): one message per import.
+    The sheet is saved either way, so a card that can't be sent is only logged."""
+    if not report:
+        return
+    try:
+        await interaction.followup.send(report[0], ephemeral=True)
+    except discord.HTTPException:
+        log.info("The import status card couldn't be sent")
 
 
 async def _still_member(interaction: discord.Interaction, guild_id: int) -> bool:
@@ -606,6 +640,7 @@ class LinkForm(discord.ui.Modal, title="Link your D&D Beyond sheet"):
         if not await _still_member(interaction, self.guild_id):
             return
         c = self.character
+        report: list[str] = []
         try:
             said = await link_and_read(
                 _bot(interaction),
@@ -614,11 +649,13 @@ class LinkForm(discord.ui.Modal, title="Link your D&D Beyond sheet"):
                 c.entity_id,
                 number,
                 player=interaction.user.id,
+                report=report,
             )
         except SheetRefused:
             await _tell(interaction, NOT_YOURS)
             return
         await show_panel(interaction, self.guild_id, c, note=said)
+        await _send_card(interaction, report)
 
 
 class TypedForm(discord.ui.Modal, title="Type in your character"):
@@ -698,6 +735,10 @@ class TypedForm(discord.ui.Modal, title="Type in your character"):
         if len(kept) < len(typed):
             said += TYPED_DROPPED.format(n=len(typed) - len(kept))
         await show_panel(interaction, self.guild_id, c, note=said)
+        await _send_card(
+            interaction,
+            [await status_card(_bot(interaction), self.guild_id, c.campaign_id, snapshot)],
+        )
 
 
 # ---- the DM's side ------------------------------------------------------------------
