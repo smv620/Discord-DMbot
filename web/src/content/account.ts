@@ -73,12 +73,13 @@ export const text = {
   emailButton: "Email me a sign-in link",
   emailSending: "One moment…",
   emailNote:
-    "The link works once and ends after 15 minutes. Adding DMbot to a server needs Discord, so for that, sign in with Discord.",
+    "The link works once and ends after 15 minutes. To add DMbot to a server, sign in with Discord instead.",
   emailMissing: "Type your email address first.",
-  emailAnswer: "If that email belongs to a DMbot account, we've sent a link",
+  emailAnswer:
+    "If that email belongs to a DMbot account, we've sent a link. Check your inbox (and spam). It ends in 15 minutes.",
   emailWait: "Too many tries. Wait about 10 minutes, then try again.",
   emailLinkBad:
-    "That sign-in link didn't work. It may have been used already, or it ended. Ask for a new one below.",
+    "That sign-in link didn't work. It may have been used already, or it ran out of time. Ask for a new one below.",
 
   // Errors
   down: "DMbot isn't answering right now. Tap Try again in a minute.",
@@ -280,10 +281,10 @@ export const text = {
   pointsNote: "The minutes DMbot has run for you, all time.",
   moveHeading: "Moving to a new Discord account?",
   moveText:
-    "Get a move code. We email it to your payment email. Your plan, hours and campaigns move with it. If you only want to give campaigns to another game master, use Hand over on each campaign instead: they pay with their own plan.",
+    "Press Get a move code. We email it to your payment email. Your plan, hours and campaigns move to your new account. Only want to give campaigns to another game master? Use Hand over on each campaign instead. They use their own plan.",
   moveButton: "Get a move code",
   moveSent:
-    "We've emailed a move code to your payment email. It works once, for 30 minutes. On your new Discord account, type /dmbot migrate, press Import from another Discord account, and type the code. Your new account says yes to being recorded again.",
+    "We've emailed a move code to your payment email. It works once, for 30 minutes. On your new Discord account, type /dmbot migrate, press Import from another Discord account, and type the code. You will be asked to say yes to being recorded again.",
   moveNotReady: "Moving to a new Discord account isn't open yet. Please try again soon.",
   moveWait: "Too many tries. Wait an hour, then try again.",
 
