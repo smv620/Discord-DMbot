@@ -1,6 +1,7 @@
-"""The publisher's side of shared house rules (#1191): publishing a new version, and who can
-edit the set. Reached from the Shared house rules menu in ⚙️ Settings; every press re-checks
-that the person is a DM of the campaign. Followers get a new version at their next session
+"""The publisher's side of shared house rules (#1191): publishing a new version, undoing it,
+and the version history. Only the campaign's DMs edit the set (no separate co-editor list; owner
+decision, PLAN #1257). Reached from the Shared house rules menu in ⚙️ Settings; every press
+re-checks that the person is a DM of the campaign. Followers get a new version at their next session
 start, never sooner, and may take it or pick from it (dmbot.dm_screen.set_update)."""
 
 from __future__ import annotations
@@ -11,7 +12,7 @@ import discord
 
 from dmbot.campaigns import Campaign
 from dmbot.rules import rule_sets, set_diff
-from dmbot.ui.dmbot_commands import _bot, _Button, _Menu, _Select, _send, _tell
+from dmbot.ui.dmbot_commands import _bot, _Button, _Menu, _send, _tell
 from dmbot.ui.shared_rules import (
     CANCEL_LABEL,
     _escape,
@@ -22,14 +23,14 @@ from dmbot.ui.shared_rules import (
 
 SHOWN_CHANGES = 12  # the lines of a diff quoted on the screen; the rest are counted
 BODY_MAX = 1400  # the diff's characters: the whole message stays under Discord's 2000
-NAMES_SHOWN = 10  # co-editors named in the history text
-EDITORS_MAX = 25  # what the remove menu can hold
 YOUR_RULES_CHANGED = (
     "Your house rules changed while you were looking. Press 🔄 Publish my changes again to "
     "see the new changes."
 )
 NOT_SHARED_HERE = "Your rules aren't shared yet. Use 📤 Share my house rules first."
 HISTORY_SHOWN = 8
+LINK_ONLY = "Only the rules document link changed."
+UNDO_LABEL = "↩️ Undo"
 NOTHING_NEW = "Your house rules are the same as the shared version, so there is nothing to publish."
 
 
@@ -64,6 +65,13 @@ async def show_changes(interaction: discord.Interaction, campaign: Campaign) -> 
     if ready is None:
         return
     current, store = ready
+    # Asked before the diff, so nobody reads changes they can't publish (as Share does).
+    refused = await _bot(interaction).plan_gate(
+        "share", current.guild_id, current, interaction.user.id
+    )
+    if refused is not None:
+        await _tell(interaction, refused)
+        return
     shared = await store.current_content(current.guild_id, current.id)
     if shared is None:
         await _tell(interaction, NOT_SHARED_HERE)
@@ -78,20 +86,21 @@ async def show_changes(interaction: discord.Interaction, campaign: Campaign) -> 
     if not changes and before.get("link") == after.get("link"):
         await _tell(interaction, NOTHING_NEW)
         return
-    body = changes_text(changes) or "Only the rules document link changed."
+    body = changes_text(changes)
+    if before.get("link") != after.get("link"):
+        body = f"{body}\nThe rules document link changed." if body else LINK_ONLY
+    count = f"{set_diff.count_words(changes)} changed" if changes else "no rule changed"
     await _send(
         interaction,
         f"**{_escape(mine.name[:60])}**: publish as version {mine.version + 1}? "
-        f"{set_diff.count_words(changes)} changed:\n{body}\n"
+        f"{count}:\n{body}\n"
         "Tables using it get the new version at their next session start.",
         ConfirmPublish(current, mine.version, after),
     )
 
 
 class ConfirmPublish(_Menu):
-    def __init__(
-        self, campaign: Campaign, version: int, shown: dict[str, Any] | None = None
-    ) -> None:
+    def __init__(self, campaign: Campaign, version: int, shown: dict[str, Any]) -> None:
         super().__init__()
         self.campaign, self.version, self.shown = campaign, version, shown
         self.add_item(_Button(self._yes, label="Yes, publish", style=discord.ButtonStyle.primary))
@@ -119,7 +128,7 @@ class ConfirmPublish(_Menu):
         if shared[0].version != self.version:
             await _tell(interaction, rule_sets.CHANGED_AGAIN)  # someone else published meanwhile
             return
-        if self.shown is not None and rule_sets.content_of(rules, link) != self.shown:
+        if rule_sets.content_of(rules, link) != self.shown:
             # What would be published is not what the DM saw: they look again first.
             await _tell(interaction, YOUR_RULES_CHANGED)
             return
@@ -133,10 +142,11 @@ class ConfirmPublish(_Menu):
             plan_ok=True,  # checked just above with plan_gate
             expected_version=self.version,  # and again under the lock, in the store
         )
-        await _tell(
+        await _send(
             interaction,
             f"✅ **{_escape(made.name[:60])}** is now version {made.version} "
             f"({_rules(len(rules))}). Tables get it at their next session start.",
+            UndoPublish(current, made.version),
         )
 
     async def _no(self, interaction: discord.Interaction) -> None:
@@ -146,7 +156,7 @@ class ConfirmPublish(_Menu):
 
 @_guarded
 async def show_history(interaction: discord.Interaction, campaign: Campaign) -> None:
-    """Who made each version and who else can edit the set."""
+    """Who made each version of the set (read only)."""
     ready = await _ready(interaction, campaign)
     if ready is None:
         return
@@ -170,98 +180,18 @@ async def show_history(interaction: discord.Interaction, campaign: Campaign) -> 
         )
     if len(log) > HISTORY_SHOWN:
         lines.append(f"…and {len(log) - HISTORY_SHOWN} older.")
-    editors = await store.editors(current.guild_id, current.id)
-    if editors:
-        shown = [_escape(bot.name_of(current.guild_id, e)[:40]) for e in editors[:NAMES_SHOWN]]
-        extra = len(editors) - len(shown)
-        more = f" and {extra} more" if extra > 0 else ""
-        lines.append(f"Co-editors: {', '.join(shown)}{more}")
-    else:
-        lines.append("No co-editors. Any DM of this campaign can change the set.")
-    by_id = {e: bot.name_of(current.guild_id, e) for e in editors[:EDITORS_MAX]}
-    await _send(interaction, "\n".join(lines), EditorsMenu(current, editors, by_id))
+    await _tell(interaction, "\n".join(lines))
 
 
-class _DmSelect(discord.ui.UserSelect[Any]):
-    def __init__(self, on_pick: Any) -> None:
-        super().__init__(placeholder="Add a co-editor…", row=0)
-        self.on_pick = on_pick
+class UndoPublish(_Menu):
+    """Puts the rules from before a publish back as the next version, so followers that took
+    the mistake get the correction as a normal update. It doesn't delete the version: the
+    history stays complete."""
 
-    async def callback(self, interaction: discord.Interaction) -> None:
-        await self.on_pick(interaction, self.values[0])
-
-
-class EditorsMenu(_Menu):
-    def __init__(
-        self, campaign: Campaign, editors: list[int], names: dict[int, str] | None = None
-    ) -> None:
+    def __init__(self, campaign: Campaign, version: int) -> None:
         super().__init__()
-        self.campaign = campaign
-        names = names or {}
-        self.add_item(_DmSelect(self._add))
-        if editors:
-            self.add_item(
-                _Select(
-                    self._remove,
-                    placeholder="Remove a co-editor…",
-                    options=[
-                        discord.SelectOption(label=(names.get(e) or str(e))[:25], value=str(e))
-                        for e in editors[:EDITORS_MAX]
-                    ],
-                    row=1,
-                )
-            )
-
-    @_guarded
-    async def _add(self, interaction: discord.Interaction, person: Any) -> None:
-        ready = await _ready(interaction, self.campaign)
-        if ready is None:
-            return
-        current, store = ready
-        if getattr(person, "bot", False):
-            await _tell(interaction, "Bots can't edit rules.")
-            return
-        if len(await store.editors(current.guild_id, current.id)) >= EDITORS_MAX:
-            await _tell(
-                interaction,
-                f"That's the most co-editors a set can have ({EDITORS_MAX}). Remove one first.",
-            )
-            return
-        await store.add_editor(current.guild_id, current.id, interaction.user.id, person.id)
-        name = _escape(_bot(interaction).name_of(current.guild_id, person.id)[:40])
-        await _send(
-            interaction,
-            f"✅ **{name}** is a co-editor now and can change the set.",
-            UndoEditor(current, person.id, added=True),
-        )
-
-    @_guarded
-    async def _remove(self, interaction: discord.Interaction) -> None:
-        select = next(c for c in self.children if isinstance(c, discord.ui.Select))
-        editor_id = int(select.values[0])
-        ready = await _ready(interaction, self.campaign)
-        if ready is None:
-            return
-        current, store = ready
-        removed = await store.remove_editor(
-            current.guild_id, current.id, interaction.user.id, editor_id
-        )
-        name = _escape(_bot(interaction).name_of(current.guild_id, editor_id)[:40])
-        if not removed:
-            await _tell(interaction, f"**{name}** wasn't a co-editor.")
-            return
-        await _send(
-            interaction,
-            f"**{name}** is no longer a co-editor.",
-            UndoEditor(current, editor_id, added=False),
-        )
-
-
-class UndoEditor(_Menu):
-    def __init__(self, campaign: Campaign, editor_id: int, *, added: bool) -> None:
-        super().__init__()
-        self.campaign, self.editor_id, self.added = campaign, editor_id, added
-        self.add_item(_Button(self._undo, label="↩️ Undo"))
+        self.campaign, self.version = campaign, version
+        self.add_item(_Button(self._undo, label=UNDO_LABEL))
 
     @_guarded
     async def _undo(self, interaction: discord.Interaction) -> None:
@@ -269,15 +199,27 @@ class UndoEditor(_Menu):
         if ready is None:
             return
         current, store = ready
-        if self.added:
-            await store.remove_editor(
-                current.guild_id, current.id, interaction.user.id, self.editor_id
-            )
-        else:
-            await store.add_editor(
-                current.guild_id, current.id, interaction.user.id, self.editor_id
-            )
+        refused = await _bot(interaction).plan_gate(
+            "share", current.guild_id, current, interaction.user.id
+        )
+        if refused is not None:
+            await _tell(interaction, refused)
+            return
+        before = await store.content_at(current.guild_id, current.id, self.version - 1)
+        if before is None:
+            await _tell(interaction, "There is no earlier version to go back to.")
+            return
         self.stop()
-        name = _escape(_bot(interaction).name_of(current.guild_id, self.editor_id)[:40])
-        done = "is not a co-editor" if self.added else "is a co-editor again"
-        await _tell(interaction, f"↩️ Undone: {name} {done}.")
+        made = await store.save_version(
+            current.guild_id,
+            current.id,
+            interaction.user.id,
+            before,
+            plan_ok=True,  # checked just above with plan_gate
+            expected_version=self.version,  # only while that publish is still the newest
+        )
+        await _tell(
+            interaction,
+            f"↩️ Undone. The rules from before are now version {made.version}. Tables that took "
+            f"version {self.version} get this one at their next session start.",
+        )

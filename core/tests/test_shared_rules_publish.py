@@ -1,5 +1,5 @@
-"""Publishing a new version and naming editors (#1191): the diff shown first, the checks on
-every press, and that nothing is published without a press. Fake stores, no Discord."""
+"""Publishing a new version, undoing it and the history (#1191): the diff shown first, the checks
+on every press, and that nothing is published without a press. Fake stores, no Discord."""
 
 from __future__ import annotations
 
@@ -7,8 +7,6 @@ import unittest
 from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
-
-import discord
 
 from dmbot.rules import rule_sets
 from dmbot.rules.house import HouseRule
@@ -26,12 +24,20 @@ def rule(number: int, text: str) -> HouseRule:
     return HouseRule(number, "c1", text, None, None, None, 7, 1, 1)
 
 
+def rules_bot(s: Any, rules: list[HouseRule] | None = None, **kw: Any) -> Any:
+    """A bot whose campaign holds exactly the rules BEFORE says (or the ones given)."""
+    bot = bot_with(s, **kw)
+    bot.house_rules.list = AsyncMock(
+        return_value=rules if rules is not None else [rule(1, "Flanking gives advantage")]
+    )
+    return bot
+
+
 def store(**kw: Any) -> Any:
     s = MagicMock()
     s.current_content = AsyncMock(return_value=(SET, BEFORE))
     s.published = AsyncMock(return_value=SET)
     s.version_log = AsyncMock(return_value=[])
-    s.editors = AsyncMock(return_value=[])
     for name, value in kw.items():
         setattr(s, name, value)
     return s
@@ -71,12 +77,31 @@ class Publishing(unittest.IsolatedAsyncioTestCase):
         await pub.show_changes(it2, campaign())
         self.assertEqual(it2.sent[0][0], pub.NOT_SHARED_HERE)
 
+    async def test_the_plan_is_checked_before_the_diff_is_shown(self) -> None:
+        s = store()
+        it = interaction(7, rules_bot(s, refusal="Sharing house rules needs a paid plan."))
+        await pub.show_changes(it, campaign())
+        self.assertEqual(it.sent[0][0], "Sharing house rules needs a paid plan.")
+        s.current_content.assert_not_called()
+
+    async def test_a_link_only_change_is_said_in_words(self) -> None:
+        s = store()
+        bot = rules_bot(s)
+        bot.house_file_links = SimpleNamespace(
+            get=AsyncMock(return_value=SimpleNamespace(link="https://example.com/rules"))
+        )
+        it = interaction(7, bot)
+        await pub.show_changes(it, campaign())
+        text = it.sent[0][0]
+        self.assertIn("no rule changed", text)
+        self.assertIn(pub.LINK_ONLY, text)
+
     async def test_publish_checks_the_plan_and_the_version_the_dm_saw(self) -> None:
         made = rule_sets.SharedSet("s", "Red Table rules", True, 5)
         s = store(publish_changes=AsyncMock(return_value=made))
-        bot = bot_with(s, refusal="Sharing house rules needs a paid plan.")
+        bot = rules_bot(s, refusal="Sharing house rules needs a paid plan.")
         it = interaction(7, bot)
-        await pub.ConfirmPublish(campaign(), 4)._yes(it)
+        await pub.ConfirmPublish(campaign(), 4, BEFORE)._yes(it)
         self.assertEqual(it.sent[0][0], "Sharing house rules needs a paid plan.")
         s.publish_changes.assert_not_called()
         # Someone else published meanwhile: the DM looks again, nothing is published.
@@ -86,14 +111,14 @@ class Publishing(unittest.IsolatedAsyncioTestCase):
             ),
             publish_changes=AsyncMock(return_value=made),
         )
-        it2 = interaction(7, bot_with(s2))
-        await pub.ConfirmPublish(campaign(), 4)._yes(it2)
+        it2 = interaction(7, rules_bot(s2))
+        await pub.ConfirmPublish(campaign(), 4, BEFORE)._yes(it2)
         self.assertEqual(it2.sent[0][0], rule_sets.CHANGED_AGAIN)
         s2.publish_changes.assert_not_called()
         # The normal press publishes.
         s3 = store(publish_changes=AsyncMock(return_value=made))
-        it3 = interaction(7, bot_with(s3))
-        await pub.ConfirmPublish(campaign(), 4)._yes(it3)
+        it3 = interaction(7, rules_bot(s3))
+        await pub.ConfirmPublish(campaign(), 4, BEFORE)._yes(it3)
         self.assertIn("version 5", it3.sent[0][0])
         s3.publish_changes.assert_awaited_once()
 
@@ -114,12 +139,12 @@ class WhatWasShown(unittest.IsolatedAsyncioTestCase):
 
     async def test_the_store_gets_the_version_the_dm_saw_and_an_unshared_set_is_said(self) -> None:
         s = store(publish_changes=AsyncMock(return_value=rule_sets.SharedSet("s", "R", True, 5)))
-        it = interaction(7, bot_with(s))
-        await pub.ConfirmPublish(campaign(), 4)._yes(it)
+        it = interaction(7, rules_bot(s))
+        await pub.ConfirmPublish(campaign(), 4, BEFORE)._yes(it)
         self.assertEqual(s.publish_changes.await_args.kwargs["expected_version"], 4)
         gone = store(current_content=AsyncMock(return_value=None), publish_changes=AsyncMock())
-        it2 = interaction(7, bot_with(gone))
-        await pub.ConfirmPublish(campaign(), 4)._yes(it2)
+        it2 = interaction(7, rules_bot(gone))
+        await pub.ConfirmPublish(campaign(), 4, BEFORE)._yes(it2)
         self.assertEqual(it2.sent[0][0], pub.NOT_SHARED_HERE)
         gone.publish_changes.assert_not_called()
 
@@ -134,62 +159,59 @@ class Limits(unittest.IsolatedAsyncioTestCase):
         ]
         self.assertLess(len(pub.changes_text(changes)), pub.BODY_MAX + 40)
 
-    async def test_bots_and_a_full_list_are_refused(self) -> None:
-        s = store(add_editor=AsyncMock(), editors=AsyncMock(return_value=list(range(25))))
-        bot = bot_with(s)
-        bot.name_of = lambda guild, user: "Mia"
-        it = interaction(7, bot)
-        await pub.EditorsMenu(campaign(), [])._add(it, SimpleNamespace(id=8, bot=True))
-        self.assertEqual(it.sent[0][0], "Bots can't edit rules.")
-        it2 = interaction(7, bot)
-        await pub.EditorsMenu(campaign(), [])._add(it2, SimpleNamespace(id=8, bot=False))
-        self.assertIn("most co-editors", it2.sent[0][0])
-        s.add_editor.assert_not_called()
-
-    def test_the_remove_menu_shows_names_not_ids(self) -> None:
-        menu = pub.EditorsMenu(campaign(), [8], {8: "Mia"})
-        select = next(c for c in menu.children if isinstance(c, discord.ui.Select))
-        self.assertEqual(select.options[0].label, "Mia")
-
 
 class History(unittest.IsolatedAsyncioTestCase):
-    async def test_the_log_and_the_editors_are_shown_by_name(self) -> None:
+    async def test_the_log_is_shown_by_name_without_any_editor_list(self) -> None:
         log = [
             rule_sets.VersionLog(2, 7, 1_700_000_000, "suggestion"),
             rule_sets.VersionLog(1, 7, 1_699_000_000, "publisher"),
         ]
-        s = store(version_log=AsyncMock(return_value=log), editors=AsyncMock(return_value=[8]))
+        s = store(version_log=AsyncMock(return_value=log))
         bot = bot_with(s)
-        bot.name_of = lambda guild, user: {7: "Sam", 8: "Mia"}[user]
+        bot.name_of = lambda guild, user: "Sam"
         it = interaction(7, bot)
         await pub.show_history(it, campaign())
-        text, view = it.sent[0]
+        text = it.sent[0][0]
         self.assertIn("Version 2, by Sam", text)
         self.assertIn("from a player's suggestion", text)
-        self.assertIn("Co-editors: Mia", text)
-        self.assertIsInstance(view, pub.EditorsMenu)
+        self.assertNotIn("editor", text.lower())
 
-    async def test_naming_an_editor_can_be_undone(self) -> None:
-        s = store(add_editor=AsyncMock(), remove_editor=AsyncMock(return_value=True))
-        bot = bot_with(s)
-        bot.name_of = lambda guild, user: "Mia"
-        it = interaction(7, bot)
-        menu = pub.EditorsMenu(campaign(), [])
-        await menu._add(it, SimpleNamespace(id=8))
-        s.add_editor.assert_awaited_once_with(1, "c1", 7, 8)
-        text, undo = it.sent[0]
-        self.assertIn("co-editor now", text)
-        it2 = interaction(7, bot)
-        await undo._undo(it2)
-        s.remove_editor.assert_awaited_once_with(1, "c1", 7, 8)
+    async def test_a_player_cannot_read_the_history(self) -> None:
+        it = interaction(99, bot_with(store()))
+        await pub.show_history(it, campaign())
+        self.assertIn("Only this campaign's DMs", it.sent[0][0])
 
-    async def test_a_store_refusal_is_told_in_its_words(self) -> None:
-        s = store(add_editor=AsyncMock(side_effect=rule_sets.RuleSetError(rule_sets.EDITOR_NOT_DM)))
+
+class UndoingAPublish(unittest.IsolatedAsyncioTestCase):
+    async def test_undo_republishes_the_earlier_rules_as_the_next_version(self) -> None:
+        made = rule_sets.SharedSet("s", "Red Table rules", True, 6)
+        s = store(
+            content_at=AsyncMock(return_value=BEFORE), save_version=AsyncMock(return_value=made)
+        )
         it = interaction(7, bot_with(s))
-        bot = it.client
-        bot.name_of = lambda guild, user: "Mia"
-        await pub.EditorsMenu(campaign(), [])._add(it, SimpleNamespace(id=8))
-        self.assertEqual(it.sent[0][0], rule_sets.EDITOR_NOT_DM)
+        await pub.UndoPublish(campaign(), 5)._undo(it)
+        s.content_at.assert_awaited_once_with(1, "c1", 4)
+        args, kwargs = s.save_version.await_args
+        self.assertEqual(args[3], BEFORE)
+        self.assertEqual(kwargs["expected_version"], 5)
+        self.assertIn("version 6", it.sent[0][0])
+
+    async def test_undo_is_refused_for_a_player_and_without_a_paid_plan(self) -> None:
+        s = store(content_at=AsyncMock(return_value=BEFORE), save_version=AsyncMock())
+        it = interaction(99, bot_with(s))
+        await pub.UndoPublish(campaign(), 5)._undo(it)
+        self.assertIn("Only this campaign's DMs", it.sent[0][0])
+        it2 = interaction(7, bot_with(s, refusal="Sharing house rules needs a paid plan."))
+        await pub.UndoPublish(campaign(), 5)._undo(it2)
+        self.assertEqual(it2.sent[0][0], "Sharing house rules needs a paid plan.")
+        s.save_version.assert_not_called()
+
+    async def test_a_publish_cannot_be_confirmed_by_a_player(self) -> None:
+        s = store(publish_changes=AsyncMock())
+        it = interaction(99, rules_bot(s))
+        await pub.ConfirmPublish(campaign(), 4, BEFORE)._yes(it)
+        self.assertIn("Only this campaign's DMs", it.sent[0][0])
+        s.publish_changes.assert_not_called()
 
 
 if __name__ == "__main__":

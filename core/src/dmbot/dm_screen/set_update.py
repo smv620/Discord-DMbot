@@ -52,8 +52,13 @@ COULDNT = "That didn't work, and nothing changed. Press the button again in a mo
 UNDO_LABEL = "↩️ Undo"
 
 
-def note_text(follow_name: str, version: int, changes: int) -> str:
+LINK_ONLY = "only the rules document link changed"
+
+
+def note_text(follow_name: str, version: int, changes: int, link_changed: bool = False) -> str:
     rules = f"{changes} rule" + ("" if changes == 1 else "s")
+    if changes == 0 and link_changed:
+        rules = LINK_ONLY
     return (
         f"📚 **{discord.utils.escape_markdown(follow_name)}** house rules updated to "
         f"v{version}: {rules}. DMbot took the new version."
@@ -155,7 +160,10 @@ async def press(
                 f"Already undone. The campaign is on v{follow.version}. {UNDONE_AND_WAITING}",
             )
         elif action == "see":
-            await _tell(interaction, changes_text(follow.name, version, list(update.changes)))
+            await _tell(
+                interaction,
+                changes_text(follow.name, version, list(update.changes), update.link_changed),
+            )
         else:
             await _open_picker(interaction, campaign, update)
         return
@@ -165,7 +173,13 @@ async def press(
             await _tell(interaction, "There's nothing to compare: that update was undone.")
             return
         await _tell(
-            interaction, changes_text(follow.name, version, set_diff.diff(before, follow.content))
+            interaction,
+            changes_text(
+                follow.name,
+                version,
+                set_diff.diff(before, follow.content),
+                before.get("link") != follow.content.get("link"),
+            ),
         )
         return
     try:
@@ -192,8 +206,12 @@ async def _open_picker(
     view.origin = interaction
 
 
-def changes_text(name: str, version: int, changes: list[set_diff.Change]) -> str:
+def changes_text(
+    name: str, version: int, changes: list[set_diff.Change], link_changed: bool = False
+) -> str:
     lines = [set_diff.describe(c) for c in changes]
+    if link_changed:
+        lines.append("The rules document link changed.")
     text = "\n".join(lines) or "Only the version number changed. No rule is different."
     if len(text) > TEXT_MAX:
         kept = text[:TEXT_MAX].rsplit("\n", 1)[0]
@@ -295,10 +313,11 @@ class PickView(_Menu):
         pages = max(1, -(-len(self.update.changes) // PAGE))
         where = f" (page {self.page + 1} of {pages})" if pages > 1 else ""
         lines = "\n".join(set_diff.describe(c, 60) for c in self._page_changes())
+        link = "\nThe rules document link changed too." if self.update.link_changed else ""
         return (
             f"Pick changes: **{discord.utils.escape_markdown(self.update.offer.name)}**{where}. "
             "Ticked = keep. Everything starts ticked. If you untick any, you stop following "
-            "the set and get your own copy. You can undo it.\n" + lines
+            "the set and get your own copy. You can undo it.\n" + lines + link
         )
 
     def _draw(self) -> None:
@@ -390,7 +409,9 @@ async def check_update(bot: Any, campaign: Campaign, screen_id: int) -> None:
         )
         posted = await bot.post_message(
             screen_id,
-            note_text(update.offer.name, update.offer.version, len(update.changes)),
+            note_text(
+                update.offer.name, update.offer.version, len(update.changes), update.link_changed
+            ),
             note_view(campaign.id, update.offer.version),
         )
         if posted is None:  # taken, but the DM has no note and no Undo button for it

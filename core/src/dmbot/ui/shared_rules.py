@@ -30,7 +30,7 @@ FOLLOW_LABEL = "📥 Use shared rules"
 UNFOLLOW_LABEL = "Stop using shared rules"
 UNDO_LABEL = "↩️ Undo"
 PUBLISH_LABEL = "🔄 Publish my changes"
-HISTORY_LABEL = "👥 History and editors"
+HISTORY_LABEL = "📜 Version history"
 CONFIRM_LABEL = "Yes, use this set"
 CANCEL_LABEL = "Cancel"
 

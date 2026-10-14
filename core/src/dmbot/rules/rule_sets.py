@@ -58,8 +58,7 @@ OWN_SET = "That set is this campaign's own."
 ALREADY_FOLLOWING = "This campaign already follows a set of house rules. Unfollow it first."
 NOT_FOLLOWING = "This campaign isn't following a set of house rules."
 NO_CHANGES = "Nothing is different from the last version, so no new version was made."
-NOT_EDITOR = "Only this set's DMs and the people they named can change it."
-EDITOR_NOT_DM = "A co-editor has to be a DM of the campaign that shares the set."
+NOT_EDITOR = "Only this campaign's DMs can change the set."
 NOT_PAID = "Changing a shared set needs the campaign to be on a paid plan."
 NOTHING_NEW = "There is nothing new to take."
 NOTHING_TO_UNDO = "There is nothing to undo."
@@ -118,6 +117,11 @@ class Update:
     follow: Follow
     offer: Offer
     changes: tuple[set_diff.Change, ...]
+
+    @property
+    def link_changed(self) -> bool:
+        """The rules document link differs (it is not a rule, so `changes` doesn't show it)."""
+        return self.follow.content.get("link") != self.offer.content.get("link")
 
 
 @dataclass(frozen=True, slots=True)
@@ -254,6 +258,20 @@ class RuleSetStore:
             )
             row = await cur.fetchone()
         return (mine, valid_content(_json(row["content"]))) if row else None
+
+    async def content_at(
+        self, guild_id: int, campaign_id: str, version: int
+    ) -> dict[str, Any] | None:
+        """What one version of the campaign's own shared set held (None: no such version)."""
+        async with self._db.guild(guild_id) as conn:
+            cur = await conn.execute(
+                "SELECT v.content FROM rule_set_versions v JOIN rule_sets s"
+                " ON s.guild_id = v.guild_id AND s.campaign_id = v.campaign_id AND s.id = v.set_id"
+                " WHERE v.guild_id = %s AND v.campaign_id = %s AND s.kind = %s AND v.version = %s",
+                (guild_id, campaign_id, HOUSE_RULES, version),
+            )
+            row = await cur.fetchone()
+        return valid_content(_json(row["content"])) if row else None
 
     async def publish(
         self,
@@ -519,19 +537,12 @@ class RuleSetStore:
     async def _may_edit(
         self, conn: Conn, guild_id: int, campaign_id: str, user_id: int, set_id: str
     ) -> None:
-        """A DM of the publishing campaign, or someone its DMs named, may change the set."""
+        """Only the publishing campaign's current DMs change the set (owner decision: no
+        separate co-editor list; adding a DM to the campaign is how someone gets to edit)."""
         try:
             await require_dm(conn, guild_id, campaign_id, user_id, lock=True)
-            return
-        except HouseRuleError:
-            pass
-        cur = await conn.execute(
-            "SELECT 1 AS ok FROM rule_set_editors WHERE guild_id = %s AND campaign_id = %s"
-            " AND set_id = %s AND user_id = %s",
-            (guild_id, campaign_id, set_id, user_id),
-        )
-        if await cur.fetchone() is None:
-            raise RuleSetError(NOT_EDITOR)
+        except HouseRuleError as exc:
+            raise RuleSetError(NOT_EDITOR) from exc
 
     async def save_version(
         self,
@@ -613,55 +624,6 @@ class RuleSetStore:
             plan_ok=plan_ok,
             expected_version=expected_version,
         )
-
-    async def add_editor(
-        self, guild_id: int, campaign_id: str, user_id: int, editor_id: int
-    ) -> None:
-        """Name a co-editor. A publisher action: only the publishing campaign's DMs."""
-        if editor_id <= 0:
-            raise RuleSetError(NOT_EDITOR)
-        async with self._db.guild(guild_id) as conn:
-            await require_dm(conn, guild_id, campaign_id, user_id, lock=True)
-            cur = await conn.execute(
-                "SELECT 1 AS ok FROM campaign_dms WHERE guild_id = %s AND campaign_id = %s"
-                " AND user_id = %s",
-                (guild_id, campaign_id, editor_id),
-            )
-            if await cur.fetchone() is None:  # co-editors are DMs of the publishing campaign
-                raise RuleSetError(EDITOR_NOT_DM)
-            cur = await conn.execute(
-                "SELECT id FROM rule_sets WHERE guild_id = %s AND campaign_id = %s AND kind = %s",
-                (guild_id, campaign_id, HOUSE_RULES),
-            )
-            row = await cur.fetchone()
-            if row is None:
-                raise RuleSetError(NOT_SHARED)
-            await conn.execute(
-                "INSERT INTO rule_set_editors (guild_id, campaign_id, set_id, user_id, added_by,"
-                " added_at) VALUES (%s, %s, %s, %s, %s, %s) ON CONFLICT DO NOTHING",
-                (guild_id, campaign_id, row["id"], editor_id, user_id, self._now()),
-            )
-
-    async def remove_editor(
-        self, guild_id: int, campaign_id: str, user_id: int, editor_id: int
-    ) -> bool:
-        async with self._db.guild(guild_id) as conn:
-            await require_dm(conn, guild_id, campaign_id, user_id, lock=True)
-            cur = await conn.execute(
-                "DELETE FROM rule_set_editors WHERE guild_id = %s AND campaign_id = %s"
-                " AND user_id = %s",
-                (guild_id, campaign_id, editor_id),
-            )
-            return bool(cur.rowcount > 0)
-
-    async def editors(self, guild_id: int, campaign_id: str) -> list[int]:
-        async with self._db.guild(guild_id) as conn:
-            cur = await conn.execute(
-                "SELECT user_id FROM rule_set_editors WHERE guild_id = %s AND campaign_id = %s"
-                " ORDER BY added_at, user_id",
-                (guild_id, campaign_id),
-            )
-            return [int(r["user_id"]) for r in await cur.fetchall()]
 
     async def version_log(self, guild_id: int, campaign_id: str) -> list[VersionLog]:
         """Each version of the campaign's set: who made it, when and how, newest first."""

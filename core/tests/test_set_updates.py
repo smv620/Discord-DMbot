@@ -45,10 +45,8 @@ class Updates(DatabaseTest):
         self.code = await self.sets.make_code(GUILD_A, self.pub, DM_A)
 
     async def make_editor(self) -> None:
-        """EDITOR becomes a DM of the publishing campaign, then a named co-editor."""
-        campaigns = CampaignStore(self.db)
-        await campaigns.add_dm(GUILD_A, self.pub, EDITOR)
-        await self.sets.add_editor(GUILD_A, self.pub, DM_A, EDITOR)
+        """EDITOR becomes a second DM of the publishing campaign (the only way to edit)."""
+        await CampaignStore(self.db).add_dm(GUILD_A, self.pub, EDITOR)
 
     async def follow_far(self) -> rule_sets.Follow:
         offer = await self.sets.by_code(GUILD_B, DM_B, self.code)
@@ -62,8 +60,6 @@ class Updates(DatabaseTest):
                 GUILD_A, self.pub, DM_A, content((1, "x", None)) | {"rules": "no"}, plan_ok=True
             )
         await self.make_editor()
-        with self.assertRaises(HouseRuleError):  # naming co-editors is the publisher's
-            await self.sets.add_editor(GUILD_A, self.pub, EDITOR, PLAYER)
         made = await self.sets.save_version(GUILD_A, self.pub, EDITOR, V2, plan_ok=True)
         self.assertEqual(made.version, 2)
         with self.assertRaises(RuleSetError):  # nothing differs
@@ -73,16 +69,34 @@ class Updates(DatabaseTest):
             [(v.version, v.by, v.source) for v in log],
             [(2, EDITOR, "publisher"), (1, DM_A, "publisher")],
         )
-        self.assertTrue(await self.sets.remove_editor(GUILD_A, self.pub, DM_A, EDITOR))
-        self.assertEqual(await self.sets.editors(GUILD_A, self.pub), [])
-        # A co-editor has to be a DM of the publishing campaign; and the plan must be paid.
+        # Only current DMs write: a DM taken off the campaign can't change the set any more.
+        await CampaignStore(self.db).remove_dm(GUILD_A, self.pub, EDITOR)
         with self.assertRaises(RuleSetError):
-            await self.sets.add_editor(GUILD_A, self.pub, DM_A, PLAYER)
+            await self.sets.save_version(
+                GUILD_A, self.pub, EDITOR, content((7, "Late", None)), plan_ok=True
+            )
+        # The plan must be paid.
         with self.assertRaises(RuleSetError) as err:
             await self.sets.save_version(
                 GUILD_A, self.pub, DM_A, content((9, "z", None)), plan_ok=False
             )
         self.assertEqual(str(err.exception), rule_sets.NOT_PAID)
+
+    async def test_undoing_a_publish_republishes_the_earlier_rules(self) -> None:
+        made = await self.sets.save_version(GUILD_A, self.pub, DM_A, V2, plan_ok=True)
+        first = await self.sets.content_at(GUILD_A, self.pub, made.version - 1)
+        assert first is not None
+        back = await self.sets.save_version(
+            GUILD_A, self.pub, DM_A, first, plan_ok=True, expected_version=made.version
+        )
+        self.assertEqual(back.version, 3)
+        self.assertEqual((await self.sets.content_at(GUILD_A, self.pub, 3)), first)
+        self.assertEqual(len(await self.sets.version_log(GUILD_A, self.pub)), 3)  # nothing erased
+        with self.assertRaises(RuleSetError) as err:  # the publish is no longer the newest
+            await self.sets.save_version(
+                GUILD_A, self.pub, DM_A, V2, plan_ok=True, expected_version=made.version
+            )
+        self.assertEqual(str(err.exception), rule_sets.CHANGED_AGAIN)
 
     async def test_an_update_waits_and_the_follower_keeps_its_copy_until_it_takes_it(self) -> None:
         follow = await self.follow_far()
