@@ -13,8 +13,8 @@ READY TO DEPLOY (merged into development, not on the server yet; dev1 deploys)
 - #1157 (WebDev, merged): website "Stop recording me" per server. Deploy core (the bot) AND web-api; no migration (the migrate
   step applies the new rights). Check: on the account page press Stop recording me for a test server; the bot tells the DM and
   ears stops that person within seconds. Rides with the big deploy (#1180).
-- READY (#1180): the big deploy. The whole queue is merged (development fc3e22c). Dry run PASSED three times on a throwaway
-  copy of the database (2026-10-13; 2026-10-14 with #1157's rights; 2026-10-14 again with #1200's 0056 and 0057).
+- READY (#1180): the big deploy. The whole queue is merged (development 83522d9). Dry run PASSED four times on a throwaway
+  copy of the database (2026-10-13; 2026-10-14 with #1157's rights; with #1200's 0056 and 0057; with #1188's 0058).
   0. OWNER FIRST, or DMbot will not come online at all (Discord refuses the connection, close code 4014): switch on
      Message Content Intent at https://discord.com/developers/applications > DMbot > Bot > Privileged Gateway Intents
      > Message Content Intent > Save Changes. Do NOT press Reset Token on that page. dev1 asks the owner to confirm
@@ -24,12 +24,13 @@ READY TO DEPLOY (merged into development, not on the server yet; dev1 deploys)
   3. Build with GIT_COMMIT=$(git rev-parse HEAD) in front (#1199: baked in so DMbot links to its own documents; core now
      mounts docs/PLAN.md, README.md and web/src/content/help.ts). Build, then up, as two steps: core first (it runs the migrations), then web-api (it only checks the schema and
      refuses to start if core has not migrated yet). ears and cloudflared: only if their files changed.
-  4. Migrations, in one transaction (all seven or none): 0051 dndbeyond_invite (campaigns: the DM's invite link)
+  4. Migrations, in one transaction (all eight or none): 0051 dndbeyond_invite (campaigns: the DM's invite link)
      -> 0052 table_chat (campaigns.table_chat on by default, table_chat_channel_id; transcript_lines.typed; the
      sidebar_via check gains 'table-chat') -> 0053 combat_state (game_clocks.combat_round, combat_secs;
      campaigns.side_initiative) -> 0054 sheet_questions (character_sheets.ask_mismatch) -> 0055 fightbot (new
      table fightbot_players, server-scoped) -> 0056 dmbchat_channel (campaigns.dmbchat_channel_id) -> 0057 table_questions
-     (two sidebar CHECK constraints replaced). No rows change. Expect "Database updated: 0051_..., 0057_table_questions".
+     (two sidebar CHECK constraints replaced) -> 0058 people
+     (a person entry and a plays link for each played character: none in the live data today; a unique index). No rows change. Expect "Database updated: 0051_..., 0058_people".
   5. Check: "ears connected", "Connected to 1 server(s)", 0 ERROR in core and web-api; web-api healthy.
   6. Consent wording goes from version 4 to 6: everyone, the owner too, is asked again and is NOT recorded
      until they press yes. Say so in the next test's steps.
