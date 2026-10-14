@@ -292,6 +292,15 @@ class Watching(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("feature=", calls[1])
         self.assertEqual([c[3] for c in watch._calls], ["fightbot", None])
 
+    def test_the_daily_totals_count_each_named_feature(self) -> None:
+        watch = self.watch({})
+        watch.record(5, 1, "fightbot")
+        watch.record(5, 1)
+        self.clock.now += 90_000.0
+        with self.assertLogs("dmbot.ai_watch", "INFO") as logs:
+            watch.record(5, 1, "fightbot")
+        self.assertIn("by_feature=fightbot:1", logs.output[0])
+
 
 class Settings(unittest.TestCase):
     def test_empty_by_default(self) -> None:

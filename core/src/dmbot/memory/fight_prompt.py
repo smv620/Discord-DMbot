@@ -14,7 +14,7 @@ import re
 from collections.abc import Iterable, Mapping
 from typing import Any
 
-from dmbot.memory.sheet_checks import class_line, slot_line, vitals
+from dmbot.memory.sheet_checks import class_line, slots_left, vitals
 
 LINES_MAX = 8  # table lines in the prompt, newest last
 LINE_CHARS = 200
@@ -60,8 +60,8 @@ def sheet_facts(snapshot: Mapping[str, Any]) -> str:
         rows.append(f"Class: {classes}")
     if (v := vitals(snapshot)) != "":
         rows.append(v)
-    if slots := slot_line(snapshot):
-        rows.append(f"Spell slots: {slots}")
+    if slots := slots_left(snapshot):
+        rows.append(f"Spell slots left: {slots}")
     for label, key in (
         ("Conditions", "conditions"),
         ("Spells", "spells"),
@@ -113,7 +113,7 @@ def fingerprint(snapshot: Mapping[str, Any], round_number: int) -> tuple[Any, ..
         snapshot.get("temp_hp"),
         tuple(sorted(_names(snapshot, "conditions"))),
         snapshot.get("exhaustion"),
-        slot_line(snapshot),
+        slots_left(snapshot),
     )
 
 

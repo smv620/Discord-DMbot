@@ -381,6 +381,22 @@ def slot_line(snapshot: Mapping[str, Any]) -> str:
     return ", ".join(parts)
 
 
+def slots_left(snapshot: Mapping[str, Any]) -> str:
+    """For FightBot: only the levels with slots left, in the words a reminder uses
+    ("2 level 1 slots, 1 level 2 slot"). A spent level is not mentioned, so the AI has no
+    zero to repeat and no totals to work with. Snapshots are cleaned before they are kept."""
+    slots = snapshot.get("slots")
+    parts = []
+    for e in slots if isinstance(slots, list) else []:
+        if not (isinstance(e, Mapping) and isinstance(e.get("level"), int)):
+            continue
+        top, used = e.get("max"), e.get("used")
+        if isinstance(top, int) and isinstance(used, int) and top - used > 0:
+            left = top - used
+            parts.append(f"{left} level {e['level']} slot{'' if left == 1 else 's'}")
+    return ", ".join(parts)
+
+
 def _slots(snapshot: Mapping[str, Any]) -> Check | None:
     line = slot_line(snapshot)
     return Check("slots", OK, f"Spell slots: {line}") if line else None

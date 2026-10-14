@@ -31,7 +31,9 @@ class Slots(unittest.TestCase):
 
     def test_the_prompt_gets_the_counts_and_may_say_them(self) -> None:
         facts = fight_prompt.sheet_facts(SNAPSHOT)
-        self.assertIn("Spell slots: level 1: 2 of 4 left", facts)
+        self.assertIn("Spell slots left: 2 level 1 slots", facts)
+        self.assertNotIn("level 2", facts)  # spent: nothing to repeat
+        self.assertNotIn("of 4", facts)
         self.assertIn("level 1 slots", fight_prompt.PROMPT)
 
     def test_using_a_slot_asks_for_a_new_reminder(self) -> None:
