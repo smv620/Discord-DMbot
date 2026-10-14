@@ -606,6 +606,59 @@ that house rules must be readable offline, so DMbot keeps a plain-text file of r
   to the DM; nothing is stored.
 - The offers wait in memory (the 20 newest); after a restart an old button says it has ended.
 
+**Shared rulesets: homebrew packs and house-rules sets (owner, 2026-10-14).** Rules can be shared between
+campaigns, in the same server or another one, when both sides choose to. Only rules cross; a campaign's story
+never does.
+- **Three layers:**
+  | Layer | What | Who uses it |
+  |---|---|---|
+  | **Official** | SRD rules data and the core relationships (#1189) | Every campaign, always; read-only, versioned |
+  | **Shared** | A named **homebrew pack** or **house-rules set**: rules entries, house rules, and the relationships that content needs | Campaigns whose DM chose to follow it |
+  | **The campaign's own** | Its own homebrew, house rules and relationships, and all its story memory | That campaign only |
+- **Precedence, highest first:** the campaign's own house rules → the house-rules set it follows → its own
+  homebrew → the homebrew packs it follows (in the order the DM lists them) → target ruleset → fallback.
+  Every rules answer names where it came from ("Frostmaiden homebrew, v3").
+- **Relationships layer the same way:** a campaign's vocabulary is the official list, plus its shared sets'
+  relationships, plus its own. The reuse-before-create check looks across all three, and every relationship
+  and fact records its source (official, which set and version, or this campaign) with its definition version.
+- **Publishing:** a DM of a **paid** campaign may publish its homebrew as a pack, or its house rules as a set,
+  with a name. Within the server, other DMs pick it from a list; for another server, the publishing DM gets a
+  **share code** to hand out (it can be turned off, which stops new followers only). Try It campaigns can
+  follow but not publish (they have no backups either).
+- **What a set may hold:** only content the campaign's DMs wrote themselves. **Never** anything from a shared
+  rulebook or adventure (the right to use it was confirmed for one campaign only, CLAUDE.md, IP), checked by
+  where each entry came from; never story memory, names, transcripts, DM notes or character sheets.
+- **One writer.** Only the publishing campaign's DMs change a set (and DMs it names as co-editors; every change
+  is logged with who, which campaign and when).
+  - **A follower can't change it.** When a following campaign's DM changes a shared rule, or a ruling is made
+    at their table, it goes into **their own** house rules, which win over the set. The publisher never sees
+    it and is never affected. **"Suggest it to <set>"** sends it to the publisher's DMs as a suggestion
+    ([Accept] [No thanks]); nothing changes until they accept.
+  - **The document of record can be edited outside DMbot** by anyone with edit access, and DMbot can't see
+    who. So a change DMbot finds in a shared house-rules document (at any following campaign's session
+    start) is **held as pending** and shown to the publisher's DMs as a diff ([See changes] [Accept] [Not
+    these]). Until they accept, every campaign keeps the last accepted version; followers see "New changes
+    are waiting for the <set> DM."
+- **Updates reach followers at their next session start, never mid-game**, as a note on their DM screen:
+  "The Frostmaiden house rules changed (v4): 2 rules. **[Follow]** **[Cherry pick]** [See changes]".
+  - **Follow** (the default, also what happens if the DM does nothing): take the changes and keep following.
+  - **Cherry pick:** decide change by change, Accept or Reject. **If every change is accepted, it is the same
+    as Follow.** **If any change is rejected,** the set as the campaign had it, plus the accepted changes and
+    without the rejected ones, is **merged into the campaign's own house rules** (or its own homebrew), and
+    the campaign stops following that set. Its own rules still win over what was merged. The merged rules
+    keep a note of where they came from ("from Frostmaiden house rules v4"); the campaign may follow the set
+    again later.
+  - A shared rule the campaign already changed for itself stays its own: "A shared rule you changed was
+    updated. Yours still applies. [Compare]".
+- **Never lost:** a following campaign's backup holds a copy of the set version it uses. If the publisher
+  deletes or stops sharing a set, followers keep their last version, marked "no longer updated".
+- **Isolation:** shared sets live in their own tables, readable only by the campaigns that follow them
+  (row-level security through the follow record), and never readable by anything else of the publishing
+  campaign. A follow, a share code and every change are visible and can be undone by the DM.
+- **Build:** #1190 (sets, publishing, following, precedence, share codes) and #1191 (updates: Follow and Cherry
+  pick, pending document changes, suggestions), CloudDev.
+
+
 **AI models by task (decided 2026-10-10, built #1006).** Every AI call names a *tier*, never
 a model.
 - **Which job uses which:** **FAST** (the small model, Haiku today) for simple jobs:

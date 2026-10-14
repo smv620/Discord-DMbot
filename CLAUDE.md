@@ -233,7 +233,12 @@ terminal output or Discord screenshots copied to it.
   agent checks this on every PR.
 - **Campaign and server isolation:** every query, cache, file, and AI prompt is scoped to
   one campaign. No data or settings ever cross between campaigns, and never between
-  Discord servers.
+  Discord servers. **The one exception is shared rulesets** (owner, 2026-10-14): a paid
+  campaign's DMs may publish their own homebrew or house rules as a set, and another
+  campaign's DM may choose to follow it (in the same server, or another one with a share
+  code). Only rules cross, never story memory, names, transcripts, notes or sheets, and never
+  content from a shared rulebook or adventure. Only the publisher changes a set; a follower's
+  changes stay its own. See docs/PLAN.md, "Shared rulesets".
 - **API keys:** customers' keys are entered through private forms, stored encrypted, never
   logged, and never shown back in full.
 - **Secrets:** never commit tokens or keys. Config comes from environment variables
@@ -299,7 +304,7 @@ terminal output or Discord screenshots copied to it.
     build the knowledge graph (its structures, nodes and edges) or the campaign's rules
     data, with short quotes as evidence and citations. Record who confirmed and when. It stays in that one campaign (never shared
     between campaigns or servers), and the DM can delete it; it goes when the campaign is
-    deleted.
+    deleted. It can never go into a shared ruleset.
   - **Everything else:** without that confirmation, nothing is bulk-copied into the
     database or prompts; send only short, relevant excerpts per query (rules lookups
     without a shared rulebook, D&D Beyond).
