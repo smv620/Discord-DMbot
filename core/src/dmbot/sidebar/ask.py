@@ -150,10 +150,14 @@ class AskLimiter:
         self._recent: deque[float] = deque(maxlen=per_minute)
         self._count = 0
 
-    def allow(self, now: float) -> bool:
+    def would_allow(self, now: float) -> bool:
+        """Whether `allow` would say yes, without counting anything."""
         if self._count >= self._per_session:
             return False
-        if len(self._recent) == self._per_minute and now - self._recent[0] < 60.0:
+        return not (len(self._recent) == self._per_minute and now - self._recent[0] < 60.0)
+
+    def allow(self, now: float) -> bool:
+        if not self.would_allow(now):
             return False
         self._recent.append(now)
         self._count += 1

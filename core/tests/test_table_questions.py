@@ -130,6 +130,35 @@ class LinkAllowlist(unittest.TestCase):
         other = "https://docs.example.org/another-campaign"
         self.assertEqual(table_links.keep_allowed(f"Yes {other}", [self.HOUSE]), "Yes")
 
+    def test_a_backslash_or_user_info_cannot_pass_as_dndbeyond(self) -> None:
+        for sneaky in (
+            "https://evil.example.net\\@dndbeyond.com/x",
+            "https://user@dndbeyond.com/x",
+            "http://www.dndbeyond.com/x",  # (not https)
+            "https://www.dndbeyond.com:8443/x",
+        ):
+            self.assertEqual(table_links.keep_allowed(f"Yes {sneaky}", []), "Yes", sneaky)
+
+    def test_bare_addresses_are_dropped_too(self) -> None:
+        for bare in ("discord.gg/abc", "www.evil.example", "evil.com/path"):
+            self.assertNotIn(bare, table_links.keep_allowed(f"Yes, see {bare} now", []))
+        self.assertEqual(
+            table_links.keep_allowed("The Bag of Holding holds 500 lb. Yes.", []),
+            "The Bag of Holding holds 500 lb. Yes.",
+        )
+
+    def test_one_link_across_all_the_parts_of_a_message(self) -> None:
+        got = table_links.keep_allowed_in(
+            ["https://www.dndbeyond.com/a", "and https://www.dndbeyond.com/b"], []
+        )
+        self.assertEqual(sum(x.count("http") for x in got), 1)
+
+    def test_a_link_in_what_a_person_typed_is_taken_out(self) -> None:
+        self.assertEqual(
+            table_links.strip_links("is https://evil.example.net/x ok? or discord.gg/abc"),
+            "is ok? or",
+        )
+
     def test_never_more_than_one_link(self) -> None:
         got = table_links.keep_allowed(
             "https://www.dndbeyond.com/a and https://www.dndbeyond.com/b", []

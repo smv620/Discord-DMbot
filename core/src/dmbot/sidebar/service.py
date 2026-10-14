@@ -33,7 +33,7 @@ from dmbot.ai import AIError
 from dmbot.audio.segmenter import Utterance
 from dmbot.rules import house_voice
 from dmbot.sidebar import memo, table_links
-from dmbot.sidebar.ask import ASK_PER_SESSION, AskLimiter, Request, request_in
+from dmbot.sidebar.ask import AskLimiter, Request, request_in
 from dmbot.transcript.models import (
     SIDEBAR_ANSWER,
     SIDEBAR_QUESTION,
@@ -67,6 +67,7 @@ DECODE_AT_ONCE = 2
 MESSAGE_LIMIT = 2_000  # Discord's
 NOTE_EVERY_S = 30.0  # the same kind of note to the same person, at most this often
 ASK_PER_PERSON_PER_MINUTE = 2  # so one player can't use up the table's questions (#1187)
+ASK_PER_PERSON_PER_SESSION = 30  # (and not the whole session's 120 either)
 Q_CHARS = 100  # the question as shown in the chat: one short line
 
 NO_SESSION = "No game is running with you as DM. Start one with /dmbot start, then ask again."
@@ -102,6 +103,7 @@ HOUSE_NOT_AGREED = (
 HOUSE_WHICH = "Which game is this house rule for?"
 WHICH = "Which game is this for?"
 SENT_PRIVATELY = "Sent to the DM privately."
+COULDNT_SEND = "I couldn't send that to the DM. Ask again."
 TOO_MANY = "That's a lot of questions at once. Ask again in a minute."
 TYPE_INSTEAD = "I can only read typed questions and voice messages."
 NOT_YOURS = "This isn't your question."
@@ -127,6 +129,8 @@ class Answer(Protocol):
     def sources(self) -> Sequence[str]: ...  # rules entries, house rule numbers, facts, span
     @property
     def parts(self) -> Sequence[str]: ...  # a long answer as messages; else (text,)
+    @property
+    def one_for_dm(self) -> bool: ...  # a table question that needs the DM (#1187)
 
 
 class Answerer(Protocol):
@@ -495,15 +499,24 @@ class SidebarService:
             return False
         # Per person only for the table's questions: one player can't use up the table's
         # questions (the DM's private ones have only the table-wide limit, as before).
-        person_ok = True
-        if public:
-            person = table.person_limits.setdefault(
-                user_id, AskLimiter(ASK_PER_PERSON_PER_MINUTE, ASK_PER_SESSION)
+        now = self._clock()
+        person = (
+            table.person_limits.setdefault(
+                user_id, AskLimiter(ASK_PER_PERSON_PER_MINUTE, ASK_PER_PERSON_PER_SESSION)
             )
-            person_ok = person.allow(self._clock())
-        if not (person_ok and table.sidebar_limiter.allow(self._clock())):  # (the last counts)
+            if public
+            else None
+        )
+        # Both are asked before either counts, so a question the table refuses doesn't use up
+        # the person's allowance (and the other way round).
+        if not (
+            table.sidebar_limiter.would_allow(now) and (person is None or person.would_allow(now))
+        ):
             self._note(table, user_id, "limit", TOO_MANY, public)
             return False
+        table.sidebar_limiter.allow(now)
+        if person is not None:
+            person.allow(now)
         self._busy.add(_campaign_key(table))
         self._background(
             self._table_question(table, user_id, request, via=via, public=public), "sidebar"
@@ -513,7 +526,13 @@ class SidebarService:
     def _background(self, work: Coroutine[object, object, object], name: str) -> None:
         task = asyncio.create_task(work, name=name)
         self._tasks.add(task)
-        task.add_done_callback(self._tasks.discard)
+        task.add_done_callback(self._finished)
+
+    def _finished(self, task: asyncio.Task[object]) -> None:
+        """A background job ended: forget it, and log (never raise) how it failed."""
+        self._tasks.discard(task)
+        if not task.cancelled() and (error := task.exception()) is not None:
+            log.warning("A sidebar background job failed: %s", type(error).__name__)
 
     def _note(self, table: Table, user_id: int, kind: str, text: str, public: bool) -> None:
         """A short note about a question that wasn't answered, at most one of its kind every
@@ -618,15 +637,19 @@ class SidebarService:
             return
         if not self._still(table, user_id, dm=dm_only):
             return
-        if public and _is_dm(table, user_id) and getattr(answer, "one_for_dm", False):
+        if public and _is_dm(table, user_id) and answer.one_for_dm:
             # The DM's question needs the DM's side of the game (secrets, notes): the table
             # sees only that it was sent, and the answer, with everything, goes to the DM.
             if not await self._answer_privately(
                 table, user_id, campaign, question, scene, answerer
             ):
+                # The table is told only that it failed, never what was asked privately.
+                await reply(self._framed(table, user_id, question, COULDNT_SEND, public))
                 return
-            line = await self._chat_line(table, user_id, question, SENT_PRIVATELY)
-            if not await reply(line):
+            name = await self.host.sidebar_table_name(table, user_id)
+            if not self._still(table, user_id, dm=dm_only):
+                return  # (consent can be withdrawn while the name is looked up)
+            if not await reply(self._chat_line(name, question, SENT_PRIVATELY)):
                 return
             self._save_lines(
                 table, user_id, heard, question, asked_ms, answer, SENT_PRIVATELY, via, public
@@ -637,18 +660,34 @@ class SidebarService:
         if not said:
             await reply(self._framed(table, user_id, question, FAILED, public))
             return
+        name = ""
         if public:
-            shown = await self._for_the_table(table, answer, shown)
+            # The character's name and the campaign's links are read together, not one after the
+            # other, and the links only when the answer could show one.
+            name, (house, others) = await asyncio.gather(
+                self.host.sidebar_table_name(table, user_id),
+                self._links_for(table, answer, " ".join(shown)),
+            )
+            shown = self._for_the_table(house, others, answer, shown)
             said = shown[0]
+            if not self._still(table, user_id, dm=dm_only):
+                return  # consent can be withdrawn while those are read: nothing is posted
         elif via == VIA_VOICE:
             echo = question if len(question) <= ECHO_CHARS else question[:ECHO_CHARS].rstrip() + "…"
             shown[0] = f"🎙️ “{discord.utils.escape_markdown(echo)}”\n{shown[0]}"
         self._undelivered.pop(user_id, None)
-        first = True
-        for part in (piece for text in shown for piece in _parts(text)):
-            if public and first:
-                part = await self._chat_line(table, user_id, question, part)
-            first = False
+        pieces = [piece for text in shown for piece in _parts(text)]
+        if public:
+            # One message in the chat (no reply chain), kept inside Discord's limit.
+            message = self._chat_line(name, question, " ".join(shown))
+            pieces = [
+                message[: MESSAGE_LIMIT - 1].rstrip() + "…"
+                if len(message) > MESSAGE_LIMIT
+                else message
+            ]
+        for part in pieces:
+            if public and not self._still(table, user_id, dm=dm_only):
+                return  # (right before every post)
             if not await reply(part):
                 # Only the DM's private path, and only when Discord says their messages are
                 # closed: the DM screen is the one place left to say so.
@@ -709,7 +748,7 @@ class SidebarService:
                 ),
             )
 
-    async def _chat_line(self, table: Table, user_id: int, question: str, answer: str) -> str:
+    def _chat_line(self, name: str, question: str, answer: str) -> str:
         """One message for the DMbot chat, in the owner's form (#1187):
 
             Q (Mira): Does fireball need line of sight?
@@ -717,8 +756,8 @@ class SidebarService:
 
         The name is the linked character's, else the nickname. What people said is escaped, so
         it can't format the message or ping anyone."""
-        name = await self.host.sidebar_table_name(table, user_id)
-        short = " ".join(question.split())
+        short = " ".join(table_links.strip_links(question).split())
+        name = table_links.strip_links(name) or "Someone"
         if len(short) > Q_CHARS:
             short = short[:Q_CHARS].rsplit(" ", 1)[0].rstrip(" ,;:") + "…"
         elif short and short[-1] not in "?.!…":
@@ -733,24 +772,32 @@ class SidebarService:
         question it belongs to) for the table. Synchronous: the name is the nickname."""
         if not public:
             return text
-        return f"Q ({_plain(self.host.name_of(table.guild_id, user_id))}): " + (
-            f"{_plain(' '.join(question.split())[:Q_CHARS])}\nAnswer: {text}"
-        )
+        name = table_links.strip_links(self.host.name_of(table.guild_id, user_id)) or "Someone"
+        short = " ".join(table_links.strip_links(question).split())[:Q_CHARS]
+        return f"Q ({_plain(name)}): {_plain(short)}\nAnswer: {text}"
 
-    async def _for_the_table(self, table: Table, answer: Answer, shown: list[str]) -> list[str]:
+    async def _links_for(
+        self, table: Table, answer: Answer, first: str
+    ) -> tuple[str | None, tuple[str, ...]]:
+        """This campaign's shareable links, read only if the answer could show one: it has a
+        link in it, or it comes from a house rule."""
+        if table_links.has_link(first) or _from_a_house_rule(answer):  # (`first`: all parts)
+            return await self.host.sidebar_links(table)
+        return None, ()
+
+    @staticmethod
+    def _for_the_table(
+        house: str | None, others: tuple[str, ...], answer: Answer, shown: list[str]
+    ) -> list[str]:
         """The answer as the whole table may read it: at most one link, and only an allowed
         one (dndbeyond.com, or a public link this campaign shared). The house-rules link
         comes first when the answer comes from a house rule."""
-        house, others = await self.host.sidebar_links(table)
+        house = house if house and table_links.is_plain(house) else None
         allowed = (*([house] if house else []), *others)
-        first = table_links.keep_allowed(shown[0], allowed)
-        if (
-            house
-            and not table_links.has_link(first)
-            and any(str(source).lower().startswith("house rule") for source in answer.sources)
-        ):
-            first = f"{first} {house}"
-        return [first, *shown[1:]]
+        kept = table_links.keep_allowed_in(shown, allowed)  # one link in all the parts
+        if house and not any(table_links.has_link(x) for x in kept) and _from_a_house_rule(answer):
+            kept[0] = f"{kept[0]} {house}"
+        return kept
 
     async def _answer_privately(
         self,
@@ -802,6 +849,10 @@ def _campaign_key(table: Table) -> tuple[int, str]:
 def _plain(text: str) -> str:
     """What a person said or is called, shown as plain text: no formatting, no pings."""
     return discord.utils.escape_markdown(discord.utils.escape_mentions(text))
+
+
+def _from_a_house_rule(answer: Answer) -> bool:
+    return any(str(source).lower().startswith("house rule") for source in answer.sources)
 
 
 def _is_dm(table: Table, user_id: int) -> bool:

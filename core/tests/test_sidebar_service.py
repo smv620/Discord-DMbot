@@ -1155,3 +1155,58 @@ class TableQuestions(unittest.IsolatedAsyncioTestCase):
     async def test_another_campaigns_chat_in_the_same_server_is_not_this_tables(self) -> None:
         other = make_table(chat=777)  # a different campaign's channel, never this table's id
         self.assertNotEqual(other.dmbchat_channel_id, self.table.dmbchat_channel_id)
+
+    async def test_a_link_typed_in_a_question_is_not_repeated_by_dmbot(self) -> None:
+        self.answerer.answer_to_give = FakeAnswer(text="Yes. https://www.dndbeyond.com/rules")
+        self.sidebar.ask_in_chat(self.table, PLAYER, "is https://evil.example.net/x allowed here")
+        await self.settle()
+        self.assertEqual(self.host.chat[0].count("http"), 1)
+        self.assertNotIn("evil", self.host.chat[0])
+
+    async def test_a_long_answer_is_one_message_inside_discords_limit(self) -> None:
+        self.answerer.answer_to_give = FakeAnswer(
+            text="x" * 50, parts=("a" * 1900, "b" * 1900, "c" * 500)
+        )
+        self.sidebar.ask_in_chat(self.table, PLAYER, "read me the whole grapple rule")
+        await self.settle()
+        self.assertEqual(len(self.host.chat), 1)
+        self.assertLessEqual(len(self.host.chat[0]), service.MESSAGE_LIMIT)
+
+    async def test_consent_withdrawn_while_the_name_is_looked_up_posts_nothing(self) -> None:
+        gate = asyncio.Event()
+        original = self.host.sidebar_table_name
+
+        async def slow(table: Any, user_id: int) -> str:
+            await gate.wait()
+            return await original(table, user_id)
+
+        self.host.sidebar_table_name = slow  # type: ignore[method-assign]
+        self.sidebar.ask_in_chat(self.table, PLAYER, "does fireball need line of sight?")
+        for _ in range(10):
+            await asyncio.sleep(0)
+        self.host.agreed.discard((GUILD, PLAYER))
+        gate.set()
+        await self.settle()
+        self.assertEqual((self.host.chat, self.host.saved), ([], []))
+
+    async def test_a_question_the_table_refuses_does_not_use_up_the_persons_allowance(self) -> None:
+        for n in range(ASK_PER_MINUTE):  # others fill the table's minute
+            self.host.agreed.add((GUILD, 40 + n))
+            self.assertTrue(self.sidebar.ask_in_chat(self.table, 40 + n, f"question number {n}"))
+            await self.settle()
+        self.assertFalse(self.sidebar.ask_in_chat(self.table, PLAYER, "one more for the table"))
+        self.assertEqual(len(self.table.person_limits[PLAYER]._recent), 0)  # not charged
+        self.now[0] += 61
+        self.assertTrue(self.sidebar.ask_in_chat(self.table, PLAYER, "now it is my turn"))
+        await self.settle()
+
+    async def test_when_the_private_answer_cannot_be_sent_the_table_is_told_only_that(self) -> None:
+        self.answerer.answer_to_give = FakeAnswer(text="That's one for your DM.", one_for_dm=True)
+        self.host.can_dm = False
+        self.sidebar.ask_in_chat(self.table, DM, "who is the masked stranger?")
+        await self.settle()
+        self.assertEqual(len(self.host.chat), 1)
+        self.assertIn(service.COULDNT_SEND, self.host.chat[0])
+        self.assertEqual(self.host.saved, [])
+        self.assertTrue(self.host.screen)  # the DM is told where they will see it
+        self.assertEqual(self.sidebar._busy, set())  # and the table is free again
