@@ -4,34 +4,51 @@
 
     docker compose run --rm --no-deps -T web-api python -m dmbot.web.stripe_prefix
 
-It lists subscriptions, whose metadata carries our Discord user id, works out each DMbot ID
-and sets it on the subscription's customer. Safe to run again. Prints counts, never ids,
-emails or keys.
+It lists subscriptions, whose metadata carries our Discord user id, looks up that person's
+stored DMbot ID (after an account move the two can differ, and the stored one is the
+account's) and sets it on the subscription's customer. A customer that Stripe refuses is
+counted and skipped, so one bad customer doesn't stop the rest. Safe to run again. Prints
+counts only, never ids, emails or keys.
 """
 
 from __future__ import annotations
 
 import asyncio
+import logging
 import os
 import sys
+from collections.abc import Awaitable, Callable
+from dataclasses import dataclass
 from typing import Any
+from urllib.parse import urlencode
 
-from dmbot.account_id import to_dmbot_id
+from dmbot.db import Database
+from dmbot.web.payments import PaymentError
 from dmbot.web.stripe import HttpTransport, StripeConfig, StripeProvider
 
+log = logging.getLogger(__name__)
 PAGE = 100
 
+# A person's stored DMbot ID, or None if they have no account.
+Lookup = Callable[[int], Awaitable[str | None]]
 
-async def set_prefixes(provider: StripeProvider, transport: Any) -> tuple[int, int]:
-    """(customers updated, subscriptions skipped). `transport` is the provider's own."""
-    done = skipped = 0
+
+@dataclass(slots=True)
+class Counts:
+    set: int = 0
+    skipped: int = 0  # no DMbot user on the subscription, or no account for them
+    failed: int = 0  # Stripe refused this customer
+
+
+async def set_prefixes(provider: StripeProvider, transport: Any, lookup: Lookup) -> Counts:
+    counts = Counts()
     seen: set[str] = set()
     after: str | None = None
     while True:
         form = {"status": "all", "limit": str(PAGE)}
         if after:
             form["starting_after"] = after
-        status, answer = await transport("GET", "/v1/subscriptions?" + _query(form), None)
+        status, answer = await transport("GET", "/v1/subscriptions?" + urlencode(form), None)
         if status != 200 or not isinstance(answer, dict):
             raise RuntimeError(f"Stripe answered {status} listing subscriptions")
         items = answer.get("data") or []
@@ -39,40 +56,57 @@ async def set_prefixes(provider: StripeProvider, transport: Any) -> tuple[int, i
             customer = sub.get("customer")
             meta = sub.get("metadata") or {}
             try:
-                dmbot_id = to_dmbot_id(int(meta["user_id"]))
+                dmbot_id = await lookup(int(meta["user_id"]))
             except (KeyError, ValueError, TypeError):
-                skipped += 1
+                dmbot_id = None
+            if dmbot_id is None or not isinstance(customer, str):
+                counts.skipped += 1
                 continue
-            if not isinstance(customer, str) or customer in seen:
+            if customer in seen:
                 continue
             seen.add(customer)
-            await provider.set_invoice_prefix(customer, dmbot_id)
-            done += 1
+            try:
+                await provider.set_invoice_prefix(customer, dmbot_id)
+            except PaymentError:
+                counts.failed += 1
+                continue
+            counts.set += 1
         if not answer.get("has_more") or not items:
-            return done, skipped
+            return counts
         after = items[-1].get("id")
-
-
-def _query(form: dict[str, str]) -> str:
-    return "&".join(f"{k}={v}" for k, v in form.items())
 
 
 async def main() -> int:
     key = os.environ.get("STRIPE_SECRET_KEY", "")
-    if not key.startswith(("sk_test_", "sk_live_", "rk_test_", "rk_live_")):
-        print("STRIPE_SECRET_KEY is not set to a Stripe secret key.", file=sys.stderr)
+    url = os.environ.get("DATABASE_URL", "")
+    if not key.startswith(("sk_test_", "sk_live_", "rk_test_", "rk_live_")) or not url:
+        print("STRIPE_SECRET_KEY and DATABASE_URL must be set.", file=sys.stderr)
         return 1
+    db = await Database.open(url, migrate=False)
     transport = HttpTransport(key)
-    provider = StripeProvider(
-        StripeConfig(secret_key=key, prices={}, extra_hours_price=""), b"x", transport=transport
-    )
+    config = StripeConfig(secret_key=key, prices={}, extra_hours_price="")
+    provider = StripeProvider(config, b"x", transport=transport)
+
+    async def lookup(user_id: int) -> str | None:
+        async with db.user(user_id) as conn:
+            cur = await conn.execute(
+                "SELECT dmbot_id FROM web_users WHERE user_id = %s", (user_id,)
+            )
+            row = await cur.fetchone()
+        return None if row is None else str(row["dmbot_id"])
+
     try:
-        done, skipped = await set_prefixes(provider, transport)
+        counts = await set_prefixes(provider, transport, lookup)
     finally:
         await transport.close()
-    print(f"Invoice prefix set on {done} customers; {skipped} subscriptions had no DMbot user.")
-    return 0
+        await db.close()
+    print(
+        f"Invoice prefix set on {counts.set} customers; {counts.skipped} subscriptions skipped;"
+        f" {counts.failed} customers Stripe refused."
+    )
+    return 0 if counts.failed == 0 else 2
 
 
 if __name__ == "__main__":
+    logging.basicConfig(level=logging.WARNING)
     raise SystemExit(asyncio.run(main()))

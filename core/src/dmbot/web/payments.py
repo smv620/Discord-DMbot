@@ -133,6 +133,8 @@ class FakeProvider:
         self._secret = secret
         self._site_url = site_url.rstrip("/")
         self.cancelled: list[str] = []
+        # What each checkout was given, so tests can see the DMbot ID and customer travel.
+        self.checkouts: list[dict[str, object]] = []
 
     def sign(self, body: bytes) -> str:
         return hmac.new(self._secret, body, hashlib.sha256).hexdigest()
@@ -147,6 +149,9 @@ class FakeProvider:
         dmbot_id: str | None = None,
         customer_id: str | None = None,
     ) -> str:
+        self.checkouts.append(
+            {"user_id": user_id, "plan": plan.id, "dmbot_id": dmbot_id, "customer_id": customer_id}
+        )
         query: dict[str, str] = {"fake_checkout": plan.id}
         return f"{return_url}?{urlencode(query)}"
 
@@ -159,6 +164,9 @@ class FakeProvider:
         dmbot_id: str | None = None,
         customer_id: str | None = None,
     ) -> str:
+        self.checkouts.append(
+            {"user_id": user_id, "extra": True, "dmbot_id": dmbot_id, "customer_id": customer_id}
+        )
         return f"{return_url}?{urlencode({'fake_extra_hours': '1'})}"
 
     async def billing_url(self, *, customer_id: str, return_url: str) -> str:

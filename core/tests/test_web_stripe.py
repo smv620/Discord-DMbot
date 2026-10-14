@@ -11,12 +11,13 @@ import unittest
 from collections.abc import Callable
 from typing import Any, ClassVar
 from unittest import mock
-from urllib.parse import parse_qs, urlsplit
+from urllib.parse import parse_qs, urlencode, urlsplit
 
 import aiohttp
 import httpx
 
 from dmbot import entitlements, plans
+from dmbot.account_id import to_dmbot_id
 from dmbot.config import ConfigError
 from dmbot.web import entitlements_writer
 from dmbot.web.app import create_app
@@ -631,13 +632,50 @@ class Provider(unittest.IsolatedAsyncioTestCase):
             return_url="https://dmbot.example/account",
             dmbot_id="ABC123",
         )
-        made, session = self.http.calls
+        looked, made, session = self.http.calls  # first it looks for one made earlier
+        self.assertEqual(looked[1].split("?")[0], "/v1/customers/search")
         self.assertEqual(made[1], "/v1/customers")
         self.assertEqual(made[2]["invoice_prefix"], "ABC123")
         self.assertEqual(made[2]["metadata[user_id]"], str(USER))
         self.assertEqual(session[2]["customer"], "cus_new1")
         self.assertNotIn("customer_email", session[2])  # Stripe takes one or the other
-        self.assertIsNotNone(self.http.keys[0])  # the same request again: the same customer
+        self.assertTrue((self.http.keys[1] or "").startswith("dmbot-customer-"))  # same request,
+        # same customer within Stripe's key window
+
+    async def test_a_customer_made_earlier_is_found_not_made_again(self) -> None:
+        query = urlencode({"query": f"metadata['user_id']:'{USER}'", "limit": "1"})
+        self.http.answers[("GET", f"/v1/customers/search?{query}")] = (
+            200,
+            {"data": [{"id": "cus_early7"}]},
+        )
+        self.http.answers[("POST", "/v1/checkout/sessions")] = (200, {"url": CHECKOUT_URL})
+        await self.provider.checkout_url(
+            user_id=USER,
+            email=None,
+            plan=plans.load().by_id["table"],
+            return_url="https://dmbot.example/account",
+            dmbot_id="ABC123",
+        )
+        paths = [(m, p.split("?")[0]) for m, p, _ in self.http.calls]
+        self.assertEqual(
+            paths, [("GET", "/v1/customers/search"), ("POST", "/v1/checkout/sessions")]
+        )
+        self.assertEqual(self.http.calls[-1][2]["customer"], "cus_early7")
+
+    async def test_an_id_too_short_for_stripe_makes_the_customer_without_a_prefix(self) -> None:
+        self.http.answers[("POST", "/v1/customers")] = (200, {"id": "cus_short1"})
+        self.http.answers[("POST", "/v1/checkout/sessions")] = (200, {"url": CHECKOUT_URL})
+        await self.provider.checkout_url(
+            user_id=USER,
+            email=None,
+            plan=plans.load().by_id["table"],
+            return_url="https://dmbot.example/account",
+            dmbot_id="AB",
+        )
+        made = next(f for m, p, f in self.http.calls if (m, p) == ("POST", "/v1/customers"))
+        self.assertNotIn("invoice_prefix", made)
+        with self.assertRaises(PaymentError):
+            await self.provider.set_invoice_prefix("cus_short1", "AB")
 
     async def test_a_known_customer_is_reused_not_made_again(self) -> None:
         self.http.answers[("POST", "/v1/checkout/sessions")] = (200, {"url": CHECKOUT_URL})
@@ -662,7 +700,8 @@ class Provider(unittest.IsolatedAsyncioTestCase):
                 return_url="https://dmbot.example/account",
                 dmbot_id="ABC123",
             )
-        self.assertEqual(len(self.http.calls), 1)  # no checkout without the customer
+        # It looked, it tried to make the customer, and went no further: no checkout.
+        self.assertEqual(len(self.http.calls), 2)
 
     async def test_an_existing_customer_can_be_given_the_prefix(self) -> None:
         self.http.answers[("POST", "/v1/customers/cus_old9")] = (200, {})
@@ -1100,11 +1139,20 @@ class Routes(DatabaseTest):
         )
 
     async def test_checkout_through_the_route_builds_a_stripe_checkout(self) -> None:
+        self.http.answers[("POST", "/v1/customers")] = (200, {"id": "cus_route1"})
         self.http.answers[("POST", "/v1/checkout/sessions")] = (200, {"url": CHECKOUT_URL})
         response = await self.client.post(
             "/billing/checkout", headers={"X-DMbot-Request": "1"}, json={"plan": "two-tables"}
         )
         self.assertEqual((response.status_code, response.json()), (200, {"url": CHECKOUT_URL}))
-        form = self.http.calls[0][2]
+        customer = next(f for m, p, f in self.http.calls if (m, p) == ("POST", "/v1/customers"))
+        self.assertEqual(customer["metadata[user_id]"], str(ALICE.id))
+        # Test accounts have small ids, too short for Stripe's 3-character prefix: no prefix.
+        self.assertEqual(
+            customer.get("invoice_prefix"),
+            (to_dmbot_id(ALICE.id) if len(to_dmbot_id(ALICE.id)) >= 3 else None),
+        )
+        form = self.http.calls[-1][2]
+        self.assertEqual(form["customer"], "cus_route1")
         self.assertEqual(form["metadata[user_id]"], str(ALICE.id))
         self.assertEqual(form["line_items[0][price]"], "price_two")

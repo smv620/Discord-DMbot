@@ -590,7 +590,7 @@ def create_app(
             raise HTTPException(status_code=409, detail="has_free_access")
         if current is not None and current.plan != "try-it" and current.status != "lapsed":
             # A paid plan is working: change it on the billing page, never a second
-            # subscription (or a second first-month offer).
+            # subscription.
             raise HTTPException(status_code=409, detail="has_paid_plan")
         email = await account_email(db, session.user_id)
         try:

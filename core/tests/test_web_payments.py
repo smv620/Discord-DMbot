@@ -13,6 +13,7 @@ from urllib.parse import parse_qs, urlsplit
 import httpx
 
 from dmbot import entitlements
+from dmbot.account_id import to_dmbot_id
 from dmbot.config import ConfigError
 from dmbot.web import accounts, entitlements_writer, grants
 from dmbot.web.app import create_app
@@ -704,6 +705,9 @@ class Payments(DatabaseTest):
         after Try It, and a working paid plan still refuses a second checkout."""
         plain = (await self.post("/billing/checkout", {"plan": "table"})).json()["url"]
         self.assertNotIn("first_month", plain)
+        # The DMbot ID travels with the checkout, so the invoices are numbered from it.
+        self.assertEqual(self.provider.checkouts[-1]["dmbot_id"], to_dmbot_id(ALICE.id))
+        self.assertIsNone(self.provider.checkouts[-1]["customer_id"])
         await self.post("/plan/try-it")
         offer = (await self.post("/billing/checkout", {"plan": "table"})).json()["url"]
         self.assertNotIn("first_month", offer)
@@ -824,7 +828,8 @@ class Payments(DatabaseTest):
         async def broken(**_: object) -> str:
             raise PaymentError("down")
 
-        setattr(self.provider, "extra_hours_checkout_url", broken)  # noqa: B010 (mypy)
+        # setattr: mypy objects to a method assigned a stand-in with different arguments
+        setattr(self.provider, "extra_hours_checkout_url", broken)  # noqa: B010
         failed = await self.post("/billing/extra-hours")
         self.assertEqual(
             (failed.status_code, failed.json()), (502, {"error": "payments_unavailable"})

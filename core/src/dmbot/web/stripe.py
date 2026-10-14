@@ -44,7 +44,7 @@ import time
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass, field
 from typing import Any, Protocol
-from urllib.parse import urlsplit
+from urllib.parse import urlencode, urlsplit
 
 import aiohttp
 
@@ -54,6 +54,7 @@ from dmbot.web.payments import EventKind, PaymentError, PaymentEvent
 log = logging.getLogger(__name__)
 
 API_BASE = "https://api.stripe.com"
+PREFIX_MIN, PREFIX_MAX = 3, 12  # the characters Stripe allows in an invoice prefix
 SIGNATURE_HEADER = "stripe-signature"
 # How far a signed timestamp may be from now, either way (Stripe's own default).
 TOLERANCE_SECONDS = 300
@@ -187,10 +188,23 @@ class StripeProvider:
         (#1228). Stripe's Checkout can't set an invoice prefix, so the customer is made first
         and the checkout is told to use it. The same request within Stripe's idempotency
         window gets the same customer back, so abandoned checkouts don't pile up customers."""
-        form = {"invoice_prefix": dmbot_id, "metadata[user_id]": str(user_id)}
+        # A customer made earlier for this person (they left a checkout and came back after
+        # Stripe forgot the idempotency key) is reused, never a second one with the same prefix.
+        # Stripe's search can lag a minute behind, which the idempotency key covers.
+        query = urlencode({"query": f"metadata['user_id']:'{user_id}'", "limit": "1"})
+        status, answer = await self._http("GET", f"/v1/customers/search?{query}", None)
+        if status == 200 and isinstance(answer, dict):
+            for old in answer.get("data") or []:
+                if isinstance(old, dict) and isinstance(old.get("id"), str):
+                    return _checked(old["id"], _CUSTOMER, "customer id")
+        form = {"metadata[user_id]": str(user_id)}
+        if PREFIX_MIN <= len(dmbot_id) <= PREFIX_MAX:  # Stripe takes 3 to 12 characters
+            form["invoice_prefix"] = dmbot_id
         if email:
             form["email"] = email
-        status, answer = await self._http("POST", "/v1/customers", form, _idempotency_key(form))
+        status, answer = await self._http(
+            "POST", "/v1/customers", form, "dmbot-customer-" + _idempotency_key(form)[15:]
+        )
         found = answer.get("id") if status == 200 and isinstance(answer, dict) else None
         if not isinstance(found, str):
             raise PaymentError(f"Stripe answered {status} to a new customer")
@@ -198,6 +212,8 @@ class StripeProvider:
 
     async def set_invoice_prefix(self, customer_id: str, dmbot_id: str) -> None:
         """Give an existing customer the DMbot ID as its invoice prefix."""
+        if not PREFIX_MIN <= len(dmbot_id) <= PREFIX_MAX:
+            raise PaymentError("A DMbot ID that short can't be an invoice prefix")
         path = f"/v1/customers/{_checked(customer_id, _CUSTOMER, 'customer id')}"
         status, _ = await self._http("POST", path, {"invoice_prefix": dmbot_id})
         if status != 200:
