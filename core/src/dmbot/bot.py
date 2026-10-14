@@ -1941,11 +1941,47 @@ class DMBot(commands.AutoShardedBot):
                 return None
             return await self.lookup.get_within(campaign.guild_id, campaign.id, NAMES_WAIT_S)
 
+        async def people(campaign: Campaign) -> list[str]:
+            return await self.sidebar_people(campaign)
+
         ai = self.ai_client.tier(FEATURE_TIERS[Feature.SIDEBAR])
         careful = self.ai_client.tier(FEATURE_TIERS[Feature.SIDEBAR_RETRY])
         return Sidebar(
-            ai, rules_index.srd, gate=gate, houses=houses, names=names, second_try=careful
+            ai,
+            rules_index.srd,
+            gate=gate,
+            houses=houses,
+            names=names,
+            people=people,
+            second_try=careful,
         )
+
+    async def sidebar_people(self, campaign: Campaign) -> list[str]:
+        """Who is who at this table, as short lines of names (never Discord IDs) for the
+        sidebar's answers (#1188): "Mia plays Cerric", "Ana is the DM". Only people who still
+        agree to be recorded, so no one's name is read out after they stopped."""
+        if self.memory is None:
+            return []
+        agreed = await self.consent.consenting(campaign.guild_id)
+        lines: list[str] = []
+        for user_id, characters, also in await self.memory.table_people(
+            campaign.guild_id, campaign.id
+        ):
+            if user_id not in agreed:
+                continue
+            name = self.name_of(campaign.guild_id, user_id)
+            if name.startswith("<@"):
+                continue  # no name to show
+            parts = []
+            if user_id in campaign.dm_user_ids:
+                parts.append("is the DM")
+            if characters:
+                parts.append("plays " + " and ".join(characters))
+            if also:
+                parts.append("is also called " + " and ".join(also))
+            if parts:
+                lines.append(f"{name} " + ", ".join(parts))
+        return lines
 
     async def plan_gate(
         self, action: plan_rules.Action, guild_id: int, campaign: Campaign, user_id: int
@@ -2774,6 +2810,15 @@ class DMBot(commands.AutoShardedBot):
                         return str(sheet.name)
             except Exception:
                 log.exception("Couldn't look up a character name; using the nickname")
+        if self.memory is not None and table.campaign_id is not None:
+            try:  # the character they play (the `plays` link), even with no sheet linked
+                for played, characters, _ in await self.memory.table_people(
+                    table.guild_id, table.campaign_id
+                ):
+                    if played == user_id and characters:
+                        return characters[-1]
+            except Exception:
+                log.exception("Couldn't look up who plays whom; using the nickname")
         return name
 
     async def sidebar_links(self, table: Table) -> tuple[str | None, tuple[str, ...]]:

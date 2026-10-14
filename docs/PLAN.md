@@ -1614,7 +1614,15 @@ that Mike is the person who just spoke, and that this person plays the character
   Discord user ID (as the DM list already is), and the DM can remove them from the person's card. **Stop
   recording me** removes the names DMbot *learned* for that person and any suggestions still waiting;
   names and links the DM set by hand stay. Never in GitHub, tests or logs: tests use made-up names.
-- **Build:** #1188 (CloudDev).
+- **Build:** #1188 (CloudDev). **Built (2026-10-14, PRs #1204, #1207 and the consumers PR):** the
+  `person` kind and `plays` link (the character keeps `played_by` as a mirror written in the same
+  change); the four DM words refused as names; learning from "a name, then an answer" with the DM's
+  questions on their own 🧑 Check who is who button; Stop recording me removing what was learned;
+  `Q (name)` and the sidebar's who-is-who lines from the `plays` link. **Not yet:** people in the
+  name lookup, so the Cleaner does not fix a person's spelling (today it also never maps a person to
+  a character, because people are left out of the lookup); the person's id column in Add many and
+  Download all (players are refused in lists and left out of downloads for now); DM aliases
+  resolving to the session's DM.
 
 *Proposed additions (2026-10-06, docs/STORY_MEMORY.md, not yet decided):* a core v2
 with story threads, promises, clues and state facts (`condition`: alive, dead, missing…,

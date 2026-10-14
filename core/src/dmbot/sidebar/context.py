@@ -115,6 +115,10 @@ _WORD = re.compile(r"[A-Za-z0-9'’]+")
 _POSSESSIVE = re.compile(r"['’]s$", re.IGNORECASE)
 
 
+PEOPLE_MAX = 12  # a table is small; a long list is never sent
+PEOPLE_LINE_MAX = 160
+
+
 def words_of(text: str) -> list[str]:
     """The words of a question, with a possessive removed ("Fireball's" is "Fireball")."""
     return [w for w in (_POSSESSIVE.sub("", w).strip("'’") for w in _WORD.findall(text)) if w]
@@ -272,6 +276,7 @@ def build(
     house_rules: Sequence[HouseRule],
     lookup: CampaignLookup | None,
     scene: str,
+    people: Sequence[str] = (),
     table: bool = False,
 ) -> Context:
     """The AI's message for one question about one campaign. `house_rules` and `lookup`
@@ -304,6 +309,10 @@ def build(
         sections.append("CAMPAIGN NAMES (confirmed):")
         sections.extend(f"- {line}" for line in names)
         sources.append("campaign names")
+    if people:  # names only, no ids; a table question gets them too (#1188)
+        sections.append("WHO IS WHO AT THE TABLE (real people and the characters they play):")
+        sections.extend(f"- {line[:PEOPLE_LINE_MAX]}" for line in people[:PEOPLE_MAX])
+        sources.append("who is who")
     scene = " ".join(scene[-SCENE_MAX * 2 :].split())[-SCENE_MAX:]  # cut first: it may be long
     if scene:
         sections.append(

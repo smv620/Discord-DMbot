@@ -1401,6 +1401,49 @@ class MemoryStore:
                     )  # fmt: skip
             return out
 
+    async def table_people(
+        self, guild_id: int, campaign_id: str
+    ) -> list[tuple[int, list[str], list[str]]]:
+        """Who is who at this table (#1188): for each person, their Discord user, the
+        characters they play (the confirmed `plays` links) and the other names the DM
+        confirmed for them. Names only, no secret names; the placeholder name is left out."""
+        async with self._read(guild_id, campaign_id, snapshot=True) as scope:
+            people = {
+                str(r["id"]): r
+                for r in await scope.select(
+                    ENTITIES, " AND type = 'person' AND status IN ('proposed', 'confirmed')"
+                )
+            }
+            if not people:
+                return []
+            characters = {
+                str(r["id"]): str(r["name"])
+                for r in await scope.select(
+                    ENTITIES, " AND status = 'confirmed' AND type <> 'person'"
+                )
+            }
+            plays: dict[str, list[str]] = {}
+            for r in await scope.select(
+                RELATIONS,
+                " AND predicate = %s AND status = 'confirmed' AND NOT secret ORDER BY created_at",
+                [PLAYS],
+            ):
+                name = characters.get(str(r["object_id"]))
+                if name is not None and str(r["subject_id"]) in people:
+                    plays.setdefault(str(r["subject_id"]), []).append(name)
+            also: dict[str, list[str]] = {}
+            for a in await scope.select(
+                ALIASES, " AND status = 'confirmed' AND NOT secret ORDER BY created_at, id"
+            ):
+                owner = people.get(str(a["entity_id"]))
+                if owner is not None and a["text"] != owner["name"]:
+                    also.setdefault(str(a["entity_id"]), []).append(str(a["text"]))
+            return [
+                (int(r["played_by"]), plays.get(pid, []), also.get(pid, []))
+                for pid, r in people.items()
+                if r["played_by"] is not None
+            ]
+
     async def accept_person_name(
         self, guild_id: int, campaign_id: str, alias_id: str, *, user_id: int | None = None
     ) -> Written[None]:
