@@ -116,6 +116,7 @@ from dmbot.dm_screen.settings import (
     RulesCardsButton,
     SettingsButton,
     SettingsVisibilityButton,
+    SharedRulesButton,
     SideInitiativeButton,
 )
 from dmbot.dm_screen.site_offers import SiteOffers
@@ -161,6 +162,7 @@ from dmbot.rules import house_voice
 from dmbot.rules import index as rules_index
 from dmbot.rules.house import HouseRule, HouseRulesSection, HouseRuleStore
 from dmbot.rules.house_file_link import HouseFileLinkStore
+from dmbot.rules.rule_sets import RuleSetStore
 from dmbot.rules.spotter import Mention
 from dmbot.sessions import SavedSession, SessionStore
 from dmbot.sidebar import knowledge
@@ -548,6 +550,7 @@ class DMBot(commands.AutoShardedBot):
         house_file_links: HouseFileLinkStore | None = None,
         effects: EffectStore | None = None,
         test_voice: TestVoiceStore | None = None,
+        rule_sets: RuleSetStore | None = None,
     ) -> None:
         intents = discord.Intents.none()
         intents.guilds = True
@@ -591,6 +594,7 @@ class DMBot(commands.AutoShardedBot):
         self.clocks = clocks
         # The linked house-rules file (#969), and what is waiting for a DM's press.
         self.house_file_links = house_file_links
+        self.rule_sets = rule_sets  # shared house rules (#1190)
         self.house_syncs = house_sync.Pendings()
         # Timed effects on that clock (#998); None without a database.
         self.effects = effects
@@ -765,6 +769,7 @@ class DMBot(commands.AutoShardedBot):
             RulesCardsButton,
             SideInitiativeButton,
             HouseFileButton,
+            SharedRulesButton,
             InviteButton,
             TableChatButton,
         )
@@ -5743,6 +5748,7 @@ async def run(settings: Settings) -> None:
             HouseFileLinkStore(db),
             EffectStore(db),
             TestVoiceStore(db),
+            RuleSetStore(db),
         )
         _close_on_sigterm(bot)
         async with bot:

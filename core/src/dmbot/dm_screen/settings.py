@@ -152,6 +152,7 @@ def settings_view(campaign: Campaign, offer: HandoverOffer | None, viewer: int) 
         view.add_item(RulesCardsButton(campaign.id, campaign.rules_cards))
         view.add_item(ClockButton(campaign.id, "open"))  # the game clock (#965)
         view.add_item(HouseFileButton(campaign.id))  # the house-rules file (#969)
+        view.add_item(SharedRulesButton(campaign.id))  # shared house rules (#1190)
         view.add_item(InviteButton(campaign.id))  # the D&D Beyond invite (#1119)
         view.add_item(TableChatButton(campaign.id))  # which typed chat is read (#1118)
         view.add_item(SideInitiativeButton(campaign.id, campaign.side_initiative))  # #1127
@@ -335,6 +336,54 @@ class HouseFileButton(
                 campaign = await store.get(guild.id, self.campaign_id)
             except Exception:
                 log.exception("Couldn't load a campaign for the house-rules file")
+                await interaction.response.send_message(LOAD_FAILED, ephemeral=True)
+                return
+        if campaign is None:
+            await interaction.response.send_message(GONE, ephemeral=True)
+            return
+        if interaction.user.id not in campaign.dm_user_ids:
+            await interaction.response.send_message(ONLY_DMS, ephemeral=True)
+            return
+        await open_menu(interaction, campaign)
+
+
+class SharedRulesButton(
+    discord.ui.DynamicItem[discord.ui.Button[discord.ui.View]],
+    template=rf"dmbot:sharedrules:{_ID}",
+):
+    """📚 Shared rules, on ⚙️ Settings (#1190): share house rules, or use another table's
+    set. Only the campaign's DMs."""
+
+    def __init__(self, campaign_id: str) -> None:
+        super().__init__(
+            discord.ui.Button(
+                label="Shared rules",
+                emoji="📚",
+                style=discord.ButtonStyle.secondary,
+                row=3,
+                custom_id=f"dmbot:sharedrules:{campaign_id}",
+            )
+        )
+        self.campaign_id = campaign_id
+
+    @classmethod
+    async def from_custom_id(
+        cls, interaction: discord.Interaction, item: discord.ui.Item[Any], match: re.Match[str]
+    ) -> SharedRulesButton:
+        return cls(match["campaign"])
+
+    async def callback(self, interaction: discord.Interaction) -> Any:
+        from dmbot.ui.shared_rules import GONE, ONLY_DMS, open_menu
+
+        set_log_context(guild_id=interaction.guild_id)
+        store = getattr(interaction.client, "campaigns", None)
+        guild = interaction.guild
+        campaign: Campaign | None = None
+        if store is not None and guild is not None:
+            try:
+                campaign = await store.get(guild.id, self.campaign_id)
+            except Exception:
+                log.exception("Couldn't load a campaign for the shared rules")
                 await interaction.response.send_message(LOAD_FAILED, ephemeral=True)
                 return
         if campaign is None:
