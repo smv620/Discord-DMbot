@@ -2062,12 +2062,12 @@ async def _move_rule_links(w: Changes, keep_id: str, gone_id: str) -> None:
 async def _on_person(w: Changes, alias: dict[str, Any]) -> bool:
     """Only a name waiting on a person can be answered as one."""
     owner = await w.get(ENTITIES, alias["entity_id"])
-    return owner is not None and owner["type"] == PERSON
+    return owner is not None and bool(owner["type"] == PERSON)
 
 
 def _is_character(row: dict[str, Any]) -> bool:
     """A story character (any role), not a place, thing or person."""
-    return row["type"] == "character"
+    return bool(row["type"] == "character")
 
 
 async def _ensure_person(w: Changes, user_id: int) -> str:
