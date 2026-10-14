@@ -286,6 +286,17 @@ def create_app(
         response.delete_cookie(session_cookie, path="/", secure=settings.secure_cookies)
         return response
 
+    @app.post("/me/sign-out-everywhere", status_code=204)
+    async def sign_out_everywhere(signed: Signed) -> Response:
+        """End every sign-in of the signed-in person, this one too (#1163). Needs a sign-in
+        (401 otherwise), so nobody ends anyone else's."""
+        session, _token = signed
+        await sessions.sign_out_everywhere(db, session.user_id)
+        log.info("A person signed out everywhere")
+        response = Response(status_code=204)
+        response.delete_cookie(session_cookie, path="/", secure=settings.secure_cookies)
+        return response
+
     @app.get("/me")
     async def me(signed: Signed) -> dict[str, Any]:
         session, _token = signed

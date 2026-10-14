@@ -738,6 +738,24 @@ describe("safety", () => {
     expect(screen.queryByRole("button", { name: text.exportButton })).toBeNull();
   });
 
+  it("Sign out everywhere calls the API and then shows signed out (#1163)", async () => {
+    const { api } = show("table");
+    expect(await screen.findByText(text.signOutEverywhereNote)).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: text.signOutEverywhere }));
+    await waitFor(() => expect(api.calls).toContain("signOutEverywhere"));
+    expect(await screen.findByRole("link", { name: text.signIn })).toBeTruthy();
+  });
+
+  it("Sign out everywhere says to wait a minute on a 429 (#1163)", async () => {
+    const api = mockApi("table");
+    api.signOutEverywhere = async () => {
+      throw new ApiError("slow-down");
+    };
+    render(<Account api={api} go={vi.fn()} />);
+    fireEvent.click(await screen.findByRole("button", { name: text.signOutEverywhere }));
+    expect(await screen.findByText(text.signOutEverywhereWait)).toBeTruthy();
+  });
+
   it("signed out: Start Try It is the main button, with the plans under it", async () => {
     show("signed-out");
     const links = await screen.findAllByRole("link");
