@@ -50,6 +50,34 @@ class PredicateTerm:
     core: bool = True
     status: str = ACTIVE
     replaced_by: str | None = None
+    # The full definition (#1189), kept in the database by version so a fact can say which one
+    # it was written under. `covers`: the D&D cases it is for. `not_this`: near cases, each
+    # with the relationship it belongs to. `synonyms`: other keys that mean this one.
+    covers: tuple[str, ...] = ()
+    not_this: tuple[tuple[str, str], ...] = ()
+    examples: tuple[str, ...] = ()
+    inverse_label: str = ""  # reads from the object's side: "Cerric *is allied with* Belleros"
+    synonyms: tuple[str, ...] = ()
+    # Up when the MEANING changes (what it covers, what it connects, its synonyms). A
+    # wording-only fix keeps the version.
+    version: int = 1
+
+
+NOT_THIS_SEP = " -> "
+
+
+def encode_not_this(pairs: Iterable[tuple[str, str]]) -> list[str]:
+    """The "not this" cases as plain text for the database: "near case -> relationship"."""
+    return [f"{near}{NOT_THIS_SEP}{key}" for near, key in pairs]
+
+
+def decode_not_this(items: Iterable[str]) -> tuple[tuple[str, str], ...]:
+    out = []
+    for item in items:
+        near, _, key = item.rpartition(NOT_THIS_SEP)
+        if near and key:
+            out.append((near, key))
+    return tuple(out)
 
 
 def _t(key: str, label: str, description: str, parent: str | None = None) -> TypeTerm:
@@ -177,64 +205,179 @@ CORE_PREDICATES: tuple[PredicateTerm, ...] = (
     PredicateTerm(
         "located_in",
         "is in",
-        "Where someone or something is.",
+        "Where someone or something is, or sits: a character in a town, a shop in a city, an "
+        "item in a vault. One place at a time; a move ends the old fact.",
         ("character", "place", "faction", "item", "event"),
         ("place",),
         max_per_subject=1,
+        covers=(
+            "a character who is at, lives in or is held in a place",
+            "a place inside a larger place (a tavern in a town)",
+            "an item kept somewhere, an event held somewhere",
+        ),
+        not_this=(
+            ("a character who belongs to a group that rules a place", "member_of"),
+            ("a character who owns a place", "owns"),
+        ),
+        examples=("Belleros is in Waterdeep.", "The Rusty Anchor is in Port Nyanzaru."),
+        inverse_label="has inside it",
+        synonyms=("lives_in", "based_in", "is_in", "found_in"),
     ),
     PredicateTerm(
         "member_of",
         "is a member of",
-        "Belongs to a group.",
+        "Belongs to a group such as a guild, an army, a cult, a family house or an adventuring "
+        "company. About joining the group, not about what the group is for.",
         ("character",),
         ("faction",),
+        covers=(
+            "a guild member, a soldier in an army, a cultist",
+            "a member of a noble house or an adventuring company",
+        ),
+        not_this=(
+            ("taking orders from a ruler without belonging to a group", "serves"),
+            ("bound by a sworn oath to a person or group", "sworn_to"),
+            ("related by blood or marriage", "kin_of"),
+        ),
+        examples=("Cerric is a member of the Harpers.", "Snot is a member of the Red Fang."),
+        inverse_label="has as a member",
+        synonyms=("belongs_to", "part_of", "in_group"),
     ),
     PredicateTerm(
         "ally_of",
         "is an ally of",
-        "On the same side.",
+        "On the same side, and acting on it: friends, partners, allied groups. Both ways.",
         (*_BEINGS, "faction"),
         (*_BEINGS, "faction"),
         symmetric=True,
         conflicts_with=("enemy_of",),
+        covers=(
+            "friends and companions who help each other",
+            "two groups that fight together or trade as partners",
+        ),
+        not_this=(
+            ("one side works for the other", "serves"),
+            ("a formal oath binds one to the other", "sworn_to"),
+            ("they merely know each other", "knows"),
+        ),
+        examples=("Cerric is an ally of Belleros.", "The Harpers are an ally of the Order."),
+        inverse_label="is an ally of",
+        synonyms=("friend_of", "friends_with", "allied_with", "allies_with"),
     ),
     PredicateTerm(
         "enemy_of",
         "is an enemy of",
-        "On opposite sides.",
+        "On opposite sides, and acting on it: rivals, enemies, groups at war. Both ways.",
         (*_BEINGS, "faction"),
         (*_BEINGS, "faction"),
         symmetric=True,
         conflicts_with=("ally_of",),
+        covers=(
+            "a villain and the heroes who oppose them",
+            "two groups at war or in a feud",
+        ),
+        not_this=(
+            ("they merely dislike each other in passing", "knows"),
+            ("one of them rules the other", "serves"),
+        ),
+        examples=("Strahd is an enemy of Cerric.", "The Zhentarim are an enemy of the Harpers."),
+        inverse_label="is an enemy of",
+        synonyms=("rival_of", "enemies_with", "hates", "opposes"),
     ),
     PredicateTerm(
         "kin_of",
         "is family of",
-        "Related by family. The detail says how (sister, father).",
+        "Related by family: blood, marriage or adoption. The detail says how (sister, father). "
+        "Both ways.",
         _BEINGS,
         _BEINGS,
         symmetric=True,
+        covers=("siblings, parents and children, spouses, adopted family",),
+        not_this=(
+            ("a member of the same noble house with no family tie", "member_of"),
+            ("a friend called a brother", "ally_of"),
+        ),
+        examples=("Cerric is family of Mira (his sister).",),
+        inverse_label="is family of",
+        synonyms=("related_to", "sibling_of", "parent_of", "child_of", "family_of"),
     ),
     PredicateTerm(
         "owns",
         "owns",
-        "Has or holds something.",
+        "Has or holds something that is theirs: an item, a place, a ship, even a pet.",
         (*_BEINGS, "faction"),
         ("item", "place", *_BEINGS),
+        covers=(
+            "a character who carries or owns an item",
+            "a character or group that owns a building, a ship or land",
+        ),
+        not_this=(
+            ("the thing is only in that place", "located_in"),
+            ("a person is bound to a master", "serves"),
+        ),
+        examples=("Cerric owns the Sun Blade.", "The Order owns the Silver Tower."),
+        inverse_label="is owned by",
+        synonyms=("has", "carries", "wields", "possesses"),
     ),
     PredicateTerm(
         "knows",
         "knows",
-        "Knows someone or about something.",
+        "Knows someone or about something: has met them, or has learned of it. The weakest tie "
+        "between two entries; use a stronger one when it fits.",
         _BEINGS,
         _ANY,
+        covers=(
+            "a character who has met another character",
+            "a character who knows about a place, an item, an event or a secret",
+        ),
+        not_this=(
+            ("they fight on the same side", "ally_of"),
+            ("they are on opposite sides", "enemy_of"),
+            ("a character who is in a place", "located_in"),
+        ),
+        examples=("Belleros knows Cerric.", "Cerric knows the Sun Blade."),
+        inverse_label="is known by",
+        synonyms=("knows_of", "met", "acquainted_with"),
     ),
     PredicateTerm(
         "serves",
         "serves",
-        "Works for, obeys or worships.",
+        "Works for, obeys or worships, with no binding oath: a servant, a hireling, a follower of "
+        "a god or a ruler.",
         (*_BEINGS, "faction"),
         (*_BEINGS, "faction"),
+        covers=(
+            "a servant, retainer or hired guard and their employer",
+            "a worshipper and their god",
+        ),
+        not_this=(
+            ("a sworn oath or pact binds them", "sworn_to"),
+            ("they belong to the group as a member", "member_of"),
+            ("they are partners, not master and servant", "ally_of"),
+        ),
+        examples=("Mira serves Lord Neverember.", "The cultist serves Tiamat."),
+        inverse_label="is served by",
+        synonyms=("worships", "works_for", "obeys"),
+    ),
+    PredicateTerm(
+        "sworn_to",
+        "is sworn to",
+        "Bound by a sworn oath, vow or pact to a person, a group or an idea: a paladin's oath, "
+        "a warlock's pact, a knight's fealty.",
+        _BEINGS,
+        (*_BEINGS, "faction", "concept"),
+        covers=(
+            "a paladin sworn to an oath or a deity",
+            "a warlock bound by a pact to a patron",
+            "a knight who swore fealty to a lord or an order",
+        ),
+        not_this=(
+            ("service or worship with no binding oath", "serves"),
+            ("belonging to an order as a member", "member_of"),
+        ),
+        examples=("Cerric is sworn to the Oath of Vengeance.", "Mira is sworn to Lord Aldric."),
+        inverse_label="has sworn",
+        synonyms=("pledged_to", "oath_to", "pact_with", "bound_to"),
     ),
     PredicateTerm(
         "plays",
@@ -243,13 +386,26 @@ CORE_PREDICATES: tuple[PredicateTerm, ...] = (
         "played by). A character has one player at a time; a person may play several.",
         ("person",),
         ("character",),
+        covers=("a player and the player character they control",),
+        not_this=(("a DM voicing an NPC in the story", "knows"),),
+        examples=("Mia plays Cerric.",),
+        inverse_label="is played by",
+        synonyms=("controls", "controlled_by"),
     ),
     PredicateTerm(
         "appears_in",
         "appears in",
-        "Takes part in or shows up in an event.",
+        "Takes part in or shows up in an event: a battle, a wedding, a heist.",
         tuple(k for k in _ANY if k != "event"),
         ("event",),
+        covers=("a character who fights in a battle or attends a wedding",),
+        not_this=(
+            ("an event that took place in a location", "located_in"),
+            ("a character who merely heard about it", "knows"),
+        ),
+        examples=("Cerric appears in the Battle of the Bridge.",),
+        inverse_label="has taking part",
+        synonyms=("takes_part_in", "involved_in", "present_at"),
     ),
 )
 
@@ -288,44 +444,9 @@ def _words(text: str) -> str:
     return " ".join(re.sub(r"[^a-z0-9]+", " ", text.casefold()).split())
 
 
-# Words an AI might reach for that mean a core relationship: reuse, don't create.
-SYNONYMS: Mapping[str, str] = {
-    "controls": "plays",
-    "controlled_by": "plays",
-    "friend_of": "ally_of",
-    "friends_with": "ally_of",
-    "allied_with": "ally_of",
-    "allies_with": "ally_of",
-    "rival_of": "enemy_of",
-    "enemies_with": "enemy_of",
-    "hates": "enemy_of",
-    "opposes": "enemy_of",
-    "lives_in": "located_in",
-    "based_in": "located_in",
-    "is_in": "located_in",
-    "found_in": "located_in",
-    "belongs_to": "member_of",
-    "part_of": "member_of",
-    "in_group": "member_of",
-    "related_to": "kin_of",
-    "sibling_of": "kin_of",
-    "parent_of": "kin_of",
-    "child_of": "kin_of",
-    "family_of": "kin_of",
-    "has": "owns",
-    "carries": "owns",
-    "wields": "owns",
-    "possesses": "owns",
-    "worships": "serves",
-    "works_for": "serves",
-    "obeys": "serves",
-    "knows_of": "knows",
-    "met": "knows",
-    "acquainted_with": "knows",
-    "takes_part_in": "appears_in",
-    "involved_in": "appears_in",
-    "present_at": "appears_in",
-}
+# Words an AI might reach for that mean a core relationship: reuse, don't create. Built from
+# each relationship's own `synonyms` (#1189), so there is one place to say it.
+SYNONYMS: Mapping[str, str] = {s: p.key for p in CORE_PREDICATES for s in p.synonyms}
 
 
 @dataclass(slots=True)
