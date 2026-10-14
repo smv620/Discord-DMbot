@@ -84,6 +84,7 @@ from dmbot.dm_screen import (
     house_sync,
     peek_view,
     rules_cards,
+    set_suggestion,
     set_update,
 )
 from dmbot.dm_screen import clock as clock_screen
@@ -812,6 +813,7 @@ class DMBot(commands.AutoShardedBot):
         )
         self.add_dynamic_items(PutBackButton)  # lines left out as off-topic (#677)
         self.add_dynamic_items(set_update.SetUpdateButton)  # shared rules changed (#1191)
+        self.add_dynamic_items(set_suggestion.SuggestionButton)  # a table's suggestion (#1259)
         self.add_dynamic_items(house_sync.HouseSyncButton)  # the house-rules file (#969)
         self.add_dynamic_items(rules_cards.RulesCardButton)  # rules cards from the table (#931)
         self.add_dynamic_items(house_voice_screen.HouseVoiceButton)  # house rules said aloud (#953)

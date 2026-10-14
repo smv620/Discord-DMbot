@@ -27,13 +27,15 @@ from __future__ import annotations
 
 import logging
 import re
+from collections.abc import Sequence
 from typing import Any
 
 import discord
 
 from dmbot.campaigns import Campaign
+from dmbot.dm_screen import set_suggestion
 from dmbot.rules import rule_sets, set_diff
-from dmbot.rules.house import HouseRuleError
+from dmbot.rules.house import HouseRule, HouseRuleError
 from dmbot.ui.dmbot_commands import _answer_first, _bot, _Button, _Menu, _Select, _tell
 
 log = logging.getLogger(__name__)
@@ -55,19 +57,62 @@ UNDO_LABEL = "↩️ Undo"
 LINK_ONLY = "only the rules document link changed"
 
 
-def note_text(follow_name: str, version: int, changes: int, link_changed: bool = False) -> str:
+OVERRIDDEN = "A shared rule you changed was updated. Yours still applies."
+
+
+def overrides(
+    own: Sequence[HouseRule], changes: Sequence[set_diff.Change]
+) -> list[tuple[set_diff.Change, HouseRule]]:
+    """The updated (or removed) shared rules that one of the campaign's OWN rules overrides: its
+    "instead of" is the shared rule's old words. Rules merged in from a set are not its own."""
+    found = []
+    for change in changes:
+        if change.kind == "added" or change.before is None:
+            continue
+        for rule in own:
+            if not rule.from_set and rule_sets.same_words(rule.supersedes, change.before["rule"]):
+                found.append((change, rule))
+                break
+    return found
+
+
+def compare_text(name: str, pairs: Sequence[tuple[set_diff.Change, HouseRule]]) -> str:
+    """For each overridden shared rule: the old shared words, the new ones, and the campaign's."""
+    md = discord.utils.escape_markdown
+    blocks = []
+    for change, mine in pairs:
+        before = change.before["rule"] if change.before else ""
+        now = change.after["rule"] if change.after else "(removed from the set)"
+        blocks.append(
+            f"Shared rule {change.number}\nBefore: {md(before)}\nNow: {md(now)}\n"
+            f"Yours (still applies): {md(mine.rule)}"
+        )
+    text = "\n\n".join(blocks)
+    if len(text) > TEXT_MAX:
+        text = text[:TEXT_MAX].rsplit("\n", 1)[0] + "\n…and more."
+    return f"**{md(name)}**: {OVERRIDDEN}\n\n{text}"
+
+
+def note_text(
+    follow_name: str,
+    version: int,
+    changes: int,
+    link_changed: bool = False,
+    overridden: bool = False,
+) -> str:
     rules = f"{changes} rule" + ("" if changes == 1 else "s")
     if link_changed:
         rules = LINK_ONLY if changes == 0 else f"{rules} and the rules document link"
-    return (
+    text = (
         f"📚 **{discord.utils.escape_markdown(follow_name)}** house rules updated to "
         f"v{version}: {rules}. DMbot took the new version."
     )
+    return f"{text}\n{OVERRIDDEN}" if overridden else text
 
 
-def note_view(campaign_id: str, version: int) -> discord.ui.View:
+def note_view(campaign_id: str, version: int, compare: bool = False) -> discord.ui.View:
     view = discord.ui.View(timeout=None)
-    for action in ("see", "pick", "undo"):
+    for action in ("see", "pick", "undo") + (("compare",) if compare else ()):
         view.add_item(SetUpdateButton(campaign_id, action, version))
     return view
 
@@ -76,12 +121,13 @@ _LABELS = {
     "see": ("See changes", discord.ButtonStyle.secondary),
     "pick": ("Pick changes", discord.ButtonStyle.secondary),
     "undo": ("Undo", discord.ButtonStyle.secondary),
+    "compare": ("Compare", discord.ButtonStyle.secondary),
 }
 
 
 class SetUpdateButton(
     discord.ui.DynamicItem[discord.ui.Button[discord.ui.View]],
-    template=r"dmbot:setupd:(?P<action>see|pick|undo):(?P<campaign>[0-9a-f]{32}):(?P<version>[0-9]{1,9})",
+    template=r"dmbot:setupd:(?P<action>see|pick|undo|compare):(?P<campaign>[0-9a-f]{32}):(?P<version>[0-9]{1,9})",
 ):
     def __init__(self, campaign_id: str, action: str, version: int) -> None:
         label, style = _LABELS[action]
@@ -164,8 +210,17 @@ async def press(
                 interaction,
                 changes_text(follow.name, version, list(update.changes), update.link_changed),
             )
+        elif action == "compare":
+            await _compare(interaction, campaign, follow.name, list(update.changes))
         else:
             await _open_picker(interaction, campaign, update)
+        return
+    if action == "compare":
+        before = follow.previous_content
+        if before is None:
+            await _tell(interaction, "There's nothing to compare: that update was undone.")
+            return
+        await _compare(interaction, campaign, follow.name, set_diff.diff(before, follow.content))
         return
     if action == "see":
         before = follow.previous_content
@@ -218,6 +273,34 @@ def changes_text(
         left = len(lines) - kept.count("\n") - 1
         text = kept + f"\n…and {left} more. Use Pick changes to go through all of them."
     return f"**{discord.utils.escape_markdown(name)}** v{version}:\n{text}"
+
+
+async def _own_rules(bot: Any, campaign: Campaign) -> list[HouseRule]:
+    """The campaign's house rules, or none if they can't be read (a note is worth posting
+    without its Compare line)."""
+    store = bot.house_rules
+    if store is None:
+        return []
+    try:
+        return list(await store.list(campaign.guild_id, campaign.id))
+    except Exception:
+        log.warning("Couldn't read house rules for a Compare line", exc_info=True)
+        return []
+
+
+async def _compare(
+    interaction: discord.Interaction,
+    campaign: Campaign,
+    name: str,
+    changes: list[set_diff.Change],
+) -> None:
+    """[Compare]: the old shared words, the new ones, and the campaign's own, for each shared
+    rule that was updated and that the campaign overrides."""
+    pairs = overrides(await _own_rules(_bot(interaction), campaign), changes)
+    if not pairs:
+        await _tell(interaction, "None of your own rules is about a rule that changed.")
+        return
+    await _tell(interaction, compare_text(name, pairs))
 
 
 async def take(
@@ -387,6 +470,10 @@ async def check_update(bot: Any, campaign: Campaign, screen_id: int) -> None:
     sets = bot.rule_sets
     if sets is None:
         return
+    # Suggestions first: answers to the ones this campaign sent, and notes for its own set that
+    # never reached the screen. Each never raises.
+    await set_suggestion.tell_answers(bot, campaign, screen_id)
+    await set_suggestion.post_waiting(bot, campaign)
     try:
         update = await sets.pending_update(campaign.guild_id, campaign.id, for_dmbot=True)
         if update is None:
@@ -407,12 +494,17 @@ async def check_update(bot: Any, campaign: Campaign, screen_id: int) -> None:
             None,
             expected_version=update.offer.version,
         )
+        overridden = bool(overrides(await _own_rules(bot, campaign), update.changes))
         posted = await bot.post_message(
             screen_id,
             note_text(
-                update.offer.name, update.offer.version, len(update.changes), update.link_changed
+                update.offer.name,
+                update.offer.version,
+                len(update.changes),
+                update.link_changed,
+                overridden,
             ),
-            note_view(campaign.id, update.offer.version),
+            note_view(campaign.id, update.offer.version, overridden),
         )
         if posted is None:  # taken, but the DM has no note and no Undo button for it
             log.warning(
