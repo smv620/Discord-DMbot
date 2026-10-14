@@ -95,7 +95,9 @@ def house_lines(matches: Sequence[HouseRule], line_max: int = HOUSE_LINE_MAX) ->
         if isinstance(rule, FollowedRule):
             label = f"**{_md(rule.cite)}, rule {rule.number}:**"
         elif rule.from_set:
-            label = f"**House rule {rule.number} (from {_md(rule.from_set)}):**"
+            label = (
+                f"**House rule {rule.number} (from {_md(rule.from_set)}; the campaign's own win):**"
+            )
         else:
             label = f"**House rule {rule.number}:**"
         lines.append(_fit(f"🏠 {label} {words}", line_max))

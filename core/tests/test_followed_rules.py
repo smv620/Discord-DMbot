@@ -88,7 +88,9 @@ class Reading(unittest.IsolatedAsyncioTestCase):
         self.assertEqual([r.number for r in matches], [30, 1])
         lines = rule_card.house_lines(matches)
         self.assertIn("House rule 30:", lines[0])
-        self.assertIn("House rule 1 (from Red Table house rules, v4):", lines[1])
+        self.assertIn(
+            "House rule 1 (from Red Table house rules, v4; the campaign's own win):", lines[1]
+        )
 
     def test_the_sidebar_lists_the_own_rule_first_and_labels_the_merged_one(self) -> None:
         merged = HouseRule(

@@ -339,6 +339,20 @@ class Updates(DatabaseTest):
         mine = (await self.sets.following(GUILD_B, self.far))[0]
         self.assertIsNone(mine.declined_version)
 
+    async def test_pick_reject_undo_does_not_retake_the_rejected_version(self) -> None:
+        await self.follow_far()
+        await self.sets.save_version(GUILD_A, self.pub, DM_A, V2, plan_ok=True)
+        taken = await self.sets.take_update(GUILD_B, self.far, DM_B, accepted={3})
+        self.assertTrue(taken.merged)
+        await self.sets.undo_take(GUILD_B, self.far, DM_B, taken)
+        mine = (await self.sets.following(GUILD_B, self.far))[0]
+        self.assertEqual((mine.version, mine.declined_version), (1, 2))
+        # DMbot waits for a newer version; the DM can still choose this one.
+        self.assertIsNone(await self.sets.pending_update(GUILD_B, self.far, for_dmbot=True))
+        with self.assertRaises(RuleSetError):
+            await self.sets.take_update(GUILD_B, self.far, None, expected_version=2)
+        self.assertIsNotNone(await self.sets.pending_update(GUILD_B, self.far))
+
     async def test_the_other_undo_path_also_clears_what_it_undid(self) -> None:
         await self.follow_far()
         await self.sets.save_version(GUILD_A, self.pub, DM_A, V2, plan_ok=True)

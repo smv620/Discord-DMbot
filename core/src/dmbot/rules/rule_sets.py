@@ -130,6 +130,7 @@ class Taken:
     after_version: int
     added: tuple[int, ...] = ()
     marker: str = ""
+    offered: int = 0  # the version of the set that was on offer (an Undo declines it)
 
 
 @dataclass(frozen=True, slots=True)
@@ -794,7 +795,7 @@ class RuleSetStore:
                         follow.set_id,
                     ),
                 )
-                return Taken(False, follow, fresh.version)
+                return Taken(False, follow, fresh.version, offered=fresh.version)
             if user_id is None:  # only a DM's press merges rules into the campaign's own
                 raise RuleSetError(NOT_FOLLOWING)
             author: int = user_id
@@ -821,7 +822,7 @@ class RuleSetStore:
                 " AND set_id = %s",
                 (guild_id, campaign_id, follow.set_id),
             )
-            return Taken(True, follow, version, tuple(added), marker)
+            return Taken(True, follow, version, tuple(added), marker, fresh.version)
 
     async def undo_last_take(
         self, guild_id: int, campaign_id: str, user_id: int, expected_version: int
@@ -877,6 +878,13 @@ class RuleSetStore:
                         before.updating,
                     ),
                 )  # fmt: skip
+                # Back on the earlier copy: DMbot must not take the rejected version again at
+                # the next session start (only a newer one), as for a plain Undo.
+                await conn.execute(
+                    "UPDATE rule_set_follows SET declined_version = %s WHERE guild_id = %s"
+                    " AND campaign_id = %s AND set_id = %s",
+                    (taken.offered, guild_id, campaign_id, before.set_id),
+                )
             else:
                 cur = await conn.execute(
                     "UPDATE rule_set_follows SET version = %s, content = %s, set_name = %s,"
@@ -888,7 +896,7 @@ class RuleSetStore:
                         Jsonb(before.content),
                         before.name,
                         before.publisher,
-                        taken.after_version,
+                        taken.offered or taken.after_version,
                         guild_id,
                         campaign_id,
                         before.set_id,
