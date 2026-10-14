@@ -596,6 +596,23 @@ class Provider(unittest.IsolatedAsyncioTestCase):
         await self.provider.cancel(subscription_id="sub_55")
         self.assertEqual(set(self.http.keys), {None})
 
+    async def test_a_moved_account_points_the_customer_and_subscription_at_the_new_id(self) -> None:
+        self.http.answers[("POST", "/v1/customers/cus_777")] = (200, {})
+        self.http.answers[("POST", "/v1/subscriptions/sub_55")] = (200, {})
+        await self.provider.retarget(customer_id="cus_777", subscription_id="sub_55", user_id=99)
+        self.assertEqual(
+            self.http.calls,
+            [
+                ("POST", "/v1/customers/cus_777", {"metadata[user_id]": "99"}),
+                ("POST", "/v1/subscriptions/sub_55", {"metadata[user_id]": "99"}),
+            ],
+        )
+        self.http.answers[("POST", "/v1/customers/cus_777")] = (500, {})
+        with self.assertRaises(PaymentError):
+            await self.provider.retarget(customer_id="cus_777", subscription_id=None, user_id=99)
+        with self.assertRaises(PaymentError):  # an id is checked before it goes into a path
+            await self.provider.retarget(customer_id="../x", subscription_id=None, user_id=99)
+
     async def test_the_first_month_uses_the_once_only_coupon(self) -> None:
         self.http.answers[("POST", "/v1/checkout/sessions")] = (200, {"url": CHECKOUT_URL})
         await self.provider.checkout_url(

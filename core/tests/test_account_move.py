@@ -15,15 +15,16 @@ from dmbot.consent import ConsentStore
 from dmbot.db import Database
 from dmbot.memory.backup import MemorySection
 from dmbot.memory.store import MemoryStore
-from dmbot.web import accounts, entitlements_writer, sessions
+from dmbot.web import accounts, entitlements_writer, move_sync, sessions
 from dmbot.web.discord import DiscordUser
-from dmbot.web.payments import PaymentEvent
+from dmbot.web.payments import FakeProvider, PaymentError, PaymentEvent
 from tests.pg import REQUIRE_DB, SUPERUSER_URL, DatabaseTest
 from tests.test_web_accounts_db import INSERT_PLAN, PLAN_ROW
 from tests.test_web_role import ensure_web_role, web_url
 
 OLD, NEW, THIRD = 111_111_111_111_111_111, 222_222_222_222_222_222, 333_333_333_333_333_333
 THIRD_NEW = 444_444_444_444_444_444
+FOURTH = 555_555_555_555_555_555
 GUILD_A, GUILD_B = 1001, 2002
 NOW = 1_800_000_000
 
@@ -268,6 +269,90 @@ class Moves(DatabaseTest):
         with self.assertRaises(MoveError):
             await self.moves.move(OLD, OLD, await self.code())  # the same account
 
+    async def test_an_account_with_a_lapsed_plan_or_that_was_moved_to_is_its_own_history(
+        self,
+    ) -> None:
+        await self.give_plan(THIRD, status="lapsed", lapsed_at=NOW)
+        with self.assertRaises(MoveError) as err:
+            await self.moves.move(OLD, THIRD, await self.code())
+        self.assertEqual(str(err.exception), account_move.TARGET_HISTORY)
+        # An account that an earlier move went to (and left again) is its own history too.
+        await self.moves.move(OLD, NEW, await self.code())
+        self.now = NOW + 31 * 86400
+        await self.moves.move(NEW, THIRD_NEW, await self.moves.make_code(NEW))
+        await self.add_user(FOURTH)
+        await self.give_plan(FOURTH)
+        with self.assertRaises(MoveError) as err:
+            await self.moves.move(FOURTH, NEW, await self.moves.make_code(FOURTH))
+        self.assertEqual(str(err.exception), account_move.TARGET_HISTORY)
+
+    async def test_moving_back_works_after_30_days(self) -> None:
+        await self.moves.move(OLD, NEW, await self.code())
+        with self.assertRaises(MoveError):  # too soon
+            await self.moves.move(NEW, OLD, await self.moves.make_code(NEW))
+        self.now = NOW + 31 * 86400
+        await self.moves.move(NEW, OLD, await self.moves.make_code(NEW))
+        self.assertEqual(await self.scalar("SELECT plan FROM entitlements", person=OLD), "table")
+        self.assertEqual(await self.moves.moved_to(OLD), None)  # it is the account again
+        self.assertEqual(await self.moves.moved_to(NEW), OLD)
+        a = await self.campaigns.get(GUILD_A, self.a)
+        assert a
+        self.assertEqual(a.owner_user_id, OLD)
+
+    async def test_two_moves_with_one_code_make_exactly_one(self) -> None:
+        import asyncio
+
+        code = await self.code()
+        results = await asyncio.gather(
+            self.moves.move(OLD, NEW, code),
+            self.moves.move(OLD, THIRD_NEW, code),
+            return_exceptions=True,
+        )
+        failures = [r for r in results if isinstance(r, MoveError)]
+        self.assertEqual(len(failures), 1)
+        # Whichever lost is told plainly; the code can't be used twice.
+        self.assertIn(str(failures[0]), (account_move.BAD_CODE, account_move.NO_ACCOUNT))
+
+    async def test_nothing_else_of_the_old_account_moves(self) -> None:
+        # A player entry and a DM place the old account has in campaigns it doesn't own, and
+        # its recording agreement, stay where they are.
+        await self.memory.add_entity(
+            GUILD_A, self.other, name="Hero", type="player_character", source="dm", played_by=OLD
+        )
+        await self.campaigns.add_dm(GUILD_A, self.other, OLD)
+        consent = ConsentStore(self.db)
+        await consent.grant(GUILD_A, OLD)
+
+        async def played() -> int:
+            async with self.db.guild(GUILD_A) as conn:
+                cur = await conn.execute(
+                    "SELECT count(*) AS n FROM memory_entities WHERE campaign_id = %s"
+                    " AND played_by = %s",
+                    (self.other, OLD),
+                )
+                return int((await cur.fetchone() or {})["n"])
+
+        before = await played()
+        self.assertGreaterEqual(before, 1)
+        await self.moves.move(OLD, NEW, await self.code())
+        self.assertEqual(await played(), before)
+        self.assertIn(OLD, (await self.campaigns.get(GUILD_A, self.other)).dm_user_ids)  # type: ignore[union-attr]
+        agreed = await consent.consenting(GUILD_A)
+        self.assertIn(OLD, agreed)
+        self.assertNotIn(NEW, agreed)
+
+    async def test_a_target_that_is_recording_stops_the_move(self) -> None:
+        mine = (await self.campaigns.create(GUILD_B, "New Table", NEW)).id
+        async with self.db.guild(GUILD_B) as conn:
+            await conn.execute(
+                "INSERT INTO active_sessions (guild_id, campaign_id, voice_channel_id,"
+                " screen_channel_id, started_by, started_at) VALUES (%s, %s, 1, 2, %s, %s)",
+                (GUILD_B, mine, NEW, NOW),
+            )
+        with self.assertRaises(MoveError) as err:
+            await self.moves.move(OLD, NEW, await self.code())
+        self.assertEqual(str(err.exception), account_move.TARGET_LISTENING)
+
     async def test_a_running_session_stops_the_move(self) -> None:
         async with self.db.guild(GUILD_A) as conn:
             await conn.execute(
@@ -282,7 +367,9 @@ class Moves(DatabaseTest):
         assert a
         self.assertEqual(a.owner_user_id, OLD)  # nothing moved
 
-    async def test_the_new_accounts_own_try_it_is_replaced_and_its_hours_add_up(self) -> None:
+    async def test_the_new_accounts_own_try_it_is_replaced_and_its_minutes_do_not_count(
+        self,
+    ) -> None:
         await entitlements_writer.start_try_it(self.db, NEW, now=NOW)
         await self.add_hours(OLD, 10)
         await self.add_hours(NEW, 5)
@@ -294,7 +381,7 @@ class Moves(DatabaseTest):
             await self.scalar(
                 "SELECT minutes FROM owner_hours WHERE owner_user_id = %s", NEW, person=NEW
             ),
-            15,
+            10,  # only the paid plan's minutes: the Try It minutes don't count toward it
         )
 
     async def web(self) -> Database:
@@ -333,7 +420,7 @@ class Moves(DatabaseTest):
         web = await self.web()
         await self.moves.move(OLD, NEW, await self.code())
         for sql_text in (
-            "SELECT dmbot_move_account(%s, %s, 0)",
+            "SELECT dmbot_move_account(%s, %s, 0, 'x')",
             "SELECT * FROM dmbot_move_preview(%s)",
         ):
             with self.assertRaises(errors.InsufficientPrivilege):
@@ -380,7 +467,8 @@ class Moves(DatabaseTest):
         async with self.db.guild(GUILD_A) as conn:
             await conn.execute(
                 "INSERT INTO campaign_handover_offers (guild_id, campaign_id, from_user_id,"
-                " to_user_id, created_at, from_name, to_name) VALUES (%s, %s, %s, %s, %s, 'a', 'b')",
+                " to_user_id, created_at, from_name, to_name)"
+                " VALUES (%s, %s, %s, %s, %s, 'a', 'b')",
                 (GUILD_A, self.a, OLD, THIRD, NOW),
             )
         await self.moves.move(OLD, NEW, await self.code())
@@ -403,3 +491,20 @@ class Moves(DatabaseTest):
             await self.scalar("SELECT period_end FROM entitlements", person=THIRD_NEW),
             self.now + 77,
         )
+
+    async def test_the_payment_records_are_updated_after_the_move_and_retried_on_failure(
+        self,
+    ) -> None:
+        web = await self.web()
+        await self.moves.move(OLD, NEW, await self.code())
+        fake = FakeProvider(b"s" * 32, "https://site.example.com")
+
+        class Down(FakeProvider):
+            async def retarget(self, **_: object) -> None:
+                raise PaymentError("Stripe answered 500")
+
+        down = Down(b"s" * 32, "https://site.example.com")
+        self.assertEqual(await move_sync.sync_moves(web, down), 0)  # nothing marked done
+        self.assertEqual(await move_sync.sync_moves(web, fake), 1)
+        self.assertEqual(fake.retargeted, [("cus_old1", "sub_old1", NEW)])
+        self.assertEqual(await move_sync.sync_moves(web, fake), 0)  # done once

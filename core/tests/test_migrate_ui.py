@@ -39,7 +39,9 @@ def interaction(user: int, bot: Any) -> Any:
 def bot_with(**moves: Any) -> Any:
     class Conn:
         async def execute(self, *_: Any) -> Any:
-            return SimpleNamespace(fetchone=AsyncMock(return_value={"email": "p@example.com"}))
+            return SimpleNamespace(
+                fetchone=AsyncMock(return_value={"payment_email": "p@example.com"})
+            )
 
     @asynccontextmanager
     async def user(_: int) -> Any:
@@ -74,7 +76,10 @@ class GettingACode(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(bot.mailer.send.await_args.kwargs["to"], "p@example.com")
         self.assertNotIn("ABCD", it.sent[0][0])
         # One email for each code, so asking again is never hidden behind the first email.
-        self.assertEqual(bot.mailer.send.await_args.kwargs["kind"], "move-code:ABCD2345")
+        kind = bot.mailer.send.await_args.kwargs["kind"]
+        self.assertTrue(kind.startswith("move-code:"))
+        self.assertNotIn("ABCD", kind)  # stored and logged: the code itself is in neither
+        self.assertNotIn("2345", kind)
         self.assertNotIn("example.com", it.sent[0][0])
 
     async def test_an_unpaid_account_is_told_why(self) -> None:
@@ -89,7 +94,7 @@ class GettingACode(unittest.IsolatedAsyncioTestCase):
 
         class Conn:
             async def execute(self, *_: Any) -> Any:
-                return SimpleNamespace(fetchone=AsyncMock(return_value={"email": None}))
+                return SimpleNamespace(fetchone=AsyncMock(return_value={"payment_email": None}))
 
         @asynccontextmanager
         async def user(_: int) -> Any:
@@ -143,7 +148,7 @@ class Importing(unittest.IsolatedAsyncioTestCase):
 
     async def test_confirming_moves_once_and_tells_the_old_account(self) -> None:
         bot = bot_with()
-        view = migrate.ConfirmMove(OLD, "ABCD2345")
+        view = migrate.ConfirmMove(OLD, NEW, "ABCD2345")
         it = interaction(NEW, bot)
         await view._yes(it)
         bot.account_moves.move.assert_awaited_once_with(OLD, NEW, "ABCD2345")
@@ -156,10 +161,24 @@ class Importing(unittest.IsolatedAsyncioTestCase):
             move=AsyncMock(side_effect=MoveError("This account moved less than 30 days ago."))
         )
         it = interaction(NEW, bot)
-        await migrate.ConfirmMove(OLD, "ABCD2345")._yes(it)
+        await migrate.ConfirmMove(OLD, NEW, "ABCD2345")._yes(it)
         self.assertIn("less than 30 days", it.sent[0][0])
         self.assertIn("Start again with `/dmbot migrate`", it.sent[0][0])
         bot.after_account_move.assert_not_called()
+
+    async def test_only_the_person_who_asked_can_press_the_buttons(self) -> None:
+        bot = bot_with()
+        view = migrate.ConfirmMove(OLD, NEW, "ABCD2345")
+        it = interaction(OLD, bot)  # someone else
+        await view._yes(it)
+        bot.account_moves.move.assert_not_called()
+        self.assertEqual(it.sent[0][0], "This one isn't yours.")
+        self.assertFalse(view.is_finished())
+
+    async def test_the_button_and_intro_say_import_my_account(self) -> None:
+        self.assertEqual(migrate.IMPORT_LABEL, "📥 Import my account")
+        self.assertLessEqual(len(migrate.IMPORT_LABEL), 80)
+        self.assertIn("Import my account", migrate.INTRO)
 
     async def test_the_help_says_how_to_give_campaigns_to_someone_else(self) -> None:
         self.assertIn("Hand over", migrate.INTRO)

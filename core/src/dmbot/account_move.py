@@ -7,7 +7,7 @@ list). Two steps:
    never on screen: 8 letters and digits, 30 minutes, one use. Only its hash is stored.
 2. On the new account, type the code. The screen shows what will move (the plan and each
    campaign's name) and asks to confirm. Then, in one database transaction
-   (`dmbot_move_account`, migration 0066), the plan, its hours, the Stripe link, the owned
+   (`dmbot_move_account`, migration 0068), the plan, its hours, the Stripe link, the owned
    campaigns and the DM place and player entries in them go to the new Discord ID. The old ID
    is left as a "moved" marker and can never start Try It. The DMbot ID stays. Recording
    consent does not move: the new account says yes for itself.
@@ -24,6 +24,7 @@ import time
 from collections import deque
 from collections.abc import Callable
 from dataclasses import dataclass
+from datetime import UTC, datetime
 
 from psycopg import errors
 
@@ -48,7 +49,11 @@ TOO_MANY = "Too many tries. Wait 10 minutes, then try again."
 TOO_MANY_ASKS = "You've asked for 3 codes this hour. Wait an hour, or use the last email."
 SAME = "This is the old account. Open Discord on your new account and run `/dmbot migrate` there."
 NEW_HAS_PLAN = "This account already has a paid plan. Use an account without one."
-NEW_MOVED_AWAY = "This account moved its plan away before. Use a different account."
+TARGET_HISTORY = (
+    "That Discord account already has its own DMbot history. Use a fresh account, or ask us at "
+    "the hello page."
+)
+TARGET_LISTENING = "DMbot is recording a session for that account. End it, then try again."
 LISTENING = "DMbot is recording a session for the old account. End it, then try again."
 TOO_MANY_CAMPAIGNS = (
     "Both accounts together own more campaigns than the plan allows. Delete or hand over "
@@ -63,7 +68,9 @@ _REFUSALS = {
     "not_paid": NOT_PAID,
     "too_soon": TOO_SOON,
     "new_has_plan": NEW_HAS_PLAN,
-    "new_moved_away": NEW_MOVED_AWAY,
+    "target_history": TARGET_HISTORY,
+    "target_listening": TARGET_LISTENING,
+    "bad_code": BAD_CODE,
     "listening": LISTENING,
     "too_many_campaigns": TOO_MANY_CAMPAIGNS,
 }
@@ -210,8 +217,8 @@ class AccountMoves:
                 # while the move waited, then happen unseen.
                 await conn.execute("SET LOCAL lock_timeout = '3s'")
                 cur = await conn.execute(
-                    "SELECT dmbot_move_account(%s, %s, %s) AS outcome",
-                    (old_user_id, new_user_id, self._now()),
+                    "SELECT dmbot_move_account(%s, %s, %s, %s) AS outcome",
+                    (old_user_id, new_user_id, self._now(), hash_code(code)),
                 )
                 row = await cur.fetchone()
         except errors.LockNotAvailable:
@@ -242,9 +249,18 @@ class AccountMoves:
             row = await cur.fetchone()
         if row is None:
             return None
-        from datetime import UTC, datetime
+        return old_told(long_date(int(row["moved_at"])))
 
-        when = datetime.fromtimestamp(int(row["moved_at"]), UTC).strftime("%B %-d, %Y")
-        from dmbot.ui.migrate import old_told
 
-        return old_told(when)
+def long_date(stamp: int) -> str:
+    """ "October 14, 2026" (the day without a leading zero, on any platform)."""
+    when = datetime.fromtimestamp(stamp, UTC)
+    return f"{when:%B} {when.day}, {when.year}"
+
+
+def old_told(when: str) -> str:
+    """What the old account hears, right away and again the first time it uses DMbot."""
+    return (
+        f"Your DMbot plan, hours and campaigns moved to another Discord account on {when}. "
+        "Was that not you? Tell us now on the website's hello page."
+    )

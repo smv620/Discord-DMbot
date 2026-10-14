@@ -107,6 +107,14 @@ class PaymentProvider(Protocol):
         that is already cancelled must succeed, so a retried deletion works."""
         ...
 
+    async def retarget(
+        self, *, customer_id: str | None, subscription_id: str | None, user_id: int
+    ) -> None:
+        """After an account moved (#1230): point the customer's and the subscription's
+        `user_id` at the new Discord ID, so later events name it. Raises PaymentError if
+        the company refuses or can't be reached; safe to repeat."""
+        ...
+
     def verify(self, body: bytes, headers: Mapping[str, str]) -> bool:
         """The body really comes from the payment company (its signature checks out)."""
         ...
@@ -127,6 +135,7 @@ class FakeProvider:
         self._secret = secret
         self._site_url = site_url.rstrip("/")
         self.cancelled: list[str] = []
+        self.retargeted: list[tuple[str | None, str | None, int]] = []
 
     def sign(self, body: bytes) -> str:
         return hmac.new(self._secret, body, hashlib.sha256).hexdigest()
@@ -155,6 +164,11 @@ class FakeProvider:
 
     async def cancel(self, *, subscription_id: str) -> None:
         self.cancelled.append(subscription_id)
+
+    async def retarget(
+        self, *, customer_id: str | None, subscription_id: str | None, user_id: int
+    ) -> None:
+        self.retargeted.append((customer_id, subscription_id, user_id))
 
     def verify(self, body: bytes, headers: Mapping[str, str]) -> bool:
         try:

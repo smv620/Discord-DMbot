@@ -2049,6 +2049,8 @@ WEB_ROLE_FUNCTIONS: tuple[tuple[str, str], ...] = (
     ("dmbot_minutes_total", "dmbot_minutes_total()"),
     ("dmbot_user_of", "dmbot_user_of(TEXT)"),  # links made before a move (#1230)
     ("dmbot_moved_to", "dmbot_moved_to(BIGINT, TEXT, TEXT)"),  # payments after a move (#1230)
+    ("dmbot_moves_to_sync", "dmbot_moves_to_sync()"),  # the job that updates Stripe (#1230)
+    ("dmbot_move_synced", "dmbot_move_synced(BIGINT)"),
 )
 # The columns the website may fill when it creates a hand-over offer (#728): who, where and the
 # two names. Left out on purpose, so they take their defaults: status and decided_at (an offer
@@ -2375,9 +2377,15 @@ MOVES = """
         new_user_id BIGINT NOT NULL UNIQUE CHECK (new_user_id > 0),
         dmbot_id    TEXT NOT NULL,
         moved_at    BIGINT NOT NULL,
-        told_at     BIGINT
+        told_at     BIGINT,
+        -- The payment company's ids at the move, so the website's job can point them at the
+        -- new Discord ID after the commit (stripe_done_at NULL = still to do).
+        customer_id        TEXT,
+        subscription_id    TEXT,
+        stripe_done_at     BIGINT
     );
     CREATE INDEX account_moves_by_id ON account_moves (dmbot_id, moved_at);
+    CREATE INDEX account_moves_to_sync ON account_moves (moved_at) WHERE stripe_done_at IS NULL;
     -- Rows that point at the account follow its Discord ID when the move changes it.
     ALTER TABLE entitlements DROP CONSTRAINT entitlements_user_id_fkey,
         ADD CONSTRAINT entitlements_user_id_fkey FOREIGN KEY (user_id)
@@ -2432,7 +2440,8 @@ MOVES = """
             current_schema());
     END
     $do$;
-    CREATE FUNCTION dmbot_move_account(old BIGINT, new BIGINT, now BIGINT) RETURNS TEXT
+    CREATE FUNCTION dmbot_move_account(old BIGINT, new BIGINT, now BIGINT, which TEXT)
+        RETURNS TEXT
         LANGUAGE plpgsql SECURITY DEFINER
         AS $fn$
     #variable_conflict use_column
@@ -2474,8 +2483,28 @@ MOVES = """
                 outcome := 'not_paid';
             END IF;
         END IF;
-        IF outcome = 'moved' AND EXISTS (SELECT 1 FROM account_moves WHERE old_user_id = new) THEN
-            outcome := 'new_moved_away';
+        IF outcome <> 'moved' THEN  -- nothing below reads a record that was never found
+            PERFORM set_config('dmbot.owner_sync', before, true);
+            RETURN outcome;
+        END IF;
+        -- The code is checked and spent here, in the same transaction as the move, so two
+        -- moves with one code can't both happen.
+        IF outcome = 'moved' THEN
+            PERFORM 1 FROM move_codes m WHERE m.user_id = old AND m.code_hash = which
+                AND m.used_at IS NULL AND m.expires_at > now FOR UPDATE;
+            IF NOT FOUND THEN
+                outcome := 'bad_code';
+            END IF;
+        END IF;
+        IF outcome <> 'moved' THEN
+            PERFORM set_config('dmbot.owner_sync', before, true);
+            RETURN outcome;
+        END IF;
+        IF outcome = 'moved' AND EXISTS (
+                SELECT 1 FROM active_sessions a JOIN campaigns c
+                    ON c.id = a.campaign_id AND c.guild_id = a.guild_id
+                WHERE c.owner_user_id = new) THEN
+            outcome := 'target_listening';
         END IF;
         IF outcome = 'moved' AND EXISTS (SELECT 1 FROM account_moves
                                          WHERE dmbot_id = acct.dmbot_id
@@ -2486,6 +2515,19 @@ MOVES = """
                                          WHERE user_id = new AND plan <> 'try-it'
                                            AND status <> 'lapsed') THEN
             outcome := 'new_has_plan';
+        END IF;
+        -- The target must be a fresh account, or the account this one came from (moving back).
+        -- Any plan it ever had, or being the target of an earlier move, is its own history.
+        IF outcome = 'moved' AND (
+               EXISTS (SELECT 1 FROM entitlements e WHERE e.user_id = new AND e.plan <> 'try-it')
+            OR EXISTS (SELECT 1 FROM payment_events p WHERE p.user_id = new
+                       AND (p.kind IS NULL OR p.kind = ANY(
+                            ARRAY['subscription_started', 'subscription_renewed',
+                                  'extra_hours_bought'])))
+            OR EXISTS (SELECT 1 FROM account_moves m WHERE m.new_user_id = new)
+            OR EXISTS (SELECT 1 FROM account_moves m
+                       WHERE m.old_user_id = new AND m.dmbot_id <> acct.dmbot_id)) THEN
+            outcome := 'target_history';
         END IF;
         IF outcome = 'moved' AND EXISTS (
                 SELECT 1 FROM active_sessions a JOIN campaigns c
@@ -2512,7 +2554,8 @@ MOVES = """
         UPDATE web_users SET user_id = new WHERE user_id = old;
         UPDATE payment_events SET user_id = new WHERE user_id = old;
 
-        -- The hours add to any the new account already has.
+        -- The new account's own Try It minutes don't count toward the paid plan: they go.
+        DELETE FROM owner_hours WHERE owner_user_id = new;
         INSERT INTO owner_hours (owner_user_id, month_start, minutes, grace_session)
             SELECT new, month_start, minutes, grace_session FROM owner_hours
              WHERE owner_user_id = old
@@ -2544,8 +2587,14 @@ MOVES = """
         INSERT INTO email_unsubscribed (user_id, at)
             SELECT new, at FROM email_unsubscribed WHERE user_id = old
             ON CONFLICT DO NOTHING;
-        INSERT INTO account_moves (old_user_id, new_user_id, dmbot_id, moved_at)
-            VALUES (old, new, acct.dmbot_id, now);
+        -- Moving back: the earlier marker for this Discord ID ends, it is the account again.
+        DELETE FROM account_moves WHERE old_user_id = new;
+        INSERT INTO account_moves (old_user_id, new_user_id, dmbot_id, moved_at, customer_id,
+                                   subscription_id, stripe_done_at)
+            VALUES (old, new, acct.dmbot_id, now, ent.provider_customer_id,
+                    ent.provider_subscription_id,
+                    CASE WHEN ent.provider_customer_id IS NULL
+                          AND ent.provider_subscription_id IS NULL THEN now END);
         PERFORM set_config('dmbot.owner_sync', before, true);
         RETURN 'moved';
     END
@@ -2553,12 +2602,12 @@ MOVES = """
     DO $do$
     BEGIN
         EXECUTE format(
-            'ALTER FUNCTION dmbot_move_account(BIGINT, BIGINT, BIGINT)'
+            'ALTER FUNCTION dmbot_move_account(BIGINT, BIGINT, BIGINT, TEXT)'
             ' SET search_path = pg_catalog, %I, pg_temp',
             current_schema());
     END
     $do$;
-    REVOKE ALL ON FUNCTION dmbot_move_account(BIGINT, BIGINT, BIGINT) FROM PUBLIC;
+    REVOKE ALL ON FUNCTION dmbot_move_account(BIGINT, BIGINT, BIGINT, TEXT) FROM PUBLIC;
     -- Two small doors for the website's role, which has no grant on account_moves:
     --   dmbot_user_of(id)   the Discord ID that holds a DMbot ID now (an unsubscribe or
     --                       personal link carries the ID the account was made with, and the
@@ -2623,6 +2672,35 @@ MOVES = """
     $do$;
     REVOKE ALL ON FUNCTION dmbot_user_of(TEXT) FROM PUBLIC;
     REVOKE ALL ON FUNCTION dmbot_moved_to(BIGINT, TEXT, TEXT) FROM PUBLIC;
+    -- The payment company's records name the Discord ID the plan was bought with. After a
+    -- move commits, the website's job points them at the new one: these two doors say which
+    -- moves still need it, and that one is done (nothing else of account_moves is readable).
+    CREATE FUNCTION dmbot_moves_to_sync()
+        RETURNS TABLE (old_user_id BIGINT, new_user_id BIGINT, customer_id TEXT,
+                       subscription_id TEXT)
+        LANGUAGE sql SECURITY DEFINER
+        AS $fn$
+        SELECT m.old_user_id, m.new_user_id, m.customer_id, m.subscription_id
+            FROM account_moves m WHERE m.stripe_done_at IS NULL ORDER BY m.moved_at LIMIT 20;
+    $fn$;
+    CREATE FUNCTION dmbot_move_synced(who BIGINT) RETURNS VOID
+        LANGUAGE sql SECURITY DEFINER
+        AS $fn$
+        UPDATE account_moves SET stripe_done_at = extract(epoch FROM now())::BIGINT
+            WHERE old_user_id = who AND stripe_done_at IS NULL;
+    $fn$;
+    DO $do$
+    BEGIN
+        EXECUTE format(
+            'ALTER FUNCTION dmbot_moves_to_sync() SET search_path = pg_catalog, %I, pg_temp',
+            current_schema());
+        EXECUTE format(
+            'ALTER FUNCTION dmbot_move_synced(BIGINT) SET search_path = pg_catalog, %I, pg_temp',
+            current_schema());
+    END
+    $do$;
+    REVOKE ALL ON FUNCTION dmbot_moves_to_sync() FROM PUBLIC;
+    REVOKE ALL ON FUNCTION dmbot_move_synced(BIGINT) FROM PUBLIC;
     -- What a move would take, for the confirmation screen: the plan and the name of each
     -- campaign. Names only; nothing else of a campaign leaves.
     CREATE FUNCTION dmbot_move_preview(old BIGINT) RETURNS TABLE (kind TEXT, label TEXT)

@@ -14,7 +14,7 @@ import logging
 import discord
 
 from dmbot import account_move
-from dmbot.account_move import MoveError, Preview
+from dmbot.account_move import MoveError, Preview, hash_code
 from dmbot.ui.dmbot_commands import (
     _answer_first,
     _bot,
@@ -24,6 +24,7 @@ from dmbot.ui.dmbot_commands import (
     _tell,
     dmbot_group,
 )
+from dmbot.web.accounts import payment_email
 
 log = logging.getLogger(__name__)
 
@@ -33,7 +34,7 @@ INTRO = (
     "account is left empty. You can move once every 30 days.\n"
     "Recording agreements don't move. Your new account says yes again at its first table.\n"
     "1. Old account: tap **Get a move code**. We email it to the address you pay with.\n"
-    "2. New account: run `/dmbot migrate`, tap **I have a code**, and type it.\n"
+    "2. New account: run `/dmbot migrate`, tap **Import my account**, and type the code.\n"
     "Want to give campaigns to someone else? Use **Hand over** in ⚙️ Settings. It doesn't "
     "move your plan."
 )
@@ -41,24 +42,19 @@ EMAILED = (
     "We've emailed a code to the address you pay with. It works once, for 30 minutes. "
     "Check your spam too."
 )
-NO_EMAIL = "We have no email for you yet. Sign in on the website with Discord, then try again."
+NO_EMAIL = (
+    "We don't have the email you pay with yet. It's saved when a payment goes through. Try "
+    "again later, or tell us on the website's hello page."
+)
 NOT_READY = (
     "Something went wrong and nothing moved. Try again in a minute. If it keeps happening, "
     "tell us on the website."
 )
 EMAIL_FAILED = "The code couldn't be emailed just now. Try again in a few minutes."
 GET_LABEL = "📧 Get a move code"
-IMPORT_LABEL = "📥 I have a code"
+IMPORT_LABEL = "📥 Import my account"
 CONFIRM_LABEL = "Yes, move it here"
 CANCEL_LABEL = "Cancel"
-
-
-def old_told(when: str) -> str:
-    """What the old account hears, right away and again the first time it uses DMbot."""
-    return (
-        f"Your DMbot plan, hours and campaigns moved to another Discord account on {when}. "
-        "Was that not you? Tell us now on the website's hello page."
-    )
 
 
 CAMPAIGNS_SHOWN = 8
@@ -106,15 +102,11 @@ class MigrateMenu(_Menu):
 
 
 async def _payment_email(interaction: discord.Interaction) -> str | None:
+    """Only the address the payment company has: a code goes nowhere else."""
     bot = _bot(interaction)
     if bot.meter is None:
         return None
-    async with bot.meter.db.user(interaction.user.id) as conn:
-        cur = await conn.execute(
-            "SELECT email FROM web_users WHERE user_id = %s", (interaction.user.id,)
-        )
-        row = await cur.fetchone()
-    return None if row is None else row["email"]
+    return await payment_email(bot.meter.db, interaction.user.id)
 
 
 async def get_code(interaction: discord.Interaction) -> None:
@@ -136,14 +128,16 @@ async def get_code(interaction: discord.Interaction) -> None:
         code = await bot.account_moves.make_code(interaction.user.id)
         result = await bot.mailer.send(
             user_id=interaction.user.id,
-            kind=f"move-code:{code}",  # one email for each code, so a new code is never hidden
+            # One email for each code, so a new code is never hidden. The kind is stored and
+            # logged, so it carries a short hash of the code, never the code.
+            kind=f"move-code:{hash_code(code)[:8]}",
             to=email,
             subject="Your DMbot move code",
             body=(
                 f"Your DMbot move code: {code[:4]}-{code[4:]}\n\n"
                 "It works once and lasts 30 minutes.\n"
-                'Type it on your NEW Discord account: run /dmbot migrate, tap "I have a '
-                'code", and enter it.\n'
+                'Type it on your NEW Discord account: run /dmbot migrate, tap "Import my '
+                'account", and enter it.\n'
                 "The code moves your plan, its hours and your campaigns. Never give it to "
                 "anyone else.\n"
                 "Didn't ask for this? Ignore this email. Nothing changes."
@@ -163,7 +157,7 @@ async def get_code(interaction: discord.Interaction) -> None:
     await _tell(interaction, EMAILED)
 
 
-class CodeForm(discord.ui.Modal, title="Import from another account"):
+class CodeForm(discord.ui.Modal, title="Import my account"):
     code: discord.ui.TextInput[CodeForm] = discord.ui.TextInput(
         label="The move code from your email",  # 45 characters at most
         placeholder="For example: ABCD-2345",
@@ -191,18 +185,29 @@ async def look_up(interaction: discord.Interaction, code: str) -> None:
         log.exception("Couldn't check a move code")
         await _tell(interaction, NOT_READY)
         return
-    await _send(interaction, confirm_text(preview, old), ConfirmMove(old, code))
+    await _send(
+        interaction, confirm_text(preview, old), ConfirmMove(old, interaction.user.id, code)
+    )
 
 
 class ConfirmMove(_Menu):
-    def __init__(self, old_user_id: int, code: str) -> None:
+    def __init__(self, old_user_id: int, new_user_id: int, code: str) -> None:
         super().__init__()
-        self.old, self.code = old_user_id, code
+        self.old, self.new, self.code = old_user_id, new_user_id, code
         self.add_item(_Button(self._yes, label=CONFIRM_LABEL, style=discord.ButtonStyle.danger))
         self.add_item(_Button(self._no, label=CANCEL_LABEL))
 
+    async def _mine(self, interaction: discord.Interaction) -> bool:
+        """Only the person who asked can press: the menu is theirs alone."""
+        if interaction.user.id == self.new:
+            return True
+        await _tell(interaction, "This one isn't yours.")
+        return False
+
     async def _yes(self, interaction: discord.Interaction) -> None:
         await _answer_first(interaction)
+        if not await self._mine(interaction):
+            return
         bot = _bot(interaction)
         if bot.account_moves is None:
             await _tell(interaction, NOT_READY)
@@ -225,6 +230,8 @@ class ConfirmMove(_Menu):
         await bot.after_account_move(self.old, interaction.user.id)
 
     async def _no(self, interaction: discord.Interaction) -> None:
+        if not await self._mine(interaction):
+            return
         self.stop()
         await _tell(interaction, "Okay, nothing moved.")
 

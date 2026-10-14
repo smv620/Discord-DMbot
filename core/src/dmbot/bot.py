@@ -509,6 +509,7 @@ class DMBotTree(app_commands.CommandTree["DMBot"]):
 
     async def interaction_check(self, interaction: discord.Interaction) -> bool:
         set_log_context(guild_id=interaction.guild_id)
+        await self.client.tell_if_moved(interaction.user.id)
         return True
 
     async def on_error(
@@ -5059,15 +5060,25 @@ class DMBot(commands.AutoShardedBot):
         exists. The payment company's records are brought up to date when its next event
         arrives (the website's webhook finds a moved person through the marker). Never
         raises."""
-        from datetime import UTC, datetime
-
-        from dmbot.ui.migrate import old_told
+        from dmbot.account_move import long_date, old_told
 
         try:
-            when = datetime.now(UTC).strftime("%B %-d, %Y")
-            await self._dm_trial_user(old_user_id, old_told(when))
+            await self._dm_trial_user(old_user_id, old_told(long_date(int(time.time()))))
         except Exception:
             log.exception("Couldn't tell the old account about a move")
+
+    async def tell_if_moved(self, user_id: int) -> None:
+        """An old account whose DMbot account moved (#1230) hears so, privately, the first time
+        it uses any command (marked told as it is read; the line is lost if the message can't
+        be sent, which beats telling twice). Never raises and never holds a command up."""
+        if self.account_moves is None:
+            return
+        try:
+            notice = await self.account_moves.take_moved_notice(user_id)
+            if notice:
+                await self._dm_trial_user(user_id, notice)
+        except Exception:
+            log.exception("Couldn't tell an old account that its DMbot account moved")
 
     async def _discord_name(self, user_id: int) -> str:
         try:
