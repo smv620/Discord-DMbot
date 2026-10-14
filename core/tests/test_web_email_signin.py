@@ -1,30 +1,29 @@
 """Website sign-in by emailed link, the account number and personal links (#1231), as the
-website's own database role. The pure parts (the DMbot ID, the signed link code, what counts as
-an email) need no database."""
+website's own database role. What counts as an email needs no database. The DMbot ID and the
+link tokens are tested with their own code (#1228)."""
 
 from __future__ import annotations
 
 import asyncio
 import re
 import unittest
+from email.message import EmailMessage
 
 import httpx
 
+from dmbot.account_id import to_dmbot_id
 from dmbot.db import Database
+from dmbot.entitlements import Entitlement
+from dmbot.link_tokens import make_link_token
+from dmbot.mail import Mailer, MailSettings
 from dmbot.web import email_signin
 from dmbot.web.app import create_app
 from dmbot.web.discord import DiscordUser
 from dmbot.web.limits import LIMITS, RateLimit
+from dmbot.web.moving import can_move
 from dmbot.web.payments import FakeProvider
-from dmbot.web.personal import (
-    check_link_token,
-    from_dmbot_id,
-    link_secret,
-    make_link_token,
-    to_dmbot_id,
-)
 from tests.pg import REQUIRE_DB, SUPERUSER_URL, DatabaseTest
-from tests.test_web_api import ALICE, API, SECRET, SITE, THURSDAY, FakeDiscord, settings
+from tests.test_web_api import ALICE, API, SITE, THURSDAY, FakeDiscord, settings
 from tests.test_web_role import ensure_web_role, web_url
 
 BOB = DiscordUser(id=2002, name="Quillon", email="quillon@example.com")
@@ -39,53 +38,6 @@ def email_of(user: DiscordUser) -> str:
 SAME_ANSWER = {"message": "If that email belongs to a DMbot account, we've sent a link"}
 
 
-class DmbotId(unittest.TestCase):
-    def test_a_discord_id_round_trips(self) -> None:
-        for number in (1, 35, 36, 1001, 1_500_000_000_000_000_000):
-            self.assertEqual(from_dmbot_id(to_dmbot_id(number)), number)
-        self.assertEqual(to_dmbot_id(36), "10")
-        self.assertEqual(to_dmbot_id(35), "Z")
-
-    def test_todays_largest_ids_fit_in_twelve_characters(self) -> None:
-        self.assertLessEqual(len(to_dmbot_id(1_500_000_000_000_000_000)), 12)
-        self.assertEqual(len(to_dmbot_id(36**12 - 1)), 12)
-        self.assertEqual(len(to_dmbot_id(36**12)), 13)
-
-    def test_what_is_not_an_id_reads_as_none(self) -> None:
-        for text in ("", "abc", "AB-C", "A" * 13, "0", "000"):
-            self.assertIsNone(from_dmbot_id(text), text)
-
-    def test_zero_and_negative_have_no_id(self) -> None:
-        for number in (0, -5):
-            with self.assertRaises(ValueError):
-                to_dmbot_id(number)
-
-
-class LinkTokens(unittest.TestCase):
-    secret = link_secret(SECRET)
-
-    def test_a_fresh_token_for_its_id_is_ok(self) -> None:
-        token = make_link_token(self.secret, "ABC123", 1000)
-        self.assertTrue(check_link_token(self.secret, "ABC123", token, 1001))
-
-    def test_another_id_a_tampered_expiry_or_another_key_is_not(self) -> None:
-        token = make_link_token(self.secret, "ABC123", 1000)
-        self.assertFalse(check_link_token(self.secret, "ABC124", token, 1001))
-        expires, mac = token.split(".")
-        later = f"{int(expires) + 10_000_000}.{mac}"  # a longer life with the old signature
-        self.assertFalse(check_link_token(self.secret, "ABC123", later, 1001))
-        self.assertFalse(check_link_token(link_secret(b"z" * 40), "ABC123", token, 1001))
-
-    def test_it_expires_after_thirty_days(self) -> None:
-        token = make_link_token(self.secret, "ABC123", 1000)
-        self.assertTrue(check_link_token(self.secret, "ABC123", token, 1000 + 30 * 86400 - 1))
-        self.assertFalse(check_link_token(self.secret, "ABC123", token, 1000 + 30 * 86400))
-
-    def test_junk_is_just_no(self) -> None:
-        for junk in ("", ".", "x.y", "1.2.3", "99999999999.", "not a token"):
-            self.assertFalse(check_link_token(self.secret, "ABC123", junk, 1001), junk)
-
-
 class CleanEmail(unittest.TestCase):
     def test_an_address_is_trimmed_and_lowered(self) -> None:
         self.assertEqual(email_signin.clean_email("  Alice@Example.COM "), "alice@example.com")
@@ -93,20 +45,70 @@ class CleanEmail(unittest.TestCase):
     def test_what_cannot_be_an_address_is_none(self) -> None:
         for raw in (None, 5, "", "alice", "a@b", "@example.com", "a@@example.com", "a b@x.com"):
             self.assertIsNone(email_signin.clean_email(raw), repr(raw))
-        self.assertIsNone(email_signin.clean_email("a@" + "x" * 260 + ".com"))
+        self.assertIsNone(email_signin.clean_email("a@" + "x" * 260 + ".example.org"))
 
 
-class FakeMailer:
-    """Records what would have been sent: (address, link). Tests use example.com only."""
+class CanMove(unittest.TestCase):
+    """One rule for who may ask for a move code (`/me` and the route both use it)."""
+
+    def plan(self, plan: str, status: str = "active", end: int = 2_000) -> Entitlement:
+        return Entitlement(
+            user_id=1,
+            plan=plan,  # type: ignore[arg-type]
+            status=status,  # type: ignore[arg-type]
+            hours_cap=18,
+            extra_hours=0,
+            campaign_cap=1,
+            period_start=0,
+            period_end=end,
+            grace_ends_at=None,
+            lapsed_at=None,
+            plan_changed_at=0,
+        )
+
+    def test_an_active_paid_plan_may(self) -> None:
+        for paid in ("table", "two-tables", "guild"):
+            self.assertTrue(can_move(self.plan(paid), 1_000), paid)
+
+    def test_try_it_and_its_extension_may_not(self) -> None:
+        # An extension is more days of the same `try-it` plan (#1229), so it fails the same way.
+        self.assertFalse(can_move(self.plan("try-it"), 1_000))
+        self.assertFalse(can_move(self.plan("try-it", end=10_000_000), 1_000))
+
+    def test_no_plan_a_lapsed_or_grace_or_ended_plan_may_not(self) -> None:
+        self.assertFalse(can_move(None, 1_000))
+        self.assertFalse(can_move(self.plan("table", "lapsed"), 1_000))
+        self.assertFalse(can_move(self.plan("table", "grace"), 1_000))
+        self.assertFalse(can_move(self.plan("table"), 10_000_000_000))
+
+
+class FakeTransport:
+    """The mail server: records (address, link) for what would have been sent. Addresses in
+    tests are example.com or example.org only."""
 
     def __init__(self) -> None:
         self.sent: list[tuple[str, str]] = []
         self.fail = False
+        self.gate: asyncio.Event | None = None  # when set, sending waits for it
 
-    async def send_sign_in_link(self, to: str, link: str) -> None:
+    async def __call__(self, message: EmailMessage) -> None:
+        if self.gate is not None:
+            await self.gate.wait()
         if self.fail:
             raise RuntimeError("the mail server is down")
-        self.sent.append((to, link))
+        body = message.get_content()
+        link = re.search(r"https://\S+", body)
+        assert link is not None
+        self.sent.append((str(message["To"]), link.group(0)))
+
+
+LINK_SECRET = b"s" * 40
+SMTP = MailSettings(
+    host="smtp.example.org",
+    user="dmbot@example.org",
+    app_password="app-password",
+    sender="dmbot@example.org",
+)
 
 
 class FakeMoveCodes:
@@ -133,7 +135,15 @@ class EmailSignIn(DatabaseTest):
         await super().asyncSetUp()
         self.web = await Database.open(web_url(), schema=self.schema, max_size=2, migrate=False)
         self.now = 1_800_000_000
-        self.mailer = FakeMailer()
+        self.mailer = FakeTransport()
+        self.sender = Mailer(
+            self.web,
+            SMTP,
+            transport=self.mailer,
+            site_url=SITE,
+            link_secret=LINK_SECRET,
+            clock=lambda: float(self.now),
+        )
         self.moves = FakeMoveCodes()
         self.limits = {
             name: RateLimit(group.seconds, clock=lambda: float(self.now), count=group.count)
@@ -141,13 +151,13 @@ class EmailSignIn(DatabaseTest):
         }
         self.email_limit = RateLimit(3600, clock=lambda: float(self.now), count=3)
         self.app = create_app(
-            settings(),
+            settings(link_token_secret=LINK_SECRET),
             self.web,
             FakeDiscord(),
             payments=FakeProvider(b"h" * 32, SITE),
             route_limits=self.limits,
             email_limit=self.email_limit,
-            mailer=self.mailer,
+            mailer=self.sender,
             move_codes=self.moves,
             clock=lambda: self.now,
         )
@@ -200,28 +210,75 @@ class EmailSignIn(DatabaseTest):
         # Mailing takes time only for an address with an account, so the answer must not wait
         # for it, or the speed would tell anyone whether an address has an account.
         await self.account(ALICE)
-        gate = asyncio.Event()
-
-        class SlowMailer:
-            async def send_sign_in_link(self, to: str, link: str) -> None:
-                await gate.wait()
-
-        app = create_app(
-            settings(),
-            self.web,
-            FakeDiscord(),
-            payments=FakeProvider(b"h" * 32, SITE),
-            mailer=SlowMailer(),
-            clock=lambda: self.now,
-        )
-        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url=API) as c:
+        self.mailer.gate = asyncio.Event()
+        async with self.browser() as client:
             answer = await asyncio.wait_for(
-                c.post("/auth/email/request", json={"email": email_of(ALICE)}, headers=HEADERS),
+                client.post(
+                    "/auth/email/request", json={"email": email_of(ALICE)}, headers=HEADERS
+                ),
                 timeout=5,
             )
             self.assertEqual(answer.json(), SAME_ANSWER)
-            gate.set()
+            self.mailer.gate.set()
+            await self.settle()
+        self.assertEqual(len(self.mailer.sent), 1)
+
+    async def test_a_full_limiter_does_not_stop_links_for_everyone(self) -> None:
+        await self.account(ALICE)
+        tiny = RateLimit(3600, clock=lambda: float(self.now), count=3, most=1)
+        tiny.take("someone-else")  # the limiter is full of another address
+        app = create_app(
+            settings(link_token_secret=LINK_SECRET),
+            self.web,
+            FakeDiscord(),
+            payments=FakeProvider(b"h" * 32, SITE),
+            email_limit=tiny,
+            mailer=self.sender,
+            clock=lambda: self.now,
+        )
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url=API) as c:
+            answer = await c.post(
+                "/auth/email/request", json={"email": email_of(ALICE)}, headers=HEADERS
+            )
             await asyncio.gather(*list(app.state.email_tasks))
+        self.assertEqual(answer.json(), SAME_ANSWER)
+        self.assertEqual(len(self.mailer.sent), 1)  # the link went anyway
+
+    async def test_asking_again_spends_the_earlier_link(self) -> None:
+        await self.account(ALICE)
+        async with self.browser() as client:
+            await self.ask(client, email_of(ALICE))
+            await self.ask(client, email_of(ALICE))
+            first, second = (token_in(link) for _to, link in self.mailer.sent)
+            old = await client.post("/auth/email/verify", json={"token": first}, headers=HEADERS)
+            self.assertEqual(old.status_code, 400)  # only the newest link is live
+            new = await client.post("/auth/email/verify", json={"token": second}, headers=HEADERS)
+            self.assertEqual(new.status_code, 204)
+
+    async def test_each_link_is_its_own_email_in_the_log_and_no_address_is_kept(self) -> None:
+        await self.account(ALICE)
+        async with self.browser() as client:
+            await self.ask(client, email_of(ALICE))
+            self.now += 60
+            await self.ask(client, email_of(ALICE))
+        async with self.db.unscoped() as conn:
+            cur = await conn.execute("SELECT user_id, kind FROM sent_emails ORDER BY sent_at")
+            rows = await cur.fetchall()
+        self.assertEqual(len(rows), 2)
+        self.assertTrue(all(r["kind"].startswith("sign-in:") for r in rows))
+        self.assertNotEqual(rows[0]["kind"], rows[1]["kind"])
+        self.assertTrue(all(r["user_id"] == ALICE.id for r in rows))
+        self.assertNotIn("example.com", repr(rows))  # ids and kinds only, never an address
+
+    async def test_move_codes_are_limited_per_account(self) -> None:
+        await self.account(ALICE)
+        await self.give_plan(ALICE, "table", "active")
+        async with self.browser() as client:
+            await self.sign_in_by_email(client, ALICE)
+            codes = [
+                (await client.post("/me/move-code", headers=HEADERS)).status_code for _ in range(4)
+            ]
+        self.assertEqual(codes, [202, 202, 202, 429])
 
     async def test_a_chunked_or_huge_body_is_just_no_email(self) -> None:
         await self.account(ALICE)
@@ -417,7 +474,7 @@ class EmailSignIn(DatabaseTest):
 
     async def personal(self, user: DiscordUser, **changes: str) -> httpx.Response:
         uid = to_dmbot_id(user.id)
-        token = make_link_token(link_secret(SECRET), uid, self.now)
+        token = make_link_token(uid, self.now, LINK_SECRET)
         query = {"uid": uid, "t": token} | changes
         async with self.browser() as client:
             return await client.get("/personal", params=query)
@@ -437,7 +494,7 @@ class EmailSignIn(DatabaseTest):
     async def test_every_wrong_personal_link_is_the_same_404(self) -> None:
         await self.account(ALICE)
         await self.account(BOB)
-        stolen = make_link_token(link_secret(SECRET), to_dmbot_id(BOB.id), self.now)
+        stolen = make_link_token(to_dmbot_id(BOB.id), self.now, LINK_SECRET)
         for changes in (
             {"t": ""},
             {"t": "1.2"},
@@ -454,7 +511,7 @@ class EmailSignIn(DatabaseTest):
                 "/personal",
                 params={
                     "uid": to_dmbot_id(ALICE.id),
-                    "t": make_link_token(link_secret(SECRET), to_dmbot_id(ALICE.id), 1_800_000_000),
+                    "t": make_link_token(to_dmbot_id(ALICE.id), 1_800_000_000, LINK_SECRET),
                 },
             )
         self.assertEqual(old.status_code, 404)  # a code from 31 days ago
@@ -513,11 +570,11 @@ class EmailSignIn(DatabaseTest):
         await self.account(ALICE)
         await self.give_plan(ALICE, "table", "active")
         app = create_app(
-            settings(),
+            settings(link_token_secret=LINK_SECRET),
             self.web,
             FakeDiscord(),
             payments=FakeProvider(b"h" * 32, SITE),
-            mailer=self.mailer,
+            mailer=self.sender,
             clock=lambda: self.now,
         )
         async with self.browser() as signing_in:

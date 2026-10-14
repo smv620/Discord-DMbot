@@ -101,6 +101,24 @@ export const playerSteps: Step[] = [
   },
 ];
 
+/** Your account (#1215): DMbot has no password of its own, and a new Discord account starts clean. */
+export const accountSteps: Step[] = [
+  {
+    text: "Forgot your password? DMbot has no password. It uses your Discord account, so use Discord's own reset: open the Discord sign-in page and press Forgot your password?",
+  },
+  {
+    text: "Moving to a new Discord account? Do this for each campaign you own: press ⚙️ Settings, then press Hand over, and pick your new account or another game master. When all are handed over, cancel your plan on your account page. On the new account, say yes to being recorded again.",
+    names: [{ name: "Hand over", file: "dm_screen/handover.py" }],
+  },
+  {
+    text: "Can't reach your old account any more? If you kept a backup (type /dmbot backup before you leave, paid campaigns only), type /dmbot restore on your new account. That needs a plan with a free campaign slot.",
+    names: [
+      { name: "/dmbot backup", file: "ui/dmbot_commands.py" },
+      { name: "/dmbot restore", file: "ui/dmbot_commands.py" },
+    ],
+  },
+];
+
 /** Not a step to do: what players may notice at the table. */
 export const playerNote =
   'Your game master may show the story\'s day and time, like "Day 5, morning", in your own channel. You do not need to do anything.';

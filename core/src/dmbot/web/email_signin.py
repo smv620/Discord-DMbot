@@ -37,7 +37,8 @@ def clean_email(raw: object) -> str | None:
 
 async def make_link(db: Database, email: str, *, now: int) -> tuple[int, str] | None:
     """The account this address belongs to, and a new sign-in token for it: None when no one
-    (or two accounts) has the address. The caller emails the token and tells no one the answer."""
+    (or two accounts) has the address. The caller emails the token and tells no one the answer.
+    The link's id (for the email log) is `link_id(token)`."""
     async with db.anonymous() as conn:
         cur = await conn.execute("SELECT dmbot_user_by_email(%s) AS user_id", (email,))
         row = await cur.fetchone()
@@ -46,18 +47,21 @@ async def make_link(db: Database, email: str, *, now: int) -> tuple[int, str] | 
     user_id = int(row["user_id"])
     token = secrets.token_urlsafe(32)
     async with db.user(user_id) as conn:
-        # Old and spent links go, so the table holds only what could still be used.
-        await conn.execute(
-            "DELETE FROM email_sign_in_links"
-            " WHERE user_id = %s AND (expires_at <= %s OR used_at IS NOT NULL)",
-            (user_id, now),
-        )
+        # One live link at a time: asking again spends the earlier ones (and clears old and
+        # used ones), so a link in an old email, or one a stranger triggered, stops working.
+        await conn.execute("DELETE FROM email_sign_in_links WHERE user_id = %s", (user_id,))
         await conn.execute(
             "INSERT INTO email_sign_in_links (token_hash, user_id, created_at, expires_at)"
             " VALUES (%s, %s, %s, %s)",
             (hash_token(token), user_id, now, now + LINK_SECONDS),
         )
     return user_id, token
+
+
+def link_id(token: str) -> str:
+    """A short id for a link that names no secret (the start of its stored hash), for the
+    email log's kind: `sign-in:<id>`, so each link is its own email."""
+    return hash_token(token)[:16]
 
 
 async def redeem(db: Database, token: str, *, now: int) -> int | None:

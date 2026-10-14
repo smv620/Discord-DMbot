@@ -131,4 +131,7 @@ LIMITS: dict[str, Group] = {
     "personal": Group(30, 10 * 60, ("/personal",)),
     # A move code is an email to the payment address and starts a move: rare.
     "move-code": Group(5, 60 * 60, ("/me/move-code",)),
+    # The unsubscribe link in an offer email (#1229): a person clicks it once; a token is
+    # checked before anything is written.
+    "unsubscribe": Group(20, 60, ("/email/unsubscribe",)),
 }

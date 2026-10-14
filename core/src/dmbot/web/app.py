@@ -25,9 +25,11 @@ from fastapi import Depends, FastAPI, HTTPException, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, RedirectResponse
 
-from dmbot import consent_notify, entitlements, install, plans
+from dmbot import consent_notify, entitlements, install, mail, plans
+from dmbot.account_id import from_dmbot_id
 from dmbot.consent import ConsentStore
 from dmbot.db import Database
+from dmbot.link_tokens import check_link_token, check_unsubscribe_token
 from dmbot.web import (
     admin_api,
     email_signin,
@@ -53,15 +55,8 @@ from dmbot.web.export import build_export
 from dmbot.web.feedback import Discussions, FeedbackError, HumanCheck
 from dmbot.web.limits import LIMITS, RateLimit
 from dmbot.web.me import build_me
+from dmbot.web.moving import MoveCodes, can_move
 from dmbot.web.payments import PaymentError, PaymentProvider, paid_plan_ids
-from dmbot.web.personal import (
-    Mailer,
-    MoveCodes,
-    NoMailer,
-    check_link_token,
-    from_dmbot_id,
-    link_secret,
-)
 from dmbot.web.sessions import Session
 from dmbot.web.settings import WebSettings
 
@@ -101,8 +96,9 @@ def create_app(
     feedback_limit: RateLimit | None = None,
     export_limit: RateLimit | None = None,
     email_limit: RateLimit | None = None,
-    mailer: Mailer | None = None,
+    mailer: mail.Mailer | None = None,
     move_codes: MoveCodes | None = None,
+    move_limit: RateLimit | None = None,
     route_limits: dict[str, RateLimit] | None = None,
     google: GoogleSignIn | None = None,
     admin_sessions: AdminSessions | None = None,
@@ -115,11 +111,14 @@ def create_app(
     if feedback_limit is None:
         feedback_limit = RateLimit()
     if email_limit is None:
-        # Sign-in links (#1231): three a hour per email address, kept apart from the per-address
-        # limit so one person can't fill someone else's inbox from many connections.
-        email_limit = RateLimit(60 * 60, count=3)
-    if mailer is None:
-        mailer = NoMailer()
+        # Sign-in links (#1231): three a hour per email address, kept apart from the per-connection
+        # limit so one person can't fill someone else's inbox from many connections. Room for a
+        # lot of addresses at once: a full limiter lets links through (see the route), but a
+        # flood of made-up addresses shouldn't fill it in the first place.
+        email_limit = RateLimit(60 * 60, count=3, most=500_000)
+    if move_limit is None:
+        # A move code is an email and starts a move: three an hour per account.
+        move_limit = RateLimit(60 * 60, count=3)
     if export_limit is None:
         # The data export (#1150): once a minute per person, counted by account, not address.
         export_limit = RateLimit(60)
@@ -347,9 +346,24 @@ def create_app(
         the answer takes the same time whether or not the address has an account."""
         try:
             made = await email_signin.make_link(db, email, now=clock())
-            if made is not None:
-                _user_id, token = made
-                await mailer.send_sign_in_link(email, f"{account_page}#email-link={token}")
+            if made is not None and mailer is not None:
+                user_id, token = made
+                # An account email (no unsubscribe): its kind has the link's own id, so each
+                # link is its own email, and it counts toward the day's cap.
+                result = await mailer.send(
+                    user_id=user_id,
+                    kind=f"sign-in:{email_signin.link_id(token)}",
+                    to=email,
+                    subject="Your DMbot sign-in link",
+                    body=(
+                        "Here is your DMbot sign-in link:\n\n"
+                        f"{account_page}#email-link={token}\n\n"
+                        "It works once and ends after 15 minutes. If you didn't ask for it, "
+                        "you can ignore this email."
+                    ),
+                )
+                if result != "sent":
+                    log.warning("A sign-in link was not sent: %s", result)
         except Exception as exc:
             # The type only: mail libraries put the address in their messages.
             log.error("A sign-in link could not be made or sent: %s", type(exc).__name__)
@@ -368,8 +382,10 @@ def create_app(
         key = hashlib.sha256(email.encode()).hexdigest()
         taken = email_limit.take(key)
         if taken == "busy":
-            log.warning("Sign-in links are being asked for by too many different addresses")
-        if taken != "ok":
+            # So many different addresses at once that the limiter is full: links still go (the
+            # per-connection limit is the brake), or one flood would stop everyone's.
+            log.warning("Sign-in links are being asked for by very many different addresses")
+        elif taken != "ok":
             return answer  # too many for this address: silently no email, same reply
         task = asyncio.create_task(send_sign_in_link(email))
         email_tasks.add(task)  # held until done, so it can't be collected half-way
@@ -403,16 +419,19 @@ def create_app(
         """What a personal link (`?uid=&t=`) may show on /pricing and /hello: the Discord name
         and the experience points (#1231). Both need the signed code in `t`, so guessing an ID
         shows nothing. Every failure is the same 404, so it can't be used to find accounts."""
-        user_id = from_dmbot_id(uid)
-        secret = link_secret(settings.secret_key)
-        if user_id is None or not check_link_token(secret, uid, t, clock()):
+        try:
+            user_id = from_dmbot_id(uid)
+        except ValueError:
+            raise HTTPException(status_code=404, detail="not_found") from None
+        # With no LINK_TOKEN_SECRET set, personal links are off: nothing passes the check.
+        if not check_link_token(uid, t, int(clock()), settings.link_token_secret):
             raise HTTPException(status_code=404, detail="not_found")
         async with db.user(user_id) as conn:
             cur = await conn.execute(
                 "SELECT display_name FROM web_users WHERE user_id = %s", (user_id,)
             )
             row = await cur.fetchone()
-            cur = await conn.execute("SELECT dmbot_total_minutes() AS minutes")
+            cur = await conn.execute("SELECT dmbot_minutes_total() AS minutes")
             minutes = await cur.fetchone()
         if row is None:
             raise HTTPException(status_code=404, detail="not_found")
@@ -430,13 +449,11 @@ def create_app(
         if move_codes is None:
             raise HTTPException(status_code=503, detail="move_off")
         plan, _grant, _access = await entitlements.plan_grant_access(db, session.user_id, clock())
-        if (
-            plan is None
-            or plan.plan == "try-it"
-            or plan.status != "active"
-            or not plan.usable(clock())
-        ):
+        if not can_move(plan, clock()):
             raise HTTPException(status_code=403, detail="not_paid")
+        # Three an hour per account, on top of the per-connection limit: a code is an email.
+        if move_limit.take(f"user-{session.user_id}") != "ok":
+            raise HTTPException(status_code=429, detail="slow_down")
         await move_codes.send_code(session.user_id)
         log.info("A move code was sent for user %s", session.user_id)
         return {"message": "We've emailed a move code to your payment email."}
@@ -834,6 +851,25 @@ def create_app(
             with contextlib.suppress(ValueError):
                 return str(ipaddress.ip_address(forwarded))
         return request.client.host if request.client else "unknown"
+
+    @app.post("/email/unsubscribe")
+    async def email_unsubscribe(request: Request) -> dict[str, bool]:
+        """The unsubscribe link in an offer email (#1229): the page sends the `uid` and `t`
+        from the link. A signed token proves the link came from us, so this needs no
+        sign-in; it never says whether the person has an account."""
+        body = await request.body()
+        if len(body) > 1024:
+            raise HTTPException(status_code=413, detail="too_long")
+        try:
+            raw = json.loads(body)
+            uid, token = str(raw["uid"]), str(raw["t"])
+            user_id = from_dmbot_id(uid)
+        except (ValueError, KeyError, TypeError):
+            raise HTTPException(status_code=400, detail="bad_link") from None
+        if not check_unsubscribe_token(uid, token, settings.link_token_secret):
+            raise HTTPException(status_code=400, detail="bad_link")
+        await mail.unsubscribe(db, user_id, now=int(clock()))
+        return {"ok": True}
 
     @app.post("/feedback")
     async def send_feedback(request: Request) -> dict[str, str]:
