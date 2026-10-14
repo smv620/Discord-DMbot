@@ -2763,8 +2763,8 @@ class DMBot(commands.AutoShardedBot):
     async def sidebar_links(self, table: Table) -> tuple[str | None, tuple[str, ...]]:
         """The links this campaign has shared (#1187), and only this campaign's: its house-rules
         file of record, which the table's answers may show (the owner's decision, 2026-10-14;
-        the file's own docstring says the link is otherwise private), and nothing else yet. dndbeyond.com is allowed without
-        being listed."""
+        the file's own docstring says the link is otherwise private), and nothing else yet.
+        dndbeyond.com is allowed without being listed."""
         house = None
         if self.house_file_links is not None and table.campaign_id is not None:
             try:
