@@ -76,7 +76,7 @@ class Sets(DatabaseTest):
             self.pub,
             DM_A,
             "Crits double the dice",
-            instead="Crits double the damage",
+            "Crits double the damage",
             scenario="a story",
         )
         await self.houses.add(GUILD_A, self.pub, DM_A, "No flanking")
