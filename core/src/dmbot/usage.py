@@ -267,6 +267,20 @@ async def minutes_this_month(conn: Conn, owner_user_id: int, month: hours.Month)
     return (await _hours_row(conn, owner_user_id, month))[0]
 
 
+async def total_minutes(db: Database, owner_user_id: int) -> int:
+    """Every minute DMbot has listened for this owner's campaigns, all time, from the hours
+    meter (their experience points, docs/PLAN.md "Accounts"). Reads only the owner's own
+    rows."""
+    async with db.user(owner_user_id) as conn:
+        cur = await conn.execute(
+            "SELECT COALESCE(sum(minutes), 0)::BIGINT AS total FROM owner_hours"
+            " WHERE owner_user_id = %s",
+            (owner_user_id,),
+        )
+        row = await cur.fetchone()
+    return int(row["total"]) if row else 0
+
+
 async def start_grace(
     db: Database,
     guild_id: int,

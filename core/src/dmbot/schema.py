@@ -2085,6 +2085,67 @@ WEB_ROLE_GRANTS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("SELECT, INSERT", ("access_log",)),
 )
 
+DMBOT_ID = """
+    -- The DMbot ID (#1228; docs/PLAN.md, "Accounts"): a Discord ID in base 36, the Stripe invoice
+    -- prefix, fixed for the life of the account. The database makes it (one source of truth for
+    -- every account, including the ones made before this), a trigger fills it on insert whatever
+    -- the caller says, and another refuses any later change. dmbot.account_id is the same
+    -- function in Python, and a test holds the two together.
+    CREATE FUNCTION dmbot_base36(n BIGINT) RETURNS TEXT
+        LANGUAGE plpgsql IMMUTABLE
+        SET search_path = pg_catalog
+        AS $fn$
+    DECLARE
+        digits CONSTANT TEXT := '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ';
+        rest BIGINT := n;
+        out TEXT := '';
+    BEGIN
+        IF n IS NULL OR n <= 0 THEN
+            RAISE EXCEPTION 'A Discord ID is a positive number';
+        END IF;
+        WHILE rest > 0 LOOP
+            out := substr(digits, (rest % 36)::INTEGER + 1, 1) || out;
+            rest := rest / 36;
+        END LOOP;
+        IF char_length(out) > 12 THEN
+            RAISE EXCEPTION 'That ID is too big for a DMbot ID';
+        END IF;
+        RETURN out;
+    END
+    $fn$;
+    ALTER TABLE web_users ADD COLUMN dmbot_id TEXT;
+    -- Migrations run with no server or person set, so row-level security hides every row:
+    -- open the table to this one UPDATE, dropped again inside the migration's transaction.
+    CREATE POLICY migrate_backfill ON web_users FOR ALL USING (true) WITH CHECK (true);
+    UPDATE web_users SET dmbot_id = dmbot_base36(user_id);
+    DROP POLICY migrate_backfill ON web_users;
+    ALTER TABLE web_users
+        ALTER COLUMN dmbot_id SET NOT NULL,
+        ADD CONSTRAINT web_users_dmbot_id_form CHECK (dmbot_id ~ '^[1-9A-Z][0-9A-Z]{0,11}$'),
+        ADD CONSTRAINT web_users_dmbot_id_unique UNIQUE (dmbot_id);
+    CREATE FUNCTION dmbot_web_users_id() RETURNS trigger
+        LANGUAGE plpgsql
+        AS $fn$
+    BEGIN
+        IF TG_OP = 'INSERT' THEN
+            NEW.dmbot_id := dmbot_base36(NEW.user_id);
+        ELSIF NEW.dmbot_id IS DISTINCT FROM OLD.dmbot_id OR NEW.user_id <> OLD.user_id THEN
+            RAISE EXCEPTION 'A DMbot ID never changes';
+        END IF;
+        RETURN NEW;
+    END
+    $fn$;
+    CREATE TRIGGER web_users_dmbot_id BEFORE INSERT OR UPDATE ON web_users
+        FOR EACH ROW EXECUTE FUNCTION dmbot_web_users_id();
+    DO $do$
+    BEGIN
+        EXECUTE format(
+            'ALTER FUNCTION dmbot_web_users_id() SET search_path = pg_catalog, %I, pg_temp',
+            current_schema());
+    END
+    $do$;
+    """
+
 MIGRATIONS: tuple[Migration, ...] = (
     ("0001_initial", INITIAL),
     ("0002_active_sessions", ACTIVE_SESSIONS),
@@ -2145,6 +2206,7 @@ MIGRATIONS: tuple[Migration, ...] = (
     ("0057_table_questions", TABLE_QUESTIONS),
     ("0058_people", PEOPLE),
     ("0059_definitions", DEFINITIONS),
+    ("0063_dmbot_id", DMBOT_ID),
 )
 
 # Tables that must have row-level security. A test checks every table in the schema

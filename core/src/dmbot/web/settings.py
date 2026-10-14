@@ -50,6 +50,8 @@ class WebSettings:
     # The "Say hello" forms (#665): a GitHub token that can only write Discussions in
     # feedback_repo. Empty: the forms answer feedback_off.
     feedback_token: str = field(default="", repr=False)
+    # Signs personal links (dmbot.link_tokens, #1228). Empty: personal links are off.
+    link_token_secret: bytes = field(default=b"", repr=False)
     feedback_repo: str = "smv620/Discord-DMbot"
     # Cloudflare Turnstile's secret key, the check that a person sent the form. Needed
     # whenever the forms are on, except when testing on localhost.
@@ -150,6 +152,9 @@ def load_web_settings(env: Mapping[str, str] | None = None) -> WebSettings:
     if provider and len(webhook_secret) < 16:
         raise ConfigError("PAYMENT_WEBHOOK_SECRET must be set (16 characters or more).")
     feedback_token = get("GITHUB_FEEDBACK_TOKEN")
+    link_secret = get("LINK_TOKEN_SECRET")
+    if link_secret and len(link_secret) < 32:
+        raise ConfigError("LINK_TOKEN_SECRET must be at least 32 characters (or empty).")
     feedback_repo = get("GITHUB_FEEDBACK_REPO") or "smv620/Discord-DMbot"
     if not re.fullmatch(r"[\w.-]+/[\w.-]+", feedback_repo):
         raise ConfigError("GITHUB_FEEDBACK_REPO must look like owner/name.")
@@ -228,6 +233,7 @@ def load_web_settings(env: Mapping[str, str] | None = None) -> WebSettings:
         stripe=stripe,
         any_db_role=any_db_role,
         feedback_token=feedback_token,
+        link_token_secret=link_secret.encode("utf-8"),
         feedback_repo=feedback_repo,
         turnstile_secret=turnstile_secret,
         client_ip_header=client_ip_header,
