@@ -57,8 +57,8 @@ LINK_ONLY = "only the rules document link changed"
 
 def note_text(follow_name: str, version: int, changes: int, link_changed: bool = False) -> str:
     rules = f"{changes} rule" + ("" if changes == 1 else "s")
-    if changes == 0 and link_changed:
-        rules = LINK_ONLY
+    if link_changed:
+        rules = LINK_ONLY if changes == 0 else f"{rules} and the rules document link"
     return (
         f"📚 **{discord.utils.escape_markdown(follow_name)}** house rules updated to "
         f"v{version}: {rules}. DMbot took the new version."

@@ -1,4 +1,4 @@
-"""Shared rulesets, part 2 (#1191): new versions by the publisher and named co-editors, and a
+"""Shared rulesets, part 2 (#1191): new versions by the publisher's DMs, and a
 follower taking an update (Follow, or Cherry pick that merges into its own rules). Needs
 Postgres, like the other store tests; CI runs them."""
 
@@ -9,6 +9,7 @@ from typing import Any
 from dmbot.campaigns import CampaignStore
 from dmbot.rules import rule_sets
 from dmbot.rules.house import HOUSE_RULES_MAX, HouseRuleError, HouseRuleStore
+from dmbot.rules.house_file_link import HouseFileLinkStore
 from dmbot.rules.rule_sets import RuleSetError, RuleSetStore
 from tests.pg import DatabaseTest
 
@@ -186,6 +187,34 @@ class Updates(DatabaseTest):
         update = await self.sets.pending_update(GUILD_A, self.same)
         assert update is not None
         self.assertEqual(update.offer.version, 2)
+
+    async def test_pick_changes_carries_a_changed_link_to_the_campaign(self) -> None:
+        links = HouseFileLinkStore(self.db)
+        await self.follow_far()
+        new = V2 | {"link": "https://example.com/rules"}
+        await self.sets.save_version(GUILD_A, self.pub, DM_A, new, plan_ok=True)
+        taken = await self.sets.take_update(GUILD_B, self.far, DM_B, accepted={3})
+        self.assertTrue(taken.merged)
+        got = await links.get(GUILD_B, self.far)
+        assert got is not None
+        self.assertEqual(got.link, "https://example.com/rules")
+        await self.sets.undo_take(GUILD_B, self.far, DM_B, taken)  # the link goes with the rules
+        self.assertIsNone(await links.get(GUILD_B, self.far))
+
+    async def test_pick_changes_never_replaces_the_campaigns_own_link(self) -> None:
+        links = HouseFileLinkStore(self.db)
+        await links.set_link(GUILD_B, self.far, DM_B, "https://example.com/mine")
+        await self.follow_far()
+        new = V2 | {"link": "https://example.com/rules"}
+        await self.sets.save_version(GUILD_A, self.pub, DM_A, new, plan_ok=True)
+        taken = await self.sets.take_update(GUILD_B, self.far, DM_B, accepted={3})
+        got = await links.get(GUILD_B, self.far)
+        assert got is not None
+        self.assertEqual(got.link, "https://example.com/mine")
+        await self.sets.undo_take(GUILD_B, self.far, DM_B, taken)
+        again = await links.get(GUILD_B, self.far)
+        assert again is not None
+        self.assertEqual(again.link, "https://example.com/mine")
 
     async def test_undo_leaves_a_merged_rule_the_dm_has_edited(self) -> None:
         await self.follow_far()

@@ -135,6 +135,7 @@ class Taken:
     added: tuple[int, ...] = ()
     marker: str = ""
     offered: int = 0  # the version of the set that was on offer (an Undo declines it)
+    link_written: str | None = None  # the set's document link, made the campaign's own on a merge
 
 
 @dataclass(frozen=True, slots=True)
@@ -532,7 +533,7 @@ class RuleSetStore:
                 ),
             )
 
-    # ---- the publisher's side: new versions, co-editors, the log --------------------
+    # ---- the publisher's side: new versions, the log ------------------------------
 
     async def _may_edit(
         self, conn: Conn, guild_id: int, campaign_id: str, user_id: int, set_id: str
@@ -555,8 +556,8 @@ class RuleSetStore:
         plan_ok: bool,
         expected_version: int | None = None,
     ) -> SharedSet:
-        """Make `content` the set's next version. Only the publisher's DMs and its named
-        co-editors; the set must be shared; nothing is made if nothing differs. Followers
+        """Make `content` the set's next version. Only the publisher's DMs; the set
+        must be shared; nothing is made if nothing differs. Followers
         see it at their next session start, never sooner. `plan_ok`: the caller has checked the
         publishing campaign is still on a paid plan (the owner's plan, which this store can't
         read); without it nothing is saved."""
@@ -565,7 +566,7 @@ class RuleSetStore:
         wanted = valid_content(content)
         now = self._now()
         async with self._db.guild(guild_id) as conn:
-            # The campaign row is locked first, for DMs and co-editors alike and in the same
+            # The campaign row is locked first, in the same
             # order as every other writer, so two saves take turns and never both make N+1.
             await conn.execute(
                 "SELECT 1 FROM campaigns WHERE guild_id = %s AND id = %s FOR UPDATE",
@@ -789,7 +790,8 @@ class RuleSetStore:
                 raise RuleSetError(NOT_FOLLOWING)
             author: int = user_id
             kept = numbers & set(accepted)
-            merged = set_diff.rules_of(set_diff.apply(follow.content, changes, kept))
+            result = set_diff.apply(follow.content, changes, kept, fresh.content if kept else None)
+            merged = set_diff.rules_of(result)
             cur = await conn.execute(
                 "SELECT count(*) AS n FROM house_rules WHERE guild_id = %s AND campaign_id = %s",
                 (guild_id, campaign_id),
@@ -811,7 +813,31 @@ class RuleSetStore:
                 " AND set_id = %s",
                 (guild_id, campaign_id, follow.set_id),
             )
-            return Taken(True, follow, version, tuple(added), marker, fresh.version)
+            link = await self._adopt_link(conn, guild_id, campaign_id, user_id, result, follow, now)
+            return Taken(True, follow, version, tuple(added), marker, fresh.version, link)
+
+    async def _adopt_link(
+        self,
+        conn: Conn,
+        guild_id: int,
+        campaign_id: str,
+        user_id: int,
+        result: dict[str, Any],
+        follow: Follow,
+        now: int,
+    ) -> str | None:
+        """Pick changes with the set's document link changed: the link comes with the rules,
+        as the campaign's own file link. A link the campaign already has is never replaced
+        (its own win). Returns the link written, for Undo."""
+        link = result.get("link")
+        if not link or link == follow.content.get("link"):
+            return None
+        cur = await conn.execute(
+            "INSERT INTO house_rules_file (guild_id, campaign_id, link, ignored, set_by, set_at)"
+            " VALUES (%s, %s, %s, NULL, %s, %s) ON CONFLICT (guild_id, campaign_id) DO NOTHING",
+            (guild_id, campaign_id, link, user_id, now),
+        )
+        return str(link) if cur.rowcount else None
 
     async def undo_last_take(
         self, guild_id: int, campaign_id: str, user_id: int, expected_version: int
@@ -856,6 +882,12 @@ class RuleSetStore:
                     (guild_id, campaign_id, list(taken.added), taken.marker),
                 )
                 kept = len(taken.added) - int(cur.rowcount)
+                if taken.link_written:  # the link the merge made the campaign's own goes too
+                    await conn.execute(
+                        "DELETE FROM house_rules_file WHERE guild_id = %s AND campaign_id = %s"
+                        " AND link = %s",
+                        (guild_id, campaign_id, taken.link_written),
+                    )
                 offer = Offer(
                     before.set_id, before.kind, before.name, before.publisher, before.version,
                     before.content, before.code,

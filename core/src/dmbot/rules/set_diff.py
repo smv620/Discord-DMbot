@@ -66,9 +66,16 @@ def diff(old: Any, new: Any) -> list[Change]:
     return changes
 
 
-def apply(old: Any, changes: Sequence[Change], accepted: Collection[int] | None = None) -> Any:
+def apply(
+    old: Any,
+    changes: Sequence[Change],
+    accepted: Collection[int] | None = None,
+    newer: Any = None,
+) -> Any:
     """`old`'s content with the changes whose numbers are in `accepted` applied (all of
-    them when `accepted` is None). Returns new content; `old` is not changed."""
+    them when `accepted` is None). Returns new content; `old` is not changed. `newer`: the
+    content the changes came from; when given, its rules document link is carried over (the
+    link is not a rule, so `changes` can't hold it)."""
     rules = rules_of(old)
     for change in changes:
         if accepted is not None and change.number not in accepted:
@@ -77,7 +84,8 @@ def apply(old: Any, changes: Sequence[Change], accepted: Collection[int] | None 
             rules.pop(change.number, None)
         else:
             rules[change.number] = dict(change.rule)
-    link = old.get("link") if isinstance(old, dict) else None
+    source = newer if isinstance(newer, dict) else old
+    link = source.get("link") if isinstance(source, dict) else None
     return {"rules": [rules[n] for n in sorted(rules)], "link": link}
 
 

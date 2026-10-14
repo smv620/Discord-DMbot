@@ -83,6 +83,8 @@ class Wording(unittest.TestCase):
             "only the rules document link changed", set_update.note_text("Red Table", 4, 0, True)
         )
         self.assertIn("document link changed", set_update.changes_text("Red Table", 4, [], True))
+        both = set_update.note_text("Red Table", 4, 2, True)
+        self.assertIn("2 rules and the rules document link", both)
 
     def test_the_note_says_what_changed_and_that_dmbot_took_it(self) -> None:
         text = set_update.note_text("Red Table", 4, 2)

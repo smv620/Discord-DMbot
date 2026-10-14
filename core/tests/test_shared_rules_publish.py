@@ -194,7 +194,7 @@ class UndoingAPublish(unittest.IsolatedAsyncioTestCase):
         args, kwargs = s.save_version.await_args
         self.assertEqual(args[3], BEFORE)
         self.assertEqual(kwargs["expected_version"], 5)
-        self.assertIn("version 6", it.sent[0][0])
+        self.assertIn("Version 6 has the rules from before", it.sent[0][0])
 
     async def test_undo_is_refused_for_a_player_and_without_a_paid_plan(self) -> None:
         s = store(content_at=AsyncMock(return_value=BEFORE), save_version=AsyncMock())

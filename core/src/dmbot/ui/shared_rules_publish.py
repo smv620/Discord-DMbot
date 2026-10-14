@@ -29,6 +29,10 @@ YOUR_RULES_CHANGED = (
 )
 NOT_SHARED_HERE = "Your rules aren't shared yet. Use 📤 Share my house rules first."
 HISTORY_SHOWN = 8
+HOW = {  # how a version came about, when it wasn't a DM's own publish
+    "suggestion": " (from a player's suggestion)",
+    "document": " (from the rules document)",
+}
 LINK_ONLY = "Only the rules document link changed."
 UNDO_LABEL = "↩️ Undo"
 NOTHING_NEW = "Your house rules are the same as the shared version, so there is nothing to publish."
@@ -132,7 +136,6 @@ class ConfirmPublish(_Menu):
             # What would be published is not what the DM saw: they look again first.
             await _tell(interaction, YOUR_RULES_CHANGED)
             return
-        self.stop()
         made = await store.publish_changes(
             current.guild_id,
             current.id,
@@ -142,6 +145,7 @@ class ConfirmPublish(_Menu):
             plan_ok=True,  # checked just above with plan_gate
             expected_version=self.version,  # and again under the lock, in the store
         )
+        self.stop()  # only after it worked: a refused press can be tried again
         await _send(
             interaction,
             f"✅ **{_escape(made.name[:60])}** is now version {made.version} "
@@ -169,14 +173,9 @@ async def show_history(interaction: discord.Interaction, campaign: Campaign) -> 
     log = await store.version_log(current.guild_id, current.id)
     lines = [f"**{_escape(shared.name[:60])}**: versions"]
     for entry in log[:HISTORY_SHOWN]:
-        how = {
-            "publisher": "",
-            "suggestion": " (from a player's suggestion)",
-            "document": " (from the rules document)",
-        }
         who = _escape(bot.name_of(current.guild_id, entry.by)[:40])
         lines.append(
-            f"• Version {entry.version}, by {who}, <t:{entry.at}:d>{how.get(entry.source, '')}"
+            f"• Version {entry.version}, by {who}, <t:{entry.at}:d>{HOW.get(entry.source, '')}"
         )
     if len(log) > HISTORY_SHOWN:
         lines.append(f"…and {len(log) - HISTORY_SHOWN} older.")
@@ -209,7 +208,6 @@ class UndoPublish(_Menu):
         if before is None:
             await _tell(interaction, "There is no earlier version to go back to.")
             return
-        self.stop()
         made = await store.save_version(
             current.guild_id,
             current.id,
@@ -218,8 +216,9 @@ class UndoPublish(_Menu):
             plan_ok=True,  # checked just above with plan_gate
             expected_version=self.version,  # only while that publish is still the newest
         )
+        self.stop()
         await _tell(
             interaction,
-            f"↩️ Undone. The rules from before are now version {made.version}. Tables that took "
-            f"version {self.version} get this one at their next session start.",
+            f"↩️ Undone. Version {made.version} has the rules from before. Tables get it at "
+            "their next session start.",
         )
