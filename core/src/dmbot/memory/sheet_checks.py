@@ -23,6 +23,7 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from typing import Any
 
+from dmbot.campaigns.models import DEFAULT_FALLBACK, DEFAULT_TARGET
 from dmbot.memory import sheet_names
 from dmbot.memory.sheets import (
     ABILITIES,
@@ -35,6 +36,9 @@ from dmbot.memory.sheets import (
 from dmbot.rules.index import srd
 
 OK, WARN, BAD = "ok", "warn", "bad"
+# The rulesets to check names against when a campaign can't be found: the project defaults
+# (2024, then 2014), the same everywhere.
+NO_CAMPAIGN_RULESETS = (DEFAULT_TARGET, DEFAULT_FALLBACK)
 EMOJI = {OK: "✅", WARN: "⚠️", BAD: "⛔"}
 _WORST = {OK: 0, WARN: 1, BAD: 2}
 SHOWN_NAMES = 3  # names listed before "and N more": the card stays under one message
@@ -475,3 +479,21 @@ def card(
 def changed(old: Mapping[str, Any] | None, new: Mapping[str, Any]) -> bool:
     """Whether a re-read found anything different (a card is sent after a re-read only if so)."""
     return old is None or dict(old) != dict(new)
+
+
+def got_worse(
+    old: Mapping[str, Any] | None,
+    new: Mapping[str, Any],
+    *,
+    target: str = "2024",
+    fallback: str = "2014",
+) -> bool:
+    """Whether a part that was ✅ is ⚠️ or ⛔ after a re-read (#1128). Only then is the status
+    card sent again: ordinary changes (hit points, a new level) are silent."""
+    if old is None:
+        return False
+    before = {c.part: c.status for c in checks(old, target=target, fallback=fallback)}
+    return any(
+        before.get(c.part) == OK and c.status != OK
+        for c in checks(new, target=target, fallback=fallback)
+    )
