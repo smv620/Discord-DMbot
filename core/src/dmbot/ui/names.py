@@ -62,6 +62,7 @@ KINDS: dict[str, str] = {
     "deity": "A god or other power",
     "event": "Something that happened (event)",
     "concept": "Something else",
+    "person": "A player or the DM",
 }
 KIND_SHORT: dict[str, str] = {
     "npc": "NPC",
@@ -75,6 +76,7 @@ KIND_SHORT: dict[str, str] = {
     "spell": "spell",
     "event": "event",
     "concept": "other",
+    "person": "player or DM",
 }
 NOT_AVAILABLE = (
     "Remembering names isn't switched on for this DMbot yet. Ask whoever runs DMbot to turn it on."

@@ -24,6 +24,7 @@ from dmbot.memory.models import (
     name_key,
 )
 from dmbot.memory.ontology import (
+    BLOCKED_KINDS,
     CORE_PREDICATES,
     CORE_TYPES,
     SYNONYMS,
@@ -113,7 +114,7 @@ class CoreOntology(unittest.TestCase):
         self.assertFalse(onto.is_a("character", "horse"))
         self.assertFalse(onto.is_a("place", "character"))
 
-    def test_the_story_kinds_are_these_six(self) -> None:
+    def test_the_story_kinds_are_these_six_and_the_table_has_its_own(self) -> None:
         active = {t.key: t.label for t in CORE_TYPES if t.status == "active"}
         self.assertEqual(
             active,
@@ -124,8 +125,28 @@ class CoreOntology(unittest.TestCase):
                 "item": "item",
                 "event": "event",
                 "concept": "idea",
+                "person": "player or DM",  # not part of the story (#1188)
             },
         )
+
+    def test_a_person_is_never_a_story_subject_or_object(self) -> None:
+        for predicate in CORE_PREDICATES:
+            if predicate.key == "plays":
+                self.assertEqual(
+                    (predicate.subject_types, predicate.object_types),
+                    (("person",), ("character",)),
+                )
+            else:
+                self.assertNotIn("person", predicate.subject_types, predicate.key)
+                self.assertNotIn("person", predicate.object_types, predicate.key)
+
+    def test_controls_and_controlled_by_are_the_plays_link(self) -> None:
+        for word in ("controls", "controlled_by"):
+            self.assertEqual(SYNONYMS[word], "plays")
+
+    def test_a_campaign_cannot_add_a_kind_for_the_table_s_people(self) -> None:
+        for word in ("person", "player or dm", "gm", "dungeon master", "game master"):
+            self.assertIn(word, BLOCKED_KINDS)
 
     def test_the_older_kinds_are_retired_with_what_replaced_them(self) -> None:
         old = {t.key: t.replaced_by for t in CORE_TYPES if t.status == "deprecated"}

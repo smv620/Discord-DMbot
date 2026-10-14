@@ -44,8 +44,11 @@ PC = "player_character"
 # Kinds in plain words → the memory rules' kinds. Anything else "needs a look".
 KIND_WORDS: dict[str, str] = {
     "npc": "npc",
-    "person": "npc",
     "character": "npc",
+    "player": "person",  # a real person at the table (#1188); see PERSON_KIND
+    "dm": "person",
+    "person": "person",
+    "player or dm": "person",
     "pc": "player_character",
     "player character": "player_character",
     "player's character": "player_character",
@@ -84,6 +87,7 @@ KIND_OUT: dict[str, str] = {
     "spell": "spell",
     "event": "event",
     "concept": "other",
+    "person": "player",
 }
 
 
