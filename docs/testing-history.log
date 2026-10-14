@@ -2197,3 +2197,15 @@ Overall ...................................... PASS (Deepgram baseline: 33/33, 1
   nothing; rows unchanged (147 transcript lines); both re-added constraints validated against the existing rows;
   all earlier checks still hold. The new channel needs the same Discord rights as the transcript and game-time
   channels, so no new permission is asked.
+
+==============================================================================
+2026-10-14  dev1  Dry run on development 83522d9 with #1188 (migration 0058 people) - PASSED
+  #1204 (people as entries) merged after the last dry run and adds 0058_people: a backfill that gives every played
+  character a person entry, an alias and a "plays" link, then a unique index (one person per Discord user per
+  campaign). Same method: a fresh pg_dumpall of the live database (at 0050), restored into a throwaway postgres:16,
+  migrated as the dmbot role, deleted after.
+  Result: "Database updated: 0051_dndbeyond_invite ... 0058_people" in 0.12 s; a second run applied nothing; the
+  temporary migrate_backfill policies were all dropped again; the unique index exists; 147 transcript lines unchanged.
+  Limit of this check: the live database holds no player characters with a player (0 of 152 entries), so the backfill
+  inserted nothing here. The index and policy handling ran on the real database; the inserts are covered by #1204's
+  own test that migrates a table holding rows, not by this dry run.
