@@ -128,6 +128,26 @@ class Learning(MemoryTest):
         mine = [e for e in await self.memory.entities(GUILD_A, self.c) if e.played_by == PLAYER]
         self.assertEqual([e.type for e in mine if e.type == "person"], ["person"])
 
+    async def test_a_placeholder_with_a_correction_on_it_stays_and_nothing_fails(self) -> None:
+        await self.memory.learn_people(GUILD_A, self.c, [("Mike", PLAYER, 2)], limit=10)
+        person = next(
+            e for e in await self.memory.entities(GUILD_A, self.c) if e.played_by == PLAYER
+        )
+        async with self.db.guild(GUILD_A) as conn:  # something unlogged that hangs on it
+            await conn.execute(
+                "INSERT INTO memory_corrections (guild_id, campaign_id, id, heard, heard_key,"
+                " entity_id, action, source, created_at)"
+                " VALUES (%s, %s, repeat('c', 32), 'Mikel', 'mikel', %s, 'fix', 'dm', 0)",
+                (GUILD_A, self.c, person.id),
+            )
+        other = (await self.campaigns.create(GUILD_A, "Another", SRC_DM)).id
+        await self.memory.learn_people(GUILD_A, other, [("Mikey", PLAYER, 2)], limit=10)
+        await self.memory.forget_learned(GUILD_A, PLAYER)  # does not raise
+        here = [e for e in await self.memory.entities(GUILD_A, self.c) if e.played_by == PLAYER]
+        there = [e for e in await self.memory.entities(GUILD_A, other) if e.played_by == PLAYER]
+        self.assertEqual((len(here), len(there)), (1, 0))  # the other campaign was still cleaned
+        self.assertEqual(await self.waiting(), [])  # and the learned name went from this one
+
     async def test_a_removed_placeholder_cannot_come_back_by_undo(self) -> None:
         await self.memory.learn_people(GUILD_A, self.c, [("Mike", PLAYER, 2)], limit=10)
         await self.memory.forget_learned(GUILD_A, PLAYER)
@@ -148,6 +168,24 @@ class Learning(MemoryTest):
         self.assertEqual(
             (await self.memory.table_people(GUILD_A, self.c))[0][1], ["Testa the Bold"]
         )
+
+    async def test_the_cache_is_bounded_keeps_empty_tables_and_stays_in_its_campaign(self) -> None:
+        from dmbot.memory import store as store_module
+
+        other = (await self.campaigns.create(GUILD_A, "Another", SRC_DM)).id
+        await self.add("Testa", type="player_character", played_by=PLAYER)
+        self.assertEqual(await self.memory.table_people(GUILD_A, other), [])  # empty: cached
+        self.assertIn((GUILD_A, other), self.memory._people)
+        self.assertEqual(len(await self.memory.table_people(GUILD_A, self.c)), 1)  # not other's
+        old = store_module.PEOPLE_CACHE_MAX
+        store_module.PEOPLE_CACHE_MAX = 1
+        try:
+            await self.memory.table_people(GUILD_A, other)
+            await self.memory.table_people(GUILD_A, self.c)
+        finally:
+            store_module.PEOPLE_CACHE_MAX = old
+        self.assertEqual(list(self.memory._people)[-1], (GUILD_A, self.c))  # the newest stays
+        self.assertLessEqual(len(self.memory._people), 2)  # and it stayed bounded
 
     async def test_a_person_and_their_names_stay_in_their_campaign(self) -> None:
         other = (await self.campaigns.create(GUILD_A, "Another", SRC_DM)).id

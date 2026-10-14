@@ -21,12 +21,15 @@ from collections.abc import AsyncGenerator, AsyncIterator, Callable, Collection,
 from contextlib import asynccontextmanager
 from typing import Any
 
+from psycopg import sql
+
 from dmbot.db import Database, row_int
 from dmbot.memory import notify
 from dmbot.memory._changes import (
     ALIASES,
     CHANGED_SINCE,
     CORRECTIONS,
+    DEPENDENTS,
     ENTITIES,
     FLAGS,
     MENTIONS,
@@ -257,7 +260,7 @@ def _stronger(status_a: str, status_b: str) -> str:
 
 
 DAY = 24 * 60 * 60
-PEOPLE_CACHE_MAX = 512  # campaigns whose who-is-who is kept; cleared past this
+PEOPLE_CACHE_MAX = 512  # campaigns whose who-is-who is kept
 YIELD_AFTER_S = 0.015  # the flag check gives the event loop a turn this often
 
 
@@ -276,7 +279,7 @@ class MemoryStore:
         self._flags_checked: dict[tuple[int, str], int] = {}
         # Who is who, by campaign, at the memory version it was read at (#1208): the sidebar
         # and every table question ask for it, and it only changes with the campaign's memory.
-        # Bounded: cleared when it grows past PEOPLE_CACHE_MAX campaigns.
+        # Bounded: the oldest entry goes past PEOPLE_CACHE_MAX campaigns.
         self._people: dict[tuple[int, str], tuple[int, list[tuple[int, list[str], list[str]]]]] = {}
 
     @asynccontextmanager
@@ -1438,6 +1441,7 @@ class MemoryStore:
                 )
             }
             if not people:
+                self._keep_people(key, scope.version, [])
                 return []
             live = await scope.select(
                 ENTITIES, " AND status IN ('proposed', 'confirmed') AND type <> 'person'"
@@ -1473,11 +1477,18 @@ class MemoryStore:
                 for pid, r in people.items()
                 if r["played_by"] is not None
             ]
-            if len(self._people) >= PEOPLE_CACHE_MAX:
-                self._people.clear()
-            # The version of the snapshot just read, so a change after it is never hidden.
-            self._people[key] = (scope.version, [(u, list(c), list(a)) for u, c, a in result])
+            self._keep_people(key, scope.version, result)
             return result
+
+    def _keep_people(
+        self, key: tuple[int, str], version: int, result: list[tuple[int, list[str], list[str]]]
+    ) -> None:
+        """Remember who is who at the version of the snapshot just read (so a change after it
+        is never hidden). Past the limit the oldest entry goes, not the whole cache."""
+        self._people.pop(key, None)
+        if len(self._people) >= PEOPLE_CACHE_MAX:
+            del self._people[next(iter(self._people))]
+        self._people[key] = (version, [(u, list(c), list(a)) for u, c, a in result])
 
     async def accept_person_name(
         self, guild_id: int, campaign_id: str, alias_id: str, *, user_id: int | None = None
@@ -2257,20 +2268,26 @@ def _placeholder_name(user_id: int) -> str:
 
 async def _unused_placeholder(w: Changes, person_id: str, user_id: int) -> bool:
     """A person entry that is only the `Player 1234` placeholder: still that name, no other
-    names, no link of any kind to or from it, nothing merged into it."""
+    names, and nothing at all linking to it (the same list a delete is refused on, so the
+    delete below can't fail halfway). Rows that cascade without a log (`memory_heard`,
+    sheets) go with it, which is right for a stopped speaker."""
     row = await w.get(ENTITIES, person_id)
     if row is None or row["type"] != PERSON or row["name"] != _placeholder_name(user_id):
         return False
-    if any(
-        a["text"] != row["name"]
-        for a in await w.select(ALIASES, " AND entity_id = %s", [person_id])
-    ):
+    names = await w.select(ALIASES, " AND entity_id = %s", [person_id])
+    if any(a["text"] != row["name"] for a in names):
         return False
-    if await w.select(
-        RELATIONS, " AND (subject_id = %s OR object_id = %s)", [person_id, person_id]
-    ):
-        return False
-    return not await w.select(ENTITIES, " AND merged_into = %s", [person_id])
+    for dep_table, column, is_list in DEPENDENTS["memory_entities"]:
+        if (dep_table, column) == ("memory_aliases", "entity_id"):
+            continue  # its own placeholder name, removed with it
+        test = "%s = ANY({})" if is_list else "{} = %s"
+        query = sql.SQL(
+            "SELECT 1 FROM {} WHERE guild_id = %s AND campaign_id = %s AND " + test + " LIMIT 1"
+        ).format(sql.Identifier(dep_table), sql.Identifier(column))
+        cur = await w.conn.execute(query, (*w.ids, person_id))
+        if await cur.fetchone() is not None:
+            return False
+    return True
 
 
 async def _drop_person(w: Changes, person_id: str) -> None:
@@ -2282,7 +2299,9 @@ async def _drop_person(w: Changes, person_id: str) -> None:
             "DELETE FROM memory_aliases WHERE guild_id = %s AND campaign_id = %s AND id = ANY(%s)",
             (*w.ids, alias_ids),
         )
-    await w.delete(ENTITIES, person_id)  # also moves the campaign's version on
+    # Also moves the campaign's version on. (Any raw DELETE of something table_people shows
+    # must bump memory_version too, or its cache would go stale.)
+    await w.delete(ENTITIES, person_id)
     for table_name, ids in (("memory_aliases", alias_ids), ("memory_entities", [person_id])):
         if ids:
             await w.conn.execute(
