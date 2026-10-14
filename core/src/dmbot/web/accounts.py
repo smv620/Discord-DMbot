@@ -6,7 +6,6 @@ import logging
 import time
 
 from dmbot.db import Database
-from dmbot.web.entitlements_writer import PAID_EVENT_SQL, PAID_KINDS
 
 log = logging.getLogger(__name__)
 
@@ -35,19 +34,6 @@ async def dmbot_id(db: Database, user_id: int) -> str | None:
         cur = await conn.execute("SELECT dmbot_id FROM web_users WHERE user_id = %s", (user_id,))
         row = await cur.fetchone()
     return None if row is None else str(row["dmbot_id"])
-
-
-async def first_paid_month_after_trial(db: Database, user_id: int) -> bool:
-    """Used Try It and never paid before: the first month of Table is $1.99 (#432)."""
-    async with db.user(user_id) as conn:
-        cur = await conn.execute(
-            "SELECT EXISTS (SELECT 1 FROM try_it_used WHERE user_id = %(u)s) AS tried,"
-            f" EXISTS (SELECT 1 FROM payment_events WHERE user_id = %(u)s AND {PAID_EVENT_SQL})"
-            " AS paid",
-            {"u": user_id, "paid": PAID_KINDS},
-        )
-        row = await cur.fetchone()
-    return bool(row and row["tried"] and not row["paid"])
 
 
 async def record_install(

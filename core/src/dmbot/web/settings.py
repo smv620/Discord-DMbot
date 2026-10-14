@@ -253,7 +253,6 @@ def _stripe(get: Callable[[str], str]) -> StripeConfig:
             "STRIPE_SECRET_KEY must be set to a Stripe secret key (sk_test_... or sk_live_...)."
         )
     prices: dict[str, str] = {}
-    coupons: dict[str, str] = {}
     for plan_id in paid_plan_ids():
         suffix = plan_id.upper().replace("-", "_")
         price = get(f"STRIPE_PRICE_{suffix}")
@@ -262,10 +261,6 @@ def _stripe(get: Callable[[str], str]) -> StripeConfig:
                 f"STRIPE_PRICE_{suffix} must be the plan's Stripe price id (price_...)."
             )
         prices[plan_id] = price
-        if coupon := get(f"STRIPE_FIRST_MONTH_COUPON_{suffix}"):
-            if not coupon.isascii() or not coupon.isprintable() or " " in coupon:
-                raise ConfigError(f"STRIPE_FIRST_MONTH_COUPON_{suffix} isn't a coupon id.")
-            coupons[plan_id] = coupon
     extra = get("STRIPE_PRICE_EXTRA_HOURS")
     if not extra.startswith("price_") or not extra.isascii():
         raise ConfigError("STRIPE_PRICE_EXTRA_HOURS must be the extra hours' Stripe price id.")
@@ -280,5 +275,4 @@ def _stripe(get: Callable[[str], str]) -> StripeConfig:
         managed_payments=managed in ("1", "true", "on"),
         prices=prices,
         extra_hours_price=extra,
-        first_month_coupons=coupons,
     )

@@ -11,8 +11,7 @@
       "campaigns": 1,
       "trialDays": 30,
       "backups": false,
-      "keepAfterLastSession": { "count": 60, "unit": "day" },
-      "firstMonthAfterTrialCents": null
+      "keepAfterLastSession": { "count": 60, "unit": "day" }
     },
     "table": {
       "name": "Table",
@@ -22,8 +21,7 @@
       "campaigns": 1,
       "trialDays": null,
       "backups": true,
-      "keepAfterLastSession": { "count": 6, "unit": "month" },
-      "firstMonthAfterTrialCents": 199
+      "keepAfterLastSession": { "count": 6, "unit": "month" }
     },
     "two-tables": {
       "name": "Two Tables",
@@ -33,8 +31,7 @@
       "campaigns": 2,
       "trialDays": null,
       "backups": true,
-      "keepAfterLastSession": { "count": 1, "unit": "year" },
-      "firstMonthAfterTrialCents": null
+      "keepAfterLastSession": { "count": 1, "unit": "year" }
     },
     "guild": {
       "name": "Guild",
@@ -44,8 +41,7 @@
       "campaigns": 5,
       "trialDays": null,
       "backups": true,
-      "keepAfterLastSession": { "count": 1, "unit": "year" },
-      "firstMonthAfterTrialCents": null
+      "keepAfterLastSession": { "count": 1, "unit": "year" }
     },
     "pro": {
       "name": "Pro",
@@ -55,8 +51,7 @@
       "campaigns": 20,
       "trialDays": null,
       "backups": true,
-      "keepAfterLastSession": { "count": 1, "unit": "year" },
-      "firstMonthAfterTrialCents": null
+      "keepAfterLastSession": { "count": 1, "unit": "year" }
     }
   },
   "extraHours": { "hours": 10, "priceCents": 499 },

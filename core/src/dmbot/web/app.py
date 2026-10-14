@@ -32,7 +32,6 @@ from dmbot.web.accounts import (
     active_subscription,
     customer_id,
     delete_person,
-    first_paid_month_after_trial,
     link_install,
     record_install,
 )
@@ -592,18 +591,12 @@ def create_app(
             # A paid plan is working: change it on the billing page, never a second
             # subscription (or a second first-month offer).
             raise HTTPException(status_code=409, detail="has_paid_plan")
-        first_month: int | None = None
-        if plan.first_month_after_trial_cents is not None and await first_paid_month_after_trial(
-            db, session.user_id
-        ):
-            first_month = plan.first_month_after_trial_cents
         email = await account_email(db, session.user_id)
         try:
             url = await provider.checkout_url(
                 user_id=session.user_id,
                 email=email,
                 plan=plan,
-                first_month_cents=first_month,
                 return_url=account_page,
             )
         except PaymentError as exc:

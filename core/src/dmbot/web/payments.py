@@ -82,7 +82,6 @@ class PaymentProvider(Protocol):
         user_id: int,
         email: str | None,
         plan: Plan,
-        first_month_cents: int | None,
         return_url: str,
     ) -> str:
         """The company's checkout page for this plan. `email` prefills it and is sent to
@@ -134,12 +133,9 @@ class FakeProvider:
         user_id: int,
         email: str | None,
         plan: Plan,
-        first_month_cents: int | None,
         return_url: str,
     ) -> str:
         query: dict[str, str] = {"fake_checkout": plan.id}
-        if first_month_cents is not None:
-            query["first_month"] = str(first_month_cents)
         return f"{return_url}?{urlencode(query)}"
 
     async def extra_hours_checkout_url(

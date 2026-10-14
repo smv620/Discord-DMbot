@@ -33,7 +33,6 @@ CONFIG = StripeConfig(
     secret_key="sk_test_not_real",
     prices={"table": "price_table", "two-tables": "price_two", "guild": "price_guild"},
     extra_hours_price="price_extra",
-    first_month_coupons={"table": "FIRST199"},
 )
 CHECKOUT_URL = "https://checkout.stripe.com/c/pay/cs_test_abc"
 PORTAL_URL = "https://billing.stripe.com/p/session/test_abc"
@@ -513,7 +512,6 @@ class Provider(unittest.IsolatedAsyncioTestCase):
             user_id=USER,
             email="player@example.com",
             plan=plans.load().by_id["table"],
-            first_month_cents=None,
             return_url="https://dmbot.example/account",
         )
         self.assertEqual(url, CHECKOUT_URL)
@@ -538,7 +536,6 @@ class Provider(unittest.IsolatedAsyncioTestCase):
                 user_id=user,
                 email=email,
                 plan=plans.load().by_id["table"],
-                first_month_cents=None,
                 return_url="https://dmbot.example/account",
             )
 
@@ -588,19 +585,6 @@ class Provider(unittest.IsolatedAsyncioTestCase):
         await self.provider.cancel(subscription_id="sub_55")
         self.assertEqual(set(self.http.keys), {None})
 
-    async def test_the_first_month_uses_the_once_only_coupon(self) -> None:
-        self.http.answers[("POST", "/v1/checkout/sessions")] = (200, {"url": CHECKOUT_URL})
-        await self.provider.checkout_url(
-            user_id=USER,
-            email=None,
-            plan=plans.load().by_id["table"],
-            first_month_cents=199,
-            return_url="https://dmbot.example/account",
-        )
-        form = self.http.calls[0][2]
-        self.assertEqual(form["discounts[0][coupon]"], "FIRST199")
-        self.assertNotIn("customer_email", form)  # none known: none sent
-
     async def test_managed_payments_is_asked_for_only_when_switched_on(self) -> None:
         self.http.answers[("POST", "/v1/checkout/sessions")] = (200, {"url": CHECKOUT_URL})
         plan = plans.load().by_id["table"]
@@ -610,7 +594,6 @@ class Provider(unittest.IsolatedAsyncioTestCase):
             user_id=USER,
             email=None,
             plan=plan,
-            first_month_cents=None,
             return_url="https://x.example",
         )
         for _, _, form in self.http.calls:
@@ -630,7 +613,6 @@ class Provider(unittest.IsolatedAsyncioTestCase):
             user_id=USER,
             email=None,
             plan=plan,
-            first_month_cents=None,
             return_url="https://x.example",
         )
         await managed.extra_hours_checkout_url(
@@ -639,24 +621,12 @@ class Provider(unittest.IsolatedAsyncioTestCase):
         for _, _, form in self.http.calls:
             self.assertEqual(form["managed_payments[enabled]"], "true")
 
-    async def test_a_first_month_without_its_coupon_is_refused_not_charged_in_full(self) -> None:
-        with self.assertRaises(PaymentError):
-            await self.provider.checkout_url(
-                user_id=USER,
-                email=None,
-                plan=plans.load().by_id["two-tables"],
-                first_month_cents=199,
-                return_url="https://dmbot.example/account",
-            )
-        self.assertEqual(self.http.calls, [])
-
     async def test_a_plan_with_no_price_is_refused(self) -> None:
         with self.assertRaises(PaymentError):
             await self.provider.checkout_url(
                 user_id=USER,
                 email=None,
                 plan=plans.load().by_id["pro"],
-                first_month_cents=None,
                 return_url="https://dmbot.example/account",
             )
         self.assertEqual(self.http.calls, [])
@@ -699,7 +669,6 @@ class Provider(unittest.IsolatedAsyncioTestCase):
                     user_id=USER,
                     email=None,
                     plan=plans.load().by_id["table"],
-                    first_month_cents=None,
                     return_url="https://dmbot.example/account",
                 )
 
@@ -713,7 +682,6 @@ class Provider(unittest.IsolatedAsyncioTestCase):
                 user_id=USER,
                 email="player@example.com",
                 plan=plans.load().by_id["table"],
-                first_month_cents=None,
                 return_url="https://dmbot.example/account",
             )
         self.assertNotIn("example.com", str(caught.exception))
@@ -871,7 +839,6 @@ class Config(unittest.TestCase):
         "STRIPE_PRICE_TWO_TABLES": "price_2",
         "STRIPE_PRICE_GUILD": "price_3",
         "STRIPE_PRICE_EXTRA_HOURS": "price_4",
-        "STRIPE_FIRST_MONTH_COUPON_TABLE": "FIRST199",
     }
 
     def test_it_reads_the_ids_and_hides_the_key(self) -> None:
@@ -880,7 +847,6 @@ class Config(unittest.TestCase):
         assert config is not None
         self.assertEqual(config.prices["two-tables"], "price_2")
         self.assertEqual(config.extra_hours_price, "price_4")
-        self.assertEqual(config.first_month_coupons, {"table": "FIRST199"})
         self.assertFalse(config.live)
         self.assertFalse(config.managed_payments)
         self.assertNotIn("key_not_real", repr(loaded))
@@ -911,8 +877,6 @@ class Config(unittest.TestCase):
             load_web_settings({**self.ENV, "STRIPE_SECRET_KEY": "pk_test_publishable"})
         with self.assertRaisesRegex(ConfigError, "STRIPE_PRICE_TABLE"):
             load_web_settings({**self.ENV, "STRIPE_PRICE_TABLE": "prod_1"})
-        with self.assertRaisesRegex(ConfigError, "COUPON"):
-            load_web_settings({**self.ENV, "STRIPE_FIRST_MONTH_COUPON_TABLE": "two words"})
 
     def test_two_plans_cannot_share_a_price(self) -> None:
         with self.assertRaisesRegex(ConfigError, "different"):

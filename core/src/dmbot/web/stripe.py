@@ -93,10 +93,6 @@ class StripeConfig:
     # A paid plan's id (plans.json) -> its recurring Price id in Stripe.
     prices: Mapping[str, str]
     extra_hours_price: str
-    # A paid plan's id -> the once-only coupon that takes the price down to the first-month
-    # price (#435). Missing: a first-month checkout for that plan is refused, so nobody is
-    # charged more than was promised.
-    first_month_coupons: Mapping[str, str] = field(default_factory=dict)
     # Stripe's Managed Payments (Stripe as the merchant of record, owner decision on #1096):
     # asks each Checkout Session to opt in. Off by default until the sandbox run (#1096) has
     # shown the parameter is accepted; the owner also accepts Stripe's terms in the dashboard.
@@ -214,7 +210,6 @@ class StripeProvider:
         user_id: int,
         email: str | None,
         plan: Plan,
-        first_month_cents: int | None,
         return_url: str,
     ) -> str:
         price = self._config.prices.get(plan.id)
@@ -230,13 +225,6 @@ class StripeProvider:
             # Renewals and failures carry the subscription's metadata, not the checkout's.
             "subscription_data[metadata][user_id]": str(user_id),
         }
-        if first_month_cents is not None:
-            # The $1.99 first month (#435) is a once-only coupon made in Stripe; without one
-            # set up, refuse rather than charge the full price.
-            coupon = self._config.first_month_coupons.get(plan.id)
-            if coupon is None:
-                raise PaymentError(f"No first-month coupon is set for the {plan.id} plan")
-            form["discounts[0][coupon]"] = coupon
         return await self._checkout(form, email)
 
     async def extra_hours_checkout_url(
