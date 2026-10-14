@@ -231,6 +231,20 @@ export const text = {
   addTo: "Add DMbot",
   alreadyThere: "Already added",
 
+  // My characters (#1164): read-only. Changing a sheet stays in Discord.
+  charactersHeading: "My characters",
+  charactersNone: "No characters yet. In Discord, press 📜 My character sheet in your campaign.",
+  characterUnread: "Sheet saved",
+  characterUnreadNote: "Its details show up after DMbot reads it.",
+  characterWhere: (server: string, campaign: string | null): string =>
+    campaign ? `${server} · ${campaign}` : server,
+  characterLevel: (n: number): string => `Level ${n}`,
+  characterHp: (n: number): string => `Max hit points: ${n}`,
+  characterAc: (n: number): string => `Armor class (AC) ${n}`,
+  characterRead: (date: string): string => `Read on ${shortDate(date)}`,
+  characterTyped: "You typed this one in.",
+  characterOpen: "Open the online sheet (new tab)",
+  characterChange: "Change a character in Discord with 📜 My character sheet.",
   // Where DMbot may record you (#1151). The warning is the bot's own wording.
   recordingHeading: "Where DMbot may record you",
   recordingLine: (server: string, date: string): string =>
