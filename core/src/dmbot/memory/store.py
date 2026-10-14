@@ -1412,17 +1412,16 @@ class MemoryStore:
             people = {
                 str(r["id"]): r
                 for r in await scope.select(
-                    ENTITIES, " AND type = 'person' AND status = 'confirmed'"
+                    ENTITIES,
+                    " AND type = 'person' AND status = 'confirmed' ORDER BY created_at, id",
                 )
             }
             if not people:
                 return []
-            characters = {
-                str(r["id"]): str(r["name"])
-                for r in await scope.select(
-                    ENTITIES, " AND status = 'confirmed' AND type <> 'person'"
-                )
-            }
+            live = await scope.select(
+                ENTITIES, " AND status IN ('proposed', 'confirmed') AND type <> 'person'"
+            )
+            characters = {str(r["id"]): str(r["name"]) for r in live}
             plays: dict[str, list[str]] = {}
             for r in await scope.select(
                 RELATIONS,
@@ -1432,6 +1431,15 @@ class MemoryStore:
                 name = characters.get(str(r["object_id"]))
                 if name is not None and str(r["subject_id"]) in people:
                     plays.setdefault(str(r["subject_id"]), []).append(name)
+            # The player kept on the character itself (the mirror) counts too, so a character
+            # linked only that way is not missed; each name once.
+            by_user = {int(r["played_by"]): pid for pid, r in people.items() if r["played_by"]}
+            for r in live:
+                pid = by_user.get(int(r["played_by"])) if r["played_by"] is not None else None
+                if pid is not None and r["role"] == PLAYER_CHARACTER:
+                    names = plays.setdefault(pid, [])
+                    if str(r["name"]) not in names:
+                        names.append(str(r["name"]))
             also: dict[str, list[str]] = {}
             for a in await scope.select(
                 ALIASES, " AND status = 'confirmed' AND NOT secret ORDER BY created_at, id"

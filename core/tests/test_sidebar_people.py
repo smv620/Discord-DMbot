@@ -56,7 +56,7 @@ class FromMemory(MemoryTest):
         await self.memory.learn_people(GUILD_A, self.c, [("Belleros", OTHER, 2)], limit=10)
         before = await self.memory.table_people(GUILD_A, self.c)
         # Waiting questions are not true yet: nothing about them is told.
-        self.assertEqual(sorted(before), [(OTHER, [], []), (PLAYER, ["Cerric"], [])])
+        self.assertEqual(before, [(PLAYER, ["Cerric"], []), (OTHER, [], [])])  # oldest first
         rows = await self.memory.people_suggestions(GUILD_A, self.c)
         mike = next(s for s in rows if s.name == "Mike")
         await self.memory.accept_person_name(GUILD_A, self.c, mike.row_id)
