@@ -4,6 +4,7 @@ an email) need no database."""
 
 from __future__ import annotations
 
+import asyncio
 import re
 import unittest
 
@@ -164,8 +165,14 @@ class EmailSignIn(DatabaseTest):
         """The person has signed in with Discord before: that is what makes an account."""
         await sessions_sign_in(self.web, user, self.now)
 
+    async def settle(self) -> None:
+        """The link is made and mailed after the answer goes: wait for that work to finish."""
+        await asyncio.gather(*list(self.app.state.email_tasks))
+
     async def ask(self, client: httpx.AsyncClient, email: str) -> httpx.Response:
-        return await client.post("/auth/email/request", json={"email": email}, headers=HEADERS)
+        answer = await client.post("/auth/email/request", json={"email": email}, headers=HEADERS)
+        await self.settle()
+        return answer
 
     async def test_a_known_address_gets_a_link_and_an_unknown_one_gets_the_same_words(
         self,
@@ -187,6 +194,44 @@ class EmailSignIn(DatabaseTest):
         async with self.browser() as client:
             answer = await self.ask(client, email_of(ALICE))
         self.assertEqual(answer.json(), SAME_ANSWER)
+        self.assertEqual(self.mailer.sent, [])
+
+    async def test_the_answer_does_not_wait_for_the_mail(self) -> None:
+        # Mailing takes time only for an address with an account, so the answer must not wait
+        # for it, or the speed would tell anyone whether an address has an account.
+        await self.account(ALICE)
+        gate = asyncio.Event()
+
+        class SlowMailer:
+            async def send_sign_in_link(self, to: str, link: str) -> None:
+                await gate.wait()
+
+        app = create_app(
+            settings(),
+            self.web,
+            FakeDiscord(),
+            payments=FakeProvider(b"h" * 32, SITE),
+            mailer=SlowMailer(),
+            clock=lambda: self.now,
+        )
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url=API) as c:
+            answer = await asyncio.wait_for(
+                c.post("/auth/email/request", json={"email": email_of(ALICE)}, headers=HEADERS),
+                timeout=5,
+            )
+            self.assertEqual(answer.json(), SAME_ANSWER)
+            gate.set()
+            await asyncio.gather(*list(app.state.email_tasks))
+
+    async def test_a_chunked_or_huge_body_is_just_no_email(self) -> None:
+        await self.account(ALICE)
+        async with self.browser() as client:
+            big = await client.post(
+                "/auth/email/request",
+                content=b'{"email": "' + b"a" * 5000 + b'"}',
+                headers=HEADERS | {"Content-Type": "application/json"},
+            )
+        self.assertEqual((big.status_code, big.json()), (202, SAME_ANSWER))
         self.assertEqual(self.mailer.sent, [])
 
     async def test_a_mail_error_still_gets_the_same_words(self) -> None:
@@ -397,6 +442,7 @@ class EmailSignIn(DatabaseTest):
             {"t": ""},
             {"t": "1.2"},
             {"t": stolen},  # Bob's code on Alice's number
+            {"t": "1.é"},  # not even ASCII
             {"uid": "ZZZZZZZZZZZZZ"},  # not an ID at all
             {"uid": to_dmbot_id(9_999_999)},  # a number with no account (and a bad code)
         ):
@@ -474,10 +520,12 @@ class EmailSignIn(DatabaseTest):
             mailer=self.mailer,
             clock=lambda: self.now,
         )
+        async with self.browser() as signing_in:
+            await self.sign_in_by_email(signing_in, ALICE)  # a browser of the main app
+            cookies = signing_in.cookies
         async with httpx.AsyncClient(
-            transport=httpx.ASGITransport(app=app), base_url=API
+            transport=httpx.ASGITransport(app=app), base_url=API, cookies=cookies
         ) as client:
-            await self.sign_in_by_email(client, ALICE)
             answer = await client.post("/me/move-code", headers=HEADERS)
         self.assertEqual((answer.status_code, answer.json()), (503, {"error": "move_off"}))
 

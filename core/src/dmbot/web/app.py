@@ -10,6 +10,7 @@ Security rules (CLAUDE.md, #434, #435):
 - Logs carry ids only, never names, emails or tokens.
 """
 
+import asyncio
 import contextlib
 import hashlib
 import hmac
@@ -325,38 +326,54 @@ def create_app(
         return response
 
     async def small_json(request: Request) -> dict[str, Any]:
-        """A small JSON object from the request, or {} for anything else (never an error page)."""
-        with contextlib.suppress(ValueError):
-            if int(request.headers.get("content-length", "0")) > 2048:
+        """A small JSON object from the request, or {} for anything else (never an error page).
+        Reads at most 2 KB, whatever the headers claim, so a long body costs no memory."""
+        body = b""
+        async for chunk in request.stream():
+            body += chunk
+            if len(body) > 2048:
                 return {}
         try:
-            raw = json.loads((await request.body())[:2048])
+            raw = json.loads(body)
         except (ValueError, RecursionError):
             return {}
         return raw if isinstance(raw, dict) else {}
 
-    @app.post("/auth/email/request", status_code=202)
-    async def email_sign_in_request(request: Request) -> dict[str, str]:
-        """Email a one-use sign-in link if the address belongs to one account (#1231). The
-        answer is the same words and the same status whatever happened (no account, two
-        accounts, too many asks, a mail error), so it never tells anyone whether an address has
-        an account. Only a refusal for this connection's own count differs, and that says
-        nothing about the address."""
-        answer = {"message": "If that email belongs to a DMbot account, we've sent a link"}
-        email = email_signin.clean_email((await small_json(request)).get("email"))
-        if email is None:
-            return answer
-        key = hashlib.sha256(email.encode()).hexdigest()
-        if email_limit.take(key) != "ok":
-            return answer  # too many for this address: silently no email, same reply
+    email_tasks: set[asyncio.Task[None]] = set()
+    app.state.email_tasks = email_tasks  # tests wait on these
+
+    async def send_sign_in_link(email: str) -> None:
+        """Look the address up, make the link and mail it: all after the answer has gone, so
+        the answer takes the same time whether or not the address has an account."""
         try:
             made = await email_signin.make_link(db, email, now=clock())
             if made is not None:
                 _user_id, token = made
                 await mailer.send_sign_in_link(email, f"{account_page}#email-link={token}")
-        except Exception:
-            # Logged without the address; the person still sees the same words.
-            log.exception("A sign-in link could not be made or sent")
+        except Exception as exc:
+            # The type only: mail libraries put the address in their messages.
+            log.error("A sign-in link could not be made or sent: %s", type(exc).__name__)
+
+    @app.post("/auth/email/request", status_code=202)
+    async def email_sign_in_request(request: Request) -> dict[str, str]:
+        """Email a one-use sign-in link if the address belongs to one account (#1231). The
+        answer is the same words and the same status, and comes back at the same speed,
+        whatever happens (no account, two accounts, too many asks, a mail error), so it never
+        tells anyone whether an address has an account. Only a refusal for this connection's
+        own count differs, and that says nothing about the address."""
+        answer = {"message": "If that email belongs to a DMbot account, we've sent a link"}
+        email = email_signin.clean_email((await small_json(request)).get("email"))
+        if email is None:
+            return answer
+        key = hashlib.sha256(email.encode()).hexdigest()
+        taken = email_limit.take(key)
+        if taken == "busy":
+            log.warning("Sign-in links are being asked for by too many different addresses")
+        if taken != "ok":
+            return answer  # too many for this address: silently no email, same reply
+        task = asyncio.create_task(send_sign_in_link(email))
+        email_tasks.add(task)  # held until done, so it can't be collected half-way
+        task.add_done_callback(email_tasks.discard)
         return answer
 
     @app.post("/auth/email/verify", status_code=204)
@@ -369,9 +386,13 @@ def create_app(
         )
         if user_id is None:
             raise HTTPException(status_code=400, detail="bad_link")
-        session_token = await sessions.sign_in_by_email(
-            db, user_id, now=clock(), days=settings.session_days
-        )
+        try:
+            session_token = await sessions.sign_in_by_email(
+                db, user_id, now=clock(), days=settings.session_days
+            )
+        except LookupError:
+            # The account went between the link being made and used.
+            raise HTTPException(status_code=400, detail="bad_link") from None
         log.info("Signed in by email link: user %s", user_id)
         response = Response(status_code=204)
         set_session_cookie(response, session_token)

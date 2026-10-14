@@ -2033,6 +2033,8 @@ EMAIL_SIGN_IN = (
     -- The name the person last signed in with, kept so a personal link can greet them with no
     -- session open. Nullable: no rows change, so no new policy.
     ALTER TABLE web_users ADD COLUMN display_name TEXT;
+    -- The email lookup below compares lower case, so it needs this to avoid reading every row.
+    CREATE INDEX web_users_by_email ON web_users (lower(email));
 
 """
     + _setting("dmbot_email_lookup", "dmbot.email_lookup", "TEXT")
@@ -2144,7 +2146,9 @@ WEB_ROLE_GRANTS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("INSERT, DELETE", ("feedback",)),
     ("SELECT, INSERT, UPDATE, DELETE", ("web_users", "web_sessions")),
     # Emailed sign-in links (#1231): made and used by the website, never read by anyone else.
-    ("SELECT, INSERT, UPDATE, DELETE", ("email_sign_in_links",)),
+    # (Only `used_at` can be changed: a holder of a link can spend it, never revive or move it.)
+    ("SELECT, INSERT, DELETE", ("email_sign_in_links",)),
+    ("UPDATE (used_at)", ("email_sign_in_links",)),
     # Free access (#771): the admin page gives, changes and revokes grants (through
     # Database.grant_writer()); account deletion deletes the person's own.
     ("SELECT, INSERT, UPDATE, DELETE", ("access_grants",)),

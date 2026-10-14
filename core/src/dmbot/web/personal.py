@@ -71,7 +71,10 @@ def check_link_token(secret: bytes, dmbot_id: str, token: str, now: int) -> bool
         expires = int(expires_raw)
     except ValueError:
         return False
-    return now < expires and hmac.compare_digest(given, _mac(secret, dmbot_id, expires))
+    # Bytes, so a stray non-ASCII character is just "no" and not an error.
+    return now < expires and hmac.compare_digest(
+        given.encode(), _mac(secret, dmbot_id, expires).encode()
+    )
 
 
 class Mailer(Protocol):
