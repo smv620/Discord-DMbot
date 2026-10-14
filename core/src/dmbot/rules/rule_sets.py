@@ -108,6 +108,7 @@ class Follow:
     code: str | None = None  # the share code it was followed by, to ask for updates
     previous_version: int | None = None  # the copy before the last update, for Undo
     previous_content: dict[str, Any] | None = None
+    declined_version: int | None = None  # an Undo sent this version back: not taken again
 
 
 @dataclass(frozen=True, slots=True)
@@ -205,6 +206,7 @@ def _follow(row: dict[str, Any]) -> Follow:
         int(row["version"]), _json(row["content"]), bool(row["updating"]),
         int(row["followed_at"]), row.get("code"), row.get("previous_version"),
         _json(row["previous_content"]) if row.get("previous_content") else None,
+        row.get("declined_version"),
     )  # fmt: skip
 
 
@@ -671,11 +673,7 @@ class RuleSetStore:
                 follow.code,
             )
             return (fresh, False) if fresh.set_id == follow.set_id else (None, True)
-        cur = await conn.execute(
-            _LATEST.replace("v.content FROM rule_sets s", "v.content, s.status FROM rule_sets s")
-            + " WHERE s.id = %s",
-            (follow.set_id,),
-        )
+        cur = await conn.execute(_LATEST_WITH_STATUS + " WHERE s.id = %s", (follow.set_id,))
         row = await cur.fetchone()
         if row is None:
             return None, False  # not in this server: unknown
@@ -683,10 +681,14 @@ class RuleSetStore:
             return None, True
         return _offer(row), False
 
-    async def pending_update(self, guild_id: int, campaign_id: str) -> Update | None:
+    async def pending_update(
+        self, guild_id: int, campaign_id: str, *, for_dmbot: bool = False
+    ) -> Update | None:
         """A newer version of the house-rules set this campaign follows, if there is one.
         Read only. Called at a session's start and never during one, so a table's rules
-        never change mid-game."""
+        never change mid-game. `for_dmbot`: DMbot is asking whether to take it, so a version
+        an Undo sent back is skipped (only a newer one is taken); the DM, choosing with Pick
+        changes or See changes, still sees it."""
         async with self._db.guild(guild_id) as conn:
             mine = [
                 f
@@ -697,6 +699,8 @@ class RuleSetStore:
                 return None
             fresh, _ = await self._latest_of(conn, mine[0])
         if fresh is None or fresh.version <= mine[0].version:
+            return None
+        if for_dmbot and fresh.version <= (mine[0].declined_version or 0):
             return None
         return Update(mine[0], fresh, tuple(set_diff.diff(mine[0].content, fresh.content)))
 
@@ -764,6 +768,8 @@ class RuleSetStore:
                 raise RuleSetError(NO_SUCH_SET)
             if fresh.version <= follow.version:
                 raise RuleSetError(NOTHING_NEW)
+            if user_id is None and fresh.version <= (follow.declined_version or 0):
+                raise RuleSetError(NOTHING_NEW)  # Undone: DMbot waits for a newer version
             if expected_version is not None and fresh.version != expected_version:
                 raise RuleSetError(CHANGED_AGAIN)  # the choices were made on older changes
             changes = set_diff.diff(follow.content, fresh.content)
@@ -772,7 +778,7 @@ class RuleSetStore:
                 await conn.execute(
                     "UPDATE rule_set_follows SET version = %s, content = %s, set_name = %s,"
                     " publisher = %s, previous_version = %s, previous_content = %s,"
-                    " taken_by = %s, taken_source = %s"
+                    " taken_by = %s, taken_source = %s, declined_version = NULL"
                     " WHERE guild_id = %s AND campaign_id = %s AND set_id = %s",
                     (
                         fresh.version,
@@ -834,10 +840,11 @@ class RuleSetStore:
             cur = await conn.execute(
                 "UPDATE rule_set_follows SET version = previous_version,"
                 " content = previous_content, previous_version = NULL,"
-                " previous_content = NULL, taken_by = NULL, taken_source = NULL"
+                " previous_content = NULL, taken_by = NULL, taken_source = NULL,"
+                " declined_version = %s"
                 " WHERE guild_id = %s AND campaign_id = %s AND set_id = %s"
                 " AND version = %s AND previous_version IS NOT NULL RETURNING version",
-                (guild_id, campaign_id, mine[0].set_id, expected_version),
+                (expected_version, guild_id, campaign_id, mine[0].set_id, expected_version),
             )
             if await cur.fetchone() is None:
                 raise RuleSetError(NOTHING_TO_UNDO)
@@ -873,13 +880,15 @@ class RuleSetStore:
             else:
                 cur = await conn.execute(
                     "UPDATE rule_set_follows SET version = %s, content = %s, set_name = %s,"
-                    " publisher = %s WHERE guild_id = %s"
-                    " AND campaign_id = %s AND set_id = %s AND version = %s",
+                    " publisher = %s, previous_version = NULL, previous_content = NULL,"
+                    " taken_by = NULL, taken_source = NULL, declined_version = %s"
+                    " WHERE guild_id = %s AND campaign_id = %s AND set_id = %s AND version = %s",
                     (
                         before.version,
                         Jsonb(before.content),
                         before.name,
                         before.publisher,
+                        taken.after_version,
                         guild_id,
                         campaign_id,
                         before.set_id,
@@ -892,13 +901,21 @@ class RuleSetStore:
             return kept
 
 
-_LATEST = (
-    "SELECT s.id AS set_id, s.kind, s.name AS set_name, c.name AS publisher, v.version,"
-    " v.content FROM rule_sets s"
+_LATEST_FROM = (
+    " FROM rule_sets s"
     " JOIN campaigns c ON c.guild_id = s.guild_id AND c.id = s.campaign_id"
     " JOIN rule_set_versions v ON v.guild_id = s.guild_id AND v.campaign_id = s.campaign_id"
     " AND v.set_id = s.id AND v.version = (SELECT max(version) FROM rule_set_versions m"
     "  WHERE m.guild_id = s.guild_id AND m.campaign_id = s.campaign_id AND m.set_id = s.id)"
+)
+_LATEST = (
+    "SELECT s.id AS set_id, s.kind, s.name AS set_name, c.name AS publisher, v.version,"
+    " v.content" + _LATEST_FROM
+)
+# The same, with the set's status, for a follower that wants to know whether it is still shared.
+_LATEST_WITH_STATUS = (
+    "SELECT s.id AS set_id, s.kind, s.name AS set_name, c.name AS publisher, v.version,"
+    " v.content, s.status" + _LATEST_FROM
 )
 _INSERT_FOLLOW = (
     "INSERT INTO rule_set_follows (guild_id, campaign_id, set_id, kind, set_name, publisher,"
@@ -920,7 +937,7 @@ def _follow_values(
 async def _followed(conn: Conn, guild_id: int, campaign_id: str) -> list[Follow]:
     cur = await conn.execute(
         "SELECT set_id, kind, set_name, publisher, version, content, updating, followed_at, code,"
-        " previous_version, previous_content FROM rule_set_follows"
+        " previous_version, previous_content, declined_version FROM rule_set_follows"
         " WHERE guild_id = %s AND campaign_id = %s"
         " ORDER BY position, followed_at, set_id",
         (guild_id, campaign_id),

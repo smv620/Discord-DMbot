@@ -2239,7 +2239,12 @@ SET_UPDATES = (
     --                           whether the set has a newer version. A code the publisher
     --                           turned off stops NEW followers only (owner decision): follows
     --                           made before keep getting updates, until Stop sharing.
-    --   rule_set_codes.deactivated_at  when a code was turned off, for that comparison
+    --   rule_set_codes.deactivated_at  when a code was turned off, for that comparison (codes
+    --                           turned off before this migration have none, and keep their
+    --                           old meaning: they do not update earlier follows)
+    --   rule_set_follows.declined_version  the version an Undo sent back: DMbot does not
+    --                           take it again at a session start, only a newer one; the DM
+    --                           can still choose it with Pick changes
     --   rule_set_follows.previous_*, taken_*  the copy before the last update was taken, so
     --                           Undo needs no memory, and who took it (NULL: DMbot did, at a
     --                           session start; "auto")
@@ -2256,6 +2261,7 @@ SET_UPDATES = (
         ADD COLUMN code TEXT CHECK (code IS NULL OR code ~ '^[A-Z2-7]{{10}}$'),
         ADD COLUMN previous_version INTEGER,
         ADD COLUMN previous_content JSONB,
+        ADD COLUMN declined_version INTEGER,
         ADD COLUMN taken_by BIGINT,
         ADD COLUMN taken_source TEXT CHECK (taken_source IS NULL OR taken_source IN ('auto', 'dm'));
     ALTER TABLE rule_set_codes ADD COLUMN deactivated_at BIGINT;

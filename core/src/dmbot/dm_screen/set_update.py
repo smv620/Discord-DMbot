@@ -7,7 +7,9 @@ DMbot, not to a DM) and posts one note on the DM screen: "<set> house rules upda
 [See changes] [Pick changes] [Undo]".
 
 - **Undo** goes back to the copy the campaign had. It is kept in the follow's own row, so the
-  button works after a restart.
+  button works after a restart. DMbot does not take that same version again at the next
+  session start, only a newer one (`declined_version`); See changes and Pick changes on the
+  same note still work, and Pick needs no second undo.
 - **Pick changes** undoes the take and opens the per-change picker in one step. Everything
   starts ticked. Unticking anything copies the set (as the campaign had it plus the accepted
   changes) into the campaign's own house rules, marked with where it came from, ranked below
@@ -44,6 +46,8 @@ NEWER = (
     "A newer version came after that note. Look for the newest note on the DM screen. "
     "Nothing changed."
 )
+NOT_FOLLOWING_NOW = "This campaign doesn't follow that set any more. Nothing changed."
+UNDONE_AND_WAITING = "DMbot will take the next new version; use Pick changes to choose."
 COULDNT = "That didn't work, and nothing changed. Press the button again in a moment."
 UNDO_LABEL = "↩️ Undo"
 
@@ -119,7 +123,7 @@ async def _dm_and_follow(
         f for f in await sets.following(campaign.guild_id, campaign.id) if f.kind == "house_rules"
     ]
     if not follows:
-        await _tell(interaction, NEWER)
+        await _tell(interaction, NOT_FOLLOWING_NOW)
         return None
     return campaign, follows[0]
 
@@ -134,8 +138,26 @@ async def press(
     campaign, follow = found
     sets = _bot(interaction).rule_sets
     assert sets is not None  # checked above
-    if follow.version != version:  # the note is for an older version than the campaign has
+    if follow.version > version:  # the note is for an older version than the campaign has
         await _tell(interaction, NEWER)
+        return
+    if follow.version < version:
+        # The note's update was undone and the campaign is back on the earlier copy. The note
+        # is still true while that version is the newest: See changes and Pick changes work
+        # on it as they did (Pick needs no second undo), and Undo has nothing left to do.
+        update = await sets.pending_update(campaign.guild_id, campaign.id)
+        if update is None or update.offer.version != version:
+            await _tell(interaction, NEWER)
+            return
+        if action == "undo":
+            await _tell(
+                interaction,
+                f"Already undone. The campaign is on v{follow.version}. {UNDONE_AND_WAITING}",
+            )
+        elif action == "see":
+            await _tell(interaction, changes_text(follow.name, version, list(update.changes)))
+        else:
+            await _open_picker(interaction, campaign, update)
         return
     if action == "see":
         before = follow.previous_content
@@ -153,12 +175,18 @@ async def press(
         return
     if action == "undo":
         back = follow.previous_version
-        await _tell(interaction, f"↩️ Undone. Back on v{back}, and still following.")
+        await _tell(interaction, f"↩️ Undone. Back on v{back}. {UNDONE_AND_WAITING}")
         return
     update = await sets.pending_update(campaign.guild_id, campaign.id)
     if update is None or update.offer.version != version:
         await _tell(interaction, NEWER)  # undone, and a different version is waiting now
         return
+    await _open_picker(interaction, campaign, update)
+
+
+async def _open_picker(
+    interaction: discord.Interaction, campaign: Campaign, update: rule_sets.Update
+) -> None:
     view = PickView(campaign, update)
     await _tell(interaction, view.text(), view=view)
     view.origin = interaction
@@ -237,9 +265,13 @@ class UndoView(_Menu):
             return
         self.stop()
         v = self.taken.before.version
-        again = " and following it again" if self.taken.merged else " and still following it"
-        edited = f" {kept} merged rule{'s' if kept != 1 else ''} you edited stayed." if kept else ""
-        await _tell(interaction, f"↩️ Undone. Back on v{v}{again}.{edited}")
+        if self.taken.merged:
+            edited = (
+                f" {kept} merged rule{'s' if kept != 1 else ''} you edited stayed." if kept else ""
+            )
+            await _tell(interaction, f"↩️ Undone. Back on v{v} and following it again.{edited}")
+        else:
+            await _tell(interaction, f"↩️ Undone. Back on v{v}. {UNDONE_AND_WAITING}")
 
 
 class PickView(_Menu):
@@ -334,7 +366,7 @@ async def check_update(bot: Any, campaign: Campaign, screen_id: int) -> None:
     if sets is None:
         return
     try:
-        update = await sets.pending_update(campaign.guild_id, campaign.id)
+        update = await sets.pending_update(campaign.guild_id, campaign.id, for_dmbot=True)
         if update is None:
             if await sets.is_gone(campaign.guild_id, campaign.id):
                 follows = await sets.following(campaign.guild_id, campaign.id)
@@ -353,10 +385,15 @@ async def check_update(bot: Any, campaign: Campaign, screen_id: int) -> None:
             None,
             expected_version=update.offer.version,
         )
-        await bot.post_message(
+        posted = await bot.post_message(
             screen_id,
             note_text(update.offer.name, update.offer.version, len(update.changes)),
             note_view(campaign.id, update.offer.version),
         )
+        if posted is None:  # taken, but the DM has no note and no Undo button for it
+            log.warning(
+                "Took a shared-rules update for campaign %s but couldn't post its note",
+                campaign.id,
+            )
     except Exception:
         log.exception("Couldn't check for a shared-rules update")

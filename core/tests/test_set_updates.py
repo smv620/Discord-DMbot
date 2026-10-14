@@ -315,6 +315,46 @@ class Updates(DatabaseTest):
         with self.assertRaises(RuleSetError):
             await self.sets.undo_last_take(GUILD_B, self.far, DM_B, expected_version=2)  # once
 
+    async def test_undo_keeps_the_earlier_version_until_a_newer_one_comes(self) -> None:
+        await self.follow_far()
+        await self.sets.save_version(GUILD_A, self.pub, DM_A, V2, plan_ok=True)
+        await self.sets.take_update(GUILD_B, self.far, None, expected_version=2)
+        await self.sets.undo_last_take(GUILD_B, self.far, DM_B, expected_version=2)
+        # DMbot does not take v2 again at the next session start...
+        self.assertIsNone(await self.sets.pending_update(GUILD_B, self.far, for_dmbot=True))
+        with self.assertRaises(RuleSetError):
+            await self.sets.take_update(GUILD_B, self.far, None, expected_version=2)
+        # ...but the DM still sees it and can choose it.
+        shown = await self.sets.pending_update(GUILD_B, self.far)
+        assert shown is not None
+        self.assertEqual(shown.offer.version, 2)
+        # A newer version is taken by DMbot as before.
+        v3 = content((1, "Crits double the dice, always", None), (2, "No flanking", None))
+        await self.sets.save_version(GUILD_A, self.pub, DM_A, v3, plan_ok=True)
+        newer = await self.sets.pending_update(GUILD_B, self.far, for_dmbot=True)
+        assert newer is not None
+        self.assertEqual(newer.offer.version, 3)
+        taken = await self.sets.take_update(GUILD_B, self.far, None, expected_version=3)
+        self.assertEqual(taken.after_version, 3)
+        mine = (await self.sets.following(GUILD_B, self.far))[0]
+        self.assertIsNone(mine.declined_version)
+
+    async def test_the_other_undo_path_also_clears_what_it_undid(self) -> None:
+        await self.follow_far()
+        await self.sets.save_version(GUILD_A, self.pub, DM_A, V2, plan_ok=True)
+        taken = await self.sets.take_update(GUILD_B, self.far, DM_B, expected_version=2)
+        await self.sets.undo_take(GUILD_B, self.far, DM_B, taken)
+        mine = (await self.sets.following(GUILD_B, self.far))[0]
+        self.assertEqual(
+            (mine.version, mine.previous_version, mine.previous_content, mine.declined_version),
+            (1, None, None, 2),
+        )
+        async with self.db.guild(GUILD_B) as conn:
+            cur = await conn.execute("SELECT taken_by, taken_source FROM rule_set_follows")
+            row = await cur.fetchone()
+        self.assertEqual((row or {})["taken_by"], None)
+        self.assertEqual((row or {})["taken_source"], None)
+
     async def test_dmbot_cannot_merge_for_a_dm(self) -> None:
         await self.follow_far()
         await self.sets.save_version(GUILD_A, self.pub, DM_A, V2, plan_ok=True)

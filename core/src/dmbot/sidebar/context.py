@@ -203,7 +203,13 @@ def relevant_house_rules(
             named.append(rule)
         elif any(f" {w} " in text for w in words):
             shared.append(rule)
-    return [*named, *shared][:HOUSE_RULES_MAX]
+    # The campaign's own rules win: own first, then rules merged in from a set, then the
+    # followed set's. A stable sort keeps "names an entry" ahead inside each group.
+    ranked = sorted(
+        [*named, *shared],
+        key=lambda r: (isinstance(r, FollowedRule), bool(getattr(r, "from_set", None))),
+    )
+    return ranked[:HOUSE_RULES_MAX]
 
 
 def mentioned_names(question: str, lookup: CampaignLookup | None) -> list[str]:

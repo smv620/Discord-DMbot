@@ -141,6 +141,7 @@ class Pressing(unittest.IsolatedAsyncioTestCase):
         await set_update.press(it, CAMPAIGN, "undo", 4)
         bot.rule_sets.undo_last_take.assert_awaited_once_with(1, CAMPAIGN, DM, 4)
         self.assertIn("Back on v3", it.sent[0][0])
+        self.assertIn("DMbot will take the next new version; use Pick changes", it.sent[0][0])
 
     async def test_pick_undoes_the_take_and_opens_the_picker_in_one_step(self) -> None:
         bot = bot_with(pending_update=AsyncMock(return_value=update(2)))
@@ -150,6 +151,37 @@ class Pressing(unittest.IsolatedAsyncioTestCase):
         text, view = it.sent[0]
         self.assertIn("Pick changes", text)
         self.assertIsInstance(view, set_update.PickView)
+
+    async def test_after_undo_pick_opens_the_picker_without_another_undo(self) -> None:
+        # The campaign is back on v3 (undone), and v4 is still the newest version.
+        undone = follow_at(3, previous=None)
+        bot = bot_with(
+            following=AsyncMock(return_value=[undone]),
+            pending_update=AsyncMock(return_value=update(2)),
+        )
+        it = interaction(DM, bot)
+        await set_update.press(it, CAMPAIGN, "pick", 4)
+        bot.rule_sets.undo_last_take.assert_not_called()
+        self.assertIsInstance(it.sent[0][1], set_update.PickView)
+
+    async def test_after_undo_see_shows_the_changes_and_undo_says_it_is_done(self) -> None:
+        bot = bot_with(
+            following=AsyncMock(return_value=[follow_at(3, previous=None)]),
+            pending_update=AsyncMock(return_value=update(2)),
+        )
+        it = interaction(DM, bot)
+        await set_update.press(it, CAMPAIGN, "see", 4)
+        self.assertIn("Rule 1", it.sent[0][0])
+        again = interaction(DM, bot)
+        await set_update.press(again, CAMPAIGN, "undo", 4)
+        self.assertIn("Already undone", again.sent[0][0])
+        bot.rule_sets.undo_last_take.assert_not_called()
+
+    async def test_a_campaign_that_follows_nothing_gets_its_own_message(self) -> None:
+        bot = bot_with(following=AsyncMock(return_value=[]))
+        it = interaction(DM, bot)
+        await set_update.press(it, CAMPAIGN, "pick", 4)
+        self.assertEqual(it.sent[0][0], set_update.NOT_FOLLOWING_NOW)
 
     async def test_see_lists_what_differs_from_the_copy_before(self) -> None:
         it = interaction(DM, bot_with())
@@ -187,6 +219,21 @@ class SessionStart(unittest.IsolatedAsyncioTestCase):
         await set_update.check_update(bot, campaign(), 99)
         bot.rule_sets.stop_updating.assert_awaited_once()
         self.assertIn("aren't shared any more", bot.post.await_args.args[1])
+
+    async def test_dmbot_asks_for_updates_that_skip_an_undone_version(self) -> None:
+        bot = bot_with()
+        await set_update.check_update(bot, campaign(), 99)
+        bot.rule_sets.pending_update.assert_awaited_once_with(1, CAMPAIGN, for_dmbot=True)
+
+    async def test_a_note_that_cannot_be_posted_is_logged(self) -> None:
+        bot = bot_with(
+            pending_update=AsyncMock(return_value=update(2)),
+            post_message=AsyncMock(return_value=None),
+        )
+        bot.post_message = AsyncMock(return_value=None)
+        with self.assertLogs("dmbot.dm_screen.set_update", level="WARNING") as logged:
+            await set_update.check_update(bot, campaign(), 99)
+        self.assertIn("couldn't post its note", logged.output[0])
 
     async def test_a_failure_never_escapes_and_posts_nothing(self) -> None:
         bot = bot_with(pending_update=AsyncMock(side_effect=RuntimeError("down")))

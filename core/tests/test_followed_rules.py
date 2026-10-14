@@ -77,6 +77,36 @@ class Reading(unittest.IsolatedAsyncioTestCase):
         text = "\n".join(rule_card.house_lines(matches))
         self.assertIn("Red Table house rules, v4, rule 1", text)
 
+    def test_a_merged_rule_that_contradicts_an_own_rule_comes_second_and_says_so(self) -> None:
+        merged = HouseRule(
+            1, "c1", "Flanking gives no advantage", None, None, None, 7, 1, 1,
+            from_set="Red Table house rules, v4",
+        )  # fmt: skip
+        mine = own(30, "Flanking gives advantage")
+        # The merged rule has the lower number, so only the ranking puts the own rule first.
+        matches = rule_card.house_matches([merged, mine], ["flanking"])
+        self.assertEqual([r.number for r in matches], [30, 1])
+        lines = rule_card.house_lines(matches)
+        self.assertIn("House rule 30:", lines[0])
+        self.assertIn("House rule 1 (from Red Table house rules, v4):", lines[1])
+
+    def test_the_sidebar_lists_the_own_rule_first_and_labels_the_merged_one(self) -> None:
+        merged = HouseRule(
+            1, "c1", "Flanking gives no advantage", None, None, None, 7, 1, 1,
+            from_set="Red Table house rules, v4",
+        )  # fmt: skip
+        mine = own(30, "Flanking gives advantage")
+        built = context.build(
+            "Does flanking give advantage?", house_rules=[merged, mine], target="2024",
+            fallback="2014", index=srd(), lookup=None, scene="",
+        )  # fmt: skip
+        prompt = built.prompt
+        own_at = prompt.index("House rule 30:")
+        merged_at = prompt.index(
+            "House rule 1 (from Red Table house rules, v4; the campaign's own win)"
+        )
+        self.assertLess(own_at, merged_at)
+
 
 if __name__ == "__main__":
     unittest.main()
