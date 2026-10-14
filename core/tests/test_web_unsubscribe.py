@@ -90,3 +90,32 @@ class UnsubscribeRoute(DatabaseTest):
     async def test_a_huge_body_is_refused(self) -> None:
         out = await self.post(b"x" * 5000)
         self.assertEqual(out.status_code, 413)
+
+
+class WebRoleAndEmailTable(UnsubscribeRoute):
+    """The website's role sends its own account emails through the door and can touch no row
+    of the email history."""
+
+    async def test_the_website_can_use_the_door_but_not_read_or_write_the_table(self) -> None:
+        import psycopg
+
+        async with self.web.unscoped() as conn:
+            cur = await conn.execute(
+                "SELECT dmbot_claim_email(%s, %s, false) AS ok", (USER, "sign-in:1")
+            )
+            row = await cur.fetchone()
+            self.assertTrue((row or {})["ok"])
+            cur = await conn.execute(
+                "SELECT dmbot_claim_email(%s, %s, false) AS ok", (USER, "sign-in:1")
+            )
+            row = await cur.fetchone()
+            self.assertFalse((row or {})["ok"])  # a kind goes once
+        for statement in (
+            "SELECT * FROM sent_emails",
+            "INSERT INTO sent_emails (user_id, kind, sent_at) VALUES (1, 'x', 0)",
+            "DELETE FROM sent_emails",
+            "SELECT * FROM email_unsubscribed",
+        ):
+            with self.assertRaises(psycopg.errors.InsufficientPrivilege, msg=statement):
+                async with self.web.unscoped() as conn:
+                    await conn.execute(statement)

@@ -5,6 +5,7 @@ example.com addresses only. The sending tests need Postgres, like the other stor
 from __future__ import annotations
 
 import logging
+import time
 import unittest
 from email.message import EmailMessage
 from typing import ClassVar
@@ -137,25 +138,49 @@ class Sending(DatabaseTest):
         self.assertEqual(await self.send(made, "sign-in-1"), "sent")
         self.assertEqual(len(fake.sent), 1)
 
-    async def test_the_daily_cap_stops_the_flood_and_a_new_day_starts_again(self) -> None:
-        made, fake = self.mailer(MAIL_DAILY_CAP=2)
+    async def test_the_daily_cap_stops_the_flood(self) -> None:
+        made, _ = self.mailer(MAIL_DAILY_CAP=2)
         results = [await self.send(made, f"k{i}") for i in range(3)]
         self.assertEqual(results, ["sent", "sent", "capped"])
         self.assertEqual(await made.sent_today(), 2)
-        tomorrow = Mailer(
-            self.db, load_mail_settings({**ENV, "MAIL_DAILY_CAP": "2"}), transport=fake,
-            site_url=SITE, link_secret=SECRET, clock=lambda: NOW + 86400,
-        )  # fmt: skip
-        self.assertEqual(await self.send(tomorrow, "k2"), "sent")
 
-    async def test_a_failed_send_is_not_marked_sent_and_logs_no_address(self) -> None:
+    async def test_the_door_holds_400_in_all_and_300_for_offers_by_itself(self) -> None:
+        async def claim(user: int, kind: str, offer: bool) -> bool:
+            async with self.db.unscoped() as conn:
+                cur = await conn.execute(
+                    "SELECT dmbot_claim_email(%s, %s, %s) AS ok", (user, kind, offer)
+                )
+                row = await cur.fetchone()
+            return bool(row and row["ok"])
+
+        async with self.db.unscoped() as conn:
+            await conn.execute(
+                "INSERT INTO sent_emails (user_id, kind, sent_at)"
+                " SELECT g, 'bulk', extract(epoch FROM now())::BIGINT"
+                " FROM generate_series(1, 299) g"
+            )
+            # Yesterday's rows and private-message records don't count.
+            await conn.execute(
+                "INSERT INTO sent_emails (user_id, kind, sent_at) VALUES (900, 'old', 1),"
+                " (901, 'dm:x', extract(epoch FROM now())::BIGINT)"
+            )
+        self.assertTrue(await claim(1001, "offer-a", True))  # the 300th
+        self.assertFalse(await claim(1002, "offer-b", True))  # offers stop at 300
+        self.assertTrue(await claim(1003, "sign-in:1", False))  # account emails go on to 400
+        self.assertFalse(await claim(1003, "sign-in:1", False))  # and each kind goes once
+        self.assertFalse(await claim(1004, "dm:trial", False))  # not an email kind
+        self.assertFalse(await claim(0, "k", False))
+
+    async def test_a_failed_send_keeps_its_record_and_logs_no_address(self) -> None:
         made, fake = self.mailer()
         fake.fail = True
         with self.assertLogs("dmbot.mail", level=logging.ERROR) as logged:
-            self.assertEqual(await self.send(made, "sign-in-1"), "failed")
+            self.assertEqual(await self.send(made, "sign-in:1"), "failed")
         self.assertNotIn("example.com", "\n".join(logged.output))
         fake.fail = False
-        self.assertEqual(await self.send(made, "sign-in-1"), "sent")
+        # At most once: the record stays, so the same kind is not sent later.
+        self.assertEqual(await self.send(made, "sign-in:1"), "already_sent")
+        self.assertEqual(await self.send(made, "sign-in:2"), "sent")
 
     async def test_no_address_or_a_bad_one_sends_nothing(self) -> None:
         made, fake = self.mailer()
@@ -203,7 +228,7 @@ class Sending(DatabaseTest):
         await self.send(made, "sign-in:a")
         await self.send(made, "move-code:b")
         await self.send(made, "trial-end:1", offer=True)
-        later = NOW + 91 * 86400
+        later = int(time.time()) + 91 * 86400  # the door writes the database's own time
         self.assertEqual(await mail.prune_account_emails(self.db, later), 2)
         self.assertEqual(await self.send(made, "trial-end:1", offer=True), "already_sent")
 
