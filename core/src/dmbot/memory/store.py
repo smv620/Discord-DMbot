@@ -453,8 +453,12 @@ class MemoryStore:
             if row is None:
                 raise MemoryRuleError(NOT_HERE)
             scope = Scope(conn, guild_id, campaign_id, int(row["memory_version"]))
+            # The table's people are left out of the lookup: a placeholder like "Player
+            # 1234" must never be matched in speech or turned into a fix (#1188; their
+            # real names come with part 2).
             entities = await scope.select(
-                ENTITIES, " AND status IN ('proposed', 'confirmed') ORDER BY id"
+                ENTITIES,
+                " AND status IN ('proposed', 'confirmed') AND type <> 'person' ORDER BY id",
             )
             # Names and facts of live entries, filtered here against the entries just
             # read (same snapshot): plain reads, never a join that can go quadratic (#598).

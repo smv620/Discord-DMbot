@@ -260,7 +260,7 @@ class SheetStore:
                 "SELECT e.campaign_id, c.name AS campaign_name, e.id, e.name"
                 " FROM memory_entities e JOIN campaigns c"
                 "  ON c.guild_id = e.guild_id AND c.id = e.campaign_id"
-                " WHERE e.guild_id = %s AND e.played_by = %s"
+                " WHERE e.guild_id = %s AND e.played_by = %s AND e.type <> 'person'"
                 "  AND e.status NOT IN ('merged', 'rejected')"
                 "  AND (%s::text IS NULL OR e.campaign_id = %s)"
                 " ORDER BY lower(c.name), lower(e.name), e.id",
@@ -283,7 +283,7 @@ class SheetStore:
         player character can be "played by" someone (the memory store checks that when
         it's set), so a player is enough to know it's one."""
         cur = await conn.execute(
-            "SELECT played_by, status FROM memory_entities"
+            "SELECT played_by, status, type FROM memory_entities"
             " WHERE guild_id = %s AND campaign_id = %s AND id = %s FOR SHARE",
             (guild_id, campaign_id, entity_id),
         )
@@ -292,6 +292,7 @@ class SheetStore:
             row is None
             or row["status"] in ("merged", "rejected")
             or row["played_by"] is None
+            or row["type"] == "person"  # a player, not their character (#1188)
             or (player is not None and row["played_by"] != player)
         ):
             raise SheetRefused(NOT_A_CHARACTER)

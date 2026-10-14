@@ -647,6 +647,9 @@ PEOPLE = """
     DROP POLICY migrate_backfill ON memory_relations;
     DROP POLICY migrate_backfill ON memory_aliases;
     DROP POLICY migrate_backfill ON memory_entities;
+    -- The table's links to its entries are checked at the end of a transaction, and an
+    -- index can't be built while checks are waiting: run them now.
+    SET CONSTRAINTS ALL IMMEDIATE;
     -- One person entry for each Discord user in a campaign.
     CREATE UNIQUE INDEX memory_entities_one_person
         ON memory_entities (guild_id, campaign_id, played_by)
