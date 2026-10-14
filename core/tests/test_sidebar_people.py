@@ -63,6 +63,14 @@ class FromMemory(MemoryTest):
         after = dict((u, (c, a)) for u, c, a in await self.memory.table_people(GUILD_A, self.c))
         self.assertEqual(after[PLAYER], (["Cerric"], ["Mike"]))
 
+    async def test_people_made_in_the_same_second_come_in_a_fixed_order(self) -> None:
+        # Entry ids are random, so a tie on the second must never fall to them: the order is
+        # the same however the ids come out (lower Discord id first).
+        await self.add("A", type="player_character", played_by=OTHER)
+        await self.add("B", type="player_character", played_by=PLAYER)
+        users = [u for u, _, _ in await self.memory.table_people(GUILD_A, self.c)]
+        self.assertEqual(users, [PLAYER, OTHER])
+
     async def test_another_campaigns_people_are_not_here(self) -> None:
         other = (await self.campaigns.create(GUILD_A, "Another", DM)).id
         await self.add("Cerric", type="player_character", played_by=PLAYER, campaign=other)
