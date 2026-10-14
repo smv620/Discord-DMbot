@@ -344,9 +344,11 @@ def create_app(
     async def send_sign_in_link(email: str) -> None:
         """Look the address up, make the link and mail it: all after the answer has gone, so
         the answer takes the same time whether or not the address has an account."""
+        if mailer is None:
+            return  # nothing could be sent, so no link is made either
         try:
             made = await email_signin.make_link(db, email, now=clock())
-            if made is not None and mailer is not None:
+            if made is not None:
                 user_id, token = made
                 # An account email (no unsubscribe): its kind has the link's own id, so each
                 # link is its own email, and it counts toward the day's cap.

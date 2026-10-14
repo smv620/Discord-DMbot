@@ -14,6 +14,7 @@ from typing import Any
 from dmbot import consent, entitlements, hours
 from dmbot.campaigns.models import HANDOVER_SECONDS
 from dmbot.db import Database
+from dmbot.web.accounts import dmbot_id
 from dmbot.web.entitlements_writer import PAID_EVENT_SQL, PAID_KINDS
 from dmbot.web.moving import can_move
 from dmbot.web.offers import offer_ref
@@ -161,15 +162,11 @@ async def build_me(db: Database, session: Session, *, now: int) -> dict[str, Any
                 )
 
         # "Experience points": every minute DMbot has run for this account, all time, through the
-        # one door the website's role has to the hours meter (#1228, #1231). And the account's
-        # stored DMbot ID, which is kept for life (a move to a new Discord account keeps it).
+        # one door the website's role has to the hours meter (#1228, #1231).
         cur = await conn.execute("SELECT dmbot_minutes_total() AS minutes")
         total_row = await cur.fetchone()
         experience = int(total_row["minutes"]) if total_row else 0
-        cur = await conn.execute(
-            "SELECT dmbot_id FROM web_users WHERE user_id = %s", (session.user_id,)
-        )
-        id_row = await cur.fetchone()
+
         if month is not None:
             cur = await conn.execute("SELECT dmbot_hours_used(%s) AS minutes", (month.start,))
             hours_row = await cur.fetchone()
@@ -206,11 +203,14 @@ async def build_me(db: Database, session: Session, *, now: int) -> dict[str, Any
             for row in await cur.fetchall()
         ]
 
+    # The account's stored DMbot ID, kept for life (a move to a new Discord account keeps it).
+    account_number = await dmbot_id(db, session.user_id)
+
     return {
         "user": {"id": str(session.user_id), "name": session.display_name},
         # The account number (the Discord ID in base 36) and the minutes DMbot has run (#1231).
         # A move code is for an active paid plan only (not Try It, a grant or the free list).
-        **({"dmbotId": str(id_row["dmbot_id"])} if id_row else {}),
+        **({"dmbotId": account_number} if account_number else {}),
         "experiencePoints": experience,
         "canMove": can_move(plan, now),
         # A first payment that failed and no payment since: the page says "try again" (#922).
