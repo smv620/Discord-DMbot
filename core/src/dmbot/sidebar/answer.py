@@ -35,13 +35,13 @@ from dmbot.memory.lookup import CampaignLookup
 from dmbot.rules import facts as rule_facts
 from dmbot.rules.house import HouseRule
 from dmbot.rules.index import Hit, Index, normalize
-from dmbot.sidebar import brevity, context
+from dmbot.sidebar import brevity, context, table_links
 from dmbot.ui import rule_card
 
 log = logging.getLogger(__name__)
 T = TypeVar("T")
 
-PROMPT_VERSION = "sidebar-8"  # bump when SYSTEM or the reply form changes (it is recorded)
+PROMPT_VERSION = "sidebar-9"  # bump when SYSTEM or the reply form changes (it is recorded)
 MAX_TOKENS = 150  # 200 characters of answer and the four fields fit in ~100
 CALL_TIMEOUT_S = 6  # one AI call; a Haiku answer of ~80 tokens takes 1 to 3 s
 TOTAL_BUDGET_S = 8  # everything after the plan check, retry included (the target is ~5 s)
@@ -116,7 +116,9 @@ SOURCE: <a few words, like "SRD 5.2.1 p. 131", "House rule 3" or "DMbot help"; o
 CONFIDENCE: <confident or uncertain>
 IN_GAME: <yes if it is about the campaign or the game's rules or content; no for DMbot or \
 Discord help>
-ON_TOPIC: <yes or no>"""
+ON_TOPIC: <yes or no>
+QUESTION: <only if the message starts with AUDIENCE: THE TABLE: the question restated in at most \
+12 plain words, no names, no links; otherwise none>"""
 
 ONE_FOR_DM = "That's one for your DM."  # a table question that needs the DM's secrets or call
 _ONE_FOR_DM = re.compile(r"that['’]s one for your dm", re.IGNORECASE)
@@ -137,7 +139,7 @@ _NOTE_ANYWHERE = re.compile(
 )
 _OLD_WORDS = {"sure": "confident", "not sure": "uncertain"}
 _FIELD = re.compile(
-    r"^\s*(ANSWER|SOURCE|CONFIDENCE|SURE|IN_GAME|ON_TOPIC)\s*:\s*(.*)$", re.IGNORECASE
+    r"^\s*(ANSWER|SOURCE|CONFIDENCE|SURE|IN_GAME|ON_TOPIC|QUESTION)\s*:\s*(.*)$", re.IGNORECASE
 )
 
 
@@ -168,6 +170,7 @@ class Answer:
     in_game: bool  # about the campaign or the game: goes in the raw transcript as DMbot
     refused: bool = False  # the plan check said no; `text` holds the plain words
     one_for_dm: bool = False  # a table question that needs the DM: answered ONE_FOR_DM (#1187)
+    question: str = ""  # the question restated in a few words, for the chat's Q line (#1187)
     model: str = ""  # "" when no AI was used (a refusal, a rule card)
     prompt_version: str = PROMPT_VERSION
     sources: tuple[str, ...] = ()  # everything the AI was given, in short words
@@ -184,6 +187,19 @@ class Fields:
     confidence: str | None
     in_game: bool
     on_topic: bool
+    question: str = ""  # a table question restated in a few words (#1187); "" when none
+
+
+RESTATED_WORDS = 12
+
+
+def restated(text: str) -> str:
+    """The question as the AI restated it for the table (#1187): at most RESTATED_WORDS words,
+    and "" if it said none. Links are taken out in code; what is left is only ever shown."""
+    text = " ".join(text.split()).strip(" .")
+    if text.lower() in ("", "none", "n/a", "-"):
+        return ""
+    return " ".join(table_links.strip_links(text).split()[:RESTATED_WORDS])
 
 
 def parse(raw: str) -> Fields:
@@ -212,6 +228,7 @@ def parse(raw: str) -> Fields:
         confidence=confidence if confidence in ("confident", "uncertain") else None,
         in_game=found.get("IN_GAME", "yes").strip().lower() != "no",
         on_topic=found.get("ON_TOPIC", "yes").strip().lower() != "no",
+        question=restated(found.get("QUESTION", "")),
     )
 
 
@@ -480,6 +497,7 @@ class Sidebar:
                     ONE_FOR_DM,
                     in_game=False,
                     one_for_dm=True,
+                    question=fields.question,
                     model=reply.model or self._ai.model,
                     sources=ctx.sources,
                     parts=(ONE_FOR_DM,),
@@ -557,6 +575,7 @@ class Sidebar:
             Answer(
                 text,
                 in_game=fields.in_game,
+                question=fields.question if table else "",
                 model=reply.model or self._ai.model,  # the one that answered, if it says
                 sources=ctx.sources,
                 parts=(text,),

@@ -34,6 +34,7 @@ class FakeAnswer:
     sources: tuple[str, ...] = ("SRD 5.2.1 p. 241",)
     parts: tuple[str, ...] = ()
     one_for_dm: bool = False
+    question: str = ""  # the AI's few-word restatement of a table question
 
 
 class FakeAnswerer:
@@ -1210,3 +1211,20 @@ class TableQuestions(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.host.saved, [])
         self.assertTrue(self.host.screen)  # the DM is told where they will see it
         self.assertEqual(self.sidebar._busy, set())  # and the table is free again
+
+    async def test_the_q_line_uses_the_ais_few_words_and_falls_back_to_the_shortened_text(
+        self,
+    ) -> None:
+        self.answerer.answer_to_give = FakeAnswer(
+            text="No. A point you choose.", question="Does fireball need line of sight"
+        )
+        self.sidebar.ask_in_chat(
+            self.table, PLAYER, "so like when we are in the cave and the wizard casts it, does it"
+        )
+        await self.settle()
+        self.assertTrue(self.host.chat[0].startswith("Q (Mira): Does fireball need line of sight?"))
+        self.now[0] += 60
+        self.answerer.answer_to_give = FakeAnswer(text="No.")  # no restatement given
+        self.sidebar.ask_in_chat(self.table, PLAYER, "does fireball need line of sight")
+        await self.settle()
+        self.assertTrue(self.host.chat[1].startswith("Q (Mira): Does fireball need line of sight?"))

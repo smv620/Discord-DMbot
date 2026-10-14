@@ -131,6 +131,8 @@ class Answer(Protocol):
     def parts(self) -> Sequence[str]: ...  # a long answer as messages; else (text,)
     @property
     def one_for_dm(self) -> bool: ...  # a table question that needs the DM (#1187)
+    @property
+    def question(self) -> str: ...  # the question restated in a few words, or ""
 
 
 class Answerer(Protocol):
@@ -524,11 +526,14 @@ class SidebarService:
         return True
 
     def _background(self, work: Coroutine[object, object, object], name: str) -> None:
-        task = asyncio.create_task(work, name=name)
+        async def run() -> None:
+            await work
+
+        task = asyncio.create_task(run(), name=name)
         self._tasks.add(task)
         task.add_done_callback(self._finished)
 
-    def _finished(self, task: asyncio.Task[object]) -> None:
+    def _finished(self, task: asyncio.Task[None]) -> None:
         """A background job ended: forget it, and log (never raise) how it failed."""
         self._tasks.discard(task)
         if not task.cancelled() and (error := task.exception()) is not None:
@@ -649,7 +654,7 @@ class SidebarService:
             name = await self.host.sidebar_table_name(table, user_id)
             if not self._still(table, user_id, dm=dm_only):
                 return  # (consent can be withdrawn while the name is looked up)
-            if not await reply(self._chat_line(name, question, SENT_PRIVATELY)):
+            if not await reply(self._chat_line(name, question, SENT_PRIVATELY, answer.question)):
                 return
             self._save_lines(
                 table, user_id, heard, question, asked_ms, answer, SENT_PRIVATELY, via, public
@@ -679,7 +684,7 @@ class SidebarService:
         pieces = [piece for text in shown for piece in _parts(text)]
         if public:
             # One message in the chat (no reply chain), kept inside Discord's limit.
-            message = self._chat_line(name, question, " ".join(shown))
+            message = self._chat_line(name, question, " ".join(shown), answer.question)
             pieces = [
                 message[: MESSAGE_LIMIT - 1].rstrip() + "…"
                 if len(message) > MESSAGE_LIMIT
@@ -748,7 +753,7 @@ class SidebarService:
                 ),
             )
 
-    def _chat_line(self, name: str, question: str, answer: str) -> str:
+    def _chat_line(self, name: str, question: str, answer: str, restated: str = "") -> str:
         """One message for the DMbot chat, in the owner's form (#1187):
 
             Q (Mira): Does fireball need line of sight?
@@ -756,7 +761,8 @@ class SidebarService:
 
         The name is the linked character's, else the nickname. What people said is escaped, so
         it can't format the message or ping anyone."""
-        short = " ".join(table_links.strip_links(question).split())
+        # The AI's few-word restatement when it gave one, else what was heard, shortened.
+        short = " ".join(table_links.strip_links(restated or question).split())
         name = table_links.strip_links(name) or "Someone"
         if len(short) > Q_CHARS:
             short = short[:Q_CHARS].rsplit(" ", 1)[0].rstrip(" ,;:") + "…"

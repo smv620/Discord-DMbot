@@ -105,6 +105,50 @@ class TheTablePrompt(unittest.TestCase):
         self.assertNotIn("http", table.text)
 
 
+class TheRestatedQuestion(unittest.TestCase):
+    """The owner asked for the Q line to be paraphrased: a few words from the same AI call."""
+
+    def test_the_reply_form_has_a_question_field_read_and_cut_to_twelve_words(self) -> None:
+        from dmbot.sidebar.answer import RESTATED_WORDS, parse
+
+        fields = parse(
+            "ANSWER: No.\nSOURCE: none\nCONFIDENCE: confident\nIN_GAME: yes\nON_TOPIC: yes\n"
+            "QUESTION: Does fireball need line of sight to the target or only a point within range"
+            " that you can see at all?"
+        )
+        self.assertEqual(len(fields.question.split()), RESTATED_WORDS)
+        self.assertTrue(fields.question.startswith("Does fireball need line of sight"))
+
+    def test_none_and_links_are_not_a_question(self) -> None:
+        from dmbot.sidebar.answer import parse
+
+        self.assertEqual(parse("ANSWER: Yes.\nQUESTION: none").question, "")
+        self.assertEqual(
+            parse("ANSWER: Yes.\nQUESTION: is https://evil.example.net/x fine to use").question,
+            "is fine to use",
+        )
+        self.assertEqual(parse("ANSWER: Yes.").question, "")  # an old-form reply still parses
+
+    def test_a_table_answer_carries_it_and_a_private_one_does_not(self) -> None:
+        raw = (
+            "ANSWER: No.\nSOURCE: none\nCONFIDENCE: confident\nIN_GAME: yes\nON_TOPIC: yes\n"
+            "QUESTION: Fireball needs a clear line?"
+        )
+        ai = FakeAI([raw, raw])
+        table = run(
+            engine(ai).answer(campaign(), "fireball and line of sight", asker_id=1, table=True)
+        )
+        private = run(engine(ai).answer(campaign(), "fireball and line of sight", asker_id=1))
+        self.assertEqual(table.question, "Fireball needs a clear line?")
+        self.assertEqual(private.question, "")
+
+    def test_the_prompt_asks_for_it_and_the_version_moved_on(self) -> None:
+        from dmbot.sidebar import answer
+
+        self.assertIn("QUESTION:", answer.SYSTEM)
+        self.assertEqual(answer.PROMPT_VERSION, "sidebar-9")
+
+
 class LinkAllowlist(unittest.TestCase):
     HOUSE = "https://docs.example.org/our-house-rules"
 
@@ -200,7 +244,7 @@ class TheChatHook(unittest.TestCase):
         self.asked.assert_called_once_with(self.table, PLAYER, "does fireball need line of sight")
 
     def test_bots_webhooks_and_dmbot_itself_are_never_answered(self) -> None:
-        self.bot._connection.user = SimpleNamespace(id=999)  # type: ignore[attr-defined]
+        self.bot._connection.user = SimpleNamespace(id=999)
         for msg in (message(bot=True), message(webhook=5), message(author=999)):
             self.assertTrue(self.bot._hear_dmbchat(msg))  # (handled: nothing else reads it)
         self.asked.assert_not_called()
@@ -227,11 +271,12 @@ class TheChatThroughOnMessage(unittest.IsolatedAsyncioTestCase):
         table.dmbchat_channel_id = CHAT
         table.listening = True
         bot.tables[GUILD] = table
-        bot.sidebar.ask_in_chat = MagicMock()  # type: ignore[method-assign]
-        bot._hear_typed = MagicMock()  # type: ignore[method-assign]
+        asked, typed = MagicMock(), MagicMock()
+        bot.sidebar.ask_in_chat = asked  # type: ignore[method-assign]
+        bot._hear_typed = typed  # type: ignore[method-assign]
         await bot.on_message(message())
-        bot.sidebar.ask_in_chat.assert_called_once()  # type: ignore[attr-defined]
-        bot._hear_typed.assert_not_called()
+        asked.assert_called_once()
+        typed.assert_not_called()
 
     async def test_the_dm_asking_there_is_a_question_like_anyone(self) -> None:
         bot = make_bot()
@@ -239,8 +284,7 @@ class TheChatThroughOnMessage(unittest.IsolatedAsyncioTestCase):
         table.dmbchat_channel_id = CHAT
         table.listening = True
         bot.tables[GUILD] = table
-        bot.sidebar.ask_in_chat = MagicMock()  # type: ignore[method-assign]
+        asked = MagicMock()
+        bot.sidebar.ask_in_chat = asked  # type: ignore[method-assign]
         await bot.on_message(message(author=DM))
-        bot.sidebar.ask_in_chat.assert_called_once_with(
-            table, DM, "does fireball need line of sight"
-        )  # type: ignore[attr-defined]
+        asked.assert_called_once_with(table, DM, "does fireball need line of sight")
