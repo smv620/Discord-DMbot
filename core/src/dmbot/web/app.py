@@ -37,6 +37,7 @@ from dmbot.web.accounts import (
     record_install,
 )
 from dmbot.web.admin import CSRF_HEADER, AdminSessions, FailedTries, GoogleSignIn
+from dmbot.web.characters import build_characters
 from dmbot.web.discord import DiscordError, DiscordOAuth
 from dmbot.web.export import build_export
 from dmbot.web.feedback import Discussions, FeedbackError, HumanCheck
@@ -301,6 +302,12 @@ def create_app(
     async def me(signed: Signed) -> dict[str, Any]:
         session, _token = signed
         return await build_me(db, session, now=clock())
+
+    @app.get("/me/characters")
+    async def me_characters(signed: Signed) -> dict[str, Any]:
+        """The signed-in person's own character sheets, read-only (#1164)."""
+        session, _token = signed
+        return {"characters": await build_characters(db, session)}
 
     @app.post("/me/recording/{server_id}/stop", status_code=204)
     async def stop_recording(server_id: str, signed: Signed) -> Response:

@@ -99,6 +99,22 @@ export interface Me {
   offers: { incoming: Offer[]; outgoing: Offer[] };
 }
 
+/** One of the person's own characters (#1164), read-only. Fields are missing when the sheet has
+ * not been read yet (a link only) or does not hold them. */
+export interface Character {
+  serverName: string;
+  campaign: string | null;
+  name: string | null;
+  classLine: string | null;
+  level: number | null;
+  maxHp: number | null;
+  ac: number | null;
+  /** The online sheet's link, if there is one. */
+  sheetLink: string | null;
+  typedIn: boolean;
+  readAt: string | null;
+}
+
 /** A server where this person said yes to recording (#1151). `on` is false when their yes was
  * given under older wording: DMbot records nobody until they say yes again in Discord. */
 export interface RecordingEntry {
@@ -154,6 +170,8 @@ export interface AccountApi {
   /** The file for "Download my data": the person's own data as JSON (#1150). Fetched from the
    * page, so a refusal (once a minute, or signed out) can be said in words. */
   downloadExport(): Promise<Blob>;
+  /** The person's own characters. Missing from an API older than #1164. */
+  characters?(): Promise<Character[]>;
   /** Stop recording me in one server (#1151). Starting again stays in Discord. */
   stopRecording(serverId: string): Promise<void>;
   /** Where "Add DMbot" goes: the API, which sends the browser on to Discord. */
@@ -261,6 +279,8 @@ export function httpApi(base: string, fetcher: typeof fetch = fetch): AccountApi
     billingPortalUrl: () => url("/billing/portal"),
     extraHoursUrl: () => url("/billing/extra-hours"),
     downloadExport: async () => (await call("GET", "/me/export", undefined, true)) as Blob,
+    characters: async () =>
+      ((await call("GET", "/me/characters")) as { characters: Character[] }).characters,
     installUrl: (serverId) => `${root}/install?server_id=${encodeURIComponent(serverId)}`,
     linkServer: async (serverId) => {
       await call("POST", `/servers/${encodeURIComponent(serverId)}/link`);
