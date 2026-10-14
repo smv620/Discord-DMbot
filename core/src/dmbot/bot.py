@@ -89,6 +89,7 @@ from dmbot.dm_screen import effects as timer_screen
 from dmbot.dm_screen import house_voice as house_voice_screen
 from dmbot.dm_screen import levels as screen_levels
 from dmbot.dm_screen import messages as screen_messages
+from dmbot.dm_screen.dmbchat_channel import DmbchatChannelError, setup_dmbchat_channel
 from dmbot.dm_screen.gametime_channel import GametimeChannelError, setup_gametime_channel
 from dmbot.dm_screen.handover import (
     AcceptOfferButton,
@@ -407,6 +408,13 @@ class Table:
     chat_on: bool = True
     chat_channel_id: int | None = None
     chat_notice_posted: bool = False  # the one line in the extra channel, once a session
+    # The campaign's DMbot chat channel (#1187): where the table asks DMbot and reads the answers.
+    dmbchat_channel_id: int | None = None
+    # People who typed there without having agreed, already shown the agree button this session.
+    dmbchat_nudged: set[int] = field(default_factory=set)
+    # Questions per person (at most ASK_PER_PERSON_PER_MINUTE a minute), so one player can't use
+    # up the table's questions.
+    person_limits: dict[int, AskLimiter] = field(default_factory=dict)
     typed_rate: table_chat.TypedRate = field(default_factory=table_chat.TypedRate)
     clock_waiting: int = 0  # clock-phrase checks running now (capped; #1154)
     # The campaign's D&D Beyond invite link, for the Join button on the messages players see
@@ -2077,6 +2085,7 @@ class DMBot(commands.AutoShardedBot):
             return False, join_blocked_message(problems)
         transcript_id, transcript_problem = await self._transcript_channel(guild, campaign, screen)
         gametime_problem = await self._gametime_channel(guild, campaign, screen)
+        dmbchat_id, dmbchat_problem = await self._dmbchat_channel(guild, campaign, screen)
 
         await self.campaigns.set_dm_screen(guild.id, campaign.id, screen_id)
         await self.campaigns.set_last_voice_channel(guild.id, campaign.id, voice.id)
@@ -2098,6 +2107,7 @@ class DMBot(commands.AutoShardedBot):
             dndbeyond_invite=campaign.dndbeyond_invite,
             chat_on=campaign.table_chat,
             chat_channel_id=campaign.table_chat_channel_id,
+            dmbchat_channel_id=dmbchat_id,
             started_at=started_at,
         )
         if table.rules_on:
@@ -2131,6 +2141,8 @@ class DMBot(commands.AutoShardedBot):
             await self.post(screen_id, transcript_problem)
         if gametime_problem:
             await self.post(screen_id, gametime_problem)
+        if dmbchat_problem:
+            await self.post(screen_id, dmbchat_problem)
         self._check_house_file(campaign, screen_id)
         transcript_line = (
             f"📜 Transcript (anyone in the server can read it): <#{transcript_id}>\n"
@@ -2436,6 +2448,13 @@ class DMBot(commands.AutoShardedBot):
             dndbeyond_invite=campaign.dndbeyond_invite,
             chat_on=campaign.table_chat,
             chat_channel_id=campaign.table_chat_channel_id,
+            # After a restart: still there, or the next /dmbot start makes it again.
+            dmbchat_channel_id=(
+                campaign.dmbchat_channel_id
+                if campaign.dmbchat_channel_id is not None
+                and self.get_channel(campaign.dmbchat_channel_id) is not None
+                else None
+            ),
             started_at=saved.started_at,
         )
         if table.rules_on:
@@ -2685,6 +2704,8 @@ class DMBot(commands.AutoShardedBot):
         the table (#1118): read only if it is in the table's chat and passes the checks."""
         if message.guild is not None:
             try:
+                if self._hear_dmbchat(message):
+                    return
                 if await self._chat_channel_allowed(message):
                     self._hear_typed(message)
             except Exception:
@@ -2694,6 +2715,83 @@ class DMBot(commands.AutoShardedBot):
             await self.sidebar.on_dm_message(message)
         except Exception:
             log.exception("Couldn't handle a private message")
+
+    def _hear_dmbchat(self, message: discord.Message) -> bool:
+        """A message in this session's DMbot chat channel (#1187): True if it was one (read or
+        not), so no other path looks at it. Every message there is a question for DMbot, from
+        anyone who agreed to be recorded; bots, DMbot itself and commands are never answered.
+        Only this campaign's channel counts: another campaign's chat in the same server has a
+        different id and is never read."""
+        guild = message.guild
+        table = self.tables.get(guild.id) if guild is not None else None
+        if table is None or message.channel.id != table.dmbchat_channel_id:
+            return False
+        author = message.author
+        if (
+            not table.listening
+            or author.bot
+            or (self.user is not None and author.id == self.user.id)
+            or message.webhook_id is not None
+            or message.type not in table_chat.READ_TYPES
+            or getattr(message, "interaction_metadata", None) is not None
+        ):
+            return True
+        text = table_chat.clean(message.clean_content)  # names, not <@123> markup
+        if text is not None:
+            self.sidebar.ask_in_chat(table, author.id, text)
+        return True
+
+    async def sidebar_post_chat(self, table: Table, text: str) -> bool:
+        """Post in the session's DMbot chat channel (#1187); False if there is none."""
+        if table.dmbchat_channel_id is None:
+            return False
+        return await self.post(table.dmbchat_channel_id, text)
+
+    async def sidebar_table_name(self, table: Table, user_id: int) -> str:
+        """How the table's answer names someone: their linked character's name when a sheet is
+        linked, else their server nickname (#1187)."""
+        name = self.name_of(table.guild_id, user_id)
+        if self.sheets is not None and table.campaign_id is not None:
+            try:
+                for sheet in await self.sheets.sheets(table.guild_id, table.campaign_id):
+                    if sheet.played_by == user_id:
+                        return str(sheet.name)
+            except Exception:
+                log.exception("Couldn't look up a character name; using the nickname")
+        return name
+
+    async def sidebar_links(self, table: Table) -> tuple[str | None, tuple[str, ...]]:
+        """The links this campaign has shared (#1187), and only this campaign's: its house-rules
+        file of record, which the table's answers may show (the owner's decision, 2026-10-14;
+        the file's own docstring says the link is otherwise private), and nothing else yet.
+        dndbeyond.com is allowed without being listed."""
+        house = None
+        if self.house_file_links is not None and table.campaign_id is not None:
+            try:
+                found = await self.house_file_links.get(table.guild_id, table.campaign_id)
+                house = found.link if found is not None else None
+            except Exception:
+                log.exception("Couldn't read the house-rules link; showing no link")
+        return house, ()
+
+    async def sidebar_nudge_chat(self, table: Table, user_id: int) -> None:
+        """Someone typed in the DMbot chat before agreeing to be recorded: one short reply with
+        the agree button, once a session. What they typed is not kept or sent anywhere."""
+        if table.dmbchat_channel_id is None:
+            return
+        view = request_view(
+            table.guild_id,
+            outside=self.outside_engine,
+            test_voice=self.test_voice_listed(table.guild_id),
+            invite=table.dndbeyond_invite,
+        )
+        await self.post(
+            table.dmbchat_channel_id,
+            f"{discord.utils.escape_markdown(self.name_of(table.guild_id, user_id))}: to ask "
+            "DMbot, first say yes to being recorded with the button below. No pressure, you can "
+            "still play. DMbot did not keep what you typed.",
+            view,
+        )
 
     def sidebar_has_consent(self, guild_id: int, user_id: int) -> bool:
         return self.consent.has_consent(guild_id, user_id)
@@ -5180,6 +5278,26 @@ class DMBot(commands.AutoShardedBot):
         except Exception:
             log.exception("Couldn't put the players' clock in the game-time channel")
         return None
+
+    async def _dmbchat_channel(
+        self, guild: discord.Guild, campaign: Campaign, screen: object
+    ) -> tuple[int | None, str | None]:
+        """The table's DMbot chat channel (#1187), made or repaired at every start: its id, or a
+        note for the DM if it couldn't be set up. A failure here never stops a session."""
+        category = getattr(screen, "category", None)
+        try:
+            channel = await setup_dmbchat_channel(
+                guild,
+                campaign.id,
+                self.campaigns,
+                category=category if isinstance(category, discord.CategoryChannel) else None,
+            )
+        except DmbchatChannelError as exc:
+            return None, screen_messages.dmbchat_failed(str(exc))
+        except Exception:
+            log.exception("Couldn't set up the DMbot chat channel")
+            return None, screen_messages.dmbchat_failed(screen_messages.TRANSCRIPT_NO_ANSWER)
+        return channel.id, None
 
     def _usable_transcript(self, guild: discord.Guild, campaign: Campaign) -> int | None:
         """After a restart: the campaign's transcript channel, if it's still one and

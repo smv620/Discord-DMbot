@@ -68,9 +68,15 @@ class Engine(sidebar.Sidebar):
     """The engine, asked by the DM (id 7) unless a test says otherwise."""
 
     async def answer(
-        self, campaign: Campaign, question: str, *, asker_id: int = 7, scene: str = ""
+        self,
+        campaign: Campaign,
+        question: str,
+        *,
+        asker_id: int = 7,
+        scene: str = "",
+        table: bool = False,
     ) -> sidebar.Answer:
-        return await super().answer(campaign, question, asker_id=asker_id, scene=scene)
+        return await super().answer(campaign, question, asker_id=asker_id, scene=scene, table=table)
 
 
 def engine(
@@ -378,7 +384,7 @@ class AccuracyPart3(unittest.TestCase):
         self.assertIn("not in DMbot's rules", got.text)
 
     def test_the_prompt_version_moved_on(self) -> None:
-        self.assertEqual(sidebar.PROMPT_VERSION, "sidebar-6")
+        self.assertEqual(sidebar.PROMPT_VERSION, "sidebar-9")
 
 
 class CarefulSecondTry(unittest.TestCase):
@@ -729,7 +735,7 @@ class Lineage(unittest.TestCase):
         ai = FakeAI([reply("No.", "SRD 5.2.1 p. 131")])
         got = run(engine(ai).answer(campaign(), "do you need line of sight for fireball"))
         self.assertEqual(got.model, "fake-fast-model")
-        self.assertEqual(got.prompt_version, "sidebar-6")
+        self.assertEqual(got.prompt_version, "sidebar-9")
         self.assertEqual(got.sources, ("SRD 5.2.1 p. 131",))
         self.assertGreaterEqual(got.seconds, 0)
 

@@ -44,8 +44,10 @@ from dmbot.db import Conn, Database
 # goes up again. Version 4: DMbot's minimum age is 16 and the button confirms it (owner,
 # 2026-10-10; #1018): no age or birthdate is stored, the yes under this wording is the
 # confirmation. Version 5: DMbot also reads what is typed in the table's chat while it is
-# listening (owner, 2026-10-13; #1118), so everyone is asked again.
-TERMS_VERSION = 5
+# listening (owner, 2026-10-13; #1118), so everyone is asked again. Version 6: it also reads
+# what is typed in the campaign's DMbot chat channel, where anyone at the table may ask it a
+# question and the answer is posted for everyone (owner, 2026-10-14; #1187).
+TERMS_VERSION = 6
 # How someone said yes: the button in DMbot's private message, or in the reply to
 # /consent give in the server.
 ConsentMethod = Literal["private_message", "consent_command"]

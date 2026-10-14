@@ -1617,6 +1617,29 @@ GAMETIME_CHANNEL = """
     ALTER TABLE game_clocks ADD COLUMN players_message_id BIGINT;
 """
 
+DMBCHAT_CHANNEL = """
+    -- The table's DMbot chat channel (docs/PLAN.md, "Table questions: anyone may ask"; #1187):
+    -- `dmb-chat-<slug>`, where anyone at the table asks DMbot a quick rules question and the
+    -- answer is posted for everyone. Its id is a channel id: it means nothing in another
+    -- server, so (like the DM screen's) none goes into a backup. A nullable column: no row
+    -- changes, so no row-level-security policy is needed.
+    ALTER TABLE campaigns ADD COLUMN dmbchat_channel_id BIGINT;
+"""
+
+TABLE_QUESTIONS = """
+    -- A player's question to DMbot, and the answer posted in the table's DMbot chat (#1187):
+    -- a new kind of sidebar line, `table_question`, shown in the as-heard (raw) transcript as
+    -- `[Table Q via=...]`, never in the cleaned one. A question typed in the DMbot chat has
+    -- the new "via" `chat`. Only two CHECK constraints are replaced to allow the new values:
+    -- no row changes, so no row-level-security policy is needed.
+    ALTER TABLE transcript_lines DROP CONSTRAINT transcript_lines_sidebar_check;
+    ALTER TABLE transcript_lines ADD CONSTRAINT transcript_lines_sidebar_check
+        CHECK (sidebar IN ('question', 'answer', 'table_question'));
+    ALTER TABLE transcript_lines DROP CONSTRAINT transcript_lines_sidebar_via_check;
+    ALTER TABLE transcript_lines ADD CONSTRAINT transcript_lines_sidebar_via_check
+        CHECK (sidebar_via IN ('voice-memo', 'typed', 'table-trigger', 'table-chat', 'chat'));
+"""
+
 DNDBEYOND_INVITE = """
     -- The DM's own D&D Beyond campaign invite link (#1119; docs/PLAN.md, "The D&D Beyond
     -- campaign invite"), passed on to players on a button. Only the one standard form is
@@ -2033,6 +2056,8 @@ MIGRATIONS: tuple[Migration, ...] = (
     ("0053_combat_state", COMBAT_STATE),
     ("0054_sheet_questions", SHEET_QUESTIONS),
     ("0055_fightbot", FIGHTBOT),
+    ("0056_dmbchat_channel", DMBCHAT_CHANNEL),
+    ("0057_table_questions", TABLE_QUESTIONS),
 )
 
 # Tables that must have row-level security. A test checks every table in the schema
