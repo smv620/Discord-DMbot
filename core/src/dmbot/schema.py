@@ -2329,6 +2329,10 @@ PAYMENT_EMAIL = """
         CHECK (payment_email IS NULL OR char_length(payment_email) BETWEEN 3 AND 254);
     -- When the company said so (its event time): an older event never replaces a newer one.
     ALTER TABLE web_users ADD COLUMN payment_email_at BIGINT;
+    -- Sign-in by emailed link finds an account by lower(email) or lower(payment_email); without
+    -- this every request would scan web_users.
+    CREATE INDEX web_users_by_payment_email ON web_users (lower(payment_email))
+        WHERE payment_email IS NOT NULL;
     -- A changed address arrives with the company's customer id, not ours: this door finds the
     -- account by the customer id stored with its plan and sets the address, only for an event
     -- newer than the one already kept. The website's role has no other way to look an account

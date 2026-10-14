@@ -3106,6 +3106,8 @@ stays, and so does the meaning of each event kind:
   `user_id`) is `email_updated`: it only keeps the payer's address as the account's payment email
   (#1242). The Stripe dashboard's webhook endpoint (https://dashboard.stripe.com/webhooks) must
   list `customer.updated` too, or a changed address arrives with the next invoice instead.
+  A payment email is whatever the payer typed into Stripe: if one address belongs to two accounts,
+  sign-in by email finds neither (by design), so the person signs in with Discord instead.
   Everything else is ignored.
 - **Ids, times and periods:** an event's id is Stripe's own event `id`, and `occurred_at` is its
   `created`. The billing period is the subscription's current period start and end.
