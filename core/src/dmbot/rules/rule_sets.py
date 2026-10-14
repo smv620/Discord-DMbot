@@ -966,7 +966,8 @@ class RuleSetStore:
         with no code was picked from the list in its own server, where a set that is not there
         any more is deleted. (A restored backup's follow has no code and does not update, so it
         is never asked.) A follow made from ANOTHER server before share codes were kept has no
-        code either and could not update anyway, so it too reads as gone once, harmlessly."""
+        code either and could not update anyway, so it too reads as gone once, harmlessly (none
+        exist yet: nothing with share codes is deployed)."""
         if follow.code is not None:
             cur = await conn.execute(
                 "SELECT * FROM dmbot_set_update_by_code(%s, %s)", (follow.code, follow.followed_at)

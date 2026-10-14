@@ -5,6 +5,8 @@ restored campaign keeps its copy as a follow that no longer updates. Needs Postg
 from __future__ import annotations
 
 import json
+from collections.abc import Callable
+from typing import Any
 
 from dmbot.campaigns import CampaignError, CampaignStore
 from dmbot.rules import followed
@@ -76,14 +78,15 @@ class FollowedBackup(_Base):
 
     async def test_a_damaged_follow_row_is_refused_whole(self) -> None:
         backup = await self.campaigns.export(GUILD_B, self.far)
-        for damage in (
+        damages: tuple[Callable[[dict[str, Any]], object], ...] = (
             lambda r: r.update(version=0),
             lambda r: r.update(set_id="nope"),
             lambda r: r.update(kind="elsewhere"),
             lambda r: r.update(content={"rules": "no"}),
             lambda r: r.update(code="ABCDEFGHIJ"),
             lambda r: r.pop("by"),
-        ):
+        )
+        for damage in damages:
             broken = json.loads(json.dumps(backup))
             damage(broken["sections"]["rule_set_follows"][0])
             with self.assertRaises(CampaignError):

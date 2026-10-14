@@ -141,8 +141,8 @@ async def open_menu(interaction: discord.Interaction, campaign: Campaign) -> Non
         note = (
             ""
             if followed.updating
-            else " This copy no longer gets updates. To get them, unfollow it and follow it "
-            "again with the share code."
+            else " This copy no longer gets updates. To get them again, ask its DM to share it "
+            "with you again."
         )
         lines.append(
             f"• Using: **{_escape(followed.name)}** from {_escape(followed.publisher)} "

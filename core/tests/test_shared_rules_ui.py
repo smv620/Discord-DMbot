@@ -154,7 +154,7 @@ class Robustness(unittest.IsolatedAsyncioTestCase):
         await shared_rules.open_menu(it, campaign())
         text = it.sent[0][0]
         self.assertIn("no longer gets updates", text)
-        self.assertIn("follow it again with the share code", text)
+        self.assertIn("ask its DM to share it with you again", text)
         self.assertNotIn("isn't shared any more", text)
 
     async def test_undo_rechecks_the_person(self) -> None:

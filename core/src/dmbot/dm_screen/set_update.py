@@ -487,7 +487,9 @@ async def check_update(bot: Any, campaign: Campaign, screen_id: int) -> None:
                     for f in await sets.following(campaign.guild_id, campaign.id)
                     if f.kind == rule_sets.HOUSE_RULES and f.updating
                 ]
-                await sets.stop_updating(campaign.guild_id, campaign.id)
+                stopped = await sets.stop_updating(campaign.guild_id, campaign.id)
+                if not stopped:
+                    return  # another check got there first and said it: said once
                 if houses:
                     name = discord.utils.escape_markdown(houses[0].name)
                     text = (

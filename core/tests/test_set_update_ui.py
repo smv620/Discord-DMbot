@@ -62,7 +62,7 @@ def bot_with(**sets: Any) -> Any:
     store = SimpleNamespace(
         pending_update=AsyncMock(return_value=None),
         is_gone=AsyncMock(return_value=False),
-        stop_updating=AsyncMock(),
+        stop_updating=AsyncMock(return_value=1),
         following=AsyncMock(return_value=[follow_at(4)]),
         take_update=AsyncMock(),
         undo_last_take=AsyncMock(),
@@ -247,6 +247,13 @@ class SessionStart(unittest.IsolatedAsyncioTestCase):
         self.assertIn(
             "Your table keeps version 4, and it won't get updates.", bot.post.await_args.args[1]
         )
+
+    async def test_the_gone_note_is_not_said_twice_when_two_checks_race(self) -> None:
+        bot = bot_with(
+            is_gone=AsyncMock(return_value=True), stop_updating=AsyncMock(return_value=0)
+        )
+        await set_update.check_update(bot, campaign(), 99)
+        bot.post.assert_not_called()  # the other check already stopped it and said it
 
     async def test_the_note_names_the_house_rules_set_not_another_follow(self) -> None:
         homebrew = rule_sets.Follow("h", "homebrew", "Pack", "Blue", 9, {}, True, 1, None)
