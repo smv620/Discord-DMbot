@@ -99,6 +99,13 @@ export const playerSteps: Step[] = [
   {
     text: "A linked sheet must be set to Public on the sheet's own site, so anyone with the link can open it. Your game master sees it on your character's card.",
   },
+  {
+    text: "In a fight, DMbot's fight helper, FightBot, may send you a short private reminder of what your sheet says you still have, like a spell, a feature, or spell slots. It only reminds you. Your game master decides what happens. To switch it off, press 📜 My character sheet, then Turn FightBot off.",
+    names: [{ name: "Turn FightBot off", file: "ui/sheets.py" }],
+  },
+  {
+    text: "If your sheet is linked online, your spell slots show on your character card. About a minute after someone at the table says a slot was used, DMbot looks at your sheet again to keep up. It never changes your sheet.",
+  },
 ];
 
 /** Your account (#1215): DMbot has no password of its own, and a new Discord account starts clean. */
