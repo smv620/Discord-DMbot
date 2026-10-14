@@ -8,6 +8,7 @@ import hashlib
 import hmac
 import json
 import unittest
+from collections.abc import Callable
 from typing import Any, ClassVar
 from unittest import mock
 from urllib.parse import parse_qs, urlsplit
@@ -114,15 +115,24 @@ def sign(body: bytes, *, at: int = int(NOW), secret: bytes = SECRET) -> str:
     return f"t={at},v1={digest}"
 
 
+def _clock_at(moment: float) -> Callable[[], float]:
+    """A clock that always says `moment`."""
+    return lambda: moment
+
+
 class Fake:
     """A fake Stripe API: records calls, answers from `answers`."""
 
     def __init__(self) -> None:
         self.calls: list[tuple[str, str, Any]] = []
+        self.keys: list[str | None] = []  # the idempotency key of each call, in order
         self.answers: dict[tuple[str, str], tuple[int, Any]] = {}
 
-    async def __call__(self, method: str, path: str, form: Any) -> tuple[int, Any]:
+    async def __call__(
+        self, method: str, path: str, form: Any, idempotency_key: str | None = None
+    ) -> tuple[int, Any]:
         self.calls.append((method, path, form))
+        self.keys.append(idempotency_key)
         return self.answers.get((method, path), (404, None))
 
 
@@ -296,6 +306,30 @@ class Provider(unittest.IsolatedAsyncioTestCase):
         back = self.provider.parse(resumed)
         assert back is not None
         self.assertEqual(back.kind, "subscription_renewed")  # active again: clears a cancel
+
+    def test_a_plan_change_while_a_cancel_is_pending_is_the_cancel_and_says_so_in_the_log(
+        self,
+    ) -> None:
+        body = event(
+            "customer.subscription.updated",
+            subscription(cancel_at_period_end=True),  # now on the table plan
+            previous={"items": {"data": [{"price": {"id": "price_other"}}]}},
+        )
+        with self.assertLogs("dmbot.web.stripe", level="INFO") as logs:
+            parsed = self.provider.parse(body)
+        assert parsed is not None
+        # Decided on #1122: one event, the cancel; only the end date is stored.
+        self.assertEqual(parsed.kind, "subscription_cancelled")
+        self.assertEqual(parsed.period_end, PERIOD_END)
+        self.assertTrue(any("only the end date is stored" in r.getMessage() for r in logs.records))
+        # A plain cancel logs nothing of the kind.
+        plain = event(
+            "customer.subscription.updated",
+            subscription(cancel_at_period_end=True),
+            previous={"cancel_at_period_end": False},
+        )
+        with self.assertNoLogs("dmbot.web.stripe", level="INFO"):
+            self.provider.parse(plain)
 
     def test_a_cancel_date_works_like_cancel_at_period_end(self) -> None:
         end = PERIOD_END + 86400
@@ -495,6 +529,64 @@ class Provider(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(form["subscription_data[metadata][user_id]"], str(USER))
         self.assertEqual(form["success_url"], "https://dmbot.example/account")
         self.assertNotIn("discounts[0][coupon]", form)
+
+    async def test_a_double_click_sends_the_same_idempotency_key_and_expiry(self) -> None:
+        self.http.answers[("POST", "/v1/checkout/sessions")] = (200, {"url": CHECKOUT_URL})
+
+        async def ask(user: int = USER, email: str | None = None) -> None:
+            await self.provider.checkout_url(
+                user_id=user,
+                email=email,
+                plan=plans.load().by_id["table"],
+                first_month_cents=None,
+                return_url="https://dmbot.example/account",
+            )
+
+        await ask()
+        await ask()  # the same request again, moments later
+        first, second = self.http.keys
+        assert first is not None
+        self.assertEqual(first, second)
+        self.assertTrue(first.startswith("dmbot-checkout-"))
+        self.assertLessEqual(len(first), 255)
+        forms = [call[2] for call in self.http.calls]
+        self.assertEqual(forms[0]["expires_at"], forms[1]["expires_at"])  # or Stripe refuses it
+        # Another person, plan or address is another checkout.
+        await ask(user=USER + 1)
+        await ask(email="player@example.com")
+        self.assertEqual(len({*self.http.keys}), 3)
+        self.assertNotIn("player@example.com", " ".join(k or "" for k in self.http.keys))
+
+    async def test_the_expiry_is_at_least_thirty_minutes_away_and_a_new_window_is_a_new_key(
+        self,
+    ) -> None:
+        self.http.answers[("POST", "/v1/checkout/sessions")] = (200, {"url": CHECKOUT_URL})
+        start = (int(NOW) // 300 + 1) * 300.0  # the first second of a window
+        for now in (start, start + 299.0, start + 301.0):  # its first, its last, the next's
+            provider = StripeProvider(CONFIG, SECRET, transport=self.http, clock=_clock_at(now))
+            await provider.extra_hours_checkout_url(
+                user_id=USER, email=None, return_url="https://dmbot.example/account"
+            )
+            expires = int(self.http.calls[-1][2]["expires_at"])
+            self.assertGreaterEqual(expires - now, 1800 + 60)  # a margin even in the last second
+            self.assertLessEqual(expires - now, 1800 + 120 + 300)
+        keys = self.http.keys
+        self.assertEqual(len(keys), 3)
+        self.assertNotEqual(keys[0], keys[2])  # five minutes later: a new checkout is allowed
+
+    async def test_only_checkout_creation_carries_a_key(self) -> None:
+        self.http.answers[("POST", "/v1/billing_portal/sessions")] = (
+            200,
+            {"url": "https://billing.stripe.com/p/x"},
+        )
+        await self.provider.billing_url(customer_id="cus_777", return_url="https://x.example")
+        self.http.answers[("GET", "/v1/subscriptions/sub_55")] = (
+            200,
+            {"status": "active", "cancel_at_period_end": False},
+        )
+        self.http.answers[("POST", "/v1/subscriptions/sub_55")] = (200, {})
+        await self.provider.cancel(subscription_id="sub_55")
+        self.assertEqual(set(self.http.keys), {None})
 
     async def test_the_first_month_uses_the_once_only_coupon(self) -> None:
         self.http.answers[("POST", "/v1/checkout/sessions")] = (200, {"url": CHECKOUT_URL})
@@ -746,6 +838,20 @@ class Transport(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(kwargs["data"], {"mode": "payment"})
         self.assertFalse(kwargs["allow_redirects"])
+
+    async def test_it_sends_the_idempotency_key_as_a_header_only_when_given(self) -> None:
+        transport = HttpTransport("sk_test_not_real")
+        context = _answering(200, {"ok": True})
+        with mock.patch.object(aiohttp.ClientSession, "request", return_value=context) as sent:
+            await transport(
+                "POST", "/v1/checkout/sessions", {"mode": "payment"}, "dmbot-checkout-x"
+            )
+            await transport("GET", "/v1/subscriptions/sub_1", None)
+        await transport.close()
+        with_key, without = (call.kwargs["headers"] for call in sent.call_args_list)
+        self.assertEqual(with_key["Idempotency-Key"], "dmbot-checkout-x")
+        self.assertEqual(with_key["Authorization"], "Bearer sk_test_not_real")
+        self.assertNotIn("Idempotency-Key", without)
 
     async def test_an_answer_that_is_not_json_is_none_not_a_crash(self) -> None:
         transport = HttpTransport("sk_test_not_real")

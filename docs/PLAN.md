@@ -189,6 +189,18 @@ database.
   session lease), because the rolling window and look-back keep state per session.
 - **Later, if ever needed:** Apache AGE adds graph queries on the same Postgres, after
   checking it works with row-level security.
+- **Confirmed 2026-10-14 (owner asked: RDF-star or a labelled property graph?):** a labelled property
+  graph (LPG) in these tables, with RDF's discipline. Every fact is one edge, subject → predicate → object
+  (`Mia → plays → Vaelora`), and the edge carries its details as properties (confidence, source, status,
+  game time, evidence), which is what RDF-star's statements about statements would give us. **Each
+  relationship is stored once, in one direction:** a predicate declares its inverse's label ("played by")
+  for reading from the other side, and synonyms (`controls`, `controlled_by`) map to it, so the graph
+  never holds the same fact twice under different words. **The vocabulary grows, but governed:** the core
+  predicates are in code; the AI may *propose* a new predicate for one campaign, which is accepted only
+  if no existing one fits (searched by name and meaning) and it comes with a description, domain and
+  range, inverse label, how many are allowed and an example (rules 1–3, 9). An AI free to invent edges
+  would scatter one idea across many names (plays, controls, is_player_of, runs) and the checks and
+  questions ("who plays Vaelora?") would miss facts.
 
 **Hosting target: public bot, shard pods + workers (decided 2026-10-04, #57).** DMbot will
 be a public bot others can install, on a scalable Kubernetes platform. *This replaces the
@@ -240,7 +252,7 @@ than in separate volumes.
 | 3 | **Rules advisor + house rules**: alerts with ✅ Agree / 🙈 Ignore / ⚖️ Override, house rules by voice with DM approval, `/dmbot houserules` | Uses the rules hierarchy below |
 | 4 | **TimeBot**: game clock, effect durations, rests, dawn/noon/dusk, split-party clocks | |
 | 5 | **NPC tracker** (remembers NPCs, relationships, factions between sessions), then **PlotBot** (DM-confirmed story events) | Read the campaign memory; use **confirmed** entities and relationships only. *Split (decided 2026-10-06, docs/STORY_MEMORY.md):* 5a claims, state facts and the first continuity warnings · 5b NPC tracker, who knows what, hierarchical reputations · 5c PlotBot: threads, promises, summaries, pre-session note · 5d the Shared story switch |
-| 6 | **DM sidebar**: quick, very short AI answers for the DM, by voice memo or by asking out loud at the table; tagged `[DM Sidebar]` in the raw transcript only (owner, 2026-10-09) | No install needed; being built early, after the rules lookup |
+| 6 | **DM sidebar**: quick, very short AI answers for the DM, by voice memo or by asking out loud at the table; tagged `[DM Sidebar]` in the raw transcript only (owner, 2026-10-09). **Since 2026-10-14 anyone at the table may ask** ("Hey DMbot…" or typed in `dmb-chat`), and table questions are answered in the campaign's chat channel (see "Table questions") | No install needed; being built early, after the rules lookup |
 | 7 | **Google Drive** (writing the house-rules file of record directly) and **character data** from D&D Beyond links | Reading a linked house-rules file and the download come first (2026-10-09) |
 | later | Paid service billing (owner's key, per-server metering); D&D Beyond companion extension; optional DM hotkey helper | |
 
@@ -843,6 +855,7 @@ so the docs always show names the way Discord does. For the campaign
 | Live transcript (cleaned lines, view only) | `dmb-transcript-rmfthfrstmdn` | Phase 1 (#124, built 2026-10-06; misheard names fixed since 2026-10-07, #127) |
 | Rules archive (house rules, overrides, rulings) | `dmb-rules-rmfthfrstmdn` | Phase 3 |
 | Game time (the players' clock; owner, 2026-10-13) | `dmb-gametime-rmfthfrstmdn` | Phase 4 |
+| DMbot chat (table questions and their answers; owner, 2026-10-14) | `dmb-chat-rmfthfrstmdn` | Phase 4 |
 | NPCs (roster, relationships, factions) | `dmb-npcs-rmfthfrstmdn` | Phase 5 |
 | Plot (story beats, places, hooks) | `dmb-plot-rmfthfrstmdn` | Phase 5 |
 
@@ -1458,6 +1471,15 @@ versioned and self-checking:
 3. **Reuse before creating:** before adding a relationship, search the existing ones by
    name and meaning ("friends_with" maps to `ally_of`). Every new term needs a plain
    description, a parent, a domain and range, examples, and a reason.
+   *How (owner, 2026-10-14):* synonym list, spelling, then meaning by in-context embedding distance
+   between terms that connect the same kinds of things; thresholds set offline on a golden set; the DM never
+   approves terms, only facts; a refused term's fact goes on `associated_with` with a label. Term embeddings
+   are stored on the predicate's definition, each fact's in-context embedding in the edge's properties.
+   See docs/STORY_MEMORY.md, "How the ontology steward decides a new term".
+   *Traceable definitions (owner, 2026-10-14):* every relationship, core and campaign, has a real-world
+   definition (description, covers, not this, examples) kept in the database by version, and each fact records
+   the version it was written under; `sworn_to` joins the core (paladin oaths, warlock pacts). See
+   docs/STORY_MEMORY.md, "The official list of relationships"; build #1189.
 4. **Only add, never silently rewrite:** terms are deprecated, not deleted, and every move
    of existing data to another term is logged.
 5. **Checked on every write:** domain and range, how many are allowed ("one birthplace"),
@@ -1496,6 +1518,50 @@ and categories are never kinds.
   character with that role; a named creature becomes a character, and a spell an idea, both marked
   "needs a look" for the DM (nothing is deleted); a campaign's own kinds and relationships that
   named an older kind name its replacement. Older backups are mapped the same way on load.
+
+**Players and the DM in the names (owner, 2026-10-14).** DMbot also learns the names the table uses for
+the **real people** at it, so "Mike, what do you do?" followed by "I run at it with my sword" tells it
+that Mike is the person who just spoke, and that this person plays the character the DM was talking to.
+- **A new kind, `person`, shown as "player or DM".** It is the one kind that is not part of the story: it
+  stands for a real person at this campaign's table and is always tied to their Discord account. Its
+  names are the names the table calls them ("Mike", "Mikey"); their server nickname and display name
+  count as names already, without asking. It sits next to the story kinds in every names menu ("What is
+  it?", Browse by kind, the overview, Add many), but PlotBot, NPCBot and the story checks ignore it.
+- **Every person is checked: they play a character, or they are the DM.**
+  - `plays`: person → character (read from the other side as "played by"). This is the "played by" link
+    that **🧑 Add a player's character** and the D&D Beyond sheet already make, now stored as one edge from
+    the person. `controls` and `controlled_by` are registered synonyms that map to it (rule 3, reuse before
+    creating), never second edges. A person may play more than one character; a player character has one player at a time.
+  - **The DM:** a person who is one of the campaign's DMs (from the campaign's DM list, never guessed)
+    answers to **DM, GM, Dungeon Master and Game Master** as well as their own names. These four are
+    built in for every campaign and are never suggested, fixed into anything else, or used for a
+    character.
+  - A person with neither (someone who only watches) is flagged "needs a look" for the DM, never fixed
+    silently (ontology rule 5).
+- **How DMbot learns it, without AI.** Only from consented speakers' lines, while listening. DMbot knows
+  who said each line, so it watches for **a name, then an answer**: a line that calls someone by name
+  ("Mike, what do you do?", "…your turn, Cerric") and, within about 10 seconds, the next line, said by
+  someone else, who answers in the first person ("Ok, I'll do that.", "I run with my sword", "I cast…").
+  - A **new name** that is answered that way by the same person **at least twice in a session** is
+    suggested in **📝 Check new names** as a player or DM: "When someone said **Mike**, **Mia** answered (3
+    times). Is Mike a name for Mia? [Yes, that's Mia] [Someone else…] [Not a player]".
+  - A **character** with no player that is answered that way by the same person at least twice is
+    suggested as theirs: "**Mia** answered to **Cerric** 3 times. Does Mia play Cerric? [Yes] [No]".
+  - When the answers point to someone other than the known player, nothing changes and nothing is asked;
+    it is only counted (it may be a shared microphone or crosstalk).
+  - Nothing is stored as true until the DM confirms (rule 8). Everything the DM sets by hand counts as
+    confirmed, as today.
+- **The Cleaner** treats a player's name like any other name: it may fix its spelling. It never turns a
+  player's name into a character's name or the other way round, because they are different people, even
+  when they sound alike ("Mike" and "Mikal").
+- **Where it helps:** the `Q (name)` line in `dmb-chat`, speaker labels in transcripts, the sidebar
+  knowing who "Mike" is, and FightBot and the sheet re-reads knowing whose character an action belongs to.
+- **Privacy:** these are the real names of people at the table. They stay in this one campaign (never
+  shared with another campaign or server), they go into the campaign's backups with the person kept as a
+  Discord user ID (as the DM list already is), and the DM can remove them from the person's card. **Stop
+  recording me** removes the names DMbot *learned* for that person and any suggestions still waiting;
+  names and links the DM set by hand stay. Never in GitHub, tests or logs: tests use made-up names.
+- **Build:** #1188 (CloudDev).
 
 *Proposed additions (2026-10-06, docs/STORY_MEMORY.md, not yet decided):* a core v2
 with story threads, promises, clues and state facts (`condition`: alive, dead, missing…,
@@ -2037,7 +2103,10 @@ table isn't left waiting while the DM looks something up.
 - **Only on topic:** the campaign, the game's rules and content, DMbot itself, and Discord
   mechanics. Anything else gets one short line saying it can't help with that here.
 - **Where answers go:** privately, in the DM's chat with DMbot, never in a public
-  channel.
+  channel. *Changed 2026-10-14 (owner):* this stays true for the **voice memo and the DM's
+  private chat**. A question asked **at the table** ("Hey DMbot…", "hold on, I need to
+  find…") or **typed in `dmb-chat`** is answered in `dmb-chat`, for everyone; see "Table
+  questions: anyone may ask" below.
 - **Transcripts:** the DM's sidebar lines are added to the **raw** transcript with the tag
   `[DM Sidebar]`, and DMbot's replies about in-game content are added under the speaker
   name `DMbot`. Both are always kept out of the **cleaned** transcript. **The raw transcript
@@ -2187,9 +2256,65 @@ what came before: "…so they're in the cave, hey DMbot what's the range of fire
 end of the line, is the question. A **bare "DMbot"** also calls it, but only when a pause or comma follows or the
 next word asks ("DMbot, what…", "DMbot is fireball…", "DMbot check…"); "…and DMbot said earlier…" or "the DMbot
 screen" do not. With two calls in a line, the last real one asks. Only the DM (a player's line does nothing), never a
-line tagged in character. Speech-to-text spellings, matched on word boundaries: DMbot, DM bot, D.M. bot, D M bot,
+line tagged in character. *Changed 2026-10-14 (owner): any consented player may now call "Hey DMbot" too, and the
+answer goes to `dmb-chat`; see "Table questions: anyone may ask".* Speech-to-text spellings, matched on word boundaries: DMbot, DM bot, D.M. bot, D M bot,
 DM-bot, Dee em bot, the M bot (a constant in `sidebar/ask.py`). The answer stays private (the DM's chat only) and
 the raw transcript keeps its `[DM Sidebar]` lines.
+
+**Table questions: anyone may ask (owner, 2026-10-14).** Until now only the DM could ask DMbot, and
+only the DM saw the answer. Now **anyone at the table** may ask, and a question asked at the table gets its
+answer **where the whole table can read it**, so nobody waits while someone looks something up.
+- **Two ways to ask:**
+  1. **Say "Hey DMbot, …"** at the table (the wake phrase above, now from anyone who agreed to be recorded,
+     not only the DM). "Hold on, I need to find…" stays the DM's alone: a player saying "I need to check my
+     sheet" is not a question to DMbot.
+  2. **Type the question in `dmb-chat-<short name>`**, the campaign's DMbot chat channel. Every message there
+     is a question; no "Hey DMbot" needed. A typed "Hey DMbot, …" in the table chat (#1152) also asks, and its
+     answer goes to `dmb-chat` too.
+- **The channel:** DMbot makes `dmb-chat-<short name>` at `/dmbot start`, next to the game-time channel, the
+  same way (repaired if missing; a failure is a note on the DM screen and never stops the session). Everyone in
+  the server can read it and type in it. Its topic says, in plain words: "Ask DMbot a quick rules question.
+  Your DM has the final say."
+- **The answer, as short as possible** (CLAUDE.md, "Quick, short and on topic"):
+  ```
+  Q (Mira): Does fireball need line of sight?
+  Answer: No. You pick a point within 150 feet. (PHB 2024, sure)
+  ```
+  - **Q:** who asked (their name at the table: the character name when one is linked, else their server
+    nickname) and the question **paraphrased and shortened** to one line.
+  - **Answer:** the briefest true answer ("Yes." when yes answers it), with its source and how sure DMbot is in
+    a few words (CLAUDE.md, "Citations"). Elaborates only when asked again.
+  - **At most one link**, and only to an official source on **dndbeyond.com**, or to a **public link shared
+    with this campaign** (the house-rules file of record above, or another link the DM gave DMbot for this
+    campaign). That is the preferred link when the answer comes from the house rules. Never any other site,
+    never a link from another campaign.
+- **Nothing secret goes into `dmb-chat`.** Its answers use only what the whole table may know: the rules
+  (house rules → homebrew → target → fallback), how DMbot and Discord work, and what was said at the table
+  (transcripts are already shared). **Never DM-screen content:** secret names, DM notes, NPC and plot notes,
+  PlotBot/NPCBot facts the players haven't heard, or a shared adventure's text.
+  - A **player's** question that needs any of that, or asks DMbot to decide something ("can I sneak past
+    them?", "what's behind the door?"), gets: "That's one for your DM." DMbot never makes the DM's call, never
+    invents story.
+  - A **DM's** question that needs it is answered **privately**, in the DM's chat with DMbot, and `dmb-chat`
+    shows "Answer: Sent to the DM privately."
+- **Rulings stay the DM's:** an answer in `dmb-chat` is rules information with its source, not a ruling.
+  DMbot still never posts the DM screen's alerts or house-rule prompts to players (CLAUDE.md, "DM authority").
+- **Who and when:** only while DMbot is listening to that campaign; only from people who agreed to be recorded
+  (anyone else who types in `dmb-chat` gets one short reply with the agree button, once per session); bots
+  are never answered. Only the campaign's own channels count, never another campaign's or server's.
+- **Limits:** the sidebar's per-table limit stands (one at a time, at most 6 a minute and 120 per listening
+  session, spoken and typed alike), and **at most 2 a minute per person**, so one player can't use up the
+  table's questions. Past either: "That's a lot of questions at once. Ask again in a minute." Every answer goes
+  through `can_use_ai`. Still behind `DMBOT_SIDEBAR=1`.
+- **Off topic** (not the campaign, the game's rules and content, DMbot or Discord): one short line saying DMbot
+  can't help with that here.
+- **Transcripts:** like the DM sidebar, the question and answer go into the **raw** transcript only, with
+  their data lineage: a player's as `[Table Q via=table-trigger|chat …]`, a DM's keeps `[DM Sidebar …]`;
+  DMbot's answer under `DMbot` with `reply-to`, model, prompt version and sources. Never in the cleaned
+  transcript or the live transcript channel.
+- **Consent:** the consent message adds that questions typed in `dmb-chat` are read, so the consent terms
+  version goes up (everyone is asked again once).
+- **Not built yet:** #1187 (CloudDev). The site's help and privacy pages follow (WebDev, with #1155).
 
 **Who pays for AI and speech (decided 2026-10-04, replaced 2026-10-07).** Bring-your-own
 keys is dropped: it asked ordinary DMs to open developer accounts, fund them and paste
@@ -2921,7 +3046,15 @@ stays, and so does the meaning of each event kind:
 - **Checkout** is a Checkout Session made by an API call (email server-side, never in the
   address), with the plan's Price id. The $1.99 first month of Table is a once-only coupon made
   in Stripe, and a first-month checkout with no coupon set is refused rather than charged in
-  full.
+  full. Each checkout request carries an **idempotency key** (a hash of the request) and the same
+  expiry for every request in a five-minute window, so a double-click or a retry after a timeout
+  gets the same session instead of a second live one (two completed checkouts would be two
+  subscriptions). The session expires 32 to 37 minutes after it is made (#1122).
+- **A plan change while a cancel is pending** (decided on #1122, not two events): Stripe sends
+  one update, which DMbot treats as the cancel. Only the end date is stored, and the new plan
+  applies if they resume or resubscribe. It is logged ("only the end date is stored") so the
+  owner can see it happened. Whether Stripe's portal offers a plan change on a subscription set
+  to cancel is for the sandbox run (#1096) to show.
 - **Billing and deletion:** the billing page is a Customer Portal session. Account deletion sets
   `cancel_at_period_end` (a cancel that is already done succeeds). A refunded extra-hours order
   stays credited (manual for now).
