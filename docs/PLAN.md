@@ -628,8 +628,10 @@ never does.
 - **What a set may hold:** only content the campaign's DMs wrote themselves. **Never** anything from a shared
   rulebook or adventure (the right to use it was confirmed for one campaign only, CLAUDE.md, IP), checked by
   where each entry came from; never story memory, names, transcripts, DM notes or character sheets.
-- **One writer.** Only the publishing campaign's DMs change a set (and DMs it names as co-editors; every change
-  is logged with who, which campaign and when).
+- **One writer.** Only the publishing campaign's DMs change a set; every change is logged with who, which
+  campaign and when. *(Supervisor, 2026-10-14, #1256: no separate co-editor list. To let another DM edit the
+  set, make them a DM of the publishing campaign. Publishing a version can be undone: Undo publishes the earlier
+  rules again as the next version, which followers take at their next session.)*
   - **A follower can't change it.** When a following campaign's DM changes a shared rule, or a ruling is made
     at their table, it goes into **their own** house rules, which win over the set. The publisher never sees
     it and is never affected. **"Suggest it to <set>"** sends it to the publisher's DMs as a suggestion
