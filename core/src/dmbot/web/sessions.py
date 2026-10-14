@@ -78,16 +78,39 @@ async def sign_in(
     )
     async with db.user(user.id) as conn:
         await conn.execute(
-            "INSERT INTO web_users (user_id, email, created_at, last_sign_in_at)"
-            " VALUES (%s, %s, %s, %s)"
+            "INSERT INTO web_users (user_id, email, created_at, last_sign_in_at, display_name)"
+            " VALUES (%s, %s, %s, %s, %s)"
             " ON CONFLICT (user_id) DO UPDATE"
-            " SET email = EXCLUDED.email, last_sign_in_at = EXCLUDED.last_sign_in_at",
-            (user.id, user.email, now, now),
+            " SET email = EXCLUDED.email, last_sign_in_at = EXCLUDED.last_sign_in_at,"
+            " display_name = EXCLUDED.display_name",
+            (user.id, user.email, now, now, user.name),
         )
         await conn.execute(
             "INSERT INTO web_sessions (id_hash, user_id, created_at, expires_at, guilds,"
             " display_name) VALUES (%s, %s, %s, %s, %s::jsonb, %s)",
             (hash_token(token), user.id, now, now + days * 86400, guilds_json, user.name),
+        )
+    return token
+
+
+async def sign_in_by_email(db: Database, user_id: int, *, now: int, days: int) -> str:
+    """Start a session for a person who proved they own their account's email (#1231). Same
+    cookie, same length as a Discord sign-in. There is no Discord token here, so the session
+    has no server list: what needs a server (adding DMbot, recording, characters) stays empty
+    until they sign in with Discord. The name is the one they last signed in with."""
+    token = secrets.token_urlsafe(32)
+    async with db.user(user_id) as conn:
+        cur = await conn.execute(
+            "UPDATE web_users SET last_sign_in_at = %s WHERE user_id = %s RETURNING display_name",
+            (now, user_id),
+        )
+        row = await cur.fetchone()
+        if row is None:
+            raise LookupError("no such account")
+        await conn.execute(
+            "INSERT INTO web_sessions (id_hash, user_id, created_at, expires_at, guilds,"
+            " display_name) VALUES (%s, %s, %s, %s, '[]'::jsonb, %s)",
+            (hash_token(token), user_id, now, now + days * 86400, row["display_name"] or ""),
         )
     return token
 

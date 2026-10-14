@@ -11,6 +11,7 @@ Security rules (CLAUDE.md, #434, #435):
 """
 
 import contextlib
+import hashlib
 import hmac
 import ipaddress
 import json
@@ -26,7 +27,15 @@ from fastapi.responses import JSONResponse, RedirectResponse
 from dmbot import consent_notify, entitlements, install, plans
 from dmbot.consent import ConsentStore
 from dmbot.db import Database
-from dmbot.web import admin_api, entitlements_writer, feedback, offers, sessions, tokens
+from dmbot.web import (
+    admin_api,
+    email_signin,
+    entitlements_writer,
+    feedback,
+    offers,
+    sessions,
+    tokens,
+)
 from dmbot.web.accounts import (
     account_email,
     active_subscription,
@@ -44,6 +53,14 @@ from dmbot.web.feedback import Discussions, FeedbackError, HumanCheck
 from dmbot.web.limits import LIMITS, RateLimit
 from dmbot.web.me import build_me
 from dmbot.web.payments import PaymentError, PaymentProvider, paid_plan_ids
+from dmbot.web.personal import (
+    Mailer,
+    MoveCodes,
+    NoMailer,
+    check_link_token,
+    from_dmbot_id,
+    link_secret,
+)
 from dmbot.web.sessions import Session
 from dmbot.web.settings import WebSettings
 
@@ -82,6 +99,9 @@ def create_app(
     human_check: HumanCheck | None = None,
     feedback_limit: RateLimit | None = None,
     export_limit: RateLimit | None = None,
+    email_limit: RateLimit | None = None,
+    mailer: Mailer | None = None,
+    move_codes: MoveCodes | None = None,
     route_limits: dict[str, RateLimit] | None = None,
     google: GoogleSignIn | None = None,
     admin_sessions: AdminSessions | None = None,
@@ -93,6 +113,12 @@ def create_app(
     no Turnstile check (settings allow that only on localhost)."""
     if feedback_limit is None:
         feedback_limit = RateLimit()
+    if email_limit is None:
+        # Sign-in links (#1231): three a hour per email address, kept apart from the per-address
+        # limit so one person can't fill someone else's inbox from many connections.
+        email_limit = RateLimit(60 * 60, count=3)
+    if mailer is None:
+        mailer = NoMailer()
     if export_limit is None:
         # The data export (#1150): once a minute per person, counted by account, not address.
         export_limit = RateLimit(60)
@@ -297,6 +323,102 @@ def create_app(
         response = Response(status_code=204)
         response.delete_cookie(session_cookie, path="/", secure=settings.secure_cookies)
         return response
+
+    async def small_json(request: Request) -> dict[str, Any]:
+        """A small JSON object from the request, or {} for anything else (never an error page)."""
+        with contextlib.suppress(ValueError):
+            if int(request.headers.get("content-length", "0")) > 2048:
+                return {}
+        try:
+            raw = json.loads((await request.body())[:2048])
+        except (ValueError, RecursionError):
+            return {}
+        return raw if isinstance(raw, dict) else {}
+
+    @app.post("/auth/email/request", status_code=202)
+    async def email_sign_in_request(request: Request) -> dict[str, str]:
+        """Email a one-use sign-in link if the address belongs to one account (#1231). The
+        answer is the same words and the same status whatever happened (no account, two
+        accounts, too many asks, a mail error), so it never tells anyone whether an address has
+        an account. Only a refusal for this connection's own count differs, and that says
+        nothing about the address."""
+        answer = {"message": "If that email belongs to a DMbot account, we've sent a link"}
+        email = email_signin.clean_email((await small_json(request)).get("email"))
+        if email is None:
+            return answer
+        key = hashlib.sha256(email.encode()).hexdigest()
+        if email_limit.take(key) != "ok":
+            return answer  # too many for this address: silently no email, same reply
+        try:
+            made = await email_signin.make_link(db, email, now=clock())
+            if made is not None:
+                _user_id, token = made
+                await mailer.send_sign_in_link(email, f"{account_page}#email-link={token}")
+        except Exception:
+            # Logged without the address; the person still sees the same words.
+            log.exception("A sign-in link could not be made or sent")
+        return answer
+
+    @app.post("/auth/email/verify", status_code=204)
+    async def email_sign_in_use(request: Request) -> Response:
+        """Use an emailed link: the same session cookie a Discord sign-in makes. One use,
+        15 minutes. The page posts the token (it came after a `#`, so no server or log saw it)."""
+        token = (await small_json(request)).get("token")
+        user_id = (
+            await email_signin.redeem(db, token, now=clock()) if isinstance(token, str) else None
+        )
+        if user_id is None:
+            raise HTTPException(status_code=400, detail="bad_link")
+        session_token = await sessions.sign_in_by_email(
+            db, user_id, now=clock(), days=settings.session_days
+        )
+        log.info("Signed in by email link: user %s", user_id)
+        response = Response(status_code=204)
+        set_session_cookie(response, session_token)
+        return response
+
+    @app.get("/personal")
+    async def personal_page(uid: str = "", t: str = "") -> dict[str, Any]:
+        """What a personal link (`?uid=&t=`) may show on /pricing and /hello: the Discord name
+        and the experience points (#1231). Both need the signed code in `t`, so guessing an ID
+        shows nothing. Every failure is the same 404, so it can't be used to find accounts."""
+        user_id = from_dmbot_id(uid)
+        secret = link_secret(settings.secret_key)
+        if user_id is None or not check_link_token(secret, uid, t, clock()):
+            raise HTTPException(status_code=404, detail="not_found")
+        async with db.user(user_id) as conn:
+            cur = await conn.execute(
+                "SELECT display_name FROM web_users WHERE user_id = %s", (user_id,)
+            )
+            row = await cur.fetchone()
+            cur = await conn.execute("SELECT dmbot_total_minutes() AS minutes")
+            minutes = await cur.fetchone()
+        if row is None:
+            raise HTTPException(status_code=404, detail="not_found")
+        name = row["display_name"]
+        return {
+            "name": name or None,
+            "experiencePoints": int(minutes["minutes"]) if minutes else 0,
+        }
+
+    @app.post("/me/move-code", status_code=202)
+    async def move_code(signed: Signed) -> dict[str, str]:
+        """Email a move code to the account's payment email (#1231; the code itself is #1230's).
+        Paid, active plans only, and never shown on screen: it only goes to the email."""
+        session, _token = signed
+        if move_codes is None:
+            raise HTTPException(status_code=503, detail="move_off")
+        plan, _grant, _access = await entitlements.plan_grant_access(db, session.user_id, clock())
+        if (
+            plan is None
+            or plan.plan == "try-it"
+            or plan.status != "active"
+            or not plan.usable(clock())
+        ):
+            raise HTTPException(status_code=403, detail="not_paid")
+        await move_codes.send_code(session.user_id)
+        log.info("A move code was sent for user %s", session.user_id)
+        return {"message": "We've emailed a move code to your payment email."}
 
     @app.get("/me")
     async def me(signed: Signed) -> dict[str, Any]:

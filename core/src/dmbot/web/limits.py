@@ -122,4 +122,13 @@ LIMITS: dict[str, Group] = {
     # call, so a few a minute is far above real use (#1163). Like the other groups it counts
     # a call before the sign-in is checked, so a shared address shares the five.
     "sign-out-everywhere": Group(5, 60, ("/me/sign-out-everywhere",)),
+    # Sign-in by emailed link (#1231). Asking for a link sends an email, so 10 per 10 minutes per
+    # address; the same refusal for everyone, whether or not the email has an account. The
+    # per-email limit is separate (create_app). Using a link and opening a personal page are
+    # cheap reads of a 256-bit secret or a signed code, so they are loose.
+    "email-sign-in": Group(10, 10 * 60, ("/auth/email/request",)),
+    "email-verify": Group(20, 10 * 60, ("/auth/email/verify",)),
+    "personal": Group(30, 10 * 60, ("/personal",)),
+    # A move code is an email to the payment address and starts a move: rare.
+    "move-code": Group(5, 60 * 60, ("/me/move-code",)),
 }

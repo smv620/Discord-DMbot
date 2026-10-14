@@ -2000,6 +2000,103 @@ PLAN_ENDS = """
     REVOKE ALL ON FUNCTION dmbot_hours_used(BIGINT) FROM PUBLIC;
 """
 
+EMAIL_SIGN_IN = (
+    """
+    -- Website sign-in by an emailed link (#1231; docs/PLAN.md, "Accounts"). A link is one use and
+    -- lasts 15 minutes; only its SHA-256 is kept, like a session cookie, so a database copy
+    -- can't sign anyone in. Made under the person's own scope; used (once) by whoever holds the
+    -- token, through the same setting as a session cookie's hash.
+    CREATE TABLE email_sign_in_links (
+        token_hash  TEXT PRIMARY KEY,
+        user_id     BIGINT NOT NULL REFERENCES web_users ON DELETE CASCADE,
+        created_at  BIGINT NOT NULL,
+        expires_at  BIGINT NOT NULL,
+        used_at     BIGINT
+    );
+    CREATE INDEX email_sign_in_links_by_user ON email_sign_in_links (user_id);
+    ALTER TABLE email_sign_in_links ENABLE ROW LEVEL SECURITY;
+    ALTER TABLE email_sign_in_links FORCE ROW LEVEL SECURITY;
+    CREATE POLICY user_isolation ON email_sign_in_links
+        USING (user_id = dmbot_current_user())
+        WITH CHECK (user_id = dmbot_current_user());
+    -- Redeeming: the one unexpired, unused link whose hash was shown. It can be read and
+    -- marked used, never made or changed in any other way.
+    -- (A used link stays readable by its holder until it expires: the update's RETURNING is
+    -- checked against this policy with the new row, which has `used_at` set.)
+    CREATE POLICY by_token_read ON email_sign_in_links FOR SELECT
+        USING (token_hash = dmbot_current_session() AND expires_at > dmbot_now());
+    CREATE POLICY by_token_use ON email_sign_in_links FOR UPDATE
+        USING (token_hash = dmbot_current_session() AND used_at IS NULL
+               AND expires_at > dmbot_now())
+        WITH CHECK (token_hash = dmbot_current_session());
+
+    -- The name the person last signed in with, kept so a personal link can greet them with no
+    -- session open. Nullable: no rows change, so no new policy.
+    ALTER TABLE web_users ADD COLUMN display_name TEXT;
+
+"""
+    + _setting("dmbot_email_lookup", "dmbot.email_lookup", "TEXT")
+    + """
+    -- Who an email address belongs to, for sending a sign-in link. The website's role can't
+    -- read web_users without a person set, and nobody is set yet when someone types an
+    -- address, so this is the one door: an address in, at most one account number out. An
+    -- address shared by two accounts finds neither (a link goes to no one rather than the
+    -- wrong person). The API never says whether it found anyone.
+    CREATE FUNCTION dmbot_user_by_email(addr TEXT) RETURNS BIGINT
+        LANGUAGE plpgsql SECURITY DEFINER
+        AS $fn$
+    DECLARE
+        found BIGINT;
+        before TEXT := COALESCE(current_setting('dmbot.email_lookup', true), '');
+    BEGIN
+        IF addr IS NULL OR addr = '' THEN
+            RETURN NULL;
+        END IF;
+        PERFORM set_config('dmbot.email_lookup', 'on', true);
+        SELECT min(user_id) INTO found FROM web_users
+            WHERE lower(email) = lower(addr)
+            HAVING count(*) = 1;
+        PERFORM set_config('dmbot.email_lookup', before, true);
+        RETURN found;
+    END
+    $fn$;
+    -- web_users is forced to a person's own row, and the function runs with its owner's rights,
+    -- so it needs a way in: a read-only policy TO the role that owns the function (the one
+    -- running this migration), open only while the function has set its own setting. Never the
+    -- website's role, which could otherwise set the setting itself and read every account's
+    -- email.
+    DO $do$
+    BEGIN
+        EXECUTE format(
+            'CREATE POLICY email_lookup ON web_users FOR SELECT TO %I
+                USING (dmbot_email_lookup() = ''on'')',
+            current_user);
+    END
+    $do$;
+    -- All the minutes a person has used, all time, across plan months, for "Experience points"
+    -- on the account page (the website's role has no grant on owner_hours). Like
+    -- dmbot_hours_used it takes no person: it uses the one set for the transaction.
+    CREATE FUNCTION dmbot_total_minutes() RETURNS BIGINT
+        LANGUAGE sql STABLE SECURITY DEFINER
+        AS $fn$
+        SELECT COALESCE((SELECT sum(minutes) FROM owner_hours
+            WHERE owner_user_id = dmbot_current_user()), 0)::BIGINT
+    $fn$;
+    DO $do$
+    BEGIN
+        EXECUTE format(
+            'ALTER FUNCTION dmbot_user_by_email(TEXT) SET search_path = pg_catalog, %I, pg_temp',
+            current_schema());
+        EXECUTE format(
+            'ALTER FUNCTION dmbot_total_minutes() SET search_path = pg_catalog, %I, pg_temp',
+            current_schema());
+    END
+    $do$;
+    REVOKE ALL ON FUNCTION dmbot_user_by_email(TEXT) FROM PUBLIC;
+    REVOKE ALL ON FUNCTION dmbot_total_minutes() FROM PUBLIC;
+    """
+)
+
 # What the website's role may touch at all: its own tables, and only reads of the two
 # server tables /me needs. Everything else (consent, transcripts, memory...) is refused
 # outright. Applied by Database.migrate whenever the role exists, so a new table is never
@@ -2009,6 +2106,9 @@ WEB_ROLE_FUNCTIONS: tuple[tuple[str, str], ...] = (
     ("dmbot_owned_campaigns", "dmbot_owned_campaigns()"),
     ("dmbot_orphan_owned_campaigns", "dmbot_orphan_owned_campaigns(BIGINT)"),
     ("dmbot_hours_used", "dmbot_hours_used(BIGINT)"),
+    # Sign-in by emailed link and "Experience points" (#1231).
+    ("dmbot_user_by_email", "dmbot_user_by_email(TEXT)"),
+    ("dmbot_total_minutes", "dmbot_total_minutes()"),
 )
 # The columns the website may fill when it creates a hand-over offer (#728): who, where and the
 # two names. Left out on purpose, so they take their defaults: status and decided_at (an offer
@@ -2043,6 +2143,8 @@ WEB_ROLE_GRANTS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("SELECT, INSERT", ("payment_events", "try_it_used")),
     ("INSERT, DELETE", ("feedback",)),
     ("SELECT, INSERT, UPDATE, DELETE", ("web_users", "web_sessions")),
+    # Emailed sign-in links (#1231): made and used by the website, never read by anyone else.
+    ("SELECT, INSERT, UPDATE, DELETE", ("email_sign_in_links",)),
     # Free access (#771): the admin page gives, changes and revokes grants (through
     # Database.grant_writer()); account deletion deletes the person's own.
     ("SELECT, INSERT, UPDATE, DELETE", ("access_grants",)),
@@ -2108,6 +2210,7 @@ MIGRATIONS: tuple[Migration, ...] = (
     ("0056_dmbchat_channel", DMBCHAT_CHANNEL),
     ("0057_table_questions", TABLE_QUESTIONS),
     ("0058_people", PEOPLE),
+    ("0059_email_sign_in", EMAIL_SIGN_IN),
 )
 
 # Tables that must have row-level security. A test checks every table in the schema
@@ -2143,6 +2246,7 @@ USER_ISOLATED_TABLES = (
     "entitlements",
     "payment_events",
     "web_sessions",
+    "email_sign_in_links",
     "installs",
     # Keyed by Discord account (#771): the person's own grant, or the grant writer.
     "access_grants",
