@@ -2227,6 +2227,208 @@ TRIAL = """
     REVOKE ALL ON FUNCTION dmbot_extend_trial(BIGINT, BIGINT, INTEGER, INTEGER) FROM PUBLIC;
     """
 
+MOVES = """
+    -- Moving an account to a new Discord account (#1230; docs/PLAN.md, "Accounts"). A paid
+    -- account may move once in 30 days; the plan, its hours, the Stripe link, the campaigns it
+    -- owns and its place in them go to the new Discord ID in ONE transaction. The DMbot ID
+    -- stays. Recording consent does not move.
+    --   move_codes      the one move code an account has asked for: only its hash, when it
+    --                   was made and runs out, and when it was used
+    --   account_moves   the "moved" marker: which Discord ID moved to which, when, and the
+    --                   DMbot ID that went with it; told_at is when the old account was
+    --                   told (the first time it uses DMbot again). Unscoped like try_it_used.
+    CREATE TABLE move_codes (
+        user_id    BIGINT PRIMARY KEY CHECK (user_id > 0),
+        code_hash  TEXT NOT NULL UNIQUE CHECK (char_length(code_hash) = 64),
+        created_at BIGINT NOT NULL,
+        expires_at BIGINT NOT NULL,
+        used_at    BIGINT
+    );
+    CREATE TABLE account_moves (
+        old_user_id BIGINT PRIMARY KEY CHECK (old_user_id > 0),
+        new_user_id BIGINT NOT NULL UNIQUE CHECK (new_user_id > 0),
+        dmbot_id    TEXT NOT NULL,
+        moved_at    BIGINT NOT NULL,
+        told_at     BIGINT,
+        stripe_done_at BIGINT
+    );
+    CREATE INDEX account_moves_by_id ON account_moves (dmbot_id, moved_at);
+    -- The DMbot ID is unique, and a move hands it from the old row to the new one inside one
+    -- transaction: the check waits for the end of the statement group.
+    ALTER TABLE web_users DROP CONSTRAINT web_users_dmbot_id_unique;
+    ALTER TABLE web_users ADD CONSTRAINT web_users_dmbot_id_unique
+        UNIQUE (dmbot_id) DEFERRABLE INITIALLY IMMEDIATE;
+    -- A new row normally gets its ID from the Discord ID; the move passes the old one on.
+    CREATE OR REPLACE FUNCTION dmbot_web_users_id() RETURNS trigger
+        LANGUAGE plpgsql
+        AS $fn$
+    BEGIN
+        IF TG_OP = 'INSERT' THEN
+            IF dmbot_owner_sync() = 'move' AND NEW.dmbot_id IS NOT NULL THEN
+                RETURN NEW;
+            END IF;
+            NEW.dmbot_id := dmbot_base36(NEW.user_id);
+        ELSIF NEW.dmbot_id IS DISTINCT FROM OLD.dmbot_id OR NEW.user_id <> OLD.user_id THEN
+            RAISE EXCEPTION 'A DMbot ID never changes';
+        END IF;
+        RETURN NEW;
+    END
+    $fn$;
+    -- The move door opens the tables it touches to itself through a setting it sets and puts
+    -- back (like the orphan and Try It doors). One policy for each table, for the function's
+    -- owner only.
+    DO $do$
+    DECLARE
+        t TEXT;
+    BEGIN
+        FOREACH t IN ARRAY ARRAY['web_users', 'entitlements', 'web_sessions', 'installs',
+                                 'payment_events', 'owner_hours', 'session_usage',
+                                 'try_it_used', 'campaigns', 'campaign_dms',
+                                 'memory_entities', 'active_sessions']
+        LOOP
+            EXECUTE format(
+                'CREATE POLICY move_all ON %I FOR ALL TO %I
+                    USING (dmbot_owner_sync() = ''move'')
+                    WITH CHECK (dmbot_owner_sync() = ''move'')',
+                t, current_user);
+        END LOOP;
+        EXECUTE format(
+            'ALTER FUNCTION dmbot_web_users_id() SET search_path = pg_catalog, %I, pg_temp',
+            current_schema());
+    END
+    $do$;
+    CREATE FUNCTION dmbot_move_account(old BIGINT, new BIGINT, now BIGINT) RETURNS TEXT
+        LANGUAGE plpgsql SECURITY DEFINER
+        AS $fn$
+    #variable_conflict use_column
+    DECLARE
+        before TEXT := COALESCE(current_setting('dmbot.owner_sync', true), '');
+        acct RECORD;
+        ent RECORD;
+        owned TEXT[];
+        outcome TEXT := 'moved';
+    BEGIN
+        PERFORM set_config('dmbot.owner_sync', 'move', true);
+        IF old IS NULL OR new IS NULL OR old <= 0 OR new <= 0 OR old = new THEN
+            outcome := 'same';
+        END IF;
+        IF outcome = 'moved' THEN
+            SELECT * INTO acct FROM web_users WHERE user_id = old FOR UPDATE;
+            IF NOT FOUND THEN
+                outcome := 'no_account';
+            END IF;
+        END IF;
+        IF outcome = 'moved' THEN
+            SELECT * INTO ent FROM entitlements WHERE user_id = old FOR UPDATE;
+            IF NOT FOUND OR ent.plan = 'try-it' OR ent.status <> 'active'
+               OR ent.provider_subscription_id IS NULL THEN
+                outcome := 'not_paid';
+            END IF;
+        END IF;
+        IF outcome = 'moved' AND EXISTS (SELECT 1 FROM account_moves WHERE old_user_id = new) THEN
+            outcome := 'new_moved_away';
+        END IF;
+        IF outcome = 'moved' AND EXISTS (SELECT 1 FROM account_moves
+                                         WHERE dmbot_id = acct.dmbot_id
+                                           AND moved_at > now - 30 * 86400) THEN
+            outcome := 'too_soon';
+        END IF;
+        IF outcome = 'moved' AND EXISTS (SELECT 1 FROM entitlements
+                                         WHERE user_id = new AND plan <> 'try-it'
+                                           AND status <> 'lapsed') THEN
+            outcome := 'new_has_plan';
+        END IF;
+        IF outcome = 'moved' AND EXISTS (
+                SELECT 1 FROM active_sessions a JOIN campaigns c
+                    ON c.id = a.campaign_id AND c.guild_id = a.guild_id
+                WHERE c.owner_user_id = old) THEN
+            outcome := 'listening';
+        END IF;
+        IF outcome <> 'moved' THEN
+            PERFORM set_config('dmbot.owner_sync', before, true);
+            RETURN outcome;
+        END IF;
+
+        SELECT COALESCE(array_agg(id), '{}') INTO owned FROM campaigns WHERE owner_user_id = old;
+        SET CONSTRAINTS web_users_dmbot_id_unique DEFERRED;
+        -- Whatever the new account had of its own that is not a paid plan goes: a Try It
+        -- or a stopped plan, and its sign-ins.
+        DELETE FROM entitlements WHERE user_id = new;
+        DELETE FROM web_users WHERE user_id = new;
+        INSERT INTO web_users (user_id, email, created_at, last_sign_in_at, dmbot_id)
+            VALUES (new, acct.email, acct.created_at, acct.last_sign_in_at, acct.dmbot_id);
+        UPDATE entitlements SET user_id = new WHERE user_id = old;
+        UPDATE payment_events SET user_id = new WHERE user_id = old;
+        UPDATE installs SET installed_by_user_id = new WHERE installed_by_user_id = old;
+        DELETE FROM web_sessions WHERE user_id = old;
+        DELETE FROM web_users WHERE user_id = old;
+        SET CONSTRAINTS web_users_dmbot_id_unique IMMEDIATE;
+
+        -- The hours add to any the new account already has.
+        INSERT INTO owner_hours (owner_user_id, month_start, minutes, grace_session)
+            SELECT new, month_start, minutes, grace_session FROM owner_hours
+             WHERE owner_user_id = old
+            ON CONFLICT (owner_user_id, month_start)
+            DO UPDATE SET minutes = owner_hours.minutes + EXCLUDED.minutes;
+        DELETE FROM owner_hours WHERE owner_user_id = old;
+        UPDATE session_usage SET owner_user_id = new WHERE owner_user_id = old;
+
+        UPDATE campaigns SET owner_user_id = new WHERE owner_user_id = old;
+        DELETE FROM campaign_dms d WHERE d.user_id = old AND d.campaign_id = ANY(owned)
+            AND EXISTS (SELECT 1 FROM campaign_dms n
+                        WHERE n.campaign_id = d.campaign_id AND n.user_id = new);
+        UPDATE campaign_dms SET user_id = new WHERE user_id = old AND campaign_id = ANY(owned);
+        UPDATE memory_entities e SET played_by = new
+            WHERE e.played_by = old AND e.campaign_id = ANY(owned)
+              AND NOT EXISTS (SELECT 1 FROM memory_entities x
+                              WHERE x.guild_id = e.guild_id AND x.campaign_id = e.campaign_id
+                                AND x.type = 'person' AND x.played_by = new
+                                AND x.status IN ('proposed', 'confirmed'));
+
+        -- One free trial for each person, and a moved ID can never start another.
+        INSERT INTO try_it_used (user_id) VALUES (old), (new) ON CONFLICT DO NOTHING;
+        DELETE FROM move_codes WHERE user_id = old;
+        INSERT INTO account_moves (old_user_id, new_user_id, dmbot_id, moved_at)
+            VALUES (old, new, acct.dmbot_id, now);
+        PERFORM set_config('dmbot.owner_sync', before, true);
+        RETURN 'moved';
+    END
+    $fn$;
+    DO $do$
+    BEGIN
+        EXECUTE format(
+            'ALTER FUNCTION dmbot_move_account(BIGINT, BIGINT, BIGINT)'
+            ' SET search_path = pg_catalog, %I, pg_temp',
+            current_schema());
+    END
+    $do$;
+    REVOKE ALL ON FUNCTION dmbot_move_account(BIGINT, BIGINT, BIGINT) FROM PUBLIC;
+    -- What a move would take, for the confirmation screen: the plan and the name of each
+    -- campaign. Names only; nothing else of a campaign leaves.
+    CREATE FUNCTION dmbot_move_preview(old BIGINT) RETURNS TABLE (kind TEXT, label TEXT)
+        LANGUAGE plpgsql SECURITY DEFINER
+        AS $fn$
+    #variable_conflict use_column
+    DECLARE
+        before TEXT := COALESCE(current_setting('dmbot.owner_sync', true), '');
+    BEGIN
+        PERFORM set_config('dmbot.owner_sync', 'move', true);
+        RETURN QUERY SELECT 'plan'::TEXT, e.plan FROM entitlements e WHERE e.user_id = old;
+        RETURN QUERY SELECT 'campaign'::TEXT, c.name FROM campaigns c
+            WHERE c.owner_user_id = old ORDER BY c.name, c.id;
+        PERFORM set_config('dmbot.owner_sync', before, true);
+    END
+    $fn$;
+    DO $do$
+    BEGIN
+        EXECUTE format(
+            'ALTER FUNCTION dmbot_move_preview(BIGINT) SET search_path = pg_catalog, %I, pg_temp',
+            current_schema());
+    END
+    $do$;
+    REVOKE ALL ON FUNCTION dmbot_move_preview(BIGINT) FROM PUBLIC;
+    """
+
 # Numbered 0063 on purpose: 0060 to 0062 belong to pull requests still waiting to merge
 # (owner gone, shared rulesets, their updates). A migration list may have gaps.
 DMBOT_ID = """
@@ -2370,6 +2572,7 @@ MIGRATIONS: tuple[Migration, ...] = (
     ("0063_dmbot_id", DMBOT_ID),
     ("0064_mail", MAIL),
     ("0065_trial", TRIAL),
+    ("0066_moves", MOVES),
 )
 
 # Tables that must have row-level security. A test checks every table in the schema
@@ -2426,5 +2629,7 @@ UNSCOPED_TABLES = (
     "sent_emails",
     "email_unsubscribed",
     "trial_extensions",
+    "move_codes",
+    "account_moves",
     *ROUTING_TABLES,
 )
