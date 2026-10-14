@@ -189,7 +189,11 @@ async def make_file(
             await bot.save_transcript(table)
     lines = await store.lines(guild_id, session.id)
     names = await display_names(guild, tuple(sorted({line.user_id for line in lines})))
-    playing = await player_characters(bot, guild_id, campaign.id, campaign.dm_user_ids)
+    running_table = bot.tables.get(guild_id)
+    dms = set(campaign.dm_user_ids)
+    if running_table is not None and running_table.campaign_id == campaign.id:
+        dms.add(running_table.dm_user_id)  # whoever started the session counts as a DM too
+    playing = await player_characters(bot, guild_id, campaign.id, dms)
     files = []
     total = 0
     for version in versions:

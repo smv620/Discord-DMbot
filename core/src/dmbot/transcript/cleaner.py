@@ -573,6 +573,8 @@ def _sounds_like(lookup: CampaignLookup, said: str, start: int) -> Fix | Questio
 
 
 def _people_sounding_like(lookup: CampaignLookup, joined: str) -> dict[str, dict[str, NameEntry]]:
+    """The table people's confirmed names that sound like these words: person entity id →
+    its names by alias id. Empty for nearly every word."""
     found: dict[str, dict[str, NameEntry]] = {}
     for code in sound_codes(joined):
         for entry in lookup.people_by_sound.get(code, ()):
@@ -588,6 +590,8 @@ def _person_fix(people: dict[str, dict[str, NameEntry]], said: str, start: int) 
         return None
     ((entity_id, entries),) = people.items()
     best = max(entries.values(), key=lambda e: (likeness(said, e.text), e.text))
+    # (A fix of several words below NEAR_CERTAIN is made unsure by the caller, like a
+    # character's, so it shows with Undo.)
     score = likeness(said, best.text)
     if score < MIN_LIKENESS or best.text == said:
         return None

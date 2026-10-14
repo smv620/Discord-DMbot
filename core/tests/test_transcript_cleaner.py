@@ -766,6 +766,26 @@ class TablePeople(unittest.TestCase):
         )
         self.assertEqual(clean(two, "Then Mikel went first.").fixes, ())
 
+    def test_a_secret_character_name_that_sounds_like_the_person_blocks_the_fix(self) -> None:
+        secret = CampaignLookup.build(
+            LookupData(
+                1,
+                (entity(CERRIC, "Cerric"),),
+                (alias(CERRIC, "Cerric"), alias(CERRIC, "Mikal", secret=True)),
+                (),
+                (),
+                people=(alias(self.PERSON, "Mikael"),),
+            )
+        )
+        self.assertEqual(clean(secret, "Then Mikail went first.").fixes, ())
+
+    def test_several_words_close_enough_are_fixed_and_without_a_scene(self) -> None:
+        two = CampaignLookup.build(
+            LookupData(1, (), (), (), (), people=(alias(self.PERSON, "Ka Zet"),))
+        )
+        got = clean(two, "Then Ka Zett went first.", scene=())
+        self.assertEqual([f.entity_id for f in got.fixes], [self.PERSON])
+
     def test_people_are_not_story_names(self) -> None:
         built = self.build()
         self.assertEqual(built.entities, {})

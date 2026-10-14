@@ -158,6 +158,12 @@ class Learning(MemoryTest):
         data = await self.memory.lookup_data(GUILD_A, self.c)
         self.assertEqual([a.text for a in data.people], ["Mike"])  # not "Player 1234"
         self.assertEqual([e for e in data.entities if e.type == "person"], [])
+        # Not the ones the DM said no to, nor secret ones.
+        await self.memory.learn_people(GUILD_A, self.c, [("Vera", PLAYER, 2)], limit=10)
+        wrong = await self.memory.people_suggestions(GUILD_A, self.c)
+        await self.memory.reject_person_name(GUILD_A, self.c, wrong[0].row_id)
+        again = await self.memory.lookup_data(GUILD_A, self.c)
+        self.assertEqual([a.text for a in again.people], ["Mike"])
 
     async def test_a_removed_placeholder_cannot_come_back_by_undo(self) -> None:
         await self.memory.learn_people(GUILD_A, self.c, [("Mike", PLAYER, 2)], limit=10)
