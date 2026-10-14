@@ -160,7 +160,9 @@ class Mailer:
         since = int(self._clock()) - int(self._clock()) % DAY_S
         async with self._db.unscoped() as conn:
             cur = await conn.execute(
-                "SELECT count(*) AS n FROM sent_emails WHERE sent_at >= %s", (since,)
+                "SELECT count(*) AS n FROM sent_emails WHERE sent_at >= %s"
+                " AND kind NOT LIKE 'dm:%%'",  # private-message records are not emails
+                (since,),
             )
             row = await cur.fetchone()
         return int(row["n"]) if row else 0

@@ -2119,6 +2119,8 @@ TRIAL = """
     -- And two doors for the bot's daily job, which acts for no one person: it may list who is
     -- in Try It (with the facts the rules need) and extend one person's Try It. Both are
     -- SECURITY DEFINER, granted to the bot's role only, never the website's.
+    -- Like try_it_used, these rows are ids and times only and are not removed with an account:
+    -- a person who deletes their account and signs up again is not messaged twice.
     CREATE TABLE trial_extensions (
         user_id     BIGINT NOT NULL CHECK (user_id > 0),
         extended_at BIGINT NOT NULL,
@@ -2183,12 +2185,24 @@ TRIAL = """
     BEGIN
         PERFORM set_config('dmbot.owner_sync', 'trial', true);
         -- Only a Try It that has ended and is still the person's plan; the hours are what is
-        -- left of Try It's 8 in all (the caller works that out), never more.
+        -- left of Try It's 8 in all (the caller works that out), never more. The rules are
+        -- checked here too, not only by the caller: 30 days, at most 8 hours, 3 days after
+        -- the end, never paid, under 4 hours in all.
+        IF days <> 30 OR hours < 0 OR hours > 8 THEN
+            PERFORM set_config('dmbot.owner_sync', before, true);
+            RETURN FALSE;
+        END IF;
         UPDATE entitlements
            SET period_start = now, period_end = now + days * 86400, hours_cap = hours,
                extra_hours = 0, plan_changed_at = now, updated_at = now
          WHERE entitlements.user_id = who AND plan = 'try-it' AND status = 'active'
-           AND period_end <= now;
+           AND period_end + 259200 <= now
+           AND NOT EXISTS (SELECT 1 FROM payment_events p WHERE p.user_id = who
+                           AND (p.kind IS NULL OR p.kind = ANY(
+                                ARRAY['subscription_started', 'subscription_renewed',
+                                      'extra_hours_bought'])))
+           AND COALESCE((SELECT sum(h.minutes) FROM owner_hours h
+                         WHERE h.owner_user_id = who), 0) < 240;
         GET DIAGNOSTICS changed = ROW_COUNT;
         PERFORM set_config('dmbot.owner_sync', before, true);
         IF changed = 0 THEN

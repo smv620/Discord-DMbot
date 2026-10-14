@@ -22,6 +22,7 @@ import logging
 import time
 from collections.abc import Awaitable, Callable, Collection
 from dataclasses import dataclass
+from typing import Literal
 from urllib.parse import urlencode
 
 from dmbot.db import Database
@@ -113,7 +114,10 @@ async def take_extension_notice(db: Database, user_id: int, now: int) -> str | N
         return EXTENSION_NOTICE if await cur.fetchone() else None
 
 
-SendDm = Callable[[int, str], Awaitable[bool]]
+# "sent"; "closed" (Discord won't take a message from DMbot for this person, and trying again
+# won't change that); "retry" (a hiccup: try again at the next run).
+DmResult = Literal["sent", "closed", "retry"]
+SendDm = Callable[[int, str], Awaitable[DmResult]]
 NameOf = Callable[[int], Awaitable[str]]
 
 
@@ -217,12 +221,18 @@ class TrialJobs:
         pricing, hello = self._links(person, now)
         name = await self._name_of(person.user_id)
         text = last_day_text(name, pricing, hello)
-        kind = f"trial-end-dm:{person.period_end}"
+        kind = f"dm:trial-end:{person.period_end}"
         if await claim(self._db, person.user_id, kind, now):
-            if await self._send_dm(person.user_id, text):
+            try:
+                sent: DmResult = await self._send_dm(person.user_id, text)
+            except Exception:
+                log.exception("A Try It private message failed")
+                sent = "retry"
+            if sent == "sent":
                 summary.last_day_dms += 1
-            else:  # closed messages or a hiccup: try again at the next run, within the day
+            elif sent == "retry":  # a hiccup: try again at the next run, within the day
                 await release(self._db, person.user_id, kind)
+            # "closed": one attempt only; asking Discord again would only be refused again
         result = await self._mail.send(
             user_id=person.user_id,
             kind=f"trial-end:{person.period_end}",

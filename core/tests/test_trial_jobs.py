@@ -88,7 +88,7 @@ class Jobs(DatabaseTest):
         self.now = START
         self.mail = FakeMail()
         self.dms: list[tuple[int, str]] = []
-        self.dm_ok = True
+        self.dm_result = "sent"
         for uid in (USER, OTHER):
             async with self.db.user(uid) as conn:
                 await conn.execute(
@@ -99,10 +99,12 @@ class Jobs(DatabaseTest):
             await entitlements_writer.start_try_it(self.db, uid, now=START)
 
     def jobs(self, enforce: bool = True) -> TrialJobs:
-        async def send_dm(user_id: int, text: str) -> bool:
-            if self.dm_ok:
+        async def send_dm(user_id: int, text: str) -> trial_jobs.DmResult:
+            if self.dm_result == "raise":
+                raise RuntimeError("discord is down")
+            if self.dm_result == "sent":
                 self.dms.append((user_id, text))
-            return self.dm_ok
+            return self.dm_result  # type: ignore[return-value]
 
         async def name_of(user_id: int) -> str:
             return f"Name{user_id}"
@@ -139,6 +141,41 @@ class Jobs(DatabaseTest):
         self.assertEqual(summary, trial_jobs.Summary())
         self.assertEqual((self.dms, self.mail.sent), ([], []))
 
+    async def test_the_free_list_is_left_alone(self) -> None:
+        self.now = END - 3600
+        jobs = self.jobs()
+        jobs._skip = frozenset({USER})
+        await jobs.run()
+        self.assertEqual([u for u, _ in self.dms], [OTHER])
+
+    async def test_private_message_records_do_not_use_up_the_email_cap(self) -> None:
+        self.now = END - 3600
+        await self.jobs().run()
+        mailer = self.jobs()._mail
+        self.assertEqual(await mailer.sent_today(), 2)  # two emails, not four records
+
+    async def test_the_door_checks_the_rules_itself(self) -> None:
+        async def extend(uid: int, now: int, days: int = 30, hours: int = 8) -> bool:
+            async with self.db.unscoped() as conn:
+                cur = await conn.execute(
+                    "SELECT dmbot_extend_trial(%s, %s, %s, %s) AS ok", (uid, now, days, hours)
+                )
+                row = await cur.fetchone()
+            return bool(row and row["ok"])
+
+        late = END + 3 * DAY_S
+        self.assertFalse(await extend(USER, late - 1))  # too early
+        self.assertFalse(await extend(USER, late, days=90))  # not 30 days
+        self.assertFalse(await extend(USER, late, hours=99))  # more than 8 hours
+        await self.use(OTHER, 300)
+        self.assertFalse(await extend(OTHER, late))  # over 4 hours in all
+        self.assertTrue(await extend(USER, late))
+        self.assertFalse(await extend(USER, late))  # a second call changes nothing
+        async with self.db.unscoped() as conn:  # the door puts its setting back
+            cur = await conn.execute("SELECT current_setting('dmbot.owner_sync', true) AS s")
+            row = await cur.fetchone()
+        self.assertIn((row or {}).get("s"), (None, ""))
+
     async def test_the_last_day_message_goes_once_by_message_and_by_email(self) -> None:
         self.now = END - 3600
         first = await self.jobs().run()
@@ -155,10 +192,20 @@ class Jobs(DatabaseTest):
 
     async def test_a_message_that_could_not_be_delivered_is_tried_again(self) -> None:
         self.now = END - 3600
-        self.dm_ok = False
+        self.dm_result = "retry"
         self.assertEqual((await self.jobs().run()).last_day_dms, 0)
-        self.dm_ok = True
+        self.dm_result = "raise"  # even a failure nobody expected leaves it to try again
+        self.assertEqual((await self.jobs().run()).last_day_dms, 0)
+        self.dm_result = "sent"
         self.assertEqual((await self.jobs().run()).last_day_dms, 2)
+
+    async def test_a_person_discord_will_not_message_is_tried_once(self) -> None:
+        self.now = END - 3600
+        self.dm_result = "closed"
+        self.assertEqual((await self.jobs().run()).last_day_dms, 0)
+        self.dm_result = "sent"
+        self.assertEqual((await self.jobs().run()).last_day_dms, 0)  # not asked again
+        self.assertEqual(len(self.mail.sent), 2)  # the email went the first time
 
     async def test_an_extension_adds_30_days_and_the_hours_left(self) -> None:
         await self.use(USER, 90)
