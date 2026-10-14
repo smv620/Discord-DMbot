@@ -5,10 +5,11 @@ written under, and a meaning change without a version bump fails here."""
 from __future__ import annotations
 
 import unittest
+from typing import Any, ClassVar
 
 from dmbot.db import Database, drop_schema
 from dmbot.memory import definitions
-from dmbot.memory.backup import _with_definition_fields
+from dmbot.memory.backup import _TAGS, _check_terms, _with_definition_fields
 from dmbot.memory.models import MemoryRuleError
 from dmbot.memory.ontology import (
     CORE_PREDICATES,
@@ -125,7 +126,67 @@ class OldBackups(unittest.TestCase):
         self.assertEqual([r["definition_version"] for r in out], [1, 1, 1])
 
 
+class ACampaignsOwnSwornTo(unittest.TestCase):
+    ROW: ClassVar[dict[str, Any]] = {
+        "table": "predicate", "key": "sworn_to", "parent": None, "label": "swears to",
+        "description": "Ours.", "examples": ["x"], "reason": "r", "subject_types": ["character"],
+        "object_types": ["place"], "is_symmetric": False, "max_per_subject": None,
+        "conflicts_with": [], "status": "active", "replaced_by": None, "created_at": 1,
+    }  # fmt: skip
+
+    def test_an_old_backup_with_its_own_sworn_to_is_never_refused(self) -> None:
+        (row,) = _with_definition_fields([dict(self.ROW)])
+        self.assertEqual((row["status"], row["replaced_by"]), ("deprecated", "sworn_to"))
+        by_tag: dict[str, list[dict[str, object]]] = {tag: [] for tag in _TAGS}
+        by_tag["predicate"] = [row]
+        _check_terms(by_tag)  # no CampaignError
+
+    def test_a_current_backup_naming_a_core_key_is_still_damaged(self) -> None:
+        from dmbot.campaigns import CampaignError
+
+        row = {**self.ROW, "version": 1}  # a current file: no excuse for a core key
+        by_tag: dict[str, list[dict[str, object]]] = {tag: [] for tag in _TAGS}
+        by_tag["predicate"] = [row]
+        with self.assertRaises(CampaignError):
+            _check_terms(by_tag)
+
+
 class Stored(MemoryTest):
+    async def test_a_campaigns_own_sworn_to_is_replaced_by_the_core_and_its_facts_rechecked(
+        self,
+    ) -> None:
+        a = await self.add("Cerric")
+        place = await self.add("Waterdeep", type="place")
+        async with self.db.guild(GUILD_A) as conn:
+            await conn.execute(
+                "INSERT INTO memory_predicates (guild_id, campaign_id, key, parent, label,"
+                " description, examples, reason, subject_types, object_types, is_symmetric,"
+                " max_per_subject, conflicts_with, status, replaced_by, created_at)"
+                " VALUES (%s, %s, 'sworn_to', NULL, 'swears to', 'Our own.', ARRAY['x'], 'r',"
+                " ARRAY['character'], ARRAY['place'], false, NULL, ARRAY[]::text[], 'active',"
+                " NULL, 1)",
+                (GUILD_A, self.c),
+            )
+            await conn.execute(
+                "INSERT INTO memory_relations (guild_id, campaign_id, id, subject_id, predicate,"
+                " object_id, detail, confidence, status, source, mention_ids, secret, created_at)"
+                " VALUES (%s, %s, %s, %s, 'sworn_to', %s, '', 1.0, 'confirmed', 'dm', '{}',"
+                " false, 1)",
+                (GUILD_A, self.c, "c" * 32, a, place),
+            )
+        looked = await self.memory.recheck_definitions(GUILD_A, self.c)
+        self.assertEqual(looked.value, 1)
+        async with self.db.guild(GUILD_A) as conn:
+            cur = await conn.execute("SELECT kind FROM memory_flags")
+            flags = [r["kind"] for r in await cur.fetchall()]
+            cur = await conn.execute("SELECT status, replaced_by, version FROM memory_predicates")
+            row = await cur.fetchone()
+        self.assertEqual(flags, ["wrong_object"])  # the core's meaning: not a place
+        self.assertEqual(
+            dict(row or {}), {"status": "deprecated", "replaced_by": "sworn_to", "version": 2}
+        )
+        self.assertEqual((await self.memory.recheck_definitions(GUILD_A, self.c)).value, 0)
+
     async def test_undo_works_across_the_migration_for_relations_and_predicates(self) -> None:
         a, b = await self.add("Cerric"), await self.add("Belleros")
         added = await self.relate(a, "ally_of", b)

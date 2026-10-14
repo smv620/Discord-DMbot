@@ -1551,13 +1551,33 @@ class MemoryStore:
         looked at."""
         async with self._write(guild_id, campaign_id, "scan") as w:
             onto = await _load_ontology(w)
+            # A campaign's own relationship the core has since taken the name of (a custom
+            # `sworn_to`): the core one replaces it. The campaign's row is kept as deprecated
+            # ("replaced by" the core key, version 1 = not looked at yet) and its facts are
+            # looked at against the core meaning below; version 2 marks that it was done.
+            core_keys = {p.key for p in CORE_PREDICATES}
+            replaced: set[str] = set()
+            for r in await w.select(PREDICATES):
+                key = str(r["key"])
+                if key not in core_keys:
+                    continue
+                if r["status"] == ACTIVE:
+                    await w.update(
+                        PREDICATES, key, {"status": DEPRECATED, "replaced_by": key, "version": 1}
+                    )
+                    replaced.add(key)
+                elif r["replaced_by"] == key and int(r["version"]) == 1:
+                    replaced.add(key)
             behind = [
                 r
                 for r in await w.select(RELATIONS, " AND status IN ('proposed', 'confirmed')")
                 if r["predicate"] in onto.predicates
-                and int(r["definition_version"]) < onto.predicates[r["predicate"]].version
+                and (
+                    r["predicate"] in replaced
+                    or int(r["definition_version"]) < onto.predicates[r["predicate"]].version
+                )
             ]
-            if not behind:
+            if not behind and not replaced:
                 return Written(0, None)
             types = {
                 str(r["id"]): str(r["type"])

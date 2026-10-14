@@ -9,7 +9,7 @@ file are untrusted and fully checked before anything is written.
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from typing import Any
 
 from psycopg import errors as pg_errors
@@ -271,6 +271,10 @@ _NEW_PREDICATE_FIELDS: dict[str, Any] = {
 }  # fmt: skip
 
 
+def _replaced_by_core(row: Mapping[str, Any]) -> bool:
+    return row.get("status") == DEPRECATED and row.get("replaced_by") == row.get("key")
+
+
 def _with_definition_fields(rows: list[Any]) -> list[Any]:
     """A backup from before definitions were versioned (#1189) has none of the new columns:
     its relationships get empty definitions at version 1 and its facts version 1. A fact
@@ -278,6 +282,7 @@ def _with_definition_fields(rows: list[Any]) -> list[Any]:
     the oldest known version, 1; the after-session check then looks at it again against the
     definition it is held to now."""
     known = {p.key: p.version for p in CORE_PREDICATES}
+    core_predicates = frozenset(known)
     for raw in rows:
         if isinstance(raw, dict) and raw.get("table") == "predicate":
             version = raw.get("version", 1)
@@ -286,7 +291,13 @@ def _with_definition_fields(rows: list[Any]) -> list[Any]:
     out: list[Any] = []
     for raw in rows:
         if isinstance(raw, dict) and raw.get("table") == "predicate":
+            old_format = "version" not in raw
             raw = {**_NEW_PREDICATE_FIELDS, **raw}
+            if old_format and raw.get("key") in core_predicates:
+                # A file from before the core took this name: never refused. The campaign's
+                # row is kept as replaced by the core one, and `recheck_definitions` looks at
+                # its facts against the core meaning.
+                raw = {**raw, "status": DEPRECATED, "replaced_by": raw["key"], "version": 1}
         elif isinstance(raw, dict) and raw.get("table") == "relation":
             version = raw.get("definition_version", 1)
             name = raw.get("predicate")
@@ -411,7 +422,11 @@ def _check_terms(by_tag: dict[str, list[dict[str, Any]]]) -> None:
     """Entities and facts in a backup must use known kinds; extensions can't replace
     the core."""
     core = {t.key for t in CORE_TYPES} | {p.key for p in CORE_PREDICATES}
-    if any(r["key"] in core for r in (*by_tag["type"], *by_tag["predicate"])):
+    # A campaign's own relationship that the core has since taken the name of is kept as a
+    # deprecated row "replaced by" the core one (#1189); any other core key is damage.
+    if any(r["key"] in core for r in by_tag["type"]) or any(
+        r["key"] in core and not _replaced_by_core(r) for r in by_tag["predicate"]
+    ):
         raise CampaignError(DAMAGED)
     onto = Ontology.build(
         (_type_term(r) for r in by_tag["type"]),
