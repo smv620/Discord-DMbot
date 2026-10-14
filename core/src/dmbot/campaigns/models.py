@@ -148,6 +148,8 @@ class Campaign:
     # When the owner deleted their account (#1059): the campaign is kept, ownerless, and the
     # retention job deletes it 120 days later unless a DM takes it on. None otherwise.
     owner_left_at: int | None = None
+    # When DMbot first saw the owner was not in the server (#1214); None while they are here.
+    owner_missing_since: int | None = None
 
     @property
     def last_active_at(self) -> int:
