@@ -4,7 +4,7 @@ and a DM's question never shows a character name. Made-up names, no database."""
 from __future__ import annotations
 
 import unittest
-from typing import Any
+from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock
 
 from tests.test_sidebar_bot import DM, GUILD, PLAYER, make_bot, make_table
@@ -49,7 +49,8 @@ class TheQuestionersName(unittest.IsolatedAsyncioTestCase):
             return_value=[(DM, ["Strahd"], []), (PLAYER, ["Cerric"], [])]
         )
         bot.memory = memory
-        bot.name_of = lambda guild, user: {DM: "Ana", PLAYER: "Mia"}[user]  # type: ignore[method-assign]
+        names = {DM: "Ana", PLAYER: "Mia"}
+        cast(Any, bot).name_of = lambda guild_id, user_id: names[user_id]
         self.assertEqual(await bot.sidebar_table_name(table, DM), "Ana")
         self.assertEqual(await bot.sidebar_table_name(table, PLAYER), "Cerric")
 
