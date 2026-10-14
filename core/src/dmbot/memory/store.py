@@ -1423,7 +1423,8 @@ class MemoryStore:
                 str(r["id"]): r
                 for r in await scope.select(
                     ENTITIES,
-                    " AND type = 'person' AND status = 'confirmed' ORDER BY created_at, played_by, id",
+                    " AND type = 'person' AND status = 'confirmed'"
+                    " ORDER BY created_at, played_by, id",
                 )
             }
             if not people:
