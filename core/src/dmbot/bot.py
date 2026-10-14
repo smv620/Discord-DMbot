@@ -2801,7 +2801,9 @@ class DMBot(commands.AutoShardedBot):
                         return str(sheet.name)
             except Exception:
                 log.exception("Couldn't look up a character name; using the nickname")
-        if self.memory is not None and table.campaign_id is not None:
+        # A DM keeps the nickname: a DM may "play" an NPC, and the table must not learn which
+        # one the DM is voicing from the name on their question (#1188).
+        if self.memory is not None and table.campaign_id is not None and not table.is_dm(user_id):
             try:  # the character they play (the `plays` link), even with no sheet linked
                 async with asyncio.timeout(NAMES_WAIT_S):
                     people = await self.memory.table_people(table.guild_id, table.campaign_id)
@@ -3137,6 +3139,8 @@ class DMBot(commands.AutoShardedBot):
             return  # raw transcript only: no recent lines, sidebar or name scan (#1154)
         table.recent.add(user_id, text, time.monotonic(), typed=True)
         if self.tables.get(table.guild_id) is table:
+            # Same clock as the spoken path (Unix milliseconds); consent was just checked.
+            table.name_answers.feed(user_id, start_ms, text, consented=True)
             self.sidebar.ask_at_table(table, user_id, text, typed=True)
         if len(table.heard) < HEARD_MAX:
             table.heard.append((user_id, text))
