@@ -3209,6 +3209,10 @@ experience points and the trial extension (owner, 2026-10-14; Supervisor's detai
      those campaigns (and its `played_by` and person entries there) move to the new Discord ID.
      The old account is left as a **moved** marker: who it moved to and when. Transcripts keep
      the names they were written with.
+  - *History (owner, 2026-10-14):* the current Discord ID and the DMbot ID are separate columns; the DMbot ID
+    never changes. Every move also adds a row to a permanent, append-only history (`account_id_history`: the
+    old and new Discord IDs, when, and the payment email the code went to), kept for the life of the account,
+    shown in the person's data export and deleted with the account.
   4. **Recording consent does not move.** The new account says yes for itself the first time
      it joins a table. Consent belongs to the Discord account whose voice is recorded.
   - *Limits (Supervisor):* one move per 30 days. A moved account can never start a new Try It
