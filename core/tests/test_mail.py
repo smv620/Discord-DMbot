@@ -93,9 +93,10 @@ class Sending(DatabaseTest):
         *,
         offer: bool = False,
         to: str | None = "p@example.com",
+        user: int = USER,
     ) -> str:
         return await made.send(
-            user_id=USER, dmbot_id=ID, kind=kind, to=to, subject="Hi", body="Hello", offer=offer
+            user_id=user, kind=kind, to=to, subject="Hi", body="Hello", offer=offer
         )
 
     async def test_an_account_email_goes_once_per_kind(self) -> None:
@@ -157,9 +158,33 @@ class Sending(DatabaseTest):
 
     async def test_no_address_or_a_bad_one_sends_nothing(self) -> None:
         made, fake = self.mailer()
-        for to in (None, "", "nobody", "a@example.com\nBcc: b@example.com"):
+        for to in (
+            None,
+            "",
+            "nobody",
+            "a@example.com\nBcc: b@example.com",
+            "a@example.com, b@example.com",
+            "Name <a@example.com>",
+            "a@example.com;b@example.com",
+            "a b@example.com",
+        ):
             self.assertEqual(await self.send(made, "k", to=to), "no_address")
         self.assertEqual(fake.sent, [])
+
+    async def test_a_message_that_cannot_be_built_leaves_no_record(self) -> None:
+        made, fake = self.mailer()
+        self.assertEqual(await self.send(made, "k", offer=True, user=-5), "no_address")
+        self.assertEqual(await made.sent_today(), 0)
+        self.assertEqual(await self.send(made, "x" * 61), "no_address")  # kind too long
+        self.assertEqual(fake.sent, [])
+
+    async def test_two_sends_at_once_make_one_email(self) -> None:
+        import asyncio
+
+        made, fake = self.mailer()
+        results = await asyncio.gather(*(self.send(made, "once") for _ in range(4)))
+        self.assertEqual(sorted(results), ["already_sent"] * 3 + ["sent"])
+        self.assertEqual(len(fake.sent), 1)
 
     async def test_an_unset_mailbox_sends_nothing(self) -> None:
         made = Mailer(self.db, MailSettings(), transport=Fake(), clock=lambda: NOW)
