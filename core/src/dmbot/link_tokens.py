@@ -12,12 +12,20 @@ from __future__ import annotations
 import hashlib
 import hmac
 
+from dmbot.account_id import from_dmbot_id
+
 LIFETIME_S = 30 * 86400
 _SIGNATURE_CHARS = 32  # hex characters kept (128 bits)
 
 
+# A purpose in front of what is signed, so the same secret can sign other things later
+# without a token for one being good for another.
+_PURPOSE = b"dmbot-link-v1."
+
+
 def _sign(dmbot_id: str, expires: int, secret: bytes) -> str:
-    message = f"{dmbot_id}.{expires}".encode()
+    from_dmbot_id(dmbot_id)  # a real ID only: the "." between ID and expiry stays unambiguous
+    message = _PURPOSE + f"{dmbot_id}.{expires}".encode()
     return hmac.new(secret, message, hashlib.sha256).hexdigest()[:_SIGNATURE_CHARS]
 
 
@@ -37,7 +45,12 @@ def check_link_token(dmbot_id: str, token: str, now: int, secret: bytes) -> bool
     if not dot or not stamp.isascii() or not stamp.isdigit() or len(stamp) > 12:
         return False
     expires = int(stamp)
-    good = _sign(dmbot_id, expires, secret)
+    if stamp != str(expires):  # one way to write a token: no leading zeros
+        return False
+    try:
+        good = _sign(dmbot_id, expires, secret)
+    except ValueError:  # not a DMbot ID
+        return False
     # compare_digest on every path that reaches the secret: no early exit on a near match
     if not hmac.compare_digest(signature.encode(), good.encode()):
         return False

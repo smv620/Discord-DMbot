@@ -272,11 +272,9 @@ async def total_minutes(db: Database, owner_user_id: int) -> int:
     meter (their experience points, docs/PLAN.md "Accounts"). Reads only the owner's own
     rows."""
     async with db.user(owner_user_id) as conn:
-        cur = await conn.execute(
-            "SELECT COALESCE(sum(minutes), 0)::BIGINT AS total FROM owner_hours"
-            " WHERE owner_user_id = %s",
-            (owner_user_id,),
-        )
+        # Through the one door the website's role may use (migration 0063): it has no grant
+        # on owner_hours, and the function takes no person, only the one set above.
+        cur = await conn.execute("SELECT dmbot_minutes_total() AS total")
         row = await cur.fetchone()
     return int(row["total"]) if row else 0
 

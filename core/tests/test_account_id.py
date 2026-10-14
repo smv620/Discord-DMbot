@@ -72,6 +72,14 @@ class Tokens(unittest.TestCase):
         ):
             self.assertFalse(lt.check_link_token(ID, bad, NOW, SECRET), bad)
 
+    def test_one_way_to_write_a_token_and_only_real_ids(self) -> None:
+        token = lt.make_link_token(ID, NOW, SECRET)
+        stamp, _, sig = token.partition(".")
+        self.assertFalse(lt.check_link_token(ID, f"0{stamp}.{sig}", NOW, SECRET))
+        self.assertFalse(lt.check_link_token("not an id", token, NOW, SECRET))
+        with self.assertRaises(ValueError):
+            lt.make_link_token("a.b", NOW, SECRET)
+
     def test_no_secret_means_no_tokens(self) -> None:
         with self.assertRaises(ValueError):
             lt.make_link_token(ID, NOW, b"")

@@ -32,6 +32,12 @@ class DmbotId(DatabaseTest):
             await add_user(self.db, n)
             self.assertEqual(await accounts.dmbot_id(self.db, n), account_id.to_dmbot_id(n))
 
+    async def test_ids_python_refuses_the_database_refuses_too(self) -> None:
+        with self.assertRaises(ValueError):
+            account_id.to_dmbot_id(36**12)
+        with self.assertRaises(pg_errors.RaiseException):
+            await add_user(self.db, 36**12)
+
     async def test_it_cannot_be_changed_or_chosen(self) -> None:
         await add_user(self.db, 42)
         with self.assertRaises(pg_errors.RaiseException):
