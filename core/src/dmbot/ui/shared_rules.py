@@ -25,20 +25,19 @@ log = logging.getLogger(__name__)
 SHARE_LABEL = "📤 Share my house rules"
 STOP_LABEL = "Stop sharing"
 CODE_LABEL = "🔑 New share code"
-FOLLOW_LABEL = "📥 Use a shared set"
-UNFOLLOW_LABEL = "Stop using this set"
+FOLLOW_LABEL = "📥 Use shared rules"
+UNFOLLOW_LABEL = "Stop using shared rules"
 UNDO_LABEL = "↩️ Undo"
 CONFIRM_LABEL = "Yes, use this set"
-CANCEL_LABEL = "No thanks"
+CANCEL_LABEL = "Cancel"
 
 INTRO = (
-    "📚 **Shared house rules**\nShare your house rules with another table, or use a set "
-    "another DM shared. Only the rules go across: never your story, names or notes."
+    "📚 **Shared house rules**\nShare your rules with another table, or use rules from "
+    "another DM. Only rules are shared. Never your story, names or notes."
 )
 CODE_NOTE = (
-    "Give this code to a DM who should use your rules. Anyone who has it can use them, so "
-    "share it with care. You can stop sharing any time; tables already using your set keep "
-    "their copy."
+    "Give this code to a DM who should use your rules. Anyone with the code can use them. "
+    "Old codes still work; use Stop sharing to turn them all off."
 )
 
 
@@ -84,20 +83,20 @@ async def open_menu(interaction: discord.Interaction, campaign: Campaign) -> Non
     lines = [INTRO]
     sharing = mine is not None and mine.shared
     if sharing and mine is not None:
-        lines.append(f"• You share **{_escape(mine.name)}** (version {mine.version}).")
+        lines.append(f"• Sharing: **{_escape(mine.name)}** (version {mine.version}).")
     elif mine is not None:
-        lines.append(f"• You shared **{_escape(mine.name)}** before. It isn't shared now.")
+        lines.append(f"• Not sharing now. Last set: **{_escape(mine.name)}**.")
     else:
-        lines.append("• You aren't sharing your house rules.")
+        lines.append("• Not sharing your house rules.")
     followed = follows[0] if follows else None
     if followed is not None:
-        note = "" if followed.updating else " It isn't updated any more."
+        note = "" if followed.updating else " It won't get updates."
         lines.append(
-            f"• You use **{_escape(followed.name)}** from {_escape(followed.publisher)} "
+            f"• Using: **{_escape(followed.name)}** from {_escape(followed.publisher)} "
             f"(version {followed.version}).{note}"
         )
     else:
-        lines.append("• You aren't using anyone else's set.")
+        lines.append("• Not using another table's rules.")
     await _send(
         interaction,
         "\n".join(lines),
@@ -107,8 +106,8 @@ async def open_menu(interaction: discord.Interaction, campaign: Campaign) -> Non
 
 class ShareForm(discord.ui.Modal, title="Share your house rules"):
     name: discord.ui.TextInput[ShareForm] = discord.ui.TextInput(
-        label="A name for the set",  # 45 characters at most
-        placeholder="For example: The Red Table's rules",
+        label="Name for your rules",  # 45 characters at most
+        placeholder="Example: Red Table rules",
         max_length=rule_sets.NAME_MAX,
     )
 
@@ -123,7 +122,7 @@ class ShareForm(discord.ui.Modal, title="Share your house rules"):
 class CodeForm(discord.ui.Modal, title="Use a shared set"):
     code: discord.ui.TextInput[CodeForm] = discord.ui.TextInput(
         label="The share code",  # 45 characters at most
-        placeholder="The code the other DM gave you",
+        placeholder="Paste the code here",
         max_length=40,
     )
 
@@ -171,7 +170,7 @@ async def share(interaction: discord.Interaction, campaign: Campaign, name: str)
         return
     await _tell(
         interaction,
-        f"✅ Sharing **{_escape(shared.name)}**.\nShare code: `{code}`\n{CODE_NOTE}",
+        f"✅ Sharing **{_escape(shared.name)}**.\n`{code}`\n{CODE_NOTE}",
     )
 
 
@@ -186,7 +185,7 @@ async def new_code(interaction: discord.Interaction, campaign: Campaign) -> None
     except HouseRuleError as exc:
         await _tell(interaction, str(exc))
         return
-    await _tell(interaction, f"Share code: `{code}`\n{CODE_NOTE}")
+    await _tell(interaction, f"`{code}`\n{CODE_NOTE}")
 
 
 async def stop_sharing(interaction: discord.Interaction, campaign: Campaign) -> None:
@@ -202,8 +201,8 @@ async def stop_sharing(interaction: discord.Interaction, campaign: Campaign) -> 
         return
     await _tell(
         interaction,
-        "Done. Your set isn't shared any more and its codes stop working. Tables already "
-        "using it keep their copy."
+        "Done. Your rules aren't shared now and their codes stopped working. Tables using "
+        "them keep their copy."
         if had
         else rule_sets.NOT_SHARED,
     )
@@ -228,8 +227,8 @@ async def look_up(interaction: discord.Interaction, campaign: Campaign, code: st
         interaction,
         f"**{_escape(offer.name)}** from {_escape(offer.publisher)}: "
         f"{_rules(_count(offer.content))} (version {offer.version}).\n"
-        "Using it copies these rules to your campaign as a set of their own. Your own house "
-        "rules stay yours and come first. Nothing is added to your list.",
+        "If you use it, DMbot will check these rules too. Your own rules win if they "
+        "disagree. You can stop any time.",
         view=ConfirmFollow(current, offer),
     )
 
@@ -258,13 +257,30 @@ class ConfirmFollow(_Menu):
         self.stop()
         await _tell(
             interaction,
-            f"✅ Now using **{_escape(follow.name)}** (version {follow.version}). DMbot "
-            "checks it alongside your own house rules.",
+            f"✅ Now using **{_escape(follow.name)}**. DMbot checks it along with your own rules.",
         )
 
     async def _no(self, interaction: discord.Interaction) -> None:
         self.stop()
-        await _tell(interaction, "Okay. Nothing changed.")
+        await _tell(interaction, "Okay, nothing changed.")
+
+
+class ConfirmStop(_Menu):
+    def __init__(self, campaign: Campaign) -> None:
+        super().__init__()
+        self.campaign = campaign
+        self.add_item(
+            _Button(self._yes, label="Yes, stop sharing", style=discord.ButtonStyle.danger)
+        )
+        self.add_item(_Button(self._no, label=CANCEL_LABEL))
+
+    async def _yes(self, interaction: discord.Interaction) -> None:
+        self.stop()
+        await stop_sharing(interaction, self.campaign)
+
+    async def _no(self, interaction: discord.Interaction) -> None:
+        self.stop()
+        await _tell(interaction, "Okay, nothing changed.")
 
 
 class UndoUnfollow(_Menu):
@@ -308,6 +324,16 @@ class SharedMenu(_Menu):
             self.add_item(_Button(self._follow, label=FOLLOW_LABEL))
 
     async def _share(self, interaction: discord.Interaction) -> None:
+        # Ask about the plan before the form, so nobody types a name only to be refused.
+        # A modal must be the first answer, so the check has to finish inside Discord's
+        # 3 seconds (plan_gate fails open if it is slow).
+        bot = _bot(interaction)
+        refused = await bot.plan_gate(
+            "share", self.campaign.guild_id, self.campaign, interaction.user.id
+        )
+        if refused is not None:
+            await _tell(interaction, refused)
+            return
         await interaction.response.send_modal(ShareForm(self.campaign))
 
     async def _follow(self, interaction: discord.Interaction) -> None:
@@ -317,7 +343,13 @@ class SharedMenu(_Menu):
         await new_code(interaction, self.campaign)
 
     async def _stop(self, interaction: discord.Interaction) -> None:
-        await stop_sharing(interaction, self.campaign)
+        # Stopping turns off every code handed out, so it asks first.
+        await _tell(
+            interaction,
+            "Stop sharing? Every share code will stop working. Tables already using your "
+            "rules keep their copy.",
+            view=ConfirmStop(self.campaign),
+        )
 
     async def _unfollow(self, interaction: discord.Interaction) -> None:
         await _answer_first(interaction)
@@ -332,8 +364,7 @@ class SharedMenu(_Menu):
             return
         await _tell(
             interaction,
-            f"Done. You don't use **{_escape(follow.name)}** any more. Your own house rules "
-            "are as they were.",
+            f"Stopped using **{_escape(follow.name)}**. Your own rules are unchanged.",
             view=UndoUnfollow(current, follow),
         )
 
