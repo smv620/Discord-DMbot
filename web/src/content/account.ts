@@ -231,6 +231,20 @@ export const text = {
   addTo: "Add DMbot",
   alreadyThere: "Already added",
 
+  // Where DMbot may record you (#1151). The warning is the bot's own wording.
+  recordingHeading: "Where DMbot may record you",
+  recordingLine: (server: string, date: string): string =>
+    `${server}: DMbot may record you. You said yes on ${shortDate(date)}.`,
+  recordingOld: (server: string): string =>
+    `${server}: not recording you. To allow it, press ⚙️ Menu in DMbot's private message in Discord.`,
+  stopRecording: "Stop recording me",
+  stopWarning: (server: string): string =>
+    `Stop recording you in ${server}? DMbot won't write down anything you say from now on. The campaign's record will have gaps wherever you speak, so its summaries can miss things and plot holes can appear. You can start again any time in Discord.`,
+  stopYes: "Yes, stop recording me",
+  stopKeep: "Keep recording",
+  stoppedRecording: (server: string): string =>
+    `Stopped. DMbot is not recording you in ${server}. To start again, press ⚙️ Menu in DMbot's private message in Discord.`,
+
   // Download my data (#1150)
   exportHeading: "Download my data",
   exportWhat:

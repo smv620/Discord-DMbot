@@ -198,15 +198,29 @@ class Export(DatabaseTest):
         data = await build_export(self.web, self.alice, now=self.now)
         self.assertEqual((data["plan"]["plan"], data["usedTryIt"]), ("try-it", True))
 
-    async def test_the_role_reads_only_its_own_consent_and_cannot_write_it(self) -> None:
+    async def test_the_role_reads_only_its_own_consent_and_may_only_delete_it(self) -> None:
         async with self.web.user(ALICE.id, session=self.alice.id_hash) as conn:
             await conn.execute("SELECT set_config('dmbot.guild_id', %s, true)", (str(THURSDAY.id),))
             cur = await conn.execute("SELECT user_id FROM consent")
             self.assertEqual([r["user_id"] for r in await cur.fetchall()], [ALICE.id])
+        # No yes can be added or changed from the website (the right to stop is the only one,
+        # #1151: the website's Stop recording me).
+        for statement in (
+            "INSERT INTO consent (guild_id, user_id, granted_at) VALUES (111, 1001, 1)",
+            "UPDATE consent SET granted_at = granted_at + 1",
+        ):
+            async with self.web.user(ALICE.id, session=self.alice.id_hash) as conn:
+                await conn.execute(
+                    "SELECT set_config('dmbot.guild_id', %s, true)", (str(THURSDAY.id),)
+                )
+                with self.assertRaises(errors.InsufficientPrivilege):
+                    await conn.execute(statement)
+        # A delete with no WHERE takes only her own row here, never Bob's.
         async with self.web.user(ALICE.id, session=self.alice.id_hash) as conn:
             await conn.execute("SELECT set_config('dmbot.guild_id', %s, true)", (str(THURSDAY.id),))
-            with self.assertRaises(errors.InsufficientPrivilege):
-                await conn.execute("DELETE FROM consent")
+            cur = await conn.execute("DELETE FROM consent RETURNING user_id")
+            self.assertEqual([r["user_id"] for r in await cur.fetchall()], [ALICE.id])
+        self.assertIsNotNone(await self.consent.granted_at(THURSDAY.id, BOB.id))
         async with self.web.unscoped() as conn:
             with self.assertRaises(errors.InsufficientPrivilege):
                 await conn.execute("SELECT 1 FROM transcript_lines")  # still closed

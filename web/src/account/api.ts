@@ -93,8 +93,20 @@ export interface Me {
   // already says "You added DMbot here", so the page doesn't use it (#497).
   /** A first payment failed and none has gone through since (#922): the page says to try again. */
   firstPaymentFailed?: boolean;
+  /** Where DMbot may record you. Missing from an API older than #1151. */
+  recording?: RecordingEntry[];
   /** Hand-overs offered to you, and the ones you offered (#614). */
   offers: { incoming: Offer[]; outgoing: Offer[] };
+}
+
+/** A server where this person said yes to recording (#1151). `on` is false when their yes was
+ * given under older wording: DMbot records nobody until they say yes again in Discord. */
+export interface RecordingEntry {
+  serverId: string;
+  serverName: string;
+  /** ISO date they said yes. */
+  agreedOn: string;
+  on: boolean;
 }
 
 /** Why a call failed, in a form the page can turn into plain words. */
@@ -142,6 +154,8 @@ export interface AccountApi {
   /** The file for "Download my data": the person's own data as JSON (#1150). Fetched from the
    * page, so a refusal (once a minute, or signed out) can be said in words. */
   downloadExport(): Promise<Blob>;
+  /** Stop recording me in one server (#1151). Starting again stays in Discord. */
+  stopRecording(serverId: string): Promise<void>;
   /** Where "Add DMbot" goes: the API, which sends the browser on to Discord. */
   installUrl(serverId: string): string;
   /** Say you added DMbot to a server it joined through a plain link. */
@@ -261,6 +275,9 @@ export function httpApi(base: string, fetcher: typeof fetch = fetch): AccountApi
     },
     withdrawOffer: async (offerId) => {
       await call("POST", `/offers/${encodeURIComponent(offerId)}/withdraw`);
+    },
+    stopRecording: async (serverId) => {
+      await call("POST", `/me/recording/${encodeURIComponent(serverId)}/stop`);
     },
     requestDelete: async () =>
       ((await call("POST", "/account/delete/request")) as { confirm_token: string })
