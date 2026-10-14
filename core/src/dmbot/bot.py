@@ -33,6 +33,7 @@ from dmbot import (
     fightbot,
     hours,
     install,
+    owner_presence,
     plan_rules,
     retention,
     sheet_reread,
@@ -243,6 +244,7 @@ TRANSCRIPT_PARALLEL = 10  # campaigns posting at once (one rate-limited channel 
 STOP_DRAIN_TIMEOUT_S = 120.0  # at stop, wait this long for the last words to be written
 FINAL_FLUSH_TIMEOUT_S = 15.0  # at stop or shutdown, give up on posting after this
 IDLE_SWEEP_INTERVAL_S = 1
+OWNER_LOOK_TIMEOUT_S = 6  # asking Discord about an owner must not hold up a start
 FORGET_TIMEOUT_S = 10  # removing learned names must not hold up stopping a recording
 METER_INTERVAL_S = 60  # how often listening minutes are written to the hours meter (#437)
 METER_FINAL_TRIES = 3  # at a stop: the last minutes are written nowhere else
@@ -1736,6 +1738,10 @@ class DMBot(commands.AutoShardedBot):
             log.exception("The daily retention job failed")
             return
         retention.write_last_run(state_dir, int(time.time()))
+        try:
+            await self.check_owners_daily()
+        except Exception:
+            log.exception("The daily owner check failed")
 
     async def _tell_admin(self, user_id: int, text: str) -> None:
         """A private message to one of DMbot's admins (#972). Raises if it can't be sent, so
@@ -1762,11 +1768,54 @@ class DMBot(commands.AutoShardedBot):
             )
         return None
 
+    async def check_owner_present(self, campaign: Campaign) -> Campaign:
+        """Is the campaign's owner still in the server (#1214)? Asked only when DMbot already
+        has a reason to look: a start, opening Settings, and the daily job. Never raises; the
+        campaign as it is now comes back (ownerless if it just became so)."""
+        owner = campaign.owner_user_id
+        guild = self.get_guild(campaign.guild_id)
+        if owner is None or guild is None:
+            return campaign
+        try:
+            async with asyncio.timeout(OWNER_LOOK_TIMEOUT_S):
+                seen = await owner_presence.look(guild.fetch_member, self.fetch_user, owner)
+                now = int(time.time())
+                step = owner_presence.decide(campaign.owner_missing_since, seen, now)
+                gid, cid = campaign.guild_id, campaign.id
+                if step.action == owner_presence.MARK:
+                    await self.campaigns.note_owner_presence(gid, cid, owner, missing_since=now)
+                elif step.action == owner_presence.CLEAR:
+                    await self.campaigns.note_owner_presence(gid, cid, owner, missing_since=None)
+                elif (
+                    step.action == owner_presence.ORPHAN
+                    and await self.campaigns.orphan_missing_owner(gid, cid, owner, now)
+                ):
+                    log.info("A campaign's owner is gone from Discord; it is ownerless now")
+                    for dm in sorted(campaign.dm_user_ids):
+                        await self._dm_user(dm, f"**{campaign.name}**: {owner_presence.TELL_DMS}")
+                return await self.campaigns.get(gid, cid) or campaign
+        except Exception:
+            log.exception("Couldn't check whether a campaign's owner is still here")
+            return campaign
+
+    async def check_owners_daily(self) -> None:
+        """Once a day, with the retention job: look at the owner of each campaign played in
+        the last 120 days, one at a time (#1214)."""
+        now = int(time.time())
+        for guild_id in await self.campaigns.guilds_with_campaigns():
+            if self.get_guild(guild_id) is None:
+                continue
+            for campaign in await self.campaigns.list_campaigns(guild_id):
+                if campaign.owner_user_id is None or campaign.last_active_at < now - 120 * 86400:
+                    continue
+                await self.check_owner_present(campaign)
+
     async def plan_refusal(self, guild_id: int, campaign: Campaign, starter_id: int) -> str | None:
         """Why the campaign's owner's plan, hours or campaign count don't allow a start, in
         plain words for the person starting it, or None (#437). A paused campaign is refused
         whatever the plan; the rest only when DMBOT_ENFORCE_PLANS is on. Fails open: a
         database hiccup must never lock a table out of its game."""
+        campaign = await self.check_owner_present(campaign)  # a gone owner: Take it on (#1214)
         owner = campaign.owner_user_id
         if owner is not None and self.settings.enforce_plans and self.meter is not None:
             # A plan that shrank pauses the campaigns over its cap first, so this one may
