@@ -71,6 +71,9 @@ class PaymentEvent:
     period_end: int | None = None
     customer_id: str | None = None
     subscription_id: str | None = None
+    # The address the company has for the payer (never logged): kept as the account's
+    # payment email (#1242).
+    email: str | None = None
 
 
 class PaymentProvider(Protocol):
