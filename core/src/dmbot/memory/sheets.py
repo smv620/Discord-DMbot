@@ -27,6 +27,9 @@ from dmbot.memory.models import name_key
 
 SOURCE_DNDBEYOND = "dndbeyond"
 SOURCE_TYPED = "typed"
+# A typed sheet whose fields were read from the player's own document by the AI (#1125). It is
+# "typed" for editing (no link), but is checked like a full sheet.
+ORIGIN_DOCUMENT = "document"
 SNAPSHOT_VERSION = 1
 
 API = "https://character-service.dndbeyond.com/character/v5/character/{id}"
@@ -48,12 +51,12 @@ LEVEL_MAX = 20
 SCORE_MAX = 30
 ABILITIES = ("str", "dex", "con", "int", "wis", "cha")
 _ABILITY_NAMES = ("strength", "dexterity", "constitution", "intelligence", "wisdom", "charisma")
-_SKILLS = (
+SKILLS = (
     "acrobatics", "animal-handling", "arcana", "athletics", "deception", "history",
     "insight", "intimidation", "investigation", "medicine", "nature", "perception",
     "performance", "persuasion", "religion", "sleight-of-hand", "stealth", "survival",
 )  # fmt: skip
-_SENSES = ("darkvision", "blindsight", "tremorsense", "truesight")
+SENSES = ("darkvision", "blindsight", "tremorsense", "truesight")
 _NAME_LISTS = ("spells", "features", "feats", "items")
 # The "full" part of the sheet (#1124): more lists of names, kept as names only (never
 # descriptions or rules text). They are trimmed with the others when a snapshot is too big.
@@ -152,7 +155,7 @@ def parse(answer: Mapping[str, Any]) -> dict[str, Any]:
             {
                 str(m["subType"])
                 for m in modifiers
-                if m.get("type") in ("proficiency", "expertise") and m.get("subType") in _SKILLS
+                if m.get("type") in ("proficiency", "expertise") and m.get("subType") in SKILLS
             }
         ),
         "senses": _senses(modifiers),
@@ -212,7 +215,7 @@ def _full(
             {
                 str(m["subType"])
                 for m in modifiers
-                if m.get("type") == "expertise" and m.get("subType") in _SKILLS
+                if m.get("type") == "expertise" and m.get("subType") in SKILLS
             }
         ),
         "tools": _names(
@@ -424,7 +427,7 @@ def _senses(modifiers: list[Mapping[str, Any]]) -> dict[str, int]:
     senses: dict[str, int] = {}
     for m in modifiers:
         sense = m.get("subType")
-        if m.get("type") == "set-base" and sense in _SENSES:
+        if m.get("type") == "set-base" and sense in SENSES:
             feet = _int(m.get("value"), 1, 1000)
             if feet is not None:
                 senses[str(sense)] = max(feet, senses.get(str(sense), 0))
@@ -503,7 +506,7 @@ def clean(snapshot: Any) -> dict[str, Any] | None:
     senses_in = snapshot.get("senses")
     senses = {
         s: v
-        for s in _SENSES
+        for s in SENSES
         if isinstance(senses_in, Mapping) and (v := _int(senses_in.get(s), 1, 1000)) is not None
     }
     out: dict[str, Any] = {
@@ -520,7 +523,7 @@ def clean(snapshot: Any) -> dict[str, Any] | None:
         "proficiency_bonus": _int(snapshot.get("proficiency_bonus"), 2, 6),
         "saves": [a for a in ABILITIES if a in _list(snapshot.get("saves"))],
         "skills": sorted(
-            {s for s in _list(snapshot.get("skills")) if isinstance(s, str) and s in _SKILLS}
+            {s for s in _list(snapshot.get("skills")) if isinstance(s, str) and s in SKILLS}
         ),
         "senses": senses,
         "languages": _names(_list(snapshot.get("languages"))),
@@ -528,6 +531,8 @@ def clean(snapshot: Any) -> dict[str, Any] | None:
     for key in _NAME_LISTS:
         out[key] = _names(_list(snapshot.get(key)))
     out.update(_clean_full(snapshot))
+    if source == SOURCE_TYPED and snapshot.get("origin") == ORIGIN_DOCUMENT:
+        out["origin"] = ORIGIN_DOCUMENT  # read from a document by the AI (#1125): the full checks
     out["flags"] = sorted(f for f in _list(snapshot.get("flags")) if f in FLAG_PARTS)
     # Never bigger than SNAPSHOT_MAX_BYTES as Postgres stores it (UTF-8, not \u escapes):
     # the longest lists lose their last entries. Each pass shrinks a list or returns, so
@@ -558,7 +563,7 @@ def _clean_full(snapshot: Mapping[str, Any]) -> dict[str, Any]:
         out[key] = _names(_list(snapshot.get(key)))
     out["weapon_profs"] = _names(_list(snapshot.get("weapon_profs")))
     out["armor_profs"] = _names(_list(snapshot.get("armor_profs")))
-    out["expertise"] = sorted({s for s in _list(snapshot.get("expertise")) if s in _SKILLS})
+    out["expertise"] = sorted({s for s in _list(snapshot.get("expertise")) if s in SKILLS})
     inventory = snapshot.get("inventory")
     if isinstance(inventory, Mapping):
         rarity_in = inventory.get("rarity")

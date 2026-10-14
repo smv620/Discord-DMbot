@@ -147,6 +147,7 @@ class Tiers(unittest.TestCase):
                 Feature.HOUSE_RULES: AIModelTier.CAREFUL,
                 Feature.SIDEBAR_RETRY: AIModelTier.CAREFUL,
                 Feature.RULES_CONFIRM: AIModelTier.CAREFUL,
+                Feature.SHEET: AIModelTier.CAREFUL,  # a player's sheet document (#1125)
             },
         )
         self.assertEqual(set(FEATURE_TIERS), set(Feature))  # none left out
@@ -164,6 +165,7 @@ class Tiers(unittest.TestCase):
             (bot.ai, Feature.NAMES),
             (bot.topic_ai, Feature.TOPIC),
             (bot.audio_ai, Feature.AUDIO_CHECK),
+            (bot.sheet_ai, Feature.SHEET),
         ):
             assert isinstance(client, TierClient)
             self.assertEqual(client.tier, FEATURE_TIERS[job], job)

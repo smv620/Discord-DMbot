@@ -1063,7 +1063,7 @@ WEB_ROLE_POLICIES = """
                                   AND o.to_user_id = dmbot_current_user() AND o.status = 'open'
                                   AND o.created_at + 7 * 86400 > dmbot_now()));
     -- The person's own consent, in the session's servers (#1150: the data export; #1151: where
-    -- DMbot may record them). Read-only here; the right to stop is granted with #1151.
+    -- DMbot may record them). It may read and delete (stop) its own row, never add or change one.
     DROP POLICY IF EXISTS web_own_rows ON consent;
     CREATE POLICY web_own_rows ON consent AS RESTRICTIVE TO dmbot_web
         USING (user_id = dmbot_current_user()
@@ -1627,6 +1627,24 @@ DNDBEYOND_INVITE = """
             '^https://www[.]dndbeyond[.]com/campaigns/join/[A-Za-z0-9]{4,64}$');
 """
 
+TABLE_CHAT = """
+    -- Typed chat at the table (#1118; docs/PLAN.md, "Typed chat at the table"). The voice
+    -- channel's own text chat is read while DMbot listens (and only from people who agreed);
+    -- `table_chat_channel_id` is at most one more text channel the DM picked, and
+    -- `table_chat` is the DM's switch (on for everyone, because the consent wording that
+    -- covers it was asked again, version 5). A typed line is stored with `typed`, shown only
+    -- in the as-heard transcript and tagged "(typed)". Nullable or defaulted columns: no row
+    -- changes, so no backfill policy.
+    ALTER TABLE campaigns
+        ADD COLUMN table_chat BOOLEAN NOT NULL DEFAULT TRUE,
+        ADD COLUMN table_chat_channel_id BIGINT;
+    ALTER TABLE transcript_lines ADD COLUMN typed BOOLEAN NOT NULL DEFAULT FALSE;
+    -- A DM sidebar question typed in the table's chat has its own "via" (no speech-to-text).
+    ALTER TABLE transcript_lines DROP CONSTRAINT transcript_lines_sidebar_via_check;
+    ALTER TABLE transcript_lines ADD CONSTRAINT transcript_lines_sidebar_via_check
+        CHECK (sidebar_via IN ('voice-memo', 'typed', 'table-trigger', 'table-chat'));
+"""
+
 OWNER_CAMPAIGNS = (
     _setting("dmbot_owner_sync", "dmbot.owner_sync", "TEXT")
     + """
@@ -1894,8 +1912,11 @@ OFFER_INSERT_COLUMNS: tuple[str, ...] = (
 WEB_ROLE_GRANTS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("SELECT", ("schema_migrations",)),
     # The person's own consent and character sheets, for the data export (#1150); the
-    # restrictive web_own_rows policies hold it to their own rows in their servers.
-    ("SELECT", ("consent", "character_sheets")),
+    # restrictive web_own_rows policies hold it to their own rows in their servers. The right
+    # to stop (DELETE) on consent is the website's Stop recording me (#1151): the same
+    # policies hold it to the person's own row; it can never add or change a yes.
+    ("SELECT", ("character_sheets",)),
+    ("SELECT, DELETE", ("consent",)),
     # Accepting a hand-over (#614) makes the person the owner and one of the DMs; the
     # store locks the campaign row first (FOR UPDATE needs an UPDATE right), and answering
     # changes only an offer's status.
@@ -1964,6 +1985,7 @@ MIGRATIONS: tuple[Migration, ...] = (
     ("0049_game_effects_extended", GAME_EFFECTS_EXTENDED),
     ("0050_gametime_channel", GAMETIME_CHANNEL),
     ("0051_dndbeyond_invite", DNDBEYOND_INVITE),
+    ("0052_table_chat", TABLE_CHAT),
 )
 
 # Tables that must have row-level security. A test checks every table in the schema

@@ -643,6 +643,64 @@ describe("safety", () => {
     expect(screen.queryByText(text.firstPaymentFailed)).toBeNull();
   });
 
+  it("lists where DMbot may record you, with one warning and one confirmation to stop (#1151)", async () => {
+    const { api } = show("table");
+    const first = await screen.findByText(text.recordingLine("Thursday Table", "2026-09-20"));
+    expect(first).toBeTruthy();
+    expect(screen.getByText(text.recordingLine("Gorrak's Hall", "2026-08-02"))).toBeTruthy();
+    // Nothing is stopped by the first press: it shows the warning and a way back.
+    const row = first.closest("li") as HTMLElement;
+    fireEvent.click(within(row).getByRole("button", { name: text.stopRecording }));
+    expect(within(row).getByText(text.stopWarning("Thursday Table"))).toBeTruthy();
+    expect(api.calls.some((c) => c.startsWith("stop-recording"))).toBe(false);
+    fireEvent.click(within(row).getByRole("button", { name: text.stopKeep }));
+    expect(within(row).queryByText(text.stopWarning("Thursday Table"))).toBeNull();
+    expect(api.calls.some((c) => c.startsWith("stop-recording"))).toBe(false);
+    // The one confirmation stops it, and the page says so.
+    fireEvent.click(within(row).getByRole("button", { name: text.stopRecording }));
+    fireEvent.click(within(row).getByRole("button", { name: text.stopYes }));
+    expect(await screen.findByText(text.stoppedRecording("Thursday Table"))).toBeTruthy();
+    expect(api.calls).toContain("stop-recording:srv-thursday");
+    await waitFor(() =>
+      expect(screen.queryByText(text.recordingLine("Thursday Table", "2026-09-20"))).toBeNull(),
+    );
+    // The other server is untouched.
+    expect(screen.getByText(text.recordingLine("Gorrak's Hall", "2026-08-02"))).toBeTruthy();
+  });
+
+  it("says a yes under older wording is not recording anyone (#1151)", async () => {
+    const api = mockApi("table");
+    const realMe = api.me.bind(api);
+    api.me = async () => {
+      const me = await realMe();
+      return me
+        ? {
+            ...me,
+            recording: [
+              { serverId: "srv-x", serverName: "Old Hall", agreedOn: "2026-01-01", on: false },
+            ],
+          }
+        : me;
+    };
+    render(<Account api={api} go={vi.fn()} />);
+    expect(await screen.findByText(text.recordingOld("Old Hall"))).toBeTruthy();
+    expect(screen.queryByRole("button", { name: text.stopRecording })).toBeNull();
+  });
+
+  it("shows no recording card to someone who never agreed, or from an older API (#1151)", async () => {
+    const api = mockApi("table");
+    const realMe = api.me.bind(api);
+    api.me = async () => {
+      const me = await realMe();
+      if (!me) return me;
+      const { recording: _gone, ...older } = me;
+      return older;
+    };
+    render(<Account api={api} go={vi.fn()} />);
+    await screen.findByRole("heading", { name: text.exportHeading });
+    expect(screen.queryByText(text.recordingHeading)).toBeNull();
+  });
+
   it("downloads the person's data from the page, as a file (#1150)", async () => {
     const saved: string[] = [];
     URL.createObjectURL = vi.fn(() => "blob:pretend");
@@ -733,6 +791,24 @@ describe("safety", () => {
     render(<Account api={api} go={vi.fn()} />);
     await screen.findByRole("heading", { name: text.exportHeading });
     expect(screen.queryByText(text.charactersHeading)).toBeNull();
+  });
+
+  it("Sign out everywhere calls the API and then shows signed out (#1163)", async () => {
+    const { api } = show("table");
+    expect(await screen.findByText(text.signOutEverywhereNote)).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: text.signOutEverywhere }));
+    await waitFor(() => expect(api.calls).toContain("signOutEverywhere"));
+    expect(await screen.findByRole("link", { name: text.signIn })).toBeTruthy();
+  });
+
+  it("Sign out everywhere says to wait a minute on a 429 (#1163)", async () => {
+    const api = mockApi("table");
+    api.signOutEverywhere = async () => {
+      throw new ApiError("slow-down");
+    };
+    render(<Account api={api} go={vi.fn()} />);
+    fireEvent.click(await screen.findByRole("button", { name: text.signOutEverywhere }));
+    expect(await screen.findByText(text.signOutEverywhereWait)).toBeTruthy();
   });
 
   it("signed out: Start Try It is the main button, with the plans under it", async () => {

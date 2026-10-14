@@ -7,7 +7,8 @@ of the sheet:
 - ⚠️ read, but a name isn't in DMbot's rules list (content outside the free rules, or
   homebrew). It may be perfectly fine, and the card says so plainly;
 - ⛔ couldn't be read, or doesn't add up (levels over 20, hit points over max plus temporary,
-  a number below zero, a name that is nothing like any DMbot knows).
+  a number that can't be right (below zero or far too big), a name that is nothing like
+  any DMbot knows).
 
 The checks are the rules index (`dmbot.rules.index`, spells and conditions of the SRD),
 `sheet_names` (classes, species and feats) and simple arithmetic. No AI, and nothing is
@@ -26,6 +27,7 @@ from dmbot.memory import sheet_names
 from dmbot.memory.sheets import (
     ABILITIES,
     INVENTORY_MAX,
+    ORIGIN_DOCUMENT,
     RARITIES,
     SOURCE_DNDBEYOND,
     SOURCE_TYPED,
@@ -64,6 +66,19 @@ def _quoted(names: list[str]) -> str:
 
 def _plural(n: int, word: str, many: str | None = None) -> str:
     return f"{n} {word if n == 1 else many or word + 's'}"
+
+
+def _again(snapshot: Mapping[str, Any]) -> str:
+    """What to do about a part that couldn't be read: a linked sheet is linked again; a sheet
+    read from a document has no link, so it is the document that is checked."""
+    if snapshot.get("origin") == ORIGIN_DOCUMENT:
+        return "check your document, or press Type in my character"
+    return "link the sheet again"
+
+
+def _again_sentence(snapshot: Mapping[str, Any]) -> str:
+    text = _again(snapshot)
+    return text[0].upper() + text[1:]
 
 
 def _worse(a: str, b: str) -> str:
@@ -174,7 +189,7 @@ def checks(
     """One check per part of the sheet, in the order the card shows them. A sheet someone
     typed in has only the parts the form asks for, so only those are checked."""
     out = [_basic(snapshot)]
-    if snapshot.get("source") == SOURCE_TYPED:
+    if snapshot.get("source") == SOURCE_TYPED and snapshot.get("origin") != ORIGIN_DOCUMENT:
         out.append(_typed_names(snapshot, target, fallback))
         return out
     out += [
@@ -209,7 +224,7 @@ def _basic(snapshot: Mapping[str, Any]) -> Check:
     total = sum(c["level"] for c in classes if isinstance(c.get("level"), int))
     if not classes:
         status = BAD
-        problems.append("no class or level could be read; link the sheet again")
+        problems.append(f"no class or level could be read; {_again(snapshot)}")
     elif total > MAX_LEVEL:
         status = BAD
         problems.append(
@@ -220,7 +235,7 @@ def _basic(snapshot: Mapping[str, Any]) -> Check:
     if not isinstance(top, int):
         if not typed:
             status = BAD
-            problems.append("hit points couldn't be read; link the sheet again")
+            problems.append(f"hit points couldn't be read; {_again(snapshot)}")
     elif isinstance(hp, int) and hp > top + temp:
         status = BAD
         problems.append(f"HP {hp} is above the maximum {top} + {temp}. Check HP on your sheet")
@@ -229,7 +244,9 @@ def _basic(snapshot: Mapping[str, Any]) -> Check:
         problems.append("armor class couldn't be worked out; check it on your sheet")
     if "basic" in (snapshot.get("flags") or []):
         status = BAD
-        problems.append("a number on the sheet is below zero. Check your sheet")
+        problems.append(
+            "a number on the sheet can't be right (too small or too big). Check your sheet"
+        )
     unknown: list[str] = []  # nothing like a name DMbot knows (⛔)
     unlisted: list[str] = []  # a real book's name, or D&D Beyond's own: DMbot just lacks it (⚠️)
     names = [(f"'{c.get('name')}'", "class", str(c.get("name"))) for c in classes]
@@ -264,11 +281,19 @@ def _abilities(snapshot: Mapping[str, Any]) -> Check:
     missing = [a.upper() for a in ABILITIES if a not in scores]
     if "abilities" in (snapshot.get("flags") or []):
         return Check(
-            "abilities", BAD, "Ability scores: a score on the sheet is below zero. Check your sheet"
+            "abilities",
+            BAD,
+            "Ability scores: a score on the sheet can't be right (1 to 30). Check your sheet",
+        )
+    if missing and snapshot.get("origin") == ORIGIN_DOCUMENT:  # the AI leaves out what isn't there
+        if len(missing) == 6:
+            return Check("abilities", WARN, "Ability scores: none found in your document")
+        return Check(
+            "abilities", WARN, f"Ability scores: {_few(missing, 6)} not found in your document"
         )
     if missing:
         what = "couldn't be read" if len(missing) == 6 else f"{_few(missing, 6)} couldn't be read"
-        return Check("abilities", BAD, f"Ability scores: {what}. Link the sheet again")
+        return Check("abilities", BAD, f"Ability scores: {what}. {_again_sentence(snapshot)}")
     shown = " ".join(f"{a.upper()} {scores[a]}" for a in ABILITIES)
     return Check("abilities", OK, f"Ability scores: {shown}")
 
@@ -359,23 +384,33 @@ def _more(snapshot: Mapping[str, Any]) -> Check:
 
 def _inventory(snapshot: Mapping[str, Any]) -> Check:
     inv = snapshot.get("inventory")
+    if not isinstance(inv, Mapping) and snapshot.get("origin") == ORIGIN_DOCUMENT:
+        return Check("inventory", OK, "Inventory: not found in your document")
     if not isinstance(inv, Mapping):
-        return Check("inventory", BAD, "Inventory: couldn't be read. Link the sheet again")
+        return Check("inventory", BAD, f"Inventory: couldn't be read. {_again_sentence(snapshot)}")
     if "inventory" in (snapshot.get("flags") or []):
         return Check(
-            "inventory", BAD, "Inventory: an amount on the sheet is below zero. Check your sheet"
+            "inventory",
+            BAD,
+            "Inventory: an amount on the sheet can't be right. Check your sheet",
         )
     rarity = inv.get("rarity") if isinstance(inv.get("rarity"), Mapping) else {}
     assert isinstance(rarity, Mapping)
     count = inv.get("count") or 0
     capped = count >= INVENTORY_MAX  # a count cut at the limit can't be matched to its parts
-    if not capped and sum(rarity.get(r, 0) for r in RARITIES) != count:
+    # A player's own document almost never says the rarity of each thing, so the counts the AI
+    # gives can't be held to the total (#1125).
+    from_document = snapshot.get("origin") == ORIGIN_DOCUMENT
+    if not capped and not from_document and sum(rarity.get(r, 0) for r in RARITIES) != count:
         return Check(
             "inventory",
             BAD,
-            "Inventory: DMbot couldn't count your items properly. Link the sheet again",
+            f"Inventory: DMbot couldn't count your items properly. {_again_sentence(snapshot)}",
         )
-    counts = [f"{rarity[r]} {r}" for r in reversed(RARITIES) if rarity.get(r)]
+    # A document's breakdown is the AI's guess, so only the count and weight are shown.
+    counts = (
+        [] if from_document else [f"{rarity[r]} {r}" for r in reversed(RARITIES) if rarity.get(r)]
+    )
     weight = f"{inv.get('weight') or 0:.2f}"
     tail = f": {', '.join(counts)}" if counts else ""
     return Check("inventory", OK, f"Inventory ({_plural(count, 'item')}, {weight} lb){tail}")
