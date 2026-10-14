@@ -21,7 +21,8 @@ READY TO DEPLOY (merged into development, not on the server yet; dev1 deploys)
      it is on before deploying #1152 (dev1 cannot check it without reading the token).
   1. No game running (active_sessions = 0) and no table test due; tell the owner.
   2. Backup: pg_dumpall to ~/db-backups/dmbot-before-<sha>-<UTC time>.sql, chmod 600.
-  3. Build, then up, as two steps: core first (it runs the migrations), then web-api (it only checks the schema and
+  3. Build with GIT_COMMIT=$(git rev-parse HEAD) in front (#1199: baked in so DMbot links to its own documents; core now
+     mounts docs/PLAN.md, README.md and web/src/content/help.ts). Build, then up, as two steps: core first (it runs the migrations), then web-api (it only checks the schema and
      refuses to start if core has not migrated yet). ears and cloudflared: only if their files changed.
   4. Migrations, in one transaction (all five or none): 0051 dndbeyond_invite (campaigns: the DM's invite link)
      -> 0052 table_chat (campaigns.table_chat on by default, table_chat_channel_id; transcript_lines.typed; the
