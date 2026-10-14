@@ -2055,6 +2055,7 @@ WEB_ROLE_FUNCTIONS: tuple[tuple[str, str], ...] = (
     ("dmbot_hours_used", "dmbot_hours_used(BIGINT)"),
     ("dmbot_claim_email", "dmbot_claim_email(BIGINT, TEXT, BOOLEAN, INTEGER, INTEGER)"),
     ("dmbot_minutes_total", "dmbot_minutes_total()"),
+    ("dmbot_set_payment_email", "dmbot_set_payment_email(TEXT, TEXT, BIGINT)"),  # #1242
 )
 # The columns the website may fill when it creates a hand-over offer (#728): who, where and the
 # two names. Left out on purpose, so they take their defaults: status and decided_at (an offer
@@ -2321,6 +2322,56 @@ PAYMENT_EMAIL = """
     -- and nowhere else. Never logged or shown back in full.
     ALTER TABLE web_users ADD COLUMN payment_email TEXT
         CHECK (payment_email IS NULL OR char_length(payment_email) BETWEEN 3 AND 254);
+    -- When the company said so (its event time): an older event never replaces a newer one.
+    ALTER TABLE web_users ADD COLUMN payment_email_at BIGINT;
+    -- A changed address arrives with the company's customer id, not ours: this door finds the
+    -- account by the customer id stored with its plan and sets the address, only for an event
+    -- newer than the one already kept. The website's role has no other way to look an account
+    -- up by customer id.
+    DO $do$
+    BEGIN
+        EXECUTE format(
+            'CREATE POLICY paymail ON web_users FOR ALL TO %I'
+            ' USING (dmbot_owner_sync() = ''paymail'')'
+            ' WITH CHECK (dmbot_owner_sync() = ''paymail'')',
+            current_user);
+        EXECUTE format(
+            'CREATE POLICY paymail ON entitlements FOR SELECT TO %I'
+            ' USING (dmbot_owner_sync() = ''paymail'')',
+            current_user);
+    END
+    $do$;
+    CREATE FUNCTION dmbot_set_payment_email(cust TEXT, addr TEXT, happened BIGINT)
+        RETURNS BOOLEAN
+        LANGUAGE plpgsql SECURITY DEFINER
+        AS $fn$
+    #variable_conflict use_column
+    DECLARE
+        before TEXT := COALESCE(current_setting('dmbot.owner_sync', true), '');
+        changed INTEGER;
+    BEGIN
+        IF cust IS NULL OR addr IS NULL OR char_length(addr) NOT BETWEEN 3 AND 254 THEN
+            RETURN FALSE;
+        END IF;
+        PERFORM set_config('dmbot.owner_sync', 'paymail', true);
+        UPDATE web_users u SET payment_email = addr, payment_email_at = happened
+            FROM entitlements e
+            WHERE e.user_id = u.user_id AND e.provider_customer_id = cust
+              AND (u.payment_email_at IS NULL OR u.payment_email_at < happened);
+        GET DIAGNOSTICS changed = ROW_COUNT;
+        PERFORM set_config('dmbot.owner_sync', before, true);
+        RETURN changed > 0;
+    END
+    $fn$;
+    DO $do$
+    BEGIN
+        EXECUTE format(
+            'ALTER FUNCTION dmbot_set_payment_email(TEXT, TEXT, BIGINT)'
+            ' SET search_path = pg_catalog, %I, pg_temp',
+            current_schema());
+    END
+    $do$;
+    REVOKE ALL ON FUNCTION dmbot_set_payment_email(TEXT, TEXT, BIGINT) FROM PUBLIC;
     -- Try It's job reads the address through its door: the payment email first.
     CREATE OR REPLACE FUNCTION dmbot_trial_people(since BIGINT, now BIGINT)
         RETURNS TABLE (user_id BIGINT, dmbot_id TEXT, email TEXT, period_end BIGINT,
