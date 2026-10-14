@@ -639,10 +639,13 @@ never does.
     start) is **held as pending** and shown to the publisher's DMs as a diff ([See changes] [Accept] [Not
     these]). Until they accept, every campaign keeps the last accepted version; followers see "New changes
     are waiting for the <set> DM."
-- **Updates reach followers at their next session start, never mid-game**, as a note on their DM screen:
-  "The Frostmaiden house rules changed (v4): 2 rules. **[Follow]** **[Cherry pick]** [See changes]".
-  - **Follow** (the default, also what happens if the DM does nothing): take the changes and keep following.
-  - **Cherry pick:** decide change by change, Accept or Reject. **If every change is accepted, it is the same
+- **Updates reach followers at their next session start, never mid-game.** DMbot takes the update then
+  (Follow, the default) and posts a note on the DM screen: "The Frostmaiden house rules were updated to v4:
+  2 rules. [See changes] [Pick changes] [Undo]".
+  - **Follow** (the default, also what happens if the DM does nothing): the changes are taken and the campaign
+    keeps following. **Undo** goes back to the earlier version and keeps it: DMbot does not take that same
+    version again at the next session, only a newer one.
+  - **Pick changes** (cherry pick): undo the take and decide change by change. **If every change is accepted, it is the same
     as Follow.** **If any change is rejected,** the set as the campaign had it, plus the accepted changes and
     without the rejected ones, is **merged into the campaign's own house rules** (or its own homebrew), and
     the campaign stops following that set. Its own rules still win over what was merged. The merged rules
