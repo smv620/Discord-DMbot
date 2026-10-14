@@ -689,7 +689,7 @@ RULE_SETS = (
         {_memory_scope()}
         set_id     TEXT NOT NULL,
         version    INTEGER NOT NULL CHECK (version >= 1),
-        content    JSONB NOT NULL,
+        content    JSONB NOT NULL CHECK (jsonb_typeof(content) = 'object'),
         created_by BIGINT NOT NULL CHECK (created_by > 0),
         created_at BIGINT NOT NULL,
         PRIMARY KEY (guild_id, campaign_id, set_id, version),
@@ -714,7 +714,7 @@ RULE_SETS = (
         set_name     TEXT NOT NULL CHECK (char_length(set_name) BETWEEN 1 AND 60),
         publisher    TEXT NOT NULL CHECK (char_length(publisher) BETWEEN 1 AND 100),
         version      INTEGER NOT NULL CHECK (version >= 1),
-        content      JSONB NOT NULL,
+        content      JSONB NOT NULL CHECK (jsonb_typeof(content) = 'object'),
         position     INTEGER NOT NULL DEFAULT 0 CHECK (position >= 0),
         updating     BOOLEAN NOT NULL,
         followed_by  BIGINT NOT NULL CHECK (followed_by > 0),
@@ -732,7 +732,13 @@ RULE_SETS = (
         for t in ("rule_sets", "rule_set_versions", "rule_set_codes", "rule_set_follows")
     )
     + """
-    -- The door. TO the role that owns the function (the one running this migration), never the
+    -- The door. Note: the policies below also let a caller read their OWN server's rows (the
+    -- plain guild_isolation policy already does); what they add is the one set a code opens.
+    -- The `campaigns` policy has no code condition of its own on purpose: its sub-select on
+    -- rule_sets is itself filtered by these row-level rules, so it reaches only a set whose
+    -- active code equals the one the function was given. Both settings are transaction-local,
+    -- so an error inside the function rolls them back; the restore lines are for success.
+    -- TO the role that owns the function (the one running this migration), never the
     -- website's role. Each policy needs the setting the function sets, and the code it sets.
     DO $do$
     BEGIN
@@ -776,7 +782,8 @@ RULE_SETS = (
             FROM rule_set_codes rc
             JOIN rule_sets s ON s.id = rc.set_id
             JOIN campaigns c ON c.guild_id = s.guild_id AND c.id = s.campaign_id
-            JOIN rule_set_versions v ON v.set_id = s.id
+            JOIN rule_set_versions v ON v.guild_id = s.guild_id AND v.campaign_id = s.campaign_id
+                AND v.set_id = s.id
             WHERE rc.code = wanted AND rc.active AND s.status = 'shared'
             ORDER BY v.version DESC
             LIMIT 1;

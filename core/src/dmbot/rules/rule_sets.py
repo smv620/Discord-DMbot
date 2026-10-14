@@ -20,21 +20,22 @@ from __future__ import annotations
 import json
 import secrets
 import time
-from collections import defaultdict, deque
+from collections import deque
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, cast
 
 from psycopg.types.json import Jsonb
 
 from dmbot.db import Conn, Database
-from dmbot.rules.house import HouseRule, HouseRuleError, require_dm
+from dmbot.rules.house import HOUSE_RULES_MAX, RULE_MAX, HouseRule, HouseRuleError, require_dm
 
 HOUSE_RULES = "house_rules"
 NAME_MAX = 60
 CODE_LETTERS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567"  # no 0/1/8/9: easy to read out and type
 CODE_LENGTH = 10  # 32**10 is about 10**15: not guessable
 # Wrong codes tried from one server: a few, then a wait (a code is the key to a set).
+LINK_MAX = 2000
 GUESSES = 5
 GUESS_WINDOW_S = 600
 
@@ -75,6 +76,7 @@ class Offer:
     publisher: str  # the publishing campaign's name
     version: int
     content: dict[str, Any]
+    code: str | None = None  # the share code it was found by, so a follow can ask again
 
 
 @dataclass(frozen=True, slots=True)
@@ -102,6 +104,32 @@ def content_of(rules: Sequence[HouseRule], link: str | None) -> dict[str, Any]:
     }
 
 
+def valid_content(content: Any) -> dict[str, Any]:
+    """A set's content as a copy that is only what a set may hold: a list of rules (number,
+    text, "instead of") and a link, each within the limits. Anything else is dropped; a shape
+    that isn't a set's raises."""
+    if not isinstance(content, dict) or not isinstance(content.get("rules"), list):
+        raise RuleSetError(NO_SUCH_SET)
+    rules = []
+    for entry in content["rules"][:HOUSE_RULES_MAX]:
+        if not isinstance(entry, dict):
+            raise RuleSetError(NO_SUCH_SET)
+        number, text, instead = entry.get("number"), entry.get("rule"), entry.get("instead")
+        if (
+            not isinstance(number, int)
+            or isinstance(number, bool)
+            or not isinstance(text, str)
+            or not 0 < len(text) <= RULE_MAX
+            or not (instead is None or (isinstance(instead, str) and len(instead) <= RULE_MAX))
+        ):
+            raise RuleSetError(NO_SUCH_SET)
+        rules.append({"number": number, "rule": text, "instead": instead})
+    link = content.get("link")
+    if link is not None and (not isinstance(link, str) or len(link) > LINK_MAX):
+        raise RuleSetError(NO_SUCH_SET)
+    return {"rules": rules, "link": link}
+
+
 def new_code() -> str:
     return "".join(secrets.choice(CODE_LETTERS) for _ in range(CODE_LENGTH))
 
@@ -111,20 +139,22 @@ def clean_code(text: str) -> str:
     return "".join(c for c in text.upper() if c.isalnum())
 
 
-def _offer(row: dict[str, Any]) -> Offer:
-    content = row["content"]
+def _json(content: Any) -> dict[str, Any]:
+    return cast(dict[str, Any], content if isinstance(content, dict) else json.loads(content))
+
+
+def _offer(row: dict[str, Any], code: str | None = None) -> Offer:
     return Offer(
         str(row["set_id"]), str(row["kind"]), str(row["set_name"]), str(row["publisher"]),
-        int(row["version"]), content if isinstance(content, dict) else json.loads(content),
+        int(row["version"]), valid_content(_json(row["content"])), code,
     )  # fmt: skip
 
 
 def _follow(row: dict[str, Any]) -> Follow:
-    content = row["content"]
     return Follow(
         str(row["set_id"]), str(row["kind"]), str(row["set_name"]), str(row["publisher"]),
-        int(row["version"]), content if isinstance(content, dict) else json.loads(content),
-        bool(row["updating"]), int(row["followed_at"]),
+        int(row["version"]), _json(row["content"]), bool(row["updating"]),
+        int(row["followed_at"]),
     )  # fmt: skip
 
 
@@ -132,7 +162,7 @@ class RuleSetStore:
     def __init__(self, db: Database, clock: Callable[[], float] = time.time) -> None:
         self._db = db
         self._clock = clock
-        self._wrong: dict[int, deque[float]] = defaultdict(deque)  # server -> wrong guesses
+        self._wrong: dict[tuple[int, int], deque[float]] = {}  # (server, person) -> guesses
 
     def _now(self) -> int:
         return int(self._clock())
@@ -177,24 +207,40 @@ class RuleSetStore:
         async with self._db.guild(guild_id) as conn:
             await require_dm(conn, guild_id, campaign_id, user_id, lock=True)
             cur = await conn.execute(
-                "SELECT 1 AS ok FROM rule_sets WHERE guild_id = %s AND campaign_id = %s"
+                "SELECT id, status FROM rule_sets WHERE guild_id = %s AND campaign_id = %s"
                 " AND kind = %s",
                 (guild_id, campaign_id, HOUSE_RULES),
             )
-            if await cur.fetchone() is not None:
+            old = await cur.fetchone()
+            if old is not None and old["status"] == "shared":
                 raise RuleSetError(ALREADY_SHARED)
-            set_id = secrets.token_hex(16)
-            await conn.execute(
-                "INSERT INTO rule_sets (guild_id, campaign_id, id, kind, name, status,"
-                " created_by, created_at) VALUES (%s, %s, %s, %s, %s, 'shared', %s, %s)",
-                (guild_id, campaign_id, set_id, HOUSE_RULES, name, user_id, now),
-            )
+            content = Jsonb(content_of(rules, link))
+            if old is not None:  # shared before and stopped: shared again, a new version
+                set_id = str(old["id"])
+                cur = await conn.execute(
+                    "SELECT max(version) AS v FROM rule_set_versions WHERE guild_id = %s"
+                    " AND campaign_id = %s AND set_id = %s",
+                    (guild_id, campaign_id, set_id),
+                )
+                version = int((await cur.fetchone() or {"v": 0})["v"] or 0) + 1
+                await conn.execute(
+                    "UPDATE rule_sets SET status = 'shared', name = %s WHERE guild_id = %s"
+                    " AND campaign_id = %s AND id = %s",
+                    (name, guild_id, campaign_id, set_id),
+                )
+            else:
+                set_id, version = secrets.token_hex(16), 1
+                await conn.execute(
+                    "INSERT INTO rule_sets (guild_id, campaign_id, id, kind, name, status,"
+                    " created_by, created_at) VALUES (%s, %s, %s, %s, %s, 'shared', %s, %s)",
+                    (guild_id, campaign_id, set_id, HOUSE_RULES, name, user_id, now),
+                )
             await conn.execute(
                 "INSERT INTO rule_set_versions (guild_id, campaign_id, set_id, version,"
-                " content, created_by, created_at) VALUES (%s, %s, %s, 1, %s, %s, %s)",
-                (guild_id, campaign_id, set_id, Jsonb(content_of(rules, link)), user_id, now),
+                " content, created_by, created_at) VALUES (%s, %s, %s, %s, %s, %s, %s)",
+                (guild_id, campaign_id, set_id, version, content, user_id, now),
             )
-        return SharedSet(set_id, name, True, 1)
+        return SharedSet(set_id, name, True, version)
 
     async def stop_sharing(self, guild_id: int, campaign_id: str, user_id: int) -> bool:
         """Turn sharing off: no new follows (every code stops working). Followers keep the
@@ -269,28 +315,43 @@ class RuleSetStore:
             )
             return [_offer(r) for r in await cur.fetchall()]
 
-    async def by_code(self, guild_id: int, code: str) -> Offer:
+    async def _door(self, conn: Conn, code: str) -> Offer | None:
+        cur = await conn.execute("SELECT * FROM dmbot_set_by_code(%s)", (code,))
+        row = await cur.fetchone()
+        if row is None:
+            return None
+        return _offer(
+            {"set_id": row["set_id"], "kind": row["kind"], "set_name": row["set_name"],
+             "publisher": row["publisher"], "version": row["version"], "content": row["content"]},
+            code,
+        )  # fmt: skip
+
+    async def by_code(self, guild_id: int, user_id: int, code: str) -> Offer:
         """The shared set a code opens, from any server: its name, its publisher campaign's
-        name and the content it would copy. A wrong code counts toward a short limit."""
+        name and the content it would copy. For a DM who is about to confirm following it:
+        the caller checks that (this returns the full content). A wrong code counts toward a
+        short limit for that person in that server (kept in memory, so it resets on a restart;
+        a code is 10 letters from 32, about 10**15, so the limit only slows a determined
+        guesser)."""
+        key = (guild_id, user_id)
         now = self._clock()
-        tries = self._wrong[guild_id]
+        tries = self._wrong.setdefault(key, deque())
         while tries and now - tries[0] > GUESS_WINDOW_S:
             tries.popleft()
         if len(tries) >= GUESSES:
             raise RuleSetError(TOO_MANY)
+        tries.append(now)  # reserved before the database is asked, so parallel guesses count
         wanted = clean_code(code)
-        row = None
+        offer = None
         if len(wanted) == CODE_LENGTH:
             async with self._db.guild(guild_id) as conn:
-                cur = await conn.execute("SELECT * FROM dmbot_set_by_code(%s)", (wanted,))
-                row = await cur.fetchone()
-        if row is None:
-            tries.append(now)
+                offer = await self._door(conn, wanted)
+        if offer is None:
             raise RuleSetError(BAD_CODE)
-        return _offer(
-            {"set_id": row["set_id"], "kind": row["kind"], "set_name": row["set_name"],
-             "publisher": row["publisher"], "version": row["version"], "content": row["content"]}
-        )  # fmt: skip
+        tries.pop()  # a right code isn't a wrong guess
+        if not tries:
+            del self._wrong[key]
+        return offer
 
     # ---- following ------------------------------------------------------------------
 
@@ -300,29 +361,47 @@ class RuleSetStore:
 
     async def follow(self, guild_id: int, campaign_id: str, user_id: int, offer: Offer) -> Follow:
         """Follow the set in `offer` (from `shared_here` or `by_code`, which the DM has just
-        confirmed): the campaign takes its own copy of this version. Only a DM of the
-        following campaign; one house-rules set at a time."""
+        confirmed): the campaign takes its own copy. The set is read again here, in the same
+        transaction, so a set turned off or changed since the DM looked is not copied from
+        the old offer; the DM follows what is shared now. Only a DM of the following
+        campaign; one house-rules set at a time."""
         now = self._now()
         async with self._db.guild(guild_id) as conn:
             await require_dm(conn, guild_id, campaign_id, user_id, lock=True)
+            fresh = await self._reread(conn, offer)
             cur = await conn.execute(
                 "SELECT 1 AS ok FROM rule_sets"
                 " WHERE guild_id = %s AND campaign_id = %s AND id = %s",
-                (guild_id, campaign_id, offer.set_id),
+                (guild_id, campaign_id, fresh.set_id),
             )
             if await cur.fetchone() is not None:
                 raise RuleSetError(OWN_SET)
-            if offer.kind == HOUSE_RULES and any(
+            if fresh.kind == HOUSE_RULES and any(
                 f.kind == HOUSE_RULES for f in await _followed(conn, guild_id, campaign_id)
             ):
                 raise RuleSetError(ALREADY_FOLLOWING)
             await conn.execute(
-                _INSERT_FOLLOW, _follow_values(guild_id, campaign_id, user_id, now, offer, 0)
+                _INSERT_FOLLOW, _follow_values(guild_id, campaign_id, user_id, now, fresh, 0)
             )
         return Follow(
-            offer.set_id, offer.kind, offer.name, offer.publisher, offer.version,
-            offer.content, True, now,
+            fresh.set_id, fresh.kind, fresh.name, fresh.publisher, fresh.version,
+            fresh.content, True, now,
         )  # fmt: skip
+
+    async def _reread(self, conn: Conn, offer: Offer) -> Offer:
+        """The offer as the set is now, from the same door that made it (a code) or from
+        this server's own rows (a pick from the list)."""
+        if offer.code is not None:
+            fresh = await self._door(conn, offer.code)
+        else:
+            cur = await conn.execute(
+                _LATEST + " WHERE s.id = %s AND s.status = 'shared'", (offer.set_id,)
+            )
+            row = await cur.fetchone()
+            fresh = _offer(row) if row is not None else None
+        if fresh is None or fresh.set_id != offer.set_id:
+            raise RuleSetError(NO_SUCH_SET)
+        return fresh
 
     async def unfollow(self, guild_id: int, campaign_id: str, user_id: int) -> Follow:
         """Stop following the house-rules set. Returns what was removed, so the caller's Undo

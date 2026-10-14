@@ -105,7 +105,7 @@ class Sets(DatabaseTest):
     async def test_a_code_opens_the_set_from_another_server_and_following_copies_it(self) -> None:
         await self.publish()
         code = await self.sets.make_code(GUILD_A, self.pub, DM_A)
-        offer = await self.sets.by_code(GUILD_B, code.lower())
+        offer = await self.sets.by_code(GUILD_B, DM_B, code.lower())
         self.assertEqual(
             (offer.name, offer.publisher, offer.version),
             ("Frostmaiden house rules", "Frostmaiden", 1),
@@ -125,19 +125,19 @@ class Sets(DatabaseTest):
         await self.publish()
         for _ in range(rule_sets.GUESSES):
             with self.assertRaises(RuleSetError):
-                await self.sets.by_code(GUILD_B, "AAAAAAAAAA")
+                await self.sets.by_code(GUILD_B, DM_B, "AAAAAAAAAA")
         code = await self.sets.make_code(GUILD_A, self.pub, DM_A)
         with self.assertRaisesRegex(RuleSetError, "Too many"):
-            await self.sets.by_code(GUILD_B, code)
+            await self.sets.by_code(GUILD_B, DM_B, code)
 
     async def test_a_turned_off_code_refuses_new_follows_and_keeps_existing_ones(self) -> None:
         await self.publish()
         code = await self.sets.make_code(GUILD_A, self.pub, DM_A)
-        offer = await self.sets.by_code(GUILD_B, code)
+        offer = await self.sets.by_code(GUILD_B, DM_B, code)
         await self.sets.follow(GUILD_B, self.far, DM_B, offer)
         self.assertTrue(await self.sets.turn_off_code(GUILD_A, self.pub, DM_A, code))
         with self.assertRaises(RuleSetError):
-            await self.sets.by_code(GUILD_B, code)
+            await self.sets.by_code(GUILD_B, DM_B, code)
         self.assertEqual(len(await self.sets.following(GUILD_B, self.far)), 1)
 
     async def test_stopping_sharing_stops_new_follows_only(self) -> None:
@@ -147,9 +147,9 @@ class Sets(DatabaseTest):
             GUILD_A, self.same, DM_A, (await self.sets.shared_here(GUILD_A, self.same))[0]
         )
         self.assertTrue(await self.sets.stop_sharing(GUILD_A, self.pub, DM_A))
-        self.assertEqual(await self.sets.shared_here(GUILD_A, self.far), [])
+        self.assertEqual(await self.sets.shared_here(GUILD_A, self.same), [])
         with self.assertRaises(RuleSetError):
-            await self.sets.by_code(GUILD_B, code)
+            await self.sets.by_code(GUILD_B, DM_B, code)
         self.assertEqual(len(await self.sets.following(GUILD_A, self.same)), 1)  # kept
 
     async def test_the_same_server_picks_from_a_list_and_never_its_own(self) -> None:
@@ -175,7 +175,9 @@ class Sets(DatabaseTest):
     async def test_a_follower_reads_the_set_and_nothing_else_of_the_publisher(self) -> None:
         await self.publish()
         code = await self.sets.make_code(GUILD_A, self.pub, DM_A)
-        await self.sets.follow(GUILD_B, self.far, DM_B, await self.sets.by_code(GUILD_B, code))
+        await self.sets.follow(
+            GUILD_B, self.far, DM_B, await self.sets.by_code(GUILD_B, DM_B, code)
+        )
         async with self.db.guild(GUILD_B) as conn:
             for table in (
                 "rule_sets",
@@ -193,6 +195,56 @@ class Sets(DatabaseTest):
             # And the door answers nothing for a code that isn't active, in any server.
             cur = await conn.execute("SELECT count(*) AS n FROM dmbot_set_by_code('AAAAAAAAAA')")
             self.assertEqual((await cur.fetchone() or {})["n"], 0)
+            # The door puts its setting back: nothing stays open after it.
+            cur = await conn.execute("SELECT current_setting('dmbot.owner_sync', true) AS s")
+            self.assertIn((await cur.fetchone() or {})["s"], (None, ""))
+
+    async def test_stopping_then_sharing_again_gives_a_new_version(self) -> None:
+        await self.publish()
+        await self.sets.stop_sharing(GUILD_A, self.pub, DM_A)
+        await self.houses.add(GUILD_A, self.pub, DM_A, "Healing potions are a bonus action")
+        again = await self.publish()
+        self.assertEqual((again.shared, again.version), (True, 2))
+        offer = (await self.sets.shared_here(GUILD_A, self.same))[0]
+        self.assertEqual((offer.version, len(offer.content["rules"])), (2, 3))
+
+    async def test_following_reads_the_set_again_so_a_turned_off_set_is_not_copied(self) -> None:
+        await self.publish()
+        offer = (await self.sets.shared_here(GUILD_A, self.same))[0]
+        await self.sets.stop_sharing(GUILD_A, self.pub, DM_A)
+        with self.assertRaises(RuleSetError):
+            await self.sets.follow(GUILD_A, self.same, DM_A, offer)
+        self.assertEqual(await self.sets.following(GUILD_A, self.same), [])
+
+    async def test_only_a_dm_makes_codes_stops_sharing_or_follows(self) -> None:
+        await self.publish()
+        offer = (await self.sets.shared_here(GUILD_A, self.same))[0]
+        with self.assertRaises(HouseRuleError):
+            await self.sets.make_code(GUILD_A, self.pub, PLAYER)
+        with self.assertRaises(HouseRuleError):
+            await self.sets.stop_sharing(GUILD_A, self.pub, PLAYER)
+        with self.assertRaises(HouseRuleError):
+            await self.sets.follow(GUILD_A, self.same, PLAYER, offer)
+
+    async def test_a_copy_that_is_not_a_set_is_refused(self) -> None:
+        for bad in ({}, {"rules": "x"}, {"rules": [{"number": 1, "rule": ""}], "link": None},
+                    {"rules": [{"number": 1, "rule": "ok", "extra": 1}], "link": 5}):  # fmt: skip
+            with self.assertRaises(RuleSetError):
+                rule_sets.valid_content(bad)
+        got = rule_sets.valid_content(
+            {"rules": [{"number": 1, "rule": "ok", "instead": None, "junk": "x"}], "link": None}
+        )
+        self.assertEqual(got["rules"], [{"number": 1, "rule": "ok", "instead": None}])
+
+    async def test_a_player_pressing_guesses_does_not_lock_out_the_dm(self) -> None:
+        await self.publish()
+        code = await self.sets.make_code(GUILD_A, self.pub, DM_A)
+        for _ in range(rule_sets.GUESSES):
+            with self.assertRaises(RuleSetError):
+                await self.sets.by_code(GUILD_B, PLAYER, "AAAAAAAAAA")
+        self.assertEqual(
+            (await self.sets.by_code(GUILD_B, DM_B, code)).name, "Frostmaiden house rules"
+        )
 
     async def test_a_campaign_that_does_not_follow_cannot_read_the_set(self) -> None:
         await self.publish()
