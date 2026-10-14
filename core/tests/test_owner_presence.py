@@ -23,9 +23,10 @@ DAY = 86400
 
 
 def not_found(code: int) -> discord.NotFound:
-    return discord.NotFound(
-        SimpleNamespace(status=404, reason="Not Found"), {"code": code, "message": "x"}
-    )
+    response: Any = SimpleNamespace(
+        status=404, reason="Not Found"
+    )  # only status and reason are read
+    return discord.NotFound(response, {"code": code, "message": "x"})
 
 
 class Deciding(unittest.TestCase):
