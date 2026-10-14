@@ -3251,8 +3251,9 @@ experience points and the trial extension (owner, 2026-10-14; Supervisor's detai
 - **Pause from the website: no** (Supervisor, 2026-10-14, #435): pausing a campaign stays in
   Discord (⏸️ on ⚙️ Settings), where the bot holds the session lock and knows whether it is
   listening.
-- **Build:** see the issues filed on 2026-10-14 for the DMbot ID and personal links, email
-  sending, sign-in by email, moves, the trial-end message and extension, and the site's pages.
+- **Build:** #1228 (DMbot ID, link tokens, experience points, no $1.99), #1229 (email, trial-end
+  message, extension), #1230 (moves), all CloudDev; #1231 (website sign-in by email, My Account,
+  personal pages, WebDev); #1232 (owner: postal address, Gmail app password).
 
 **License (decided 2026-10-03).** Public repository under PolyForm Strict 1.0.0.
 
