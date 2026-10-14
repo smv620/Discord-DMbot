@@ -253,6 +253,43 @@ class EmailSignIn(DatabaseTest):
         self.assertEqual(answer.json(), SAME_ANSWER)
         self.assertEqual(len(self.mailer.sent), 1)  # the link went anyway
 
+    async def test_no_link_is_made_when_there_is_no_mailer(self) -> None:
+        await self.account(ALICE)
+        app = create_app(
+            settings(link_token_secret=LINK_SECRET),
+            self.web,
+            FakeDiscord(),
+            payments=FakeProvider(b"h" * 32, SITE),
+            clock=lambda: self.now,
+        )
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url=API) as c:
+            answer = await c.post(
+                "/auth/email/request", json={"email": email_of(ALICE)}, headers=HEADERS
+            )
+            await asyncio.gather(*list(app.state.email_tasks))
+        self.assertEqual(answer.json(), SAME_ANSWER)
+        async with self.db.user(ALICE.id) as conn:
+            cur = await conn.execute("SELECT count(*) AS n FROM email_sign_in_links")
+            row = await cur.fetchone()
+        assert row is not None
+        self.assertEqual(row["n"], 0)  # nothing could be sent, so nothing was made
+
+    async def test_two_asks_at_once_leave_one_live_link(self) -> None:
+        await self.account(ALICE)
+        async with self.browser() as one, self.browser() as two:
+            await asyncio.gather(
+                one.post("/auth/email/request", json={"email": email_of(ALICE)}, headers=HEADERS),
+                two.post("/auth/email/request", json={"email": email_of(ALICE)}, headers=HEADERS),
+            )
+            await self.settle()
+        async with self.db.user(ALICE.id) as conn:
+            cur = await conn.execute(
+                "SELECT count(*) AS n FROM email_sign_in_links WHERE used_at IS NULL"
+            )
+            row = await cur.fetchone()
+        assert row is not None
+        self.assertEqual(row["n"], 1)  # the row lock made the second ask wait for the first
+
     async def test_asking_again_spends_the_earlier_link(self) -> None:
         await self.account(ALICE)
         async with self.browser() as client:
