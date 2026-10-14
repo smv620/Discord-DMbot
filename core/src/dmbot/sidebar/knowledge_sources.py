@@ -16,7 +16,10 @@ from dmbot.sidebar.knowledge import BUILT, Chunk
 log = logging.getLogger(__name__)
 
 PACKAGE = Path(__file__).resolve().parents[1]  # .../dmbot (in the image and in a checkout)
-_STRING = re.compile(r'"((?:[^"\\\n]|\\.){25,})"|\'((?:[^\'\\\n]|\\.){25,})\'|`([^`]{25,})`')
+# The sentences of the Help page: each step's `text:` and the exported heading, intro and note.
+_STRING = re.compile(
+    r"(?:\btext:|export const \w+ =)\s*(?P<q>[\"'`])(?P<s>(?:\\.|(?!(?P=q)).)*)(?P=q)", re.S
+)
 
 
 def docs_root() -> Path | None:
@@ -48,8 +51,9 @@ def help_page_chunks(path: Path) -> list[Chunk]:
     """The website's Help page: its sentences, as the page reads."""
     if not path.is_file():
         return []
-    found = [next(g for g in m.groups() if g) for m in _STRING.finditer(path.read_text("utf-8"))]
+    found = [m["s"] for m in _STRING.finditer(path.read_text("utf-8"))]
     text = " ".join(f.replace("\\'", "'").replace('\\"', '"') for f in found)
+    text = knowledge.without_process_notes(re.sub(r"\$\{[^}]*\}", "", text))
     return [Chunk("help page", "The Help page", "", BUILT, " ".join(text.split()))] if text else []
 
 
@@ -95,7 +99,10 @@ def help_card_chunks() -> list[Chunk]:
     path = PACKAGE / "dm_screen" / "messages.py"
     if not path.is_file():
         return []
-    tree = ast.parse(path.read_text(encoding="utf-8"))
+    try:
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+    except (SyntaxError, UnicodeDecodeError):
+        return []
     for node in ast.walk(tree):
         if isinstance(node, ast.FunctionDef) and node.name == "help_card":
             lines = [

@@ -1,11 +1,11 @@
 """What DMbot knows about itself, so the sidebar can answer "how do I...?" from the docs that
 shipped with the running build (#1195).
 
-The index is built in memory, once, from the documents the image was built with (the plan, the
-README, the website's Help page) and from the command descriptions in the code itself (see
-`knowledge_sources`), so it cannot drift from the running build and there is no generated file to
-keep up to date. Nothing is fetched at answer time: a live read of GitHub would show
-`development`, which can describe features that are not deployed.
+The index is built in memory, once, from the documents of the checkout the running image was
+built from (mounted read-only by docker-compose: the plan, the README, the website's Help page)
+and from the command descriptions in the code itself (see `knowledge_sources`), so there is no
+generated file to keep up to date. Nothing is fetched at answer time: a live read of GitHub
+would show `development`, which can describe features that are not deployed.
 
 Pure Python, no AI and no network: a keyword ranker (BM25) picks the few chunks that answer a
 question, each marked built, planned or decided, so the answer never promises what is not there.
@@ -13,6 +13,7 @@ question, each marked built, planned or decided, so the answer never promises wh
 
 from __future__ import annotations
 
+import logging
 import math
 import os
 import re
@@ -24,12 +25,12 @@ REPO_URL = "https://github.com/smv620/Discord-DMbot"
 
 CHUNK_MAX = 1800  # characters: one idea per chunk keeps the prompt small and the ranking sharp
 BUDGET = 6000  # characters of chunks added to one prompt (#1195)
-MIN_SCORE = 8.0  # a match in SURE_MATCH sources at least this strong makes a question about DMbot
-# Files written for the people who use DMbot rank above the plan, which is for its builders.
+# Weighted up because they are written for the people who use DMbot (a nudge, not a rule: the
+# golden questions in the tests pin the outcome).
 USER_FACING = {"commands": 1.4, "help card": 1.4, "help page": 1.4}
-# Sources short and distinctive enough that a strong match alone shows a question is about DMbot.
-SURE_MATCH = {"commands", "help card"}
 PLANNED_HEADINGS = {"phases", "open decisions"}
+
+log = logging.getLogger(__name__)
 
 BUILT, PLANNED, MIXED, DECIDED = "built", "planned", "mixed", "decided"
 
@@ -138,9 +139,20 @@ def tokens(text: str) -> list[str]:
     return out
 
 
+_SESSIONS = re.compile(
+    r"\b(dev1|dev2|dev3|WebDev|CloudDev|Supervisor|RepoManager|pycharm|Master Web Session)\b", re.I
+)
+_DATE = re.compile(r"\s*\b\d{4}-\d{2}-\d{2}\b")
+_SENTENCE = re.compile(r"(?<=[.!?])\s+")
+
+
 def without_process_notes(text: str) -> str:
-    """The text without who-decided-what-when notes and issue numbers."""
+    """The text without who-decided-what-when notes: parentheses about an owner or session,
+    sentences naming a session, dates and issue numbers. They are for the people who build
+    DMbot, and the AI should never be given something it could repeat to a DM."""
     text = _PROCESS_NOTE.sub("", text)
+    text = " ".join(x for x in _SENTENCE.split(text) if not _SESSIONS.search(x))
+    text = re.sub(r",?\s*\b(decided|chosen|owner)\b(?=\s*(,|$|\.|:|\)))", "", _DATE.sub("", text))
     return _ISSUE_REF.sub("", text)
 
 
@@ -271,16 +283,22 @@ def load() -> Ranker:
     """The index for this build (empty when the documents were not shipped)."""
     from dmbot.sidebar import knowledge_sources  # (it imports this module)
 
-    return Ranker(knowledge_sources.collect())
+    try:
+        return Ranker(knowledge_sources.collect())
+    except Exception:  # broken or odd documents must not break the sidebar
+        log.exception("DMbot couldn't read its own documents; answering from the digest only")
+        return Ranker([])
 
 
-# Words that name DMbot or one of its features: a question with one is about DMbot even when the
-# ranker is unsure. ("House rules" and "the clock" alone are game words too, so they are not here.)
+# Words that name DMbot or one of its features. Only DMbot's own words: "record", "restore",
+# "command", "who can see" and "between sessions" are game words too (the Command spell, a
+# rogue unseen), so a bare one must never add DMbot's documents to a rules question.
 _NAMES_DMBOT = re.compile(
-    r"(\b(dmbot|discord|commands?|slash|consent|record(ing|ed|s)?|transcripts?|backups?|restore|"
-    r"dm screen|sidebar|fightbot|timebot|plotbot|npcbot|entitybot|game clock|game time|"
-    r"character sheets?|wake phrase|share codes?|back ?ups?|between sessions|across sessions|"
-    r"what can you do|what do you do|how do you work|who can (see|read))\b|(^|\s)/\w+)",
+    r"(\b(dmbot|discord|slash commands?|consent|transcripts?|back ?ups?|dm screen|dm sidebar|"
+    r"fightbot|timebot|plotbot|npcbot|entitybot|game clock|game time|character sheets?|"
+    r"wake phrase|share codes?|shared rulesets?|recording me|record me|being recorded|"
+    r"stop recording|are you recording|how do you work)\b|(^|\s)/\w+|"
+    r"\bshare\b.*\b(campaign|server)\b)",
     re.IGNORECASE,
 )
 
@@ -292,14 +310,14 @@ def names_dmbot(question: str) -> bool:
 
 def retrieve(question: str, ranker: Ranker | None = None, budget: int = BUDGET) -> list[Chunk]:
     """The chunks that answer a question about DMbot, best first, up to `budget` characters.
-    Nothing for a question that is not about DMbot: the plan is full of game words, so a game
-    question only counts as about DMbot when it names DMbot or a feature, or matches a command or
-    the help card strongly."""
+    Nothing for a question that is not about DMbot. The plan is full of game words, so no score can
+    tell the two apart (measured on the real index: a game question scored above DMbot ones); the
+    question must name DMbot, a slash command or one of its features (`names_dmbot`), and the
+    ranking then picks the sections."""
     ranked = (ranker or load()).scores(question)
     if not ranked:
         return []
-    sure = max((sc for sc, c in ranked if c.file in SURE_MATCH), default=0.0)
-    if not names_dmbot(question) and sure < MIN_SCORE:
+    if not names_dmbot(question):
         return []
     floor = ranked[0][0] * 0.4  # a far weaker chunk is noise next to the best one
     out: list[Chunk] = []

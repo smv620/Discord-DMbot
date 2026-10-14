@@ -507,7 +507,12 @@ class Sidebar:
         if not says_no_info(text):
             source = legacy_citation(source, ctx) or source
         text = brevity.join_source(text, source, confidence)
-        if source == "DMbot help" and ctx.about_link and not _NOT_THERE.search(text):
+        if (
+            source == "DMbot help"
+            and ctx.about_link
+            and not _NOT_THERE.search(text)
+            and not says_no_info(text)
+        ):
             # One link, at this build's commit (#1195); none for "not built yet" or "I don't
             # have that", which it would not help.
             text = f"{text} More: {ctx.about_link}"

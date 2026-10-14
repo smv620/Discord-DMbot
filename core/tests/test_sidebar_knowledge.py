@@ -139,6 +139,43 @@ class Shipped(unittest.TestCase):
             self.assertTrue({"docs/PLAN.md", "README.md", "help page"} <= files)
 
 
+class EveryChunk(unittest.TestCase):
+    """Scans the whole index of this checkout, not a handful of questions."""
+
+    def test_no_chunk_carries_a_session_name_a_date_or_an_issue_number(self) -> None:
+        for chunk in knowledge_sources.collect():
+            where = f"{chunk.file}: {chunk.heading}"
+            for text in (chunk.heading, chunk.text):
+                self.assertNotRegex(text, r"CloudDev|WebDev|Supervisor|RepoManager|dev1", where)
+                self.assertNotRegex(text, r"\b\d{4}-\d{2}-\d{2}\b", where)
+                self.assertNotRegex(text, r"#\d{3,}", where)
+
+    def test_the_help_page_is_its_sentences_not_its_code(self) -> None:
+        for chunk in knowledge_sources.collect():
+            if chunk.file == "help page":
+                for code in ("export ", "interface", "*/", "=>", "${"):
+                    self.assertNotIn(code, chunk.text)
+                self.assertIn("/dmbot start", chunk.text)
+
+
+class GameWords(unittest.TestCase):
+    """Words DMbot shares with the game must not add its documents to a rules question."""
+
+    def test_game_questions_that_use_dmbots_words_get_no_block(self) -> None:
+        for question in (
+            "Can I restore hit points with a short rest?",
+            "What does the Command spell do?",
+            "who can see an invisible rogue?",
+            "What do you do when a goblin grapples you?",
+            "what is the weather in the forest between sessions",
+            "does the bard record the song on the lute",
+        ):
+            self.assertNotIn("ABOUT DMBOT", build(question), question)
+
+    def test_a_question_about_sharing_rules_between_campaigns_finds_its_section(self) -> None:
+        self.assertIn("ABOUT DMBOT", build("how do I share my house rules with another campaign?"))
+
+
 class GoldenQuestions(unittest.TestCase):
     """What the AI is given for the owner's kind of question: the section that answers it, how far
     it is built, and nothing about DMbot for a game question."""
