@@ -44,20 +44,26 @@ def parse(text: str | None) -> Duration:
         return Duration(None)
     lowered = " ".join(text.split()).lower()
     concentration = "concentration" in lowered
-    match = _LENGTH.search(lowered)
-    if match is None:
-        return Duration(None, concentration)
-    number = match.group(1)
-    count = int(number) if number.isdigit() else _NUMBERS.get(number)
-    if count is None or count < 1:
-        return Duration(None, concentration)
-    unit = match.group(2)
-    if unit == "round":
-        minutes = math.ceil(count * 6 / 60)
-    elif unit in ("second", "sec", "s"):
-        minutes = math.ceil(count / 60)
+    # Scan every hit: a word that only looks like a length ("dismiss" read as "dismis" + "s")
+    # must not hide the real one after it. The bare "s" counts only after a digit.
+    for match in _LENGTH.finditer(lowered):
+        number, unit = match.group(1), match.group(2)
+        if unit == "s" and not number.isdigit():
+            continue
+        count = int(number) if number.isdigit() else _NUMBERS.get(number)
+        if count is None:
+            continue
+        if count < 1:
+            return Duration(None, concentration)
+        if unit == "round":
+            minutes = math.ceil(count * 6 / 60)
+        elif unit in ("second", "sec", "s"):
+            minutes = math.ceil(count / 60)
+        else:
+            minutes = count * _UNIT_MINUTES[unit]
+        break
     else:
-        minutes = count * _UNIT_MINUTES[unit]
+        return Duration(None, concentration)
     if minutes > MAX_MINUTES:
         return Duration(None, concentration)
     return Duration(minutes, concentration)
