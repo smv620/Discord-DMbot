@@ -252,6 +252,13 @@ terminal output or Discord screenshots copied to it.
   game's rules and content, DMbot itself and Discord mechanics.
 - **DM authority:** the bot never posts rulings to players or public channels. Advice
   goes only to `#dm-screen` / the DM. PlotBot and NPCBot record only DM-confirmed facts.
+  **Table questions** (owner, 2026-10-14): anyone at the table may ask DMbot ("Hey DMbot…" or
+  typed in the campaign's `dmb-chat` channel), and the answer is posted in `dmb-chat` as
+  `Q (who asked): <the question, shortened>` / `Answer: <as short as possible>`, with its source and
+  at most one link (dndbeyond.com, or a public link shared with the campaign, such as its house
+  rules). That is rules information, not a ruling, and it never holds DM-screen content: a
+  player's question that needs it, or asks DMbot to decide, gets "That's one for your DM."; a
+  DM's goes to the DM privately. See docs/PLAN.md, "Table questions".
 - **Transcripts are shared; the DM screen is not pushed to players.** Anyone in the
   Discord server may view and download a campaign's session transcripts (decided
   2026-10-05). Only people who agreed are ever recorded, and the consent request tells
@@ -263,7 +270,7 @@ terminal output or Discord screenshots copied to it.
   or **open**. The one exception is the **DM sidebar** (owner, 2026-10-09): the DM's quick
   questions to DMbot and its in-game replies go into the **raw** transcript, tagged
   `[DM Sidebar]` and `DMbot` with their data lineage (where each line came from), never
-  the cleaned one. **The raw transcript is unedited and unredacted** for everyone who may
+  the cleaned one; players' table questions (2026-10-14) likewise, tagged `[Table Q]`. **The raw transcript is unedited and unredacted** for everyone who may
   read transcripts, spoilers included (owner, #933): it is the data DMbot is improved
   from. See docs/PLAN.md.
 - **Backups are complete, and anyone in the server may download one of a paid campaign**
