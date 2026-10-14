@@ -6,7 +6,7 @@
  * The names are our own invented cast (docs/test-scripts/), never real people.
  */
 import type { PlanId } from "../content/pricing";
-import type { AccountApi, Campaign, Me, Offer, Person } from "./api";
+import type { AccountApi, Campaign, Me, Offer, Person, RecordingEntry } from "./api";
 import { ApiError } from "./api";
 
 /** Found in the built files only if the pretend API was included; check-csp fails a real
@@ -120,8 +120,13 @@ export const outgoingOffer: Offer = {
   expiresAt: "2026-10-13T18:00:00Z",
 };
 
+export const recording: RecordingEntry[] = [
+  { serverId: "srv-thursday", serverName: "Thursday Table", agreedOn: "2026-09-20", on: true },
+  { serverId: "srv-gorrak", serverName: "Gorrak's Hall", agreedOn: "2026-08-02", on: true },
+];
+
 export function scenarioMe(scenario: Scenario): Me | null {
-  const base = { user, campaigns, servers, offers: { incoming: [], outgoing: [] } };
+  const base = { user, campaigns, servers, recording, offers: { incoming: [], outgoing: [] } };
   switch (scenario) {
     case "signed-out":
     case "down":
@@ -231,6 +236,10 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
       return me;
     },
     signInUrl: () => "#demo-sign-in",
+    async signOutEverywhere() {
+      calls.push("signOutEverywhere");
+      me = null;
+    },
     async signOut() {
       calls.push("signOut");
       me = null;
@@ -326,6 +335,11 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
         ...now,
         offers: { ...now.offers, incoming: now.offers.incoming.filter((o) => o.id !== offerId) },
       };
+    },
+    async stopRecording(serverId: string) {
+      calls.push(`stop-recording:${serverId}`);
+      const now = signedIn();
+      me = { ...now, recording: (now.recording ?? []).filter((r) => r.serverId !== serverId) };
     },
     async withdrawOffer(offerId: string) {
       calls.push(`withdraw:${offerId}`);

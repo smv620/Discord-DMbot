@@ -70,6 +70,7 @@ from dmbot.consent_dm import (
     warning_text,
     warning_view,
 )
+from dmbot.consent_site import SiteStops
 from dmbot.db import Database
 from dmbot.dm_screen import (
     DMScreenError,
@@ -400,6 +401,8 @@ class Table:
     chat_on: bool = True
     chat_channel_id: int | None = None
     chat_notice_posted: bool = False  # the one line in the extra channel, once a session
+    typed_rate: table_chat.TypedRate = field(default_factory=table_chat.TypedRate)
+    clock_waiting: int = 0  # clock-phrase checks running now (capped; #1154)
     # The campaign's D&D Beyond invite link, for the Join button on the messages players see
     # this session (#1119); None when the DM set none.
     dndbeyond_invite: str | None = None
@@ -701,6 +704,13 @@ class DMBot(commands.AutoShardedBot):
             spawn=self._track,
             post=self.post,  # the #dm-screen note on an accept made on the website
         )
+        # Stops made on the website (#1151): the same stop as the Stop button, for our servers.
+        self.site_stops = SiteStops(
+            is_ours=lambda guild_id: self.get_guild(guild_id) is not None,
+            consent=self.consent,
+            stop=self.withdraw_consent,  # stops capture, tells the DM, pushes ears, saves
+            spawn=self._track,
+        )
 
     # ---- lifecycle ---------------------------------------------------------
 
@@ -794,6 +804,7 @@ class DMBot(commands.AutoShardedBot):
             self._watched(self.site_offers.follow(self.campaigns.listen), "site-offers"),
             self._watched(self.site_offers.every_hour(), "site-offer-sweeps"),
             self._watched(self.site_offers.follow_decided(self.campaigns.listen), "site-decisions"),
+            self._watched(self.site_stops.follow(self.campaigns.listen), "site-consent-stops"),
         ]
 
     async def close(self) -> None:
@@ -2825,7 +2836,7 @@ class DMBot(commands.AutoShardedBot):
                 utterance.start_ms,
             )
 
-    def _act_on_line(self, table: Table, user_id: int, line: str) -> None:
+    def _act_on_line(self, table: Table, user_id: int, line: str, *, typed: bool = False) -> None:
         """What a line of table talk can set off, said or typed (#1118): a rules card, a house
         rule, the game clock. The one place both ways in share, so a typed "we take a long
         rest" does what the spoken one does. Consent was checked by the caller."""
@@ -2843,9 +2854,18 @@ class DMBot(commands.AutoShardedBot):
         except Exception:
             log.exception("House rules by voice: couldn't look at a line")
         if self.clocks is not None:
-            self._track(  # a DM's words move the clock; a player's only ask the DM
+            if typed and table.clock_waiting >= table_chat.CLOCK_WAITING_MAX:
+                return  # typed flood: skip this clock phrase, never speech (#1154)
+            table.clock_waiting += 1
+            task = self._track(  # a DM's words move the clock; a player's only ask the DM
                 self._note_clock_phrase(table, user_id, line), "clock-phrase"
             )
+            if task is None:
+                table.clock_waiting -= 1
+            else:
+                task.add_done_callback(
+                    lambda _t: setattr(table, "clock_waiting", table.clock_waiting - 1)
+                )
 
     async def _chat_channel_allowed(self, message: discord.Message) -> bool:
         """False for a message in the DM's extra chat channel when that channel is any
@@ -2907,16 +2927,24 @@ class DMBot(commands.AutoShardedBot):
         the "Hey DMbot" sidebar, the transcript), minus what only audio has: no cleaning, no
         off-topic filter, no audio check. In the transcript it is tagged (typed) and only in
         the as-heard version, never the cleaned one."""
-        table.vocabulary.note(user_id, text)
-        if table.name_lookup is not None:
-            named = mentions(table.name_lookup, text)
-            table.scene.note(named, user_id, time.monotonic())
-            table.heard_counts.update((entity_id, user_id) for entity_id in named)
-        self._act_on_line(table, user_id, text)
+        now = time.monotonic()
+        listeners = table.typed_rate.allow(user_id, now)
+        if not listeners and table.typed_rate.should_log(now):
+            # No text, no names: only that it happened (#1154).
+            log.info("Typed chat: a flood of lines; extra lines skip the listeners")
+        if listeners:
+            table.vocabulary.note(user_id, text)
+            if table.name_lookup is not None:
+                named = mentions(table.name_lookup, text)
+                table.scene.note(named, user_id, now)
+                table.heard_counts.update((entity_id, user_id) for entity_id in named)
+            self._act_on_line(table, user_id, text, typed=True)
         if self.transcripts is not None:
             table.unsaved.add(
                 Line(start_ms, user_id, text, text, typed=True, message_id=message_id)
             )
+        if not listeners:
+            return  # raw transcript only: no recent lines, sidebar or name scan (#1154)
         table.recent.add(user_id, text, time.monotonic())
         if self.tables.get(table.guild_id) is table:
             self.sidebar.ask_at_table(table, user_id, text, typed=True)
