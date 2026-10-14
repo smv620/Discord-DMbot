@@ -6,6 +6,7 @@ from __future__ import annotations
 from typing import Any
 
 from psycopg import AsyncConnection, errors
+from psycopg.rows import dict_row
 
 from dmbot import account_move
 from dmbot.account_id import to_dmbot_id
@@ -623,11 +624,13 @@ class Moves(DatabaseTest):
             self.assertEqual(await cur.fetchall(), [])  # someone else's history is not theirs
         await accounts.delete_person(web, NEW)
         # Physically gone (read as the database's administrator, who bypasses row security).
-        async with await AsyncConnection.connect(SUPERUSER_URL, autocommit=True) as admin:
+        async with await AsyncConnection.connect(
+            SUPERUSER_URL, autocommit=True, row_factory=dict_row
+        ) as admin:
             await admin.execute(f"SET search_path TO {self.schema}")
-            cur = await admin.execute("SELECT count(*) FROM account_id_history")
+            cur = await admin.execute("SELECT count(*) AS n FROM account_id_history")
             row = await cur.fetchone()
-            self.assertEqual(row[0] if row else None, 0)
+            self.assertEqual((row or {})["n"], 0)
 
     async def test_the_export_lists_earlier_discord_accounts(self) -> None:
         from dmbot.web.export import build_export
