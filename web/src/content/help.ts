@@ -118,8 +118,9 @@ export const accountSteps: Step[] = [
     names: [{ name: "Hand over", file: "dm_screen/handover.py" }],
   },
   {
-    text: "Can't reach your old account any more? If you kept a backup (type /dmbot backup before you leave, paid campaigns only), type /dmbot restore on your new account. That needs a plan with a free campaign slot.",
+    text: "Can't reach your old account any more? If it has been out of your server for 7 days, or Discord says it is gone, DMbot gives the campaign's other game masters a Take it on button in ⚙️ Settings. A new account can also type /dmbot backup once it has joined the server, then /dmbot restore (that needs a plan with a free campaign slot). Backups are for paid campaigns.",
     names: [
+      { name: "Take it on", file: "dm_screen/handover.py" },
       { name: "/dmbot backup", file: "ui/dmbot_commands.py" },
       { name: "/dmbot restore", file: "ui/dmbot_commands.py" },
     ],
