@@ -657,6 +657,10 @@ never does.
   campaign. A follow, a share code and every change are visible and can be undone by the DM.
 - **Build:** #1190 (sets, publishing, following, precedence, share codes) and #1191 (updates: Follow and Cherry
   pick, pending document changes, suggestions), CloudDev.
+- **Build status (#1190):** built so far: the tables and store (#1221), the Settings menu (#1223), and house
+  rules reaching the sidebar, rules lookup, rules cards and alerts (a followed set's rules come after the
+  campaign's own, each cited as "<set> house rules, v4"). Still to build: relationship definitions in sets,
+  follower backups, and the note at a follower's next start when a set is deleted.
 
 
 **AI models by task (decided 2026-10-10, built #1006).** Every AI call names a *tier*, never

@@ -29,6 +29,7 @@ from dmbot.campaigns.models import FALLBACK_NONE
 from dmbot.memory.kinds import kind_phrase
 from dmbot.memory.lookup import CampaignLookup
 from dmbot.memory.models import CONFIRMED
+from dmbot.rules.followed import FollowedRule
 from dmbot.rules.house import HouseRule
 from dmbot.rules.index import Hit, Index, edition_tag, normalize
 from dmbot.sidebar import knowledge
@@ -293,8 +294,13 @@ def build(
         sections.append("HOUSE RULES (they come first):")
         for rule in rules:
             instead = f" (instead of: {rule.supersedes})" if rule.supersedes else ""
-            sections.append(f"- House rule {rule.number}: {rule.rule}{instead}"[:HOUSE_RULE_MAX])
-            sources.append(f"house rule {rule.number}")
+            if isinstance(rule, FollowedRule):  # a shared set the DM chose to follow
+                label = f"Shared rule {rule.number} ({rule.cite})"
+                sources.append(rule.cite)
+            else:
+                label = f"House rule {rule.number}"
+                sources.append(f"house rule {rule.number}")
+            sections.append(f"- {label}: {rule.rule}{instead}"[:HOUSE_RULE_MAX])
     if hits:
         sections.append("RULES ENTRIES (the free rules, word for word):")
         for hit in hits:
