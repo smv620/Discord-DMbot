@@ -1598,6 +1598,8 @@ class MemoryStore:
                     rel.id,
                     {"definition_version": onto.predicates[rel.predicate].version},
                 )
+            for key in replaced:
+                await w.update(PREDICATES, key, {"version": 2})  # looked at: not again
             return Written(len(behind), w.batch)
 
     # ---- relationships ----------------------------------------------------------------
