@@ -2950,7 +2950,15 @@ stays, and so does the meaning of each event kind:
 - **Checkout** is a Checkout Session made by an API call (email server-side, never in the
   address), with the plan's Price id. The $1.99 first month of Table is a once-only coupon made
   in Stripe, and a first-month checkout with no coupon set is refused rather than charged in
-  full.
+  full. Each checkout request carries an **idempotency key** (a hash of the request) and the same
+  expiry for every request in a five-minute window, so a double-click or a retry after a timeout
+  gets the same session instead of a second live one (two completed checkouts would be two
+  subscriptions). The session expires 32 to 37 minutes after it is made (#1122).
+- **A plan change while a cancel is pending** (decided on #1122, not two events): Stripe sends
+  one update, which DMbot treats as the cancel. Only the end date is stored, and the new plan
+  applies if they resume or resubscribe. It is logged ("only the end date is stored") so the
+  owner can see it happened. Whether Stripe's portal offers a plan change on a subscription set
+  to cancel is for the sandbox run (#1096) to show.
 - **Billing and deletion:** the billing page is a Customer Portal session. Account deletion sets
   `cancel_at_period_end` (a cancel that is already done succeeds). A refunded extra-hours order
   stays credited (manual for now).
