@@ -1027,11 +1027,49 @@ class CampaignStore:
                 return "no_free_slot"
             # Taking it on also ends the 120-day countdown a deleted account started (#1059).
             await conn.execute(
-                "UPDATE campaigns SET owner_user_id = %s, owner_left_at = NULL"
-                " WHERE guild_id = %s AND id = %s",
+                "UPDATE campaigns SET owner_user_id = %s, owner_left_at = NULL,"
+                " owner_missing_since = NULL WHERE guild_id = %s AND id = %s",
                 (user_id, guild_id, campaign_id),
             )
             return "taken"
+
+    async def note_owner_presence(
+        self, guild_id: int, campaign_id: str, owner_id: int, *, missing_since: int | None
+    ) -> bool:
+        """Record when the owner was first missed, or clear it with None (#1214). Only while
+        `owner_id` is still the owner; False if the campaign or its owner changed meanwhile."""
+        async with self._db.guild(guild_id) as conn:
+            cur = await conn.execute(
+                "UPDATE campaigns SET owner_missing_since = %s"
+                " WHERE guild_id = %s AND id = %s AND owner_user_id = %s",
+                (missing_since, guild_id, campaign_id, owner_id),
+            )
+            return bool(cur.rowcount > 0)
+
+    async def orphan_missing_owner(
+        self,
+        guild_id: int,
+        campaign_id: str,
+        owner_id: int,
+        now: int,
+        *,
+        still_missing_since: int | None = None,
+        any_state: bool = False,
+    ) -> bool:
+        """The owner is gone for good: the campaign becomes ownerless, as when a DMbot account
+        is deleted (#1059), and its 120 days start (#1214). Only while `owner_id` is still the
+        owner and (unless `any_state`: a deleted account can't come back) while the date the
+        owner was first missed is still `still_missing_since`: an owner seen again, which
+        cleared it, is not ended by an older look. True if it changed."""
+        async with self._db.guild(guild_id) as conn:
+            cur = await conn.execute(
+                "UPDATE campaigns SET owner_user_id = NULL, owner_left_at = %s,"
+                " owner_missing_since = NULL"
+                " WHERE guild_id = %s AND id = %s AND owner_user_id = %s"
+                " AND (%s OR owner_missing_since IS NOT DISTINCT FROM %s)",
+                (now, guild_id, campaign_id, owner_id, any_state, still_missing_since),
+            )
+            return bool(cur.rowcount > 0)
 
     async def _close_offer(
         self,
@@ -1423,6 +1461,9 @@ def _to_campaign(row: dict[str, Any], dms: set[int]) -> Campaign:
             else None
         ),  # older schemas (tests) have none
         owner_left_at=(int(row["owner_left_at"]) if row.get("owner_left_at") is not None else None),
+        owner_missing_since=(
+            int(row["owner_missing_since"]) if row.get("owner_missing_since") is not None else None
+        ),
     )
 
 
