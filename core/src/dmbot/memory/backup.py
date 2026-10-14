@@ -385,11 +385,15 @@ def _check_terms(by_tag: dict[str, list[dict[str, Any]]]) -> None:
     )
     if any(r["type"] not in onto.types for r in by_tag["entity"]):
         raise CampaignError(DAMAGED)
-    # A role belongs to a character; only a player character has a player; a link is on a
-    # character that is in the file.
+    # A role belongs to a character; only a player character (or a person) has a player;
+    # a link is on a character that is in the file.
     if any(
         (r["role"] is not None and not onto.is_a(r["type"], "character"))
-        or (r["played_by"] is not None and r["role"] != "player_character")
+        or (
+            r["played_by"] is not None
+            and r["role"] != "player_character"
+            and r["type"] != "person"  # a person keeps their Discord ID here (#1188)
+        )
         for r in by_tag["entity"]
     ):
         raise CampaignError(DAMAGED)

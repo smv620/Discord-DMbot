@@ -15,7 +15,7 @@ from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, field
 
 from dmbot.memory.models import NAME_MAX, name_key
-from dmbot.memory.ontology import SPELL_NOT_KEPT, UNNAMED_MONSTER
+from dmbot.memory.ontology import PERSON_NOT_LISTED, SPELL_NOT_KEPT, UNNAMED_MONSTER
 from dmbot.rules import index
 
 MAX_FILE_BYTES = 256 * 1024
@@ -328,6 +328,9 @@ def parse(text: str, *, secrets: bool) -> Parsed:
         word = " ".join(cells[1].split())
         if kind_of(word) == "spell":
             out.refused.append((number, SPELL_NOT_KEPT))
+            continue
+        if kind_of(word) == "person":
+            out.refused.append((number, PERSON_NOT_LISTED))
             continue
         if kind_of(word) == "creature" and index.srd().is_monster(name):
             out.refused.append((number, UNNAMED_MONSTER))

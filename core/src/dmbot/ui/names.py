@@ -62,7 +62,6 @@ KINDS: dict[str, str] = {
     "deity": "A god or other power",
     "event": "Something that happened (event)",
     "concept": "Something else",
-    "person": "A player or the DM",
 }
 KIND_SHORT: dict[str, str] = {
     "npc": "NPC",

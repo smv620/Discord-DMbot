@@ -89,15 +89,19 @@ from dmbot.memory.models import (
 from dmbot.memory.ontology import (
     ACTIVE,
     DEPRECATED,
+    DM_WORD_REFUSED,
     MAX_NEW_TERMS_PER_SESSION,
     Ontology,
     PredicateTerm,
     TypeTerm,
     check_named,
+    is_dm_word,
     resolve_kind,
 )
 from dmbot.memory.sounds import sound_codes
 
+PERSON = "person"
+PLAYS = "plays"
 NOT_HERE = "That campaign doesn't exist in this server."
 INT64_MAX = 2**63 - 1
 # For a lookup of a few rows (one key). Reads of a whole campaign's names or facts use
@@ -580,6 +584,7 @@ class MemoryStore:
                 },
             )
             await w.insert(ALIASES, _new_alias(w, row["id"], name, "full", status, False, None))
+            await _sync_plays(w, row["id"])
             return Written(_entity(row), w.batch)
 
     async def add_names(
@@ -767,6 +772,7 @@ class MemoryStore:
             if current["played_by"] is not None and role != PLAYER_CHARACTER:
                 changes["played_by"] = None
             row = await w.update(ENTITIES, entity_id, changes)
+            await _sync_plays(w, entity_id)
             return Written(_entity(row), w.batch)
 
     async def rule_links(
@@ -867,6 +873,8 @@ class MemoryStore:
         key = lookup_key(name)
         async with self._write(guild_id, campaign_id, source) as w:
             current = await _entity_row(w, entity_id)
+            if current["type"] != "person":
+                check_named(current["type"], name)
             old_key = lookup_key(current["name"])
             own = await w.select(ALIASES, " AND entity_id = %s AND key = %s", [entity_id, old_key])
             clash = await w.select(ALIASES, " AND entity_id = %s AND key = %s", [entity_id, key])
@@ -967,6 +975,7 @@ class MemoryStore:
                 ALIASES, " AND entity_id = %s AND status = 'proposed'", [entity_id]
             ):
                 await w.update(ALIASES, alias["id"], {"status": CONFIRMED})
+            await _sync_plays(w, entity_id)
             return Written(_entity(row), w.batch)
 
     async def confirm_kinds(
@@ -1057,7 +1066,9 @@ class MemoryStore:
         text = clean_text(text)
         key = lookup_key(text)
         async with self._write(guild_id, campaign_id, source) as w:
-            await _entity_row(w, entity_id)
+            owner = await _entity_row(w, entity_id)
+            if owner["type"] != "person" and is_dm_word(text):
+                raise MemoryRuleError(DM_WORD_REFUSED)
             if used_by is not None:
                 await _entity_row(w, used_by)
             existing = await w.select(ALIASES, " AND entity_id = %s AND key = %s", [entity_id, key])
@@ -1204,9 +1215,40 @@ class MemoryStore:
             await w.update(ENTITIES, keep_id, {"status": _stronger(keep["status"], gone["status"])})
             # Older merges pointing at gone_id now chain to keep_id; `resolve` follows it.
             await w.update(ENTITIES, gone_id, {"status": MERGED, "merged_into": keep_id})
+            await _sync_plays(w, keep_id)
+            await _sync_plays(w, gone_id)
             final = await w.get(ENTITIES, keep_id)
             assert final is not None
             return Written(_entity(final), w.batch)
+
+    async def check_people(
+        self, guild_id: int, campaign_id: str, dm_ids: Collection[int]
+    ) -> Written[int]:
+        """After a session (#1188): make every played character have its person and
+        `plays` link (a backup from before people were entries has none), then mark a
+        person who plays nothing and isn't a DM as "needs a look", so the DM can say who
+        they are. Returns how many are marked. A person already looked at is left alone."""
+        async with self._write(guild_id, campaign_id, DM) as w:
+            for row in await w.select(
+                ENTITIES,
+                " AND role = %s AND played_by IS NOT NULL AND status IN ('proposed', 'confirmed')",
+                [PLAYER_CHARACTER],
+            ):
+                await _sync_plays(w, row["id"])
+            playing = {
+                r["subject_id"] for r in await w.select(RELATIONS, " AND predicate = %s", [PLAYS])
+            }
+            marked = 0
+            for row in await w.select(
+                ENTITIES,
+                " AND type = 'person' AND status IN ('proposed', 'confirmed')",
+                [],
+            ):
+                if row["id"] in playing or row["needs_look"] or row["played_by"] in dm_ids:
+                    continue
+                await w.update(ENTITIES, row["id"], {"needs_look": True})
+                marked += 1
+            return Written(marked, w.batch)
 
     # ---- relationships ----------------------------------------------------------------
 
@@ -1245,6 +1287,9 @@ class MemoryStore:
         async with self._write(guild_id, campaign_id, source) as w:
             onto = await _load_ontology(w)
             pred = onto.active_predicate(predicate)
+            if pred.key == PLAYS:
+                # Who plays a character is set on the character, then kept here (#1188).
+                raise MemoryRuleError("Say who plays a character on the character itself.")
             types = {
                 subject_id: (await _entity_row(w, subject_id))["type"],
                 object_id: (await _entity_row(w, object_id))["type"],
@@ -1729,6 +1774,71 @@ async def _move_rule_links(w: Changes, keep_id: str, gone_id: str) -> None:
         has_same.add((link["kind"], link["rules_source"], link["name"]))
 
 
+async def _ensure_person(w: Changes, user_id: int) -> str:
+    """The campaign's entry for this Discord user, made if there is none. A person made
+    here is named `Player 1234` (the last four digits of their ID, never their Discord
+    name: that is read only in the live session) until a better name is known (#1188)."""
+    found = await w.select(
+        ENTITIES,
+        " AND type = 'person' AND played_by = %s AND status IN ('proposed', 'confirmed')",
+        [user_id],
+    )
+    if found:
+        return str(found[0]["id"])
+    name = f"Player {str(user_id)[-4:]}"
+    row = await w.insert(
+        ENTITIES,
+        {
+            "id": new_id(),
+            "type": PERSON,
+            "name": name,
+            "description": "",
+            "status": CONFIRMED,
+            "merged_into": None,
+            "source": w.source,
+            "created_at": w.now,
+            "played_by": user_id,
+            "role": None,
+            "needs_look": False,
+        },
+    )
+    await w.insert(ALIASES, _new_alias(w, row["id"], name, "full", CONFIRMED, False, None))
+    return str(row["id"])
+
+
+async def _sync_plays(w: Changes, character_id: str) -> None:
+    """Make the `plays` link match the character's `played_by` (the mirror kept so the
+    sheets, fights and the live session read it as before): exactly one confirmed link,
+    from the person who plays it, or none when nobody does. Written in the caller's
+    change, so one Undo takes it back with the rest."""
+    row = await w.get(ENTITIES, character_id)
+    edges = await w.select(
+        RELATIONS, " AND predicate = %s AND object_id = %s", [PLAYS, character_id]
+    )
+    person: str | None = None
+    if (
+        row is not None
+        and row["status"] in LIVE
+        and row["role"] == PLAYER_CHARACTER
+        and row["played_by"] is not None
+    ):
+        person = await _ensure_person(w, int(row["played_by"]))
+    kept = False
+    for edge in edges:
+        if person is not None and edge["subject_id"] == person and not kept:
+            kept = True
+            if edge["status"] != CONFIRMED or edge["to_session_at"] is not None:
+                await w.update(RELATIONS, edge["id"], {"status": CONFIRMED, "to_session_at": None})
+        else:
+            await w.delete(RELATIONS, edge["id"])
+    if person is not None and not kept:
+        link = Relation(
+            new_id(), person, PLAYS, character_id, "", 1.0, CONFIRMED, w.source,
+            (), None, None, None, None, False, w.now,
+        )  # fmt: skip
+        await w.insert(RELATIONS, _relation_row(link))
+
+
 def _check_role(onto: Ontology, type_key: str, role: str | None, played_by: int | None) -> None:
     """A role belongs to a character, one at a time; only a player character is played by
     someone (#1034)."""
@@ -1737,7 +1847,7 @@ def _check_role(onto: Ontology, type_key: str, role: str | None, played_by: int 
             raise MemoryRuleError("A character is a player character, an NPC or a god.")
         if not onto.is_a(type_key, "character"):
             raise MemoryRuleError("Only a character has a role.")
-    if played_by is not None and role != PLAYER_CHARACTER:
+    if played_by is not None and role != PLAYER_CHARACTER and type_key != PERSON:
         raise MemoryRuleError("Only a player character is played by someone.")
 
 

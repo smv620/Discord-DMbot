@@ -1621,6 +1621,7 @@ class DMBot(commands.AutoShardedBot):
             ("summary", lambda: self.post_session_summary(table, ended_at, caught_up, sent)),
             ("names heard", lambda: self.keep_heard_names(table)),
             ("name scan", lambda: self.suggest_names(table)),
+            ("people check", lambda: self.check_people(table)),
             ("stale flags", lambda: self.close_stale_flags(table)),
             ("old undo history", lambda: self.prune_old_changes(table)),
         ]
@@ -4821,6 +4822,16 @@ class DMBot(commands.AutoShardedBot):
             if self.lookup is not None:
                 self.lookup.drop([cid])
             log.info("Kept how often %d name(s) were said", kept)
+
+    async def check_people(self, table: Table) -> None:
+        """After a session: every player has their entry and link to a character, and a
+        person who plays nothing and isn't a DM is marked "needs a look" (#1188)."""
+        if self.memory is None or table.campaign_id is None:
+            return
+        gid, cid = table.guild_id, table.campaign_id
+        with log_context(guild_id=gid, campaign_id=cid):
+            dms = {table.dm_user_id, *table.dm_user_ids}
+            await self.memory.check_people(gid, cid, dms)
 
     async def suggest_names(self, table: Table) -> None:
         """After a session: suggest names DMbot heard but doesn't know, for the DM to

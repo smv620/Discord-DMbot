@@ -121,10 +121,26 @@ UNNAMED_MONSTER = (
 )
 
 
+PERSON_NOT_LISTED = (
+    "Players and the DM are added by DMbot when someone joins. Add their character "
+    "instead, and say who plays it."
+)
+# "DM" is the person running the game, never a name in the story (#1188): kept out of
+# every name and other name so a line like "the DM says" can't turn into an entry.
+DM_WORDS = frozenset({"dm", "gm", "dungeon master", "game master"})
+DM_WORD_REFUSED = "That's what DMbot calls the DM, so it can't be a name. Pick another."
+
+
+def is_dm_word(text: str) -> bool:
+    return " ".join(text.casefold().replace(".", "").split()) in DM_WORDS
+
+
 def check_named(kind: str, name: str) -> None:
     """A caller that says `creature` means one named creature. A name that is a monster in
     the rules ("goblin", "three goblins", "Goblin Warrior") is a kind of monster, not an
-    entry: refused (decided on #1034)."""
+    entry: refused (decided on #1034). "DM" and its likes are never a name."""
+    if kind != "person" and is_dm_word(name):
+        raise MemoryRuleError(DM_WORD_REFUSED)
     if kind != "creature":
         return
     from dmbot.rules import index  # late: the rules data loads on first use
