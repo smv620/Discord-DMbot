@@ -2045,6 +2045,7 @@ WEB_ROLE_FUNCTIONS: tuple[tuple[str, str], ...] = (
     ("dmbot_owned_campaigns", "dmbot_owned_campaigns()"),
     ("dmbot_orphan_owned_campaigns", "dmbot_orphan_owned_campaigns(BIGINT)"),
     ("dmbot_hours_used", "dmbot_hours_used(BIGINT)"),
+    ("dmbot_minutes_total", "dmbot_minutes_total()"),
 )
 # The columns the website may fill when it creates a hand-over offer (#728): who, where and the
 # two names. Left out on purpose, so they take their defaults: status and decided_at (an offer
@@ -2085,6 +2086,8 @@ WEB_ROLE_GRANTS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("SELECT, INSERT", ("access_log",)),
 )
 
+# Numbered 0063 on purpose: 0060 to 0062 belong to pull requests still waiting to merge
+# (owner gone, shared rulesets, their updates). A migration list may have gaps.
 DMBOT_ID = """
     -- The DMbot ID (#1228; docs/PLAN.md, "Accounts"): a Discord ID in base 36, the Stripe invoice
     -- prefix, fixed for the life of the account. The database makes it (one source of truth for
@@ -2135,6 +2138,23 @@ DMBOT_ID = """
         RETURN NEW;
     END
     $fn$;
+    -- Experience points (#1228): all-time minutes of the person set for the transaction. The
+    -- website's role has no grant on owner_hours, so, like dmbot_hours_used, this is the one
+    -- door: it takes no person, uses the one set for the transaction, and returns one number.
+    CREATE FUNCTION dmbot_minutes_total() RETURNS BIGINT
+        LANGUAGE sql STABLE SECURITY DEFINER
+        AS $fn$
+        SELECT COALESCE((SELECT sum(minutes) FROM owner_hours
+            WHERE owner_user_id = dmbot_current_user()), 0)::BIGINT
+    $fn$;
+    DO $do$
+    BEGIN
+        EXECUTE format(
+            'ALTER FUNCTION dmbot_minutes_total() SET search_path = pg_catalog, %I, pg_temp',
+            current_schema());
+    END
+    $do$;
+    REVOKE ALL ON FUNCTION dmbot_minutes_total() FROM PUBLIC;
     CREATE TRIGGER web_users_dmbot_id BEFORE INSERT OR UPDATE ON web_users
         FOR EACH ROW EXECUTE FUNCTION dmbot_web_users_id();
     DO $do$
