@@ -87,6 +87,6 @@ class UnsubscribeRoute(DatabaseTest):
         self.assertFalse(await made.is_unsubscribed(USER))
         self.assertFalse(await made.is_unsubscribed(42))
 
-    async def test_a_huge_body_is_refused_unread(self) -> None:
+    async def test_a_huge_body_is_refused(self) -> None:
         out = await self.post(b"x" * 5000)
         self.assertEqual(out.status_code, 413)
