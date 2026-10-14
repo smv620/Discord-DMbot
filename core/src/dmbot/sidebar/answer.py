@@ -41,7 +41,7 @@ from dmbot.ui import rule_card
 log = logging.getLogger(__name__)
 T = TypeVar("T")
 
-PROMPT_VERSION = "sidebar-7"  # bump when SYSTEM or the reply form changes (it is recorded)
+PROMPT_VERSION = "sidebar-8"  # bump when SYSTEM or the reply form changes (it is recorded)
 MAX_TOKENS = 150  # 200 characters of answer and the four fields fit in ~100
 CALL_TIMEOUT_S = 6  # one AI call; a Haiku answer of ~80 tokens takes 1 to 3 s
 TOTAL_BUDGET_S = 8  # everything after the plan check, retry included (the target is ~5 s)
@@ -107,7 +107,8 @@ ready yet." Never invent a feature, button or command: if the documents do not c
 11. If the message starts with AUDIENCE: THE TABLE, everyone at the table reads your answer. Use \
 only the rules, DMbot help and the scene given. If the question needs anything else (a secret, \
 the story, a name not given) or asks you to decide or invent something, set ANSWER to exactly \
-"That's one for your DM." and SOURCE to none.
+"That's one for your DM." and SOURCE to none. Never say a thing is allowed or not allowed at \
+this table: give what the rules say, and the DM decides.
 
 Reply in exactly this form, one item per line:
 ANSWER: <the answer>

@@ -2786,9 +2786,9 @@ class DMBot(commands.AutoShardedBot):
         )
         await self.post(
             table.dmbchat_channel_id,
-            f"{discord.utils.escape_markdown(self.name_of(table.guild_id, user_id))}: DMbot "
-            "answers people who agreed to be recorded. Press the button if you agree. "
-            "It didn't keep what you typed.",
+            f"{discord.utils.escape_markdown(self.name_of(table.guild_id, user_id))}: to ask "
+            "DMbot, first say yes to being recorded with the button below. No pressure, you can "
+            "still play. DMbot did not keep what you typed.",
             view,
         )
 
