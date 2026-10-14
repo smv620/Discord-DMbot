@@ -13,8 +13,8 @@ READY TO DEPLOY (merged into development, not on the server yet; dev1 deploys)
 - #1157 (WebDev, merged): website "Stop recording me" per server. Deploy core (the bot) AND web-api; no migration (the migrate
   step applies the new rights). Check: on the account page press Stop recording me for a test server; the bot tells the DM and
   ears stops that person within seconds. Rides with the big deploy (#1180).
-- PREPARED, not merged yet (#1180): the big deploy, once RepoManager has merged the queue on #516 (#1139, #1140,
-  #1152, #1166, #1168, #1171, #1174 and the web PRs). Dry run PASSED on a throwaway copy of the database, 2026-10-13.
+- READY (#1180): the big deploy. The whole queue is merged (development 242f6f2). Dry run PASSED twice on a throwaway
+  copy of the database (2026-10-13, and again on final development 2026-10-14, with #1157's rights).
   0. OWNER FIRST, or DMbot will not come online at all (Discord refuses the connection, close code 4014): switch on
      Message Content Intent at https://discord.com/developers/applications > DMbot > Bot > Privileged Gateway Intents
      > Message Content Intent > Save Changes. Do NOT press Reset Token on that page. dev1 asks the owner to confirm

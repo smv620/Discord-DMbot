@@ -2175,3 +2175,14 @@ Overall ...................................... PASS (Deepgram baseline: 33/33, 1
   against the existing rows. Today's code (d197ba8) opened the migrated copy cleanly, so rolling back the code alone
   is safe. Found: #1152 asks Discord for Message Content, so with the intent off DMbot would not log in at all
   (not "typed chat arrives empty"); the consent wording goes from version 4 to 5 (everyone is asked again).
+
+==============================================================================
+2026-10-14  dev1  Dry run again on final development 242f6f2 (queue merged, #1180) - PASSED
+  The whole queue is in development: #1139, #1140, #1152, #1166, #1168, #1171, #1174, #1157, #1165, #1177 and
+  the web PRs. Same method as the 2026-10-13 dry run: a fresh pg_dumpall of the live database (live is at 0050)
+  restored into a throwaway postgres:16 on its own network, migrated as the ordinary dmbot role, deleted after.
+  Result: "Database updated: 0051_dndbeyond_invite ... 0055_fightbot" in 0.12 s; a second run applied nothing.
+  Rows unchanged (147 transcript lines, 3 campaigns, 2 game clocks); all 8 new columns present; fightbot_players
+  row-level security on and forced; sidebar_via check validated; all 3 existing campaigns get typed chat on.
+  New since the first dry run: #1157's rights. The website's database role dmbot_web now has SELECT and DELETE on
+  consent (it had none) and the migrate step applied them. Nothing else changed. active_sessions = 0 now.
