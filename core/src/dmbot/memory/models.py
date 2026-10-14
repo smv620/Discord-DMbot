@@ -238,6 +238,8 @@ class Relation:
     to_game_time: int | None
     secret: bool
     created_at: int
+    # The version of its relationship's definition it was written under (#1189).
+    definition_version: int = 1
 
 
 @dataclass(frozen=True, slots=True)
