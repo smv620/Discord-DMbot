@@ -37,6 +37,7 @@ from dmbot import (
     retention,
     sheet_reread,
     table_chat,
+    trial_jobs,
     usage,
 )
 from dmbot.ai import FEATURE_TIERS, AnthropicClient, Feature
@@ -142,6 +143,7 @@ from dmbot.ears.protocol import (
 from dmbot.ears.server import EarsServer
 from dmbot.fightbot import FightState
 from dmbot.logs import log_context, set_log_context
+from dmbot.mail import Mailer
 from dmbot.memory import definitions, document_reader
 from dmbot.memory.backup import MemorySection
 from dmbot.memory.lookup import CampaignLookup, LookupCache
@@ -598,6 +600,25 @@ class DMBot(commands.AutoShardedBot):
         # The hours meter (#437 part 2): listening minutes are written here; None records
         # nothing (tests and tools that run no real sessions).
         self.meter = meter
+        # The last day of Try It and the extension (#1229): only with a database, and the mail
+        # sender (which sends nothing until SMTP is set up) for the emails.
+        self.trial_jobs: trial_jobs.TrialJobs | None = None
+        if meter is not None:
+            self.trial_jobs = trial_jobs.TrialJobs(
+                meter.db,
+                Mailer(
+                    meter.db,
+                    settings.mail,
+                    site_url=settings.site_url,
+                    link_secret=settings.link_token_secret,
+                ),
+                enforce_plans=settings.enforce_plans,
+                site_url=settings.site_url,
+                link_secret=settings.link_token_secret,
+                send_dm=self._dm_user,
+                name_of=self._discord_name,
+                skip=settings.free_users,
+            )
         # The daily job that warns about and deletes campaigns past their keep date (#964).
         # Needs the meter (the owners' plans); without one nothing is ever deleted.
         self.retention: RetentionJob | None = None
@@ -816,6 +837,7 @@ class DMBot(commands.AutoShardedBot):
             self._watched(self._idle_sweeper(), "idle-sweep"),
             self._watched(self._summary_poster(), "summaries"),
             self._watched(self._meter_loop(), "hours-meter"),
+            *([self._watched(self._trial_loop(), "trial-jobs")] if self.trial_jobs else []),
             *([self._watched(self._retention_loop(), "retention")] if self.retention else []),
             *(
                 [self._watched(self._test_recordings_loop(), "test-recordings")]
@@ -2188,6 +2210,15 @@ class DMBot(commands.AutoShardedBot):
         if dmbchat_problem:
             await self.post(screen_id, dmbchat_problem)
         self._check_house_file(campaign, screen_id)
+        trial_line = ""
+        if self.meter is not None:  # told once, privately, at their next start (#1229)
+            try:
+                trial_line = (
+                    await trial_jobs.take_extension_notice(self.meter.db, user.id, int(time.time()))
+                    or ""
+                )
+            except Exception:
+                log.exception("Couldn't check for a Try It extension notice")
         transcript_line = (
             f"📜 Transcript (anyone in the server can read it): <#{transcript_id}>\n"
             if transcript_id
@@ -2198,6 +2229,7 @@ class DMBot(commands.AutoShardedBot):
             f"{transcript_line}🛡️ Notes for the DM: <#{screen_id}>"
             f"{ui_logic.screen_note(campaign.dm_screen_visibility)}\n"
             "Only people who said yes are recorded, the DM included."
+            + (f"\n\n{trial_line}" if trial_line else "")
         )
 
     async def stop_session(
@@ -4993,6 +5025,36 @@ class DMBot(commands.AutoShardedBot):
                     after_session_text(added),
                     view=review_view(cid),
                 )
+
+    async def _dm_user(self, user_id: int, text: str) -> bool:
+        """A private message to a person who is not at a table now. False if Discord won't
+        deliver it (closed messages, no shared server): never raises."""
+        try:
+            user = await self.fetch_user(user_id)
+            await user.send(text, allowed_mentions=discord.AllowedMentions.none())
+        except discord.HTTPException:
+            return False
+        return True
+
+    async def _discord_name(self, user_id: int) -> str:
+        try:
+            user = await self.fetch_user(user_id)
+        except discord.HTTPException:
+            return "there"
+        return user.display_name
+
+    async def _trial_loop(self) -> None:
+        """Every hour: the last-day messages and the automatic extensions (#1229). Waits a
+        few minutes first so a restart loop can't send anything twice in a hurry (each message
+        is also recorded, so none goes out twice anyway)."""
+        await asyncio.sleep(300)
+        while True:
+            try:
+                if self.trial_jobs is not None:
+                    await self.trial_jobs.run()
+            except Exception:
+                log.exception("The Try It jobs failed")
+            await asyncio.sleep(3600)
 
     async def _meter_loop(self) -> None:
         """Once a minute, write each running session's listening minutes to the hours

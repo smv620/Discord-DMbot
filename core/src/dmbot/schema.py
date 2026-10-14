@@ -2125,11 +2125,40 @@ TRIAL = """
         told_at     BIGINT,
         PRIMARY KEY (user_id, extended_at)
     );
+    -- Like the orphan and pause doors (0037, 0044), the functions open the tables they read to
+    -- themselves through a setting they set and put back, and only for this one purpose.
+    DO $do$
+    BEGIN
+        EXECUTE format(
+            'CREATE POLICY trial_read ON entitlements FOR SELECT TO %I
+                USING (dmbot_owner_sync() = ''trial'')', current_user);
+        EXECUTE format(
+            'CREATE POLICY trial_update ON entitlements FOR UPDATE TO %I
+                USING (dmbot_owner_sync() = ''trial'' AND plan = ''try-it'')
+                WITH CHECK (dmbot_owner_sync() = ''trial'' AND plan = ''try-it'')',
+            current_user);
+        EXECUTE format(
+            'CREATE POLICY trial_read ON web_users FOR SELECT TO %I
+                USING (dmbot_owner_sync() = ''trial'')', current_user);
+        EXECUTE format(
+            'CREATE POLICY trial_read ON owner_hours FOR SELECT TO %I
+                USING (dmbot_owner_sync() = ''trial'')', current_user);
+        EXECUTE format(
+            'CREATE POLICY trial_read ON payment_events FOR SELECT TO %I
+                USING (dmbot_owner_sync() = ''trial'')', current_user);
+    END
+    $do$;
     CREATE FUNCTION dmbot_trial_people(since BIGINT)
         RETURNS TABLE (user_id BIGINT, dmbot_id TEXT, email TEXT, period_end BIGINT,
                        minutes BIGINT, paid BOOLEAN, extensions INTEGER)
-        LANGUAGE sql STABLE SECURITY DEFINER
+        LANGUAGE plpgsql SECURITY DEFINER
         AS $fn$
+    #variable_conflict use_column
+    DECLARE
+        before TEXT := COALESCE(current_setting('dmbot.owner_sync', true), '');
+    BEGIN
+        PERFORM set_config('dmbot.owner_sync', 'trial', true);
+        RETURN QUERY
         SELECT e.user_id, u.dmbot_id, u.email, e.period_end,
                COALESCE((SELECT sum(h.minutes) FROM owner_hours h
                          WHERE h.owner_user_id = e.user_id), 0)::BIGINT,
@@ -2139,15 +2168,20 @@ TRIAL = """
                                   'extra_hours_bought']))),
                (SELECT count(*)::INTEGER FROM trial_extensions t WHERE t.user_id = e.user_id)
         FROM entitlements e JOIN web_users u ON u.user_id = e.user_id
-        WHERE e.plan = 'try-it' AND e.status = 'active' AND e.period_end >= since
+        WHERE e.plan = 'try-it' AND e.status = 'active' AND e.period_end >= since;
+        PERFORM set_config('dmbot.owner_sync', before, true);
+    END
     $fn$;
     CREATE FUNCTION dmbot_extend_trial(who BIGINT, now BIGINT, days INTEGER, hours INTEGER)
         RETURNS BOOLEAN
         LANGUAGE plpgsql SECURITY DEFINER
         AS $fn$
+    #variable_conflict use_column
     DECLARE
+        before TEXT := COALESCE(current_setting('dmbot.owner_sync', true), '');
         changed INTEGER;
     BEGIN
+        PERFORM set_config('dmbot.owner_sync', 'trial', true);
         -- Only a Try It that has ended and is still the person's plan; the hours are what is
         -- left of Try It's 8 in all (the caller works that out), never more.
         UPDATE entitlements
@@ -2156,6 +2190,7 @@ TRIAL = """
          WHERE entitlements.user_id = who AND plan = 'try-it' AND status = 'active'
            AND period_end <= now;
         GET DIAGNOSTICS changed = ROW_COUNT;
+        PERFORM set_config('dmbot.owner_sync', before, true);
         IF changed = 0 THEN
             RETURN FALSE;
         END IF;
