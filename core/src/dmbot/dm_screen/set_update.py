@@ -269,7 +269,10 @@ class UndoView(_Menu):
             edited = (
                 f" {kept} merged rule{'s' if kept != 1 else ''} you edited stayed." if kept else ""
             )
-            await _tell(interaction, f"↩️ Undone. Back on v{v} and following it again.{edited}")
+            await _tell(
+                interaction,
+                f"↩️ Undone. Back on v{v} and following it again.{edited} {UNDONE_AND_WAITING}",
+            )
         else:
             await _tell(interaction, f"↩️ Undone. Back on v{v}. {UNDONE_AND_WAITING}")
 

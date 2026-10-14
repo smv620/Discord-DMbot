@@ -127,6 +127,20 @@ class SavingPicks(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(it.sent[0][0], rule_sets.CHANGED_AGAIN)
 
 
+class UndoingAPick(unittest.IsolatedAsyncioTestCase):
+    async def test_both_undo_replies_say_dmbot_waits_for_a_newer_version(self) -> None:
+        for merged in (True, False):
+            taken = rule_sets.Taken(merged, follow_at(3, None), 4, offered=4)
+            bot = bot_with(undo_take=AsyncMock(return_value=2 if merged else 0))
+            it = interaction(DM, bot)
+            await set_update.UndoView(campaign(), taken)._undo(it)
+            said = it.sent[0][0]
+            self.assertIn("Back on v3", said)
+            self.assertIn(set_update.UNDONE_AND_WAITING, said)
+            if merged:
+                self.assertIn("2 merged rules you edited stayed", said)
+
+
 class Pressing(unittest.IsolatedAsyncioTestCase):
     async def test_a_note_for_an_older_version_does_nothing(self) -> None:
         bot = bot_with(following=AsyncMock(return_value=[follow_at(5)]))
