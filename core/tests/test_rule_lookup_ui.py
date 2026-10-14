@@ -72,7 +72,8 @@ class LookupTest(unittest.IsolatedAsyncioTestCase):
             rule_sets=None,
         )
         # The real reader, so a store that can't be read is handled as it is in the bot.
-        self.bot.all_house_rules = lambda g, c: DMBot.all_house_rules(self.bot, g, c)
+        reader: Any = DMBot.all_house_rules  # a plain function: self can be any stand-in
+        self.bot.all_house_rules = lambda g, c: reader(self.bot, g, c)
 
     def it(self, user_id: int = DM, kind: discord.InteractionType | None = None) -> Any:
         user = MagicMock(spec=discord.Member)
