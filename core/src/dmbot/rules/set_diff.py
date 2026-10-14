@@ -39,6 +39,8 @@ def rules_of(content: Any) -> dict[int, Rule]:
         return out
     for item in items:
         try:
+            if not isinstance(item["rule"], str):
+                continue
             number = int(item["number"])
             out[number] = {
                 "number": number,

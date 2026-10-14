@@ -2210,6 +2210,9 @@ SET_UPDATES = f"""
     -- New columns with defaults: no row is rewritten, so no row-level security to open.
     ALTER TABLE rule_set_follows
         ADD COLUMN code TEXT CHECK (code IS NULL OR code ~ '^[A-Z2-7]{{10}}$');
+    -- notified_version: the newest version the DM has been told about (at a session start), so
+    -- an update the DM left alone is taken at the session after (Follow is the default).
+    ALTER TABLE rule_set_follows ADD COLUMN notified_version INTEGER;
     ALTER TABLE rule_set_versions
         ADD COLUMN source TEXT NOT NULL DEFAULT 'publisher'
         CHECK (source IN ('publisher', 'suggestion', 'document'));

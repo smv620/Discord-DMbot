@@ -159,3 +159,68 @@ class Updates(DatabaseTest):
         update = await self.sets.pending_update(GUILD_A, self.same)
         assert update is not None
         self.assertEqual(update.offer.version, 2)
+
+    async def test_undo_leaves_a_merged_rule_the_dm_has_edited(self) -> None:
+        await self.follow_far()
+        await self.sets.save_version(GUILD_A, self.pub, DM_A, V2)
+        taken = await self.sets.take_update(GUILD_B, self.far, DM_B, accepted={3})
+        potion = next(r for r in await self.houses.list(GUILD_B, self.far) if "Potions" in r.rule)
+        await self.houses.edit(
+            GUILD_B, self.far, DM_B, potion.number, "Potions take a bonus action"
+        )
+        await self.sets.undo_take(GUILD_B, self.far, DM_B, taken)
+        left = [r.rule for r in await self.houses.list(GUILD_B, self.far)]
+        self.assertEqual(left, ["Potions take a bonus action"])  # only the untouched ones went
+
+    async def test_a_take_made_on_older_changes_is_refused(self) -> None:
+        await self.follow_far()
+        await self.sets.save_version(GUILD_A, self.pub, DM_A, V2)
+        await self.sets.save_version(GUILD_A, self.pub, DM_A, content((7, "Another", None)))
+        with self.assertRaises(RuleSetError) as err:
+            await self.sets.take_update(GUILD_B, self.far, DM_B, {1}, expected_version=2)
+        self.assertEqual(str(err.exception), rule_sets.CHANGED_AGAIN)
+        self.assertEqual((await self.sets.following(GUILD_B, self.far))[0].version, 1)
+
+    async def test_two_takes_in_a_row_give_nothing_new_the_second_time(self) -> None:
+        await self.follow_far()
+        await self.sets.save_version(GUILD_A, self.pub, DM_A, V2)
+        await self.sets.take_update(GUILD_B, self.far, DM_B)
+        with self.assertRaises(RuleSetError):
+            await self.sets.take_update(GUILD_B, self.far, DM_B)
+
+    async def test_a_follow_marked_no_longer_updated_takes_nothing(self) -> None:
+        await self.follow_far()
+        await self.sets.save_version(GUILD_A, self.pub, DM_A, V2)
+        await self.sets.stop_updating(GUILD_B, self.far)
+        with self.assertRaises(RuleSetError):
+            await self.sets.take_update(GUILD_B, self.far, DM_B)
+
+    async def test_two_editors_saving_at_once_make_two_versions(self) -> None:
+        import asyncio
+
+        await self.sets.add_editor(GUILD_A, self.pub, DM_A, EDITOR)
+        results = await asyncio.gather(
+            self.sets.save_version(GUILD_A, self.pub, EDITOR, content((5, "One", None))),
+            self.sets.save_version(GUILD_A, self.pub, DM_A, content((6, "Two", None))),
+            return_exceptions=True,
+        )
+        self.assertEqual(
+            sorted(r.version for r in results if not isinstance(r, BaseException)), [2, 3]
+        )
+
+    async def test_a_full_campaign_gets_a_clear_message_and_nothing_changes(self) -> None:
+        await self.follow_far()
+        for i in range(rule_sets.HOUSE_RULES_MAX):
+            await self.houses.add(GUILD_B, self.far, DM_B, f"Own rule {i}")
+        await self.sets.save_version(GUILD_A, self.pub, DM_A, V2)
+        with self.assertRaises(RuleSetError) as err:
+            await self.sets.take_update(GUILD_B, self.far, DM_B, accepted={3})
+        self.assertIn("more than", str(err.exception))
+        self.assertEqual(len(await self.sets.following(GUILD_B, self.far)), 1)
+
+    async def test_a_code_turned_off_ends_updates_but_the_copy_stays(self) -> None:
+        await self.follow_far()
+        await self.sets.turn_off_code(GUILD_A, self.pub, DM_A, self.code)
+        await self.sets.save_version(GUILD_A, self.pub, DM_A, V2)
+        self.assertIsNone(await self.sets.pending_update(GUILD_B, self.far))
+        self.assertEqual((await self.sets.following(GUILD_B, self.far))[0].version, 1)

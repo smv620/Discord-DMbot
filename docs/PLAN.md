@@ -657,6 +657,11 @@ never does.
   campaign. A follow, a share code and every change are visible and can be undone by the DM.
 - **Build:** #1190 (sets, publishing, following, precedence, share codes) and #1191 (updates: Follow and Cherry
   pick, pending document changes, suggestions), CloudDev.
+- **Updates and share codes (decided 2026-10-14, #1191):** a follower asks for newer versions with the share
+  code it followed by, so turning that code off (or stopping sharing) ends updates for the tables that used it:
+  they keep their copy, marked "no longer updated". A publisher who wants followers to keep getting updates
+  leaves their codes on. The code is a key to the publisher's set, so it is kept out of backups and never shown
+  again after the follow.
 - **Build status (#1190):** built so far: the tables and store (#1221), the Settings menu (#1223), and house
   rules reaching the sidebar, rules lookup, rules cards and alerts (a followed set's rules come after the
   campaign's own, each cited as "<set> house rules, v4"). Still to build: relationship definitions in sets,
