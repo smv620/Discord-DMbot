@@ -104,8 +104,15 @@ class Learning(MemoryTest):
         )
         await self.memory.learn_people(GUILD_A, other, [("Mikey", PLAYER, 2)], limit=10)
         await self.memory.learn_people(GUILD_A, self.c, [("Vera", OTHER, 2)], limit=10)
-        self.assertEqual(await self.memory.forget_learned(GUILD_A, PLAYER), 3)
+        # Three learned names and links, and the two placeholder entries (one per campaign)
+        # nothing else hangs on.
+        self.assertEqual(await self.memory.forget_learned(GUILD_A, PLAYER), 5)
         self.assertEqual(await self.waiting(), [("name", "Vera", OTHER)])
+        for campaign in (self.c, other):
+            gone = [
+                e for e in await self.memory.entities(GUILD_A, campaign) if e.played_by == PLAYER
+            ]
+            self.assertEqual(gone, [])
         self.assertEqual(await self.waiting(other), [])
         # Not even the change log keeps it.
         async with self.db.guild(GUILD_A) as conn:
@@ -113,6 +120,133 @@ class Learning(MemoryTest):
                 "SELECT count(*) AS n FROM memory_changes WHERE after::text LIKE '%Mike%'"
             )
             self.assertEqual((await cur.fetchone() or {})["n"], 0)
+
+    async def test_a_person_with_something_hanging_on_it_stays(self) -> None:
+        await self.add("Testa", type="player_character", played_by=PLAYER)  # a confirmed link
+        await self.memory.learn_people(GUILD_A, self.c, [("Mike", PLAYER, 2)], limit=10)
+        await self.memory.forget_learned(GUILD_A, PLAYER)
+        mine = [e for e in await self.memory.entities(GUILD_A, self.c) if e.played_by == PLAYER]
+        self.assertEqual([e.type for e in mine if e.type == "person"], ["person"])
+
+    async def test_a_placeholder_with_a_correction_on_it_stays_and_nothing_fails(self) -> None:
+        await self.memory.learn_people(GUILD_A, self.c, [("Mike", PLAYER, 2)], limit=10)
+        person = next(
+            e for e in await self.memory.entities(GUILD_A, self.c) if e.played_by == PLAYER
+        )
+        async with self.db.guild(GUILD_A) as conn:  # something unlogged that hangs on it
+            await conn.execute(
+                "INSERT INTO memory_corrections (guild_id, campaign_id, id, heard, heard_key,"
+                " entity_id, action, source, created_at)"
+                " VALUES (%s, %s, repeat('c', 32), 'Mikel', 'mikel', %s, 'fix', 'dm', 0)",
+                (GUILD_A, self.c, person.id),
+            )
+        other = (await self.campaigns.create(GUILD_A, "Another", SRC_DM)).id
+        await self.memory.learn_people(GUILD_A, other, [("Mikey", PLAYER, 2)], limit=10)
+        await self.memory.forget_learned(GUILD_A, PLAYER)  # does not raise
+        here = [e for e in await self.memory.entities(GUILD_A, self.c) if e.played_by == PLAYER]
+        there = [e for e in await self.memory.entities(GUILD_A, other) if e.played_by == PLAYER]
+        self.assertEqual((len(here), len(there)), (1, 0))  # the other campaign was still cleaned
+        self.assertEqual(await self.waiting(), [])  # and the learned name went from this one
+
+    async def person_id(self) -> str:
+        return next(
+            e.id for e in await self.memory.entities(GUILD_A, self.c) if e.played_by == PLAYER
+        )
+
+    async def stays_after_forgetting(self) -> bool:
+        await self.memory.forget_learned(GUILD_A, PLAYER)
+        return any(e.played_by == PLAYER for e in await self.memory.entities(GUILD_A, self.c))
+
+    async def test_a_placeholder_the_dm_wrote_on_stays(self) -> None:
+        await self.memory.learn_people(GUILD_A, self.c, [("Mike", PLAYER, 2)], limit=10)
+        person = await self.person_id()
+        async with self.db.guild(GUILD_A) as conn:
+            await conn.execute(
+                "UPDATE memory_entities SET description = 'Runs the shop' WHERE id = %s", (person,)
+            )
+        self.assertTrue(await self.stays_after_forgetting())
+
+    async def test_the_after_session_check_does_not_make_a_placeholder_the_dms(self) -> None:
+        await self.memory.learn_people(GUILD_A, self.c, [("Mike", PLAYER, 2)], limit=10)
+        marked = await self.memory.check_people(GUILD_A, self.c, [])
+        self.assertEqual(marked.value, 1)  # it plays nothing: "needs a look"
+        self.assertFalse(await self.stays_after_forgetting())  # but Stop recording me removes it
+
+    async def test_a_placeholder_with_a_change_by_the_dm_logged_stays(self) -> None:
+        await self.memory.learn_people(GUILD_A, self.c, [("Mike", PLAYER, 2)], limit=10)
+        person = await self.person_id()
+        async with self.db.guild(GUILD_A) as conn:
+            await conn.execute(
+                "INSERT INTO memory_changes (guild_id, campaign_id, version, batch, table_name,"
+                " row_id, op, source, made_at) VALUES (%s, %s, 9999, 9999, 'memory_entities',"
+                " %s, 'update', 'dm', 0)",
+                (GUILD_A, self.c, person),
+            )
+        self.assertTrue(await self.stays_after_forgetting())
+
+    async def test_a_placeholder_with_heard_counts_or_a_sheet_stays(self) -> None:
+        for table_name in ("memory_heard", "character_sheets"):
+            await self.memory.learn_people(GUILD_A, self.c, [("Mike", PLAYER, 2)], limit=10)
+            person = await self.person_id()
+            async with self.db.guild(GUILD_A) as conn:
+                if table_name == "memory_heard":
+                    await conn.execute(
+                        "INSERT INTO memory_heard (guild_id, campaign_id, entity_id,"
+                        " session_started_at, speaker_id, times) VALUES (%s, %s, %s, 1, %s, 2)",
+                        (GUILD_A, self.c, person, PLAYER),
+                    )
+                else:
+                    await conn.execute(
+                        "INSERT INTO character_sheets (guild_id, campaign_id, entity_id, player_id,"
+                        " url) VALUES (%s, %s, %s, %s,"
+                        " 'https://www.dndbeyond.com/characters/12345')",
+                        (GUILD_A, self.c, person, PLAYER),
+                    )
+            self.assertTrue(await self.stays_after_forgetting(), table_name)
+            async with self.db.guild(GUILD_A) as conn:
+                await conn.execute(f"DELETE FROM {table_name}")
+                await conn.execute("DELETE FROM memory_entities WHERE id = %s", (person,))
+
+    async def test_a_removed_placeholder_cannot_come_back_by_undo(self) -> None:
+        await self.memory.learn_people(GUILD_A, self.c, [("Mike", PLAYER, 2)], limit=10)
+        await self.memory.forget_learned(GUILD_A, PLAYER)
+        async with self.db.guild(GUILD_A) as conn:
+            cur = await conn.execute(
+                "SELECT count(*) AS n FROM memory_changes WHERE after::text LIKE '%Player 1234%'"
+                " OR before::text LIKE '%Player 1234%'"
+            )
+            self.assertEqual((await cur.fetchone() or {})["n"], 0)
+
+    async def test_who_is_who_is_kept_until_the_memory_changes(self) -> None:
+        pc = await self.add("Testa", type="player_character", played_by=PLAYER)
+        first = await self.memory.table_people(GUILD_A, self.c)
+        first[0][1].append("tampered")  # a caller changing its copy can't change the cache
+        self.assertEqual((await self.memory.table_people(GUILD_A, self.c))[0][1], ["Testa"])
+        # A change to the campaign's memory is seen at once.
+        await self.memory.rename_entity(GUILD_A, self.c, pc, "Testa the Bold", source="dm")
+        self.assertEqual(
+            (await self.memory.table_people(GUILD_A, self.c))[0][1], ["Testa the Bold"]
+        )
+
+    async def test_the_cache_is_bounded_keeps_empty_tables_and_stays_in_its_campaign(self) -> None:
+        from dmbot.memory import store as store_module
+
+        other = (await self.campaigns.create(GUILD_A, "Another", SRC_DM)).id
+        await self.add("Testa", type="player_character", played_by=PLAYER)
+        self.assertEqual(await self.memory.table_people(GUILD_A, other), [])  # empty: cached
+        self.assertIn((GUILD_A, other), self.memory._people)
+        self.assertEqual(len(await self.memory.table_people(GUILD_A, self.c)), 1)  # not other's
+        third = (await self.campaigns.create(GUILD_A, "Third", SRC_DM)).id
+        self.memory._people.clear()
+        old = store_module.PEOPLE_CACHE_MAX
+        store_module.PEOPLE_CACHE_MAX = 2
+        try:
+            for campaign in (self.c, other, third):  # three misses, room for two
+                await self.memory.table_people(GUILD_A, campaign)
+        finally:
+            store_module.PEOPLE_CACHE_MAX = old
+        # Only the oldest went, not the whole cache.
+        self.assertEqual(list(self.memory._people), [(GUILD_A, other), (GUILD_A, third)])
 
     async def test_a_person_and_their_names_stay_in_their_campaign(self) -> None:
         other = (await self.campaigns.create(GUILD_A, "Another", SRC_DM)).id
