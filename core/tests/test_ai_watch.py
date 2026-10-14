@@ -18,6 +18,7 @@ from dmbot.ai import (
     AIModelTier,
     AIOutOfFunds,
     AnthropicClient,
+    Feature,
     is_out_of_funds,
 )
 from dmbot.ai_watch import ADMIN_NOTICE, NOTICE_EVERY_S, STATE_FILE, AIWatch
@@ -277,7 +278,19 @@ class Watching(unittest.IsolatedAsyncioTestCase):
         watch = self.watch({})
         body = {"content": [], "usage": {"input_tokens": 20, "output_tokens": 3}}
         await self.client(watch, 200, json.dumps(body)).complete("s", "t", tier=AIModelTier.FAST)
-        self.assertEqual(next(iter(watch._calls))[1:], (20, 3))
+        self.assertEqual(next(iter(watch._calls))[1:3], (20, 3))
+
+    async def test_a_named_feature_is_in_the_log_line_and_the_totals(self) -> None:
+        watch = self.watch({})
+        body = {"content": [], "usage": {"input_tokens": 20, "output_tokens": 3}}
+        client = self.client(watch, 200, json.dumps(body))
+        with self.assertLogs("dmbot.ai", "INFO") as logs:
+            await client.tier(AIModelTier.FAST, Feature.FIGHTBOT).complete("s", "t")
+            await client.tier(AIModelTier.FAST).complete("s", "t")
+        calls = [m for m in logs.output if "AI call" in m]
+        self.assertIn("feature=fightbot", calls[0])
+        self.assertNotIn("feature=", calls[1])
+        self.assertEqual([c[3] for c in watch._calls], ["fightbot", None])
 
 
 class Settings(unittest.TestCase):

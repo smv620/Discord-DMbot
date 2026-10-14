@@ -108,8 +108,33 @@ class Parsing(unittest.TestCase):
                 "hp", "temp_hp", "conditions", "exhaustion", "resistances", "immunities",
                 "vulnerabilities", "expertise", "tools", "weapon_profs", "armor_profs",
                 "background", "inventory", "flags",
+                "slots",  # numbers only (#1176)
             },
         )  # fmt: skip
+
+    def test_spell_slots_are_kept_as_numbers_only(self) -> None:
+        data = answer()
+        data["data"]["spellSlots"] = [
+            {"level": 2, "used": 1, "available": 3, "note": "LEAK"},
+            {"level": 1, "used": 9, "available": 4},  # used above max: capped
+            {"level": 3, "used": 0, "available": 0},  # none at this level: left out
+            {"level": 12, "used": 0, "available": 1},  # not a spell level
+            {"level": "x", "used": 0, "available": 1},
+            "junk",
+        ]
+        snapshot = sheets.parse(data)
+        self.assertEqual(
+            snapshot["slots"],
+            [{"level": 1, "max": 4, "used": 4}, {"level": 2, "max": 3, "used": 1}],
+        )
+        self.assertNotIn("LEAK", json.dumps(snapshot))
+
+    def test_a_sheet_without_slots_has_none(self) -> None:
+        self.assertEqual(sheets.parse(answer())["slots"], [])
+        old = {k: v for k, v in sheets.parse(answer()).items() if k != "slots"}
+        cleaned = sheets.clean(old)
+        assert cleaned is not None
+        self.assertEqual(cleaned["slots"], [])
 
     def test_text_in_an_allowed_field_is_still_dropped(self) -> None:
         data = answer()

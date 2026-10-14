@@ -53,6 +53,8 @@ NAME_MAX = 60  # a spell, feature or item name; longer is likely text, and dropp
 LIST_MAX = 100  # of each kind of name
 TYPED_NAMES_MAX = 20  # spell or feature names on the fallback form
 LEVEL_MAX = 20
+SLOT_LEVEL_MAX = 9  # spell slots exist for levels 1 to 9
+SLOT_MAX = 99
 SCORE_MAX = 30
 ABILITIES = ("str", "dex", "con", "int", "wis", "cha")
 _ABILITY_NAMES = ("strength", "dexterity", "constitution", "intelligence", "wisdom", "charisma")
@@ -252,7 +254,28 @@ def _full(
         "background": _name(_get(data, "background", "definition", "name"))
         or _name(_get(data, "background", "customBackground", "name")),
         "inventory": _inventory(data),
+        "slots": clean_slots(_list(data.get("spellSlots"))),
     }
+
+
+def clean_slots(value: Any) -> list[dict[str, int]]:
+    """Spell slots, numbers only (#1176): for each level 1 to 9 how many the character has
+    (`max`) and how many are used. D&D Beyond calls these `available` and `used`; the
+    snapshot's own shape (`max`, `used`) is accepted as well. A level with none is left out,
+    and used is never above max. Anything that isn't that shape is dropped."""
+    best: dict[int, dict[str, int]] = {}
+    for entry in _list(value):
+        level = _int(_get(entry, "level"), 1, SLOT_LEVEL_MAX)
+        top = _int(
+            _get(entry, "max") if _get(entry, "max") is not None else _get(entry, "available"),
+            1,
+            SLOT_MAX,
+        )
+        if level is None or top is None:
+            continue
+        used = min(_int(_get(entry, "used"), 0, SLOT_MAX) or 0, top)
+        best[level] = {"level": level, "max": top, "used": used}
+    return [best[k] for k in sorted(best)]
 
 
 def _sub(modifier: Mapping[str, Any]) -> str:
@@ -584,6 +607,7 @@ def _clean_full(snapshot: Mapping[str, Any]) -> dict[str, Any]:
     out["weapon_profs"] = _names(_list(snapshot.get("weapon_profs")))
     out["armor_profs"] = _names(_list(snapshot.get("armor_profs")))
     out["expertise"] = sorted({s for s in _list(snapshot.get("expertise")) if s in SKILLS})
+    out["slots"] = clean_slots(snapshot.get("slots"))
     inventory = snapshot.get("inventory")
     if isinstance(inventory, Mapping):
         rarity_in = inventory.get("rarity")

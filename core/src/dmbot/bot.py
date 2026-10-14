@@ -649,7 +649,9 @@ class DMBot(commands.AutoShardedBot):
         )
         # FightBot's reminders to players in combat (#1129), on the smallest model.
         self.fight_ai = (
-            self.ai_client.tier(FEATURE_TIERS[Feature.FIGHTBOT]) if self.ai_client else None
+            self.ai_client.tier(FEATURE_TIERS[Feature.FIGHTBOT], Feature.FIGHTBOT)
+            if self.ai_client
+            else None
         )
         # The off-topic filter (#52), the audio check and the DM sidebar.
         self.topic_ai = (

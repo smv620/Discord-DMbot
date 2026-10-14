@@ -211,6 +211,7 @@ def checks(
             lambda n: sheet_names.close("feat", n),
         ),
         _more(snapshot),
+        *([c] if (c := _slots(snapshot)) is not None else []),
         _named(
             "spells",
             "Spells",
@@ -363,6 +364,26 @@ def _typed_names(snapshot: Mapping[str, Any], target: str, fallback: str) -> Che
         return found[0].name if found else sheet_names.close("feat", name)
 
     return _named("features", "Names you typed", _list(snapshot, "features"), status, near)
+
+
+def slot_line(snapshot: Mapping[str, Any]) -> str:
+    """ "level 1: 2 of 3 left, level 2: 1 of 2 left" (#1176), or "" when the sheet has no
+    spell slots (a character who casts nothing, or a sheet read before slots were kept)."""
+    slots = snapshot.get("slots")
+    if not isinstance(slots, list):
+        return ""
+    parts = [
+        f"level {e['level']}: {e['max'] - e['used']} of {e['max']} left"
+        for e in slots
+        if isinstance(e, Mapping) and isinstance(e.get("level"), int)
+        and isinstance(e.get("max"), int) and isinstance(e.get("used"), int)
+    ]  # fmt: skip
+    return ", ".join(parts)
+
+
+def _slots(snapshot: Mapping[str, Any]) -> Check | None:
+    line = slot_line(snapshot)
+    return Check("slots", OK, f"Spell slots: {line}") if line else None
 
 
 def _features(snapshot: Mapping[str, Any]) -> Check:
