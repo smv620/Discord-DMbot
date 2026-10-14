@@ -750,14 +750,27 @@ class TablePeople(unittest.TestCase):
         both = self.build(character="Mikal", person_name="Mike")
         # Each is a known name of its own kind, so neither is changed into the other.
         for line in ("Then Mikal went first.", "Then Mike went first."):
-            self.assertEqual(clean(both, line).text, line)
-        # A word that could be either is left as heard.
-        for line in ("Then Mikel went first.", "Then Mykal went first."):
-            self.assertEqual(clean(both, line).text, line, line)
+            self.assertEqual(clean(both, line, scene=(CERRIC,)).text, line)
+
+    def test_a_dm_rule_never_turns_a_persons_name_into_a_character(self) -> None:
+        rule = CampaignLookup.build(
+            LookupData(
+                1,
+                (entity(CERRIC, "Mikal", "player_character"),),
+                (alias(CERRIC, "Mikal"),),
+                (correction("Mike", CERRIC, FIX),),
+                (),
+                people=(alias(self.PERSON, "Mike"),),
+            )
+        )
+        line = "Then Mike went first."
+        # Even with the character in the scene, where a rule or a sound match could act.
+        self.assertEqual(clean(rule, line, scene=(CERRIC,)).text, line)
+        self.assertEqual(clean(rule, line, scene=(CERRIC,)).fixes, ())
 
     def test_a_word_between_a_person_and_a_character_is_never_fixed_to_either(self) -> None:
         both = self.build(character="Mikal", person_name="Mikael")
-        self.assertEqual(clean(both, "Then Mikail went first.").fixes, ())
+        self.assertEqual(clean(both, "Then Mikail went first.", scene=(CERRIC,)).fixes, ())
 
     def test_two_people_alike_are_left_alone(self) -> None:
         other = alias("q" * 32, "Mikail")

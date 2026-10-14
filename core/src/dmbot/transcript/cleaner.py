@@ -235,6 +235,9 @@ def clean(
     person_keys = {name_key(p) for p in people} | {
         name_key(p.split()[0]) for p in people if p.split()
     }
+    # A table person's own name is never rewritten into a character, even by a DM's rule
+    # ("Mike" → Mikal): people and characters stay apart (#1208).
+    person_keys |= set(lookup.people_by_key)
     n = len(words)
     # Words that are already something DMbot knows: never changed by sound.
     known = [False] * n
