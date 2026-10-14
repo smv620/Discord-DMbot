@@ -2209,3 +2209,15 @@ Overall ...................................... PASS (Deepgram baseline: 33/33, 1
   Limit of this check: the live database holds no player characters with a player (0 of 152 entries), so the backfill
   inserted nothing here. The index and policy handling ran on the real database; the inserts are covered by #1204's
   own test that migrates a table holding rows, not by this dry run.
+
+==============================================================================
+2026-10-14  dev1  Dry run on development 8538b79 with #1189 (migration 0059 definitions) - PASSED
+  #1209 and #1217 merged after the last dry run; #1189 adds 0059_definitions: a new shared table
+  ontology_predicate_versions (no campaign data, so no row-level security, like schema_migrations), five new columns
+  on memory_predicates and definition_version on memory_relations. Same method as before (fresh pg_dumpall of the live
+  database at 0050, throwaway postgres:16, dmbot role, deleted after).
+  Result: "Database updated: 0051_dndbeyond_invite ... 0059_definitions" in 0.15 s; a second run applied nothing; the
+  new columns exist; row counts unchanged (152 entries, 237 aliases, 147 transcript lines); the dmbot role can read the
+  new table (the website's role cannot, which it does not need). The new table holds 0 rows right after migrating: core
+  writes the shipped definitions at every start, so it fills on the first start after the deploy, which this check does
+  not run. Check after deploying: "Database updated: ... 0059_definitions" and 0 ERROR.
