@@ -2186,3 +2186,14 @@ Overall ...................................... PASS (Deepgram baseline: 33/33, 1
   row-level security on and forced; sidebar_via check validated; all 3 existing campaigns get typed chat on.
   New since the first dry run: #1157's rights. The website's database role dmbot_web now has SELECT and DELETE on
   consent (it had none) and the migrate step applied them. Nothing else changed. active_sessions = 0 now.
+
+==============================================================================
+2026-10-14  dev1  Dry run on development fc3e22c with #1200 (migrations 0056, 0057) - PASSED
+  #1200 (table questions: the dmb-chat channel) merged after the last dry run and adds 0056 dmbchat_channel
+  (campaigns.dmbchat_channel_id, nullable) and 0057 table_questions (replaces the two transcript_lines sidebar
+  CHECK constraints), and the consent wording goes to version 6. Same method: a fresh pg_dumpall of the live
+  database (at 0050), restored into a throwaway postgres:16, migrated as the dmbot role, deleted after.
+  Result: "Database updated: 0051_dndbeyond_invite ... 0057_table_questions" in 0.10 s; a second run applied
+  nothing; rows unchanged (147 transcript lines); both re-added constraints validated against the existing rows;
+  all earlier checks still hold. The new channel needs the same Discord rights as the transcript and game-time
+  channels, so no new permission is asked.
