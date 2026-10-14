@@ -5,17 +5,22 @@ from __future__ import annotations
 
 from typing import Any
 
+from psycopg import errors
+
 from dmbot import account_move
 from dmbot.account_id import to_dmbot_id
 from dmbot.account_move import AccountMoves, MoveError
 from dmbot.campaigns import CampaignStore
 from dmbot.consent import ConsentStore
+from dmbot.db import Database
 from dmbot.memory.backup import MemorySection
 from dmbot.memory.store import MemoryStore
-from dmbot.web import entitlements_writer
+from dmbot.web import accounts, entitlements_writer, sessions
+from dmbot.web.discord import DiscordUser
 from dmbot.web.payments import PaymentEvent
-from tests.pg import DatabaseTest
+from tests.pg import REQUIRE_DB, SUPERUSER_URL, DatabaseTest
 from tests.test_web_accounts_db import INSERT_PLAN, PLAN_ROW
+from tests.test_web_role import ensure_web_role, web_url
 
 OLD, NEW, THIRD = 111_111_111_111_111_111, 222_222_222_222_222_222, 333_333_333_333_333_333
 GUILD_A, GUILD_B = 1001, 2002
@@ -47,7 +52,7 @@ class Moves(DatabaseTest):
             )
 
     async def give_plan(self, user_id: int, **values: object) -> None:
-        row = {**PLAN_ROW, "user_id": user_id, "provider": "stripe", **values}
+        row = {**PLAN_ROW, "user_id": user_id, "provider": "stripe", "campaign_cap": 5, **values}
         async with self.db.plan_writer(user_id) as conn:
             await conn.execute(INSERT_PLAN, row)
             await conn.execute(
@@ -290,3 +295,82 @@ class Moves(DatabaseTest):
             ),
             15,
         )
+
+    async def web(self) -> Database:
+        """The website's own database role, as the internet-facing API connects."""
+        if not SUPERUSER_URL:
+            if REQUIRE_DB:
+                self.fail("DMBOT_TEST_SUPERUSER_URL is needed to test the website's role")
+            self.skipTest("set DMBOT_TEST_SUPERUSER_URL to test the website's role")
+        await ensure_web_role()
+        web = await Database.open(web_url(), schema=self.schema, max_size=2, migrate=False)
+        self.addAsyncCleanup(web.close)
+        return web
+
+    async def test_the_old_id_cannot_make_a_website_account_and_others_can(self) -> None:
+        web = await self.web()
+        await self.moves.move(OLD, NEW, await self.code())
+        with self.assertRaises(sessions.AccountMoved):
+            await sessions.sign_in(
+                web, DiscordUser(id=OLD, name="Old", email=None), [], now=NOW, days=1
+            )
+        await sessions.sign_in(
+            web, DiscordUser(id=444, name="Fresh", email=None), [], now=NOW, days=1
+        )
+        # The moved account keeps its DMbot ID on the new Discord ID.
+        self.assertEqual(await accounts.dmbot_id(web, NEW), to_dmbot_id(OLD))
+        self.assertIsNone(await accounts.dmbot_id(web, OLD))
+
+    async def test_a_link_made_before_the_move_finds_the_account_by_its_dmbot_id(self) -> None:
+        web = await self.web()
+        self.assertEqual(await accounts.user_of_dmbot_id(web, to_dmbot_id(OLD)), OLD)
+        await self.moves.move(OLD, NEW, await self.code())
+        self.assertEqual(await accounts.user_of_dmbot_id(web, to_dmbot_id(OLD)), NEW)
+        self.assertIsNone(await accounts.user_of_dmbot_id(web, "ZZZZZZ"))
+
+    async def test_the_website_cannot_move_or_peek_at_moves(self) -> None:
+        web = await self.web()
+        await self.moves.move(OLD, NEW, await self.code())
+        for sql_text in (
+            "SELECT dmbot_move_account(%s, %s, 0)",
+            "SELECT * FROM dmbot_move_preview(%s)",
+        ):
+            with self.assertRaises(errors.InsufficientPrivilege):
+                async with web.user(OLD) as conn:
+                    await conn.execute(sql_text, (OLD, NEW)[: sql_text.count("%s")])
+        for table in ("account_moves", "move_codes"):
+            with self.assertRaises(errors.InsufficientPrivilege):
+                async with web.user(OLD) as conn:
+                    await conn.execute(f"SELECT * FROM {table}")
+
+    async def test_a_plan_the_old_id_buys_later_is_not_sent_to_the_new_account(self) -> None:
+        await self.moves.move(OLD, NEW, await self.code())
+        event = PaymentEvent(
+            provider="stripe", event_id="evt_2", kind="subscription_renewed", user_id=OLD,
+            occurred_at=NOW + 50, plan="table", period_start=NOW, period_end=NOW + 99,
+            customer_id="cus_other", subscription_id="sub_other",
+        )  # fmt: skip
+        await entitlements_writer.apply_event(self.db, event, now=NOW + 60)
+        self.assertNotEqual(
+            await self.scalar("SELECT period_end FROM entitlements", person=NEW), NOW + 99
+        )
+
+    async def test_no_offer_emails_goes_with_the_account(self) -> None:
+        async with self.db.unscoped() as conn:
+            await conn.execute(
+                "INSERT INTO email_unsubscribed (user_id, at) VALUES (%s, 5)", (OLD,)
+            )
+        await self.moves.move(OLD, NEW, await self.code())
+        self.assertEqual(
+            await self.scalar("SELECT count(*) FROM email_unsubscribed WHERE user_id = %s", NEW), 1
+        )
+
+    async def test_too_many_campaigns_for_the_plan_stops_the_move(self) -> None:
+        async with self.db.plan_writer(OLD) as conn:
+            await conn.execute(
+                "UPDATE entitlements SET campaign_cap = 2 WHERE user_id = %s", (OLD,)
+            )
+        await self.campaigns.create(GUILD_A, "Third Own", NEW)
+        with self.assertRaises(MoveError) as err:
+            await self.moves.move(OLD, NEW, await self.code())
+        self.assertEqual(str(err.exception), account_move.TOO_MANY_CAMPAIGNS)

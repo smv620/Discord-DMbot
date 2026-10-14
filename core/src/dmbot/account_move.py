@@ -48,6 +48,10 @@ SAME = "This is the old account. Open Discord on your new account and run `/dmbo
 NEW_HAS_PLAN = "This account already has a paid plan. Use an account without one."
 NEW_MOVED_AWAY = "This account moved its plan away before. Use a different account."
 LISTENING = "DMbot is recording a session for the old account. End it, then try again."
+TOO_MANY_CAMPAIGNS = (
+    "Both accounts together own more campaigns than the plan allows. Delete or hand over "
+    "some on the new account, then try again."
+)
 NO_ACCOUNT = "We can't find a DMbot account for that code. Ask for a new one on the old account."
 
 _REFUSALS = {
@@ -58,6 +62,7 @@ _REFUSALS = {
     "new_has_plan": NEW_HAS_PLAN,
     "new_moved_away": NEW_MOVED_AWAY,
     "listening": LISTENING,
+    "too_many_campaigns": TOO_MANY_CAMPAIGNS,
 }
 
 
@@ -149,6 +154,12 @@ class AccountMoves:
                 (user_id, hash_code(code), now, now + CODE_LIFETIME_S),
             )
         return code
+
+    async def cancel_code(self, user_id: int) -> None:
+        """Forget the account's code: the email didn't go, so no code should be waiting that
+        nobody has seen (and the earlier one, already replaced, doesn't come back)."""
+        async with self._db.unscoped() as conn:
+            await conn.execute("DELETE FROM move_codes WHERE user_id = %s", (user_id,))
 
     async def find(self, new_user_id: int, code: str) -> int:
         """The old account a code is for. A wrong or old code counts toward a short limit for

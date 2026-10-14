@@ -48,6 +48,7 @@ def bot_with(**moves: Any) -> Any:
     stub = SimpleNamespace(
         can_move=AsyncMock(return_value=None),
         make_code=AsyncMock(return_value="ABCD2345"),
+        cancel_code=AsyncMock(),
         find=AsyncMock(return_value=OLD),
         preview=AsyncMock(return_value=Preview("table", ("Frostmaiden", "Sunken *City*"))),
         move=AsyncMock(),
@@ -106,6 +107,7 @@ class GettingACode(unittest.IsolatedAsyncioTestCase):
         it = interaction(OLD, bot)
         await migrate.get_code(it)
         self.assertEqual(it.sent[0][0], migrate.EMAIL_FAILED)
+        bot.account_moves.cancel_code.assert_awaited_once_with(OLD)  # no code nobody has seen
         bad = bot_with(make_code=AsyncMock(side_effect=RuntimeError("down")))
         it2 = interaction(OLD, bad)
         await migrate.get_code(it2)

@@ -156,7 +156,11 @@ async def get_code(interaction: discord.Interaction) -> None:
         log.exception("Couldn't make a move code")
         await _tell(interaction, NOT_READY)
         return
-    await _tell(interaction, EMAILED if result in ("sent", "already_sent") else EMAIL_FAILED)
+    if result not in ("sent", "already_sent"):
+        await bot.account_moves.cancel_code(interaction.user.id)
+        await _tell(interaction, EMAIL_FAILED)
+        return
+    await _tell(interaction, EMAILED)
 
 
 class CodeForm(discord.ui.Modal, title="Import from another account"):

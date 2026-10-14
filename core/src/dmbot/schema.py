@@ -2046,6 +2046,8 @@ WEB_ROLE_FUNCTIONS: tuple[tuple[str, str], ...] = (
     ("dmbot_orphan_owned_campaigns", "dmbot_orphan_owned_campaigns(BIGINT)"),
     ("dmbot_hours_used", "dmbot_hours_used(BIGINT)"),
     ("dmbot_minutes_total", "dmbot_minutes_total()"),
+    ("dmbot_user_of", "dmbot_user_of(TEXT)"),  # links made before a move (#1230)
+    ("dmbot_moved_to", "dmbot_moved_to(BIGINT, TEXT, TEXT)"),  # payments after a move (#1230)
 )
 # The columns the website may fill when it creates a hand-over offer (#728): who, where and the
 # two names. Left out on purpose, so they take their defaults: status and decided_at (an offer
@@ -2079,7 +2081,6 @@ WEB_ROLE_GRANTS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("SELECT, INSERT, UPDATE", ("installs", "entitlements")),
     ("SELECT, INSERT", ("payment_events", "try_it_used")),
     ("SELECT, INSERT", ("email_unsubscribed",)),  # the unsubscribe link (#1229)
-    ("SELECT", ("account_moves",)),  # a payment for a moved account finds its new owner (#1230)
     ("INSERT, DELETE", ("feedback",)),
     ("SELECT, INSERT, UPDATE, DELETE", ("web_users", "web_sessions")),
     # Free access (#771): the admin page gives, changes and revokes grants (through
@@ -2250,26 +2251,34 @@ MOVES = """
         new_user_id BIGINT NOT NULL UNIQUE CHECK (new_user_id > 0),
         dmbot_id    TEXT NOT NULL,
         moved_at    BIGINT NOT NULL,
-        told_at     BIGINT,
-        stripe_done_at BIGINT
+        told_at     BIGINT
     );
     CREATE INDEX account_moves_by_id ON account_moves (dmbot_id, moved_at);
-    -- The DMbot ID is unique, and a move hands it from the old row to the new one inside one
-    -- transaction: the check waits for the end of the statement group.
-    ALTER TABLE web_users DROP CONSTRAINT web_users_dmbot_id_unique;
-    ALTER TABLE web_users ADD CONSTRAINT web_users_dmbot_id_unique
-        UNIQUE (dmbot_id) DEFERRABLE INITIALLY IMMEDIATE;
-    -- A new row normally gets its ID from the Discord ID; the move passes the old one on.
+    -- Rows that point at the account follow its Discord ID when the move changes it.
+    ALTER TABLE entitlements DROP CONSTRAINT entitlements_user_id_fkey,
+        ADD CONSTRAINT entitlements_user_id_fkey FOREIGN KEY (user_id)
+            REFERENCES web_users ON DELETE CASCADE ON UPDATE CASCADE;
+    ALTER TABLE installs DROP CONSTRAINT installs_installed_by_user_id_fkey,
+        ADD CONSTRAINT installs_installed_by_user_id_fkey FOREIGN KEY (installed_by_user_id)
+            REFERENCES web_users ON DELETE SET NULL ON UPDATE CASCADE;
+    -- A move changes the Discord ID on the account's own row (the DMbot ID stays), so the
+    -- unique check on the DMbot ID is never in play. Only the move may do that; any other
+    -- change of either still fails. An old Discord ID that moved away can't make a new
+    -- account on the website: its DMbot ID is the moved account's.
+    -- (SECURITY DEFINER: it reads account_moves, which the website's role can't.)
     CREATE OR REPLACE FUNCTION dmbot_web_users_id() RETURNS trigger
-        LANGUAGE plpgsql
+        LANGUAGE plpgsql SECURITY DEFINER
         AS $fn$
     BEGIN
         IF TG_OP = 'INSERT' THEN
-            IF dmbot_owner_sync() = 'move' AND NEW.dmbot_id IS NOT NULL THEN
-                RETURN NEW;
+            IF EXISTS (SELECT 1 FROM account_moves WHERE old_user_id = NEW.user_id) THEN
+                RAISE EXCEPTION 'This account moved'
+                    USING ERRCODE = 'P0001', HINT = 'account_moved';
             END IF;
             NEW.dmbot_id := dmbot_base36(NEW.user_id);
-        ELSIF NEW.dmbot_id IS DISTINCT FROM OLD.dmbot_id OR NEW.user_id <> OLD.user_id THEN
+        ELSIF NEW.dmbot_id IS DISTINCT FROM OLD.dmbot_id THEN
+            RAISE EXCEPTION 'A DMbot ID never changes';
+        ELSIF NEW.user_id <> OLD.user_id AND dmbot_owner_sync() <> 'move' THEN
             RAISE EXCEPTION 'A DMbot ID never changes';
         END IF;
         RETURN NEW;
@@ -2285,7 +2294,8 @@ MOVES = """
         FOREACH t IN ARRAY ARRAY['web_users', 'entitlements', 'web_sessions', 'installs',
                                  'payment_events', 'owner_hours', 'session_usage',
                                  'try_it_used', 'campaigns', 'campaign_dms',
-                                 'memory_entities', 'active_sessions']
+                                 'memory_entities', 'active_sessions',
+                                 'campaign_handover_offers']
         LOOP
             EXECUTE format(
                 'CREATE POLICY move_all ON %I FOR ALL TO %I
@@ -2312,6 +2322,18 @@ MOVES = """
         PERFORM set_config('dmbot.owner_sync', 'move', true);
         IF old IS NULL OR new IS NULL OR old <= 0 OR new <= 0 OR old = new THEN
             outcome := 'same';
+        END IF;
+        -- Same lock order as the hand-over and the pause door: the campaigns (in a fixed
+        -- order), then the people. A payment for either account waits for the move.
+        IF old IS NOT NULL AND new IS NOT NULL AND old > 0 AND new > 0 AND old <> new THEN
+            PERFORM 1 FROM campaigns c WHERE c.owner_user_id = old
+                ORDER BY c.guild_id, c.id FOR UPDATE;
+            PERFORM pg_advisory_xact_lock(
+                hashtextextended('dmbot.owner_slots:' || old::text, 0));
+            PERFORM pg_advisory_xact_lock(
+                hashtextextended('dmbot.plan_writer:' || least(old, new)::text, 0));
+            PERFORM pg_advisory_xact_lock(
+                hashtextextended('dmbot.plan_writer:' || greatest(old, new)::text, 0));
         END IF;
         IF outcome = 'moved' THEN
             SELECT * INTO acct FROM web_users WHERE user_id = old FOR UPDATE;
@@ -2345,25 +2367,24 @@ MOVES = """
                 WHERE c.owner_user_id = old) THEN
             outcome := 'listening';
         END IF;
+        IF outcome = 'moved' AND (SELECT count(*) FROM campaigns
+                                  WHERE owner_user_id IN (old, new)) > ent.campaign_cap THEN
+            outcome := 'too_many_campaigns';
+        END IF;
         IF outcome <> 'moved' THEN
             PERFORM set_config('dmbot.owner_sync', before, true);
             RETURN outcome;
         END IF;
 
         SELECT COALESCE(array_agg(id), '{}') INTO owned FROM campaigns WHERE owner_user_id = old;
-        SET CONSTRAINTS web_users_dmbot_id_unique DEFERRED;
         -- Whatever the new account had of its own that is not a paid plan goes: a Try It
         -- or a stopped plan, and its sign-ins.
         DELETE FROM entitlements WHERE user_id = new;
         DELETE FROM web_users WHERE user_id = new;
-        INSERT INTO web_users (user_id, email, created_at, last_sign_in_at, dmbot_id)
-            VALUES (new, acct.email, acct.created_at, acct.last_sign_in_at, acct.dmbot_id);
-        UPDATE entitlements SET user_id = new WHERE user_id = old;
-        UPDATE payment_events SET user_id = new WHERE user_id = old;
-        UPDATE installs SET installed_by_user_id = new WHERE installed_by_user_id = old;
         DELETE FROM web_sessions WHERE user_id = old;
-        DELETE FROM web_users WHERE user_id = old;
-        SET CONSTRAINTS web_users_dmbot_id_unique IMMEDIATE;
+        -- The account's own row takes the new Discord ID; its plan and installs follow it.
+        UPDATE web_users SET user_id = new WHERE user_id = old;
+        UPDATE payment_events SET user_id = new WHERE user_id = old;
 
         -- The hours add to any the new account already has.
         INSERT INTO owner_hours (owner_user_id, month_start, minutes, grace_session)
@@ -2374,6 +2395,10 @@ MOVES = """
         DELETE FROM owner_hours WHERE owner_user_id = old;
         UPDATE session_usage SET owner_user_id = new WHERE owner_user_id = old;
 
+        -- An offer to hand a campaign over, to or from the old account, ends with the move.
+        UPDATE campaign_handover_offers SET status = 'withdrawn', decided_at = now
+            WHERE status = 'open' AND (from_user_id = old OR to_user_id = old
+                                       OR from_user_id = new OR to_user_id = new);
         UPDATE campaigns SET owner_user_id = new WHERE owner_user_id = old;
         DELETE FROM campaign_dms d WHERE d.user_id = old AND d.campaign_id = ANY(owned)
             AND EXISTS (SELECT 1 FROM campaign_dms n
@@ -2389,6 +2414,10 @@ MOVES = """
         -- One free trial for each person, and a moved ID can never start another.
         INSERT INTO try_it_used (user_id) VALUES (old), (new) ON CONFLICT DO NOTHING;
         DELETE FROM move_codes WHERE user_id = old;
+        -- "No offer emails" is about the person, so it goes with the account.
+        INSERT INTO email_unsubscribed (user_id, at)
+            SELECT new, at FROM email_unsubscribed WHERE user_id = old
+            ON CONFLICT DO NOTHING;
         INSERT INTO account_moves (old_user_id, new_user_id, dmbot_id, moved_at)
             VALUES (old, new, acct.dmbot_id, now);
         PERFORM set_config('dmbot.owner_sync', before, true);
@@ -2404,6 +2433,59 @@ MOVES = """
     END
     $do$;
     REVOKE ALL ON FUNCTION dmbot_move_account(BIGINT, BIGINT, BIGINT) FROM PUBLIC;
+    -- Two small doors for the website's role, which has no grant on account_moves:
+    --   dmbot_user_of(id)   the Discord ID that holds a DMbot ID now (an unsubscribe or
+    --                       personal link carries the ID the account was made with, and the
+    --                       account may have moved since), or no row
+    --   dmbot_moved_to(old, subscription, customer)
+    --                       the Discord ID a moved account's plan went to, only when that
+    --                       plan is the one the payment event names, so a plan the old
+    --                       account buys later is never sent to the new one
+    CREATE FUNCTION dmbot_user_of(id TEXT) RETURNS BIGINT
+        LANGUAGE plpgsql STABLE SECURITY DEFINER
+        AS $fn$
+    #variable_conflict use_column
+    DECLARE
+        before TEXT := COALESCE(current_setting('dmbot.owner_sync', true), '');
+        found BIGINT;
+    BEGIN
+        PERFORM set_config('dmbot.owner_sync', 'move', true);
+        SELECT u.user_id INTO found FROM web_users u WHERE u.dmbot_id = id;
+        PERFORM set_config('dmbot.owner_sync', before, true);
+        RETURN found;
+    END
+    $fn$;
+    CREATE FUNCTION dmbot_moved_to(old BIGINT, sub TEXT, cust TEXT) RETURNS BIGINT
+        LANGUAGE plpgsql STABLE SECURITY DEFINER
+        AS $fn$
+    #variable_conflict use_column
+    DECLARE
+        before TEXT := COALESCE(current_setting('dmbot.owner_sync', true), '');
+        found BIGINT;
+    BEGIN
+        PERFORM set_config('dmbot.owner_sync', 'move', true);
+        SELECT m.new_user_id INTO found
+            FROM account_moves m JOIN entitlements e ON e.user_id = m.new_user_id
+            WHERE m.old_user_id = old
+              AND ((sub IS NOT NULL AND e.provider_subscription_id = sub)
+                   OR (cust IS NOT NULL AND e.provider_customer_id = cust));
+        PERFORM set_config('dmbot.owner_sync', before, true);
+        RETURN found;
+    END
+    $fn$;
+    DO $do$
+    BEGIN
+        EXECUTE format(
+            'ALTER FUNCTION dmbot_user_of(TEXT) SET search_path = pg_catalog, %I, pg_temp',
+            current_schema());
+        EXECUTE format(
+            'ALTER FUNCTION dmbot_moved_to(BIGINT, TEXT, TEXT)'
+            ' SET search_path = pg_catalog, %I, pg_temp',
+            current_schema());
+    END
+    $do$;
+    REVOKE ALL ON FUNCTION dmbot_user_of(TEXT) FROM PUBLIC;
+    REVOKE ALL ON FUNCTION dmbot_moved_to(BIGINT, TEXT, TEXT) FROM PUBLIC;
     -- What a move would take, for the confirmation screen: the plan and the name of each
     -- campaign. Names only; nothing else of a campaign leaves.
     CREATE FUNCTION dmbot_move_preview(old BIGINT) RETURNS TABLE (kind TEXT, label TEXT)

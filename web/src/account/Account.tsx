@@ -153,7 +153,13 @@ export default function Account({ api, go = defaultGo, search = "" }: Props) {
       }
       const why = params.get("signin");
       const notice =
-        why === "failed" ? text.signInFailed : why === "slow" ? text.tooManyTries : null;
+        why === "failed"
+          ? text.signInFailed
+          : why === "slow"
+            ? text.tooManyTries
+            : why === "moved"
+              ? text.signInMoved
+              : null;
       setState(me ? { kind: "signed-in", me } : { kind: "signed-out", notice });
     } catch {
       setState({ kind: "down" });

@@ -131,25 +131,29 @@ def _same_subscription(row: dict[str, Any], event: PaymentEvent) -> bool:
     return known is None or event.subscription_id is None or known == event.subscription_id
 
 
-async def _current_owner(db: Database, user_id: int) -> int:
+async def _current_owner(db: Database, event: PaymentEvent) -> int:
     """Who holds the subscription an event names now. The payment company's records carry
     the Discord ID the plan was bought with; if that account moved (#1230), the plan is the
-    new account's. Follows a chain of moves (a few at most)."""
+    new account's, but only when the event names the plan that moved (its subscription or
+    customer): a plan the old ID buys later stays the old ID's. Follows a chain of moves
+    (a few at most)."""
+    user_id = event.user_id
     for _ in range(5):
-        async with db.unscoped() as conn:
+        async with db.user(user_id) as conn:
             cur = await conn.execute(
-                "SELECT new_user_id FROM account_moves WHERE old_user_id = %s", (user_id,)
+                "SELECT dmbot_moved_to(%s, %s, %s) AS moved",
+                (user_id, event.subscription_id, event.customer_id),
             )
             row = await cur.fetchone()
-        if row is None:
+        if row is None or row["moved"] is None:
             break
-        user_id = int(row["new_user_id"])
+        user_id = int(row["moved"])
     return user_id
 
 
 async def apply_event(db: Database, event: PaymentEvent, *, now: int) -> Outcome:
     loaded = plans.load()
-    owner = await _current_owner(db, event.user_id)
+    owner = await _current_owner(db, event)
     if owner != event.user_id:
         event = dataclasses.replace(event, user_id=owner)
     async with db.plan_writer(event.user_id) as conn:  # one change per person at a time
