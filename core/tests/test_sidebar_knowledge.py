@@ -87,7 +87,7 @@ class Ranking(unittest.TestCase):
             "how much damage does a falling creature take",
             "how long does Bless last",
         ):
-            self.assertEqual(knowledge.retrieve(question), [], question)
+            self.assertNotIn("ABOUT DMBOT", build(question), question)
 
     def test_what_is_added_is_kept_to_the_budget(self) -> None:
         got = knowledge.retrieve("how does DMbot record and keep the game clock", budget=2500)
@@ -174,6 +174,55 @@ class GameWords(unittest.TestCase):
 
     def test_a_question_about_sharing_rules_between_campaigns_finds_its_section(self) -> None:
         self.assertIn("ABOUT DMBOT", build("how do I share my house rules with another campaign?"))
+
+
+class TheOpenGate(unittest.TestCase):
+    """How people ask DMbot about itself in its private chat: nobody says "DMbot" there (#1195)."""
+
+    def about(self, question: str) -> str:
+        prompt = build(question)
+        return prompt.split("ABOUT DMBOT", 1)[1] if "ABOUT DMBOT" in prompt else ""
+
+    def test_questions_put_to_dmbot_get_its_documents(self) -> None:
+        for question in (
+            "what can you do?",
+            "can you track initiative?",
+            "do you remember NPCs between sessions?",
+            "how do I add my sheet?",
+            "how do I peek behind the DM screen?",
+            "how do I turn on table chat?",
+        ):
+            self.assertTrue(self.about(question), question)
+
+    def test_the_right_section_comes_first(self) -> None:
+        first = {
+            "how do I add my sheet?": r"sheet",
+            "how do I turn on table chat?": r"chat",
+        }
+        for question, pattern in first.items():
+            shown = self.about(question).split("FROM DMBOT'S DOCUMENTS", 1)[1]
+            lead = shown.splitlines()[1]
+            self.assertRegex(lead.lower(), pattern, question)
+
+    def test_a_rules_question_that_says_you_stays_a_rules_question(self) -> None:
+        for question in (
+            "can you see an invisible creature with truesight?",
+            "does fireball need line of sight?",
+        ):
+            self.assertEqual(self.about(question), "", question)
+
+    def test_every_button_label_and_command_name_in_the_index_opens_the_gate(self) -> None:
+        ranker = knowledge.load()
+        self.assertGreater(len(ranker.terms), 30)
+        for term in sorted(ranker.terms):
+            self.assertTrue(knowledge.opens_gate(f"about {term}", ranker), term)
+            # (the label as a person types it, with the game's punctuation)
+        self.assertTrue(knowledge.opens_gate("where is the D&D Beyond invite", ranker))
+
+    def test_the_labels_people_press_are_in_the_index(self) -> None:
+        terms = knowledge.load().terms
+        for label in ("stop recording me", "peek behind the dm screen", "my character sheet"):
+            self.assertIn(label, terms)
 
 
 class GoldenQuestions(unittest.TestCase):

@@ -30,11 +30,11 @@ services:
       context: ./core
       args:
         EXTRAS: ${CORE_EXTRAS:-whisper}   # set CORE_EXTRAS=dev for cloud transcription only
+        GIT_COMMIT: ${GIT_COMMIT:-}       # baked in: DMbot links to its documents at this commit
     env_file: .env
     environment:
       EARS_WS_HOST: 0.0.0.0   # listen on the private network so ears can reach it
       DMBOT_DOCS_DIR: /app/knowledge   # its own documents, mounted below (#1195)
-      GIT_COMMIT: ${GIT_COMMIT:-}      # the commit being run; DMbot's links point at it (#1195)
       LOG_FORMAT: ${LOG_FORMAT:-json}   # one JSON line per event on servers
       DATABASE_URL: postgresql://dmbot:${DMBOT_DB_PASSWORD}@postgres:5432/dmbot
       POSTGRES_ADMIN_PASSWORD: ""   # only the postgres service needs these
@@ -54,6 +54,9 @@ services:
       # Read at start-up to warn when .env is missing newer settings (#31). Names only.
       - ./.env.example:/app/.env.example:ro
       # What DMbot answers questions about itself from (#1195): the checkout it was built from.
+      # Mounted, not copied into the image: the image is built from ./core alone, and moving the
+      # build to the repository root would change CI's image build too. Deploys always rebuild
+      # (docs/DEPLOY.md), so the files and the code come from the same checkout.
       - ./docs/PLAN.md:/app/knowledge/docs/PLAN.md:ro
       - ./README.md:/app/knowledge/README.md:ro
       - ./web/src/content/help.ts:/app/knowledge/web/src/content/help.ts:ro
@@ -91,6 +94,7 @@ services:
       context: ./core
       args:
         EXTRAS: ${CORE_EXTRAS:-whisper}
+        GIT_COMMIT: ${GIT_COMMIT:-}   # (the same image as core: both builds must agree)
     command: ["python", "-m", "dmbot.web"]
     # Only the settings the API needs, listed by name (no env_file): a secret added to
     # .env later never reaches it by accident. No bot token, voice secret, AI or speech keys.

@@ -311,9 +311,10 @@ def build(
     # Ranked against DMbot's own documents for every question, not gated by a word pattern: a
     # question worded another way still finds its section, and a game question finds nothing
     # (#1195). The short digest always comes with it.
-    docs = knowledge.retrieve(question)
+    rules_named = bool(hits)  # a question naming a rules entry is a rules question
+    docs = knowledge.retrieve(question, rules_named=rules_named)
     about_link = None
-    if docs or asks_about_dmbot(question):
+    if docs or knowledge.opens_gate(question, rules_named=rules_named):
         shown = "FROM DMBOT'S DOCUMENTS (each marked how far it is built):\n" + knowledge.render(
             docs
         )

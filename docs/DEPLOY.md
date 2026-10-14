@@ -142,8 +142,8 @@ docker compose up -d --build
 docker compose logs -f        # watch it start; Ctrl+C stops watching, not the bot
 ```
 
-(`GIT_COMMIT=$(git rev-parse HEAD)` in front lets DMbot link to its own documents at the commit
-it is running; without it, answers about DMbot simply carry no link.)
+(`GIT_COMMIT=$(git rev-parse HEAD)` in front is baked into the image, so DMbot can link to its
+own documents at the commit it is running; without it, answers about DMbot carry no link.)
 
 You should see `ears connected` in core's log and `logged in as …` from ears. The first
 start with local Whisper downloads the model (a few hundred MB for `small`); it is kept

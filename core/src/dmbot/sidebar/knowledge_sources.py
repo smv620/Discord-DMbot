@@ -94,15 +94,15 @@ def command_chunks() -> list[Chunk]:
     return chunks
 
 
-def help_card_chunks() -> list[Chunk]:
-    """The DM screen's help card, from its function in the code."""
+def _help_card_raw() -> str:
+    """The help card's words as the code writes them (with its bold markers), or ""."""
     path = PACKAGE / "dm_screen" / "messages.py"
     if not path.is_file():
-        return []
+        return ""
     try:
         tree = ast.parse(path.read_text(encoding="utf-8"))
     except (SyntaxError, UnicodeDecodeError):
-        return []
+        return ""
     for node in ast.walk(tree):
         if isinstance(node, ast.FunctionDef) and node.name == "help_card":
             lines = [
@@ -110,6 +110,45 @@ def help_card_chunks() -> list[Chunk]:
                 for n in ast.walk(node)
                 if isinstance(n, ast.Constant) and isinstance(n.value, str) and len(n.value) > 15
             ]
-            text = " ".join(" ".join(lines).replace("**", "").split())
-            return [Chunk("help card", "The DM screen help card", "", BUILT, text)]
-    return []
+            return " ".join(lines)
+    return ""
+
+
+def help_card_chunks() -> list[Chunk]:
+    """The DM screen's help card, from its function in the code."""
+    text = " ".join(_help_card_raw().replace("**", "").split())
+    return [Chunk("help card", "The DM screen help card", "", BUILT, text)] if text else []
+
+
+def labels() -> list[str]:
+    """Every button, menu and select label in the code (a literal, or a named constant), the
+    help card's bold names: how people say what they press."""
+    trees = []
+    for path in sorted(PACKAGE.rglob("*.py")):
+        try:
+            trees.append(ast.parse(path.read_text(encoding="utf-8")))
+        except (SyntaxError, UnicodeDecodeError):
+            continue
+    constants: dict[str, str] = {}  # NAME = "text" anywhere in the package
+    for tree in trees:
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Assign) and (text := _text(node.value)):
+                for target in node.targets:
+                    if isinstance(target, ast.Name):
+                        constants[target.id] = text
+    found: set[str] = set()
+    for tree in trees:
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Call):
+                for keyword in node.keywords:
+                    if keyword.arg != "label":
+                        continue
+                    value = keyword.value
+                    if text := _text(value):
+                        found.add(text)
+                    elif isinstance(value, ast.Name) and value.id in constants:
+                        found.add(constants[value.id])
+                    elif isinstance(value, ast.Attribute) and value.attr in constants:
+                        found.add(constants[value.attr])
+    found.update(re.findall(r"\*\*([^*]{4,40})\*\*", _help_card_raw()))
+    return sorted(found)

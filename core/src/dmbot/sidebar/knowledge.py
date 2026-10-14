@@ -18,6 +18,7 @@ import math
 import os
 import re
 from collections import Counter
+from collections.abc import Sequence
 from dataclasses import dataclass
 from functools import cache
 
@@ -245,8 +246,9 @@ class Ranker:
 
     K1, B = 1.5, 0.75
 
-    def __init__(self, chunks: list[Chunk]) -> None:
+    def __init__(self, chunks: list[Chunk], labels: Sequence[str] = ()) -> None:
         self.chunks = chunks
+        self.terms = gate_terms(chunks, labels)
         self._docs = [Counter(c.words) for c in chunks]
         self._lengths = [sum(d.values()) for d in self._docs]
         self._average = (sum(self._lengths) / len(chunks)) if chunks else 1.0
@@ -284,7 +286,7 @@ def load() -> Ranker:
     from dmbot.sidebar import knowledge_sources  # (it imports this module)
 
     try:
-        return Ranker(knowledge_sources.collect())
+        return Ranker(knowledge_sources.collect(), knowledge_sources.labels())
     except Exception:  # broken or odd documents must not break the sidebar
         log.exception("DMbot couldn't read its own documents; answering from the digest only")
         return Ranker([])
@@ -308,16 +310,77 @@ def names_dmbot(question: str) -> bool:
     return bool(_NAMES_DMBOT.search(question))
 
 
-def retrieve(question: str, ranker: Ranker | None = None, budget: int = BUDGET) -> list[Chunk]:
-    """The chunks that answer a question about DMbot, best first, up to `budget` characters.
-    Nothing for a question that is not about DMbot. The plan is full of game words, so no score can
-    tell the two apart (measured on the real index: a game question scored above DMbot ones); the
-    question must name DMbot, a slash command or one of its features (`names_dmbot`), and the
-    ranking then picks the sections."""
-    ranked = (ranker or load()).scores(question)
-    if not ranked:
+# A question put to DMbot itself ("what can you do?", "how do I turn on table chat?"): the
+# private chat is where DMbot is asked, and nobody there says "DMbot" (#1195).
+_ADDRESSED = re.compile(
+    r"\b(can|could|do|does|will|would|are) you\b|\byour\b|"
+    r"\bhow (do|can|would) i "
+    r"(use|turn on|turn off|stop|start|add|link|set|change|get|see|find|peek)\b",
+    re.IGNORECASE,
+)
+_PHRASE_MIN = 8  # characters: shorter labels ("Menu", "Settings") are everyday words
+
+
+_WORDS = re.compile(r"[\w']+")  # (so "D&D Beyond" is "d d beyond" in the term and the question)
+_TERM = re.compile(r"[a-z][a-z' &-]+")
+
+
+def _is_term(text: str) -> bool:
+    """Words only, two to five of them: a label or heading someone could say aloud, not a form's
+    example text, a count or a sentence."""
+    return bool(_TERM.fullmatch(text)) and 2 <= len(text.split()) <= 5 and "built" not in text
+
+
+def gate_terms(chunks: list[Chunk], labels: Sequence[str] = ()) -> frozenset[str]:
+    """Words and phrases that are DMbot's own, taken from the index itself so a new feature
+    opens the gate without anyone keeping a list: long command names, the buttons' and menus'
+    labels, and the headings of what is built."""
+    found: set[str] = set()
+    for chunk in chunks:
+        if chunk.file == "commands":
+            name = chunk.heading.rsplit(" ", 1)[-1].lstrip("/").lower()
+            if len(name) >= _PHRASE_MIN + 2:  # (houserules, optionalrules, transcript; not restore)
+                found.add(name)
+        elif chunk.status == BUILT and _is_term(chunk.heading.lower()):
+            found.add(chunk.heading.lower())
+    for label in labels:
+        label = re.sub(r"^[^\w]+|[^\w]+$", "", label).lower()
+        if len(label) >= _PHRASE_MIN and _is_term(label):
+            found.add(label)
+    return frozenset(" ".join(_WORDS.findall(term)) for term in found)
+
+
+def opens_gate(question: str, ranker: Ranker | None = None, rules_named: bool = False) -> bool:
+    """Whether the question is about DMbot, so its documents are added. Any of: it names DMbot
+    or a feature (`names_dmbot`); it is put to DMbot ("can you...", "do you...", "your...") and
+    names no rules entry, so "can you see an invisible creature" stays a rules question; or it
+    holds a term from the index (a button's label, a command, a built heading), again unless a
+    rules entry is named. No score can do this: the plan is full of game words, so a game
+    question scored above DMbot ones on the real index."""
+    if names_dmbot(question):
+        return True
+    if rules_named:
+        return False
+    if _ADDRESSED.search(question):
+        return True
+    lowered = " ".join(_WORDS.findall(question.lower()))
+    return any(re.search(rf"\b{re.escape(term)}\b", lowered) for term in (ranker or load()).terms)
+
+
+def retrieve(
+    question: str,
+    ranker: Ranker | None = None,
+    budget: int = BUDGET,
+    rules_named: bool = False,
+) -> list[Chunk]:
+    """The chunks that answer a question about DMbot, best first, up to `budget` characters;
+    nothing when the question is not about DMbot (`opens_gate`). The ranking picks the
+    sections, not the gate."""
+    ranker = ranker or load()
+    if not opens_gate(question, ranker, rules_named):
         return []
-    if not names_dmbot(question):
+    ranked = ranker.scores(question)
+    if not ranked:
         return []
     floor = ranked[0][0] * 0.4  # a far weaker chunk is noise next to the best one
     out: list[Chunk] = []
