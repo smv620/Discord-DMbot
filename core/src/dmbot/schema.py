@@ -2438,7 +2438,7 @@ MOVES = """
     );
     CREATE TABLE account_moves (
         old_user_id BIGINT PRIMARY KEY CHECK (old_user_id > 0),
-        new_user_id BIGINT NOT NULL UNIQUE CHECK (new_user_id > 0),
+        new_user_id BIGINT NOT NULL CHECK (new_user_id > 0),  -- not unique: A to B to C to B
         dmbot_id    TEXT NOT NULL,
         moved_at    BIGINT NOT NULL,
         told_at     BIGINT,
@@ -2453,6 +2453,7 @@ MOVES = """
         stripe_last_try_at BIGINT
     );
     CREATE INDEX account_moves_by_id ON account_moves (dmbot_id, moved_at);
+    CREATE INDEX account_moves_by_new ON account_moves (new_user_id);
     CREATE INDEX account_moves_to_sync ON account_moves (moved_at) WHERE stripe_done_at IS NULL;
     -- Rows that point at the account follow its Discord ID when the move changes it.
     ALTER TABLE entitlements DROP CONSTRAINT entitlements_user_id_fkey,
@@ -2592,7 +2593,8 @@ MOVES = """
                        AND (p.kind IS NULL OR p.kind = ANY(
                             ARRAY['subscription_started', 'subscription_renewed',
                                   'extra_hours_bought'])))
-            OR EXISTS (SELECT 1 FROM account_moves m WHERE m.new_user_id = new)
+            OR EXISTS (SELECT 1 FROM account_moves m
+                       WHERE m.new_user_id = new AND m.dmbot_id <> acct.dmbot_id)
             OR EXISTS (SELECT 1 FROM account_moves m
                        WHERE m.old_user_id = new AND m.dmbot_id <> acct.dmbot_id)) THEN
             outcome := 'target_history';

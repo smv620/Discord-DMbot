@@ -207,8 +207,10 @@ class AccountMoves:
         return Preview(plan, tuple(str(r["label"]) for r in rows if r["kind"] == "campaign"))
 
     async def move(self, old_user_id: int, new_user_id: int, code: str) -> None:
-        """Do the move. The code is checked again here, so a confirmation that sat open past
-        its half hour (or after a newer code) moves nothing."""
+        """Do the move. The code is checked twice, on purpose: `find` above counts wrong guesses
+        against the person typing; the database function then checks and spends the code in the
+        same transaction as the move, so a confirmation that sat open past its half hour (or
+        after a newer code) moves nothing, and two moves with one code make exactly one."""
         if await self.find(new_user_id, code) != old_user_id:
             raise MoveError(BAD_CODE)
         try:

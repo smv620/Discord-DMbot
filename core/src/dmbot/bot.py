@@ -5153,6 +5153,10 @@ class DMBot(commands.AutoShardedBot):
         """Start the "your account moved" check without making the command wait for it."""
         if self.account_moves is None or user_id in self._moved_checked:
             return
+        # Marked before the task starts, so two commands at once start one check.
+        if len(self._moved_checked) >= MOVED_CHECKED_MAX:
+            self._moved_checked.clear()
+        self._moved_checked.add(user_id)
         task = asyncio.create_task(self.tell_if_moved(user_id))
         self._moved_tasks.add(task)  # a reference, or the task could be dropped mid-way
         task.add_done_callback(self._moved_tasks.discard)
@@ -5165,12 +5169,10 @@ class DMBot(commands.AutoShardedBot):
             return
         try:
             notice = await self.account_moves.take_moved_notice(user_id)
-            if len(self._moved_checked) >= MOVED_CHECKED_MAX:
-                self._moved_checked.clear()
-            self._moved_checked.add(user_id)
             if notice:
                 await self._dm_trial_user(user_id, notice)
         except Exception:
+            self._moved_checked.discard(user_id)  # try again at their next command
             log.exception("Couldn't tell an old account that its DMbot account moved")
 
     async def _discord_name(self, user_id: int) -> str:

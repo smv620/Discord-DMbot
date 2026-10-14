@@ -310,6 +310,15 @@ class Moves(DatabaseTest):
         )
         failures = [r for r in results if isinstance(r, MoveError)]
         self.assertEqual(len(failures), 1)
+        winners = [
+            uid
+            for uid in (NEW, THIRD_NEW)
+            if await self.scalar("SELECT count(*) FROM entitlements", person=uid)
+        ]
+        self.assertEqual(len(winners), 1)  # exactly one account holds the plan
+        a = await self.campaigns.get(GUILD_A, self.a)
+        assert a
+        self.assertEqual(a.owner_user_id, winners[0])  # and its campaigns
         # Whichever lost is told plainly; the code can't be used twice.
         self.assertIn(str(failures[0]), (account_move.BAD_CODE, account_move.NO_ACCOUNT))
 
@@ -533,3 +542,33 @@ class Moves(DatabaseTest):
             cur = await conn.execute("SELECT old_user_id FROM dmbot_moves_to_sync()")
             handed = [r["old_user_id"] for r in await cur.fetchall()]
         self.assertEqual(len(handed), 20)  # never more than 20 a pass
+
+    async def test_the_payment_email_goes_with_the_account(self) -> None:
+        async with self.db.user(OLD) as conn:
+            await conn.execute(
+                "UPDATE web_users SET payment_email = 'payer@example.com',"
+                " payment_email_at = 77 WHERE user_id = %s",
+                (OLD,),
+            )
+        await self.moves.move(OLD, NEW, await self.code())
+        self.assertEqual(await accounts.payment_email(self.db, NEW), "payer@example.com")
+        self.assertEqual(
+            await self.scalar("SELECT payment_email_at FROM web_users", person=NEW), 77
+        )
+        self.assertIsNone(await accounts.payment_email(self.db, OLD))
+
+    async def test_a_to_b_to_c_and_back_to_b_works_and_a_stays_moved_away(self) -> None:
+        await self.moves.move(OLD, NEW, await self.code())
+        self.now = NOW + 31 * 86400
+        await self.moves.move(NEW, THIRD_NEW, await self.moves.make_code(NEW))
+        self.now = NOW + 62 * 86400
+        await self.moves.move(THIRD_NEW, NEW, await self.moves.make_code(THIRD_NEW))
+        self.assertEqual(await self.scalar("SELECT plan FROM entitlements", person=NEW), "table")
+        self.assertEqual(await accounts.dmbot_id(self.db, NEW), to_dmbot_id(OLD))
+        # The first account is still moved away (its DMbot ID is held by the new one).
+        self.assertEqual(await self.moves.moved_to(OLD), NEW)
+        web = await self.web()
+        with self.assertRaises(sessions.AccountMoved):
+            await sessions.sign_in(
+                web, DiscordUser(id=OLD, name="Old", email=None), [], now=NOW, days=1
+            )

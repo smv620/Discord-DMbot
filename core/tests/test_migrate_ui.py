@@ -202,7 +202,6 @@ class TheCommandHook(unittest.IsolatedAsyncioTestCase):
         async def tell(user_id: int) -> None:
             await release.wait()  # slow: the command must not wait for it
             calls.append(user_id)
-            client._moved_checked.add(user_id)
 
         client: Any = SimpleNamespace(
             account_moves=object(), _moved_checked=set(), _moved_tasks=set(), tell_if_moved=tell
@@ -211,7 +210,9 @@ class TheCommandHook(unittest.IsolatedAsyncioTestCase):
         tree: Any = SimpleNamespace(client=client)
         it: Any = SimpleNamespace(user=SimpleNamespace(id=7), guild_id=1)
         self.assertTrue(await DMBotTree.interaction_check(tree, it))  # returns at once
+        self.assertTrue(await DMBotTree.interaction_check(tree, it))  # a second at the same time
         self.assertEqual(calls, [])  # the check has not finished, and nobody waited
+        self.assertEqual(len(client._moved_tasks), 1)  # two commands at once: one check
         release.set()
         await asyncio.gather(*client._moved_tasks)
         self.assertTrue(await DMBotTree.interaction_check(tree, it))
