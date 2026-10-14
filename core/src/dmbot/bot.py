@@ -34,6 +34,7 @@ from dmbot import (
     install,
     plan_rules,
     retention,
+    sheet_reread,
     table_chat,
     usage,
 )
@@ -145,9 +146,11 @@ from dmbot.memory.models import DM, FIX, KEEP, Heard, MemoryRuleError, name_key
 from dmbot.memory.scan import MAX_SUGGESTIONS, find_new_names, group_alike
 from dmbot.memory.scene import HintParts, SceneTracker, mentions, scene_hints
 from dmbot.memory.scene import prepare as prepare_hints
+from dmbot.memory.sheet_questions import Questions as SheetQuestions
 from dmbot.memory.sheet_refresh import hint_names as sheet_hint_names
 from dmbot.memory.sheet_refresh import refresh as refresh_sheets
-from dmbot.memory.sheet_store import SheetStore
+from dmbot.memory.sheet_store import CharacterSheet, SheetStore
+from dmbot.memory.sheet_watch import SheetWatch
 from dmbot.memory.store import MemoryStore
 from dmbot.retention import RetentionJob
 from dmbot.rules import house_voice
@@ -340,6 +343,12 @@ class Table:
     # Spell, feature and item names from the players' D&D Beyond sheets (#723).
     sheet_hints: tuple[str, ...] = ()
     sheet_task: asyncio.Task[None] | None = None  # reading them; cancelled at the end
+    # Reading linked D&D Beyond sheets again during the session (#1128): the linked sheets as
+    # last read, the schedule, and the loop that runs it (cancelled at the end).
+    sheet_links: dict[str, CharacterSheet] = field(default_factory=dict)
+    sheet_watch: SheetWatch = field(default_factory=SheetWatch)
+    sheet_questions: SheetQuestions = field(default_factory=SheetQuestions)
+    watch_task: asyncio.Task[None] | None = None
     sheet_loads: int = 0  # each load of the names counts up; only the newest one is used
     # For the Transcript Cleaner (#127): what this session's lines say about words, and
     # the display names of people who agreed (never "fixed" into a name).
@@ -673,6 +682,9 @@ class DMBot(commands.AutoShardedBot):
         # runs waits on it rather than starting another (a stalled database would pile up).
         self._lookups: dict[tuple[int, int], asyncio.Task[ConsentStatus]] = {}
         self._asking: set[asyncio.Task[None]] = set()  # private-message rounds in flight
+        # Loops that last as long as a session (#1128, #1129): kept apart from `_asking`, which
+        # tests and `close()` wait on until it is empty.
+        self._loops: set[asyncio.Task[None]] = set()
         self._finishing: set[asyncio.Task[None]] = set()  # stopped sessions winding down
         # The hours follow-up (warn, grace, stop) in flight, per server (#437).
         self._follow_ups: dict[int, asyncio.Task[None]] = {}
@@ -825,9 +837,11 @@ class DMBot(commands.AutoShardedBot):
             )
         lookups = list(self._lookups.values())  # so the database can close at once
         await self.sidebar.close()
-        for task in [*self._background, *self._asking, *lookups]:
+        for task in [*self._background, *self._asking, *self._loops, *lookups]:
             task.cancel()
-        await asyncio.gather(*self._background, *self._asking, *lookups, return_exceptions=True)
+        await asyncio.gather(
+            *self._background, *self._asking, *self._loops, *lookups, return_exceptions=True
+        )
         await self.pipeline.transcriber.close()
         if self.ai_client is not None:
             await self.ai_client.close()
@@ -942,6 +956,8 @@ class DMBot(commands.AutoShardedBot):
             table.held = {k: v for k, v in table.held.items() if k[0] != user_id}
             table.unsaved.drop_speaker(user_id)  # and never saved
             table.recent.drop_speaker(user_id)  # and never part of a sidebar answer's scene
+            table.sheet_watch.drop_speaker(user_id)  # no sheet is read again for what they said
+            table.sheet_questions.drop_speaker(user_id)  # nor asked about it (#1128)
             table.scene.forget_speaker(user_id)  # and no longer shape the hints
             table.vocabulary.forget_speaker(user_id)  # or the name fixes
             if table.fix_notes.drop_speaker(user_id):  # their fixes leave the DM screen
@@ -1159,6 +1175,25 @@ class DMBot(commands.AutoShardedBot):
         task.add_done_callback(self._asking.discard)
         return task
 
+    def _track_loop(self, work: Awaitable[Any], name: str) -> asyncio.Task[None] | None:
+        """Run a loop that lasts as long as a session; the session's end and close() cancel
+        it. Not part of `_asking`: nothing waits for it to finish."""
+        if self._closing:
+            if inspect.iscoroutine(work):
+                work.close()
+            return None
+
+        async def guarded() -> None:
+            try:
+                await work
+            except Exception:
+                log.exception("Background %s failed", name)
+
+        task = asyncio.create_task(guarded(), name=name)
+        self._loops.add(task)
+        task.add_done_callback(self._loops.discard)
+        return task
+
     def start_asking(
         self, table: Table, members: list[discord.Member], *, only_renewals: bool = False
     ) -> None:
@@ -1351,6 +1386,7 @@ class DMBot(commands.AutoShardedBot):
             self._sheet_hints(table, refresh=not table.resumed), "sheets"
         )
         self._track(self._fight_left_over(table), "fight-left-over")  # #1173
+        table.watch_task = self._track_loop(sheet_reread.run(self, table), "sheet-watch")  # #1128
         return sent
 
     async def _fight_left_over(self, table: Table) -> None:
@@ -1408,6 +1444,7 @@ class DMBot(commands.AutoShardedBot):
                 kept = await self.sheets.sheets(guild_id, campaign_id)
                 if table.sheet_loads == mine:  # a later change already loaded newer ones
                     table.sheet_hints = tuple(sheet_hint_names(kept))
+                    sheet_reread.track(table, kept)
                 if refresh and current():
                     now = int(time.time())
                     found = await refresh_sheets(
@@ -1420,6 +1457,7 @@ class DMBot(commands.AutoShardedBot):
                         self.sheets_changed(guild_id, campaign_id)
                     else:
                         table.sheet_hints = tuple(sheet_hint_names(found))
+                        sheet_reread.track(table, found)
                     linked = sum(s.url is not None for s in found)
                     # Once a session. Only names read from D&D Beyond (game words, at
                     # most 15), never one that is also a secret name: never what a player
@@ -1450,6 +1488,8 @@ class DMBot(commands.AutoShardedBot):
             log.info("Session ended: %s", reason)
         if table.sheet_task is not None:  # no more reading sheets for it (#723)
             table.sheet_task.cancel()
+        if table.watch_task is not None:  # nor re-reading them (#1128)
+            table.watch_task.cancel()
         await self.ears.send(leave_command(guild_id))
         # Speech still being heard or written down is finished, not dropped (#109): the
         # session stays "ending" until the pipeline has caught up.
@@ -2821,6 +2861,10 @@ class DMBot(commands.AutoShardedBot):
         """What a line of table talk can set off, said or typed (#1118): a rules card, a house
         rule, the game clock. The one place both ways in share, so a typed "we take a long
         rest" does what the spoken one does. Consent was checked by the caller."""
+        try:  # a change at the table that D&D Beyond should show: read that sheet again (#1128)
+            sheet_reread.note_line(table, user_id, line)
+        except Exception:
+            log.exception("Sheet re-reads: couldn't look at a line")
         try:  # a card is never worth a lost line: nothing below may be skipped
             self._note_rules(table, user_id, line)
         except Exception:

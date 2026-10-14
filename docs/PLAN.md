@@ -2899,6 +2899,36 @@ once. The new-campaign form's link is saved in the same step as the campaign.
     move), DMbot asks the player privately and politely, at most once per change: "The DM
     mentioned 8 damage to Belleros. Your D&D Beyond sheet still shows 26 HP. Want to update it?"
     It never changes a D&D Beyond sheet itself, and never tells the DM or the table.
+  - **How it runs (built in #1128):**
+    - Only sheets linked from D&D Beyond are read again; a typed or document sheet never is.
+    - Whose change it is comes from the character's name standing right before the words
+      ("Belleros takes 8 damage") or after "to" ("8 damage to Belleros"), or from "I" for the
+      speaker's own character. Two names, a monster, or no name: nothing, never a guess.
+    - Phrases are strict (no questions, wishes, "if" or "maybe"); damage, healing, a condition
+      or a spell slot. A slot count isn't kept, so a slot only causes the read.
+    - Backing off after a refusal or an error: 2 minutes, doubling, at most 30 minutes; the
+      changes wait. A 5-player table is read about 20 times an hour on the schedule, plus one
+      read a minute at most per change.
+    - A question is asked once per change heard, only if the sheet shows nothing of it (damage
+      that didn't lower HP, healing that didn't raise it unless already full, a condition not
+      listed). Hit points and temporary hit points count together. The player's switch is
+      **Turn sheet questions off/on** on 📜 My character sheet (per character).
+    - The status card is sent again only when a part that was ✅ became ⚠️ or ⛔, and not in
+      combat (it waits for the fight to end).
+    - **Questions must be rare** (decided by Supervisor, 2026-10-13, #1171), because the game
+      has to stay quick: at most **one message per player every 15 minutes**, with all their
+      waiting questions merged into it (at most three) and the campaign named in it; **none in
+      combat**: they are held and sent after the fight; **never twice** about the same value
+      while the sheet still shows the same number; and one the sheet already answers (the
+      player updated it meanwhile) is dropped. Damage and healing of the same size within the
+      minute cancel out, and "Mira heals 5" is not used (Mira may be the healer): only the
+      one who is healed as the subject counts ("Mira regains 5 hit points").
+    - **A person who stops being recorded** takes their words with them: nothing waiting that
+      they said is read for, asked about, or used.
+    - **One limit for the whole bot** on D&D Beyond: a bucket of **20 reads a minute** across
+      all servers, and a pause for every sheet after a 429 or a 5xx for as long as
+      `Retry-After` says (a minute if it says nothing; never more than 15). A read held by the
+      limit waits and nobody is penalised; a 429 is logged apart from other failures.
 - **Combat state.**
   - DMbot knows whether the table is **in combat** and which **round** it is.
   - From what the DM says ("roll initiative", "round three", "the fight's over") and from DM-screen

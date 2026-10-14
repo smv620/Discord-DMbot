@@ -18,7 +18,8 @@ import asyncio
 import json
 import math
 import re
-from collections.abc import Iterable, Mapping
+import time
+from collections.abc import Callable, Iterable, Mapping
 from typing import Any
 
 import aiohttp
@@ -37,6 +38,10 @@ USER_AGENT = "DMbot (Discord bot for tabletop games; https://github.com/smv620/D
 FETCH_TIMEOUT_S = 10
 MAX_BYTES = 2 * 1024 * 1024  # a big sheet is a few hundred KB
 FETCHES_AT_ONCE = 2  # sheets read at once, across all servers
+READS_PER_MINUTE = 20  # D&D Beyond reads a minute, across all servers (a token bucket)
+PAUSE_DEFAULT_S = 60.0  # how long every read waits after a 429 or 5xx with no Retry-After
+PAUSE_MAX_S = 900.0  # never longer than this, whatever D&D Beyond asks
+HOLD_MAX_S = 5.0  # a read held by the limit this long or less waits; longer is refused as busy
 SNAPSHOT_MAX_BYTES = 32 * 1024  # a kept snapshot (the database allows 64 KB)
 SHEET_URL = "https://www.dndbeyond.com/characters/{id}"
 _LINK = re.compile(
@@ -86,6 +91,7 @@ NOT_A_LINK = (
     "That doesn't look like a D&D Beyond character link. Open your character on D&D "
     "Beyond and copy the address from the top of the page."
 )
+BUSY = "D&D Beyond is busy just now. DMbot will try again in a little while."
 NOT_PUBLIC = (
     "DMbot can't read that sheet yet. On D&D Beyond:\n"
     "1. Open the character and press **Edit**.\n"
@@ -98,11 +104,25 @@ NOT_PUBLIC = (
 
 class SheetError(Exception):
     """A sheet couldn't be read. `refused` when D&D Beyond refused (the sheet isn't
-    public, or there's no such character): the player can fix that."""
+    public, or there's no such character): the player can fix that. `limited` when D&D
+    Beyond asked us to slow down (429) or had a server problem (5xx), or our own limit held the
+    read back: not the sheet's fault, so nobody is penalised for it; `status` is the answer's
+    code and `retry_after` the seconds to wait."""
 
-    def __init__(self, message: str, *, refused: bool = False) -> None:
+    def __init__(
+        self,
+        message: str,
+        *,
+        refused: bool = False,
+        limited: bool = False,
+        status: int | None = None,
+        retry_after: float = 0.0,
+    ) -> None:
         super().__init__(message)
         self.refused = refused
+        self.limited = limited
+        self.status = status
+        self.retry_after = retry_after
 
 
 def character_id(link: str) -> int | None:
@@ -624,6 +644,64 @@ def who(snapshot: Mapping[str, Any]) -> str:
 _fetching: tuple[asyncio.AbstractEventLoop, asyncio.Semaphore] | None = None
 
 
+class _Gate:
+    """One limit for the whole bot on how fast D&D Beyond is asked for sheets, so that being
+    rate-limited by dndbeyond.com (and so breaking sheet import for every customer) is not
+    something a busy evening can cause. A token bucket of READS_PER_MINUTE, and a pause for
+    everyone after a 429 or a 5xx, as long as D&D Beyond asks (`Retry-After`). A read held by
+    the limit just waits: it is nobody's failure."""
+
+    def __init__(self, clock: Callable[[], float] = time.monotonic) -> None:
+        self._clock = clock
+        self._tokens = float(READS_PER_MINUTE)
+        self._stamp = clock()
+        self._paused_until = 0.0
+
+    def _refill(self, now: float) -> None:
+        self._tokens = min(
+            float(READS_PER_MINUTE),
+            self._tokens + (now - self._stamp) * READS_PER_MINUTE / 60.0,
+        )
+        self._stamp = now
+
+    def wait(self) -> float:
+        """Seconds until a read may start (0: now). Takes nothing."""
+        now = self._clock()
+        self._refill(now)
+        paused = max(0.0, self._paused_until - now)
+        short = 0.0 if self._tokens >= 1.0 else (1.0 - self._tokens) * 60.0 / READS_PER_MINUTE
+        return max(paused, short)
+
+    def take(self) -> float:
+        """Take a token if one is free and nothing is paused: 0. Else the seconds to wait."""
+        wait = self.wait()
+        if wait <= 0.0:
+            self._tokens -= 1.0
+        return wait
+
+    def pause(self, seconds: float) -> None:
+        """D&D Beyond said slow down: every read waits (for at most PAUSE_MAX_S)."""
+        seconds = min(PAUSE_MAX_S, max(1.0, seconds))
+        self._paused_until = max(self._paused_until, self._clock() + seconds)
+
+
+GATE = _Gate()
+
+
+def wait_time() -> float:
+    """Seconds until the bot may ask D&D Beyond for a sheet (0: now). Background re-reads look
+    first and simply wait, rather than start a read that would be held."""
+    return GATE.wait()
+
+
+def _retry_after(value: str | None) -> float:
+    """Seconds from a `Retry-After` header (a number; a date is not read, the default is used)."""
+    try:
+        return float(value) if value is not None else PAUSE_DEFAULT_S
+    except ValueError:
+        return PAUSE_DEFAULT_S
+
+
 def _permit() -> asyncio.Semaphore:
     """The process's FETCHES_AT_ONCE permits, made on first use for the running loop (a
     semaphore belongs to one loop; tests run many)."""
@@ -652,6 +730,10 @@ async def fetch(character: int, *, session: aiohttp.ClientSession | None = None)
     own = session is None
     client = session or new_session()
     try:
+        while (held := GATE.take()) > 0.0:
+            if held > HOLD_MAX_S:
+                raise SheetError(BUSY, limited=True, retry_after=held)
+            await asyncio.sleep(held)
         async with (
             asyncio.timeout(FETCH_TIMEOUT_S),
             _permit(),
@@ -659,8 +741,17 @@ async def fetch(character: int, *, session: aiohttp.ClientSession | None = None)
         ):
             if resp.status in (401, 403, 404):
                 raise SheetError(NOT_PUBLIC, refused=True)
+            if resp.status == 429 or resp.status >= 500:
+                after = _retry_after(resp.headers.get("Retry-After"))
+                GATE.pause(after)  # every sheet waits, not just this one
+                raise SheetError(
+                    f"D&D Beyond answered {resp.status}",
+                    limited=True,
+                    status=resp.status,
+                    retry_after=after,
+                )
             if resp.status != 200:
-                raise SheetError(f"D&D Beyond answered {resp.status}")
+                raise SheetError(f"D&D Beyond answered {resp.status}", status=resp.status)
             body = bytearray()
             async for piece in resp.content.iter_chunked(64 * 1024):
                 body += piece

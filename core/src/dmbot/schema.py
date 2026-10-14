@@ -1659,6 +1659,14 @@ COMBAT_STATE = """
     ALTER TABLE campaigns ADD COLUMN side_initiative BOOLEAN NOT NULL DEFAULT FALSE;
 """
 
+SHEET_QUESTIONS = """
+    -- Sheet re-reads (#1128; docs/PLAN.md, "Re-reading D&D Beyond"): whether DMbot may ask this
+    -- sheet's player, privately, when a re-read doesn't show what was said at the table. On
+    -- unless the player turns it off from their character sheet panel. Defaulted column: no
+    -- row changes, so no backfill policy.
+    ALTER TABLE character_sheets ADD COLUMN ask_mismatch BOOLEAN NOT NULL DEFAULT TRUE;
+"""
+
 OWNER_CAMPAIGNS = (
     _setting("dmbot_owner_sync", "dmbot.owner_sync", "TEXT")
     + """
@@ -2001,6 +2009,7 @@ MIGRATIONS: tuple[Migration, ...] = (
     ("0051_dndbeyond_invite", DNDBEYOND_INVITE),
     ("0052_table_chat", TABLE_CHAT),
     ("0053_combat_state", COMBAT_STATE),
+    ("0054_sheet_questions", SHEET_QUESTIONS),
 )
 
 # Tables that must have row-level security. A test checks every table in the schema
