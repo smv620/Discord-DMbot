@@ -79,7 +79,7 @@ class UnsubscribeRoute(DatabaseTest):
         seen = set()
         for body in bad:
             out = await self.post(body)
-            seen.add((out.status_code, out.json()["detail"]))
+            seen.add((out.status_code, out.json()["error"]))
         self.assertEqual(seen, {(400, "bad_link")})
         for raw in (b"[1, 2]", b"nonsense", b'"text"', b"null"):
             self.assertEqual((await self.post(raw)).status_code, 400)
