@@ -33,6 +33,8 @@ services:
     env_file: .env
     environment:
       EARS_WS_HOST: 0.0.0.0   # listen on the private network so ears can reach it
+      DMBOT_DOCS_DIR: /app/knowledge   # its own documents, mounted below (#1195)
+      GIT_COMMIT: ${GIT_COMMIT:-}      # the commit being run; DMbot's links point at it (#1195)
       LOG_FORMAT: ${LOG_FORMAT:-json}   # one JSON line per event on servers
       DATABASE_URL: postgresql://dmbot:${DMBOT_DB_PASSWORD}@postgres:5432/dmbot
       POSTGRES_ADMIN_PASSWORD: ""   # only the postgres service needs these
@@ -51,6 +53,10 @@ services:
       - test-recordings:/var/lib/dmbot/test-recordings   # saved test sessions (#1019), test server only
       # Read at start-up to warn when .env is missing newer settings (#31). Names only.
       - ./.env.example:/app/.env.example:ro
+      # What DMbot answers questions about itself from (#1195): the checkout it was built from.
+      - ./docs/PLAN.md:/app/knowledge/docs/PLAN.md:ro
+      - ./README.md:/app/knowledge/README.md:ro
+      - ./web/src/content/help.ts:/app/knowledge/web/src/content/help.ts:ro
     restart: unless-stopped
 
   ears:

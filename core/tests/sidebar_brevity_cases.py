@@ -185,6 +185,53 @@ CASES: tuple[Case, ...] = (
         ("stop recording me",),
         in_game=False,
     ),
+    Case(  # #1195: DMbot answers about itself from its own documents, not a word pattern
+        "what does the game clock do",
+        (
+            reply(
+                "It keeps the story's time, and Short rest and Long rest move it.",
+                "DMbot help",
+                in_game="no",
+            ),
+        ),
+        ("time", "clock"),
+        in_game=False,
+    ),
+    Case(
+        "how do I add my character sheet",
+        (reply("Press Menu, then My character sheet.", "DMbot help", in_game="no"),),
+        ("my character sheet",),
+        in_game=False,
+    ),
+    Case(
+        "what's FightBot",
+        (
+            reply(
+                "In a fight it privately reminds each player of their own spells and features.",
+                "DMbot help",
+                in_game="no",
+            ),
+        ),
+        ("fight",),
+        in_game=False,
+    ),
+    Case(
+        "do you remember NPCs between sessions",
+        (reply("Yes. It keeps the NPCs you confirm.", "DMbot help", in_game="no"),),
+        ("npcs",),
+        yes_no=True,
+        in_game=False,
+    ),
+    Case(
+        "what is a share code",
+        (
+            reply(
+                "The plan has it, but I can't confirm it's built yet.", "DMbot help", in_game="no"
+            ),
+        ),
+        ("can't confirm", "planned"),
+        in_game=False,
+    ),
     Case(
         "can players read the transcript",
         (reply("Yes. Anyone in the server can read and download it.", "DMbot help", in_game="no"),),
