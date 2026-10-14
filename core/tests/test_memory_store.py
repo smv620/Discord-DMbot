@@ -534,7 +534,9 @@ class Rules(MemoryTest):
         lords = [await self.add(f"Lord {n}") for n in range(4)]
         facts = [(await self.relate(cerric, "retained_by", lord)).value for lord in lords[:2]]
         third = await self.relate(cerric, "retained_by", lords[2], source="cleaner", confidence=0.5)
-        fourth = await self.relate(cerric, "retained_by", lords[3], source="cleaner", confidence=0.5)
+        fourth = await self.relate(
+            cerric, "retained_by", lords[3], source="cleaner", confidence=0.5
+        )
         self.assertTrue(third.value[1] and fourth.value[1])  # both over the limit
         await self.memory.update_relation(
             GUILD_A, self.c, facts[0][0].id, status=REJECTED, source="dm"
