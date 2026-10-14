@@ -6,7 +6,7 @@ from __future__ import annotations
 import unittest
 from dataclasses import replace
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock
 
 import discord
@@ -82,8 +82,10 @@ class TheBotsFlow(unittest.IsolatedAsyncioTestCase):
         self.bot = make_bot()
         self.guild = MagicMock()
         self.guild.fetch_member = AsyncMock()
+        self.guild.get_member = MagicMock(return_value=None)  # not cached
         self.bot.get_guild = lambda gid: self.guild  # type: ignore[method-assign]
-        self.bot.fetch_user = AsyncMock()  # type: ignore[method-assign]
+        self.fetch_user = AsyncMock()
+        cast(Any, self.bot).fetch_user = self.fetch_user
         self.store = MagicMock()
         self.store.note_owner_presence = AsyncMock(return_value=True)
         self.store.orphan_missing_owner = AsyncMock(return_value=True)
@@ -121,7 +123,7 @@ class TheBotsFlow(unittest.IsolatedAsyncioTestCase):
 
     async def test_a_deleted_account_is_ownerless_at_once(self) -> None:
         self.guild.fetch_member.side_effect = not_found(op.UNKNOWN_MEMBER)
-        self.bot.fetch_user.side_effect = not_found(op.UNKNOWN_USER)
+        self.fetch_user.side_effect = not_found(op.UNKNOWN_USER)
         await self.bot.check_owner_present(campaign())
         self.store.orphan_missing_owner.assert_awaited_once()
 
@@ -129,6 +131,32 @@ class TheBotsFlow(unittest.IsolatedAsyncioTestCase):
         self.guild.fetch_member.side_effect = RuntimeError("Discord is down")
         await self.bot.check_owner_present(campaign(since=NOW - 30 * DAY))
         self.store.note_owner_presence.assert_not_awaited()
+        self.store.orphan_missing_owner.assert_not_awaited()
+
+    async def test_a_cached_owner_costs_no_call_to_discord(self) -> None:
+        self.guild.get_member.return_value = object()
+        await self.bot.check_owner_present(campaign(since=NOW))
+        self.guild.fetch_member.assert_not_awaited()
+        self.store.note_owner_presence.assert_awaited_once()  # seen: the mark is cleared
+
+    async def test_discord_is_asked_at_most_once_an_hour_for_a_campaign(self) -> None:
+        self.guild.fetch_member.side_effect = not_found(op.UNKNOWN_MEMBER)
+        await self.bot.check_owner_present(campaign())
+        await self.bot.check_owner_present(campaign())
+        self.assertEqual(self.guild.fetch_member.await_count, 1)
+        await self.bot.check_owner_present(campaign(), force=True)  # the daily job
+        self.assertEqual(self.guild.fetch_member.await_count, 2)
+
+    async def test_a_start_waits_at_most_its_short_time(self) -> None:
+        import asyncio
+
+        async def slow(_: int) -> None:
+            await asyncio.sleep(5)
+
+        self.guild.fetch_member.side_effect = slow
+        started = asyncio.get_running_loop().time()
+        await self.bot.check_owner_present(campaign(), wait=0.05)
+        self.assertLess(asyncio.get_running_loop().time() - started, 1)
         self.store.orphan_missing_owner.assert_not_awaited()
 
     async def test_a_campaign_with_no_owner_is_not_looked_at(self) -> None:

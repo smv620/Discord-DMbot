@@ -1058,13 +1058,16 @@ class CampaignStore:
     ) -> bool:
         """The owner is gone for good: the campaign becomes ownerless, as when a DMbot account
         is deleted (#1059), and its 120 days start (#1214). Only while `owner_id` is still the
-        owner. True if it changed."""
+        owner and (unless `any_state`: a deleted account can't come back) while the date the
+        owner was first missed is still `still_missing_since`: an owner seen again, which
+        cleared it, is not ended by an older look. True if it changed."""
         async with self._db.guild(guild_id) as conn:
             cur = await conn.execute(
                 "UPDATE campaigns SET owner_user_id = NULL, owner_left_at = %s,"
                 " owner_missing_since = NULL"
-                " WHERE guild_id = %s AND id = %s AND owner_user_id = %s",
-                (now, guild_id, campaign_id, owner_id),
+                " WHERE guild_id = %s AND id = %s AND owner_user_id = %s"
+                " AND (%s OR owner_missing_since IS NOT DISTINCT FROM %s)",
+                (now, guild_id, campaign_id, owner_id, any_state, still_missing_since),
             )
             return bool(cur.rowcount > 0)
 

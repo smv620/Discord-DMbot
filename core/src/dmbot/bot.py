@@ -246,6 +246,8 @@ FINAL_FLUSH_TIMEOUT_S = 15.0  # at stop or shutdown, give up on posting after th
 IDLE_SWEEP_INTERVAL_S = 1
 OWNER_CHECK_DAYS = 120  # the retention window: older campaigns are not looked at (#1214)
 OWNER_CHECK_GAP_S = 0.5  # between campaigns in the daily look
+OWNER_START_WAIT_S = 2  # at a start the table is waiting
+OWNER_ASK_EVERY_S = 3600  # Discord is asked about one campaign's owner at most this often
 OWNER_LOOK_TIMEOUT_S = 6  # asking Discord about an owner must not hold up a start
 FORGET_TIMEOUT_S = 10  # removing learned names must not hold up stopping a recording
 METER_INTERVAL_S = 60  # how often listening minutes are written to the hours meter (#437)
@@ -603,6 +605,7 @@ class DMBot(commands.AutoShardedBot):
         self.meter = meter
         # The daily job that warns about and deletes campaigns past their keep date (#964).
         # Needs the meter (the owners' plans); without one nothing is ever deleted.
+        self._owner_asked: dict[str, float] = {}  # campaign id -> when Discord was last asked
         self.retention: RetentionJob | None = None
         if meter is not None:
             self.retention = RetentionJob(
@@ -1770,7 +1773,9 @@ class DMBot(commands.AutoShardedBot):
             )
         return None
 
-    async def check_owner_present(self, campaign: Campaign) -> Campaign:
+    async def check_owner_present(
+        self, campaign: Campaign, *, wait: float = OWNER_LOOK_TIMEOUT_S, force: bool = False
+    ) -> Campaign:
         """Is the campaign's owner still in the server (#1214)? Asked only when DMbot already
         has a reason to look: a start, opening Settings, and the daily job. Never raises; the
         campaign as it is now comes back (ownerless if it just became so)."""
@@ -1779,9 +1784,18 @@ class DMBot(commands.AutoShardedBot):
         if owner is None or guild is None:
             return campaign
         gid, cid = campaign.guild_id, campaign.id
+        cached = guild.get_member(owner) is not None  # no call to Discord at all
+        if not cached and not force:
+            asked = self._owner_asked.get(cid)
+            if asked is not None and time.monotonic() - asked < OWNER_ASK_EVERY_S:
+                return campaign  # asked lately: a start never waits on Discord for this
         try:
-            async with asyncio.timeout(OWNER_LOOK_TIMEOUT_S):  # only the asking of Discord
-                seen = await owner_presence.look(guild.fetch_member, self.fetch_user, owner)
+            if cached:
+                seen = owner_presence.HERE
+            else:
+                self._owner_asked[cid] = time.monotonic()
+                async with asyncio.timeout(wait):  # only the asking of Discord
+                    seen = await owner_presence.look(guild.fetch_member, self.fetch_user, owner)
             now = int(time.time())
             step = owner_presence.decide(campaign.owner_missing_since, seen, now)
             if step.action == owner_presence.MARK:
@@ -1817,7 +1831,7 @@ class DMBot(commands.AutoShardedBot):
                     or campaign.last_active_at < now - OWNER_CHECK_DAYS * 86400
                 ):
                     continue
-                await self.check_owner_present(campaign)
+                await self.check_owner_present(campaign, force=True)
                 await asyncio.sleep(OWNER_CHECK_GAP_S)  # one Discord call at a time, spaced
 
     async def plan_refusal(self, guild_id: int, campaign: Campaign, starter_id: int) -> str | None:
@@ -1825,7 +1839,9 @@ class DMBot(commands.AutoShardedBot):
         plain words for the person starting it, or None (#437). A paused campaign is refused
         whatever the plan; the rest only when DMBOT_ENFORCE_PLANS is on. Fails open: a
         database hiccup must never lock a table out of its game."""
-        campaign = await self.check_owner_present(campaign)  # a gone owner: Take it on (#1214)
+        # A gone owner gets Take it on (#1214); at a start, a cached owner costs nothing and
+        # Discord is asked at most once an hour for a campaign, for at most 2 seconds.
+        campaign = await self.check_owner_present(campaign, wait=OWNER_START_WAIT_S)
         owner = campaign.owner_user_id
         if owner is not None and self.settings.enforce_plans and self.meter is not None:
             # A plan that shrank pauses the campaigns over its cap first, so this one may
