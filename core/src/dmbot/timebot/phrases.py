@@ -140,8 +140,17 @@ _SUGGESTS = re.compile(
 )
 
 
+_CURLY = str.maketrans({"\u2019": "'", "\u2018": "'", "\u02bc": "'"})
+
+
+def normalise(line: str) -> str:
+    """Whitespace squeezed and the curly apostrophes a phone keyboard types (U+2019, U+2018,
+    U+02BC) made plain, so a curly "combat's over" matches the plain one (#1173)."""
+    return " ".join(line.translate(_CURLY).split())
+
+
 def _clean(line: str) -> str | None:
-    text = " ".join(line.split())
+    text = normalise(line)
     if not text or "?" in text or len(text.split()) > MAX_WORDS:
         return None
     return text
@@ -231,7 +240,7 @@ def suggested_rest(line: str) -> Rest | None:
     """ "short" or "long" if a player is suggesting a rest ("let's take a short rest", "can we
     long rest?"). Only ever a question for the DM: it moves nothing. A line that is about
     something else (a past rest, a quote) is not one."""
-    text = " ".join(line.split())
+    text = normalise(line)
     if not text or len(text.split()) > MAX_WORDS:
         return None
     if re.search(

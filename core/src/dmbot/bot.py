@@ -1395,9 +1395,30 @@ class DMBot(commands.AutoShardedBot):
         table.sheet_task = self._track(
             self._sheet_hints(table, refresh=not table.resumed), "sheets"
         )
+        self._track(self._fight_left_over(table), "fight-left-over")  # #1173
         table.watch_task = self._track_loop(sheet_reread.run(self, table), "sheet-watch")  # #1128
         table.fight_task = self._track_loop(fightbot.run(self, table), "fightbot")  # #1129
         return sent
+
+    async def _fight_left_over(self, table: Table) -> None:
+        """A session starts with a fight still running from last time: one line on the DM
+        screen with End combat (#1173). Never ended without the DM, because a session can stop
+        in the middle of a fight. Not after a restart in the middle of a session."""
+        if self.clocks is None or table.campaign_id is None or table.resumed:
+            return
+        stored = await self.clocks.get(table.guild_id, table.campaign_id)
+        if stored is None or stored.clock.combat_round is None:
+            return
+        if self.tables.get(table.guild_id) is not table:
+            return  # the session ended while the clock was read: no line on a closed table
+        view = discord.ui.View(timeout=None)
+        view.add_item(clock_screen.ClockButton(table.campaign_id, "cend"))
+        await self.post(
+            table.screen_channel_id,
+            f"⚔️ A fight from last time is still running (round {stored.clock.combat_round}). "
+            "Press **End combat** if it is over.",
+            view,
+        )
 
     async def _secret_keys(self, guild_id: int, campaign_id: str) -> frozenset[str] | None:
         """The campaign's secret names, as keys (for leaving them out of a log line), or
@@ -3065,20 +3086,46 @@ class DMBot(commands.AutoShardedBot):
         last = table.clock_said.get(said.key)
         if last is not None and now - last < CLOCK_PHRASE_GAP_S:
             return  # a rest said as starting and finishing, or the same words twice: once
+        # Marked at once, before any await: the same words arriving by voice and by chat a
+        # moment apart must count once (#1173). Taken back on every path that changes nothing.
+        table.clock_said[said.key] = now
+        marked = [said.key]  # grows if a rest's amount changes the key (taken back with it)
+        moved = False
+        try:
+            moved = await self._clock_phrase_moves(table, user_id, line, said, now, marked)
+        finally:
+            if not moved:
+                for key in marked:
+                    table.clock_said.pop(key, None)
+
+    async def _clock_phrase_moves(
+        self,
+        table: Table,
+        user_id: int,
+        line: str,
+        said: clock_phrases.Said,
+        now: float,
+        marked: list[str],
+    ) -> bool:
+        """The rest of `_note_clock_phrase`: True once the clock was moved. `marked` lists
+        the window keys set so far, so the caller can take them all back."""
+        assert table.campaign_id is not None
         campaign = await self.campaigns.get(table.guild_id, table.campaign_id)
         if campaign is None or user_id not in campaign.dm_user_ids:
-            return
-        said = await self._less_what_a_rest_covers(table, campaign, said, now)
-        if said is None:
-            return
+            return False
+        covered = await self._less_what_a_rest_covers(table, campaign, said, now)
+        if covered is None:
+            return False
+        said = covered
         # Consent and the session are checked again after the awaits above, as for a voice line.
         if (
             self.tables.get(table.guild_id) is not table
             or not table.listening
             or not self.consent.has_consent(table.guild_id, user_id)
         ):
-            return
-        table.clock_said[said.key] = now
+            return False
+        table.clock_said[said.key] = now  # (the amount a rest covered may have changed the key)
+        marked.append(said.key)
         try:
             result = await clock_screen.press(
                 self,
@@ -3090,14 +3137,13 @@ class DMBot(commands.AutoShardedBot):
             )
         except Exception:
             log.exception("The game clock couldn't take what was said at the table")
-            return
+            return False
         if (
             result.before is None
             or result.after is None
             or result.after.minute == result.before.minute
         ):
-            table.clock_said.pop(said.key, None)  # nothing moved: don't burn the window
-            return  # no clock set yet, or already there ("at dawn" at dawn): nothing to say
+            return False  # no clock set yet, or already there ("at dawn" at dawn): nothing to say
         table.clock_spoken_rest = (
             (said.action, result.after.minute - result.before.minute, result.after.minute, now)
             if said.action in ("short", "long")
@@ -3105,7 +3151,7 @@ class DMBot(commands.AutoShardedBot):
         )
         stored = await self.clocks.get(campaign.guild_id, campaign.id) if self.clocks else None
         if stored is None:
-            return
+            return True
         await clock_screen.show(self, campaign, stored)
         await clock_screen.update_players(self, campaign, said.action, result)  # #1116
         await timer_screen.announce_due(self, campaign, stored.clock.minute)
@@ -3114,12 +3160,23 @@ class DMBot(commands.AutoShardedBot):
             campaign,
             [
                 clock_screen.rest_note(said.action, result.after, said.minutes),
-                # What was heard, so the DM can tell a misheard line from a real one.
-                f"(heard: “{discord.utils.escape_markdown(' '.join(line.split())[:80])}”)",
+                # What was heard, so the DM can tell a misheard line from a real one: dropped
+                # (the clock change stays) if consent was withdrawn during the awaits (#1173).
+                *self._heard_quote(table, user_id, line),
                 *result.lines,
             ],
             clock_screen.undo_id(result.before, result.after),
         )
+        return True
+
+    def _heard_quote(self, table: Table, user_id: int, line: str) -> list[str]:
+        """The "(heard: …)" line for a DM-screen note, or nothing if the speaker no longer
+        agrees to be recorded or the session is over: checked right before it is said."""
+        if self.tables.get(table.guild_id) is not table or not self.consent.has_consent(
+            table.guild_id, user_id
+        ):
+            return []
+        return [f"(heard: “{discord.utils.escape_markdown(' '.join(line.split())[:80])}”)"]
 
     async def _note_combat_phrase(
         self, table: Table, user_id: int, line: str, fight: combat_phrases.CombatSaid
@@ -3132,36 +3189,51 @@ class DMBot(commands.AutoShardedBot):
         last = table.clock_said.get(fight.key)
         if last is not None and now - last < COMBAT_PHRASE_GAP_S:
             return
+        # Marked before any await, so the same words by voice and by chat count once (#1173);
+        # taken back on every path that changes nothing.
+        table.clock_said[fight.key] = now
+        changed = False
+        try:
+            changed = await self._combat_phrase_changes(table, user_id, line, fight, now)
+        finally:
+            if not changed:
+                table.clock_said.pop(fight.key, None)
+
+    async def _combat_phrase_changes(
+        self,
+        table: Table,
+        user_id: int,
+        line: str,
+        fight: combat_phrases.CombatSaid,
+        now: float,
+    ) -> bool:
+        """The rest of `_note_combat_phrase`: True once the combat state was changed."""
         assert table.campaign_id is not None
         campaign = await self.campaigns.get(table.guild_id, table.campaign_id)
         if campaign is None or user_id not in campaign.dm_user_ids:
-            return
+            return False
         # Consent and the session are checked again after the await above, as for a voice line.
         if (
             self.tables.get(table.guild_id) is not table
             or not table.listening
             or not self.consent.has_consent(table.guild_id, user_id)
         ):
-            return
+            return False
         action = {"start": "cstart", "next": "cnext", "round": "cround", "end": "cend"}[fight.kind]
-        table.clock_said[fight.key] = now
         try:
             result = await clock_screen.press(
                 self, campaign.guild_id, campaign.id, user_id, action, set_to=fight.number
             )
         except CampaignError:
-            table.clock_said.pop(fight.key, None)  # no longer a DM: said quietly, not an error
-            return
+            return False  # no longer a DM: said quietly, not an error
         except Exception:
             log.exception("Combat couldn't take what was said at the table")
-            table.clock_said.pop(fight.key, None)
-            return
+            return False
         if result.before is None or result.after is None or result.after == result.before:
-            table.clock_said.pop(fight.key, None)  # nothing changed: don't burn the window
-            return
+            return False  # nothing changed: don't burn the window
         stored = await self.clocks.get(campaign.guild_id, campaign.id) if self.clocks else None
         if stored is None:
-            return
+            return True
         await clock_screen.show(self, campaign, stored)
         await clock_screen.update_players(self, campaign, action, result, announce=False)
         await timer_screen.announce_due(self, campaign, stored.clock.minute)
@@ -3170,11 +3242,12 @@ class DMBot(commands.AutoShardedBot):
             campaign,
             [
                 clock_screen.combat_note(action, result.before, result.after),
-                f"(heard: “{discord.utils.escape_markdown(' '.join(line.split())[:80])}”)",
+                *self._heard_quote(table, user_id, line),
                 *result.lines,
             ],
             combat_undo=clock_screen.combat_undo_id(result.before, result.after),
         )
+        return True
 
     async def _less_what_a_rest_covers(
         self, table: Table, campaign: Campaign, said: clock_phrases.Said, now: float
