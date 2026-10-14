@@ -821,10 +821,10 @@ class Payments(DatabaseTest):
     async def test_extra_hours_when_the_company_fails_or_payments_are_off(self) -> None:
         await self.start_table()
 
-        async def broken(*, user_id: int, email: str | None, return_url: str) -> str:
+        async def broken(**_: object) -> str:
             raise PaymentError("down")
 
-        self.provider.extra_hours_checkout_url = broken  # type: ignore[method-assign]
+        setattr(self.provider, "extra_hours_checkout_url", broken)  # noqa: B010 (mypy)
         failed = await self.post("/billing/extra-hours")
         self.assertEqual(
             (failed.status_code, failed.json()), (502, {"error": "payments_unavailable"})
