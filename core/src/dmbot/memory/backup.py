@@ -397,6 +397,25 @@ def _check_terms(by_tag: dict[str, list[dict[str, Any]]]) -> None:
         for r in by_tag["entity"]
     ):
         raise CampaignError(DAMAGED)
+    # One live person for each Discord user, and a `plays` link goes from a person to a
+    # character (the database enforces the first; a damaged file must not reach it).
+    live_people = [
+        r["played_by"]
+        for r in by_tag["entity"]
+        if r["type"] == "person" and r["status"] in ("proposed", "confirmed")
+    ]
+    if len(live_people) != len(set(live_people)) or any(
+        r["played_by"] is None for r in by_tag["entity"] if r["type"] == "person"
+    ):
+        raise CampaignError(DAMAGED)
+    kinds = {r["id"]: r["type"] for r in by_tag["entity"]}
+    if any(
+        kinds.get(r["subject_id"]) != "person"
+        or not onto.is_a(kinds.get(r["object_id"], ""), "character")
+        for r in by_tag["relation"]
+        if r["predicate"] == "plays"
+    ):
+        raise CampaignError(DAMAGED)
     characters = {r["id"] for r in by_tag["entity"] if onto.is_a(r["type"], "character")}
     if any(r["entity_id"] not in characters for r in by_tag["rule_link"]):
         raise CampaignError(DAMAGED)

@@ -122,13 +122,16 @@ UNNAMED_MONSTER = (
 
 
 PERSON_NOT_LISTED = (
-    "Players and the DM are added by DMbot when someone joins. Add their character "
-    "instead, and say who plays it."
+    "DMbot adds players and the DM by itself, so you don't need to list them. Add their "
+    "character instead, then say who plays it."
 )
 # "DM" is the person running the game, never a name in the story (#1188): kept out of
 # every name and other name so a line like "the DM says" can't turn into an entry.
 DM_WORDS = frozenset({"dm", "gm", "dungeon master", "game master"})
-DM_WORD_REFUSED = "That's what DMbot calls the DM, so it can't be a name. Pick another."
+DM_WORD_REFUSED = (
+    '"DM" is the person running the game, so it can\'t be a name in the story. '
+    "Try the character's own name."
+)
 
 
 def is_dm_word(text: str) -> bool:

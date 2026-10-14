@@ -82,6 +82,56 @@ class People(MemoryTest):
         self.assertEqual(len([e for e in found if e.type == "person"]), 1)
 
 
+class Edges(MemoryTest):
+    async def test_rejecting_a_character_ends_its_link_and_the_person_needs_a_look(self) -> None:
+        pc = await self.add("Testa", type="player_character", played_by=PLAYER)
+        await self.memory.set_entity_status(GUILD_A, self.c, pc, "rejected", source=SRC)
+        rels = await self.memory.relations(GUILD_A, self.c)
+        self.assertEqual([r for r in rels if r.predicate == "plays"], [])
+        self.assertEqual((await self.memory.check_people(GUILD_A, self.c, {DM})).value, 1)
+
+    async def test_a_person_is_never_merged_with_a_character(self) -> None:
+        pc = await self.add("Testa", type="player_character", played_by=PLAYER)
+        person = next(
+            e.id for e in await self.memory.entities(GUILD_A, self.c) if e.type == "person"
+        )
+        with self.assertRaises(MemoryRuleError):
+            await self.memory.merge(GUILD_A, self.c, pc, person, source=SRC, dm_said_same=True)
+        with self.assertRaises(MemoryRuleError):
+            await self.memory.set_entity_type(GUILD_A, self.c, person, "place", source=SRC)
+
+
+class Checking(MemoryTest):
+    async def test_check_people_marks_only_those_who_play_nothing_and_are_not_dm(self) -> None:
+        pc = await self.add("Testa", type="player_character", played_by=PLAYER)
+        # A player whose character was set to an NPC afterwards plays nothing now.
+        gone = await self.add("Quin", type="player_character", played_by=OTHER)
+        await self.memory.set_entity_type(
+            GUILD_A, self.c, gone, "character", source=SRC, role="npc"
+        )
+        marked = await self.memory.check_people(GUILD_A, self.c, {DM})
+        self.assertEqual(marked.value, 1)
+        persons = {
+            e.played_by: e
+            for e in await self.memory.entities(GUILD_A, self.c)
+            if e.type == "person"
+        }
+        self.assertTrue(persons[OTHER].needs_look)
+        self.assertFalse(persons[PLAYER].needs_look)
+        self.assertEqual((await self.memory.check_people(GUILD_A, self.c, {DM})).value, 0)
+        self.assertEqual((await self.memory.check_people(GUILD_A, self.c, {OTHER})).value, 0)
+        self.assertTrue(pc)
+
+    async def test_a_dm_is_not_marked(self) -> None:
+        pc = await self.add("Testa", type="player_character", played_by=PLAYER)
+        await self.memory.set_entity_type(GUILD_A, self.c, pc, "character", source=SRC, role="npc")
+        self.assertEqual((await self.memory.check_people(GUILD_A, self.c, {PLAYER})).value, 0)
+
+    async def test_nobody_adds_a_person_by_hand(self) -> None:
+        with self.assertRaises(MemoryRuleError):
+            await self.add("Mia", type="person")
+
+
 class Backfill0058(MemoryTest):
     """Migrations run with no server set: 0058's backfill must open every table it reads
     and writes, or it makes no person at all."""

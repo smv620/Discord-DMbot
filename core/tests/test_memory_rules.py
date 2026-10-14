@@ -328,3 +328,16 @@ class Checks(unittest.TestCase):
         rejected = replace(old, status=REJECTED)
         self.assertEqual(duplicate_of(rel(A, "ally_of", B), [rejected]), rejected)
         self.assertEqual(duplicate_of(rel(A, "ally_of", B), [rejected, old]), old)
+
+
+class PeopleInLists(unittest.TestCase):
+    def test_a_player_or_dm_line_in_a_list_is_refused(self) -> None:
+        from dmbot.memory.name_list import kind_of
+
+        self.assertEqual(kind_of("player"), "person")
+        self.assertEqual(kind_of("DM"), "person")
+
+    def test_the_player_placeholder_key_matches_the_migration(self) -> None:
+        from dmbot.memory.models import lookup_key
+
+        self.assertEqual(lookup_key("Player 1234"), "player 1234")

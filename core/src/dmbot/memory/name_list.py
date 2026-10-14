@@ -416,6 +416,8 @@ def render(names: Iterable[OutName], *, campaign: str, secrets: bool) -> str:
     adds nothing that's already known. A name with more other or secret names than a
     line holds goes on more lines, as a person would write it."""
     lines = _prelude(campaign=campaign, secrets=secrets)
+    # Players and the DM are DMbot's own entries and can't be uploaded again (#1188).
+    names = [n for n in names if n.kind != "person"]
     for n in sorted(names, key=lambda n: name_key(n.name)):
         hidden = n.secrets if secrets else ()
         lines += lines_for(n.name, KIND_OUT.get(n.kind, "other"), n.others, hidden)

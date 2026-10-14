@@ -91,6 +91,7 @@ from dmbot.memory.ontology import (
     DEPRECATED,
     DM_WORD_REFUSED,
     MAX_NEW_TERMS_PER_SESSION,
+    PERSON_NOT_LISTED,
     Ontology,
     PredicateTerm,
     TypeTerm,
@@ -556,6 +557,8 @@ class MemoryStore:
         Discord user playing a player character."""
         check_named(type, name)
         type, role = resolve_kind(type, role)
+        if type == PERSON:
+            raise MemoryRuleError(PERSON_NOT_LISTED)  # only DMbot makes these
         _check_choice(status, LIVE, "entity status")
         check_status_change(None, status, source)
         name = clean_text(name)
@@ -584,7 +587,8 @@ class MemoryStore:
                 },
             )
             await w.insert(ALIASES, _new_alias(w, row["id"], name, "full", status, False, None))
-            await _sync_plays(w, row["id"])
+            if role == PLAYER_CHARACTER and played_by is not None:
+                await _sync_plays(w, row["id"])
             return Written(_entity(row), w.batch)
 
     async def add_names(
@@ -760,10 +764,14 @@ class MemoryStore:
             raise MemoryRuleError("Only the DM can say what something is.")
         asked = type
         type, role = resolve_kind(type, role)
+        if type == PERSON:
+            raise MemoryRuleError(PERSON_NOT_LISTED)
         async with self._write(guild_id, campaign_id, source) as w:
             onto = await _load_ontology(w)
             onto.active_type(type)
             current = await _entity_row(w, entity_id)
+            if current["type"] == PERSON:
+                raise MemoryRuleError(PERSON_NOT_LISTED)
             check_named(asked, current["name"])
             if role is None and type == current["type"]:
                 role = current["role"]  # same kind, no new role said: it keeps its role
@@ -873,7 +881,7 @@ class MemoryStore:
         key = lookup_key(name)
         async with self._write(guild_id, campaign_id, source) as w:
             current = await _entity_row(w, entity_id)
-            if current["type"] != "person":
+            if current["type"] != PERSON:
                 check_named(current["type"], name)
             old_key = lookup_key(current["name"])
             own = await w.select(ALIASES, " AND entity_id = %s AND key = %s", [entity_id, old_key])
@@ -955,6 +963,8 @@ class MemoryStore:
             raise ValueError("Bad Discord user ID")
         asked = type
         type, role = resolve_kind(type, role)
+        if type == PERSON:
+            raise MemoryRuleError(PERSON_NOT_LISTED)
         async with self._write(guild_id, campaign_id, source) as w:
             onto = await _load_ontology(w)
             onto.active_type(type)
@@ -1043,6 +1053,8 @@ class MemoryStore:
             current = await _entity_row(w, entity_id, allow_rejected=True)
             check_status_change(current["status"], status, source)
             row = await w.update(ENTITIES, entity_id, {"status": status})
+            if current["role"] == PLAYER_CHARACTER:
+                await _sync_plays(w, entity_id)  # a rejected character has no player
             return Written(_entity(row), w.batch)
 
     async def add_alias(
@@ -1067,7 +1079,7 @@ class MemoryStore:
         key = lookup_key(text)
         async with self._write(guild_id, campaign_id, source) as w:
             owner = await _entity_row(w, entity_id)
-            if owner["type"] != "person" and is_dm_word(text):
+            if owner["type"] != PERSON and is_dm_word(text):
                 raise MemoryRuleError(DM_WORD_REFUSED)
             if used_by is not None:
                 await _entity_row(w, used_by)
@@ -1144,6 +1156,8 @@ class MemoryStore:
         async with self._write(guild_id, campaign_id, source) as w:
             keep = await _entity_row(w, keep_id)
             gone = await _entity_row(w, gone_id)
+            if (keep["type"] == PERSON) != (gone["type"] == PERSON):
+                raise MemoryRuleError("A player or the DM can't be the same as a character.")
             needs_dm = CONFIRMED in (keep["status"], gone["status"]) or (
                 keep["type"],
                 keep["role"],
