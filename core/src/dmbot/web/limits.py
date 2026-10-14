@@ -122,4 +122,7 @@ LIMITS: dict[str, Group] = {
     # call, so a few a minute is far above real use (#1163). Like the other groups it counts
     # a call before the sign-in is checked, so a shared address shares the five.
     "sign-out-everywhere": Group(5, 60, ("/me/sign-out-everywhere",)),
+    # The unsubscribe link in an offer email (#1229): a person clicks it once; a token is
+    # checked before anything is written.
+    "unsubscribe": Group(20, 60, ("/email/unsubscribe",)),
 }

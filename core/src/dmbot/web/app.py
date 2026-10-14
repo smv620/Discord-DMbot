@@ -699,8 +699,11 @@ def create_app(
         """The unsubscribe link in an offer email (#1229): the page sends the `uid` and `t`
         from the link. A signed token proves the link came from us, so this needs no
         sign-in; it never says whether the person has an account."""
+        body = await request.body()
+        if len(body) > 1024:
+            raise HTTPException(status_code=413, detail="too_long")
         try:
-            raw = await request.json()
+            raw = json.loads(body)
             uid, token = str(raw["uid"]), str(raw["t"])
             user_id = from_dmbot_id(uid)
         except (ValueError, KeyError, TypeError):

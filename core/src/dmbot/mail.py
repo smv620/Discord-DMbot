@@ -26,11 +26,13 @@ from email.message import EmailMessage
 from email.utils import formatdate, make_msgid
 from typing import Literal
 
+from dmbot.account_id import to_dmbot_id
 from dmbot.db import Database
 from dmbot.link_tokens import make_unsubscribe_token
 
 log = logging.getLogger(__name__)
 
+KIND_MAX = 60  # the sent_emails column's limit
 DAILY_CAP_DEFAULT = 400
 DAY_S = 86400
 
@@ -112,6 +114,17 @@ class SmtpTransport:
         await asyncio.to_thread(self._send, message)
 
 
+def _one_address(to: str | None) -> bool:
+    """Exactly one plain address and nothing else: no list, no display name, no line break,
+    so one send can never reach a second person or add a header."""
+    if not to or len(to) > 254 or not to.isprintable() or not to.isascii():
+        return False
+    if any(c in to for c in ' ,;<>()[]"\\'):
+        return False
+    local, at, domain = to.partition("@")
+    return bool(local and at and "." in domain and "@" not in domain and not domain.endswith("."))
+
+
 class Mailer:
     def __init__(
         self,
@@ -156,7 +169,6 @@ class Mailer:
         self,
         *,
         user_id: int,
-        dmbot_id: str,
         kind: str,
         to: str | None,
         subject: str,
@@ -167,7 +179,7 @@ class Mailer:
         something that may repeat). Never raises: the result says what happened. An offer
         is refused without a postal address, to someone who unsubscribed, or when the daily
         cap is spent."""
-        if not to or "@" not in to or "\n" in to or "\r" in to:
+        if not _one_address(to) or not 0 < len(kind) <= KIND_MAX or user_id <= 0:
             return "no_address"
         if not self._s.configured:
             return "not_ready"
@@ -179,9 +191,19 @@ class Mailer:
         if await self.sent_today() >= self._s.daily_cap:
             log.warning("The daily email cap is spent; %s waits", kind)
             return "capped"
+        # Built before anything is recorded: a message that can't be built must not leave the
+        # once-only row behind. The unsubscribe link is made for this person, from their id.
+        try:
+            message = self._build(to or "", to_dmbot_id(user_id), subject, body, offer)
+        except ValueError:
+            log.error("Couldn't build a %s email", kind)
+            return "failed"
         now = int(self._clock())
         # The row is written first, so two runs at once can't both send it; a failed send
-        # takes it back so the next run tries again.
+        # takes it back so the next run tries again. (A crash between the two loses the
+        # email rather than sending it twice: at most once.) The cap is checked a moment
+        # earlier in another transaction, so callers running at once can pass it together;
+        # 400 against Gmail's 500 leaves room for that.
         async with self._db.unscoped() as conn:
             cur = await conn.execute(
                 "INSERT INTO sent_emails (user_id, kind, sent_at) VALUES (%s, %s, %s)"
@@ -190,15 +212,18 @@ class Mailer:
             )
             if await cur.fetchone() is None:
                 return "already_sent"
-        message = self._build(to, dmbot_id, subject, body, offer)
         try:
             await self._send(message)
         except Exception:  # an SMTP error can carry the address: log only the kind
             log.error("Couldn't send a %s email", kind, exc_info=False)
-            async with self._db.unscoped() as conn:
-                await conn.execute(
-                    "DELETE FROM sent_emails WHERE user_id = %s AND kind = %s", (user_id, kind)
-                )
+            try:
+                async with self._db.unscoped() as conn:
+                    await conn.execute(
+                        "DELETE FROM sent_emails WHERE user_id = %s AND kind = %s",
+                        (user_id, kind),
+                    )
+            except Exception:
+                log.error("Couldn't take back the %s email's record", kind, exc_info=False)
             return "failed"
         log.info("Sent a %s email", kind)
         return "sent"
