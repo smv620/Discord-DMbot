@@ -15,6 +15,7 @@ import io
 import logging
 import re
 import time
+from collections.abc import Collection
 from typing import TYPE_CHECKING, Any
 
 import discord
@@ -131,16 +132,28 @@ async def display_names(guild: discord.Guild | None, user_ids: tuple[int, ...]) 
     return {user_id: name for user_id, name in found if name is not None}
 
 
-async def player_characters(bot: DMBot, guild_id: int, campaign_id: str) -> dict[int, str]:
+async def player_characters(
+    bot: DMBot, guild_id: int, campaign_id: str, dm_user_ids: Collection[int] = ()
+) -> dict[int, str]:
     """Who plays which character in this campaign, for the download's labels; none if
-    the campaign's names can't be read (the file still works without them)."""
-    if bot.lookup is None:
-        return {}
-    try:
-        return cleaner.characters(await bot.lookup.get(guild_id, campaign_id))
-    except Exception:
-        log.exception("Couldn't read the players' characters for a transcript download")
-        return {}
+    the campaign's names can't be read (the file still works without them). A player with
+    no character entry of their own gets the character on their `plays` link, as table
+    questions do (#1208). A DM's label stays their nickname: a DM may voice an NPC, and the
+    file must not tell which."""
+    found: dict[int, str] = {}
+    if bot.lookup is not None:
+        try:
+            found = cleaner.characters(await bot.lookup.get(guild_id, campaign_id))
+        except Exception:
+            log.exception("Couldn't read the players' characters for a transcript download")
+    if bot.memory is not None:
+        try:
+            for user_id, characters, _ in await bot.memory.table_people(guild_id, campaign_id):
+                if characters and user_id not in found:
+                    found[user_id] = characters[-1]
+        except Exception:
+            log.exception("Couldn't read who plays whom for a transcript download")
+    return {user_id: name for user_id, name in found.items() if user_id not in dm_user_ids}
 
 
 def _running(bot: DMBot, session: TranscriptSession) -> bool:
@@ -176,7 +189,7 @@ async def make_file(
             await bot.save_transcript(table)
     lines = await store.lines(guild_id, session.id)
     names = await display_names(guild, tuple(sorted({line.user_id for line in lines})))
-    playing = await player_characters(bot, guild_id, campaign.id)
+    playing = await player_characters(bot, guild_id, campaign.id, campaign.dm_user_ids)
     files = []
     total = 0
     for version in versions:

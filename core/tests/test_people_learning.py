@@ -148,6 +148,17 @@ class Learning(MemoryTest):
         self.assertEqual((len(here), len(there)), (1, 0))  # the other campaign was still cleaned
         self.assertEqual(await self.waiting(), [])  # and the learned name went from this one
 
+    async def test_the_lookup_has_the_names_the_dm_confirmed_for_people_and_nothing_else(
+        self,
+    ) -> None:
+        made = await self.memory.learn_people(GUILD_A, self.c, [("Mike", PLAYER, 2)], limit=10)
+        waiting = await self.memory.lookup_data(GUILD_A, self.c)
+        self.assertEqual(waiting.people, ())  # a waiting question is not true yet
+        await self.memory.accept_person_name(GUILD_A, self.c, made.value[0].row_id)
+        data = await self.memory.lookup_data(GUILD_A, self.c)
+        self.assertEqual([a.text for a in data.people], ["Mike"])  # not "Player 1234"
+        self.assertEqual([e for e in data.entities if e.type == "person"], [])
+
     async def test_a_removed_placeholder_cannot_come_back_by_undo(self) -> None:
         await self.memory.learn_people(GUILD_A, self.c, [("Mike", PLAYER, 2)], limit=10)
         await self.memory.forget_learned(GUILD_A, PLAYER)

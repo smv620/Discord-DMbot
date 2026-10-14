@@ -485,6 +485,21 @@ class MemoryStore:
                 for r in await scope.select(ALIASES, " AND status <> 'rejected' ORDER BY id")
                 if r["entity_id"] in live
             ]
+            # The table's people, apart from the story's entries: only the names the DM
+            # confirmed, never the placeholder `Player 1234` (the entry's own name).
+            persons = {
+                str(r["id"]): r
+                for r in await scope.select(
+                    ENTITIES, " AND type = 'person' AND status = 'confirmed'"
+                )
+            }
+            people_aliases = [
+                r
+                for r in await scope.select(
+                    ALIASES, " AND status = 'confirmed' AND NOT secret ORDER BY id"
+                )
+                if r["entity_id"] in persons and r["text"] != persons[r["entity_id"]]["name"]
+            ]
             corrections = await scope.select(CORRECTIONS, " ORDER BY id")
             relations = [
                 r
@@ -528,6 +543,7 @@ class MemoryStore:
                 heard,
                 recent,
                 tuple(_rule_link(r) for r in links),
+                tuple(_alias(r) for r in people_aliases),
             )
 
     async def corrections(self, guild_id: int, campaign_id: str) -> list[Correction]:

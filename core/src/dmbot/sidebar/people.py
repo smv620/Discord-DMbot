@@ -22,6 +22,7 @@ def lines(
     agreed: Collection[int],
     dm_ids: Collection[int],
     name_of: Callable[[int], str],
+    dm_word_user: int | None = None,
 ) -> list[str]:
     """ "Mia plays Cerric, is also called Mike" for each person who still agrees to be
     recorded and has a name to show. A person with two entries is one line."""
@@ -33,6 +34,12 @@ def lines(
         have[0].extend(c for c in characters if c not in have[0])
         have[1].extend(a for a in also if a not in have[1])
     out: list[str] = []
+    # "The DM", "the GM"... mean the DM who started the session (the starter, when there are
+    # co-DMs) for whoever asks; these words are never stored as anyone's name (#1208).
+    if dm_word_user is not None and dm_word_user in agreed:
+        dm_name = name_of(dm_word_user)
+        if not dm_name.startswith("<@") and clean_name(dm_name):
+            out.append(f"DM, GM, Dungeon Master and Game Master all mean {clean_name(dm_name)}")
     for user_id, (characters, also) in merged.items():
         name = name_of(user_id)
         if name.startswith("<@") or not clean_name(name):
