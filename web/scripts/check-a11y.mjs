@@ -8,11 +8,12 @@
 import { readdirSync, readFileSync, statSync, existsSync } from "node:fs";
 import { createServer } from "node:http";
 import { createRequire } from "node:module";
-import { join, relative } from "node:path";
+import { join, relative, resolve, sep } from "node:path";
+import { fileURLToPath } from "node:url";
 
 import { chromium } from "playwright-core";
 
-const dist = new URL("../dist/", import.meta.url).pathname;
+const dist = fileURLToPath(new URL("../dist/", import.meta.url));
 const axeSource = readFileSync(createRequire(import.meta.url).resolve("axe-core/axe.min.js"), "utf8");
 
 function pages(dir) {
@@ -24,9 +25,17 @@ function pages(dir) {
 
 // "/help" is dist/help.html (the site builds with format "file"), "/" is index.html.
 function fileFor(url) {
-  const path = decodeURIComponent(url.split(/[?#]/)[0]);
+  let path;
+  try {
+    path = decodeURIComponent(url.split(/[?#]/)[0]);
+  } catch {
+    return undefined;
+  }
   const base = path === "/" ? "/index.html" : path;
-  return [join(dist, base), join(dist, `${base}.html`)].find((f) => existsSync(f) && statSync(f).isFile());
+  // Never serve anything outside dist/, whatever the address says.
+  return [resolve(dist, "." + base), resolve(dist, "." + `${base}.html`)].find(
+    (f) => f.startsWith(dist) && existsSync(f) && statSync(f).isFile(),
+  );
 }
 
 const server = createServer((req, res) => {
@@ -35,7 +44,8 @@ const server = createServer((req, res) => {
     res.writeHead(404).end("not found");
     return;
   }
-  const type = file.endsWith(".html") ? "text/html; charset=utf-8" : file.endsWith(".css") ? "text/css" : file.endsWith(".js") ? "text/javascript" : "application/octet-stream";
+  const types = { ".html": "text/html; charset=utf-8", ".css": "text/css", ".js": "text/javascript", ".svg": "image/svg+xml", ".png": "image/png", ".webp": "image/webp", ".json": "application/json", ".woff2": "font/woff2", ".txt": "text/plain" };
+  const type = types[file.slice(file.lastIndexOf("."))] ?? "application/octet-stream";
   res.writeHead(200, { "content-type": type }).end(readFileSync(file));
 });
 await new Promise((ok) => server.listen(0, "127.0.0.1", ok));
@@ -47,9 +57,20 @@ const addresses = pages(dist)
   .map((p) => (p === "/index" ? "/" : p))
   .sort();
 
-const browser = await chromium.launch(
-  process.env.A11Y_CHROME ? { executablePath: process.env.A11Y_CHROME } : { channel: "chrome" },
-);
+if (addresses.length === 0) {
+  console.error("No built pages in dist/. Run `npm run build` first.");
+  process.exit(1);
+}
+
+let browser;
+try {
+  browser = await chromium.launch(
+    process.env.A11Y_CHROME ? { executablePath: process.env.A11Y_CHROME } : { channel: "chrome" },
+  );
+} catch (error) {
+  console.error(`Could not start Chrome (${error.message.split("\n")[0]}). Install Google Chrome, or set A11Y_CHROME to a Chrome or Chromium binary.`);
+  process.exit(1);
+}
 
 const failures = [];
 const fail = (page, what) => failures.push(`${page}: ${what}`);
@@ -66,31 +87,48 @@ async function axeFindings(page) {
   });
 }
 
-// Tab through the page: every control it lands on must show where it is.
+// Tab through the page: every control it lands on must show where it is. A drop shadow that is
+// there all the time doesn't count, so the shadow is compared with the control's unfocused one.
 async function focusRingFindings(page) {
   const bad = [];
-  for (let i = 0; i < 60; i++) {
+  const first = new Set();
+  let stops = 0;
+  for (let i = 0; i < 80; i++) {
     await page.keyboard.press("Tab");
     const seen = await page.evaluate(() => {
       const el = document.activeElement;
       if (!el || el === document.body) return null;
+      const name = `${el.tagName.toLowerCase()}${el.id ? "#" + el.id : ""} "${(el.textContent ?? "").trim().slice(0, 30)}"`;
       const s = getComputedStyle(el);
-      const outline = s.outlineStyle !== "none" && parseFloat(s.outlineWidth) > 0;
-      const shadow = s.boxShadow !== "none";
-      return { name: `${el.tagName.toLowerCase()}${el.id ? "#" + el.id : ""} "${(el.textContent ?? "").trim().slice(0, 30)}"`, ok: outline || shadow };
+      const outline = s.outlineStyle !== "none" && parseFloat(s.outlineWidth) > 0 && s.outlineColor !== "rgba(0, 0, 0, 0)";
+      const focusedShadow = s.boxShadow;
+      el.blur();
+      const shadow = focusedShadow !== "none" && focusedShadow !== getComputedStyle(el).boxShadow;
+      el.focus();
+      return { name, ok: outline || shadow };
     });
-    if (seen === null) break;
+    if (seen === null) continue;
+    if (first.has(seen.name)) break; // Tab came round to the start
+    first.add(seen.name);
+    stops++;
     if (!seen.ok) bad.push(seen.name);
   }
+  if (stops === 0) bad.push("(Tab reached no control at all)");
   return bad;
 }
 
-for (const address of addresses) {
+async function open(browser, address, options) {
+  const context = await browser.newContext(options);
+  const page = await context.newPage();
+  page.setDefaultTimeout(15000);
+  await page.goto(origin + address, { waitUntil: "load" });
+  await page.waitForSelector("h1"); // the account page draws its first view from a script
+  return { context, page };
+}
+
+async function checkPage(address) {
   for (const scheme of ["light", "dark"]) {
-    const context = await browser.newContext({ colorScheme: scheme, viewport: { width: 1280, height: 800 } });
-    const page = await context.newPage();
-    await page.goto(origin + address, { waitUntil: "load" });
-    await page.waitForTimeout(300); // the account page's script draws its first view
+    const { context, page } = await open(browser, address, { colorScheme: scheme, viewport: { width: 1280, height: 800 } });
     const label = `${address} (${scheme})`;
     for (const finding of await axeFindings(page)) fail(label, finding);
     const h1s = await page.locator("h1").count();
@@ -103,34 +141,60 @@ for (const address of addresses) {
     await context.close();
   }
 
-  // 320 px wide is also what 400% zoom on a desktop screen gives.
-  const narrow = await browser.newContext({ viewport: { width: 320, height: 640 } });
-  const small = await narrow.newPage();
-  await small.goto(origin + address, { waitUntil: "load" });
-  await small.waitForTimeout(300);
-  const width = await small.evaluate(() => document.documentElement.scrollWidth);
-  if (width > 320) fail(`${address} (320 px)`, `scrolls sideways: the page is ${width} px wide`);
-  await narrow.close();
+  // 320 px wide is also what 400% zoom on a desktop screen gives. A page that hides its own
+  // overflow would pass the scroll width, so what sticks out of the window is measured too.
+  {
+    const { context, page } = await open(browser, address, { viewport: { width: 320, height: 640 } });
+    const wide = await page.evaluate(() => {
+      // A row that scrolls inside its own box (the pricing cards on a phone) is allowed to be
+      // wider than the window: axe's scrollable-region-focusable rule makes sure the keyboard
+      // can scroll it.
+      const inOwnScroller = (el) => {
+        for (let up = el.parentElement; up && up !== document.body; up = up.parentElement) {
+          if (/auto|scroll/.test(getComputedStyle(up).overflowX)) return true;
+        }
+        return false;
+      };
+      const out = [...document.querySelectorAll("body *")]
+        .filter((el) => el.getBoundingClientRect().right > 321 && getComputedStyle(el).position !== "fixed" && !inOwnScroller(el))
+        .map((el) => el.tagName.toLowerCase() + (el.className ? "." + String(el.className).split(" ")[0] : ""));
+      return { scroll: document.documentElement.scrollWidth, out: [...new Set(out)].slice(0, 5) };
+    });
+    if (wide.scroll > 320) fail(`${address} (320 px)`, `scrolls sideways: the page is ${wide.scroll} px wide`);
+    else if (wide.out.length > 0) fail(`${address} (320 px)`, `sticks out past the window: ${wide.out.join(", ")}`);
+    await context.close();
+  }
 
-  const calm = await browser.newContext({ reducedMotion: "reduce", viewport: { width: 1280, height: 800 } });
-  const still = await calm.newPage();
-  await still.goto(origin + address, { waitUntil: "load" });
-  const moving = await still.evaluate(() => {
-    const seconds = (value) => Math.max(...value.split(",").map((v) => parseFloat(v) * (v.trim().endsWith("ms") ? 0.001 : 1)));
-    return [...document.querySelectorAll("*")]
-      .filter((el) => {
-        const s = getComputedStyle(el);
-        return seconds(s.animationDuration) > 0.05 || seconds(s.transitionDuration) > 0.05 || s.scrollBehavior === "smooth";
-      })
-      .map((el) => el.tagName.toLowerCase() + (el.className ? "." + String(el.className).split(" ")[0] : ""))
-      .slice(0, 5);
-  });
-  if (moving.length > 0) fail(`${address} (reduced motion)`, `still moves: ${moving.join(", ")}`);
-  await calm.close();
+  {
+    const { context, page } = await open(browser, address, { reducedMotion: "reduce", viewport: { width: 1280, height: 800 } });
+    const moving = await page.evaluate(() => {
+      const seconds = (value) => Math.max(0, ...value.split(",").map((v) => (parseFloat(v) || 0) * (v.trim().endsWith("ms") ? 0.001 : 1)));
+      return [...document.querySelectorAll("*")]
+        .filter((el) => {
+          const s = getComputedStyle(el);
+          return seconds(s.animationDuration) > 0.05 || seconds(s.transitionDuration) > 0.05 || s.scrollBehavior === "smooth";
+        })
+        .map((el) => el.tagName.toLowerCase() + (el.className ? "." + String(el.className).split(" ")[0] : ""))
+        .slice(0, 5);
+    });
+    if (moving.length > 0) fail(`${address} (reduced motion)`, `still moves: ${moving.join(", ")}`);
+    await context.close();
+  }
 }
 
-await browser.close();
-server.close();
+try {
+  for (const address of addresses) {
+    try {
+      await checkPage(address);
+    } catch (error) {
+      // One page that won't load must not hide what the others show.
+      fail(address, `the check itself failed: ${error.message.split("\n")[0]}`);
+    }
+  }
+} finally {
+  await browser.close();
+  server.close();
+}
 
 if (failures.length > 0) {
   console.error(`Accessibility problems:\n${failures.join("\n")}`);
