@@ -33,6 +33,7 @@ from dmbot import (
     fightbot,
     hours,
     install,
+    mail,
     plan_rules,
     retention,
     sheet_reread,
@@ -2217,7 +2218,10 @@ class DMBot(commands.AutoShardedBot):
             await self.post(screen_id, dmbchat_problem)
         self._check_house_file(campaign, screen_id)
         trial_line = ""
-        if self.meter is not None:  # told once, privately, at their next start (#1229)
+        # Told once, privately, at their next start (#1229). It is marked told as it is read,
+        # before the reply is sent: a reply that fails to send loses this one line, which is
+        # better than telling the same person twice, and the start itself is not held up.
+        if self.meter is not None:
             try:
                 trial_line = (
                     await trial_jobs.take_extension_notice(self.meter.db, user.id, int(time.time()))
@@ -5081,6 +5085,8 @@ class DMBot(commands.AutoShardedBot):
             try:
                 if self.trial_jobs is not None:
                     await self.trial_jobs.run()
+                    if self.meter is not None:  # old sign-in and move-code records (#1229)
+                        await mail.prune_account_emails(self.meter.db, int(time.time()))
             except Exception:
                 log.exception("The Try It jobs failed")
             await asyncio.sleep(3600)

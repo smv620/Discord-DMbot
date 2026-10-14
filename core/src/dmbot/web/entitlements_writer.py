@@ -185,6 +185,14 @@ async def _apply_once(db: Database, event: PaymentEvent, *, now: int) -> Outcome
             return "ignored"
         if await _seen(conn, event):
             return "duplicate"
+        if event.email:
+            # The address the company has for the payer: kept for sign-in links, move codes
+            # and Try It emails. Written for any new event of a known person; never logged.
+            await conn.execute(
+                "UPDATE web_users SET payment_email = %s WHERE user_id = %s"
+                " AND payment_email IS DISTINCT FROM %s",
+                (event.email, event.user_id, event.email),
+            )
         row = await _current(conn, event.user_id)
 
         if event.kind == "extra_hours_bought":
@@ -272,7 +280,7 @@ async def _apply_once(db: Database, event: PaymentEvent, *, now: int) -> Outcome
                 " %(start)s, %(end)s, NULL, NULL, %(now)s, %(provider)s, %(customer)s,"
                 " %(subscription)s, %(at)s, %(now)s)"
                 " ON CONFLICT (user_id) DO UPDATE SET plan = EXCLUDED.plan,"
-                " status = 'active', hours_cap = EXCLUDED.hours_cap,"
+                " status = 'active', hours_cap = EXCLUDED.hours_cap, minutes_taken = 0,"
                 # Extra hours belong to one period: a new period starts without them.
                 " extra_hours = CASE WHEN %(new_period)s THEN 0"
                 "   ELSE entitlements.extra_hours END,"
@@ -408,7 +416,7 @@ async def start_try_it(db: Database, user_id: int, *, now: int) -> TryItResult:
             " VALUES (%(user)s, 'try-it', 'active', %(hours)s, 0, %(campaigns)s, %(now)s,"
             " %(end)s, %(now)s, %(provider)s, 0, %(now)s)"
             " ON CONFLICT (user_id) DO UPDATE SET plan = 'try-it', status = 'active',"
-            " hours_cap = EXCLUDED.hours_cap, extra_hours = 0,"
+            " hours_cap = EXCLUDED.hours_cap, extra_hours = 0, minutes_taken = 0,"
             " campaign_cap = EXCLUDED.campaign_cap, period_start = EXCLUDED.period_start,"
             " period_end = EXCLUDED.period_end, grace_ends_at = NULL, lapsed_at = NULL,"
             " ends_at = NULL,"

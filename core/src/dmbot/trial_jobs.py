@@ -48,6 +48,7 @@ class TrialPerson:
     minutes: int  # all DMbot minutes, all time
     paid: bool  # ever paid
     extensions: int  # how many times Try It was extended already
+    granted: bool = False  # has free access from an admin grant (#771)
 
 
 def on_last_day(p: TrialPerson, now: int) -> bool:
@@ -59,10 +60,20 @@ def extension_due(p: TrialPerson, now: int) -> bool:
     return not p.paid and p.minutes < UNDER_MINUTES and now >= p.period_end + EXTEND_AFTER_S
 
 
-def extension_hours(minutes: int) -> int:
-    """Whole hours left of Try It's 8 in all. At least 4, because only people under 4 hours
-    are extended."""
-    return max(0, (TRY_IT_MINUTES_IN_ALL - minutes) // 60)
+def minutes_left(minutes: int) -> int:
+    """Minutes left of Try It's 8 hours in all. More than 4 hours, because only people under 4
+    hours are extended. The database works out the same number for the cap itself."""
+    return max(0, TRY_IT_MINUTES_IN_ALL - minutes)
+
+
+def left_words(minutes: int) -> str:
+    """The time left in plain words, to the half hour and rounded down: "6 hours",
+    "6½ hours"."""
+    halves = minutes // 30
+    whole, half = divmod(halves, 2)
+    if half:
+        return f"{whole}½ hours"
+    return f"{whole} hour" + ("" if whole == 1 else "s")
 
 
 def _page(site: str, path: str, dmbot_id: str, now: int, secret: bytes) -> str:
@@ -84,12 +95,15 @@ def last_day_text(name: str, pricing: str, hello: str) -> str:
     )
 
 
-def extension_text(name: str, hours_left: int, pricing: str, hello: str) -> str:
-    plural = "" if hours_left == 1 else "s"
+LIMITS = "one campaign, no backups or downloads, no hand-overs, no moves"
+
+
+def extension_text(name: str, minutes_used: int, pricing: str, hello: str) -> str:
+    left = left_words(minutes_left(minutes_used))
     return (
         f"Hi {name}! You have 30 more days of Try It, so you get a real chance to try DMbot "
-        "at your table. Same limits as before: one campaign, no backups or downloads, and 8 "
-        f"hours of DMbot time in all. You have about {hours_left} hour{plural} of that left. "
+        f"at your table. Same limits as before: {LIMITS}, and 8 hours of DMbot time in all. "
+        f"You have about {left} of that left. "
         f"To keep using DMbot after the 30 days, see the plans at {pricing}. Tell us how to "
         f"make DMbot better at {hello}."
     )
@@ -97,7 +111,7 @@ def extension_text(name: str, hours_left: int, pricing: str, hello: str) -> str:
 
 EXTENSION_NOTICE = (
     "Good news: your Try It has 30 more days. Same limits as before: the 8 hours in all "
-    "still count, one campaign, no backups or downloads."
+    f"still count, {LIMITS}."
 )
 
 
@@ -134,9 +148,9 @@ async def people(db: Database, now: int) -> list[TrialPerson]:
     job may use (migration 0065)."""
     async with db.unscoped() as conn:
         cur = await conn.execute(
-            "SELECT user_id, dmbot_id, email, period_end, minutes, paid, extensions"
-            " FROM dmbot_trial_people(%s)",
-            (now - LOOK_BACK_S,),
+            "SELECT user_id, dmbot_id, email, period_end, minutes, paid, extensions, granted"
+            " FROM dmbot_trial_people(%s, %s)",
+            (now - LOOK_BACK_S, now),
         )
         return [
             TrialPerson(
@@ -147,6 +161,7 @@ async def people(db: Database, now: int) -> list[TrialPerson]:
                 int(r["minutes"]),
                 bool(r["paid"]),
                 int(r["extensions"]),
+                granted=bool(r["granted"]),
             )
             for r in await cur.fetchall()
         ]
@@ -200,7 +215,7 @@ class TrialJobs:
             return summary
         now = int(self._clock())
         for person in await people(self._db, now):
-            if person.user_id in self._skip:
+            if person.user_id in self._skip or person.granted:
                 continue
             try:
                 if on_last_day(person, now):
@@ -217,12 +232,34 @@ class TrialJobs:
             _page(self._site, "/hello", person.dmbot_id, now, self._secret),
         )
 
+    async def _mail_due(self, person: TrialPerson, kind: str) -> bool:
+        """Will an offer email go? Only with an address on file, a mailbox ready for offers
+        (until the postal address is set nothing goes), no unsubscribe and none sent."""
+        return bool(
+            person.email
+            and self._mail.ready_for_offers
+            and not await self._mail.is_unsubscribed(person.user_id)
+            and not await self._mail.already_sent(person.user_id, kind)
+        )
+
     async def _last_day(self, person: TrialPerson, now: int, summary: Summary) -> None:
-        pricing, hello = self._links(person, now)
-        name = await self._name_of(person.user_id)
-        text = last_day_text(name, pricing, hello)
         kind = f"dm:trial-end:{person.period_end}"
-        if await claim(self._db, person.user_id, kind, now):
+        mail_kind = f"trial-end:{person.period_end}"
+        dm_due = await claim(self._db, person.user_id, kind, now)
+        mail_due = await self._mail_due(person, mail_kind)
+        if not dm_due and not mail_due:  # nothing to send: don't ask Discord for the name
+            return
+        pricing, hello = self._links(person, now)
+        try:
+            name = await self._name_of(person.user_id)
+        except Exception:
+            # Give the private-message claim back, so the next run tries again.
+            log.exception("A Try It name lookup failed")
+            if dm_due:
+                await release(self._db, person.user_id, kind)
+            return
+        text = last_day_text(name, pricing, hello)
+        if dm_due:
             try:
                 sent: DmResult = await self._send_dm(person.user_id, text)
             except Exception:
@@ -235,9 +272,9 @@ class TrialJobs:
             # "closed": one attempt only; asking Discord again would only be refused again
         result = await self._mail.send(
             user_id=person.user_id,
-            kind=f"trial-end:{person.period_end}",
+            kind=mail_kind,
             to=person.email,
-            subject="Your DMbot Try It ends today",
+            subject="Your DMbot Try It ends soon",
             body=text,
             offer=True,
         )
@@ -245,16 +282,18 @@ class TrialJobs:
             summary.last_day_emails += 1
 
     async def _extend(self, person: TrialPerson, now: int, summary: Summary) -> None:
-        hours = extension_hours(person.minutes)
         async with self._db.unscoped() as conn:
+            # The database works out the new cap from the meter; nothing is passed for it.
             cur = await conn.execute(
-                "SELECT dmbot_extend_trial(%s, %s, %s, %s) AS ok",
-                (person.user_id, now, EXTENSION_DAYS, hours),
+                "SELECT dmbot_extend_trial(%s, %s, %s) AS ok",
+                (person.user_id, now, EXTENSION_DAYS),
             )
             row = await cur.fetchone()
         if not (row and row["ok"]):
             return
         summary.extended += 1
+        if not await self._mail_due(person, f"trial-extension:{person.extensions + 1}"):
+            return  # nothing will be sent: don't ask Discord for the name
         pricing, hello = self._links(person, now)
         name = await self._name_of(person.user_id)
         result = await self._mail.send(
@@ -262,7 +301,7 @@ class TrialJobs:
             kind=f"trial-extension:{person.extensions + 1}",
             to=person.email,
             subject="30 more days of DMbot Try It, free",
-            body=extension_text(name, hours, pricing, hello),
+            body=extension_text(name, person.minutes, pricing, hello),
             offer=True,
         )
         if result == "sent":

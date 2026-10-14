@@ -53,11 +53,22 @@ class Rules(unittest.TestCase):
         self.assertFalse(trial_jobs.extension_due(person(minutes=240), after))
         self.assertFalse(trial_jobs.extension_due(person(paid=True), after))
 
-    def test_the_hours_are_what_is_left_of_the_8_in_all(self) -> None:
-        self.assertEqual(trial_jobs.extension_hours(0), 8)
-        self.assertEqual(trial_jobs.extension_hours(90), 6)  # 1.5 hours used: 6 whole hours left
-        self.assertEqual(trial_jobs.extension_hours(239), 4)
-        self.assertEqual(trial_jobs.extension_hours(500), 0)
+    def test_the_time_left_is_counted_in_minutes_and_said_to_the_half_hour(self) -> None:
+        self.assertEqual(trial_jobs.minutes_left(0), 480)
+        self.assertEqual(trial_jobs.minutes_left(90), 390)  # 6 h 30 min, exactly
+        self.assertEqual(trial_jobs.minutes_left(239), 241)
+        self.assertEqual(trial_jobs.minutes_left(500), 0)
+        self.assertEqual(trial_jobs.left_words(390), "6½ hours")
+        self.assertEqual(trial_jobs.left_words(360), "6 hours")
+        self.assertEqual(trial_jobs.left_words(60), "1 hour")
+
+    def test_every_limit_is_in_the_words(self) -> None:
+        for text in (
+            trial_jobs.extension_text("Ana", 90, "https://x.example/p", "https://x.example/h"),
+            trial_jobs.EXTENSION_NOTICE,
+        ):
+            for limit in ("one campaign", "no backups or downloads", "no hand-overs", "no moves"):
+                self.assertIn(limit, text)
 
     def test_the_owners_words_and_personal_links(self) -> None:
         text = trial_jobs.last_day_text(
@@ -72,6 +83,17 @@ class Rules(unittest.TestCase):
         self.assertTrue(link_tokens.check_link_token("ABC", query["t"][0], 1000, SECRET))
         self.assertEqual(trial_jobs._page(SITE, "/hello", "ABC", 1, b""), f"{SITE}/hello")
         self.assertEqual(trial_jobs._page("", "/hello", "ABC", 1, SECRET), "/hello")
+
+
+class Wiring(unittest.TestCase):
+    def test_the_start_command_asks_for_the_extension_notice(self) -> None:
+        import inspect
+
+        from dmbot import bot
+
+        source = inspect.getsource(bot)
+        self.assertIn("trial_jobs.take_extension_notice(", source)
+        self.assertIn("self._trial_loop()", source)
 
 
 class FakeMail:
@@ -119,13 +141,15 @@ class Jobs(DatabaseTest):
         )  # fmt: skip
 
     async def plan(self, uid: int) -> tuple[int, int]:
+        """(period end, the cap in minutes the meter will use)."""
         async with self.db.user(uid) as conn:
             cur = await conn.execute(
-                "SELECT period_end, hours_cap FROM entitlements WHERE user_id = %s", (uid,)
+                "SELECT period_end, hours_cap, minutes_taken FROM entitlements WHERE user_id = %s",
+                (uid,),
             )
             row = await cur.fetchone()
         assert row is not None
-        return int(row["period_end"]), int(row["hours_cap"])
+        return int(row["period_end"]), int(row["hours_cap"]) * 60 - int(row["minutes_taken"])
 
     async def use(self, uid: int, minutes: int) -> None:
         campaigns = CampaignStore(self.db)
@@ -152,13 +176,18 @@ class Jobs(DatabaseTest):
         self.now = END - 3600
         await self.jobs().run()
         mailer = self.jobs()._mail
-        self.assertEqual(await mailer.sent_today(), 2)  # two emails, not four records
+        async with self.db.unscoped() as conn:
+            cur = await conn.execute(
+                "SELECT count(*) AS n FROM sent_emails WHERE kind NOT LIKE 'dm:%'"
+            )
+            self.assertEqual((await cur.fetchone() or {})["n"], 2)  # two emails, not four records
+        del mailer
 
     async def test_the_door_checks_the_rules_itself(self) -> None:
-        async def extend(uid: int, now: int, days: int = 30, hours: int = 8) -> bool:
+        async def extend(uid: int, now: int, days: int = 30) -> bool:
             async with self.db.unscoped() as conn:
                 cur = await conn.execute(
-                    "SELECT dmbot_extend_trial(%s, %s, %s, %s) AS ok", (uid, now, days, hours)
+                    "SELECT dmbot_extend_trial(%s, %s, %s) AS ok", (uid, now, days)
                 )
                 row = await cur.fetchone()
             return bool(row and row["ok"])
@@ -166,10 +195,12 @@ class Jobs(DatabaseTest):
         late = END + 3 * DAY_S
         self.assertFalse(await extend(USER, late - 1))  # too early
         self.assertFalse(await extend(USER, late, days=90))  # not 30 days
-        self.assertFalse(await extend(USER, late, hours=99))  # more than 8 hours
         await self.use(OTHER, 300)
         self.assertFalse(await extend(OTHER, late))  # over 4 hours in all
         self.assertTrue(await extend(USER, late))
+        # The cap is worked out in the door: 8 hours in all less what the meter shows (nothing
+        # used here), whatever a caller might want.
+        self.assertEqual(await self.plan(USER), (late + 30 * DAY_S, 480))
         self.assertFalse(await extend(USER, late))  # a second call changes nothing
         async with self.db.unscoped() as conn:  # the door puts its setting back
             cur = await conn.execute("SELECT current_setting('dmbot.owner_sync', true) AS s")
@@ -212,8 +243,9 @@ class Jobs(DatabaseTest):
         self.now = END + 3 * DAY_S
         summary = await self.jobs().run()
         self.assertEqual((summary.extended, summary.extension_emails), (2, 2))
-        self.assertEqual(await self.plan(USER), (self.now + 30 * DAY_S, 6))  # 8 in all, 1.5 used
-        self.assertEqual(await self.plan(OTHER), (self.now + 30 * DAY_S, 8))
+        # 8 hours in all with 1 h 30 min used: exactly 6 h 30 min left, in minutes.
+        self.assertEqual(await self.plan(USER), (self.now + 30 * DAY_S, 390))
+        self.assertEqual(await self.plan(OTHER), (self.now + 30 * DAY_S, 480))
         again = await self.jobs().run()
         self.assertEqual(again.extended, 0)
         # Told once, privately, at the next start.
@@ -244,7 +276,93 @@ class Jobs(DatabaseTest):
             )
         self.now = END + 3 * DAY_S
         self.assertEqual((await self.jobs().run()).extended, 0)
-        self.assertEqual(await self.plan(USER), (END, 8))
+        self.assertEqual(await self.plan(USER), (END, 480))
+        self.assertEqual(await self.plan(OTHER), (END, 480))  # the paid one is left as it was
+
+    async def test_over_4_hours_still_gets_the_last_day_message_and_a_paid_person_does_not(
+        self,
+    ) -> None:
+        await self.use(USER, 300)
+        async with self.db.plan_writer(OTHER) as conn:
+            await conn.execute(
+                "INSERT INTO payment_events (provider, event_id, user_id, kind, received_at)"
+                " VALUES ('fake', 'p2', %s, 'subscription_started', %s)",
+                (OTHER, START),
+            )
+        self.now = END - 3600
+        summary = await self.jobs().run()
+        # Over 4 hours still gets the last-day message (it is thanks, not an extension); a
+        # person who paid has a plan and is not in Try It's last day.
+        self.assertEqual(summary.last_day_dms, 1)
+        self.assertEqual([u for u, _ in self.dms], [USER])
+
+    async def test_someone_with_an_admin_grant_is_left_alone(self) -> None:
+        from dmbot.web import grants
+
+        await grants.give(
+            self.db, "admin@example.invalid", USER, "guild", ends_at=None, note="", now=START
+        )
+        self.now = END + 3 * DAY_S
+        self.assertEqual((await self.jobs().run()).extended, 1)  # only the other person
+
+    async def test_the_name_is_not_looked_up_when_nothing_will_be_sent(self) -> None:
+        self.now = END - 3600
+        await self.jobs().run()
+        asked: list[int] = []
+
+        async def name_of(user_id: int) -> str:
+            asked.append(user_id)
+            return "x"
+
+        again = self.jobs()
+        again._name_of = name_of
+        await again.run()  # everything was sent already
+        self.assertEqual(asked, [])
+
+    async def no_dm(self, user_id: int, text: str) -> trial_jobs.DmResult:
+        return "closed"
+
+    async def test_the_name_is_not_looked_up_when_mail_is_not_ready_or_unsubscribed(self) -> None:
+        self.now = END - 3600
+        for person in (USER, OTHER):  # the private messages went already
+            await trial_jobs.claim(self.db, person, f"dm:trial-end:{END}", self.now)
+        asked: list[int] = []
+
+        async def name_of(user_id: int) -> str:
+            asked.append(user_id)
+            return "x"
+
+        mailer = Mailer(
+            self.db, load_mail_settings({**ENV, "MAIL_POSTAL_ADDRESS": ""}), transport=self.mail,
+            site_url=SITE, link_secret=SECRET, clock=lambda: float(self.now),
+        )  # fmt: skip
+        not_ready = TrialJobs(
+            self.db, mailer, enforce_plans=True, site_url=SITE, link_secret=SECRET,
+            send_dm=self.no_dm, name_of=name_of, clock=lambda: float(self.now),
+        )  # fmt: skip
+        await not_ready.run()
+        self.assertEqual(asked, [])  # no postal address: no offer email, so no name
+        async with self.db.unscoped() as conn:
+            for person in (USER, OTHER):
+                await conn.execute(
+                    "INSERT INTO email_unsubscribed (user_id, at) VALUES (%s, 1)", (person,)
+                )
+        again = self.jobs()
+        again._name_of = name_of
+        await again.run()
+        self.assertEqual(asked, [])  # unsubscribed
+
+    async def test_a_failed_name_lookup_gives_the_private_message_back(self) -> None:
+        self.now = END - 3600
+
+        async def broken(user_id: int) -> str:
+            raise RuntimeError("discord is down")
+
+        bad = self.jobs()
+        bad._name_of = broken
+        await bad.run()
+        await self.jobs().run()  # the next run tries again
+        self.assertEqual(sorted(u for u, _ in self.dms), sorted([USER, OTHER]))
 
     async def test_nobody_is_extended_early(self) -> None:
         self.now = END + 3 * DAY_S - 1

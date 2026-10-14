@@ -15,6 +15,7 @@ from psycopg import AsyncCursor
 from psycopg.rows import DictRow
 
 from dmbot.db import Conn, Database
+from dmbot.entitlements import cap_hours
 from dmbot.web.discord import DiscordGuild
 from dmbot.web.me import MAX_GUILDS
 from dmbot.web.sessions import Session
@@ -115,7 +116,7 @@ async def build_export(db: Database, session: Session, *, now: int) -> dict[str,
     characters: list[dict[str, Any]] = []
     async with db.user(session.user_id, session=session.id_hash) as conn:
         cur = await conn.execute(
-            "SELECT email, created_at, last_sign_in_at FROM web_users WHERE user_id = %s",
+            "SELECT email, created_at, last_sign_in_at, dmbot_id FROM web_users WHERE user_id = %s",
             (session.user_id,),
         )
         account = await cur.fetchone()
@@ -128,8 +129,9 @@ async def build_export(db: Database, session: Session, *, now: int) -> dict[str,
             characters += more_characters
         await conn.execute("SELECT set_config('dmbot.guild_id', '', true)")
         cur = await conn.execute(
-            "SELECT plan, status, hours_cap, extra_hours, campaign_cap, period_start, period_end,"
-            " grace_ends_at, lapsed_at, provider FROM entitlements WHERE user_id = %s",
+            "SELECT plan, status, hours_cap, extra_hours, minutes_taken, campaign_cap,"
+            " period_start, period_end, grace_ends_at, lapsed_at, provider FROM entitlements"
+            " WHERE user_id = %s",
             (session.user_id,),
         )
         plan = await cur.fetchone()
@@ -159,6 +161,8 @@ async def build_export(db: Database, session: Session, *, now: int) -> dict[str,
         "exportedAt": _iso(now),
         "account": {
             "discordId": str(session.user_id),
+            # The account number: the Discord ID in base 36, kept for life, used on invoices.
+            "dmbotId": account["dmbot_id"] if account else None,
             "name": session.display_name,
             "email": account["email"] if account else None,
             "firstSignedInAt": _iso(account["created_at"]) if account else None,
@@ -172,7 +176,7 @@ async def build_export(db: Database, session: Session, *, now: int) -> dict[str,
         else {
             "plan": plan["plan"],
             "status": plan["status"],
-            "hoursCap": plan["hours_cap"],
+            "hoursCap": cap_hours(plan["hours_cap"], plan["minutes_taken"]),
             "extraHours": plan["extra_hours"],
             "campaignCap": plan["campaign_cap"],
             "periodStart": _iso(plan["period_start"]),

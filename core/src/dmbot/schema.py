@@ -2045,6 +2045,7 @@ WEB_ROLE_FUNCTIONS: tuple[tuple[str, str], ...] = (
     ("dmbot_owned_campaigns", "dmbot_owned_campaigns()"),
     ("dmbot_orphan_owned_campaigns", "dmbot_orphan_owned_campaigns(BIGINT)"),
     ("dmbot_hours_used", "dmbot_hours_used(BIGINT)"),
+    ("dmbot_claim_email", "dmbot_claim_email(BIGINT, TEXT, BOOLEAN, INTEGER, INTEGER)"),
     ("dmbot_minutes_total", "dmbot_minutes_total()"),
     ("dmbot_user_of", "dmbot_user_of(TEXT)"),  # links made before a move (#1230)
     ("dmbot_moved_to", "dmbot_moved_to(BIGINT, TEXT, TEXT)"),  # payments after a move (#1230)
@@ -2080,7 +2081,10 @@ WEB_ROLE_GRANTS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("SELECT, UPDATE (status, decided_at)", ("campaign_handover_offers",)),
     ("SELECT, INSERT, UPDATE", ("installs", "entitlements")),
     ("SELECT, INSERT", ("payment_events", "try_it_used")),
-    ("SELECT, INSERT", ("email_unsubscribed",)),  # the unsubscribe link (#1229)
+    # The unsubscribe link (#1229) may be written, never read: the list stays the bot's. The
+    # website sends its own account emails through dmbot_claim_email (WEB_ROLE_FUNCTIONS), and
+    # has no grant on sent_emails.
+    ("INSERT", ("email_unsubscribed",)),
     ("INSERT, DELETE", ("feedback",)),
     ("SELECT, INSERT, UPDATE, DELETE", ("web_users", "web_sessions")),
     # Free access (#771): the admin page gives, changes and revokes grants (through
@@ -2111,6 +2115,68 @@ MAIL = """
         user_id BIGINT PRIMARY KEY CHECK (user_id > 0),
         at      BIGINT NOT NULL
     );
+    -- The one door for sending an email, for the bot and the website alike (the website's
+    -- role has no grant on sent_emails: the table is everyone's email history). Under one
+    -- lock it counts today's rows, applies the caps the caller passes (never above 400 in
+    -- all and 300 for offers, so the sign-in links and move codes people ask for always have
+    -- room), writes the row (an email of this kind goes once) and answers with a status:
+    -- 'sent' (go ahead), 'duplicate' (already sent), 'capped' (the day is full) or 'refused'
+    -- (not an email kind). The day and the time are the database's own. A failed send keeps
+    -- its row (at most once), except an offer, which the bot gives back with
+    -- dmbot_release_email so one hiccup doesn't lose it. Kinds starting "dm:" are private
+    -- message records, not emails, and are refused here.
+    CREATE FUNCTION dmbot_claim_email(who BIGINT, what TEXT, offer BOOLEAN, cap INTEGER,
+                                      offer_cap INTEGER) RETURNS TEXT
+        LANGUAGE plpgsql SECURITY DEFINER
+        AS $fn$
+    #variable_conflict use_column
+    DECLARE
+        stamp BIGINT := extract(epoch FROM now())::BIGINT;
+        today BIGINT;
+        added INTEGER;
+        most INTEGER := LEAST(COALESCE(cap, 400), 400);
+        most_offers INTEGER := LEAST(COALESCE(offer_cap, 300), 300, most);
+    BEGIN
+        IF who IS NULL OR who <= 0 OR what IS NULL OR char_length(what) NOT BETWEEN 1 AND 60
+           OR what LIKE 'dm:%' THEN
+            RETURN 'refused';
+        END IF;
+        PERFORM pg_advisory_xact_lock(hashtextextended('dmbot.email_day', 0));
+        SELECT count(*) INTO today FROM sent_emails s
+            WHERE s.sent_at >= stamp - stamp % 86400 AND s.kind NOT LIKE 'dm:%';
+        IF EXISTS (SELECT 1 FROM sent_emails s WHERE s.user_id = who AND s.kind = what) THEN
+            RETURN 'duplicate';
+        END IF;
+        IF today >= most OR (offer AND today >= most_offers) THEN
+            RETURN 'capped';
+        END IF;
+        INSERT INTO sent_emails (user_id, kind, sent_at) VALUES (who, what, stamp)
+            ON CONFLICT DO NOTHING;
+        GET DIAGNOSTICS added = ROW_COUNT;
+        RETURN CASE WHEN added = 1 THEN 'sent' ELSE 'duplicate' END;
+    END
+    $fn$;
+    -- Gives back the claim of an email that did not go (bot only: the website's role has no
+    -- EXECUTE), so the next run tries again.
+    CREATE FUNCTION dmbot_release_email(who BIGINT, what TEXT) RETURNS VOID
+        LANGUAGE sql SECURITY DEFINER
+        AS $fn$
+        DELETE FROM sent_emails s WHERE s.user_id = who AND s.kind = what;
+    $fn$;
+    DO $do$
+    BEGIN
+        EXECUTE format(
+            'ALTER FUNCTION dmbot_claim_email(BIGINT, TEXT, BOOLEAN, INTEGER, INTEGER)'
+            ' SET search_path = pg_catalog, %I, pg_temp',
+            current_schema());
+        EXECUTE format(
+            'ALTER FUNCTION dmbot_release_email(BIGINT, TEXT)'
+            ' SET search_path = pg_catalog, %I, pg_temp',
+            current_schema());
+    END
+    $do$;
+    REVOKE ALL ON FUNCTION dmbot_claim_email(BIGINT, TEXT, BOOLEAN, INTEGER, INTEGER) FROM PUBLIC;
+    REVOKE ALL ON FUNCTION dmbot_release_email(BIGINT, TEXT) FROM PUBLIC;
     """
 
 TRIAL = """
@@ -2123,6 +2189,8 @@ TRIAL = """
     -- SECURITY DEFINER, granted to the bot's role only, never the website's.
     -- Like try_it_used, these rows are ids and times only and are not removed with an account:
     -- a person who deletes their account and signs up again is not messaged twice.
+    -- (sent_emails also holds the private-message records of these jobs, kinds starting "dm:";
+    -- they are not emails and do not count toward the daily cap.)
     CREATE TABLE trial_extensions (
         user_id     BIGINT NOT NULL CHECK (user_id > 0),
         extended_at BIGINT NOT NULL,
@@ -2150,11 +2218,14 @@ TRIAL = """
         EXECUTE format(
             'CREATE POLICY trial_read ON payment_events FOR SELECT TO %I
                 USING (dmbot_owner_sync() = ''trial'')', current_user);
+        EXECUTE format(
+            'CREATE POLICY trial_read ON access_grants FOR SELECT TO %I
+                USING (dmbot_owner_sync() = ''trial'')', current_user);
     END
     $do$;
-    CREATE FUNCTION dmbot_trial_people(since BIGINT)
+    CREATE FUNCTION dmbot_trial_people(since BIGINT, now BIGINT)
         RETURNS TABLE (user_id BIGINT, dmbot_id TEXT, email TEXT, period_end BIGINT,
-                       minutes BIGINT, paid BOOLEAN, extensions INTEGER)
+                       minutes BIGINT, paid BOOLEAN, extensions INTEGER, granted BOOLEAN)
         LANGUAGE plpgsql SECURITY DEFINER
         AS $fn$
     #variable_conflict use_column
@@ -2170,41 +2241,48 @@ TRIAL = """
                        AND (p.kind IS NULL OR p.kind = ANY(
                             ARRAY['subscription_started', 'subscription_renewed',
                                   'extra_hours_bought']))),
-               (SELECT count(*)::INTEGER FROM trial_extensions t WHERE t.user_id = e.user_id)
+               (SELECT count(*)::INTEGER FROM trial_extensions t WHERE t.user_id = e.user_id),
+               EXISTS (SELECT 1 FROM access_grants g WHERE g.discord_user_id = e.user_id
+                       AND g.revoked_at IS NULL
+                       AND (g.ends_at IS NULL OR g.ends_at > now))
         FROM entitlements e JOIN web_users u ON u.user_id = e.user_id
         WHERE e.plan = 'try-it' AND e.status = 'active' AND e.period_end >= since;
         PERFORM set_config('dmbot.owner_sync', before, true);
     END
     $fn$;
-    CREATE FUNCTION dmbot_extend_trial(who BIGINT, now BIGINT, days INTEGER, hours INTEGER)
+    -- Try It's 8 hours are 8 hours in all: an extension has a cap of 8 hours less the minutes
+    -- already used, counted in minutes (`minutes_taken` comes off the cap). The new cap is
+    -- worked out here from the meter, whatever the caller thinks.
+    ALTER TABLE entitlements ADD COLUMN minutes_taken INTEGER NOT NULL DEFAULT 0
+        CHECK (minutes_taken >= 0);
+    CREATE FUNCTION dmbot_extend_trial(who BIGINT, now BIGINT, days INTEGER)
         RETURNS BOOLEAN
         LANGUAGE plpgsql SECURITY DEFINER
         AS $fn$
     #variable_conflict use_column
     DECLARE
         before TEXT := COALESCE(current_setting('dmbot.owner_sync', true), '');
+        used BIGINT;
         changed INTEGER;
     BEGIN
         PERFORM set_config('dmbot.owner_sync', 'trial', true);
-        -- Only a Try It that has ended and is still the person's plan; the hours are what is
-        -- left of Try It's 8 in all (the caller works that out), never more. The rules are
-        -- checked here too, not only by the caller: 30 days, at most 8 hours, 3 days after
-        -- the end, never paid, under 4 hours in all.
-        IF days <> 30 OR hours < 0 OR hours > 8 THEN
+        -- Only a Try It that has ended and is still the person's plan, for 30 days, three
+        -- days after the end, for someone who never paid and has used under 4 hours in all.
+        IF days <> 30 THEN
             PERFORM set_config('dmbot.owner_sync', before, true);
             RETURN FALSE;
         END IF;
+        SELECT COALESCE(sum(h.minutes), 0) INTO used FROM owner_hours h
+            WHERE h.owner_user_id = who;
         UPDATE entitlements
-           SET period_start = now, period_end = now + days * 86400, hours_cap = hours,
-               extra_hours = 0, plan_changed_at = now, updated_at = now
+           SET period_start = now, period_end = now + days * 86400, hours_cap = 8,
+               minutes_taken = used, extra_hours = 0, plan_changed_at = now, updated_at = now
          WHERE entitlements.user_id = who AND plan = 'try-it' AND status = 'active'
-           AND period_end + 259200 <= now
+           AND period_end + 259200 <= now AND used < 240
            AND NOT EXISTS (SELECT 1 FROM payment_events p WHERE p.user_id = who
                            AND (p.kind IS NULL OR p.kind = ANY(
                                 ARRAY['subscription_started', 'subscription_renewed',
-                                      'extra_hours_bought'])))
-           AND COALESCE((SELECT sum(h.minutes) FROM owner_hours h
-                         WHERE h.owner_user_id = who), 0) < 240;
+                                      'extra_hours_bought'])));
         GET DIAGNOSTICS changed = ROW_COUNT;
         PERFORM set_config('dmbot.owner_sync', before, true);
         IF changed = 0 THEN
@@ -2217,16 +2295,62 @@ TRIAL = """
     DO $do$
     BEGIN
         EXECUTE format(
-            'ALTER FUNCTION dmbot_trial_people(BIGINT) SET search_path = pg_catalog, %I, pg_temp',
+            'ALTER FUNCTION dmbot_trial_people(BIGINT, BIGINT)'
+            ' SET search_path = pg_catalog, %I, pg_temp',
             current_schema());
         EXECUTE format(
-            'ALTER FUNCTION dmbot_extend_trial(BIGINT, BIGINT, INTEGER, INTEGER)'
+            'ALTER FUNCTION dmbot_extend_trial(BIGINT, BIGINT, INTEGER)'
             ' SET search_path = pg_catalog, %I, pg_temp',
             current_schema());
     END
     $do$;
-    REVOKE ALL ON FUNCTION dmbot_trial_people(BIGINT) FROM PUBLIC;
-    REVOKE ALL ON FUNCTION dmbot_extend_trial(BIGINT, BIGINT, INTEGER, INTEGER) FROM PUBLIC;
+    REVOKE ALL ON FUNCTION dmbot_trial_people(BIGINT, BIGINT) FROM PUBLIC;
+    REVOKE ALL ON FUNCTION dmbot_extend_trial(BIGINT, BIGINT, INTEGER) FROM PUBLIC;
+    """
+
+PAYMENT_EMAIL = """
+    -- The email Stripe has for the account's payments (#1242; docs/PLAN.md, "Accounts"),
+    -- kept from the payment webhook beside the Discord email the website sign-in gives.
+    -- Sign-in links and Try It emails use it before the Discord email; move codes go to it
+    -- and nowhere else. Never logged or shown back in full.
+    ALTER TABLE web_users ADD COLUMN payment_email TEXT
+        CHECK (payment_email IS NULL OR char_length(payment_email) BETWEEN 3 AND 254);
+    -- Try It's job reads the address through its door: the payment email first.
+    CREATE OR REPLACE FUNCTION dmbot_trial_people(since BIGINT, now BIGINT)
+        RETURNS TABLE (user_id BIGINT, dmbot_id TEXT, email TEXT, period_end BIGINT,
+                       minutes BIGINT, paid BOOLEAN, extensions INTEGER, granted BOOLEAN)
+        LANGUAGE plpgsql SECURITY DEFINER
+        AS $fn$
+    #variable_conflict use_column
+    DECLARE
+        before TEXT := COALESCE(current_setting('dmbot.owner_sync', true), '');
+    BEGIN
+        PERFORM set_config('dmbot.owner_sync', 'trial', true);
+        RETURN QUERY
+        SELECT e.user_id, u.dmbot_id, COALESCE(u.payment_email, u.email), e.period_end,
+               COALESCE((SELECT sum(h.minutes) FROM owner_hours h
+                         WHERE h.owner_user_id = e.user_id), 0)::BIGINT,
+               EXISTS (SELECT 1 FROM payment_events p WHERE p.user_id = e.user_id
+                       AND (p.kind IS NULL OR p.kind = ANY(
+                            ARRAY['subscription_started', 'subscription_renewed',
+                                  'extra_hours_bought']))),
+               (SELECT count(*)::INTEGER FROM trial_extensions t WHERE t.user_id = e.user_id),
+               EXISTS (SELECT 1 FROM access_grants g WHERE g.discord_user_id = e.user_id
+                       AND g.revoked_at IS NULL
+                       AND (g.ends_at IS NULL OR g.ends_at > now))
+        FROM entitlements e JOIN web_users u ON u.user_id = e.user_id
+        WHERE e.plan = 'try-it' AND e.status = 'active' AND e.period_end >= since;
+        PERFORM set_config('dmbot.owner_sync', before, true);
+    END
+    $fn$;
+    DO $do$
+    BEGIN
+        EXECUTE format(
+            'ALTER FUNCTION dmbot_trial_people(BIGINT, BIGINT)'
+            ' SET search_path = pg_catalog, %I, pg_temp',
+            current_schema());
+    END
+    $do$;
     """
 
 MOVES = """
@@ -2668,7 +2792,8 @@ MIGRATIONS: tuple[Migration, ...] = (
     ("0063_dmbot_id", DMBOT_ID),
     ("0064_mail", MAIL),
     ("0065_trial", TRIAL),
-    ("0066_moves", MOVES),
+    ("0067_payment_email", PAYMENT_EMAIL),
+    ("0068_moves", MOVES),  # 0066 is the sign-in-by-email migration (#1237)
 )
 
 # Tables that must have row-level security. A test checks every table in the schema

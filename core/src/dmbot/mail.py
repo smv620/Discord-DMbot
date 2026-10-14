@@ -23,7 +23,7 @@ import time
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass, field
 from email.message import EmailMessage
-from email.utils import formatdate, make_msgid
+from email.utils import formatdate, make_msgid, parseaddr
 from typing import Literal
 
 from dmbot.account_id import to_dmbot_id
@@ -52,6 +52,11 @@ class MailSettings:
     sender: str = ""  # the From address
     postal_address: str = ""  # required in offer emails; the owner's call (needs: owner)
     daily_cap: int = DAILY_CAP_DEFAULT
+
+    @property
+    def offer_cap(self) -> int:
+        """Offer emails stop here; account emails go on up to `daily_cap`."""
+        return min(self.daily_cap * 3 // 4, 300)  # the database door's own ceiling is 300
 
     @property
     def configured(self) -> bool:
@@ -156,16 +161,13 @@ class Mailer:
             )
             return await cur.fetchone() is not None
 
-    async def sent_today(self) -> int:
-        since = int(self._clock()) - int(self._clock()) % DAY_S
+    async def already_sent(self, user_id: int, kind: str) -> bool:
         async with self._db.unscoped() as conn:
             cur = await conn.execute(
-                "SELECT count(*) AS n FROM sent_emails WHERE sent_at >= %s"
-                " AND kind NOT LIKE 'dm:%%'",  # private-message records are not emails
-                (since,),
+                "SELECT 1 AS ok FROM sent_emails WHERE user_id = %s AND kind = %s",
+                (user_id, kind),
             )
-            row = await cur.fetchone()
-        return int(row["n"]) if row else 0
+            return await cur.fetchone() is not None
 
     async def send(
         self,
@@ -181,7 +183,13 @@ class Mailer:
         something that may repeat). Never raises: the result says what happened. An offer
         is refused without a postal address, to someone who unsubscribed, or when the daily
         cap is spent."""
-        if not _one_address(to) or not 0 < len(kind) <= KIND_MAX or user_id <= 0:
+        # "dm:" kinds are the private-message records the Try It jobs keep in the same table.
+        if (
+            not _one_address(to)
+            or not 0 < len(kind) <= KIND_MAX
+            or kind.startswith("dm:")
+            or user_id <= 0
+        ):
             return "no_address"
         if not self._s.configured:
             return "not_ready"
@@ -190,9 +198,6 @@ class Mailer:
                 return "not_ready"
             if await self.is_unsubscribed(user_id):
                 return "unsubscribed"
-        if await self.sent_today() >= self._s.daily_cap:
-            log.warning("The daily email cap is spent; %s waits", kind)
-            return "capped"
         # Built before anything is recorded: a message that can't be built must not leave the
         # once-only row behind. The unsubscribe link is made for this person, from their id.
         try:
@@ -200,35 +205,43 @@ class Mailer:
         except ValueError:
             log.error("Couldn't build a %s email", kind)
             return "failed"
-        now = int(self._clock())
-        # The row is written first, so two runs at once can't both send it; a failed send
-        # takes it back so the next run tries again. (A crash between the two loses the
-        # email rather than sending it twice: at most once.) The cap is checked a moment
-        # earlier in another transaction, so callers running at once can pass it together;
-        # 400 against Gmail's 500 leaves room for that.
+        # The database's door counts the day, applies the caps (offers stop short of the
+        # cap, so the sign-in links and move codes people ask for always have room) and
+        # writes the row under one lock, so two runs at once can't both send it. The website
+        # uses the same door. The row stays if the send then fails (a crash or an SMTP error
+        # loses that email rather than risk sending it twice), except for an offer: that is
+        # given back below so the next run retries it.
         async with self._db.unscoped() as conn:
             cur = await conn.execute(
-                "INSERT INTO sent_emails (user_id, kind, sent_at) VALUES (%s, %s, %s)"
-                " ON CONFLICT DO NOTHING RETURNING user_id",
-                (user_id, kind, now),
+                "SELECT dmbot_claim_email(%s, %s, %s, %s, %s) AS status",
+                (user_id, kind, offer, self._s.daily_cap, self._s.offer_cap),
             )
-            if await cur.fetchone() is None:
-                return "already_sent"
+            row = await cur.fetchone()
+        status = row["status"] if row else "refused"
+        if status == "capped":
+            log.warning("The daily email cap is spent; %s waits", kind)
+            return "capped"
+        if status == "duplicate":
+            return "already_sent"
+        if status != "sent":
+            return "no_address"
         try:
             await self._send(message)
         except Exception:  # an SMTP error can carry the address: log only the kind
             log.error("Couldn't send a %s email", kind, exc_info=False)
-            try:
-                async with self._db.unscoped() as conn:
-                    await conn.execute(
-                        "DELETE FROM sent_emails WHERE user_id = %s AND kind = %s",
-                        (user_id, kind),
-                    )
-            except Exception:
-                log.error("Couldn't take back the %s email's record", kind, exc_info=False)
+            if offer:
+                await self._release(user_id, kind)
             return "failed"
         log.info("Sent a %s email", kind)
         return "sent"
+
+    async def _release(self, user_id: int, kind: str) -> None:
+        """Give back the claim of an offer that didn't go, so the next run retries it."""
+        try:
+            async with self._db.unscoped() as conn:
+                await conn.execute("SELECT dmbot_release_email(%s, %s)", (user_id, kind))
+        except Exception:
+            log.error("Couldn't give back a %s email's claim", kind)
 
     def _build(self, to: str, dmbot_id: str, subject: str, body: str, offer: bool) -> EmailMessage:
         message = EmailMessage()
@@ -236,7 +249,10 @@ class Mailer:
         message["To"] = to
         message["Subject"] = " ".join(subject.split())
         message["Date"] = formatdate(self._clock(), localtime=False)
-        message["Message-ID"] = make_msgid(domain=self._s.sender.rpartition("@")[2] or None)
+        domain = parseaddr(self._s.sender)[1].rpartition("@")[
+            2
+        ]  # from "Name <a@b>", not the raw text
+        message["Message-ID"] = make_msgid(domain=domain or None)
         text = body.strip()
         if offer:
             link = self.unsubscribe_link(dmbot_id)
@@ -253,12 +269,24 @@ class Mailer:
         return f"{self._site}/unsubscribe?uid={dmbot_id}&t={token}"
 
 
-async def unsubscribe(db: Database, user_id: int, *, now: int) -> bool:
-    """Record that this person wants no offer emails. True the first time."""
+async def unsubscribe(db: Database, user_id: int, *, now: int) -> None:
+    """Record that this person wants no offer emails (again is the same). Without RETURNING:
+    the website's role may insert here but not read the list (migration 0064)."""
     async with db.unscoped() as conn:
-        cur = await conn.execute(
-            "INSERT INTO email_unsubscribed (user_id, at) VALUES (%s, %s)"
-            " ON CONFLICT DO NOTHING RETURNING user_id",
+        await conn.execute(
+            "INSERT INTO email_unsubscribed (user_id, at) VALUES (%s, %s) ON CONFLICT DO NOTHING",
             (user_id, now),
         )
-        return await cur.fetchone() is not None
+
+
+async def prune_account_emails(db: Database, now: int) -> int:
+    """Forget the records of sign-in and move-code emails after 90 days: they repeat, so the
+    table would only grow. One-off offers stay (that is what keeps them from being sent
+    twice)."""
+    async with db.unscoped() as conn:
+        cur = await conn.execute(
+            "DELETE FROM sent_emails WHERE sent_at < %s"
+            " AND (kind LIKE 'sign-in:%%' OR kind LIKE 'move-code:%%')",
+            (now - 90 * DAY_S,),
+        )
+        return int(cur.rowcount)
