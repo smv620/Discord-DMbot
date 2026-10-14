@@ -255,6 +255,53 @@ Rules for every role:
   NPC lies, plans versus facts, secrets, injection lines. Each role's prompt and model
   version is recorded with what it wrote.
 
+**How the ontology steward decides a new term (owner, 2026-10-14).** Fixed rules decide, never an AI.
+The DM never sees or approves terms; they are an expert's job under the hood. The DM confirms only
+story facts, in plain words ("Is **Aldric** sworn to **Auril**? [Yes] [No]").
+- **Rules words are never terms.** Feat, spell, class, species, ability, saving throw and the rest live
+  in the rules data; campaign memory only links to them. So the ontology is mostly story relationships
+  (`serves`, `sworn_to`, `plays`, `located_in`), whose D&D meaning is close to their English meaning.
+- **The check, in order:**
+  1. The hand-written synonym list (`ontology.SYNONYMS`), extended with D&D words that plain English
+     misleads on ("check" is an ability check, "save" is a saving throw, "turn" is a round or turning
+     undead). Free and exact.
+  2. Exact name or label, and spelling at least 85% alike (as today).
+  3. **Meaning, by embedding distance**, compared only with terms that connect the same kinds of things
+     (same domain and range), so `sworn_to` (character → god) is compared with `serves`, never with
+     `located_in`. **Very close:** refused; reuse the existing term. **Clearly far:** accepted if the
+     other rules pass. **In between:** refused, counted in the health report.
+- **Embeddings are made in context, never from a bare word.** The text embedded starts "In a Dungeons &
+  Dragons campaign:" and holds the term's name, label, description, what it connects and an example
+  (`sworn_to`: "a character who has taken an oath to a god or person; character → character; e.g.
+  Aldric is sworn to Auril"). Context pulls a word toward its D&D meaning.
+- **Where embeddings are stored:**
+  - **On the predicate's definition** (`memory_predicates`, one vector per term, core and campaign
+    terms alike): the term's in-context embedding. The meaning check compares against these. It is
+    stored once per term, never copied onto every edge.
+  - **In each edge's properties** (`memory_relations`): the fact's own in-context embedding (subject,
+    the relationship's wording, object, and the line it was heard in). Needed first for the catch-all
+    edges below, so the steward can see that "sworn to", "pledged to" and "took an oath to" keep coming
+    back as one idea; later, for search by meaning.
+  - **Every vector records the model and version that made it**: vectors from different models are
+    never compared. A model change re-embeds the campaign's terms and edges after the session.
+  - Same isolation as all memory (`guild_id`, `campaign_id`, row-level security). Vectors are not put in
+    backups: they are rebuilt from the text after a restore.
+- **A refused term never loses the fact.** The fact is stored on the catch-all `associated_with` edge,
+  with the steward's words as its label ("sworn to") and its in-context embedding; the DM confirms it in
+  plain words like any fact. When the same idea keeps coming back in a campaign, that is the evidence to
+  create a real term (through the same check), or for a reviewed release to add one to the core.
+- **Thresholds are set offline, not tuned by DMs.** A golden set of term pairs labelled "same" or
+  "different", D&D traps included, sets the two thresholds for a target wrong-merge rate; they are
+  measured again whenever the embedding model changes. Real use feeds back only through review: the
+  health report counts terms later found to hold the same facts, facts on a new term the DM keeps
+  rejecting, and refusals in the in-between band; a developer adds those cases to the golden set and
+  changes the thresholds in a release. Never per campaign or per DM: the same proposal must get the same
+  answer everywhere, approvals are few and noisy, and what is said at the table must not be able to steer
+  the rules.
+- **Provider:** an embeddings model (Voyage AI, which Anthropic recommends, or a small local model in the
+  worker), decided with its cost when the steward is built. A campaign has dozens of terms, so the term
+  check runs in Python; `pgvector` is needed only for meaning search over many edges.
+
 ### 4. Continuity warnings
 
 **When warnings start, and how sure they must be (decided).**

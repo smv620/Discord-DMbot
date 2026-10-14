@@ -1471,6 +1471,11 @@ versioned and self-checking:
 3. **Reuse before creating:** before adding a relationship, search the existing ones by
    name and meaning ("friends_with" maps to `ally_of`). Every new term needs a plain
    description, a parent, a domain and range, examples, and a reason.
+   *How (owner, 2026-10-14):* synonym list, spelling, then meaning by in-context embedding distance
+   between terms that connect the same kinds of things; thresholds set offline on a golden set; the DM never
+   approves terms, only facts; a refused term's fact goes on `associated_with` with a label. Term embeddings
+   are stored on the predicate's definition, each fact's in-context embedding in the edge's properties.
+   See docs/STORY_MEMORY.md, "How the ontology steward decides a new term".
 4. **Only add, never silently rewrite:** terms are deprecated, not deleted, and every move
    of existing data to another term is logged.
 5. **Checked on every write:** domain and range, how many are allowed ("one birthplace"),
