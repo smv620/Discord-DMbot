@@ -64,6 +64,7 @@ class Feature(enum.StrEnum):
     HOUSE_RULES = "house_rules"  # house-rule changes (by voice, typed, or from a file)
     SIDEBAR_RETRY = "sidebar_retry"  # a second try when the quick answer fails its checks
     RULES_CONFIRM = "rules_confirm"  # a rules alert's candidate, confirmed before the DM sees it
+    SHEET = "sheet"  # a player's own sheet document read into the allow-listed fields (#1125)
 
 
 # The tier of each job. Nothing else chooses: a job names its tier here, never a model.
@@ -77,6 +78,7 @@ FEATURE_TIERS = {
     Feature.HOUSE_RULES: AIModelTier.CAREFUL,
     Feature.SIDEBAR_RETRY: AIModelTier.CAREFUL,
     Feature.RULES_CONFIRM: AIModelTier.CAREFUL,  # (rules alerts: FAST spots, CAREFUL confirms)
+    Feature.SHEET: AIModelTier.CAREFUL,  # its numbers and names are checked, but only once
 }
 
 # The setting that picks each tier's model (named in the log when one isn't available).

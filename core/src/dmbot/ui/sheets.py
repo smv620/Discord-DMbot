@@ -45,7 +45,10 @@ log = logging.getLogger(__name__)
 
 BUTTON_LABEL = SHEET_LABEL  # the same button, built where the consent messages are
 LINK_LABEL = "Link my D&D Beyond sheet"
+SHOW_LABEL = "Show my sheet"  # the player's view of it, a part at a time (#1126)
 TELL_LABEL = "Type in my character"
+DOC_LABEL = "Use a document link"  # any public web page or PDF link (#1125)
+FILE_LABEL = "Upload my sheet file"  # a Word, PDF or text file, kept only as names and numbers
 FORGET_LABEL = "Forget my sheet"
 NO_CHARACTER = (
     "DMbot doesn't know your character in this server yet. Ask your DM to add it: "
@@ -575,8 +578,13 @@ class SheetPanel(_Menu):
     def __init__(self, guild_id: int, character: PlayerCharacter, *, has_sheet: bool) -> None:
         super().__init__()
         self.guild_id, self.character = guild_id, character
+        if has_sheet:  # the player's own view of it, one part at a time (#1126)
+            self.add_item(_Button(self._show, label=SHOW_LABEL, style=discord.ButtonStyle.success))
         self.add_item(_Button(self._link, label=LINK_LABEL, style=discord.ButtonStyle.primary))
         self.add_item(_Button(self._typed, label=TELL_LABEL, style=discord.ButtonStyle.secondary))
+        # A document or a file the player already has (#1125); the forms live in sheet_import.
+        self.add_item(_Button(self._file, label=FILE_LABEL, style=discord.ButtonStyle.secondary))
+        self.add_item(_Button(self._doc, label=DOC_LABEL, style=discord.ButtonStyle.secondary))
         if has_sheet:
             self.add_item(
                 _Button(self._forget, label=FORGET_LABEL, style=discord.ButtonStyle.secondary)
@@ -587,6 +595,12 @@ class SheetPanel(_Menu):
     ) -> None:
         await _failed(interaction, error)
 
+    async def _show(self, interaction: discord.Interaction) -> None:
+        from dmbot.ui.sheet_view import show_my_sheet
+
+        self.origin = None  # the view is a new message; this one stays
+        await show_my_sheet(interaction, self.guild_id, self.character)
+
     async def _link(self, interaction: discord.Interaction) -> None:
         self.origin = None  # the form's answer is a new message; this one stays
         await interaction.response.send_modal(LinkForm(self.guild_id, self.character))
@@ -594,6 +608,18 @@ class SheetPanel(_Menu):
     async def _typed(self, interaction: discord.Interaction) -> None:
         self.origin = None
         await interaction.response.send_modal(TypedForm(self.guild_id, self.character))
+
+    async def _doc(self, interaction: discord.Interaction) -> None:
+        from dmbot.ui.sheet_import import DocumentLinkForm
+
+        self.origin = None
+        await interaction.response.send_modal(DocumentLinkForm(self.guild_id, self.character))
+
+    async def _file(self, interaction: discord.Interaction) -> None:
+        from dmbot.ui.sheet_import import DocumentFileForm
+
+        self.origin = None
+        await interaction.response.send_modal(DocumentFileForm(self.guild_id, self.character))
 
     async def _forget(self, interaction: discord.Interaction) -> None:
         store = _store(interaction)
