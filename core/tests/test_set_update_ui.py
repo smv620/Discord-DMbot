@@ -244,6 +244,7 @@ class SessionStart(unittest.IsolatedAsyncioTestCase):
         await set_update.check_update(bot, campaign(), 99)
         bot.rule_sets.stop_updating.assert_awaited_once()
         self.assertIn("aren't shared any more", bot.post.await_args.args[1])
+        self.assertIn("You keep version 4; it won't change.", bot.post.await_args.args[1])
 
     async def test_dmbot_asks_for_updates_that_skip_an_undone_version(self) -> None:
         bot = bot_with()

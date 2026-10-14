@@ -27,6 +27,7 @@ from typing import Any, Literal, cast
 
 from psycopg.types.json import Jsonb
 
+from dmbot.campaigns.models import CampaignError
 from dmbot.db import Conn, Database
 from dmbot.rules import set_diff
 from dmbot.rules.house import (
@@ -961,8 +962,10 @@ class RuleSetStore:
         """The set's newest version as this follower can see it, and whether the set is known
         to be gone. Through the share code it followed by (the update door: a code turned off
         AFTER the follow still answers), or by the set's id when it is in this server. (None,
-        True): the publisher stopped sharing. (None, False): not known, never "gone": a follow
-        from another server with no code, say, can't be told apart from a set we can't see."""
+        True): the publisher stopped sharing, or the set is deleted (its campaign was). A follow
+        with no code was picked from the list in its own server, where a set that is not there
+        any more is deleted. (A restored backup's follow has no code and does not update, so it
+        is never asked.)"""
         if follow.code is not None:
             cur = await conn.execute(
                 "SELECT * FROM dmbot_set_update_by_code(%s, %s)", (follow.code, follow.followed_at)
@@ -979,7 +982,7 @@ class RuleSetStore:
         cur = await conn.execute(_LATEST_WITH_STATUS + " WHERE s.id = %s", (follow.set_id,))
         row = await cur.fetchone()
         if row is None:
-            return None, False  # not in this server: unknown
+            return None, True  # picked from this server's list, and no longer in it: deleted
         if row["status"] != "shared":
             return None, True
         return _offer(row), False
@@ -1240,6 +1243,108 @@ class RuleSetStore:
                     raise RuleSetError(NOT_FOLLOWING)
                 return 0
             return kept
+
+
+FOLLOWS_DAMAGED = "This backup file is damaged (bad shared house rules)."
+_FOLLOW_KEYS = frozenset(
+    {"set_id", "kind", "name", "publisher", "version", "content", "position", "by", "at"}
+)
+
+
+class FollowedSetsSection:
+    """The sets a campaign follows, in its backup (an `ExportSection`): the name, the version it
+    uses and that version's rules, so the campaign never loses them ("Never lost", PLAN). NEVER
+    the share code, which is a key to the publisher's set and must not travel in a file anyone in
+    the server may download. A restored campaign has no code, so each follow comes back marked
+    **no longer updated**: it keeps its copy and its rules keep working, and it can follow the
+    set again with a code."""
+
+    name = "rule_set_follows"
+
+    async def dump(self, conn: Conn, guild_id: int, campaign_id: str) -> list[Any]:
+        cur = await conn.execute(
+            "SELECT set_id, kind, set_name, publisher, version, content, position, followed_by,"
+            " followed_at FROM rule_set_follows WHERE guild_id = %s AND campaign_id = %s"
+            " ORDER BY position, set_id",
+            (guild_id, campaign_id),
+        )
+        return [
+            {
+                "set_id": str(r["set_id"]),
+                "kind": str(r["kind"]),
+                "name": str(r["set_name"]),
+                "publisher": str(r["publisher"]),
+                "version": int(r["version"]),
+                "content": _json(r["content"]),
+                "position": int(r["position"]),
+                "by": str(r["followed_by"]),
+                "at": int(r["followed_at"]),
+            }
+            for r in await cur.fetchall()
+        ]
+
+    def check(self, rows: list[Any]) -> list[dict[str, Any]]:
+        """Every row validated; nothing is written until all are right."""
+        if len(rows) > 20:
+            raise CampaignError(FOLLOWS_DAMAGED)
+        out: list[dict[str, Any]] = []
+        seen: set[str] = set()
+        houses = 0
+        for row in rows:
+            if not isinstance(row, dict) or set(row) != _FOLLOW_KEYS:
+                raise CampaignError(FOLLOWS_DAMAGED)
+            set_id, kind = row["set_id"], row["kind"]
+            name, publisher = row["name"], row["publisher"]
+            by = row["by"]
+            if (
+                not isinstance(set_id, str)
+                or len(set_id) != 32
+                or set_id.strip("0123456789abcdef")
+                or set_id in seen
+                or kind not in (HOUSE_RULES, "homebrew")
+                or not isinstance(name, str)
+                or not 1 <= len(name) <= NAME_MAX
+                or not isinstance(publisher, str)
+                or not 1 <= len(publisher) <= 100
+                or not _plain_int(row["version"], 1)
+                or not _plain_int(row["position"], 0)
+                or not _plain_int(row["at"], 0)
+                or not (isinstance(by, str) and by.isascii() and by.isdigit() and int(by) > 0)
+                or int(by) > 2**63 - 1
+            ):
+                raise CampaignError(FOLLOWS_DAMAGED)
+            seen.add(set_id)
+            houses += kind == HOUSE_RULES
+            try:
+                content = valid_content(row["content"])
+            except RuleSetError:
+                raise CampaignError(FOLLOWS_DAMAGED) from None
+            out.append(row | {"content": content})
+        if houses > 1:  # a campaign follows one house-rules set
+            raise CampaignError(FOLLOWS_DAMAGED)
+        return out
+
+    async def load(self, conn: Conn, guild_id: int, campaign_id: str, rows: Any) -> None:
+        for row in self.check(rows):  # the store has checked them; this is cheap and idempotent
+            await conn.execute(
+                _INSERT_FOLLOW,
+                (
+                    guild_id, campaign_id, row["set_id"], row["kind"], row["name"],
+                    row["publisher"], row["version"], Jsonb(row["content"]), row["position"],
+                    False,  # no code, so no updates: "no longer updated"
+                    int(row["by"]), row["at"], None,
+                ),
+            )  # fmt: skip
+
+    async def clear(self, conn: Conn, guild_id: int, campaign_id: str) -> None:
+        await conn.execute(
+            "DELETE FROM rule_set_follows WHERE guild_id = %s AND campaign_id = %s",
+            (guild_id, campaign_id),
+        )
+
+
+def _plain_int(value: object, low: int) -> bool:
+    return isinstance(value, int) and not isinstance(value, bool) and low <= value <= 2**31 - 1
 
 
 _LATEST_FROM = (

@@ -484,10 +484,11 @@ async def check_update(bot: Any, campaign: Campaign, screen_id: int) -> None:
                 follows = await sets.following(campaign.guild_id, campaign.id)
                 await sets.stop_updating(campaign.guild_id, campaign.id)
                 name = discord.utils.escape_markdown(follows[0].name) if follows else "The set's"
+                kept = f"version {follows[0].version}" if follows else "your copy"
                 await bot.post(
                     screen_id,
-                    f"📚 **{name}** house rules aren't shared any more. You keep your copy as it "
-                    "is; it just won't get updates.",
+                    f"📚 **{name}** house rules aren't shared any more. "
+                    f"You keep {kept}; it won't change.",
                 )
             return
         await sets.take_update(  # DMbot takes it: Follow is the default when the DM does nothing
