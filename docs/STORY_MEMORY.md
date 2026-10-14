@@ -302,6 +302,34 @@ story facts, in plain words ("Is **Aldric** sworn to **Auril**? [Yes] [No]").
   worker), decided with its cost when the steward is built. A campaign has dozens of terms, so the term
   check runs in Python; `pgvector` is needed only for meaning search over many edges.
 
+**The official list of relationships, traceable in the database (owner, 2026-10-14).** Every
+relationship, core and campaign alike, carries a **real-world definition**, and the database keeps it, so
+any fact can be traced to exactly what its relationship meant when the fact was written.
+- **Each definition holds:** the key and label; a plain real-world description; **covers** (the D&D cases it
+  is meant for); **not this** (near cases that belong to another relationship, and which one); examples;
+  what it connects (domain and range) and how many are allowed; the label read from the other side; synonyms
+  that map to it; and the in-context embedding with its model (above).
+- **Example, a new core relationship `sworn_to`** ("is sworn to"; read back "has sworn"):
+  - *Description:* bound by an oath, vow or pact to a person, a god, a power or a cause.
+  - *Covers:* a paladin's oath (to a god, an order or an ideal), a warlock's pact with their patron, a
+    knight's fealty, a blood oath, a geas.
+  - *Not this:* worshipping or working for someone without a binding oath is `serves`; belonging to an
+    order is `member_of` (a paladin can be both a member of the order and sworn to its cause).
+  - *Connects:* a character → a character, a group or an idea. A named patron (Zariel, the Raven Queen) is a
+    character; an ideal ("the Oath of Vengeance's cause") is an idea. The **subclass** itself (Oath of
+    Devotion, the Fiend patron) is rules data and stays a link to the rules, never a relationship.
+  - *Synonyms:* `pledged_to`, `oath_to`, `pact_with`, `bound_to`.
+- **Where it lives:** the core vocabulary is written in code (it changes only in a reviewed release) and
+  **copied into a database table of definitions at every start**, one row per relationship **and version**.
+  It holds no campaign data, so it is shared by all campaigns like the rules data. A campaign's own
+  relationships stay in its own table with the same fields. **Each fact records the version of the
+  definition it was written under**, so a later change of meaning never silently changes old facts: they
+  can be found and checked again.
+- **Changing a definition** (a reviewed release): a wording fix keeps the version; a change of meaning
+  (what it covers or connects) is a new version, and the facts on the old one are checked against the new
+  one after the session (anything that no longer fits becomes a flag, never a silent fix).
+- **All core relationships get full definitions** in the same release (today's are one line each).
+
 ### 4. Continuity warnings
 
 **When warnings start, and how sure they must be (decided).**

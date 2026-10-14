@@ -1476,6 +1476,10 @@ versioned and self-checking:
    approves terms, only facts; a refused term's fact goes on `associated_with` with a label. Term embeddings
    are stored on the predicate's definition, each fact's in-context embedding in the edge's properties.
    See docs/STORY_MEMORY.md, "How the ontology steward decides a new term".
+   *Traceable definitions (owner, 2026-10-14):* every relationship, core and campaign, has a real-world
+   definition (description, covers, not this, examples) kept in the database by version, and each fact records
+   the version it was written under; `sworn_to` joins the core (paladin oaths, warlock pacts). See
+   docs/STORY_MEMORY.md, "The official list of relationships"; build #1189.
 4. **Only add, never silently rewrite:** terms are deprecated, not deleted, and every move
    of existing data to another term is logged.
 5. **Checked on every write:** domain and range, how many are allowed ("one birthplace"),
