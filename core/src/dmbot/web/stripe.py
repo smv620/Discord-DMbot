@@ -182,10 +182,43 @@ class StripeProvider:
 
     # --- asking Stripe ---
 
-    async def _checkout(self, form: dict[str, str], email: str | None) -> str:
+    async def _customer(self, user_id: int, dmbot_id: str, email: str | None) -> str:
+        """A new Stripe customer whose invoices are numbered from the person's DMbot ID
+        (#1228). Stripe's Checkout can't set an invoice prefix, so the customer is made first
+        and the checkout is told to use it. The same request within Stripe's idempotency
+        window gets the same customer back, so abandoned checkouts don't pile up customers."""
+        form = {"invoice_prefix": dmbot_id, "metadata[user_id]": str(user_id)}
+        if email:
+            form["email"] = email
+        status, answer = await self._http("POST", "/v1/customers", form, _idempotency_key(form))
+        found = answer.get("id") if status == 200 and isinstance(answer, dict) else None
+        if not isinstance(found, str):
+            raise PaymentError(f"Stripe answered {status} to a new customer")
+        return _checked(found, _CUSTOMER, "customer id")
+
+    async def set_invoice_prefix(self, customer_id: str, dmbot_id: str) -> None:
+        """Give an existing customer the DMbot ID as its invoice prefix."""
+        path = f"/v1/customers/{_checked(customer_id, _CUSTOMER, 'customer id')}"
+        status, _ = await self._http("POST", path, {"invoice_prefix": dmbot_id})
+        if status != 200:
+            raise PaymentError(f"Stripe answered {status} setting an invoice prefix")
+
+    async def _checkout(
+        self,
+        form: dict[str, str],
+        email: str | None,
+        *,
+        user_id: int,
+        dmbot_id: str | None = None,
+        customer_id: str | None = None,
+    ) -> str:
         if self._config.managed_payments:
             form["managed_payments[enabled]"] = "true"
-        if email:
+        if customer_id:
+            form["customer"] = _checked(customer_id, _CUSTOMER, "customer id")
+        elif dmbot_id:
+            form["customer"] = await self._customer(user_id, dmbot_id, email)
+        elif email:
             form["customer_email"] = email  # server-side only: never in the address returned
         # A double-click, or a retry after a timeout, must not make a second live checkout
         # (two completed ones would be two subscriptions). Within one five-minute window the
@@ -211,6 +244,8 @@ class StripeProvider:
         email: str | None,
         plan: Plan,
         return_url: str,
+        dmbot_id: str | None = None,
+        customer_id: str | None = None,
     ) -> str:
         price = self._config.prices.get(plan.id)
         if price is None:
@@ -225,10 +260,18 @@ class StripeProvider:
             # Renewals and failures carry the subscription's metadata, not the checkout's.
             "subscription_data[metadata][user_id]": str(user_id),
         }
-        return await self._checkout(form, email)
+        return await self._checkout(
+            form, email, user_id=user_id, dmbot_id=dmbot_id, customer_id=customer_id
+        )
 
     async def extra_hours_checkout_url(
-        self, *, user_id: int, email: str | None, return_url: str
+        self,
+        *,
+        user_id: int,
+        email: str | None,
+        return_url: str,
+        dmbot_id: str | None = None,
+        customer_id: str | None = None,
     ) -> str:
         """The page to buy +10 hours for this month (plans.json `extraHours`); sold by
         `POST /billing/extra-hours` (#1089). A one-time payment, marked in the metadata so the
@@ -242,7 +285,9 @@ class StripeProvider:
             "metadata[user_id]": str(user_id),
             "metadata[item]": EXTRA_HOURS_ITEM,
         }
-        return await self._checkout(form, email)
+        return await self._checkout(
+            form, email, user_id=user_id, dmbot_id=dmbot_id, customer_id=customer_id
+        )
 
     async def billing_url(self, *, customer_id: str, return_url: str) -> str:
         """The customer portal (change plan, fix a payment, stop). Stripe makes a short-lived

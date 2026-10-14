@@ -621,6 +621,56 @@ class Provider(unittest.IsolatedAsyncioTestCase):
         for _, _, form in self.http.calls:
             self.assertEqual(form["managed_payments[enabled]"], "true")
 
+    async def test_a_new_customer_gets_the_dmbot_id_as_invoice_prefix(self) -> None:
+        self.http.answers[("POST", "/v1/customers")] = (200, {"id": "cus_new1"})
+        self.http.answers[("POST", "/v1/checkout/sessions")] = (200, {"url": CHECKOUT_URL})
+        await self.provider.checkout_url(
+            user_id=USER,
+            email="player@example.com",
+            plan=plans.load().by_id["table"],
+            return_url="https://dmbot.example/account",
+            dmbot_id="ABC123",
+        )
+        made, session = self.http.calls
+        self.assertEqual(made[1], "/v1/customers")
+        self.assertEqual(made[2]["invoice_prefix"], "ABC123")
+        self.assertEqual(made[2]["metadata[user_id]"], str(USER))
+        self.assertEqual(session[2]["customer"], "cus_new1")
+        self.assertNotIn("customer_email", session[2])  # Stripe takes one or the other
+        self.assertIsNotNone(self.http.keys[0])  # the same request again: the same customer
+
+    async def test_a_known_customer_is_reused_not_made_again(self) -> None:
+        self.http.answers[("POST", "/v1/checkout/sessions")] = (200, {"url": CHECKOUT_URL})
+        await self.provider.checkout_url(
+            user_id=USER,
+            email=None,
+            plan=plans.load().by_id["table"],
+            return_url="https://dmbot.example/account",
+            dmbot_id="ABC123",
+            customer_id="cus_old9",
+        )
+        [(_, path, form)] = self.http.calls
+        self.assertEqual((path, form["customer"]), ("/v1/checkout/sessions", "cus_old9"))
+
+    async def test_a_customer_stripe_would_not_make_stops_the_checkout(self) -> None:
+        self.http.answers[("POST", "/v1/customers")] = (400, None)
+        with self.assertRaises(PaymentError):
+            await self.provider.checkout_url(
+                user_id=USER,
+                email=None,
+                plan=plans.load().by_id["table"],
+                return_url="https://dmbot.example/account",
+                dmbot_id="ABC123",
+            )
+        self.assertEqual(len(self.http.calls), 1)  # no checkout without the customer
+
+    async def test_an_existing_customer_can_be_given_the_prefix(self) -> None:
+        self.http.answers[("POST", "/v1/customers/cus_old9")] = (200, {})
+        await self.provider.set_invoice_prefix("cus_old9", "ABC123")
+        self.assertEqual(self.http.calls[0][2], {"invoice_prefix": "ABC123"})
+        with self.assertRaises(PaymentError):
+            await self.provider.set_invoice_prefix("not a customer", "ABC123")
+
     async def test_a_plan_with_no_price_is_refused(self) -> None:
         with self.assertRaises(PaymentError):
             await self.provider.checkout_url(

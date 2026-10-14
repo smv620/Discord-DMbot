@@ -83,13 +83,23 @@ class PaymentProvider(Protocol):
         email: str | None,
         plan: Plan,
         return_url: str,
+        dmbot_id: str | None = None,
+        customer_id: str | None = None,
     ) -> str:
         """The company's checkout page for this plan. `email` prefills it and is sent to
-        the company server-side only, never put in the returned address."""
+        the company server-side only, never put in the returned address. `customer_id`: the
+        company's customer for this person if they have one; otherwise `dmbot_id` (their
+        DMbot ID) is the prefix of the new customer's invoices (#1228)."""
         ...
 
     async def extra_hours_checkout_url(
-        self, *, user_id: int, email: str | None, return_url: str
+        self,
+        *,
+        user_id: int,
+        email: str | None,
+        return_url: str,
+        dmbot_id: str | None = None,
+        customer_id: str | None = None,
     ) -> str:
         """The company's page to buy the extra hours (plans.json `extraHours`) for this
         month. Same rules as `checkout_url`: the email goes server-side only."""
@@ -134,12 +144,20 @@ class FakeProvider:
         email: str | None,
         plan: Plan,
         return_url: str,
+        dmbot_id: str | None = None,
+        customer_id: str | None = None,
     ) -> str:
         query: dict[str, str] = {"fake_checkout": plan.id}
         return f"{return_url}?{urlencode(query)}"
 
     async def extra_hours_checkout_url(
-        self, *, user_id: int, email: str | None, return_url: str
+        self,
+        *,
+        user_id: int,
+        email: str | None,
+        return_url: str,
+        dmbot_id: str | None = None,
+        customer_id: str | None = None,
     ) -> str:
         return f"{return_url}?{urlencode({'fake_extra_hours': '1'})}"
 

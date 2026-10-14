@@ -32,6 +32,7 @@ from dmbot.web.accounts import (
     active_subscription,
     customer_id,
     delete_person,
+    dmbot_id,
     link_install,
     record_install,
 )
@@ -598,6 +599,8 @@ def create_app(
                 email=email,
                 plan=plan,
                 return_url=account_page,
+                dmbot_id=await dmbot_id(db, session.user_id),
+                customer_id=await customer_id(db, session.user_id),
             )
         except PaymentError as exc:
             log.warning("Checkout failed: %s", exc)
@@ -621,7 +624,11 @@ def create_app(
         email = await account_email(db, session.user_id)
         try:
             url = await provider.extra_hours_checkout_url(
-                user_id=session.user_id, email=email, return_url=account_page
+                user_id=session.user_id,
+                email=email,
+                return_url=account_page,
+                dmbot_id=await dmbot_id(db, session.user_id),
+                customer_id=await customer_id(db, session.user_id),
             )
         except PaymentError as exc:
             log.warning("Extra hours checkout failed: %s", exc)
