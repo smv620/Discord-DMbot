@@ -481,13 +481,18 @@ async def check_update(bot: Any, campaign: Campaign, screen_id: int) -> None:
         update = await sets.pending_update(campaign.guild_id, campaign.id, for_dmbot=True)
         if update is None:
             if await sets.is_gone(campaign.guild_id, campaign.id):
-                follows = await sets.following(campaign.guild_id, campaign.id)
+                # The house-rules follow is the one is_gone and stop_updating acted on.
+                houses = [
+                    f
+                    for f in await sets.following(campaign.guild_id, campaign.id)
+                    if f.kind == rule_sets.HOUSE_RULES and f.updating
+                ]
                 await sets.stop_updating(campaign.guild_id, campaign.id)
-                if follows:
-                    name = discord.utils.escape_markdown(follows[0].name)
+                if houses:
+                    name = discord.utils.escape_markdown(houses[0].name)
                     text = (
                         f"📚 **{name}** isn't being shared any more. "
-                        f"Your table keeps version {follows[0].version}, and it won't get updates."
+                        f"Your table keeps version {houses[0].version}, and it won't get updates."
                     )
                 else:
                     text = (

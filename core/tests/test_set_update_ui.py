@@ -248,6 +248,18 @@ class SessionStart(unittest.IsolatedAsyncioTestCase):
             "Your table keeps version 4, and it won't get updates.", bot.post.await_args.args[1]
         )
 
+    async def test_the_note_names_the_house_rules_set_not_another_follow(self) -> None:
+        homebrew = rule_sets.Follow("h", "homebrew", "Pack", "Blue", 9, {}, True, 1, None)
+        bot = bot_with(
+            is_gone=AsyncMock(return_value=True),
+            following=AsyncMock(return_value=[homebrew, follow_at(4)]),
+        )
+        await set_update.check_update(bot, campaign(), 99)
+        said = bot.post.await_args.args[1]
+        self.assertIn("Red Table", said)
+        self.assertIn("version 4", said)
+        self.assertNotIn("Pack", said)
+
     async def test_dmbot_asks_for_updates_that_skip_an_undone_version(self) -> None:
         bot = bot_with()
         await set_update.check_update(bot, campaign(), 99)

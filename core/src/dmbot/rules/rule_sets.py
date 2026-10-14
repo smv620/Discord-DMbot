@@ -965,7 +965,8 @@ class RuleSetStore:
         True): the publisher stopped sharing, or the set is deleted (its campaign was). A follow
         with no code was picked from the list in its own server, where a set that is not there
         any more is deleted. (A restored backup's follow has no code and does not update, so it
-        is never asked.)"""
+        is never asked.) A follow made from ANOTHER server before share codes were kept has no
+        code either and could not update anyway, so it too reads as gone once, harmlessly."""
         if follow.code is not None:
             cur = await conn.execute(
                 "SELECT * FROM dmbot_set_update_by_code(%s, %s)", (follow.code, follow.followed_at)
@@ -1245,6 +1246,7 @@ class RuleSetStore:
             return kept
 
 
+FOLLOWS_MAX = 100  # dump and check agree, so a backup that downloads also restores
 FOLLOWS_DAMAGED = "This backup file is damaged (bad shared house rules)."
 _FOLLOW_KEYS = frozenset(
     {"set_id", "kind", "name", "publisher", "version", "content", "position", "by", "at"}
@@ -1257,7 +1259,9 @@ class FollowedSetsSection:
     the share code, which is a key to the publisher's set and must not travel in a file anyone in
     the server may download. A restored campaign has no code, so each follow comes back marked
     **no longer updated**: it keeps its copy and its rules keep working, and it can follow the
-    set again with a code."""
+    set again with a code. A forged file could name any set id here; that is harmless because a
+    restored follow has no code and does not update, and nothing authorises by a set id alone
+    (a suggestion needs a follow that is still updating)."""
 
     name = "rule_set_follows"
 
@@ -1265,8 +1269,8 @@ class FollowedSetsSection:
         cur = await conn.execute(
             "SELECT set_id, kind, set_name, publisher, version, content, position, followed_by,"
             " followed_at FROM rule_set_follows WHERE guild_id = %s AND campaign_id = %s"
-            " ORDER BY position, set_id",
-            (guild_id, campaign_id),
+            " ORDER BY position, set_id LIMIT %s",
+            (guild_id, campaign_id, FOLLOWS_MAX),
         )
         return [
             {
@@ -1285,7 +1289,7 @@ class FollowedSetsSection:
 
     def check(self, rows: list[Any]) -> list[dict[str, Any]]:
         """Every row validated; nothing is written until all are right."""
-        if len(rows) > 20:
+        if len(rows) > FOLLOWS_MAX:
             raise CampaignError(FOLLOWS_DAMAGED)
         out: list[dict[str, Any]] = []
         seen: set[str] = set()
@@ -1308,7 +1312,7 @@ class FollowedSetsSection:
                 or not 1 <= len(publisher) <= 100
                 or not _plain_int(row["version"], 1)
                 or not _plain_int(row["position"], 0)
-                or not _plain_int(row["at"], 0)
+                or not _plain_int(row["at"], 0, 2**63 - 1)
                 or not (isinstance(by, str) and by.isascii() and by.isdigit() and int(by) > 0)
                 or int(by) > 2**63 - 1
             ):
@@ -1343,8 +1347,8 @@ class FollowedSetsSection:
         )
 
 
-def _plain_int(value: object, low: int) -> bool:
-    return isinstance(value, int) and not isinstance(value, bool) and low <= value <= 2**31 - 1
+def _plain_int(value: object, low: int, high: int = 2**31 - 1) -> bool:
+    return isinstance(value, int) and not isinstance(value, bool) and low <= value <= high
 
 
 _LATEST_FROM = (
