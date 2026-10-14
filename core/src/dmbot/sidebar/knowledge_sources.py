@@ -129,13 +129,16 @@ def labels() -> list[str]:
             trees.append(ast.parse(path.read_text(encoding="utf-8")))
         except (SyntaxError, UnicodeDecodeError):
             continue
-    constants: dict[str, str] = {}  # NAME = "text" anywhere in the package
+    # NAME = "text" anywhere in the package. Two modules may use the same name for different
+    # words (a STOP_LABEL in each), so every text a name is given is kept: a label that uses
+    # the name may mean any of them, and none must be lost.
+    constants: dict[str, set[str]] = {}
     for tree in trees:
         for node in ast.walk(tree):
             if isinstance(node, ast.Assign) and (text := _text(node.value)):
                 for target in node.targets:
                     if isinstance(target, ast.Name):
-                        constants[target.id] = text
+                        constants.setdefault(target.id, set()).add(text)
     found: set[str] = set()
     for tree in trees:
         for node in ast.walk(tree):
@@ -147,8 +150,8 @@ def labels() -> list[str]:
                     if text := _text(value):
                         found.add(text)
                     elif isinstance(value, ast.Name) and value.id in constants:
-                        found.add(constants[value.id])
+                        found.update(constants[value.id])
                     elif isinstance(value, ast.Attribute) and value.attr in constants:
-                        found.add(constants[value.attr])
+                        found.update(constants[value.attr])
     found.update(re.findall(r"\*\*([^*]{4,40})\*\*", _help_card_raw()))
     return sorted(found)
