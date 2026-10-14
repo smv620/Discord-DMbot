@@ -2326,10 +2326,12 @@ MOVES = """
         -- Same lock order as the hand-over and the pause door: the campaigns (in a fixed
         -- order), then the people. A payment for either account waits for the move.
         IF old IS NOT NULL AND new IS NOT NULL AND old > 0 AND new > 0 AND old <> new THEN
-            PERFORM 1 FROM campaigns c WHERE c.owner_user_id = old
+            PERFORM 1 FROM campaigns c WHERE c.owner_user_id IN (old, new)
                 ORDER BY c.guild_id, c.id FOR UPDATE;
             PERFORM pg_advisory_xact_lock(
-                hashtextextended('dmbot.owner_slots:' || old::text, 0));
+                hashtextextended('dmbot.owner_slots:' || least(old, new)::text, 0));
+            PERFORM pg_advisory_xact_lock(
+                hashtextextended('dmbot.owner_slots:' || greatest(old, new)::text, 0));
             PERFORM pg_advisory_xact_lock(
                 hashtextextended('dmbot.plan_writer:' || least(old, new)::text, 0));
             PERFORM pg_advisory_xact_lock(
@@ -2442,7 +2444,7 @@ MOVES = """
     --                       plan is the one the payment event names, so a plan the old
     --                       account buys later is never sent to the new one
     CREATE FUNCTION dmbot_user_of(id TEXT) RETURNS BIGINT
-        LANGUAGE plpgsql STABLE SECURITY DEFINER
+        LANGUAGE plpgsql SECURITY DEFINER
         AS $fn$
     #variable_conflict use_column
     DECLARE
@@ -2456,19 +2458,30 @@ MOVES = """
     END
     $fn$;
     CREATE FUNCTION dmbot_moved_to(old BIGINT, sub TEXT, cust TEXT) RETURNS BIGINT
-        LANGUAGE plpgsql STABLE SECURITY DEFINER
+        LANGUAGE plpgsql SECURITY DEFINER
         AS $fn$
     #variable_conflict use_column
     DECLARE
         before TEXT := COALESCE(current_setting('dmbot.owner_sync', true), '');
         found BIGINT;
+        here BIGINT := old;
+        hop BIGINT;
     BEGIN
         PERFORM set_config('dmbot.owner_sync', 'move', true);
-        SELECT m.new_user_id INTO found
-            FROM account_moves m JOIN entitlements e ON e.user_id = m.new_user_id
-            WHERE m.old_user_id = old
-              AND ((sub IS NOT NULL AND e.provider_subscription_id = sub)
-                   OR (cust IS NOT NULL AND e.provider_customer_id = cust));
+        -- Follow the moves (a few at most) to the account that holds the plan now.
+        FOR i IN 1..5 LOOP
+            SELECT m.new_user_id INTO hop FROM account_moves m WHERE m.old_user_id = here;
+            EXIT WHEN hop IS NULL;
+            here := hop;
+            IF EXISTS (SELECT 1 FROM entitlements e
+                       WHERE e.user_id = here
+                         AND ((sub IS NOT NULL AND e.provider_subscription_id = sub)
+                              OR (cust IS NOT NULL AND e.provider_customer_id = cust))) THEN
+                found := here;
+                EXIT;
+            END IF;
+            hop := NULL;
+        END LOOP;
         PERFORM set_config('dmbot.owner_sync', before, true);
         RETURN found;
     END

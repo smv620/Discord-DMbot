@@ -23,6 +23,7 @@ from tests.test_web_accounts_db import INSERT_PLAN, PLAN_ROW
 from tests.test_web_role import ensure_web_role, web_url
 
 OLD, NEW, THIRD = 111_111_111_111_111_111, 222_222_222_222_222_222, 333_333_333_333_333_333
+THIRD_NEW = 444_444_444_444_444_444
 GUILD_A, GUILD_B = 1001, 2002
 NOW = 1_800_000_000
 
@@ -35,7 +36,7 @@ class Moves(DatabaseTest):
         self.campaigns = CampaignStore(self.db, clock=lambda: self.now)
         self.campaigns.register_section(MemorySection())
         self.memory = MemoryStore(self.db, clock=lambda: self.now)
-        for uid in (OLD, NEW, THIRD):
+        for uid in (OLD, NEW, THIRD, THIRD_NEW):
             await self.add_user(uid)
         await self.give_plan(OLD)
         self.a = (await self.campaigns.create(GUILD_A, "Frostmaiden", OLD)).id
@@ -374,3 +375,31 @@ class Moves(DatabaseTest):
         with self.assertRaises(MoveError) as err:
             await self.moves.move(OLD, NEW, await self.code())
         self.assertEqual(str(err.exception), account_move.TOO_MANY_CAMPAIGNS)
+
+    async def test_open_hand_over_offers_end_with_the_move(self) -> None:
+        async with self.db.guild(GUILD_A) as conn:
+            await conn.execute(
+                "INSERT INTO campaign_handover_offers (guild_id, campaign_id, from_user_id,"
+                " to_user_id, created_at, from_name, to_name) VALUES (%s, %s, %s, %s, %s, 'a', 'b')",
+                (GUILD_A, self.a, OLD, THIRD, NOW),
+            )
+        await self.moves.move(OLD, NEW, await self.code())
+        async with self.db.guild(GUILD_A) as conn:
+            cur = await conn.execute("SELECT status FROM campaign_handover_offers")
+            self.assertEqual([r["status"] for r in await cur.fetchall()], ["withdrawn"])
+
+    async def test_a_payment_follows_a_chain_of_two_moves(self) -> None:
+        await self.moves.move(OLD, NEW, await self.code())
+        self.now = NOW + 31 * 86400
+        code = await self.moves.make_code(NEW)
+        await self.moves.move(NEW, THIRD_NEW, code)
+        event = PaymentEvent(
+            provider="stripe", event_id="evt_3", kind="subscription_renewed", user_id=OLD,
+            occurred_at=self.now + 5, plan="table", period_start=self.now,
+            period_end=self.now + 77, customer_id="cus_old1", subscription_id="sub_old1",
+        )  # fmt: skip
+        await entitlements_writer.apply_event(self.db, event, now=self.now + 10)
+        self.assertEqual(
+            await self.scalar("SELECT period_end FROM entitlements", person=THIRD_NEW),
+            self.now + 77,
+        )

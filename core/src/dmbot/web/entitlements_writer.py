@@ -131,32 +131,42 @@ def _same_subscription(row: dict[str, Any], event: PaymentEvent) -> bool:
     return known is None or event.subscription_id is None or known == event.subscription_id
 
 
-async def _current_owner(db: Database, event: PaymentEvent) -> int:
-    """Who holds the subscription an event names now. The payment company's records carry
-    the Discord ID the plan was bought with; if that account moved (#1230), the plan is the
-    new account's, but only when the event names the plan that moved (its subscription or
-    customer): a plan the old ID buys later stays the old ID's. Follows a chain of moves
-    (a few at most)."""
-    user_id = event.user_id
-    for _ in range(5):
-        async with db.user(user_id) as conn:
-            cur = await conn.execute(
-                "SELECT dmbot_moved_to(%s, %s, %s) AS moved",
-                (user_id, event.subscription_id, event.customer_id),
-            )
-            row = await cur.fetchone()
-        if row is None or row["moved"] is None:
-            break
-        user_id = int(row["moved"])
-    return user_id
+async def _moved_to(conn: Conn, event: PaymentEvent) -> int | None:
+    """Where the plan this event names went, if its account moved (#1230). The company's
+    records carry the Discord ID the plan was bought with; after a move the plan is the new
+    account's, but only when the event names the plan that moved (its subscription or
+    customer): a plan the old ID buys later stays the old ID's. Asked inside the person's
+    plan lock, so a move that commits just before can't leave the event on a gone row."""
+    cur = await conn.execute(
+        "SELECT dmbot_moved_to(%s, %s, %s) AS moved",
+        (event.user_id, event.subscription_id, event.customer_id),
+    )
+    row = await cur.fetchone()
+    return None if row is None or row["moved"] is None else int(row["moved"])
+
+
+MOVE_HOPS = 5  # accounts that moved again and again: more than this is not real
 
 
 async def apply_event(db: Database, event: PaymentEvent, *, now: int) -> Outcome:
+    """Apply one payment event, following the plan to its new account if it moved."""
+    for _ in range(MOVE_HOPS):
+        result = await _apply_once(db, event, now=now)
+        if isinstance(result, int):
+            event = dataclasses.replace(event, user_id=result)
+            continue
+        return result
+    log.warning("Payment event %s followed too many account moves: ignored", event.event_id)
+    return "ignored"
+
+
+async def _apply_once(db: Database, event: PaymentEvent, *, now: int) -> Outcome | int:
+    """One try under the person's plan lock; an int is the account the plan moved to."""
     loaded = plans.load()
-    owner = await _current_owner(db, event)
-    if owner != event.user_id:
-        event = dataclasses.replace(event, user_id=owner)
     async with db.plan_writer(event.user_id) as conn:  # one change per person at a time
+        moved = await _moved_to(conn, event)
+        if moved is not None:
+            return moved
         if not await _known_person(conn, event.user_id):
             # Nothing to attach the plan to. The company still has the payment; ids only.
             if await _paid_before(conn, event.user_id):

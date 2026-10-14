@@ -25,6 +25,8 @@ from collections import deque
 from collections.abc import Callable
 from dataclasses import dataclass
 
+from psycopg import errors
+
 from dmbot.db import Database
 
 CODE_LETTERS = "ABCDEFGHJKMNPQRSTUVWXYZ23456789"  # no 0/O, 1/I/L: easy to read out and type
@@ -52,6 +54,7 @@ TOO_MANY_CAMPAIGNS = (
     "Both accounts together own more campaigns than the plan allows. Delete or hand over "
     "some on the new account, then try again."
 )
+BUSY = "DMbot is busy with this account right now. Try again in a minute."
 NO_ACCOUNT = "We can't find a DMbot account for that code. Ask for a new one on the old account."
 
 _REFUSALS = {
@@ -201,12 +204,18 @@ class AccountMoves:
         its half hour (or after a newer code) moves nothing."""
         if await self.find(new_user_id, code) != old_user_id:
             raise MoveError(BAD_CODE)
-        async with self._db.unscoped() as conn:
-            cur = await conn.execute(
-                "SELECT dmbot_move_account(%s, %s, %s) AS outcome",
-                (old_user_id, new_user_id, self._now()),
-            )
-            row = await cur.fetchone()
+        try:
+            async with self._db.unscoped() as conn:
+                # Don't queue behind a long transaction: the Discord answer would time out
+                # while the move waited, then happen unseen.
+                await conn.execute("SET LOCAL lock_timeout = '3s'")
+                cur = await conn.execute(
+                    "SELECT dmbot_move_account(%s, %s, %s) AS outcome",
+                    (old_user_id, new_user_id, self._now()),
+                )
+                row = await cur.fetchone()
+        except errors.LockNotAvailable:
+            raise MoveError(BUSY) from None
         outcome = str(row["outcome"]) if row else "no_account"
         if outcome != "moved":
             raise MoveError(_REFUSALS.get(outcome, NOT_PAID))
