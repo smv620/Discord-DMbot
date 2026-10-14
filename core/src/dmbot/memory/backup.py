@@ -385,12 +385,35 @@ def _check_terms(by_tag: dict[str, list[dict[str, Any]]]) -> None:
     )
     if any(r["type"] not in onto.types for r in by_tag["entity"]):
         raise CampaignError(DAMAGED)
-    # A role belongs to a character; only a player character has a player; a link is on a
-    # character that is in the file.
+    # A role belongs to a character; only a player character (or a person) has a player;
+    # a link is on a character that is in the file.
     if any(
         (r["role"] is not None and not onto.is_a(r["type"], "character"))
-        or (r["played_by"] is not None and r["role"] != "player_character")
+        or (
+            r["played_by"] is not None
+            and r["role"] != "player_character"
+            and r["type"] != "person"  # a person keeps their Discord ID here (#1188)
+        )
         for r in by_tag["entity"]
+    ):
+        raise CampaignError(DAMAGED)
+    # One live person for each Discord user, and a `plays` link goes from a person to a
+    # character (the database enforces the first; a damaged file must not reach it).
+    live_people = [
+        r["played_by"]
+        for r in by_tag["entity"]
+        if r["type"] == "person" and r["status"] in ("proposed", "confirmed")
+    ]
+    if len(live_people) != len(set(live_people)) or any(
+        r["played_by"] is None for r in by_tag["entity"] if r["type"] == "person"
+    ):
+        raise CampaignError(DAMAGED)
+    kinds = {r["id"]: r["type"] for r in by_tag["entity"]}
+    if any(
+        kinds.get(r["subject_id"]) != "person"
+        or not onto.is_a(kinds.get(r["object_id"], ""), "character")
+        for r in by_tag["relation"]
+        if r["predicate"] == "plays"
     ):
         raise CampaignError(DAMAGED)
     characters = {r["id"] for r in by_tag["entity"] if onto.is_a(r["type"], "character")}

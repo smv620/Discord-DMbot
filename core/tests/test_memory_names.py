@@ -2095,4 +2095,6 @@ class Store(NamesTest):
         backup = await self.campaigns.export(GUILD, self.campaign.id)
         restored = await self.campaigns.import_backup(2, backup, DM)
         copy = await self.memory.entities(2, restored.id, statuses=[CONFIRMED])
-        self.assertEqual([(e.name, e.played_by) for e in copy], [("Cerric", PLAYER)])
+        self.assertEqual(
+            [(e.name, e.played_by) for e in copy if e.type != "person"], [("Cerric", PLAYER)]
+        )

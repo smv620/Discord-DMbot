@@ -75,6 +75,7 @@ KIND_SHORT: dict[str, str] = {
     "spell": "spell",
     "event": "event",
     "concept": "other",
+    "person": "player or DM",
 }
 NOT_AVAILABLE = (
     "Remembering names isn't switched on for this DMbot yet. Ask whoever runs DMbot to turn it on."

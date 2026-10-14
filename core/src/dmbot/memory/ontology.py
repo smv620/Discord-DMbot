@@ -79,6 +79,14 @@ CORE_TYPES: tuple[TypeTerm, ...] = (
     _t("item", "item", "An object: a weapon, amulet, letter, ship."),
     _t("event", "event", "Something that happened or will happen: a battle, a wedding."),
     _t("concept", "idea", "Anything else worth remembering: a prophecy, a curse, a law."),
+    # The one kind that is not part of the story (#1188): a real person at this campaign's table,
+    # tied to their Discord account. Its names are what the table calls them. PlotBot, NPCBot
+    # and the story checks ignore it (it is left out of `_ANY` below).
+    _t(
+        "person",
+        "player or DM",
+        "A real person at the table: a player or the DM. Not part of the story.",
+    ),
     _old("player_character", "player character", "character"),
     _old("npc", "NPC", "character"),
     _old("deity", "god", "character"),
@@ -113,10 +121,29 @@ UNNAMED_MONSTER = (
 )
 
 
+PERSON_NOT_LISTED = (
+    "DMbot adds players and the DM by itself, so you don't need to list them. Add their "
+    "character instead, then say who plays it."
+)
+# "DM" is the person running the game, never a name in the story (#1188): kept out of
+# every name and other name so a line like "the DM says" can't turn into an entry.
+DM_WORDS = frozenset({"dm", "gm", "dungeon master", "game master"})
+DM_WORD_REFUSED = (
+    '"DM" is the person running the game, so it can\'t be a name in the story. '
+    "Try the character's own name."
+)
+
+
+def is_dm_word(text: str) -> bool:
+    return " ".join(text.casefold().replace(".", "").split()) in DM_WORDS
+
+
 def check_named(kind: str, name: str) -> None:
     """A caller that says `creature` means one named creature. A name that is a monster in
     the rules ("goblin", "three goblins", "Goblin Warrior") is a kind of monster, not an
-    entry: refused (decided on #1034)."""
+    entry: refused (decided on #1034). "DM" and its likes are never a name."""
+    if kind != "person" and is_dm_word(name):
+        raise MemoryRuleError(DM_WORD_REFUSED)
     if kind != "creature":
         return
     from dmbot.rules import index  # late: the rules data loads on first use
@@ -140,7 +167,11 @@ def resolve_kind(kind: str, role: str | None = None) -> tuple[str, str | None]:
 
 
 _BEINGS = ("character",)
-_ANY = tuple(t.key for t in CORE_TYPES if t.parent is None and t.status == ACTIVE)
+# The story's kinds: every active core kind except `person`, who sits at the table and not in
+# the story, so "knows" and "appears in" never reach them (#1188).
+_ANY = tuple(
+    t.key for t in CORE_TYPES if t.parent is None and t.status == ACTIVE and t.key != "person"
+)
 
 CORE_PREDICATES: tuple[PredicateTerm, ...] = (
     PredicateTerm(
@@ -206,6 +237,14 @@ CORE_PREDICATES: tuple[PredicateTerm, ...] = (
         (*_BEINGS, "faction"),
     ),
     PredicateTerm(
+        "plays",
+        "plays",
+        "A real person at the table plays this character (read from the character's side: "
+        "played by). A character has one player at a time; a person may play several.",
+        ("person",),
+        ("character",),
+    ),
+    PredicateTerm(
         "appears_in",
         "appears in",
         "Takes part in or shows up in an event.",
@@ -221,6 +260,8 @@ BLOCKED_KINDS = frozenset(
     {
         # roles
         "npc", "pc", "player", "player character", "god", "goddess", "deity",
+        # the table's own people (#1188)
+        "person", "player or dm", "dm", "gm", "dungeon master", "game master",
         # rules vocabulary
         "monster", "creature", "beast", "race", "species", "creature type", "class",
         "background", "feat", "spell", "skill", "ability", "stat block",
@@ -249,6 +290,8 @@ def _words(text: str) -> str:
 
 # Words an AI might reach for that mean a core relationship: reuse, don't create.
 SYNONYMS: Mapping[str, str] = {
+    "controls": "plays",
+    "controlled_by": "plays",
     "friend_of": "ally_of",
     "friends_with": "ally_of",
     "allied_with": "ally_of",
