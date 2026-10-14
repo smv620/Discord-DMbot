@@ -56,7 +56,7 @@ class MailSettings:
     @property
     def offer_cap(self) -> int:
         """Offer emails stop here; account emails go on up to `daily_cap`."""
-        return self.daily_cap * 3 // 4
+        return min(self.daily_cap * 3 // 4, 300)  # the database door's own ceiling is 300
 
     @property
     def configured(self) -> bool:
@@ -161,16 +161,6 @@ class Mailer:
             )
             return await cur.fetchone() is not None
 
-    async def sent_today(self) -> int:
-        now = int(self._clock())  # read once: the day can't change between the two uses
-        since = now - now % DAY_S
-        async with self._db.unscoped() as conn:
-            cur = await conn.execute(
-                "SELECT count(*) AS n FROM sent_emails WHERE sent_at >= %s", (since,)
-            )
-            row = await cur.fetchone()
-        return int(row["n"]) if row else 0
-
     async def send(
         self,
         *,
@@ -194,12 +184,6 @@ class Mailer:
                 return "not_ready"
             if await self.is_unsubscribed(user_id):
                 return "unsubscribed"
-        # Offers stop short of the cap (3/4 of it, 300 of 400), so the sign-in links and move
-        # codes people ask for always have room.
-        today = await self.sent_today()
-        if today >= self._s.daily_cap or (offer and today >= self._s.offer_cap):
-            log.warning("The daily email cap is spent; %s waits", kind)
-            return "capped"
         # Built before anything is recorded: a message that can't be built must not leave the
         # once-only row behind. The unsubscribe link is made for this person, from their id.
         try:
@@ -207,35 +191,43 @@ class Mailer:
         except ValueError:
             log.error("Couldn't build a %s email", kind)
             return "failed"
-        now = int(self._clock())
-        # The row is written first, so two runs at once can't both send it; a failed send
-        # takes it back so the next run tries again. (A crash between the two loses the
-        # email rather than sending it twice: at most once.) The cap is checked a moment
-        # earlier in another transaction, so callers running at once can pass it together;
-        # 400 against Gmail's 500 leaves room for that.
+        # The database's door counts the day, applies the caps (offers stop short of the
+        # cap, so the sign-in links and move codes people ask for always have room) and
+        # writes the row under one lock, so two runs at once can't both send it. The website
+        # uses the same door. The row stays if the send then fails (a crash or an SMTP error
+        # loses that email rather than risk sending it twice), except for an offer: that is
+        # given back below so the next run retries it.
         async with self._db.unscoped() as conn:
             cur = await conn.execute(
-                "INSERT INTO sent_emails (user_id, kind, sent_at) VALUES (%s, %s, %s)"
-                " ON CONFLICT DO NOTHING RETURNING user_id",
-                (user_id, kind, now),
+                "SELECT dmbot_claim_email(%s, %s, %s, %s, %s) AS status",
+                (user_id, kind, offer, self._s.daily_cap, self._s.offer_cap),
             )
-            if await cur.fetchone() is None:
-                return "already_sent"
+            row = await cur.fetchone()
+        status = row["status"] if row else "refused"
+        if status == "capped":
+            log.warning("The daily email cap is spent; %s waits", kind)
+            return "capped"
+        if status == "duplicate":
+            return "already_sent"
+        if status != "sent":
+            return "no_address"
         try:
             await self._send(message)
         except Exception:  # an SMTP error can carry the address: log only the kind
             log.error("Couldn't send a %s email", kind, exc_info=False)
-            try:
-                async with self._db.unscoped() as conn:
-                    await conn.execute(
-                        "DELETE FROM sent_emails WHERE user_id = %s AND kind = %s",
-                        (user_id, kind),
-                    )
-            except Exception:
-                log.error("Couldn't take back the %s email's record", kind, exc_info=False)
+            if offer:
+                await self._release(user_id, kind)
             return "failed"
         log.info("Sent a %s email", kind)
         return "sent"
+
+    async def _release(self, user_id: int, kind: str) -> None:
+        """Give back the claim of an offer that didn't go, so the next run retries it."""
+        try:
+            async with self._db.unscoped() as conn:
+                await conn.execute("SELECT dmbot_release_email(%s, %s)", (user_id, kind))
+        except Exception:
+            log.error("Couldn't give back a %s email's claim", kind)
 
     def _build(self, to: str, dmbot_id: str, subject: str, body: str, offer: bool) -> EmailMessage:
         message = EmailMessage()
