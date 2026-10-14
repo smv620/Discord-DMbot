@@ -139,7 +139,7 @@ before PlotBot (phase 5c) builds on the memory.
 | `concept` | idea | a prophecy, a curse, a clue |
 
 **Not a story kind:** `person` ("player or DM", owner, 2026-10-14) is a real person at this campaign's
-table, tied to their Discord account. Each one `controls` (plays) one or more characters, or is one of the
+table, tied to their Discord account. Each one `plays` one or more characters (inverse label "played by"; `controls` maps to it), or is one of the
 campaign's DMs and answers to "DM", "GM", "Dungeon Master" and "Game Master". Story checks and PlotBot
 ignore it. See docs/PLAN.md, "Players and the DM in the names".
 

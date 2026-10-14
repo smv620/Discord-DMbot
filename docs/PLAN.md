@@ -189,6 +189,18 @@ database.
   session lease), because the rolling window and look-back keep state per session.
 - **Later, if ever needed:** Apache AGE adds graph queries on the same Postgres, after
   checking it works with row-level security.
+- **Confirmed 2026-10-14 (owner asked: RDF-star or a labelled property graph?):** a labelled property
+  graph (LPG) in these tables, with RDF's discipline. Every fact is one edge, subject → predicate → object
+  (`Mia → plays → Vaelora`), and the edge carries its details as properties (confidence, source, status,
+  game time, evidence), which is what RDF-star's statements about statements would give us. **Each
+  relationship is stored once, in one direction:** a predicate declares its inverse's label ("played by")
+  for reading from the other side, and synonyms (`controls`, `controlled_by`) map to it, so the graph
+  never holds the same fact twice under different words. **The vocabulary grows, but governed:** the core
+  predicates are in code; the AI may *propose* a new predicate for one campaign, which is accepted only
+  if no existing one fits (searched by name and meaning) and it comes with a description, domain and
+  range, inverse label, how many are allowed and an example (rules 1–3, 9). An AI free to invent edges
+  would scatter one idea across many names (plays, controls, is_player_of, runs) and the checks and
+  questions ("who plays Vaelora?") would miss facts.
 
 **Hosting target: public bot, shard pods + workers (decided 2026-10-04, #57).** DMbot will
 be a public bot others can install, on a scalable Kubernetes platform. *This replaces the
@@ -1507,9 +1519,10 @@ that Mike is the person who just spoke, and that this person plays the character
   count as names already, without asking. It sits next to the story kinds in every names menu ("What is
   it?", Browse by kind, the overview, Add many), but PlotBot, NPCBot and the story checks ignore it.
 - **Every person is checked: they play a character, or they are the DM.**
-  - `controls` (shown as "plays"): person → character. This is the "played by" link that **🧑 Add a
-    player's character** and the D&D Beyond sheet already make, now stored as a connection from the
-    person. A person may play more than one character; a player character has one player at a time.
+  - `plays`: person → character (read from the other side as "played by"). This is the "played by" link
+    that **🧑 Add a player's character** and the D&D Beyond sheet already make, now stored as one edge from
+    the person. `controls` and `controlled_by` are registered synonyms that map to it (rule 3, reuse before
+    creating), never second edges. A person may play more than one character; a player character has one player at a time.
   - **The DM:** a person who is one of the campaign's DMs (from the campaign's DM list, never guessed)
     answers to **DM, GM, Dungeon Master and Game Master** as well as their own names. These four are
     built in for every campaign and are never suggested, fixed into anything else, or used for a
