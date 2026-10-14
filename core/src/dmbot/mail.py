@@ -56,7 +56,7 @@ class MailSettings:
     @property
     def offer_cap(self) -> int:
         """Offer emails stop here; account emails go on up to `daily_cap`."""
-        return self.daily_cap * 3 // 4
+        return min(self.daily_cap * 3 // 4, 300)  # the database door's own ceiling is 300
 
     @property
     def configured(self) -> bool:
@@ -170,13 +170,13 @@ class Mailer:
             return await cur.fetchone() is not None
 
     async def sent_today(self) -> int:
-        now = int(self._clock())  # read once: the day can't change between the two uses
-        since = now - now % DAY_S
+        """Emails recorded today (the database's UTC day). Private-message records ("dm:")
+        are not emails and are left out."""
         async with self._db.unscoped() as conn:
             cur = await conn.execute(
-                "SELECT count(*) AS n FROM sent_emails WHERE sent_at >= %s"
-                " AND kind NOT LIKE 'dm:%%'",  # private-message records are not emails
-                (since,),
+                "SELECT count(*) AS n FROM sent_emails"
+                " WHERE sent_at >= extract(epoch FROM now())::BIGINT"
+                " - extract(epoch FROM now())::BIGINT % 86400 AND kind NOT LIKE 'dm:%'"
             )
             row = await cur.fetchone()
         return int(row["n"]) if row else 0
@@ -213,7 +213,7 @@ class Mailer:
         # Offers stop short of the cap (3/4 of it, 300 of 400), so the sign-in links and move
         # codes people ask for always have room.
         today = await self.sent_today()
-        if today >= self._s.daily_cap or (offer and today >= self._s.offer_cap):
+        if today >= min(self._s.daily_cap, 400) or (offer and today >= self._s.offer_cap):
             log.warning("The daily email cap is spent; %s waits", kind)
             return "capped"
         # Built before anything is recorded: a message that can't be built must not leave the
@@ -223,32 +223,21 @@ class Mailer:
         except ValueError:
             log.error("Couldn't build a %s email", kind)
             return "failed"
-        now = int(self._clock())
-        # The row is written first, so two runs at once can't both send it; a failed send
-        # takes it back so the next run tries again. (A crash between the two loses the
-        # email rather than sending it twice: at most once.) The cap is checked a moment
-        # earlier in another transaction, so callers running at once can pass it together;
-        # 400 against Gmail's 500 leaves room for that.
+        # The database's door counts the day, applies its cap and writes the row in one step,
+        # so two runs at once can't both send it. The row stays if the send then fails (a
+        # crash or an SMTP error loses that email rather than risk sending it twice): at most
+        # once. The website uses the same door.
         async with self._db.unscoped() as conn:
             cur = await conn.execute(
-                "INSERT INTO sent_emails (user_id, kind, sent_at) VALUES (%s, %s, %s)"
-                " ON CONFLICT DO NOTHING RETURNING user_id",
-                (user_id, kind, now),
+                "SELECT dmbot_claim_email(%s, %s, %s) AS ok", (user_id, kind, offer)
             )
-            if await cur.fetchone() is None:
-                return "already_sent"
+            row = await cur.fetchone()
+        if not (row and row["ok"]):
+            return "already_sent"
         try:
             await self._send(message)
         except Exception:  # an SMTP error can carry the address: log only the kind
             log.error("Couldn't send a %s email", kind, exc_info=False)
-            try:
-                async with self._db.unscoped() as conn:
-                    await conn.execute(
-                        "DELETE FROM sent_emails WHERE user_id = %s AND kind = %s",
-                        (user_id, kind),
-                    )
-            except Exception:
-                log.error("Couldn't take back the %s email's record", kind, exc_info=False)
             return "failed"
         log.info("Sent a %s email", kind)
         return "sent"

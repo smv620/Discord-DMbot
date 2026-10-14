@@ -2045,6 +2045,7 @@ WEB_ROLE_FUNCTIONS: tuple[tuple[str, str], ...] = (
     ("dmbot_owned_campaigns", "dmbot_owned_campaigns()"),
     ("dmbot_orphan_owned_campaigns", "dmbot_orphan_owned_campaigns(BIGINT)"),
     ("dmbot_hours_used", "dmbot_hours_used(BIGINT)"),
+    ("dmbot_claim_email", "dmbot_claim_email(BIGINT, TEXT, BOOLEAN)"),
     ("dmbot_minutes_total", "dmbot_minutes_total()"),
 )
 # The columns the website may fill when it creates a hand-over offer (#728): who, where and the
@@ -2078,9 +2079,10 @@ WEB_ROLE_GRANTS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("SELECT, UPDATE (status, decided_at)", ("campaign_handover_offers",)),
     ("SELECT, INSERT, UPDATE", ("installs", "entitlements")),
     ("SELECT, INSERT", ("payment_events", "try_it_used")),
-    # The unsubscribe link (#1229) and the website's own account emails (sign-in links) may be
-    # written, never read: the lists stay the bot's.
-    ("INSERT", ("email_unsubscribed", "sent_emails")),
+    # The unsubscribe link (#1229) may be written, never read: the list stays the bot's. The
+    # website sends its own account emails through dmbot_claim_email (WEB_ROLE_FUNCTIONS), and
+    # has no grant on sent_emails.
+    ("INSERT", ("email_unsubscribed",)),
     ("INSERT, DELETE", ("feedback",)),
     ("SELECT, INSERT, UPDATE, DELETE", ("web_users", "web_sessions")),
     # Free access (#771): the admin page gives, changes and revokes grants (through
@@ -2111,6 +2113,46 @@ MAIL = """
         user_id BIGINT PRIMARY KEY CHECK (user_id > 0),
         at      BIGINT NOT NULL
     );
+    -- The one door for sending an email, for the bot and the website alike (the website's
+    -- role has no grant on sent_emails: the table is everyone's email history). It counts
+    -- today's rows, applies the cap (400 in all; offers stop at 300, so the sign-in links and
+    -- move codes people ask for always have room), writes the row (ON CONFLICT DO NOTHING:
+    -- an email of this kind goes once) and says whether the email may go. A failed send keeps
+    -- its row. The day and the time are the database's own. Kinds starting "dm:" are private
+    -- message records, not emails, and are refused here.
+    CREATE FUNCTION dmbot_claim_email(who BIGINT, kind TEXT, offer BOOLEAN) RETURNS BOOLEAN
+        LANGUAGE plpgsql SECURITY DEFINER
+        AS $fn$
+    #variable_conflict use_column
+    DECLARE
+        stamp BIGINT := extract(epoch FROM now())::BIGINT;
+        today BIGINT;
+        added INTEGER;
+    BEGIN
+        IF who IS NULL OR who <= 0 OR kind IS NULL OR char_length(kind) NOT BETWEEN 1 AND 60
+           OR kind LIKE 'dm:%' THEN
+            RETURN FALSE;
+        END IF;
+        SELECT count(*) INTO today FROM sent_emails s
+            WHERE s.sent_at >= stamp - stamp % 86400 AND s.kind NOT LIKE 'dm:%';
+        IF today >= 400 OR (offer AND today >= 300) THEN
+            RETURN FALSE;
+        END IF;
+        INSERT INTO sent_emails (user_id, kind, sent_at) VALUES (who, kind, stamp)
+            ON CONFLICT DO NOTHING;
+        GET DIAGNOSTICS added = ROW_COUNT;
+        RETURN added = 1;
+    END
+    $fn$;
+    DO $do$
+    BEGIN
+        EXECUTE format(
+            'ALTER FUNCTION dmbot_claim_email(BIGINT, TEXT, BOOLEAN)'
+            ' SET search_path = pg_catalog, %I, pg_temp',
+            current_schema());
+    END
+    $do$;
+    REVOKE ALL ON FUNCTION dmbot_claim_email(BIGINT, TEXT, BOOLEAN) FROM PUBLIC;
     """
 
 TRIAL = """
