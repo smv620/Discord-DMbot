@@ -116,6 +116,7 @@ class TheBotsFlow(unittest.IsolatedAsyncioTestCase):
         await self.bot.check_owner_present(campaign(since=int(time.time()) - 8 * DAY))
         self.store.orphan_missing_owner.assert_awaited_once()
         self.assertEqual({u for u, _ in self.sent}, {DM, 88})
+        self.assertNotIn(77, {u for u, _ in self.sent})  # the owner is gone: not told
         self.assertIn("Press Take it on in ⚙️ Settings", self.sent[0][1])
 
     async def test_a_deleted_account_is_ownerless_at_once(self) -> None:
@@ -154,3 +155,17 @@ class TheStore(DatabaseTest):
             (got.owner_user_id, got.owner_left_at, got.owner_missing_since), (None, 500, None)
         )
         self.assertFalse(await store.orphan_missing_owner(GUILD_A, made.id, 77, 600))  # already
+
+    async def test_an_older_look_cannot_end_an_owner_seen_again_meanwhile(self) -> None:
+        store = CampaignStore(self.db, clock=lambda: 1)
+        made = await store.create(GUILD_A, "Frozen Wastes", DM)
+        async with self.db.guild(GUILD_A) as conn:
+            await conn.execute("UPDATE campaigns SET owner_user_id = 77 WHERE id = %s", (made.id,))
+        await store.note_owner_presence(GUILD_A, made.id, 77, missing_since=100)
+        await store.note_owner_presence(GUILD_A, made.id, 77, missing_since=None)  # seen again
+        self.assertFalse(
+            await store.orphan_missing_owner(GUILD_A, made.id, 77, 900, still_missing_since=100)
+        )
+        self.assertTrue(  # a deleted account can't come back: no condition
+            await store.orphan_missing_owner(GUILD_A, made.id, 77, 900, any_state=True)
+        )

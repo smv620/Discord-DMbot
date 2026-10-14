@@ -1047,7 +1047,14 @@ class CampaignStore:
             return bool(cur.rowcount > 0)
 
     async def orphan_missing_owner(
-        self, guild_id: int, campaign_id: str, owner_id: int, now: int
+        self,
+        guild_id: int,
+        campaign_id: str,
+        owner_id: int,
+        now: int,
+        *,
+        still_missing_since: int | None = None,
+        any_state: bool = False,
     ) -> bool:
         """The owner is gone for good: the campaign becomes ownerless, as when a DMbot account
         is deleted (#1059), and its 120 days start (#1214). Only while `owner_id` is still the

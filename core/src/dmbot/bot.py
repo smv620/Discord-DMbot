@@ -244,6 +244,8 @@ TRANSCRIPT_PARALLEL = 10  # campaigns posting at once (one rate-limited channel 
 STOP_DRAIN_TIMEOUT_S = 120.0  # at stop, wait this long for the last words to be written
 FINAL_FLUSH_TIMEOUT_S = 15.0  # at stop or shutdown, give up on posting after this
 IDLE_SWEEP_INTERVAL_S = 1
+OWNER_CHECK_DAYS = 120  # the retention window: older campaigns are not looked at (#1214)
+OWNER_CHECK_GAP_S = 0.5  # between campaigns in the daily look
 OWNER_LOOK_TIMEOUT_S = 6  # asking Discord about an owner must not hold up a start
 FORGET_TIMEOUT_S = 10  # removing learned names must not hold up stopping a recording
 METER_INTERVAL_S = 60  # how often listening minutes are written to the hours meter (#437)
@@ -1776,24 +1778,28 @@ class DMBot(commands.AutoShardedBot):
         guild = self.get_guild(campaign.guild_id)
         if owner is None or guild is None:
             return campaign
+        gid, cid = campaign.guild_id, campaign.id
         try:
-            async with asyncio.timeout(OWNER_LOOK_TIMEOUT_S):
+            async with asyncio.timeout(OWNER_LOOK_TIMEOUT_S):  # only the asking of Discord
                 seen = await owner_presence.look(guild.fetch_member, self.fetch_user, owner)
-                now = int(time.time())
-                step = owner_presence.decide(campaign.owner_missing_since, seen, now)
-                gid, cid = campaign.guild_id, campaign.id
-                if step.action == owner_presence.MARK:
-                    await self.campaigns.note_owner_presence(gid, cid, owner, missing_since=now)
-                elif step.action == owner_presence.CLEAR:
-                    await self.campaigns.note_owner_presence(gid, cid, owner, missing_since=None)
-                elif (
-                    step.action == owner_presence.ORPHAN
-                    and await self.campaigns.orphan_missing_owner(gid, cid, owner, now)
-                ):
-                    log.info("A campaign's owner is gone from Discord; it is ownerless now")
-                    for dm in sorted(campaign.dm_user_ids):
-                        await self._dm_user(dm, f"**{campaign.name}**: {owner_presence.TELL_DMS}")
-                return await self.campaigns.get(gid, cid) or campaign
+            now = int(time.time())
+            step = owner_presence.decide(campaign.owner_missing_since, seen, now)
+            if step.action == owner_presence.MARK:
+                await self.campaigns.note_owner_presence(gid, cid, owner, missing_since=now)
+            elif step.action == owner_presence.CLEAR:
+                await self.campaigns.note_owner_presence(gid, cid, owner, missing_since=None)
+            elif step.action == owner_presence.ORPHAN and await self.campaigns.orphan_missing_owner(
+                gid,
+                cid,
+                owner,
+                now,
+                still_missing_since=campaign.owner_missing_since,
+                any_state=seen == owner_presence.ACCOUNT_DELETED,
+            ):
+                log.info("A campaign's owner is gone from Discord; it is ownerless now")
+                for dm in sorted(campaign.dm_user_ids - {owner}):  # the owner can't read it
+                    await self._dm_user(dm, f"**{campaign.name}**: {owner_presence.TELL_DMS}")
+            return await self.campaigns.get(gid, cid) or campaign
         except Exception:
             log.exception("Couldn't check whether a campaign's owner is still here")
             return campaign
@@ -1806,9 +1812,13 @@ class DMBot(commands.AutoShardedBot):
             if self.get_guild(guild_id) is None:
                 continue
             for campaign in await self.campaigns.list_campaigns(guild_id):
-                if campaign.owner_user_id is None or campaign.last_active_at < now - 120 * 86400:
+                if (
+                    campaign.owner_user_id is None
+                    or campaign.last_active_at < now - OWNER_CHECK_DAYS * 86400
+                ):
                     continue
                 await self.check_owner_present(campaign)
+                await asyncio.sleep(OWNER_CHECK_GAP_S)  # one Discord call at a time, spaced
 
     async def plan_refusal(self, guild_id: int, campaign: Campaign, starter_id: int) -> str | None:
         """Why the campaign's owner's plan, hours or campaign count don't allow a start, in

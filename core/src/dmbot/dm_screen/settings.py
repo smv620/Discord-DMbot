@@ -211,6 +211,9 @@ async def _redraw(interaction: discord.Interaction, campaign: Campaign) -> None:
             await interaction.followup.send(SAVED, ephemeral=True)
 
 
+_OWNER_CHECKS: set[asyncio.Task[Any]] = set()
+
+
 class SettingsButton(
     discord.ui.DynamicItem[discord.ui.Button[discord.ui.View]],
     template=rf"dmbot:settings:{_ID}",
@@ -253,7 +256,9 @@ class SettingsButton(
         check = getattr(interaction.client, "check_owner_present", None)
         looking = check(campaign) if callable(check) else None
         if asyncio.iscoroutine(looking):
-            asyncio.create_task(looking, name="owner-check")  # noqa: RUF006
+            task = asyncio.create_task(looking, name="owner-check")
+            _OWNER_CHECKS.add(task)  # a task nobody holds can be collected before it ends
+            task.add_done_callback(_OWNER_CHECKS.discard)
 
 
 class RuleLookupButton(
