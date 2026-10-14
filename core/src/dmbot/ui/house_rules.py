@@ -199,7 +199,7 @@ async def _suggest_target(
     interaction: discord.Interaction, campaign: Campaign, is_dm: bool
 ) -> str | None:
     """The name of the set the campaign follows, when its DM may suggest a rule to it (#1259)."""
-    sets = _bot(interaction).rule_sets
+    sets = getattr(_bot(interaction), "rule_sets", None)
     if sets is None or not is_dm:
         return None
     try:
