@@ -39,7 +39,8 @@ PREDICATES = Table(
     "key",
     ("key", "parent", "label", "description", "examples", "reason", "subject_types",
      "object_types", "is_symmetric", "max_per_subject", "conflicts_with", "status",
-     "replaced_by", "created_at"),
+     "replaced_by", "created_at", "covers", "not_this", "inverse_label", "synonyms",
+     "version"),
 )  # fmt: skip
 ENTITIES = Table(
     "memory_entities",
@@ -89,7 +90,7 @@ RELATIONS = Table(
     "id",
     ("id", "subject_id", "predicate", "object_id", "detail", "confidence", "status", "source",
      "mention_ids", "from_session_at", "to_session_at", "from_game_time", "to_game_time",
-     "secret", "created_at"),
+     "secret", "created_at", "definition_version"),
 )  # fmt: skip
 CORRECTIONS = Table(
     "memory_corrections",
@@ -454,11 +455,26 @@ class Changes(Scope):
         )
 
 
+# Columns added after change-log rows were written, with the value an older snapshot reads as
+# (#1189): a fact written before definitions were versioned was written under version 1.
+_ADDED_LATER: dict[str, dict[str, Any]] = {
+    "memory_relations": {"definition_version": 1},
+    "memory_predicates": {
+        "covers": [], "not_this": [], "inverse_label": "", "synonyms": [], "version": 1,
+    },
+}  # fmt: skip
+
+
 def _filled(table: Table, snapshot: Any) -> Any:
-    """A change-log snapshot as it would read today (#1034): an entry written before roles
-    existed is read the way the migration moved it (npc becomes a character with the role
-    npc, and so on), so Undo across the migration puts back what the entry is now."""
-    if table.name != "memory_entities" or not isinstance(snapshot, dict) or "role" in snapshot:
+    """A change-log snapshot as it would read today: an entry written before roles existed is
+    read the way the migration moved it (npc becomes a character with the role npc, and so
+    on, #1034), and a row written before a column existed gets that column's starting value
+    (#1189), so Undo across a migration puts back what the row is now."""
+    if not isinstance(snapshot, dict):
+        return snapshot
+    if table.name in _ADDED_LATER:
+        return {**_ADDED_LATER[table.name], **snapshot}
+    if table.name != "memory_entities" or "role" in snapshot:
         return snapshot
     kind, role, look = MIGRATED_KINDS.get(
         str(snapshot.get("type")), (snapshot.get("type"), None, False)
