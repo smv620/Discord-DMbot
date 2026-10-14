@@ -2078,7 +2078,9 @@ WEB_ROLE_GRANTS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("SELECT, UPDATE (status, decided_at)", ("campaign_handover_offers",)),
     ("SELECT, INSERT, UPDATE", ("installs", "entitlements")),
     ("SELECT, INSERT", ("payment_events", "try_it_used")),
-    ("SELECT, INSERT", ("email_unsubscribed",)),  # the unsubscribe link (#1229)
+    # The unsubscribe link (#1229) and the website's own account emails (sign-in links) may be
+    # written, never read: the lists stay the bot's.
+    ("INSERT", ("email_unsubscribed", "sent_emails")),
     ("INSERT, DELETE", ("feedback",)),
     ("SELECT, INSERT, UPDATE, DELETE", ("web_users", "web_sessions")),
     # Free access (#771): the admin page gives, changes and revokes grants (through

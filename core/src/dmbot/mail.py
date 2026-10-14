@@ -23,7 +23,7 @@ import time
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass, field
 from email.message import EmailMessage
-from email.utils import formatdate, make_msgid
+from email.utils import formatdate, make_msgid, parseaddr
 from typing import Literal
 
 from dmbot.account_id import to_dmbot_id
@@ -52,6 +52,11 @@ class MailSettings:
     sender: str = ""  # the From address
     postal_address: str = ""  # required in offer emails; the owner's call (needs: owner)
     daily_cap: int = DAILY_CAP_DEFAULT
+
+    @property
+    def offer_cap(self) -> int:
+        """Offer emails stop here; account emails go on up to `daily_cap`."""
+        return self.daily_cap * 3 // 4
 
     @property
     def configured(self) -> bool:
@@ -157,7 +162,8 @@ class Mailer:
             return await cur.fetchone() is not None
 
     async def sent_today(self) -> int:
-        since = int(self._clock()) - int(self._clock()) % DAY_S
+        now = int(self._clock())  # read once: the day can't change between the two uses
+        since = now - now % DAY_S
         async with self._db.unscoped() as conn:
             cur = await conn.execute(
                 "SELECT count(*) AS n FROM sent_emails WHERE sent_at >= %s"
@@ -190,7 +196,10 @@ class Mailer:
                 return "not_ready"
             if await self.is_unsubscribed(user_id):
                 return "unsubscribed"
-        if await self.sent_today() >= self._s.daily_cap:
+        # Offers stop short of the cap (3/4 of it, 300 of 400), so the sign-in links and move
+        # codes people ask for always have room.
+        today = await self.sent_today()
+        if today >= self._s.daily_cap or (offer and today >= self._s.offer_cap):
             log.warning("The daily email cap is spent; %s waits", kind)
             return "capped"
         # Built before anything is recorded: a message that can't be built must not leave the
@@ -236,7 +245,10 @@ class Mailer:
         message["To"] = to
         message["Subject"] = " ".join(subject.split())
         message["Date"] = formatdate(self._clock(), localtime=False)
-        message["Message-ID"] = make_msgid(domain=self._s.sender.rpartition("@")[2] or None)
+        domain = parseaddr(self._s.sender)[1].rpartition("@")[
+            2
+        ]  # from "Name <a@b>", not the raw text
+        message["Message-ID"] = make_msgid(domain=domain or None)
         text = body.strip()
         if offer:
             link = self.unsubscribe_link(dmbot_id)
@@ -253,12 +265,24 @@ class Mailer:
         return f"{self._site}/unsubscribe?uid={dmbot_id}&t={token}"
 
 
-async def unsubscribe(db: Database, user_id: int, *, now: int) -> bool:
-    """Record that this person wants no offer emails. True the first time."""
+async def unsubscribe(db: Database, user_id: int, *, now: int) -> None:
+    """Record that this person wants no offer emails (again is the same). Without RETURNING:
+    the website's role may insert here but not read the list (migration 0064)."""
     async with db.unscoped() as conn:
-        cur = await conn.execute(
-            "INSERT INTO email_unsubscribed (user_id, at) VALUES (%s, %s)"
-            " ON CONFLICT DO NOTHING RETURNING user_id",
+        await conn.execute(
+            "INSERT INTO email_unsubscribed (user_id, at) VALUES (%s, %s) ON CONFLICT DO NOTHING",
             (user_id, now),
         )
-        return await cur.fetchone() is not None
+
+
+async def prune_account_emails(db: Database, now: int) -> int:
+    """Forget the records of sign-in and move-code emails after 90 days: they repeat, so the
+    table would only grow. One-off offers stay (that is what keeps them from being sent
+    twice)."""
+    async with db.unscoped() as conn:
+        cur = await conn.execute(
+            "DELETE FROM sent_emails WHERE sent_at < %s"
+            " AND (kind LIKE 'sign-in:%%' OR kind LIKE 'move-code:%%')",
+            (now - 90 * DAY_S,),
+        )
+        return int(cur.rowcount)

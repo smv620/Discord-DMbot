@@ -7,6 +7,7 @@ from __future__ import annotations
 import logging
 import unittest
 from email.message import EmailMessage
+from typing import ClassVar
 
 from dmbot import account_id, link_tokens, mail
 from dmbot.mail import Mailer, MailSettings, load_mail_settings
@@ -130,8 +131,8 @@ class Sending(DatabaseTest):
         self,
     ) -> None:
         made, fake = self.mailer()
-        self.assertTrue(await mail.unsubscribe(self.db, USER, now=NOW))
-        self.assertFalse(await mail.unsubscribe(self.db, USER, now=NOW))
+        await mail.unsubscribe(self.db, USER, now=NOW)
+        await mail.unsubscribe(self.db, USER, now=NOW)  # again is the same
         self.assertEqual(await self.send(made, "trial-end", offer=True), "unsubscribed")
         self.assertEqual(await self.send(made, "sign-in-1"), "sent")
         self.assertEqual(len(fake.sent), 1)
@@ -174,6 +175,8 @@ class Sending(DatabaseTest):
     async def test_a_message_that_cannot_be_built_leaves_no_record(self) -> None:
         made, fake = self.mailer()
         self.assertEqual(await self.send(made, "k", offer=True, user=-5), "no_address")
+        # A real-looking id too big for a DMbot ID reaches the build and fails there: no record.
+        self.assertEqual(await self.send(made, "k", offer=True, user=36**12), "failed")
         self.assertEqual(await made.sent_today(), 0)
         self.assertEqual(await self.send(made, "x" * 61), "no_address")  # kind too long
         self.assertEqual(fake.sent, [])
@@ -186,6 +189,34 @@ class Sending(DatabaseTest):
         self.assertEqual(sorted(results), ["already_sent"] * 3 + ["sent"])
         self.assertEqual(len(fake.sent), 1)
 
+    async def test_offers_stop_at_three_quarters_of_the_cap_so_account_emails_have_room(
+        self,
+    ) -> None:
+        made, _ = self.mailer(MAIL_DAILY_CAP=4)  # offers stop at 3
+        results = [await self.send(made, f"offer{i}", offer=True, user=USER + i) for i in range(4)]
+        self.assertEqual(results, ["sent", "sent", "sent", "capped"])
+        self.assertEqual(await self.send(made, "sign-in:1"), "sent")  # the 4th slot is theirs
+        self.assertEqual(await self.send(made, "sign-in:2"), "capped")
+
+    async def test_old_account_email_records_are_pruned_but_offers_stay(self) -> None:
+        made, _ = self.mailer()
+        await self.send(made, "sign-in:a")
+        await self.send(made, "move-code:b")
+        await self.send(made, "trial-end:1", offer=True)
+        later = NOW + 91 * 86400
+        self.assertEqual(await mail.prune_account_emails(self.db, later), 2)
+        self.assertEqual(await self.send(made, "trial-end:1", offer=True), "already_sent")
+
+    def test_the_message_id_uses_the_domain_of_the_from_address(self) -> None:
+        made = Mailer(
+            None,  # type: ignore[arg-type]
+            load_mail_settings({**ENV, "MAIL_FROM": "DMbot <sender@example.com>"}),
+            transport=Fake(),
+            clock=lambda: NOW,
+        )
+        message = made._build("p@example.com", ID, "Hi", "Hello", False)
+        self.assertTrue(str(message["Message-ID"]).endswith("@example.com>"))
+
     async def test_an_unset_mailbox_sends_nothing(self) -> None:
         made = Mailer(self.db, MailSettings(), transport=Fake(), clock=lambda: NOW)
         self.assertEqual(await self.send(made), "not_ready")
@@ -193,3 +224,40 @@ class Sending(DatabaseTest):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class FakeSmtp:
+    """Stands in for smtplib.SMTP: records what the real sender does, in order."""
+
+    log: ClassVar[list[str]] = []
+
+    def __init__(self, *args: object, **kwargs: object) -> None:
+        FakeSmtp.log.append("connect")
+
+    def __enter__(self) -> FakeSmtp:
+        return self
+
+    def __exit__(self, *exc: object) -> None:
+        return None
+
+    def starttls(self, **kwargs: object) -> None:
+        FakeSmtp.log.append("starttls")
+
+    def login(self, user: str, password: str) -> None:
+        FakeSmtp.log.append("login")
+
+    def send_message(self, message: EmailMessage) -> None:
+        FakeSmtp.log.append("send")
+
+
+class SmtpOrder(unittest.IsolatedAsyncioTestCase):
+    async def test_the_connection_is_encrypted_before_the_password_is_sent(self) -> None:
+        from unittest.mock import patch
+
+        FakeSmtp.log = []
+        message = EmailMessage()
+        message["To"] = "p@example.com"
+        message.set_content("Hello")
+        with patch("dmbot.mail.smtplib.SMTP", FakeSmtp):
+            await mail.SmtpTransport(load_mail_settings(ENV))(message)
+        self.assertEqual(FakeSmtp.log, ["connect", "starttls", "login", "send"])
