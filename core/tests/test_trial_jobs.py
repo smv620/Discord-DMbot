@@ -176,7 +176,12 @@ class Jobs(DatabaseTest):
         self.now = END - 3600
         await self.jobs().run()
         mailer = self.jobs()._mail
-        self.assertEqual(await mailer.sent_today(), 2)  # two emails, not four records
+        async with self.db.unscoped() as conn:
+            cur = await conn.execute(
+                "SELECT count(*) AS n FROM sent_emails WHERE kind NOT LIKE 'dm:%'"
+            )
+            self.assertEqual((await cur.fetchone() or {})["n"], 2)  # two emails, not four records
+        del mailer
 
     async def test_the_door_checks_the_rules_itself(self) -> None:
         async def extend(uid: int, now: int, days: int = 30) -> bool:
@@ -274,7 +279,9 @@ class Jobs(DatabaseTest):
         self.assertEqual(await self.plan(USER), (END, 480))
         self.assertEqual(await self.plan(OTHER), (END, 480))  # the paid one is left as it was
 
-    async def test_a_person_over_4_hours_or_who_paid_gets_no_last_day_message(self) -> None:
+    async def test_over_4_hours_still_gets_the_last_day_message_and_a_paid_person_does_not(
+        self,
+    ) -> None:
         await self.use(USER, 300)
         async with self.db.plan_writer(OTHER) as conn:
             await conn.execute(
@@ -311,6 +318,51 @@ class Jobs(DatabaseTest):
         again._name_of = name_of
         await again.run()  # everything was sent already
         self.assertEqual(asked, [])
+
+    async def no_dm(self, user_id: int, text: str) -> trial_jobs.DmResult:
+        return "closed"
+
+    async def test_the_name_is_not_looked_up_when_mail_is_not_ready_or_unsubscribed(self) -> None:
+        self.now = END - 3600
+        for person in (USER, OTHER):  # the private messages went already
+            await trial_jobs.claim(self.db, person, f"dm:trial-end:{END}", self.now)
+        asked: list[int] = []
+
+        async def name_of(user_id: int) -> str:
+            asked.append(user_id)
+            return "x"
+
+        mailer = Mailer(
+            self.db, load_mail_settings({**ENV, "MAIL_POSTAL_ADDRESS": ""}), transport=self.mail,
+            site_url=SITE, link_secret=SECRET, clock=lambda: float(self.now),
+        )  # fmt: skip
+        not_ready = TrialJobs(
+            self.db, mailer, enforce_plans=True, site_url=SITE, link_secret=SECRET,
+            send_dm=self.no_dm, name_of=name_of, clock=lambda: float(self.now),
+        )  # fmt: skip
+        await not_ready.run()
+        self.assertEqual(asked, [])  # no postal address: no offer email, so no name
+        async with self.db.unscoped() as conn:
+            for person in (USER, OTHER):
+                await conn.execute(
+                    "INSERT INTO email_unsubscribed (user_id, at) VALUES (%s, 1)", (person,)
+                )
+        again = self.jobs()
+        again._name_of = name_of
+        await again.run()
+        self.assertEqual(asked, [])  # unsubscribed
+
+    async def test_a_failed_name_lookup_gives_the_private_message_back(self) -> None:
+        self.now = END - 3600
+
+        async def broken(user_id: int) -> str:
+            raise RuntimeError("discord is down")
+
+        bad = self.jobs()
+        bad._name_of = broken
+        await bad.run()
+        await self.jobs().run()  # the next run tries again
+        self.assertEqual(sorted(u for u, _ in self.dms), sorted([USER, OTHER]))
 
     async def test_nobody_is_extended_early(self) -> None:
         self.now = END + 3 * DAY_S - 1

@@ -149,8 +149,8 @@ async def people(db: Database, now: int) -> list[TrialPerson]:
     async with db.unscoped() as conn:
         cur = await conn.execute(
             "SELECT user_id, dmbot_id, email, period_end, minutes, paid, extensions, granted"
-            " FROM dmbot_trial_people(%s)",
-            (now - LOOK_BACK_S,),
+            " FROM dmbot_trial_people(%s, %s)",
+            (now - LOOK_BACK_S, now),
         )
         return [
             TrialPerson(
@@ -232,17 +232,32 @@ class TrialJobs:
             _page(self._site, "/hello", person.dmbot_id, now, self._secret),
         )
 
+    async def _mail_due(self, person: TrialPerson, kind: str) -> bool:
+        """Will an offer email go? Only with an address on file, a mailbox ready for offers
+        (until the postal address is set nothing goes), no unsubscribe and none sent."""
+        return bool(
+            person.email
+            and self._mail.ready_for_offers
+            and not await self._mail.is_unsubscribed(person.user_id)
+            and not await self._mail.already_sent(person.user_id, kind)
+        )
+
     async def _last_day(self, person: TrialPerson, now: int, summary: Summary) -> None:
         kind = f"dm:trial-end:{person.period_end}"
         mail_kind = f"trial-end:{person.period_end}"
         dm_due = await claim(self._db, person.user_id, kind, now)
-        mail_due = bool(person.email) and not await self._mail.already_sent(
-            person.user_id, mail_kind
-        )
+        mail_due = await self._mail_due(person, mail_kind)
         if not dm_due and not mail_due:  # nothing to send: don't ask Discord for the name
             return
         pricing, hello = self._links(person, now)
-        name = await self._name_of(person.user_id)
+        try:
+            name = await self._name_of(person.user_id)
+        except Exception:
+            # Give the private-message claim back, so the next run tries again.
+            log.exception("A Try It name lookup failed")
+            if dm_due:
+                await release(self._db, person.user_id, kind)
+            return
         text = last_day_text(name, pricing, hello)
         if dm_due:
             try:
@@ -277,6 +292,8 @@ class TrialJobs:
         if not (row and row["ok"]):
             return
         summary.extended += 1
+        if not await self._mail_due(person, f"trial-extension:{person.extensions + 1}"):
+            return  # nothing will be sent: don't ask Discord for the name
         pricing, hello = self._links(person, now)
         name = await self._name_of(person.user_id)
         result = await self._mail.send(

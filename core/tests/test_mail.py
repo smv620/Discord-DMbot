@@ -138,20 +138,32 @@ class Sending(DatabaseTest):
         self.assertEqual(await self.send(made, "sign-in-1"), "sent")
         self.assertEqual(len(fake.sent), 1)
 
+    async def count_today(self) -> int:
+        async with self.db.unscoped() as conn:
+            cur = await conn.execute(
+                "SELECT count(*) AS n FROM sent_emails"
+                " WHERE sent_at >= extract(epoch FROM now())::BIGINT"
+                " - extract(epoch FROM now())::BIGINT % 86400 AND kind NOT LIKE 'dm:%'"
+            )
+            row = await cur.fetchone()
+        return int((row or {})["n"])
+
     async def test_the_daily_cap_stops_the_flood(self) -> None:
         made, _ = self.mailer(MAIL_DAILY_CAP=2)
         results = [await self.send(made, f"k{i}") for i in range(3)]
         self.assertEqual(results, ["sent", "sent", "capped"])
-        self.assertEqual(await made.sent_today(), 2)
+        self.assertEqual(await self.count_today(), 2)
 
     async def test_the_door_holds_400_in_all_and_300_for_offers_by_itself(self) -> None:
-        async def claim(user: int, kind: str, offer: bool) -> bool:
+        async def claim(user: int, kind: str, offer: bool) -> str:
             async with self.db.unscoped() as conn:
+                # Caps far above the door's own ceilings: the door must still hold them.
                 cur = await conn.execute(
-                    "SELECT dmbot_claim_email(%s, %s, %s) AS ok", (user, kind, offer)
+                    "SELECT dmbot_claim_email(%s, %s, %s, 9999, 9999) AS status",
+                    (user, kind, offer),
                 )
                 row = await cur.fetchone()
-            return bool(row and row["ok"])
+            return str((row or {})["status"])
 
         async with self.db.unscoped() as conn:
             await conn.execute(
@@ -164,12 +176,12 @@ class Sending(DatabaseTest):
                 "INSERT INTO sent_emails (user_id, kind, sent_at) VALUES (900, 'old', 1),"
                 " (901, 'dm:x', extract(epoch FROM now())::BIGINT)"
             )
-        self.assertTrue(await claim(1001, "offer-a", True))  # the 300th
-        self.assertFalse(await claim(1002, "offer-b", True))  # offers stop at 300
-        self.assertTrue(await claim(1003, "sign-in:1", False))  # account emails go on to 400
-        self.assertFalse(await claim(1003, "sign-in:1", False))  # and each kind goes once
-        self.assertFalse(await claim(1004, "dm:trial", False))  # not an email kind
-        self.assertFalse(await claim(0, "k", False))
+        self.assertEqual(await claim(1001, "offer-a", True), "sent")  # the 300th
+        self.assertEqual(await claim(1002, "offer-b", True), "capped")  # offers stop at 300
+        self.assertEqual(await claim(1003, "sign-in:1", False), "sent")  # account emails to 400
+        self.assertEqual(await claim(1003, "sign-in:1", False), "duplicate")  # each kind once
+        self.assertEqual(await claim(1004, "dm:trial", False), "refused")  # not an email kind
+        self.assertEqual(await claim(0, "k", False), "refused")
 
     async def test_a_failed_send_keeps_its_record_and_logs_no_address(self) -> None:
         made, fake = self.mailer()
@@ -197,12 +209,25 @@ class Sending(DatabaseTest):
             self.assertEqual(await self.send(made, "k", to=to), "no_address")
         self.assertEqual(fake.sent, [])
 
+    async def test_a_failed_offer_is_given_back_and_goes_on_the_next_run(self) -> None:
+        made, fake = self.mailer()
+        fake.fail = True
+        self.assertEqual(await self.send(made, "trial-end:1", offer=True), "failed")
+        fake.fail = False
+        self.assertEqual(await self.send(made, "trial-end:1", offer=True), "sent")
+
+    async def test_a_full_day_is_not_reported_as_already_sent(self) -> None:
+        made, _ = self.mailer(MAIL_DAILY_CAP=1)
+        self.assertEqual(await self.send(made, "a"), "sent")
+        self.assertEqual(await self.send(made, "b"), "capped")
+        self.assertEqual(await self.send(made, "a"), "already_sent")
+
     async def test_a_message_that_cannot_be_built_leaves_no_record(self) -> None:
         made, fake = self.mailer()
         self.assertEqual(await self.send(made, "k", offer=True, user=-5), "no_address")
         # A real-looking id too big for a DMbot ID reaches the build and fails there: no record.
         self.assertEqual(await self.send(made, "k", offer=True, user=36**12), "failed")
-        self.assertEqual(await made.sent_today(), 0)
+        self.assertEqual(await self.count_today(), 0)
         self.assertEqual(await self.send(made, "x" * 61), "no_address")  # kind too long
         self.assertEqual(fake.sent, [])
 
@@ -247,10 +272,6 @@ class Sending(DatabaseTest):
         self.assertEqual(await self.send(made), "not_ready")
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
 class FakeSmtp:
     """Stands in for smtplib.SMTP: records what the real sender does, in order."""
 
@@ -286,3 +307,7 @@ class SmtpOrder(unittest.IsolatedAsyncioTestCase):
         with patch("dmbot.mail.smtplib.SMTP", FakeSmtp):
             await mail.SmtpTransport(load_mail_settings(ENV))(message)
         self.assertEqual(FakeSmtp.log, ["connect", "starttls", "login", "send"])
+
+
+if __name__ == "__main__":
+    unittest.main()

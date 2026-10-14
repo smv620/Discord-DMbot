@@ -292,6 +292,19 @@ class WebApi(DatabaseTest):
         self.assertEqual((plan["hoursUsed"], plan["hoursCap"]), (0, 28))
         self.assertRegex(plan["renewsOn"], r"^\d{4}-\d{2}-\d{2}$")
 
+    async def test_me_shows_an_extended_try_it_with_the_hours_it_has_left(self) -> None:
+        await self.sign_in()
+        async with self.db.plan_writer(ALICE.id) as conn:
+            await conn.execute(
+                "INSERT INTO entitlements (user_id, plan, status, hours_cap, extra_hours,"
+                " campaign_cap, period_start, period_end, plan_changed_at, provider,"
+                " last_event_at, updated_at, minutes_taken) VALUES (%s, 'try-it', 'active', 8, 0,"
+                " 1, %s, %s, 0, 'fake', 0, 0, 90)",
+                (ALICE.id, self.now - 100, self.now + 86400),
+            )
+        plan = (await self.client.get("/me")).json()["plan"]
+        self.assertEqual(plan["hoursCap"], 6.5)  # 8 hours in all, less the 90 minutes used
+
     async def test_an_expired_session_is_signed_out(self) -> None:
         await self.sign_in()
         self.now += 31 * 86400  # the API's clock

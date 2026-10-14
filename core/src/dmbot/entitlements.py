@@ -37,6 +37,17 @@ Status = Literal["active", "grace", "lapsed"]
 RENEWAL_SLACK_SECONDS = 3 * 24 * 3600
 
 
+def cap_minutes(hours: int, minutes_taken: int) -> int:
+    """Hours less the minutes already taken from them, never below 0."""
+    return max(0, hours * 60 - minutes_taken)
+
+
+def cap_hours(hours: int, minutes_taken: int) -> int | float:
+    """The same in hours for the website: whole when it is, else to one decimal (6.5)."""
+    minutes = cap_minutes(hours, minutes_taken)
+    return minutes // 60 if minutes % 60 == 0 else round(minutes / 60, 1)
+
+
 @dataclass(frozen=True)
 class Entitlement:
     user_id: int
@@ -62,6 +73,13 @@ class Entitlement:
     @property
     def hours_this_period(self) -> int:
         return self.hours_cap + self.extra_hours
+
+    @property
+    def cap_minutes(self) -> int:
+        """What the meter allows this period, in minutes: the period's hours less those an
+        extended Try It already used (8 hours in all). The one number the bot's meter, /me
+        and the data export all show."""
+        return cap_minutes(self.hours_this_period, self.minutes_taken)
 
     def usable(self, now: int) -> bool:
         """The plan works now: active (and its period not long over), or in the payment
