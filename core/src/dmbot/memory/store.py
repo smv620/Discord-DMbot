@@ -2284,15 +2284,37 @@ def _placeholder_name(user_id: int) -> str:
 
 async def _unused_placeholder(w: Changes, person_id: str, user_id: int) -> bool:
     """A person entry that is only the `Player 1234` placeholder: still that name, no other
-    names, and nothing at all linking to it (the same list a delete is refused on, so the
-    delete below can't fail halfway). Rows that cascade without a log (`memory_heard`,
-    sheets) go with it, which is right for a stopped speaker."""
+    names, nothing written on it (description, role), nothing logged for it by anyone but the
+    scan, and nothing linking to it: the same list a delete is refused on (so the delete below
+    can't fail halfway), plus the rows that would cascade without a log (a character sheet,
+    heard counts), which keep it. An entry the DM touched stays."""
     row = await w.get(ENTITIES, person_id)
     if row is None or row["type"] != PERSON or row["name"] != _placeholder_name(user_id):
         return False
+    if row["description"] or row["role"] is not None or row["needs_look"]:
+        return False  # the DM wrote on it
     names = await w.select(ALIASES, " AND entity_id = %s", [person_id])
     if any(a["text"] != row["name"] for a in names):
         return False
+    # Anything logged for it by someone other than DMbot's own scan: the DM touched it.
+    cur = await w.conn.execute(
+        "SELECT 1 FROM memory_changes WHERE guild_id = %s AND campaign_id = %s"
+        " AND table_name = 'memory_entities' AND row_id = %s AND source <> 'scan' LIMIT 1",
+        (*w.ids, person_id),
+    )
+    if await cur.fetchone() is not None:
+        return False
+    # Rows that would go with it without a log: kept, never silently deleted.
+    for table_name in ("character_sheets", "memory_heard"):
+        cur = await w.conn.execute(
+            sql.SQL(
+                "SELECT 1 FROM {} WHERE guild_id = %s AND campaign_id = %s"
+                " AND entity_id = %s LIMIT 1"
+            ).format(sql.Identifier(table_name)),
+            (*w.ids, person_id),
+        )
+        if await cur.fetchone() is not None:
+            return False
     for dep_table, column, is_list in DEPENDENTS["memory_entities"]:
         if (dep_table, column) == ("memory_aliases", "entity_id"):
             continue  # its own placeholder name, removed with it
