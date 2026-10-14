@@ -24,7 +24,7 @@ import time
 import uuid
 from collections import deque
 from collections.abc import Awaitable, Callable, Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Protocol
 
 import discord
@@ -157,20 +157,28 @@ class Recent:
     """What was said lately, to give the answer engine the scene. In memory, bounded."""
 
     lines: deque[tuple[float, int, str]]
+    # The same, but only what was *spoken* (cleaned by the Transcript Cleaner): typed chat
+    # is raw text anyone can write anything in, so FightBot (#1129) reads only this.
+    spoken: deque[tuple[float, int, str]] = field(
+        default_factory=lambda: deque(maxlen=RECENT_LINES)
+    )
 
     @classmethod
     def new(cls) -> Recent:
         return cls(deque(maxlen=RECENT_LINES))
 
-    def add(self, user_id: int, text: str, now: float) -> None:
+    def add(self, user_id: int, text: str, now: float, *, typed: bool = False) -> None:
         if text.strip():
             self.lines.append((now, user_id, text))
+            if not typed:
+                self.spoken.append((now, user_id, text))
 
     def drop_speaker(self, user_id: int) -> None:
         """Someone stopped being recorded: nothing they said is used again."""
-        kept = [item for item in self.lines if item[1] != user_id]
-        self.lines.clear()
-        self.lines.extend(kept)
+        for lines in (self.lines, self.spoken):
+            kept = [item for item in lines if item[1] != user_id]
+            lines.clear()
+            lines.extend(kept)
 
     def scene(
         self,

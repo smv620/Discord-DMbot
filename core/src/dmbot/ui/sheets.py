@@ -50,6 +50,20 @@ TELL_LABEL = "Type in my character"
 DOC_LABEL = "Use a document link"  # any public web page or PDF link (#1125)
 FILE_LABEL = "Upload my sheet file"  # a Word, PDF or text file, kept only as names and numbers
 FORGET_LABEL = "Forget my sheet"
+# The button says what it does, not what is set now (#1171): pressing "Turn off" turns off.
+QUESTIONS_ON = "Turn sheet questions off"  # shown while DMbot may ask
+QUESTIONS_OFF = "Turn sheet questions on"
+QUESTIONS_NOW_ON = (
+    "✅ Sheet questions are on. DMbot may privately ask if your sheet doesn't match what was said."
+)
+# The button says what it does (#1129): the spec's words, FightBot on / off.
+FIGHTBOT_ON = "Turn FightBot off"  # shown while FightBot may remind this player
+FIGHTBOT_OFF = "Turn FightBot on"
+FIGHTBOT_NOW_ON = (
+    "✅ FightBot is on. In a fight it may privately remind you of your own spells and features."
+)
+FIGHTBOT_NOW_OFF = "✅ FightBot is off for you."
+QUESTIONS_NOW_OFF = "✅ Sheet questions are off."
 NO_CHARACTER = (
     "DMbot doesn't know your character in this server yet. Ask your DM to add it: "
     "`/dmbot names`, then **🧑 Add a player's character**."
@@ -249,7 +263,7 @@ async def status_card(
     target, fallback = (
         (campaign.target_ruleset, campaign.fallback_ruleset)
         if campaign is not None
-        else ("2024", "none")
+        else sheet_checks.NO_CAMPAIGN_RULESETS
     )
     return sheet_checks.card(snapshot, target=target, fallback=fallback, escape=_md)
 
@@ -567,7 +581,12 @@ async def show_panel(
     text = panel_text(character, sheet, link=True)
     if note:
         text = f"{note}\n\n{text}"
-    view = SheetPanel(guild_id, character, has_sheet=sheet is not None)
+    asks = sheet.asks if sheet is not None and sheet.url is not None else None
+    fight: bool | None = None
+    if sheet is not None:  # FightBot's switch is per player per campaign, kept apart from sheets
+        mine = (await store.fight_players(guild_id, character.campaign_id)).get(interaction.user.id)
+        fight = not (mine is not None and mine.never)
+    view = SheetPanel(guild_id, character, has_sheet=sheet is not None, asks=asks, fight=fight)
     if replace:
         await _replace(interaction, text, view)
     else:
@@ -575,9 +594,19 @@ async def show_panel(
 
 
 class SheetPanel(_Menu):
-    def __init__(self, guild_id: int, character: PlayerCharacter, *, has_sheet: bool) -> None:
+    def __init__(
+        self,
+        guild_id: int,
+        character: PlayerCharacter,
+        *,
+        has_sheet: bool,
+        asks: bool | None = None,
+        fight: bool | None = None,
+    ) -> None:
         super().__init__()
         self.guild_id, self.character = guild_id, character
+        self.asks = asks
+        self.fight = fight
         if has_sheet:  # the player's own view of it, one part at a time (#1126)
             self.add_item(_Button(self._show, label=SHOW_LABEL, style=discord.ButtonStyle.success))
         self.add_item(_Button(self._link, label=LINK_LABEL, style=discord.ButtonStyle.primary))
@@ -585,6 +614,22 @@ class SheetPanel(_Menu):
         # A document or a file the player already has (#1125); the forms live in sheet_import.
         self.add_item(_Button(self._file, label=FILE_LABEL, style=discord.ButtonStyle.secondary))
         self.add_item(_Button(self._doc, label=DOC_LABEL, style=discord.ButtonStyle.secondary))
+        if asks is not None:  # a D&D Beyond sheet is re-read; its player may be asked (#1128)
+            self.add_item(
+                _Button(
+                    self._questions,
+                    label=QUESTIONS_ON if asks else QUESTIONS_OFF,
+                    style=discord.ButtonStyle.secondary,
+                )
+            )
+        if fight is not None:  # any kind of sheet: FightBot's reminders in combat (#1129)
+            self.add_item(
+                _Button(
+                    self._fightbot,
+                    label=FIGHTBOT_ON if fight else FIGHTBOT_OFF,
+                    style=discord.ButtonStyle.secondary,
+                )
+            )
         if has_sheet:
             self.add_item(
                 _Button(self._forget, label=FORGET_LABEL, style=discord.ButtonStyle.secondary)
@@ -620,6 +665,44 @@ class SheetPanel(_Menu):
 
         self.origin = None
         await interaction.response.send_modal(DocumentFileForm(self.guild_id, self.character))
+
+    async def _questions(self, interaction: discord.Interaction) -> None:
+        """Turn DMbot's private questions about this sheet on or off (#1128)."""
+        store = _store(interaction)
+        assert store is not None
+        self.stop()
+        await _answer_first(interaction, in_place=True)
+        if not await _still_member(interaction, self.guild_id):
+            return
+        c = self.character
+        # The stored value, not what the panel showed when it was drawn: it may have changed.
+        current = await store.sheet(
+            self.guild_id, c.campaign_id, c.entity_id, player=interaction.user.id
+        )
+        turn_on = not (current.asks if current is not None else bool(self.asks))
+        if await store.set_questions(
+            self.guild_id, c.campaign_id, c.entity_id, interaction.user.id, turn_on
+        ):
+            note = QUESTIONS_NOW_ON if turn_on else QUESTIONS_NOW_OFF
+        else:
+            note = NOT_YOURS
+        await show_panel(interaction, self.guild_id, c, replace=True, note=note)
+
+    async def _fightbot(self, interaction: discord.Interaction) -> None:
+        """Turn FightBot's private reminders in combat on or off for this player (#1129)."""
+        store = _store(interaction)
+        assert store is not None
+        self.stop()
+        await _answer_first(interaction, in_place=True)
+        if not await _still_member(interaction, self.guild_id):
+            return
+        c = self.character
+        # The stored value, not what the panel showed when it was drawn: it may have changed.
+        mine = (await store.fight_players(self.guild_id, c.campaign_id)).get(interaction.user.id)
+        turn_on = mine is not None and mine.never
+        await store.set_fightbot(self.guild_id, c.campaign_id, interaction.user.id, turn_on)
+        note = FIGHTBOT_NOW_ON if turn_on else FIGHTBOT_NOW_OFF
+        await show_panel(interaction, self.guild_id, c, replace=True, note=note)
 
     async def _forget(self, interaction: discord.Interaction) -> None:
         store = _store(interaction)

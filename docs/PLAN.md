@@ -606,6 +606,59 @@ that house rules must be readable offline, so DMbot keeps a plain-text file of r
   to the DM; nothing is stored.
 - The offers wait in memory (the 20 newest); after a restart an old button says it has ended.
 
+**Shared rulesets: homebrew packs and house-rules sets (owner, 2026-10-14).** Rules can be shared between
+campaigns, in the same server or another one, when both sides choose to. Only rules cross; a campaign's story
+never does.
+- **Three layers:**
+  | Layer | What | Who uses it |
+  |---|---|---|
+  | **Official** | SRD rules data and the core relationships (#1189) | Every campaign, always; read-only, versioned |
+  | **Shared** | A named **homebrew pack** or **house-rules set**: rules entries, house rules, and the relationships that content needs | Campaigns whose DM chose to follow it |
+  | **The campaign's own** | Its own homebrew, house rules and relationships, and all its story memory | That campaign only |
+- **Precedence, highest first:** the campaign's own house rules → the house-rules set it follows → its own
+  homebrew → the homebrew packs it follows (in the order the DM lists them) → target ruleset → fallback.
+  Every rules answer names where it came from ("Frostmaiden homebrew, v3").
+- **Relationships layer the same way:** a campaign's vocabulary is the official list, plus its shared sets'
+  relationships, plus its own. The reuse-before-create check looks across all three, and every relationship
+  and fact records its source (official, which set and version, or this campaign) with its definition version.
+- **Publishing:** a DM of a **paid** campaign may publish its homebrew as a pack, or its house rules as a set,
+  with a name. Within the server, other DMs pick it from a list; for another server, the publishing DM gets a
+  **share code** to hand out (it can be turned off, which stops new followers only). Try It campaigns can
+  follow but not publish (they have no backups either).
+- **What a set may hold:** only content the campaign's DMs wrote themselves. **Never** anything from a shared
+  rulebook or adventure (the right to use it was confirmed for one campaign only, CLAUDE.md, IP), checked by
+  where each entry came from; never story memory, names, transcripts, DM notes or character sheets.
+- **One writer.** Only the publishing campaign's DMs change a set (and DMs it names as co-editors; every change
+  is logged with who, which campaign and when).
+  - **A follower can't change it.** When a following campaign's DM changes a shared rule, or a ruling is made
+    at their table, it goes into **their own** house rules, which win over the set. The publisher never sees
+    it and is never affected. **"Suggest it to <set>"** sends it to the publisher's DMs as a suggestion
+    ([Accept] [No thanks]); nothing changes until they accept.
+  - **The document of record can be edited outside DMbot** by anyone with edit access, and DMbot can't see
+    who. So a change DMbot finds in a shared house-rules document (at any following campaign's session
+    start) is **held as pending** and shown to the publisher's DMs as a diff ([See changes] [Accept] [Not
+    these]). Until they accept, every campaign keeps the last accepted version; followers see "New changes
+    are waiting for the <set> DM."
+- **Updates reach followers at their next session start, never mid-game**, as a note on their DM screen:
+  "The Frostmaiden house rules changed (v4): 2 rules. **[Follow]** **[Cherry pick]** [See changes]".
+  - **Follow** (the default, also what happens if the DM does nothing): take the changes and keep following.
+  - **Cherry pick:** decide change by change, Accept or Reject. **If every change is accepted, it is the same
+    as Follow.** **If any change is rejected,** the set as the campaign had it, plus the accepted changes and
+    without the rejected ones, is **merged into the campaign's own house rules** (or its own homebrew), and
+    the campaign stops following that set. Its own rules still win over what was merged. The merged rules
+    keep a note of where they came from ("from Frostmaiden house rules v4"); the campaign may follow the set
+    again later.
+  - A shared rule the campaign already changed for itself stays its own: "A shared rule you changed was
+    updated. Yours still applies. [Compare]".
+- **Never lost:** a following campaign's backup holds a copy of the set version it uses. If the publisher
+  deletes or stops sharing a set, followers keep their last version, marked "no longer updated".
+- **Isolation:** shared sets live in their own tables, readable only by the campaigns that follow them
+  (row-level security through the follow record), and never readable by anything else of the publishing
+  campaign. A follow, a share code and every change are visible and can be undone by the DM.
+- **Build:** #1190 (sets, publishing, following, precedence, share codes) and #1191 (updates: Follow and Cherry
+  pick, pending document changes, suggestions), CloudDev.
+
+
 **AI models by task (decided 2026-10-10, built #1006).** Every AI call names a *tier*, never
 a model.
 - **Which job uses which:** **FAST** (the small model, Haiku today) for simple jobs:
@@ -2846,12 +2899,57 @@ once. The new-campaign form's link is saved in the same step as the campaign.
     move), DMbot asks the player privately and politely, at most once per change: "The DM
     mentioned 8 damage to Belleros. Your D&D Beyond sheet still shows 26 HP. Want to update it?"
     It never changes a D&D Beyond sheet itself, and never tells the DM or the table.
+  - **How it runs (built in #1128):**
+    - Only sheets linked from D&D Beyond are read again; a typed or document sheet never is.
+    - Whose change it is comes from the character's name standing right before the words
+      ("Belleros takes 8 damage") or after "to" ("8 damage to Belleros"), or from "I" for the
+      speaker's own character. Two names, a monster, or no name: nothing, never a guess.
+    - Phrases are strict (no questions, wishes, "if" or "maybe"); damage, healing, a condition
+      or a spell slot. A slot count isn't kept, so a slot only causes the read.
+    - Backing off after a refusal or an error: 2 minutes, doubling, at most 30 minutes; the
+      changes wait. A 5-player table is read about 20 times an hour on the schedule, plus one
+      read a minute at most per change.
+    - A question is asked once per change heard, only if the sheet shows nothing of it (damage
+      that didn't lower HP, healing that didn't raise it unless already full, a condition not
+      listed). Hit points and temporary hit points count together. The player's switch is
+      **Turn sheet questions off/on** on 📜 My character sheet (per character).
+    - The status card is sent again only when a part that was ✅ became ⚠️ or ⛔, and not in
+      combat (it waits for the fight to end).
+    - **Questions must be rare** (decided by Supervisor, 2026-10-13, #1171), because the game
+      has to stay quick: at most **one message per player every 15 minutes**, with all their
+      waiting questions merged into it (at most three) and the campaign named in it; **none in
+      combat**: they are held and sent after the fight; **never twice** about the same value
+      while the sheet still shows the same number; and one the sheet already answers (the
+      player updated it meanwhile) is dropped. Damage and healing of the same size within the
+      minute cancel out, and "Mira heals 5" is not used (Mira may be the healer): only the
+      one who is healed as the subject counts ("Mira regains 5 hit points").
+    - **A person who stops being recorded** takes their words with them: nothing waiting that
+      they said is read for, asked about, or used.
+    - **One limit for the whole bot** on D&D Beyond: a bucket of **20 reads a minute** across
+      all servers, and a pause for every sheet after a 429 or a 5xx for as long as
+      `Retry-After` says (a minute if it says nothing; never more than 15). A read held by the
+      limit waits and nobody is penalised; a 429 is logged apart from other failures.
 - **Combat state.**
   - DMbot knows whether the table is **in combat** and which **round** it is.
   - From what the DM says ("roll initiative", "round three", "the fight's over") and from DM-screen
     buttons (**Start combat**, **Next round**, **End combat**) that correct it.
   - With **side-based initiative** (a campaign setting) it tracks rounds only, not turn order.
   - Combat state goes on the DM screen. Players see "⚔️ Combat, round 3" in the game-time channel.
+  - **How it runs (built in #1127):**
+    - **Kept with the game clock** (`combat_round`, plus the seconds already spent toward the
+      next minute), so it survives a restart. A backup does not carry it: a restored campaign
+      starts out of combat. The side-initiative switch is a campaign setting and is in backups.
+    - **Heard from a DM only** (voice or typed), whole lines only: "roll initiative" or "combat
+      starts" begins round 1; "round two" or "next round" sets or moves the round; "combat's
+      over" or "the fight ends" ends it. Questions, wishes, conditions and stories ("the goblin
+      dies next round") never count, and a player's words never change it. Each change posts one
+      DM-screen line with Undo.
+    - **Time:** every round is 6 seconds. The clock counts whole minutes, so it moves every
+      tenth round, and **End combat** counts the last round and rounds up to the next minute
+      (at least one). Going back a round is a correction and spends nothing.
+    - **Buttons** on the pinned clock: **Start combat** out of a fight, **Next round** and
+      **End combat** in one. Only the campaign's DMs.
+    - **One question for other parts:** `ClockStore.in_combat(guild, campaign)`.
 - **FightBot** (one per player character, only while in combat).
   - **What it says:** private messages to that player only, reminding them of their own character:
     spell slots left, features and items that could help now ("You still have Hunter's Mark and
@@ -2865,6 +2963,35 @@ once. The new-campaign form's link is saved in the same step as the campaign.
     campaign; can be turned back on from 📜 My character sheet).
   - **Cost:** FAST tier, one call per player at most every 2 minutes, only while in combat. It
     counts toward the hours meter's AI cost like every other job.
+  - **How it runs (built in #1129, changed after Supervisor's review):**
+    - A loop per running session looks every 30 seconds; it does nothing outside combat
+      (#1127). It reminds only **people in the table's voice channel right now** (not bots;
+      consent and a sheet carry over from earlier sessions, but an absent player is not
+      reminded), who agreed to be recorded and have a sheet (any kind), at most **two** AI
+      calls per pass.
+    - Per player, at most one AI call (and so one message) every **2 minutes**, and only if
+      something changed since the last (the round, hit points, a condition).
+    - The prompt holds only: that player's own allow-listed sheet facts, the round, and the
+      last few things *said aloud* in the last three minutes by people who still agree (the
+      cleaned lines, never typed chat), without any line that mentions a secret name. If the
+      secret names can't be loaded, nothing is sent. It is told to use only names from the
+      sheet, to treat the table talk as untrusted, and to answer NOTHING when nothing clearly
+      helps. On our side the reply must name a whole name from the player's own sheet, has
+      links taken out, and is dropped if it gives advice or a ruling ("should", "try",
+      "use"...).
+    - Every message is a private message to that player with **Snooze 10 min**, **Quiet until
+      next session** and **Never**. Everything a player chooses is kept in the database, one
+      row per player per campaign (`fightbot_players`): Never, the session Quiet applies to
+      (the session's start), the end of a Snooze, and the time of the last call. So a restart
+      forgets none of it, and **Forget my sheet** or a second character never turns reminders
+      back on. Never is undone with **Turn FightBot on** on 📜 My character sheet.
+    - **One private-message cap in a fight (rule, Supervisor 2026-10-13):** a player gets **at
+      most one DMbot private message per two minutes during combat**, counting everything DMbot
+      sends them. In practice that is FightBot's own gap, because the sheet questions and cards
+      of #1128 are held until the fight ends. Later features keep to this rule.
+    - **Spell slots:** the sheet snapshot (D1) does not keep slot counts, so a reminder can name
+      spells and features but not how many slots are left. Adding slots to the sheet is a
+      follow-up.
 *Built, part D1: the fields and the import status (2026-10-13, #1124):* the D&D Beyond snapshot (still version 1; a
 kept snapshot without the new fields reads them as unknown) now also holds hit points now (`hp`: the maximum minus the
 damage taken, never below 0) and temporary hit points, active conditions with the exhaustion level, resistances,

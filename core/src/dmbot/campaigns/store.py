@@ -284,6 +284,7 @@ _SETTABLE = frozenset(
         "gametime_channel_id",
         "dndbeyond_invite",
         "rules_cards",
+        "side_initiative",
     }
 )
 
@@ -641,6 +642,11 @@ class CampaignStore:
         """How much DMbot says in the DM screen: quiet, normal or chatty (#504)."""
         check_dm_screen_level(level)
         return await self._set(guild_id, campaign_id, "dm_screen_level", level)
+
+    async def set_side_initiative(self, guild_id: int, campaign_id: str, on: bool) -> Campaign:
+        """Side-based initiative (#1127): a DM's setting, off by default. DMbot tracks rounds
+        only either way; it is kept so the table's way of running a fight is recorded."""
+        return await self._set(guild_id, campaign_id, "side_initiative", bool(on))
 
     async def set_rules_cards(self, guild_id: int, campaign_id: str, on: bool) -> Campaign:
         """Whether rules cards show on the DM screen when a spell or creature is named
@@ -1110,6 +1116,7 @@ class CampaignStore:
                 "dm_screen_visibility": campaign.dm_screen_visibility,
                 "dm_screen_level": campaign.dm_screen_level,
                 "rules_cards": campaign.rules_cards,
+                "side_initiative": campaign.side_initiative,
                 "dndbeyond_invite": campaign.dndbeyond_invite,
                 # Only the switch (#1118): a channel ID means nothing in another server.
                 "table_chat": campaign.table_chat,
@@ -1174,7 +1181,7 @@ class CampaignStore:
                     "UPDATE campaigns SET target_ruleset = %s, fallback_ruleset = %s,"
                     " optional_rules_default = %s, last_played_at = %s,"
                     " dm_screen_visibility = %s, dm_screen_level = %s, rules_cards = %s,"
-                    " table_chat = %s,"
+                    " table_chat = %s, side_initiative = %s,"
                     # The invite link is not touched: it is the DM's join link for this
                     # server's table, and a backup doesn't record which server it came from,
                     # so its link could be another server's (#1119).
@@ -1191,6 +1198,7 @@ class CampaignStore:
                         info["dm_screen_level"],
                         info["rules_cards"],
                         info["table_chat"],
+                        info["side_initiative"],
                         importer_id,
                         guild_id,
                         campaign_id,
@@ -1216,6 +1224,12 @@ class CampaignStore:
                     if info["rules_cards"]:  # a new campaign starts with them off
                         await conn.execute(
                             "UPDATE campaigns SET rules_cards = TRUE"
+                            " WHERE guild_id = %s AND id = %s",
+                            (guild_id, campaign_id),
+                        )
+                    if info["side_initiative"]:  # a new campaign starts with it off
+                        await conn.execute(
+                            "UPDATE campaigns SET side_initiative = TRUE"
                             " WHERE guild_id = %s AND id = %s",
                             (guild_id, campaign_id),
                         )
@@ -1388,6 +1402,7 @@ def _to_campaign(row: dict[str, Any], dms: set[int]) -> Campaign:
         dm_screen_level=row["dm_screen_level"],
         owner_user_id=row_int(row, "owner_user_id"),
         rules_cards=bool(row.get("rules_cards", False)),  # older schemas (tests) have none
+        side_initiative=bool(row.get("side_initiative", False)),
         paused=bool(row.get("paused", False)),
         retention_warned_stage=int(row.get("retention_warned_stage", 0) or 0),
         retention_warned_for=(
@@ -1568,6 +1583,11 @@ def _validate_backup(
     if not isinstance(rules_cards, bool):
         raise CampaignError(DAMAGED)
 
+    # Backups made before combat state existed have side-based initiative off.
+    side_initiative = campaign.get("side_initiative", False)
+    if not isinstance(side_initiative, bool):
+        raise CampaignError(DAMAGED)
+
     # Backups made before typed chat existed have it on, as a new campaign does.
     table_chat = campaign.get("table_chat", True)
     if not isinstance(table_chat, bool):
@@ -1601,6 +1621,7 @@ def _validate_backup(
         "dm_screen_visibility": visibility,
         "dm_screen_level": level,
         "rules_cards": rules_cards,
+        "side_initiative": side_initiative,
         "dndbeyond_invite": invite,
         "table_chat": table_chat,
     }

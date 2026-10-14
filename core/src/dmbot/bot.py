@@ -30,10 +30,12 @@ from discord.ext import commands
 from dmbot import (
     campaign_cap,
     entitlements,
+    fightbot,
     hours,
     install,
     plan_rules,
     retention,
+    sheet_reread,
     table_chat,
     usage,
 )
@@ -113,6 +115,7 @@ from dmbot.dm_screen.settings import (
     RulesCardsButton,
     SettingsButton,
     SettingsVisibilityButton,
+    SideInitiativeButton,
 )
 from dmbot.dm_screen.site_offers import SiteOffers
 from dmbot.dm_screen.speaker_question import SpeakerQuestionButton
@@ -136,6 +139,7 @@ from dmbot.ears.protocol import (
     leave_command,
 )
 from dmbot.ears.server import EarsServer
+from dmbot.fightbot import FightState
 from dmbot.logs import log_context, set_log_context
 from dmbot.memory import document_reader
 from dmbot.memory.backup import MemorySection
@@ -144,9 +148,11 @@ from dmbot.memory.models import DM, FIX, KEEP, Heard, MemoryRuleError, name_key
 from dmbot.memory.scan import MAX_SUGGESTIONS, find_new_names, group_alike
 from dmbot.memory.scene import HintParts, SceneTracker, mentions, scene_hints
 from dmbot.memory.scene import prepare as prepare_hints
+from dmbot.memory.sheet_questions import Questions as SheetQuestions
 from dmbot.memory.sheet_refresh import hint_names as sheet_hint_names
 from dmbot.memory.sheet_refresh import refresh as refresh_sheets
-from dmbot.memory.sheet_store import SheetStore
+from dmbot.memory.sheet_store import CharacterSheet, SheetStore
+from dmbot.memory.sheet_watch import SheetWatch
 from dmbot.memory.store import MemoryStore
 from dmbot.retention import RetentionJob
 from dmbot.rules import house_voice
@@ -163,7 +169,7 @@ from dmbot.test_recording import files as test_files
 from dmbot.test_recording import library as test_library
 from dmbot.test_recording.session import TestSession
 from dmbot.test_recording.store import TestVoiceStore
-from dmbot.timebot import durations
+from dmbot.timebot import combat_phrases, durations
 from dmbot.timebot import phrases as clock_phrases
 from dmbot.timebot.effects import EffectsSection, EffectStore
 from dmbot.timebot.store import ClockSection, ClockStore
@@ -240,6 +246,7 @@ NAMES_WAIT_S = 1.0  # the sidebar waits this long for a campaign's names, then a
 GATE_TIMEOUT_S = 2  # a button press must be answered within Discord's 3 s: fail open sooner
 CHAT_BLOCKED_TTL_S = 60  # how long the list of channels never read as chat is kept (#1118)
 CLOCK_PHRASE_GAP_S = 300  # the same rest said twice within this is counted once (#965)
+COMBAT_PHRASE_GAP_S = 15  # the same combat words twice (voice and chat) within this: once (#1127)
 METER_CALL_TIMEOUT_S = 8  # one write of minutes; a stuck database must not hold the loop
 RECORDED_CHECK_S = 2.0  # the ⚙️ Menu's database check: well inside Discord's 3 s
 NO_PINGS = discord.AllowedMentions.none()
@@ -338,6 +345,15 @@ class Table:
     # Spell, feature and item names from the players' D&D Beyond sheets (#723).
     sheet_hints: tuple[str, ...] = ()
     sheet_task: asyncio.Task[None] | None = None  # reading them; cancelled at the end
+    # Reading linked D&D Beyond sheets again during the session (#1128): the linked sheets as
+    # last read, the schedule, and the loop that runs it (cancelled at the end).
+    sheet_links: dict[str, CharacterSheet] = field(default_factory=dict)
+    sheet_watch: SheetWatch = field(default_factory=SheetWatch)
+    sheet_questions: SheetQuestions = field(default_factory=SheetQuestions)
+    watch_task: asyncio.Task[None] | None = None
+    # FightBot's memory for this session and its loop (#1129).
+    fight: FightState = field(default_factory=FightState)
+    fight_task: asyncio.Task[None] | None = None
     sheet_loads: int = 0  # each load of the names counts up; only the newest one is used
     # For the Transcript Cleaner (#127): what this session's lines say about words, and
     # the display names of people who agreed (never "fixed" into a name).
@@ -616,6 +632,10 @@ class DMBot(commands.AutoShardedBot):
         self.sheet_ai = (
             self.ai_client.tier(FEATURE_TIERS[Feature.SHEET]) if self.ai_client else None
         )
+        # FightBot's reminders to players in combat (#1129), on the smallest model.
+        self.fight_ai = (
+            self.ai_client.tier(FEATURE_TIERS[Feature.FIGHTBOT]) if self.ai_client else None
+        )
         # The off-topic filter (#52), the audio check and the DM sidebar.
         self.topic_ai = (
             self.ai_client.tier(FEATURE_TIERS[Feature.TOPIC]) if self.ai_client else None
@@ -671,6 +691,9 @@ class DMBot(commands.AutoShardedBot):
         # runs waits on it rather than starting another (a stalled database would pile up).
         self._lookups: dict[tuple[int, int], asyncio.Task[ConsentStatus]] = {}
         self._asking: set[asyncio.Task[None]] = set()  # private-message rounds in flight
+        # Loops that last as long as a session (#1128, #1129): kept apart from `_asking`, which
+        # tests and `close()` wait on until it is empty.
+        self._loops: set[asyncio.Task[None]] = set()
         self._finishing: set[asyncio.Task[None]] = set()  # stopped sessions winding down
         # The hours follow-up (warn, grace, stop) in flight, per server (#437).
         self._follow_ups: dict[int, asyncio.Task[None]] = {}
@@ -723,6 +746,7 @@ class DMBot(commands.AutoShardedBot):
             SettingsVisibilityButton,
             RuleLookupButton,
             RulesCardsButton,
+            SideInitiativeButton,
             HouseFileButton,
             InviteButton,
             TableChatButton,
@@ -744,6 +768,8 @@ class DMBot(commands.AutoShardedBot):
         self.add_dynamic_items(  # #965, #1117
             clock_screen.ClockButton, clock_screen.ClockUndoButton, clock_screen.SuggestionButton
         )
+        self.add_dynamic_items(clock_screen.CombatUndoButton)  # #1127
+        self.add_dynamic_items(fightbot.FightButton)  # #1129
         self.add_dynamic_items(timer_screen.EffectButton)  # timed effects (#998)
         # Undo after forgetting a name (its card), after a restart too.
         self.add_dynamic_items(UndoButton, UndoListButton)
@@ -821,9 +847,11 @@ class DMBot(commands.AutoShardedBot):
             )
         lookups = list(self._lookups.values())  # so the database can close at once
         await self.sidebar.close()
-        for task in [*self._background, *self._asking, *lookups]:
+        for task in [*self._background, *self._asking, *self._loops, *lookups]:
             task.cancel()
-        await asyncio.gather(*self._background, *self._asking, *lookups, return_exceptions=True)
+        await asyncio.gather(
+            *self._background, *self._asking, *self._loops, *lookups, return_exceptions=True
+        )
         await self.pipeline.transcriber.close()
         if self.ai_client is not None:
             await self.ai_client.close()
@@ -938,6 +966,8 @@ class DMBot(commands.AutoShardedBot):
             table.held = {k: v for k, v in table.held.items() if k[0] != user_id}
             table.unsaved.drop_speaker(user_id)  # and never saved
             table.recent.drop_speaker(user_id)  # and never part of a sidebar answer's scene
+            table.sheet_watch.drop_speaker(user_id)  # no sheet is read again for what they said
+            table.sheet_questions.drop_speaker(user_id)  # nor asked about it (#1128)
             table.scene.forget_speaker(user_id)  # and no longer shape the hints
             table.vocabulary.forget_speaker(user_id)  # or the name fixes
             if table.fix_notes.drop_speaker(user_id):  # their fixes leave the DM screen
@@ -1155,6 +1185,25 @@ class DMBot(commands.AutoShardedBot):
         task.add_done_callback(self._asking.discard)
         return task
 
+    def _track_loop(self, work: Awaitable[Any], name: str) -> asyncio.Task[None] | None:
+        """Run a loop that lasts as long as a session; the session's end and close() cancel
+        it. Not part of `_asking`: nothing waits for it to finish."""
+        if self._closing:
+            if inspect.iscoroutine(work):
+                work.close()
+            return None
+
+        async def guarded() -> None:
+            try:
+                await work
+            except Exception:
+                log.exception("Background %s failed", name)
+
+        task = asyncio.create_task(guarded(), name=name)
+        self._loops.add(task)
+        task.add_done_callback(self._loops.discard)
+        return task
+
     def start_asking(
         self, table: Table, members: list[discord.Member], *, only_renewals: bool = False
     ) -> None:
@@ -1346,6 +1395,8 @@ class DMBot(commands.AutoShardedBot):
         table.sheet_task = self._track(
             self._sheet_hints(table, refresh=not table.resumed), "sheets"
         )
+        table.watch_task = self._track_loop(sheet_reread.run(self, table), "sheet-watch")  # #1128
+        table.fight_task = self._track_loop(fightbot.run(self, table), "fightbot")  # #1129
         return sent
 
     async def _secret_keys(self, guild_id: int, campaign_id: str) -> frozenset[str] | None:
@@ -1383,6 +1434,7 @@ class DMBot(commands.AutoShardedBot):
                 kept = await self.sheets.sheets(guild_id, campaign_id)
                 if table.sheet_loads == mine:  # a later change already loaded newer ones
                     table.sheet_hints = tuple(sheet_hint_names(kept))
+                    sheet_reread.track(table, kept)
                 if refresh and current():
                     now = int(time.time())
                     found = await refresh_sheets(
@@ -1395,6 +1447,7 @@ class DMBot(commands.AutoShardedBot):
                         self.sheets_changed(guild_id, campaign_id)
                     else:
                         table.sheet_hints = tuple(sheet_hint_names(found))
+                        sheet_reread.track(table, found)
                     linked = sum(s.url is not None for s in found)
                     # Once a session. Only names read from D&D Beyond (game words, at
                     # most 15), never one that is also a secret name: never what a player
@@ -1425,6 +1478,10 @@ class DMBot(commands.AutoShardedBot):
             log.info("Session ended: %s", reason)
         if table.sheet_task is not None:  # no more reading sheets for it (#723)
             table.sheet_task.cancel()
+        if table.watch_task is not None:  # nor re-reading them (#1128)
+            table.watch_task.cancel()
+        if table.fight_task is not None:  # nor reminding players (#1129)
+            table.fight_task.cancel()
         await self.ears.send(leave_command(guild_id))
         # Speech still being heard or written down is finished, not dropped (#109): the
         # session stays "ending" until the pipeline has caught up.
@@ -2796,6 +2853,10 @@ class DMBot(commands.AutoShardedBot):
         """What a line of table talk can set off, said or typed (#1118): a rules card, a house
         rule, the game clock. The one place both ways in share, so a typed "we take a long
         rest" does what the spoken one does. Consent was checked by the caller."""
+        try:  # a change at the table that D&D Beyond should show: read that sheet again (#1128)
+            sheet_reread.note_line(table, user_id, line)
+        except Exception:
+            log.exception("Sheet re-reads: couldn't look at a line")
         try:  # a card is never worth a lost line: nothing below may be skipped
             self._note_rules(table, user_id, line)
         except Exception:
@@ -2897,7 +2958,7 @@ class DMBot(commands.AutoShardedBot):
             )
         if not listeners:
             return  # raw transcript only: no recent lines, sidebar or name scan (#1154)
-        table.recent.add(user_id, text, time.monotonic())
+        table.recent.add(user_id, text, time.monotonic(), typed=True)
         if self.tables.get(table.guild_id) is table:
             self.sidebar.ask_at_table(table, user_id, text, typed=True)
         if len(table.heard) < HEARD_MAX:
@@ -2993,6 +3054,10 @@ class DMBot(commands.AutoShardedBot):
         if user_id not in table.dm_user_ids:
             await self._suggest_rest(table, user_id, line)
             return
+        fight = combat_phrases.find_combat(line)
+        if fight is not None:  # combat words are never also a clock phrase
+            await self._note_combat_phrase(table, user_id, line, fight)
+            return
         said = clock_phrases.find_clock(line)
         if said is None:
             return
@@ -3054,6 +3119,61 @@ class DMBot(commands.AutoShardedBot):
                 *result.lines,
             ],
             clock_screen.undo_id(result.before, result.after),
+        )
+
+    async def _note_combat_phrase(
+        self, table: Table, user_id: int, line: str, fight: combat_phrases.CombatSaid
+    ) -> None:
+        """A DM clearly saying combat starts, which round it is, or that it is over (#1127):
+        the combat state follows, with one DM-screen line and an Undo. Only the campaign's DMs
+        (checked here and again where the state is changed); a player's words never reach
+        this. Nothing happens when no clock is set up yet or the state already matches."""
+        now = time.monotonic()
+        last = table.clock_said.get(fight.key)
+        if last is not None and now - last < COMBAT_PHRASE_GAP_S:
+            return
+        assert table.campaign_id is not None
+        campaign = await self.campaigns.get(table.guild_id, table.campaign_id)
+        if campaign is None or user_id not in campaign.dm_user_ids:
+            return
+        # Consent and the session are checked again after the await above, as for a voice line.
+        if (
+            self.tables.get(table.guild_id) is not table
+            or not table.listening
+            or not self.consent.has_consent(table.guild_id, user_id)
+        ):
+            return
+        action = {"start": "cstart", "next": "cnext", "round": "cround", "end": "cend"}[fight.kind]
+        table.clock_said[fight.key] = now
+        try:
+            result = await clock_screen.press(
+                self, campaign.guild_id, campaign.id, user_id, action, set_to=fight.number
+            )
+        except CampaignError:
+            table.clock_said.pop(fight.key, None)  # no longer a DM: said quietly, not an error
+            return
+        except Exception:
+            log.exception("Combat couldn't take what was said at the table")
+            table.clock_said.pop(fight.key, None)
+            return
+        if result.before is None or result.after is None or result.after == result.before:
+            table.clock_said.pop(fight.key, None)  # nothing changed: don't burn the window
+            return
+        stored = await self.clocks.get(campaign.guild_id, campaign.id) if self.clocks else None
+        if stored is None:
+            return
+        await clock_screen.show(self, campaign, stored)
+        await clock_screen.update_players(self, campaign, action, result, announce=False)
+        await timer_screen.announce_due(self, campaign, stored.clock.minute)
+        await clock_screen.say(
+            self,
+            campaign,
+            [
+                clock_screen.combat_note(action, result.before, result.after),
+                f"(heard: “{discord.utils.escape_markdown(' '.join(line.split())[:80])}”)",
+                *result.lines,
+            ],
+            combat_undo=clock_screen.combat_undo_id(result.before, result.after),
         )
 
     async def _less_what_a_rest_covers(

@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import re
 import unittest
+from dataclasses import replace
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -13,7 +14,13 @@ import discord
 
 from dmbot.consent_dm import consent_view, options_view, request_view
 from dmbot.memory import sheets
-from dmbot.memory.sheet_store import CharacterSheet, PlayerCharacter, SheetRefused, SheetStore
+from dmbot.memory.sheet_store import (
+    CharacterSheet,
+    FightPlayer,
+    PlayerCharacter,
+    SheetRefused,
+    SheetStore,
+)
 from dmbot.ui import sheets as ui
 from tests.test_sheets import answer
 
@@ -37,6 +44,7 @@ def interaction(found: list[PlayerCharacter], current: CharacterSheet | None = N
     store.save = AsyncMock(return_value=True)
     store.unlink = AsyncMock(return_value=True)
     store.sheets = AsyncMock(return_value=[current] if current else [])
+    store.fight_players = AsyncMock(return_value={})  # FightBot is on for everyone by default
     it = MagicMock()
     it.user = MagicMock(id=PLAYER)
     it.guild = None  # in a private message
@@ -420,3 +428,62 @@ class Refreshing(unittest.IsolatedAsyncioTestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class FightSwitch(unittest.IsolatedAsyncioTestCase):
+    """The FightBot button flips what is stored now, not what the panel showed (#1174)."""
+
+    async def press(self, shown: bool, never: bool) -> Any:
+        current = sheet(url=sheets.sheet_url(1))
+        it = interaction([PlayerCharacter(CAMPAIGN, "Alpha", ENTITY, "Testa")], current)
+        it.client.sheets.fight_players = AsyncMock(return_value={PLAYER: FightPlayer(never=never)})
+        it.client.sheets.set_fightbot = AsyncMock()
+        it.guild = None
+        panel = ui.SheetPanel(
+            GUILD, PlayerCharacter(CAMPAIGN, "Alpha", ENTITY, "Testa"), has_sheet=True, fight=shown
+        )
+        with patch("dmbot.ui.sheets._still_member", AsyncMock(return_value=True)):
+            await panel._fightbot(it)
+        return it
+
+    async def test_it_turns_off_what_is_on_now_even_if_the_panel_was_old(self) -> None:
+        it = await self.press(shown=False, never=False)  # an old panel says off; it is on
+        it.client.sheets.set_fightbot.assert_awaited_once_with(GUILD, CAMPAIGN, PLAYER, False)
+
+    async def test_and_the_other_way(self) -> None:
+        it = await self.press(shown=True, never=True)
+        it.client.sheets.set_fightbot.assert_awaited_once_with(GUILD, CAMPAIGN, PLAYER, True)
+
+    def test_the_button_says_what_it_does(self) -> None:
+        self.assertEqual(ui.FIGHTBOT_ON, "Turn FightBot off")
+        self.assertEqual(ui.FIGHTBOT_OFF, "Turn FightBot on")
+
+
+class QuestionSwitch(unittest.IsolatedAsyncioTestCase):
+    """The sheet questions button flips what is stored now, not what the panel showed (#1171)."""
+
+    async def press(self, shown: bool, stored: bool) -> Any:
+        current = sheet(url=sheets.sheet_url(1))
+        current = replace(current, asks=stored)
+        it = interaction([PlayerCharacter(CAMPAIGN, "Alpha", ENTITY, "Testa")], current)
+        it.client.sheets.set_questions = AsyncMock(return_value=True)
+        it.guild = None
+        panel = ui.SheetPanel(
+            GUILD, PlayerCharacter(CAMPAIGN, "Alpha", ENTITY, "Testa"), has_sheet=True, asks=shown
+        )
+        with patch("dmbot.ui.sheets._still_member", AsyncMock(return_value=True)):
+            await panel._questions(it)
+        return it
+
+    async def test_it_turns_off_what_is_on_now_even_if_the_panel_was_old(self) -> None:
+        it = await self.press(shown=False, stored=True)  # an old panel says off; it is on
+        self.assertIs(it.client.sheets.set_questions.await_args.args[-1], False)
+
+    async def test_and_the_other_way(self) -> None:
+        it = await self.press(shown=True, stored=False)
+        self.assertIs(it.client.sheets.set_questions.await_args.args[-1], True)
+
+    def test_the_button_says_what_it_does(self) -> None:
+        self.assertEqual(ui.QUESTIONS_ON, "Turn sheet questions off")
+        self.assertEqual(ui.QUESTIONS_OFF, "Turn sheet questions on")
+        self.assertLessEqual(len(ui.QUESTIONS_ON), 80)
