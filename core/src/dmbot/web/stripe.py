@@ -357,17 +357,19 @@ class StripeProvider:
         if name in ("checkout.session.completed", "checkout.session.async_payment_succeeded"):
             return self._extra_hours(obj, event_id, when)
         if name == "customer.updated":
-            user_id = _person(obj.get("metadata"))
-            email = _email(obj.get("email"))
-            if user_id is None or email is None:  # a customer DMbot didn't make, or no address
+            # A Customer object has no user_id of ours: the account is found by the customer id
+            # stored with its plan (user_id 0 here means "not known yet"). A customer DMbot
+            # has no plan for is ignored by the writer.
+            email, customer = _email(obj.get("email")), _text(obj.get("id"))
+            if email is None or customer is None:
                 return None
             return PaymentEvent(
                 provider=self.name,
                 event_id=event_id,
                 kind="email_updated",
-                user_id=user_id,
+                user_id=0,
                 occurred_at=when,
-                customer_id=_text(obj.get("id")),
+                customer_id=customer,
                 email=email,
             )
         if name.startswith("invoice."):

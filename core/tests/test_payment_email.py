@@ -33,10 +33,10 @@ class Stored(DatabaseTest):
                 (USER,),
             )
 
-    def event(self, event_id: str, email: str | None) -> PaymentEvent:
+    def event(self, event_id: str, email: str | None, at: int = NOW) -> PaymentEvent:
         return PaymentEvent(
             provider="stripe", event_id=event_id, kind="subscription_started", user_id=USER,
-            occurred_at=NOW, plan="table", period_start=NOW, period_end=NOW + 30 * 86400,
+            occurred_at=at, plan="table", period_start=NOW, period_end=NOW + 30 * 86400,
             customer_id="cus_1", subscription_id="sub_1", email=email,
         )  # fmt: skip
 
@@ -49,8 +49,14 @@ class Stored(DatabaseTest):
         self.assertEqual(await accounts.payment_email(self.db, USER), "payer@example.com")
         self.assertEqual(await accounts.account_email(self.db, USER), "payer@example.com")
         # A newer address replaces it; an event with none leaves it.
-        await entitlements_writer.apply_event(self.db, self.event("e2", "new@example.com"), now=NOW)
-        await entitlements_writer.apply_event(self.db, self.event("e3", None), now=NOW)
+        await entitlements_writer.apply_event(
+            self.db, self.event("e2", "new@example.com", NOW + 5), now=NOW
+        )
+        await entitlements_writer.apply_event(self.db, self.event("e3", None, NOW + 9), now=NOW)
+        # An older event arriving late does not bring the old address back.
+        await entitlements_writer.apply_event(
+            self.db, self.event("e0", "stale@example.com", NOW - 5), now=NOW
+        )
         self.assertEqual(await accounts.payment_email(self.db, USER), "new@example.com")
 
     async def test_try_it_emails_use_the_payment_email_before_the_discord_one(self) -> None:
@@ -65,21 +71,38 @@ class Stored(DatabaseTest):
         people = await trial_jobs.people(self.db, NOW)
         self.assertEqual([p.email for p in people], ["payer@example.com"])
 
-    async def test_a_customer_update_changes_only_the_address(self) -> None:
+    async def test_a_customer_update_finds_the_account_by_its_customer_id(self) -> None:
         await entitlements_writer.apply_event(
             self.db, self.event("e1", "payer@example.com"), now=NOW
         )
-        changed = PaymentEvent(
-            provider="stripe", event_id="evt_c", kind="email_updated", user_id=USER,
-            occurred_at=NOW + 5, customer_id="cus_1", email="moved@example.com",
-        )  # fmt: skip
+
+        def changed(event_id: str, at: int, email: str, customer: str = "cus_1") -> PaymentEvent:
+            return PaymentEvent(
+                provider="stripe", event_id=event_id, kind="email_updated", user_id=0,
+                occurred_at=at, customer_id=customer, email=email,
+            )  # fmt: skip
+
+        web = self.db  # (the website's role is held to the same door in test_account_move)
         self.assertEqual(
-            await entitlements_writer.apply_event(self.db, changed, now=NOW), "applied"
+            await entitlements_writer.apply_event(
+                web, changed("c1", NOW + 50, "moved@example.com"), now=NOW
+            ),
+            "applied",
         )
         self.assertEqual(await accounts.payment_email(self.db, USER), "moved@example.com")
-        # A repeat is harmless, and the plan was not touched.
-        await entitlements_writer.apply_event(self.db, changed, now=NOW)
-        self.assertEqual((await accounts.customer_id(self.db, USER)), "cus_1")
+        # An older event that arrives late does not replace it.
+        await entitlements_writer.apply_event(
+            web, changed("c0", NOW + 10, "old@example.com"), now=NOW
+        )
+        self.assertEqual(await accounts.payment_email(self.db, USER), "moved@example.com")
+        # A customer DMbot has no plan for is ignored, and the plan was not touched.
+        self.assertEqual(
+            await entitlements_writer.apply_event(
+                web, changed("c2", NOW + 60, "x@example.com", "cus_9"), now=NOW
+            ),
+            "ignored",
+        )
+        self.assertEqual(await accounts.customer_id(self.db, USER), "cus_1")
 
 
 class Parsing(unittest.TestCase):
@@ -92,24 +115,21 @@ class Parsing(unittest.TestCase):
             b"w" * 32,
         )  # fmt: skip
 
-    def test_customer_updated_becomes_an_address_change_for_our_customers_only(self) -> None:
+    def test_customer_updated_becomes_an_address_change_found_by_customer_id(self) -> None:
         def raw(obj: dict[str, object]) -> bytes:
             return json.dumps(
                 {"id": "evt_1", "type": "customer.updated", "created": 5, "livemode": False,
                  "data": {"object": obj}}
             ).encode()  # fmt: skip
 
-        got = self.provider().parse(
-            raw({"id": "cus_1", "email": "new@example.com", "metadata": {"user_id": str(USER)}})
-        )
+        got = self.provider().parse(raw({"id": "cus_1", "email": "new@example.com"}))
         assert got is not None
         self.assertEqual(
-            (got.kind, got.user_id, got.email), ("email_updated", USER, "new@example.com")
+            (got.kind, got.customer_id, got.email, got.user_id),
+            ("email_updated", "cus_1", "new@example.com", 0),
         )
-        self.assertIsNone(self.provider().parse(raw({"id": "cus_2", "email": "a@example.com"})))
-        self.assertIsNone(
-            self.provider().parse(raw({"id": "cus_3", "metadata": {"user_id": str(USER)}}))
-        )
+        self.assertIsNone(self.provider().parse(raw({"id": "cus_3"})))  # no address
+        self.assertIsNone(self.provider().parse(raw({"email": "a@example.com"})))  # no id
 
 
 if __name__ == "__main__":

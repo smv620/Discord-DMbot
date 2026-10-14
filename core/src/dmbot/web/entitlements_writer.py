@@ -48,6 +48,22 @@ async def _current(conn: Conn, user_id: int) -> dict[str, Any] | None:
     return await cur.fetchone()
 
 
+async def _email_updated(db: Database, event: PaymentEvent) -> Outcome:
+    """The payer changed their address at the company: the account is found by the customer
+    id stored with its plan, and only a newer event replaces the address (events can arrive
+    out of order). Nothing else changes, so it needs no ledger row. The address is never
+    logged."""
+    if not event.customer_id or not event.email:
+        return "ignored"
+    async with db.unscoped() as conn:
+        cur = await conn.execute(
+            "SELECT dmbot_set_payment_email(%s, %s, %s) AS done",
+            (event.customer_id, event.email, event.occurred_at),
+        )
+        row = await cur.fetchone()
+    return "applied" if row and row["done"] else "ignored"
+
+
 async def _known_person(conn: Conn, user_id: int) -> bool:
     cur = await conn.execute("SELECT 1 FROM web_users WHERE user_id = %s", (user_id,))
     return await cur.fetchone() is not None
@@ -150,6 +166,8 @@ MOVE_HOPS = 5  # accounts that moved again and again: more than this is not real
 
 async def apply_event(db: Database, event: PaymentEvent, *, now: int) -> Outcome:
     """Apply one payment event, following the plan to its new account if it moved."""
+    if event.kind == "email_updated":  # found by the customer id: no account to follow
+        return await _email_updated(db, event)
     for _ in range(MOVE_HOPS):
         result = await _apply_once(db, event, now=now)
         if isinstance(result, int):
@@ -183,23 +201,15 @@ async def _apply_once(db: Database, event: PaymentEvent, *, now: int) -> Outcome
                     event.user_id,
                 )
             return "ignored"
-        if event.kind == "email_updated":
-            # Only the address changes: nothing to record or order, and writing it again is
-            # harmless, so a repeated or late event needs no ledger row.
-            await conn.execute(
-                "UPDATE web_users SET payment_email = %s WHERE user_id = %s",
-                (event.email, event.user_id),
-            )
-            return "applied"
         if await _seen(conn, event):
             return "duplicate"
         if event.email:
             # The address the company has for the payer: kept for sign-in links, move codes
             # and Try It emails. Written for any new event of a known person; never logged.
             await conn.execute(
-                "UPDATE web_users SET payment_email = %s WHERE user_id = %s"
-                " AND payment_email IS DISTINCT FROM %s",
-                (event.email, event.user_id, event.email),
+                "UPDATE web_users SET payment_email = %s, payment_email_at = %s"
+                " WHERE user_id = %s AND (payment_email_at IS NULL OR payment_email_at < %s)",
+                (event.email, event.occurred_at, event.user_id, event.occurred_at),
             )
         row = await _current(conn, event.user_id)
 
