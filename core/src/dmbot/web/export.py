@@ -115,7 +115,7 @@ async def build_export(db: Database, session: Session, *, now: int) -> dict[str,
     characters: list[dict[str, Any]] = []
     async with db.user(session.user_id, session=session.id_hash) as conn:
         cur = await conn.execute(
-            "SELECT email, created_at, last_sign_in_at FROM web_users WHERE user_id = %s",
+            "SELECT email, created_at, last_sign_in_at, dmbot_id FROM web_users WHERE user_id = %s",
             (session.user_id,),
         )
         account = await cur.fetchone()
@@ -159,6 +159,8 @@ async def build_export(db: Database, session: Session, *, now: int) -> dict[str,
         "exportedAt": _iso(now),
         "account": {
             "discordId": str(session.user_id),
+            # The account number: the Discord ID in base 36, kept for life, used on invoices.
+            "dmbotId": account["dmbot_id"] if account else None,
             "name": session.display_name,
             "email": account["email"] if account else None,
             "firstSignedInAt": _iso(account["created_at"]) if account else None,

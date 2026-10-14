@@ -43,7 +43,16 @@ class CleanEmail(unittest.TestCase):
         self.assertEqual(email_signin.clean_email("  Alice@Example.COM "), "alice@example.com")
 
     def test_what_cannot_be_an_address_is_none(self) -> None:
-        for raw in (None, 5, "", "alice", "a@b", "@example.com", "a@@example.com", "a b@x.com"):
+        for raw in (
+            None,
+            5,
+            "",
+            "alice",
+            "a@b",
+            "@example.com",
+            "a@@example.com",
+            "a b@example.org",
+        ):
             self.assertIsNone(email_signin.clean_email(raw), repr(raw))
         self.assertIsNone(email_signin.clean_email("a@" + "x" * 260 + ".example.org"))
 

@@ -47,6 +47,9 @@ async def make_link(db: Database, email: str, *, now: int) -> tuple[int, str] | 
     user_id = int(row["user_id"])
     token = secrets.token_urlsafe(32)
     async with db.user(user_id) as conn:
+        # Two asks at once must leave one live link, not two: the account's row is locked while
+        # the old links go and the new one is made, so the second ask waits for the first.
+        await conn.execute("SELECT 1 FROM web_users WHERE user_id = %s FOR UPDATE", (user_id,))
         # One live link at a time: asking again spends the earlier ones (and clears old and
         # used ones), so a link in an old email, or one a stranger triggered, stops working.
         await conn.execute("DELETE FROM email_sign_in_links WHERE user_id = %s", (user_id,))
