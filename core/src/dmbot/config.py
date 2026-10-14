@@ -11,6 +11,7 @@ from pathlib import Path
 from dmbot.ai import DEFAULT_MODELS, AIModels
 from dmbot.entitlements import parse_free_users
 from dmbot.logs import LOG_FORMATS, LOG_LEVELS
+from dmbot.mail import MailConfigError, MailSettings, load_mail_settings
 from dmbot.sharding import ShardConfigError, ShardSettings, parse_shards
 from dmbot.transcription.config import (
     TranscriptionConfigError,
@@ -65,6 +66,10 @@ class Settings:
     # admin, by Discord user ID. None: not set (the problem is only logged). Never logged.
     admin_primary_id: int | None = field(default=None, repr=False)
     admin_secondary_id: int | None = field(default=None, repr=False)
+    # Sending email (#1229). Nothing is sent unless SMTP is set up; offer emails also need a
+    # postal address. The link secret signs unsubscribe links.
+    mail: MailSettings = field(default_factory=MailSettings)
+    link_token_secret: bytes = field(default=b"", repr=False)
 
 
 def load_settings(env: Mapping[str, str] | None = None) -> Settings:
@@ -138,6 +143,14 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
     except ValueError as exc:
         raise ConfigError(str(exc)) from exc
 
+    try:
+        mail = load_mail_settings(env)
+    except MailConfigError as exc:
+        raise ConfigError(str(exc)) from exc
+    link_secret = get("LINK_TOKEN_SECRET")
+    if link_secret and len(link_secret) < 32:
+        raise ConfigError("LINK_TOKEN_SECRET must be at least 32 characters (or empty).")
+
     return Settings(
         discord_token=get("DISCORD_TOKEN"),
         ears_secret=get("EARS_SHARED_SECRET"),
@@ -157,6 +170,8 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
         free_users=free_users,
         enforce_plans=enforce_raw in ("1", "true", "on"),
         site_url=get("WEB_SITE_URL").rstrip("/"),
+        mail=mail,
+        link_token_secret=link_secret.encode("utf-8"),
         sidebar_on=sidebar_raw in ("1", "true", "on"),
         admin_primary_id=admin_primary,
         admin_secondary_id=admin_secondary,

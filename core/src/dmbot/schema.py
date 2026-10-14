@@ -2078,6 +2078,7 @@ WEB_ROLE_GRANTS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("SELECT, UPDATE (status, decided_at)", ("campaign_handover_offers",)),
     ("SELECT, INSERT, UPDATE", ("installs", "entitlements")),
     ("SELECT, INSERT", ("payment_events", "try_it_used")),
+    ("SELECT, INSERT", ("email_unsubscribed",)),  # the unsubscribe link (#1229)
     ("INSERT, DELETE", ("feedback",)),
     ("SELECT, INSERT, UPDATE, DELETE", ("web_users", "web_sessions")),
     # Free access (#771): the admin page gives, changes and revokes grants (through
@@ -2085,6 +2086,30 @@ WEB_ROLE_GRANTS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("SELECT, INSERT, UPDATE, DELETE", ("access_grants",)),
     ("SELECT, INSERT", ("access_log",)),
 )
+
+MAIL = """
+    -- Sending email (#1229; docs/PLAN.md, "Accounts"). Two small tables of ids and times, never
+    -- an address or any text:
+    --   sent_emails         who was sent which kind of email and when, so a one-off email goes
+    --                       once and the daily cap can be counted (a kind that may repeat has
+    --                       a round number in its name)
+    --   email_unsubscribed  people who asked for no offer emails; written by the website's
+    --                       unsubscribe link (which proves it with a signed token) and read by
+    --                       the sender
+    -- Like the routing tables they belong to no server, and they are written by jobs with no
+    -- person set, so there is no row-level security to open.
+    CREATE TABLE sent_emails (
+        user_id BIGINT NOT NULL CHECK (user_id > 0),
+        kind    TEXT   NOT NULL CHECK (char_length(kind) BETWEEN 1 AND 60),
+        sent_at BIGINT NOT NULL,
+        PRIMARY KEY (user_id, kind)
+    );
+    CREATE INDEX sent_emails_by_day ON sent_emails (sent_at);
+    CREATE TABLE email_unsubscribed (
+        user_id BIGINT PRIMARY KEY CHECK (user_id > 0),
+        at      BIGINT NOT NULL
+    );
+    """
 
 # Numbered 0063 on purpose: 0060 to 0062 belong to pull requests still waiting to merge
 # (owner gone, shared rulesets, their updates). A migration list may have gaps.
@@ -2227,6 +2252,7 @@ MIGRATIONS: tuple[Migration, ...] = (
     ("0058_people", PEOPLE),
     ("0059_definitions", DEFINITIONS),
     ("0063_dmbot_id", DMBOT_ID),
+    ("0064_mail", MAIL),
 )
 
 # Tables that must have row-level security. A test checks every table in the schema
@@ -2277,4 +2303,10 @@ USER_ISOLATED_TABLES = (
 WRITE_ONLY_TABLES = ("feedback",)
 # Hold only server IDs (see the rules at the top of this file).
 ROUTING_TABLES = ("live_session_guilds", "campaign_guilds")
-UNSCOPED_TABLES = ("schema_migrations", "ontology_predicate_versions", *ROUTING_TABLES)
+UNSCOPED_TABLES = (
+    "schema_migrations",
+    "ontology_predicate_versions",
+    "sent_emails",
+    "email_unsubscribed",
+    *ROUTING_TABLES,
+)

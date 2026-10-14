@@ -23,9 +23,11 @@ from fastapi import Depends, FastAPI, HTTPException, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, RedirectResponse
 
-from dmbot import consent_notify, entitlements, install, plans
+from dmbot import consent_notify, entitlements, install, mail, plans
+from dmbot.account_id import from_dmbot_id
 from dmbot.consent import ConsentStore
 from dmbot.db import Database
+from dmbot.link_tokens import check_unsubscribe_token
 from dmbot.web import admin_api, entitlements_writer, feedback, offers, sessions, tokens
 from dmbot.web.accounts import (
     account_email,
@@ -691,6 +693,22 @@ def create_app(
             with contextlib.suppress(ValueError):
                 return str(ipaddress.ip_address(forwarded))
         return request.client.host if request.client else "unknown"
+
+    @app.post("/email/unsubscribe")
+    async def email_unsubscribe(request: Request) -> dict[str, bool]:
+        """The unsubscribe link in an offer email (#1229): the page sends the `uid` and `t`
+        from the link. A signed token proves the link came from us, so this needs no
+        sign-in; it never says whether the person has an account."""
+        try:
+            raw = await request.json()
+            uid, token = str(raw["uid"]), str(raw["t"])
+            user_id = from_dmbot_id(uid)
+        except (ValueError, KeyError, TypeError):
+            raise HTTPException(status_code=400, detail="bad_link") from None
+        if not check_unsubscribe_token(uid, token, settings.link_token_secret):
+            raise HTTPException(status_code=400, detail="bad_link")
+        await mail.unsubscribe(db, user_id, now=int(clock()))
+        return {"ok": True}
 
     @app.post("/feedback")
     async def send_feedback(request: Request) -> dict[str, str]:
