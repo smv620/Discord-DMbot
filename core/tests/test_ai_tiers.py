@@ -148,6 +148,7 @@ class Tiers(unittest.TestCase):
                 Feature.SIDEBAR_RETRY: AIModelTier.CAREFUL,
                 Feature.RULES_CONFIRM: AIModelTier.CAREFUL,
                 Feature.SHEET: AIModelTier.CAREFUL,  # a player's sheet document (#1125)
+                Feature.FIGHTBOT: AIModelTier.FAST,  # a short reminder in combat (#1129)
             },
         )
         self.assertEqual(set(FEATURE_TIERS), set(Feature))  # none left out
@@ -166,6 +167,7 @@ class Tiers(unittest.TestCase):
             (bot.topic_ai, Feature.TOPIC),
             (bot.audio_ai, Feature.AUDIO_CHECK),
             (bot.sheet_ai, Feature.SHEET),
+            (bot.fight_ai, Feature.FIGHTBOT),
         ):
             assert isinstance(client, TierClient)
             self.assertEqual(client.tier, FEATURE_TIERS[job], job)

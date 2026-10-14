@@ -12,7 +12,7 @@ import itertools
 import unittest
 from types import SimpleNamespace
 from typing import Any, cast
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import discord
 
@@ -21,6 +21,7 @@ from dmbot.audio.segmenter import Segmenter
 from dmbot.bot import Table
 from dmbot.consent import TERMS_VERSION
 from dmbot.dm_screen import table_chat_panel as panel
+from dmbot.sidebar.service import Recent
 from dmbot.transcript import export
 from dmbot.transcript.models import Line, TranscriptSession
 from tests.test_timebot import (
@@ -131,6 +132,22 @@ class AtTheTableTyped(AtTheTable):
         for i in range(table_chat.TYPED_PER_MINUTE + 5):
             await self.hear(message(f"line {i}", author=PLAYER))
         self.assertEqual(len(asked), table_chat.TYPED_PER_MINUTE)  # the rest never reached them
+        self.assertEqual(len(self.live.unsaved), table_chat.TYPED_PER_MINUTE + 5)  # all kept raw
+
+    async def test_lines_over_the_limit_stay_out_of_recent_and_the_rest_are_typed(self) -> None:
+        added: list[tuple[str, bool]] = []
+        original = Recent.add
+
+        def spy(this: Recent, user_id: int, text: str, now: float, *, typed: bool = False) -> None:
+            added.append((text, typed))
+            original(this, user_id, text, now, typed=typed)
+
+        with patch.object(Recent, "add", spy):
+            for i in range(table_chat.TYPED_PER_MINUTE + 5):
+                await self.hear(message(f"line {i}", author=PLAYER))
+        self.assertEqual(len(added), table_chat.TYPED_PER_MINUTE)  # the rest never got in
+        self.assertTrue(all(typed for _, typed in added))  # and FightBot only reads spoken lines
+        self.assertNotIn(f"line {table_chat.TYPED_PER_MINUTE}", [text for text, _ in added])
         self.assertEqual(len(self.live.unsaved), table_chat.TYPED_PER_MINUTE + 5)  # all kept raw
 
     async def test_one_persons_flood_does_not_silence_another(self) -> None:

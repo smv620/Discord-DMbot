@@ -30,6 +30,7 @@ from discord.ext import commands
 from dmbot import (
     campaign_cap,
     entitlements,
+    fightbot,
     hours,
     install,
     plan_rules,
@@ -138,6 +139,7 @@ from dmbot.ears.protocol import (
     leave_command,
 )
 from dmbot.ears.server import EarsServer
+from dmbot.fightbot import FightState
 from dmbot.logs import log_context, set_log_context
 from dmbot.memory import document_reader
 from dmbot.memory.backup import MemorySection
@@ -349,6 +351,9 @@ class Table:
     sheet_watch: SheetWatch = field(default_factory=SheetWatch)
     sheet_questions: SheetQuestions = field(default_factory=SheetQuestions)
     watch_task: asyncio.Task[None] | None = None
+    # FightBot's memory for this session and its loop (#1129).
+    fight: FightState = field(default_factory=FightState)
+    fight_task: asyncio.Task[None] | None = None
     sheet_loads: int = 0  # each load of the names counts up; only the newest one is used
     # For the Transcript Cleaner (#127): what this session's lines say about words, and
     # the display names of people who agreed (never "fixed" into a name).
@@ -627,6 +632,10 @@ class DMBot(commands.AutoShardedBot):
         self.sheet_ai = (
             self.ai_client.tier(FEATURE_TIERS[Feature.SHEET]) if self.ai_client else None
         )
+        # FightBot's reminders to players in combat (#1129), on the smallest model.
+        self.fight_ai = (
+            self.ai_client.tier(FEATURE_TIERS[Feature.FIGHTBOT]) if self.ai_client else None
+        )
         # The off-topic filter (#52), the audio check and the DM sidebar.
         self.topic_ai = (
             self.ai_client.tier(FEATURE_TIERS[Feature.TOPIC]) if self.ai_client else None
@@ -760,6 +769,7 @@ class DMBot(commands.AutoShardedBot):
             clock_screen.ClockButton, clock_screen.ClockUndoButton, clock_screen.SuggestionButton
         )
         self.add_dynamic_items(clock_screen.CombatUndoButton)  # #1127
+        self.add_dynamic_items(fightbot.FightButton)  # #1129
         self.add_dynamic_items(timer_screen.EffectButton)  # timed effects (#998)
         # Undo after forgetting a name (its card), after a restart too.
         self.add_dynamic_items(UndoButton, UndoListButton)
@@ -1387,6 +1397,7 @@ class DMBot(commands.AutoShardedBot):
         )
         self._track(self._fight_left_over(table), "fight-left-over")  # #1173
         table.watch_task = self._track_loop(sheet_reread.run(self, table), "sheet-watch")  # #1128
+        table.fight_task = self._track_loop(fightbot.run(self, table), "fightbot")  # #1129
         return sent
 
     async def _fight_left_over(self, table: Table) -> None:
@@ -1490,6 +1501,8 @@ class DMBot(commands.AutoShardedBot):
             table.sheet_task.cancel()
         if table.watch_task is not None:  # nor re-reading them (#1128)
             table.watch_task.cancel()
+        if table.fight_task is not None:  # nor reminding players (#1129)
+            table.fight_task.cancel()
         await self.ears.send(leave_command(guild_id))
         # Speech still being heard or written down is finished, not dropped (#109): the
         # session stays "ending" until the pipeline has caught up.
@@ -2966,7 +2979,7 @@ class DMBot(commands.AutoShardedBot):
             )
         if not listeners:
             return  # raw transcript only: no recent lines, sidebar or name scan (#1154)
-        table.recent.add(user_id, text, time.monotonic())
+        table.recent.add(user_id, text, time.monotonic(), typed=True)
         if self.tables.get(table.guild_id) is table:
             self.sidebar.ask_at_table(table, user_id, text, typed=True)
         if len(table.heard) < HEARD_MAX:
