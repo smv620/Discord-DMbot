@@ -167,6 +167,7 @@ from dmbot.sidebar import knowledge
 from dmbot.sidebar.answer import PROMPT_VERSION as SIDEBAR_PROMPT_VERSION
 from dmbot.sidebar.answer import Sidebar
 from dmbot.sidebar.ask import AskLimiter
+from dmbot.sidebar.people import lines as people_lines
 from dmbot.sidebar.service import Recent, SidebarService
 from dmbot.test_recording import files as test_files
 from dmbot.test_recording import library as test_library
@@ -1941,10 +1942,36 @@ class DMBot(commands.AutoShardedBot):
                 return None
             return await self.lookup.get_within(campaign.guild_id, campaign.id, NAMES_WAIT_S)
 
+        async def people(campaign: Campaign) -> list[str]:
+            # Optional context: a slow database must not eat the answer's time (#1188).
+            async with asyncio.timeout(NAMES_WAIT_S):
+                return await self.sidebar_people(campaign)
+
         ai = self.ai_client.tier(FEATURE_TIERS[Feature.SIDEBAR])
         careful = self.ai_client.tier(FEATURE_TIERS[Feature.SIDEBAR_RETRY])
         return Sidebar(
-            ai, rules_index.srd, gate=gate, houses=houses, names=names, second_try=careful
+            ai,
+            rules_index.srd,
+            gate=gate,
+            houses=houses,
+            names=names,
+            people=people,
+            second_try=careful,
+        )
+
+    async def sidebar_people(self, campaign: Campaign) -> list[str]:
+        """Who is who at this table, as short lines of names (never Discord IDs) for the
+        sidebar's answers (#1188). Only people who still agree to be recorded, checked after
+        the read so no one is named after they stopped."""
+        if self.memory is None:
+            return []
+        rows = await self.memory.table_people(campaign.guild_id, campaign.id)
+        agreed = await self.consent.consenting(campaign.guild_id)
+        return people_lines(
+            rows,
+            agreed,
+            campaign.dm_user_ids,
+            lambda user_id: self.name_of(campaign.guild_id, user_id),
         )
 
     async def plan_gate(
@@ -2774,6 +2801,17 @@ class DMBot(commands.AutoShardedBot):
                         return str(sheet.name)
             except Exception:
                 log.exception("Couldn't look up a character name; using the nickname")
+        # A DM keeps the nickname: a DM may "play" an NPC, and the table must not learn which
+        # one the DM is voicing from the name on their question (#1188).
+        if self.memory is not None and table.campaign_id is not None and not table.is_dm(user_id):
+            try:  # the character they play (the `plays` link), even with no sheet linked
+                async with asyncio.timeout(NAMES_WAIT_S):
+                    people = await self.memory.table_people(table.guild_id, table.campaign_id)
+                for played, characters, _ in people:
+                    if played == user_id and characters:
+                        return characters[-1]
+            except Exception:
+                log.exception("Couldn't look up who plays whom; using the nickname")
         return name
 
     async def sidebar_links(self, table: Table) -> tuple[str | None, tuple[str, ...]]:
@@ -3101,6 +3139,8 @@ class DMBot(commands.AutoShardedBot):
             return  # raw transcript only: no recent lines, sidebar or name scan (#1154)
         table.recent.add(user_id, text, time.monotonic(), typed=True)
         if self.tables.get(table.guild_id) is table:
+            # Same clock as the spoken path (Unix milliseconds); consent was just checked.
+            table.name_answers.feed(user_id, start_ms, text, consented=True)
             self.sidebar.ask_at_table(table, user_id, text, typed=True)
         if len(table.heard) < HEARD_MAX:
             table.heard.append((user_id, text))
