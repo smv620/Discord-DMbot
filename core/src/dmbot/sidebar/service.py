@@ -38,6 +38,7 @@ from dmbot.transcript.models import (
     SIDEBAR_ANSWER,
     SIDEBAR_QUESTION,
     VIA_TABLE,
+    VIA_TABLE_CHAT,
     VIA_TYPED,
     VIA_VOICE,
     Line,
@@ -421,11 +422,18 @@ class SidebarService:
     # ---- said at the table ----------------------------------------------------------
 
     def ask_at_table(
-        self, table: Table, user_id: int, text: str, *, in_character: bool = False
+        self,
+        table: Table,
+        user_id: int,
+        text: str,
+        *,
+        in_character: bool = False,
+        typed: bool = False,
     ) -> bool:
         """The DM's line at the table: if it clearly asks for a look-up, answer it
         privately, in the background. Only the campaign's own DM's lines count, within the
-        safety limit. True if a question was started."""
+        safety limit. True if a question was started. `typed`: it was typed in the table's chat,
+        and its lineage says so (no speech-to-text; #1118)."""
         if self.answerer is None or table.campaign_id is None or not _is_dm(table, user_id):
             return False  # no engine: quietly nothing, and the minute is not used up
         request = request_in(text, in_character=in_character)
@@ -438,7 +446,9 @@ class SidebarService:
             self._note_later(user_id, "limit", TOO_MANY)
             return False
         self._busy.add(_campaign_key(table))
-        task = asyncio.create_task(self._table_question(table, user_id, request), name="sidebar")
+        task = asyncio.create_task(
+            self._table_question(table, user_id, request, typed=typed), name="sidebar"
+        )
         self._tasks.add(task)
         task.add_done_callback(self._tasks.discard)
         return True
@@ -456,14 +466,17 @@ class SidebarService:
         self._tasks.add(task)
         task.add_done_callback(self._tasks.discard)
 
-    async def _table_question(self, table: Table, user_id: int, request: Request) -> None:
+    async def _table_question(
+        self, table: Table, user_id: int, request: Request, *, typed: bool = False
+    ) -> None:
         async def reply(text: str) -> bool:
             status = await self.host.sidebar_send_dm(user_id, text)
             self._undelivered[user_id] = status
             return status == "sent"
 
         try:
-            await self._ask(table, user_id, request.question, reply, via=VIA_TABLE)
+            via = VIA_TABLE_CHAT if typed else VIA_TABLE
+            await self._ask(table, user_id, request.question, reply, via=via)
         except Exception:
             log.exception("A question said at the table failed")
         finally:
@@ -533,13 +546,15 @@ class SidebarService:
             if not await reply(part):
                 # Only the table path, and only when Discord says their messages are closed:
                 # the DM screen is the one place left to say so.
-                if via == VIA_TABLE and self._undelivered.pop(user_id, "") == "forbidden":
+                if via in (VIA_TABLE, VIA_TABLE_CHAT) and (
+                    self._undelivered.pop(user_id, "") == "forbidden"
+                ):
                     await self._cant_dm(table, user_id)
                 return
         if answer.refused or not self._still(table, user_id):
             return
         ref = uuid.uuid4().hex[:6]  # the reply says which question it answers
-        stt = self.host.sidebar_stt() if via != VIA_TYPED else ""
+        stt = self.host.sidebar_stt() if via not in (VIA_TYPED, VIA_TABLE_CHAT) else ""
         self.host.sidebar_save(
             table,
             Line(

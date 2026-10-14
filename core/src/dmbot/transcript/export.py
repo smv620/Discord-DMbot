@@ -42,6 +42,11 @@ SIDEBAR_NOTE = (
     "came from. They are left out of the Cleaned version."
 )
 SIDEBAR_TAG, DMBOT_NAME = "[DM Sidebar]", "DMbot"
+TYPED_TAG = "(typed)"
+TYPED_NOTE = (
+    "(typed) lines were typed in the table's chat, not said. They are left out of the Cleaned "
+    "version."
+)
 HOW_TO_READ = (
     "Each line: [time since start] (person) {their character}: what they said. "
     "{narrating} means the DM is describing the scene; an NPC's name in braces means the DM "
@@ -207,7 +212,11 @@ def render(
     # The cleaned version hides clearly off-topic talk (#52): each run of it becomes one
     # marker with how long it lasted. The as-heard version keeps everything.
     everything = list(lines)
-    table_lines = [line for line in everything if not line.sidebar]
+    # Typed chat (#1118) is only in the as-heard version, tagged "(typed)"; the cleaned one is
+    # what was said.
+    typed_lines = [line for line in everything if line.typed and not line.sidebar]
+    table_lines = [line for line in everything if not line.sidebar and not line.typed]
+    shown_typed = typed_lines if version == AS_HEARD else []
     shown_sidebar = [line for line in everything if line.sidebar] if version == AS_HEARD else []
     spoken = [
         Spoken(
@@ -246,6 +255,15 @@ def render(
         said = " ".join(line.heard.split())
         tag = sidebar_tag(line)
         timed.append((line.started_ms, f"[{when}] ({_plain(asker)}) {tag}: {said}"))
+    for line in shown_typed:  # "[0:12:06] (Mia) {Cerric} (typed): we take a long rest"
+        when = clock((line.started_ms - start_ms) / 1000)
+        said = " ".join(line.heard.split())
+        who = label(
+            when,
+            clean_name(names.get(line.user_id)),
+            clean_name(playing[line.user_id]) if line.user_id in playing else None,
+        )
+        timed.append((line.started_ms, f"{who} {TYPED_TAG}: {said}"))
     timed.sort(key=lambda t: t[0])  # stable: a sidebar line follows table speech at the same ms
     body = [text for _, text in timed]
     started = time.strftime("%Y-%m-%d %H:%M UTC", time.gmtime(session.started_at))
@@ -261,6 +279,7 @@ def render(
         CLEANED_NOTE if version == CLEANED else AS_HEARD_NOTE,
         HOW_TO_READ,
         *([SIDEBAR_NOTE] if shown_sidebar else []),
+        *([TYPED_NOTE] if shown_typed else []),
     ]
     if running:
         header.append(

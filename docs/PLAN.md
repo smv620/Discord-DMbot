@@ -2015,6 +2015,30 @@ as what is said, so the clock and the other listeners hear "we take a long rest"
   The owner switches Message Content on in the Developer Portal (Bot, Privileged Gateway
   Intents). Once DMbot is in 100 or more servers, Discord must approve that intent, so it is part
   of the go-live checklist (#498).
+*Built, part 5: typed chat at the table (2026-10-13, #1118):* the bot asks Discord for guild messages and the privileged
+Message Content intent (`bot.py`), and `DMBot.on_message` sends every server message to `_hear_typed`, which drops
+it unless it is in the table voice channel's own chat or the campaign's one extra "Table chat" channel (`table_chat.py`),
+the session is listening, the campaign's Table chat switch is on, the author is not a bot, webhook, DMbot or a
+slash command (only plain messages and replies are read), and the author has consent (`has_consent`, the same
+check as a voice line). A typed line goes through `_act_on_line` like a spoken one (rules cards, house rules,
+the game clock), and also into names heard, vocabulary, the sidebar's "Hey DMbot" and the raw transcript as a
+`Line(typed=True)`: tagged `(typed)` in the as-heard file, never in the cleaned one and never in the live transcript
+channel; it has no audio check and no cleaning. ⚙️ Settings has **💬 Table chat** (campaign DMs and server managers): a
+private panel that says which channels are read, picks the one extra text channel of this server, and turns it off.
+Migration 0052: `campaigns.table_chat` (default on) and `table_chat_channel_id`, `transcript_lines.typed`, and a new
+sidebar way-in `table-chat` (a typed "Hey DMbot" has no speech-to-text in its lineage). A backup carries the on/off
+switch only (a channel ID means nothing in another server; a restore keeps the campaign's own extra channel). Messages
+are read as Discord shows them (`clean_content`: mentions as names). A message deleted before its line is saved is taken
+back; a saved line stays. No campaign's DM screen, transcript or game-time channel in the server can be the extra channel
+(refused when picked, and again when a message arrives, from a one-minute cache). One line in the extra channel and
+"and what they type in this chat" in the voice channel notice tell people it is read. The consent terms went to version 5
+(one added sentence), so everyone is asked again. **Owner step after merge:** switch on Message Content Intent at
+https://discord.com/developers/applications (the DMbot app, then Bot, then Privileged Gateway Intents, then Message
+Content Intent, then Save Changes; not Reset Token). The privacy page and help wording are WebDev's follow-up.
+An edited or deleted message is not read again, and a typed line the person deletes later stays in the raw transcript, as a
+spoken line does (the raw transcript is unedited). DMbot keeps no message cache (`max_messages=None`), so the text of
+messages it does not read is never held.
+
 *Built, part 3: the players' game-time channel (2026-10-13, #1116):* `dmb-gametime-<short name>` is made
 or repaired at every `/dmbot start` next to the DM screen (`dm_screen/gametime_channel.py`, on the
 transcript channel's permissions: everyone reads, only DMbot posts; a failure is a note on the DM

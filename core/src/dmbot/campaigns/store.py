@@ -390,6 +390,20 @@ class CampaignStore:
         async with self._db.guild(guild_id) as conn:
             return await self._get(conn, guild_id, campaign_id)
 
+    async def special_channel_ids(self, guild_id: int) -> frozenset[int]:
+        """The DM-screen, transcript and game-time channels of every campaign in the server
+        (#1118): none of them may be read as table chat, whichever campaign picks it, because
+        DM-screen content never goes into a transcript."""
+        async with self._db.guild(guild_id, snapshot=True) as conn:
+            cur = await conn.execute(
+                "SELECT dm_screen_channel_id, transcript_channel_id, gametime_channel_id"
+                " FROM campaigns WHERE guild_id = %s",
+                (guild_id,),
+            )
+            return frozenset(
+                int(v) for row in await cur.fetchall() for v in row.values() if v is not None
+            )
+
     async def list_campaigns(self, guild_id: int) -> list[Campaign]:
         """All of a server's campaigns, most recently used first."""
         async with self._db.guild(guild_id, snapshot=True) as conn:
@@ -584,6 +598,21 @@ class CampaignStore:
     ) -> Campaign:
         """Store the campaign's game-time channel (#1116): not part of a backup."""
         return await self._set(guild_id, campaign_id, "gametime_channel_id", channel_id)
+
+    async def set_table_chat(
+        self, guild_id: int, campaign_id: str, *, on: bool, channel_id: int | None
+    ) -> Campaign:
+        """Typed chat at the table (#1118): the DM's switch and the one extra text channel
+        (None = only the voice channel's own chat). Not part of a backup: a channel ID means
+        nothing in another server."""
+        async with self._db.guild(guild_id) as conn:
+            await self._require(conn, guild_id, campaign_id)
+            await conn.execute(  # one statement: the two never get out of step
+                "UPDATE campaigns SET table_chat = %s, table_chat_channel_id = %s"
+                " WHERE guild_id = %s AND id = %s",
+                (on, channel_id, guild_id, campaign_id),
+            )
+            return await self._require(conn, guild_id, campaign_id)
 
     async def set_dndbeyond_invite(
         self, guild_id: int, campaign_id: str, invite: str | None
@@ -1082,6 +1111,8 @@ class CampaignStore:
                 "dm_screen_level": campaign.dm_screen_level,
                 "rules_cards": campaign.rules_cards,
                 "dndbeyond_invite": campaign.dndbeyond_invite,
+                # Only the switch (#1118): a channel ID means nothing in another server.
+                "table_chat": campaign.table_chat,
             },
             "sections": sections,
         }
@@ -1143,6 +1174,7 @@ class CampaignStore:
                     "UPDATE campaigns SET target_ruleset = %s, fallback_ruleset = %s,"
                     " optional_rules_default = %s, last_played_at = %s,"
                     " dm_screen_visibility = %s, dm_screen_level = %s, rules_cards = %s,"
+                    " table_chat = %s,"
                     # The invite link is not touched: it is the DM's join link for this
                     # server's table, and a backup doesn't record which server it came from,
                     # so its link could be another server's (#1119).
@@ -1158,6 +1190,7 @@ class CampaignStore:
                         info["dm_screen_visibility"],
                         info["dm_screen_level"],
                         info["rules_cards"],
+                        info["table_chat"],
                         importer_id,
                         guild_id,
                         campaign_id,
@@ -1183,6 +1216,12 @@ class CampaignStore:
                     if info["rules_cards"]:  # a new campaign starts with them off
                         await conn.execute(
                             "UPDATE campaigns SET rules_cards = TRUE"
+                            " WHERE guild_id = %s AND id = %s",
+                            (guild_id, campaign_id),
+                        )
+                    if not info["table_chat"]:  # typed chat starts on; a backup may say off
+                        await conn.execute(
+                            "UPDATE campaigns SET table_chat = FALSE"
                             " WHERE guild_id = %s AND id = %s",
                             (guild_id, campaign_id),
                         )
@@ -1341,6 +1380,11 @@ def _to_campaign(row: dict[str, Any], dms: set[int]) -> Campaign:
         else None,
         # Absent in a schema older than #1119, for the same reason.
         dndbeyond_invite=row.get("dndbeyond_invite"),
+        # Absent before #1118: the default is on, with no extra channel.
+        table_chat=bool(row.get("table_chat", True)),
+        table_chat_channel_id=row_int(row, "table_chat_channel_id")
+        if "table_chat_channel_id" in row
+        else None,
         dm_screen_level=row["dm_screen_level"],
         owner_user_id=row_int(row, "owner_user_id"),
         rules_cards=bool(row.get("rules_cards", False)),  # older schemas (tests) have none
@@ -1524,6 +1568,11 @@ def _validate_backup(
     if not isinstance(rules_cards, bool):
         raise CampaignError(DAMAGED)
 
+    # Backups made before typed chat existed have it on, as a new campaign does.
+    table_chat = campaign.get("table_chat", True)
+    if not isinstance(table_chat, bool):
+        raise CampaignError(DAMAGED)
+
     # Backups made before the invite link existed have none. A link that isn't one is damage.
     invite = campaign.get("dndbeyond_invite")
     if invite is not None:
@@ -1553,5 +1602,6 @@ def _validate_backup(
         "dm_screen_level": level,
         "rules_cards": rules_cards,
         "dndbeyond_invite": invite,
+        "table_chat": table_chat,
     }
     return info, {name: list(rows) for name, rows in sections.items()}
