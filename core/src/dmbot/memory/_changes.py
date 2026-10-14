@@ -39,7 +39,8 @@ PREDICATES = Table(
     "key",
     ("key", "parent", "label", "description", "examples", "reason", "subject_types",
      "object_types", "is_symmetric", "max_per_subject", "conflicts_with", "status",
-     "replaced_by", "created_at"),
+     "replaced_by", "created_at", "covers", "not_this", "inverse_label", "synonyms",
+     "version"),
 )  # fmt: skip
 ENTITIES = Table(
     "memory_entities",
@@ -89,7 +90,7 @@ RELATIONS = Table(
     "id",
     ("id", "subject_id", "predicate", "object_id", "detail", "confidence", "status", "source",
      "mention_ids", "from_session_at", "to_session_at", "from_game_time", "to_game_time",
-     "secret", "created_at"),
+     "secret", "created_at", "definition_version"),
 )  # fmt: skip
 CORRECTIONS = Table(
     "memory_corrections",

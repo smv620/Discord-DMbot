@@ -97,6 +97,8 @@ from dmbot.memory.ontology import (
     PredicateTerm,
     TypeTerm,
     check_named,
+    decode_not_this,
+    encode_not_this,
     is_dm_word,
     resolve_kind,
 )
@@ -163,7 +165,7 @@ def _relation(r: dict[str, Any]) -> Relation:
         r["id"], r["subject_id"], r["predicate"], r["object_id"], r["detail"],
         float(r["confidence"]), r["status"], r["source"], tuple(r["mention_ids"]),
         r["from_session_at"], r["to_session_at"], r["from_game_time"], r["to_game_time"],
-        r["secret"], r["created_at"],
+        r["secret"], r["created_at"], r["definition_version"],
     )  # fmt: skip
 
 
@@ -184,6 +186,7 @@ def _relation_row(rel: Relation) -> dict[str, Any]:
         "to_game_time": rel.to_game_time,
         "secret": rel.secret,
         "created_at": rel.created_at,
+        "definition_version": rel.definition_version,
     }
 
 
@@ -209,6 +212,8 @@ def _predicate_term(r: dict[str, Any]) -> PredicateTerm:
         r["key"], r["label"], r["description"], tuple(r["subject_types"]),
         tuple(r["object_types"]), r["is_symmetric"], r["max_per_subject"],
         tuple(r["conflicts_with"]), r["parent"], False, r["status"], r["replaced_by"],
+        tuple(r["covers"]), decode_not_this(r["not_this"]), tuple(r["examples"]),
+        r["inverse_label"], tuple(r["synonyms"]), r["version"],
     )  # fmt: skip
 
 
@@ -1535,6 +1540,43 @@ class MemoryStore:
                 removed += len(aliases) + len(links)
         return removed
 
+    async def recheck_definitions(self, guild_id: int, campaign_id: str) -> Written[int]:
+        """After a session (#1189): facts written under an older version of a relationship
+        whose meaning has changed are checked against the definition they are held to now. One
+        that no longer fits becomes a flag for the DM, never a silent fix; the fact then
+        carries the current version so it is looked at once. Returns how many facts were
+        looked at."""
+        async with self._write(guild_id, campaign_id, "scan") as w:
+            onto = await _load_ontology(w)
+            behind = [
+                r
+                for r in await w.select(RELATIONS, " AND status IN ('proposed', 'confirmed')")
+                if r["predicate"] in onto.predicates
+                and int(r["definition_version"]) < onto.predicates[r["predicate"]].version
+            ]
+            if not behind:
+                return Written(0, None)
+            types = {
+                str(r["id"]): str(r["type"])
+                for r in await w.select(ENTITIES, " AND status IN ('proposed', 'confirmed')")
+            }
+            for row in behind:
+                rel = _relation(row)
+                if rel.subject_id in types and rel.object_id in types:
+                    existing = [
+                        e for e in await _relations_touching(w, rel.subject_id, rel.object_id)
+                        if e.id != rel.id
+                    ]  # fmt: skip
+                    await _flag_problems(
+                        w, onto, rel, types[rel.subject_id], types[rel.object_id], existing
+                    )
+                await w.update(
+                    RELATIONS,
+                    rel.id,
+                    {"definition_version": onto.predicates[rel.predicate].version},
+                )
+            return Written(len(behind), w.batch)
+
     # ---- relationships ----------------------------------------------------------------
 
     async def add_relation(
@@ -1587,6 +1629,7 @@ class MemoryStore:
             new = Relation(
                 new_id(), s, predicate, o, " ".join(detail.split()), confidence, status, source,
                 tuple(mention_ids), from_session_at, to_session_at, None, None, secret, w.now,
+                pred.version,
             )  # fmt: skip
             existing = await _relations_touching(w, s, o)
             same = duplicate_of(new, existing)
@@ -1926,6 +1969,11 @@ class MemoryStore:
                     "status": ACTIVE,
                     "replaced_by": None,
                     "created_at": w.now,
+                    "covers": list(term.covers),
+                    "not_this": encode_not_this(term.not_this),
+                    "inverse_label": term.inverse_label,
+                    "synonyms": list(term.synonyms),
+                    "version": 1,
                 },
             )
             return Written(_predicate_term(row), w.batch)

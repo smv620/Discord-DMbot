@@ -93,6 +93,7 @@ _TEXT_LIMITS = {
     "detail": DETAIL_MAX,
     "line_ref": LINE_REF_MAX,
     "parent": 40,
+    "inverse_label": LABEL_MAX,
     "rules_source": LINK_SOURCE_MAX,
     "replaced_by": 40,
     "type": 40,
@@ -110,8 +111,9 @@ _IDS = {"id", "entity_id", "merged_into", "used_by", "subject_id", "object_id", 
         "other_id"}  # fmt: skip
 _INTS = {"played_by", "created_at", "from_session_at", "to_session_at", "from_game_time",
          "to_game_time", "max_per_subject"}  # fmt: skip
+_VERSIONS = {"version", "definition_version"}  # from 1 up (#1189)
 _LISTS = {"examples", "subject_types", "object_types", "conflicts_with", "sound_codes",
-          "mention_ids"}  # fmt: skip
+          "mention_ids", "covers", "not_this", "synonyms"}  # fmt: skip
 _NULLABLE = {
     "role", "edition", "played_by", "merged_into", "used_by", "other_id", "entity_id",
     "replaced_by", "parent", "from_session_at", "to_session_at", "from_game_time",
@@ -125,6 +127,8 @@ def _valid(column: str, value: object) -> bool:
         return column in _NULLABLE
     if column in _IDS:
         return is_id(value)
+    if column in _VERSIONS:
+        return isinstance(value, int) and not isinstance(value, bool) and 1 <= value <= 10_000
     if column in _INTS:
         return isinstance(value, int) and not isinstance(value, bool) and 0 <= value <= INT64_MAX
     if column in _LISTS:
@@ -231,7 +235,7 @@ def _checked_rows(rows: list[Any]) -> dict[str, list[dict[str, Any]]]:
     """A backup's memory rows, every value checked, grouped by table tag. Untrusted:
     raises CampaignError(DAMAGED) on anything out of shape."""
     by_tag: dict[str, list[dict[str, Any]]] = {tag: [] for tag in _TAGS}
-    rows = _from_before_kinds(rows)
+    rows = _with_definition_fields(_from_before_kinds(rows))
     for raw in rows:
         if not isinstance(raw, dict) or raw.get("table") not in _TAGS:
             raise CampaignError(DAMAGED)
@@ -262,6 +266,36 @@ def _checked_rows(rows: list[Any]) -> dict[str, list[dict[str, Any]]]:
 
 
 _OLD_PARENTS = {k: v[0] for k, v in MIGRATED_KINDS.items()}
+_NEW_PREDICATE_FIELDS: dict[str, Any] = {
+    "covers": [], "not_this": [], "inverse_label": "", "synonyms": [], "version": 1,
+}  # fmt: skip
+
+
+def _with_definition_fields(rows: list[Any]) -> list[Any]:
+    """A backup from before definitions were versioned (#1189) has none of the new columns:
+    its relationships get empty definitions at version 1 and its facts version 1. A fact
+    that names a version this DMbot doesn't know (a backup from a newer release) is read as
+    the oldest known version, 1; the after-session check then looks at it again against the
+    definition it is held to now."""
+    known = {p.key: p.version for p in CORE_PREDICATES}
+    for raw in rows:
+        if isinstance(raw, dict) and raw.get("table") == "predicate":
+            version = raw.get("version", 1)
+            if isinstance(raw.get("key"), str) and isinstance(version, int):
+                known.setdefault(raw["key"], version)
+    out: list[Any] = []
+    for raw in rows:
+        if isinstance(raw, dict) and raw.get("table") == "predicate":
+            raw = {**_NEW_PREDICATE_FIELDS, **raw}
+        elif isinstance(raw, dict) and raw.get("table") == "relation":
+            version = raw.get("definition_version", 1)
+            name = raw.get("predicate")
+            top = known.get(name, 1) if isinstance(name, str) else 1
+            if isinstance(version, int) and not isinstance(version, bool) and version > top:
+                version = 1
+            raw = {**raw, "definition_version": version}
+        out.append(raw)
+    return out
 
 
 def _from_before_kinds(rows: list[Any]) -> list[Any]:
