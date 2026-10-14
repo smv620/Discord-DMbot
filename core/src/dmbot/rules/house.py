@@ -161,45 +161,18 @@ class HouseRuleStore:
             # Locking the campaign makes two adds at once take turns: the limit holds, and
             # each gets its own number.
             await require_dm(conn, guild_id, campaign_id, user_id, lock=True)
-            cur = await conn.execute(
-                "SELECT count(*) AS n FROM house_rules WHERE guild_id = %s AND campaign_id = %s",
-                (guild_id, campaign_id),
+            return await insert_rule(
+                conn,
+                guild_id,
+                campaign_id,
+                user_id,
+                text,
+                instead,
+                happened,
+                session_id,
+                wanted,
+                now,
             )
-            row = await cur.fetchone()
-            assert row is not None
-            if row["n"] >= HOUSE_RULES_MAX:
-                raise HouseRuleError(FULL)
-            cur = await conn.execute(
-                "UPDATE campaigns SET house_rules_made = CASE"
-                " WHEN %s::integer IS NOT NULL AND %s::integer > house_rules_made"
-                " AND %s::integer <= house_rules_made + %s THEN %s::integer"
-                " ELSE house_rules_made + 1 END"
-                " WHERE guild_id = %s AND id = %s RETURNING house_rules_made",
-                (wanted, wanted, wanted, HOUSE_RULES_MAX, wanted, guild_id, campaign_id),
-            )
-            made = await cur.fetchone()
-            assert made is not None
-            cur = await conn.execute(
-                "INSERT INTO house_rules (guild_id, campaign_id, number, rule, supersedes,"
-                " scenario, session_id, created_by, created_at, updated_at)"
-                " VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)"
-                f" RETURNING {_COLUMNS}",
-                (
-                    guild_id,
-                    campaign_id,
-                    made["house_rules_made"],
-                    text,
-                    instead,
-                    happened,
-                    session_id,
-                    user_id,
-                    now,
-                    now,
-                ),
-            )
-            saved = await cur.fetchone()
-            assert saved is not None
-            return _rule(saved)
 
     async def edit(
         self,
@@ -273,6 +246,62 @@ async def _missing(conn: Conn, guild_id: int, campaign_id: str, number: int) -> 
         (guild_id, campaign_id, number),
     )
     return HouseRuleError(GONE if await cur.fetchone() is None else CHANGED)
+
+
+async def insert_rule(
+    conn: Conn,
+    guild_id: int,
+    campaign_id: str,
+    user_id: int,
+    text: str,
+    instead: str | None,
+    happened: str | None,
+    session_id: str | None,
+    wanted: int | None,
+    now: int,
+) -> HouseRule:
+    """Save one already-cleaned rule with the campaign's next number, inside the caller's
+    transaction (which has checked the person is a DM and locked the campaign). Shared with
+    the shared-rules merge, so a merged rule gets its number the same way."""
+    cur = await conn.execute(
+        "SELECT count(*) AS n FROM house_rules WHERE guild_id = %s AND campaign_id = %s",
+        (guild_id, campaign_id),
+    )
+    row = await cur.fetchone()
+    assert row is not None
+    if row["n"] >= HOUSE_RULES_MAX:
+        raise HouseRuleError(FULL)
+    cur = await conn.execute(
+        "UPDATE campaigns SET house_rules_made = CASE"
+        " WHEN %s::integer IS NOT NULL AND %s::integer > house_rules_made"
+        " AND %s::integer <= house_rules_made + %s THEN %s::integer"
+        " ELSE house_rules_made + 1 END"
+        " WHERE guild_id = %s AND id = %s RETURNING house_rules_made",
+        (wanted, wanted, wanted, HOUSE_RULES_MAX, wanted, guild_id, campaign_id),
+    )
+    made = await cur.fetchone()
+    assert made is not None
+    cur = await conn.execute(
+        "INSERT INTO house_rules (guild_id, campaign_id, number, rule, supersedes,"
+        " scenario, session_id, created_by, created_at, updated_at)"
+        " VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)"
+        f" RETURNING {_COLUMNS}",
+        (
+            guild_id,
+            campaign_id,
+            made["house_rules_made"],
+            text,
+            instead,
+            happened,
+            session_id,
+            user_id,
+            now,
+            now,
+        ),
+    )
+    saved = await cur.fetchone()
+    assert saved is not None
+    return _rule(saved)
 
 
 async def require_dm(

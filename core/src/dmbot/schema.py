@@ -2195,6 +2195,36 @@ WEB_ROLE_GRANTS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("SELECT, INSERT", ("access_log",)),
 )
 
+SET_UPDATES = f"""
+    -- Shared rulesets part 2 (#1191): updates to a set, and who may write it.
+    --   rule_set_follows.code   the share code a follower used, so its next session start can
+    --                           ask the same door whether the set has a newer version (a
+    --                           follower in the publisher's server, which picked from the
+    --                           list, has none and reads the set by id; a code turned off
+    --                           means "no longer updated")
+    --   rule_set_versions.source  who made the version: the publisher's DMs or co-editors,
+    --                           an accepted suggestion, or an accepted change found in the
+    --                           shared document (the log of who and when is created_by and
+    --                           created_at)
+    --   rule_set_editors        people the publisher named as co-editors of its set
+    -- New columns with defaults: no row is rewritten, so no row-level security to open.
+    ALTER TABLE rule_set_follows
+        ADD COLUMN code TEXT CHECK (code IS NULL OR code ~ '^[A-Z2-7]{{10}}$');
+    ALTER TABLE rule_set_versions
+        ADD COLUMN source TEXT NOT NULL DEFAULT 'publisher'
+        CHECK (source IN ('publisher', 'suggestion', 'document'));
+    CREATE TABLE rule_set_editors (
+        {_memory_scope()}
+        set_id      TEXT NOT NULL,
+        user_id     BIGINT NOT NULL CHECK (user_id > 0),
+        added_by    BIGINT NOT NULL CHECK (added_by > 0),
+        added_at    BIGINT NOT NULL,
+        PRIMARY KEY (guild_id, campaign_id, set_id, user_id),
+        FOREIGN KEY (guild_id, campaign_id, set_id)
+            REFERENCES rule_sets (guild_id, campaign_id, id) ON DELETE CASCADE
+    );
+    """ + _isolate("rule_set_editors")
+
 MIGRATIONS: tuple[Migration, ...] = (
     ("0001_initial", INITIAL),
     ("0002_active_sessions", ACTIVE_SESSIONS),
@@ -2255,6 +2285,7 @@ MIGRATIONS: tuple[Migration, ...] = (
     ("0057_table_questions", TABLE_QUESTIONS),
     ("0058_people", PEOPLE),
     ("0061_rule_sets", RULE_SETS),
+    ("0062_set_updates", SET_UPDATES),
 )
 
 # Tables that must have row-level security. A test checks every table in the schema
@@ -2284,6 +2315,7 @@ ISOLATED_TABLES = (
     "rule_set_versions",
     "rule_set_codes",
     "rule_set_follows",
+    "rule_set_editors",
 )
 # A person's own rows (the website, #435): row-level security on `user_id`, set by
 # Database.user(). Sessions can also be found by their cookie hash (Database.session()),
