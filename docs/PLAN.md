@@ -3233,6 +3233,11 @@ experience points and the trial extension (owner, 2026-10-14; Supervisor's detai
   time an extension ends while the total stays under 4 hours. It happens on its own: nothing to
   click. Only people DMbot has an email for get the email, but the extension applies to everyone
   who qualifies, and the bot says so privately at their next `/dmbot start`.
+  *Details (Supervisor, 2026-10-14, #1240):* the 8 hours in all are counted in minutes and enforced
+  by the database itself (480 minus the minutes used). The daily job looks back 40 days: at its
+  first run it reaches people whose trial ended up to 40 days ago, who may still come back,
+  and never emails people long gone. The last-day message goes again at the end of each
+  extension. Experience points are the minutes on campaigns the account owns.
 - **Sending email:** for now from the owner's `dmbot.admin@gmail.com` (SMTP with a Google app
   password, kept in the server's `.env`, never in the repository; dev1 adds it). Later from the
   owner's own email account. One small sending module in core with a daily cap (Gmail allows
