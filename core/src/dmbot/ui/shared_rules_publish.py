@@ -24,6 +24,10 @@ SHOWN_CHANGES = 12  # the lines of a diff quoted on the screen; the rest are cou
 BODY_MAX = 1400  # the diff's characters: the whole message stays under Discord's 2000
 NAMES_SHOWN = 10  # co-editors named in the history text
 EDITORS_MAX = 25  # what the remove menu can hold
+YOUR_RULES_CHANGED = (
+    "Your house rules changed while you were looking. Press 🔄 Publish my changes again to "
+    "see the new changes."
+)
 NOT_SHARED_HERE = "Your rules aren't shared yet. Use 📤 Share my house rules first."
 HISTORY_SHOWN = 8
 NOTHING_NEW = "Your house rules are the same as the shared version, so there is nothing to publish."
@@ -80,14 +84,16 @@ async def show_changes(interaction: discord.Interaction, campaign: Campaign) -> 
         f"**{_escape(mine.name[:60])}**: publish as version {mine.version + 1}? "
         f"{set_diff.count_words(changes)} changed:\n{body}\n"
         "Tables using it get the new version at their next session start.",
-        ConfirmPublish(current, mine.version),
+        ConfirmPublish(current, mine.version, after),
     )
 
 
 class ConfirmPublish(_Menu):
-    def __init__(self, campaign: Campaign, version: int) -> None:
+    def __init__(
+        self, campaign: Campaign, version: int, shown: dict[str, Any] | None = None
+    ) -> None:
         super().__init__()
-        self.campaign, self.version = campaign, version
+        self.campaign, self.version, self.shown = campaign, version, shown
         self.add_item(_Button(self._yes, label="Yes, publish", style=discord.ButtonStyle.primary))
         self.add_item(_Button(self._no, label=CANCEL_LABEL))
 
@@ -107,12 +113,25 @@ class ConfirmPublish(_Menu):
             return
         rules, link = got
         shared = await store.current_content(current.guild_id, current.id)
-        if shared is not None and shared[0].version != self.version:
+        if shared is None:
+            await _tell(interaction, NOT_SHARED_HERE)
+            return
+        if shared[0].version != self.version:
             await _tell(interaction, rule_sets.CHANGED_AGAIN)  # someone else published meanwhile
+            return
+        if self.shown is not None and rule_sets.content_of(rules, link) != self.shown:
+            # What would be published is not what the DM saw: they look again first.
+            await _tell(interaction, YOUR_RULES_CHANGED)
             return
         self.stop()
         made = await store.publish_changes(
-            current.guild_id, current.id, interaction.user.id, rules, link, plan_ok=True
+            current.guild_id,
+            current.id,
+            interaction.user.id,
+            rules,
+            link,
+            plan_ok=True,  # checked just above with plan_gate
+            expected_version=self.version,  # and again under the lock, in the store
         )
         await _tell(
             interaction,
@@ -159,7 +178,7 @@ async def show_history(interaction: discord.Interaction, campaign: Campaign) -> 
         lines.append(f"Co-editors: {', '.join(shown)}{more}")
     else:
         lines.append("No co-editors. Any DM of this campaign can change the set.")
-    by_id = {e: bot.name_of(current.guild_id, e) for e in editors[:25]}
+    by_id = {e: bot.name_of(current.guild_id, e) for e in editors[:EDITORS_MAX]}
     await _send(interaction, "\n".join(lines), EditorsMenu(current, editors, by_id))
 
 
@@ -187,7 +206,7 @@ class EditorsMenu(_Menu):
                     placeholder="Remove a co-editor…",
                     options=[
                         discord.SelectOption(label=(names.get(e) or str(e))[:25], value=str(e))
-                        for e in editors[:25]
+                        for e in editors[:EDITORS_MAX]
                     ],
                     row=1,
                 )

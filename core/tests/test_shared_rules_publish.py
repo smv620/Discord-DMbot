@@ -98,6 +98,32 @@ class Publishing(unittest.IsolatedAsyncioTestCase):
         s3.publish_changes.assert_awaited_once()
 
 
+class WhatWasShown(unittest.IsolatedAsyncioTestCase):
+    async def test_rules_edited_after_the_diff_are_not_published_unseen(self) -> None:
+        shown = {
+            "rules": [{"number": 1, "rule": "Flanking gives advantage", "instead": None}],
+            "link": None,
+        }
+        s = store(publish_changes=AsyncMock())
+        bot = bot_with(s)
+        bot.house_rules.list = AsyncMock(return_value=[rule(1, "Flanking is optional")])
+        it = interaction(7, bot)
+        await pub.ConfirmPublish(campaign(), 4, shown)._yes(it)
+        self.assertEqual(it.sent[0][0], pub.YOUR_RULES_CHANGED)
+        s.publish_changes.assert_not_called()
+
+    async def test_the_store_gets_the_version_the_dm_saw_and_an_unshared_set_is_said(self) -> None:
+        s = store(publish_changes=AsyncMock(return_value=rule_sets.SharedSet("s", "R", True, 5)))
+        it = interaction(7, bot_with(s))
+        await pub.ConfirmPublish(campaign(), 4)._yes(it)
+        self.assertEqual(s.publish_changes.await_args.kwargs["expected_version"], 4)
+        gone = store(current_content=AsyncMock(return_value=None), publish_changes=AsyncMock())
+        it2 = interaction(7, bot_with(gone))
+        await pub.ConfirmPublish(campaign(), 4)._yes(it2)
+        self.assertEqual(it2.sent[0][0], pub.NOT_SHARED_HERE)
+        gone.publish_changes.assert_not_called()
+
+
 class Limits(unittest.IsolatedAsyncioTestCase):
     def test_a_long_diff_stays_under_the_message_limit(self) -> None:
         from dmbot.rules import set_diff

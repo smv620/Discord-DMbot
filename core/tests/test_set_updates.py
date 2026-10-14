@@ -369,6 +369,19 @@ class Updates(DatabaseTest):
         self.assertEqual((row or {})["taken_by"], None)
         self.assertEqual((row or {})["taken_source"], None)
 
+    async def test_a_publish_made_on_an_old_version_is_refused_in_the_store(self) -> None:
+        await self.follow_far()
+        await self.sets.save_version(GUILD_A, self.pub, DM_A, V2, plan_ok=True)  # now version 2
+        v3 = content((1, "Crits double the dice, always", None))
+        with self.assertRaises(RuleSetError):  # the DM was looking at version 1
+            await self.sets.save_version(
+                GUILD_A, self.pub, DM_A, v3, plan_ok=True, expected_version=1
+            )
+        made = await self.sets.save_version(
+            GUILD_A, self.pub, DM_A, v3, plan_ok=True, expected_version=2
+        )
+        self.assertEqual(made.version, 3)
+
     async def test_current_content_is_the_newest_version_and_none_when_not_shared(self) -> None:
         await self.follow_far()
         await self.sets.save_version(GUILD_A, self.pub, DM_A, V2, plan_ok=True)

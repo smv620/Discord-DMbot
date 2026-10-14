@@ -542,6 +542,7 @@ class RuleSetStore:
         source: Literal["publisher", "suggestion", "document"] = "publisher",
         *,
         plan_ok: bool,
+        expected_version: int | None = None,
     ) -> SharedSet:
         """Make `content` the set's next version. Only the publisher's DMs and its named
         co-editors; the set must be shared; nothing is made if nothing differs. Followers
@@ -576,6 +577,8 @@ class RuleSetStore:
             )
             last = await cur.fetchone()
             assert last is not None  # a set always has version 1
+            if expected_version is not None and int(last["version"]) != expected_version:
+                raise RuleSetError(CHANGED_AGAIN)  # someone published since the DM looked
             if valid_content(_json(last["content"])) == wanted:
                 raise RuleSetError(NO_CHANGES)
             version = int(last["version"]) + 1
@@ -596,11 +599,19 @@ class RuleSetStore:
         link: str | None,
         *,
         plan_ok: bool,
+        expected_version: int | None = None,
     ) -> SharedSet:
         """The publisher's current house rules as the set's next version. `plan_ok`: see
-        `save_version`."""
+        `save_version`. `expected_version`: the version the DM was looking at; if another has
+        been published since, nothing is made."""
         return await self.save_version(
-            guild_id, campaign_id, user_id, content_of(rules, link), "publisher", plan_ok=plan_ok
+            guild_id,
+            campaign_id,
+            user_id,
+            content_of(rules, link),
+            "publisher",
+            plan_ok=plan_ok,
+            expected_version=expected_version,
         )
 
     async def add_editor(
