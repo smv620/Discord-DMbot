@@ -369,6 +369,16 @@ class Updates(DatabaseTest):
         self.assertEqual((row or {})["taken_by"], None)
         self.assertEqual((row or {})["taken_source"], None)
 
+    async def test_current_content_is_the_newest_version_and_none_when_not_shared(self) -> None:
+        await self.follow_far()
+        await self.sets.save_version(GUILD_A, self.pub, DM_A, V2, plan_ok=True)
+        got = await self.sets.current_content(GUILD_A, self.pub)
+        assert got is not None
+        self.assertEqual((got[0].version, got[1]["rules"][0]["number"]), (2, 1))
+        await self.sets.stop_sharing(GUILD_A, self.pub, DM_A)
+        self.assertIsNone(await self.sets.current_content(GUILD_A, self.pub))
+        self.assertIsNone(await self.sets.current_content(GUILD_A, "none"))
+
     async def test_dmbot_cannot_merge_for_a_dm(self) -> None:
         await self.follow_far()
         await self.sets.save_version(GUILD_A, self.pub, DM_A, V2, plan_ok=True)

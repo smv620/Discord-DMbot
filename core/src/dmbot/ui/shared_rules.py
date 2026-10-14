@@ -29,6 +29,8 @@ CODE_LABEL = "🔑 New share code"
 FOLLOW_LABEL = "📥 Use shared rules"
 UNFOLLOW_LABEL = "Stop using shared rules"
 UNDO_LABEL = "↩️ Undo"
+PUBLISH_LABEL = "🔄 Publish my changes"
+HISTORY_LABEL = "👥 History and editors"
 CONFIRM_LABEL = "Yes, use this set"
 CANCEL_LABEL = "Cancel"
 
@@ -344,6 +346,8 @@ class SharedMenu(_Menu):
         super().__init__()
         self.campaign = campaign
         if sharing:
+            self.add_item(_Button(self._publish, label=PUBLISH_LABEL))
+            self.add_item(_Button(self._history, label=HISTORY_LABEL))
             self.add_item(_Button(self._code, label=CODE_LABEL, style=discord.ButtonStyle.primary))
             self.add_item(_Button(self._stop, label=STOP_LABEL, style=discord.ButtonStyle.danger))
         else:
@@ -372,6 +376,16 @@ class SharedMenu(_Menu):
 
     async def _follow(self, interaction: discord.Interaction) -> None:
         await interaction.response.send_modal(CodeForm(self.campaign))
+
+    async def _publish(self, interaction: discord.Interaction) -> None:
+        from dmbot.ui import shared_rules_publish
+
+        await shared_rules_publish.show_changes(interaction, self.campaign)
+
+    async def _history(self, interaction: discord.Interaction) -> None:
+        from dmbot.ui import shared_rules_publish
+
+        await shared_rules_publish.show_history(interaction, self.campaign)
 
     async def _code(self, interaction: discord.Interaction) -> None:
         await new_code(interaction, self.campaign)

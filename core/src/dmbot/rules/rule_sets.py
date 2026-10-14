@@ -239,6 +239,22 @@ class RuleSetStore:
             str(row["id"]), str(row["name"]), row["status"] == "shared", int(row["version"])
         )
 
+    async def current_content(
+        self, guild_id: int, campaign_id: str
+    ) -> tuple[SharedSet, dict[str, Any]] | None:
+        """The campaign's shared set and what its newest version holds (None: not shared)."""
+        mine = await self.published(guild_id, campaign_id)
+        if mine is None or not mine.shared:
+            return None
+        async with self._db.guild(guild_id) as conn:
+            cur = await conn.execute(
+                "SELECT content FROM rule_set_versions WHERE guild_id = %s AND campaign_id = %s"
+                " AND set_id = %s AND version = %s",
+                (guild_id, campaign_id, mine.id, mine.version),
+            )
+            row = await cur.fetchone()
+        return (mine, valid_content(_json(row["content"]))) if row else None
+
     async def publish(
         self,
         guild_id: int,
