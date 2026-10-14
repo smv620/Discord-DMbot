@@ -151,6 +151,14 @@ async def apply_event(db: Database, event: PaymentEvent, *, now: int) -> Outcome
             return "ignored"
         if await _seen(conn, event):
             return "duplicate"
+        if event.email:
+            # The address the company has for the payer: kept for sign-in links, move codes
+            # and Try It emails. Written for any new event of a known person; never logged.
+            await conn.execute(
+                "UPDATE web_users SET payment_email = %s WHERE user_id = %s"
+                " AND payment_email IS DISTINCT FROM %s",
+                (event.email, event.user_id, event.email),
+            )
         row = await _current(conn, event.user_id)
 
         if event.kind == "extra_hours_bought":

@@ -12,10 +12,25 @@ log = logging.getLogger(__name__)
 
 
 async def account_email(db: Database, user_id: int) -> str | None:
+    """The account's address: the one the payment company has, else the Discord one."""
     async with db.user(user_id) as conn:
-        cur = await conn.execute("SELECT email FROM web_users WHERE user_id = %s", (user_id,))
+        cur = await conn.execute(
+            "SELECT COALESCE(payment_email, email) AS email FROM web_users WHERE user_id = %s",
+            (user_id,),
+        )
         row = await cur.fetchone()
     return None if row is None else row["email"]
+
+
+async def payment_email(db: Database, user_id: int) -> str | None:
+    """Only the address the payment company has (move codes go here and nowhere else), or
+    None while the account has none stored."""
+    async with db.user(user_id) as conn:
+        cur = await conn.execute(
+            "SELECT payment_email FROM web_users WHERE user_id = %s", (user_id,)
+        )
+        row = await cur.fetchone()
+    return None if row is None else row["payment_email"]
 
 
 async def customer_id(db: Database, user_id: int) -> str | None:

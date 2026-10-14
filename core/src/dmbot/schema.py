@@ -2306,6 +2306,51 @@ TRIAL = """
     REVOKE ALL ON FUNCTION dmbot_extend_trial(BIGINT, BIGINT, INTEGER) FROM PUBLIC;
     """
 
+PAYMENT_EMAIL = """
+    -- The email Stripe has for the account's payments (#1242; docs/PLAN.md, "Accounts"),
+    -- kept from the payment webhook beside the Discord email the website sign-in gives.
+    -- Sign-in links and Try It emails use it before the Discord email; move codes go to it
+    -- and nowhere else. Never logged or shown back in full.
+    ALTER TABLE web_users ADD COLUMN payment_email TEXT
+        CHECK (payment_email IS NULL OR char_length(payment_email) BETWEEN 3 AND 254);
+    -- Try It's job reads the address through its door: the payment email first.
+    CREATE OR REPLACE FUNCTION dmbot_trial_people(since BIGINT, now BIGINT)
+        RETURNS TABLE (user_id BIGINT, dmbot_id TEXT, email TEXT, period_end BIGINT,
+                       minutes BIGINT, paid BOOLEAN, extensions INTEGER, granted BOOLEAN)
+        LANGUAGE plpgsql SECURITY DEFINER
+        AS $fn$
+    #variable_conflict use_column
+    DECLARE
+        before TEXT := COALESCE(current_setting('dmbot.owner_sync', true), '');
+    BEGIN
+        PERFORM set_config('dmbot.owner_sync', 'trial', true);
+        RETURN QUERY
+        SELECT e.user_id, u.dmbot_id, COALESCE(u.payment_email, u.email), e.period_end,
+               COALESCE((SELECT sum(h.minutes) FROM owner_hours h
+                         WHERE h.owner_user_id = e.user_id), 0)::BIGINT,
+               EXISTS (SELECT 1 FROM payment_events p WHERE p.user_id = e.user_id
+                       AND (p.kind IS NULL OR p.kind = ANY(
+                            ARRAY['subscription_started', 'subscription_renewed',
+                                  'extra_hours_bought']))),
+               (SELECT count(*)::INTEGER FROM trial_extensions t WHERE t.user_id = e.user_id),
+               EXISTS (SELECT 1 FROM access_grants g WHERE g.discord_user_id = e.user_id
+                       AND g.revoked_at IS NULL
+                       AND (g.ends_at IS NULL OR g.ends_at > now))
+        FROM entitlements e JOIN web_users u ON u.user_id = e.user_id
+        WHERE e.plan = 'try-it' AND e.status = 'active' AND e.period_end >= since;
+        PERFORM set_config('dmbot.owner_sync', before, true);
+    END
+    $fn$;
+    DO $do$
+    BEGIN
+        EXECUTE format(
+            'ALTER FUNCTION dmbot_trial_people(BIGINT, BIGINT)'
+            ' SET search_path = pg_catalog, %I, pg_temp',
+            current_schema());
+    END
+    $do$;
+    """
+
 # Numbered 0063 on purpose: 0060 to 0062 belong to pull requests still waiting to merge
 # (owner gone, shared rulesets, their updates). A migration list may have gaps.
 DMBOT_ID = """
@@ -2449,6 +2494,7 @@ MIGRATIONS: tuple[Migration, ...] = (
     ("0063_dmbot_id", DMBOT_ID),
     ("0064_mail", MAIL),
     ("0065_trial", TRIAL),
+    ("0067_payment_email", PAYMENT_EMAIL),
 )
 
 # Tables that must have row-level security. A test checks every table in the schema

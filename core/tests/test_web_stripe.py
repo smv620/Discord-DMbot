@@ -190,6 +190,14 @@ class Provider(unittest.IsolatedAsyncioTestCase):
 
     # Started, renewed, failed
 
+    def test_the_payers_address_is_kept_from_the_invoice(self) -> None:
+        parsed = self.provider.parse(event("invoice.paid", invoice()))
+        assert parsed is not None
+        self.assertEqual(parsed.email, "player@example.com")
+        none = self.provider.parse(event("invoice.paid", invoice(customer_email="not an address")))
+        assert none is not None
+        self.assertIsNone(none.email)
+
     def test_a_first_payment_starts_the_plan_with_its_period(self) -> None:
         parsed = self.provider.parse(event("invoice.paid", invoice()))
         assert parsed is not None
