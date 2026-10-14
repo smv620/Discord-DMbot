@@ -137,7 +137,7 @@ export const extraHours = {
 /** What every plan does, after "every plan": one list, used twice below. */
 const featureList =
   "writes down what’s said at the table, remembers the names your table makes up, helps with rules, remembers your story, and keeps backups";
-const features = `Every plan ${featureList}.`;
+const features = `Every plan ${featureList}. Paid plans can also share your house rules with other tables, if you choose.`;
 
 export const labels = {
   recommendedBadge: "Best for one game a week",

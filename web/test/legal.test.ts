@@ -275,3 +275,11 @@ describe("the facts #433 asks for", () => {
     expect(terms()).not.toContain("governing law and courts");
   });
 });
+
+describe("shared house rules (#1254)", () => {
+  it("the privacy page says only rules are shared, never story or transcripts", () => {
+    const t = text(doc("privacy").querySelector("main"));
+    expect(t).toContain("only the rules themselves");
+    expect(t).toContain("The story, names, notes and what was said are never shared");
+  });
+});
