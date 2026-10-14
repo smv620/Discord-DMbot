@@ -189,7 +189,7 @@ CASES: tuple[Case, ...] = (
         "what does the game clock do",
         (
             reply(
-                "It keeps the story's time, and Short rest and Long rest move it.",
+                "It tracks story time. Short rest and Long rest move it.",
                 "DMbot help",
                 in_game="no",
             ),
@@ -207,7 +207,7 @@ CASES: tuple[Case, ...] = (
         "what's FightBot",
         (
             reply(
-                "In a fight it privately reminds each player of their own spells and features.",
+                "FightBot privately reminds each player of their own spells and features.",
                 "DMbot help",
                 in_game="no",
             ),
@@ -224,12 +224,8 @@ CASES: tuple[Case, ...] = (
     ),
     Case(
         "what is a share code",
-        (
-            reply(
-                "The plan has it, but I can't confirm it's built yet.", "DMbot help", in_game="no"
-            ),
-        ),
-        ("can't confirm", "planned"),
+        (reply("Not built yet. It's planned.", "DMbot help", in_game="no"),),
+        ("not built yet",),
         in_game=False,
     ),
     Case(

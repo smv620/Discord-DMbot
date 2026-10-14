@@ -698,6 +698,13 @@ class Isolation(unittest.TestCase):
         self.assertEqual(got.text.count("https://"), 1)
         self.assertIn(f"/blob/{commit}/", got.text)
         self.assertTrue(got.text.startswith("It keeps the game's time."))
+        self.assertIn("More: https://", got.text)
+
+    def test_no_link_when_the_answer_is_that_it_is_not_built(self) -> None:
+        ai = FakeAI([reply("Not built yet. It's planned.", "DMbot help", in_game="no")])
+        with patch.dict("os.environ", {"GIT_COMMIT": "0123456789abcdef"}):
+            got = run(engine(ai).answer(campaign(), "what is a share code in dmbot"))
+        self.assertNotIn("https://", got.text)
 
     def test_no_link_without_the_build_commit_or_for_a_game_answer(self) -> None:
         ai = FakeAI([reply("It keeps the game's time.", "DMbot help", in_game="no"), reply("Yes.")])
