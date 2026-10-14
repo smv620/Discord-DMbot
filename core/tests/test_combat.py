@@ -398,6 +398,17 @@ class SessionStart(AtTheTable):
         await self.bot._fight_left_over(table)
         self.bot.post.assert_not_awaited()
 
+    async def test_nothing_is_said_on_a_table_that_closed_meanwhile(self) -> None:
+        await self.press("set", set_to=NOON4)
+        await self.press("cstart")
+        table = cast(Any, self.table)
+        table.resumed = False
+        table.screen_channel_id = 555
+        self.bot.post = AsyncMock()  # type: ignore[method-assign]
+        self.bot.tables.pop(table.guild_id, None)  # the session ended while the clock was read
+        await self.bot._fight_left_over(table)
+        self.bot.post.assert_not_awaited()
+
 
 class Heard(AtTheTable):
     async def combat_round(self) -> int | None:

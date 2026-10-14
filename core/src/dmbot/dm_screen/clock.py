@@ -191,6 +191,7 @@ async def press(
         and before.combat_round is not None
         and after.combat_round is None
     ):
+        # Undo puts back the time only, not the fight: the DM starts combat again if needed.
         result.lines.insert(0, f"🏁 Combat is over (round {before.combat_round}).")
     if before is not None and after is not None and _speaks(action):
         marks = game.crossings(before.minute, after.minute)

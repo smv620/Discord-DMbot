@@ -140,11 +140,13 @@ _SUGGESTS = re.compile(
 )
 
 
+_CURLY = str.maketrans({"\u2019": "'", "\u2018": "'", "\u02bc": "'"})
+
+
 def normalise(line: str) -> str:
     """Whitespace squeezed and the curly apostrophes a phone keyboard types (U+2019, U+2018,
     U+02BC) made plain, so a curly "combat's over" matches the plain one (#1173)."""
-    curly = str.maketrans({"\u2019": "'", "\u2018": "'", "\u02bc": "'"})
-    return " ".join(line.translate(curly).split())
+    return " ".join(line.translate(_CURLY).split())
 
 
 def _clean(line: str) -> str | None:

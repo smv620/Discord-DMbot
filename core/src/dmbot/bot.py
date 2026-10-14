@@ -1362,6 +1362,8 @@ class DMBot(commands.AutoShardedBot):
         stored = await self.clocks.get(table.guild_id, table.campaign_id)
         if stored is None or stored.clock.combat_round is None:
             return
+        if self.tables.get(table.guild_id) is not table:
+            return  # the session ended while the clock was read: no line on a closed table
         view = discord.ui.View(timeout=None)
         view.add_item(clock_screen.ClockButton(table.campaign_id, "cend"))
         await self.post(
@@ -3030,17 +3032,26 @@ class DMBot(commands.AutoShardedBot):
         # Marked at once, before any await: the same words arriving by voice and by chat a
         # moment apart must count once (#1173). Taken back on every path that changes nothing.
         table.clock_said[said.key] = now
+        marked = [said.key]  # grows if a rest's amount changes the key (taken back with it)
         moved = False
         try:
-            moved = await self._clock_phrase_moves(table, user_id, line, said, now)
+            moved = await self._clock_phrase_moves(table, user_id, line, said, now, marked)
         finally:
             if not moved:
-                table.clock_said.pop(said.key, None)
+                for key in marked:
+                    table.clock_said.pop(key, None)
 
     async def _clock_phrase_moves(
-        self, table: Table, user_id: int, line: str, said: clock_phrases.Said, now: float
+        self,
+        table: Table,
+        user_id: int,
+        line: str,
+        said: clock_phrases.Said,
+        now: float,
+        marked: list[str],
     ) -> bool:
-        """The rest of `_note_clock_phrase`: True once the clock was moved."""
+        """The rest of `_note_clock_phrase`: True once the clock was moved. `marked` lists
+        the window keys set so far, so the caller can take them all back."""
         assert table.campaign_id is not None
         campaign = await self.campaigns.get(table.guild_id, table.campaign_id)
         if campaign is None or user_id not in campaign.dm_user_ids:
@@ -3057,6 +3068,7 @@ class DMBot(commands.AutoShardedBot):
         ):
             return False
         table.clock_said[said.key] = now  # (the amount a rest covered may have changed the key)
+        marked.append(said.key)
         try:
             result = await clock_screen.press(
                 self,
