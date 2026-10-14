@@ -360,7 +360,7 @@ class SharedRulesButton(
                 label="Shared rules",
                 emoji="📚",
                 style=discord.ButtonStyle.secondary,
-                row=3,
+                row=4,
                 custom_id=f"dmbot:sharedrules:{campaign_id}",
             )
         )
