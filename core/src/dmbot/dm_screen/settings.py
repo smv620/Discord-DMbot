@@ -60,7 +60,8 @@ RULES_CARDS_ON = (
 RULES_CARDS_STOP = " Tap 🃏 Turn rules cards off to stop them."
 RULES_CARDS_PEEK = " Players who peek can see them too."
 RULES_CARDS_OPEN = " Players can see them too, because your DM screen is open."
-RULES_CARDS_ONLY_DMS = "Only this campaign's DMs can change this."
+ONLY_DMS = "Only this campaign's DMs can change this."
+RULES_CARDS_ONLY_DMS = ONLY_DMS  # (the old name, kept for its callers)
 RULES_LINE = (
     "• **Rules:** press 📖 Look up a rule to read a spell, condition or creature from the "
     "free rules (SRD). Only you see it."

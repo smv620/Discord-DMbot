@@ -2950,6 +2950,11 @@ once. The new-campaign form's link is saved in the same step as the campaign.
     - **Buttons** on the pinned clock: **Start combat** out of a fight, **Next round** and
       **End combat** in one. Only the campaign's DMs.
     - **One question for other parts:** `ClockStore.in_combat(guild, campaign)`.
+    - **A forgotten fight ends** (decided 2026-10-13, #1173): a **long rest** or **Skip to dawn**
+      ends combat as if **End combat** was pressed (the last round counts, then the rest); a
+      short rest and other clock moves leave it alone. At session start, a fight left running
+      from last time gets one DM-screen line with **End combat**; it is never ended without the
+      DM, because a session can stop in the middle of a fight.
 - **FightBot** (one per player character, only while in combat). *Built (#1174, 2026-10-14).*
   - **What it says:** private messages to that player only, reminding them of their own character:
     spell slots left, features and items that could help now ("You still have Hunter's Mark and
