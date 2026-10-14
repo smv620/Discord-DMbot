@@ -59,7 +59,10 @@ ALREADY_FOLLOWING = "This campaign already follows a set of house rules. Unfollo
 NOT_FOLLOWING = "This campaign isn't following a set of house rules."
 NO_CHANGES = "Nothing is different from the last version, so no new version was made."
 NOT_EDITOR = "Only this set's DMs and the people they named can change it."
+EDITOR_NOT_DM = "A co-editor has to be a DM of the campaign that shares the set."
+NOT_PAID = "Changing a shared set needs the campaign to be on a paid plan."
 NOTHING_NEW = "There is nothing new to take."
+NOTHING_TO_UNDO = "There is nothing to undo."
 CHANGED_AGAIN = "The set changed again while you were looking. Look at the new changes first."
 NO_ROOM = "Your own house rules and this set together are more than {n} rules. Remove some first."
 
@@ -103,7 +106,8 @@ class Follow:
     updating: bool  # False: "no longer updated"
     followed_at: int
     code: str | None = None  # the share code it was followed by, to ask for updates
-    notified: int | None = None  # the newest version the DM has been told about
+    previous_version: int | None = None  # the copy before the last update, for Undo
+    previous_content: dict[str, Any] | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -143,6 +147,7 @@ def content_of(rules: Sequence[HouseRule], link: str | None) -> dict[str, Any]:
         "rules": [
             {"number": r.number, "rule": r.rule, "instead": r.supersedes}
             for r in sorted(rules, key=lambda r: r.number)
+            if not r.from_set  # rules merged in from another set are not this campaign's to share
         ],
         "link": link,
     }
@@ -198,7 +203,8 @@ def _follow(row: dict[str, Any]) -> Follow:
     return Follow(
         str(row["set_id"]), str(row["kind"]), str(row["set_name"]), str(row["publisher"]),
         int(row["version"]), _json(row["content"]), bool(row["updating"]),
-        int(row["followed_at"]), row.get("code"), row.get("notified_version"),
+        int(row["followed_at"]), row.get("code"), row.get("previous_version"),
+        _json(row["previous_content"]) if row.get("previous_content") else None,
     )  # fmt: skip
 
 
@@ -334,15 +340,16 @@ class RuleSetStore:
             return [(str(r["code"]), bool(r["active"])) for r in await cur.fetchall()]
 
     async def turn_off_code(self, guild_id: int, campaign_id: str, user_id: int, code: str) -> bool:
-        """Stop one code working (it can't be turned back on: make another). Followers who
-        used it keep their copy but stop getting updates: updates are asked for with the code
-        they followed by (docs/PLAN.md)."""
+        """Stop one code working for NEW followers (it can't be turned back on: make another).
+        Tables that followed before keep getting updates until the publisher stops sharing
+        (owner decision): updates are asked for through `dmbot_set_update_by_code`, which
+        still answers a code turned off after the follow."""
         async with self._db.guild(guild_id) as conn:
             await require_dm(conn, guild_id, campaign_id, user_id, lock=True)
             cur = await conn.execute(
-                "UPDATE rule_set_codes SET active = false WHERE guild_id = %s AND campaign_id = %s"
-                " AND code = %s AND active",
-                (guild_id, campaign_id, clean_code(code)),
+                "UPDATE rule_set_codes SET active = false, deactivated_at = %s"
+                " WHERE guild_id = %s AND campaign_id = %s AND code = %s AND active",
+                (self._now(), guild_id, campaign_id, clean_code(code)),
             )
             return bool(cur.rowcount > 0)
 
@@ -514,10 +521,16 @@ class RuleSetStore:
         user_id: int,
         content: Any,
         source: Literal["publisher", "suggestion", "document"] = "publisher",
+        *,
+        plan_ok: bool,
     ) -> SharedSet:
         """Make `content` the set's next version. Only the publisher's DMs and its named
         co-editors; the set must be shared; nothing is made if nothing differs. Followers
-        see it at their next session start, never sooner."""
+        see it at their next session start, never sooner. `plan_ok`: the caller has checked the
+        publishing campaign is still on a paid plan (the owner's plan, which this store can't
+        read); without it nothing is saved."""
+        if not plan_ok:
+            raise RuleSetError(NOT_PAID)
         wanted = valid_content(content)
         now = self._now()
         async with self._db.guild(guild_id) as conn:
@@ -562,10 +575,13 @@ class RuleSetStore:
         user_id: int,
         rules: Sequence[HouseRule],
         link: str | None,
+        *,
+        plan_ok: bool,
     ) -> SharedSet:
-        """The publisher's current house rules as the set's next version."""
+        """The publisher's current house rules as the set's next version. `plan_ok`: see
+        `save_version`."""
         return await self.save_version(
-            guild_id, campaign_id, user_id, content_of(rules, link), "publisher"
+            guild_id, campaign_id, user_id, content_of(rules, link), "publisher", plan_ok=plan_ok
         )
 
     async def add_editor(
@@ -576,6 +592,13 @@ class RuleSetStore:
             raise RuleSetError(NOT_EDITOR)
         async with self._db.guild(guild_id) as conn:
             await require_dm(conn, guild_id, campaign_id, user_id, lock=True)
+            cur = await conn.execute(
+                "SELECT 1 AS ok FROM campaign_dms WHERE guild_id = %s AND campaign_id = %s"
+                " AND user_id = %s",
+                (guild_id, campaign_id, editor_id),
+            )
+            if await cur.fetchone() is None:  # co-editors are DMs of the publishing campaign
+                raise RuleSetError(EDITOR_NOT_DM)
             cur = await conn.execute(
                 "SELECT id FROM rule_sets WHERE guild_id = %s AND campaign_id = %s AND kind = %s",
                 (guild_id, campaign_id, HOUSE_RULES),
@@ -629,24 +652,41 @@ class RuleSetStore:
 
     # ---- the follower's side: updates at session start --------------------------------
 
-    async def _latest_of(self, conn: Conn, follow: Follow) -> Offer | None:
-        """The set's newest version as a follower can see it: through the share code it
-        followed by, or (a pick from this server's list) by the set's id. None if the set is
-        no longer shared or its codes are off."""
+    async def _latest_of(self, conn: Conn, follow: Follow) -> tuple[Offer | None, bool]:
+        """The set's newest version as this follower can see it, and whether the set is known
+        to be gone. Through the share code it followed by (the update door: a code turned off
+        AFTER the follow still answers), or by the set's id when it is in this server. (None,
+        True): the publisher stopped sharing. (None, False): not known, never "gone": a follow
+        from another server with no code, say, can't be told apart from a set we can't see."""
         if follow.code is not None:
-            fresh = await self._door(conn, follow.code)
-        else:
             cur = await conn.execute(
-                _LATEST + " WHERE s.id = %s AND s.status = 'shared'", (follow.set_id,)
+                "SELECT * FROM dmbot_set_update_by_code(%s, %s)", (follow.code, follow.followed_at)
             )
             row = await cur.fetchone()
-            fresh = _offer(row) if row is not None else None
-        return fresh if fresh is not None and fresh.set_id == follow.set_id else None
+            if row is None:
+                return None, True
+            fresh = _offer(
+                {k: row[k] for k in ("set_id", "kind", "set_name", "publisher", "version")}
+                | {"content": row["content"]},
+                follow.code,
+            )
+            return (fresh, False) if fresh.set_id == follow.set_id else (None, True)
+        cur = await conn.execute(
+            _LATEST.replace("v.content FROM rule_sets s", "v.content, s.status FROM rule_sets s")
+            + " WHERE s.id = %s",
+            (follow.set_id,),
+        )
+        row = await cur.fetchone()
+        if row is None:
+            return None, False  # not in this server: unknown
+        if row["status"] != "shared":
+            return None, True
+        return _offer(row), False
 
     async def pending_update(self, guild_id: int, campaign_id: str) -> Update | None:
         """A newer version of the house-rules set this campaign follows, if there is one.
         Read only. Called at a session's start and never during one, so a table's rules
-        never change mid-game. A set that is no longer shared gives None (see `stop_updating`)."""
+        never change mid-game."""
         async with self._db.guild(guild_id) as conn:
             mine = [
                 f
@@ -655,20 +695,23 @@ class RuleSetStore:
             ]
             if not mine:
                 return None
-            fresh = await self._latest_of(conn, mine[0])
+            fresh, _ = await self._latest_of(conn, mine[0])
         if fresh is None or fresh.version <= mine[0].version:
             return None
         return Update(mine[0], fresh, tuple(set_diff.diff(mine[0].content, fresh.content)))
 
     async def is_gone(self, guild_id: int, campaign_id: str) -> bool:
-        """The followed set is not shared any more (or its codes are off)."""
+        """The publisher stopped sharing the followed set. False when that is not known."""
         async with self._db.guild(guild_id) as conn:
             mine = [
                 f
                 for f in await _followed(conn, guild_id, campaign_id)
                 if f.kind == HOUSE_RULES and f.updating
             ]
-            return bool(mine) and await self._latest_of(conn, mine[0]) is None
+            if not mine:
+                return False
+            _, gone = await self._latest_of(conn, mine[0])
+            return gone
 
     async def stop_updating(self, guild_id: int, campaign_id: str) -> int:
         """Mark the followed house-rules set "no longer updated" (the campaign keeps its
@@ -681,21 +724,11 @@ class RuleSetStore:
             )
             return int(cur.rowcount)
 
-    async def mark_notified(self, guild_id: int, campaign_id: str, version: int) -> None:
-        """Remember the DM was told about `version` of the followed set, so the next session
-        start takes it if they did nothing."""
-        async with self._db.guild(guild_id) as conn:
-            await conn.execute(
-                "UPDATE rule_set_follows SET notified_version = %s WHERE guild_id = %s"
-                " AND campaign_id = %s AND kind = %s",
-                (version, guild_id, campaign_id, HOUSE_RULES),
-            )
-
     async def take_update(
         self,
         guild_id: int,
         campaign_id: str,
-        user_id: int,
+        user_id: int | None,
         accepted: Collection[int] | None = None,
         expected_version: int | None = None,
     ) -> Taken:
@@ -705,10 +738,19 @@ class RuleSetStore:
         changes becomes the campaign's own house rules (each marked "from <set> house rules,
         v<n>"), and the follow ends. All in one transaction, so it is one Undo. Only a DM
         of the following campaign. The version is read again here: what is taken is what is
-        shared now."""
+        shared now. `user_id` None: DMbot itself, at a session's start (Follow is the default
+        when the DM does nothing); it is credited to DMbot, not to a DM."""
         now = self._now()
         async with self._db.guild(guild_id) as conn:
-            await require_dm(conn, guild_id, campaign_id, user_id, lock=True)
+            if user_id is not None:
+                await require_dm(conn, guild_id, campaign_id, user_id, lock=True)
+            else:  # DMbot: no person to check, but the same lock as everyone else
+                cur = await conn.execute(
+                    "SELECT 1 AS ok FROM campaigns WHERE guild_id = %s AND id = %s FOR UPDATE",
+                    (guild_id, campaign_id),
+                )
+                if await cur.fetchone() is None:
+                    raise RuleSetError(NOT_FOLLOWING)
             mine = [
                 f
                 for f in await _followed(conn, guild_id, campaign_id)
@@ -717,7 +759,7 @@ class RuleSetStore:
             if not mine:
                 raise RuleSetError(NOT_FOLLOWING)
             follow = mine[0]
-            fresh = await self._latest_of(conn, follow)
+            fresh, _gone = await self._latest_of(conn, follow)
             if fresh is None:
                 raise RuleSetError(NO_SUCH_SET)
             if fresh.version <= follow.version:
@@ -729,18 +771,27 @@ class RuleSetStore:
             if accepted is None or numbers <= set(accepted):
                 await conn.execute(
                     "UPDATE rule_set_follows SET version = %s, content = %s, set_name = %s,"
-                    " publisher = %s WHERE guild_id = %s AND campaign_id = %s AND set_id = %s",
+                    " publisher = %s, previous_version = %s, previous_content = %s,"
+                    " taken_by = %s, taken_source = %s"
+                    " WHERE guild_id = %s AND campaign_id = %s AND set_id = %s",
                     (
                         fresh.version,
                         Jsonb(fresh.content),
                         fresh.name,
                         fresh.publisher,
+                        follow.version,
+                        Jsonb(follow.content),
+                        user_id,
+                        "auto" if user_id is None else "dm",
                         guild_id,
                         campaign_id,
                         follow.set_id,
                     ),
                 )
                 return Taken(False, follow, fresh.version)
+            if user_id is None:  # only a DM's press merges rules into the campaign's own
+                raise RuleSetError(NOT_FOLLOWING)
+            author: int = user_id
             kept = numbers & set(accepted)
             merged = set_diff.rules_of(set_diff.apply(follow.content, changes, kept))
             cur = await conn.execute(
@@ -750,13 +801,13 @@ class RuleSetStore:
             if int((await cur.fetchone() or {"n": 0})["n"]) + len(merged) > HOUSE_RULES_MAX:
                 raise RuleSetError(NO_ROOM.format(n=HOUSE_RULES_MAX))
             version = fresh.version if kept else follow.version
-            marker = f"From {fresh.name} house rules, v{version}"[:RULE_MAX]
+            marker = f"{fresh.name} house rules, v{version}"[:200]
             added: list[int] = []
             for number in sorted(merged):
                 rule = merged[number]
                 saved = await insert_rule(
-                    conn, guild_id, campaign_id, user_id, rule["rule"], rule["instead"],
-                    marker, None, None, now,
+                    conn, guild_id, campaign_id, author, rule["rule"],
+                    rule["instead"], None, None, None, now, marker,
                 )  # fmt: skip
                 added.append(saved.number)
             await conn.execute(
@@ -766,20 +817,48 @@ class RuleSetStore:
             )
             return Taken(True, follow, version, tuple(added), marker)
 
-    async def undo_take(self, guild_id: int, campaign_id: str, user_id: int, taken: Taken) -> None:
+    async def undo_last_take(
+        self, guild_id: int, campaign_id: str, user_id: int, expected_version: int
+    ) -> Follow:
+        """Undo the last Follow (the automatic one at a session's start, or a press): the copy
+        before it comes back. Kept in the follow's row, so this needs nothing in memory and
+        works after a restart. Only while the campaign is still on `expected_version`, so an
+        old Undo button can't undo a newer update. Returns the follow as it was."""
+        async with self._db.guild(guild_id) as conn:
+            await require_dm(conn, guild_id, campaign_id, user_id, lock=True)
+            mine = [
+                f for f in await _followed(conn, guild_id, campaign_id) if f.kind == HOUSE_RULES
+            ]
+            if not mine or mine[0].previous_version is None or mine[0].version != expected_version:
+                raise RuleSetError(NOTHING_TO_UNDO)
+            cur = await conn.execute(
+                "UPDATE rule_set_follows SET version = previous_version,"
+                " content = previous_content, previous_version = NULL,"
+                " previous_content = NULL, taken_by = NULL, taken_source = NULL"
+                " WHERE guild_id = %s AND campaign_id = %s AND set_id = %s"
+                " AND version = %s AND previous_version IS NOT NULL RETURNING version",
+                (guild_id, campaign_id, mine[0].set_id, expected_version),
+            )
+            if await cur.fetchone() is None:
+                raise RuleSetError(NOTHING_TO_UNDO)
+            return mine[0]
+
+    async def undo_take(self, guild_id: int, campaign_id: str, user_id: int, taken: Taken) -> int:
         """Put back what `take_update` did: the old copy returns (and, after a merge, the
-        rules it added are removed; their numbers are not used again)."""
+        rules it added are removed; their numbers are not used again). Returns how many
+        merged rules were kept because the DM has edited them since."""
         async with self._db.guild(guild_id) as conn:
             await require_dm(conn, guild_id, campaign_id, user_id, lock=True)
             before = taken.before
             if taken.merged:
                 if any(f.kind == HOUSE_RULES for f in await _followed(conn, guild_id, campaign_id)):
                     raise RuleSetError(ALREADY_FOLLOWING)
-                await conn.execute(
+                cur = await conn.execute(
                     "DELETE FROM house_rules WHERE guild_id = %s AND campaign_id = %s"
-                    " AND number = ANY(%s) AND scenario = %s AND version = 1",  # never edited
+                    " AND number = ANY(%s) AND from_set = %s AND version = 1",  # never edited
                     (guild_id, campaign_id, list(taken.added), taken.marker),
                 )
+                kept = len(taken.added) - int(cur.rowcount)
                 offer = Offer(
                     before.set_id, before.kind, before.name, before.publisher, before.version,
                     before.content, before.code,
@@ -809,6 +888,8 @@ class RuleSetStore:
                 )
                 if cur.rowcount == 0:
                     raise RuleSetError(NOT_FOLLOWING)
+                return 0
+            return kept
 
 
 _LATEST = (
@@ -839,7 +920,8 @@ def _follow_values(
 async def _followed(conn: Conn, guild_id: int, campaign_id: str) -> list[Follow]:
     cur = await conn.execute(
         "SELECT set_id, kind, set_name, publisher, version, content, updating, followed_at, code,"
-        " notified_version FROM rule_set_follows WHERE guild_id = %s AND campaign_id = %s"
+        " previous_version, previous_content FROM rule_set_follows"
+        " WHERE guild_id = %s AND campaign_id = %s"
         " ORDER BY position, followed_at, set_id",
         (guild_id, campaign_id),
     )

@@ -1,18 +1,24 @@
-"""A followed house-rules set changed (#1191): the note at a session's start and what its
-buttons do.
+"""A followed house-rules set changed (#1191): what happens at a session's start, and the note.
 
 At the start of a session (never during one, so a table's rules don't change mid-game) DMbot
-asks whether the set the campaign follows has a newer version. If so the DM screen gets one
-note: "The Red Table house rules changed (v4): 2 rules" with **Follow**, **Cherry pick** and
-**See changes**. Follow takes the new version. Cherry pick lets the DM keep or leave each
-change; leaving any ends the follow and copies the set (as the campaign had it, plus the
-accepted changes) into the campaign's own house rules, marked "From <set> house rules, v4".
-Every taking is one operation with an Undo. A DM who does nothing gets Follow at the next
-session start. Nothing here reads anything of the publisher but the set.
+asks whether the set the campaign follows has a newer version. If it does, DMbot **takes it
+straight away** (Follow is what happens when the DM does nothing, and the take is credited to
+DMbot, not to a DM) and posts one note on the DM screen: "<set> house rules updated to v5:
+[See changes] [Pick changes] [Undo]".
 
-The buttons on the note survive a restart (`bot.add_dynamic_items(SetUpdateButton)`); every
-press checks again that the person is one of the campaign's DMs and that the update is still
-waiting.
+- **Undo** goes back to the copy the campaign had. It is kept in the follow's own row, so the
+  button works after a restart.
+- **Pick changes** undoes the take and opens the per-change picker in one step. Everything
+  starts ticked. Unticking anything copies the set (as the campaign had it plus the accepted
+  changes) into the campaign's own house rules, marked with where it came from, ranked below
+  the rules the campaign wrote itself, and ends the follow. That is one operation with one
+  Undo.
+- **See changes** lists what differs from the copy before.
+
+A press during play is the DM's own choice and is allowed. Every press checks again that the
+person is one of the campaign's DMs and that the button is for the version the campaign is on,
+so an old button can never undo or change a newer update. Buttons survive a restart
+(`bot.add_dynamic_items(SetUpdateButton)`).
 """
 
 from __future__ import annotations
@@ -26,7 +32,7 @@ import discord
 from dmbot.campaigns import Campaign
 from dmbot.rules import rule_sets, set_diff
 from dmbot.rules.house import HouseRuleError
-from dmbot.ui.dmbot_commands import NO_PINGS, _answer_first, _bot, _Button, _Menu, _Select, _tell
+from dmbot.ui.dmbot_commands import _answer_first, _bot, _Button, _Menu, _Select, _tell
 
 log = logging.getLogger(__name__)
 
@@ -34,68 +40,69 @@ PAGE = 25  # a Discord menu holds 25 choices
 TEXT_MAX = 1900
 ONLY_DMS = "Only this campaign's DMs can do that."
 GONE = "That campaign isn't here any more."
-NOT_WAITING = (
-    "That update is already done, or a newer one came. Look for the newest note on the "
-    "DM screen. Your picks weren't saved."
+NEWER = (
+    "A newer version came after that note. Look for the newest note on the DM screen. "
+    "Nothing changed."
 )
 COULDNT = "That didn't work, and nothing changed. Press the button again in a moment."
 UNDO_LABEL = "↩️ Undo"
 
 
-def note_text(update: rule_sets.Update) -> str:
+def note_text(follow_name: str, version: int, changes: int) -> str:
+    rules = f"{changes} rule" + ("" if changes == 1 else "s")
     return (
-        f"📚 **{discord.utils.escape_markdown(update.offer.name)}** house rules changed "
-        f"(v{update.offer.version}): {set_diff.count_words(update.changes)}. Still on "
-        f"v{update.follow.version} for now. Choose below, or DMbot uses "
-        f"v{update.offer.version} at your next session."
+        f"📚 **{discord.utils.escape_markdown(follow_name)}** house rules updated to "
+        f"v{version}: {rules}. DMbot took the new version."
     )
 
 
-def note_view(campaign_id: str) -> discord.ui.View:
+def note_view(campaign_id: str, version: int) -> discord.ui.View:
     view = discord.ui.View(timeout=None)
-    for action in ("follow", "pick", "see"):
-        view.add_item(SetUpdateButton(campaign_id, action))
+    for action in ("see", "pick", "undo"):
+        view.add_item(SetUpdateButton(campaign_id, action, version))
     return view
 
 
 _LABELS = {
-    "follow": ("Use all changes", discord.ButtonStyle.primary),
-    "pick": ("Pick changes", discord.ButtonStyle.secondary),
     "see": ("See changes", discord.ButtonStyle.secondary),
+    "pick": ("Pick changes", discord.ButtonStyle.secondary),
+    "undo": ("Undo", discord.ButtonStyle.secondary),
 }
 
 
 class SetUpdateButton(
     discord.ui.DynamicItem[discord.ui.Button[discord.ui.View]],
-    template=r"dmbot:setupd:(?P<action>follow|pick|see):(?P<campaign>[0-9a-f]{32})",
+    template=r"dmbot:setupd:(?P<action>see|pick|undo):(?P<campaign>[0-9a-f]{32}):(?P<version>[0-9]{1,9})",
 ):
-    def __init__(self, campaign_id: str, action: str) -> None:
+    def __init__(self, campaign_id: str, action: str, version: int) -> None:
         label, style = _LABELS[action]
         super().__init__(
             discord.ui.Button(
-                label=label, style=style, custom_id=f"dmbot:setupd:{action}:{campaign_id}"
+                label=label,
+                style=style,
+                custom_id=f"dmbot:setupd:{action}:{campaign_id}:{version}",
             )
         )
-        self.campaign_id, self.action = campaign_id, action
+        self.campaign_id, self.action, self.version = campaign_id, action, version
 
     @classmethod
     async def from_custom_id(
         cls, interaction: discord.Interaction, item: discord.ui.Item[Any], match: re.Match[str]
     ) -> SetUpdateButton:
-        return cls(match["campaign"], match["action"])
+        return cls(match["campaign"], match["action"], int(match["version"]))
 
     async def callback(self, interaction: discord.Interaction) -> Any:
         try:
-            await press(interaction, self.campaign_id, self.action)
+            await press(interaction, self.campaign_id, self.action, self.version)
         except Exception:
             log.exception("A shared-rules update button failed")
             await _tell(interaction, COULDNT)
 
 
-async def _dm_and_update(
+async def _dm_and_follow(
     interaction: discord.Interaction, campaign_id: str
-) -> tuple[Campaign, rule_sets.Update] | None:
-    """The campaign, if this person is one of its DMs now, and its waiting update."""
+) -> tuple[Campaign, rule_sets.Follow] | None:
+    """The campaign and its followed set, if this person is one of its DMs now."""
     bot = _bot(interaction)
     sets = bot.rule_sets
     if interaction.guild is None or sets is None:
@@ -108,39 +115,63 @@ async def _dm_and_update(
     if interaction.user.id not in campaign.dm_user_ids:
         await _tell(interaction, ONLY_DMS)
         return None
-    update = await sets.pending_update(campaign.guild_id, campaign.id)
-    if update is None:
-        await _tell(interaction, NOT_WAITING)
+    follows = [
+        f for f in await sets.following(campaign.guild_id, campaign.id) if f.kind == "house_rules"
+    ]
+    if not follows:
+        await _tell(interaction, NEWER)
         return None
-    return campaign, update
+    return campaign, follows[0]
 
 
-async def press(interaction: discord.Interaction, campaign_id: str, action: str) -> None:
+async def press(
+    interaction: discord.Interaction, campaign_id: str, action: str, version: int
+) -> None:
     await _answer_first(interaction)
-    found = await _dm_and_update(interaction, campaign_id)
+    found = await _dm_and_follow(interaction, campaign_id)
     if found is None:
         return
-    campaign, update = found
+    campaign, follow = found
+    sets = _bot(interaction).rule_sets
+    assert sets is not None  # checked above
+    if follow.version != version:  # the note is for an older version than the campaign has
+        await _tell(interaction, NEWER)
+        return
     if action == "see":
-        await _tell(interaction, changes_text(update), view=note_view(campaign.id))
-    elif action == "pick":
-        view = PickView(campaign, update)
-        await _tell(interaction, view.text(), view=view)
-        view.origin = interaction
-    else:
-        await take(interaction, campaign, update, None)
+        before = follow.previous_content
+        if before is None:
+            await _tell(interaction, "There's nothing to compare: that update was undone.")
+            return
+        await _tell(
+            interaction, changes_text(follow.name, version, set_diff.diff(before, follow.content))
+        )
+        return
+    try:
+        await sets.undo_last_take(campaign.guild_id, campaign.id, interaction.user.id, version)
+    except HouseRuleError as exc:
+        await _tell(interaction, str(exc))
+        return
+    if action == "undo":
+        back = follow.previous_version
+        await _tell(interaction, f"↩️ Undone. Back on v{back}, and still following.")
+        return
+    update = await sets.pending_update(campaign.guild_id, campaign.id)
+    if update is None or update.offer.version != version:
+        await _tell(interaction, NEWER)  # undone, and a different version is waiting now
+        return
+    view = PickView(campaign, update)
+    await _tell(interaction, view.text(), view=view)
+    view.origin = interaction
 
 
-def changes_text(update: rule_sets.Update) -> str:
-    lines = [set_diff.describe(c) for c in update.changes]
+def changes_text(name: str, version: int, changes: list[set_diff.Change]) -> str:
+    lines = [set_diff.describe(c) for c in changes]
     text = "\n".join(lines) or "Only the version number changed. No rule is different."
     if len(text) > TEXT_MAX:
         kept = text[:TEXT_MAX].rsplit("\n", 1)[0]
         left = len(lines) - kept.count("\n") - 1
         text = kept + f"\n…and {left} more. Use Pick changes to go through all of them."
-    return (
-        f"**{discord.utils.escape_markdown(update.offer.name)}** v{update.offer.version}:\n{text}"
-    )
+    return f"**{discord.utils.escape_markdown(name)}** v{version}:\n{text}"
 
 
 async def take(
@@ -159,21 +190,18 @@ async def take(
             campaign.id,
             interaction.user.id,
             accepted,
-            expected_version=update.offer.version,
+            expected_version=update.offer.version,  # the version the DM was shown
         )
     except HouseRuleError as exc:
         await _tell(interaction, str(exc))
         return
     name = discord.utils.escape_markdown(update.offer.name)
-    left_out = (
-        len(update.changes) - len(accepted & {c.number for c in update.changes})
-        if accepted
-        else len(update.changes)
-    )
+    changed = {c.number for c in update.changes}
+    left_out = len(changed - (accepted or changed))
     if taken.merged:
         words = (
-            f"✅ Done. **{name}** is now your own copy ({len(taken.added)} rules, "
-            f"{left_out} left out). You no longer get its updates. Your earlier rules still win."
+            f"✅ Done. **{name}** is now your own copy ({len(taken.added)} rules, {left_out} "
+            "changes left out). You no longer get its updates. Your own rules still win."
         )
     else:
         words = f"✅ Now using **{name}** v{taken.after_version}."
@@ -197,7 +225,7 @@ class UndoView(_Menu):
             await _tell(interaction, COULDNT)
             return
         try:
-            await bot.rule_sets.undo_take(
+            kept = await bot.rule_sets.undo_take(
                 current.guild_id, current.id, interaction.user.id, self.taken
             )
         except HouseRuleError as exc:
@@ -210,12 +238,13 @@ class UndoView(_Menu):
         self.stop()
         v = self.taken.before.version
         again = " and following it again" if self.taken.merged else " and still following it"
-        await _tell(interaction, f"↩️ Undone. Back on v{v}{again}.")
+        edited = f" {kept} merged rule{'s' if kept != 1 else ''} you edited stayed." if kept else ""
+        await _tell(interaction, f"↩️ Undone. Back on v{v}{again}.{edited}")
 
 
 class PickView(_Menu):
     """Cherry pick: every change starts ticked (kept). Untick what the DM doesn't want, then
-    Apply. Pages of 25, because a Discord menu holds no more."""
+    Save my picks. Pages of 25, because a Discord menu holds no more."""
 
     def __init__(self, campaign: Campaign, update: rule_sets.Update) -> None:
         super().__init__()
@@ -288,49 +317,46 @@ class PickView(_Menu):
 
     async def _apply(self, interaction: discord.Interaction) -> None:
         await _answer_first(interaction)
-        found = await _dm_and_update(interaction, self.campaign.id)
+        found = await _dm_and_follow(interaction, self.campaign.id)
         if found is None:
             return
-        campaign, update = found
         self.stop()
-        await take(interaction, campaign, update, set(self.accepted))
+        # The version the DM was shown, not whatever is newest now: if a newer one has come,
+        # nothing is applied and the DM is told (the store compares the two).
+        await take(interaction, self.campaign, self.update, set(self.accepted))
 
 
 async def check_update(bot: Any, campaign: Campaign, screen_id: int) -> None:
-    """At a session's start: tell the DMs about a newer version of the set the campaign
-    follows, once. An update they were told about and left alone is taken now (Follow is the
-    default). Never raises; a set that is gone is marked "no longer updated"."""
+    """At a session's start: take a newer version of the followed set at once and say so on
+    the DM screen. Never raises; a set whose publisher stopped sharing is marked "no longer
+    updated" and said so once."""
     sets = bot.rule_sets
-    if sets is None or not campaign.dm_user_ids:
+    if sets is None:
         return
     try:
         update = await sets.pending_update(campaign.guild_id, campaign.id)
         if update is None:
             if await sets.is_gone(campaign.guild_id, campaign.id):
+                follows = await sets.following(campaign.guild_id, campaign.id)
                 await sets.stop_updating(campaign.guild_id, campaign.id)
-                name = discord.utils.escape_markdown(
-                    (await sets.following(campaign.guild_id, campaign.id))[0].name
-                )
+                name = discord.utils.escape_markdown(follows[0].name) if follows else "The set's"
                 await bot.post(
                     screen_id,
                     f"📚 **{name}** house rules aren't shared any more. You keep your copy as it "
                     "is; it just won't get updates.",
                 )
             return
-        if update.follow.notified is not None and update.follow.notified >= update.offer.version:
-            await sets.take_update(campaign.guild_id, campaign.id, min(campaign.dm_user_ids))
-            await bot.post(
-                screen_id,
-                f"📚 **{discord.utils.escape_markdown(update.offer.name)}** house rules "
-                f"v{update.offer.version} are now in use. You hadn't chosen, so DMbot took the "
-                "whole update.",
-            )
-            return
-        posted = await bot.post_message(screen_id, note_text(update), note_view(campaign.id))
-        if posted is not None:
-            await sets.mark_notified(campaign.guild_id, campaign.id, update.offer.version)
+        await sets.take_update(  # DMbot takes it: Follow is the default when the DM does nothing
+            campaign.guild_id,
+            campaign.id,
+            None,
+            None,
+            expected_version=update.offer.version,
+        )
+        await bot.post_message(
+            screen_id,
+            note_text(update.offer.name, update.offer.version, len(update.changes)),
+            note_view(campaign.id, update.offer.version),
+        )
     except Exception:
         log.exception("Couldn't check for a shared-rules update")
-
-
-__all__ = ["NO_PINGS", "SetUpdateButton", "check_update"]

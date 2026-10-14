@@ -297,6 +297,9 @@ def build(
             if isinstance(rule, FollowedRule):  # a shared set the DM chose to follow
                 label = f"Shared rule {rule.number} ({rule.cite})"
                 sources.append(rule.cite)
+            elif rule.from_set:  # merged in from a set: it ranks below the campaign's own
+                label = f"House rule {rule.number} (from {rule.from_set}; the campaign's own win)"
+                sources.append(f"house rule {rule.number}")
             else:
                 label = f"House rule {rule.number}"
                 sources.append(f"house rule {rule.number}")

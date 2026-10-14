@@ -74,6 +74,9 @@ class HouseRule:
     created_at: int
     updated_at: int
     version: int = 1  # counts changes to this rule, for `unchanged_since`
+    # Set when the rule came from a followed set in a Cherry pick (#1191): "<set> house rules,
+    # v4". Such rules rank below the campaign's own.
+    from_set: str | None = None
 
 
 def clean_rule(raw: str) -> str:
@@ -111,12 +114,13 @@ def _rule(row: dict[str, Any]) -> HouseRule:
         int(row["created_at"]),
         int(row["updated_at"]),
         int(row["version"]),
+        row.get("from_set"),
     )
 
 
 _COLUMNS = (
     "number, campaign_id, rule, supersedes, scenario, session_id, created_by, created_at,"
-    " updated_at, version"
+    " updated_at, version, from_set"
 )
 
 
@@ -259,6 +263,7 @@ async def insert_rule(
     session_id: str | None,
     wanted: int | None,
     now: int,
+    from_set: str | None = None,
 ) -> HouseRule:
     """Save one already-cleaned rule with the campaign's next number, inside the caller's
     transaction (which has checked the person is a DM and locked the campaign). Shared with
@@ -283,8 +288,8 @@ async def insert_rule(
     assert made is not None
     cur = await conn.execute(
         "INSERT INTO house_rules (guild_id, campaign_id, number, rule, supersedes,"
-        " scenario, session_id, created_by, created_at, updated_at)"
-        " VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)"
+        " scenario, session_id, created_by, created_at, updated_at, from_set)"
+        " VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)"
         f" RETURNING {_COLUMNS}",
         (
             guild_id,
@@ -297,6 +302,7 @@ async def insert_rule(
             user_id,
             now,
             now,
+            from_set,
         ),
     )
     saved = await cur.fetchone()
@@ -327,6 +333,7 @@ async def require_dm(
 # ---- backups ------------------------------------------------------------------------
 
 _KEYS = frozenset({"number", "rule", "instead", "scenario", "by", "created_at", "updated_at"})
+_KEYS_FROM_SET = _KEYS | {"from_set"}
 _MADE_KEYS = frozenset({"made"})  # the first row, when the campaign has made any rule
 
 
@@ -334,6 +341,12 @@ def _timestamp(value: object) -> int:
     if isinstance(value, int) and not isinstance(value, bool) and 0 <= value <= INT64_MAX:
         return value
     raise CampaignError(DAMAGED)
+
+
+def _short(text: str | None) -> str | None:
+    if text is not None and len(text) > 200:  # the column's limit
+        raise CampaignError(DAMAGED)
+    return text
 
 
 def _number(value: object) -> int:
@@ -374,6 +387,7 @@ class _Checked:
     created_by: int
     created_at: int
     updated_at: int
+    from_set: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -399,8 +413,8 @@ class HouseRulesSection:
         )
         made = await cur.fetchone()
         cur = await conn.execute(
-            "SELECT number, rule, supersedes, scenario, created_by, created_at, updated_at"
-            " FROM house_rules WHERE guild_id = %s AND campaign_id = %s ORDER BY number",
+            "SELECT number, rule, supersedes, scenario, created_by, created_at, updated_at,"
+            " from_set FROM house_rules WHERE guild_id = %s AND campaign_id = %s ORDER BY number",
             (guild_id, campaign_id),
         )
         rows: list[Any] = [
@@ -412,6 +426,8 @@ class HouseRulesSection:
                 "by": str(r["created_by"]),
                 "created_at": int(r["created_at"]),
                 "updated_at": int(r["updated_at"]),
+                # Only on a rule that came from a followed set; older backups have no key.
+                **({"from_set": r["from_set"]} if r["from_set"] else {}),
             }
             for r in await cur.fetchall()
         ]
@@ -430,7 +446,7 @@ class HouseRulesSection:
         checked = []
         numbers: set[int] = set()
         for row in rows:
-            if not isinstance(row, dict) or set(row) != _KEYS:
+            if not isinstance(row, dict) or set(row) not in (_KEYS, _KEYS_FROM_SET):
                 raise CampaignError(DAMAGED)
             number = _number(row["number"])
             if number in numbers:  # two rules can't share a number
@@ -450,6 +466,7 @@ class HouseRulesSection:
                     _person(row["by"]),
                     created,
                     updated,
+                    _short(_text(row.get("from_set"), optional=True)),
                 )
             )
         if made is not None and numbers and made < max(numbers):
@@ -466,8 +483,8 @@ class HouseRulesSection:
             async with conn.cursor() as cur:
                 await cur.executemany(
                     "INSERT INTO house_rules (guild_id, campaign_id, number, rule, supersedes,"
-                    " scenario, created_by, created_at, updated_at)"
-                    " VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)",
+                    " scenario, created_by, created_at, updated_at, from_set)"
+                    " VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
                     [
                         (
                             guild_id,
@@ -479,6 +496,7 @@ class HouseRulesSection:
                             r.created_by,
                             r.created_at,
                             r.updated_at,
+                            r.from_set,
                         )
                         for r in loaded.rules
                     ],

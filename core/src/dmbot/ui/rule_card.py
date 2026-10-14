@@ -72,7 +72,8 @@ def house_matches(rules: Iterable[HouseRule], names: Iterable[str]) -> list[Hous
         text = f" {normalize(rule.rule)} {normalize(rule.supersedes or '')} "
         if any(f" {name} " in text for name in wanted):
             found.append(rule)
-    return sorted(found, key=lambda r: (isinstance(r, FollowedRule), r.number))  # own first
+    # Own first, then rules merged in from a set, then the followed set's: the order they win.
+    return sorted(found, key=lambda r: (isinstance(r, FollowedRule), bool(r.from_set), r.number))
 
 
 def house_lines(matches: Sequence[HouseRule], line_max: int = HOUSE_LINE_MAX) -> list[str]:
@@ -91,11 +92,12 @@ def house_lines(matches: Sequence[HouseRule], line_max: int = HOUSE_LINE_MAX) ->
         words = _md(rule.rule)
         if rule.supersedes:
             words += f" (instead of: {_md(rule.supersedes)})"
-        label = (
-            f"**{_md(rule.cite)}, rule {rule.number}:**"
-            if isinstance(rule, FollowedRule)
-            else f"**House rule {rule.number}:**"
-        )
+        if isinstance(rule, FollowedRule):
+            label = f"**{_md(rule.cite)}, rule {rule.number}:**"
+        elif rule.from_set:
+            label = f"**House rule {rule.number} (from {_md(rule.from_set)}):**"
+        else:
+            label = f"**House rule {rule.number}:**"
         lines.append(_fit(f"🏠 {label} {words}", line_max))
     extra = len(matches) - HOUSE_SHOWN
     if extra > 0:
