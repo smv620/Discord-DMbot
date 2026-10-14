@@ -1303,8 +1303,18 @@ class MemoryStore:
                 for r in await w.select(RELATIONS, " AND predicate = %s", [PLAYS])
             }
             asked: set[tuple[str, str]] = set()  # one question for each pair
+            # Questions still waiting from earlier sessions count toward the cap.
+            waiting = len(
+                await w.select(ALIASES, " AND status = 'proposed' AND source = 'scan'")
+            ) + len(
+                await w.select(
+                    RELATIONS,
+                    " AND predicate = %s AND status = 'proposed' AND source = 'scan'",
+                    [PLAYS],
+                )
+            )
             for name, user_id, times in answered:
-                if len(made) >= limit:
+                if len(made) + waiting >= limit:
                     break
                 try:
                     key = lookup_key(name)
@@ -1329,7 +1339,7 @@ class MemoryStore:
                         continue
                     if entity["played_by"] is not None:
                         continue  # someone plays it already
-                    if not live_is_character(entity):
+                    if not _is_character(entity):
                         continue
                     person = await _ensure_person(w, user_id)
                     link = Relation(
@@ -1359,7 +1369,7 @@ class MemoryStore:
                 ALIASES, " AND status = 'proposed' AND source = 'scan' ORDER BY created_at, id"
             ):
                 person = people.get(str(a["entity_id"]))
-                if person is not None:
+                if person is not None and person["played_by"] is not None:
                     out.append(
                         PeopleSuggestion(
                             "name",
@@ -1382,7 +1392,7 @@ class MemoryStore:
             ):
                 person = people.get(str(r["subject_id"]))
                 character = entities.get(str(r["object_id"]))
-                if person is not None and character is not None:
+                if person is not None and person["played_by"] is not None and character is not None:
                     out.append(
                         PeopleSuggestion(
                             "plays", int(person["played_by"]), character["name"], r["id"],
@@ -1399,7 +1409,7 @@ class MemoryStore:
         removes it."""
         async with self._write(guild_id, campaign_id, DM) as w:
             alias = await w.get(ALIASES, alias_id)
-            if alias is None or alias["status"] != PROPOSED:
+            if alias is None or alias["status"] != PROPOSED or not await _on_person(w, alias):
                 raise MemoryRuleError(NOT_FOUND)
             if user_id is None:
                 await w.update(ALIASES, alias_id, {"status": CONFIRMED, "source": DM})
@@ -1421,7 +1431,7 @@ class MemoryStore:
         """ "Not a player": the name goes, and is never asked again (a keep-as-heard rule)."""
         async with self._write(guild_id, campaign_id, DM) as w:
             alias = await w.get(ALIASES, alias_id)
-            if alias is None or alias["status"] != PROPOSED:
+            if alias is None or alias["status"] != PROPOSED or not await _on_person(w, alias):
                 raise MemoryRuleError(NOT_FOUND)
             await w.delete(ALIASES, alias_id)
             await w.insert(
@@ -1452,6 +1462,9 @@ class MemoryStore:
                 await w.update(RELATIONS, relation_id, {"status": "rejected", "source": DM})
                 return Written(None, w.batch)
             person = await _entity_row(w, link["subject_id"])
+            character = await _entity_row(w, link["object_id"])
+            if character["played_by"] is not None:
+                raise MemoryRuleError(CHANGED_SINCE)  # the DM gave it to someone meanwhile
             await w.update(
                 ENTITIES,
                 link["object_id"],
@@ -1466,8 +1479,12 @@ class MemoryStore:
         and links DMbot *learned* for this person (not yet accepted), also from the
         change log so an Undo can't bring them back. What the DM set by hand stays."""
         async with self._db.guild(guild_id) as conn:
-            cur = await conn.execute("SELECT id FROM campaigns WHERE guild_id = %s", (guild_id,))
-            campaigns = [str(r["id"]) for r in await cur.fetchall()]
+            cur = await conn.execute(
+                "SELECT DISTINCT campaign_id FROM memory_entities WHERE guild_id = %s"
+                " AND type = 'person' AND played_by = %s",
+                (guild_id, user_id),
+            )
+            campaigns = [str(r["campaign_id"]) for r in await cur.fetchall()]
         removed = 0
         for campaign_id in campaigns:
             async with self._write(guild_id, campaign_id, "scan") as w:
@@ -2042,7 +2059,13 @@ async def _move_rule_links(w: Changes, keep_id: str, gone_id: str) -> None:
         has_same.add((link["kind"], link["rules_source"], link["name"]))
 
 
-def live_is_character(row: dict[str, Any]) -> bool:
+async def _on_person(w: Changes, alias: dict[str, Any]) -> bool:
+    """Only a name waiting on a person can be answered as one."""
+    owner = await w.get(ENTITIES, alias["entity_id"])
+    return owner is not None and owner["type"] == PERSON
+
+
+def _is_character(row: dict[str, Any]) -> bool:
     """A story character (any role), not a place, thing or person."""
     return row["type"] == "character"
 

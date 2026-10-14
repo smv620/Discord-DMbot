@@ -17,20 +17,20 @@ from dmbot.ui.names import _campaign_for, _md, _memory
 log = logging.getLogger(__name__)
 
 NOTHING_WAITING = "✅ Nothing to check. DMbot asks after a session, when it learns a name."
-GONE = "That one was already answered. Open the check again."
+GONE = "That one was already answered. Press **Check who is who** again for the next one."
 
 
 def question_text(s: PeopleSuggestion, who: str, count: int) -> str:
     """The question in plain words. `who` is the person's name as the DM knows it."""
-    more = f"\n({count - 1} more after this.)" if count > 1 else ""
+    more = f"\n_{count - 1} more after this._" if count > 1 else ""
     if s.kind == "name":
         return (
-            f"When someone said **{_md(s.name)}**, **{_md(who)}** answered.\n"
-            f"Is **{_md(s.name)}** a name for **{_md(who)}**?{more}"
+            f"Someone said **{_md(s.name)}**, and **{_md(who)}** answered.\n"
+            f"Is **{_md(s.name)}** another name for **{_md(who)}**?{more}"
         )
     return (
-        f"**{_md(who)}** answered to **{_md(s.name)}**.\n"
-        f"Does **{_md(who)}** play **{_md(s.name)}**?{more}"
+        f"**{_md(who)}** answered when someone said **{_md(s.name)}**.\n"
+        f"Is **{_md(who)}** playing the character **{_md(s.name)}**?{more}"
     )
 
 
@@ -38,8 +38,8 @@ def waiting_text(count: int) -> str:
     """For the DM screen after a session: how many, never who."""
     what = "question" if count == 1 else "questions"
     return (
-        f"🧑 **{count} {what} about who is who** at the table. DMbot noticed who answers to "
-        "which name. Nothing changes until you say so. It opens privately for the DM."
+        f"🧑 **{count} quick {what} about who is who.** DMbot noticed who answers to "
+        "which name. Nothing changes until you say so. Press the button; only you will see it."
     )
 
 
@@ -135,7 +135,7 @@ class PeopleReview(_Menu):
             buttons = [
                 (self._yes, "✅ Yes, that's them", discord.ButtonStyle.success, 0),
                 (self._other, "👤 Someone else…", discord.ButtonStyle.primary, 0),
-                (self._no, "🚫 Not a player", discord.ButtonStyle.secondary, 1),
+                (self._no, "🚫 Not at the table", discord.ButtonStyle.secondary, 1),
                 (self._later, "⏳ Later", discord.ButtonStyle.secondary, 1),
             ]
         else:
@@ -152,9 +152,9 @@ class PeopleReview(_Menu):
         text = await self.current_text(interaction)
         if text is None:
             self.stop()
-            await _replace(interaction, f"{done}\n\n{NOTHING_WAITING}", None)
+            await _replace(interaction, f"{done}\n\n{NOTHING_WAITING}".strip(), None)
             return
-        await _replace(interaction, f"{done}\n\n{text}", self)
+        await _replace(interaction, f"{done}\n\n{text}".strip(), self)
 
     async def _check(self, interaction: discord.Interaction) -> tuple[Any, PeopleSuggestion] | None:
         """The store and the question being answered, if this person may answer and it is
@@ -198,7 +198,10 @@ class PeopleReview(_Menu):
                 await memory.decide_plays(
                     interaction.guild.id, self.campaign_id, s.row_id, yes=False
                 )
-                done = "❌ Left as it was. DMbot won't ask again."
+                done = (
+                    f"❌ **{_md(self._name_of(interaction, s))}** is not marked as playing "
+                    f"**{_md(s.name)}**. DMbot won't ask again."
+                )
         except MemoryRuleError:
             await _tell(interaction, GONE)
             return
@@ -209,7 +212,7 @@ class PeopleReview(_Menu):
         if got is None:
             return
         self.later.add(got[1].row_id)
-        await self._next(interaction, "⏳ Left for later.")
+        await self._next(interaction, "⏳ Left for later. DMbot will ask again next time.")
 
     async def _other(self, interaction: discord.Interaction) -> None:
         got = await self._check(interaction)
@@ -234,7 +237,11 @@ class PeopleReview(_Menu):
         bot = _bot(interaction)
         if person.bot or person.id not in await bot.consent.consenting(guild.id):
             # Only people who agreed to be recorded here could have been at the table.
-            await _tell(interaction, "Pick someone from your table who agreed to be recorded.")
+            await _tell(
+                interaction,
+                "That person hasn't agreed to be recorded here, so they can't be picked. "
+                "Pick someone who has.",
+            )
             return
         try:
             await memory.accept_person_name(guild.id, self.campaign_id, s.row_id, user_id=person.id)

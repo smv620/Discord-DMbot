@@ -243,6 +243,7 @@ TRANSCRIPT_PARALLEL = 10  # campaigns posting at once (one rate-limited channel 
 STOP_DRAIN_TIMEOUT_S = 120.0  # at stop, wait this long for the last words to be written
 FINAL_FLUSH_TIMEOUT_S = 15.0  # at stop or shutdown, give up on posting after this
 IDLE_SWEEP_INTERVAL_S = 1
+FORGET_TIMEOUT_S = 10  # removing learned names must not hold up stopping a recording
 METER_INTERVAL_S = 60  # how often listening minutes are written to the hours meter (#437)
 METER_FINAL_TRIES = 3  # at a stop: the last minutes are written nowhere else
 METER_FINAL_RETRY_S = 2
@@ -1159,11 +1160,15 @@ class DMBot(commands.AutoShardedBot):
         if was_recorded:  # stopped here at once, even if saving fails below
             self._tell_dm_about_consent(guild_id, user_id, agreed=False)
         log.info("Consent withdrawn: user %s", user_id)
-        if self.memory is not None:  # the names learned for them go too (#1188)
-            with contextlib.suppress(Exception):
-                await self.memory.forget_learned(guild_id, user_id)
         with contextlib.suppress(Exception):
             await self.push_allowlist(guild_id)
+        if self.memory is not None:  # the names learned for them go too (#1188)
+            try:
+                async with asyncio.timeout(FORGET_TIMEOUT_S):
+                    await self.memory.forget_learned(guild_id, user_id)
+            except Exception:
+                # Never blocks stopping; the learned names are only waiting questions.
+                log.exception("Could not remove the names learned for a stopped speaker")
         try:
             return await self.consent.revoke(guild_id, user_id)
         finally:

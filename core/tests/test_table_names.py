@@ -108,6 +108,20 @@ class Pairs(unittest.TestCase):
             [a.speaker for a in run(*self.TWICE).answered()], [MIA]
         )  # and the DM's side alone never named anyone
 
+    def test_a_name_only_a_stopped_speaker_answered_is_forgotten_entirely(self) -> None:
+        tracker = run(*self.TWICE)
+        tracker.drop_speaker(MIA)
+        self.assertEqual(tracker._display, {})
+
+    def test_a_line_calling_two_names_counts_both(self) -> None:
+        tracker = run(
+            (DM, 0, "Mike, you are up, Vera"),
+            (MIA, 1000, "I go"),
+            (DM, 20_000, "Mike, you are up, Vera"),
+            (MIA, 21_000, "I go"),
+        )
+        self.assertEqual({a.name for a in tracker.answered()}, {"Mike", "Vera"})
+
 
 if __name__ == "__main__":
     unittest.main()

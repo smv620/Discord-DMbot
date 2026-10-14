@@ -126,7 +126,7 @@ class Words(MemoryTest):
     async def test_the_questions_are_in_plain_words(self) -> None:
         made = await self.memory.learn_people(GUILD_A, self.c, [("Mike", PLAYER, 2)], limit=10)
         text = question_text(made.value[0], "Mia", 2)
-        self.assertIn("When someone said **Mike**, **Mia** answered", text)
+        self.assertIn("Someone said **Mike**, and **Mia** answered", text)
         self.assertIn("1 more after this", text)
-        self.assertIn("2 questions", waiting_text(2))
+        self.assertIn("2 quick questions", waiting_text(2))
         self.assertNotIn("Mike", waiting_text(1))  # the screen says how many, never who

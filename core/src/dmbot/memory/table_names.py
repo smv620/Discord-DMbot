@@ -13,7 +13,6 @@ from __future__ import annotations
 
 import re
 from collections import Counter
-from collections.abc import Iterable
 from dataclasses import dataclass
 
 from dmbot.memory.models import name_key
@@ -125,8 +124,9 @@ class NameThenAnswer:
         self._display: dict[str, str] = {}
 
     def feed(self, speaker: int, at_ms: int, text: str, *, consented: bool) -> None:
-        """The next line of the session. A line from someone who didn't agree is never
-        read and breaks the pair, as any third voice would."""
+        """The next line of the session, in the order heard (a late line only loses a pair,
+        never invents one). A line from someone who didn't agree is never read and breaks the
+        pair, as any third voice would."""
         before, self._previous = self._previous, None
         if not consented:
             return
@@ -163,8 +163,7 @@ class NameThenAnswer:
         too)."""
         for key in [k for k in self._counts if k[1] == user_id]:
             del self._counts[key]
+        kept = {k[0] for k in self._counts}  # a name only they said is forgotten too
+        self._display = {k: v for k, v in self._display.items() if k in kept}
         if self._previous is not None and self._previous[0] == user_id:
             self._previous = None
-
-    def names(self) -> Iterable[str]:
-        return self._display.values()
