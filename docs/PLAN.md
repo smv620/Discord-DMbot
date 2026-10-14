@@ -1498,6 +1498,49 @@ and categories are never kinds.
   "needs a look" for the DM (nothing is deleted); a campaign's own kinds and relationships that
   named an older kind name its replacement. Older backups are mapped the same way on load.
 
+**Players and the DM in the names (owner, 2026-10-14).** DMbot also learns the names the table uses for
+the **real people** at it, so "Mike, what do you do?" followed by "I run at it with my sword" tells it
+that Mike is the person who just spoke, and that this person plays the character the DM was talking to.
+- **A new kind, `person`, shown as "player or DM".** It is the one kind that is not part of the story: it
+  stands for a real person at this campaign's table and is always tied to their Discord account. Its
+  names are the names the table calls them ("Mike", "Mikey"); their server nickname and display name
+  count as names already, without asking. It sits next to the story kinds in every names menu ("What is
+  it?", Browse by kind, the overview, Add many), but PlotBot, NPCBot and the story checks ignore it.
+- **Every person is checked: they play a character, or they are the DM.**
+  - `controls` (shown as "plays"): person → character. This is the "played by" link that **🧑 Add a
+    player's character** and the D&D Beyond sheet already make, now stored as a connection from the
+    person. A person may play more than one character; a player character has one player at a time.
+  - **The DM:** a person who is one of the campaign's DMs (from the campaign's DM list, never guessed)
+    answers to **DM, GM, Dungeon Master and Game Master** as well as their own names. These four are
+    built in for every campaign and are never suggested, fixed into anything else, or used for a
+    character.
+  - A person with neither (someone who only watches) is flagged "needs a look" for the DM, never fixed
+    silently (ontology rule 5).
+- **How DMbot learns it, without AI.** Only from consented speakers' lines, while listening. DMbot knows
+  who said each line, so it watches for **a name, then an answer**: a line that calls someone by name
+  ("Mike, what do you do?", "…your turn, Cerric") and, within about 10 seconds, the next line, said by
+  someone else, who answers in the first person ("Ok, I'll do that.", "I run with my sword", "I cast…").
+  - A **new name** that is answered that way by the same person **at least twice in a session** is
+    suggested in **📝 Check new names** as a player or DM: "When someone said **Mike**, **Mia** answered (3
+    times). Is Mike a name for Mia? [Yes, that's Mia] [Someone else…] [Not a player]".
+  - A **character** with no player that is answered that way by the same person at least twice is
+    suggested as theirs: "**Mia** answered to **Cerric** 3 times. Does Mia play Cerric? [Yes] [No]".
+  - When the answers point to someone other than the known player, nothing changes and nothing is asked;
+    it is only counted (it may be a shared microphone or crosstalk).
+  - Nothing is stored as true until the DM confirms (rule 8). Everything the DM sets by hand counts as
+    confirmed, as today.
+- **The Cleaner** treats a player's name like any other name: it may fix its spelling. It never turns a
+  player's name into a character's name or the other way round, because they are different people, even
+  when they sound alike ("Mike" and "Mikal").
+- **Where it helps:** the `Q (name)` line in `dmb-chat`, speaker labels in transcripts, the sidebar
+  knowing who "Mike" is, and FightBot and the sheet re-reads knowing whose character an action belongs to.
+- **Privacy:** these are the real names of people at the table. They stay in this one campaign (never
+  shared with another campaign or server), they go into the campaign's backups with the person kept as a
+  Discord user ID (as the DM list already is), and the DM can remove them from the person's card. **Stop
+  recording me** removes the names DMbot *learned* for that person and any suggestions still waiting;
+  names and links the DM set by hand stay. Never in GitHub, tests or logs: tests use made-up names.
+- **Build:** #1188 (CloudDev).
+
 *Proposed additions (2026-10-06, docs/STORY_MEMORY.md, not yet decided):* a core v2
 with story threads, promises, clues and state facts (`condition`: alive, dead, missing…,
 one at a time, with allowed changes); new checks (one holder at a time, only for items

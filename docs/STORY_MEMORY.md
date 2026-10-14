@@ -138,6 +138,11 @@ before PlotBot (phase 5c) builds on the memory.
 | `event` | event | and threads and promises hang off it |
 | `concept` | idea | a prophecy, a curse, a clue |
 
+**Not a story kind:** `person` ("player or DM", owner, 2026-10-14) is a real person at this campaign's
+table, tied to their Discord account. Each one `controls` (plays) one or more characters, or is one of the
+campaign's DMs and answers to "DM", "GM", "Dungeon Master" and "Game Master". Story checks and PlotBot
+ignore it. See docs/PLAN.md, "Players and the DM in the names".
+
 **Traits and links:**
 - **Role:** `player_character`, `npc` or `god`, on a character, one at a time (a state fact).
 - **Links to rules entries** (SRD 5.2.1 / 5.1, the campaign's homebrew and shared rulebooks, by
