@@ -14,6 +14,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import discord
 
+from dmbot.bot import DMBot
 from dmbot.campaigns import Campaign
 from dmbot.dm_screen.settings import RuleLookupButton, settings_view
 from dmbot.rules import index
@@ -68,7 +69,10 @@ class LookupTest(unittest.IsolatedAsyncioTestCase):
             ),
             house_rules=self.store,
             active_campaign_id=lambda guild_id: self.playing,
+            rule_sets=None,
         )
+        # The real reader, so a store that can't be read is handled as it is in the bot.
+        self.bot.all_house_rules = lambda g, c: DMBot.all_house_rules(self.bot, g, c)
 
     def it(self, user_id: int = DM, kind: discord.InteractionType | None = None) -> Any:
         user = MagicMock(spec=discord.Member)

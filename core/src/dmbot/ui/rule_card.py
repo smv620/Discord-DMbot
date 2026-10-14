@@ -17,6 +17,7 @@ import discord
 
 from dmbot.rules import facts as rule_facts
 from dmbot.rules import index
+from dmbot.rules.followed import FollowedRule
 from dmbot.rules.house import HouseRule
 from dmbot.rules.index import Entry, Hit, monster_keys, normalize
 
@@ -71,7 +72,7 @@ def house_matches(rules: Iterable[HouseRule], names: Iterable[str]) -> list[Hous
         text = f" {normalize(rule.rule)} {normalize(rule.supersedes or '')} "
         if any(f" {name} " in text for name in wanted):
             found.append(rule)
-    return sorted(found, key=lambda r: r.number)
+    return sorted(found, key=lambda r: (isinstance(r, FollowedRule), r.number))  # own first
 
 
 def house_lines(matches: Sequence[HouseRule], line_max: int = HOUSE_LINE_MAX) -> list[str]:
@@ -90,7 +91,12 @@ def house_lines(matches: Sequence[HouseRule], line_max: int = HOUSE_LINE_MAX) ->
         words = _md(rule.rule)
         if rule.supersedes:
             words += f" (instead of: {_md(rule.supersedes)})"
-        lines.append(_fit(f"🏠 **House rule {rule.number}:** {words}", line_max))
+        label = (
+            f"**{_md(rule.cite)}, rule {rule.number}:**"
+            if isinstance(rule, FollowedRule)
+            else f"**House rule {rule.number}:**"
+        )
+        lines.append(_fit(f"🏠 {label} {words}", line_max))
     extra = len(matches) - HOUSE_SHOWN
     if extra > 0:
         plural = "s" if extra != 1 else ""

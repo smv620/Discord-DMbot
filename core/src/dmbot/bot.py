@@ -160,6 +160,7 @@ from dmbot.memory.table_names import NameThenAnswer
 from dmbot.retention import RetentionJob
 from dmbot.rules import house_voice
 from dmbot.rules import index as rules_index
+from dmbot.rules.followed import followed_rules, own_first
 from dmbot.rules.house import HouseRule, HouseRulesSection, HouseRuleStore
 from dmbot.rules.house_file_link import HouseFileLinkStore
 from dmbot.rules.rule_sets import RuleSetStore
@@ -1929,6 +1930,15 @@ class DMBot(commands.AutoShardedBot):
             # The pause is saved and the start refusal says it too.
             log.info("Couldn't tell an owner their campaigns were paused", exc_info=True)
 
+    async def all_house_rules(self, guild_id: int, campaign_id: str) -> list[HouseRule]:
+        """The campaign's own house rules, then any set it follows (#1190): own rules first,
+        as the precedence in CLAUDE.md says. Every advisor reads rules through here, so a
+        followed rule is always cited with its set."""
+        own: list[HouseRule] = []
+        if self.house_rules is not None:
+            own = await self.house_rules.list(guild_id, campaign_id)
+        return own_first(own, await followed_rules(self.rule_sets, guild_id, campaign_id))
+
     def _make_sidebar_answers(self) -> Sidebar | None:
         if self.ai_client is None:
             return None
@@ -1937,9 +1947,7 @@ class DMBot(commands.AutoShardedBot):
             return await self.plan_gate("ai", campaign.guild_id, campaign, user_id)
 
         async def houses(campaign: Campaign) -> Sequence[HouseRule]:
-            if self.house_rules is None:
-                return []
-            return await self.house_rules.list(campaign.guild_id, campaign.id)
+            return await self.all_house_rules(campaign.guild_id, campaign.id)
 
         async def names(campaign: Campaign) -> CampaignLookup | None:
             if self.lookup is None:
@@ -3499,10 +3507,10 @@ class DMBot(commands.AutoShardedBot):
         words and its minute back."""
         rules: list[HouseRule] = []
         unchecked = True
-        if self.house_rules is not None and table.campaign_id is not None:
-            try:  # this campaign's own house rules and no other's
+        if table.campaign_id is not None:
+            try:  # this campaign's own house rules, then its followed set; no other's
                 async with asyncio.timeout(RULES_CARD_DB_S):
-                    rules = await self.house_rules.list(table.guild_id, table.campaign_id)
+                    rules = await self.all_house_rules(table.guild_id, table.campaign_id)
                 unchecked = False
             except TimeoutError:
                 log.warning("Reading house rules for a proposal took too long")
@@ -3556,10 +3564,10 @@ class DMBot(commands.AutoShardedBot):
         if hit is None:
             table.rules.forget(card_id, before)
             return
-        if self.house_rules is not None and table.campaign_id is not None:
-            try:  # this campaign's own house rules and no other's
+        if table.campaign_id is not None:
+            try:  # this campaign's own house rules, then its followed set; no other's
                 async with asyncio.timeout(RULES_CARD_DB_S):
-                    rules = await self.house_rules.list(table.guild_id, table.campaign_id)
+                    rules = await self.all_house_rules(table.guild_id, table.campaign_id)
             except Exception:
                 log.exception("Couldn't read house rules for a rules card")
         # After the awaits: the words heard are shown, so the speaker must still be recorded,
