@@ -2229,3 +2229,14 @@ Overall ...................................... PASS (Deepgram baseline: 33/33, 1
   Result: "Database updated: 0051_dndbeyond_invite ... 0060_owner_missing" in 0.23 s; a second run applied nothing; the
   column exists with no value in any row; 3 campaigns, 152 entries and 147 transcript lines unchanged. #1222 and #1243
   merged too: no schema, consent, compose or ears change.
+
+==============================================================================
+2026-10-14  dev1  Dry run on development c0803ee with #1190 (migration 0061 rule sets) - PASSED
+  #1221, #1248 and #1249 merged after the last dry run; #1190 adds 0061_rule_sets: four new campaign-scoped tables
+  (rule_sets, rule_set_versions, rule_set_codes, rule_set_follows), their row-level security, a "code door" policy
+  set and a SECURITY DEFINER function dmbot_set_by_code. Same method (fresh pg_dumpall of the live database at 0050,
+  throwaway postgres:16, dmbot role, deleted after).
+  Result: "Database updated: 0051_dndbeyond_invite ... 0061_rule_sets" in 0.20 s; a second run applied nothing; all
+  four tables have row-level security on and forced (1-2 policies each); the function is security definer, owned by
+  dmbot, executable by dmbot and not by the website's role; row counts unchanged (3 campaigns, 152 entries, 147
+  transcript lines). The tables are empty, so the policies were checked for existence, not by a request through them.
