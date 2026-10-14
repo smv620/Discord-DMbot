@@ -1279,7 +1279,9 @@ class MemoryStore:
         `plays` link (a backup from before people were entries has none), then mark a
         person who plays nothing and isn't a DM as "needs a look", so the DM can say who
         they are. Returns how many are marked. A person already looked at is left alone."""
-        async with self._write(guild_id, campaign_id, DM) as w:
+        # DMbot's own check, written as the scan: it must not look like something the DM did
+        # (Stop recording me keeps what the DM touched).
+        async with self._write(guild_id, campaign_id, "scan") as w:
             for row in await w.select(
                 ENTITIES,
                 " AND role = %s AND played_by IS NOT NULL AND status IN ('proposed', 'confirmed')",
@@ -2291,8 +2293,8 @@ async def _unused_placeholder(w: Changes, person_id: str, user_id: int) -> bool:
     row = await w.get(ENTITIES, person_id)
     if row is None or row["type"] != PERSON or row["name"] != _placeholder_name(user_id):
         return False
-    if row["description"] or row["role"] is not None or row["needs_look"]:
-        return False  # the DM wrote on it
+    if row["description"] or row["role"] is not None:
+        return False  # the DM wrote on it (needs_look is DMbot's own mark, not the DM's)
     names = await w.select(ALIASES, " AND entity_id = %s", [person_id])
     if any(a["text"] != row["name"] for a in names):
         return False

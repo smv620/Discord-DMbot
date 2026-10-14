@@ -183,6 +183,12 @@ class Learning(MemoryTest):
             )
         self.assertTrue(await self.stays_after_forgetting())
 
+    async def test_the_after_session_check_does_not_make_a_placeholder_the_dms(self) -> None:
+        await self.memory.learn_people(GUILD_A, self.c, [("Mike", PLAYER, 2)], limit=10)
+        marked = await self.memory.check_people(GUILD_A, self.c, [])
+        self.assertEqual(marked.value, 1)  # it plays nothing: "needs a look"
+        self.assertFalse(await self.stays_after_forgetting())  # but Stop recording me removes it
+
     async def test_a_placeholder_with_a_change_by_the_dm_logged_stays(self) -> None:
         await self.memory.learn_people(GUILD_A, self.c, [("Mike", PLAYER, 2)], limit=10)
         person = await self.person_id()
