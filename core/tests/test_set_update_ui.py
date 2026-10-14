@@ -31,12 +31,12 @@ class Wording(unittest.TestCase):
         text = set_update.note_text(update(2))
         self.assertIn("Red Table", text)
         self.assertIn("(v4): 2 rules", text)
-        self.assertIn("If you do nothing", text)
+        self.assertIn("or DMbot uses v4 at your next session", text)
 
     def test_three_buttons_that_survive_a_restart(self) -> None:
         view = set_update.note_view("a" * 32)
         labels = [i.item.label for i in view.children]  # type: ignore[attr-defined]
-        self.assertEqual(labels, ["Follow", "Cherry pick", "See changes"])
+        self.assertEqual(labels, ["Use all changes", "Pick changes", "See changes"])
 
     def test_the_change_list_is_cut_to_discords_limit(self) -> None:
         self.assertLessEqual(len(set_update.changes_text(update(400))), 2100)
@@ -55,7 +55,7 @@ class Picking(unittest.TestCase):
     def test_a_short_list_has_no_paging(self) -> None:
         view = set_update.PickView(campaign(), update(3))
         labels = [getattr(c, "label", None) for c in view.children]
-        self.assertEqual([x for x in labels if x], ["Apply"])
+        self.assertEqual([x for x in labels if x], ["Save my picks"])
 
 
 class SessionStart(unittest.IsolatedAsyncioTestCase):

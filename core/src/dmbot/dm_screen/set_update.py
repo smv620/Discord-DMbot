@@ -34,17 +34,20 @@ PAGE = 25  # a Discord menu holds 25 choices
 TEXT_MAX = 1900
 ONLY_DMS = "Only this campaign's DMs can do that."
 GONE = "That campaign isn't here any more."
-NOT_WAITING = "That update was already taken, or the set changed again. Nothing to do."
-COULDNT = "That didn't work. Please try again in a moment."
+NOT_WAITING = (
+    "That update is already done, or a newer one came. Look for the newest note on the "
+    "DM screen. Your picks weren't saved."
+)
+COULDNT = "That didn't work, and nothing changed. Press the button again in a moment."
 UNDO_LABEL = "↩️ Undo"
 
 
 def note_text(update: rule_sets.Update) -> str:
     return (
-        f"📚 The **{discord.utils.escape_markdown(update.offer.name)}** house rules changed "
-        f"(v{update.offer.version}): {set_diff.count_words(update.changes)}. They are not "
-        "used until you choose. If you do nothing, DMbot takes the new version at your next "
-        "session."
+        f"📚 **{discord.utils.escape_markdown(update.offer.name)}** house rules changed "
+        f"(v{update.offer.version}): {set_diff.count_words(update.changes)}. Still on "
+        f"v{update.follow.version} for now. Choose below, or DMbot uses "
+        f"v{update.offer.version} at your next session."
     )
 
 
@@ -56,8 +59,8 @@ def note_view(campaign_id: str) -> discord.ui.View:
 
 
 _LABELS = {
-    "follow": ("Follow", discord.ButtonStyle.primary),
-    "pick": ("Cherry pick", discord.ButtonStyle.secondary),
+    "follow": ("Use all changes", discord.ButtonStyle.primary),
+    "pick": ("Pick changes", discord.ButtonStyle.secondary),
     "see": ("See changes", discord.ButtonStyle.secondary),
 }
 
@@ -119,7 +122,7 @@ async def press(interaction: discord.Interaction, campaign_id: str, action: str)
         return
     campaign, update = found
     if action == "see":
-        await _tell(interaction, changes_text(update))
+        await _tell(interaction, changes_text(update), view=note_view(campaign.id))
     elif action == "pick":
         view = PickView(campaign, update)
         await _tell(interaction, view.text(), view=view)
@@ -132,7 +135,9 @@ def changes_text(update: rule_sets.Update) -> str:
     lines = [set_diff.describe(c) for c in update.changes]
     text = "\n".join(lines) or "Only the version number changed. No rule is different."
     if len(text) > TEXT_MAX:
-        text = text[:TEXT_MAX].rsplit("\n", 1)[0] + "\n…and more."
+        kept = text[:TEXT_MAX].rsplit("\n", 1)[0]
+        left = len(lines) - kept.count("\n") - 1
+        text = kept + f"\n…and {left} more. Use Pick changes to go through all of them."
     return (
         f"**{discord.utils.escape_markdown(update.offer.name)}** v{update.offer.version}:\n{text}"
     )
@@ -157,14 +162,18 @@ async def take(
         await _tell(interaction, str(exc))
         return
     name = discord.utils.escape_markdown(update.offer.name)
+    left_out = (
+        len(update.changes) - len(accepted & {c.number for c in update.changes})
+        if accepted
+        else len(update.changes)
+    )
     if taken.merged:
         words = (
-            f"✅ Done. The **{name}** rules are now your own house rules ({len(taken.added)} "
-            f"rules, each marked “{taken.marker}”) and you no longer follow the set. Your "
-            "earlier rules still come first."
+            f"✅ Done. **{name}** is now your own copy ({len(taken.added)} rules, "
+            f"{left_out} left out). You no longer get its updates. Your earlier rules still win."
         )
     else:
-        words = f"✅ Now following **{name}** v{taken.after_version}."
+        words = f"✅ Now using **{name}** v{taken.after_version}."
     await _tell(interaction, words, view=UndoView(campaign, taken))
 
 
@@ -193,7 +202,9 @@ class UndoView(_Menu):
             await _tell(interaction, COULDNT)
             return
         self.stop()
-        await _tell(interaction, "Put back as it was.")
+        v = self.taken.before.version
+        again = " and following it again" if self.taken.merged else " and still following it"
+        await _tell(interaction, f"↩️ Undone. Back on v{v}{again}.")
 
 
 class PickView(_Menu):
@@ -213,11 +224,11 @@ class PickView(_Menu):
     def text(self) -> str:
         pages = max(1, -(-len(self.update.changes) // PAGE))
         where = f" (page {self.page + 1} of {pages})" if pages > 1 else ""
+        lines = "\n".join(set_diff.describe(c, 60) for c in self._page_changes())
         return (
-            f"Cherry pick the **{discord.utils.escape_markdown(self.update.offer.name)}** "
-            f"changes{where}. Everything starts ticked. Untick what you don't want. If you "
-            "untick anything, the set is copied into your own house rules without it, and you "
-            "stop following the set. You can undo it."
+            f"Pick changes: **{discord.utils.escape_markdown(self.update.offer.name)}**{where}. "
+            "Ticked = keep. Everything starts ticked. If you untick any, you stop following "
+            "the set and get your own copy. You can undo it.\n" + lines
         )
 
     def _draw(self) -> None:
@@ -226,7 +237,8 @@ class PickView(_Menu):
         if shown:
             options = [
                 discord.SelectOption(
-                    label=set_diff.describe(c, 90)[:100],
+                    label=f"{c.number} {c.kind.capitalize()}"[:25],
+                    description=set_diff.describe(c, 90)[:100],
                     value=str(c.number),
                     default=c.number in self.accepted,
                 )
@@ -246,7 +258,9 @@ class PickView(_Menu):
             self.add_item(_Button(self._prev, label="◀ Back", row=1, disabled=self.page == 0))
             last = (self.page + 1) * PAGE >= len(self.update.changes)
             self.add_item(_Button(self._next, label="More ▶", row=1, disabled=last))
-        self.add_item(_Button(self._apply, label="Apply", style=discord.ButtonStyle.primary, row=1))
+        self.add_item(
+            _Button(self._apply, label="Save my picks", style=discord.ButtonStyle.primary, row=1)
+        )
 
     async def _picked(self, interaction: discord.Interaction) -> None:
         select = next(c for c in self.children if isinstance(c, discord.ui.Select))
@@ -293,17 +307,17 @@ async def check_update(bot: Any, campaign: Campaign, screen_id: int) -> None:
                 )
                 await bot.post(
                     screen_id,
-                    f"📚 The **{name}** house rules aren't shared any more. You keep your copy; "
-                    "it won't change.",
+                    f"📚 **{name}** house rules aren't shared any more. You keep your copy as it "
+                    "is; it just won't get updates.",
                 )
             return
         if update.follow.notified is not None and update.follow.notified >= update.offer.version:
             await sets.take_update(campaign.guild_id, campaign.id, campaign.dm_user_ids[0])
             await bot.post(
                 screen_id,
-                f"📚 You didn't choose, so DMbot is now following the **"
-                f"{discord.utils.escape_markdown(update.offer.name)}** house rules v"
-                f"{update.offer.version}.",
+                f"📚 **{discord.utils.escape_markdown(update.offer.name)}** house rules "
+                f"v{update.offer.version} are now in use. You hadn't chosen, so DMbot took the "
+                "whole update.",
             )
             return
         posted = await bot.post_message(screen_id, note_text(update), note_view(campaign.id))
