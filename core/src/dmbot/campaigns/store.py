@@ -282,6 +282,7 @@ _SETTABLE = frozenset(
         "channel_number",
         "transcript_channel_id",
         "gametime_channel_id",
+        "dmbchat_channel_id",
         "dndbeyond_invite",
         "rules_cards",
         "side_initiative",
@@ -397,7 +398,8 @@ class CampaignStore:
         DM-screen content never goes into a transcript."""
         async with self._db.guild(guild_id, snapshot=True) as conn:
             cur = await conn.execute(
-                "SELECT dm_screen_channel_id, transcript_channel_id, gametime_channel_id"
+                "SELECT dm_screen_channel_id, transcript_channel_id, gametime_channel_id,"
+                " dmbchat_channel_id"
                 " FROM campaigns WHERE guild_id = %s",
                 (guild_id,),
             )
@@ -599,6 +601,12 @@ class CampaignStore:
     ) -> Campaign:
         """Store the campaign's game-time channel (#1116): not part of a backup."""
         return await self._set(guild_id, campaign_id, "gametime_channel_id", channel_id)
+
+    async def set_dmbchat_channel(
+        self, guild_id: int, campaign_id: str, channel_id: int | None
+    ) -> Campaign:
+        """Store the campaign's DMbot chat channel (#1187): not part of a backup."""
+        return await self._set(guild_id, campaign_id, "dmbchat_channel_id", channel_id)
 
     async def set_table_chat(
         self, guild_id: int, campaign_id: str, *, on: bool, channel_id: int | None
@@ -1391,6 +1399,10 @@ def _to_campaign(row: dict[str, Any], dms: set[int]) -> Campaign:
         # Absent in a schema older than #1116 (a migration test opens one).
         gametime_channel_id=row_int(row, "gametime_channel_id")
         if "gametime_channel_id" in row
+        else None,
+        # Absent in a schema older than #1187, for the same reason.
+        dmbchat_channel_id=row_int(row, "dmbchat_channel_id")
+        if "dmbchat_channel_id" in row
         else None,
         # Absent in a schema older than #1119, for the same reason.
         dndbeyond_invite=row.get("dndbeyond_invite"),

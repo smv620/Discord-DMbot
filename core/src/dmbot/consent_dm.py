@@ -108,8 +108,9 @@ def _date(timestamp: int) -> str:
 # Says what changed in the current consent.TERMS_VERSION; rewrite it when that goes up.
 # It explains rather than adds terms, so it isn't part of the pinned wording.
 RENEWED = (
-    "**What's new:** DMbot now also reads what you type in the voice channel's chat while it "
-    "is listening. That is why it is asking you again. Until you press "
+    "**What's new:** anyone at the table can now ask DMbot a quick rules question, and DMbot "
+    "also reads what you type in its chat channel while it is listening. That is why it is "
+    "asking you again. Until you press "
     f"**{CONSENT_LABEL}**, it records nothing from you. Don't want that? Press "
     f"**{DECLINE_LABEL}** and keep playing."
 )
@@ -162,8 +163,9 @@ def request_text(
         AGE_LINE,
         UNDER_LINE,
         f"• Press **{CONSENT_LABEL}** and DMbot records what you say, and reads what you type in "
-        "the voice channel's chat (and one more channel if your DM picks one), while it is "
-        "listening. It turns both into text. "
+        "the voice channel's chat, in DMbot's chat channel (where anyone can ask it a question) "
+        "and in one more channel if your DM picks one, while it is "
+        "listening. It turns it all into text. "
         "Anyone in this server can read and download that text. It stays there even if you "
         f"stop later. {AI_NOTE}",
         f"• Press **{DECLINE_LABEL}** and DMbot ignores your voice and your typing. "
