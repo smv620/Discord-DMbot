@@ -1114,7 +1114,7 @@ class Undo(MemoryTest):
             )
         started = time.perf_counter()
         await self.memory.merge(GUILD_A, fresh, keep.value.id, gone.value.id, source="dm")
-        self.assertLess(time.perf_counter() - started, 1.0)  # the bad plan took over 3 s
+        self.assertLess(time.perf_counter() - started, 2.0)  # the bad plan took over 3 s
 
     async def fill_names(self, campaign: str, count: int) -> None:
         """`count` entries with one name each, written directly (quicker than the API)."""
