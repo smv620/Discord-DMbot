@@ -59,8 +59,8 @@ export const beforeQuestions: readonly Question[] = [
     // company named here is on the privacy page. No new privacy wording: it links there.
     question: "Does it send what we say to an AI?",
     answer:
-      "Yes, in two steps. A speech company (Deepgram) turns the sound of people who said yes into text and the sound is thrown away, then an AI company (Anthropic) reads the text to help with names, rules and story notes.",
-    more: { text: "Read the privacy page for the details", href: "/legal/privacy" },
+      "Yes, in two steps. A speech company (Deepgram) turns the sound of people who said yes into text, and the sound is thrown away. An AI company (Anthropic) then gets the text it needs, not sound, to help with names, rules and story notes.",
+    more: { text: "Read the privacy page", href: "/legal/privacy" },
   },
   {
     // CLAUDE.md "Rules edition" (newest first, older tagged) and the order in rules/index.py:

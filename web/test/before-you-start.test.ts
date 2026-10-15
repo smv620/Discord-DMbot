@@ -52,12 +52,18 @@ describe("Before you start", () => {
       expect(row?.answer, company).toContain(company);
       expect(privacy, `${company} on the privacy page`).toContain(company);
     }
-    expect(consent).toContain("AI company (Anthropic)");
+    expect(consent, "the yes message and the privacy page must stay in sync").toContain("AI company (Anthropic)");
+    expect(row?.answer).toContain("thrown away");
     expect(privacy).toContain("the sound is thrown away");
+    // "It gets the text it needs, not sound" is the privacy page's own phrase (across a line break).
+    expect(privacy.replace(/\s+/g, " ")).toContain("It gets the text it needs, not sound");
+    expect(row?.answer).toContain("gets the text it needs, not sound");
     // The yes message says the text isn't used to train the AI; the privacy page doesn't, so the
     // answer must not either until it does.
     expect(row?.answer).not.toMatch(/train/i);
-    const names = (row?.answer.match(/\b[A-Z][a-z]{3,}\b/g) ?? []).filter((w) => !["Yes"].includes(w));
+    // Any capitalised word, short ones and all-caps ones too ("OVH", "AWS"), apart from the few
+    // plain words that start a sentence or say what it is.
+    const names = (row?.answer.match(/\b[A-Z][A-Za-z]+\b/g) ?? []).filter((w) => !["Yes", "AI", "An", "A"].includes(w));
     expect(names.sort()).toEqual(["Anthropic", "Deepgram"]);
   });
 
