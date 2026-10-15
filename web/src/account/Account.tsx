@@ -32,6 +32,22 @@ interface Props {
   go?: (url: string) => void;
   /** The page's query string, for the sign-in result (?signin=failed). */
   search?: string;
+  /** The page's `#...`: an emailed sign-in link puts its one-use code there (#1231), so no
+   * server or log ever sees it. */
+  hash?: string;
+}
+
+/** The code in `#email-link=...`, or null. */
+function emailLinkToken(hash: string): string | null {
+  const found = /^#email-link=([\w-]{1,200})$/.exec(hash);
+  return found ? (found[1] ?? null) : null;
+}
+
+/** Take the code out of the address bar, so a reload or a shared screen can't use it again. */
+function forgetEmailLink(): void {
+  if (typeof window !== "undefined") {
+    window.history.replaceState(null, "", window.location.pathname + window.location.search);
+  }
 }
 
 const defaultGo = (url: string): void => {
@@ -136,12 +152,36 @@ function ActionButton({
   );
 }
 
-export default function Account({ api, go = defaultGo, search = "" }: Props) {
+export default function Account({ api, go = defaultGo, search = "", hash = "" }: Props) {
   const [state, setState] = useState<State>({ kind: "loading" });
+  // An emailed link is tried once, even if the page loads again ("Try again").
+  const linkTried = useRef(false);
 
   const load = useCallback(async () => {
     try {
+      const link = emailLinkToken(hash);
+      let linkNotice: string | null = null;
+      if (link && api.emailSignInUse && !linkTried.current) {
+        linkTried.current = true;
+        forgetEmailLink();
+        try {
+          await api.emailSignInUse(link);
+        } catch (error) {
+          // A wrong, used or ended link is said in words. Anything else (the API down) falls
+          // through to the page's own "down" answer from api.me() below.
+          // A refusal for too many tries did not spend the link, so it says to wait, not that the
+          // link was used.
+          if (error instanceof ApiError && error.kind === "bad-link") linkNotice = text.emailLinkBad;
+          else if (error instanceof ApiError && error.kind === "slow-down") {
+            linkNotice = text.emailLinkWait;
+          } else throw error;
+        }
+      }
       const me = await api.me();
+      if (!me && linkNotice) {
+        setState({ kind: "signed-out", notice: linkNotice });
+        return;
+      }
       const params = new URLSearchParams(search);
       if (me && params.get("install") === "sign_in_again") {
         setState({ kind: "signed-out", notice: text.signInAgain });
@@ -158,7 +198,7 @@ export default function Account({ api, go = defaultGo, search = "" }: Props) {
     } catch {
       setState({ kind: "down" });
     }
-  }, [api, search]);
+  }, [api, search, hash]);
 
   useEffect(() => {
     void load();
@@ -263,7 +303,62 @@ function SignedOut({ notice }: { notice: string | null }) {
         </a>
         <p class="muted small">{text.signInNote}</p>
       </div>
+      <EmailSignIn />
     </div>
+  );
+}
+
+/** Sign in without Discord (#1231): type an email, get a one-use link. The answer is always the
+ * same words, so the page can't be used to find out whether an address has an account. */
+function EmailSignIn() {
+  const { api } = useShared();
+  const [email, setEmail] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [answer, setAnswer] = useState<{ text: string; ok: boolean } | null>(null);
+  const request = api.emailSignInRequest;
+  if (!request) return null; // an API older than #1231
+  const send = async (event: Event): Promise<void> => {
+    event.preventDefault();
+    if (busy) return;
+    const address = email.trim();
+    if (address === "") {
+      setAnswer({ text: text.emailMissing, ok: false });
+      return;
+    }
+    setBusy(true);
+    setAnswer(null);
+    try {
+      await request(address);
+      setAnswer({ text: text.emailAnswer, ok: true });
+    } catch (error) {
+      const slow = error instanceof ApiError && error.kind === "slow-down";
+      setAnswer({ text: slow ? text.emailWait : text.actionFailed, ok: false });
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <form class="panel" aria-labelledby="email-heading" onSubmit={(e) => void send(e)}>
+      <h2 id="email-heading">{text.emailHeading}</h2>
+      <label for="email-address">{text.emailLabel}</label>
+      <input
+        id="email-address"
+        type="email"
+        name="email"
+        autocomplete="email"
+        value={email}
+        onInput={(e) => setEmail((e.target as HTMLInputElement).value)}
+      />
+      <button type="submit" class="button secondary" disabled={busy} aria-busy={busy}>
+        {busy ? text.emailSending : text.emailButton}
+      </button>
+      {answer && (
+        <p class={answer.ok ? "ok" : "warn"} role={answer.ok ? "status" : "alert"}>
+          {answer.text}
+        </p>
+      )}
+      <p class="muted small">{text.emailNote}</p>
+    </form>
   );
 }
 
@@ -358,6 +453,8 @@ function SignedIn({
         />
       )}
       <PlanSection me={me} />
+      {me.dmbotId !== undefined && <IdSection me={me} />}
+      {me.canMove === true && api.getMoveCode && <MoveSection />}
       <CampaignsSection me={me} />
       <ServersSection me={me} />
       <CharactersSection />
@@ -967,6 +1064,63 @@ function CharactersSection() {
           </ul>
         </>
       )}
+    </section>
+  );
+}
+
+/** Your DMbot ID and experience points (#1231). The ID is an account number, not a secret. */
+function IdSection({ me }: { me: Me }) {
+  return (
+    <section aria-labelledby="id-heading" class="panel">
+      <h2 id="id-heading">{text.idHeading}</h2>
+      <p>{text.idLine(me.dmbotId ?? "")}</p>
+      <p class="muted small">{text.idNote}</p>
+      {me.experiencePoints !== undefined && (
+        <>
+          <p>{text.pointsLine(me.experiencePoints)}</p>
+          <p class="muted small">{text.pointsNote}</p>
+        </>
+      )}
+    </section>
+  );
+}
+
+/** Moving to a new Discord account (#1231): paid plans get a move code by email, never on screen.
+ * The steps for using it show only after it has been sent. */
+function MoveSection() {
+  const { api } = useShared();
+  const { busy, notice, run } = useAction();
+  const [sent, setSent] = useState(false);
+  return (
+    <section aria-labelledby="move-heading" class="panel">
+      <h2 id="move-heading">{text.moveHeading}</h2>
+      <p>{text.moveText}</p>
+      <Notice message={notice} />
+      {sent && (
+        <p class="ok" role="status">
+          {text.moveSent}
+        </p>
+      )}
+      <ActionButton
+        busy={busy}
+        kind="secondary"
+        onClick={() =>
+          void run(
+            async () => {
+              await api.getMoveCode?.();
+              setSent(true);
+            },
+            (error) =>
+              error.kind === "not-ready"
+                ? text.moveNotReady
+                : error.kind === "slow-down"
+                  ? text.moveWait
+                  : null,
+          )
+        }
+      >
+        {text.moveButton}
+      </ActionButton>
     </section>
   );
 }

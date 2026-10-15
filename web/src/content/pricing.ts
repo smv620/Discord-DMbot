@@ -79,9 +79,8 @@ const tryItName = data.plans["try-it"].name;
 
 function note(p: PlanFacts): string | null {
   if (p.trialDays !== null) return `Free for ${p.trialDays} days. No backups or downloads.`;
-  if (p.firstMonthAfterTrialCents !== null) {
-    return `First month ${formatPrice(p.firstMonthAfterTrialCents)} after ${tryItName}.`;
-  }
+  // No introductory price: it was removed on 2026-10-14 (docs/PLAN.md, "Accounts"). The field
+  // may still be in plans.json until #1228 takes it out, so it is simply not read here.
   if (p.priceCents === null) {
     return `Need more now? Pick ${data.plans.guild.name} and add extra hours.`;
   }

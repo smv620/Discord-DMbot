@@ -7,12 +7,6 @@ import {
   operator,
   paymentProvider,
 } from "../../content/legal";
-import { byId, formatPrice } from "../../content/pricing";
-
-const firstMonth = {
-  plan: byId.table.name,
-  price: formatPrice(byId.table.firstMonthAfterTrialCents ?? 0),
-};
 ---
 
 <LegalPage
@@ -76,8 +70,7 @@ const firstMonth = {
   <ul>
     <li>
       Plans, prices and hours are on the <a href="/pricing">Prices</a> page. Paid plans renew
-      every month until you stop them. If you pick {firstMonth.plan} after Try It, the first month costs {firstMonth.price}.
-      Try It never turns into a paid plan by itself, and it needs no payment details. To keep
+      every month until you stop them. Try It never turns into a paid plan by itself, and it needs no payment details. To keep
       going after Try It, pick a plan.
     </li>
     <li>
