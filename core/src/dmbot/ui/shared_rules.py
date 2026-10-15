@@ -138,7 +138,12 @@ async def open_menu(interaction: discord.Interaction, campaign: Campaign) -> Non
         lines.append("• Not sharing your house rules.")
     followed = follows[0] if follows else None
     if followed is not None:
-        note = "" if followed.updating else " It won't get updates."
+        note = (
+            ""
+            if followed.updating
+            else " This copy no longer gets updates. To get them again, ask its DM to share it "
+            "with you again."
+        )
         lines.append(
             f"• Using: **{_escape(followed.name)}** from {_escape(followed.publisher)} "
             f"(version {followed.version}).{note}"
