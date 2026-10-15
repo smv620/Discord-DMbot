@@ -14,7 +14,25 @@ import re
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 
-from dmbot.memory.models import DESCRIPTION_MAX, GOD, NPC, PLAYER_CHARACTER, MemoryRuleError
+from dmbot.memory.models import (
+    ALIVE,
+    BEING_CONDITIONS,
+    CAPTURED,
+    DEAD,
+    DESCRIPTION_MAX,
+    DESTROYED,
+    DM,
+    GOD,
+    INTACT,
+    LOST,
+    MISSING,
+    NPC,
+    PLAYER_CHARACTER,
+    THING_CONDITIONS,
+    TRANSFORMED,
+    UNKNOWN,
+    MemoryRuleError,
+)
 
 ACTIVE, DEPRECATED = "active", "deprecated"
 KEY_PATTERN = re.compile(r"^[a-z][a-z0-9_]{1,39}$")
@@ -61,6 +79,9 @@ class PredicateTerm:
     # Up when the MEANING changes (what it covers, what it connects, its synonyms). A
     # wording-only fix keeps the version.
     version: int = 1
+    # At any one time, for one object that is one of a kind (`carries`: one holder for a unique
+    # item). Core terms only; a campaign's own relationships have no such limit.
+    max_per_object: int | None = None
 
 
 NOT_THIS_SEP = " -> "
@@ -308,16 +329,39 @@ CORE_PREDICATES: tuple[PredicateTerm, ...] = (
         (*_BEINGS, "faction"),
         ("item", "place", *_BEINGS),
         covers=(
-            "a character who carries or owns an item",
+            "a character who owns an item, whoever has it in hand",
             "a character or group that owns a building, a ship or land",
         ),
         not_this=(
             ("the thing is only in that place", "located_in"),
             ("a person is bound to a master", "serves"),
+            ("who has an item in hand right now", "carries"),
         ),
         examples=("Cerric owns the Sun Blade.", "The Order owns the Silver Tower."),
         inverse_label="is owned by",
-        synonyms=("has", "carries", "wields", "possesses"),
+        synonyms=("has", "possesses"),
+        version=2,
+    ),
+    PredicateTerm(
+        "carries",
+        "carries",
+        "Who has an item right now: in a pack, on a belt, in a hand. Owning is something else. "
+        "For an item of which only one exists, one holder at a time: a new holder is flagged "
+        "until the old fact is ended.",
+        _BEINGS,
+        ("item",),
+        max_per_object=1,
+        covers=(
+            "a character who carries, wields or wears an item",
+            "an item that changes hands: stolen, given, lent, dropped and picked up",
+        ),
+        not_this=(
+            ("the item belongs to them, wherever it is", "owns"),
+            ("the item is lying in a place", "located_in"),
+        ),
+        examples=("Cerric carries Heartseeker.", "Mira carries a longbow."),
+        inverse_label="is held by",
+        synonyms=("carrying", "holds", "wields", "wearing", "has_on"),
     ),
     PredicateTerm(
         "knows",
@@ -408,6 +452,58 @@ CORE_PREDICATES: tuple[PredicateTerm, ...] = (
         synonyms=("takes_part_in", "involved_in", "present_at"),
     ),
 )
+
+# State facts (docs/STORY_MEMORY.md, "State facts"): what a being or a thing is right now. Only
+# beings (characters) and items and places have one; anything else is refused. The changes
+# allowed are this small table: from a condition, which ones may follow. Anything not listed
+# (a character "missing" to "intact") is no change at all.
+STATE_CHANGES: Mapping[str, frozenset[str]] = {
+    ALIVE: frozenset({DEAD, MISSING, CAPTURED, TRANSFORMED, UNKNOWN}),
+    DEAD: frozenset({ALIVE, TRANSFORMED}),
+    MISSING: frozenset({ALIVE, DEAD, CAPTURED, TRANSFORMED, UNKNOWN}),
+    CAPTURED: frozenset({ALIVE, DEAD, MISSING, TRANSFORMED, UNKNOWN}),
+    TRANSFORMED: frozenset({ALIVE, DEAD, MISSING, CAPTURED, UNKNOWN}),
+    UNKNOWN: frozenset({ALIVE, DEAD, MISSING, CAPTURED, TRANSFORMED}),
+    INTACT: frozenset({DESTROYED, LOST, UNKNOWN}),
+    DESTROYED: frozenset({INTACT}),
+    LOST: frozenset({INTACT, DESTROYED, UNKNOWN}),
+}
+# The way back from an end is never inferred from a proposal: only the DM's word ("brought
+# back") brings the dead or a destroyed thing back, so a clear-sounding claim can't undo it.
+DM_ONLY_CHANGES: frozenset[tuple[str, str]] = frozenset(
+    {(DEAD, ALIVE), (DEAD, TRANSFORMED), (DESTROYED, INTACT)}
+)
+STATE_NOT_KEPT = "DMbot keeps track of this only for characters, items and places."
+STATE_BAD = "That isn't one of the things DMbot keeps track of for {label}."
+STATE_NEEDS_DM = "Only the DM can say that {name} is back."
+
+
+def conditions_for(onto: Ontology, type_key: str) -> tuple[str, ...] | None:
+    """The conditions an entry of this kind can have, or None when it has no state."""
+    if onto.is_a(type_key, "character"):
+        return BEING_CONDITIONS
+    if onto.is_a(type_key, "item") or onto.is_a(type_key, "place"):
+        return THING_CONDITIONS
+    return None
+
+
+def check_condition_change(
+    onto: Ontology, type_key: str, name: str, old: str | None, new: str, source: str
+) -> None:
+    """Refuse a condition the kind can't have, a change the table doesn't allow, or a way
+    back from an end that isn't the DM's. No old condition: anything the kind can have."""
+    allowed = conditions_for(onto, type_key)
+    if allowed is None:
+        raise MemoryRuleError(STATE_NOT_KEPT)
+    if new not in allowed:
+        raise MemoryRuleError(STATE_BAD.format(label=name))
+    if old is None or old == new:
+        return
+    if old not in allowed or new not in STATE_CHANGES.get(old, frozenset()):
+        raise MemoryRuleError(f"{name} can't go from {old} to {new}.")
+    if (old, new) in DM_ONLY_CHANGES and source != DM:
+        raise MemoryRuleError(STATE_NEEDS_DM.format(name=name))
+
 
 # A campaign can't add a kind that is really a role or a rules category (#1034): those are a
 # character's role or its links to the rules. Compared as plain words (case, spaces, _ and -

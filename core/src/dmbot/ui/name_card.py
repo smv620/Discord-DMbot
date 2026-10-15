@@ -35,6 +35,7 @@ from dmbot.memory.models import (
     is_id,
     name_key,
 )
+from dmbot.memory.ontology import CORE_TYPES
 from dmbot.memory.search import MAX_RESULTS, Match, find, said_lately
 from dmbot.ui import logic
 from dmbot.ui.dmbot_commands import (
@@ -68,6 +69,19 @@ from dmbot.ui.names import (
 )
 
 log = logging.getLogger(__name__)
+ITEM = "item"  # only an item, or a kind under item, can be one of a kind
+CORE_KINDS = frozenset(t.key for t in CORE_TYPES)
+# Why DMbot will ask, for the checks that say so in plain words; any other is "an odd pair".
+FLAG_WHY = {
+    "place_loop": "That would put a place inside itself",
+    "held_twice": "Someone else already has that, and there is only one",
+    "acts_after_end": "They were dead or destroyed before this",
+    "too_many": "That's more than one place at once",
+}
+ONLY_ONE = "☝️ Only one of these exists (you said so)."
+ONLY_ONE_GUESS = "☝️ Taken as the only one (it has a proper name)."
+ONLY_ONE_BUTTON = "☝️ Only one exists"
+MORE_THAN_ONE_BUTTON = "Allow more than one"
 ALSO_CALLED = "🏷️ Also called…"  # adds another name; its own icon, not Add a name's (#393)
 NOTHING_CHANGED = (
     "Something went wrong and nothing was changed. Press 🔍 Find a name to open it and try again."
@@ -164,10 +178,12 @@ def card_text(
     sheet: str | None = None,
     full: bool = False,
     limit: int = CARD_MAX,
+    item: bool | None = None,
 ) -> str | None:
     """The card for one name, or None if it's gone. `player`: who plays it (a player's
     character); `sheet`: its D&D Beyond sheet line (#723). `full`: every entry of each
-    section (Show all), not the first few."""
+    section (Show all), not the first few. `item`: it is an item, of the core kind or one
+    a campaign added under it (None: only the core kind counts)."""
     entity = lookup.entities.get(entity_id)
     if entity is None or entity.status != CONFIRMED:
         return None
@@ -184,6 +200,8 @@ def card_text(
     phrase = kind_phrase(entity, lookup.links.get(entity_id, ()))
     what = f"{phrase} · played by **{_md(player)}**" if player else phrase
     lines = [f"🪪 **{_md(entity.name)}** · {what} · {when}"]
+    if (entity.type == ITEM if item is None else item) and entity.is_unique:
+        lines.append(ONLY_ONE if entity.unique_item else ONLY_ONE_GUESS)
     if sheet:
         lines.append(sheet)
     if others:
@@ -267,6 +285,7 @@ async def show_card(
             sheet = card_line(found, link=secrets)  # the address: the campaign's DMs only
     note = cut(note, NOTE_MAX) if note else None
     limit = CARD_MAX - (len(note) + 2 if note else 0)
+    is_item = entity is not None and await _is_item(memory, campaign, entity.type)
     text = card_text(
         names,
         entity_id,
@@ -276,6 +295,7 @@ async def show_card(
         sheet=sheet,
         full=full,
         limit=limit,
+        item=is_item,
     )
     if text is None or entity is None:
         if replace:  # never leave the message pressed on a step that's over
@@ -292,6 +312,7 @@ async def show_card(
         sheet=sheet,
         full=True,
         limit=limit,
+        item=is_item,
     )
     own = name_key(entity.name)
     others = any(
@@ -300,11 +321,30 @@ async def show_card(
     )
     if note:
         text = f"{note}\n\n{text}"
-    view = NameCard(campaign.id, entity_id, others=others, longer=longer, sheet=has_sheet)
+    view = NameCard(
+        campaign.id,
+        entity_id,
+        others=others,
+        longer=longer,
+        sheet=has_sheet,
+        item=is_item,
+        unique=entity.is_unique,
+    )
     if replace:
         await _replace(interaction, text, view)
     else:
         await _send(interaction, text, view)
+
+
+async def _is_item(memory: Any, campaign: Campaign, type_key: str) -> bool:
+    """Is this kind an item, or a kind the campaign added under item (a potion, a weapon)?
+    The core kinds are known without asking."""
+    if type_key == ITEM:
+        return True
+    if type_key in CORE_KINDS:
+        return False
+    onto = await memory.ontology(campaign.guild_id, campaign.id)
+    return bool(onto.is_a(type_key, ITEM))
 
 
 async def _current(
@@ -331,10 +371,13 @@ class NameCard(_Menu):
         others: bool = False,
         longer: bool = False,
         sheet: bool = False,
+        item: bool = False,
+        unique: bool = False,
     ) -> None:
         super().__init__()
         self.campaign_id = campaign_id
         self.entity_id = entity_id
+        self.unique = unique
         grey = discord.ButtonStyle.secondary
         # First row: the three edits the names panel names, in its words (#353). Remove
         # says what it does and still asks first.
@@ -353,6 +396,38 @@ class NameCard(_Menu):
             self.add_item(_Button(self._all, label="Show all", style=grey, row=2))
         if sheet:
             self.add_item(_Button(self._unlink_sheet, label="📜 Forget sheet", style=grey, row=2))
+        if item:
+            # The DM's word on an item: a named one (Heartseeker) is taken as one of a kind
+            # until they say otherwise (#1267). Says what it will do: it flips.
+            label = MORE_THAN_ONE_BUTTON if unique else ONLY_ONE_BUTTON
+            self.add_item(_Button(self._one_of_a_kind, label=label, style=grey, row=3))
+
+    async def _one_of_a_kind(self, interaction: discord.Interaction) -> None:
+        await _answer_first(interaction, in_place=True)
+        found = await _current(interaction, self.campaign_id, self.entity_id)
+        memory = _memory(interaction)
+        if found is None or memory is None:
+            return
+        campaign, name = found
+        if not sees_secrets(campaign, interaction.user.id):  # only the campaign's DMs
+            await _tell(interaction, "Only the DM can change that.")
+            return
+        now_unique = not self.unique
+        try:
+            await memory.set_unique(
+                campaign.guild_id, campaign.id, self.entity_id, now_unique, source=DM
+            )
+        except MemoryRuleError as exc:
+            await _tell(interaction, f"Couldn't change it. {exc}")
+            return
+        changed(interaction, campaign)
+        note = (
+            f"☝️ Noted: there is only one **{_md(name)}**. It goes in your after-session "
+            "report if two characters carry it. You can change this any time."
+            if now_unique
+            else f"Noted: there can be more than one **{_md(name)}**."
+        )
+        await show_card(interaction, campaign.id, self.entity_id, replace=True, note=note)
 
     async def _unlink_sheet(self, interaction: discord.Interaction) -> None:
         from dmbot.ui.sheets import dm_unlink
@@ -1272,10 +1347,10 @@ async def connect(
     _, flags = written.value
     note = f"🧭 Saved: **{_md(subject[1])}** {connection_words(predicate)} **{_md(obj[1])}**."
     if flags:
-        note += (
-            f' It\'s an odd pair for "{connection_words(predicate)}", so DMbot will ask you '
-            "about it after the session."
+        why = FLAG_WHY.get(flags[0].kind) or (
+            f'It\'s an odd pair for "{connection_words(predicate)}"'
         )
+        note += f" {why}, so DMbot will ask you about it after the session."
     await show_card(interaction, campaign.id, entity_id, replace=True, note=note)
 
 

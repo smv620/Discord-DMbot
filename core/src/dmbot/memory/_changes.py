@@ -57,7 +57,15 @@ ENTITIES = Table(
         "played_by",
         "role",
         "needs_look",
+        "unique_item",
     ),
+)
+# What a being or thing is now, with the history of what it was (#1267): one current row for
+# each entry, a new condition closes it.
+STATES = Table(
+    "memory_states",
+    "id",
+    ("id", "entity_id", "condition", "from_session_at", "source", "created_at", "closed_at"),
 )
 # A character's links to the rules (#1034): species, creature type, stat block, class,
 # background.
@@ -102,7 +110,8 @@ FLAGS = Table(
     "id",
     ("id", "kind", "relation_id", "other_id", "status", "created_at"),
 )
-ALL = (TYPES, PREDICATES, ENTITIES, ALIASES, MENTIONS, RELATIONS, CORRECTIONS, FLAGS, RULE_LINKS)
+ALL = (TYPES, PREDICATES, ENTITIES, ALIASES, MENTIONS, RELATIONS, CORRECTIONS, FLAGS, RULE_LINKS,
+       STATES)  # fmt: skip
 BY_NAME = {t.name: t for t in ALL}
 
 # What links to a row (table, column, is the column a list), checked before deleting it,
@@ -130,6 +139,7 @@ DEPENDENTS: dict[str, tuple[tuple[str, str, bool], ...]] = {
         ("memory_relations", "object_id", False),
         ("memory_corrections", "entity_id", False),
         ("memory_rule_links", "entity_id", False),
+        ("memory_states", "entity_id", False),
     ),
     "memory_mentions": (("memory_relations", "mention_ids", True),),
     "memory_relations": (
@@ -459,6 +469,7 @@ class Changes(Scope):
 # (#1189): a fact written before definitions were versioned was written under version 1.
 _ADDED_LATER: dict[str, dict[str, Any]] = {
     "memory_relations": {"definition_version": 1},
+    "memory_entities": {"unique_item": None},  # nobody said: the name decides (#1267)
     "memory_predicates": {
         "covers": [], "not_this": [], "inverse_label": "", "synonyms": [], "version": 1,
     },
@@ -473,7 +484,7 @@ def _filled(table: Table, snapshot: Any) -> Any:
     if not isinstance(snapshot, dict):
         return snapshot
     if table.name in _ADDED_LATER:
-        return {**_ADDED_LATER[table.name], **snapshot}
+        snapshot = {**_ADDED_LATER[table.name], **snapshot}
     if table.name != "memory_entities" or "role" in snapshot:
         return snapshot
     kind, role, look = MIGRATED_KINDS.get(

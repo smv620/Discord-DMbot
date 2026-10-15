@@ -138,6 +138,7 @@ class Isolation(MemoryTest):
         from dmbot.memory.models import Heard
 
         await self.memory.add_session_heard(GUILD_A, self.c, 1_000, [Heard(a, DM, 1)])
+        await self.memory.set_condition(GUILD_A, self.c, a, "missing", source="dm")
         return a, b
 
     async def test_another_server_sees_nothing(self) -> None:
@@ -666,9 +667,9 @@ class Rules(MemoryTest):
 
         sizes: list[int] = []
 
-        def counted(onto: Any, new: Any, st: str, ot: str, existing: Any) -> Any:
+        def counted(onto: Any, new: Any, st: str, ot: str, existing: Any, **kw: Any) -> Any:
             sizes.append(len(existing))
-            return real(onto, new, st, ot, existing)
+            return real(onto, new, st, ot, existing, **kw)
 
         with patch.object(store_module, "check_relation", counted):
             closed = await self.memory.resolve_stale_flags(GUILD_A, self.c)

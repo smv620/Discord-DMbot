@@ -6,15 +6,32 @@ becomes a flag for review, because only the DM decides what's true in their stor
 
 from __future__ import annotations
 
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
+from typing import NamedTuple
 
 from dmbot.memory.models import REJECTED, Relation
 from dmbot.memory.ontology import Ontology, PredicateTerm
 
 WRONG_SUBJECT, WRONG_OBJECT = "wrong_subject", "wrong_object"
 TOO_MANY, CONTRADICTION = "too_many", "contradiction"
-FLAG_KINDS = (WRONG_SUBJECT, WRONG_OBJECT, TOO_MANY, CONTRADICTION)
+# Story memory 5a (#1267): a one-of-a-kind item in two holders' hands, a place inside itself
+# (through other places), and something that is dead or destroyed acting after it ended.
+HELD_TWICE, PLACE_LOOP, ACTS_AFTER_END = "held_twice", "place_loop", "acts_after_end"
+FLAG_KINDS = (WRONG_SUBJECT, WRONG_OBJECT, TOO_MANY, CONTRADICTION, HELD_TWICE, PLACE_LOOP,
+              ACTS_AFTER_END)  # fmt: skip
+
+# Places nest (an inn in a town in a region): the relationship that says where something is.
+NESTS = "located_in"
+# The relationships where the subject DOES something, so a dead or destroyed one can't (the
+# two-way ones act with both ends). Not `kin_of` (the dead still have family), not `located_in`
+# (a body lies somewhere), not `owns` (a dead owner still owns, and an heir's claim is dated
+# later), not `plays`. A list in code, never guessed from a relationship's
+# word: a new relationship acts only when it is added here.
+ACTING = frozenset(
+    {"carries", "serves", "sworn_to", "member_of", "knows", "appears_in", "ally_of",
+     "enemy_of"}
+)  # fmt: skip
 
 
 @dataclass(frozen=True, slots=True)
@@ -76,15 +93,79 @@ def duplicate_of(new: Relation, existing: Iterable[Relation]) -> Relation | None
     return same[0] if same else None
 
 
+class Nesting:
+    """Which places are inside which, from the live `located_in` facts between places.
+    Pure: built from (place, the place it is in) pairs."""
+
+    def __init__(self, pairs: Iterable[tuple[str, str]] = ()) -> None:
+        self._in: dict[str, set[str]] = {}
+        for inner, outer in pairs:
+            self._in.setdefault(inner, set()).add(outer)
+
+    def above(self, place: str) -> set[str]:
+        """Every place this one is inside, at any depth (a loop in the data can't hang it)."""
+        seen: set[str] = set()
+        todo = [place]
+        while todo:
+            for outer in self._in.get(todo.pop(), ()):
+                if outer not in seen:
+                    seen.add(outer)
+                    todo.append(outer)
+        return seen
+
+    def related(self, a: str, b: str) -> bool:
+        """Is one inside the other (so being in both is just being in the smaller one)?"""
+        return a == b or b in self.above(a) or a in self.above(b)
+
+    def would_loop(self, inner: str, outer: str) -> bool:
+        """Would putting `inner` in `outer` make a place part of itself?"""
+        return inner == outer or inner in self.above(outer)
+
+
+class Ended(NamedTuple):
+    """When a dead or destroyed condition began: the session it dates from (None when nobody
+    said) and when DMbot stored it."""
+
+    session: int | None
+    stored: int
+
+
+def acts_after_end(onto: Ontology, fact: Relation, ended: Mapping[str, Ended]) -> bool:
+    """Is a dead or destroyed entry the actor of a fact dated after it ended? Like is compared
+    with like: a fact with a session date against the end's session date (the end's stored time
+    when it has none), a fact with no date by when it was stored against when the end was
+    stored. A fact in the same session as the end is not after it."""
+    term = onto.predicates.get(fact.predicate)
+    if term is None or term.key not in ACTING:
+        return False
+    actors = (fact.subject_id, fact.object_id) if term.symmetric else (fact.subject_id,)
+    for a in actors:
+        end = ended.get(a)
+        if end is None:
+            continue
+        if fact.from_session_at is None:
+            if fact.created_at > end.stored:
+                return True
+        elif fact.from_session_at > (end.stored if end.session is None else end.session):
+            return True
+    return False
+
+
 def check_relation(
     onto: Ontology,
     new: Relation,
     subject_type: str,
     object_type: str,
     existing: Iterable[Relation],
+    *,
+    object_unique: bool = False,
+    nesting: Nesting | None = None,
+    ended: Mapping[str, Ended] | None = None,
 ) -> list[Problem]:
     """Problems with `new`, given the live facts already stored about its subject and
-    object. Never raises for a rule failure: problems are returned to be flagged."""
+    object. Never raises for a rule failure: problems are returned to be flagged.
+    `object_unique`: the object is an item of which only one exists. `nesting`: the places
+    inside places, without `new`. `ended`: when each dead or destroyed entry ended."""
     p = onto.predicates[new.predicate]
     problems: list[Problem] = []
     if not onto.is_any(subject_type, p.subject_types):
@@ -103,11 +184,34 @@ def check_relation(
                 and not same_pair(r, new)
                 and (end in (r.subject_id, r.object_id) if p.symmetric else r.subject_id == end)
             ]
+            if p.key == NESTS and nesting is not None:
+                # Being in the inn and in the town it is in is one place, not two.
+                others = [r for r in others if not nesting.related(r.object_id, new.object_id)]
             if len(others) >= p.max_per_subject:
                 problems += [Problem(TOO_MANY, r.id) for r in others]
+    if p.max_per_object is not None and object_unique:
+        holders = [
+            r
+            for r in live
+            if r.predicate == p.key
+            and r.object_id == new.object_id
+            and r.subject_id != new.subject_id
+        ]
+        if len(holders) >= p.max_per_object:
+            problems += [Problem(HELD_TWICE, r.id) for r in holders]
+    if (
+        p.key == NESTS
+        and nesting is not None
+        and onto.is_a(subject_type, "place")
+        and onto.is_a(object_type, "place")
+        and nesting.would_loop(new.subject_id, new.object_id)
+    ):
+        problems.append(Problem(PLACE_LOOP))
     problems += [
         Problem(CONTRADICTION, r.id)
         for r in live
         if same_pair(r, new) and conflicts(onto, p, r.predicate)
     ]
+    if ended and acts_after_end(onto, new, ended):
+        problems.append(Problem(ACTS_AFTER_END))
     return problems

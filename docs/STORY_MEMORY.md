@@ -185,6 +185,14 @@ each with a plain label:
 - states live in their own table (`memory_states`), not as relationships;
 - only `dead` and `destroyed` stop something from acting. `missing`, `captured` and the
   rest are soft: a missing NPC turning up is news, not a contradiction.
+- **As built (#1267):** a change the table doesn't allow, and the way back from `dead` or
+  `destroyed` from anyone but the DM, is **refused when it is written** (the state row has no
+  review status to hold it in), not flagged; the extractor slice turns a refused claim into a
+  question for the DM. A proposal never changes a condition the DM set. Each state row has the
+  session it dates from (`from_session_at`, else when it was stored) and who said it; a new
+  one closes the old with `closed_at`. Moving an entry to another kind closes a condition the
+  new kind can't have. A merge brings the merged entry's condition along unless the kept one
+  has its own.
 
 **Relationships** (each with domain, range, how many, conflicts):
 - `involved_in` (being/group/item/place → thread, detail = role: quest giver, target,
@@ -527,10 +535,11 @@ on embeddings. Apache AGE is still not needed: these are 1–2 hop lookups.
 
 Each step is useful on its own and ships behind the existing phases.
 
-1. **Phase 5a: claims and state** (after the Cleaner and speaker tagging, Phase 2b):
-   the extractor and claim table, `condition` state facts, the unique flag and
-   `carries` with `max_per_object`, nesting and loop checks, the first continuity
-   warnings (dead or destroyed actors, a unique item in two hands, two places), the
+1. **Phase 5a: claims and state** (after the Cleaner and speaker tagging, Phase 2b).
+   **Slice 1 is built (#1267):** `memory_states` and `STATE_CHANGES`, the unique flag and
+   `carries` with `max_per_object`, the nesting, loop, held-twice and acts-after-end checks (flags
+   only, no AI), and the "☝️ Only one exists" button on an item's name card. What is left of 5a:
+   the extractor and claim table, the continuity warnings shown to the DM, and the
    secret-said-aloud question. Start after-session only, then live.
 2. **Phase 5b: NPC tracker and reputation:** knowledge (clues, `knows`, `witnessed`),
    deeds, standing, the NPC channel, the recall service.

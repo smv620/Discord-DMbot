@@ -24,7 +24,7 @@ from typing import Any
 from psycopg import sql
 
 from dmbot.db import Database, row_int
-from dmbot.memory import notify
+from dmbot.memory import notify, states
 from dmbot.memory._changes import (
     ALIASES,
     CHANGED_SINCE,
@@ -37,12 +37,13 @@ from dmbot.memory._changes import (
     PREDICATES,
     RELATIONS,
     RULE_LINKS,
+    STATES,
     TYPES,
     Changes,
     Scope,
     undo_batch,
 )
-from dmbot.memory.checks import check_relation, duplicate_of, ordered
+from dmbot.memory.checks import HELD_TWICE, Ended, check_relation, duplicate_of, ordered
 from dmbot.memory.lookup import LookupData
 from dmbot.memory.models import (
     ALIAS_KINDS,
@@ -51,6 +52,7 @@ from dmbot.memory.models import (
     DESCRIPTION_MAX,
     DETAIL_MAX,
     DM,
+    ENDED,
     FACT_STATUSES,
     FIX,
     KEEP,
@@ -81,6 +83,7 @@ from dmbot.memory.models import (
     PeopleSuggestion,
     Relation,
     RuleLink,
+    State,
     TooLateToUndo,
     Written,
     check_status_change,
@@ -148,7 +151,7 @@ async def _live_ids(scope: Scope, among: Collection[str] | None = None) -> set[s
 def _entity(r: dict[str, Any]) -> Entity:
     return Entity(
         r["id"], r["type"], r["name"], r["description"], r["status"], r["merged_into"],
-        r["source"], r["created_at"], r["played_by"], r["role"], r["needs_look"],
+        r["source"], r["created_at"], r["played_by"], r["role"], r["needs_look"], r["unique_item"],
     )  # fmt: skip
 
 
@@ -558,6 +561,122 @@ class MemoryStore:
             )
             return [_flag(r) for r in rows]
 
+    # ---- states and one-of-a-kind items (#1267) ------------------------------------------
+
+    async def states(
+        self, guild_id: int, campaign_id: str, entity_ids: Collection[str] | None = None
+    ) -> dict[str, State]:
+        """The current condition of every entry that has one (or of those asked for)."""
+        async with self._read(guild_id, campaign_id) as scope:
+            if entity_ids is None:
+                rows = await scope.select(STATES, " AND closed_at IS NULL")
+                return {r["entity_id"]: states.state_of(r) for r in rows}
+            return await states.current_states(scope, entity_ids)
+
+    async def state_history(self, guild_id: int, campaign_id: str, entity_id: str) -> list[State]:
+        """Everything an entry has been, oldest first: when it changed and who said so."""
+        async with self._read(guild_id, campaign_id) as scope:
+            rows = await scope.select(
+                STATES, " AND entity_id = %s ORDER BY created_at, id", [entity_id]
+            )
+            return [states.state_of(r) for r in rows]
+
+    async def set_condition(
+        self,
+        guild_id: int,
+        campaign_id: str,
+        entity_id: str,
+        condition: str,
+        *,
+        source: str,
+        from_session_at: int | None = None,
+    ) -> Written[tuple[State | None, list[Flag]]]:
+        """Say what a character, item or place is now (alive, dead, intact, destroyed…); the
+        old condition closes and stays as history. The way back from dead or destroyed is the
+        DM's alone. A fact that a dead or destroyed entry acts in after it ended is flagged
+        for the DM, who can answer "brought back" by setting the condition again."""
+        async with self._write(guild_id, campaign_id, source) as w:
+            onto = await _load_ontology(w)
+            entity = await _entity_row(w, entity_id)
+            new = await states.set_condition(
+                w, onto, entity, condition, from_session_at=from_session_at
+            )
+            if new is None:
+                return Written((None, []), w.batch)
+            touching = [
+                _relation(r)
+                for r in await w.select(
+                    RELATIONS,
+                    " AND (subject_id = %s OR object_id = %s) AND status <> 'rejected'"
+                    ' ORDER BY id COLLATE "C"',
+                    [entity_id, entity_id],
+                )
+            ]
+            await states.close_resolved_after_end(w, onto, touching)
+            ended = (
+                {entity_id: Ended(new.from_session_at, new.created_at)}
+                if new.condition in ENDED
+                else {}
+            )
+            rows = await states.flag_acting_after_end(w, onto, touching, ended)
+            return Written((new, [_flag(r) for r in rows]), w.batch)
+
+    async def set_unique(
+        self, guild_id: int, campaign_id: str, entity_id: str, unique: bool, *, source: str
+    ) -> Written[tuple[Entity, list[Flag]]]:
+        """Say whether only one of this item exists (Heartseeker, not a longbow): the DM's
+        call. Switching it on flags a unique item that two are already carrying."""
+        if source != DM:
+            raise MemoryRuleError("Only the DM can say that.")
+        async with self._write(guild_id, campaign_id, source) as w:
+            onto = await _load_ontology(w)
+            current = await _entity_row(w, entity_id)
+            if not onto.is_a(current["type"], "item"):
+                raise MemoryRuleError(states.ONLY_ITEMS)
+            row = await w.update(ENTITIES, entity_id, {"unique_item": unique})
+            flags: list[Flag] = []
+            if not unique:  # the alerts about this item's holders no longer hold
+                held = [
+                    r["id"] for r in await w.select(RELATIONS, " AND object_id = %s", [entity_id])
+                ]
+                for flag in await w.select(
+                    FLAGS,
+                    " AND kind = %s AND status = 'open' AND relation_id = ANY(%s)",
+                    [HELD_TWICE, held],
+                ):
+                    await w.update(FLAGS, flag["id"], {"status": "resolved"})
+            if unique:
+                limited = sorted(k for k, t in onto.predicates.items() if t.max_per_object)
+                carried = {
+                    r.id: r
+                    for r in (
+                        _relation(r)
+                        for r in await w.select(
+                            RELATIONS,
+                            " AND object_id = %s AND status <> 'rejected'"
+                            ' AND predicate = ANY(%s) ORDER BY id COLLATE "C"',
+                            [entity_id, limited],
+                        )
+                    )
+                }
+                for rel in carried.values():
+                    subject = await _entity_row(w, rel.subject_id)
+                    for problem in check_relation(
+                        onto, rel, subject["type"], current["type"], list(carried.values()),
+                        object_unique=True,
+                    ):  # fmt: skip
+                        other = carried.get(problem.other_id or "")
+                        # Each pair once: the later fact is the one flagged.
+                        if (
+                            problem.kind == HELD_TWICE
+                            and other is not None
+                            and (rel.created_at, rel.id) > (other.created_at, other.id)
+                        ):
+                            made = await states.flag_new(w, rel, problem.kind, other.id)
+                            if made is not None:
+                                flags.append(_flag(made))
+            return Written((_entity(row), flags), w.batch)
+
     async def resolve(self, guild_id: int, campaign_id: str, entity_id: str) -> Entity | None:
         """The entity an ID stands for now, following merges."""
         async with self._read(guild_id, campaign_id) as scope:
@@ -621,6 +740,7 @@ class MemoryStore:
                     "played_by": played_by,
                     "role": role,
                     "needs_look": False,
+                    "unique_item": None,
                 },
             )
             await w.insert(ALIASES, _new_alias(w, row["id"], name, "full", status, False, None))
@@ -729,6 +849,7 @@ class MemoryStore:
                         "status": n.status, "merged_into": None, "source": source,
                         "created_at": w.now, "played_by": None, "role": role,
                         "needs_look": False,
+                        "unique_item": None,
                     }
                 )  # fmt: skip
                 seen = {name_key_}
@@ -817,6 +938,8 @@ class MemoryStore:
             if current["played_by"] is not None and role != PLAYER_CHARACTER:
                 changes["played_by"] = None
             row = await w.update(ENTITIES, entity_id, changes)
+            await states.settle_kind(w, onto, [entity_id], type)
+            row = await _entity_row(w, entity_id)
             await _sync_plays(w, entity_id)
             return Written(_entity(row), w.batch)
 
@@ -1016,12 +1139,15 @@ class MemoryStore:
                     "status": CONFIRMED,
                     "played_by": played_by,
                     "needs_look": False,
+                    "unique_item": None,
                 },
             )
             for alias in await w.select(
                 ALIASES, " AND entity_id = %s AND status = 'proposed'", [entity_id]
             ):
                 await w.update(ALIASES, alias["id"], {"status": CONFIRMED})
+            await states.settle_kind(w, onto, [entity_id], type)
+            row = await _entity_row(w, entity_id)
             await _sync_plays(w, entity_id)
             return Written(_entity(row), w.batch)
 
@@ -1060,6 +1186,7 @@ class MemoryStore:
                 [sorted(set(entity_ids))],
             )
             ids = [row["id"] for row in confirmed]
+            await states.settle_kind(w, onto, ids, type)
             if ids:
                 await w.update_where(
                     ALIASES,
@@ -1191,6 +1318,7 @@ class MemoryStore:
         if dm_said_same and source != DM:
             raise ValueError("Only a DM source can say two entries are the same")
         async with self._write(guild_id, campaign_id, source) as w:
+            onto = await _load_ontology(w)
             keep = await _entity_row(w, keep_id)
             gone = await _entity_row(w, gone_id)
             if (keep["type"] == PERSON) != (gone["type"] == PERSON):
@@ -1211,15 +1339,23 @@ class MemoryStore:
                     keep_id,
                     {"type": gone["type"], "role": gone["role"], "played_by": gone["played_by"]},
                 )
+                await states.settle_kind(w, onto, [keep_id], gone["type"])
             kept = await _entity_row(w, keep_id)
             if kept["type"] == gone["type"]:  # one role, one look: neither is lost or invented
                 merged = {
                     "role": kept["role"] or gone["role"],
                     "needs_look": kept["needs_look"] and gone["needs_look"],
+                    # The kept entry's word on one of a kind, else the merged one's.
+                    "unique_item": (
+                        kept["unique_item"]
+                        if kept["unique_item"] is not None
+                        else gone["unique_item"]
+                    ),
                 }
-                if merged != {"role": kept["role"], "needs_look": kept["needs_look"]}:
+                if merged != {k: kept[k] for k in merged}:
                     await w.update(ENTITIES, keep_id, merged)
             await _move_rule_links(w, keep_id, gone_id)
+            await states.move_states(w, onto, keep_id, kept["type"], gone_id)
             if confirm_keys and source != DM:
                 raise ValueError("Only the DM confirms names")
             await _move_aliases(w, keep_id, gone_id, frozenset(confirm_keys))
@@ -2010,6 +2146,7 @@ class MemoryStore:
                     "played_by": None,
                     "role": None,
                     "needs_look": False,
+                    "unique_item": None,
                 },
             )
             await w.insert(ALIASES, _new_alias(w, row["id"], name, "full", PROPOSED, False, None))
@@ -2178,6 +2315,7 @@ async def _close_stale_flags(w: Changes) -> list[Flag]:
         for e in {r.subject_id, r.object_id}:
             by_end.setdefault((e, r.predicate), []).append(r)
         by_pair.setdefault(frozenset((r.subject_id, r.object_id)), []).append(r)
+    extra = await states.load_extras(w, onto, [f for f in facts if f.status != REJECTED])
     stale: list[str] = []
     mark = time.perf_counter()
     for fact in facts:
@@ -2197,6 +2335,8 @@ async def _close_stale_flags(w: Changes) -> list[Flag]:
                     (fact.subject_id, fact.object_id) if term.symmetric else (fact.subject_id,)
                 ):
                     others.update((r.id, r) for r in by_end.get((end, term.key), []))
+            if term.max_per_object is not None:
+                others.update((r.id, r) for r in by_end.get((fact.object_id, term.key), []))
             others.pop(fact.id, None)
             problems = check_relation(
                 onto,
@@ -2204,6 +2344,9 @@ async def _close_stale_flags(w: Changes) -> list[Flag]:
                 types[fact.subject_id],
                 types[fact.object_id],
                 list(others.values()),
+                object_unique=fact.object_id in extra.unique,
+                nesting=extra.nesting,
+                ended=extra.ended,
             )
             still = {(p.kind, p.other_id) for p in problems}
         seen: set[tuple[str, str | None]] = set()
@@ -2274,6 +2417,7 @@ async def _ensure_person(w: Changes, user_id: int) -> str:
             "played_by": user_id,
             "role": None,
             "needs_look": False,
+            "unique_item": None,
         },
     )
     await w.insert(ALIASES, _new_alias(w, row["id"], name, "full", CONFIRMED, False, None))
@@ -2491,9 +2635,17 @@ async def _flag_problems(
     subject_type: str,
     object_type: str,
     existing: Sequence[Relation],
+    extra: states.Extras | None = None,
 ) -> list[Flag]:
+    """Flag what `check_relation` finds. `extra` is what the checks need besides the facts;
+    a caller checking many facts in one write reads it once for all of them (#1267)."""
     flags = []
-    for problem in check_relation(onto, rel, subject_type, object_type, existing):
+    if extra is None:
+        extra = await states.load_extras(w, onto, [rel])
+    for problem in check_relation(
+        onto, rel, subject_type, object_type, existing,
+        object_unique=rel.object_id in extra.unique, nesting=extra.nesting, ended=extra.ended,
+    ):  # fmt: skip
         row = await w.insert(
             FLAGS,
             {
@@ -2615,11 +2767,12 @@ async def _move_relations(w: Changes, keep_id: str, gone_id: str) -> None:
     await w.update_rows(RELATIONS, moves)
     # Flags before removals, as the old walk did: a flag can point at a fact removed
     # later in the walk, and removing that fact removes its flags too.
+    extra = await states.load_extras(w, onto, [moved for moved, _ in to_check])
     for moved, others in to_check:
         subject, obj = (entities.get(e) for e in (moved.subject_id, moved.object_id))
         if subject is None or obj is None or {subject["status"], obj["status"]} - set(LIVE):
             raise MemoryRuleError(NOT_FOUND)  # the far end was rejected or merged away
-        await _flag_problems(w, onto, moved, subject["type"], obj["type"], others)
+        await _flag_problems(w, onto, moved, subject["type"], obj["type"], others, extra)
     for relation_id in gone_rows:
         await _delete_relation(w, relation_id)
     for twin_id, upgrade in upgrades:

@@ -222,6 +222,108 @@ class NameCards(NamesTest):
         manager = await self.card(MANAGER)
         self.assertNotIn("hooded", manager)  # a server manager may be at the table
 
+    async def test_an_item_card_has_one_button_for_one_of_a_kind_and_says_so(self) -> None:
+        from dmbot.ui import name_card
+
+        sword = await ui.save_name(self.memory, self.campaign, "Heartseeker", "item", [], [])
+        self.fresh()
+        it = self.it()
+        await name_card.show_card(it, self.campaign.id, sword.id)
+        text, _kw = it.response.sent[0]
+        view = _kw["view"]
+        self.assertIn(name_card.ONLY_ONE_GUESS, text)  # a proper name: taken as one of a kind
+        self.assertEqual(
+            [getattr(c, "label", "") for c in view.children if c.row == 3],
+            [name_card.MORE_THAN_ONE_BUTTON],
+        )
+        bow = await ui.save_name(self.memory, self.campaign, "a longbow", "item", [], [])
+        self.fresh()
+        it = self.it()
+        await name_card.show_card(it, self.campaign.id, bow.id)
+        text, _kw = it.response.sent[0]
+        self.assertNotIn("only one", text.lower())
+        (button,) = [c for c in _kw["view"].children if c.row == 3]
+        self.assertEqual(button.label, name_card.ONLY_ONE_BUTTON)
+        it = self.it()
+        await button.callback(it)  # the DM says there is only one
+        text, view = it.response.edited[0]
+        self.assertIn(name_card.ONLY_ONE, text)  # now the DM's word, not a guess
+        self.assertTrue((await self.memory.entity(GUILD, self.campaign.id, bow.id)).is_unique)  # type: ignore[union-attr]
+        (back,) = [c for c in view.children if c.row == 3]
+        self.assertEqual(back.label, name_card.MORE_THAN_ONE_BUTTON)
+        it = self.it()
+        await back.callback(it)  # and says it again the other way
+        entity = await self.memory.entity(GUILD, self.campaign.id, bow.id)
+        assert entity is not None
+        self.assertEqual(entity.unique_item, False)
+
+    async def test_a_kind_a_campaign_added_under_item_gets_the_button_too(self) -> None:
+        from dmbot.memory.ontology import TypeTerm
+        from dmbot.ui import name_card
+
+        await self.memory.add_type(
+            GUILD,
+            self.campaign.id,
+            TypeTerm("potion", "item", "potion", "A drink.", core=False),
+            examples=["healing potion"],
+            reason="r",
+            source="entitybot",
+        )
+        potion = (
+            await self.memory.add_entity(
+                GUILD,
+                self.campaign.id,
+                type="potion",
+                name="Elixir of Dawn",
+                source="dm",
+                status=CONFIRMED,
+            )
+        ).value
+        self.fresh()
+        it = self.it()
+        await name_card.show_card(it, self.campaign.id, potion.id)
+        text, kw = it.response.sent[0]
+        self.assertIn(name_card.ONLY_ONE_GUESS, text)
+        self.assertEqual([c.label for c in kw["view"].children if c.row == 3],
+                         [name_card.MORE_THAN_ONE_BUTTON])  # fmt: skip
+
+    async def test_only_the_dm_can_press_it(self) -> None:
+        from dmbot.ui import name_card
+
+        bow = await ui.save_name(self.memory, self.campaign, "a longbow", "item", [], [])
+        for user in (MANAGER, STRANGER, PLAYER):
+            it = self.it(user)
+            await name_card.NameCard(self.campaign.id, bow.id, item=True)._one_of_a_kind(it)
+            self.assertRegex(it.response.sent[0][0], r"Only (the|this campaign's) DM")
+        entity = await self.memory.entity(GUILD, self.campaign.id, bow.id)
+        assert entity is not None
+        self.assertIsNone(entity.unique_item)
+
+    async def test_connecting_a_place_inside_itself_says_so_in_plain_words(self) -> None:
+        from dmbot.ui import name_card
+
+        inn = await ui.save_name(self.memory, self.campaign, "Rusty Anchor", "place", [], [])
+        town = await ui.save_name(self.memory, self.campaign, "Port Dunmere", "place", [], [])
+        self.fresh()
+        await name_card.connect(self.it(), self.campaign.id, inn.id, "located_in", town.id)
+        it = self.it()
+        await name_card.connect(it, self.campaign.id, town.id, "located_in", inn.id)
+        text, _view = it.response.edited[0]
+        self.assertIn("That would put a place inside itself", text)
+        self.assertNotIn("odd pair", text)
+
+    async def test_only_an_item_card_has_that_button(self) -> None:
+        from dmbot.ui import name_card
+
+        card = name_card.NameCard(self.campaign.id, self.bell.id, others=True, longer=True)
+        self.assertFalse([c for c in card.children if c.row == 3])
+        self.assertTrue(
+            all(
+                len(getattr(c, "label", "")) <= 25
+                for c in name_card.NameCard(self.campaign.id, self.bell.id, item=True).children
+            )
+        )
+
     async def test_fix_spelling_changes_the_name_it_listens_for(self) -> None:
         from dmbot.ui import name_card
 
