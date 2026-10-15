@@ -16,7 +16,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from dmbot.memory import sheets
-from dmbot.memory.sheet_checks import class_line, vitals
+from dmbot.memory.sheet_checks import class_line, slot_line, vitals
 
 SHOWN = 25  # names listed in a section before "and N more"
 FIELD_MAX = 4000  # characters in one form box: Discord's own limit, so a long list fits
@@ -174,6 +174,7 @@ def _show_features(s: Mapping[str, Any]) -> str:
     rows = [
         f"Features: {_few(features)}" if features else "",
         f"Feats: {_few(feats)}" if feats else "",
+        f"Spell slots: {slots}" if (slots := slot_line(s)) else "",
     ]
     return "\n".join(r for r in rows if r) or "None yet."
 

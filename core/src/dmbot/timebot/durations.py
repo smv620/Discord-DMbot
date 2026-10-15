@@ -2,7 +2,8 @@
 
 The rules index gives a spell's duration as text ("1 minute", "Concentration, up to 1 hour",
 "Until dispelled", "Instantaneous"). The DM can also type one ("10 minutes", "8 hr"). A round
-is 6 seconds, rounded up to the clock's whole minute (so 1 to 10 rounds is a minute). Anything
+is 6 seconds, and seconds can be typed too ("60 seconds", "45 s"): both are rounded up to the
+clock's whole minute (so 1 to 10 rounds, or 1 to 60 seconds, is a minute). Anything
 that is not a length of time ("Instantaneous", "Until dispelled", "Special") is not timed: no
 timer is started for it.
 """
@@ -18,8 +19,10 @@ _NUMBERS = {
     "eight": 8, "nine": 9, "ten": 10, "twelve": 12,
 }  # fmt: skip
 _UNIT_MINUTES = {"minute": 1, "min": 1, "hour": 60, "hr": 60, "day": 1440}
+# "second" and "sec" before the bare "s", so "60 seconds" isn't read as "60 s" plus "econds".
 _LENGTH = re.compile(
-    r"(?:up to\s+)?(\d{1,4}|[a-z]+)\s*(round|minute|min|hour|hr|day)s?\b", re.IGNORECASE
+    r"(?:up to\s+)?(\d{1,4}|[a-z]+)\s*(round|minute|min|hour|hr|day|second|sec|s)s?\b",
+    re.IGNORECASE,
 )
 MAX_MINUTES = 60 * 24 * 365  # a year: more than any timer a table would run
 
@@ -41,15 +44,26 @@ def parse(text: str | None) -> Duration:
         return Duration(None)
     lowered = " ".join(text.split()).lower()
     concentration = "concentration" in lowered
-    match = _LENGTH.search(lowered)
-    if match is None:
+    # Scan every hit: a word that only looks like a length ("dismiss" read as "dismis" + "s")
+    # must not hide the real one after it. The bare "s" counts only after a digit.
+    for match in _LENGTH.finditer(lowered):
+        number, unit = match.group(1), match.group(2)
+        if unit == "s" and not number.isdigit():
+            continue
+        count = int(number) if number.isdigit() else _NUMBERS.get(number)
+        if count is None:
+            continue
+        if count < 1:
+            return Duration(None, concentration)
+        if unit == "round":
+            minutes = math.ceil(count * 6 / 60)
+        elif unit in ("second", "sec", "s"):
+            minutes = math.ceil(count / 60)
+        else:
+            minutes = count * _UNIT_MINUTES[unit]
+        break
+    else:
         return Duration(None, concentration)
-    number = match.group(1)
-    count = int(number) if number.isdigit() else _NUMBERS.get(number)
-    if count is None or count < 1:
-        return Duration(None, concentration)
-    unit = match.group(2)
-    minutes = math.ceil(count * 6 / 60) if unit == "round" else count * _UNIT_MINUTES[unit]
     if minutes > MAX_MINUTES:
         return Duration(None, concentration)
     return Duration(minutes, concentration)

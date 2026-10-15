@@ -225,6 +225,24 @@ class TheOpenGate(unittest.TestCase):
             self.assertIn(label, terms)
 
 
+class LabelNames(unittest.TestCase):
+    def test_two_modules_with_the_same_constant_name_both_keep_their_words(self) -> None:
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            (root / "one.py").write_text(
+                'STOP_LABEL = "Stop recording me"\nButton(label=STOP_LABEL)\n', encoding="utf-8"
+            )
+            (root / "two.py").write_text(
+                'STOP_LABEL = "Stop sharing"\nButton(label=STOP_LABEL)\n', encoding="utf-8"
+            )
+            with patch.object(knowledge_sources, "PACKAGE", root):
+                found = knowledge_sources.labels()
+        self.assertIn("Stop recording me", found)
+        self.assertIn("Stop sharing", found)
+
+
 class GoldenQuestions(unittest.TestCase):
     """What the AI is given for the owner's kind of question: the section that answers it, how far
     it is built, and nothing about DMbot for a game question."""

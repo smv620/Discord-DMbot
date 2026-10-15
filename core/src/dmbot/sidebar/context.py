@@ -29,6 +29,7 @@ from dmbot.campaigns.models import FALLBACK_NONE
 from dmbot.memory.kinds import kind_phrase
 from dmbot.memory.lookup import CampaignLookup
 from dmbot.memory.models import CONFIRMED
+from dmbot.rules.followed import FollowedRule
 from dmbot.rules.house import HouseRule
 from dmbot.rules.index import Hit, Index, edition_tag, normalize
 from dmbot.sidebar import knowledge
@@ -202,7 +203,13 @@ def relevant_house_rules(
             named.append(rule)
         elif any(f" {w} " in text for w in words):
             shared.append(rule)
-    return [*named, *shared][:HOUSE_RULES_MAX]
+    # The campaign's own rules win: own first, then rules merged in from a set, then the
+    # followed set's. A stable sort keeps "names an entry" ahead inside each group.
+    ranked = sorted(
+        [*named, *shared],
+        key=lambda r: (isinstance(r, FollowedRule), bool(getattr(r, "from_set", None))),
+    )
+    return ranked[:HOUSE_RULES_MAX]
 
 
 def mentioned_names(question: str, lookup: CampaignLookup | None) -> list[str]:
@@ -293,8 +300,16 @@ def build(
         sections.append("HOUSE RULES (they come first):")
         for rule in rules:
             instead = f" (instead of: {rule.supersedes})" if rule.supersedes else ""
-            sections.append(f"- House rule {rule.number}: {rule.rule}{instead}"[:HOUSE_RULE_MAX])
-            sources.append(f"house rule {rule.number}")
+            if isinstance(rule, FollowedRule):  # a shared set the DM chose to follow
+                label = f"Shared rule {rule.number} ({rule.cite})"
+                sources.append(rule.cite)
+            elif rule.from_set:  # merged in from a set: it ranks below the campaign's own
+                label = f"House rule {rule.number} (from {rule.from_set}; the campaign's own win)"
+                sources.append(f"house rule {rule.number}")
+            else:
+                label = f"House rule {rule.number}"
+                sources.append(f"house rule {rule.number}")
+            sections.append(f"- {label}: {rule.rule}{instead}"[:HOUSE_RULE_MAX])
     if hits:
         sections.append("RULES ENTRIES (the free rules, word for word):")
         for hit in hits:
