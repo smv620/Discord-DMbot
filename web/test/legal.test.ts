@@ -284,3 +284,24 @@ describe("the facts #433 asks for", () => {
     expect(terms()).not.toContain("governing law and courts");
   });
 });
+
+describe("email from DMbot (#1283)", () => {
+  const privacy = (): string => text(doc("privacy").querySelector("main"));
+
+  it("says which email each kind goes to, what is sent, and how long the notes stay", () => {
+    const t = privacy();
+    expect(t).toContain("A move code goes only to the email you paid with");
+    expect(t).toContain("two Try It emails");
+    expect(t).toContain("deleted after 90 days");
+    expect(t).toContain("We do not keep the words of the email or the address it went to");
+    expect(t).toContain("Sign-in links and move codes have no such link, because you asked for them");
+  });
+
+  it("no longer promises emails about the account and plan that nothing sends", () => {
+    expect(privacy()).not.toContain("tell you about your account and plan");
+  });
+
+  it("puts no postal address on the page", () => {
+    expect(privacy()).not.toMatch(/\b\d{2,5} [A-Z][a-z]+ (Street|St\.?|Road|Rd\.?|Avenue|Ave\.?|Lane|Drive)\b/);
+  });
+});
