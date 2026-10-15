@@ -2253,3 +2253,18 @@ Overall ...................................... PASS (Deepgram baseline: 33/33, 1
   changed nothing; 3 campaigns, 152 entries and 147 transcript lines unchanged. As before, the new tables and
   policies were checked for existence, not through a request. #1247 (the seconds fix for #1194) is in development
   and goes out with this deploy.
+
+==============================================================================
+2026-10-15  dev1  DEPLOY: the big deploy (#1180) is live as ee256c7 (migrations 0051-0062)
+  Owner confirmed Message Content Intent was switched on and said "go ahead" (2026-10-15 ~01:55 UTC). active_sessions
+  was 0. Backup first: ~/db-backups/dmbot-before-ee256c7-20261015T015810Z.sql (chmod 600). Then, as separate steps,
+  `GIT_COMMIT=ee256c7... docker compose build core web-api` and `up -d --no-deps core`, then `up -d --no-deps web-api`.
+  ears and cloudflared untouched (no change to ears/).
+  Result: core logged "Database updated: 0051_dndbeyond_invite ... 0062_set_updates", then "Connected to 1 server(s)" and
+  "ears connected" (no close code 4014, so the intent is on). web-api started and went healthy after core had migrated.
+  0 ERROR or traceback lines in core and web-api. schema_migrations: 62 rows, last 0062_set_updates.
+  ontology_predicate_versions holds 11 rows: core wrote the shipped definitions at its first start, as expected.
+  The image carries GIT_COMMIT and DMbot's own documents are mounted (PLAN.md, README.md, help.ts).
+  Not yet checked live (needs people at Discord): typed chat, FightBot, table questions, rule sets, the website's
+  Stop recording me, the timer seconds fix. Consent is now version 6: everyone is asked again and is not recorded until
+  they press yes. Rollback if needed: git checkout fc09d9c, build, up; the migrated database runs the old code.
