@@ -2284,3 +2284,18 @@ Overall ...................................... PASS (Deepgram baseline: 33/33, 1
   rows); the new tables are empty and the policies were checked for existence, not through a request. Still to do for
   #1271: dry-run 0066 and the rest of the stack when they merge, and check that the runner applies a lower number
   (0066) added after higher ones when the database is already at 0068; deploy only when the whole stack is in.
+
+==============================================================================
+2026-10-15  dev1  Dry run on development cfa3c56c: accounts stack through 0069, and 0066 added after 0068 (#1271) - PASSED
+  #1237 (0066 sign-in by email) and #1274 (0069 the website's door to a move code) merged after the last dry run. Same
+  method: a fresh pg_dumpall of the live database (at 0062), restored into a throwaway postgres:16, migrated as the
+  dmbot role, deleted after. Two paths:
+  A, the deploy path: live copy straight to current development in one run: "Database updated: 0063_dmbot_id,
+  0064_mail, 0065_trial, 0066_email_sign_in, 0067_payment_email, 0068_moves, 0069_web_move_codes" in 0.40 s, applied in
+  number order; a second run applied nothing; 69 migrations.
+  B, out of order (Supervisor's check on #1271): the same copy first migrated with the code of 27cdad0 (0063 to 0065, 0067,
+  0068, no 0066), then with current development: the runner applied the lower-numbered 0066 and 0069 afterwards ("Database
+  updated: 0066_email_sign_in, 0069_web_move_codes"), nothing twice, 69 migrations in the end. So a deploy in between
+  would be safe.
+  Rows unchanged in both: 3 campaigns, 152 entries, 147 transcript lines; web_users is still 0, so the DMbot-ID backfill
+  has still never run on rows (its own test covers it). Still to merge for #1271: see the issue; dry-run each as it lands.

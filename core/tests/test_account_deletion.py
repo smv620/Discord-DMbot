@@ -79,3 +79,25 @@ class AccountDeletion(DatabaseTest):
 
     async def test_the_countdown_is_120_days_from_the_deletion(self) -> None:
         self.assertEqual(plans.load().keep_after_plan_stops_paying.days, 120)
+
+    async def test_deleting_removes_the_sent_email_records_and_keeps_the_unsubscribe_list(
+        self,
+    ) -> None:
+        async with self.db.unscoped() as conn:
+            await conn.execute(
+                "INSERT INTO sent_emails (user_id, kind, sent_at) VALUES"
+                " (%s, 'trial-end:1', 1), (%s, 'dm:trial-end:1', 1), (%s, 'trial-end:1', 1)",
+                (ALICE, ALICE, BOB),
+            )
+            await conn.execute(
+                "INSERT INTO email_unsubscribed (user_id, at) VALUES (%s, 1), (%s, 1)",
+                (ALICE, BOB),
+            )
+        await accounts.delete_person(self.db, ALICE, now=NOW)
+        async with self.db.unscoped() as conn:
+            cur = await conn.execute("SELECT user_id FROM sent_emails")
+            sent = {r["user_id"] for r in await cur.fetchall()}
+            cur = await conn.execute("SELECT user_id FROM email_unsubscribed")
+            unsubscribed = {r["user_id"] for r in await cur.fetchall()}
+        self.assertEqual(sent, {BOB})  # hers are gone, his are untouched
+        self.assertEqual(unsubscribed, {ALICE, BOB})  # the never-email-me list stays

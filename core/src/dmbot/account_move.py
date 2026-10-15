@@ -12,13 +12,15 @@ list). Two steps:
    is left as a "moved" marker and can never start Try It. The DMbot ID stays. Recording
    consent does not move: the new account says yes for itself.
 
-Limits: one move in 30 days (checked in the database), the codes are rate-limited here, and a
+Limits: one move in 30 days and the code asks (3 an hour) are counted in the database, by the
+door the website also uses, so the two paths share one limit and a restart forgets nothing; a
 wrong code counts against the person typing it. This module has no Discord in it.
 """
 
 from __future__ import annotations
 
 import hashlib
+import logging
 import secrets
 import time
 from collections import deque
@@ -30,6 +32,8 @@ from psycopg import errors
 
 from dmbot.db import Database
 
+log = logging.getLogger(__name__)
+
 CODE_LETTERS = "ABCDEFGHJKMNPQRSTUVWXYZ23456789"  # no 0/O, 1/I/L: easy to read out and type
 CODE_LENGTH = 8
 CODE_LIFETIME_S = 30 * 60
@@ -37,7 +41,7 @@ MOVE_GAP_S = 30 * 86400
 GUESSES = 5  # wrong codes a person may type...
 GUESS_WINDOW_S = 10 * 60  # ...in this long
 ASKS = 3  # codes an account may ask for...
-ASK_WINDOW_S = 60 * 60  # ...in this long
+ASK_WINDOW_S = 60 * 60  # ...in this long (the numbers are the database door's; a test holds them)
 
 NOT_PAID = "Only paid plans can move. Try It and free access can't."
 TOO_SOON = "You can move once every 30 days, and this account moved less than 30 days ago."
@@ -76,6 +80,15 @@ _REFUSALS = {
 }
 
 
+# What the database door says when it refuses an ask, in words for the person.
+_ASK_REFUSALS = {
+    "no_account": NO_ACCOUNT,
+    "not_paid": NOT_PAID,
+    "too_soon": TOO_SOON,
+    "slow_down": TOO_MANY_ASKS,
+}
+
+
 class MoveError(ValueError):
     """Something the person can fix or needs to know. The message is safe to show as-is."""
 
@@ -93,6 +106,23 @@ def hash_code(code: str) -> str:
     return hashlib.sha256(clean_code(code).encode()).hexdigest()
 
 
+class IssuedCode(str):
+    """A move code, with the time it was asked for (the door needs both to give the ask back)."""
+
+    asked_at: int
+
+    def __new__(cls, code: str, asked_at: int) -> IssuedCode:
+        self = super().__new__(cls, code)
+        self.asked_at = asked_at
+        return self
+
+
+def _bot_source(user_id: int) -> str:
+    """The door's "connection" for a code asked for in Discord: a hash of the account, so the
+    per-connection limit can't be used up by anyone else."""
+    return hashlib.sha256(f"discord:{user_id}".encode()).hexdigest()
+
+
 @dataclass(frozen=True, slots=True)
 class Preview:
     plan: str  # the plan's id, as plans.json names it
@@ -104,7 +134,6 @@ class AccountMoves:
         self._db = db
         self._clock = clock
         self._wrong: dict[int, deque[float]] = {}  # new account -> wrong guesses
-        self._asked: dict[int, deque[float]] = {}  # old account -> codes asked for
 
     def _now(self) -> int:
         return int(self._clock())
@@ -140,36 +169,39 @@ class AccountMoves:
                 return TOO_SOON
         return None
 
-    async def make_code(self, user_id: int) -> str:
+    async def make_code(self, user_id: int) -> IssuedCode:
         """A new move code for this account (the earlier one stops working). The caller sends
-        it to the payment email and shows it nowhere else."""
-        why = await self.can_move(user_id)
-        if why is not None:
-            raise MoveError(why)
+        it to the payment email and shows it nowhere else.
+
+        Made and counted by the database door the website uses (`dmbot_web_move_code`), so the
+        plan check, the 30-day rule and the limit (3 codes an hour for an account) are one rule in
+        one place, and a restart forgets nothing. The bot has no connection to count: its
+        "connection" is the account itself."""
         now = self._now()
-        asked = self._asked.setdefault(user_id, deque())
-        while asked and now - asked[0] > ASK_WINDOW_S:
-            asked.popleft()
-        if len(asked) >= ASKS:
-            raise MoveError(TOO_MANY_ASKS)
-        asked.append(now)
         code = new_code()
         async with self._db.unscoped() as conn:
-            await conn.execute(
-                "INSERT INTO move_codes (user_id, code_hash, created_at, expires_at)"
-                " VALUES (%s, %s, %s, %s)"
-                " ON CONFLICT (user_id) DO UPDATE SET code_hash = EXCLUDED.code_hash,"
-                " created_at = EXCLUDED.created_at, expires_at = EXCLUDED.expires_at,"
-                " used_at = NULL",
-                (user_id, hash_code(code), now, now + CODE_LIFETIME_S),
+            cur = await conn.execute(
+                "SELECT dmbot_web_move_code(%s, %s, %s, %s, %s) AS outcome",
+                (user_id, _bot_source(user_id), now, hash_code(code), now + CODE_LIFETIME_S),
             )
-        return code
+            row = await cur.fetchone()
+        outcome = str(row["outcome"]) if row else "no_account"
+        if outcome != "ok":
+            if outcome not in _ASK_REFUSALS:  # a door that learned a new answer: fail closed
+                log.warning("The move-code door gave an answer this code doesn't know")
+                raise MoveError(BUSY)
+            raise MoveError(_ASK_REFUSALS[outcome])
+        return IssuedCode(code, now)
 
-    async def cancel_code(self, user_id: int) -> None:
-        """Forget the account's code: the email didn't go, so no code should be waiting that
-        nobody has seen (and the earlier one, already replaced, doesn't come back)."""
+    async def cancel_code(self, user_id: int, code: IssuedCode) -> None:
+        """Forget this very code: the email didn't go, so no code should be waiting that nobody
+        has seen, and the ask is given back. Only this code goes (the door checks its hash): a
+        newer one asked for meanwhile, perhaps on the website and already mailed, stays."""
         async with self._db.unscoped() as conn:
-            await conn.execute("DELETE FROM move_codes WHERE user_id = %s", (user_id,))
+            await conn.execute(
+                "SELECT dmbot_web_cancel_move_code(%s, %s, %s)",
+                (user_id, hash_code(code), code.asked_at),
+            )
 
     async def find(self, new_user_id: int, code: str) -> int:
         """The old account a code is for. A wrong or old code counts toward a short limit for
