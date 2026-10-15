@@ -38,10 +38,13 @@ while IFS= read -r f; do
     # ears' tests read the protocol fixtures; core's read them too (test_protocol.py)
     protocol/*) core=true ears=true ;;
     ears/*) ears=true ;;
-    # Core reads most of docs/ (the plan and story memory feed the sidebar, the test scripts and
-    # logs feed devtools and tests, docs/ci/ holds a workflow its tests check) and CLAUDE.md. Only
-    # these three are words nobody reads.
+    # Core reads most of docs/ (the plan and story memory feed the sidebar, the test scripts feed
+    # devtools and tests, docs/ci/ holds a workflow its tests check) and CLAUDE.md. Only these are
+    # words nobody reads. The two testing logs are written by devtools (--log) but no test reads
+    # the real files (tests use temporary ones; checked with grep in #1355), so a log-only push
+    # skips core.
     docs/DEPLOY.md | docs/LIVE_TEST.md | docs/next-test-step.md | LICENSE) ;;
+    docs/testing-status.log | docs/testing-history.log) ;;
     docs/* | CLAUDE.md) core=true ;;
     *) everything ;; # workflows, scripts/, compose files, .env.example, README.md, anything new
   esac
