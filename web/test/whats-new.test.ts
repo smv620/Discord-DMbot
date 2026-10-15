@@ -42,19 +42,24 @@ describe("What's new", () => {
     expect(entries.length).toBeGreaterThanOrEqual(5);
     for (const [i, e] of entries.entries()) {
       expect(e.date, e.title).toMatch(/^\d{4}-\d{2}-\d{2}$/);
-      expect(Number.isNaN(Date.parse(e.date)), e.title).toBe(false);
+      // Round-trip, because "2026-02-31" parses (as 3 March) and would pass a plain parse.
+      expect(new Date(e.date).toISOString().slice(0, 10), e.title).toBe(e.date);
       if (i > 0) expect(e.date <= (entries[i - 1]?.date ?? ""), `${e.title} is newer than the one above it`).toBe(true);
     }
   });
 
-  it("writes the date in words that read the same everywhere", () => {
+  it("writes the date in words that read the same everywhere, and refuses a bad one", () => {
     expect(formatDate("2026-10-15")).toBe("15 October 2026");
     expect(formatDate("2026-01-03")).toBe("3 January 2026");
+    expect(() => formatDate("2026-13-01")).toThrow("Not a date");
+    expect(() => formatDate("x")).toThrow("Not a date");
   });
 
   it("keeps each title to six words and each entry to one or two sentences", () => {
     for (const e of entries) {
       expect(e.title.split(/\s+/).length, e.title).toBeLessThanOrEqual(6);
+      // A sentence ends at . ! or ? followed by a space or the end; keep abbreviations ("e.g.")
+      // and decimals out of the entries, or this counts them as extra sentences.
       const sentences = e.what.split(/[.!?](?:\s|$)/).filter((s) => s.trim() !== "");
       expect(sentences.length, e.title).toBeGreaterThanOrEqual(1);
       expect(sentences.length, e.title).toBeLessThanOrEqual(2);
@@ -100,7 +105,10 @@ describe("What's new", () => {
   it("is linked from the footer and from the top of the Help page", () => {
     const footer = [...home.querySelectorAll("footer a")].map((a) => a.getAttribute("href"));
     expect(footer).toContain("/whats-new");
-    const top = help.querySelector("main > p.muted a")?.getAttribute("href");
-    expect(top).toBe("/whats-new");
+    const link = help.querySelector('main a[href="/whats-new"]');
+    expect(link).not.toBeNull();
+    // At the top: before the first section heading.
+    const firstHeading = help.querySelector("main h2");
+    expect(link && firstHeading && link.compareDocumentPosition(firstHeading) & 4).toBeTruthy(); // 4: the heading follows
   });
 });
