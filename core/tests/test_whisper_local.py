@@ -158,10 +158,20 @@ class LocalWhisperTests(unittest.IsolatedAsyncioTestCase):
         t._model = FakeModel([FakeSegment("  "), FakeSegment(" ")])
         self.assertIsNone(await t.transcribe(Utterance(1, 2, 0, 0, bytes(32000)), []))
 
-    def test_a_number_that_is_not_finite_is_not_confidence(self) -> None:
+    def test_a_number_that_is_not_finite_is_no_confidence(self) -> None:
         nan = float("nan")
-        self.assertEqual(confidence_of_segments([SegmentScore("a b", 0.0, nan)]), 0.0)
-        self.assertEqual(confidence_of_segments([SegmentScore("a b", 0.0, -math.inf)]), 0.0)
+        self.assertIsNone(confidence_of_segments([SegmentScore("a b", 0.0, nan)]))
+        self.assertIsNone(confidence_of_segments([SegmentScore("a b", 0.0, -math.inf)]))
+        self.assertIsNone(
+            confidence_of_segments(
+                [SegmentScore("a b", 0.0, nan), SegmentScore("c d", 0.0, -math.inf)]
+            )
+        )
+
+    def test_a_bad_segment_is_left_out_not_counted_as_zero(self) -> None:
+        # One bad number on a clean line must not look like a garbled one.
+        mixed = [SegmentScore("a b c d", 0.0, -0.2), SegmentScore("e f g h i j", 0.0, float("nan"))]
+        self.assertAlmostEqual(confidence_of_segments(mixed) or 0, math.exp(-0.2))
 
     def test_the_text_survives_copy_and_pickle_with_its_engine(self) -> None:
         import copy

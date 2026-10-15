@@ -91,13 +91,13 @@ def confidence_of_segments(segments: list[SegmentScore]) -> float | None:
     averaged over the words of each segment. NOT on Deepgram's scale: clean speech sits near
     0.7 to 0.8 here, so the audio check has its own limits for Whisper (#733). Only the kept
     segments count: the ones dropped as likely inventions don't pull it down, which is the
-    point of dropping them. A number that isn't finite counts as no confidence at all."""
+    point of dropping them. A segment whose number isn't finite is left out of the
+    average (one bad number must not decide a clean line); if none is finite there is
+    no confidence, and the check asks the AI instead."""
     weighted = [
-        (
-            len(s.text.split()),
-            math.exp(min(0.0, s.avg_logprob)) if math.isfinite(s.avg_logprob) else 0.0,
-        )
+        (len(s.text.split()), math.exp(min(0.0, s.avg_logprob)))
         for s in segments
+        if math.isfinite(s.avg_logprob)
     ]
     words = sum(n for n, _ in weighted)
     if not words:
