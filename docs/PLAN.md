@@ -634,14 +634,15 @@ never does.
   rules again as the next version, which followers take at their next session.)*
   - **A follower can't change it.** When a following campaign's DM changes a shared rule, or a ruling is made
     at their table, it goes into **their own** house rules, which win over the set. The publisher never sees
-    it and is never affected. **"Suggest it to <set>"** sends it to the publisher's DMs as a suggestion
-    ([Accept] [No thanks]); nothing changes until they accept.
+    it and is never affected. **💡 Suggest** sends it to the publisher's DMs as a suggestion
+    ([See] [Add to set] [No thanks]); nothing changes until they press Add to set.
   - **The document of record can be edited outside DMbot** by anyone with edit access. Its changes reach the
     publisher's **own** house rules through the usual document sync (the DM confirms them), and reach
     followers only when the publisher presses **🔄 Publish my changes** (Supervisor, 2026-10-14, #1259; no
     separate pending-changes screen and no write-back to followers' files).
   - **Suggestions** (#1259): the publisher's note says "A table that uses <set> house rules suggests: …" and
-    never names the other campaign, server or DM; Accept makes the next version.
+    never names the other campaign, server or DM; Add to set makes the next version. *(Supervisor,
+    2026-10-15, #1315: wording matched to the buttons as built.)*
 - **Updates reach followers at their next session start, never mid-game.** DMbot takes the update then
   (Follow, the default) and posts a note on the DM screen: "The Frostmaiden house rules were updated to v4:
   2 rules. [See changes] [Pick changes] [Undo]".
@@ -3106,6 +3107,14 @@ within 30 days, no claim about how the database is encrypted, and the owner's ow
 responsibility" wording; no `{{CHECK}}` markers remain. That closes #498 item 4. The Discord app
 stays private until the rest of #498 is done and the owner says go. Settings stay in Discord for now;
 the site is account, plan, campaigns, invite and marketing.
+**What's new page** (Supervisor, 2026-10-15, #1321/#1322). The site has a short What's new page
+(`/whats-new`, content in `web/src/content/whats-new.ts`), newest first, in plain words. An entry
+goes there only when its feature is **live: deployed on the server and not known to fail** for an
+ordinary user. Untried is not broken; a failed live check takes the entry off. An entry that is
+deployed but blocked (for example the account move, whose code goes to the payment email while
+payments are off, #1096) waits in the file's `held` list with its reason. A PR that ships a
+feature people can see adds its entry, or a held one, in the same PR.
+
 **Page changes: magic dust, and runes on the banner** (owner, 2026-10-15; Supervisor's details).
 Moving between the site's pages gets a short magic-dust dissolve: the old page breaks up into
 sparkling dust while the new one fades in, about 350 ms, built with the browser's own page

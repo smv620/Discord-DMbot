@@ -16,6 +16,7 @@
     "test": "vitest run",
     "check:links": "node scripts/check-links.mjs",
     "check:csp": "node scripts/check-csp.mjs",
+    "check:transitions": "node scripts/check-transitions.mjs",
     "check:a11y": "node scripts/check-a11y.mjs"
   },
   "dependencies": {
