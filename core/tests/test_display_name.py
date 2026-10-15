@@ -75,12 +75,8 @@ class Bot(unittest.IsolatedAsyncioTestCase):
             _names_noted={},
             _name_tasks=set(),
         )
-        fake._keep_display_name = lambda db, user, name: DMBot._keep_display_name(
-            fake,
-            db,
-            user,
-            name,  # type: ignore[arg-type]
-        )
+        bound: Any = DMBot._keep_display_name
+        fake._keep_display_name = lambda db, user, name: bound(fake, db, user, name)
         return fake
 
     async def settle(self, fake: Any) -> None:
