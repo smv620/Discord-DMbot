@@ -27,7 +27,10 @@ log = logging.getLogger(__name__)
 NO_PINGS = discord.AllowedMentions.none()
 _ID = r"(?P<campaign>[0-9a-f]{32})"
 FAILED = "Sorry, that didn't save. Please try again."
-NEED_LENGTH = "Give a length, like 10 minutes or 1 hour. DMbot has no length for that name."
+NEED_LENGTH = "No length found for {name}. Type one, like 10 minutes or 1 hour. No timer started."
+UNREADABLE = (
+    "DMbot couldn't read '{typed}'. Try a length like 10 minutes or 1 hour. No timer started."
+)
 NOT_TIMED = (
     "{name} isn't timed ({how}), so there is nothing to start. Give a length to time it anyway."
 )
@@ -92,14 +95,18 @@ async def start_timer(
     known = spell_duration(campaign, name)
     chosen = typed if typed is not None else known
     if chosen is None or not chosen.timed:
-        if length.strip():
-            await _reply(interaction, NEED_LENGTH)
+        if length.strip():  # the DM typed something on purpose: never swapped for the spell's own
+            shown = discord.utils.escape_markdown(" ".join(length.split())[:30])
+            await _reply(interaction, UNREADABLE.format(typed=shown))
         elif known is not None:
             await _reply(
                 interaction, NOT_TIMED.format(name=name.strip(), how="it has no set length")
             )
         else:
-            await _reply(interaction, NEED_LENGTH)
+            await _reply(
+                interaction,
+                NEED_LENGTH.format(name=discord.utils.escape_markdown(name.strip()[:40])),
+            )
         return
     assert chosen.minutes is not None
     concentration = chosen.concentration or bool(known and known.concentration and typed is None)

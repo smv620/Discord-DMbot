@@ -375,9 +375,17 @@ class ForgottenFights(Clocks):
             assert stored is not None
             self.assertEqual(stored.clock.combat_round is None, ends, action)
             self.assertEqual(any("Combat is over" in line for line in result.lines), ends, action)
+            if ends:  # started (round 1), then Next round: two rounds were played
+                self.assertIn("🏁 Combat is over after 2 rounds.", result.lines, action)
             if ends:  # the fight's last round counted before the rest
                 self.assertGreaterEqual(stored.clock.minute, NOON4 + 1)
             await self.clocks.change(GUILD_A, self.a.id, DM, lambda c: None)
+
+    async def test_a_rest_that_ends_a_one_round_fight_says_round_not_rounds(self) -> None:
+        await self.press("set", set_to=NOON4)
+        await self.press("cstart")
+        result = await self.press("long")
+        self.assertIn("🏁 Combat is over after 1 round.", result.lines)
 
     async def test_a_rest_with_no_fight_says_nothing_about_one(self) -> None:
         await self.press("set", set_to=NOON4)
