@@ -1,0 +1,92 @@
+"""The one-off invoice-prefix helper (#1228): from subscriptions to customers."""
+
+from __future__ import annotations
+
+import unittest
+from typing import Any
+
+from dmbot.web import stripe_prefix
+from dmbot.web.stripe import StripeConfig, StripeProvider
+
+
+class Fake:
+    def __init__(self, pages: list[dict[str, Any]]) -> None:
+        self.pages = pages
+        self.calls: list[tuple[str, str, Any]] = []
+
+    async def __call__(
+        self, method: str, path: str, form: Any, idempotency_key: str | None = None
+    ) -> tuple[int, Any]:
+        self.calls.append((method, path, form))
+        if method == "GET":
+            return 200, self.pages.pop(0)
+        return 200, {}
+
+
+def sub(sub_id: str, customer: str, user: str | None) -> dict[str, Any]:
+    return {
+        "id": sub_id,
+        "customer": customer,
+        "metadata": {} if user is None else {"user_id": user},
+    }
+
+
+class Backfill(unittest.IsolatedAsyncioTestCase):
+    def provider(self, http: Fake) -> StripeProvider:
+        return StripeProvider(
+            StripeConfig(secret_key="sk_test_x", prices={}, extra_hours_price=""),
+            b"s",
+            transport=http,
+        )
+
+    async def test_each_customer_gets_the_stored_dmbot_id_once(self) -> None:
+        http = Fake(
+            [
+                {
+                    "data": [sub("sub_1", "cus_a", "42"), sub("sub_2", "cus_a", "42")],
+                    "has_more": True,
+                },
+                {
+                    "data": [sub("sub_3", "cus_b", "36"), sub("sub_4", "cus_c", None)],
+                    "has_more": False,
+                },
+            ]
+        )
+
+        async def lookup(user_id: int) -> str | None:
+            return {42: "MOVED42", 36: "STORED36"}.get(user_id)  # the stored ID, not recomputed
+
+        counts = await stripe_prefix.set_prefixes(self.provider(http), http, lookup)
+        self.assertEqual((counts.set, counts.skipped, counts.failed), (2, 1, 0))
+        posts = [(p, f["invoice_prefix"]) for m, p, f in http.calls if m == "POST"]
+        self.assertEqual(
+            posts, [("/v1/customers/cus_a", "MOVED42"), ("/v1/customers/cus_b", "STORED36")]
+        )
+        self.assertIn("starting_after=sub_2", http.calls[2][1])
+
+    async def test_a_customer_stripe_refuses_is_counted_and_the_rest_go_on(self) -> None:
+        http = Fake([{"data": [sub("sub_1", "cus_a", "42"), sub("sub_2", "cus_b", "43")]}])
+        original = http.__call__
+
+        async def refuse_first(
+            method: str, path: str, form: Any, idempotency_key: str | None = None
+        ) -> tuple[int, Any]:
+            status, answer = await original(method, path, form, idempotency_key)
+            if method == "POST" and path.endswith("cus_a"):
+                return 400, None
+            return status, answer
+
+        async def lookup(user_id: int) -> str | None:
+            return f"ID{user_id}"
+
+        provider = StripeProvider(
+            StripeConfig(secret_key="sk_test_x", prices={}, extra_hours_price=""),
+            b"s",
+            transport=refuse_first,
+        )
+        counts = await stripe_prefix.set_prefixes(provider, refuse_first, lookup)
+        self.assertEqual((counts.set, counts.skipped, counts.failed), (1, 0, 1))
+
+
+if __name__ == "__main__":
+    unittest.main()

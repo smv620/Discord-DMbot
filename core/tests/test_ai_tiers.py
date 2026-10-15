@@ -225,7 +225,7 @@ class Watch:
         self.funds = 0
         self.used: list[tuple[int, int]] = []
 
-    def record(self, input_tokens: int, output_tokens: int) -> None:
+    def record(self, input_tokens: int, output_tokens: int, feature: str | None = None) -> None:
         self.used.append((input_tokens, output_tokens))
 
     def out_of_funds(self) -> None:

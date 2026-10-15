@@ -39,7 +39,6 @@ class Plan:
     trial_days: int | None
     backups: bool
     keep_after_last_session: Period
-    first_month_after_trial_cents: int | None
 
 
 @dataclass(frozen=True)
@@ -76,7 +75,6 @@ def load() -> Plans:
             trial_days=p["trialDays"],
             backups=p["backups"],
             keep_after_last_session=_period(p["keepAfterLastSession"]),
-            first_month_after_trial_cents=p["firstMonthAfterTrialCents"],
         )
     return Plans(
         order=tuple(raw["order"]),

@@ -1,0 +1,114 @@
+## Scene 21: The bow
+1. dm statement: Hanging over the fireplace is Heartseeker, the elven bow that never misses.
+   - claim: Heartseeker | located in | fireplace
+2. player statement: Bram said Heartseeker belongs to the Ember Clan.
+   - claim: Ember Clan | owns | Heartseeker
+3. dm statement: Bram takes it down and slings it over his shoulder.
+   - claim: Bram | carries | Heartseeker
+4. player question: Is he allowed to?
+5. dm statement: He is the clan's champion, so yes.
+   - claim: Bram | champion of | Ember Clan
+6. player plan: I ask Bram to lend me the bow for the duel.
+   - claim: party | ask | Bram
+
+## Scene 22: Passing it on
+1. dm statement: After the duel Bram hands Heartseeker to Hesper. "It chooses its holder," he says.
+   - claim: Hesper | carries | Heartseeker
+2. player statement: So Hesper has it now, not Bram.
+   - claim: Hesper | carries | Heartseeker
+3. dm statement: Hesper tests the string and smiles.
+4. player question: Does that mean the clan gave it away?
+5. dm statement: Only lent, not given. The Ember Clan still owns it.
+   - claim: Ember Clan | owns | Heartseeker
+6. dm ooc: Update your inventories.
+
+## Scene 23: Ordinary things
+1. dm statement: Each of you gets a longbow from the armoury.
+   - also: party | carries | longbow
+2. player statement: I take a longbow and Hesper takes a longbow too.
+   - also: party | carries | longbow
+   - also: Hesper | carries | longbow
+3. player question: Do we get arrows?
+4. dm statement: Twenty arrows each.
+5. dm ooc: Mark twenty arrows on your sheet.
+
+## Scene 24: The stolen amulet
+1. dm statement: The Amulet of Lanterns, a silver pendant, sits in a glass case in the chapel.
+   - claim: Amulet of Lanterns | located in | chapel
+2. dm statement: The next morning the case is empty and the priest is frantic.
+   - claim: Amulet of Lanterns | missing from | chapel
+3. player statement: I bet Hesper took it, she was alone in the chapel last night.
+   - claim: Hesper | stole | Amulet of Lanterns
+4. dm statement: Hesper protests. "I did not."
+5. player plan: We search her pack.
+   - claim: party | search | Hesper
+6. dm ooc: Roll Investigation.
+
+## Scene 25: The sword in the stone
+1. dm statement: Deep in the ruin, a sword called Dawnbreaker stands in a block of black stone.
+   - claim: Dawnbreaker | located in | ruin
+2. player statement: Dawnbreaker was the sword of the first king of Ashenford.
+   - claim: Dawnbreaker | owned by | first king of Ashenford
+3. player plan: I try to pull it out of the stone.
+   - claim: party | pull | Dawnbreaker
+4. dm statement: It comes free with a ring like a bell.
+5. dm statement: Ilyra now carries Dawnbreaker.
+   - claim: Ilyra | carries | Dawnbreaker
+6. player question: Does that make me the king's heir?
+7. dm statement: That is for the council to say.
+
+## Scene 26: A broken blade
+1. dm statement: The duel ends when Maren's sabre snaps in two against the iron door.
+   - state: Maren's sabre | destroyed
+2. player statement: Her sabre is broken, she cannot fight now.
+   - state: Maren's sabre | destroyed
+3. dm statement: Maren draws a dagger instead.
+   - claim: Maren Voss | carries | dagger
+4. player question: Can we mend the sabre later?
+5. dm ooc: A smith could, with a week and fifty gold.
+
+## Scene 27: A lost ring
+1. dm statement: Tam Rusk loses his signet ring in the river and it is swept away.
+   - state: signet ring | lost
+2. player statement: Tam's signet ring is lost for good.
+   - state: signet ring | lost
+3. player question: Did he say who gave it to him?
+4. dm statement: His mother, Sela Rusk, gave it to him.
+   - claim: Sela Rusk | gave | signet ring
+   - claim: Sela Rusk | kin of | Tam Rusk
+5. player plan: I check the shallows downstream.
+   - claim: party | search | river
+
+## Scene 28: Two keys
+1. dm statement: The vault has two keys. The bronze key hangs on the council chair, and the iron key is with Aldwin.
+   - claim: bronze key | located in | council chair
+   - claim: Aldwin | carries | iron key
+2. player statement: So we need both keys to open the vault.
+   - claim: vault | needs | bronze key
+   - claim: vault | needs | iron key
+3. dm statement: That is right.
+4. player plan: We ask Aldwin for the iron key.
+   - claim: party | ask | Aldwin
+5. dm ooc: Roll Persuasion again.
+
+## Scene 29: Heartseeker again
+1. dm statement: Snot the goblin has Heartseeker slung on his back.
+   - claim: Snot | carries | Heartseeker
+2. player question: Wait, isn't Hesper carrying that?
+3. dm statement: She was. Snot lifted it from her while she slept.
+   - claim: Snot | stole | Heartseeker
+4. player statement: Then Hesper does not have Heartseeker any more.
+   - claim: Hesper | carries not | Heartseeker
+5. dm statement: Correct.
+6. player plan: We catch Snot and take it back.
+   - claim: party | catch | Snot
+   - claim: party | take back | Heartseeker
+
+## Scene 30: A gift
+1. dm statement: The headwoman gives each of you a loaf of bread and a wool cloak.
+   - also: party | carries | wool cloak
+2. player statement: Orla Finch was kind to us.
+   - claim: Orla Finch | kind to | party
+3. player question: Is the cloak magical?
+4. dm statement: No, just warm.
+5. dm ooc: Bread keeps for three days.

@@ -82,7 +82,7 @@ async def _paid_before(conn: Conn, user_id: int) -> bool:
 _PAID_KINDS = ("subscription_started", "subscription_renewed", "extra_hours_bought")
 
 # SQL for "a payment on record": a row with no kind was recorded before kinds were kept and
-# counts as paid. Shared with /me and the first-month price, so a recorded failure is never
+# counts as paid. Shared with /me and the Try It jobs, so a recorded failure is never
 # mistaken for a payment (#922).
 PAID_EVENT_SQL = "(kind IS NULL OR kind = ANY(%(paid)s))"
 PAID_KINDS = list(_PAID_KINDS)

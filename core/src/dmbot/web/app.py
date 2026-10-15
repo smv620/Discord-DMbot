@@ -44,7 +44,7 @@ from dmbot.web.accounts import (
     active_subscription,
     customer_id,
     delete_person,
-    first_paid_month_after_trial,
+    dmbot_id,
     link_install,
     record_install,
     user_of_dmbot_id,
@@ -758,21 +758,17 @@ def create_app(
             raise HTTPException(status_code=409, detail="has_free_access")
         if current is not None and current.plan != "try-it" and current.status != "lapsed":
             # A paid plan is working: change it on the billing page, never a second
-            # subscription (or a second first-month offer).
+            # subscription.
             raise HTTPException(status_code=409, detail="has_paid_plan")
-        first_month: int | None = None
-        if plan.first_month_after_trial_cents is not None and await first_paid_month_after_trial(
-            db, session.user_id
-        ):
-            first_month = plan.first_month_after_trial_cents
         email = await account_email(db, session.user_id)
         try:
             url = await provider.checkout_url(
                 user_id=session.user_id,
                 email=email,
                 plan=plan,
-                first_month_cents=first_month,
                 return_url=account_page,
+                dmbot_id=await dmbot_id(db, session.user_id),
+                customer_id=await customer_id(db, session.user_id),
             )
         except PaymentError as exc:
             log.warning("Checkout failed: %s", exc)
@@ -796,7 +792,11 @@ def create_app(
         email = await account_email(db, session.user_id)
         try:
             url = await provider.extra_hours_checkout_url(
-                user_id=session.user_id, email=email, return_url=account_page
+                user_id=session.user_id,
+                email=email,
+                return_url=account_page,
+                dmbot_id=await dmbot_id(db, session.user_id),
+                customer_id=await customer_id(db, session.user_id),
             )
         except PaymentError as exc:
             log.warning("Extra hours checkout failed: %s", exc)

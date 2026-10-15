@@ -39,13 +39,14 @@ def allowed(rule: Rule, access: Access | None) -> bool:
     return rules[rule](access)
 
 
-Action = Literal["ai", "copy", "transcript", "restore"]
+Action = Literal["ai", "copy", "transcript", "restore", "share"]
 # Each thing a person can press belongs to exactly one rule, so the pair can't drift apart.
 RULE_OF: dict[Action, Rule] = {
     "ai": "ai",
     "copy": "backup",
     "transcript": "backup",
     "restore": "backup",
+    "share": "backup",  # sharing house rules needs a paid plan (#1190)
 }
 
 # What a person pressed, in the words the refusal uses, so it names what they tried and not a
@@ -56,12 +57,14 @@ _UNAVAILABLE: dict[Action, str] = {
     "copy": "Copies of this campaign aren't available",
     "transcript": "Transcripts aren't available for this campaign",
     "restore": "Loading a copy isn't available",
+    "share": "Sharing house rules isn't available for this campaign",
 }
 _CANT: dict[Action, str] = {
     "ai": "find names with its AI",
     "copy": "make copies",
     "transcript": "send transcripts",
     "restore": "load copies",
+    "share": "share house rules",
 }
 _ASK_OWNER: dict[Action, str] = {
     action: f"{text}. Ask the campaign's owner to take a look."
@@ -104,6 +107,8 @@ def refusal(
     if access is None or not access.works:
         return f"Your plan has ended, so DMbot can't {_CANT[action]}. Pick one {where}"
     # A plan that works but has no copies: Try It, the only one (plans.json).
+    if action == "share":
+        return f"Sharing house rules needs a paid plan. Pick one {where}"
     if action == "restore":
         return f"Nothing was loaded. Loading a copy needs a paid plan. Pick one {where}"
     return f"Try It campaigns can't make copies or transcripts. A paid plan can. See plans {where}"

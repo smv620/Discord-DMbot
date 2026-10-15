@@ -1,0 +1,126 @@
+## Scene 1: Arrival at Veldmoor
+1. dm statement: You ride into Veldmoor at dusk. A grey stone chapel stands by the harbour, its bell ringing.
+   - claim: chapel | located in | Veldmoor
+2. player statement: I think Veldmoor is the town the map called the City of Lanterns.
+   - claim: Veldmoor | is | City of Lanterns
+3. player plan: I want to go into the chapel and ask about the missing sailors.
+   - claim: party | visit | chapel
+   - also: sailors | are | missing
+4. dm statement: The priest, Odric Vale, meets you at the door and offers you tea.
+   - claim: Odric Vale | priest of | chapel
+5. player question: Can I roll Insight on him?
+6. dm ooc: Sure, roll it. Twelve is fine, he seems honest but tired.
+
+## Scene 2: The Copper Kettle
+1. dm statement: The Copper Kettle is a cramped inn on the second street of Veldmoor.
+   - claim: Copper Kettle | located in | Veldmoor
+2. dm statement: Its owner, Marguerite Hale, wipes the bar and says the cellar floods every spring.
+   - claim: Marguerite Hale | owns | Copper Kettle
+   - also: cellar | floods | spring
+3. player statement: Marguerite is Bram's aunt, right? I remember Bram saying that.
+   - claim: Marguerite Hale | kin of | Bram
+4. dm statement: Right. Bram nods from the corner table, he is her nephew.
+   - claim: Bram | nephew of | Marguerite Hale
+5. player plan: We take two rooms upstairs and rest.
+   - claim: party | rest at | Copper Kettle
+6. dm ooc: That is a long rest, mark it on your sheets.
+
+## Scene 3: The Guild of Ropes
+1. dm statement: The Guild of Ropes runs every dock in Greywater.
+   - claim: Guild of Ropes | controls | docks
+   - also: docks | located in | Greywater
+2. dm statement: Its guildmaster is a woman named Sennet Crow, small and sharp-eyed.
+   - claim: Sennet Crow | guildmaster of | Guild of Ropes
+3. player statement: Hesper told me last night that she is a member of the Guild of Ropes too.
+   - claim: Hesper | member of | Guild of Ropes
+4. dm statement: Hesper looks away and says nothing.
+5. player question: Is that a yes?
+6. dm statement: Sennet says, "Everyone on these docks answers to me."
+   - claim: Sennet Crow | leads | docks
+7. player plan: Then we keep our heads down and ask for work.
+   - claim: party | ask for | work
+
+## Scene 4: The Marrow Road
+1. dm statement: The Marrow Road runs from Greywater up to the Ashen Pass.
+   - claim: Marrow Road | connects | Greywater
+   - claim: Marrow Road | connects | Ashen Pass
+2. dm statement: Halfway along it you reach a toll house run by two brothers.
+   - claim: toll house | located on | Marrow Road
+3. player statement: The brothers are Tam and Dov Rusk, they work for the Guild.
+   - claim: Tam Rusk | serves | Guild of Ropes
+   - claim: Dov Rusk | serves | Guild of Ropes
+4. dm statement: Tam shrugs. "Toll is five silver a head."
+   - claim: toll | is | five silver
+5. player plan: We pay and go on.
+   - claim: party | pay | toll
+
+## Scene 5: Nesting
+1. dm statement: The Rusted Anchor is a tavern in the harbour ward.
+   - claim: Rusted Anchor | located in | harbour ward
+2. dm statement: The harbour ward is the oldest part of Port Dunmere.
+   - claim: harbour ward | located in | Port Dunmere
+3. dm statement: Port Dunmere lies on the coast of the Sunward Reach.
+   - claim: Port Dunmere | located in | Sunward Reach
+4. player question: So the Anchor is in the Reach, technically?
+5. dm statement: Technically yes, everything in Port Dunmere is in the Reach.
+6. player statement: Ilyra grew up in the harbour ward.
+   - claim: Ilyra | lives in | harbour ward
+
+## Scene 6: Two sisters
+1. dm statement: Ilyra Voss and Maren Voss are sisters. Ilyra is the elder.
+   - claim: Ilyra Voss | sister of | Maren Voss
+2. dm statement: Maren is a captain in the Dunmere watch.
+   - claim: Maren Voss | member of | Dunmere watch
+3. player statement: Ilyra hates the watch, they arrested her father.
+   - claim: Ilyra Voss | enemy of | Dunmere watch
+   - also: father | arrested by | Dunmere watch
+4. dm statement: Maren is torn between her duty and her sister.
+5. player plan: I will try to talk Maren round.
+   - claim: party | talk to | Maren Voss
+6. dm ooc: Make a Persuasion check.
+
+## Scene 7: The Thornwood
+1. dm statement: The Thornwood is a dense forest north of Tolbrook.
+   - claim: Thornwood | located in | north of Tolbrook
+2. dm statement: A hermit named Quill lives in a hut at its edge.
+   - claim: Quill | lives in | Thornwood
+3. player statement: Quill used to be a wizard of the Silver Circle.
+   - claim: Quill | member of | Silver Circle
+4. dm statement: Quill spits. "I left them a long time ago."
+   - claim: Quill | left | Silver Circle
+5. player question: Does he still have his spellbook?
+6. dm statement: He pats a battered leather satchel at his side but says nothing.
+
+## Scene 8: The Ashenford council
+1. dm statement: Ashenford is ruled by a council of five elders.
+   - claim: council of five elders | rules | Ashenford
+2. dm statement: The eldest is Brother Aldwin, a gentle old man with a limp.
+   - claim: Aldwin | elder of | Ashenford
+3. player statement: The council is allied with the Dunmere watch.
+   - claim: council of five elders | ally of | Dunmere watch
+4. dm statement: Aldwin smiles but does not confirm it.
+5. player plan: We ask the council for permission to search the old mill.
+   - claim: party | ask | council of five elders
+6. dm ooc: Roll Persuasion with advantage, you brought a gift.
+
+## Scene 9: Companions
+1. dm statement: Your companion Bram is a half-orc scout from the Ember Clan.
+   - claim: Bram | member of | Ember Clan
+2. player statement: Bram is also loyal to Hesper, he would follow her anywhere.
+   - claim: Bram | serves | Hesper
+3. dm statement: Bram grunts agreement.
+4. player question: Is the Ember Clan friendly with the Guild of Ropes?
+5. dm statement: No. The Ember Clan and the Guild have been at war for years.
+   - claim: Ember Clan | enemy of | Guild of Ropes
+6. player statement: So Bram and Sennet Crow are enemies then.
+   - claim: Bram | enemy of | Sennet Crow
+
+## Scene 10: A short stop
+1. dm statement: You reach the village of Pell, a dozen houses around a well.
+   - claim: Pell | is | village
+2. dm statement: The headwoman, Orla Finch, welcomes you.
+   - claim: Orla Finch | headwoman of | Pell
+3. player question: Do we know anybody here?
+4. dm statement: Orla Finch is Quill's cousin, though she does not say so.
+   - claim: Orla Finch | kin of | Quill
+5. dm ooc: Take a short rest if you like.
