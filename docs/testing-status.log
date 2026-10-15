@@ -57,10 +57,12 @@ DMBOT_SIDEBAR is 1 (ON since 2026-10-10 05:47 UTC: Supervisor said "sidebar may 
 private (no install link) until the website launches.
 
 ------------------------------------------------------------------------------
-NEXT TEST: the game clock and timers again (docs/next-test-step.md)
+NEXT TEST: Test I, the new consent question (docs/next-test-step.md; #1270 check 1)
 ------------------------------------------------------------------------------
-Test F again, after the timer fix (docs/next-test-step.md; #1123 and #1130 are deployed). Test G (sidebar by voice)
-PASSED on 2026-10-13. Test F first run worked except the two timer faults (#1112, fixed in #1123).
+After the big deploy (ee256c7) the live checks run one small test at a time, in the order of #1270: 1 consent v6 (Test I),
+2 typed chat, 3 table questions, 4 FightBot and spell slots, 5 the timer form incl. "60 seconds" (Test F again, #1194 is
+fixed), 6 shared house rules, 7 the website's Stop recording me. Test G (sidebar by voice) PASSED on 2026-10-13. Test F first
+run worked except the two timer faults (#1112, fixed in #1123).
 
 SMALL TESTS AFTER THAT (one at a time; each one's "Check:" note is in the history log,
 entry "Status log as it stood before it was trimmed"):
