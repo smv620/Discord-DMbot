@@ -46,7 +46,8 @@
 ## Scene 15: The lie about the dead
 1. dm statement: The innkeeper leans in. "Old Aldwin is dead, buried last week, I saw the grave."
    - state: Aldwin | dead
-2. player question: Wait, I talked to Aldwin two days ago in Ashenford.
+2. player statement: Wait, I talked to Aldwin two days ago in Ashenford.
+   - also: party | talked to | Aldwin
 3. dm statement: The innkeeper blinks and goes pale. "Then someone is lying to one of us."
 4. player statement: I bet the innkeeper is lying for the council.
    - claim: innkeeper | lying for | council of five elders

@@ -17,7 +17,7 @@ _NOT = {"not", "no", "never", "isn't", "isnt", "aren't", "arent", "nobody", "non
 PARTY = {"party", "we", "us", "i", "group", "adventurers", "players", "player", "heroes"}
 
 
-def _words(text: str) -> set[str]:
+def words(text: str) -> set[str]:
     words = re.findall(r"[a-z0-9']+", text.casefold().replace("’", "'"))
     return {w.removesuffix("'s") for w in words} - _STOP
 
@@ -26,9 +26,9 @@ def _same(expected: str, given: str) -> bool:
     """One names the other: "party" and "the party", "orc scouts" and "scouts". Words in
     the key may have alternatives, "fine/intact"; "party" is any way of saying the
     player characters."""
-    b = _words(given)
+    b = words(given)
     for option in expected.split("/"):
-        a = _words(option)
+        a = words(option)
         if a == {"party"} and b and b <= PARTY | {"party"}:
             return True
         if a and b and (a <= b or b <= a):
@@ -37,7 +37,7 @@ def _same(expected: str, given: str) -> bool:
 
 
 def _negated(text: str) -> bool:
-    return bool(_words(text) & _NOT)
+    return bool(words(text) & _NOT)
 
 
 def matches(expected: Expected, claim: Claim) -> bool:
@@ -47,7 +47,7 @@ def matches(expected: Expected, claim: Claim) -> bool:
     rest = f"{claim.relationship} {claim.object} {claim.details}"
     if _negated(expected.relationship) != _negated(f"{claim.relationship} {claim.details}"):
         return False
-    in_rest = any(_words(o) and _words(o) <= _words(rest) for o in expected.object.split("/"))
+    in_rest = any(words(o) and words(o) <= words(rest) for o in expected.object.split("/"))
     forward = _same(expected.subject, claim.subject) and (
         _same(expected.object, claim.object) or in_rest
     )
@@ -164,7 +164,7 @@ def score(lines: Sequence[Line], claims: Iterable[Claim]) -> Score:
             continue
         result.invented += 1
         result.from_quiet += bool(claim.lines) and set(claim.lines) <= quiet
-        text = _words(f"{claim.subject} {claim.relationship} {claim.object} {claim.details}")
+        text = words(f"{claim.subject} {claim.relationship} {claim.object} {claim.details}")
         if any(set(words) <= text for words in nevers):
             result.injections += 1
     return result

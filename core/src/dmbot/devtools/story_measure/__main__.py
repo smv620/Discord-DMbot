@@ -25,6 +25,7 @@ import sys
 from collections.abc import Sequence
 from datetime import date
 from pathlib import Path
+from typing import NamedTuple
 
 from dmbot.ai import AIError, AIModels, AIModelTier, AIOutOfFunds, AnthropicClient
 from dmbot.config import ConfigError, parse_ai_models
@@ -136,11 +137,20 @@ def _missed(total: Score, scene: Scene) -> None:
             total.states_expected += e.condition
 
 
+class Measured(NamedTuple):
+    score: Score
+    calls: list[report.Call]
+    notes: list[str]
+    stop: bool  # the whole run must stop: out of funds, or the very first call failed
+
+
 async def measure(
     client: Client, scenes: Sequence[Scene], price: tuple[float, float], budget_usd: float
-) -> tuple[Score, list[report.Call], list[str]]:
+) -> Measured:
     """One pass over the scenes. Stops before the next call once `budget_usd` is spent (so
-    the cap is overshot by one call at most). Returns the score, each call's tokens and notes."""
+    the cap is overshot by one call at most), when the account is out of funds, and when the
+    first call fails (a refused model or key would only fail again 59 times). Returns the score,
+    each call's tokens, notes, and whether the whole run (every later tier) must stop."""
     total = Score()
     calls: list[report.Call] = []
     notes: list[str] = []
@@ -161,10 +171,15 @@ async def measure(
             for later in scenes[n:]:
                 _missed(total, later)
             notes.append("  stopped: the AI account is out of funds; the rest counted as missed")
-            break
+            return Measured(total, calls, notes, True)
         except AIError:
             failed += 1
             _missed(total, scene)
+            if not calls:  # the first call failed: a refused model or key, not a bad scene
+                for later in scenes[n + 1 :]:
+                    _missed(total, later)
+                notes.append("  stopped: the first call failed (is the model or key refused?)")
+                return Measured(total, calls, notes, True)
             continue
         total.add(score(scene.lines, got.claims))
         calls.append(report.Call(got.input_tokens, got.output_tokens))
@@ -176,7 +191,7 @@ async def measure(
             f"  answers: {dropped} claims dropped as malformed, {cut} cut off, {failed} calls "
             "failed (a failed call that timed out may still be billed)"
         )
-    return total, calls, notes
+    return Measured(total, calls, notes, False)
 
 
 async def main_async(args: argparse.Namespace) -> int:
@@ -240,7 +255,9 @@ async def main_async(args: argparse.Namespace) -> int:
         assert price is not None
         ai = AnthropicClient(key, AIModels.same(model))  # one model: no quiet fall back
         try:
-            result, calls, notes = await measure(ai.tier(tier), scenes, price, args.max_usd - spent)
+            result, calls, notes, stop = await measure(
+                ai.tier(tier), scenes, price, args.max_usd - spent
+            )
         finally:
             await ai.close()
         spent += cost.dollars(
@@ -252,6 +269,10 @@ async def main_async(args: argparse.Namespace) -> int:
             *report.token_lines(calls, price),
             *notes,
         ]
+        if stop:
+            results.append("stopped: later tiers were not run")
+            print("\n".join(results))
+            return 1
     print("\n".join(results))
     return 0
 

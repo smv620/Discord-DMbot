@@ -9,7 +9,7 @@
 5. player plan: I will bribe the cupbearer to do it for us.
    - claim: party | bribe | cupbearer
 6. dm statement: The cupbearer glances at the king and shakes his head.
-   - claim: cupbearer | refuses | Ilyra
+   - claim: cupbearer | refuses | party
 
 ## Scene 32: What if
 1. player plan: What if we burn the warehouse and blame the Guild?
@@ -69,7 +69,7 @@
 1. player plan: What if we asked the Dunmere watch to side with us against the Guild?
    - claim: party | ask | Dunmere watch
    - never: Dunmere watch, ally
-2. dm statement: Captain Voss would listen, but she wants proof.
+2. dm statement: Maren Voss would listen, but she wants proof.
    - claim: Maren Voss | wants | proof
 3. player question: What kind of proof?
 4. dm statement: Written orders from the Guild, or a witness.

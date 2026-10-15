@@ -127,9 +127,12 @@ class GoldenSet(unittest.TestCase):
 
 class Format(unittest.TestCase):
     GOOD = (
-        "## Scene 1: t\n1. dm statement: One.\n   - claim: a | b | c\n2. player question: Two?\n"
-        "3. dm ooc: Three.\n4. player plan: Four.\n   - claim: party | go | x\n"
-        "5. player statement: Five.\n   - state: Roan | dead\n   - never: roan, alive\n"
+        "## Scene 1: t\n"
+        "1. dm statement: Alpha beats bravo.\n   - claim: alpha | beats | bravo\n"
+        "2. player question: Two?\n"
+        "3. dm ooc: Three.\n"
+        "4. player plan: Go to bravo.\n   - claim: party | go | bravo\n"
+        "5. player statement: Five.\n   - state: Alpha | dead\n   - never: roan, alive\n"
     )
 
     def bad(self, text: str, why: str) -> None:
@@ -151,13 +154,16 @@ class Format(unittest.TestCase):
             "claim on a question": (
                 self.GOOD.replace(
                     "2. player question: Two?\n",
-                    "2. player question: Two?\n   - claim: a | b | c\n",
+                    "2. player question: Two?\n   - claim: alpha | beats | bravo\n",
                 ),
                 "yields no claim",
             ),
-            "bad claim shape": (self.GOOD.replace("a | b | c", "a | b"), "subject | relationship"),
+            "bad claim shape": (
+                self.GOOD.replace("alpha | beats | bravo", "alpha | beats"),
+                "subject | relationship",
+            ),
             "not a condition": (
-                self.GOOD.replace("Roan | dead", "Roan | asleep"),
+                self.GOOD.replace("Alpha | dead", "Alpha | asleep"),
                 "not a condition",
             ),
             "numbers skip": (self.GOOD.replace("3. dm ooc", "4. dm ooc"), "count 1, 2, 3"),
@@ -169,6 +175,11 @@ class Format(unittest.TestCase):
             ),
             "empty never": (self.GOOD.replace("roan, alive", " , "), "needs words"),
             "no scenes": ("", "no scenes"),
+            "a question with no ?": (self.GOOD.replace("Two?", "Two."), "a question has no"),
+            "a name the scene never says": (
+                self.GOOD.replace("alpha | beats | bravo", "alpha | beats | zulu"),
+                "'zulu' is not in the scene's words",
+            ),
         }
         for name, (text, why) in cases.items():
             with self.subTest(name):
@@ -186,7 +197,7 @@ class Format(unittest.TestCase):
 
 class Scoring(unittest.IsolatedAsyncioTestCase):
     async def test_a_perfect_extractor_scores_everything(self) -> None:
-        score, calls, notes = await run(Canned())
+        score, calls, notes, _ = await run(Canned())
         self.assertEqual((score.pulled, score.invented, score.injections), (score.expected, 0, 0))
         self.assertEqual(score.from_quiet, 0)
         self.assertEqual(len(calls), len(SCENES))
@@ -238,14 +249,17 @@ class Scoring(unittest.IsolatedAsyncioTestCase):
     async def test_a_scene_the_client_cannot_answer_counts_its_claims_as_missed(self) -> None:
         from dmbot.ai import AIError
 
-        class Fails(Canned):
+        class SecondFails(Canned):
             async def complete(self, system: str, text: str, *, max_tokens: int = 1500) -> Reply:
-                raise AIError("down")
+                if self.calls == 1:
+                    self.calls += 1
+                    raise AIError("down")
+                return await super().complete(system, text, max_tokens=max_tokens)
 
-        score, calls, notes = await run(Fails())
-        self.assertEqual((score.pulled, calls), (0, []))
-        self.assertGreater(score.expected, 0)
-        self.assertIn("60 calls failed", notes[0])
+        score, calls, notes, stop = await run(SecondFails())
+        self.assertEqual((len(calls), stop), (len(SCENES) - 1, False))
+        self.assertLess(score.pulled, score.expected)  # that scene's claims count as missed
+        self.assertIn("1 calls failed", notes[0])
 
     async def test_an_account_out_of_funds_stops_the_pass_at_once(self) -> None:
         from dmbot.ai import AIOutOfFunds
@@ -256,7 +270,7 @@ class Scoring(unittest.IsolatedAsyncioTestCase):
                 raise AIOutOfFunds("no money")
 
         client = Broke()
-        score, calls, notes = await run(client)
+        score, calls, notes, _ = await run(client)
         self.assertEqual((client.calls, calls), (1, []))
         self.assertIn("out of funds", notes[0])
         plans = sum(e.how == "plan" for sc in SCENES for ln in sc.lines for e in ln.expected)
@@ -282,7 +296,7 @@ class Scoring(unittest.IsolatedAsyncioTestCase):
 
     async def test_the_cap_stops_the_pass(self) -> None:
         client = Canned(tokens=(1_000_000, 0))
-        score, calls, notes = await measure_main.measure(client, SCENES, (1.0, 5.0), 1.5)
+        score, calls, notes, _ = await measure_main.measure(client, SCENES, (1.0, 5.0), 1.5)
         self.assertEqual(len(calls), 2)  # overshot by one call at most
         self.assertGreater(score.want["plan"], 0)  # the unmeasured scenes count as missed
         self.assertIn("the cap", notes[0])
@@ -355,8 +369,57 @@ class Command(unittest.TestCase):
         self.assertEqual(code, 2)
         self.assertIn("no *.txt files", err)
 
-    def test_the_key_is_never_printed(self) -> None:
-        with patch.object(measure_main, "AnthropicClient", side_effect=AssertionError("a call")):
-            _, out, err = self.go("--extractor", "anthropic", "--max-usd", "0.01",
-                                  env={"ANTHROPIC_API_KEY": "sk-secret-value"})  # fmt: skip
+    def paid(self, client: Any, *argv: str, key: str = "sk-secret-value") -> tuple[int, str, str]:
+        """The paid path, with the AI client swapped for `client` (no call leaves the machine)."""
+
+        class Fake:
+            def __init__(self, *_: Any) -> None:
+                pass
+
+            def tier(self, _tier: Any) -> Any:
+                return client
+
+            async def close(self) -> None:
+                return None
+
+        with patch.object(measure_main, "AnthropicClient", Fake):
+            return self.go("--extractor", "anthropic", *argv, env={"ANTHROPIC_API_KEY": key})
+
+    def test_the_key_is_never_printed_even_on_the_paid_path(self) -> None:
+        code, out, err = self.paid(Canned(), "--tier", "fast")
+        self.assertEqual(code, 0)
+        self.assertIn("measured fast", out)
         self.assertNotIn("sk-secret-value", out + err)
+
+    def test_out_of_funds_stops_every_tier_and_exits_non_zero(self) -> None:
+        from dmbot.ai import AIOutOfFunds
+
+        class Broke(Canned):
+            async def complete(self, system: str, text: str, *, max_tokens: int = 1500) -> Reply:
+                self.calls += 1
+                raise AIOutOfFunds("no money")
+
+        client = Broke()
+        code, out, _ = self.paid(client, "--tier", "fast", "--tier", "careful",
+                                 "--price", "claude-sonnet-5-5=3,15")  # fmt: skip
+        self.assertEqual((code, client.calls), (1, 1))  # one call, not one for each tier
+        self.assertIn("later tiers were not run", out)
+        self.assertNotIn("measured careful", out)
+
+    def test_a_first_call_that_fails_stops_the_run_at_once(self) -> None:
+        from dmbot.ai import AIError
+
+        class Refused(Canned):
+            async def complete(self, system: str, text: str, *, max_tokens: int = 1500) -> Reply:
+                self.calls += 1
+                raise AIError("model not found")
+
+        client = Refused()
+        code, out, _ = self.paid(client, "--tier", "fast")
+        self.assertEqual((code, client.calls), (1, 1))
+        self.assertIn("the first call failed", out)
+
+    def test_a_price_that_is_not_a_price_is_refused(self) -> None:
+        for bad in ("m", "m=1", "m=a,b", "m=0,1", "=1,2", "m=1,nan"):
+            with self.subTest(bad), self.assertRaises(SystemExit), redirect_stderr(io.StringIO()):
+                measure_main.parse_args(["--price", bad])

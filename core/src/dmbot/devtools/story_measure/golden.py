@@ -30,7 +30,7 @@ from collections.abc import Iterable
 from pathlib import Path
 
 from dmbot.devtools.claims.scenes import Expected, Line, Scene
-from dmbot.devtools.claims.score import _words as tokens
+from dmbot.devtools.claims.score import words as tokens
 
 # The conditions a state change can name (docs/STORY_MEMORY.md, "State facts"). Kept here, not
 # imported, so the golden set doesn't depend on the memory code it is there to measure.
@@ -133,6 +133,27 @@ def _check_scene(scenes: list[Scene], name: str) -> None:
     scene = scenes[-1]
     if not MIN_LINES <= len(scene.lines) <= MAX_LINES:
         raise GoldenError(f"{name}: scene {scene.title!r} has {len(scene.lines)} lines")
+    for line in scene.lines:
+        if line.kind == "question" and "?" not in line.text:
+            raise GoldenError(
+                f"{name}: scene {scene.title!r} line {line.number}: a question has no '?'"
+            )
+    # Nothing is expected that no extractor could read: every name in a claim is in the scene's
+    # own words, whichever line (a perfect-extractor test just echoes the claims back, so it
+    # can't see this). "party" stands for the player characters and is always fine.
+    said: set[str] = set()
+    for line in scene.lines:
+        said |= tokens(line.text)
+    for line in scene.lines:
+        for e in (*line.expected, *line.also):
+            parts = [e.subject] if e.condition else [e.subject, e.object]
+            for part in parts:
+                options = part.split("/")
+                if part.casefold() != "party" and not any(tokens(o) & said for o in options):
+                    raise GoldenError(
+                        f"{name}: scene {scene.title!r} line {line.number}: '{part}' is not "
+                        "in the scene's words"
+                    )
 
 
 def load_golden(directory: Path = GOLDEN) -> list[Scene]:

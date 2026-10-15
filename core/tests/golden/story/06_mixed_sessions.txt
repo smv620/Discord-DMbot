@@ -16,7 +16,7 @@
 9. dm ooc: Roll a Perception check for the night watch.
 10. player question: Does anyone else hear a noise outside?
 11. dm statement: Faint scraping at the shutter, like a knife on wood.
-12. player plan: I open the shutter fast and grab whoever is there.
+12. player plan: I open the shutter fast and grab the intruder.
    - claim: party | grab | intruder
 
 ## Scene 52: The parley
@@ -46,7 +46,7 @@
    - claim: Aldwin | let in | Guild of Ropes
    - claim: Guild of Ropes | took | Amulet of Lanterns
 2. player statement: So Aldwin is the traitor after all.
-   - claim: Aldwin | traitor of | council of five elders
+   - claim: Aldwin | is | traitor
 3. dm statement: He nods, ashamed. "They threatened my sister."
    - claim: Aldwin | kin of | sister
 4. player question: Where did they take the amulet?
@@ -117,8 +117,8 @@
 7. dm statement: The chapel bell rings the next morning, and the ceremony begins.
 8. player question: Do we know any of the guests?
 9. dm statement: Orla Finch is there, in the second row, and so is Maren Voss.
-   - claim: Orla Finch | attends | wedding
-   - claim: Maren Voss | attends | wedding
+   - claim: Orla Finch | attends | ceremony
+   - claim: Maren Voss | attends | ceremony
 10. dm statement: Odric Vale takes Marguerite's hands. "Before the town, I take you as my wife."
    - claim: Odric Vale | married | Marguerite Hale
 11. player statement: They are husband and wife now.
@@ -143,7 +143,7 @@
 10. dm statement: The sarcophagus is empty. Dust and a rusted helmet only.
    - state: Ser Corvin | missing
 11. player statement: Then someone took him, or he walked out.
-   - also: Ser Corvin | is | missing
+   - also: someone | took | Ser Corvin
 12. player plan: We search the walls for a hidden door.
    - claim: party | search | walls
 13. dm ooc: Roll Perception, with disadvantage in the dark.
