@@ -37,8 +37,8 @@ export const features: Feature[] = [
   },
   {
     title: "Remembers your story",
-    what: "The names, places and characters your game master confirms are kept from one game to the next.",
-    example: "The innkeeper from last month is still the innkeeper.",
+    what: "Names, places and characters your game master confirms are kept from one game to the next, along with which items are one of a kind and who carries them. DMbot only points out when something doesn't add up, and never makes up story.",
+    example: "The innkeeper from last month is still the innkeeper. You said there is only one magic sword, so DMbot flags it if two people carry it.",
   },
   {
     title: "Character sheets",
@@ -49,5 +49,10 @@ export const features: Feature[] = [
     title: "Backups (paid plans)",
     what: "A campaign is never lost if its game master leaves. Anyone in the server can download a backup, which holds the game master's secrets.",
     example: "A new game master loads the backup and carries on.",
+  },
+  {
+    title: "Share house rules (paid plans)",
+    what: "A game master on a paid plan can choose to share their house rules with another table using a share code. The other table can use them, keep its own changes, and suggest a rule back. Only the rules are shared, never the story, names or what was said.",
+    example: "A friend's table starts with your house rules, then tweaks the ones that don't fit their game.",
   },
 ];

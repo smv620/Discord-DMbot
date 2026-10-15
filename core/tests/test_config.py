@@ -98,6 +98,10 @@ class PlanChecksSetting(unittest.TestCase):
         self.assertFalse(load_settings(BASE).sidebar_on)
         self.assertTrue(load_settings({**BASE, "DMBOT_SIDEBAR": "1"}).sidebar_on)
         self.assertFalse(load_settings({**BASE, "DMBOT_SIDEBAR": "off"}).sidebar_on)
+        self.assertFalse(load_settings(BASE).story_extractor_on)  # off unless asked for
+        self.assertTrue(load_settings({**BASE, "DMBOT_STORY_EXTRACTOR": "1"}).story_extractor_on)
+        with self.assertRaisesRegex(ConfigError, "DMBOT_STORY_EXTRACTOR must be 1"):
+            load_settings({**BASE, "DMBOT_STORY_EXTRACTOR": "maybe"})
         with self.assertRaisesRegex(ConfigError, "DMBOT_SIDEBAR must be 1"):
             load_settings({**BASE, "DMBOT_SIDEBAR": "maybe"})
 

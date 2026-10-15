@@ -58,6 +58,10 @@ class Settings:
     # The DM sidebar's ways in (#935) use the answer engine (#934) only when this is on.
     # Off until the sidebar's 17 test answers have been read (#954).
     sidebar_on: bool = False
+    # The story extractor (phase 5a, #1297) reads each session with one AI call per batch of
+    # lines. Off, and not shown to customers, until it passes its measurement (#1282); with it
+    # off nothing calls the AI and the after-session step has nothing to ask.
+    story_extractor_on: bool = False
     # Test recordings (#1019): servers where people who agreed to it have their voices saved
     # for DMbot's own tests, and where the files go. Empty: nothing is ever saved.
     test_recording_guilds: frozenset[int] = frozenset()
@@ -129,6 +133,11 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
             'DMBOT_ENFORCE_PLANS must be 1 (on) or 0 (off), got "' + enforce_raw + '".'
         )
 
+    extractor_raw = (get("DMBOT_STORY_EXTRACTOR") or "0").lower()
+    if extractor_raw not in ("0", "1", "true", "on", "false", "off"):
+        raise ConfigError(
+            'DMBOT_STORY_EXTRACTOR must be 1 (on) or 0 (off), got "' + extractor_raw + '".'
+        )
     sidebar_raw = (get("DMBOT_SIDEBAR") or "0").lower()
     if sidebar_raw not in ("0", "1", "true", "false", "on", "off"):
         raise ConfigError('DMBOT_SIDEBAR must be 1 (on) or 0 (off), got "' + sidebar_raw + '".')
@@ -173,6 +182,7 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
         mail=mail,
         link_token_secret=link_secret.encode("utf-8"),
         sidebar_on=sidebar_raw in ("1", "true", "on"),
+        story_extractor_on=extractor_raw in ("1", "true", "on"),
         admin_primary_id=admin_primary,
         admin_secondary_id=admin_secondary,
         test_recording_guilds=test_guilds,
