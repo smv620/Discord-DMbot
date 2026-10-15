@@ -634,14 +634,15 @@ never does.
   rules again as the next version, which followers take at their next session.)*
   - **A follower can't change it.** When a following campaign's DM changes a shared rule, or a ruling is made
     at their table, it goes into **their own** house rules, which win over the set. The publisher never sees
-    it and is never affected. **"Suggest it to <set>"** sends it to the publisher's DMs as a suggestion
-    ([Accept] [No thanks]); nothing changes until they accept.
+    it and is never affected. **💡 Suggest** sends it to the publisher's DMs as a suggestion
+    ([See] [Add to set] [No thanks]); nothing changes until they press Add to set.
   - **The document of record can be edited outside DMbot** by anyone with edit access. Its changes reach the
     publisher's **own** house rules through the usual document sync (the DM confirms them), and reach
     followers only when the publisher presses **🔄 Publish my changes** (Supervisor, 2026-10-14, #1259; no
     separate pending-changes screen and no write-back to followers' files).
   - **Suggestions** (#1259): the publisher's note says "A table that uses <set> house rules suggests: …" and
-    never names the other campaign, server or DM; Accept makes the next version.
+    never names the other campaign, server or DM; Add to set makes the next version. *(Supervisor,
+    2026-10-15, #1315: wording matched to the buttons as built.)*
 - **Updates reach followers at their next session start, never mid-game.** DMbot takes the update then
   (Follow, the default) and posts a note on the DM screen: "The Frostmaiden house rules were updated to v4:
   2 rules. [See changes] [Pick changes] [Undo]".
