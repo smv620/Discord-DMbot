@@ -166,13 +166,19 @@ Added 2026-10-15 (Supervisor, at the owner's request). **Deepgram is what DMbot 
 
 | What | Price per hour | Per minute | Source | Checked |
 |---|---|---|---|---|
-| Deepgram Nova-3, pre-recorded (in use) | $0.258 | $0.0043 (billed per second) | https://deepgram.com/pricing (the table above) | 2026-10-09 |
+| Deepgram Nova-3, pre-recorded (in use) | $0.258 | $0.0043 (billed per second) | https://deepgram.com/pricing (pay as you go; Growth plan $0.0036) | 2026-10-15 |
 | Speechmatics batch, Standard accuracy | $0.23 | $0.00383 | https://www.speechmatics.com/pricing | 2026-10-15 |
 | Speechmatics batch, Enhanced accuracy (the one compared on 2026-10-05) | $0.38 | $0.00633 | https://www.speechmatics.com/pricing | 2026-10-15 |
 | Speechmatics batch, Melia 1 (cheapest; never tested by DMbot) | $0.121 | $0.00202 | https://www.speechmatics.com/pricing | 2026-10-15 |
-| Speechmatics real-time, Enhanced (for comparison only) | $0.43 | $0.00717 | a price tracker, not Speechmatics: https://usagepricing.com/blueprint/activity/speechmatics-2026-07-06-realtime-stt-price-cut | 2026-10-15 |
+| Speechmatics real-time, Enhanced (for comparison only) | about $0.40 | about $0.0067 | https://www.speechmatics.com/pricing (worked out from its credits, see below) | 2026-10-15 |
 
-How these were read: this session's network blocks speechmatics.com, so the Speechmatics batch prices come from search results quoting its official pricing page, and the real-time price from a tracker. Before a decision, someone should read https://www.speechmatics.com/pricing directly and correct this table. Pay-as-you-go list prices, no discount: Speechmatics offers up to 25% off with volume and a one-time $100 credit for new accounts, and neither is counted here. Batch is the like-for-like price, because core sends each piece of speech as a short file. **Not checked:** whether Speechmatics bills a minimum per file. Core sends many short pieces (8 pieces for the 0.6 speech-minutes of DMOnlyAudio, 20 for the bake-off's 175 s), so a per-file minimum would raise every Speechmatics figure here.
+How these were read: both price pages were read directly on 2026-10-15. Speechmatics shows its pre-recorded (batch) prices per hour: Melia 1 $0.12 (the page title gives $0.121), Standard $0.23 and Enhanced $0.38. Its real-time prices only appear behind a switch on the page. The page's own data gives every model in credits per hour, and the batch prices above work out at about $0.50 a credit. At that rate real-time Enhanced is about $0.40 an hour, an estimate rather than a price the page states. **Billing:** Speechmatics bills to the second, like Deepgram, so short pieces cost no more than their length. Batch is the like-for-like price, because core sends each piece of speech as a short file.
+
+Not counted:
+
+- Speechmatics' volume discount (up to 25% off) and its one-time $100 credit for new accounts.
+- Its model-training discount (33% off). That discount means letting Speechmatics train on the audio, which players have not agreed to.
+- Deepgram's Growth plan ($0.0036 a minute, about 16% off).
 
 ### What the measured speech costs
 
