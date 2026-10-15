@@ -401,8 +401,15 @@ def implied_kind(onto: Ontology, claim: Extracted, side: str) -> str:
     """The kind of entry a relationship fixes for a name on this side of a claim, or `CONCEPT`
     ("unsure") when it fixes none: "is in" puts a place on its object side, say. The DM can
     always change it when the name is checked."""
-    if condition_of(claim) is not None:
-        return CONCEPT
+    condition = condition_of(claim)
+    if condition is not None:
+        # "Garrick is dead": the one kind that can be in that condition, if there is just one.
+        fits = [
+            k
+            for k in ("character", "item", "place", "faction")
+            if (allowed := conditions_for(onto, k)) is not None and condition in allowed
+        ]
+        return fits[0] if len(fits) == 1 else CONCEPT
     known = resolve_relationship(onto, claim.relationship)
     if known is None:
         return CONCEPT
@@ -505,7 +512,9 @@ class ClaimStore:
             for claim, reason, unknown in work:
                 if unknown:
                     if left and any(name_key(n) not in chosen for n in unknown):
-                        deferred += 1  # past the limit: asked next session, not remembered now
+                        # Past the limit: its name is not made, so the claim is not kept. It is
+                        # counted; the DM is not told (the names that were made are the most said).
+                        deferred += 1
                         continue
                     reason = judged(claim)
                 key = _repeat_key(claim.subject, claim.relationship, claim.object, claim.how)
@@ -581,7 +590,7 @@ class ClaimStore:
             if str(e["id"]) in pending:
                 waiting_keys[name_key(str(e["name"]))] = str(e["id"])
         for a in aliases:
-            if str(a["entity_id"]) in pending:
+            if str(a["entity_id"]) in pending and not a.get("secret"):  # never via a secret name
                 waiting_keys[str(a["key"])] = str(a["entity_id"])
         made: list[str] = []
         joined = 0
@@ -670,23 +679,21 @@ class ClaimStore:
         (a page is five, so 200 is far more than anyone answers in one sitting, and the
         grouping covers just these)."""
         await self.purge_stopped(guild_id, campaign_id, opted_in)
-        ready, _pending = await self._sorted(guild_id, campaign_id, limit)
-        found = ready
+        # (`_sorted` also drops claims whose name the DM turned down: a write on a read path, safe
+        # because it rechecks each claim's status under the campaign's lock.)
+        ready, _pending = await self._sorted(guild_id, campaign_id)
+        found = ready[:limit]  # the limit is after the split: waiting ones can't hide ready ones
         found.sort(key=lambda c: name_key(c.subject))  # stable: oldest first within a name
         return found
 
-    async def _sorted(
-        self, guild_id: int, campaign_id: str, limit: int | None = None
-    ) -> tuple[list[Claim], list[Claim]]:
+    async def _sorted(self, guild_id: int, campaign_id: str) -> tuple[list[Claim], list[Claim]]:
         """The proposed claims split by their names (#1364): (ready, waiting on a new name).
         A claim is ready when each name in it is a confirmed entry. One naming an entry the DM
         has not said yet what it is waits. One whose name is no longer anyone's (the DM said it
         isn't a name, or it was taken away) is dropped here for good, so it is never asked."""
         async with self._store._read(guild_id, campaign_id) as scope:
             sql = " AND status = 'proposed' ORDER BY created_at, id"
-            rows = await scope.select(
-                CLAIMS, sql + (" LIMIT %s" if limit else ""), [limit] if limit else []
-            )
+            rows = await scope.select(CLAIMS, sql)
             if not rows:
                 return [], []
             entities = await scope.select(

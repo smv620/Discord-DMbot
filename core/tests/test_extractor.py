@@ -214,6 +214,14 @@ class Running(unittest.IsolatedAsyncioTestCase):
         report = await go(ai, Recorder(), session(100), max_seconds=-1)
         self.assertEqual((report.calls, report.stopped, report.unsent), (0, "time limit", 100))
 
+    async def test_the_whole_session_is_handed_over_at_once_even_when_it_stops_early(self) -> None:
+        store = Recorder()
+        ai = Canned([None, None, AIOutOfFunds("x")])
+        report = await go(ai, store, session(40))
+        self.assertEqual((report.calls, report.stopped), (3, "out of funds"))
+        self.assertEqual(len(store.calls), 1)  # one hand-over, with what the two answers found
+        self.assertEqual(len(store.calls[0][0]), 2)
+
     async def test_running_out_of_funds_stops_at_once(self) -> None:
         ai = Canned([AIOutOfFunds("x")])
         report = await go(ai, Recorder(), session(100))

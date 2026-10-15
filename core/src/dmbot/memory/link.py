@@ -15,15 +15,13 @@ from collections import Counter
 from collections.abc import Iterable, Mapping, Sequence
 
 MIN_FUZZY_LEN = 5  # shorter names are never matched loosely: "Bryn" and "Bran" are two people
-NEAR_LEN = 9  # from here a name may differ by two letters, below it by one
+MIN_WORD = 5  # a word shorter than this is never taken for another: "Mira" and "Kira" are two
 
 
 def allowed_distance(key: str) -> int:
     """How many single-letter changes (add, drop, change) still count as the same name, for a
-    name key of this length: none below `MIN_FUZZY_LEN`, one up to eight letters, two beyond."""
-    if len(key) < MIN_FUZZY_LEN:
-        return 0
-    return 1 if len(key) < NEAR_LEN else 2
+    name key of this length: none below `MIN_FUZZY_LEN`, one from there on."""
+    return 1 if len(key) >= MIN_FUZZY_LEN else 0
 
 
 def within(a: str, b: str, limit: int) -> bool:
@@ -44,14 +42,31 @@ def within(a: str, b: str, limit: int) -> bool:
     return previous[-1] <= limit
 
 
+def same_name(a: str, b: str) -> bool:
+    """Whether two name keys may be one name spelt two ways: one letter apart, and only inside
+    a word of 5 or more letters that has no digit. So "Oskar Vance" and "Oskar Vence" are, while
+    "Mira Stone" and "Kira Stone" (two people), "Room 12" and "Room 13", "Goblin Cave A" and
+    "Goblin Cave B" are not."""
+    if a == b:
+        return True
+    first, second = a.split(), b.split()
+    if len(first) != len(second):
+        return False
+    for x, y in zip(first, second, strict=True):
+        if x == y:
+            continue
+        if min(len(x), len(y)) < MIN_WORD or any(c.isdigit() for c in x + y):
+            return False
+        if not within(x, y, 1):
+            return False
+    return True
+
+
 def alike(key: str, candidates: Mapping[str, str]) -> str | None:
     """The one entry a name key is near, among `candidates` (name key → entry id): its id when
-    exactly one entry has a key within `allowed_distance` of it, None when none or more than one
-    (two entries that close are the DM's to tell apart). The distance is the shorter key's."""
-    found: set[str] = set()
-    for other, entry in candidates.items():
-        if within(key, other, allowed_distance(min(key, other, key=len))):
-            found.add(entry)
+    exactly one entry has a key `same_name` as it, None when none or more than one (two entries
+    that close are the DM's to tell apart)."""
+    found = {entry for other, entry in candidates.items() if same_name(key, other)}
     return next(iter(found)) if len(found) == 1 else None
 
 

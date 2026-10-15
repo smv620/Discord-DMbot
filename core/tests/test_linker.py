@@ -63,7 +63,18 @@ class Matching(unittest.TestCase):
         self.assertEqual(link.allowed_distance("bryn"), 0)
         self.assertIsNone(link.alike("bran", {"bryn": "a"}))  # two people
         self.assertEqual(link.allowed_distance("bryns"), 1)
-        self.assertEqual(link.allowed_distance("bryn shander"), 2)
+        self.assertEqual(link.allowed_distance("bryn shander"), 1)
+
+    def test_two_things_that_differ_by_a_letter_or_a_number_are_not_one_name(self) -> None:
+        for a, b in (
+            ("mira stone", "kira stone"),  # two people
+            ("room 12", "room 13"),
+            ("goblin cave a", "goblin cave b"),
+            ("bryn shander", "bryn"),
+        ):
+            self.assertFalse(link.same_name(a, b), (a, b))
+        self.assertTrue(link.same_name("oskar vance", "oskar vence"))
+        self.assertTrue(link.same_name("greywater keep", "greywatar keep"))
 
     def test_the_distance_counts_single_letter_changes(self) -> None:
         self.assertTrue(link.within("oskar vane", "oskar vana", 1))
@@ -74,11 +85,11 @@ class Matching(unittest.TestCase):
         self.assertFalse(link.within("abc", "abcdefg", 2))  # too far apart in length at once
 
     def test_one_near_entry_is_a_match_and_two_are_not(self) -> None:
-        self.assertEqual(link.alike("oskar vane", {"oskar vain": "a", "mira": "b"}), "a")
-        self.assertIsNone(link.alike("oskar vane", {"oskar vain": "a", "oskar vana": "b"}))
+        self.assertEqual(link.alike("oskar vance", {"oskar vence": "a", "mira": "b"}), "a")
+        self.assertIsNone(link.alike("oskar vance", {"oskar vence": "a", "oskar vanca": "b"}))
         # Two names of one entry are still one entry.
-        self.assertEqual(link.alike("oskar vane", {"oskar vain": "a", "oskar vana": "a"}), "a")
-        self.assertIsNone(link.alike("oskar vane", {"mira": "b"}))
+        self.assertEqual(link.alike("oskar vance", {"oskar vence": "a", "oskar vancy": "a"}), "a")
+        self.assertIsNone(link.alike("oskar vance", {"mira": "b"}))
 
     def test_the_most_said_names_come_first_and_the_rest_are_counted(self) -> None:
         said_keys = ["a", "b", "b", "c", "c", "c", "d"]
@@ -86,15 +97,15 @@ class Matching(unittest.TestCase):
         self.assertEqual(link.most_mentioned(["x", "y"], 5), (["x", "y"], 0))
 
     def test_a_name_said_two_ways_is_one_group(self) -> None:
-        groups = link.spellings(["oskar vane", "mira", "oskar vain"])
-        self.assertEqual(groups, {"oskar vane": ["oskar vain"], "mira": []})
+        groups = link.spellings(["oskar vance", "mira", "oskar vence", "kira"])
+        self.assertEqual(groups, {"oskar vance": ["oskar vence"], "mira": [], "kira": []})
 
 
 class DmScreenText(unittest.TestCase):
     def test_the_post_says_why_some_of_what_was_said_is_not_asked_yet(self) -> None:
         from dmbot.ui.names import held_back_text
 
-        text = held_back_text(["Mother Ilse", "Oskar Vane"])
+        text = held_back_text(["Mother Ilse", "Oskar Vance"])
         self.assertIn("2 new names to check", text)
         self.assertIn("**Mother Ilse**", text)
         self.assertIn("held back until you check them", text)
@@ -189,9 +200,9 @@ class Linking(ConfirmedMemoryTest):
         keep = (await self.entries())["Greywater Keep"]
         self.assertEqual(keep.type, "place")
 
-    async def test_a_name_in_a_state_change_is_unsure(self) -> None:
+    async def test_a_name_in_a_state_change_gets_the_kind_that_can_be_in_it(self) -> None:
         await self.propose(said("Old Garrick", "is", "dead"))
-        self.assertEqual((await self.entries())["Old Garrick"].type, "concept")
+        self.assertEqual((await self.entries())["Old Garrick"].type, "character")
 
     # ---- near names ------------------------------------------------------------------------
 
@@ -209,26 +220,44 @@ class Linking(ConfirmedMemoryTest):
         )
 
     async def test_two_near_known_names_make_a_plain_new_proposal(self) -> None:
-        await self.add("Oskar Vain", type="character")
-        await self.add("Oskar Vana", type="character")
-        got = await self.propose(said("Bram", "knows", "Oskar Vane"))
+        await self.add("Oskar Vence", type="character")
+        await self.add("Oskar Vanca", type="character")
+        got = await self.propose(said("Bram", "knows", "Oskar Vance"))
         self.assertEqual(got.named, 1)
 
     async def test_a_second_spelling_joins_the_name_already_waiting(self) -> None:
-        await self.propose(said("Bram", "knows", "Oskar Vane"))
-        got = await self.propose(said("Bram", "owes", "Oskar Vain"))
+        await self.propose(said("Bram", "knows", "Oskar Vance"))
+        got = await self.propose(said("Bram", "owes", "Oskar Vence"))
         self.assertEqual((got.named, got.joined, got.waiting), (0, 1, 1))
         found = await self.entries()
-        self.assertEqual(list(found), ["Oskar Vane"])  # still one question for the DM
+        self.assertEqual(list(found), ["Oskar Vance"])  # still one question for the DM
         spelt = [
             a.text
-            for a in await self.memory.aliases(GUILD_A, self.c, entity_id=found["Oskar Vane"].id)
+            for a in await self.memory.aliases(GUILD_A, self.c, entity_id=found["Oskar Vance"].id)
         ]
-        self.assertEqual(sorted(spelt), ["Oskar Vain", "Oskar Vane"])
+        self.assertEqual(sorted(spelt), ["Oskar Vance", "Oskar Vence"])
+
+    async def test_two_people_whose_names_differ_by_a_letter_stay_two(self) -> None:
+        got = await self.propose(
+            said("Bram", "knows", "Mira Stone"), said("Bram", "knows", "Kira Stone")
+        )
+        self.assertEqual((got.named, got.waiting), (2, 2))
+
+    async def test_a_state_change_about_a_new_name_waits_on_the_name_too(self) -> None:
+        got = await self.propose(said("Old Garrick", "is", "dead"))
+        self.assertEqual((got.named, got.waiting, got.new), (1, 1, ("Old Garrick",)))
+        self.assertEqual(await self.counts(), {"names": 1})
+
+    async def test_claims_waiting_on_names_never_hide_the_ones_that_can_be_answered(self) -> None:
+        stranger = [said("Bram", "knows", name) for name in STRANGERS[:6]]
+        await self.propose(*stranger)
+        await self.propose(said("Bram", "knows", "Veldmoor"))
+        ask = await self.claims.waiting(GUILD_A, self.c, opted_in=EVERYONE, limit=1)
+        self.assertEqual([c.object for c in ask], ["Veldmoor"])
 
     async def test_a_name_said_two_ways_in_one_session_is_one_proposal(self) -> None:
         got = await self.propose(
-            said("Bram", "knows", "Oskar Vane"), said("Bram", "owes", "Oskar Vain")
+            said("Bram", "knows", "Oskar Vance"), said("Bram", "owes", "Oskar Vence")
         )
         self.assertEqual((got.named, got.waiting), (1, 2))
         self.assertEqual(len(await self.entries()), 1)
