@@ -60,6 +60,7 @@ SESSION_SECONDS = 30 * 86400  # a fact a month older than the newest scores half
 MAX_FACTS_ROUND = 500
 MAX_FACTS_TOTAL = 1000
 MAX_ROUNDS = 5  # groups cost no step, so a walk can need a few rounds more than its steps
+QUOTED_FACTS = 10  # evidence is looked up for this many of the best facts
 LINES_TIMEOUT_S = 2.0  # a hung transcript read costs the quotes, never the recall
 # A group or a thread holds its members together: walking through one costs no extra step.
 CLUSTER_TYPES = frozenset({"faction", "thread"})
@@ -261,22 +262,23 @@ class RecallService:
             notes = await self._conditions(scope, reached, as_of) if audience == DM_SCREEN else {}
             onto = await _load_ontology(scope)
             found = _Found(walk, heard, notes, onto, as_of, audience)
-            # Rank and cut first, so evidence is looked up only for what will be kept.
+            # Rank and cut first: the items come before their evidence, and evidence is looked
+            # up only for the best few facts, so it can fill what is left but never crowd out
+            # an item.
             first = _cut(audience, as_of, tuple(walk.seeds), found.items(), budget)
-            wanted = [i.id for i in first.items if i.kind == FACT]
+            wanted = [i.id for i in first.items if i.kind == FACT][:QUOTED_FACTS]
             sources = (
                 await self._sources(scope, [walk.facts[f] for f in wanted])
                 if self._lines is not None and agreed and wanted
                 else {}
             )
-        items = list(first.items)
+        quotes: dict[str, tuple[Quote, ...]] = {}
         if sources and self._lines is not None:
-            items = await self._with_quotes(guild_id, campaign_id, items, sources, agreed, opted_in)
-        final = _cut(audience, as_of, tuple(walk.seeds), items, budget)
+            quotes = await self._quotes(guild_id, campaign_id, sources, agreed, opted_in)
+        items, size = _fill(first.items, quotes, budget - first.size)
         return Recall(
-            audience, as_of, final.items, final.seeds, first.cut + final.cut, final.size,
-            walk.truncated,
-        )  # fmt: skip
+            audience, as_of, items, first.seeds, first.cut, first.size + size, walk.truncated
+        )
 
     # ---- the walk --------------------------------------------------------------------
 
@@ -481,36 +483,34 @@ class RecallService:
                 )
         return out
 
-    async def _with_quotes(
+    async def _quotes(
         self,
         guild_id: int,
         campaign_id: str,
-        items: list[Item],
         sources: Sources,
         agreed: frozenset[int],
         opted_in: OptedIn,
-    ) -> list[Item]:
+    ) -> dict[str, tuple[Quote, ...]]:
+        """The quotes each fact may carry: from lines of people recorded now, newest first, at
+        most a few."""
         assert self._lines is not None
         wanted = sorted({ref for refs in sources.values() for ref, _, _ in refs})
         if not wanted:
-            return items
+            return {}
         try:
             lines = await asyncio.wait_for(
                 self._lines(guild_id, campaign_id, wanted), LINES_TIMEOUT_S
             )
         except Exception:  # a reader that fails or hangs costs the quotes, nothing else
             log.warning("Recall: the transcript could not be read; no quotes this time")
-            return items
+            return {}
         # Who is recorded is asked again now, after the awaits: someone who stopped meanwhile
         # is not quoted.
         agreed = agreed & await _agreed(opted_in)
-        out = []
-        for item in items:
-            if item.kind != FACT:
-                out.append(item)
-                continue
+        out: dict[str, tuple[Quote, ...]] = {}
+        for fact_id, refs in sources.items():
             quotes: dict[str, Quote] = {}
-            for ref, session, speakers in sources.get(item.id, []):
+            for ref, session, speakers in refs:
                 line = lines.get(ref)
                 if line is None or line.sidebar or line.speaker_id not in agreed:
                     continue
@@ -522,7 +522,8 @@ class RecallService:
             newest = sorted(
                 quotes.values(), key=lambda q: (q.session_started_at or 0, q.at_ms or 0, q.line_ref)
             )[::-1]
-            out.append(_replace_quotes(item, tuple(newest[:EVIDENCE_PER_FACT])))
+            if newest:
+                out[fact_id] = tuple(newest[:EVIDENCE_PER_FACT])
         return out
 
 
@@ -606,3 +607,23 @@ def _cut(
         kept.append(item)
         used += item.size
     return Recall(audience, as_of, tuple(kept), seeds, len(ordered) - len(kept), used)
+
+
+def _fill(
+    items: Sequence[Item], quotes: Mapping[str, tuple[Quote, ...]], room: int
+) -> tuple[tuple[Item, ...], int]:
+    """Give the best facts their quotes, in score order, while there is budget left over: a
+    quote is added whole or not at all, and never takes the place of an item. Returns the items
+    and how much room the quotes used."""
+    out: list[Item] = []
+    used = 0
+    for item in items:
+        given: list[Quote] = []
+        for quote in quotes.get(item.id, ()) if item.kind == FACT else ():
+            cost = len(quote.text) + 20
+            if used + cost > room:
+                break
+            given.append(quote)
+            used += cost
+        out.append(_replace_quotes(item, tuple(given)) if given else item)
+    return tuple(out), used

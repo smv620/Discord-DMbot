@@ -87,6 +87,16 @@ class Pure(unittest.TestCase):
         self.assertEqual([i.id for i in got.items], ["a", "b"])
         self.assertEqual(got.cut, 1)
 
+    def test_quotes_fill_the_room_left_and_never_take_an_items_place(self) -> None:
+        q = [Quote(f"L{n}", "q" * 30, S1, n) for n in range(3)]  # 50 characters each
+        items = [item("a", 3.0), item("b", 2.0), item("c", 1.0)]
+        filled, used = recall._fill(items, {"a": tuple(q), "b": tuple(q)}, 175)
+        self.assertEqual([len(i.quotes) for i in filled], [3, 0, 0])  # a took 150; b's 50 won't fit
+        self.assertEqual(used, 150)
+        self.assertEqual([i.id for i in filled], ["a", "b", "c"])  # every item still there
+        none, zero = recall._fill(items, {"a": tuple(q)}, 0)
+        self.assertEqual((none, zero), (tuple(items), 0))
+
     def test_nothing_fits_a_budget_of_zero(self) -> None:
         got = recall._cut(PLAYERS, AsOf(), (), [item("a", 1.0)], 0)
         self.assertEqual((got.items, got.cut), ((), 1))
@@ -662,7 +672,7 @@ class Speed(MemoryTest):
             self.assertGreater(len(got.items), 20)  # it really found a neighbourhood
             self.assertTrue(any(i.quotes for i in facts))  # and quoted from it
             # Evidence is looked up only for what is kept, never for the whole neighbourhood.
-            self.assertLessEqual(max(asked), 2 * len(facts))
+            self.assertLessEqual(max(asked), 2 * recall.QUOTED_FACTS)
             summary = (
                 f"recall {audience}: median {median:.1f} ms, worst {max(ms for ms, _ in runs):.1f}"
                 f" ms over 7 runs; {self.ENTRIES} entries, {self.FACTS} facts, with claims and"
