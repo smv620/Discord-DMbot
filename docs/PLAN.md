@@ -3106,6 +3106,14 @@ within 30 days, no claim about how the database is encrypted, and the owner's ow
 responsibility" wording; no `{{CHECK}}` markers remain. That closes #498 item 4. The Discord app
 stays private until the rest of #498 is done and the owner says go. Settings stay in Discord for now;
 the site is account, plan, campaigns, invite and marketing.
+**What's new page** (Supervisor, 2026-10-15, #1321/#1322). The site has a short What's new page
+(`/whats-new`, content in `web/src/content/whats-new.ts`), newest first, in plain words. An entry
+goes there only when its feature is **live: deployed on the server and not known to fail** for an
+ordinary user. Untried is not broken; a failed live check takes the entry off. An entry that is
+deployed but blocked (for example the account move, whose code goes to the payment email while
+payments are off, #1096) waits in the file's `held` list with its reason. A PR that ships a
+feature people can see adds its entry, or a held one, in the same PR.
+
 **Page changes: magic dust, and runes on the banner** (owner, 2026-10-15; Supervisor's details).
 Moving between the site's pages gets a short magic-dust dissolve: the old page breaks up into
 sparkling dust while the new one fades in, about 350 ms, built with the browser's own page
