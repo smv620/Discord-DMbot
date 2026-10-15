@@ -211,6 +211,7 @@ def checks(
             lambda n: sheet_names.close("feat", n),
         ),
         _more(snapshot),
+        *([c] if (c := _slots(snapshot)) is not None else []),
         _named(
             "spells",
             "Spells",
@@ -363,6 +364,61 @@ def _typed_names(snapshot: Mapping[str, Any], target: str, fallback: str) -> Che
         return found[0].name if found else sheet_names.close("feat", name)
 
     return _named("features", "Names you typed", _list(snapshot, "features"), status, near)
+
+
+def _pact_numbers(snapshot: Mapping[str, Any]) -> tuple[int, int, int] | None:
+    """(level, how many, how many used) of a warlock's pact slots, if the sheet has them."""
+    pact = snapshot.get("pact")
+    if not isinstance(pact, Mapping):
+        return None
+    level, top, used = pact.get("level"), pact.get("max"), pact.get("used")
+    if isinstance(level, int) and isinstance(top, int) and isinstance(used, int):
+        return level, top, used
+    return None
+
+
+def slot_line(snapshot: Mapping[str, Any]) -> str:
+    """ "level 1: 2 of 3 left, level 2: 1 of 2 left" (#1176), or "" when the sheet has no
+    spell slots (a character who casts nothing, or a sheet read before slots were kept)."""
+    slots = snapshot.get("slots")
+    if not isinstance(slots, list):
+        return ""
+    parts = [
+        f"level {e['level']}: {e['max'] - e['used']} of {e['max']} left"
+        for e in slots
+        if isinstance(e, Mapping) and isinstance(e.get("level"), int)
+        and isinstance(e.get("max"), int) and isinstance(e.get("used"), int)
+    ]  # fmt: skip
+    pact = _pact_numbers(snapshot)
+    if pact is not None:
+        level, top, used = pact
+        parts.append(f"pact slots (level {level}): {top - used} of {top} left")
+    return ", ".join(parts)
+
+
+def slots_left(snapshot: Mapping[str, Any]) -> str:
+    """For FightBot: only the levels with slots left, in the words a reminder uses
+    ("2 level 1 slots, 1 level 2 slot"). A spent level is not mentioned, so the AI has no
+    zero to repeat and no totals to work with. Snapshots are cleaned before they are kept."""
+    slots = snapshot.get("slots")
+    parts = []
+    for e in slots if isinstance(slots, list) else []:
+        if not (isinstance(e, Mapping) and isinstance(e.get("level"), int)):
+            continue
+        top, used = e.get("max"), e.get("used")
+        if isinstance(top, int) and isinstance(used, int) and top - used > 0:
+            left = top - used
+            parts.append(f"{left} level {e['level']} slot{'' if left == 1 else 's'}")
+    pact = _pact_numbers(snapshot)
+    if pact is not None and pact[1] - pact[2] > 0:
+        left = pact[1] - pact[2]
+        parts.append(f"{left} pact slot{'' if left == 1 else 's'} (level {pact[0]})")
+    return ", ".join(parts)
+
+
+def _slots(snapshot: Mapping[str, Any]) -> Check | None:
+    line = slot_line(snapshot)
+    return Check("slots", OK, f"Spell slots: {line}") if line else None
 
 
 def _features(snapshot: Mapping[str, Any]) -> Check:
