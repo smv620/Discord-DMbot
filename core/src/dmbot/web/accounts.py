@@ -12,10 +12,25 @@ log = logging.getLogger(__name__)
 
 
 async def account_email(db: Database, user_id: int) -> str | None:
+    """The account's address: the one the payment company has, else the Discord one."""
     async with db.user(user_id) as conn:
-        cur = await conn.execute("SELECT email FROM web_users WHERE user_id = %s", (user_id,))
+        cur = await conn.execute(
+            "SELECT COALESCE(payment_email, email) AS email FROM web_users WHERE user_id = %s",
+            (user_id,),
+        )
         row = await cur.fetchone()
     return None if row is None else row["email"]
+
+
+async def payment_email(db: Database, user_id: int) -> str | None:
+    """Only the address the payment company has (move codes go here and nowhere else), or
+    None while the account has none stored."""
+    async with db.user(user_id) as conn:
+        cur = await conn.execute(
+            "SELECT payment_email FROM web_users WHERE user_id = %s", (user_id,)
+        )
+        row = await cur.fetchone()
+    return None if row is None else row["payment_email"]
 
 
 async def customer_id(db: Database, user_id: int) -> str | None:
@@ -26,6 +41,23 @@ async def customer_id(db: Database, user_id: int) -> str | None:
         )
         row = await cur.fetchone()
     return None if row is None else row["provider_customer_id"]
+
+
+async def dmbot_id(db: Database, user_id: int) -> str | None:
+    """The account's DMbot ID (base 36, fixed for life), or None if they have no account on
+    the website yet."""
+    async with db.user(user_id) as conn:
+        cur = await conn.execute("SELECT dmbot_id FROM web_users WHERE user_id = %s", (user_id,))
+        row = await cur.fetchone()
+    return None if row is None else str(row["dmbot_id"])
+
+
+async def user_of_dmbot_id(db: Database, dmbot_id: str) -> int | None:
+    """The Discord ID that holds this DMbot ID now (it changes when the account moves)."""
+    async with db.unscoped() as conn:
+        cur = await conn.execute("SELECT dmbot_user_of(%s) AS u", (dmbot_id,))
+        row = await cur.fetchone()
+    return None if row is None or row["u"] is None else int(row["u"])
 
 
 async def first_paid_month_after_trial(db: Database, user_id: int) -> bool:
@@ -116,6 +148,8 @@ async def delete_person(db: Database, user_id: int, *, now: int | None = None) -
         )
         row = await cur.fetchone()
         log.info("Account deletion: %s campaign(s) kept, ownerless", row["n"] if row else 0)
+        # The account's history of earlier Discord accounts goes with it (#1230).
+        await conn.execute("SELECT dmbot_forget_account_history()")
         await conn.execute("DELETE FROM web_users WHERE user_id = %s", (user_id,))
         # Free access goes with the account (#771). It isn't linked to web_users (a grant
         # works for someone who never signed in), so it's deleted by hand.

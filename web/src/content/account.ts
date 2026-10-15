@@ -65,6 +65,8 @@ export const text = {
   haveAccount: "Already have a plan?",
   seePrices: "See the plans",
   signInFailed: "You didn't finish signing in. Tap Sign in with Discord to try again.",
+  signInMoved:
+    "This Discord account's DMbot account moved to a new Discord account. Sign in with the new one.",
   tooManyTries: "Too many tries. Wait about 10 minutes, then tap Sign in with Discord again.",
 
   // Errors

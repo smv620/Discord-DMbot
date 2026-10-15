@@ -17,6 +17,7 @@ Payment events:
 
 from __future__ import annotations
 
+import dataclasses
 import logging
 from dataclasses import dataclass
 from typing import Any, Literal
@@ -45,6 +46,22 @@ class TryItResult:
 async def _current(conn: Conn, user_id: int) -> dict[str, Any] | None:
     cur = await conn.execute("SELECT * FROM entitlements WHERE user_id = %s", (user_id,))
     return await cur.fetchone()
+
+
+async def _email_updated(db: Database, event: PaymentEvent) -> Outcome:
+    """The payer changed their address at the company: the account is found by the customer
+    id stored with its plan, and only a newer event replaces the address (events can arrive
+    out of order). Nothing else changes, so it needs no ledger row. The address is never
+    logged."""
+    if not event.customer_id or not event.email:
+        return "ignored"
+    async with db.unscoped() as conn:
+        cur = await conn.execute(
+            "SELECT dmbot_set_payment_email(%s, %s, %s) AS done",
+            (event.customer_id, event.email, event.occurred_at),
+        )
+        row = await cur.fetchone()
+    return "applied" if row and row["done"] else "ignored"
 
 
 async def _known_person(conn: Conn, user_id: int) -> bool:
@@ -130,9 +147,44 @@ def _same_subscription(row: dict[str, Any], event: PaymentEvent) -> bool:
     return known is None or event.subscription_id is None or known == event.subscription_id
 
 
+async def _moved_to(conn: Conn, event: PaymentEvent) -> int | None:
+    """Where the plan this event names went, if its account moved (#1230). The company's
+    records carry the Discord ID the plan was bought with; after a move the plan is the new
+    account's, but only when the event names the plan that moved (its subscription or
+    customer): a plan the old ID buys later stays the old ID's. Asked inside the person's
+    plan lock, so a move that commits just before can't leave the event on a gone row."""
+    cur = await conn.execute(
+        "SELECT dmbot_moved_to(%s, %s, %s) AS moved",
+        (event.user_id, event.subscription_id, event.customer_id),
+    )
+    row = await cur.fetchone()
+    return None if row is None or row["moved"] is None else int(row["moved"])
+
+
+MOVE_HOPS = 5  # accounts that moved again and again: more than this is not real
+
+
 async def apply_event(db: Database, event: PaymentEvent, *, now: int) -> Outcome:
+    """Apply one payment event, following the plan to its new account if it moved."""
+    if event.kind == "email_updated":  # found by the customer id: no account to follow
+        return await _email_updated(db, event)
+    for _ in range(MOVE_HOPS):
+        result = await _apply_once(db, event, now=now)
+        if isinstance(result, int):
+            event = dataclasses.replace(event, user_id=result)
+            continue
+        return result
+    log.warning("Payment event %s followed too many account moves: ignored", event.event_id)
+    return "ignored"
+
+
+async def _apply_once(db: Database, event: PaymentEvent, *, now: int) -> Outcome | int:
+    """One try under the person's plan lock; an int is the account the plan moved to."""
     loaded = plans.load()
     async with db.plan_writer(event.user_id) as conn:  # one change per person at a time
+        moved = await _moved_to(conn, event)
+        if moved is not None:
+            return moved
         if not await _known_person(conn, event.user_id):
             # Nothing to attach the plan to. The company still has the payment; ids only.
             if await _paid_before(conn, event.user_id):
@@ -151,6 +203,14 @@ async def apply_event(db: Database, event: PaymentEvent, *, now: int) -> Outcome
             return "ignored"
         if await _seen(conn, event):
             return "duplicate"
+        if event.email:
+            # The address the company has for the payer: kept for sign-in links, move codes
+            # and Try It emails. Written for any new event of a known person; never logged.
+            await conn.execute(
+                "UPDATE web_users SET payment_email = %s, payment_email_at = %s"
+                " WHERE user_id = %s AND (payment_email_at IS NULL OR payment_email_at < %s)",
+                (event.email, event.occurred_at, event.user_id, event.occurred_at),
+            )
         row = await _current(conn, event.user_id)
 
         if event.kind == "extra_hours_bought":
@@ -238,7 +298,7 @@ async def apply_event(db: Database, event: PaymentEvent, *, now: int) -> Outcome
                 " %(start)s, %(end)s, NULL, NULL, %(now)s, %(provider)s, %(customer)s,"
                 " %(subscription)s, %(at)s, %(now)s)"
                 " ON CONFLICT (user_id) DO UPDATE SET plan = EXCLUDED.plan,"
-                " status = 'active', hours_cap = EXCLUDED.hours_cap,"
+                " status = 'active', hours_cap = EXCLUDED.hours_cap, minutes_taken = 0,"
                 # Extra hours belong to one period: a new period starts without them.
                 " extra_hours = CASE WHEN %(new_period)s THEN 0"
                 "   ELSE entitlements.extra_hours END,"
@@ -374,7 +434,7 @@ async def start_try_it(db: Database, user_id: int, *, now: int) -> TryItResult:
             " VALUES (%(user)s, 'try-it', 'active', %(hours)s, 0, %(campaigns)s, %(now)s,"
             " %(end)s, %(now)s, %(provider)s, 0, %(now)s)"
             " ON CONFLICT (user_id) DO UPDATE SET plan = 'try-it', status = 'active',"
-            " hours_cap = EXCLUDED.hours_cap, extra_hours = 0,"
+            " hours_cap = EXCLUDED.hours_cap, extra_hours = 0, minutes_taken = 0,"
             " campaign_cap = EXCLUDED.campaign_cap, period_start = EXCLUDED.period_start,"
             " period_end = EXCLUDED.period_end, grace_ends_at = NULL, lapsed_at = NULL,"
             " ends_at = NULL,"

@@ -10,6 +10,7 @@ import httpx
 from psycopg import errors
 
 from dmbot import consent as consent_module
+from dmbot.account_id import to_dmbot_id
 from dmbot.campaigns import CampaignStore
 from dmbot.consent import ConsentStore
 from dmbot.db import Database
@@ -112,6 +113,16 @@ class Export(DatabaseTest):
     async def test_it_holds_the_persons_own_data(self) -> None:
         data = await build_export(self.web, self.alice, now=self.now)
         self.assertEqual(data["account"]["discordId"], str(ALICE.id))
+        self.assertEqual(data["account"]["dmbotId"], to_dmbot_id(ALICE.id))
+        self.assertEqual(data["account"]["previousDiscordIds"], [])  # never moved
+        self.assertIsNone(data["account"]["paymentEmail"])  # None until a payment has come
+        async with self.db.user(ALICE.id) as conn:
+            await conn.execute(
+                "UPDATE web_users SET payment_email = 'payer@example.com' WHERE user_id = %s",
+                (ALICE.id,),
+            )
+        again = await build_export(self.web, self.alice, now=self.now)
+        self.assertEqual(again["account"]["paymentEmail"], "payer@example.com")
         self.assertEqual(data["account"]["name"], ALICE.name)
         self.assertEqual(
             sorted(c["serverName"] for c in data["recordingConsent"]),
