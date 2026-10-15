@@ -149,6 +149,7 @@ class Tiers(unittest.TestCase):
                 Feature.RULES_CONFIRM: AIModelTier.CAREFUL,
                 Feature.SHEET: AIModelTier.CAREFUL,  # a player's sheet document (#1125)
                 Feature.FIGHTBOT: AIModelTier.FAST,  # a short reminder in combat (#1129)
+                Feature.EXTRACTOR: AIModelTier.FAST,  # the story extractor (#1363), off by default
             },
         )
         self.assertEqual(set(FEATURE_TIERS), set(Feature))  # none left out
