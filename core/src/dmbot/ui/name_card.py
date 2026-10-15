@@ -102,6 +102,7 @@ CONNECTION_WORDS = {
     "owns": "owns",
     "knows": "knows",
     "serves": "works for",
+    "carries": "carries",
 }
 # The same connection read from the other name's card ("Frostwolf tribe has as members
 # Ulfgar"). Connections that read the same both ways use CONNECTION_WORDS.
@@ -111,6 +112,7 @@ CONNECTION_BACK = {
     "owns": "is owned by",
     "knows": "is known to",
     "serves": "is the boss of",
+    "carries": "is carried by",
 }
 # On a card, where several names may follow ("members include Ulfgar, Kesh").
 CARD_BACK = {**CONNECTION_BACK, "member_of": "members include"}
