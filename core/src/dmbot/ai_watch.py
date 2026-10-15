@@ -16,7 +16,7 @@ import json
 import logging
 import math
 import time
-from collections import deque
+from collections import Counter, deque
 from collections.abc import Awaitable, Callable
 from pathlib import Path
 
@@ -66,27 +66,31 @@ class AIWatch:
         self._started = clock()
         self._last_error_log = float("-inf")
         self._last_usage_log = clock()
-        self._calls: deque[tuple[float, int, int]] = deque()  # when, input, output tokens
+        self._calls: deque[tuple[float, int, int, str | None]] = deque()  # when, in, out, feature
 
     # ---- usage ---------------------------------------------------------------
 
-    def record(self, input_tokens: int, output_tokens: int) -> None:
+    def record(self, input_tokens: int, output_tokens: int, feature: str | None = None) -> None:
         """One finished AI call. Once a day (on the first call after a day has passed, so a
         quiet day has no line), logs the last 24 hours' counts; until the bot has run for a
         full day the line says "since start", as the counts are only since then."""
         now = self._clock()
-        self._calls.append((now, input_tokens, output_tokens))
+        self._calls.append((now, input_tokens, output_tokens, feature))
         self._trim(now)
         if now - self._last_usage_log >= USAGE_WINDOW_S:
             self._last_usage_log = now
             # Until a full day has passed since start-up the counts are only since then.
             span = "last 24 hours" if now - self._started >= USAGE_WINDOW_S else "since start"
+            by_feature = Counter(c[3] for c in self._calls if c[3])
             log.info(
-                "AI usage, %s: calls=%d input_tokens=%d output_tokens=%d",
+                "AI usage, %s: calls=%d input_tokens=%d output_tokens=%d%s",
                 span,
                 len(self._calls),
                 sum(c[1] for c in self._calls),
                 sum(c[2] for c in self._calls),
+                " by_feature=" + ",".join(f"{k}:{n}" for k, n in sorted(by_feature.items()))
+                if by_feature
+                else "",
             )
 
     def _trim(self, now: float) -> None:

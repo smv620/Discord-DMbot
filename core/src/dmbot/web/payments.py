@@ -52,6 +52,7 @@ EventKind = Literal[
     "subscription_cancelled",  # cancelled: works to the period's end (period_end), then ends
     "subscription_ended",  # stopped paying, or cancelled at the period's end
     "extra_hours_bought",  # +10 hours for this period
+    "email_updated",  # the payer changed their address at the company (no plan change)
 ]
 
 
@@ -71,6 +72,9 @@ class PaymentEvent:
     period_end: int | None = None
     customer_id: str | None = None
     subscription_id: str | None = None
+    # The address the company has for the payer (never logged): kept as the account's
+    # payment email (#1242).
+    email: str | None = None
 
 
 class PaymentProvider(Protocol):
@@ -82,15 +86,24 @@ class PaymentProvider(Protocol):
         user_id: int,
         email: str | None,
         plan: Plan,
-        first_month_cents: int | None,
         return_url: str,
+        dmbot_id: str | None = None,
+        customer_id: str | None = None,
     ) -> str:
         """The company's checkout page for this plan. `email` prefills it and is sent to
-        the company server-side only, never put in the returned address."""
+        the company server-side only, never put in the returned address. `customer_id`: the
+        company's customer for this person if they have one; otherwise `dmbot_id` (their
+        DMbot ID) is the prefix of the new customer's invoices (#1228)."""
         ...
 
     async def extra_hours_checkout_url(
-        self, *, user_id: int, email: str | None, return_url: str
+        self,
+        *,
+        user_id: int,
+        email: str | None,
+        return_url: str,
+        dmbot_id: str | None = None,
+        customer_id: str | None = None,
     ) -> str:
         """The company's page to buy the extra hours (plans.json `extraHours`) for this
         month. Same rules as `checkout_url`: the email goes server-side only."""
@@ -102,6 +115,14 @@ class PaymentProvider(Protocol):
         """Stop the subscription at the end of the period already paid for: the person is
         deleting their account and must never be charged again. Cancelling a subscription
         that is already cancelled must succeed, so a retried deletion works."""
+        ...
+
+    async def retarget(
+        self, *, customer_id: str | None, subscription_id: str | None, user_id: int
+    ) -> None:
+        """After an account moved (#1230): point the customer's and the subscription's
+        `user_id` at the new Discord ID, so later events name it. Raises PaymentError if
+        the company refuses or can't be reached; safe to repeat."""
         ...
 
     def verify(self, body: bytes, headers: Mapping[str, str]) -> bool:
@@ -124,6 +145,9 @@ class FakeProvider:
         self._secret = secret
         self._site_url = site_url.rstrip("/")
         self.cancelled: list[str] = []
+        # What each checkout was given, so tests can see the DMbot ID and customer travel.
+        self.checkouts: list[dict[str, object]] = []
+        self.retargeted: list[tuple[str | None, str | None, int]] = []
 
     def sign(self, body: bytes) -> str:
         return hmac.new(self._secret, body, hashlib.sha256).hexdigest()
@@ -134,17 +158,28 @@ class FakeProvider:
         user_id: int,
         email: str | None,
         plan: Plan,
-        first_month_cents: int | None,
         return_url: str,
+        dmbot_id: str | None = None,
+        customer_id: str | None = None,
     ) -> str:
+        self.checkouts.append(
+            {"user_id": user_id, "plan": plan.id, "dmbot_id": dmbot_id, "customer_id": customer_id}
+        )
         query: dict[str, str] = {"fake_checkout": plan.id}
-        if first_month_cents is not None:
-            query["first_month"] = str(first_month_cents)
         return f"{return_url}?{urlencode(query)}"
 
     async def extra_hours_checkout_url(
-        self, *, user_id: int, email: str | None, return_url: str
+        self,
+        *,
+        user_id: int,
+        email: str | None,
+        return_url: str,
+        dmbot_id: str | None = None,
+        customer_id: str | None = None,
     ) -> str:
+        self.checkouts.append(
+            {"user_id": user_id, "extra": True, "dmbot_id": dmbot_id, "customer_id": customer_id}
+        )
         return f"{return_url}?{urlencode({'fake_extra_hours': '1'})}"
 
     async def billing_url(self, *, customer_id: str, return_url: str) -> str:
@@ -152,6 +187,11 @@ class FakeProvider:
 
     async def cancel(self, *, subscription_id: str) -> None:
         self.cancelled.append(subscription_id)
+
+    async def retarget(
+        self, *, customer_id: str | None, subscription_id: str | None, user_id: int
+    ) -> None:
+        self.retargeted.append((customer_id, subscription_id, user_id))
 
     def verify(self, body: bytes, headers: Mapping[str, str]) -> bool:
         try:

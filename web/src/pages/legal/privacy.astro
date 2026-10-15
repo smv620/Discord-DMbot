@@ -34,13 +34,25 @@ import {
     <li>
       Your <strong>Discord account number</strong>, your <strong>Discord name</strong> and the
       <strong>email</strong> Discord gives us (only if Discord has confirmed it is yours). We use the
-      email only to tell you about your account and plan, and to fill in the payment page when
-      you pick a plan.
+      email only to tell you about your account and plan, to fill in the payment page when
+      you pick a plan, and to send you a sign-in link when you ask for one. We keep your Discord
+      name so a personal link we send you can greet you by it.
     </li>
     <li>
       The <strong>names and numbers of the Discord servers you are in</strong>, and whether you
       manage them, so we can show you the ones that use DMbot. We keep this only while you are
       signed in.
+    </li>
+    <li>
+      You can also sign in with a link we email you. It works once and ends after 15 minutes. We
+      keep only a scrambled copy of it, not the link itself, until then. When you ask for a link,
+      our answer is the same whether or not the email has an account.
+    </li>
+    <li>
+      A personal link from us holds your <strong>DMbot ID</strong> (your account number) and a
+      secret part that stops working after 30 days. With it, the Prices and Say hello pages greet
+      you by name and show your experience points (the minutes DMbot has run for you). Without
+      the link, those pages show nothing about you. Don't share it.
     </li>
     <li>
       Sign-in uses Discord. We never see your Discord password. Discord gives us a one-time
@@ -121,7 +133,10 @@ import {
       secrets, but not what was said, and anyone in the server may download one. This keeps a
       campaign safe if its game master leaves.
     </li>
-    <li>Only people in your server can open your campaign in DMbot. Campaigns never share information.</li>
+    <li>Only people in your server can open your campaign in DMbot. Campaigns never share information, except house rules a game master chooses to share (below).</li>
+    <li>
+      If a game master chooses to share their house rules, only the rules themselves (and the link to their rules document, if they added one) can be read by someone who has the share code. The story, names, notes and what was said are never shared. Tables that use the rules keep their own copy.
+    </li>
   </ul>
 
   <h2>Companies that help us</h2>
@@ -216,7 +231,9 @@ import {
       someone else's campaign stay there, readable by that server, until that campaign is
       deleted. Your campaigns are not deleted with your account, because the other players may
       still want to read or download them. They are deleted 120 days later, unless another DM
-      of the campaign takes them over.
+      of the campaign takes them over. If the owner's Discord account is gone, or the owner has
+      been out of the server for 7 days, DMbot offers the campaign's other game masters a button
+      to take the campaign on. Only a game master who presses it takes over.
     </li>
     <li>
       <strong>Get a copy of your information.</strong>

@@ -44,7 +44,7 @@ import time
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass, field
 from typing import Any, Protocol
-from urllib.parse import urlsplit
+from urllib.parse import urlencode, urlsplit
 
 import aiohttp
 
@@ -54,6 +54,7 @@ from dmbot.web.payments import EventKind, PaymentError, PaymentEvent
 log = logging.getLogger(__name__)
 
 API_BASE = "https://api.stripe.com"
+PREFIX_MIN, PREFIX_MAX = 3, 12  # the characters Stripe allows in an invoice prefix
 SIGNATURE_HEADER = "stripe-signature"
 # How far a signed timestamp may be from now, either way (Stripe's own default).
 TOLERANCE_SECONDS = 300
@@ -93,10 +94,6 @@ class StripeConfig:
     # A paid plan's id (plans.json) -> its recurring Price id in Stripe.
     prices: Mapping[str, str]
     extra_hours_price: str
-    # A paid plan's id -> the once-only coupon that takes the price down to the first-month
-    # price (#435). Missing: a first-month checkout for that plan is refused, so nobody is
-    # charged more than was promised.
-    first_month_coupons: Mapping[str, str] = field(default_factory=dict)
     # Stripe's Managed Payments (Stripe as the merchant of record, owner decision on #1096):
     # asks each Checkout Session to opt in. Off by default until the sandbox run (#1096) has
     # shown the parameter is accepted; the owner also accepts Stripe's terms in the dashboard.
@@ -186,10 +183,58 @@ class StripeProvider:
 
     # --- asking Stripe ---
 
-    async def _checkout(self, form: dict[str, str], email: str | None) -> str:
+    async def _customer(self, user_id: int, dmbot_id: str, email: str | None) -> str:
+        """A new Stripe customer whose invoices are numbered from the person's DMbot ID
+        (#1228). Stripe's Checkout can't set an invoice prefix, so the customer is made first
+        and the checkout is told to use it. The same request within Stripe's idempotency
+        window gets the same customer back, so abandoned checkouts don't pile up customers."""
+        # A customer made earlier for this person (they left a checkout and came back after
+        # Stripe forgot the idempotency key) is reused, never a second one with the same prefix.
+        # Stripe's search can lag a minute behind, which the idempotency key covers.
+        query = urlencode({"query": f"metadata['user_id']:'{user_id}'", "limit": "1"})
+        status, answer = await self._http("GET", f"/v1/customers/search?{query}", None)
+        if status == 200 and isinstance(answer, dict):
+            for old in answer.get("data") or []:
+                if isinstance(old, dict) and isinstance(old.get("id"), str):
+                    return _checked(old["id"], _CUSTOMER, "customer id")
+        form = {"metadata[user_id]": str(user_id)}
+        if PREFIX_MIN <= len(dmbot_id) <= PREFIX_MAX:  # Stripe takes 3 to 12 characters
+            form["invoice_prefix"] = dmbot_id
+        if email:
+            form["email"] = email
+        status, answer = await self._http(
+            "POST", "/v1/customers", form, "dmbot-customer-" + _idempotency_key(form)[15:]
+        )
+        found = answer.get("id") if status == 200 and isinstance(answer, dict) else None
+        if not isinstance(found, str):
+            raise PaymentError(f"Stripe answered {status} to a new customer")
+        return _checked(found, _CUSTOMER, "customer id")
+
+    async def set_invoice_prefix(self, customer_id: str, dmbot_id: str) -> None:
+        """Give an existing customer the DMbot ID as its invoice prefix."""
+        if not PREFIX_MIN <= len(dmbot_id) <= PREFIX_MAX:
+            raise PaymentError("A DMbot ID that short can't be an invoice prefix")
+        path = f"/v1/customers/{_checked(customer_id, _CUSTOMER, 'customer id')}"
+        status, _ = await self._http("POST", path, {"invoice_prefix": dmbot_id})
+        if status != 200:
+            raise PaymentError(f"Stripe answered {status} setting an invoice prefix")
+
+    async def _checkout(
+        self,
+        form: dict[str, str],
+        email: str | None,
+        *,
+        user_id: int,
+        dmbot_id: str | None = None,
+        customer_id: str | None = None,
+    ) -> str:
         if self._config.managed_payments:
             form["managed_payments[enabled]"] = "true"
-        if email:
+        if customer_id:
+            form["customer"] = _checked(customer_id, _CUSTOMER, "customer id")
+        elif dmbot_id:
+            form["customer"] = await self._customer(user_id, dmbot_id, email)
+        elif email:
             form["customer_email"] = email  # server-side only: never in the address returned
         # A double-click, or a retry after a timeout, must not make a second live checkout
         # (two completed ones would be two subscriptions). Within one five-minute window the
@@ -214,8 +259,9 @@ class StripeProvider:
         user_id: int,
         email: str | None,
         plan: Plan,
-        first_month_cents: int | None,
         return_url: str,
+        dmbot_id: str | None = None,
+        customer_id: str | None = None,
     ) -> str:
         price = self._config.prices.get(plan.id)
         if price is None:
@@ -230,17 +276,18 @@ class StripeProvider:
             # Renewals and failures carry the subscription's metadata, not the checkout's.
             "subscription_data[metadata][user_id]": str(user_id),
         }
-        if first_month_cents is not None:
-            # The $1.99 first month (#435) is a once-only coupon made in Stripe; without one
-            # set up, refuse rather than charge the full price.
-            coupon = self._config.first_month_coupons.get(plan.id)
-            if coupon is None:
-                raise PaymentError(f"No first-month coupon is set for the {plan.id} plan")
-            form["discounts[0][coupon]"] = coupon
-        return await self._checkout(form, email)
+        return await self._checkout(
+            form, email, user_id=user_id, dmbot_id=dmbot_id, customer_id=customer_id
+        )
 
     async def extra_hours_checkout_url(
-        self, *, user_id: int, email: str | None, return_url: str
+        self,
+        *,
+        user_id: int,
+        email: str | None,
+        return_url: str,
+        dmbot_id: str | None = None,
+        customer_id: str | None = None,
     ) -> str:
         """The page to buy +10 hours for this month (plans.json `extraHours`); sold by
         `POST /billing/extra-hours` (#1089). A one-time payment, marked in the metadata so the
@@ -254,7 +301,9 @@ class StripeProvider:
             "metadata[user_id]": str(user_id),
             "metadata[item]": EXTRA_HOURS_ITEM,
         }
-        return await self._checkout(form, email)
+        return await self._checkout(
+            form, email, user_id=user_id, dmbot_id=dmbot_id, customer_id=customer_id
+        )
 
     async def billing_url(self, *, customer_id: str, return_url: str) -> str:
         """The customer portal (change plan, fix a payment, stop). Stripe makes a short-lived
@@ -285,6 +334,27 @@ class StripeProvider:
         status, _ = await self._http("POST", path, {"cancel_at_period_end": "true"})
         if status not in (200, 404):
             raise PaymentError(f"Stripe answered {status} to a cancel")
+
+    async def retarget(
+        self, *, customer_id: str | None, subscription_id: str | None, user_id: int
+    ) -> None:
+        """Point the customer's and the subscription's `user_id` metadata at the new Discord
+        ID (an account move, #1230). Stripe merges metadata keys, so only this one changes;
+        repeating it is harmless."""
+        form = {"metadata[user_id]": str(int(user_id))}
+        paths = []
+        if customer_id:
+            paths.append(f"/v1/customers/{_checked(customer_id, _CUSTOMER, 'customer id')}")
+        if subscription_id:
+            paths.append(
+                f"/v1/subscriptions/{_checked(subscription_id, _SUBSCRIPTION, 'subscription id')}"
+            )
+        for path in paths:
+            status, _ = await self._http("POST", path, form)
+            if status == 404:
+                continue  # gone at the company (deleted): nothing left to point
+            if status != 200:
+                raise PaymentError(f"Stripe answered {status} to a metadata update")
 
     # --- Stripe asking us ---
 
@@ -335,6 +405,22 @@ class StripeProvider:
         # someone is asked to look at.
         if name in ("checkout.session.completed", "checkout.session.async_payment_succeeded"):
             return self._extra_hours(obj, event_id, when)
+        if name == "customer.updated":
+            # A Customer object has no user_id of ours: the account is found by the customer id
+            # stored with its plan (user_id 0 here means "not known yet"). A customer DMbot
+            # has no plan for is ignored by the writer.
+            email, customer = _email(obj.get("email")), _text(obj.get("id"))
+            if email is None or customer is None:
+                return None
+            return PaymentEvent(
+                provider=self.name,
+                event_id=event_id,
+                kind="email_updated",
+                user_id=0,
+                occurred_at=when,
+                customer_id=customer,
+                email=email,
+            )
         if name.startswith("invoice."):
             return self._invoice(name, obj, event_id, when)
         return self._subscription(name, obj, raw.get("data", {}), event_id, when)
@@ -359,6 +445,7 @@ class StripeProvider:
             user_id=user_id,
             occurred_at=when,
             customer_id=_text(session.get("customer")),
+            email=_email((session.get("customer_details") or {}).get("email")),
         )
 
     def _invoice(
@@ -378,6 +465,7 @@ class StripeProvider:
             "occurred_at": when,
             "customer_id": _text(invoice.get("customer")),
             "subscription_id": subscription_id,
+            "email": _email(invoice.get("customer_email")),
         }
         if name == "invoice.payment_failed":
             return PaymentEvent(kind="payment_failed", user_id=user_id, **common)
@@ -508,6 +596,8 @@ _USED = (
     "customer.subscription.updated",
     "customer.subscription.deleted",
     "checkout.session.completed",
+    # The payer changed their address (the billing page): kept as the payment email (#1242).
+    "customer.updated",
     # A payment method that settles later (a bank debit): paid only when this arrives.
     "checkout.session.async_payment_succeeded",
 )
@@ -590,6 +680,17 @@ def _price_id(line: dict[str, Any]) -> str | None:
     pricing = line.get("pricing")
     details = pricing.get("price_details") if isinstance(pricing, dict) else None
     return _text(details.get("price")) if isinstance(details, dict) else None
+
+
+def _email(value: object) -> str | None:
+    """The payer's address as Stripe gives it, or None if it is missing or not one address.
+    Kept as the account's payment email; never logged."""
+    if not isinstance(value, str):
+        return None
+    text = value.strip()
+    if not 3 <= len(text) <= 254 or text.count("@") != 1 or any(c.isspace() for c in text):
+        return None
+    return text
 
 
 def _text(value: object) -> str | None:

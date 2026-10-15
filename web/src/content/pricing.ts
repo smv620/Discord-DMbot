@@ -26,7 +26,6 @@ interface PlanFacts {
   trialDays: number | null;
   backups: boolean;
   keepAfterLastSession: Period;
-  firstMonthAfterTrialCents: number | null;
 }
 
 interface Facts {
@@ -79,9 +78,6 @@ const tryItName = data.plans["try-it"].name;
 
 function note(p: PlanFacts): string | null {
   if (p.trialDays !== null) return `Free for ${p.trialDays} days. No backups or downloads.`;
-  if (p.firstMonthAfterTrialCents !== null) {
-    return `First month ${formatPrice(p.firstMonthAfterTrialCents)} after ${tryItName}.`;
-  }
   if (p.priceCents === null) {
     return `Need more now? Pick ${data.plans.guild.name} and add extra hours.`;
   }
@@ -137,7 +133,7 @@ export const extraHours = {
 /** What every plan does, after "every plan": one list, used twice below. */
 const featureList =
   "writes down what’s said at the table, remembers the names your table makes up, helps with rules, remembers your story, and keeps backups";
-const features = `Every plan ${featureList}.`;
+const features = `Every plan ${featureList}. Paid plans can also share your house rules with other tables, if you choose.`;
 
 export const labels = {
   recommendedBadge: "Best for one game a week",
