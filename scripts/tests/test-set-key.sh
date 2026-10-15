@@ -154,7 +154,7 @@ run "" DEEPGRAM_API_KEY
 check "end of input at the paste: refused" refused
 check "end of input at the paste: says so" says "nothing was pasted"
 
-# The Gmail app password: the one _PASSWORD that is allowed
+# The sending password (#1347): a Google app password or a Resend API key. Nothing else.
 reset
 run "abcd efgh ijkl mnop"$'\n' SMTP_APP_PASSWORD
 check "app password: spaces are removed" has_line "SMTP_APP_PASSWORD=abcdefghijklmnop"
@@ -167,7 +167,42 @@ for bad in "abcd efgh ijkl mno" "abcd efgh ijkl mno1" "abcdefghijklmnopq" "abcd-
   run "$bad"$'\n' SMTP_APP_PASSWORD
   check "app password: rejects '$bad'" refused
   check "app password: '$bad' says 16 letters" says "16 letters"
+  check "app password: '$bad' says Resend too" says "starts with re_"
   check "app password: '$bad' changes nothing" unchanged
+  check "app password: '$bad' is not echoed" never_says "$bad"
+done
+
+# A Resend key: re_ then letters, digits and _, 20 to 80 characters in all (made-up values)
+resend_key="re_Abc123_Def456ghi789JKL012"
+reset
+run "$resend_key"$'\n' SMTP_APP_PASSWORD
+check "resend key: saved" ok
+check "resend key: in the file" has_line "SMTP_APP_PASSWORD=$resend_key"
+check "resend key: never printed" never_says "$resend_key"
+check "resend key: no part of it shown" never_says "JKL012"
+check "resend key: no start of it shown" never_says "re_Abc"
+check "resend key: says how long" says "Saved SMTP_APP_PASSWORD (${#resend_key} characters)."
+reset
+run "re_$(printf 'a%.0s' $(seq 1 17))"$'\n' SMTP_APP_PASSWORD   # 20 characters: the shortest
+check "resend key: 20 characters is allowed" ok
+check "resend key: 20 characters, none shown" never_says "aaaaaa"
+reset
+run "re_$(printf 'a%.0s' $(seq 1 77))"$'\n' SMTP_APP_PASSWORD   # 80 characters: the longest
+check "resend key: 80 characters is allowed" ok
+check "resend key: 80 characters, none shown" never_says "aaaaaa"
+reset
+run "" SMTP_APP_PASSWORD
+check "mail password: an empty paste says nothing was pasted" says "nothing was pasted"
+for bad in "re_short" "re_$(printf 'a%.0s' $(seq 1 16))" "re_$(printf 'a%.0s' $(seq 1 78))" \
+  "rx_Abc123_Def456ghi789JKL012" "Re_Abc123_Def456ghi789JKL012" "re_Abc123-Def456ghi789JKL012" \
+  "re_Abc123.Def456ghi789JKL012"; do
+  reset
+  run "$bad"$'\n' SMTP_APP_PASSWORD
+  check "resend key: rejects '$bad'" refused
+  check "resend key: '$bad' changes nothing" unchanged
+  check "resend key: '$bad' is not echoed" never_says "$bad"
+  check "resend key: '$bad' says Resend" says "starts with re_"
+  check "resend key: '$bad' not even its end is shown" never_says "${bad: -6}"
 done
 
 # Names
