@@ -13,6 +13,7 @@ import psycopg
 from dmbot.db import Database
 from dmbot.schema import MIGRATIONS
 from tests import pg
+from tests.test_web_role import ensure_web_role
 
 needs_superuser = unittest.skipUnless(
     pg.TEST_URL and pg.SUPERUSER_URL, "set DMBOT_TEST_SUPERUSER_URL to run the schema reuse tests"
@@ -35,6 +36,10 @@ def run(sql: str) -> None:
 class Reuse(unittest.IsolatedAsyncioTestCase):
     async def build(self) -> str:
         """A schema made the way DatabaseTest makes one, remembered the same way."""
+        # The website's role is cluster-wide and another worker may make it at any moment; a
+        # schema built before it exists is (rightly) never reused, which would fail these tests
+        # by chance. Make it first, as the website's own tests do.
+        await ensure_web_role()
         schema = f"t_{uuid.uuid4().hex[:16]}"
         db = await Database.open(pg.TEST_URL, schema=schema, max_size=2)
         pg._BUILT[schema] = pg.stamp(schema)
@@ -105,7 +110,7 @@ class Reuse(unittest.IsolatedAsyncioTestCase):
         used = await self.build()
         for _ in range(3):  # three tests in a row, so a leftover would show
             await self.use(used)
-            self.assertTrue(pg.recycle(used))
+            self.assertTrue(pg.recycle(used), pg.WHY)
             pg._FREE.remove(used)
         self.assertEqual(pg.structure(used), pg.structure(fresh))  # every line, names aside
         self.assertEqual(self.rows(used), self.rows(fresh))  # same rows, content included
@@ -133,7 +138,7 @@ class Reuse(unittest.IsolatedAsyncioTestCase):
         self.assertGreater(
             sum(n for n, _ in self.rows(schema).values()), len(MIGRATIONS)
         )  # rows left behind
-        self.assertTrue(pg.recycle(schema))
+        self.assertTrue(pg.recycle(schema), pg.WHY)
         self.assertIn(schema, pg._FREE)
         self.assertEqual(
             sum(n for n, _ in self.rows(schema).values()), len(MIGRATIONS)

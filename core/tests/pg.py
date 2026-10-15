@@ -260,17 +260,32 @@ def _forget(schema: str) -> None:
         conn.execute(sql.SQL("DROP SCHEMA IF EXISTS {} CASCADE").format(sql.Identifier(schema)))
 
 
+WHY = ""  # why the last schema was not reused (a test failure message needs to say)
+
+
+def _what_differs(now: str, built: str) -> str:
+    """Which catalogs of the fingerprint changed, by name, for a readable failure message."""
+    names = ["pg_class", *(table for table, _, _ in _CATALOGS)]
+    mine, theirs = now.split("|"), built.split("|")
+    parts = [n for n, x, y in zip(names, mine, theirs, strict=False) if x != y]
+    tail = [] if mine[len(names) :] == theirs[len(names) :] else ["migrations or web role"]
+    return ", ".join([*parts, *tail]) or "nothing visible"
+
+
 def recycle(schema: str) -> bool:
     """Take a schema back after a test: True when it is unchanged (nothing in its catalogs was
     written since it was built), was cleared, and may go to the next test; False when it was
     dropped because something about it changed or anything at all went wrong."""
+    global WHY
     try:
-        if stamp(schema) == _BUILT.get(schema):
+        now = stamp(schema)
+        if now == _BUILT.get(schema):
             clear_rows(schema)
             _FREE.append(schema)
             return True
-    except Exception:  # anything odd: do not trust it
-        pass
+        WHY = "changed: " + _what_differs(now, _BUILT.get(schema, ""))
+    except Exception as exc:  # anything odd: do not trust it
+        WHY = f"{type(exc).__name__}: {str(exc)[:300]}"
     with contextlib.suppress(Exception):  # stuck on a lock: left behind, never reused
         _forget(schema)
     return False
