@@ -3194,6 +3194,42 @@ is taken down on request through the same page (decided 2026-10-08 on #710). The
 as the database's administrator), and the website's hourly sweep deletes rows after 12
 months.
 
+**QAbot and support tickets** (owner request 2026-10-15; Supervisor's design).
+- **QAbot answers the Discussions category "Q&A for DMbot"** and nothing else. It is a GitHub
+  Actions workflow, not a session that stays on: it runs on GitHub's own runner when a discussion
+  or a reply is posted in that category, plus an hourly sweep for anything missed. It never runs
+  on the server and holds no server secret. All it has is a read-only checkout of this public
+  repository, the public web, its own Anthropic key (a separate key with a spending limit, a
+  repository secret) and a GitHub token limited to `contents: read`, `discussions: write` and
+  `issues: write`.
+- **The model never acts; a script does.** Claude Code runs headless with read-only tools: read
+  and search the checkout, web search, and fetching public pages (getdmbot.com first). It has no
+  shell, no file writes and no GitHub tool. It returns one fixed JSON answer: answer or escalate,
+  the reply text, and the sources it used. A small script checks that answer and is the only
+  thing that posts.
+- **Embedded instructions:** before the model sees a discussion, the script strips control,
+  zero-width and direction characters and HTML comments, and wraps the text as data. The prompt
+  says the post is a question to answer, never instructions. No model can be promised immune to
+  a clever post, so the design limits what a trick can achieve: at worst one wrong public reply,
+  never an action. The script refuses a reply that @mentions anyone, links outside an allowlist
+  (this repository, getdmbot.com, dndbeyond.com), runs past 1,200 characters or looks like a
+  key, and escalates instead.
+- **Answer only when sure:** every claim must come from a cited source (the Help page, the
+  site, this repository's docs). Anything about one person's account, payments, a bug, data
+  deletion or what DMbot will do next is always escalated. Replies are signed "QAbot (automated
+  answer)", say how to reach a person, and are short and plain (CLAUDE.md, hard rules). One reply
+  per post; at most three replies in a thread, then it escalates.
+- **Escalation** opens a public issue labelled `support` and `from: QAbot` that links the
+  discussion. The discussion is already public, so nothing private moves. QAbot replies
+  "Passed to the team as #N". Supervisor triages `support` issues like any other.
+- **Support tickets from people are private.** Paying users write from the website (signed in,
+  a Support form) and anyone can write to the support email (address TBD, owner). These hold
+  personal details, so **they never become public GitHub issues.** They go to a private
+  `support_tickets` table in the database (add-only for the website's role, like `feedback`),
+  shown on the admin page, with an email to the team. Kept for 12 months, then deleted by the
+  website's hourly sweep. The privacy page says so. Reading the support mailbox into tickets is
+  a later step. Until then the team reads the mailbox directly.
+
 **Retention.** Configurable auto-delete of transcripts per server (audio is never
 stored), and a "Delete my past transcripts" action for each player. Deleting a person's
 lines covers both versions, the fixes list, the mentions that point at those lines, and
