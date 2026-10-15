@@ -26,7 +26,6 @@ interface PlanFacts {
   trialDays: number | null;
   backups: boolean;
   keepAfterLastSession: Period;
-  firstMonthAfterTrialCents: number | null;
 }
 
 interface Facts {
@@ -79,9 +78,6 @@ const tryItName = data.plans["try-it"].name;
 
 function note(p: PlanFacts): string | null {
   if (p.trialDays !== null) return `Free for ${p.trialDays} days. No backups or downloads.`;
-  if (p.firstMonthAfterTrialCents !== null) {
-    return `First month ${formatPrice(p.firstMonthAfterTrialCents)} after ${tryItName}.`;
-  }
   if (p.priceCents === null) {
     return `Need more now? Pick ${data.plans.guild.name} and add extra hours.`;
   }

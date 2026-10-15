@@ -38,7 +38,6 @@ describe("the owner's plan facts (#432, #437)", () => {
       ["Pro", null, 217, 50, 20],
     ]);
     expect([extraHours.priceCents, extraHours.hours]).toEqual([499, 10]);
-    expect(byId.table.firstMonthAfterTrialCents).toBe(199);
     expect(tryIt.trialDays).toBe(30);
   });
 
@@ -98,7 +97,6 @@ describe("the plan file's shape", () => {
           "trialDays",
           "backups",
           "keepAfterLastSession",
-          "firstMonthAfterTrialCents",
         ].sort(),
       );
       expect(Number.isInteger(plan.hoursPerMonth) && plan.hoursPerMonth > 0, id).toBe(true);
@@ -114,7 +112,6 @@ describe("the plan file's shape", () => {
       expect(whole(p.campaigns) && p.campaigns > 0, `${id} campaigns`).toBe(true);
       expect(wholeOrNull(p.trialDays), `${id} trialDays`).toBe(true);
       expect(wholeOrNull(p.aboutHoursPerWeek), `${id} aboutHoursPerWeek`).toBe(true);
-      expect(wholeOrNull(p.firstMonthAfterTrialCents), `${id} firstMonth`).toBe(true);
       expect(typeof p.backups, `${id} backups`).toBe("boolean");
       expect(whole(p.keepAfterLastSession.count), `${id} keep`).toBe(true);
     }
@@ -137,7 +134,7 @@ describe("the words match the numbers", () => {
 
   it("says the owner's Try It and Table notes", () => {
     expect(tryItLine).toBe("8 hours a month, 1 campaign. Free for 30 days. No backups or downloads.");
-    expect(byId.table.note).toBe("First month $1.99 after Try It.");
+    expect(byId.table.note).toBeNull(); // Table is the same price from the first month
   });
 
   it("offers no button for Pro and one for every other plan", () => {
