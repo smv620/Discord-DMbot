@@ -2240,3 +2240,16 @@ Overall ...................................... PASS (Deepgram baseline: 33/33, 1
   four tables have row-level security on and forced (1-2 policies each); the function is security definer, owned by
   dmbot, executable by dmbot and not by the website's role; row counts unchanged (3 campaigns, 152 entries, 147
   transcript lines). The tables are empty, so the policies were checked for existence, not by a request through them.
+
+==============================================================================
+2026-10-15  dev1  Dry run on development 98a294e with #1190's follow-up (migration 0062 set updates) - PASSED
+  #1223, #1233, #1247, #1252, #1253 and #1257 merged after the last dry run; #1223 adds 0062_set_updates: new columns
+  on rule_set_follows, rule_set_codes, rule_set_versions and house_rules, a new table rule_set_editors, an
+  "update door" policy set and a second SECURITY DEFINER function, dmbot_set_update_by_code. Same method (fresh
+  pg_dumpall of the live database at 0050, throwaway postgres:16, dmbot role, deleted after).
+  Result: "Database updated: 0051_dndbeyond_invite ... 0062_set_updates" in 0.24 s; a second run applied nothing; all
+  nine new columns exist; all five rule-set tables have row-level security on and forced; the function is security
+  definer, executable by dmbot and not by the website's role; house_rules is empty in the live data, so its new column
+  changed nothing; 3 campaigns, 152 entries and 147 transcript lines unchanged. As before, the new tables and
+  policies were checked for existence, not through a request. #1247 (the seconds fix for #1194) is in development
+  and goes out with this deploy.
