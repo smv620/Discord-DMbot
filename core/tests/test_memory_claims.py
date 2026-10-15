@@ -31,7 +31,7 @@ from dmbot.memory.ontology import (
 )
 from dmbot.schema import MIGRATIONS
 from tests.pg import TEST_URL
-from tests.test_memory_store import DM, GUILD_A, GUILD_B, MemoryTest
+from tests.test_memory_store import DM, GUILD_A, GUILD_B, ConfirmedMemoryTest, MemoryTest
 
 ONTO = Ontology.build()
 EVERYONE = {7, 8}  # the speakers the tests use, all recorded
@@ -198,7 +198,7 @@ class Steward(unittest.TestCase):
         self.assertEqual(term.synonyms, ())  # no word is ever taken for it by accident
 
 
-class Stored(MemoryTest):
+class Stored(ConfirmedMemoryTest):
     async def asyncSetUp(self) -> None:
         await super().asyncSetUp()
         self.claims = ClaimStore(self.memory)
@@ -223,7 +223,8 @@ class Stored(MemoryTest):
             said("Bram", "carries", "Heartseeker", "plan", "3"),
             said("Nobody", "knows", "Bram"),
         )
-        self.assertEqual((got.waiting, got.dropped, got.repeated), (1, 2, 0))
+        # "Nobody" is a new name: the claim is kept, waiting on the DM saying who that is (#1364).
+        self.assertEqual((got.waiting, got.dropped, got.repeated, got.new), (2, 1, 0, ("Nobody",)))
         (waiting,) = await self.claims.waiting(GUILD_A, self.c, opted_in=EVERYONE)
         self.assertEqual(
             (waiting.status, waiting.source, waiting.speaker_ids), ("proposed", "extractor", (7,))
@@ -233,7 +234,7 @@ class Stored(MemoryTest):
         )
         self.assertEqual(await self.memory.relations(GUILD_A, self.c), [])
         counts = await self.claims.counts(GUILD_A, self.c, opted_in=EVERYONE)
-        self.assertEqual(counts, {"proposed": 1, "dropped": 2})
+        self.assertEqual(counts, {"proposed": 1, "names": 1, "dropped": 1})
 
     async def test_a_claim_on_the_catch_all_is_confirmed_with_its_words_as_the_label(self) -> None:
         self.hesper = await self.add("Hesper", type="character")
@@ -381,12 +382,14 @@ class Stored(MemoryTest):
 
     async def test_a_claim_dropped_for_the_same_reason_again_is_not_stored_again(self) -> None:
         for _ in range(3):
-            await self.propose(said("Nobody", "knows", "Bram"), said("Nobody", "knows", "Bram"))
+            await self.propose(
+                said("Bram", "knows", "Bram"),
+                said("Bram", "knows", "Bram"),  # an entry and itself
+            )
         self.assertEqual(
             await self.claims.counts(GUILD_A, self.c, opted_in=EVERYONE), {"dropped": 1}
         )
-        await self.add("Nobody", type="character")  # now the name is known: it can be asked
-        got = await self.propose(said("Nobody", "knows", "Bram"))
+        got = await self.propose(said("Bram", "knows", "Chapel"))  # a different claim can be asked
         self.assertEqual(got.waiting, 1)
 
     async def test_the_stored_row_is_untrusted_too_a_plan_or_instruction_never_confirms(
