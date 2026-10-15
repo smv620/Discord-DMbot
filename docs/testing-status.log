@@ -1,6 +1,6 @@
 DMbot - TESTING STATUS (current testing only)
 =============================================
-Last updated: 2026-10-15 02:05 UTC by dev1 (big deploy live, #1180)
+Last updated: 2026-10-15 13:55 UTC by dev1 (accounts stack live, #1271)
 
 **For the people at the table: docs/next-test-step.md has the one next small test (#569).**
 Short by design: see CLAUDE.md "Testing logs". Full record: docs/testing-history.log.
@@ -9,19 +9,19 @@ Never put tokens, .env contents or players' personal data here (public repo).
 ------------------------------------------------------------------------------
 READY TO DEPLOY (merged into development, not on the server yet; dev1 deploys)
 ------------------------------------------------------------------------------
-(nothing: the big deploy (#1180) and everything before it are live in ee256c7)
-- WebDev, merged 2026-10-15 06:31 UTC (#1237 sign-in by emailed link, #1274 the website's move code; both on top of #1244/#1245): deploy core + web-api
-  with migrations 0066 (email sign-in), 0069 (website's move-code door). Needs SMTP_*, MAIL_FROM, MAIL_POSTAL_ADDRESS and LINK_TOKEN_SECRET set in .env
-  (the owner enters keys; no mailer means no link and move codes answer "off"). Web site: the Account page needs the same build (Cloudflare Pages builds it).
-  Check, with a paid test account that has a payment email: on the Account page ask for a sign-in link by email and use it (works once, ends after
-  15 minutes); press "Get a move code" and see the email arrive at the payment address (not the Discord one); three failed or sent asks in an hour stop the 4th.
+(nothing: the accounts and shared-rules stack (#1271) and everything before it are live in cf4983b6)
+- Still to check live for #1271 (needs the owner): one test sign-in email to an address the owner chooses, and the signed link accepted (#1237); the
+  Account page's "Get a move code" email goes to the payment address, not the Discord one (#1274; needs a paid test account with a payment email).
 - Waiting on the owner, not a deploy: once the Stripe account exists (#1096), replace the LEMONSQUEEZY_* values in .env
   with the STRIPE_* ones (.env.example) through scripts/set-key (#1110). Payments stay off until then.
 
 ------------------------------------------------------------------------------
 LIVE NOW
 ------------------------------------------------------------------------------
-core + web-api ee256c7 (2026-10-15 02:00 UTC, the big deploy #1180: migrations 0051-0062; typed chat #1152 (Message Content Intent is on),
+core + web-api cf4983b6 (2026-10-15 13:49 UTC, the accounts and shared-rules stack #1271: migrations 0063-0072; DMbot ID and personal links (#1228),
+sign-in by emailed link (#1237), account moves (#1244), payment email, email sender and records (#1239, #1288), trial extension (#1240), memory
+states (#1272), shared house rules and suggestions (#1255, #1261, #1262), better extractor prompt (#1292, still off live); SMTP_* and
+LINK_TOKEN_SECRET set by the owner in .env); before that ee256c7 (2026-10-15 02:00 UTC, the big deploy #1180: migrations 0051-0062; typed chat #1152 (Message Content Intent is on),
 FightBot and combat rounds, D&D Beyond invites and sheet questions, table questions in the dmb-chat channel, people as entries,
 relationship definitions, shared rule sets, the website's Stop recording me #1157, timer seconds #1194; consent wording v6, so
 everyone is asked again); before that fc09d9c (2026-10-13 07:07 UTC, migrations 0049 timer total #1123 and 0050 game-time channel #1116, Start listening #1130); before that 042ca8d (2026-10-13 06:11 UTC, migration 0048 plan end date #1106); before that 6c26108 (2026-10-11 20:52 UTC, migration 0047 owner_left #1099: account deletion keeps campaigns; DM "Who was speaking just now?" question #1100; before that 8391df7 19:30 UTC, speaker labels on DM lines #1093/#1095, payments adapter and extra hours #1086/#1097 in web-api, payments still off; before that e8fe8e3 18:11 UTC, migration 0046 transcript entity #1090; before that 383470a 17:01 UTC, migration 0045 campaign_guilds, retention follow-ups #1080, transcript table-talk tags #1079; before that 0f39e35 05:55 UTC, "confident / uncertain" #1072; before that 4f2a957 05:03 UTC, entry facts #1064; before that 5383938 04:44 UTC, migrations through 0044 memory kinds #1053; before that 4904c12 04:08 UTC; sidebar header facts #1045, fixes #1039; before that ccb8f47 03:31 UTC; wake phrase "Hey DMbot" #1048, consent age line #1044; before that 02:38 UTC, migrations through 0043: retention, house-rules file, TimeBot, test voice
