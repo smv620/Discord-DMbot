@@ -69,11 +69,10 @@ def may_look_up(campaign: Campaign, user_id: int) -> bool:
 async def _house_rules(interaction: discord.Interaction, campaign: Campaign) -> list[HouseRule]:
     """This campaign's house rules and no one else's (the store reads one campaign's at a
     time); none if the store isn't there or can't be read, so the card still shows."""
-    store = _bot(interaction).house_rules
-    if store is None:
-        return []
     try:
-        rules: list[HouseRule] = await store.list(campaign.guild_id, campaign.id)
+        rules: list[HouseRule] = await _bot(interaction).all_house_rules(
+            campaign.guild_id, campaign.id
+        )
     except Exception:
         log.exception("Couldn't read the house rules for a rule lookup")
         return []
