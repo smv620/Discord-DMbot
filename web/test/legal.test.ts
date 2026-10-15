@@ -88,6 +88,8 @@ describe("retention and warnings", () => {
       "kept for 120 days. We message the game master on Discord 14 days and 3 days before",
     );
     expect(text(doc("terms").querySelector("main"))).toContain("campaigns are kept for 120 days");
+    // No $1.99 first month any more (2026-10-14): not on the rendered terms either.
+    expect(text(doc("terms").querySelector("main"))).not.toMatch(/\$1\.99|first month/i);
     expect(text(doc("refunds").querySelector("main"))).toContain("kept for 120 days");
   });
 });
@@ -303,5 +305,13 @@ describe("email from DMbot (#1283)", () => {
 
   it("puts no postal address on the page", () => {
     expect(privacy()).not.toMatch(/\b\d{2,5} [A-Z][a-z]+ (Street|St\.?|Road|Rd\.?|Avenue|Ave\.?|Lane|Drive)\b/);
+  });
+});
+
+describe("shared house rules (#1254)", () => {
+  it("the privacy page says only rules are shared, never story or transcripts", () => {
+    const t = text(doc("privacy").querySelector("main"));
+    expect(t).toContain("only the rules themselves");
+    expect(t).toContain("The story, names, notes and what was said are never shared");
   });
 });
