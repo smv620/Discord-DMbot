@@ -187,6 +187,14 @@ class Database:
             yield conn
 
     @asynccontextmanager
+    async def anonymous(self) -> AsyncIterator[Conn]:
+        """A transaction with no person and no session set, for the one question asked before
+        anyone is known: which account an email address belongs to (#1231). Everything row-level
+        is hidden; only the `dmbot_user_by_email` door answers."""
+        async with self._with() as conn:
+            yield conn
+
+    @asynccontextmanager
     async def session(self, id_hash: str) -> AsyncIterator[Conn]:
         """A transaction that can see only the unexpired website session with this cookie
         hash, to find who is signed in before the person is known. Read only."""

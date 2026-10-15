@@ -2,11 +2,14 @@
 // "Say hello" (#665): feedback and questions for the team, and where developers go.
 import { REPO_URL, text } from "../content/hello";
 import HelloIsland from "../hello/HelloIsland";
+import GreetingIsland from "../personal/Greeting";
 import Base from "../layouts/Base.astro";
 ---
 
 <Base title={text.title} description={text.description}>
   <div class="hello">
+    {/* Only for someone who came from a personal link (?uid=&t=); everyone else sees nothing here. */}
+    <GreetingIsland client:only="preact" />
     <h1>{text.heading}</h1>
     <p class="lead">
       {text.intro}{" "}{text.qaNote} <a href="/pricing#questions">{text.qaLink}</a>.
