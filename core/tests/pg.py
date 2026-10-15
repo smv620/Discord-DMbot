@@ -38,3 +38,6 @@ class DatabaseTest(unittest.IsolatedAsyncioTestCase):
     async def asyncTearDown(self) -> None:
         await self.db.close()
         await drop_schema(TEST_URL, self.schema)
+
+
+# Proof push for #1323 (a core-only change); not for merge.
