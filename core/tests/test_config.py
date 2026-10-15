@@ -102,6 +102,22 @@ class PlanChecksSetting(unittest.TestCase):
         self.assertTrue(load_settings({**BASE, "DMBOT_STORY_EXTRACTOR": "1"}).story_extractor_on)
         with self.assertRaisesRegex(ConfigError, "DMBOT_STORY_EXTRACTOR must be 1"):
             load_settings({**BASE, "DMBOT_STORY_EXTRACTOR": "maybe"})
+
+    def test_continuity_levels_have_defaults_and_are_checked(self) -> None:
+        levels = load_settings(BASE).continuity
+        self.assertEqual((levels.possible, levels.probable, levels.likely), (0.25, 0.5, 0.8))
+        self.assertEqual((levels.min_facts, levels.min_sessions), (50, 3))
+        changed = load_settings({**BASE, "DMBOT_CONTINUITY_MIN_FACTS": "20"}).continuity
+        self.assertEqual(changed.min_facts, 20)
+        for name, bad in (
+            ("DMBOT_CONTINUITY_LIKELY", "1.5"),
+            ("DMBOT_CONTINUITY_POSSIBLE", "none"),
+            ("DMBOT_CONTINUITY_MIN_SESSIONS", "0"),
+        ):
+            with self.subTest(name), self.assertRaisesRegex(ConfigError, name):
+                load_settings({**BASE, name: bad})
+        with self.assertRaisesRegex(ConfigError, "in that order"):
+            load_settings({**BASE, "DMBOT_CONTINUITY_POSSIBLE": "0.9"})
         with self.assertRaisesRegex(ConfigError, "DMBOT_SIDEBAR must be 1"):
             load_settings({**BASE, "DMBOT_SIDEBAR": "maybe"})
 
