@@ -12,12 +12,12 @@
    - claim: Guild of Ropes | wants | Heartseeker
 7. dm statement: Tam sets a pot of stew on the fire and whistles, too casual.
 8. player plan: I keep the bow within reach and sleep sitting up.
-   - claim: Hesper | keep | Heartseeker
+   - claim: party | keep | Heartseeker
 9. dm ooc: Roll a Perception check for the night watch.
 10. player question: Does anyone else hear a noise outside?
 11. dm statement: Faint scraping at the shutter, like a knife on wood.
 12. player plan: I open the shutter fast and grab whoever is there.
-   - claim: Ilyra | grab | intruder
+   - claim: party | grab | intruder
 
 ## Scene 52: The parley
 1. dm statement: Captain Maren Voss meets you on the quay with six guards. Her hand rests on her sabre.
@@ -28,7 +28,7 @@
 3. player statement: Maren is our ally now, at least for the night.
    - claim: Maren Voss | ally of | party
 4. player question: Does she know her sister is with us?
-5. dm statement: She looks at Ilyra and the hardness drops from her face for a moment.
+5. dm statement: Maren looks at Ilyra. "My sister," she says, and the hardness drops from her face.
    - claim: Maren Voss | sister of | Ilyra Voss
 6. player plan: Ilyra steps forward and offers her hand.
    - claim: Ilyra Voss | offer hand to | Maren Voss
@@ -36,9 +36,9 @@
 8. dm ooc: This is a good moment for a short break.
 9. player question: Can I check the quay for anyone listening?
 10. dm statement: A hooded man by the crates ducks away.
-   - claim: hooded man | spies on | party
+   - also: hooded man | spies on | party
 11. player plan: I run after him.
-   - claim: Hesper | chase | hooded man
+   - claim: party | chase | hooded man
 12. dm ooc: Roll initiative.
 
 ## Scene 53: Aldwin's confession
@@ -64,7 +64,7 @@
 ## Scene 54: Fire in Greywater
 1. dm statement: The warehouse in Greywater is ablaze. Flames climb the rope walk and the whole street is lit orange.
    - claim: warehouse in Greywater | burning | Greywater
-2. dm statement: Sennet Crow stands in the road with a torch, laughing.
+2. dm statement: Sennet Crow sets her own warehouse alight with a torch, laughing.
    - claim: Sennet Crow | set fire to | warehouse in Greywater
 3. player statement: She burned her own warehouse to hide the amulet.
    - claim: Sennet Crow | burned | warehouse in Greywater
@@ -72,7 +72,7 @@
 5. dm statement: A silver pendant cannot burn. It lies in the ashes, blackened but whole.
    - state: Amulet of Lanterns | intact
 6. player plan: I dive in and grab it.
-   - claim: Ilyra | grab | Amulet of Lanterns
+   - claim: party | grab | Amulet of Lanterns
 7. dm ooc: Roll Dexterity, then Constitution against the smoke.
 8. dm statement: Ilyra comes out coughing, the amulet in her fist.
    - claim: Ilyra | carries | Amulet of Lanterns
@@ -94,11 +94,11 @@
    - claim: party | return | Amulet of Lanterns
 6. dm ooc: Fine, but you will want a good argument.
 7. player plan: I argue that Sennet Crow ordered the theft.
-   - claim: Ilyra | accuse | Sennet Crow
+   - claim: party | accuse | Sennet Crow
 8. dm statement: Delphine listens, then calls two guards to the door.
    - claim: Delphine Aubrey | summons | guards
 9. player question: Are the guards for us or for Sennet?
-10. dm statement: For Sennet. They escort her from the hall.
+10. dm statement: For Sennet. They take her from the hall in chains.
    - state: Sennet Crow | captured
 11. player statement: The council has arrested Sennet Crow.
    - state: Sennet Crow | captured
@@ -113,7 +113,7 @@
    - claim: Bram | kin of | Marguerite Hale
 5. dm ooc: Bring your fanciest outfits. No weapons in the chapel.
 6. player plan: I hide a dagger in my boot anyway.
-   - claim: Hesper | hide | dagger
+   - claim: party | hide | dagger
 7. dm statement: The chapel bell rings the next morning, and the ceremony begins.
 8. player question: Do we know any of the guests?
 9. dm statement: Orla Finch is there, in the second row, and so is Maren Voss.
@@ -159,7 +159,7 @@
 6. dm statement: The omen is favourable. Auril accepts.
    - claim: Auril | accepts | Cerric
 7. player plan: I keep my vows and fight only the guilty.
-   - claim: Cerric | fight | guilty
+   - claim: party | fight | guilty
 8. dm statement: A white wolf watches from the hill, then vanishes.
    - claim: white wolf | watches | Cerric
 9. player question: Is the wolf Auril's servant?
@@ -170,7 +170,7 @@
 1. dm statement: The thief, a slim man called Pip Ashgrove, bolts across the rooftops of Veldmoor with a satchel.
    - claim: Pip Ashgrove | carries | satchel
 2. player plan: I chase him over the rooftops.
-   - claim: Ilyra | chase | Pip Ashgrove
+   - claim: party | chase | Pip Ashgrove
 3. dm ooc: Roll Athletics each turn, three successes catch him.
 4. player question: Can I shoot him with the longbow?
 5. dm ooc: Disadvantage at that range, but yes.
@@ -187,7 +187,7 @@
 12. dm ooc: That is the end of the chase scene.
 
 ## Scene 60: Ending the campaign arc
-1. dm statement: With Sennet Crow in prison and the Guild's docks seized, Greywater breathes again.
+1. dm statement: With Sennet Crow in the watch's prison and the Guild's docks seized by the council, Greywater breathes again.
    - claim: Sennet Crow | prisoner of | Dunmere watch
    - claim: Guild of Ropes | seized by | council of merchants
 2. player statement: The Guild is finished in Greywater.

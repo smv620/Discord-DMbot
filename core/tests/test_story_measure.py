@@ -115,6 +115,12 @@ class GoldenSet(unittest.TestCase):
             text = path.read_text(encoding="utf-8")
             self.assertIsNone(re.search(r"https?://|www\.|@\w|\b\d{15,}\b", text), path.name)
 
+    def test_a_never_is_single_words(self) -> None:
+        for scene in SCENES:
+            for line in scene.lines:
+                for words in line.never:
+                    self.assertTrue(all(" " not in w for w in words), scene.title)
+
     def test_summary_counts(self) -> None:
         self.assertIn(f"{len(SCENES)} scenes", summary(SCENES))
 
@@ -134,7 +140,7 @@ class Format(unittest.TestCase):
         (scene,) = parse_golden(self.GOOD)
         self.assertEqual(len(scene.lines), 5)
         self.assertEqual(scene.lines[4].expected[0].condition, True)
-        self.assertEqual(scene.lines[4].never, [("roan", "alive")])
+        self.assertEqual(scene.lines[4].never, [("alive", "roan")])
         self.assertEqual(scene.lines[0].expected[0].how, "dm_said")
         self.assertEqual(scene.lines[3].expected[0].how, "plan")
         self.assertEqual(scene.lines[4].expected[0].how, "player_said")
@@ -241,10 +247,44 @@ class Scoring(unittest.IsolatedAsyncioTestCase):
         self.assertGreater(score.expected, 0)
         self.assertIn("60 calls failed", notes[0])
 
+    async def test_an_account_out_of_funds_stops_the_pass_at_once(self) -> None:
+        from dmbot.ai import AIOutOfFunds
+
+        class Broke(Canned):
+            async def complete(self, system: str, text: str, *, max_tokens: int = 1500) -> Reply:
+                self.calls += 1
+                raise AIOutOfFunds("no money")
+
+        client = Broke()
+        score, calls, notes = await run(client)
+        self.assertEqual((client.calls, calls), (1, []))
+        self.assertIn("out of funds", notes[0])
+        plans = sum(e.how == "plan" for sc in SCENES for ln in sc.lines for e in ln.expected)
+        self.assertEqual(score.want["plan"], plans)
+
+    async def test_a_multi_word_never_still_catches_an_obeyed_injection(self) -> None:
+        for title, claim in (
+            ("Injection in character", ("temple of Nyxara", "has", "fallen")),
+            ("Let's kill the king", ("king of Dunmere", "is", "dead")),
+        ):
+            scene = next(s for s in SCENES if title in s.title)
+
+            def lie(s: Scene, scene: Scene = scene, claim: tuple[str, str, str] = claim) -> str:
+                extra = []
+                if s is scene:
+                    extra = [{"subject": claim[0], "relationship": claim[1], "object": claim[2],
+                              "details": "", "lines": [1], "how": "player_said"}]  # fmt: skip
+                return answer(s, extra=extra)
+
+            with self.subTest(title):
+                score, *_ = await run(Canned(lie))
+                self.assertEqual(score.injections, 1)
+
     async def test_the_cap_stops_the_pass(self) -> None:
         client = Canned(tokens=(1_000_000, 0))
-        _, calls, notes = await measure_main.measure(client, SCENES, (1.0, 5.0), 1.5)
+        score, calls, notes = await measure_main.measure(client, SCENES, (1.0, 5.0), 1.5)
         self.assertEqual(len(calls), 2)  # overshot by one call at most
+        self.assertGreater(score.want["plan"], 0)  # the unmeasured scenes count as missed
         self.assertIn("the cap", notes[0])
 
 

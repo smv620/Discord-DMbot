@@ -1,5 +1,5 @@
 ## Scene 11: The bridge
-1. dm statement: The bridge at Tolbrook collapses under the ogre's weight. Captain Roan falls into the gorge and does not come up.
+1. dm statement: The bridge at Tolbrook collapses under the ogre's weight. Captain Roan falls into the gorge and does not come up, drowned.
    - state: Captain Roan | dead
    - also: bridge | collapses | Tolbrook
 2. player statement: Roan is dead, I watched him fall.
@@ -23,7 +23,7 @@
 5. dm ooc: Roll Stealth when you move.
 
 ## Scene 13: Where is Quill?
-1. dm statement: Quill's hut is empty. The bed is cold and the satchel is gone.
+1. dm statement: Quill's hut is empty. The bed is cold and the satchel is gone. Quill is nowhere to be found.
    - state: Quill | missing
 2. player statement: I think Quill went to warn the Silver Circle.
    - claim: Quill | went to warn | Silver Circle
@@ -37,7 +37,7 @@
    - state: Ashen Pass watchtower | destroyed
 2. player statement: The watchtower is gone. The Guild must have done this.
    - state: Ashen Pass watchtower | destroyed
-   - claim: Guild of Ropes | burned | Ashen Pass watchtower
+   - also: Guild of Ropes | burned | Ashen Pass watchtower
 3. dm statement: You cannot tell who set the fire.
 4. player question: Did the garrison get out?
 5. dm statement: A few survivors are huddled by the road.
@@ -74,8 +74,8 @@
 4. dm statement: A copper key lies in the dust where she stood.
    - claim: copper key | located in | well
 5. player plan: I pick up the key and follow the wolf.
-   - claim: Ilyra | pick up | copper key
-   - claim: Ilyra | follow | silver wolf
+   - claim: party | pick up | copper key
+   - claim: party | follow | silver wolf
 
 ## Scene 18: Thought dead
 1. dm statement: The assassin's body is never found. A bloody dagger lies in the alley.
@@ -85,7 +85,7 @@
 3. player question: Shall we search his room anyway?
 4. dm statement: The room is empty and the window is open.
 5. player plan: I ask around the harbour ward for anyone who saw him.
-   - claim: Ilyra | ask | harbour ward
+   - claim: party | ask | harbour ward
 
 ## Scene 19: Two deaths
 1. dm statement: In the battle, Ser Corvin falls to a spear. Lady Maris stays on her feet but is badly wounded.

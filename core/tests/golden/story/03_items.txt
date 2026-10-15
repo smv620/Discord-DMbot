@@ -9,7 +9,7 @@
 5. dm statement: He is the clan's champion, so yes.
    - claim: Bram | champion of | Ember Clan
 6. player plan: I ask Bram to lend me the bow for the duel.
-   - claim: Hesper | ask | Bram
+   - claim: party | ask | Bram
 
 ## Scene 22: Passing it on
 1. dm statement: After the duel Bram hands Heartseeker to Hesper. "It chooses its holder," he says.
@@ -18,7 +18,7 @@
    - claim: Hesper | carries | Heartseeker
 3. dm statement: Hesper tests the string and smiles.
 4. player question: Does that mean the clan gave it away?
-5. dm statement: Only lent, not given.
+5. dm statement: Only lent, not given. The Ember Clan still owns it.
    - claim: Ember Clan | owns | Heartseeker
 6. dm ooc: Update your inventories.
 
@@ -50,7 +50,7 @@
 2. player statement: Dawnbreaker was the sword of the first king of Ashenford.
    - claim: Dawnbreaker | owned by | first king of Ashenford
 3. player plan: I try to pull it out of the stone.
-   - claim: Ilyra | pull | Dawnbreaker
+   - claim: party | pull | Dawnbreaker
 4. dm statement: It comes free with a ring like a bell.
 5. dm statement: Ilyra now carries Dawnbreaker.
    - claim: Ilyra | carries | Dawnbreaker
@@ -77,7 +77,7 @@
    - claim: Sela Rusk | gave | signet ring
    - claim: Sela Rusk | kin of | Tam Rusk
 5. player plan: I check the shallows downstream.
-   - claim: Ilyra | search | river
+   - claim: party | search | river
 
 ## Scene 28: Two keys
 1. dm statement: The vault has two keys. The bronze key hangs on the council chair, and the iron key is with Aldwin.

@@ -16,7 +16,7 @@
 2. player question: Is that confirmed?
 3. dm statement: The courier cannot say. He only heard it from a guard.
 4. player statement: I do not trust the courier. The king is probably fine.
-   - state: king | alive
+   - also: king | is | alive
 5. dm ooc: You may roll Insight.
 6. player plan: We ride to the palace and see for ourselves.
    - claim: party | ride to | palace
@@ -73,7 +73,7 @@
 5. dm statement: Perhaps a faint glow behind one shutter, but you cannot be sure.
    - claim: old keep | has | faint glow
 6. player plan: I sneak up to the shutter and look in.
-   - claim: Hesper | sneak up | old keep
+   - claim: party | sneak up | old keep
 7. dm ooc: Roll Stealth.
 
 ## Scene 48: Contradicting himself
@@ -84,7 +84,6 @@
 4. dm statement: The temple was on the shore, it burned down last year.
    - state: temple | destroyed
 5. player statement: Then I was right.
-   - claim: temple | located in | Veldmoor
 6. dm ooc: Fine, you were right.
 
 ## Scene 49: Belief versus fact

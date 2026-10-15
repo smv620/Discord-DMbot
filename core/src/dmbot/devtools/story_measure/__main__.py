@@ -26,7 +26,7 @@ from collections.abc import Sequence
 from datetime import date
 from pathlib import Path
 
-from dmbot.ai import AIError, AIModels, AIModelTier, AnthropicClient
+from dmbot.ai import AIError, AIModels, AIModelTier, AIOutOfFunds, AnthropicClient
 from dmbot.config import ConfigError, parse_ai_models
 from dmbot.devtools.claims import cost
 from dmbot.devtools.claims.extract import MAX_TOKENS, SYSTEM, Client, extract, transcript
@@ -126,6 +126,16 @@ def estimate(scenes: Sequence[Scene], *, worst: bool) -> list[report.Call]:
     ]
 
 
+def _missed(total: Score, scene: Scene) -> None:
+    """A scene that wasn't answered: all its expected claims count as missed, in every tally,
+    so recall by kind and overall recall agree."""
+    for line in scene.lines:
+        for e in line.expected:
+            total.expected += 1
+            total.want[e.how] += 1
+            total.states_expected += e.condition
+
+
 async def measure(
     client: Client, scenes: Sequence[Scene], price: tuple[float, float], budget_usd: float
 ) -> tuple[Score, list[report.Call], list[str]]:
@@ -136,15 +146,25 @@ async def measure(
     notes: list[str] = []
     failed = dropped = cut = 0
     spent = 0.0
-    for scene in scenes:
+    for n, scene in enumerate(scenes):
         if spent >= budget_usd:
-            notes.append(f"  stopped at ${spent:.2f}: the cap; later scenes not measured")
+            for later in scenes[n:]:
+                _missed(total, later)
+            notes.append(
+                f"  stopped at ${spent:.2f}: the cap; {len(scenes) - n} of {len(scenes)} scenes "
+                "not measured (counted as missed)"
+            )
             break
         try:
             got = await extract(client, scene.lines)
+        except AIOutOfFunds:
+            for later in scenes[n:]:
+                _missed(total, later)
+            notes.append("  stopped: the AI account is out of funds; the rest counted as missed")
+            break
         except AIError:
             failed += 1
-            total.expected += sum(len(line.expected) for line in scene.lines)
+            _missed(total, scene)
             continue
         total.add(score(scene.lines, got.claims))
         calls.append(report.Call(got.input_tokens, got.output_tokens))

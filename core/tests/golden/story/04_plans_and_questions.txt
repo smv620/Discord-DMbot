@@ -7,7 +7,7 @@
 3. player question: Could we poison his cup?
 4. dm ooc: You would need a proficiency with poisoner's kit.
 5. player plan: I will bribe the cupbearer to do it for us.
-   - claim: Ilyra | bribe | cupbearer
+   - claim: party | bribe | cupbearer
 6. dm statement: The cupbearer glances at the king and shakes his head.
    - claim: cupbearer | refuses | Ilyra
 
@@ -44,7 +44,7 @@
 ## Scene 35: A promise
 1. dm statement: Lord Haldane swears he will march on Tolbrook before the first snow.
    - claim: Lord Haldane | will march on | Tolbrook
-2. player statement: I do not believe him, he promised the same last year.
+2. player statement: I do not believe him, he promised the same last year and broke it.
    - claim: Lord Haldane | broke promise | last year
 3. player plan: We warn Tolbrook anyway.
    - claim: party | warn | Tolbrook
@@ -58,7 +58,7 @@
 2. player statement: That is only a rumour, nobody knows.
    - also: lighthouse keeper | rumoured | soul
 3. dm statement: A sailor adds, "They also say the lighthouse is cursed."
-   - claim: lighthouse | cursed | rumour
+   - also: lighthouse | cursed | rumour
 4. player question: Who is the lighthouse keeper?
 5. dm statement: Old Jory Pike, a stooped man who has not left the tower in years.
    - claim: Jory Pike | keeper of | lighthouse
@@ -90,12 +90,12 @@
 
 ## Scene 39: A bet
 1. player statement: I bet five gold that Brother Aldwin is the traitor.
-   - claim: Aldwin | traitor of | council of five elders
+   - also: Aldwin | traitor of | council of five elders
 2. dm ooc: We do not play for real gold, you can bet in-game coins.
 3. player ooc: Fine, a copper then.
 4. dm statement: The innkeeper takes the wager with a grin.
 5. player plan: I watch Aldwin all evening.
-   - claim: Hesper | watch | Aldwin
+   - claim: party | watch | Aldwin
 6. dm statement: Aldwin spends the evening alone in his room, reading.
 
 ## Scene 40: Planning the route

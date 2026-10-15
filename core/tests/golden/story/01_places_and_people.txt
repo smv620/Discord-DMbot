@@ -76,7 +76,7 @@
    - also: father | arrested by | Dunmere watch
 4. dm statement: Maren is torn between her duty and her sister.
 5. player plan: I will try to talk Maren round.
-   - claim: Ilyra Voss | talk to | Maren Voss
+   - claim: party | talk to | Maren Voss
 6. dm ooc: Make a Persuasion check.
 
 ## Scene 7: The Thornwood

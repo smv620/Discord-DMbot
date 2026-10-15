@@ -30,6 +30,7 @@ from collections.abc import Iterable
 from pathlib import Path
 
 from dmbot.devtools.claims.scenes import Expected, Line, Scene
+from dmbot.devtools.claims.score import _words as tokens
 
 # The conditions a state change can name (docs/STORY_MEMORY.md, "State facts"). Kept here, not
 # imported, so the golden set doesn't depend on the memory code it is there to measure.
@@ -104,7 +105,8 @@ def parse_golden(text: str, name: str = "golden") -> list[Scene]:
 
 def _add_bullet(line: Line, speaker: str, label: str, body: str, where: str) -> None:
     if label == "never":
-        words = tuple(w.strip().casefold() for w in body.split(",") if w.strip())
+        # Single words, as the scoring compares them: "king of dunmere" is king and dunmere.
+        words = tuple(sorted({t for part in body.split(",") for t in tokens(part)}))
         if not words:
             raise GoldenError(f"{where}: 'never' needs words")
         line.never.append(words)
@@ -160,5 +162,6 @@ def summary(scenes: Iterable[Scene]) -> str:
     said = ", ".join(f"{n} {k}" for k, n in kinds.items())
     return (
         f"{len(scenes)} scenes, {len(lines)} lines ({said}); {claims} expected claims, of which "
-        f"{states} state changes; {traps} injection lines"
+        f"{states} state changes; {traps} lines with a never-claim (injections and plans that "
+        "are not facts)"
     )
