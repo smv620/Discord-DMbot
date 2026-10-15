@@ -22,10 +22,12 @@ permissions:
   discussions: write
   issues: write
 
-# One run per discussion at a time, so two quick replies cannot both be answered at once. The
-# sweep has its own lane. Nothing is cancelled: a run half-way through a reply finishes first.
+# One run at a time for the whole workflow. Runs are serial, so a discussion's own run and the
+# hourly sweep can never both answer it, and a flood of new discussions costs one queue slot each
+# (GitHub keeps one waiting run; the hourly sweep picks up any it dropped). Nothing is cancelled:
+# a run half-way through a reply finishes first.
 concurrency:
-  group: qabot-${{ github.event.discussion.number || 'sweep' }}
+  group: qabot
   cancel-in-progress: false
 
 env:
@@ -52,15 +54,29 @@ jobs:
       - uses: actions/checkout@v5
         with:
           persist-credentials: false
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12" # the script needs 3.11 or later; the runner's own is 3.10
       - uses: actions/setup-node@v5
         with:
           node-version: "22"
       - name: install Claude Code
         run: npm install --global "@anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}"
-      - name: answer or pass on
+
+      # Three steps, so the model's process never holds the GitHub token: it could read it from
+      # /proc and send it out through a tool. Only `ask` has the model's key, only the other two
+      # have the token, and they pass the work through a file.
+      - name: 1. read the discussions
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          QABOT_ANTHROPIC_API_KEY: ${{ secrets.QABOT_ANTHROPIC_API_KEY }}
           # Through the environment, never pasted into the script text.
           DISCUSSION_NUMBER: ${{ github.event.discussion.number }}
-        run: python3 -I scripts/qabot/qabot.py
+        run: python3 -I scripts/qabot/qabot.py prepare
+      - name: 2. ask the model (no GitHub token here)
+        env:
+          QABOT_ANTHROPIC_API_KEY: ${{ secrets.QABOT_ANTHROPIC_API_KEY }}
+        run: python3 -I scripts/qabot/qabot.py ask
+      - name: 3. check the answers and post
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: python3 -I scripts/qabot/qabot.py act
