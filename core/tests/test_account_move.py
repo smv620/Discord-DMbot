@@ -4,6 +4,7 @@ refusal. Needs Postgres."""
 from __future__ import annotations
 
 from typing import Any
+from unittest.mock import patch
 
 from psycopg import AsyncConnection, errors
 from psycopg.rows import dict_row
@@ -303,6 +304,56 @@ class Moves(DatabaseTest):
         self.assertEqual(
             await self.scalar("SELECT count(*) FROM move_code_asks WHERE user_id = %s", OLD), 1
         )
+
+    async def test_a_given_back_ask_can_be_made_again(self) -> None:
+        issued = [await self.moves.make_code(OLD) for _ in range(account_move.ASKS)]
+        await self.moves.cancel_code(OLD, issued[-1])  # its email failed: the ask comes back
+        await self.moves.make_code(OLD)
+        with self.assertRaises(MoveError):
+            await self.moves.make_code(OLD)
+
+    async def test_an_answer_the_door_did_not_use_to_give_is_refused_not_guessed(self) -> None:
+        class Odd:
+            async def fetchone(self) -> dict[str, str]:
+                return {"outcome": "weird"}
+
+        async def execute(*_: Any, **__: Any) -> Odd:
+            return Odd()
+
+        with (
+            patch.object(self.db, "unscoped") as unscoped,
+            self.assertLogs("dmbot.account_move", "WARNING") as logs,
+            self.assertRaises(MoveError) as err,
+        ):
+            unscoped.return_value.__aenter__.return_value.execute = execute
+            await self.moves.make_code(OLD)
+        self.assertEqual(str(err.exception), account_move.BUSY)
+        self.assertNotIn("weird", " ".join(logs.output))
+
+    async def test_the_precheck_and_the_door_agree(self) -> None:
+        """`can_move` is only a read-only look for the screen; the door decides. They must
+        say the same about the same account."""
+        cases: dict[str, int] = {"never paid": THIRD}
+        await self.give_plan(THIRD_NEW, plan="try-it")
+        cases["try it"] = THIRD_NEW
+        await self.add_user(FOURTH)
+        await self.give_plan(FOURTH)
+        async with self.db.plan_writer(FOURTH) as conn:
+            await conn.execute(
+                "UPDATE entitlements SET provider_subscription_id = NULL WHERE user_id = %s",
+                (FOURTH,),
+            )
+        cases["no subscription"] = FOURTH
+        cases["paid"] = OLD
+        for name, user in cases.items():
+            with self.subTest(name):
+                precheck = await self.moves.can_move(user)
+                try:
+                    await self.moves.make_code(user)
+                    door = None
+                except MoveError as exc:
+                    door = str(exc)
+                self.assertEqual(precheck, door)
 
     async def test_a_second_move_inside_30_days_is_refused(self) -> None:
         await self.moves.move(OLD, NEW, await self.code())

@@ -20,6 +20,7 @@ wrong code counts against the person typing it. This module has no Discord in it
 from __future__ import annotations
 
 import hashlib
+import logging
 import secrets
 import time
 from collections import deque
@@ -30,6 +31,8 @@ from datetime import UTC, datetime
 from psycopg import errors
 
 from dmbot.db import Database
+
+log = logging.getLogger(__name__)
 
 CODE_LETTERS = "ABCDEFGHJKMNPQRSTUVWXYZ23456789"  # no 0/O, 1/I/L: easy to read out and type
 CODE_LENGTH = 8
@@ -171,9 +174,9 @@ class AccountMoves:
         it to the payment email and shows it nowhere else.
 
         Made and counted by the database door the website uses (`dmbot_web_move_code`), so the
-        plan check, the 30-day rule and the limits (3 codes an hour for an account, 5 for a
-        connection) are one rule in one place, and a restart forgets nothing. The bot has no
-        connection: its "connection" is the account itself."""
+        plan check, the 30-day rule and the limit (3 codes an hour for an account) are one rule in
+        one place, and a restart forgets nothing. The bot has no connection to count: its
+        "connection" is the account itself."""
         now = self._now()
         code = new_code()
         async with self._db.unscoped() as conn:
@@ -184,7 +187,10 @@ class AccountMoves:
             row = await cur.fetchone()
         outcome = str(row["outcome"]) if row else "no_account"
         if outcome != "ok":
-            raise MoveError(_ASK_REFUSALS.get(outcome, NOT_PAID))
+            if outcome not in _ASK_REFUSALS:  # a door that learned a new answer: fail closed
+                log.warning("The move-code door gave an answer this code doesn't know")
+                raise MoveError(BUSY)
+            raise MoveError(_ASK_REFUSALS[outcome])
         return IssuedCode(code, now)
 
     async def cancel_code(self, user_id: int, code: IssuedCode) -> None:
