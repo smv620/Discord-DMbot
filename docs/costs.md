@@ -94,12 +94,43 @@ python -m dmbot.devtools.story_measure --extractor anthropic --tier fast --tier 
 
 ### Results
 
-**Not measured yet.** The session that built the tool has no AI key. Nothing below the estimate is a result; whoever runs the paid form pastes its output here with the date and the model ids.
+**Measured 2026-10-15** by dev1 on the server (the key stays in the server's `.env`; the owner ran the command). One run of the tool as it stands on `development`, 60 scenes per tier, the extractor prompt of `dmbot.devtools.claims.extract`. Prices: FAST from `dmbot.devtools.costs.prices`; CAREFUL (Sonnet 5.5) $2 in and $10 out per million tokens, read on 2026-10-15 from https://platform.claude.com/docs/en/about-claude/pricing. The ranges are 95% intervals: with 60 scenes they are wide, so differences of a few points mean nothing. The whole run cost about $0.48 (60 calls at $0.00222 plus 60 at $0.00575, worked out from the printed per-call costs; the tool does not print a total).
 
 | Tier | Model | Date | Tokens in / out per call (mean, p95) | $ per call | $ per session (240 / 480 calls) | Recall / precision (DM said, player said, plan) | Who said it | Injections obeyed |
 |---|---|---|---|---|---|---|---|---|
-| FAST | claude-haiku-4-5-20251001 | not run | | | | | | |
-| STRONG (CAREFUL) | not run | not run | | | | | | |
+| FAST | claude-haiku-4-5-20251001 | 2026-10-15 | 458 / 352 (p95 566 / 573) | $0.00222 | $0.53 / $1.07 | 56% / 35%, 55% / 57%, 52% / 58% | 98% | 0 |
+| STRONG (CAREFUL) | claude-sonnet-5-5 | 2026-10-15 | 576 / 460 (p95 710 / 764) | $0.00575 | $1.38 / $2.76 | 64% / 37%, 70% / 56%, 71% / 64% | 100% | 0 |
+
+Other numbers from the same run: all claims pulled 57% (FAST) and 68% (STRONG) of 237 expected, with 173 and 188 invented; state changes (dead, destroyed...) pulled 20% and 33%; what kind of line (a plan or not) 98% and 99%; claims made from a question or table talk, which should be 0: 21 and 28.
+
+The tool's own output, unedited:
+
+```
+measured fast (claude-haiku-4-5-20251001):
+  dm_said: recall 56% (48-65%), precision 35% (28-41%) (126 expected, 205 given)
+  player_said: recall 55% (41-67%), precision 57% (43-69%) (53 expected, 51 given)
+  plan: recall 52% (39-64%), precision 58% (44-70%) (58 expected, 52 given)
+  all claims: pulled 57% (51-63%) of 237 expected; invented 173
+  state changes (dead, destroyed…): pulled 20% (10-37%)
+  who said it (DM or player, of the matched statements): 98% (93-99%)
+  what kind (a plan or not, of all matched): 98% (94-99%)
+  claims made from a question or table talk (should be 0): 21
+  injection lines obeyed (should be 0): 0
+  tokens per call over 60 calls: input mean 458, 95th percentile 566; output mean 352, 95th percentile 573
+  cost: $0.00222 a call; a 4-hour session: $0.53 at 240 calls, $1.07 at 480 calls
+measured careful (claude-sonnet-5-5):
+  dm_said: recall 64% (56-72%), precision 37% (31-44%) (126 expected, 218 given)
+  player_said: recall 70% (56-80%), precision 56% (44-67%) (53 expected, 66 given)
+  plan: recall 71% (58-81%), precision 64% (52-75%) (58 expected, 64 given)
+  all claims: pulled 68% (61-73%) of 237 expected; invented 188
+  state changes (dead, destroyed…): pulled 33% (19-51%)
+  who said it (DM or player, of the matched statements): 100% (97-100%)
+  what kind (a plan or not, of all matched): 99% (97-100%)
+  claims made from a question or table talk (should be 0): 28
+  injection lines obeyed (should be 0): 0
+  tokens per call over 60 calls: input mean 576, 95th percentile 710; output mean 460, 95th percentile 764
+  cost: $0.00575 a call; a 4-hour session: $1.38 at 240 calls, $2.76 at 480 calls
+```
 
 ### Estimate (free, 2026-10-15)
 
@@ -119,4 +150,10 @@ A STRONG tier costs several times that (Sonnet's price is not on file: read it f
 
 ### Recommendation
 
-None yet: it depends on the accuracy numbers, which need a run. The decision to take from them, for the PLAN: use FAST for the live extractor if its recall on the three kinds and its who-said-it accuracy are within a few points of STRONG's and it obeys no injection line; otherwise use STRONG live only for the claims FAST is unsure of, or after the session. A live extractor that obeys even one injection line stays off whatever it costs.
+Written by dev1 from the numbers above; Supervisor decides and records it in PLAN.
+
+- **Neither tier is good enough with the prompt as it is.** Both invent as many claims as they pull (precision 35% to 64%), both make claims from questions and table talk (21 and 28 times, should be 0), and both miss most state changes (20% and 33%). That is a prompt problem before it is a tier problem: fix it and measure again.
+- **Safety:** neither tier obeyed any injection line (0 obeyed, as the tool counts them). Who said it is 98% (FAST) and 100% (STRONG), what kind of line 98% and 99%: that part works even on FAST.
+- **FAST against STRONG, by the rule written before the run:** FAST's recall is not "within a few points" of STRONG's (all claims 57% against 68%; player said 55% against 70%; plan 52% against 71%), so FAST alone does not pass. On the data so far, use **STRONG for the live extractor, about $1.38 a 4-hour session at 240 calls and $2.76 at 480**, with FAST at $0.53 and $1.07 as the cheaper fallback for the parts it does well, and re-run both after the prompt is fixed.
+- **Cost:** even STRONG is under $3 a 4-hour session. Caching the repeated instructions (the earlier estimate: most of each call's input) is worth looking at before the tier is.
+- **Limits:** one run, 60 invented scenes, wide intervals; the "appears abandoned" wording is not scored yet (see above).
