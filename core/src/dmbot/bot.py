@@ -34,6 +34,7 @@ from dmbot import (
     hours,
     install,
     mail,
+    owner_presence,
     plan_rules,
     retention,
     sheet_reread,
@@ -41,6 +42,7 @@ from dmbot import (
     trial_jobs,
     usage,
 )
+from dmbot.account_move import AccountMoves
 from dmbot.ai import FEATURE_TIERS, AnthropicClient, Feature
 from dmbot.ai_watch import AIWatch
 from dmbot.audio.segmenter import Segmenter, Utterance
@@ -206,6 +208,7 @@ from dmbot.ui import logic as ui_logic
 from dmbot.ui import rule_card
 from dmbot.ui.dmbot_commands import _failed, dmbot_group
 from dmbot.ui.house_rules import dmbot_house_rules  # noqa: F401 (registers it)
+from dmbot.ui.migrate import dmbot_migrate  # noqa: F401 (registers it)
 from dmbot.ui.name_card import UndoButton
 from dmbot.ui.name_lists import UndoListButton
 from dmbot.ui.names import ReviewButton, after_session_text, review_view
@@ -247,6 +250,12 @@ TRANSCRIPT_PARALLEL = 10  # campaigns posting at once (one rate-limited channel 
 STOP_DRAIN_TIMEOUT_S = 120.0  # at stop, wait this long for the last words to be written
 FINAL_FLUSH_TIMEOUT_S = 15.0  # at stop or shutdown, give up on posting after this
 IDLE_SWEEP_INTERVAL_S = 1
+OWNER_CHECK_DAYS = 120  # the retention window: older campaigns are not looked at (#1214)
+OWNER_CHECK_GAP_S = 0.5  # between campaigns in the daily look
+OWNER_START_WAIT_S = 2  # at a start the table is waiting
+OWNER_ASK_EVERY_S = 3600  # Discord is asked about one campaign's owner at most this often
+OWNER_LOOK_TIMEOUT_S = 6  # asking Discord about an owner must not hold up a start
+MOVED_CHECKED_MAX = 100_000  # people remembered as checked; cleared past this
 FORGET_TIMEOUT_S = 10  # removing learned names must not hold up stopping a recording
 METER_INTERVAL_S = 60  # how often listening minutes are written to the hours meter (#437)
 METER_FINAL_TRIES = 3  # at a stop: the last minutes are written nowhere else
@@ -507,6 +516,7 @@ class DMBotTree(app_commands.CommandTree["DMBot"]):
 
     async def interaction_check(self, interaction: discord.Interaction) -> bool:
         set_log_context(guild_id=interaction.guild_id)
+        self.client.tell_if_moved_later(interaction.user.id)
         return True
 
     async def on_error(
@@ -604,15 +614,24 @@ class DMBot(commands.AutoShardedBot):
         # The last day of Try It and the extension (#1229): only with a database, and the mail
         # sender (which sends nothing until SMTP is set up) for the emails.
         self.trial_jobs: trial_jobs.TrialJobs | None = None
+        self.mailer: Mailer | None = None
+        self.account_moves: AccountMoves | None = None  # moving to a new Discord account (#1230)
+        self._moved_tasks: set[asyncio.Task[None]] = set()
+        # People already checked for a "your account moved" notice since this process
+        # started: a command from them costs nothing more. An account that moves is taken
+        # out (after_account_move), so it is checked again.
+        self._moved_checked: set[int] = set()
         if meter is not None:
+            self.account_moves = AccountMoves(meter.db)
+            self.mailer = Mailer(
+                meter.db,
+                settings.mail,
+                site_url=settings.site_url,
+                link_secret=settings.link_token_secret,
+            )
             self.trial_jobs = trial_jobs.TrialJobs(
                 meter.db,
-                Mailer(
-                    meter.db,
-                    settings.mail,
-                    site_url=settings.site_url,
-                    link_secret=settings.link_token_secret,
-                ),
+                self.mailer,
                 enforce_plans=settings.enforce_plans,
                 site_url=settings.site_url,
                 link_secret=settings.link_token_secret,
@@ -622,6 +641,7 @@ class DMBot(commands.AutoShardedBot):
             )
         # The daily job that warns about and deletes campaigns past their keep date (#964).
         # Needs the meter (the owners' plans); without one nothing is ever deleted.
+        self._owner_asked: dict[str, float] = {}  # campaign id -> when Discord was last asked
         self.retention: RetentionJob | None = None
         if meter is not None:
             self.retention = RetentionJob(
@@ -1761,6 +1781,10 @@ class DMBot(commands.AutoShardedBot):
             log.exception("The daily retention job failed")
             return
         retention.write_last_run(state_dir, int(time.time()))
+        try:
+            await self.check_owners_daily()
+        except Exception:
+            log.exception("The daily owner check failed")
 
     async def _tell_admin(self, user_id: int, text: str) -> None:
         """A private message to one of DMbot's admins (#972). Raises if it can't be sent, so
@@ -1787,11 +1811,75 @@ class DMBot(commands.AutoShardedBot):
             )
         return None
 
+    async def check_owner_present(
+        self, campaign: Campaign, *, wait: float = OWNER_LOOK_TIMEOUT_S, force: bool = False
+    ) -> Campaign:
+        """Is the campaign's owner still in the server (#1214)? Asked only when DMbot already
+        has a reason to look: a start, opening Settings, and the daily job. Never raises; the
+        campaign as it is now comes back (ownerless if it just became so)."""
+        owner = campaign.owner_user_id
+        guild = self.get_guild(campaign.guild_id)
+        if owner is None or guild is None:
+            return campaign
+        gid, cid = campaign.guild_id, campaign.id
+        cached = guild.get_member(owner) is not None  # no call to Discord at all
+        if not cached and not force:
+            asked = self._owner_asked.get(cid)
+            if asked is not None and time.monotonic() - asked < OWNER_ASK_EVERY_S:
+                return campaign  # asked lately: a start never waits on Discord for this
+        try:
+            if cached:
+                seen = owner_presence.HERE
+            else:
+                self._owner_asked[cid] = time.monotonic()
+                async with asyncio.timeout(wait):  # only the asking of Discord
+                    seen = await owner_presence.look(guild.fetch_member, self.fetch_user, owner)
+            now = int(time.time())
+            step = owner_presence.decide(campaign.owner_missing_since, seen, now)
+            if step.action == owner_presence.MARK:
+                await self.campaigns.note_owner_presence(gid, cid, owner, missing_since=now)
+            elif step.action == owner_presence.CLEAR:
+                await self.campaigns.note_owner_presence(gid, cid, owner, missing_since=None)
+            elif step.action == owner_presence.ORPHAN and await self.campaigns.orphan_missing_owner(
+                gid,
+                cid,
+                owner,
+                now,
+                still_missing_since=campaign.owner_missing_since,
+                any_state=seen == owner_presence.ACCOUNT_DELETED,
+            ):
+                log.info("A campaign's owner is gone from Discord; it is ownerless now")
+                for dm in sorted(campaign.dm_user_ids - {owner}):  # the owner can't read it
+                    await self._dm_user(dm, f"**{campaign.name}**: {owner_presence.TELL_DMS}")
+            return await self.campaigns.get(gid, cid) or campaign
+        except Exception:
+            log.exception("Couldn't check whether a campaign's owner is still here")
+            return campaign
+
+    async def check_owners_daily(self) -> None:
+        """Once a day, with the retention job: look at the owner of each campaign played in
+        the last 120 days, one at a time (#1214)."""
+        now = int(time.time())
+        for guild_id in await self.campaigns.guilds_with_campaigns():
+            if self.get_guild(guild_id) is None:
+                continue
+            for campaign in await self.campaigns.list_campaigns(guild_id):
+                if (
+                    campaign.owner_user_id is None
+                    or campaign.last_active_at < now - OWNER_CHECK_DAYS * 86400
+                ):
+                    continue
+                await self.check_owner_present(campaign, force=True)
+                await asyncio.sleep(OWNER_CHECK_GAP_S)  # one Discord call at a time, spaced
+
     async def plan_refusal(self, guild_id: int, campaign: Campaign, starter_id: int) -> str | None:
         """Why the campaign's owner's plan, hours or campaign count don't allow a start, in
         plain words for the person starting it, or None (#437). A paused campaign is refused
         whatever the plan; the rest only when DMBOT_ENFORCE_PLANS is on. Fails open: a
         database hiccup must never lock a table out of its game."""
+        # A gone owner gets Take it on (#1214); at a start, a cached owner costs nothing and
+        # Discord is asked at most once an hour for a campaign, for at most 2 seconds.
+        campaign = await self.check_owner_present(campaign, wait=OWNER_START_WAIT_S)
         owner = campaign.owner_user_id
         if owner is not None and self.settings.enforce_plans and self.meter is not None:
             # A plan that shrank pauses the campaigns over its cap first, so this one may
@@ -2221,6 +2309,9 @@ class DMBot(commands.AutoShardedBot):
                     await trial_jobs.take_extension_notice(self.meter.db, user.id, int(time.time()))
                     or ""
                 )
+                if self.account_moves is not None:  # an old account that moved (#1230)
+                    moved = await self.account_moves.take_moved_notice(user.id)
+                    trial_line = "\n\n".join(x for x in (trial_line, moved) if x)
             except Exception:
                 log.exception("Couldn't check for a Try It extension notice")
         transcript_line = (
@@ -5044,6 +5135,45 @@ class DMBot(commands.AutoShardedBot):
         except Exception:
             return "retry"
         return "sent"
+
+    async def after_account_move(self, old_user_id: int, new_user_id: int) -> None:
+        """After an account has moved (#1230): tell the old account privately, if it still
+        exists. The payment company's records are brought up to date when its next event
+        arrives (the website's webhook finds a moved person through the marker). Never
+        raises."""
+        from dmbot.account_move import long_date, old_told
+
+        self._moved_checked.discard(old_user_id)  # its next command is checked again
+        try:
+            await self._dm_trial_user(old_user_id, old_told(long_date(int(time.time()))))
+        except Exception:
+            log.exception("Couldn't tell the old account about a move")
+
+    def tell_if_moved_later(self, user_id: int) -> None:
+        """Start the "your account moved" check without making the command wait for it."""
+        if self.account_moves is None or user_id in self._moved_checked:
+            return
+        # Marked before the task starts, so two commands at once start one check.
+        if len(self._moved_checked) >= MOVED_CHECKED_MAX:
+            self._moved_checked.clear()
+        self._moved_checked.add(user_id)
+        task = asyncio.create_task(self.tell_if_moved(user_id))
+        self._moved_tasks.add(task)  # a reference, or the task could be dropped mid-way
+        task.add_done_callback(self._moved_tasks.discard)
+
+    async def tell_if_moved(self, user_id: int) -> None:
+        """An old account whose DMbot account moved (#1230) hears so, privately, the first time
+        it uses any command (marked told as it is read; the line is lost if the message can't
+        be sent, which beats telling twice). Never raises and never holds a command up."""
+        if self.account_moves is None:
+            return
+        try:
+            notice = await self.account_moves.take_moved_notice(user_id)
+            if notice:
+                await self._dm_trial_user(user_id, notice)
+        except Exception:
+            self._moved_checked.discard(user_id)  # try again at their next command
+            log.exception("Couldn't tell an old account that its DMbot account moved")
 
     async def _discord_name(self, user_id: int) -> str:
         try:

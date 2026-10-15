@@ -17,6 +17,8 @@ import secrets
 from collections.abc import Iterable
 from dataclasses import dataclass
 
+import psycopg
+
 from dmbot.db import Database
 from dmbot.web.discord import DiscordGuild, DiscordUser
 
@@ -63,6 +65,10 @@ class Session:
         return next((g for g in self.guilds if g.id == guild_id and g.manage), None)
 
 
+class AccountMoved(Exception):
+    """This Discord account's DMbot account moved to a new Discord account (#1230)."""
+
+
 async def sign_in(
     db: Database,
     user: DiscordUser,
@@ -77,14 +83,20 @@ async def sign_in(
         [{"id": str(g.id), "name": g.name, "manage": g.manage} for g in guilds]
     )
     async with db.user(user.id) as conn:
-        await conn.execute(
-            "INSERT INTO web_users (user_id, email, created_at, last_sign_in_at, display_name)"
-            " VALUES (%s, %s, %s, %s, %s)"
-            " ON CONFLICT (user_id) DO UPDATE"
-            " SET email = EXCLUDED.email, last_sign_in_at = EXCLUDED.last_sign_in_at,"
-            " display_name = EXCLUDED.display_name",
-            (user.id, user.email, now, now, user.name),
-        )
+        try:
+            await conn.execute(
+                "INSERT INTO web_users (user_id, email, created_at, last_sign_in_at, display_name)"
+                " VALUES (%s, %s, %s, %s, %s)"
+                " ON CONFLICT (user_id) DO UPDATE"
+                " SET email = EXCLUDED.email, last_sign_in_at = EXCLUDED.last_sign_in_at,"
+                " display_name = EXCLUDED.display_name",
+                (user.id, user.email, now, now, user.name),
+            )
+        except psycopg.errors.RaiseException as exc:
+            # The database refuses a new account for an ID that moved away.
+            if exc.diag.message_hint == "account_moved":
+                raise AccountMoved from exc
+            raise
         await conn.execute(
             "INSERT INTO web_sessions (id_hash, user_id, created_at, expires_at, guilds,"
             " display_name) VALUES (%s, %s, %s, %s, %s::jsonb, %s)",
