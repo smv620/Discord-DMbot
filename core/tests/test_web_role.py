@@ -4,13 +4,12 @@ schema. The bot's role is unaffected."""
 
 from __future__ import annotations
 
+import contextlib
 import json
 from typing import Any
 from urllib.parse import parse_qs, urlsplit
 
 import httpx
-import contextlib
-
 from psycopg import AsyncConnection, errors
 from psycopg.conninfo import make_conninfo
 
