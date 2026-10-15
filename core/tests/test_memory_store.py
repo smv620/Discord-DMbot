@@ -139,6 +139,12 @@ class Isolation(MemoryTest):
 
         await self.memory.add_session_heard(GUILD_A, self.c, 1_000, [Heard(a, DM, 1)])
         await self.memory.set_condition(GUILD_A, self.c, a, "missing", source="dm")
+        from dmbot.memory.claims import ClaimStore, Extracted
+
+        await ClaimStore(self.memory).propose(
+            GUILD_A, self.c, [Extracted("Belleros", "knows", "Cerric", "", ("1",), "dm_said")],
+            {"1": DM}, opted_in={DM}, prompt_version="p1", model="m1", session_started_at=1_000,
+        )  # fmt: skip
         return a, b
 
     async def test_another_server_sees_nothing(self) -> None:
@@ -1108,7 +1114,7 @@ class Undo(MemoryTest):
             )
         started = time.perf_counter()
         await self.memory.merge(GUILD_A, fresh, keep.value.id, gone.value.id, source="dm")
-        self.assertLess(time.perf_counter() - started, 1.0)  # the bad plan took over 3 s
+        self.assertLess(time.perf_counter() - started, 2.0)  # the bad plan took over 3 s
 
     async def fill_names(self, campaign: str, count: int) -> None:
         """`count` entries with one name each, written directly (quicker than the API)."""

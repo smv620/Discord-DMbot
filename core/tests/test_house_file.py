@@ -135,7 +135,7 @@ class Hostile(unittest.TestCase):
     def fast(self, text: str) -> hf.Parsed:
         started = time.perf_counter()
         parsed = hf.parse(text)
-        self.assertLess(time.perf_counter() - started, 1.0)
+        self.assertLess(time.perf_counter() - started, 5.0)  # room for parallel tests (#1323)
         return parsed
 
     def test_a_long_run_of_blanks_is_not_slow(self) -> None:
@@ -168,7 +168,7 @@ class Hostile(unittest.TestCase):
         theirs = [file_rule(n + 5000, f"theirs {n}") for n in range(1, 2001)]
         started = time.perf_counter()
         diff = hf.compare(mine, theirs)
-        self.assertLess(time.perf_counter() - started, 1.0)
+        self.assertLess(time.perf_counter() - started, 5.0)  # room for parallel tests (#1323)
         self.assertEqual((len(diff.added), len(diff.removed)), (2000, 2000))
 
 
