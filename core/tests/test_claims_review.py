@@ -113,13 +113,40 @@ class Review(MemoryTest):
     async def test_a_speaker_who_stopped_since_deletes_the_question_and_says_so(self) -> None:
         await self.ask(said("Bram", "carries", "Heartseeker"))
         it = self.interaction()
-        it.client.consent.consenting = AsyncMock(return_value=set())  # nobody agrees now
         view = claims_review.ClaimsReview(self.c)
-        await view.current_text(it)
+        await view.current_text(it)  # shown while they still agreed
+        it.client.consent.consenting = AsyncMock(return_value=set())  # then they stop
         await view._decide(it, view.page[0].id, True)
         self.assertIn("stopped being recorded", it.sent[-1])
         self.assertEqual(await self.memory.relations(GUILD_A, self.c), [])
-        self.assertEqual(await self.claims.waiting(GUILD_A, self.c), [])
+        self.assertEqual(await self.claims.waiting(GUILD_A, self.c, opted_in={7}), [])
+
+    async def test_a_question_answered_behind_the_pages_back_ends_instead_of_staying_live(
+        self,
+    ) -> None:
+        await self.ask(said("Bram", "carries", "Heartseeker"), said("Hesper", "knows", "Bram"))
+        it = self.interaction()
+        view = claims_review.ClaimsReview(self.c)
+        await view.current_text(it)
+        first = view.page[0]
+        await self.claims.reject(GUILD_A, self.c, first.id)  # answered on another screen
+        await view._decide(it, first.id, True)
+        self.assertIn("doesn't have that question any more", it.sent[-1])
+        self.assertIn(first.id, view.answered)  # it ended: its buttons are off
+        self.assertEqual(await self.memory.relations(GUILD_A, self.c), [])
+        (second,) = [c for c in view.page if c.id != first.id]
+        await view._decide(it, second.id, False)  # and the page moves on
+        self.assertIn(claims_review.NOTHING_WAITING, it.sent[-1])
+
+    async def test_a_stopped_speakers_words_are_never_in_the_page(self) -> None:
+        await self.claims.propose(
+            GUILD_A, self.c, [said("Bram", "carries", "Heartseeker")], {"1": 8}, opted_in={8},
+            prompt_version="p", model="m", session_started_at=1,
+        )  # fmt: skip
+        it = self.interaction()  # the bot says only speaker 7 agrees now
+        view = claims_review.ClaimsReview(self.c)
+        self.assertIsNone(await view.current_text(it))
+        self.assertNotIn("Heartseeker", "\n".join(it.sent))
 
     async def test_a_second_holder_says_so_in_plain_words(self) -> None:
         await self.memory.set_unique(GUILD_A, self.c, self.bow, True, source="dm")
@@ -135,12 +162,12 @@ class Review(MemoryTest):
 
     async def test_nobody_but_the_campaigns_dm_can_answer(self) -> None:
         await self.ask(said("Bram", "carries", "Heartseeker"))
-        (waiting,) = await self.claims.waiting(GUILD_A, self.c)
+        (waiting,) = await self.claims.waiting(GUILD_A, self.c, opted_in={7})
         it = self.interaction(STRANGER)
         await claims_review.start_claims_review(it, self.c)
         await claims_review.ClaimsReview(self.c)._decide(it, waiting.id, True)
         self.assertEqual(await self.memory.relations(GUILD_A, self.c), [])
-        self.assertEqual(len(await self.claims.waiting(GUILD_A, self.c)), 1)
+        self.assertEqual(len(await self.claims.waiting(GUILD_A, self.c, opted_in={7})), 1)
         self.assertNotIn("Heartseeker", "\n".join(it.sent))  # nothing of the questions leaked
 
     async def test_with_nothing_waiting_it_says_so(self) -> None:
@@ -160,7 +187,11 @@ class DmScreen(MemoryTest):
             GUILD_A, self.c, [said("Bram", "carries", "Heartseeker")], {"1": 7}, opted_in={7},
             prompt_version="p", model="m", session_started_at=1,
         )  # fmt: skip
-        fake = SimpleNamespace(memory=self.memory, post=AsyncMock())
+        fake = SimpleNamespace(
+            memory=self.memory,
+            post=AsyncMock(),
+            consent=SimpleNamespace(consenting=AsyncMock(return_value={7})),
+        )
         await DMBot.ask_about_claims(fake, self.table())  # type: ignore[arg-type]
         text = fake.post.await_args.args[1]
         self.assertIn("1 thing said at the table", text)
@@ -168,6 +199,10 @@ class DmScreen(MemoryTest):
         self.assertNotIn("Heartseeker", text)
 
     async def test_with_nothing_waiting_or_the_extractor_off_nothing_is_posted(self) -> None:
-        fake = SimpleNamespace(memory=self.memory, post=AsyncMock())
+        fake = SimpleNamespace(
+            memory=self.memory,
+            post=AsyncMock(),
+            consent=SimpleNamespace(consenting=AsyncMock(return_value={7})),
+        )
         await DMBot.ask_about_claims(fake, self.table())  # type: ignore[arg-type]
         fake.post.assert_not_called()

@@ -112,6 +112,7 @@ class Claim:
 
 
 def claim_of(r: Mapping[str, Any]) -> Claim:
+    """A stored claim from its row."""
     return Claim(
         r["id"], r["subject"], r["relationship"], r["object"], r["details"], r["how"],
         tuple(r["lines"]), tuple(r["speaker_ids"]), r["source"], r["prompt_version"], r["model"],
@@ -137,6 +138,8 @@ class Confirmed:
 
 
 def _field(value: object) -> str | None:
+    """A short piece of the extractor's answer: one line of text within the limit, or None
+    when it is not text or is empty."""
     if not isinstance(value, str):
         return None
     text = " ".join(value.split())
@@ -190,6 +193,8 @@ def injection_like(claim: Extracted) -> bool:
 
 
 def _phrase(text: str) -> str:
+    """Words as a key ("Is a member of" → "is_a_member_of"), so wording, case and spacing do
+    not matter when a phrase is matched to a relationship."""
     return "_".join(re.findall(r"[a-z0-9]+", text.casefold()))
 
 
@@ -239,6 +244,7 @@ class Names:
 
 
 def names_of(entities: Sequence[Mapping[str, Any]], aliases: Sequence[Mapping[str, Any]]) -> Names:
+    """Which entries each name (or other name) means, from the campaign's live entries."""
     kinds = {str(e["id"]): str(e["type"]) for e in entities}
     seen: dict[str, dict[str, str]] = {}
     for e in entities:
@@ -376,9 +382,48 @@ class ClaimStore:
             await w.insert_many(CLAIMS, rows)
         return Proposed(waiting, dropped, repeated, malformed)
 
-    async def waiting(self, guild_id: int, campaign_id: str, limit: int = 200) -> list[Claim]:
+    async def purge_stopped(
+        self, guild_id: int, campaign_id: str, opted_in: Collection[int]
+    ) -> int:
+        """Forget, before anyone is shown them, the claims (waiting, turned down or dropped;
+        never what the DM confirmed) that cite someone who is not recorded in this server
+        now: marked dropped, with the words wiped. This is the
+        consent re-check on the read path. It catches a Stop recording me whose clean-up
+        failed, and a backup restored after someone stopped or into a server where they never
+        agreed (consent is per server). Returns how many went."""
+        async with self._store._write(guild_id, campaign_id, EXTRACTOR) as w:
+            stale = [
+                r
+                for r in await w.select(CLAIMS, " AND status <> 'confirmed'")
+                if (r["subject"] or r["lines"])  # not already wiped
+                and (not r["speaker_ids"] or not set(r["speaker_ids"]) <= set(opted_in))
+            ]
+            for r in stale:
+                await w.update(
+                    CLAIMS,
+                    r["id"],
+                    {
+                        "status": CLAIM_DROPPED,
+                        "reason": STOPPED_REASON,
+                        "subject": "",
+                        "relationship": "",
+                        "object": "",
+                        "details": "",
+                        "lines": [],
+                        "speaker_ids": [],
+                    },
+                )
+            return len(stale)
+
+    async def waiting(
+        self, guild_id: int, campaign_id: str, *, opted_in: Collection[int], limit: int = 200
+    ) -> list[Claim]:
         """The questions waiting for the DM, grouped by who they are about: the oldest first
-        within a name."""
+        within a name. Only claims whose every speaker is recorded now (`opted_in`, read just
+        before); the others are wiped first (`purge_stopped`). At most `limit`, the oldest
+        (a page is five, so 200 is far more than anyone answers in one sitting, and the
+        grouping covers just these)."""
+        await self.purge_stopped(guild_id, campaign_id, opted_in)
         async with self._store._read(guild_id, campaign_id) as scope:
             rows = await scope.select(
                 CLAIMS,
@@ -394,8 +439,13 @@ class ClaimStore:
             row = await scope.get(CLAIMS, claim_id, lock=False)
         return None if row is None else claim_of(row)
 
-    async def counts(self, guild_id: int, campaign_id: str) -> dict[str, int]:
-        """How many claims there are in each status (one grouped count, not the rows)."""
+    async def counts(
+        self, guild_id: int, campaign_id: str, *, opted_in: Collection[int]
+    ) -> dict[str, int]:
+        """How many claims there are in each status (one grouped count, not the rows), after
+        the ones that cite someone not recorded now are wiped, so a count never includes
+        words the DM must not see."""
+        await self.purge_stopped(guild_id, campaign_id, opted_in)
         async with self._store._read(guild_id, campaign_id) as scope:
             cur = await scope.conn.execute(
                 "SELECT status, count(*) AS n FROM memory_claims"
@@ -456,6 +506,10 @@ class ClaimStore:
         if claim.how == HOW_PLAN:
             raise MemoryRuleError(PLAN_REASON)
         if injection_like(wording):
+            async with self._store._write(guild_id, campaign_id, EXTRACTOR) as w:
+                await w.update(
+                    CLAIMS, claim_id, {"status": CLAIM_DROPPED, "reason": INJECTION_REASON}
+                )  # not asked again
             raise MemoryRuleError(ODD_NOW)
         if not claim.speaker_ids or any(s not in opted_in for s in claim.speaker_ids):
             async with self._store._write(guild_id, campaign_id, DM) as w:

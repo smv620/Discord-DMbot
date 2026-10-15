@@ -5095,7 +5095,9 @@ class DMBot(commands.AutoShardedBot):
             return
         gid, cid = table.guild_id, table.campaign_id
         with log_context(guild_id=gid, campaign_id=cid):
-            waiting = (await ClaimStore(self.memory).counts(gid, cid)).get("proposed", 0)
+            agreed = await self.consent.consenting(gid)
+            counts = await ClaimStore(self.memory).counts(gid, cid, opted_in=agreed)
+            waiting = counts.get("proposed", 0)
             if waiting:
                 await self.post(
                     table.screen_channel_id,

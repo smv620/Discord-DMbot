@@ -71,7 +71,9 @@ STATES = Table(
     ("id", "entity_id", "condition", "from_session_at", "source", "created_at", "closed_at"),
 )
 # What the story extractor read out of a session, waiting for the DM (#1297): text only, no
-# links to entries, because a claim names things the memory may not know yet.
+# links to entries, because a claim names things the memory may not know yet. `fact_id` is not a
+# database link: the fact it became lives in one of two tables (relationships or states) and can
+# be undone or deleted later, so it is a pointer to follow while the fact is still there.
 CLAIMS = Table(
     "memory_claims",
     "id",

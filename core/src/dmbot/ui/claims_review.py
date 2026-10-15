@@ -12,14 +12,13 @@ from typing import Any
 
 import discord
 
-from dmbot.memory.claims import ODD_NOW, PAGE, STOPPED_NOW, Claim, ClaimStore
-from dmbot.memory.models import HOW_DM, MemoryRuleError
+from dmbot.memory.claims import GONE, ODD_NOW, PAGE, STOPPED_NOW, Claim, ClaimStore
+from dmbot.memory.models import HOW_DM, MemoryRuleError, name_key
 from dmbot.ui.dmbot_commands import _bot, _Button, _Menu, _replace, _send, _tell
 from dmbot.ui.name_card import FLAG_WHY
 from dmbot.ui.names import _campaign_for, _md, _memory
 
 NOTHING_WAITING = "✅ Nothing left to check. DMbot will ask again after the next session."
-GONE = "Already answered."
 ODD_PAIR = "DMbot noticed something odd about it"
 YES, NO = "✅", "❌"
 _FINAL = (GONE, STOPPED_NOW, ODD_NOW)  # answers that end a question without a yes or a no
@@ -58,8 +57,8 @@ def page_text(page: list[Claim], total: int, answered: Mapping[str, str] | None 
     ]
     last = ""
     for number, claim in enumerate(page, 1):
-        if claim.subject.casefold() != last:
-            last = claim.subject.casefold()
+        if name_key(claim.subject) != last:  # the same key the questions are sorted by
+            last = name_key(claim.subject)
             lines.append(f"\n__{_md(claim.subject)}__")
         done = answered.get(claim.id)
         lines.append(f"{number}. {question_text(claim)}" if done is None else f"{number}. {done}")
@@ -138,7 +137,8 @@ class ClaimsReview(_Menu):
         guild = interaction.guild
         if memory is None or guild is None:
             return None
-        waiting = await ClaimStore(memory).waiting(guild.id, self.campaign_id)
+        agreed = await _bot(interaction).consent.consenting(guild.id)
+        waiting = await ClaimStore(memory).waiting(guild.id, self.campaign_id, opted_in=agreed)
         self.page, self.total, self.answered = waiting[:PAGE], len(waiting), {}
         if not self.page:
             self.clear_items()
