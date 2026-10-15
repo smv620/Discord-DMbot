@@ -1,0 +1,57 @@
+---
+import Base from "../layouts/Base.astro";
+import { entries, formatDate, whatsNewHeading, whatsNewIntro } from "../content/whats-new";
+---
+
+<Base
+  title={whatsNewHeading}
+  description="What is new in DMbot, newest first, in plain words."
+>
+  <h1>{whatsNewHeading}</h1>
+  <p class="lead muted">{whatsNewIntro}</p>
+
+  <ol class="entries">
+    {
+      entries.map((e) => (
+        <li class="surface entry">
+          <h2>{e.title}</h2>
+          <p class="muted date">
+            <time datetime={e.date}>{formatDate(e.date)}</time>
+          </p>
+          <p>{e.what}</p>
+        </li>
+      ))
+    }
+  </ol>
+
+  <p class="muted">
+    Need a hand? Read the <a href="/help">Help page</a>.
+  </p>
+</Base>
+
+<style>
+  .entries {
+    list-style: none;
+    padding: 0;
+    margin: var(--space-4) 0;
+    display: grid;
+    gap: var(--space-4);
+  }
+
+  .entry {
+    padding: var(--space-6);
+  }
+
+  .entry h2 {
+    font-size: var(--text-lg);
+    margin: 0 0 var(--space-1);
+  }
+
+  .entry p {
+    margin: 0;
+  }
+
+  .entry .date {
+    margin-bottom: var(--space-2);
+  }
+</style>
