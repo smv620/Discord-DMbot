@@ -104,7 +104,7 @@ def claims_review_view(campaign_id: str) -> discord.ui.View:
 async def start_claims_review(interaction: discord.Interaction, campaign_id: str) -> None:
     memory = _memory(interaction)
     if memory is None:
-        await _tell(interaction, "Remembering names isn't switched on for this DMbot yet.")
+        await _tell(interaction, "Remembering names isn't switched on for this DMbot yet. Ask whoever runs DMbot to turn it on.")
         return
     campaign = await _campaign_for(interaction, campaign_id)  # only whoever runs the campaign
     if campaign is None:
