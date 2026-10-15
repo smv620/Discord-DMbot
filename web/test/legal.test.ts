@@ -294,3 +294,11 @@ describe("shared house rules (#1254)", () => {
     expect(t).toContain("The story, names, notes and what was said are never shared");
   });
 });
+
+describe("story state (#1284)", () => {
+  it("the privacy page says which items are one of a kind and who carries what are kept per campaign", () => {
+    const t = text(doc("privacy").querySelector("main"));
+    expect(t).toContain("which items are the only one of their kind and who carries what");
+    expect(t).toContain("A backup holds it, and it is deleted when the campaign is deleted");
+  });
+});
