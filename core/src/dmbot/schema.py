@@ -3804,6 +3804,12 @@ SUPPORT_EMAIL = (
         IF dmbot_support_admin() IS DISTINCT FROM 'admin' THEN
             RETURN NULL;
         END IF;
+        -- Only for an account that has sent a ticket: the door is one the website's role can open
+        -- itself, so it must not be a way to read any account's address. (The ticket check runs
+        -- under the admin door the caller already holds; support_tickets is forced to it.)
+        IF NOT EXISTS (SELECT 1 FROM support_tickets WHERE user_id = who) THEN
+            RETURN NULL;
+        END IF;
         PERFORM set_config('dmbot.support_email_lookup', 'on', true);
         SELECT COALESCE(payment_email, email) INTO found FROM web_users WHERE user_id = who;
         PERFORM set_config('dmbot.support_email_lookup', before, true);

@@ -417,6 +417,26 @@ class SupportKeptPrivately(SupportBase):
             await conn.execute("UPDATE web_users SET email = NULL, payment_email = NULL")
         self.assertIsNone((await support.newest(self.web))[0].email)
 
+    async def test_an_account_with_no_ticket_gets_no_address_even_with_the_door_open(self) -> None:
+        # The door is one the website's role can open itself, so it can't be a way to read the
+        # address of an account that never wrote to us.
+        async with self.web.support_admin() as conn:
+            cur = await conn.execute("SELECT dmbot_support_email(%s) AS e", (ALICE.id,))
+            row = await cur.fetchone()
+            assert row is not None
+            self.assertIsNone(row["e"])
+        await self.add_row(ALICE.id, self.now)
+        async with self.web.support_admin() as conn:
+            cur = await conn.execute("SELECT dmbot_support_email(%s) AS e", (ALICE.id,))
+            row = await cur.fetchone()
+            assert row is not None
+            self.assertEqual(row["e"], "belleros@example.com")
+            # And only that account's: another person's address stays out of reach.
+            cur = await conn.execute("SELECT dmbot_support_email(%s) AS e", (BOB,))
+            row = await cur.fetchone()
+            assert row is not None
+            self.assertIsNone(row["e"])
+
     async def test_the_address_is_never_kept_in_the_ticket(self) -> None:
         await self.add_row(ALICE.id, self.now)
         async with self.db.support_admin() as conn:
