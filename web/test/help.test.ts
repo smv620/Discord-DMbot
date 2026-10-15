@@ -68,16 +68,26 @@ describe("Help", () => {
     const steps = dmSteps.map((s) => s.text);
     const suggest = steps.find((t) => t.includes("💡 Suggest")) ?? "";
     expect(suggest).toContain("with no name on it");
-    expect(suggest).toContain("you hear the answer at your next session");
+    expect(steps.join(" ")).toContain("You hear the answer on your DM screen at your next session.");
     // The note's buttons are See, Add to set and No thanks, not "Accept" (set_suggestion.py).
     const note = steps.find((t) => t.includes("Add to set")) ?? "";
     expect(note).toContain("It never says which table sent it.");
     expect(note).toContain("Nothing changes until you press Add to set.");
     expect(note).not.toContain("Accept");
     const source = readFileSync(join(botDir, "dm_screen/set_suggestion.py"), "utf8");
-    expect(source).toContain('"accept": ("Add to set"');
+    for (const label of ['"see": ("See"', '"accept": ("Add to set"', '"no": ("No thanks"']) {
+      expect(source, label).toContain(label);
+    }
     expect(steps.join(" ")).toContain("This copy no longer gets updates.");
     expect(steps.join(" ")).toContain("It does not keep the share code.");
+    // A table that still follows a set sees only Stop using shared rules, and following again is
+    // refused until then (shared_rules.py SharedMenu, rule_sets.py ALREADY_FOLLOWING), so both
+    // ways back to updates say to press Stop using shared rules first.
+    for (const marker of ["stop being shared", "A backup keeps"]) {
+      const step = steps.find((t) => t.includes(marker)) ?? "";
+      expect(step.indexOf("Stop using shared rules"), marker).toBeGreaterThan(-1);
+      expect(step.indexOf("Stop using shared rules"), marker).toBeLessThan(step.indexOf("📥 Use shared rules"));
+    }
   });
 
   it("links to Add to Discord and Say hello", () => {
