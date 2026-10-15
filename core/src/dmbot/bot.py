@@ -43,7 +43,7 @@ from dmbot import (
     usage,
 )
 from dmbot.account_move import AccountMoves
-from dmbot.ai import FEATURE_TIERS, AnthropicClient, Feature
+from dmbot.ai import FEATURE_TIERS, AIModelTier, AnthropicClient, Feature
 from dmbot.ai_watch import AIWatch
 from dmbot.audio.segmenter import Segmenter, Utterance
 from dmbot.audio_check import AudioChecker, Verdict
@@ -150,7 +150,7 @@ from dmbot.ears.server import EarsServer
 from dmbot.fightbot import FightState
 from dmbot.logs import log_context, set_log_context
 from dmbot.mail import Mailer
-from dmbot.memory import definitions, document_reader
+from dmbot.memory import definitions, document_reader, extractor
 from dmbot.memory.backup import MemorySection
 from dmbot.memory.claims import ClaimStore
 from dmbot.memory.continuity import ContinuityStore
@@ -729,6 +729,13 @@ class DMBot(commands.AutoShardedBot):
         self.fight_ai = (
             self.ai_client.tier(FEATURE_TIERS[Feature.FIGHTBOT], Feature.FIGHTBOT)
             if self.ai_client
+            else None
+        )
+        # The story extractor's reader after a session (#1363). Built only when the switch is on,
+        # so with it off there is no client to call; the tier is a backend setting.
+        self.extractor_ai = (
+            self.ai_client.tier(AIModelTier(settings.story_extractor_tier), Feature.EXTRACTOR)
+            if self.ai_client and settings.story_extractor_on
             else None
         )
         # The off-topic filter (#52), the audio check and the DM sidebar.
@@ -1774,6 +1781,7 @@ class DMBot(commands.AutoShardedBot):
             ("name scan", lambda: self.suggest_names(table)),
             ("who is who", lambda: self.learn_people(table)),
             ("people check", lambda: self.check_people(table)),
+            ("story extractor", lambda: self.extract_claims(table, ended_at)),
             ("what was said", lambda: self.ask_about_claims(table)),
             ("heads-ups", lambda: self.warn_about_continuity(table)),
             ("steward numbers", lambda: self.log_steward_tally(table)),
@@ -5147,6 +5155,42 @@ class DMBot(commands.AutoShardedBot):
                 await self.post(
                     table.screen_channel_id, waiting_text(len(kept)), view=people_review_view(cid)
                 )
+
+    async def extract_claims(self, table: Table, ended_at: int) -> None:
+        """After a session, only with DMBOT_STORY_EXTRACTOR on (it is off until #1282 passes): read
+        the stored transcript in short batches and store what the AI heard as proposals for the DM
+        (#1363). Off means off: no AI client, no stored lines read, no prompt built. Only lines from
+        people who still agree are sent, and the claims are checked against consent again after
+        each answer. The log gets counts only. Nothing here is a fact."""
+        if (
+            not self.settings.story_extractor_on
+            or self.extractor_ai is None
+            or self.memory is None
+            or self.transcripts is None
+            or table.campaign_id is None
+            or table.transcript_session_id is None
+        ):
+            return
+        gid, cid = table.guild_id, table.campaign_id
+        with log_context(guild_id=gid, campaign_id=cid):
+            session = await self.transcripts.session(gid, table.transcript_session_id)
+            if session is None or session.lines == 0:
+                return
+            lines = await self.transcripts.lines(gid, table.transcript_session_id)
+            report = await extractor.run(
+                self.extractor_ai,
+                ClaimStore(self.memory),
+                lines,
+                guild_id=gid,
+                campaign_id=cid,
+                dm_ids={table.dm_user_id, *table.dm_user_ids},
+                consenting=lambda: self.consent.consenting(gid),
+                model=lambda: self.extractor_ai.model if self.extractor_ai else "",
+                session_started_at=session.started_at,
+                tally=table.steward_tally,
+                max_calls=self.settings.story_extractor_max_calls,
+            )
+            log.info(report.line())
 
     async def log_steward_tally(self, table: Table) -> None:
         """After the session's other work: one line in the server log of what the ontology
