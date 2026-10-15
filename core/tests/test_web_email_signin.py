@@ -340,16 +340,6 @@ class EmailSignIn(DatabaseTest):
         self.assertTrue(all(r["user_id"] == ALICE.id for r in rows))
         self.assertNotIn("example.com", repr(rows))  # ids and kinds only, never an address
 
-    async def test_move_codes_are_limited_per_account(self) -> None:
-        await self.account(ALICE)
-        await self.give_plan(ALICE, "table", "active")
-        async with self.browser() as client:
-            await self.sign_in_by_email(client, ALICE)
-            codes = [
-                (await client.post("/me/move-code", headers=HEADERS)).status_code for _ in range(4)
-            ]
-        self.assertEqual(codes, [202, 202, 202, 429])
-
     async def test_a_chunked_or_huge_body_is_just_no_email(self) -> None:
         await self.account(ALICE)
         async with self.browser() as client:

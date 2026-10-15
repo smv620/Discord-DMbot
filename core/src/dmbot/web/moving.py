@@ -36,7 +36,7 @@ MoveOutcome = Literal["sent", "not_paid", "too_soon", "slow_down", "no_email", "
 
 class MoveCodes(Protocol):
     """Makes a move code and emails it to the account's payment email, and says how it went.
-    `source` is a hash of the connection's address, for the per-connection limit."""
+    `source` is a keyed hash of the connection's address, for the per-connection limit."""
 
     async def send_code(self, user_id: int, source: str) -> MoveOutcome: ...
 
@@ -94,11 +94,24 @@ class EmailedMoveCodes:
             )
         except Exception:
             result = "failed"
-        if result not in ("sent", "already_sent"):
-            await self._cancel(user_id, code_hash)
+        if result != "sent":
+            # "already_sent" can't be right here (each ask has its own kind), so it is a failure
+            # too: nobody got this code.
+            await self._cancel(user_id, code_hash, now)
             return "failed"
         return "sent"
 
-    async def _cancel(self, user_id: int, code_hash: str) -> None:
+    async def _cancel(self, user_id: int, code_hash: str, asked_at: int) -> None:
         async with self._db.unscoped() as conn:
-            await conn.execute("SELECT dmbot_web_cancel_move_code(%s, %s)", (user_id, code_hash))
+            await conn.execute(
+                "SELECT dmbot_web_cancel_move_code(%s, %s, %s)",
+                (user_id, code_hash, asked_at),
+            )
+
+
+async def forget_old_asks(db: Database, *, now: int) -> int:
+    """The hourly sweep: move-code asks older than the hour they count for."""
+    async with db.unscoped() as conn:
+        cur = await conn.execute("SELECT dmbot_web_forget_move_asks(%s) AS n", (now,))
+        row = await cur.fetchone()
+    return int(row["n"]) if row else 0

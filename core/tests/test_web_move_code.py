@@ -4,6 +4,7 @@ and counted by one database door, mailed to the payment email only, and shown no
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import unittest
 from email.message import EmailMessage
 
@@ -14,9 +15,10 @@ from dmbot.account_move import AccountMoves, MoveError
 from dmbot.db import Database
 from dmbot.mail import Mailer
 from dmbot.web import sessions
+from dmbot.web.accounts import delete_person
 from dmbot.web.app import create_app
 from dmbot.web.discord import DiscordUser
-from dmbot.web.moving import EmailedMoveCodes
+from dmbot.web.moving import EmailedMoveCodes, forget_old_asks
 from dmbot.web.payments import FakeProvider
 from tests.pg import REQUIRE_DB, SUPERUSER_URL, DatabaseTest
 from tests.test_web_api import ALICE, API, SITE, THURSDAY, FakeDiscord, settings
@@ -246,13 +248,40 @@ class WebMoveCode(DatabaseTest):
         self.assertEqual(results.count("sent"), 5)
         self.assertEqual(results.count("slow_down"), 3)
 
+    async def asks(self) -> int:
+        async with self.db.unscoped() as conn:
+            cur = await conn.execute("SELECT count(*) AS n FROM move_code_asks")
+            row = await cur.fetchone()
+        assert row is not None
+        return int(row["n"])
+
+    async def test_failed_emails_do_not_use_up_the_asks(self) -> None:
+        self.outbox.fail = True
+        for _ in range(3):
+            self.assertEqual(await self.codes.send_code(ALICE.id, "a" * 64), "failed")
+        self.assertEqual(await self.asks(), 0)
+        self.outbox.fail = False
+        self.assertEqual(await self.codes.send_code(ALICE.id, "a" * 64), "sent")
+
+    async def test_the_sweep_removes_old_asks(self) -> None:
+        await self.codes.send_code(ALICE.id, "a" * 64)
+        self.assertEqual(await forget_old_asks(self.web, now=self.now + 60), 0)
+        self.assertEqual(await self.asks(), 1)
+        self.assertEqual(await forget_old_asks(self.web, now=self.now + 3601), 1)
+        self.assertEqual(await self.asks(), 0)
+
+    async def test_deleting_the_account_leaves_no_asks(self) -> None:
+        await self.codes.send_code(ALICE.id, "a" * 64)
+        await delete_person(self.web, ALICE.id, now=self.now)
+        self.assertEqual(await self.asks(), 0)
+
     async def test_a_failed_mail_cancels_only_its_own_code(self) -> None:
         # Ask A makes code A; before A's mail fails, ask B replaces it and is mailed. Cancelling
         # A must leave B working.
         await self.codes.send_code(ALICE.id, "a" * 64)
         second = self.outbox.code()
         stale = account_move.hash_code("AAAA2222")
-        await self.codes._cancel(ALICE.id, stale)
+        await self.codes._cancel(ALICE.id, stale, self.now)
         bot = AccountMoves(self.db, clock=lambda: self.now)
         self.assertEqual(await bot.find(NEW_ACCOUNT, second), ALICE.id)
 
@@ -308,6 +337,18 @@ class MoveCodeRoute(WebMoveCode):
                 await self.codes.send_code(ALICE.id, "f" * 64)
             slow = await client.post("/me/move-code", headers=HEADERS)
             self.assertEqual((slow.status_code, slow.json()), (429, {"error": "slow_down"}))
+
+    async def test_the_connection_is_stored_as_a_keyed_hash_not_a_plain_one(self) -> None:
+        async with await self.signed_in() as client:
+            await client.post("/me/move-code", headers=HEADERS)
+        async with self.db.unscoped() as conn:
+            cur = await conn.execute("SELECT source FROM move_code_asks")
+            (row,) = await cur.fetchall()
+        # httpx's test connection has no real address; whatever it is, a plain sha256 of it
+        # (which anyone could compute for every IPv4 address) is not what is stored.
+        plain = hashlib.sha256(b"move-code:unknown").hexdigest()
+        self.assertEqual(len(row["source"]), 64)
+        self.assertNotEqual(row["source"], plain)
 
     async def test_no_code_in_the_logs(self) -> None:
         async with await self.signed_in() as client:

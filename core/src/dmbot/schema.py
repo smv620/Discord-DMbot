@@ -2157,7 +2157,8 @@ WEB_ROLE_FUNCTIONS: tuple[tuple[str, str], ...] = (
     ("dmbot_set_payment_email", "dmbot_set_payment_email(TEXT, TEXT, BIGINT)"),  # #1242
     # A move code asked for on the website (#1246).
     ("dmbot_web_move_code", "dmbot_web_move_code(BIGINT, TEXT, BIGINT, TEXT, BIGINT)"),
-    ("dmbot_web_cancel_move_code", "dmbot_web_cancel_move_code(BIGINT, TEXT)"),
+    ("dmbot_web_cancel_move_code", "dmbot_web_cancel_move_code(BIGINT, TEXT, BIGINT)"),
+    ("dmbot_web_forget_move_asks", "dmbot_web_forget_move_asks(BIGINT)"),
 )
 # The columns the website may fill when it creates a hand-over offer (#728): who, where and the
 # two names. Left out on purpose, so they take their defaults: status and decided_at (an offer
@@ -3079,11 +3080,14 @@ DMBOT_ID = """
 # the account must be on a paid plan and not have moved in the last 30 days, the code's hash is
 # stored (the earlier code stops working), and the limits are counted here, in the database, so
 # every web process agrees and a restart forgets nothing: 3 codes an hour for an account and 5
-# an hour for a connection. `src` is a hash of the connection's address (never the address).
+# an hour for a connection. `src` is a keyed hash (HMAC) of the connection's address: the address
+# itself is never stored, and the hash can't be turned back into one without the server's secret.
 # The caps match account_move.py's ASKS and MOVE_GAP_S; a test holds them together.
 WEB_MOVE_CODES = """
     CREATE TABLE move_code_asks (
-        user_id  BIGINT NOT NULL CHECK (user_id > 0),
+        -- Goes with the account (deletion) and follows it through a move.
+        user_id  BIGINT NOT NULL CHECK (user_id > 0)
+                 REFERENCES web_users ON DELETE CASCADE ON UPDATE CASCADE,
         source   TEXT   NOT NULL CHECK (char_length(source) = 64),
         asked_at BIGINT NOT NULL
     );
@@ -3136,12 +3140,24 @@ WEB_MOVE_CODES = """
         RETURN outcome;
     END
     $fn$;
-    -- The email didn't go, so no code should be waiting that nobody has seen. Only that very
-    -- code: a newer one asked for meanwhile, and already mailed, must stay.
-    CREATE FUNCTION dmbot_web_cancel_move_code(who BIGINT, hash TEXT) RETURNS VOID
+    -- The email didn't go, so no code should be waiting that nobody has seen, and the ask
+    -- is given back: a failed send must not use up an hour's three. Only that very code is
+    -- removed (a newer one asked for meanwhile, and already mailed, must stay); `at` is the
+    -- time the ask was made.
+    CREATE FUNCTION dmbot_web_cancel_move_code(who BIGINT, hash TEXT, at BIGINT) RETURNS VOID
         LANGUAGE sql SECURITY DEFINER
-        AS $fn$ DELETE FROM move_codes WHERE user_id = who AND code_hash = hash
-                AND used_at IS NULL $fn$;
+        AS $fn$
+            DELETE FROM move_codes WHERE user_id = who AND code_hash = hash AND used_at IS NULL;
+            DELETE FROM move_code_asks WHERE ctid = (SELECT a.ctid FROM move_code_asks a
+                WHERE a.user_id = who AND a.asked_at = at LIMIT 1);
+        $fn$;
+    -- The hourly sweep: asks older than the window are of no use.
+    CREATE FUNCTION dmbot_web_forget_move_asks(now BIGINT) RETURNS BIGINT
+        LANGUAGE sql SECURITY DEFINER
+        AS $fn$
+            WITH gone AS (DELETE FROM move_code_asks WHERE asked_at <= now - 3600 RETURNING 1)
+            SELECT count(*) FROM gone
+        $fn$;
     DO $do$
     BEGIN
         EXECUTE format(
@@ -3149,13 +3165,18 @@ WEB_MOVE_CODES = """
             ' SET search_path = pg_catalog, %I, pg_temp',
             current_schema());
         EXECUTE format(
-            'ALTER FUNCTION dmbot_web_cancel_move_code(BIGINT, TEXT)'
+            'ALTER FUNCTION dmbot_web_cancel_move_code(BIGINT, TEXT, BIGINT)'
+            ' SET search_path = pg_catalog, %I, pg_temp',
+            current_schema());
+        EXECUTE format(
+            'ALTER FUNCTION dmbot_web_forget_move_asks(BIGINT)'
             ' SET search_path = pg_catalog, %I, pg_temp',
             current_schema());
     END
     $do$;
     REVOKE ALL ON FUNCTION dmbot_web_move_code(BIGINT, TEXT, BIGINT, TEXT, BIGINT) FROM PUBLIC;
-    REVOKE ALL ON FUNCTION dmbot_web_cancel_move_code(BIGINT, TEXT) FROM PUBLIC;
+    REVOKE ALL ON FUNCTION dmbot_web_cancel_move_code(BIGINT, TEXT, BIGINT) FROM PUBLIC;
+    REVOKE ALL ON FUNCTION dmbot_web_forget_move_asks(BIGINT) FROM PUBLIC;
 """
 
 

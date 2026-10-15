@@ -292,7 +292,8 @@ export const text = {
   moveWait: "Too many tries. Wait an hour, then try again.",
   moveNoEmail:
     "We don't have the email you pay with yet. It's saved when a payment goes through. Try again later, or tell us on the Say hello page.",
-  moveTooSoon: "You can move once every 30 days, and this account moved less than 30 days ago.",
+  moveTooSoon:
+    "You can move once every 30 days, and this account moved less than 30 days ago. Try again after 30 days, or tell us on the Say hello page.",
   moveEmailFailed: "The code couldn't be emailed just now. Try again in a few minutes.",
 
   // Download my data (#1150)
