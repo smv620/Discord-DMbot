@@ -30,11 +30,6 @@ export const entries: Entry[] = [
   },
   {
     date: "2026-10-15",
-    title: "Move to a new Discord account",
-    what: "To move to a new Discord account, press Get a move code on your account page. On the new account, type /dmbot migrate, press Import my account, and type the emailed code; you will be asked to say yes to being recorded again.",
-  },
-  {
-    date: "2026-10-15",
     title: "Share house rules with other tables",
     what: "A game master on a paid plan can share their house rules with a share code. Another table can use them, keep its own changes, and get updates when the rules change.",
   },
@@ -57,6 +52,24 @@ export const entries: Entry[] = [
     date: "2026-10-13",
     title: "The game clock",
     what: "The game master keeps the story's day and time in DMbot. Players see it in their own channel, and the game master sees the exact time.",
+  },
+];
+
+/**
+ * Entries that are deployed but not shown yet, each with the reason (Supervisor, #1322: "live"
+ * means deployed and not known to fail). Move one into `entries` when its reason is gone.
+ */
+export interface Held extends Entry {
+  reason: string;
+}
+
+export const held: Held[] = [
+  {
+    date: "2026-10-15",
+    title: "Move to a new Discord account",
+    what: "To move to a new Discord account, press Get a move code on your account page. On the new account, type /dmbot migrate, press Import my account, and type the emailed code; you will be asked to say yes to being recorded again.",
+    reason:
+      "The move code goes to the payment email, and payments stay off until the Stripe account exists (#1096), so nobody can use it yet.",
   },
 ];
 

@@ -9,7 +9,7 @@ import { beforeAll, describe, expect, it } from "vitest";
 
 import { parsePage } from "./dom";
 
-import { entries, formatDate, whatsNewHeading } from "../src/content/whats-new";
+import { entries, formatDate, held, whatsNewHeading } from "../src/content/whats-new";
 import Help from "../src/pages/help.astro";
 import Home from "../src/pages/index.astro";
 import WhatsNew from "../src/pages/whats-new.astro";
@@ -36,6 +36,19 @@ describe("What's new", () => {
     expect(shown.map((e) => e.querySelector("time")?.getAttribute("datetime"))).toEqual(
       entries.map((e) => e.date),
     );
+  });
+
+  it("holds back what people can't use yet, with the reason, and shows none of it (#1322)", () => {
+    expect(held.map((h) => h.title)).toEqual(["Move to a new Discord account"]);
+    for (const h of held) {
+      expect(h.reason.length, h.title).toBeGreaterThan(20);
+      expect(entries.map((e) => e.title)).not.toContain(h.title);
+    }
+    const shown = page.querySelector("main")?.textContent ?? "";
+    expect(shown).not.toContain("Move to a new Discord account");
+    expect(shown).not.toContain("move code");
+    expect(page.querySelectorAll(".entry")).toHaveLength(entries.length);
+    expect(entries).toHaveLength(7);
   });
 
   it("has dates in order, newest first, and real days", () => {
@@ -67,7 +80,7 @@ describe("What's new", () => {
   });
 
   it("claims nothing that isn't live, and uses no hard-rule banned term", () => {
-    const all = entries.map((e) => `${e.title} ${e.what}`).join(" ");
+    const all = [...entries, ...held].map((e) => `${e.title} ${e.what}`).join(" ");
     // Alive-or-dead is stored but nothing records it yet, and who-carries-what is merged but not
     // deployed (#1319; docs/STORY_MEMORY.md, 5a): they wait for their own entries.
     expect(all).not.toMatch(/alive|\bdead\b|destroyed|carries|carried/i);
@@ -85,7 +98,7 @@ describe("What's new", () => {
       ["Allow more than one", "ui/name_card.py"],
       ["dmb-chat", "dm_screen/dmbchat_channel.py"],
     ];
-    const all = entries.map((e) => e.what).join(" ");
+    const all = [...entries, ...held].map((e) => e.what).join(" ");
     for (const [needle, file] of named) {
       expect(all, `${needle} is in an entry`).toContain(needle);
       expect(readFileSync(join(botDir, file), "utf8"), `${needle} in ${file}`).toContain(needle);
@@ -93,7 +106,8 @@ describe("What's new", () => {
   });
 
   it("says the same as the Help page and the account page about the emailed link and the move code", () => {
-    const text = (title: string): string => entries.find((e) => e.title.startsWith(title))?.what ?? "";
+    const text = (title: string): string =>
+      [...entries, ...held].find((e) => e.title.startsWith(title))?.what ?? "";
     expect(text("Sign in")).toContain("works once and stops working after 15 minutes");
     expect(text("Move to")).toContain("emailed code");
     expect(text("Move to")).toContain("say yes to being recorded again"); // account.ts moveSent
