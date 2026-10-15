@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import json
 import unittest
+from typing import Any
 
 from dmbot.campaigns.store import decode_backup, encode_backup
 from dmbot.db import Database, drop_schema
@@ -230,12 +231,32 @@ class Stored(MemoryTest):
         await self.propose(said("Bram", "carries", "Heartseeker"))
         (waiting,) = await self.claims.waiting(GUILD_A, self.c, opted_in=EVERYONE)
         with (
-            patch.object(self.memory, "add_relation", side_effect=MemoryRuleError("no")),
+            patch.object(self.memory, "add_relation_in", side_effect=MemoryRuleError("no")),
             self.assertRaises(MemoryRuleError),
         ):
             await self.claims.confirm(GUILD_A, self.c, waiting.id, opted_in={7})
         (still,) = await self.claims.waiting(GUILD_A, self.c, opted_in=EVERYONE)
         self.assertEqual((still.id, still.status, still.fact_id), (waiting.id, "proposed", None))
+
+    async def test_a_failure_after_the_fact_is_written_leaves_neither_change(self) -> None:
+        from unittest.mock import patch
+
+        await self.propose(said("Bram", "carries", "Heartseeker"))
+        (waiting,) = await self.claims.waiting(GUILD_A, self.c, opted_in=EVERYONE)
+        real = self.memory.add_relation_in
+
+        async def written_then_failed(*args: Any, **kwargs: Any) -> Any:
+            await real(*args, **kwargs)  # the fact is in the open transaction…
+            raise MemoryRuleError("crash")  # …and the claim's own update never happens
+
+        with (
+            patch.object(self.memory, "add_relation_in", written_then_failed),
+            self.assertRaises(MemoryRuleError),
+        ):
+            await self.claims.confirm(GUILD_A, self.c, waiting.id, opted_in={7})
+        self.assertEqual(await self.memory.relations(GUILD_A, self.c), [])
+        (still,) = await self.claims.waiting(GUILD_A, self.c, opted_in=EVERYONE)
+        self.assertEqual((still.status, still.fact_id), ("proposed", None))
 
     async def test_a_claim_dropped_for_the_same_reason_again_is_not_stored_again(self) -> None:
         for _ in range(3):
