@@ -1,6 +1,6 @@
 DMbot - TESTING STATUS (current testing only)
 =============================================
-Last updated: 2026-10-15 18:00 UTC by dev1 (story-memory deploy live, #1271)
+Last updated: 2026-10-15 21:00 UTC by dev1 (support-tickets deploy live, #1271)
 
 **For the people at the table: docs/next-test-step.md has the one next small test (#569).**
 Short by design: see CLAUDE.md "Testing logs". Full record: docs/testing-history.log.
@@ -9,7 +9,7 @@ Never put tokens, .env contents or players' personal data here (public repo).
 ------------------------------------------------------------------------------
 READY TO DEPLOY (merged into development, not on the server yet; dev1 deploys)
 ------------------------------------------------------------------------------
-(nothing: the story-memory deploy (#1271) and everything before it are live in bc54a3e0)
+(nothing: the support-tickets deploy (#1271) and everything before it are live in cbfd20d8)
 - Still to check live for #1271 (needs the owner): one test sign-in email to an address the owner chooses, and the signed link accepted (#1237); the
   Account page's "Get a move code" email goes to the payment address, not the Discord one (#1274; needs a paid test account with a payment email).
 - Waiting on the owner, not a deploy: once the Stripe account exists (#1096), replace the LEMONSQUEEZY_* values in .env
@@ -18,7 +18,9 @@ READY TO DEPLOY (merged into development, not on the server yet; dev1 deploys)
 ------------------------------------------------------------------------------
 LIVE NOW
 ------------------------------------------------------------------------------
-core + web-api bc54a3e0 (2026-10-15 17:53 UTC, story memory 5a: migration 0073 memory_claims (claims store), the DM's after-session questions #1299, the steward wired in #1306,
+core + web-api cbfd20d8 (2026-10-15 20:53 UTC, migration 0074 support_tickets (private support tickets, web-api POST /support and the admin list, #1344),
+the per-schema migration lock (#1331), set-key takes a Resend key (#1348), website and docs changes; old containers stopped first; SUPPORT_TEAM_EMAIL not set (optional);
+mail still on the old Gmail settings until the owner switches to Resend); before that bc54a3e0 (2026-10-15 17:53 UTC, story memory 5a: migration 0073 memory_claims (claims store), the DM's after-session questions #1299, the steward wired in #1306,
 confirm in one transaction #1307, continuity heads-ups #1333, the shared-rules "no longer updated" note #1318; the extractor stays OFF (DMBOT_STORY_EXTRACTOR default 0, #1282));
 before that cf4983b6 (2026-10-15 13:49 UTC, the accounts and shared-rules stack #1271: migrations 0063-0072; DMbot ID and personal links (#1228),
 sign-in by emailed link (#1237), account moves (#1244), payment email, email sender and records (#1239, #1288), trial extension (#1240), memory
