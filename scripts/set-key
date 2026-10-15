@@ -103,7 +103,7 @@ value=${value%"${value##*[![:space:]]}"}
 # letters, digits and _, 20 to 80 characters in all. A Google app password: 16 letters, shown
 # as four groups of four with spaces between. Nothing else, and never a word of the paste
 # in the message.
-if [[ $name == SMTP_APP_PASSWORD ]]; then
+if [[ $name == SMTP_APP_PASSWORD && -n $value ]]; then
   value=${value// /}
   if [[ $value =~ ^re_[A-Za-z0-9_]+$ ]] && ((${#value} >= 20 && ${#value} <= 80)); then
     :   # a Resend API key
