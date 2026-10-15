@@ -596,30 +596,39 @@ class MemoryStore:
         DM's alone. A fact that a dead or destroyed entry acts in after it ended is flagged
         for the DM, who can answer "brought back" by setting the condition again."""
         async with self._write(guild_id, campaign_id, source) as w:
-            onto = await _load_ontology(w)
-            entity = await _entity_row(w, entity_id)
-            new = await states.set_condition(
-                w, onto, entity, condition, from_session_at=from_session_at
+            value = await self.set_condition_in(w, entity_id, condition, from_session_at)
+            return Written(value, w.batch)
+
+    async def set_condition_in(
+        self, w: Changes, entity_id: str, condition: str, from_session_at: int | None = None
+    ) -> tuple[State | None, list[Flag]]:
+        """`set_condition` inside a write that is already open, so a caller can make other
+        changes in the same transaction (#1301): all of them happen, or none. The caller opened
+        `w` for the right campaign and source."""
+        onto = await _load_ontology(w)
+        entity = await _entity_row(w, entity_id)
+        new = await states.set_condition(
+            w, onto, entity, condition, from_session_at=from_session_at
+        )
+        if new is None:
+            return None, []
+        touching = [
+            _relation(r)
+            for r in await w.select(
+                RELATIONS,
+                " AND (subject_id = %s OR object_id = %s) AND status <> 'rejected'"
+                ' ORDER BY id COLLATE "C"',
+                [entity_id, entity_id],
             )
-            if new is None:
-                return Written((None, []), w.batch)
-            touching = [
-                _relation(r)
-                for r in await w.select(
-                    RELATIONS,
-                    " AND (subject_id = %s OR object_id = %s) AND status <> 'rejected'"
-                    ' ORDER BY id COLLATE "C"',
-                    [entity_id, entity_id],
-                )
-            ]
-            await states.close_resolved_after_end(w, onto, touching)
-            ended = (
-                {entity_id: Ended(new.from_session_at, new.created_at)}
-                if new.condition in ENDED
-                else {}
-            )
-            rows = await states.flag_acting_after_end(w, onto, touching, ended)
-            return Written((new, [_flag(r) for r in rows]), w.batch)
+        ]
+        await states.close_resolved_after_end(w, onto, touching)
+        ended = (
+            {entity_id: Ended(new.from_session_at, new.created_at)}
+            if new.condition in ENDED
+            else {}
+        )
+        rows = await states.flag_acting_after_end(w, onto, touching, ended)
+        return new, [_flag(r) for r in rows]
 
     async def set_unique(
         self, guild_id: int, campaign_id: str, entity_id: str, unique: bool, *, source: str
@@ -1866,6 +1875,33 @@ class MemoryStore:
         review; the fact is stored as given either way. A fact already known is only
         upgraded (the DM's confirmation, or secret=True); one the DM rejected stays
         rejected unless the DM says it again."""
+        async with self._write(guild_id, campaign_id, source) as w:
+            value = await self.add_relation_in(
+                w, subject_id, predicate, object_id, confidence=confidence, status=status,
+                detail=detail, from_session_at=from_session_at, to_session_at=to_session_at,
+                secret=secret, mention_ids=mention_ids,
+            )  # fmt: skip
+            return Written(value, w.batch)
+
+    async def add_relation_in(
+        self,
+        w: Changes,
+        subject_id: str,
+        predicate: str,
+        object_id: str,
+        *,
+        confidence: float,
+        status: str = PROPOSED,
+        detail: str = "",
+        from_session_at: int | None = None,
+        to_session_at: int | None = None,
+        secret: bool = False,
+        mention_ids: Sequence[str] = (),
+    ) -> tuple[Relation, list[Flag]]:
+        """`add_relation` inside a write that is already open (#1301), with the same checks;
+        the write's own source is the fact's source. The caller opened `w` for the right
+        campaign."""
+        source = w.source
         _check_choice(status, LIVE, "relation status")
         check_status_change(None, status, source)
         _check_confidence(confidence)
@@ -1877,37 +1913,36 @@ class MemoryStore:
             raise ValueError("Bad mention ID")
         if subject_id == object_id:
             raise MemoryRuleError("A relationship needs two different entries.")
-        async with self._write(guild_id, campaign_id, source) as w:
-            onto = await _load_ontology(w)
-            pred = onto.active_predicate(predicate)
-            if pred.key == PLAYS:
-                # Who plays a character is set on the character, then kept here (#1188).
-                raise MemoryRuleError("Say who plays a character on the character itself.")
-            types = {
-                subject_id: (await _entity_row(w, subject_id))["type"],
-                object_id: (await _entity_row(w, object_id))["type"],
-            }
-            if mention_ids:
-                found = await w.select(MENTIONS, " AND id = ANY(%s)", [list(mention_ids)])
-                if len(found) != len(set(mention_ids)):
-                    raise MemoryRuleError(NOT_FOUND)
-            s, o = ordered(pred, subject_id, object_id)
-            new = Relation(
-                new_id(), s, predicate, o, " ".join(detail.split()), confidence, status, source,
-                tuple(mention_ids), from_session_at, to_session_at, None, None, secret, w.now,
-                pred.version,
-            )  # fmt: skip
-            existing = await _relations_touching(w, s, o)
-            same = duplicate_of(new, existing)
-            if same is not None:
-                upgrade = _upgrade(_relation_row(same), status, secret, source)
-                if not upgrade:
-                    return Written((same, []), w.batch)
-                row = await w.update(RELATIONS, same.id, upgrade)
-                return Written((_relation(row), []), w.batch)
-            await w.insert(RELATIONS, _relation_row(new))
-            flags = await _flag_problems(w, onto, new, types[s], types[o], existing)
-            return Written((new, flags), w.batch)
+        onto = await _load_ontology(w)
+        pred = onto.active_predicate(predicate)
+        if pred.key == PLAYS:
+            # Who plays a character is set on the character, then kept here (#1188).
+            raise MemoryRuleError("Say who plays a character on the character itself.")
+        types = {
+            subject_id: (await _entity_row(w, subject_id))["type"],
+            object_id: (await _entity_row(w, object_id))["type"],
+        }
+        if mention_ids:
+            found = await w.select(MENTIONS, " AND id = ANY(%s)", [list(mention_ids)])
+            if len(found) != len(set(mention_ids)):
+                raise MemoryRuleError(NOT_FOUND)
+        s, o = ordered(pred, subject_id, object_id)
+        new = Relation(
+            new_id(), s, predicate, o, " ".join(detail.split()), confidence, status, source,
+            tuple(mention_ids), from_session_at, to_session_at, None, None, secret, w.now,
+            pred.version,
+        )  # fmt: skip
+        existing = await _relations_touching(w, s, o)
+        same = duplicate_of(new, existing)
+        if same is not None:
+            upgrade = _upgrade(_relation_row(same), status, secret, source)
+            if not upgrade:
+                return same, []
+            row = await w.update(RELATIONS, same.id, upgrade)
+            return _relation(row), []
+        await w.insert(RELATIONS, _relation_row(new))
+        flags = await _flag_problems(w, onto, new, types[s], types[o], existing)
+        return new, flags
 
     async def update_relation(
         self,
