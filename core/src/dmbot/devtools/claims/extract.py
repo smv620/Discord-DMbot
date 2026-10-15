@@ -56,8 +56,8 @@ Rules for what counts as a claim:
    alive, dead, destroyed, lost, found, captured, missing, transformed or intact, whether the
    DM said it or a player said it and the DM confirmed it (then "how" is that of the line
    you cite: "player_said" for the player's line, "dm_said" for the DM's), give it as its
-   own claim with the relationship "is" and the one word as the object. Example: subject "the old bridge",
-   relationship "is", object "destroyed". If only a cause is told and no result is stated,
+   own claim with the relationship "is" and the one word as the object. Example: subject
+   "the old bridge", relationship "is", object "destroyed". If only a cause is told and no result is stated,
    give the cause as a claim and no state change.
 
 For each claim say how it was said:
