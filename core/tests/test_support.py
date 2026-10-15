@@ -1,0 +1,573 @@
+"""Private support tickets (#1340), run as the website's own database role: only a paying,
+signed-in account can send one, one per 10 minutes; it is kept where the person can't read it
+and only the admin page's door can; the team is emailed without its words; old and deleted
+accounts' tickets go; and its words reach no log."""
+
+from __future__ import annotations
+
+import logging
+import time
+import unittest
+from email.message import EmailMessage
+from pathlib import Path
+from typing import Any, ClassVar, cast
+
+import httpx
+import psycopg
+
+from dmbot.config import ConfigError
+from dmbot.db import Database
+from dmbot.mail import Mailer
+from dmbot.web import sessions, support
+from dmbot.web.accounts import delete_person
+from dmbot.web.admin import AdminSessions, FailedTries
+from dmbot.web.app import create_app
+from dmbot.web.feedback import FeedbackError
+from dmbot.web.limits import RateLimit
+from dmbot.web.payments import FakeProvider
+from dmbot.web.settings import load_web_settings
+from tests.pg import REQUIRE_DB, SUPERUSER_URL, DatabaseTest
+from tests.test_web_admin import ADMIN, HASH, PASSWORD
+from tests.test_web_api import ALICE, API, SITE, THURSDAY, FakeDiscord, settings
+from tests.test_web_email_signin import LINK_SECRET, SMTP
+from tests.test_web_feedback import FakeHumanCheck
+from tests.test_web_role import ensure_web_role, web_url
+
+HEADERS = {"X-DMbot-Request": "1", "Origin": SITE}
+TEAM = "team@example.org"
+SUBJECT = "My table's invoice looks wrong"
+MESSAGE = "Hello, the plan on my last invoice is not the one I picked."
+BOB = 8008  # another account: its tickets are not Alice's
+NOW = 1_800_000_000
+DAY = 86400
+
+
+class Outbox:
+    def __init__(self) -> None:
+        self.sent: list[EmailMessage] = []
+        self.fail = False
+
+    async def __call__(self, message: EmailMessage) -> None:
+        if self.fail:
+            raise RuntimeError("the mail server is down")
+        self.sent.append(message)
+
+
+class SupportBase(DatabaseTest):
+    async def asyncSetUp(self) -> None:
+        if not SUPERUSER_URL:
+            if REQUIRE_DB:
+                self.fail("DMBOT_TEST_SUPERUSER_URL is needed to test the website's role")
+            self.skipTest("set DMBOT_TEST_SUPERUSER_URL to test the website's role")
+        await ensure_web_role()
+        await super().asyncSetUp()
+        self.web = await Database.open(web_url(), schema=self.schema, max_size=2, migrate=False)
+        self.now = NOW
+        self.tick = 0.0  # the rate limit's own clock, in seconds
+        self.outbox = Outbox()
+        self.mailer = Mailer(
+            self.web,
+            SMTP,
+            transport=self.outbox,
+            site_url=SITE,
+            link_secret=LINK_SECRET,
+            clock=lambda: float(self.now),
+        )
+        self.human = FakeHumanCheck()
+        await sessions.sign_in(self.web, ALICE, [THURSDAY], now=self.now, days=30)
+        await self.give_plan(ALICE.id, "table", "active")
+
+    async def asyncTearDown(self) -> None:
+        await self.web.close()
+        await super().asyncTearDown()
+
+    async def give_plan(self, user_id: int, plan: str, status: str) -> None:
+        async with self.db.plan_writer(user_id) as conn:
+            await conn.execute("DELETE FROM entitlements WHERE user_id = %s", (user_id,))
+            await conn.execute(
+                "INSERT INTO entitlements (user_id, plan, status, hours_cap, extra_hours,"
+                " campaign_cap, period_start, period_end, grace_ends_at, lapsed_at,"
+                " plan_changed_at, provider, provider_subscription_id, last_event_at, updated_at)"
+                " VALUES (%s, %s, %s, 18, 0, 1, %s, %s, %s, %s, 0, 'fake', 'sub_1', 0, 0)",
+                (
+                    user_id,
+                    plan,
+                    status,
+                    self.now - 100,
+                    self.now + DAY,
+                    self.now + DAY if status == "grace" else None,
+                    self.now - DAY if status == "lapsed" else None,
+                ),
+            )
+
+    async def tickets(self) -> list[dict[str, Any]]:
+        """Every ticket, read as the database's administrator (the bot's role is held by the
+        same policies, so it opens the admin door like the website does)."""
+        async with self.db.support_admin() as conn:
+            cur = await conn.execute("SELECT * FROM support_tickets ORDER BY id")
+            return list(await cur.fetchall())
+
+    async def add_row(self, user_id: int, created_at: int, subject: str = "Old") -> None:
+        async with self.web.user(user_id) as conn:
+            await conn.execute(
+                "INSERT INTO support_tickets (created_at, user_id, plan, subject, message)"
+                " VALUES (%s, %s, 'table', %s, 'Words')",
+                (created_at, user_id, subject),
+            )
+
+
+class SupportRoute(SupportBase):
+    async def asyncSetUp(self) -> None:
+        await super().asyncSetUp()
+        self.build()
+
+    def build(self, *, human: bool = False, team: str = TEAM) -> None:
+        self.limit = RateLimit(clock=lambda: self.tick)
+        self.app = create_app(
+            settings(link_token_secret=LINK_SECRET, support_team_email=team),
+            self.web,
+            FakeDiscord(),
+            payments=FakeProvider(b"h" * 32, SITE),
+            human_check=self.human if human else None,
+            mailer=self.mailer,
+            support_limit=self.limit,
+            clock=lambda: self.now,
+        )
+
+    async def client(self, user_id: int = ALICE.id) -> httpx.AsyncClient:
+        token = await sessions.sign_in_by_email(self.web, user_id, now=self.now, days=30)
+        client = httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=self.app), base_url=API, follow_redirects=False
+        )
+        client.cookies.set("__Host-dmbot_session", token, domain="api.dmbot.example")
+        self.addAsyncCleanup(client.aclose)
+        return client
+
+    async def send(self, client: httpx.AsyncClient, **fields: Any) -> httpx.Response:
+        body = {"subject": SUBJECT, "message": MESSAGE, **fields}
+        return await client.post("/support", json=body, headers=HEADERS)
+
+    async def test_a_paying_account_sends_a_ticket_that_is_kept_privately(self) -> None:
+        client = await self.client()
+        answer = await self.send(client)
+        self.assertEqual((answer.status_code, answer.json()), (201, {"ok": True}))
+        (row,) = await self.tickets()
+        self.assertEqual(
+            {k: row[k] for k in ("created_at", "user_id", "plan", "subject", "message")},
+            {
+                "created_at": self.now,
+                "user_id": ALICE.id,
+                "plan": "table",
+                "subject": SUBJECT,
+                "message": MESSAGE,
+            },
+        )
+        self.assertEqual((row["source"], row["status"]), ("website", "new"))
+        # The answer carries nothing back: not the words, not an id to look the ticket up by.
+        self.assertNotIn(MESSAGE, answer.text)
+
+    async def test_the_team_is_emailed_that_one_waits_but_never_the_words(self) -> None:
+        await self.send(await self.client())
+        (mail,) = self.outbox.sent
+        text = f"{mail['Subject']}\n{mail.get_content()}"
+        self.assertEqual(str(mail["To"]), TEAM)
+        self.assertIn("table", text)  # the plan
+        self.assertIn(f"{SITE}/admin", text)
+        self.assertNotIn(SUBJECT, text)
+        self.assertNotIn(MESSAGE, text)
+        self.assertNotIn("List-Unsubscribe", mail)  # to the team, not a person
+
+    async def test_a_failed_email_loses_nothing(self) -> None:
+        self.outbox.fail = True
+        answer = await self.send(await self.client())
+        self.assertEqual(answer.status_code, 201)
+        self.assertEqual(len(await self.tickets()), 1)
+
+    async def test_with_no_team_address_the_ticket_is_kept_and_nobody_is_emailed(self) -> None:
+        self.build(team="")
+        self.assertEqual((await self.send(await self.client())).status_code, 201)
+        self.assertEqual((len(await self.tickets()), self.outbox.sent), (1, []))
+
+    async def test_only_a_working_paid_plan_may_send(self) -> None:
+        for plan, status in (("try-it", "active"), ("table", "lapsed")):
+            await self.give_plan(ALICE.id, plan, status)
+            answer = await self.send(await self.client())
+            self.assertEqual((answer.status_code, answer.json()), (403, {"error": "not_paying"}))
+        async with self.db.plan_writer(ALICE.id) as conn:  # no plan at all
+            await conn.execute("DELETE FROM entitlements WHERE user_id = %s", (ALICE.id,))
+        self.assertEqual((await self.send(await self.client())).status_code, 403)
+        # The payment grace counts: someone whose payment just failed may well need us.
+        await self.give_plan(ALICE.id, "table", "grace")
+        self.assertEqual((await self.send(await self.client())).status_code, 201)
+        self.assertEqual(len(await self.tickets()), 1)
+
+    async def test_a_refused_ticket_does_not_use_the_turn(self) -> None:
+        await self.give_plan(ALICE.id, "try-it", "active")
+        client = await self.client()
+        self.assertEqual((await self.send(client)).status_code, 403)
+        self.assertEqual((await self.send(client, message="")).status_code, 400)
+        await self.give_plan(ALICE.id, "table", "active")
+        self.assertEqual((await self.send(client)).status_code, 201)
+
+    async def test_signed_out_is_refused(self) -> None:
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=self.app), base_url=API
+        ) as anonymous:
+            answer = await self.send(anonymous)
+        self.assertEqual(answer.status_code, 401)
+        self.assertEqual(await self.tickets(), [])
+
+    async def test_one_ticket_per_account_per_ten_minutes(self) -> None:
+        client = await self.client()
+        self.assertEqual((await self.send(client)).status_code, 201)
+        self.tick += 9 * 60
+        again = await self.send(client)
+        self.assertEqual((again.status_code, again.json()), (429, {"error": "slow_down"}))
+        self.tick += 61
+        self.assertEqual((await self.send(client)).status_code, 201)
+        self.assertEqual(len(await self.tickets()), 2)
+
+    async def test_the_limit_is_per_account_not_per_address(self) -> None:
+        await sessions.sign_in(self.web, _bob(), [THURSDAY], now=self.now, days=30)
+        await self.give_plan(BOB, "table", "active")
+        self.assertEqual((await self.send(await self.client(ALICE.id))).status_code, 201)
+        self.assertEqual((await self.send(await self.client(BOB))).status_code, 201)
+
+    async def test_the_words_are_checked_and_cleaned(self) -> None:
+        client = await self.client()
+        for fields, code in (
+            ({"message": ""}, "empty"),
+            ({"subject": "   "}, "empty"),
+            ({"subject": "s" * 121}, "subject_too_long"),
+            ({"message": "m" * 4001}, "too_long"),
+            ({"subject": 7}, "bad_request"),
+            ({"message": ["x"]}, "bad_request"),
+            ({"turnstile": 5}, "bad_request"),
+        ):
+            answer = await self.send(client, **fields)
+            self.assertEqual((answer.status_code, answer.json()["error"]), (400, code), fields)
+        self.assertEqual(
+            (await client.post("/support", content=b"[1,", headers=HEADERS)).status_code, 400
+        )
+        self.assertEqual(await self.tickets(), [])  # no refusal used the turn
+        # At the limits: 120 and 4,000 are fine. A subject is one line; control characters go.
+        ok = await self.send(client, subject="a\n b" + "s" * 116, message="m" * 3999 + "\x00‮!")
+        self.assertEqual(ok.status_code, 201)
+        (row,) = await self.tickets()
+        self.assertEqual(row["subject"], "a b" + "s" * 116)
+        self.assertEqual(row["message"], "m" * 3999 + "!")
+
+    async def test_a_huge_body_is_refused_before_it_is_read(self) -> None:
+        client = await self.client()
+        answer = await client.post("/support", content=b"x" * (49 * 1024), headers=HEADERS)
+        self.assertEqual((answer.status_code, answer.json()), (413, {"error": "too_long"}))
+
+    async def test_turnstile_is_asked_when_it_is_on(self) -> None:
+        self.build(human=True)
+        client = await self.client()
+        none = await self.send(client)
+        self.assertEqual((none.status_code, none.json()["error"]), (400, "not_human"))
+        wrong = await self.send(client, turnstile="robot")
+        self.assertEqual((wrong.status_code, wrong.json()["error"]), (400, "not_human"))
+        again = await self.send(client, turnstile="person")  # a wrong answer used the turn
+        self.assertEqual(again.status_code, 429)
+        self.tick += 11 * 60
+        self.assertEqual((await self.send(client, turnstile="person")).status_code, 201)
+        self.assertEqual(len(await self.tickets()), 1)
+
+    async def test_a_human_check_that_cannot_run_gives_the_turn_back(self) -> None:
+        class Down:
+            async def verify(self, token: str, address: str) -> bool:
+                raise FeedbackError("Turnstile answered 502")
+
+        self.human = Down()  # type: ignore[assignment]
+        self.build(human=True)
+        client = await self.client()
+        with self.assertLogs(level=logging.WARNING) as seen:
+            answer = await self.send(client, turnstile="person")
+        self.assertEqual(
+            (answer.status_code, answer.json()), (502, {"error": "support_unavailable"})
+        )
+        self.assertNotIn(SUBJECT, "\n".join(r.getMessage() for r in seen.records))
+        self.assertEqual(await self.tickets(), [])
+        self.human = FakeHumanCheck()
+        self.build(human=True)  # a new app, but the same account: its turn was not used up
+        self.limit = RateLimit(clock=lambda: self.tick)
+        self.assertEqual(
+            (await self.send(await self.client(), turnstile="person")).status_code, 201
+        )
+
+    async def test_a_lone_surrogate_is_a_plain_refusal_not_a_server_error(self) -> None:
+        client = await self.client()
+        answer = await client.post(
+            "/support", content=b'{"subject": "s", "message": "\\ud800"}', headers=HEADERS
+        )
+        self.assertEqual((answer.status_code, answer.json()), (400, {"error": "empty"}))
+
+    async def test_the_words_reach_no_log(self) -> None:
+        client = await self.client()
+        with self.assertLogs(level=logging.DEBUG) as seen:
+            await self.send(client)
+            logging.getLogger("dmbot.test").debug("keep the capture open")
+        logged = "\n".join(r.getMessage() for r in seen.records)
+        self.assertIn(f"Support ticket added by user {ALICE.id}", logged)
+        self.assertNotIn(SUBJECT, logged)
+        self.assertNotIn("invoice", logged)
+
+    async def test_me_says_whether_the_form_is_for_this_account(self) -> None:
+        client = await self.client()
+        self.assertIs((await client.get("/me")).json()["canSupport"], True)
+        await self.give_plan(ALICE.id, "try-it", "active")
+        self.assertIs((await client.get("/me")).json()["canSupport"], False)
+
+
+def _bob() -> Any:
+    from dataclasses import replace
+
+    return replace(ALICE, id=BOB, name="Bob", email="bob@example.com")
+
+
+class SupportKeptPrivately(SupportBase):
+    """The database's side, as the website's role: add as yourself, read nothing."""
+
+    async def test_a_person_adds_but_cannot_read_change_or_delete_a_ticket(self) -> None:
+        await self.add_row(ALICE.id, self.now)
+        async with self.web.user(ALICE.id) as conn:
+            cur = await conn.execute("SELECT count(*) AS n FROM support_tickets")
+            row = await cur.fetchone()
+            assert row is not None
+            self.assertEqual(row["n"], 0)  # their own ticket included
+        async with self.web.user(ALICE.id) as conn:
+            cur = await conn.execute("UPDATE support_tickets SET status = 'closed'")
+            self.assertEqual(cur.rowcount, 0)
+        async with self.web.user(BOB) as conn:  # nobody else's: only the account's own delete
+            cur = await conn.execute("DELETE FROM support_tickets")
+            self.assertEqual(cur.rowcount, 0)
+        self.assertEqual(len(await self.tickets()), 1)
+
+    async def test_a_person_cannot_add_for_someone_else_or_as_answered(self) -> None:
+        for user, status, source in (
+            (BOB, "new", "website"),
+            (ALICE.id, "closed", "website"),
+            (ALICE.id, "new", "email"),
+        ):
+            with self.assertRaises(psycopg.errors.InsufficientPrivilege):
+                async with self.web.user(ALICE.id) as conn:
+                    await conn.execute(
+                        "INSERT INTO support_tickets"
+                        " (created_at, user_id, plan, subject, message, source, status)"
+                        " VALUES (1, %s, 'table', 's', 'm', %s, %s)",
+                        (user, source, status),
+                    )
+        self.assertEqual(await self.tickets(), [])
+
+    async def test_without_the_admin_door_the_website_reads_nothing_and_with_it_only_status(
+        self,
+    ) -> None:
+        await self.add_row(ALICE.id, self.now)
+        async with self.web.unscoped() as conn:
+            cur = await conn.execute("SELECT count(*) AS n FROM support_tickets")
+            row = await cur.fetchone()
+            assert row is not None
+            self.assertEqual(row["n"], 0)
+        (ticket,) = await support.newest(self.web)
+        self.assertEqual((ticket.status, ticket.user_id), ("new", ALICE.id))
+        self.assertTrue(await support.set_status(self.web, ticket.id, "answered"))
+        self.assertEqual((await support.newest(self.web))[0].status, "answered")
+        # Even through the door, nothing but the status may change (the column grant).
+        with self.assertRaises(psycopg.errors.InsufficientPrivilege):
+            async with self.web.support_admin() as conn:
+                await conn.execute("UPDATE support_tickets SET message = 'edited'")
+
+    async def test_the_list_is_newest_first(self) -> None:
+        await self.add_row(ALICE.id, self.now - 50, "older")
+        await self.add_row(ALICE.id, self.now, "newer")
+        self.assertEqual([r.subject for r in await support.newest(self.web)], ["newer", "older"])
+
+    async def test_an_unknown_ticket_is_not_found_and_a_bad_status_is_refused(self) -> None:
+        self.assertFalse(await support.set_status(self.web, 999, "closed"))
+
+    async def test_the_sweep_deletes_old_tickets_without_reading_any(self) -> None:
+        # The database counts "a year" from the real clock, so the rows do too.
+        real = int(time.time())
+        await self.add_row(ALICE.id, real - 366 * DAY, "old")
+        await self.add_row(ALICE.id, real - 360 * DAY, "recent")
+        async with self.web.cleanup("old-tickets") as conn:
+            cur = await conn.execute("SELECT count(*) AS n FROM support_tickets")
+            row = await cur.fetchone()
+            assert row is not None
+            self.assertEqual(row["n"], 0)  # it may delete them, not read them
+        self.assertEqual(await support.forget_old(self.web), 1)
+        self.assertEqual([r["subject"] for r in await self.tickets()], ["recent"])
+        # The feedback sweep's own setting doesn't open this table.
+        async with self.web.cleanup("old-feedback") as conn:
+            cur = await conn.execute("DELETE FROM support_tickets")
+            self.assertEqual(cur.rowcount, 0)
+
+    async def test_deleting_an_account_deletes_its_tickets_and_only_its_own(self) -> None:
+        await sessions.sign_in(self.web, _bob(), [THURSDAY], now=self.now, days=30)
+        await self.add_row(ALICE.id, self.now, "alice's")
+        await self.add_row(BOB, self.now, "bob's")
+        await delete_person(self.web, ALICE.id, now=self.now)
+        self.assertEqual([r["subject"] for r in await self.tickets()], ["bob's"])
+
+
+class SupportAdmin(SupportBase):
+    async def asyncSetUp(self) -> None:
+        await super().asyncSetUp()
+        self.app = create_app(
+            settings(
+                admin_emails=(ADMIN,),
+                admin_password_hash=HASH,
+                client_ip_header="CF-Connecting-IP",
+            ),
+            self.web,
+            FakeDiscord(),
+            admin_sessions=AdminSessions(clock=lambda: 0.0),
+            admin_tries=FailedTries(clock=lambda: 0.0),
+            clock=lambda: self.now,
+        )
+        self.client = httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=self.app), base_url=API, follow_redirects=False
+        )
+        self.addAsyncCleanup(self.client.aclose)
+
+    async def sign_in(self) -> str:
+        signed = await self.client.post(
+            "/admin/auth/password", json={"email": ADMIN, "password": PASSWORD}, headers=HEADERS
+        )
+        self.assertEqual(signed.status_code, 204)
+        return cast(str, (await self.client.get("/admin/me")).json()["csrf"])
+
+    async def set_status(self, csrf: str, ticket_id: int, status: object) -> httpx.Response:
+        return await self.client.post(
+            f"/admin/support/{ticket_id}/status",
+            json={"status": status},
+            headers={**HEADERS, "X-Admin-CSRF": csrf},
+        )
+
+    async def test_only_a_signed_in_admin_may_read_or_close(self) -> None:
+        await self.add_row(ALICE.id, self.now)
+        self.assertEqual((await self.client.get("/admin/support")).status_code, 401)
+        self.assertEqual((await self.set_status("x", 1, "closed")).status_code, 401)
+        await self.sign_in()
+        self.assertEqual((await self.set_status("forged", 1, "closed")).status_code, 403)
+        self.assertEqual((await self.tickets())[0]["status"], "new")
+
+    async def test_the_admin_lists_newest_first_and_marks_answered_then_closed(self) -> None:
+        await self.add_row(ALICE.id, self.now - 60, "older")
+        await self.add_row(ALICE.id, self.now, "newer")
+        csrf = await self.sign_in()
+        listed = (await self.client.get("/admin/support")).json()["tickets"]
+        self.assertEqual([t["subject"] for t in listed], ["newer", "older"])
+        first = listed[0]
+        self.assertEqual(first["discordId"], str(ALICE.id))
+        self.assertRegex(first["dmbotId"], r"^[0-9A-Z]+$")
+        self.assertEqual(
+            (first["plan"], first["source"], first["status"], first["at"]),
+            ("table", "website", "new", self.now),
+        )
+        self.assertEqual((await self.set_status(csrf, first["id"], "answered")).status_code, 204)
+        self.assertEqual((await self.set_status(csrf, first["id"], "closed")).status_code, 204)
+        after = (await self.client.get("/admin/support")).json()["tickets"]
+        self.assertEqual([t["status"] for t in after], ["closed", "new"])
+
+    async def test_a_ticket_number_too_big_for_the_database_is_not_found_not_a_crash(self) -> None:
+        csrf = await self.sign_in()
+        for number in ("99999999999999999999", "0", "-3"):
+            answer = await self.client.post(
+                f"/admin/support/{number}/status",
+                json={"status": "closed"},
+                headers={**HEADERS, "X-Admin-CSRF": csrf},
+            )
+            self.assertEqual(answer.status_code, 422, number)
+
+    async def test_bad_status_and_unknown_ticket_are_refused_in_codes(self) -> None:
+        csrf = await self.sign_in()
+        await self.add_row(ALICE.id, self.now)
+        (ticket,) = await self.tickets()
+        bad = await self.set_status(csrf, ticket["id"], "deleted")
+        self.assertEqual((bad.status_code, bad.json()), (400, {"error": "bad_status"}))
+        gone = await self.set_status(csrf, 99999, "closed")
+        self.assertEqual((gone.status_code, gone.json()), (404, {"error": "no_ticket"}))
+
+    async def test_reading_and_closing_log_no_words(self) -> None:
+        await self.add_row(ALICE.id, self.now, "A secret subject")
+        csrf = await self.sign_in()
+        (ticket,) = await self.tickets()
+        with self.assertLogs(level=logging.DEBUG) as seen:
+            await self.client.get("/admin/support")
+            await self.set_status(csrf, ticket["id"], "closed")
+        logged = "\n".join(r.getMessage() for r in seen.records)
+        self.assertIn(f"support ticket {ticket['id']} to closed", logged)
+        self.assertNotIn("secret", logged)
+        self.assertNotIn(ADMIN, logged)
+
+
+class DoorBoundary(unittest.TestCase):
+    """The website's role can open the admin door itself, so the only protection is which code
+    does. This keeps that list short: a new caller fails here and must be looked at."""
+
+    ROOT = Path(__file__).resolve().parents[1] / "src" / "dmbot"
+
+    def callers(self, needle: str) -> set[str]:
+        return {
+            str(f.relative_to(self.ROOT))
+            for f in self.ROOT.rglob("*.py")
+            if needle in f.read_text(encoding="utf-8")
+        }
+
+    def test_only_support_opens_the_door_and_only_the_admin_routes_use_support(self) -> None:
+        self.assertEqual(self.callers("db.support_admin("), {"web/support.py"})
+        self.assertEqual(self.callers("support.newest("), {"web/admin_api.py"})
+        self.assertEqual(self.callers("support.set_status("), {"web/admin_api.py"})
+        # The setting's own name is set nowhere else (a hand-made set_config would skip the door).
+        self.assertEqual(self.callers("dmbot.support_admin"), {"schema.py"})
+
+
+class TeamAddress(unittest.TestCase):
+    ENV: ClassVar[dict[str, str]] = {
+        "DATABASE_URL": "postgresql://x",
+        "DISCORD_CLIENT_ID": "1",
+        "DISCORD_CLIENT_SECRET": "s",
+        "WEB_SECRET_KEY": "k" * 32,
+        "WEB_SITE_URL": "http://localhost:4321",
+        "WEB_API_URL": "http://localhost:8080",
+    }
+
+    def test_it_is_one_plain_address_or_empty(self) -> None:
+        self.assertEqual(load_web_settings(self.ENV).support_team_email, "")
+        good = {**self.ENV, "SUPPORT_TEAM_EMAIL": " team@example.org "}
+        self.assertEqual(load_web_settings(good).support_team_email, "team@example.org")
+        for bad in ("team", "a@example.org, b@example.org", "Team <t@example.org>", "t@example"):
+            with self.assertRaises(ConfigError, msg=bad):
+                load_web_settings({**self.ENV, "SUPPORT_TEAM_EMAIL": bad})
+
+
+class NotifyTeam(unittest.IsolatedAsyncioTestCase):
+    async def test_it_sends_one_plain_message_and_never_raises(self) -> None:
+        outbox = Outbox()
+        mailer = Mailer(None, SMTP, transport=outbox, site_url=SITE, link_secret=LINK_SECRET)  # type: ignore[arg-type]
+        self.assertTrue(await mailer.notify_team(TEAM, "A ticket waits", "Open the admin page."))
+        self.assertFalse(await mailer.notify_team("not an address", "s", "b"))
+        self.assertFalse(await mailer.notify_team("a@example.org, b@example.org", "s", "b"))
+        outbox.fail = True
+        self.assertFalse(await mailer.notify_team(TEAM, "s", "b"))
+        self.assertEqual(len(outbox.sent), 1)
+        self.assertEqual(str(outbox.sent[0]["To"]), TEAM)
+        self.assertNotIn("List-Unsubscribe", outbox.sent[0])
+
+
+class Reading(unittest.TestCase):
+    def test_the_form_is_checked(self) -> None:
+        self.assertEqual(
+            support.read_ticket({"subject": " Hi\n there ", "message": " Words\r\nmore "}),
+            support.Ticket("Hi there", "Words\nmore"),
+        )
+        bad: list[object] = [None, [], "x", {}, {"subject": "s"}, {"message": "m"}]
+        for raw in bad:
+            self.assertIsInstance(support.read_ticket(raw), str, raw)
+
+
+if __name__ == "__main__":
+    unittest.main()

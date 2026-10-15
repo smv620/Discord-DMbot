@@ -123,7 +123,7 @@ class SmtpTransport:
         await asyncio.to_thread(self._send, message)
 
 
-def _one_address(to: str | None) -> bool:
+def one_address(to: str | None) -> bool:
     """Exactly one plain address and nothing else: no list, no display name, no line break,
     so one send can never reach a second person or add a header."""
     if not to or len(to) > 254 or not to.isprintable() or not to.isascii():
@@ -189,7 +189,7 @@ class Mailer:
         cap is spent."""
         # "dm:" kinds are the private-message records the Try It jobs keep in the same table.
         if (
-            not _one_address(to)
+            not one_address(to)
             or not 0 < len(kind) <= KIND_MAX
             or kind.startswith("dm:")
             or user_id <= 0
@@ -238,6 +238,21 @@ class Mailer:
             return "failed"
         log.info("Sent a %s email", kind)
         return "sent"
+
+    async def notify_team(self, to: str, subject: str, body: str) -> bool:
+        """One plain email to the team's own address (a new support ticket, #1340). It is not
+        to a person, so it has no once-only record, no unsubscribe link and no share of the
+        daily cap (its pace is the ticket form's one per account per 10 minutes). Never
+        raises; False means it didn't go. Callers keep private words out of it."""
+        if not self._s.configured or not one_address(to):
+            return False
+        try:
+            message = self._build(to, "", subject, body, False)
+            await self._send(message)
+        except Exception:  # an SMTP error can carry the address: say only that it failed
+            log.error("Couldn't send a team email", exc_info=False)
+            return False
+        return True
 
     async def _release(self, user_id: int, kind: str) -> None:
         """Give back the claim of an offer that didn't go, so the next run retries it."""
