@@ -79,6 +79,30 @@ export const dmSteps: Step[] = [
     ],
   },
   {
+    text: "To suggest one of your own house rules to the game master whose rules you use, type /dmbot houserules, press 💡 Suggest next to your rule, then press Yes, send it. It goes exactly as written, with no name on it, so check that the rule names no one. Your own rules stay as they are, and you hear the answer at your next session. You only see 💡 Suggest for rules your table wrote, and only while the set you use is still being shared.",
+    names: [
+      { name: "/dmbot houserules", file: "ui/house_rules.py" },
+      { name: "💡 Suggest", file: "ui/house_rules.py" },
+      { name: "Yes, send it", file: "ui/house_rules.py" },
+    ],
+  },
+  {
+    text: "When another table suggests a rule for the rules you share, a note appears on your DM screen. It never says which table sent it. Press See to look at what would change, Add to set to put it in for every table that uses your rules (a new version), or No thanks. Nothing changes until you press Add to set.",
+    names: [
+      { name: "See", file: "dm_screen/set_suggestion.py" },
+      { name: "Add to set", file: "dm_screen/set_suggestion.py" },
+      { name: "No thanks", file: "dm_screen/set_suggestion.py" },
+    ],
+  },
+  {
+    text: "If the rules you use stop being shared, your table keeps its copy and the rules keep working, but they won't get updates any more. The 📚 Shared rules screen says \"This copy no longer gets updates.\" To get updates again, ask that game master to share the rules again, then press 📥 Use shared rules and type their new code.",
+    names: [{ name: "This copy no longer gets updates", file: "ui/shared_rules.py" }],
+  },
+  {
+    text: "A backup keeps the rules your table uses: the set's name and the version you had, with its rules. It does not keep the share code. After you type /dmbot restore, the set shows as no longer updated, and the rules keep working. To get updates again, use a share code again.",
+    names: [{ name: "/dmbot restore", file: "ui/dmbot_commands.py" }],
+  },
+  {
     text: "To stop using someone's rules, press ⚙️ Settings, then 📚 Shared rules, then Stop using shared rules. Your own rules stay as they are.",
     names: [{ name: "Stop using shared rules", file: "ui/shared_rules.py" }],
   },

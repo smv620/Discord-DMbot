@@ -64,6 +64,22 @@ describe("Help", () => {
     expect(dmSteps.map((s) => s.text).join(" ")).not.toContain("↩️ Undo");
   });
 
+  it("tells the suggesting game master and the publisher what DMbot really shows (#1313)", () => {
+    const steps = dmSteps.map((s) => s.text);
+    const suggest = steps.find((t) => t.includes("💡 Suggest")) ?? "";
+    expect(suggest).toContain("with no name on it");
+    expect(suggest).toContain("you hear the answer at your next session");
+    // The note's buttons are See, Add to set and No thanks, not "Accept" (set_suggestion.py).
+    const note = steps.find((t) => t.includes("Add to set")) ?? "";
+    expect(note).toContain("It never says which table sent it.");
+    expect(note).toContain("Nothing changes until you press Add to set.");
+    expect(note).not.toContain("Accept");
+    const source = readFileSync(join(botDir, "dm_screen/set_suggestion.py"), "utf8");
+    expect(source).toContain('"accept": ("Add to set"');
+    expect(steps.join(" ")).toContain("This copy no longer gets updates.");
+    expect(steps.join(" ")).toContain("It does not keep the share code.");
+  });
+
   it("links to Add to Discord and Say hello", () => {
     const links = [...help.querySelectorAll("main a")].map((a) => a.getAttribute("href"));
     expect(links).toContain("/install");

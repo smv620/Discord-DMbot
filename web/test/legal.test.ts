@@ -314,4 +314,10 @@ describe("shared house rules (#1254)", () => {
     expect(t).toContain("only the rules themselves");
     expect(t).toContain("The story, names, notes and what was said are never shared");
   });
+  it("says a suggestion back to the publisher carries only the rule, never the sender (#1313)", () => {
+    const t = text(doc("privacy").querySelector("main"));
+    expect(t).toContain("can suggest a rule back to the game master who shares them");
+    expect(t).toContain("A suggestion carries only the rule's words, never who sent it");
+    expect(t).toContain("keeps no record of the sender");
+  });
 });
