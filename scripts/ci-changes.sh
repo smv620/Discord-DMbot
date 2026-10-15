@@ -38,9 +38,11 @@ while IFS= read -r f; do
     # ears' tests read the protocol fixtures; core's read them too (test_protocol.py)
     protocol/*) core=true ears=true ;;
     ears/*) ears=true ;;
-    # core's tests read the test scripts; the rest of docs/ is words nobody runs
-    docs/test-scripts/*) core=true ;;
-    docs/* | LICENSE | CLAUDE.md) ;;
+    # Core reads most of docs/ (the plan and story memory feed the sidebar, the test scripts and
+    # logs feed devtools and tests, docs/ci/ holds a workflow its tests check) and CLAUDE.md. Only
+    # these three are words nobody reads.
+    docs/DEPLOY.md | docs/LIVE_TEST.md | docs/next-test-step.md | LICENSE) ;;
+    docs/* | CLAUDE.md) core=true ;;
     *) everything ;; # workflows, scripts/, compose files, .env.example, README.md, anything new
   esac
 done <<<"$files"

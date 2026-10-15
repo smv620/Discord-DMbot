@@ -110,7 +110,8 @@ class LongLines(unittest.TestCase):
         ]:
             started = time.perf_counter()
             request_in(text)
-            self.assertLess(time.perf_counter() - started, 0.05, text[:20])
+            # A runaway pattern takes seconds; 0.25 s leaves room for tests running side by side (#1323).
+            self.assertLess(time.perf_counter() - started, 0.25, text[:20])
 
 
 class WakePhrase(unittest.TestCase):

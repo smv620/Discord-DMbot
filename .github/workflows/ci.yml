@@ -30,12 +30,15 @@ jobs:
         with:
           fetch-depth: 0  # the merge base with origin/development needs the history
       - id: decide
-        run: scripts/ci-changes.sh | tee -a "$GITHUB_OUTPUT"
+        # A job is skipped only on an explicit "false": empty outputs (a crash here) run everything.
+        run: |
+          set -o pipefail
+          scripts/ci-changes.sh | tee -a "$GITHUB_OUTPUT"
 
   ears:
     name: ears (Node voice service)
     needs: changes
-    if: ${{ always() && (needs.changes.result != 'success' || needs.changes.outputs.ears == 'true') }}
+    if: ${{ always() && (needs.changes.result != 'success' || needs.changes.outputs.ears != 'false') }}
     runs-on: ubuntu-22.04  # 24.04 runners were queueing for hours (2026-10-05); see #29
     defaults:
       run:
@@ -67,7 +70,7 @@ jobs:
   web:
     name: web (customer website)
     needs: changes
-    if: ${{ always() && (needs.changes.result != 'success' || needs.changes.outputs.web == 'true') }}
+    if: ${{ always() && (needs.changes.result != 'success' || needs.changes.outputs.web != 'false') }}
     runs-on: ubuntu-22.04  # 24.04 runners were queueing for hours (2026-10-05); see #29
     timeout-minutes: 10
     defaults:
@@ -98,7 +101,7 @@ jobs:
   core:
     name: core (Python)
     needs: changes
-    if: ${{ always() && (needs.changes.result != 'success' || needs.changes.outputs.core == 'true') }}
+    if: ${{ always() && (needs.changes.result != 'success' || needs.changes.outputs.core != 'false') }}
     runs-on: ubuntu-22.04  # 24.04 runners were queueing for hours (2026-10-05); see #29
     defaults:
       run:
@@ -148,12 +151,13 @@ jobs:
           -c "ALTER SYSTEM SET full_page_writes = off"
           -c "SELECT pg_reload_conf()"
       - name: pytest
-        # -n auto: one worker per core. Each database test builds its own schema (core/tests/pg.py,
-        # with a random name) and migrations lock per schema, so workers never share state.
+        # -n 4: one worker per core of the 4-core runner (measured). Each database test builds its
+        # own schema (core/tests/pg.py, random name) and migrations lock per schema, so workers
+        # never share state.
         # --durations shows where the time goes. Nothing is skipped, deselected or xfailed.
         run: |
           set -o pipefail
-          pytest -q --tb=short -rfE -n auto --durations=25 2>&1 | tee pytest.log || {
+          pytest -q --tb=short -rfE -n 4 --durations=25 2>&1 | tee pytest.log || {
             # One multi-line annotation, so failures are readable without the raw log.
             summary=$(grep -E "^(FAILED|ERROR) |^E  |^[^ ].*\.py:[0-9]+: " pytest.log | head -80 | sed -e 's/%/%25/g' | sed ':a;N;$!ba;s/\n/%0A/g')
             echo "::error title=pytest failures::${summary}"

@@ -344,7 +344,7 @@ class Database:
         async with self.unscoped() as conn:
             cur = await conn.execute("SELECT current_schema() AS s")
             row = await cur.fetchone()
-            await _take_migration_lock(conn, "" if row is None else str(row["s"]))
+            await _take_migration_lock(conn, (row or {}).get("s") or "")
             await conn.execute(
                 "CREATE TABLE IF NOT EXISTS schema_migrations ("
                 " name TEXT PRIMARY KEY, applied_at TIMESTAMPTZ NOT NULL DEFAULT now())"
