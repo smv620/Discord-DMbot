@@ -10,7 +10,8 @@ import uuid
 
 import psycopg
 
-from dmbot.db import MIGRATIONS, Database
+from dmbot.db import Database
+from dmbot.schema import MIGRATIONS
 from tests import pg
 
 needs_superuser = unittest.skipUnless(
