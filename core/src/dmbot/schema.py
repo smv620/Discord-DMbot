@@ -3727,6 +3727,14 @@ MEMORY_CLAIMS = (
     """
 )
 
+MEMORY_CLAIMS_BY_FACT = """
+    -- The recall service (#1350) finds the claim a fact came from by the fact's id; without this
+    -- it would read every confirmed claim of the campaign to find them. An index only: no row
+    -- changes, so no row-level-security opening is needed.
+    CREATE INDEX memory_claims_by_fact ON memory_claims (guild_id, campaign_id, fact_id)
+        WHERE fact_id IS NOT NULL;
+    """
+
 MIGRATIONS: tuple[Migration, ...] = (
     ("0001_initial", INITIAL),
     ("0002_active_sessions", ACTIVE_SESSIONS),
@@ -3801,6 +3809,10 @@ MIGRATIONS: tuple[Migration, ...] = (
     ("0071_email_records", EMAIL_RECORDS),  # the email records (#1288)
     ("0072_rule_suggestions", RULE_SUGGESTIONS),  # the shared-rules suggestions (#1261)
     ("0073_memory_claims", MEMORY_CLAIMS),
+    (
+        "0074_claims_by_fact",
+        MEMORY_CLAIMS_BY_FACT,
+    ),  # the recall service finds a fact's claim (#1350)
 )
 
 # Tables that must have row-level security. A test checks every table in the schema

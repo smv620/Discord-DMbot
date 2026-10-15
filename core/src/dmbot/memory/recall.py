@@ -14,9 +14,11 @@ Who may see what is decided here, before anything is returned (never by the prom
   entry), no conditions (alive, dead) and nothing from the story plan.
 - `transcript`: always empty. Nothing from here ever goes into a transcript.
 
-Evidence is quoted only from speakers who are recorded *now*: the caller passes who that is and
-this checks again on every read, so a person who stops being recorded vanishes from the next
-recall. Sidebar lines (the DM's questions to DMbot and its answers) are never quoted.
+Evidence is quoted only from speakers who are recorded *now*: the caller passes who that is (or
+a function that says, asked again after the transcript was read), so a person who stops being
+recorded vanishes from the next recall. Sidebar lines (the DM's questions to DMbot, a table
+question, and DMbot's answers) are never quoted, and the caller's reader must say so for every
+line it returns (there is no default).
 
 Every read goes through one campaign (its server and its id are in every query, and row-level
 security backs that up), so another campaign or server never shows up, even with the same names.
@@ -26,6 +28,8 @@ campaign of thousands of entries takes milliseconds.
 
 from __future__ import annotations
 
+import asyncio
+import logging
 import math
 import re
 from collections.abc import Awaitable, Callable, Collection, Iterable, Mapping, Sequence
@@ -39,6 +43,8 @@ from dmbot.memory.models import ROLE_LABELS, name_key
 from dmbot.memory.ontology import Ontology
 from dmbot.memory.store import MemoryStore, _load_ontology
 
+log = logging.getLogger(__name__)
+
 DM_SCREEN, PLAYERS, TRANSCRIPT = "dm_screen", "players", "transcript"
 AUDIENCES = (DM_SCREEN, PLAYERS, TRANSCRIPT)
 
@@ -48,6 +54,13 @@ EVIDENCE_PER_FACT = 3
 QUOTE_CHARS = 160
 ITEM_OVERHEAD = 40  # an item's id and punctuation count against the budget too
 SESSION_SECONDS = 30 * 86400  # a fact a month older than the newest scores half as recent
+# What one recall will read, whatever the story holds: a hub with thousands of facts or a group
+# with hundreds of members must not turn one question into a scan. The newest facts win, and
+# `Recall.truncated` says when this was reached.
+MAX_FACTS_ROUND = 500
+MAX_FACTS_TOTAL = 1000
+MAX_ROUNDS = 5  # groups cost no step, so a walk can need a few rounds more than its steps
+LINES_TIMEOUT_S = 2.0  # a hung transcript read costs the quotes, never the recall
 # A group or a thread holds its members together: walking through one costs no extra step.
 CLUSTER_TYPES = frozenset({"faction", "thread"})
 # The story plan is a separate layer (docs/STORY_MEMORY.md section 6) that does not exist as
@@ -69,22 +82,33 @@ class AsOf:
     game_time: int | None = None
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, kw_only=True)
 class Line:
-    """One transcript line, as the caller's reader gives it. `sidebar` marks the DM's questions
-    to DMbot and its answers, which are never quoted."""
+    """One transcript line, as the caller's reader gives it. `sidebar` has no default on
+    purpose: the reader must say whether this is one of the DM's questions to DMbot, a table
+    question or DMbot's answer, none of which is ever quoted."""
 
     ref: str
     text: str
     speaker_id: int | None
+    sidebar: bool
     session_started_at: int | None = None
     at_ms: int | None = None
-    sidebar: bool = False
 
 
-# Reads transcript lines by the references facts and claims cite. The caller owns the
-# transcript, so recall does not reach into it; a missing line is simply not quoted.
-Lines = Callable[[Sequence[str]], Awaitable[Mapping[str, Line]]]
+# Reads transcript lines of ONE campaign by the references facts and claims cite. The caller
+# owns the transcript, so recall does not reach into it; it names the server and campaign so a
+# reference that exists in two of them can never come back from the wrong one. A missing line
+# is simply not quoted.
+Lines = Callable[[int, str, Sequence[str]], Awaitable[Mapping[str, Line]]]
+# Who is recorded now: a fixed set, or a function asked again after the transcript was read.
+OptedIn = Collection[int] | Callable[[], Awaitable[Collection[int]]]
+
+
+async def _agreed(opted_in: OptedIn) -> frozenset[int]:
+    if callable(opted_in):
+        return frozenset(await opted_in())
+    return frozenset(opted_in)
 
 
 @dataclass(frozen=True, slots=True)
@@ -118,6 +142,7 @@ class Recall:
     seeds: tuple[str, ...] = ()  # the entries the seeds named, in the order given
     cut: int = 0  # items left out to stay in the budget
     size: int = 0
+    truncated: bool = False  # the walk hit its limits (MAX_FACTS_*, MAX_ROUNDS) and stopped
 
     @property
     def ids(self) -> frozenset[str]:
@@ -139,7 +164,8 @@ def check_citations(answer_ids: Iterable[str], recall: Recall) -> tuple[str, ...
 
 
 def _true_at(as_of: AsOf) -> tuple[str, list[int]]:
-    """The SQL that keeps a fact only if it holds at `as_of`, and its values."""
+    """The SQL that keeps a fact only if it holds at `as_of`, and its values. A fact that has
+    ended by session is not current, whatever the game time asked about."""
     clauses, values = [], []
     if as_of.session_at is None:
         clauses.append("to_session_at IS NULL")
@@ -188,8 +214,15 @@ def _fact_of(r: Mapping[str, Any], hops: int, near: str, far: str) -> _Fact:
 class _Walk:
     seeds: list[str] = field(default_factory=list)
     entities: dict[str, dict[str, object]] = field(default_factory=dict)
-    cost: dict[str, int] = field(default_factory=dict)
+    cost: dict[str, int] = field(default_factory=dict)  # steps from a seed, for reached entries
     facts: dict[str, _Fact] = field(default_factory=dict)
+    truncated: bool = False
+
+    def is_cluster(self, entity_id: str) -> bool:
+        return self.entities[entity_id]["type"] in CLUSTER_TYPES
+
+
+Sources = dict[str, list[tuple[str, int | None, tuple[int, ...] | None]]]
 
 
 class RecallService:
@@ -208,29 +241,42 @@ class RecallService:
         audience: str,
         as_of: AsOf | None = None,
         budget: int = DEFAULT_BUDGET,
-        opted_in: Collection[int] = (),
+        opted_in: OptedIn = (),
         hops: int = MAX_HOPS,
     ) -> Recall:
         """What may be said about `seeds` (entry ids or names) to `audience` at `as_of`, cut to
-        `budget` characters. `opted_in` are the people recorded now: only they are quoted."""
+        `budget` characters. `opted_in` are the people recorded now (or a function that says,
+        asked again before any quote is attached): only they are quoted or counted."""
         if audience not in AUDIENCES:
             raise ValueError(f"unknown audience {audience!r}")
         as_of = as_of or AsOf()
         if audience == TRANSCRIPT:  # decided before anything is read
             return Recall(audience, as_of)
         hops = max(0, min(hops, MAX_HOPS))
+        agreed = await _agreed(opted_in)
         async with self._memory._read(guild_id, campaign_id, snapshot=True) as scope:
             walk = await self._walk(scope, seeds, audience, as_of, hops)
-            ids = list(walk.entities)
-            heard = await self._heard(scope, ids, opted_in)
-            notes = await self._conditions(scope, ids, as_of) if audience == DM_SCREEN else {}
+            reached = sorted(walk.cost)
+            heard = await self._heard(scope, reached, agreed)
+            notes = await self._conditions(scope, reached, as_of) if audience == DM_SCREEN else {}
             onto = await _load_ontology(scope)
-            sources = await self._sources(scope, list(walk.facts.values()))
-        found = _Found(walk, heard, notes, onto, sources, as_of, audience)
-        items = found.items()
-        if self._lines is not None and opted_in:
-            items = await self._with_quotes(items, found, set(opted_in))
-        return _cut(audience, as_of, tuple(walk.seeds), items, budget)
+            found = _Found(walk, heard, notes, onto, as_of, audience)
+            # Rank and cut first, so evidence is looked up only for what will be kept.
+            first = _cut(audience, as_of, tuple(walk.seeds), found.items(), budget)
+            wanted = [i.id for i in first.items if i.kind == FACT]
+            sources = (
+                await self._sources(scope, [walk.facts[f] for f in wanted])
+                if self._lines is not None and agreed and wanted
+                else {}
+            )
+        items = list(first.items)
+        if sources and self._lines is not None:
+            items = await self._with_quotes(guild_id, campaign_id, items, sources, agreed, opted_in)
+        final = _cut(audience, as_of, tuple(walk.seeds), items, budget)
+        return Recall(
+            audience, as_of, final.items, final.seeds, first.cut + final.cut, final.size,
+            walk.truncated,
+        )  # fmt: skip
 
     # ---- the walk --------------------------------------------------------------------
 
@@ -239,23 +285,32 @@ class RecallService:
     ) -> _Walk:
         walk = _Walk()
         ids = await self._seed_ids(scope, seeds, audience)
-        walk.entities.update(await self._entries(scope, ids))
+        walk.entities.update(await self._entries(scope, ids, audience))
         walk.seeds = [i for i in ids if i in walk.entities]
         walk.cost = {i: 0 for i in walk.seeds}
         when, values = _true_at(as_of)
         secret = " AND NOT secret" if audience == PLAYERS else ""
-        frontier = list(walk.seeds)
-        for _ in range(MAX_HOPS * 2 + 1):  # groups cost no step, so allow a few extra rounds
+        frontier = set(walk.seeds)
+        for _ in range(MAX_ROUNDS):
             if not frontier:
                 break
+            room = MAX_FACTS_TOTAL - len(walk.facts)
+            if room <= 0:
+                walk.truncated = True
+                break
+            limit = min(MAX_FACTS_ROUND, room)
+            ends = sorted(frontier)
             cur = await scope.conn.execute(
                 "SELECT id, subject_id, predicate, object_id, detail, from_session_at,"
                 " to_session_at, secret, source, mention_ids FROM memory_relations"
                 " WHERE guild_id = %s AND campaign_id = %s AND status = 'confirmed'"
-                f" AND (subject_id = ANY(%s) OR object_id = ANY(%s)) AND {when}{secret}",
-                (*scope.ids, frontier, frontier, *values),
+                f" AND (subject_id = ANY(%s) OR object_id = ANY(%s)) AND {when}{secret}"
+                " ORDER BY from_session_at DESC NULLS LAST, id LIMIT %s",
+                (*scope.ids, ends, ends, *values, limit),
             )
             rows = await cur.fetchall()
+            if len(rows) == limit:
+                walk.truncated = True
             if audience == PLAYERS:
                 rows = [r for r in rows if str(r["source"]) not in PLAN_SOURCES]
             unknown = {
@@ -264,38 +319,66 @@ class RecallService:
                 for end in (str(r["subject_id"]), str(r["object_id"]))
                 if end not in walk.entities
             }
-            walk.entities.update(await self._entries(scope, sorted(unknown)))
-            frontier = []
-            for r in rows:
-                fid, sub, obj = str(r["id"]), str(r["subject_id"]), str(r["object_id"])
-                if sub not in walk.entities or obj not in walk.entities:
-                    continue  # an end that is not a live entry (a person, or rejected)
-                near, far = (sub, obj) if sub in walk.cost else (obj, sub)
-                if near not in walk.cost:
-                    continue
-                step = 0 if walk.entities[near]["type"] in CLUSTER_TYPES else 1
-                reach = walk.cost[near] + step
-                if reach > hops or fid in walk.facts:
-                    continue
-                walk.facts[fid] = _fact_of(r, reach, near, far)
-                if far not in walk.cost or reach < walk.cost[far]:
-                    walk.cost[far] = reach
-                    frontier.append(far)
+            walk.entities.update(await self._entries(scope, sorted(unknown), audience))
+            frontier = self._step(walk, rows, frontier, hops)
+        else:
+            walk.truncated = walk.truncated or bool(frontier)
         return walk
+
+    @staticmethod
+    def _step(
+        walk: _Walk, rows: Sequence[Mapping[str, Any]], frontier: set[str], hops: int
+    ) -> set[str]:
+        """Take one round's facts into the walk and return the entries to expand next. Costs
+        are read from the round's start, never from what this round has just set, so the
+        result does not depend on the order the database returned the rows in."""
+        before = dict(walk.cost)
+        reached: dict[str, int] = {}
+        for r in rows:
+            sub, obj = str(r["subject_id"]), str(r["object_id"])
+            if sub not in walk.entities or obj not in walk.entities:
+                continue  # an end that is no live entry (a person, or one hidden from the audience)
+            best: tuple[int, str, str] | None = None
+            for near, far in ((sub, obj), (obj, sub)):
+                if near in frontier:
+                    reach = before[near] + (0 if walk.is_cluster(near) else 1)
+                    if best is None or (reach, near) < (best[0], best[1]):
+                        best = (reach, near, far)
+            if best is None or best[0] > hops:
+                continue
+            reach, near, far = best
+            old = walk.facts.get(str(r["id"]))
+            if old is None or reach < old.hops:
+                walk.facts[str(r["id"])] = _fact_of(r, reach, near, far)
+            if far not in before or reach < before[far]:
+                reached[far] = min(reach, reached.get(far, reach))
+        nxt: set[str] = set()
+        for entity_id, cost in reached.items():
+            walk.cost[entity_id] = cost
+            # An entry at the last step can add nothing, unless it is a group: its members come
+            # with it at no step.
+            if cost < hops or walk.is_cluster(entity_id):
+                nxt.add(entity_id)
+        return nxt
 
     async def _seed_ids(self, scope: Scope, seeds: Sequence[str], audience: str) -> list[str]:
         """The entries the seeds mean, in the order given: an id as it is, a name through the
-        entries' names and the other names it goes by (secret ones only for the DM screen)."""
+        entries' names and the other names it goes by. The players' audience only trusts names
+        the DM has confirmed and has not made secret."""
         ids: dict[str, None] = {}
         by_key: dict[str, list[str]] = {}
         keys = sorted({name_key(n) for n in seeds if not _ID.match(n) and name_key(n)})
         if keys:
             # Every entry's own name is its first alias, so one indexed lookup finds names and
-            # other names alike. A secret name only means something to the DM screen.
-            hide = " AND NOT secret" if audience == PLAYERS else ""
+            # other names alike.
+            hide = (
+                " AND NOT secret AND status = 'confirmed'"
+                if audience == PLAYERS
+                else " AND status <> 'rejected'"
+            )
             cur = await scope.conn.execute(
                 "SELECT key, entity_id FROM memory_aliases WHERE guild_id = %s AND campaign_id = %s"
-                f" AND key = ANY(%s) AND status <> 'rejected'{hide}",
+                f" AND key = ANY(%s){hide}",
                 (*scope.ids, keys),
             )
             for r in await cur.fetchall():
@@ -306,52 +389,67 @@ class RecallService:
                 ids.setdefault(entity_id)
         return list(ids)
 
-    async def _entries(self, scope: Scope, ids: Sequence[str]) -> dict[str, dict[str, object]]:
+    async def _entries(
+        self, scope: Scope, ids: Sequence[str], audience: str
+    ) -> dict[str, dict[str, object]]:
+        """The live entries among `ids`. For the players: confirmed ones only, and never an
+        entry whose own name the DM has made secret (its identity is the secret), whether it
+        came by name or by id."""
         if not ids:
             return {}
+        live = ["confirmed"] if audience == PLAYERS else list(_LIVE)
         cur = await scope.conn.execute(
             "SELECT id, type, name, description, role FROM memory_entities"
             " WHERE guild_id = %s AND campaign_id = %s AND id = ANY(%s)"
             " AND status = ANY(%s) AND type <> 'person'",
-            (*scope.ids, list(ids), list(_LIVE)),
+            (*scope.ids, list(ids), live),
         )
-        return {str(r["id"]): dict(r) for r in await cur.fetchall()}
+        rows = {str(r["id"]): dict(r) for r in await cur.fetchall()}
+        if audience == PLAYERS and rows:
+            cur = await scope.conn.execute(
+                "SELECT entity_id, key FROM memory_aliases WHERE guild_id = %s"
+                " AND campaign_id = %s AND entity_id = ANY(%s) AND secret",
+                (*scope.ids, list(rows)),
+            )
+            for r in await cur.fetchall():
+                entry = rows.get(str(r["entity_id"]))
+                if entry is not None and name_key(str(entry["name"])) == str(r["key"]):
+                    del rows[str(r["entity_id"])]
+        return rows
 
     async def _heard(
-        self, scope: Scope, ids: Sequence[str], opted_in: Collection[int]
+        self, scope: Scope, ids: Sequence[str], agreed: Collection[int]
     ) -> dict[str, int]:
         """How often each name was said, by people recorded now: counts, never words."""
-        if not ids or not opted_in:
+        if not ids or not agreed:
             return {}
         cur = await scope.conn.execute(
             "SELECT entity_id, sum(times)::int AS times FROM memory_heard"
             " WHERE guild_id = %s AND campaign_id = %s AND entity_id = ANY(%s)"
             " AND speaker_id = ANY(%s) GROUP BY entity_id",
-            (*scope.ids, list(ids), list(opted_in)),
+            (*scope.ids, list(ids), list(agreed)),
         )
         return {str(r["entity_id"]): int(r["times"]) for r in await cur.fetchall()}
 
     async def _conditions(self, scope: Scope, ids: Sequence[str], as_of: AsOf) -> dict[str, str]:
-        """The latest condition (dead, lost, ...) each entry had by `as_of`. DM screen only."""
+        """What each entry was (dead, lost, ...) at `as_of`; with no time, what it is now (the
+        open condition). DM screen only."""
         if not ids:
             return {}
         cur = await scope.conn.execute(
             "SELECT DISTINCT ON (entity_id) entity_id, condition FROM memory_states"
             " WHERE guild_id = %s AND campaign_id = %s AND entity_id = ANY(%s)"
-            " AND (%s::bigint IS NULL OR from_session_at IS NULL OR from_session_at <= %s)"
-            " ORDER BY entity_id, from_session_at DESC NULLS LAST, created_at DESC",
+            " AND CASE WHEN %s::bigint IS NULL THEN closed_at IS NULL"
+            " ELSE (from_session_at IS NULL OR from_session_at <= %s) END"
+            " ORDER BY entity_id, from_session_at DESC NULLS LAST, created_at DESC, id",
             (*scope.ids, list(ids), as_of.session_at, as_of.session_at),
         )
         return {str(r["entity_id"]): str(r["condition"]) for r in await cur.fetchall()}
 
-    async def _sources(
-        self, scope: Scope, facts: Sequence[_Fact]
-    ) -> dict[str, list[tuple[str, int | None, tuple[int, ...] | None]]]:
+    async def _sources(self, scope: Scope, facts: Sequence[_Fact]) -> Sources:
         """For each fact, where it was said: (line reference, session, speakers who said it)
         from its mentions and from the claim it was confirmed from."""
-        out: dict[str, list[tuple[str, int | None, tuple[int, ...] | None]]] = {}
-        if not facts or self._lines is None:
-            return out
+        out: Sources = {}
         mention_ids = sorted({m for f in facts for m in f.mention_ids})
         by_mention: dict[str, tuple[str, int | None]] = {}
         if mention_ids:
@@ -371,8 +469,8 @@ class RecallService:
                     out.setdefault(f.id, []).append((ref, session, None))
         cur = await scope.conn.execute(
             "SELECT fact_id, lines, speaker_ids, session_started_at FROM memory_claims"
-            " WHERE guild_id = %s AND campaign_id = %s AND status = 'confirmed'"
-            " AND fact_id = ANY(%s)",
+            " WHERE guild_id = %s AND campaign_id = %s AND fact_id = ANY(%s)"
+            " AND status = 'confirmed'",
             (*scope.ids, [f.id for f in facts]),
         )
         for r in await cur.fetchall():
@@ -384,24 +482,39 @@ class RecallService:
         return out
 
     async def _with_quotes(
-        self, items: list[Item], found: _Found, opted_in: set[int]
+        self,
+        guild_id: int,
+        campaign_id: str,
+        items: list[Item],
+        sources: Sources,
+        agreed: frozenset[int],
+        opted_in: OptedIn,
     ) -> list[Item]:
         assert self._lines is not None
-        wanted = sorted({ref for refs in found.sources.values() for ref, _, _ in refs})
+        wanted = sorted({ref for refs in sources.values() for ref, _, _ in refs})
         if not wanted:
             return items
-        lines = await self._lines(wanted)
+        try:
+            lines = await asyncio.wait_for(
+                self._lines(guild_id, campaign_id, wanted), LINES_TIMEOUT_S
+            )
+        except Exception:  # a reader that fails or hangs costs the quotes, nothing else
+            log.warning("Recall: the transcript could not be read; no quotes this time")
+            return items
+        # Who is recorded is asked again now, after the awaits: someone who stopped meanwhile
+        # is not quoted.
+        agreed = agreed & await _agreed(opted_in)
         out = []
         for item in items:
             if item.kind != FACT:
                 out.append(item)
                 continue
             quotes: dict[str, Quote] = {}
-            for ref, session, speakers in found.sources.get(item.id, []):
+            for ref, session, speakers in sources.get(item.id, []):
                 line = lines.get(ref)
-                if line is None or line.sidebar or line.speaker_id not in opted_in:
+                if line is None or line.sidebar or line.speaker_id not in agreed:
                     continue
-                if speakers is not None and (not speakers or not set(speakers) <= opted_in):
+                if speakers is not None and (not speakers or not set(speakers) <= agreed):
                     continue  # the claim it came from cites someone who is not recorded now
                 text = " ".join(line.text.split())[:QUOTE_CHARS]
                 if text:
@@ -423,7 +536,6 @@ class _Found:
     heard: dict[str, int]
     conditions: dict[str, str]
     onto: Ontology
-    sources: dict[str, list[tuple[str, int | None, tuple[int, ...] | None]]]
     as_of: AsOf
     audience: str
 
@@ -445,31 +557,18 @@ class _Found:
             score = round(score, 6)
             for end in (f.near, f.far):
                 best[end] = max(best.get(end, 0.0), score)
-            items.append(
-                Item(
-                    FACT,
-                    fid,
-                    self._fact_text(f),
-                    score,
-                    f.hops,
-                    secret=f.secret,
-                )
-            )
+            items.append(Item(FACT, fid, self._fact_text(f), score, f.hops, secret=f.secret))
         for entity_id, e in walk.entities.items():
             seed = entity_id in walk.seeds
             if not seed and entity_id not in best:
                 continue
-            items.append(
-                Item(
-                    ENTRY,
-                    entity_id,
-                    self._entry_text(e, entity_id),
-                    10.0 + 1.0 / (1 + walk.seeds.index(entity_id))
-                    if seed
-                    else round(0.5 * best[entity_id], 6),
-                    0 if seed else walk.cost.get(entity_id, MAX_HOPS),
-                )
+            score = (
+                10.0 + 1.0 / (1 + walk.seeds.index(entity_id))
+                if seed
+                else round(0.5 * best[entity_id], 6)
             )
+            hops = 0 if seed else walk.cost.get(entity_id, MAX_HOPS)
+            items.append(Item(ENTRY, entity_id, self._entry_text(e, entity_id), score, hops))
         return items
 
     def _entry_text(self, e: Mapping[str, object], entity_id: str) -> str:
@@ -485,26 +584,25 @@ class _Found:
 
     def _fact_text(self, f: _Fact) -> str:
         walk = self.walk
-        sub, obj = f.subject_id, f.object_id
         what = _predicate_words(self.onto, f.predicate, f.detail)
-        return f"{walk.entities[sub]['name']} {what} {walk.entities[obj]['name']}"
+        return f"{walk.entities[f.subject_id]['name']} {what} {walk.entities[f.object_id]['name']}"
 
 
 def _cut(
     audience: str, as_of: AsOf, seeds: tuple[str, ...], items: list[Item], budget: int
 ) -> Recall:
     """Highest score first (ties by id, so the same question always gets the same answer), kept
-    whole until the budget is spent. An item whose quotes do not fit is kept without them."""
+    whole until the budget is spent. An item whose quotes do not fit is kept without them; an
+    item that cannot fit at all is left out and the smaller ones after it still get their
+    turn, so one long entry never empties the recall."""
     ordered = sorted(items, key=lambda i: (-i.score, i.kind, i.id))
     kept: list[Item] = []
     used = 0
-    for position, item in enumerate(ordered):
+    for item in ordered:
+        if used + item.size > budget and item.quotes:
+            item = _replace_quotes(item, ())
         if used + item.size > budget:
-            bare = _replace_quotes(item, ())
-            if item.quotes and used + bare.size <= budget:
-                item = bare
-            else:
-                return Recall(audience, as_of, tuple(kept), seeds, len(ordered) - position, used)
+            continue
         kept.append(item)
         used += item.size
-    return Recall(audience, as_of, tuple(kept), seeds, 0, used)
+    return Recall(audience, as_of, tuple(kept), seeds, len(ordered) - len(kept), used)
