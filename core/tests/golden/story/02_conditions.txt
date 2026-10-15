@@ -1,0 +1,110 @@
+## Scene 11: The bridge
+1. dm statement: The bridge at Tolbrook collapses under the ogre's weight. Captain Roan falls into the gorge and does not come up.
+   - state: Captain Roan | dead
+   - also: bridge | collapses | Tolbrook
+2. player statement: Roan is dead, I watched him fall.
+   - state: Captain Roan | dead
+3. player question: Can we climb down and look for a body?
+4. dm statement: The gorge is a hundred feet deep and the water is white with foam.
+5. player plan: We build a rope ladder and go down at dawn.
+   - claim: party | climb down | gorge
+6. dm ooc: Fine, that takes the rest of the evening.
+
+## Scene 12: The prisoner
+1. dm statement: The raiders have taken Hesper alive. She is bound in the back of their wagon.
+   - state: Hesper | captured
+2. player statement: So Hesper is a prisoner of the Red Ledger company.
+   - state: Hesper | captured
+   - claim: Hesper | prisoner of | Red Ledger company
+3. dm statement: The wagon rumbles east along the Marrow Road.
+4. player plan: We follow at a distance and free her tonight.
+   - claim: party | follow | wagon
+   - claim: party | free | Hesper
+5. dm ooc: Roll Stealth when you move.
+
+## Scene 13: Where is Quill?
+1. dm statement: Quill's hut is empty. The bed is cold and the satchel is gone.
+   - state: Quill | missing
+2. player statement: I think Quill went to warn the Silver Circle.
+   - claim: Quill | went to warn | Silver Circle
+3. player question: Is there any sign of a struggle?
+4. dm statement: No sign of a struggle, only an open door.
+5. player plan: We search the Thornwood for his tracks.
+   - claim: party | search | Thornwood
+
+## Scene 14: Destroyed
+1. dm statement: The Ashen Pass watchtower burns all night. By morning only a black shell is left.
+   - state: Ashen Pass watchtower | destroyed
+2. player statement: The watchtower is gone. The Guild must have done this.
+   - state: Ashen Pass watchtower | destroyed
+   - claim: Guild of Ropes | burned | Ashen Pass watchtower
+3. dm statement: You cannot tell who set the fire.
+4. player question: Did the garrison get out?
+5. dm statement: A few survivors are huddled by the road.
+   - also: garrison survivors | are | by the road
+
+## Scene 15: The lie about the dead
+1. dm statement: The innkeeper leans in. "Old Aldwin is dead, buried last week, I saw the grave."
+   - state: Aldwin | dead
+2. player question: Wait, I talked to Aldwin two days ago in Ashenford.
+3. dm statement: The innkeeper blinks and goes pale. "Then someone is lying to one of us."
+4. player statement: I bet the innkeeper is lying for the council.
+   - claim: innkeeper | lying for | council of five elders
+5. dm ooc: You may roll Insight if you like.
+6. player plan: We go to the graveyard and look at the grave ourselves.
+   - claim: party | visit | graveyard
+
+## Scene 16: Brought back
+1. dm statement: The cleric speaks the words of return and the old guard captain gasps, alive again.
+   - state: old guard captain | alive
+2. player statement: Captain Roan is alive again, thanks to the cleric.
+   - state: Captain Roan | alive
+3. dm ooc: Yes, that was a resurrection spell, the diamond is gone from your inventory.
+4. player question: Is he in good shape?
+5. dm statement: He is weak but breathing.
+6. player plan: We carry him to the chapel.
+   - claim: party | carry | Captain Roan
+
+## Scene 17: A transformation
+1. dm statement: The old woman at the well melts into a silver wolf and bounds into the trees.
+   - state: old woman | transformed
+2. player statement: The old woman was a werewolf all along.
+   - claim: old woman | is | werewolf
+3. player question: Does she drop anything?
+4. dm statement: A copper key lies in the dust where she stood.
+   - claim: copper key | located in | well
+5. player plan: I pick up the key and follow the wolf.
+   - claim: Ilyra | pick up | copper key
+   - claim: Ilyra | follow | silver wolf
+
+## Scene 18: Thought dead
+1. dm statement: The assassin's body is never found. A bloody dagger lies in the alley.
+   - claim: dagger | located in | alley
+2. player statement: He is dead, nobody survives that wound.
+   - state: assassin | dead
+3. player question: Shall we search his room anyway?
+4. dm statement: The room is empty and the window is open.
+5. player plan: I ask around the harbour ward for anyone who saw him.
+   - claim: Ilyra | ask | harbour ward
+
+## Scene 19: Two deaths
+1. dm statement: In the battle, Ser Corvin falls to a spear. Lady Maris stays on her feet but is badly wounded.
+   - state: Ser Corvin | dead
+2. player statement: Corvin is dead and Maris is hurt.
+   - state: Ser Corvin | dead
+3. dm statement: Maris stands over his body and weeps.
+4. player question: Does the army still hold the ford?
+5. dm statement: The ford holds, for now.
+6. player plan: We bring Maris back to the camp.
+   - claim: party | bring | Lady Maris
+
+## Scene 20: A ship lost
+1. dm statement: The Gull sinks in the storm with all the cargo. Her captain, Tess Marlow, clings to a barrel.
+   - state: Gull | destroyed
+   - claim: Tess Marlow | captain of | Gull
+2. player statement: So Tess Marlow is stranded now.
+   - also: Tess Marlow | is | stranded
+3. dm statement: You see no sign of her after the next wave.
+   - state: Tess Marlow | missing
+4. player question: Can I swim out to the barrel?
+5. dm ooc: Roll Athletics.

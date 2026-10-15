@@ -1,0 +1,207 @@
+## Scene 51: The long night at the toll house
+1. dm statement: The toll house is cold and smells of wet wool. Tam Rusk bars the door behind you.
+   - claim: Tam Rusk | bars | door
+2. player question: Is his brother Dov here too?
+3. dm statement: Dov is out on the road with a lantern. He will be back before midnight.
+   - claim: Dov Rusk | out on | Marrow Road
+4. player statement: I do not like how the Rusk brothers stare at Heartseeker.
+   - claim: Rusk brothers | stare at | Heartseeker
+5. dm ooc: Hesper, you are the one carrying it. Does that worry you?
+6. player statement: It does. The Rusks work for the Guild and the Guild wants the bow.
+   - claim: Tam Rusk | serves | Guild of Ropes
+   - claim: Guild of Ropes | wants | Heartseeker
+7. dm statement: Tam sets a pot of stew on the fire and whistles, too casual.
+8. player plan: I keep the bow within reach and sleep sitting up.
+   - claim: Hesper | keep | Heartseeker
+9. dm ooc: Roll a Perception check for the night watch.
+10. player question: Does anyone else hear a noise outside?
+11. dm statement: Faint scraping at the shutter, like a knife on wood.
+12. player plan: I open the shutter fast and grab whoever is there.
+   - claim: Ilyra | grab | intruder
+
+## Scene 52: The parley
+1. dm statement: Captain Maren Voss meets you on the quay with six guards. Her hand rests on her sabre.
+   - claim: Maren Voss | meets | party
+   - claim: Maren Voss | carries | sabre
+2. dm statement: "The Guild has been bribing my watch," she says. "Half my sergeants are in their pocket."
+   - claim: Dunmere watch | bribed by | Guild of Ropes
+3. player statement: Maren is our ally now, at least for the night.
+   - claim: Maren Voss | ally of | party
+4. player question: Does she know her sister is with us?
+5. dm statement: She looks at Ilyra and the hardness drops from her face for a moment.
+   - claim: Maren Voss | sister of | Ilyra Voss
+6. player plan: Ilyra steps forward and offers her hand.
+   - claim: Ilyra Voss | offer hand to | Maren Voss
+7. dm statement: Maren takes it. "I was a fool to let you go."
+8. dm ooc: This is a good moment for a short break.
+9. player question: Can I check the quay for anyone listening?
+10. dm statement: A hooded man by the crates ducks away.
+   - claim: hooded man | spies on | party
+11. player plan: I run after him.
+   - claim: Hesper | chase | hooded man
+12. dm ooc: Roll initiative.
+
+## Scene 53: Aldwin's confession
+1. dm statement: Brother Aldwin kneels by the chapel altar and weeps. "I let the Guild in, I let them take the amulet."
+   - claim: Aldwin | let in | Guild of Ropes
+   - claim: Guild of Ropes | took | Amulet of Lanterns
+2. player statement: So Aldwin is the traitor after all.
+   - claim: Aldwin | traitor of | council of five elders
+3. dm statement: He nods, ashamed. "They threatened my sister."
+   - claim: Aldwin | kin of | sister
+4. player question: Where did they take the amulet?
+5. dm statement: To the Guild's warehouse in Greywater, behind the rope walk.
+   - claim: Amulet of Lanterns | located in | warehouse in Greywater
+6. player plan: We go to the warehouse tonight.
+   - claim: party | visit | warehouse in Greywater
+7. dm ooc: Remember you are low on healing potions.
+8. player question: Is Aldwin coming with us?
+9. dm statement: He bows his head. "I will show you the back door."
+   - claim: Aldwin | guide for | party
+10. player plan: Hesper walks behind him with an arrow nocked.
+   - claim: Hesper | guard | Aldwin
+
+## Scene 54: Fire in Greywater
+1. dm statement: The warehouse in Greywater is ablaze. Flames climb the rope walk and the whole street is lit orange.
+   - claim: warehouse in Greywater | burning | Greywater
+2. dm statement: Sennet Crow stands in the road with a torch, laughing.
+   - claim: Sennet Crow | set fire to | warehouse in Greywater
+3. player statement: She burned her own warehouse to hide the amulet.
+   - claim: Sennet Crow | burned | warehouse in Greywater
+4. player question: Is the amulet destroyed?
+5. dm statement: A silver pendant cannot burn. It lies in the ashes, blackened but whole.
+   - state: Amulet of Lanterns | intact
+6. player plan: I dive in and grab it.
+   - claim: Ilyra | grab | Amulet of Lanterns
+7. dm ooc: Roll Dexterity, then Constitution against the smoke.
+8. dm statement: Ilyra comes out coughing, the amulet in her fist.
+   - claim: Ilyra | carries | Amulet of Lanterns
+9. player statement: So Ilyra has the amulet, not Sennet.
+   - claim: Ilyra | carries | Amulet of Lanterns
+10. dm statement: Sennet's laugh turns to rage.
+11. player plan: We run for the harbour.
+   - claim: party | run to | harbour
+
+## Scene 55: Council of five
+1. dm statement: The Veldmoor council meets in the old counting house. Five merchants sit around a long table.
+   - claim: council of merchants | meets in | counting house
+2. dm statement: The chairwoman, Delphine Aubrey, calls for order.
+   - claim: Delphine Aubrey | chairwoman of | council of merchants
+3. player question: Is Delphine friendly or against us?
+4. dm statement: She is neutral. She wants the amulet returned to the chapel, whoever does it.
+   - claim: Delphine Aubrey | wants | Amulet of Lanterns
+5. player statement: Then let's give her the amulet and ask for the Guild's head.
+   - claim: party | return | Amulet of Lanterns
+6. dm ooc: Fine, but you will want a good argument.
+7. player plan: I argue that Sennet Crow ordered the theft.
+   - claim: Ilyra | accuse | Sennet Crow
+8. dm statement: Delphine listens, then calls two guards to the door.
+   - claim: Delphine Aubrey | summons | guards
+9. player question: Are the guards for us or for Sennet?
+10. dm statement: For Sennet. They escort her from the hall.
+   - state: Sennet Crow | captured
+11. player statement: The council has arrested Sennet Crow.
+   - state: Sennet Crow | captured
+12. dm ooc: End of the session, everyone. Good game.
+
+## Scene 56: The wedding
+1. dm statement: Tomorrow Marguerite Hale marries Odric Vale in the harbour chapel.
+   - claim: Marguerite Hale | will marry | Odric Vale
+2. player question: Marguerite is marrying the priest?
+3. dm statement: Yes. Half the town is invited.
+4. player statement: Bram will be insufferable, it is his aunt.
+   - claim: Bram | kin of | Marguerite Hale
+5. dm ooc: Bring your fanciest outfits. No weapons in the chapel.
+6. player plan: I hide a dagger in my boot anyway.
+   - claim: Hesper | hide | dagger
+7. dm statement: The chapel bell rings the next morning, and the ceremony begins.
+8. player question: Do we know any of the guests?
+9. dm statement: Orla Finch is there, in the second row, and so is Maren Voss.
+   - claim: Orla Finch | attends | wedding
+   - claim: Maren Voss | attends | wedding
+10. dm statement: Odric Vale takes Marguerite's hands. "Before the town, I take you as my wife."
+   - claim: Odric Vale | married | Marguerite Hale
+11. player statement: They are husband and wife now.
+   - claim: Marguerite Hale | spouse of | Odric Vale
+12. dm ooc: Applause, and a break for cake.
+
+## Scene 57: The tomb of Corvin
+1. dm statement: The tomb of Ser Corvin lies under the ruined abbey of Marrowgate. Its door is carved with a wolf.
+   - claim: tomb of Ser Corvin | located in | abbey of Marrowgate
+2. player statement: Corvin's sword is supposed to be in there with him.
+   - claim: Ser Corvin | owns | sword
+3. dm statement: The door opens onto a narrow stair going down into darkness.
+4. player question: Any traps?
+5. dm ooc: Roll Investigation.
+6. dm statement: A pressure plate is hidden on the third step.
+   - claim: pressure plate | located in | third step
+7. player plan: We jump the third step.
+   - claim: party | jump | third step
+8. dm statement: At the bottom, a stone sarcophagus rests on a dais. The lid is cracked.
+   - claim: sarcophagus | located in | tomb of Ser Corvin
+9. player question: Is Corvin's body in it?
+10. dm statement: The sarcophagus is empty. Dust and a rusted helmet only.
+   - state: Ser Corvin | missing
+11. player statement: Then someone took him, or he walked out.
+   - also: Ser Corvin | is | missing
+12. player plan: We search the walls for a hidden door.
+   - claim: party | search | walls
+13. dm ooc: Roll Perception, with disadvantage in the dark.
+
+## Scene 58: The oath
+1. dm statement: In the circle of standing stones, Cerric kneels and swears the oath of vengeance to the goddess Auril.
+   - claim: Cerric | sworn to | Auril
+2. player statement: Cerric is a paladin of Auril, bound to her cause.
+   - claim: Cerric | sworn to | Auril
+3. dm statement: The wind drops. The ice on the stones cracks like thunder.
+4. player question: Is that a good sign?
+5. dm ooc: Roll Religion to read the omen.
+6. dm statement: The omen is favourable. Auril accepts.
+   - claim: Auril | accepts | Cerric
+7. player plan: I keep my vows and fight only the guilty.
+   - claim: Cerric | fight | guilty
+8. dm statement: A white wolf watches from the hill, then vanishes.
+   - claim: white wolf | watches | Cerric
+9. player question: Is the wolf Auril's servant?
+10. dm statement: You cannot say, but the thought feels right.
+11. dm ooc: Take a breath, we are a long way into this scene.
+
+## Scene 59: The chase
+1. dm statement: The thief, a slim man called Pip Ashgrove, bolts across the rooftops of Veldmoor with a satchel.
+   - claim: Pip Ashgrove | carries | satchel
+2. player plan: I chase him over the rooftops.
+   - claim: Ilyra | chase | Pip Ashgrove
+3. dm ooc: Roll Athletics each turn, three successes catch him.
+4. player question: Can I shoot him with the longbow?
+5. dm ooc: Disadvantage at that range, but yes.
+6. dm statement: The arrow hits his leg. Pip stumbles, then drops the satchel into the harbour.
+   - state: satchel | lost
+7. player statement: The satchel is lost in the harbour.
+   - state: satchel | lost
+8. dm statement: Pip hauls himself over a chimney and vanishes into the smoke.
+   - state: Pip Ashgrove | missing
+9. player question: Did he get away?
+10. dm statement: For now.
+11. player plan: We send word to the watch.
+   - claim: party | warn | Dunmere watch
+12. dm ooc: That is the end of the chase scene.
+
+## Scene 60: Ending the campaign arc
+1. dm statement: With Sennet Crow in prison and the Guild's docks seized, Greywater breathes again.
+   - claim: Sennet Crow | prisoner of | Dunmere watch
+   - claim: Guild of Ropes | seized by | council of merchants
+2. player statement: The Guild is finished in Greywater.
+   - claim: Guild of Ropes | finished in | Greywater
+3. dm statement: Tam and Dov Rusk flee north on the Marrow Road.
+   - claim: Tam Rusk | fled to | north
+4. player question: Will they come back?
+5. dm statement: Maybe. No one can say.
+6. dm statement: Hesper is finally free of the Guild's debt and gives Heartseeker back to the Ember Clan.
+   - claim: Hesper | gave back | Heartseeker
+   - claim: Ember Clan | carries | Heartseeker
+7. player statement: So the Ember Clan has Heartseeker again.
+   - claim: Ember Clan | carries | Heartseeker
+8. player plan: Next we head to the Ashen Pass and see what is on the other side.
+   - claim: party | travel to | Ashen Pass
+9. dm ooc: That is a good place to leave it for tonight.
+10. player ooc: Thanks everyone, see you next week.
