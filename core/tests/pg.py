@@ -198,6 +198,24 @@ def stamp(schema: str) -> str:
     return f"{row[0] if row else ''}|{names[0] if names else ''}|{web_granted(schema)}"
 
 
+_ROLE_MADE = False
+
+
+def make_web_role() -> None:
+    """Make the website's role if it is missing, once per process, before any schema is migrated.
+    A migration grants to the role only if it exists at that moment, so with workers making it
+    at random (pytest -n 4) a schema built a moment too early had no grants and a website test
+    handed it failed with "The database isn't set up yet" (#1357). The role is cluster-wide and
+    harmless to tests that never use it; the password is the one tests/test_web_role.py uses."""
+    global _ROLE_MADE
+    if _ROLE_MADE or not SUPERUSER_URL:
+        return
+    if not web_role_exists():
+        with contextlib.suppress(psycopg.errors.DuplicateObject):  # another worker was first
+            _admin().execute("CREATE ROLE dmbot_web LOGIN PASSWORD 'dmbot_web'")
+    _ROLE_MADE = True
+
+
 def web_role_exists() -> bool:
     row = _admin().execute("SELECT 1 FROM pg_roles WHERE rolname = 'dmbot_web'").fetchone()
     return row is not None
@@ -343,6 +361,7 @@ class DatabaseTest(unittest.IsolatedAsyncioTestCase):
             self.skipTest("set DMBOT_TEST_DATABASE_URL to run database tests")
         reused = False
         if REUSE:
+            await asyncio.to_thread(make_web_role)
             while _FREE and not reused:
                 self.schema = _FREE.pop()
                 # The website's role may have been made since this schema was: it would have none
