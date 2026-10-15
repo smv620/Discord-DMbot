@@ -95,6 +95,9 @@ CI runs all of the above on every pull request. Never merge red CI.
 - Before opening a PR, run the reviewer agents in `.claude/agents/` (reviewer,
   ux-critic, perf-qa) on the diff and address their findings or explain why not.
 - Update `docs/PLAN.md` when a decision changes scope or architecture.
+- A PR that ships something users can see adds its line to the site's What's new page
+  (`web/src/content/whats-new.ts`), or to its `held` list with the reason while something known
+  stops it working (Supervisor, 2026-10-15; docs/PLAN.md, "What's new page").
 
 ## Claude sessions and who does what (owner decision, 2026-10-05, updated 2026-10-12)
 DMbot runs on the cloud test server (VPS), not on the owner's PC. Several Claude

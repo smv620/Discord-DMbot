@@ -12,6 +12,7 @@ from dmbot.ai import DEFAULT_MODELS, AIModels
 from dmbot.entitlements import parse_free_users
 from dmbot.logs import LOG_FORMATS, LOG_LEVELS
 from dmbot.mail import MailConfigError, MailSettings, load_mail_settings
+from dmbot.memory.continuity import Levels
 from dmbot.sharding import ShardConfigError, ShardSettings, parse_shards
 from dmbot.transcription.config import (
     TranscriptionConfigError,
@@ -62,6 +63,9 @@ class Settings:
     # lines. Off, and not shown to customers, until it passes its measurement (#1282); with it
     # off nothing calls the AI and the after-session step has nothing to ask.
     story_extractor_on: bool = False
+    # Continuity warnings (#1320): where each level starts and how much confirmed story a
+    # campaign needs first. Backend settings, tuned on the golden set; no switch shown to anyone.
+    continuity: Levels = field(default_factory=Levels)
     # Test recordings (#1019): servers where people who agreed to it have their voices saved
     # for DMbot's own tests, and where the files go. Empty: nothing is ever saved.
     test_recording_guilds: frozenset[int] = frozenset()
@@ -133,6 +137,8 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
             'DMBOT_ENFORCE_PLANS must be 1 (on) or 0 (off), got "' + enforce_raw + '".'
         )
 
+    continuity = _continuity_levels(get)
+
     extractor_raw = (get("DMBOT_STORY_EXTRACTOR") or "0").lower()
     if extractor_raw not in ("0", "1", "true", "on", "false", "off"):
         raise ConfigError(
@@ -183,6 +189,7 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
         link_token_secret=link_secret.encode("utf-8"),
         sidebar_on=sidebar_raw in ("1", "true", "on"),
         story_extractor_on=extractor_raw in ("1", "true", "on"),
+        continuity=continuity,
         admin_primary_id=admin_primary,
         admin_secondary_id=admin_secondary,
         test_recording_guilds=test_guilds,
@@ -258,3 +265,43 @@ def _admin_id(get: Callable[[str], str], name: str) -> int | None:
     if not (raw.isascii() and raw.isdigit() and 17 <= len(raw) <= 20):
         raise ConfigError(f"{name} must be empty or a Discord user ID (17 to 20 digits).")
     return int(raw)
+
+
+def _continuity_levels(get: Callable[[str], str]) -> Levels:
+    """The continuity-warning settings (#1320): each level's starting point (0 to 1, in order)
+    and how much confirmed story a campaign needs before any warning. Unset: the defaults."""
+    defaults = Levels()
+
+    def number(name: str, default: float) -> float:
+        raw = get(name)
+        if not raw:
+            return default
+        try:
+            value = float(raw)
+        except ValueError:
+            value = -1.0
+        if not 0 < value <= 1:
+            raise ConfigError(f'{name} must be a number above 0 and up to 1, got "{raw}".')
+        return value
+
+    def whole(name: str, default: int) -> int:
+        raw = get(name)
+        if not raw:
+            return default
+        if not (raw.isascii() and raw.isdigit() and int(raw) >= 1):
+            raise ConfigError(f'{name} must be a whole number from 1 up, got "{raw}".')
+        return int(raw)
+
+    levels = Levels(
+        possible=number("DMBOT_CONTINUITY_POSSIBLE", defaults.possible),
+        probable=number("DMBOT_CONTINUITY_PROBABLE", defaults.probable),
+        likely=number("DMBOT_CONTINUITY_LIKELY", defaults.likely),
+        min_facts=whole("DMBOT_CONTINUITY_MIN_FACTS", defaults.min_facts),
+        min_sessions=whole("DMBOT_CONTINUITY_MIN_SESSIONS", defaults.min_sessions),
+    )
+    if not levels.possible <= levels.probable <= levels.likely:
+        raise ConfigError(
+            "DMBOT_CONTINUITY_POSSIBLE, _PROBABLE and _LIKELY must be in that order, "
+            "smallest first."
+        )
+    return levels
