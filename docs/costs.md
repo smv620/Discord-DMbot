@@ -219,4 +219,4 @@ Hours are the plan allowances in docs/PLAN.md (Table 18, Two Tables 43, Guild 87
   - Standard and Melia 1 were not tested.
   - It was two recordings, under 2 minutes, so it settles nothing.
 - **Speed:** Speechmatics took 2.77 s to connect in that test, against Deepgram's 0.14 s. Live advice needs speed, and nothing has measured Speechmatics batch delay per short piece.
-- **So:** price alone doesn't justify a switch. A switch would be worth measuring only for Standard (cheaper, untested) or Melia 1 (much cheaper, untested). That needs the twin on Speechmatics for accuracy and delay per piece, plus a check of the per-file minimum. That is a developer's issue, not a decision made here.
+- **So:** price alone doesn't justify a switch. A switch would be worth measuring only for Standard (cheaper, untested) or Melia 1 (much cheaper, untested). That needs the twin on Speechmatics for accuracy and delay per piece. That is a developer's issue, not a decision made here.
