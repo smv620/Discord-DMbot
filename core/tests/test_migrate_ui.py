@@ -116,7 +116,9 @@ class GettingACode(unittest.IsolatedAsyncioTestCase):
         it = interaction(OLD, bot)
         await migrate.get_code(it)
         self.assertEqual(it.sent[0][0], migrate.EMAIL_FAILED)
-        bot.account_moves.cancel_code.assert_awaited_once_with(OLD)  # no code nobody has seen
+        bot.account_moves.cancel_code.assert_awaited_once_with(
+            OLD, "ABCD2345"
+        )  # no code nobody has seen
         bad = bot_with(make_code=AsyncMock(side_effect=RuntimeError("down")))
         it2 = interaction(OLD, bad)
         await migrate.get_code(it2)

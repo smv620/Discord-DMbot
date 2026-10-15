@@ -152,7 +152,7 @@ async def get_code(interaction: discord.Interaction) -> None:
         await _tell(interaction, NOT_READY)
         return
     if result not in ("sent", "already_sent"):
-        await bot.account_moves.cancel_code(interaction.user.id)
+        await bot.account_moves.cancel_code(interaction.user.id, code)
         await _tell(interaction, EMAIL_FAILED)
         return
     await _tell(interaction, EMAILED)
