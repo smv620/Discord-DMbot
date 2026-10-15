@@ -72,9 +72,9 @@ describe("page changes", () => {
     expect(css).toMatch(/::view-transition-group\(banner\)\s*\{\s*animation:\s*none/);
   });
 
-  it("lasts about 350 ms", () => {
+  it("lasts about 700 ms", () => {
     const times = [...css.matchAll(/(\d+)ms/g)].map((m) => Number(m[1]));
-    expect(Math.max(...times)).toBeLessThanOrEqual(350);
+    expect(Math.max(...times)).toBe(700); // owner, 2026-10-15: twice 350, so the runes can be seen
   });
 
   it("adds well under the 15 KB budget, with no new asset files", () => {

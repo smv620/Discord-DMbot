@@ -3117,9 +3117,9 @@ feature people can see adds its entry, or a held one, in the same PR.
 
 **Page changes: magic dust, and runes on the banner** (owner, 2026-10-15; Supervisor's details).
 Moving between the site's pages gets a short magic-dust dissolve: the old page breaks up into
-sparkling dust while the new one fades in, about 350 ms, built with the browser's own page
-transitions (CSS `@view-transition`, no script, no library, nothing new in the security
-headers). Browsers without it change pages as before. Only the page's banner (its main heading,
+sparkling dust while the new one fades in, about 700 ms (owner, 2026-10-15: doubled so the
+runes can be seen), built with the browser's own page transitions (CSS `@view-transition`, no
+script, no library, nothing new in the security headers). Browsers without it change pages as before. Only the page's banner (its main heading,
 the hero on the home page) gets the rune effect: it breaks into arcane runes as the page leaves,
 and the new banner forms out of runes as it arrives. The runes are decoration, hidden from screen
 readers, with a small rune font served from our own site. **No dice** (owner: not for now).
