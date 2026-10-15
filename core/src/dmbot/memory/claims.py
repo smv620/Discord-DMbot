@@ -56,6 +56,8 @@ PLAN_REASON = "a plan, not something that happened"
 INJECTION_REASON = "it reads like an instruction, not a story"
 NO_SPEAKER_REASON = "a line it cites has no known speaker"
 STOPPED_REASON = "a speaker it cites is not being recorded now"
+STOPPED_NOW = "Someone who said that has stopped being recorded, so it can't be kept."
+ODD_NOW = "That doesn't look like something said in the game any more."
 UNKNOWN_RELATION_REASON = "DMbot has no relationship by that name"
 UNKNOWN_NAME_REASON = "a name in it is not one DMbot knows yet"
 TWO_ENTRIES_REASON = "a name in it could be two different entries"
@@ -97,7 +99,7 @@ class Claim:
     details: str
     how: str
     lines: tuple[str, ...]
-    speaker_id: int | None
+    speaker_ids: tuple[int, ...]
     source: str
     prompt_version: str
     model: str
@@ -112,7 +114,7 @@ class Claim:
 def claim_of(r: Mapping[str, Any]) -> Claim:
     return Claim(
         r["id"], r["subject"], r["relationship"], r["object"], r["details"], r["how"],
-        tuple(r["lines"]), r["speaker_id"], r["source"], r["prompt_version"], r["model"],
+        tuple(r["lines"]), tuple(r["speaker_ids"]), r["source"], r["prompt_version"], r["model"],
         r["status"], r["reason"], r["session_started_at"], r["created_at"], r["decided_at"],
         r["fact_id"],
     )  # fmt: skip
@@ -253,14 +255,16 @@ def judge(
 ) -> str:  # fmt: skip
     """Why a claim can't go to the DM, or "" when it can. Pure: the rules from memory's
     ontology, the names as DMbot knows them, and who may be listened to *now*."""
+    # Consent first: whatever else is wrong with a claim, a speaker who is not recorded now
+    # must leave nothing behind.
+    if not speakers or any(s is None for s in speakers):
+        return NO_SPEAKER_REASON
+    if any(s not in opted_in for s in speakers):
+        return STOPPED_REASON
     if claim.how == HOW_PLAN:
         return PLAN_REASON  # a plan is never turned into a fact
     if injection_like(claim):
         return INJECTION_REASON
-    if any(s is None for s in speakers):
-        return NO_SPEAKER_REASON
-    if any(s not in opted_in for s in speakers):
-        return STOPPED_REASON
     who = names.one(claim.subject)
     if isinstance(who, str):
         return who
@@ -312,8 +316,9 @@ class ClaimStore:
     ) -> Proposed:
         """Store what the extractor said as proposals. `speakers` maps each transcript line
         the call was given to who spoke it; `opted_in` is who may be recorded *now*, read
-        after the call (consent can change while the AI works), so a claim citing anyone else
-        is dropped. Nothing here is a fact."""
+        after the call (consent can change while the AI works). A claim citing anyone else is
+        not stored at all, not even as dropped: its words are theirs, and they said no. Nothing
+        here is a fact."""
         waiting = dropped = repeated = 0
         async with self._store._write(guild_id, campaign_id, EXTRACTOR) as w:
             onto = await _load_ontology(w)
@@ -322,23 +327,28 @@ class ClaimStore:
             )
             aliases = await w.select(ALIASES, " AND status <> 'rejected'")
             names = names_of(entities, aliases)
-            asked = {
-                _repeat_key(r["subject"], r["relationship"], r["object"], r["how"])
-                for r in await w.select(
-                    CLAIMS, " AND status IN ('proposed', 'confirmed', 'rejected')"
-                )
-            }
+            asked: set[tuple[Any, ...]] = set()  # what the DM has seen or is waiting on
+            refused: set[tuple[Any, ...]] = set()  # what was dropped before, and why
+            for r in await w.select(CLAIMS, ""):
+                key = _repeat_key(r["subject"], r["relationship"], r["object"], r["how"])
+                if r["status"] == CLAIM_DROPPED:
+                    refused.add((*key, r["reason"]))
+                else:
+                    asked.add(key)
             rows: list[dict[str, Any]] = []
             for claim in claims[:MAX_CLAIMS]:
                 key = _repeat_key(claim.subject, claim.relationship, claim.object, claim.how)
-                if key in asked:
-                    repeated += 1
-                    continue
                 cited = [speakers.get(ref) for ref in claim.lines]
                 reason = judge(claim, onto, names, cited, opted_in)
-                status = CLAIM_DROPPED if reason else CLAIM_PROPOSED
+                if reason in (STOPPED_REASON, NO_SPEAKER_REASON):
+                    dropped += 1  # counted, never kept
+                    continue
+                if key in asked or (*key, reason) in refused:
+                    repeated += 1
+                    continue
                 if reason:
                     dropped += 1
+                    refused.add((*key, reason))
                 else:
                     waiting += 1
                     asked.add(key)
@@ -351,11 +361,11 @@ class ClaimStore:
                         "details": claim.details,
                         "how": claim.how,
                         "lines": list(claim.lines),
-                        "speaker_id": next((s for s in cited if s is not None), None),
+                        "speaker_ids": sorted({s for s in cited if s is not None}),
                         "source": EXTRACTOR,
                         "prompt_version": prompt_version,
                         "model": model,
-                        "status": status,
+                        "status": CLAIM_DROPPED if reason else CLAIM_PROPOSED,
                         "reason": reason,
                         "session_started_at": session_started_at,
                         "created_at": w.now,
@@ -381,16 +391,30 @@ class ClaimStore:
 
     async def get(self, guild_id: int, campaign_id: str, claim_id: str) -> Claim | None:
         async with self._store._read(guild_id, campaign_id) as scope:
-            row = await scope.get(CLAIMS, claim_id)
+            row = await scope.get(CLAIMS, claim_id, lock=False)
         return None if row is None else claim_of(row)
 
     async def counts(self, guild_id: int, campaign_id: str) -> dict[str, int]:
+        """How many claims there are in each status (one grouped count, not the rows)."""
         async with self._store._read(guild_id, campaign_id) as scope:
-            rows = await scope.select(CLAIMS, "")
-        out: dict[str, int] = {}
-        for r in rows:
-            out[r["status"]] = out.get(r["status"], 0) + 1
-        return out
+            cur = await scope.conn.execute(
+                "SELECT status, count(*) AS n FROM memory_claims"
+                " WHERE guild_id = %s AND campaign_id = %s GROUP BY status",
+                scope.ids,
+            )
+            return {str(r["status"]): int(r["n"]) for r in await cur.fetchall()}
+
+    async def forget_speaker(self, guild_id: int, user_id: int) -> int:
+        """Stop recording me: in every campaign of the server, delete the claims that cite
+        this person's words and were not turned into a fact (waiting, turned down or dropped).
+        What the DM confirmed is the DM's fact and stays. Returns how many went."""
+        async with self._store._db.guild(guild_id) as conn:
+            cur = await conn.execute(
+                "DELETE FROM memory_claims WHERE guild_id = %s AND %s = ANY(speaker_ids)"
+                " AND status <> 'confirmed'",
+                (guild_id, user_id),
+            )
+            return int(cur.rowcount)
 
     async def reject(self, guild_id: int, campaign_id: str, claim_id: str) -> Claim:
         """The DM says no: it is not asked again, and nothing is written to memory."""
@@ -401,13 +425,42 @@ class ClaimStore:
             row = await w.update(CLAIMS, claim_id, {"status": CLAIM_REJECTED, "decided_at": w.now})
             return claim_of(row)
 
-    async def confirm(self, guild_id: int, campaign_id: str, claim_id: str) -> Confirmed:
+    async def _take(self, guild_id: int, campaign_id: str, claim_id: str) -> Claim:
+        """Claim the question for this answer, under the row's lock: a second press, or a no
+        pressed at the same time, finds it taken. Put back by `_give_back` if the fact fails."""
+        async with self._store._write(guild_id, campaign_id, DM) as w:
+            row = await w.get(CLAIMS, claim_id)
+            if row is None or row["status"] != CLAIM_PROPOSED:
+                raise MemoryRuleError(GONE)
+            row = await w.update(CLAIMS, claim_id, {"status": CLAIM_CONFIRMED, "decided_at": w.now})
+            return claim_of(row)
+
+    async def _give_back(self, guild_id: int, campaign_id: str, claim_id: str) -> None:
+        async with self._store._write(guild_id, campaign_id, DM) as w:
+            await w.update(CLAIMS, claim_id, {"status": CLAIM_PROPOSED, "decided_at": None})
+
+    async def confirm(
+        self, guild_id: int, campaign_id: str, claim_id: str, *, opted_in: Collection[int]
+    ) -> Confirmed:
         """The DM says yes: the fact is written as the DM's own, through the store (so every
         rule and check runs as for any fact), and the claim keeps which fact it became. A fact
-        the rules refuse leaves the question waiting and says why."""
+        the rules refuse leaves the question waiting and says why. `opted_in` is who may be
+        recorded now: if anyone whose words it holds has stopped, the claim is deleted instead
+        (the stored row is untrusted too, so the plan and instruction checks run again)."""
         claim = await self.get(guild_id, campaign_id, claim_id)
         if claim is None or claim.status != CLAIM_PROPOSED:
             raise MemoryRuleError(GONE)
+        wording = Extracted(
+            claim.subject, claim.relationship, claim.object, claim.details, claim.lines, claim.how
+        )
+        if claim.how == HOW_PLAN:
+            raise MemoryRuleError(PLAN_REASON)
+        if injection_like(wording):
+            raise MemoryRuleError(ODD_NOW)
+        if not claim.speaker_ids or any(s not in opted_in for s in claim.speaker_ids):
+            async with self._store._write(guild_id, campaign_id, DM) as w:
+                await w.delete(CLAIMS, claim_id)
+            raise MemoryRuleError(STOPPED_NOW)
         async with self._store._read(guild_id, campaign_id) as scope:
             onto = await _load_ontology(scope)
             entities = await scope.select(
@@ -415,43 +468,43 @@ class ClaimStore:
             )
             aliases = await scope.select(ALIASES, " AND status <> 'rejected'")
         names = names_of(entities, aliases)
-        wording = Extracted(
-            claim.subject, claim.relationship, claim.object, claim.details, claim.lines, claim.how
-        )
-        if claim.how == HOW_PLAN:
-            raise MemoryRuleError(PLAN_REASON)
         # Asked again against what is known now: a name may have been merged or renamed since.
         who = names.one(claim.subject)
         if isinstance(who, str):
             raise MemoryRuleError(f"Can't write that now: {who}.")
-        flags: list[Flag] = []
+        resolved = None
+        other: tuple[str, str] | str = ""
         condition = condition_of(wording)
-        if condition is not None:
-            written = await self._store.set_condition(
-                guild_id, campaign_id, who[0], condition, source=DM,
-                from_session_at=claim.session_started_at,
-            )  # fmt: skip
-            state, flags = written.value[0], list(written.value[1])
-            fact_id = who[0] if state is None else state.id
-        else:
+        if condition is None:
             resolved = resolve_relationship(onto, claim.relationship)
             other = names.one(claim.object)
             if resolved is None:
                 raise MemoryRuleError(f"Can't write that now: {UNKNOWN_RELATION_REASON}.")
             if isinstance(other, str):
                 raise MemoryRuleError(f"Can't write that now: {other}.")
-            term, from_object = resolved
-            subject_id, object_id = (other[0], who[0]) if from_object else (who[0], other[0])
-            relation = await self._store.add_relation(
-                guild_id, campaign_id, subject_id, term.key, object_id,
-                source=DM, confidence=1.0, status=CONFIRMED, detail=claim.details,
-                from_session_at=claim.session_started_at,
-            )  # fmt: skip
-            fact_id, flags = relation.value[0].id, list(relation.value[1])
+        await self._take(guild_id, campaign_id, claim_id)
+        try:
+            flags: list[Flag] = []
+            if condition is not None:
+                written = await self._store.set_condition(
+                    guild_id, campaign_id, who[0], condition, source=DM,
+                    from_session_at=claim.session_started_at,
+                )  # fmt: skip
+                state, flags = written.value[0], list(written.value[1])
+                fact_id = who[0] if state is None else state.id
+            else:
+                assert resolved is not None and not isinstance(other, str)
+                term, from_object = resolved
+                subject_id, object_id = (other[0], who[0]) if from_object else (who[0], other[0])
+                relation = await self._store.add_relation(
+                    guild_id, campaign_id, subject_id, term.key, object_id,
+                    source=DM, confidence=1.0, status=CONFIRMED, detail=claim.details,
+                    from_session_at=claim.session_started_at,
+                )  # fmt: skip
+                fact_id, flags = relation.value[0].id, list(relation.value[1])
+        except BaseException:
+            await self._give_back(guild_id, campaign_id, claim_id)
+            raise
         async with self._store._write(guild_id, campaign_id, DM) as w:
-            row = await w.update(
-                CLAIMS,
-                claim_id,
-                {"status": CLAIM_CONFIRMED, "decided_at": w.now, "fact_id": fact_id},
-            )
+            row = await w.update(CLAIMS, claim_id, {"fact_id": fact_id})
         return Confirmed(claim_of(row), tuple(flags))

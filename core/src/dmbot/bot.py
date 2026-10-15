@@ -1242,6 +1242,11 @@ class DMBot(commands.AutoShardedBot):
             except Exception:
                 # Never blocks stopping; the learned names are only waiting questions.
                 log.exception("Could not remove the names learned for a stopped speaker")
+            try:  # and what the story extractor proposed from their words (#1297)
+                async with asyncio.timeout(FORGET_TIMEOUT_S):
+                    await ClaimStore(self.memory).forget_speaker(guild_id, user_id)
+            except Exception:
+                log.exception("Could not remove the story claims of a stopped speaker")
         try:
             return await self.consent.revoke(guild_id, user_id)
         finally:

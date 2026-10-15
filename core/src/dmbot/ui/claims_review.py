@@ -7,52 +7,64 @@ never in a transcript and never shown to players. Grouped by who they are about,
 from __future__ import annotations
 
 import re
+from collections.abc import Mapping
 from typing import Any
 
 import discord
 
-from dmbot.memory.claims import PAGE, Claim, ClaimStore
+from dmbot.memory.claims import ODD_NOW, PAGE, STOPPED_NOW, Claim, ClaimStore
 from dmbot.memory.models import HOW_DM, MemoryRuleError
-from dmbot.ui.dmbot_commands import _Button, _Menu, _replace, _send, _tell
+from dmbot.ui.dmbot_commands import _bot, _Button, _Menu, _replace, _send, _tell
 from dmbot.ui.name_card import FLAG_WHY
 from dmbot.ui.names import _campaign_for, _md, _memory
 
-NOTHING_WAITING = "✅ Nothing to check. DMbot asks after a session."
-GONE = "That one was already answered. Press **Check what was said** again for the rest."
+NOTHING_WAITING = "✅ Nothing left to check. DMbot will ask again after the next session."
+GONE = "Already answered."
+ODD_PAIR = "DMbot noticed something odd about it"
 YES, NO = "✅", "❌"
+_FINAL = (GONE, STOPPED_NOW, ODD_NOW)  # answers that end a question without a yes or a no
 
 
 def waiting_text(count: int) -> str:
     """For the DM screen after a session: how many, never what."""
     what = "thing" if count == 1 else "things"
     return (
-        f"🗣️ **{count} {what} said at the table to check.** DMbot read the session and "
-        "noticed some things. Nothing is remembered until you say so. Press the button; "
-        "only you will see it."
+        f"🗣️ **{count} {what} said at the table to check.** Nothing is remembered until you "
+        "say so. Press the button; only you will see it."
     )
 
 
-def question_text(claim: Claim) -> str:
-    """One question in the words it was said in, and who said it."""
-    by = "you said" if claim.how == HOW_DM else "a player said"
+def statement(claim: Claim) -> str:
+    """What was said, in the words it was said in: "**Bram** carries **Heartseeker**"."""
     extra = f" ({_md(claim.details)})" if claim.details else ""
     return (
-        f"**{_md(claim.subject)}** {_md(claim.relationship)} "
-        f"**{_md(claim.object)}**{extra}? _({by})_"
+        f"**{_md(claim.subject)}** {_md(claim.relationship)} **{_md(claim.object)}**{extra}"
     ).replace(" ****", "")
 
 
-def page_text(page: list[Claim], total: int) -> str:
-    """A few questions, numbered, with a heading when a name has several."""
-    lines = [f"**What was said at the table.** {YES} if it is true in your game, {NO} if not."]
+def question_text(claim: Claim) -> str:
+    """The statement as a question, and who said it."""
+    by = "you said" if claim.how == HOW_DM else "a player said"
+    return f"{statement(claim)}? _({by})_"
+
+
+def page_text(page: list[Claim], total: int, answered: Mapping[str, str] | None = None) -> str:
+    """A few questions, numbered, with a heading when a name has several. An answered one
+    keeps its number and says what came of it, so the numbers never move under a thumb."""
+    answered = answered or {}
+    lines = [
+        f"**What was said at the table.** Top row {YES}: true in your game. "
+        f"Bottom row {NO}: not true."
+    ]
     last = ""
     for number, claim in enumerate(page, 1):
         if claim.subject.casefold() != last:
             last = claim.subject.casefold()
             lines.append(f"\n__{_md(claim.subject)}__")
-        lines.append(f"{number}. {question_text(claim)}")
+        done = answered.get(claim.id)
+        lines.append(f"{number}. {question_text(claim)}" if done is None else f"{number}. {done}")
     if total > len(page):
-        lines.append(f"\n_{total - len(page)} more after these._")
+        lines.append(f"\n_{total - len(page)} more. Answer these and the next ones appear._")
     return "\n".join(lines)
 
 
@@ -106,30 +118,40 @@ async def start_claims_review(interaction: discord.Interaction, campaign_id: str
 
 
 class ClaimsReview(_Menu):
-    """A page of questions, each with ✅ and ❌ under its number."""
+    """A page of questions, each with ✅ and ❌ under its number. Answering one leaves the rest
+    where they are; the next page comes when the whole page is answered."""
 
     def __init__(self, campaign_id: str) -> None:
         super().__init__()
         self.campaign_id = campaign_id
         self.page: list[Claim] = []
+        self.total = 0
+        self.answered: dict[str, str] = {}
 
     async def current_text(self, interaction: discord.Interaction) -> str | None:
+        """A fresh page (the oldest waiting questions), or None when none are left."""
         memory = _memory(interaction)
         guild = interaction.guild
         if memory is None or guild is None:
             return None
         waiting = await ClaimStore(memory).waiting(guild.id, self.campaign_id)
-        self.clear_items()
-        self.page = waiting[:PAGE]
+        self.page, self.total, self.answered = waiting[:PAGE], len(waiting), {}
         if not self.page:
+            self.clear_items()
             return None
+        return self._render()
+
+    def _render(self) -> str:
+        self.clear_items()
         for number, claim in enumerate(self.page, 1):
+            gone = claim.id in self.answered
             self.add_item(
                 _Button(
                     self._answer(claim.id, yes=True),
                     label=f"{YES} {number}",
                     style=discord.ButtonStyle.success,
                     row=0,
+                    disabled=gone,
                 )
             )
             self.add_item(
@@ -138,9 +160,10 @@ class ClaimsReview(_Menu):
                     label=f"{NO} {number}",
                     style=discord.ButtonStyle.secondary,
                     row=1,
+                    disabled=gone,
                 )
             )
-        return page_text(self.page, len(waiting))
+        return page_text(self.page, self.total, self.answered)
 
     def _answer(self, claim_id: str, *, yes: bool) -> Any:
         async def handler(interaction: discord.Interaction) -> None:
@@ -152,28 +175,41 @@ class ClaimsReview(_Menu):
         campaign = await _campaign_for(interaction, self.campaign_id)  # asked again each press
         memory = _memory(interaction)
         guild = interaction.guild
-        if campaign is None or memory is None or guild is None:
+        claim = next((c for c in self.page if c.id == claim_id), None)
+        if campaign is None or memory is None or guild is None or claim is None:
             return
         claims = ClaimStore(memory)
-        done = ""
+        saying = statement(claim)
+        note = ""
         try:
             if yes:
-                result = await claims.confirm(guild.id, self.campaign_id, claim_id)
-                done = f"{YES} Remembered: {question_text(result.claim).rsplit('?', 1)[0]}."
+                # Who may be recorded is asked again now: someone may have stopped meanwhile.
+                agreed = await _bot(interaction).consent.consenting(guild.id)
+                result = await claims.confirm(guild.id, self.campaign_id, claim_id, opted_in=agreed)
+                done = f"{YES} Remembered: {saying}."
                 if result.flags:
-                    why = FLAG_WHY.get(result.flags[0].kind) or "It's an odd pair"
-                    done += f" {why}, so DMbot will ask you about it after the session."
+                    why = FLAG_WHY.get(result.flags[0].kind) or ODD_PAIR
+                    note = f"\n⚠️ {why}. It's saved, and DMbot will ask you about it."
             else:
-                turned = await claims.reject(guild.id, self.campaign_id, claim_id)
-                done = f"{NO} Not remembered: {question_text(turned).rsplit('?', 1)[0]}."
+                await claims.reject(guild.id, self.campaign_id, claim_id)
+                done = f"{NO} Not remembered: {saying}. DMbot won't ask again."
         except MemoryRuleError as exc:
-            done = str(exc) if str(exc) else GONE
-        text = await self.current_text(interaction)
-        if text is None:
-            self.stop()
-            await _replace(interaction, f"{done}\n\n{NOTHING_WAITING}".strip(), None)
+            message = str(exc) or GONE
+            if message not in _FINAL:
+                await _tell(interaction, message)  # the question stays; nothing changed
+                return
+            done = f"{message}"
+        self.answered[claim_id] = done
+        text = self._render()
+        if len(self.answered) >= len(self.page):  # the page is done: the next one
+            fresh = await self.current_text(interaction)
+            if fresh is None:
+                self.stop()
+                await _replace(interaction, f"{done}{note}\n\n{NOTHING_WAITING}", None)
+                return
+            await _replace(interaction, f"{done}{note}\n\n{fresh}", self)
             return
-        await _replace(interaction, f"{done}\n\n{text}".strip(), self)
+        await _replace(interaction, f"{done}{note}\n\n{text}", self)
 
 
 __all__ = [
@@ -182,5 +218,6 @@ __all__ = [
     "page_text",
     "question_text",
     "start_claims_review",
+    "statement",
     "waiting_text",
 ]

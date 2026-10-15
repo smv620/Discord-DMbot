@@ -43,7 +43,11 @@ class Review(MemoryTest):
         it = MagicMock()
         it.user = SimpleNamespace(id=user)
         it.guild = SimpleNamespace(id=GUILD_A)
-        it.client = SimpleNamespace(memory=self.memory, campaigns=self.campaigns)
+        it.client = SimpleNamespace(
+            memory=self.memory,
+            campaigns=self.campaigns,
+            consent=SimpleNamespace(consenting=AsyncMock(return_value={7})),
+        )
         it.response.is_done = lambda: False
         it.response.send_message = reply
         it.response.edit_message = reply
@@ -84,6 +88,38 @@ class Review(MemoryTest):
         self.assertIn("❌ Not remembered: **Hesper** knows **Bram**", it.sent[-1])
         self.assertIn(claims_review.NOTHING_WAITING, it.sent[-1])
         self.assertEqual(len(await self.memory.relations(GUILD_A, self.c)), 1)
+
+    async def test_numbers_stay_put_while_a_page_is_answered_and_answered_ones_go_grey(
+        self,
+    ) -> None:
+        await self.ask(
+            said("Bram", "carries", "Heartseeker"), said("Hesper", "knows", "Bram"),
+            said("Bram", "knows", "Hesper"),
+        )  # fmt: skip
+        it = self.interaction()
+        view = claims_review.ClaimsReview(self.c)
+        await view.current_text(it)
+        order = [c.id for c in view.page]
+        await view._decide(it, order[0], True)
+        text = it.sent[-1]
+        self.assertIn("1. ✅ Remembered:", text)
+        self.assertIn("2. **", text)  # the others kept their numbers
+        self.assertEqual(
+            [getattr(b, "disabled", None) for b in view.children][:2], [True, True]
+        )  # 1 is done
+        self.assertEqual([getattr(b, "disabled", None) for b in view.children][2:], [False] * 4)
+        self.assertIn("Top row ✅", text)
+
+    async def test_a_speaker_who_stopped_since_deletes_the_question_and_says_so(self) -> None:
+        await self.ask(said("Bram", "carries", "Heartseeker"))
+        it = self.interaction()
+        it.client.consent.consenting = AsyncMock(return_value=set())  # nobody agrees now
+        view = claims_review.ClaimsReview(self.c)
+        await view.current_text(it)
+        await view._decide(it, view.page[0].id, True)
+        self.assertIn("stopped being recorded", it.sent[-1])
+        self.assertEqual(await self.memory.relations(GUILD_A, self.c), [])
+        self.assertEqual(await self.claims.waiting(GUILD_A, self.c), [])
 
     async def test_a_second_holder_says_so_in_plain_words(self) -> None:
         await self.memory.set_unique(GUILD_A, self.c, self.bow, True, source="dm")

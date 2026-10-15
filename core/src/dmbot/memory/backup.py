@@ -130,11 +130,11 @@ _INTS = {"played_by", "speaker_id", "session_started_at", "decided_at", "created
          "max_per_subject", "closed_at"}  # fmt: skip
 _VERSIONS = {"version", "definition_version"}  # from 1 up (#1189)
 _LISTS = {"examples", "subject_types", "object_types", "conflicts_with", "sound_codes",
-          "mention_ids", "covers", "not_this", "synonyms", "lines"}  # fmt: skip
+          "mention_ids", "covers", "not_this", "synonyms"}  # fmt: skip
 _NULLABLE = {
     "role", "edition", "played_by", "merged_into", "used_by", "other_id", "entity_id",
     "replaced_by", "parent", "from_session_at", "to_session_at", "from_game_time",
-    "to_game_time", "max_per_subject", "closed_at", "unique_item", "speaker_id", "fact_id",
+    "to_game_time", "max_per_subject", "closed_at", "unique_item", "fact_id",
     "session_started_at", "decided_at",
 }  # fmt: skip
 
@@ -154,6 +154,20 @@ def _valid(column: str, value: object) -> bool:
             isinstance(value, list)
             and len(value) <= LIST_MAX
             and all(isinstance(v, str) and 0 < len(v) <= DESCRIPTION_MAX for v in value)
+        )
+    if column == "lines":  # transcript line references
+        return (
+            isinstance(value, list)
+            and len(value) <= LIST_MAX
+            and all(isinstance(v, str) and 0 < len(v) <= LINE_REF_MAX for v in value)
+        )
+    if column == "speaker_ids":  # Discord ids
+        return (
+            isinstance(value, list)
+            and len(value) <= LIST_MAX
+            and all(
+                isinstance(v, int) and not isinstance(v, bool) and 0 < v <= INT64_MAX for v in value
+            )
         )
     if column in ("secret", "is_symmetric", "needs_look", "known", "unique_item"):
         return isinstance(value, bool)
@@ -266,6 +280,10 @@ def _checked_rows(rows: list[Any]) -> dict[str, list[dict[str, Any]]]:
             raw = _checked_sheet(raw)
         elif not all(_valid(c, raw[c]) for c in table.columns):
             raise CampaignError(DAMAGED)
+        if table is CLAIMS:
+            _check_claim(raw)
+        elif raw.get("status") == "dropped":
+            raise CampaignError(DAMAGED)  # only a claim can be dropped
         if table is ALIASES:  # worked out again, not taken from the file
             raw = {**raw, "sound_codes": list(sound_codes(raw["text"]))}
         by_tag[raw["table"]].append(raw)
@@ -492,6 +510,17 @@ def _check_terms(by_tag: dict[str, list[dict[str, Any]]]) -> None:
     if any(r["known"] != bool(r["rules_source"]) for r in by_tag["rule_link"]):
         raise CampaignError(DAMAGED)
     if any(r["predicate"] not in onto.predicates for r in by_tag["relation"]):
+        raise CampaignError(DAMAGED)
+
+
+def _check_claim(row: Mapping[str, Any]) -> None:
+    """A claim in a file: a status a claim can have, a fact only when it was confirmed, and
+    never a plan that someone says is waiting for the DM (a plan is never asked)."""
+    if row["status"] not in CLAIM_STATUSES:
+        raise CampaignError(DAMAGED)
+    if row["fact_id"] is not None and row["status"] != "confirmed":
+        raise CampaignError(DAMAGED)
+    if row["status"] == "proposed" and row["how"] == "plan":
         raise CampaignError(DAMAGED)
 
 
