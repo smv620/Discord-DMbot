@@ -19,6 +19,7 @@ from dmbot.config import Settings
 from dmbot.consent import ConsentStore
 from dmbot.memory.backup import MemorySection
 from dmbot.memory.models import CONFIRMED, PROPOSED, REJECTED, MemoryRuleError
+from dmbot.memory.models import DM as DM_SOURCE
 from dmbot.memory.store import MemoryStore
 from dmbot.sessions import SessionStore
 from dmbot.ui import logic
@@ -593,6 +594,43 @@ class NameCards(NamesTest):
         it = self.it()
         await name_card.show_picks(it, self.campaign.id, self.bell.id, name_card.SAME, "Belleros")
         self.assertIn("No other name like **Belleros**", it.response.edited[0][0])
+
+    async def test_carries_reads_in_plain_words_from_both_sides(self) -> None:
+        from dmbot.ui import name_card
+
+        bow = await ui.save_name(self.memory, self.campaign, "Heartseeker", "item", [], [])
+        bram = await ui.save_name(self.memory, self.campaign, "Bram", "npc", [], [])
+        # The choice is there from the being's side and, read the other way, from the item's.
+        values = {v: label for v, label, _ in name_card.connect_choices("Bram")}
+        self.assertEqual(values["carries"], "Bram carries…")
+        self.assertEqual(values["carries" + name_card.BACK], "Bram is carried by…")
+        it = self.it()
+        await name_card.connect(it, self.campaign.id, bram.id, "carries", bow.id)
+        self.assertIn("🧭 Saved: **Bram** carries **Heartseeker**.", it.response.edited[0][0])
+        self.fresh()
+        it = self.it()
+        await name_card.show_card(it, self.campaign.id, bram.id)
+        self.assertIn("**Connections:** carries **Heartseeker**", it.response.sent[0][0])
+        self.fresh()
+        it = self.it()
+        await name_card.show_card(it, self.campaign.id, bow.id)
+        self.assertIn("**Connections:** is carried by **Bram**", it.response.sent[0][0])
+        self.assertNotIn("is connected to", it.response.sent[0][0])
+
+    async def test_a_second_holder_of_a_one_of_a_kind_item_gets_the_plain_note(self) -> None:
+        from dmbot.ui import name_card
+
+        bow = await ui.save_name(self.memory, self.campaign, "Heartseeker", "item", [], [])
+        bram = await ui.save_name(self.memory, self.campaign, "Bram", "npc", [], [])
+        hesper = await ui.save_name(self.memory, self.campaign, "Hesper", "npc", [], [])
+        await self.memory.set_unique(GUILD, self.campaign.id, bow.id, True, source=DM_SOURCE)
+        await name_card.connect(self.it(), self.campaign.id, bram.id, "carries", bow.id)
+        it = self.it()
+        await name_card.connect(it, self.campaign.id, hesper.id, "carries", bow.id)
+        text = it.response.edited[0][0]
+        self.assertIn("Someone else already has that, and there is only one", text)
+        self.assertIn("DMbot will ask you about it after the session", text)
+        self.assertNotIn("odd pair", text)
 
     async def test_connect_to_reads_both_ways_and_can_be_removed(self) -> None:
         from dmbot.ui import name_card
