@@ -3863,7 +3863,7 @@ MIGRATIONS: tuple[Migration, ...] = (
     ("0073_memory_claims", MEMORY_CLAIMS),
     ("0074_support_tickets", SUPPORT_TICKETS),  # private support tickets (#1340)
     (
-        "0075_claims_by_fact",
+        "0076_claims_by_fact",
         MEMORY_CLAIMS_BY_FACT,
     ),  # the recall service finds a fact's claim (#1350)
 )
