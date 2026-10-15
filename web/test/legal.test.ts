@@ -347,4 +347,24 @@ describe("shared house rules (#1254)", () => {
     expect(t).toContain("only the rules themselves");
     expect(t).toContain("The story, names, notes and what was said are never shared");
   });
+  it("says a suggestion back to the publisher carries only the rule, never the sender (#1313)", () => {
+    const t = text(doc("privacy").querySelector("main"));
+    expect(t).toContain("can suggest a rule back to the game master who shares them");
+    expect(t).toContain("A suggestion carries only the rule's words (and the rule it would replace), never who sent it");
+    expect(t).toContain("keeps no record of the sender");
+  });
+  it("is true: the publisher's table of suggestions has no column for who sent one (#1313)", () => {
+    const schema = readFileSync(new URL("../../core/src/dmbot/schema.py", import.meta.url), "utf8");
+    const table = /CREATE TABLE rule_set_suggestions \(([\s\S]*?)\n    \);/.exec(schema)?.[1] ?? "";
+    expect(table).toContain("set_id");
+    expect(table).not.toMatch(/sent_by|follower|sender|from_guild|from_campaign/);
+  });
+});
+
+describe("story state (#1284)", () => {
+  it("the privacy page says which items are one of a kind and who carries what are kept per campaign", () => {
+    const t = text(doc("privacy").querySelector("main"));
+    expect(t).toContain("which items are the only one of their kind and who carries what, and whether the game master or the bot said so");
+    expect(t).toContain("A backup holds it, and it is deleted when the campaign is deleted");
+  });
 });

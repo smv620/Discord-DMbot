@@ -20,12 +20,13 @@ import secrets
 from collections.abc import Callable
 from typing import Annotated, Any, TypeGuard
 
-from fastapi import APIRouter, Depends, HTTPException, Request, Response
+from fastapi import APIRouter, Depends, HTTPException, Path, Request, Response
 from fastapi.responses import RedirectResponse
 
+from dmbot.account_id import to_dmbot_id
 from dmbot.db import Database
 from dmbot.entitlements import GRANT_LEVELS
-from dmbot.web import grants, sessions, tokens
+from dmbot.web import grants, sessions, support, tokens
 from dmbot.web.admin import (
     CSRF_HEADER,
     MAX_SECONDS,
@@ -397,6 +398,48 @@ def router(
             # Never had one, already revoked, or on the server's free list (not a grant).
             raise HTTPException(status_code=404, detail="no_grant")
         log.info("Admin free access revoke for %s", discord_id)
+        return Response(status_code=204)
+
+    # Support tickets (#1340)
+
+    @api.get("/support")
+    async def list_support(session: Admin) -> dict[str, Any]:
+        """Private tickets from paying people, newest first. The words are shown to the
+        signed-in admin only, and never logged."""
+        rows = await support.newest(db)
+        # One lookup per distinct person, so the list is kept short (support.LIST_LIMIT).
+        names = await sessions.display_names(db, sorted({r.user_id for r in rows}), now=clock())
+        return {
+            "tickets": [
+                {
+                    "id": r.id,
+                    "at": r.created_at,
+                    # Ids are strings: they don't fit in a JavaScript number.
+                    "discordId": str(r.user_id),
+                    "dmbotId": to_dmbot_id(r.user_id),
+                    "name": names.get(r.user_id),
+                    "plan": r.plan,
+                    "subject": r.subject,
+                    "message": r.message,
+                    "source": r.source,
+                    "status": r.status,
+                }
+                for r in rows
+            ]
+        }
+
+    @api.post("/support/{ticket_id}/status", status_code=204)
+    async def set_support_status(
+        ticket_id: Annotated[int, Path(ge=1, le=2**63 - 1)], request: Request, session: AdminWrite
+    ) -> Response:
+        raw = await read_json(request)
+        status = raw.get("status") if isinstance(raw, dict) else None
+        if status not in support.STATUSES:
+            raise HTTPException(status_code=400, detail="bad_status")
+        if not await support.set_status(db, ticket_id, status):
+            raise HTTPException(status_code=404, detail="no_ticket")
+        # The number and the new status only: never the ticket's words or the admin's email.
+        log.info("Admin set support ticket %s to %s", ticket_id, status)
         return Response(status_code=204)
 
     return api
