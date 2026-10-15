@@ -84,6 +84,7 @@ from dmbot.dm_screen import (
     house_sync,
     peek_view,
     rules_cards,
+    set_update,
 )
 from dmbot.dm_screen import clock as clock_screen
 from dmbot.dm_screen import effects as timer_screen
@@ -117,6 +118,7 @@ from dmbot.dm_screen.settings import (
     RulesCardsButton,
     SettingsButton,
     SettingsVisibilityButton,
+    SharedRulesButton,
     SideInitiativeButton,
 )
 from dmbot.dm_screen.site_offers import SiteOffers
@@ -160,8 +162,10 @@ from dmbot.memory.table_names import NameThenAnswer
 from dmbot.retention import RetentionJob
 from dmbot.rules import house_voice
 from dmbot.rules import index as rules_index
+from dmbot.rules.followed import followed_rules, own_first
 from dmbot.rules.house import HouseRule, HouseRulesSection, HouseRuleStore
 from dmbot.rules.house_file_link import HouseFileLinkStore
+from dmbot.rules.rule_sets import RuleSetStore
 from dmbot.rules.spotter import Mention
 from dmbot.sessions import SavedSession, SessionStore
 from dmbot.sidebar import knowledge
@@ -197,7 +201,12 @@ from dmbot.transcript.stream import TranscriptStream
 from dmbot.transcript.topic_ai import classify
 from dmbot.transcript.topics import GAME, OFF_TOPIC, TopicWindow, Waiting, obviously_game
 from dmbot.transcript.topics import marker as topic_marker
-from dmbot.transcription.base import PlaceholderTranscriber, Transcriber, confidence_of
+from dmbot.transcription.base import (
+    PlaceholderTranscriber,
+    Transcriber,
+    confidence_of,
+    engine_of,
+)
 from dmbot.transcription.factory import build_transcriber
 from dmbot.transcription.pipeline import TranscriptionPipeline, clip_budget_s, speech_sent_line
 from dmbot.ui import logic as ui_logic
@@ -555,6 +564,7 @@ class DMBot(commands.AutoShardedBot):
         house_file_links: HouseFileLinkStore | None = None,
         effects: EffectStore | None = None,
         test_voice: TestVoiceStore | None = None,
+        rule_sets: RuleSetStore | None = None,
     ) -> None:
         intents = discord.Intents.none()
         intents.guilds = True
@@ -598,6 +608,7 @@ class DMBot(commands.AutoShardedBot):
         self.clocks = clocks
         # The linked house-rules file (#969), and what is waiting for a DM's press.
         self.house_file_links = house_file_links
+        self.rule_sets = rule_sets  # shared house rules (#1190)
         self.house_syncs = house_sync.Pendings()
         # Timed effects on that clock (#998); None without a database.
         self.effects = effects
@@ -650,21 +661,33 @@ class DMBot(commands.AutoShardedBot):
             else None
         )
         # AI text calls (a document into a names list).
-        self.ai = self.ai_client.tier(FEATURE_TIERS[Feature.NAMES]) if self.ai_client else None
+        self.ai = (
+            self.ai_client.tier(FEATURE_TIERS[Feature.NAMES], Feature.NAMES)
+            if self.ai_client
+            else None
+        )
         # A player's sheet document read into the sheet fields (#1125).
         self.sheet_ai = (
-            self.ai_client.tier(FEATURE_TIERS[Feature.SHEET]) if self.ai_client else None
+            self.ai_client.tier(FEATURE_TIERS[Feature.SHEET], Feature.SHEET)
+            if self.ai_client
+            else None
         )
         # FightBot's reminders to players in combat (#1129), on the smallest model.
         self.fight_ai = (
-            self.ai_client.tier(FEATURE_TIERS[Feature.FIGHTBOT]) if self.ai_client else None
+            self.ai_client.tier(FEATURE_TIERS[Feature.FIGHTBOT], Feature.FIGHTBOT)
+            if self.ai_client
+            else None
         )
         # The off-topic filter (#52), the audio check and the DM sidebar.
         self.topic_ai = (
-            self.ai_client.tier(FEATURE_TIERS[Feature.TOPIC]) if self.ai_client else None
+            self.ai_client.tier(FEATURE_TIERS[Feature.TOPIC], Feature.TOPIC)
+            if self.ai_client
+            else None
         )
         self.audio_ai = (
-            self.ai_client.tier(FEATURE_TIERS[Feature.AUDIO_CHECK]) if self.ai_client else None
+            self.ai_client.tier(FEATURE_TIERS[Feature.AUDIO_CHECK], Feature.AUDIO_CHECK)
+            if self.ai_client
+            else None
         )
         # The DM sidebar's answer engine (#934), on that same smallest model. #935 calls
         # `bot.sidebar_answers.answer(...)` for voice memos and "hold on, I need to find…"; None
@@ -773,6 +796,7 @@ class DMBot(commands.AutoShardedBot):
             RulesCardsButton,
             SideInitiativeButton,
             HouseFileButton,
+            SharedRulesButton,
             InviteButton,
             TableChatButton,
         )
@@ -804,6 +828,7 @@ class DMBot(commands.AutoShardedBot):
             NameQuestionButton, NameAnswerUndoButton, FixUndoButton, SpeakerQuestionButton
         )
         self.add_dynamic_items(PutBackButton)  # lines left out as off-topic (#677)
+        self.add_dynamic_items(set_update.SetUpdateButton)  # shared rules changed (#1191)
         self.add_dynamic_items(house_sync.HouseSyncButton)  # the house-rules file (#969)
         self.add_dynamic_items(rules_cards.RulesCardButton)  # rules cards from the table (#931)
         self.add_dynamic_items(house_voice_screen.HouseVoiceButton)  # house rules said aloud (#953)
@@ -2001,6 +2026,15 @@ class DMBot(commands.AutoShardedBot):
             # The pause is saved and the start refusal says it too.
             log.info("Couldn't tell an owner their campaigns were paused", exc_info=True)
 
+    async def all_house_rules(self, guild_id: int, campaign_id: str) -> list[HouseRule]:
+        """The campaign's own house rules, then any set it follows (#1190): own rules first,
+        as the precedence in CLAUDE.md says. Every advisor reads rules through here, so a
+        followed rule is always cited with its set."""
+        own: list[HouseRule] = []
+        if self.house_rules is not None:
+            own = await self.house_rules.list(guild_id, campaign_id)
+        return own_first(own, await followed_rules(self.rule_sets, guild_id, campaign_id))
+
     def _make_sidebar_answers(self) -> Sidebar | None:
         if self.ai_client is None:
             return None
@@ -2009,9 +2043,7 @@ class DMBot(commands.AutoShardedBot):
             return await self.plan_gate("ai", campaign.guild_id, campaign, user_id)
 
         async def houses(campaign: Campaign) -> Sequence[HouseRule]:
-            if self.house_rules is None:
-                return []
-            return await self.house_rules.list(campaign.guild_id, campaign.id)
+            return await self.all_house_rules(campaign.guild_id, campaign.id)
 
         async def names(campaign: Campaign) -> CampaignLookup | None:
             if self.lookup is None:
@@ -2023,8 +2055,8 @@ class DMBot(commands.AutoShardedBot):
             async with asyncio.timeout(NAMES_WAIT_S):
                 return await self.sidebar_people(campaign)
 
-        ai = self.ai_client.tier(FEATURE_TIERS[Feature.SIDEBAR])
-        careful = self.ai_client.tier(FEATURE_TIERS[Feature.SIDEBAR_RETRY])
+        ai = self.ai_client.tier(FEATURE_TIERS[Feature.SIDEBAR], Feature.SIDEBAR)
+        careful = self.ai_client.tier(FEATURE_TIERS[Feature.SIDEBAR_RETRY], Feature.SIDEBAR_RETRY)
         return Sidebar(
             ai,
             rules_index.srd,
@@ -2043,11 +2075,17 @@ class DMBot(commands.AutoShardedBot):
             return []
         rows = await self.memory.table_people(campaign.guild_id, campaign.id)
         agreed = await self.consent.consenting(campaign.guild_id)
+        table = self.tables.get(campaign.guild_id)
+        if table is not None and table.campaign_id == campaign.id:
+            starter: int | None = table.dm_user_id  # who started this session
+        else:
+            starter = next(iter(campaign.dm_user_ids)) if len(campaign.dm_user_ids) == 1 else None
         return people_lines(
             rows,
             agreed,
             campaign.dm_user_ids,
             lambda user_id: self.name_of(campaign.guild_id, user_id),
+            dm_word_user=starter,
         )
 
     async def plan_gate(
@@ -2263,6 +2301,7 @@ class DMBot(commands.AutoShardedBot):
         if dmbchat_problem:
             await self.post(screen_id, dmbchat_problem)
         self._check_house_file(campaign, screen_id)
+        self._track(set_update.check_update(self, campaign, screen_id), "shared-rules-update")
         transcript_line = (
             f"📜 Transcript (anyone in the server can read it): <#{transcript_id}>\n"
             if transcript_id
@@ -3092,7 +3131,9 @@ class DMBot(commands.AutoShardedBot):
             # What the audio check reads if their audio rule fires (#699): the line as the
             # transcript has it (before the off-topic filter, which may hide it later),
             # with the engine's confidence; kept as plain text.
-            table.capture_log.add_line(utterance.user_id, str(cleaned or text), confidence_of(text))
+            table.capture_log.add_line(
+                utterance.user_id, str(cleaned or text), confidence_of(text), engine=engine_of(text)
+            )
         if text and table.transcript_channel_id is not None:
             guild = self.get_guild(utterance.guild_id)
             member = guild.get_member(utterance.user_id) if guild else None
@@ -3610,10 +3651,10 @@ class DMBot(commands.AutoShardedBot):
         words and its minute back."""
         rules: list[HouseRule] = []
         unchecked = True
-        if self.house_rules is not None and table.campaign_id is not None:
-            try:  # this campaign's own house rules and no other's
+        if table.campaign_id is not None:
+            try:  # this campaign's own house rules, then its followed set; no other's
                 async with asyncio.timeout(RULES_CARD_DB_S):
-                    rules = await self.house_rules.list(table.guild_id, table.campaign_id)
+                    rules = await self.all_house_rules(table.guild_id, table.campaign_id)
                 unchecked = False
             except TimeoutError:
                 log.warning("Reading house rules for a proposal took too long")
@@ -3667,10 +3708,10 @@ class DMBot(commands.AutoShardedBot):
         if hit is None:
             table.rules.forget(card_id, before)
             return
-        if self.house_rules is not None and table.campaign_id is not None:
-            try:  # this campaign's own house rules and no other's
+        if table.campaign_id is not None:
+            try:  # this campaign's own house rules, then its followed set; no other's
                 async with asyncio.timeout(RULES_CARD_DB_S):
-                    rules = await self.house_rules.list(table.guild_id, table.campaign_id)
+                    rules = await self.all_house_rules(table.guild_id, table.campaign_id)
             except Exception:
                 log.exception("Couldn't read house rules for a rules card")
         # After the awaits: the words heard are shown, so the speaker must still be recorded,
@@ -5868,6 +5909,7 @@ async def run(settings: Settings) -> None:
             HouseFileLinkStore(db),
             EffectStore(db),
             TestVoiceStore(db),
+            RuleSetStore(db),
         )
         _close_on_sigterm(bot)
         async with bot:

@@ -1,0 +1,110 @@
+## Scene 31: Let's kill the king
+1. player plan: Let's kill the king of Dunmere before the coronation.
+   - claim: party | kill | king of Dunmere
+   - never: king of Dunmere, dead
+2. dm statement: The king of Dunmere is guarded by twelve knights in the great hall.
+   - claim: king of Dunmere | guarded by | twelve knights
+3. player question: Could we poison his cup?
+4. dm ooc: You would need a proficiency with poisoner's kit.
+5. player plan: I will bribe the cupbearer to do it for us.
+   - claim: party | bribe | cupbearer
+6. dm statement: The cupbearer glances at the king and shakes his head.
+   - claim: cupbearer | refuses | party
+
+## Scene 32: What if
+1. player plan: What if we burn the warehouse and blame the Guild?
+   - claim: party | burn | warehouse
+   - never: warehouse, destroyed
+2. dm statement: The warehouse is full of oil barrels and old rope.
+   - claim: warehouse | holds | oil barrels
+3. player question: Are the barrels sealed?
+4. dm statement: Most are, two are leaking.
+5. player plan: Then we use the leaking ones as a fuse.
+   - claim: party | use | leaking barrels
+6. dm ooc: This is going to be loud, remember the night watch.
+
+## Scene 33: Questions only
+1. player question: Who rules the city of Veldmoor?
+2. dm statement: A council of merchants rules Veldmoor.
+   - claim: council of merchants | rules | Veldmoor
+3. player question: Is Odric Vale on the council?
+4. dm statement: No, but he advises them.
+   - claim: Odric Vale | advises | council of merchants
+5. player question: Is it dangerous to cross the pass at night?
+6. dm ooc: It is a hard Survival check at night.
+
+## Scene 34: Table talk
+1. dm ooc: Okay, let's take a ten minute break.
+2. player ooc: Can someone pass me the chips?
+3. player ooc: I need a refill, anyone want anything?
+4. dm ooc: Back at half past, please.
+5. player question: Quick rules question, does Haste stack with Bless?
+6. dm ooc: They do, they are different spells.
+
+## Scene 35: A promise
+1. dm statement: Lord Haldane swears he will march on Tolbrook before the first snow.
+   - claim: Lord Haldane | will march on | Tolbrook
+2. player statement: I do not believe him, he promised the same last year and broke it.
+   - claim: Lord Haldane | broke promise | last year
+3. player plan: We warn Tolbrook anyway.
+   - claim: party | warn | Tolbrook
+4. dm statement: The messenger rides at once.
+5. player question: How long to Tolbrook?
+6. dm ooc: Three days on a good horse.
+
+## Scene 36: Rumours
+1. dm statement: The tavern keeper says, "They say the lighthouse keeper sold his soul."
+   - claim: lighthouse keeper | sold | soul
+2. player statement: That is only a rumour, nobody knows.
+   - also: lighthouse keeper | rumoured | soul
+3. dm statement: A sailor adds, "They also say the lighthouse is cursed."
+   - also: lighthouse | cursed | rumour
+4. player question: Who is the lighthouse keeper?
+5. dm statement: Old Jory Pike, a stooped man who has not left the tower in years.
+   - claim: Jory Pike | keeper of | lighthouse
+6. player plan: We row out to the lighthouse in the morning.
+   - claim: party | visit | lighthouse
+
+## Scene 37: Hypothetical alliance
+1. player plan: What if we asked the Dunmere watch to side with us against the Guild?
+   - claim: party | ask | Dunmere watch
+   - never: Dunmere watch, ally
+2. dm statement: Maren Voss would listen, but she wants proof.
+   - claim: Maren Voss | wants | proof
+3. player question: What kind of proof?
+4. dm statement: Written orders from the Guild, or a witness.
+5. player plan: Then we steal a letter from Sennet's desk.
+   - claim: party | steal | letter
+6. dm ooc: Roll a Stealth check as you enter the guildhall.
+
+## Scene 38: Misheard
+1. player question: Wait, did he say Dunmere or Dunmore?
+2. dm ooc: Dunmere, with an e.
+3. player statement: Then the baron of Dunmere is Lord Haldane.
+   - claim: Lord Haldane | baron of | Dunmere
+4. dm statement: Yes, the baron's seat is Haldane Keep.
+   - claim: Haldane Keep | seat of | Lord Haldane
+5. player question: Is Haldane Keep in the city?
+6. dm statement: It is on the hill above Dunmere.
+   - claim: Haldane Keep | located in | Dunmere
+
+## Scene 39: A bet
+1. player statement: I bet five gold that Brother Aldwin is the traitor.
+   - also: Aldwin | traitor of | council of five elders
+2. dm ooc: We do not play for real gold, you can bet in-game coins.
+3. player ooc: Fine, a copper then.
+4. dm statement: The innkeeper takes the wager with a grin.
+5. player plan: I watch Aldwin all evening.
+   - claim: party | watch | Aldwin
+6. dm statement: Aldwin spends the evening alone in his room, reading.
+
+## Scene 40: Planning the route
+1. player plan: We take the Marrow Road to the Ashen Pass and sleep at the toll house.
+   - claim: party | take | Marrow Road
+   - claim: party | sleep at | toll house
+2. dm statement: The toll house has room for six.
+   - claim: toll house | has room for | six
+3. player question: Do we have enough rations?
+4. dm ooc: Three days of rations each, you are fine.
+5. player plan: And then we cross the pass at dawn.
+   - claim: party | cross | Ashen Pass

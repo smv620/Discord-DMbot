@@ -93,7 +93,7 @@ def day_part(minute: int) -> str:
 
 
 def clock_time(minute: int) -> str:
-    """ "06:20": the form's default, which the Set time form reads back."""
+    """ "06:20": the form's default, which the Rests & time form reads back."""
     t = time_of_day(minute)
     return f"{t // 60:02d}:{t % 60:02d}"
 

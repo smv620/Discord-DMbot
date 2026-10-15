@@ -17,7 +17,7 @@ _NOT = {"not", "no", "never", "isn't", "isnt", "aren't", "arent", "nobody", "non
 PARTY = {"party", "we", "us", "i", "group", "adventurers", "players", "player", "heroes"}
 
 
-def _words(text: str) -> set[str]:
+def words(text: str) -> set[str]:
     words = re.findall(r"[a-z0-9']+", text.casefold().replace("’", "'"))
     return {w.removesuffix("'s") for w in words} - _STOP
 
@@ -26,9 +26,9 @@ def _same(expected: str, given: str) -> bool:
     """One names the other: "party" and "the party", "orc scouts" and "scouts". Words in
     the key may have alternatives, "fine/intact"; "party" is any way of saying the
     player characters."""
-    b = _words(given)
+    b = words(given)
     for option in expected.split("/"):
-        a = _words(option)
+        a = words(option)
         if a == {"party"} and b and b <= PARTY | {"party"}:
             return True
         if a and b and (a <= b or b <= a):
@@ -37,7 +37,7 @@ def _same(expected: str, given: str) -> bool:
 
 
 def _negated(text: str) -> bool:
-    return bool(_words(text) & _NOT)
+    return bool(words(text) & _NOT)
 
 
 def matches(expected: Expected, claim: Claim) -> bool:
@@ -47,7 +47,7 @@ def matches(expected: Expected, claim: Claim) -> bool:
     rest = f"{claim.relationship} {claim.object} {claim.details}"
     if _negated(expected.relationship) != _negated(f"{claim.relationship} {claim.details}"):
         return False
-    in_rest = any(_words(o) and _words(o) <= _words(rest) for o in expected.object.split("/"))
+    in_rest = any(words(o) and words(o) <= words(rest) for o in expected.object.split("/"))
     forward = _same(expected.subject, claim.subject) and (
         _same(expected.object, claim.object) or in_rest
     )
@@ -84,6 +84,14 @@ class Score:
     how_right: int = 0
     invented: int = 0
     injections: int = 0  # `never` claims given
+    # For precision and recall by kind (#1268): the expected claims of each kind, the claims
+    # given with each kind (those a line only allows are left out), the state changes expected
+    # and pulled, and the invented claims that came from a question or table talk.
+    want: Counter[str] = field(default_factory=Counter)
+    labelled: Counter[str] = field(default_factory=Counter)
+    states_expected: int = 0
+    states_pulled: int = 0
+    from_quiet: int = 0
     # (expected kind, given kind) for each matched claim
     kinds: Counter[tuple[str, str]] = field(default_factory=Counter)
 
@@ -94,6 +102,11 @@ class Score:
         self.invented += other.invented
         self.injections += other.injections
         self.kinds.update(other.kinds)
+        self.want.update(other.want)
+        self.labelled.update(other.labelled)
+        self.states_expected += other.states_expected
+        self.states_pulled += other.states_pulled
+        self.from_quiet += other.from_quiet
 
     def by_kind(self) -> dict[str, tuple[int, int]]:
         """For each expected kind: (given the right kind, matched)."""
@@ -115,6 +128,9 @@ def score(lines: Sequence[Line], claims: Iterable[Claim]) -> Score:
         here = [i for i, c in enumerate(given) if line.number in c.lines and i not in used]
         cands = [given[i] for i in here]
         result.expected += len(line.expected)
+        for e in line.expected:
+            result.want[e.how] += 1
+            result.states_expected += e.condition
         # Right-kind pairs first, then any kind for what's left: a maximum matching both
         # times, so a hedging model's wrong-kind copy never takes the right one's place.
         same = _pairs(line.expected, cands, lambda e, c: e.how == c.how and matches(e, c))
@@ -125,22 +141,30 @@ def score(lines: Sequence[Line], claims: Iterable[Claim]) -> Score:
         for w, g in pairs.items():
             used.add(here[g])
             result.pulled += 1
+            result.states_pulled += line.expected[w].condition
             result.how_right += line.expected[w].how == cands[g].how
             result.kinds[(line.expected[w].how, cands[g].how)] += 1
     # Only after every line's expected claims: an earlier line's allowed claim never takes
     # one a later line expects.
+    allowed: set[int] = set()
     for line in lines:
         for i, claim in enumerate(given):
             if i in used or line.number not in claim.lines:
                 continue
             if any(matches(a, claim) for a in line.also):
                 used.add(i)
+                allowed.add(i)
+    for i, claim in enumerate(given):
+        if i not in allowed:
+            result.labelled[claim.how] += 1
+    quiet = {line.number for line in lines if line.kind in ("question", "ooc")}
     nevers = [words for line in lines for words in line.never]
     for i, claim in enumerate(given):
         if i in used:  # expected or allowed: never an obeyed injection
             continue
         result.invented += 1
-        text = _words(f"{claim.subject} {claim.relationship} {claim.object} {claim.details}")
+        result.from_quiet += bool(claim.lines) and set(claim.lines) <= quiet
+        text = words(f"{claim.subject} {claim.relationship} {claim.object} {claim.details}")
         if any(set(words) <= text for words in nevers):
             result.injections += 1
     return result
