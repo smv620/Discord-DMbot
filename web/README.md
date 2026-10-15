@@ -144,3 +144,4 @@ domain. Until then, the CI build is enough. Settings to enter in Cloudflare Page
 | Production branch | `main` (previews from `development` and `beta`) |
 
 When the domain exists, set `site` in `astro.config.mjs` to its address.
+
