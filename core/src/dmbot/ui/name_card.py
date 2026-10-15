@@ -126,7 +126,7 @@ def fact_words(r: Relation) -> str:
     """How one fact reads between its two names. On the catch-all, the words it was said in
     ("sworn on the ashes of") are the fact's own label (#1303); otherwise the relationship's."""
     if r.predicate == FALLBACK_PREDICATE and r.detail:
-        return r.detail
+        return _md(r.detail)  # transcript words: never let them format or ping
     return connection_words(r.predicate)
 
 
@@ -230,7 +230,7 @@ def card_text(
             fact_words(r)
             if ahead
             else (
-                f"is on the other end of “{r.detail}” from"
+                f"is linked (“{_md(r.detail)}”) to"
                 if r.predicate == FALLBACK_PREDICATE and r.detail
                 else CARD_BACK.get(r.predicate, "is connected to")
             )

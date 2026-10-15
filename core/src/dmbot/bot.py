@@ -5093,7 +5093,9 @@ class DMBot(commands.AutoShardedBot):
     async def log_steward_tally(self, table: Table) -> None:
         """After the session's other work: one line in the server log of what the ontology
         steward decided (#1303), counts only. Never shown to a player or a DM. Nothing is
-        written when it decided nothing, which is every session while the extractor is off."""
+        written when it decided nothing, which is every session while the extractor is off.
+        The extractor's landing code passes `table.steward_tally` to `ClaimStore.propose(tally=)`
+        (not wired yet: `propose` has no caller until the extractor runs)."""
         tally, table.steward_tally = table.steward_tally, Tally()
         if tally.refused or tally.reused or tally.accepted:
             tally.write_to_log()

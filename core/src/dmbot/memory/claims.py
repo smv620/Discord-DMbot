@@ -248,6 +248,7 @@ def place_relationship(
         return known[0], known[1], ""
     decision = decide_term(
         onto,
+        # "link" is only the proposal's key when the words have no letters to make one from.
         Proposal(_phrase(text) or "link", text, subject_types=(subject_kind,),
                  object_types=(object_kind,)),
     )  # fmt: skip
@@ -257,7 +258,12 @@ def place_relationship(
         tally.record(decision)
     if isinstance(decision, Reused) and decision.existing in onto.predicates:
         return onto.predicates[decision.existing], False, ""
-    return onto.active_predicate(FALLBACK_PREDICATE), False, " ".join(text.split())[:DETAIL_MAX]
+    label = " ".join(text.split())
+    if len(label) > DETAIL_MAX:
+        # Cut at a whole word so the card never shows half a word.
+        label = label[: DETAIL_MAX - 1].rsplit(" ", 1)[0] + "…"
+    # A blank label would leave a nameless link; say it plainly instead.
+    return onto.active_predicate(FALLBACK_PREDICATE), False, label or "linked to"
 
 
 def condition_of(claim: Extracted) -> str | None:
@@ -592,12 +598,12 @@ class ClaimStore:
                 assert resolved is not None and not isinstance(other, str)
                 term, from_object, label = resolved
                 subject_id, object_id = (other[0], who[0]) if from_object else (who[0], other[0])
-                # On the catch-all, the words it was said in are the fact's label.
-                detail = " ".join(f"{label} {claim.details}".split())[:DETAIL_MAX]
+                # On the catch-all, the words it was said in are the fact's label and nothing
+                # else: the card sets `detail` between the two names, so side notes can't go there.
                 relation = await self._store.add_relation(
                     guild_id, campaign_id, subject_id, term.key, object_id,
                     source=DM, confidence=1.0, status=CONFIRMED,
-                    detail=detail if label else claim.details,
+                    detail=label or claim.details,
                     from_session_at=claim.session_started_at,
                 )  # fmt: skip
                 fact_id, flags = relation.value[0].id, list(relation.value[1])

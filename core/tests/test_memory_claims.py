@@ -166,6 +166,16 @@ class Steward(unittest.TestCase):
         _, _, label = self.place("x" * 300)
         self.assertLessEqual(len(label), DETAIL_MAX)
 
+    def test_a_long_label_is_cut_at_a_whole_word(self) -> None:
+        _, _, label = self.place("sworn on the ashes of " * 10)
+        words = {"sworn", "on", "the", "ashes", "of"}
+        self.assertTrue(label.endswith("…"))
+        self.assertLessEqual(set(label[:-1].split()), words)
+        self.assertLessEqual(len(label), DETAIL_MAX)
+
+    def test_blank_words_still_get_a_plain_label(self) -> None:
+        self.assertEqual(self.place("   ")[2], "linked to")
+
     def test_judge_sends_such_a_claim_to_the_dm_not_to_the_bin(self) -> None:
         tally = Tally()
         claim = said("Bram", "frobnicates", "Hesper")
