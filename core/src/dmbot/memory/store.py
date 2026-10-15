@@ -43,7 +43,7 @@ from dmbot.memory._changes import (
     Scope,
     undo_batch,
 )
-from dmbot.memory.checks import HELD_TWICE, check_relation, duplicate_of, ordered
+from dmbot.memory.checks import HELD_TWICE, Ended, check_relation, duplicate_of, ordered
 from dmbot.memory.lookup import LookupData
 from dmbot.memory.models import (
     ALIAS_KINDS,
@@ -613,7 +613,11 @@ class MemoryStore:
                 )
             ]
             await states.close_resolved_after_end(w, onto, touching)
-            ended = {entity_id: new.since} if new.condition in ENDED else {}
+            ended = (
+                {entity_id: Ended(new.from_session_at, new.created_at)}
+                if new.condition in ENDED
+                else {}
+            )
             rows = await states.flag_acting_after_end(w, onto, touching, ended)
             return Written((new, [_flag(r) for r in rows]), w.batch)
 
@@ -631,6 +635,16 @@ class MemoryStore:
                 raise MemoryRuleError(states.ONLY_ITEMS)
             row = await w.update(ENTITIES, entity_id, {"unique_item": unique})
             flags: list[Flag] = []
+            if not unique:  # the alerts about this item's holders no longer hold
+                held = [
+                    r["id"] for r in await w.select(RELATIONS, " AND object_id = %s", [entity_id])
+                ]
+                for flag in await w.select(
+                    FLAGS,
+                    " AND kind = %s AND status = 'open' AND relation_id = ANY(%s)",
+                    [HELD_TWICE, held],
+                ):
+                    await w.update(FLAGS, flag["id"], {"status": "resolved"})
             if unique:
                 limited = sorted(k for k, t in onto.predicates.items() if t.max_per_object)
                 carried = {
@@ -1337,7 +1351,7 @@ class MemoryStore:
                 if merged != {k: kept[k] for k in merged}:
                     await w.update(ENTITIES, keep_id, merged)
             await _move_rule_links(w, keep_id, gone_id)
-            await states.move_states(w, keep_id, gone_id)
+            await states.move_states(w, await _load_ontology(w), keep_id, kept["type"], gone_id)
             if confirm_keys and source != DM:
                 raise ValueError("Only the DM confirms names")
             await _move_aliases(w, keep_id, gone_id, frozenset(confirm_keys))
@@ -2617,9 +2631,13 @@ async def _flag_problems(
     subject_type: str,
     object_type: str,
     existing: Sequence[Relation],
+    extra: states.Extras | None = None,
 ) -> list[Flag]:
+    """Flag what `check_relation` finds. `extra` is what the checks need besides the facts;
+    a caller checking many facts in one write reads it once for all of them (#1267)."""
     flags = []
-    extra = await states.load_extras(w, onto, [rel])
+    if extra is None:
+        extra = await states.load_extras(w, onto, [rel])
     for problem in check_relation(
         onto, rel, subject_type, object_type, existing,
         object_unique=rel.object_id in extra.unique, nesting=extra.nesting, ended=extra.ended,
@@ -2745,11 +2763,12 @@ async def _move_relations(w: Changes, keep_id: str, gone_id: str) -> None:
     await w.update_rows(RELATIONS, moves)
     # Flags before removals, as the old walk did: a flag can point at a fact removed
     # later in the walk, and removing that fact removes its flags too.
+    extra = await states.load_extras(w, onto, [moved for moved, _ in to_check])
     for moved, others in to_check:
         subject, obj = (entities.get(e) for e in (moved.subject_id, moved.object_id))
         if subject is None or obj is None or {subject["status"], obj["status"]} - set(LIVE):
             raise MemoryRuleError(NOT_FOUND)  # the far end was rejected or merged away
-        await _flag_problems(w, onto, moved, subject["type"], obj["type"], others)
+        await _flag_problems(w, onto, moved, subject["type"], obj["type"], others, extra)
     for relation_id in gone_rows:
         await _delete_relation(w, relation_id)
     for twin_id, upgrade in upgrades:

@@ -15,7 +15,14 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from dmbot.memory._changes import ENTITIES, FLAGS, STATES, Changes, Scope
-from dmbot.memory.checks import ACTING, ACTS_AFTER_END, NESTS, Nesting, acts_after_end
+from dmbot.memory.checks import (
+    ACTING,
+    ACTS_AFTER_END,
+    NESTS,
+    Ended,
+    Nesting,
+    acts_after_end,
+)
 from dmbot.memory.models import (
     DM,
     ENDED,
@@ -47,7 +54,9 @@ class Extras:
 
     unique: frozenset[str] = frozenset()  # items of which only one exists
     nesting: Nesting | None = None  # places inside places
-    ended: Mapping[str, int] = field(default_factory=dict)  # entry → when it died or was destroyed
+    ended: Mapping[str, Ended] = field(
+        default_factory=dict
+    )  # entry → when it died or was destroyed
 
 
 async def current_states(w: Scope, entity_ids: Collection[str]) -> dict[str, State]:
@@ -57,7 +66,7 @@ async def current_states(w: Scope, entity_ids: Collection[str]) -> dict[str, Sta
     return {r["entity_id"]: state_of(r) for r in rows}
 
 
-async def ended_since(w: Scope, entity_ids: Collection[str]) -> dict[str, int]:
+async def ended_since(w: Scope, entity_ids: Collection[str]) -> dict[str, Ended]:
     """When each of these entries died or was destroyed (only those that have)."""
     if not entity_ids:
         return {}
@@ -66,7 +75,7 @@ async def ended_since(w: Scope, entity_ids: Collection[str]) -> dict[str, int]:
         " AND closed_at IS NULL AND condition = ANY(%s) AND entity_id = ANY(%s)",
         [list(ENDED), sorted(entity_ids)],
     )
-    return {r["entity_id"]: state_of(r).since for r in rows}
+    return {r["entity_id"]: Ended(r["from_session_at"], r["created_at"]) for r in rows}
 
 
 async def place_nesting(w: Scope, onto: Ontology) -> Nesting:
@@ -172,12 +181,22 @@ async def close_for_new_kind(w: Changes, onto: Ontology, entity_id: str, type_ke
         await w.update(STATES, held.id, {"closed_at": w.now})
 
 
-async def move_states(w: Changes, keep_id: str, gone_id: str) -> None:
-    """A merged entry's current condition goes with it, unless the kept entry has its own
-    (the one the DM kept wins; the other stays behind as history)."""
+async def move_states(
+    w: Changes, onto: Ontology, keep_id: str, keep_type: str, gone_id: str
+) -> None:
+    """A merged entry's current condition goes with it when the kept entry has none and its
+    kind can have that condition (an item merged into a character leaves `intact` behind).
+    Otherwise it is closed and stays as history: the one the DM kept wins, and a merged-away
+    entry has no current condition."""
     current = await current_states(w, [keep_id, gone_id])
-    if gone_id in current and keep_id not in current:
-        await w.update(STATES, current[gone_id].id, {"entity_id": keep_id})
+    gone = current.get(gone_id)
+    if gone is None:
+        return
+    allowed = conditions_for(onto, keep_type)
+    if keep_id not in current and allowed is not None and gone.condition in allowed:
+        await w.update(STATES, gone.id, {"entity_id": keep_id})
+    else:
+        await w.update(STATES, gone.id, {"closed_at": w.now})
 
 
 async def flag_new(
@@ -201,7 +220,7 @@ async def flag_new(
 
 
 async def flag_acting_after_end(
-    w: Changes, onto: Ontology, facts: Sequence[Relation], ended: Mapping[str, int]
+    w: Changes, onto: Ontology, facts: Sequence[Relation], ended: Mapping[str, Ended]
 ) -> list[dict[str, Any]]:
     """Flag each of these facts that a dead or destroyed entry acts in after it ended. The
     flag rows written."""

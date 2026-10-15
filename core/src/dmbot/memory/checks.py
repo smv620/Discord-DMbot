@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
+from typing import NamedTuple
 
 from dmbot.memory.models import REJECTED, Relation
 from dmbot.memory.ontology import Ontology, PredicateTerm
@@ -24,10 +25,11 @@ FLAG_KINDS = (WRONG_SUBJECT, WRONG_OBJECT, TOO_MANY, CONTRADICTION, HELD_TWICE, 
 NESTS = "located_in"
 # The relationships where the subject DOES something, so a dead or destroyed one can't (the
 # two-way ones act with both ends). Not `kin_of` (the dead still have family), not `located_in`
-# (a body lies somewhere), not `plays`. A list in code, never guessed from a relationship's
+# (a body lies somewhere), not `owns` (a dead owner still owns, and an heir's claim is dated
+# later), not `plays`. A list in code, never guessed from a relationship's
 # word: a new relationship acts only when it is added here.
 ACTING = frozenset(
-    {"owns", "carries", "serves", "sworn_to", "member_of", "knows", "appears_in", "ally_of",
+    {"carries", "serves", "sworn_to", "member_of", "knows", "appears_in", "ally_of",
      "enemy_of"}
 )  # fmt: skip
 
@@ -120,21 +122,34 @@ class Nesting:
         return inner == outer or inner in self.above(outer)
 
 
-def moment(fact: Relation) -> int:
-    """When a fact is dated: the session it is from, else when it was stored."""
-    return fact.created_at if fact.from_session_at is None else fact.from_session_at
+class Ended(NamedTuple):
+    """When a dead or destroyed condition began: the session it dates from (None when nobody
+    said) and when DMbot stored it."""
+
+    session: int | None
+    stored: int
 
 
-def acts_after_end(onto: Ontology, fact: Relation, ended: Mapping[str, int]) -> bool:
-    """Is a dead or destroyed entry the actor of a fact dated after it ended? `ended` maps an
-    entry to when its dead or destroyed condition began. A fact in the same session as the
-    end is not after it: session dates are as fine as DMbot knows."""
+def acts_after_end(onto: Ontology, fact: Relation, ended: Mapping[str, Ended]) -> bool:
+    """Is a dead or destroyed entry the actor of a fact dated after it ended? Like is compared
+    with like: a fact with a session date against the end's session date (the end's stored time
+    when it has none), a fact with no date by when it was stored against when the end was
+    stored. A fact in the same session as the end is not after it: session dates are as fine
+    as DMbot knows, and a session date is never set against a stored time."""
     term = onto.predicates.get(fact.predicate)
     if term is None or term.key not in ACTING:
         return False
     actors = (fact.subject_id, fact.object_id) if term.symmetric else (fact.subject_id,)
-    when = moment(fact)
-    return any(a in ended and when > ended[a] for a in actors)
+    for a in actors:
+        end = ended.get(a)
+        if end is None:
+            continue
+        if fact.from_session_at is None:
+            if fact.created_at > end.stored:
+                return True
+        elif fact.from_session_at > (end.stored if end.session is None else end.session):
+            return True
+    return False
 
 
 def check_relation(
@@ -146,7 +161,7 @@ def check_relation(
     *,
     object_unique: bool = False,
     nesting: Nesting | None = None,
-    ended: Mapping[str, int] | None = None,
+    ended: Mapping[str, Ended] | None = None,
 ) -> list[Problem]:
     """Problems with `new`, given the live facts already stored about its subject and
     object. Never raises for a rule failure: problems are returned to be flagged.

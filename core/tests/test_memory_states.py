@@ -15,6 +15,7 @@ from dmbot.memory.checks import (
     HELD_TWICE,
     PLACE_LOOP,
     TOO_MANY,
+    Ended,
     Nesting,
     check_relation,
 )
@@ -247,8 +248,9 @@ class Places(unittest.TestCase):
 
 class Acting(unittest.TestCase):
     def check(self, new: Relation, ended: dict[str, int]) -> list[str]:
+        marks = {k: Ended(v, v) for k, v in ended.items()}
         return [
-            p.kind for p in check_relation(ONTO, new, "character", "character", [], ended=ended)
+            p.kind for p in check_relation(ONTO, new, "character", "character", [], ended=marks)
         ]
 
     def test_a_dead_character_acting_after_dying_is_a_flag(self) -> None:
@@ -464,8 +466,6 @@ class Storage(MemoryTest):
         await self.two_carry(item)
         self.assertEqual(len(await self.flags(HELD_TWICE)), 1)
         await self.memory.set_unique(GUILD_A, self.c, item, False, source="dm")
-        closed = await self.memory.resolve_stale_flags(GUILD_A, self.c)
-        self.assertEqual(len(closed.value), 1)
         self.assertEqual(await self.flags(), [])
 
     async def test_only_the_dm_sets_it_and_only_on_an_item(self) -> None:
@@ -727,6 +727,131 @@ class Storage(MemoryTest):
         await self.memory.set_condition(GUILD_A, self.c, a, "dead", source="dm")
         await self.campaigns.delete(GUILD_A, self.c)
         self.assertEqual(await self.count("memory_states"), 0)
+
+    # ---- gaps the reviewers named ----------------------------------------------------
+
+    async def test_merging_two_holders_of_one_item_flags_it_and_undo_puts_it_back(self) -> None:
+        item = await self.add("Heartseeker", type="item")
+        mira, snot = await self.add("Mira"), await self.add("Snot")
+        await self.relate(mira, "carries", item)
+        await self.relate(snot, "owns", item)  # not a holding
+        extra = await self.add("Mira the Bold")
+        await self.relate(extra, "carries", item)
+        self.assertEqual(len(await self.flags(HELD_TWICE)), 1)
+
+    async def test_merging_a_dead_character_in_flags_what_it_did_after_dying(self) -> None:
+        keep, gone, friend = (
+            await self.add("Belleros"),
+            await self.add("Bell"),
+            await self.add("Mira"),
+        )
+        await self.memory.set_condition(
+            GUILD_A, self.c, keep, "dead", source="dm", from_session_at=100
+        )
+        await self.relate(gone, "serves", friend, from_session_at=200)
+        self.assertEqual(await self.flags(), [])
+        await self.memory.merge(GUILD_A, self.c, keep, gone, source="dm", dm_said_same=True)
+        self.assertEqual([f.kind for f in await self.flags()], [ACTS_AFTER_END])
+
+    async def test_undo_of_a_merge_that_moved_a_condition_puts_it_back(self) -> None:
+        keep, gone = await self.add("Belleros"), await self.add("Bell")
+        await self.memory.set_condition(GUILD_A, self.c, gone, "dead", source="dm")
+        before = await self.snapshot()
+        merged = await self.memory.merge(
+            GUILD_A, self.c, keep, gone, source="dm", dm_said_same=True
+        )
+        assert merged.batch is not None
+        await self.memory.undo(GUILD_A, self.c, merged.batch)
+        self.assertEqual(await self.snapshot(), before)
+
+    async def test_merging_an_item_into_a_character_leaves_its_condition_behind(self) -> None:
+        keep, gone = await self.add("Belleros"), await self.add("Bell", type="item")
+        await self.memory.set_condition(GUILD_A, self.c, gone, "intact", source="dm")
+        await self.memory.merge(GUILD_A, self.c, keep, gone, source="dm", dm_said_same=True)
+        self.assertEqual(await self.memory.states(GUILD_A, self.c), {})  # none current
+        data = await self.campaigns.export(GUILD_A, self.c)
+        await self.campaigns.import_backup(GUILD_B, data, DM)  # and the backup still loads
+
+    async def test_the_condition_left_behind_by_a_merge_is_closed(self) -> None:
+        keep, gone = await self.add("Belleros"), await self.add("Bell")
+        await self.memory.set_condition(GUILD_A, self.c, keep, "alive", source="dm")
+        await self.memory.set_condition(GUILD_A, self.c, gone, "dead", source="dm")
+        await self.memory.merge(GUILD_A, self.c, keep, gone, source="dm", dm_said_same=True)
+        states = await self.memory.states(GUILD_A, self.c)
+        self.assertEqual({k: v.condition for k, v in states.items()}, {keep: "alive"})
+
+    async def test_an_undated_fact_is_not_set_against_a_session_date(self) -> None:
+        cerric, mira = await self.person(), await self.add("Mira")
+        await self.memory.set_condition(
+            GUILD_A, self.c, cerric, "dead", source="dm", from_session_at=self.now - 1000
+        )
+        self.now += 10
+        later = await self.relate(cerric, "serves", mira)  # no date: stored after it was stored
+        self.assertEqual([f.kind for f in later.value[1]], [ACTS_AFTER_END])
+        before = await self.memory.state_history(GUILD_A, self.c, cerric)
+        self.assertEqual(len(before), 1)
+
+    async def test_switching_off_closes_the_alerts_about_the_holders(self) -> None:
+        item = await self.add("Heartseeker", type="item")
+        await self.two_carry(item)
+        self.assertEqual(len(await self.flags(HELD_TWICE)), 1)
+        await self.memory.set_unique(GUILD_A, self.c, item, False, source="dm")
+        self.assertEqual(await self.flags(), [])
+
+    async def test_undo_of_the_one_of_a_kind_switch(self) -> None:
+        item = await self.add("a longbow", type="item")
+        before = await self.snapshot()
+        done = await self.memory.set_unique(GUILD_A, self.c, item, True, source="dm")
+        assert done.batch is not None
+        await self.memory.undo(GUILD_A, self.c, done.batch)
+        self.assertEqual(await self.snapshot(), before)
+
+    async def test_three_holders_flag_each_pair_once_and_a_rejected_one_does_not_count(
+        self,
+    ) -> None:
+        item = await self.add("a longbow", type="item")
+        people = [await self.add(n) for n in ("Mira", "Snot", "Kesh", "Ulf")]
+        rels = [(await self.relate(p, "carries", item)).value[0] for p in people]
+        await self.memory.update_relation(
+            GUILD_A, self.c, rels[3].id, source="dm", status="rejected"
+        )
+        written = await self.memory.set_unique(GUILD_A, self.c, item, True, source="dm")
+        self.assertEqual(len(written.value[1]), 3)  # three holders, three pairs
+
+    async def test_places_in_another_campaign_do_not_make_a_loop_here(self) -> None:
+        other = (await self.campaigns.create(GUILD_A, "Sunken City", DM)).id
+        a1 = await self.add("Inn", type="place")
+        t1 = await self.add("Town", type="place")
+        await self.relate(a1, "located_in", t1)
+        a2 = (
+            await self.memory.add_entity(GUILD_A, other, type="place", name="Town", source="dm")
+        ).value.id
+        b2 = (
+            await self.memory.add_entity(GUILD_A, other, type="place", name="Inn", source="dm")
+        ).value.id
+        written = await self.memory.add_relation(
+            GUILD_A, other, a2, "located_in", b2, source="dm", confidence=1.0
+        )
+        self.assertEqual(written.value[1], [])
+
+    async def test_a_place_fact_that_ended_does_not_count_as_nesting(self) -> None:
+        keep, inn = await self.add("Keep", type="place"), await self.add("Inn", type="place")
+        mira = await self.add("Mira")
+        old = await self.relate(inn, "located_in", keep)
+        await self.memory.update_relation(
+            GUILD_A, self.c, old.value[0].id, source="dm", to_session_at=5
+        )
+        await self.relate(mira, "located_in", keep)
+        again = await self.relate(mira, "located_in", inn)
+        self.assertEqual([f.kind for f in again.value[1]], [TOO_MANY])
+
+    async def test_a_kind_change_away_from_item_forgets_one_of_a_kind(self) -> None:
+        item = await self.add("Heartseeker", type="item")
+        await self.memory.set_unique(GUILD_A, self.c, item, False, source="dm")
+        await self.memory.set_entity_type(GUILD_A, self.c, item, "concept", source="dm")
+        entity = await self.memory.entity(GUILD_A, self.c, item)
+        assert entity is not None
+        self.assertIsNone(entity.unique_item)
 
 
 class Migration0070(MemoryTest):

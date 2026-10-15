@@ -231,7 +231,7 @@ class NameCards(NamesTest):
         await name_card.show_card(it, self.campaign.id, sword.id)
         text, _kw = it.response.sent[0]
         view = _kw["view"]
-        self.assertIn(name_card.ONLY_ONE, text)  # a proper name: taken as one of a kind
+        self.assertIn(name_card.ONLY_ONE_GUESS, text)  # a proper name: taken as one of a kind
         self.assertEqual(
             [getattr(c, "label", "") for c in view.children if c.row == 3],
             [name_card.MORE_THAN_ONE_BUTTON],
@@ -241,13 +241,13 @@ class NameCards(NamesTest):
         it = self.it()
         await name_card.show_card(it, self.campaign.id, bow.id)
         text, _kw = it.response.sent[0]
-        self.assertNotIn(name_card.ONLY_ONE, text)
+        self.assertNotIn("only one", text.lower())
         (button,) = [c for c in _kw["view"].children if c.row == 3]
         self.assertEqual(button.label, name_card.ONLY_ONE_BUTTON)
         it = self.it()
         await button.callback(it)  # the DM says there is only one
         text, view = it.response.edited[0]
-        self.assertIn(name_card.ONLY_ONE, text)
+        self.assertIn(name_card.ONLY_ONE, text)  # now the DM's word, not a guess
         self.assertTrue((await self.memory.entity(GUILD, self.campaign.id, bow.id)).is_unique)  # type: ignore[union-attr]
         (back,) = [c for c in view.children if c.row == 3]
         self.assertEqual(back.label, name_card.MORE_THAN_ONE_BUTTON)

@@ -69,9 +69,10 @@ from dmbot.ui.names import (
 
 log = logging.getLogger(__name__)
 ITEM = "item"  # only an item can be one of a kind (extension kinds under it aren't offered)
-ONLY_ONE = "☝️ Only one of these exists."
-ONLY_ONE_BUTTON = "Only one of these exists"
-MORE_THAN_ONE_BUTTON = "There can be more"
+ONLY_ONE = "☝️ Only one of these exists (you said so)."
+ONLY_ONE_GUESS = "☝️ Taken as the only one (it has a proper name)."
+ONLY_ONE_BUTTON = "☝️ Only one exists"
+MORE_THAN_ONE_BUTTON = "Allow more than one"
 ALSO_CALLED = "🏷️ Also called…"  # adds another name; its own icon, not Add a name's (#393)
 NOTHING_CHANGED = (
     "Something went wrong and nothing was changed. Press 🔍 Find a name to open it and try again."
@@ -189,7 +190,7 @@ def card_text(
     what = f"{phrase} · played by **{_md(player)}**" if player else phrase
     lines = [f"🪪 **{_md(entity.name)}** · {what} · {when}"]
     if entity.type == ITEM and entity.is_unique:
-        lines.append(ONLY_ONE)
+        lines.append(ONLY_ONE if entity.unique_item else ONLY_ONE_GUESS)
     if sheet:
         lines.append(sheet)
     if others:
@@ -393,9 +394,10 @@ class NameCard(_Menu):
             return
         changed(interaction, campaign)
         note = (
-            f"☝️ **{_md(name)}**: only one exists."
+            f"☝️ Noted: there is only one **{_md(name)}**. It goes in your after-session "
+            "report if two characters carry it. You can change this any time."
             if now_unique
-            else f"**{_md(name)}**: there can be more than one."
+            else f"Noted: there can be more than one **{_md(name)}**."
         )
         await show_card(interaction, campaign.id, self.entity_id, replace=True, note=note)
 

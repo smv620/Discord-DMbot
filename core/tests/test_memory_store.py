@@ -667,9 +667,9 @@ class Rules(MemoryTest):
 
         sizes: list[int] = []
 
-        def counted(onto: Any, new: Any, st: str, ot: str, existing: Any) -> Any:
+        def counted(onto: Any, new: Any, st: str, ot: str, existing: Any, **kw: Any) -> Any:
             sizes.append(len(existing))
-            return real(onto, new, st, ot, existing)
+            return real(onto, new, st, ot, existing, **kw)
 
         with patch.object(store_module, "check_relation", counted):
             closed = await self.memory.resolve_stale_flags(GUILD_A, self.c)
