@@ -122,7 +122,9 @@ async def delete_person(db: Database, user_id: int, *, now: int | None = None) -
     installs keep the server but lose the person. What's kept: the Discord id in
     try_it_used (one free trial per person) and payment events with the Discord id and the
     subscription id (so a replayed payment can't apply twice, and a cancelled subscription's
-    last news isn't retried): ids only (privacy page, #433, #571).
+    last news isn't retried): ids only (privacy page, #433, #571). The person's sent-email
+    records go (#1287); the never-email-me-again list (email_unsubscribed: a Discord id, the
+    kind and a time) stays, so a returning account is never emailed against its wish.
 
     The campaigns the person owns are **kept**, ownerless, so the players can still read and
     download them: they go 120 days later unless another DM takes them on (#1059; owner,
@@ -136,6 +138,7 @@ async def delete_person(db: Database, user_id: int, *, now: int | None = None) -
         log.info("Account deletion: %s campaign(s) kept, ownerless", row["n"] if row else 0)
         # The account's history of earlier Discord accounts goes with it (#1230).
         await conn.execute("SELECT dmbot_forget_account_history()")
+        await conn.execute("SELECT dmbot_forget_email_records()")
         await conn.execute("DELETE FROM web_users WHERE user_id = %s", (user_id,))
         # Free access goes with the account (#771). It isn't linked to web_users (a grant
         # works for someone who never signed in), so it's deleted by hand.
