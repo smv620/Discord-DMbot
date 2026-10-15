@@ -30,13 +30,21 @@ from dmbot.memory.continuity import (
 )
 from dmbot.memory.models import DESTROYED, MemoryRuleError
 from dmbot.ui.claims_review import statement
-from dmbot.ui.dmbot_commands import _bot, _Button, _Menu, _replace, _send, _tell
+from dmbot.ui.dmbot_commands import (
+    _answer_first,
+    _bot,
+    _Button,
+    _Menu,
+    _replace,
+    _send,
+    _tell,
+)
 from dmbot.ui.names import _campaign_for, _md, _memory
 
 log = logging.getLogger(__name__)
 
 PAGE = 5  # heads-ups per page: a row of three buttons for each, and Discord allows five rows
-NOTHING_LEFT = "✅ No heads-ups. DMbot will look again after the next session."
+NOTHING_LEFT = "✅ Nothing left to check. DMbot looks again after your next session."
 _FINAL = (GONE, STOPPED_NOW, ODD_NOW)  # answers that end a heads-up without a choice
 
 
@@ -44,9 +52,8 @@ def waiting_text(count: int) -> str:
     """For the DM screen after a session: how many, never what."""
     what = "heads-up" if count == 1 else "heads-ups"
     return (
-        f"⚠️ **{count} {what} from this session.** Something said at the table may not fit "
-        "the story so far. Nothing changes until you say so. Press the button; only you will see "
-        "it."
+        f"⚠️ **{count} {what} from this session.** Something said at the table may clash with "
+        "your story. Nothing changes until you decide. Only you can see the list."
     )
 
 
@@ -66,31 +73,37 @@ def line_text(conflict: Conflict, numbers: Mapping[int, int]) -> str:
         if conflict.earlier is not None and conflict.earlier.quote
         else ""
     )
-    now = f"In this session: {statement(conflict.claim)}."
+    now = f"At the table: {statement(conflict.claim)}."
     if conflict.kind in (ACTS_AFTER_END, BACK_FROM_THE_END):
         ended = "was destroyed" if conflict.ended_condition == DESTROYED else "died"
         return f"⚠️ **{level}:** {name} {ended}{when}{quote}. {now}"
-    before = _md(conflict.earlier_words) or "something earlier"
+    before = _md(conflict.earlier_words) or "earlier in your story"
     return f"⚠️ **{level}: {name}.** Before{when}: {before}{quote}. {now}"
 
 
 def changed_label(conflict: Conflict) -> str:
+    """Short, because a number goes in front and Discord cuts a button at 25 characters on a
+    phone: what the DM is saying is true now."""
     if conflict.ended_condition == DESTROYED:
-        return "Not destroyed after all"
+        return "Still here"
     if conflict.ended_condition is not None:
         return "Alive after all"
-    return "It changed"
+    return "Story changed"
 
 
 def page_text(
     page: list[Conflict], total: int, numbers: Mapping[int, int], answered: Mapping[str, str]
 ) -> str:
-    lines = ["**Heads-ups from this session.** Pick what happened in your game."]
+    lines = [
+        "**Heads-ups from this session.** Pick what is true in your story.\n"
+        "**Story changed:** the new thing is true now. **Wasn't real:** a joke or a mistake; "
+        "DMbot forgets it. **Ignore:** leave it for now."
+    ]
     for number, conflict in enumerate(page, 1):
         done = answered.get(conflict.claim.id)
         lines.append(f"{number}. {line_text(conflict, numbers) if done is None else done}")
     if total > len(page):
-        lines.append(f"\n_{total - len(page)} more. Answer these and the next ones appear._")
+        lines.append(f"\n_{total - len(page)} more waiting. They show when these are done._")
     return "\n".join(lines)
 
 
@@ -145,7 +158,7 @@ async def start_continuity_review(interaction: discord.Interaction, campaign_id:
     if _memory(interaction) is None:
         await _tell(
             interaction,
-            "Remembering names isn't switched on for this DMbot yet. "
+            "Story memory isn't switched on for this DMbot yet. "
             "Ask whoever runs DMbot to turn it on.",
         )
         return
@@ -197,7 +210,7 @@ class ContinuityReview(_Menu):
             gone = conflict.claim.id in self.answered
             for action, label, style in (
                 (CHANGED, changed_label(conflict), discord.ButtonStyle.primary),
-                (NOT_TRUE, "Not true", discord.ButtonStyle.secondary),
+                (NOT_TRUE, "Wasn't real", discord.ButtonStyle.secondary),
                 (IGNORE, "Ignore", discord.ButtonStyle.secondary),
             ):
                 self.add_item(
@@ -224,6 +237,7 @@ class ContinuityReview(_Menu):
         conflict = next((c for c in self.page if c.claim.id == claim_id), None)
         if campaign is None or memory is None or guild is None or conflict is None:
             return
+        await _answer_first(interaction, in_place=True)  # the steps below can take a moment
         try:
             # Who may be recorded is asked again now: someone may have stopped meanwhile.
             agreed = await _bot(interaction).consent.consenting(guild.id)
@@ -245,17 +259,15 @@ class ContinuityReview(_Menu):
         if action == IGNORE:
             self.ignored.add(claim_id)
         log.info("Continuity heads-up answered: %s", action or "gone")  # a count, never words
-        self.answered[claim_id] = said
-        text = self._render()
-        if len(self.answered) >= len(self.page):  # the page is done: the next one
-            fresh = await self.current_text(interaction)
-            if fresh is None:
-                self.stop()
-                await _replace(interaction, f"{said}\n\n{NOTHING_LEFT}", None)
-                return
-            await _replace(interaction, f"{said}\n\n{fresh}", self)
+        # The whole list is read again after every answer, with consent asked again: a line that
+        # someone who has stopped being recorded said must leave the screen now, not when the
+        # page is done.
+        fresh = await self.current_text(interaction)
+        if fresh is None:
+            self.stop()
+            await _replace(interaction, f"{said}\n\n{NOTHING_LEFT}", None)
             return
-        await _replace(interaction, text, self)
+        await _replace(interaction, f"{said}\n\n{fresh}", self)
 
 
 __all__ = [

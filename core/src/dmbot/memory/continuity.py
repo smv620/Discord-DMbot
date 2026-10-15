@@ -46,7 +46,6 @@ from dmbot.memory.claims import (
 )
 from dmbot.memory.models import (
     ALIVE,
-    CLAIM_CONFIRMED,
     CLAIM_PROPOSED,
     CONFIRMED,
     DESTROYED,
@@ -66,6 +65,10 @@ from dmbot.memory.store import MemoryStore, _entity, _load_ontology, _relation
 
 log = logging.getLogger(__name__)
 
+# Campaigns already logged as past the critical mass in this process: one line each, not one for
+# every check (the store is built anew for every call).
+_CROSSED: set[str] = set()
+
 LIKELY, PROBABLE, POSSIBLE = "likely", "probable", "possible"
 
 # What kind of conflict a claim makes with something confirmed. The first four are the
@@ -76,7 +79,8 @@ BACK_FROM_THE_END = "back_from_the_end"
 # How sure each rule is, set here and not guessed by an AI: a direct contradiction of a
 # confirmed fact is likely; a dead or destroyed entry acting later is probable (it may be a
 # flashback or a ghost); a one-of-a-kind item in two hands is probable; being in two places at
-# once is only possible (people travel). These numbers are tuned on the golden set.
+# once is only possible (people travel). These numbers are provisional: they get tuned on the
+# golden set and in live tests.
 RULE_PROBABILITY: Mapping[str, float] = {
     BACK_FROM_THE_END: 0.90,
     CONTRADICTION: 0.90,
@@ -184,12 +188,16 @@ def conflicts_in(claims: Sequence[Claim], world: World, levels: Levels) -> list[
     """The possible conflicts between these claims and the confirmed story. Pure. A claim that
     names nothing DMbot knows, or fits no rule, makes none. At most one conflict for each claim
     and rule; the surest first."""
-    found: list[Conflict] = []
+    found: list[Conflict | None] = []
     ended = {
         eid: Ended(state.from_session_at, state.created_at)
         for eid, state in world.states.items()
         if state.condition in ENDED
     }
+    by_entry: dict[str, list[Relation]] = {}  # built once: a claim only meets its own entries
+    for r in world.relations:
+        by_entry.setdefault(r.subject_id, []).append(r)
+        by_entry.setdefault(r.object_id, []).append(r)
     for claim in claims:
         if claim.status != CLAIM_PROPOSED:
             continue
@@ -218,10 +226,12 @@ def conflicts_in(claims: Sequence[Claim], world: World, levels: Levels) -> list[
             continue
         s, o = ordered(term, subject_id, object_id)
         candidate = Relation(
-            new_id(), s, term.key, o, "", 1.0, CONFIRMED, DM, (), claim.session_started_at, None,
-            None, None, False, claim.created_at,
+            id=new_id(), subject_id=s, predicate=term.key, object_id=o, detail="", confidence=1.0,
+            status=CONFIRMED, source=DM, mention_ids=(), from_session_at=claim.session_started_at,
+            to_session_at=None, from_game_time=None, to_game_time=None, secret=False,
+            created_at=claim.created_at,
         )  # fmt: skip
-        touching = [r for r in world.relations if {r.subject_id, r.object_id} & {s, o}]
+        touching = list({r.id: r for r in (*by_entry.get(s, ()), *by_entry.get(o, ()))}.values())
         for problem in check_relation(
             world.onto,
             candidate,
@@ -247,7 +257,7 @@ def conflicts_in(claims: Sequence[Claim], world: World, levels: Levels) -> list[
     seen: set[tuple[str, str]] = set()
     unique: list[Conflict] = []
     for item in found:
-        if item.level and item.pair not in seen:
+        if item is not None and item.pair not in seen:
             seen.add(item.pair)
             unique.append(item)
     unique.sort(
@@ -266,9 +276,13 @@ def _make(
     *,
     condition: str | None = None,
     clash: Relation | None = None,
-) -> Conflict:
+) -> Conflict | None:
+    """The conflict, or None when the rule is not sure enough to reach even `possible`
+    (the backend settings may be raised above a rule's number)."""
     probability = RULE_PROBABILITY[kind]
     level = levels.level_of(probability)
+    if level is None:
+        return None
     entity = world.entities.get(entity_id)
     name = entity.name if entity is not None else claim.subject
     if clash is not None:
@@ -287,14 +301,16 @@ def _make(
         clash_ids: tuple[str, ...] = (clash.id,)
     else:
         words = ""
-        said = world.said.get(end.id) if end is not None else None
+        # A confirmed "Ulfgar is dead" claim keeps the entry's id as its fact (no state row
+        # may have been made), so the state's id and then the entry's id are both tried.
+        said = (world.said.get(end.id) or world.said.get(end.entity_id)) if end else None
         clash_ids = ()
     revive = end.entity_id if end is not None and kind != BACK_FROM_THE_END else None
     return Conflict(
         claim=claim,
         kind=kind,
         probability=probability,
-        level=level or POSSIBLE,
+        level=level,
         entity_id=entity_id,
         entity_name=name,
         ended_condition=end.condition if end is not None else None,
@@ -317,7 +333,6 @@ class ContinuityStore:
     def __init__(self, memory: MemoryStore) -> None:
         self._memory = memory
         self._claims = ClaimStore(memory)
-        self._crossed: set[str] = set()
 
     async def check(
         self,
@@ -334,29 +349,43 @@ class ContinuityStore:
         waiting = await self._claims.waiting(guild_id, campaign_id, opted_in=opted_in)
         if session_started_at is not None:
             waiting = [c for c in waiting if c.session_started_at == session_started_at]
-        world, facts, sessions = await self._world(guild_id, campaign_id, opted_in)
+        facts, sessions = await self._counts(guild_id, campaign_id)
         ready = reached_critical_mass(facts, sessions, levels)
-        if ready and campaign_id not in self._crossed:
-            self._crossed.add(campaign_id)
+        if ready and campaign_id not in _CROSSED:
+            _CROSSED.add(campaign_id)
             log.info(
                 "Continuity warnings are on for a campaign: %d confirmed facts, %d sessions",
                 facts, sessions,
             )  # fmt: skip
         if not ready or not waiting:
-            return Report((), facts, sessions, ready, len(waiting))
+            return Report((), facts, sessions, ready, len(waiting))  # the story is not read
+        world = await self._world(guild_id, campaign_id, opted_in)
         return Report(
             tuple(conflicts_in(waiting, world, levels)), facts, sessions, ready, len(waiting)
         )
 
-    async def _world(
-        self, guild_id: int, campaign_id: str, opted_in: Collection[int]
-    ) -> tuple[World, int, int]:
+    async def _counts(self, guild_id: int, campaign_id: str) -> tuple[int, int]:
+        """How many confirmed facts the campaign has and how many sessions they come from:
+        two counts, no rows, so the story is only read when there is something to check."""
+        async with self._memory._read(guild_id, campaign_id) as scope:
+            cur = await scope.conn.execute(
+                "SELECT count(*) AS facts, count(DISTINCT from_session_at) AS sessions"
+                " FROM memory_relations WHERE guild_id = %s AND campaign_id = %s"
+                " AND status = 'confirmed'",
+                scope.ids,
+            )
+            row = await cur.fetchone()
+        return (int(row["facts"]), int(row["sessions"])) if row else (0, 0)
+
+    async def _world(self, guild_id: int, campaign_id: str, opted_in: Collection[int]) -> World:
         async with self._memory._read(guild_id, campaign_id, snapshot=True) as scope:
             onto = await _load_ontology(scope)
             entity_rows = await scope.select(
                 ENTITIES, " AND status IN ('proposed', 'confirmed') AND type <> 'person'"
             )
             alias_rows = await scope.select(ALIASES, " AND status <> 'rejected'")
+            # Secret facts are left out: the DM keeps them from the table on purpose, so a
+            # clash with one is not a slip to point at.
             relation_rows = await scope.select(
                 RELATIONS, " AND status = 'confirmed' AND NOT secret ORDER BY created_at, id"
             )
@@ -383,9 +412,7 @@ class ContinuityStore:
         unique = frozenset(
             e.id for e in entities.values() if onto.is_a(e.type, "item") and e.is_unique
         )
-        sessions = {r.from_session_at for r in relations if r.from_session_at is not None}
-        sessions |= {s.from_session_at for s in states.values() if s.from_session_at is not None}
-        world = World(
+        return World(
             onto,
             names_of(entity_rows, alias_rows),
             entities,
@@ -395,7 +422,6 @@ class ContinuityStore:
             states,
             said,
         )
-        return world, len(relations), len(sessions)
 
     async def answer(
         self,
@@ -422,24 +448,29 @@ class ContinuityStore:
             return "Not remembered. DMbot won't ask again."
         if action != CHANGED:
             raise MemoryRuleError("DMbot doesn't know that button any more.")
-        world, _facts, _sessions = await self._world(guild_id, campaign_id, opted_in)
+        world = await self._world(guild_id, campaign_id, opted_in)
         mine = [c for c in conflicts_in([claim], world, levels) if c.claim.id == claim_id]
-        top = mine[0] if mine else None
+        clash_ids = tuple(dict.fromkeys(i for c in mine for i in c.clash_ids))
+        revive = {c.revive_id: c.ended_condition for c in mine if c.revive_id is not None}
 
         async def before(w: Changes) -> None:
-            if top is None:
-                return
-            if top.revive_id is not None:  # a dead or destroyed entry acts again: it is back
-                back = INTACT if top.ended_condition == DESTROYED else ALIVE
-                await self._memory.set_condition_in(
-                    w, top.revive_id, back, claim.session_started_at
+            # Everything an answer changes is checked again here, under the campaign's lock,
+            # in the transaction that writes the claim: the story may have moved since it was read.
+            for entity_id, ended in revive.items():
+                state = await w.select(
+                    STATES, " AND entity_id = %s AND closed_at IS NULL", [entity_id]
                 )
-            for fact_id in top.clash_ids:  # the earlier fact ends where the new one starts
-                if claim.session_started_at is not None:
+                if state and state[0]["condition"] in ENDED:
+                    back = INTACT if ended == DESTROYED else ALIVE
+                    await self._memory.set_condition_in(
+                        w, entity_id, back, claim.session_started_at
+                    )
+            for fact_id in clash_ids:  # the earlier fact ends where the new one starts
+                row = await w.get(RELATIONS, fact_id)
+                if row is not None and row["to_session_at"] is None and claim.session_started_at:
                     await w.update(RELATIONS, fact_id, {"to_session_at": claim.session_started_at})
 
-        result = await self._claims.confirm(
+        await self._claims.confirm(
             guild_id, campaign_id, claim_id, opted_in=opted_in, before=before
         )
-        assert result.claim.status == CLAIM_CONFIRMED
         return "Remembered, and the earlier story is kept as history."

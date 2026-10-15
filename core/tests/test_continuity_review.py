@@ -56,6 +56,7 @@ class Review(MemoryTest):
             consent=SimpleNamespace(consenting=AsyncMock(return_value={7})),
         )
         it.response.is_done = lambda: False
+        it.response.defer = AsyncMock()
         it.response.send_message = reply
         it.response.edit_message = reply
         it.followup.send = reply
@@ -68,10 +69,10 @@ class Review(MemoryTest):
         text = await view.current_text(self.interaction())
         assert text is not None
         self.assertIn("⚠️ **Probable:** **Ulfgar** died", text)
-        self.assertIn("In this session: **Ulfgar** carries **Heartseeker**.", text)
+        self.assertIn("At the table: **Ulfgar** carries **Heartseeker**.", text)
         self.assertEqual(
             [getattr(b, "label", "") for b in view.children],
-            ["1 · Alive after all", "1 · Not true", "1 · Ignore"],
+            ["1 · Alive after all", "1 · Wasn't real", "1 · Ignore"],
         )
 
     async def test_alive_after_all_writes_the_fact_and_brings_them_back(self) -> None:
@@ -130,3 +131,25 @@ class Review(MemoryTest):
         fake.settings = SimpleNamespace(continuity=Levels(min_facts=50, min_sessions=3))
         await DMBot.warn_about_continuity(fake, self.table())
         fake.post.assert_not_called()
+
+    async def test_a_line_from_someone_who_stopped_leaves_the_screen_on_the_next_press(
+        self,
+    ) -> None:
+        # A second heads-up said by speaker 8; then 8 stops being recorded before 7's is answered.
+        kesh_bow = say_two = said("Kesh", "carries", "Heartseeker")
+        await self.relate(self.cerric, "carries", self.bow, status="confirmed", from_session_at=1)
+        await self.claims.propose(
+            GUILD_A, self.c, [kesh_bow], {"1": 8}, opted_in={7, 8}, prompt_version="p",
+            model="m", session_started_at=500,
+        )  # fmt: skip
+        assert say_two
+        view = continuity.ContinuityReview(self.c)
+        it = self.interaction()
+        it.client.consent.consenting = AsyncMock(return_value={7, 8})
+        first = await view.current_text(it)
+        assert first is not None and "**Kesh** carries" in first
+        ulfgar = next(c for c in view.page if c.claim.subject == "Ulfgar")
+        it.client.consent.consenting = AsyncMock(return_value={7})  # 8 has stopped
+        await view._decide(it, ulfgar.claim.id, "i")
+        shown = it.sent[-1]
+        self.assertNotIn("Kesh", shown)  # the other row's words are gone, not left on screen

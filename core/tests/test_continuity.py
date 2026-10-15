@@ -42,6 +42,13 @@ class Levelling(unittest.TestCase):
             [None, POSSIBLE, POSSIBLE, PROBABLE, PROBABLE, LIKELY, LIKELY],
         )
 
+    def test_the_boundaries_are_the_ones_in_the_design(self) -> None:
+        levels = Levels()
+        self.assertEqual(levels.level_of(0.50), POSSIBLE)  # probable is MORE than 50%
+        self.assertEqual(levels.level_of(0.80), LIKELY)  # likely is 80% or more
+        self.assertEqual(levels.level_of(0.25), POSSIBLE)  # possible is 25% or more
+        self.assertIsNone(levels.level_of(0.24))
+
     def test_critical_mass_needs_both_enough_facts_and_enough_sessions(self) -> None:
         levels = Levels()
         self.assertFalse(reached_critical_mass(49, 3, levels))
@@ -127,6 +134,43 @@ class Continuity(MemoryTest):
         await self.claim(said("Ulfgar", "enemy of", "Cerric"))
         (conflict,) = (await self.check()).conflicts
         self.assertEqual((conflict.kind, conflict.level), (CONTRADICTION, LIKELY))
+
+    async def test_raising_the_settings_above_a_rule_silences_it(self) -> None:
+        await self.relate(
+            self.ulfgar, "ally_of", self.cerric, status="confirmed", from_session_at=EARLIER
+        )
+        await self.claim(said("Ulfgar", "enemy of", "Cerric"))
+        quiet = Levels(possible=0.95, probable=0.95, likely=0.95, min_facts=1, min_sessions=1)
+        self.assertEqual((await self.check(levels=quiet)).conflicts, ())
+
+    async def test_a_secret_fact_is_not_pointed_at(self) -> None:
+        await self.relate(
+            self.ulfgar, "ally_of", self.cerric, status="confirmed", from_session_at=EARLIER
+        )
+        await self.relate(self.bram, "carries", self.bow, status="confirmed", secret=True)
+        await self.claim(said("Kesh", "carries", "Heartseeker"))
+        self.assertEqual((await self.check()).conflicts, ())
+
+    async def test_with_nothing_waiting_the_story_is_not_read(self) -> None:
+        from unittest.mock import patch
+
+        await self.story()
+        with patch.object(ContinuityStore, "_world", side_effect=AssertionError("read")):
+            report = await self.check()  # no claims at all
+        self.assertEqual((report.claims, report.conflicts, report.ready), (0, (), True))
+
+    async def test_the_line_for_an_ended_entry_names_where_it_was_said(self) -> None:
+        await self.peace()
+        await self.claim(said("Ulfgar", "is", "dead"))
+        (waiting,) = await self.claims.waiting(GUILD_A, self.c, opted_in=AGREED)
+        await self.claims.confirm(GUILD_A, self.c, waiting.id, opted_in=AGREED)
+        await self.claims.propose(  # a later session than the one that said he died
+            GUILD_A, self.c, [said("Ulfgar", "carries", "Heartseeker")], {"1": 7},
+            opted_in=AGREED, prompt_version="p1", model="m1", session_started_at=LATER + 400,
+        )  # fmt: skip
+        (conflict,) = (await self.check()).conflicts
+        assert conflict.earlier is not None
+        self.assertEqual(conflict.earlier.quote, "Ulfgar is dead")
 
     async def test_a_claim_that_fits_the_story_makes_no_warning(self) -> None:
         await self.story()
@@ -276,3 +320,19 @@ class Words(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class Crossing(MemoryTest):
+    async def test_crossing_the_line_is_logged_once(self) -> None:
+        from dmbot.memory import continuity
+
+        continuity._CROSSED.discard(self.c)
+        a, b = (
+            await self.add("Ulfgar", type="character"),
+            await self.add("Cerric", type="character"),
+        )
+        await self.relate(a, "ally_of", b, status="confirmed", from_session_at=1)
+        with self.assertLogs("dmbot.memory.continuity", level="INFO") as logged:
+            await ContinuityStore(self.memory).check(GUILD_A, self.c, opted_in=AGREED, levels=SMALL)
+            await ContinuityStore(self.memory).check(GUILD_A, self.c, opted_in=AGREED, levels=SMALL)
+        self.assertEqual(len(logged.output), 1)
