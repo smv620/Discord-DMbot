@@ -222,6 +222,15 @@ describe("the facts #433 asks for", () => {
     );
   });
 
+  it("says a campaign whose owner's Discord account is gone can be taken on, in terms and privacy (#1220)", () => {
+    for (const name of ["terms", "privacy"]) {
+      const body = text(doc(name).querySelector("main"));
+      expect(body, name).toContain("If the owner's Discord account is gone, or the owner has");
+      expect(body, name).toContain("out of the server for 7 days");
+      expect(body, name).toContain("button to take the campaign on. Only a game master who presses it takes over.");
+    }
+  });
+
   it("keeps the 120 days in the deletion sentence in step with the plan file", () => {
     expect(facts.keepAfterPlanStopsPaying).toEqual({ count: 120, unit: "day" });
   });
@@ -275,5 +284,13 @@ describe("the facts #433 asks for", () => {
     expect(terms()).toContain("The laws of the State of Ohio, USA, apply to these terms");
     expect(terms()).toContain("heard in the courts of the State of Ohio, USA");
     expect(terms()).not.toContain("governing law and courts");
+  });
+});
+
+describe("shared house rules (#1254)", () => {
+  it("the privacy page says only rules are shared, never story or transcripts", () => {
+    const t = text(doc("privacy").querySelector("main"));
+    expect(t).toContain("only the rules themselves");
+    expect(t).toContain("The story, names, notes and what was said are never shared");
   });
 });

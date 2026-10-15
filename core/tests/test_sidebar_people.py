@@ -48,6 +48,25 @@ class Message(unittest.TestCase):
         self.assertNotIn("x" * 200, prompt)
 
 
+class DmWords(unittest.TestCase):
+    def test_dm_words_mean_the_dm_who_started_the_session(self) -> None:
+        names = {1: "Sam", 2: "Mia", 3: "<@3>"}
+        got = people_lines([(2, ["Cerric"], [])], {1, 2}, {1, 3}, names.__getitem__, dm_word_user=1)
+        self.assertEqual(got[0], "DM, GM, Dungeon Master and Game Master all mean Sam")
+        self.assertIn("Mia plays Cerric", got)
+
+    def test_no_line_when_the_starter_is_unknown_or_stopped_recording(self) -> None:
+        names = {1: "Sam", 2: "Mia", 3: "<@3>"}
+        for starter in (None, 3, 9):
+            got = people_lines(
+                [(2, [], ["Mike"])], {2}, {1}, lambda u: names.get(u, "<@9>"), dm_word_user=starter
+            )
+            self.assertFalse(any("Dungeon Master" in line for line in got))
+        # Sam did not agree to be recorded: not named by a DM word either.
+        got = people_lines([(2, [], ["Mike"])], {2}, {1}, names.__getitem__, dm_word_user=1)
+        self.assertFalse(any("Dungeon Master" in line for line in got))
+
+
 class FromMemory(MemoryTest):
     async def test_confirmed_players_names_and_characters_only(self) -> None:
         await self.add("Cerric", type="player_character", played_by=PLAYER)

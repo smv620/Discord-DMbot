@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import math
 import time
-from collections import deque
+from collections import Counter, deque
 from collections.abc import Callable
 from dataclasses import dataclass
 
@@ -91,6 +91,7 @@ class Due:
     lost: int  # frames lost, over the window
     large: bool  # so large it warns without a check
     lines: tuple[tuple[str, float | None], ...]  # their lines in the window, with confidence
+    engine: str | None = None  # whose confidence it is (limits differ per engine, #733)
 
 
 def counts_for_dm(expected: int) -> bool:
@@ -106,7 +107,7 @@ class CaptureLog:
         # Per person, the pieces that count for the DM: (when, received, expected).
         self._window: dict[int, deque[tuple[float, int, int]]] = {}
         # Per person, their transcript lines: (when, text, confidence) (#699).
-        self._lines: dict[int, deque[tuple[float, str, float | None]]] = {}
+        self._lines: dict[int, deque[tuple[float, str, float | None, str | None]]] = {}
 
     def _get(self, user_id: int) -> _SpeakerStats:
         return self._stats.setdefault(user_id, _SpeakerStats())
@@ -197,12 +198,17 @@ class CaptureLog:
         return f"Capture check: {len(parts)} speaker(s); " + "; ".join(parts)
 
     def add_line(
-        self, user_id: int, text: str, confidence: float | None, now: float | None = None
+        self,
+        user_id: int,
+        text: str,
+        confidence: float | None,
+        now: float | None = None,
+        engine: str | None = None,
     ) -> None:
         """A line of the transcript, as shown, with the engine's confidence if it gave one:
         what the check reads when the audio rule fires (#699). Kept for DM_WINDOW_S."""
         at = time.monotonic() if now is None else now
-        self._lines.setdefault(user_id, deque()).append((at, text, confidence))
+        self._lines.setdefault(user_id, deque()).append((at, text, confidence, engine))
         self._prune(user_id, at)
 
     def forget(self, user_id: int) -> None:
@@ -254,8 +260,17 @@ class CaptureLog:
             ):
                 continue  # told already at this level: no check needed either
             large = percent < LARGE_LOSS_PERCENT and lost >= LARGE_LOSS_FRAMES
-            lines = tuple((text, conf) for _, text, conf in self._lines.get(user_id, ()))
-            found.append(Due(user_id, percent, lost, large, lines))
+            kept = self._lines.get(user_id, ())
+            # One engine's numbers only: after a switch mid-session the lines hold two scales,
+            # and one pair of limits can't judge both. The engine with more lines wins (a tie:
+            # the first by name, so it never depends on the process); the others' lines are
+            # kept as text but give no number.
+            counts = Counter(e for _, _, conf, e in kept if conf is not None and e is not None)
+            engine = min(counts, key=lambda e: (-counts[e], e)) if counts else None
+            lines = tuple(
+                (text, conf if conf is None or e == engine else None) for _, text, conf, e in kept
+            )
+            found.append(Due(user_id, percent, lost, large, lines, engine))
         return found
 
     def warn(

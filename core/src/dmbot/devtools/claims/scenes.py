@@ -22,6 +22,9 @@ class Expected:
     subject: str
     relationship: str
     object: str
+    condition: bool = field(
+        default=False, kw_only=True
+    )  # a change of state (dead, destroyed…), not a relationship (#1268)
 
 
 @dataclass(slots=True)
@@ -29,6 +32,7 @@ class Line:
     number: int
     speaker: str  # "DM" or "Player"
     text: str
+    kind: str = ""  # statement, question, plan or ooc: the story_measure golden set labels it
     expected: list[Expected] = field(default_factory=list)
     also: list[Expected] = field(default_factory=list)  # fine to pull, not required
     never: list[tuple[str, ...]] = field(default_factory=list)

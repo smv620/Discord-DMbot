@@ -56,6 +56,40 @@ export const dmSteps: Step[] = [
     names: [{ name: "/dmbot backup", file: "ui/dmbot_commands.py" }],
   },
   {
+    text: "To share your house rules with another table, press ⚙️ Settings, then 📚 Shared rules, then 📤 Share my house rules (paid campaigns only). DMbot gives you a share code. Anyone with the code can read your rules, so give it only to a game master you trust. Press 🔑 New share code to get another one. Old codes keep working; Stop sharing turns them all off.",
+    names: [
+      { name: "Shared rules", file: "dm_screen/settings.py" },
+      { name: "📤 Share my house rules", file: "ui/shared_rules.py" },
+      { name: "🔑 New share code", file: "ui/shared_rules.py" },
+    ],
+  },
+  {
+    text: "To use another table's rules, press ⚙️ Settings, then 📚 Shared rules, then 📥 Use shared rules, and type their code. DMbot shows you the rules first. Press Yes, use this set to keep them. Your own house rules always win over theirs.",
+    names: [
+      { name: "📥 Use shared rules", file: "ui/shared_rules.py" },
+      { name: "Yes, use this set", file: "ui/shared_rules.py" },
+    ],
+  },
+  {
+    text: "When shared rules change, DMbot adds the new version at your next session and tells you. Press See changes to look, Pick changes to choose which to keep, or Undo to put your old copy back.",
+    names: [
+      { name: "See changes", file: "dm_screen/set_update.py" },
+      { name: "Pick changes", file: "dm_screen/set_update.py" },
+      { name: "Undo", file: "dm_screen/set_update.py" },
+    ],
+  },
+  {
+    text: "To stop using someone's rules, press ⚙️ Settings, then 📚 Shared rules, then Stop using shared rules. Your own rules stay as they are.",
+    names: [{ name: "Stop using shared rules", file: "ui/shared_rules.py" }],
+  },
+  {
+    text: "To stop sharing your own rules, press ⚙️ Settings, then 📚 Shared rules, then Stop sharing, then Yes, stop sharing. Every share code stops working. Tables already using your rules keep their copy, but it won't be updated any more.",
+    names: [
+      { name: "Stop sharing", file: "ui/shared_rules.py" },
+      { name: "Yes, stop sharing", file: "ui/shared_rules.py" },
+    ],
+  },
+  {
     text: "To give a campaign to another game master, press ⚙️ Settings, then Hand over. They must say yes.",
     names: [{ name: "Hand over", file: "dm_screen/handover.py" }],
   },
@@ -118,8 +152,9 @@ export const accountSteps: Step[] = [
     names: [{ name: "Hand over", file: "dm_screen/handover.py" }],
   },
   {
-    text: "Can't reach your old account any more? If you kept a backup (type /dmbot backup before you leave, paid campaigns only), type /dmbot restore on your new account. That needs a plan with a free campaign slot.",
+    text: "Can't get into your old account any more? After 7 days out of the server, or if Discord says the account is gone, DMbot offers the campaign's other game masters a Take it on button in ⚙️ Settings. A game master chooses whether to press it. Or use a new account: join the server, type /dmbot backup, then /dmbot restore. Both need a paid campaign, and restore needs a free campaign slot on your plan.",
     names: [
+      { name: "Take it on", file: "dm_screen/handover.py" },
       { name: "/dmbot backup", file: "ui/dmbot_commands.py" },
       { name: "/dmbot restore", file: "ui/dmbot_commands.py" },
     ],
