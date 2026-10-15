@@ -327,14 +327,31 @@ class Updates(DatabaseTest):
         self.assertEqual((older or {})["n"], 1)
         self.assertEqual((newer or {})["n"], 0)
 
-    async def test_a_follow_from_another_server_with_no_code_reads_as_unknown_not_gone(
-        self,
-    ) -> None:
+    async def test_a_follow_with_no_code_whose_set_is_not_here_reads_as_gone(self) -> None:
+        # A follow with no code was picked from this server's list; where the set is not (or no
+        # longer) in this server it is deleted. (A pre-code follow from another server never
+        # updated anyway; none exist yet, nothing with share codes is deployed.)
         await self.follow_far()
         async with self.db.guild(GUILD_B) as conn:
             await conn.execute("UPDATE rule_set_follows SET code = NULL")
+        self.assertTrue(await self.sets.is_gone(GUILD_B, self.far))
+        self.assertIsNone(await self.sets.pending_update(GUILD_B, self.far))  # nothing to take
+        self.assertEqual(await self.sets.stop_updating(GUILD_B, self.far), 1)  # said once
         self.assertFalse(await self.sets.is_gone(GUILD_B, self.far))
-        self.assertIsNone(await self.sets.pending_update(GUILD_B, self.far))
+        self.assertEqual(await self.sets.stop_updating(GUILD_B, self.far), 0)
+
+    async def test_a_set_picked_from_this_servers_list_and_deleted_reads_as_gone(self) -> None:
+        offer = (await self.sets.shared_here(GUILD_A, self.same))[0]
+        await self.sets.follow(GUILD_A, self.same, DM_A, offer)
+        self.assertFalse(await self.sets.is_gone(GUILD_A, self.same))
+        async with self.db.guild(GUILD_A) as conn:
+            await conn.execute("DELETE FROM rule_sets WHERE guild_id = %s", (GUILD_A,))
+        self.assertTrue(await self.sets.is_gone(GUILD_A, self.same))
+        self.assertEqual(await self.sets.stop_updating(GUILD_A, self.same), 1)  # the note, once
+        self.assertEqual(await self.sets.stop_updating(GUILD_A, self.same), 0)
+        kept = (await self.sets.following(GUILD_A, self.same))[0]
+        self.assertFalse(kept.updating)
+        self.assertEqual(kept.content["rules"][0]["rule"], "Crits double the dice")  # still there
 
     async def test_an_update_taken_by_dmbot_is_credited_to_dmbot_and_can_be_undone(self) -> None:
         await self.follow_far()
