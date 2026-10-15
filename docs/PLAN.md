@@ -3286,6 +3286,12 @@ experience points and the trial extension (owner, 2026-10-14; Supervisor's detai
   address is the owner's call** (`needs: owner`; a PO box or a mail service is fine), and the
   offer emails don't go out until it is set. The privacy policy and terms get a line each on
   these emails, which is legal wording for the owner to sign off.
+- **Email records are not kept for ever** (Supervisor, 2026-10-15, #1287, for the privacy page #1283):
+  (1) a Try It's sent notes (the last-day and 30-more-days emails) are deleted 1 year after they
+  were sent, because a Try It can't be taken twice (the DMbot ID marks it used) so the record
+  has no job left; (2) deleting an account deletes that person's `sent_emails` rows in the same
+  transaction; (3) their `email_unsubscribed` row stays (only the Discord id, the kind and the
+  time), so a returning account is never emailed against its wish.
 - **An owner gone from Discord** (Supervisor, 2026-10-14, #1185, built in #1214): when DMbot sees a
   campaign's owner isn't in the server (asked only at a start, on opening Settings and once a day;
   no new intent), the campaign becomes ownerless after 7 days, or at once if Discord says the

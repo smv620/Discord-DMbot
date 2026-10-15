@@ -2209,6 +2209,7 @@ WEB_ROLE_FUNCTIONS: tuple[tuple[str, str], ...] = (
     ("dmbot_previous_ids", "dmbot_previous_ids()"),  # the export's earlier Discord accounts
     ("dmbot_forget_account_history", "dmbot_forget_account_history()"),  # account deletion
     ("dmbot_set_payment_email", "dmbot_set_payment_email(TEXT, TEXT, BIGINT)"),  # #1242
+    ("dmbot_forget_email_records", "dmbot_forget_email_records()"),  # account deletion, #1287
 )
 # The columns the website may fill when it creates a hand-over offer (#728): who, where and the
 # two names. Left out on purpose, so they take their defaults: status and decided_at (an offer
@@ -2462,6 +2463,33 @@ MAIL = """
     $do$;
     REVOKE ALL ON FUNCTION dmbot_claim_email(BIGINT, TEXT, BOOLEAN, INTEGER, INTEGER) FROM PUBLIC;
     REVOKE ALL ON FUNCTION dmbot_release_email(BIGINT, TEXT) FROM PUBLIC;
+    """
+
+EMAIL_RECORDS = """
+    -- Deleting an account also deletes the person's sent-email records (#1287; docs/PLAN.md,
+    -- "Accounts"). The website's role has no grant on sent_emails (it is everyone's email
+    -- history), so this door deletes the signed-in person's own rows and nobody else's.
+    -- email_unsubscribed stays on purpose: it is the never-email-me-again list.
+    CREATE FUNCTION dmbot_forget_email_records() RETURNS INTEGER
+        LANGUAGE plpgsql SECURITY DEFINER
+        AS $fn$
+    DECLARE
+        gone INTEGER;
+    BEGIN
+        DELETE FROM sent_emails s WHERE s.user_id = dmbot_current_user();
+        GET DIAGNOSTICS gone = ROW_COUNT;
+        RETURN gone;
+    END
+    $fn$;
+    DO $do$
+    BEGIN
+        EXECUTE format(
+            'ALTER FUNCTION dmbot_forget_email_records()'
+            ' SET search_path = pg_catalog, %I, pg_temp',
+            current_schema());
+    END
+    $do$;
+    REVOKE ALL ON FUNCTION dmbot_forget_email_records() FROM PUBLIC;
     """
 
 TRIAL = """
@@ -3315,6 +3343,7 @@ MIGRATIONS: tuple[Migration, ...] = (
     ("0065_trial", TRIAL),
     ("0067_payment_email", PAYMENT_EMAIL),
     ("0068_moves", MOVES),  # 0066 is the sign-in-by-email migration (#1237)
+    ("0071_email_records", EMAIL_RECORDS),  # 0069/0070 are in other open PRs
 )
 
 # Tables that must have row-level security. A test checks every table in the schema
