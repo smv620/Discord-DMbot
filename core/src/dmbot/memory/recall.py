@@ -234,6 +234,9 @@ class RecallService:
     def __init__(self, memory: MemoryStore, lines: Lines | None = None) -> None:
         self._memory = memory
         self._lines = lines
+        # The campaign's terms, kept until its memory next changes (every write bumps the
+        # version the read scope reports): two fewer round trips on a busy table.
+        self._ontologies: dict[tuple[int, str], tuple[int, Ontology]] = {}
 
     async def recall(
         self,
@@ -262,7 +265,7 @@ class RecallService:
             reached = sorted(walk.cost)
             heard = await self._heard(scope, reached, agreed)
             notes = await self._conditions(scope, reached, as_of) if audience == DM_SCREEN else {}
-            onto = await _load_ontology(scope)
+            onto = await self._ontology(scope)
             found = _Found(walk, heard, notes, onto, as_of, audience)
             # Rank and cut first: the items come before their evidence, and evidence is looked
             # up only for the best few facts, so it can fill what is left but never crowd out
@@ -282,6 +285,15 @@ class RecallService:
         return Recall(
             audience, as_of, items, first.seeds, first.cut, first.size + size, walk.truncated
         )
+
+    async def _ontology(self, scope: Scope) -> Ontology:
+        key = scope.ids
+        held = self._ontologies.get(key)
+        if held is not None and held[0] == scope.version:
+            return held[1]
+        onto = await _load_ontology(scope)
+        self._ontologies[key] = (scope.version, onto)
+        return onto
 
     # ---- the walk --------------------------------------------------------------------
 
