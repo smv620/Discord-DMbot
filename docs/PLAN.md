@@ -996,6 +996,8 @@ so the docs always show names the way Discord does. For the campaign
   that breaks up still counts) never count; among the rest, under 95% received and at
   least 2 s lost in a rolling 60 s window per speaker is the *trigger*: it starts a
   check of that speaker's lines in the window (the engine's per-word confidence first,
+  with each engine's own limits: local Whisper's number is the chance it gave the words it
+  wrote, `exp(avg_logprob)`, not mapped onto Deepgram's scale, #733;
   else one small AI call per speaker per minute on the cleaned text), and the ⚠️ shows
   only if they read garbled. Large losses skip the check: the #631 watchdog (sending,
   nothing heard) and under 50% received with at least 10 s lost in a minute warn at

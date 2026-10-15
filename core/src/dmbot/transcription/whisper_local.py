@@ -31,7 +31,12 @@ from typing import Any, TypeVar
 
 from dmbot.audio.segmenter import Utterance
 from dmbot.ears.protocol import SAMPLE_RATE
-from dmbot.transcription.base import TranscriberUnavailable, build_prompt, clean_text
+from dmbot.transcription.base import (
+    TranscriberUnavailable,
+    Transcript,
+    build_prompt,
+    clean_text,
+)
 from dmbot.transcription.config import TranscriptionSettings
 
 log = logging.getLogger(__name__)
@@ -78,6 +83,18 @@ def keep_segment(segment: SegmentScore) -> bool:
     if segment.compression_ratio > COMPRESSION_RATIO_MAX:
         return False
     return not (segment.no_speech_prob > NO_SPEECH_MAX and segment.avg_logprob < AVG_LOGPROB_MIN)
+
+
+def confidence_of_segments(segments: list[SegmentScore]) -> float | None:
+    """How sure Whisper was of the segments kept, 0 to 1: the chance it gave the words it
+    wrote, `exp(avg_logprob)` (its own measure, the geometric mean of the words' chances),
+    averaged over the words of each segment. NOT on Deepgram's scale: clean speech sits near
+    0.7 to 0.8 here, so the audio check has its own limits for Whisper (#733)."""
+    weighted = [(len(s.text.split()), math.exp(min(0.0, s.avg_logprob))) for s in segments]
+    words = sum(n for n, _ in weighted)
+    if not words:
+        return None
+    return max(0.0, min(1.0, sum(n * c for n, c in weighted) / words))
 
 
 class LocalWhisperTranscriber:
@@ -139,14 +156,15 @@ class LocalWhisperTranscriber:
             temperature=TEMPERATURE,
             max_new_tokens=max_new_tokens(len(audio) / SAMPLE_RATE),
         )
-        kept = [
-            s.text
+        scored = [
+            SegmentScore(s.text, s.no_speech_prob, s.avg_logprob, s.compression_ratio)
             for s in segments
-            if keep_segment(
-                SegmentScore(s.text, s.no_speech_prob, s.avg_logprob, s.compression_ratio)
-            )
         ]
-        return clean_text(" ".join(kept))
+        kept = [s for s in scored if keep_segment(s)]
+        text = clean_text(" ".join(s.text for s in kept))
+        if text is None:
+            return None
+        return Transcript(text, confidence_of_segments(kept), "whisper")
 
     async def close(self) -> None:
         # Don't wait for a skipped clip still decoding; drop anything not yet started.

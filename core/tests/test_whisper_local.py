@@ -1,12 +1,13 @@
 import asyncio
 import importlib.util
+import math
 import threading
 import unittest
 from dataclasses import dataclass
 from typing import Any
 
 from dmbot.audio.segmenter import Utterance
-from dmbot.transcription.base import TranscriberUnavailable
+from dmbot.transcription.base import TranscriberUnavailable, confidence_of, engine_of
 from dmbot.transcription.config import TranscriptionSettings
 from dmbot.transcription.whisper_local import (
     MAX_NEW_TOKENS,
@@ -15,6 +16,7 @@ from dmbot.transcription.whisper_local import (
     WHISPER_MAX_LENGTH,
     LocalWhisperTranscriber,
     SegmentScore,
+    confidence_of_segments,
     keep_segment,
     max_new_tokens,
 )
@@ -124,6 +126,25 @@ class LocalWhisperTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(call["language"], "en")
         self.assertTrue(call["vad_filter"])
         self.assertEqual(call["beam_size"], 1)
+
+    async def test_the_text_carries_whispers_own_confidence(self) -> None:
+        t = LocalWhisperTranscriber(TranscriptionSettings())
+        t._model = FakeModel(
+            [FakeSegment(" I cast", 0.0, -0.2), FakeSegment(" shield now", 0.0, -0.6)]
+        )
+        text = await t.transcribe(Utterance(1, 2, 0, 0, bytes(32000)), [])
+        self.assertEqual(text, "I cast shield now")
+        self.assertEqual(engine_of(text), "whisper")
+        # exp(-0.2) over 2 words and exp(-0.6) over 2 words, averaged per word.
+        expected = (2 * math.exp(-0.2) + 2 * math.exp(-0.6)) / 4
+        self.assertAlmostEqual(confidence_of(text) or 0, expected)
+
+    def test_confidence_of_segments_is_the_chance_of_the_words(self) -> None:
+        self.assertIsNone(confidence_of_segments([]))
+        self.assertAlmostEqual(
+            confidence_of_segments([SegmentScore("a b c", 0.0, -0.5)]) or 0, math.exp(-0.5)
+        )
+        self.assertEqual(confidence_of_segments([SegmentScore("a", 0.0, 0.3)]), 1.0)  # capped
 
     async def test_auto_language_passes_none(self) -> None:
         t = LocalWhisperTranscriber(TranscriptionSettings(language=""))

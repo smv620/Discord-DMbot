@@ -87,6 +87,45 @@ class ConfidenceTests(unittest.TestCase):
         self.assertFalse(hasattr(Transcript("hi", 0.5), "__dict__"))  # light, kept per line
 
 
+class WhisperLimitsTests(unittest.TestCase):
+    """#733: Whisper's number is its own, so it has its own limits."""
+
+    LONG = "I go to the old mill and then the north road"
+
+    def by(self, confidence: float, engine: str | None) -> bool | None:
+        return _by_found(mean_confidence([(self.LONG, confidence)]), engine)
+
+    def test_a_whisper_score_that_would_be_garbled_on_deepgrams_scale_reads_fine(self) -> None:
+        # Clean Whisper speech sits near 0.75: below Deepgram's 0.9 "fine", but fine for it.
+        self.assertFalse(self.by(0.75, "whisper"))
+        self.assertIsNone(self.by(0.75, "deepgram"))
+        self.assertIsNone(self.by(0.75, None))  # an unknown engine uses the default limits
+
+    def test_whisper_garbled_and_middling(self) -> None:
+        self.assertTrue(self.by(0.40, "whisper"))
+        self.assertIsNone(self.by(0.55, "whisper"))  # ask the AI
+        self.assertIsNone(self.by(0.45, "whisper"))  # not under the limit
+
+    def test_the_log_names_the_engine(self) -> None:
+        d = Due(1, 80, 150, False, ((self.LONG, 0.4),), "whisper")
+        self.assertEqual(
+            check(AudioChecker(), d, None),
+            Verdict(True, "whisper confidence 0.40 over 11 words"),
+        )
+
+    def test_the_engine_rides_with_the_lines_to_the_check(self) -> None:
+        log = CaptureLog()
+        log.add_utterance(utt(1, 2.0))
+        for n in range(5):
+            log.add_health(1, 270, 300, n)
+        log.add_line(1, self.LONG, 0.5, 0, engine="whisper")
+        log.add_line(1, "and then we rest", None, 0)  # an engine that gave no number
+        (d,) = log.due(10)
+        self.assertEqual(d.engine, "whisper")
+        self.assertEqual(Transcript("x", 0.5, "whisper").engine, "whisper")
+        self.assertIsNone(Transcript("x", 0.5).engine)
+
+
 class CheckTests(unittest.TestCase):
     def test_the_tv_case_reads_fine_without_asking(self) -> None:
         # dev1's TV: the DM's own lines came out clean, with high confidence.

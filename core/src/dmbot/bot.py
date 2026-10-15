@@ -201,7 +201,12 @@ from dmbot.transcript.stream import TranscriptStream
 from dmbot.transcript.topic_ai import classify
 from dmbot.transcript.topics import GAME, OFF_TOPIC, TopicWindow, Waiting, obviously_game
 from dmbot.transcript.topics import marker as topic_marker
-from dmbot.transcription.base import PlaceholderTranscriber, Transcriber, confidence_of
+from dmbot.transcription.base import (
+    PlaceholderTranscriber,
+    Transcriber,
+    confidence_of,
+    engine_of,
+)
 from dmbot.transcription.factory import build_transcriber
 from dmbot.transcription.pipeline import TranscriptionPipeline, clip_budget_s, speech_sent_line
 from dmbot.ui import logic as ui_logic
@@ -3126,7 +3131,9 @@ class DMBot(commands.AutoShardedBot):
             # What the audio check reads if their audio rule fires (#699): the line as the
             # transcript has it (before the off-topic filter, which may hide it later),
             # with the engine's confidence; kept as plain text.
-            table.capture_log.add_line(utterance.user_id, str(cleaned or text), confidence_of(text))
+            table.capture_log.add_line(
+                utterance.user_id, str(cleaned or text), confidence_of(text), engine=engine_of(text)
+            )
         if text and table.transcript_channel_id is not None:
             guild = self.get_guild(utterance.guild_id)
             member = guild.get_member(utterance.user_id) if guild else None
