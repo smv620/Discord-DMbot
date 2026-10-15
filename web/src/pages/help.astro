@@ -1,6 +1,6 @@
 ---
 import Base from "../layouts/Base.astro";
-import { accountSteps, dmSteps, helpHeading, helpIntro, playerNote, playerSteps } from "../content/help";
+import { accountSteps, dmSteps, emailNote, emailSteps, helpHeading, helpIntro, playerNote, playerSteps } from "../content/help";
 ---
 
 <Base
@@ -62,6 +62,14 @@ import { accountSteps, dmSteps, helpHeading, helpIntro, playerNote, playerSteps 
         ))
       }
     </ol>
+  </section>
+
+  <section aria-labelledby="emails-heading">
+    <h2 id="emails-heading">Emails from DMbot</h2>
+    <ol>
+      {emailSteps.map((s) => <li>{s.text}</li>)}
+    </ol>
+    <p class="muted">{emailNote}</p>
   </section>
 
   <p class="muted">
