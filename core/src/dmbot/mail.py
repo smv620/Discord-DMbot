@@ -35,6 +35,10 @@ log = logging.getLogger(__name__)
 KIND_MAX = 60  # the sent_emails column's limit
 DAILY_CAP_DEFAULT = 400
 DAY_S = 86400
+# A Try It's sent notes (the last-day and 30-more-days emails and their private-message
+# records) have no job left after a year: a Try It can't be taken twice, because the DMbot ID
+# marks it used. So they are deleted then, not kept for ever (#1287).
+TRIAL_EMAIL_KEEP_S = 365 * DAY_S
 
 Result = Literal[
     "sent", "already_sent", "unsubscribed", "capped", "not_ready", "no_address", "failed"
@@ -280,13 +284,15 @@ async def unsubscribe(db: Database, user_id: int, *, now: int) -> None:
 
 
 async def prune_account_emails(db: Database, now: int) -> int:
-    """Forget the records of sign-in and move-code emails after 90 days: they repeat, so the
-    table would only grow. One-off offers stay (that is what keeps them from being sent
-    twice)."""
+    """Forget old records of emails that repeat or have done their job, so the table doesn't
+    grow for ever: sign-in and move-code records after 90 days, and a Try It's notes after a
+    year (TRIAL_EMAIL_KEEP_S). Other one-off offers stay (that is what keeps them from being
+    sent twice)."""
     async with db.unscoped() as conn:
         cur = await conn.execute(
-            "DELETE FROM sent_emails WHERE sent_at < %s"
-            " AND (kind LIKE 'sign-in:%%' OR kind LIKE 'move-code:%%')",
-            (now - 90 * DAY_S,),
+            "DELETE FROM sent_emails WHERE"
+            " (sent_at < %s AND (kind LIKE 'sign-in:%%' OR kind LIKE 'move-code:%%'))"
+            " OR (sent_at < %s AND (kind LIKE 'trial-%%' OR kind LIKE 'dm:trial-%%'))",
+            (now - 90 * DAY_S, now - TRIAL_EMAIL_KEEP_S),
         )
         return int(cur.rowcount)

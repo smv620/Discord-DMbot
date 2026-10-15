@@ -9,7 +9,7 @@ import { beforeAll, describe, expect, it } from "vitest";
 
 import { parsePage } from "./dom";
 
-import { accountSteps, dmSteps, playerSteps } from "../src/content/help";
+import { accountSteps, dmSteps, emailSteps, playerSteps } from "../src/content/help";
 import Help from "../src/pages/help.astro";
 
 const botDir = fileURLToPath(new URL("../../core/src/dmbot/", import.meta.url));
@@ -27,7 +27,7 @@ describe("Help", () => {
     expect(help.querySelector("#dm-heading")?.textContent).toBe("For the game master");
     expect(help.querySelector("#player-heading")?.textContent).toBe("For players");
     const lists = [...help.querySelectorAll("section ol")];
-    expect(lists.map((l) => l.children.length)).toEqual([dmSteps.length, playerSteps.length, accountSteps.length]);
+    expect(lists.map((l) => l.children.length)).toEqual([dmSteps.length, playerSteps.length, accountSteps.length, emailSteps.length]);
   });
 
   it("has a Your account section with Discord's own reset and the account page (#1215)", () => {
@@ -40,13 +40,22 @@ describe("Help", () => {
   });
 
   it("names only buttons and commands that are in the bot's code", () => {
-    for (const step of [...dmSteps, ...playerSteps, ...accountSteps]) {
+    for (const step of [...dmSteps, ...playerSteps, ...accountSteps, ...emailSteps]) {
       for (const { name, file } of step.names ?? []) {
         expect(step.text, `${name} is in its step`).toContain(name);
         const source = readFileSync(join(botDir, file), "utf8");
         expect(source, `${name} in ${file}`).toContain(name);
       }
     }
+  });
+
+  it("says what each email is, and that a move code is only for you (#1283)", () => {
+    const section = help.querySelector("#emails-heading")?.parentElement?.textContent ?? "";
+    expect(section).toContain("A move code is only for you: never give it to anyone.");
+    expect(section).toContain("Ignore the email. Nothing changes.");
+    expect(section).toContain("stops working after 15 minutes");
+    expect(section).toContain("lasts 30 minutes");
+    expect(section).not.toMatch(/@|\d+ [A-Z][a-z]+ (Street|St|Road|Ave)/); // no address on the site
   });
 
   it("calls the update note's button Undo, as the note itself does (#1254)", () => {
