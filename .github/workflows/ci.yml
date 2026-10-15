@@ -13,8 +13,29 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # Works out which of ears, web and core a push can affect (#1323), so a website-only or
+  # docs-only push does not wait for the 20-minute core job. A skipped job shows as "skipped",
+  # which GitHub treats as passing. Pushes to development, beta and main run everything, and so
+  # does any push this job cannot work out (the jobs below also run if this one fails).
+  changes:
+    name: changes (which jobs to run)
+    runs-on: ubuntu-22.04  # 24.04 runners were queueing for hours (2026-10-05); see #29
+    timeout-minutes: 5
+    outputs:
+      core: ${{ steps.decide.outputs.core }}
+      ears: ${{ steps.decide.outputs.ears }}
+      web: ${{ steps.decide.outputs.web }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0  # the merge base with origin/development needs the history
+      - id: decide
+        run: scripts/ci-changes.sh | tee -a "$GITHUB_OUTPUT"
+
   ears:
     name: ears (Node voice service)
+    needs: changes
+    if: ${{ always() && (needs.changes.result != 'success' || needs.changes.outputs.ears == 'true') }}
     runs-on: ubuntu-22.04  # 24.04 runners were queueing for hours (2026-10-05); see #29
     defaults:
       run:
@@ -45,6 +66,8 @@ jobs:
 
   web:
     name: web (customer website)
+    needs: changes
+    if: ${{ always() && (needs.changes.result != 'success' || needs.changes.outputs.web == 'true') }}
     runs-on: ubuntu-22.04  # 24.04 runners were queueing for hours (2026-10-05); see #29
     timeout-minutes: 10
     defaults:
@@ -74,6 +97,8 @@ jobs:
 
   core:
     name: core (Python)
+    needs: changes
+    if: ${{ always() && (needs.changes.result != 'success' || needs.changes.outputs.core == 'true') }}
     runs-on: ubuntu-22.04  # 24.04 runners were queueing for hours (2026-10-05); see #29
     defaults:
       run:
@@ -113,10 +138,22 @@ jobs:
           psql "postgresql://postgres:postgres@localhost:5432/postgres"
           -c "CREATE ROLE dmbot LOGIN PASSWORD 'dmbot'"
           -c "CREATE DATABASE dmbot_test OWNER dmbot ENCODING 'UTF8'"
+      - name: faster test database
+        # A throwaway database in a throwaway container: nothing here needs to survive a crash,
+        # and every test builds and drops its own schema, so waiting for the disk is the cost.
+        run: >-
+          psql "postgresql://postgres:postgres@localhost:5432/postgres"
+          -c "ALTER SYSTEM SET fsync = off"
+          -c "ALTER SYSTEM SET synchronous_commit = off"
+          -c "ALTER SYSTEM SET full_page_writes = off"
+          -c "SELECT pg_reload_conf()"
       - name: pytest
+        # -n auto: one worker per core. Each database test builds its own schema (core/tests/pg.py,
+        # with a random name) and migrations lock per schema, so workers never share state.
+        # --durations shows where the time goes. Nothing is skipped, deselected or xfailed.
         run: |
           set -o pipefail
-          pytest -q --tb=short -rfE 2>&1 | tee pytest.log || {
+          pytest -q --tb=short -rfE -n auto --durations=25 2>&1 | tee pytest.log || {
             # One multi-line annotation, so failures are readable without the raw log.
             summary=$(grep -E "^(FAILED|ERROR) |^E  |^[^ ].*\.py:[0-9]+: " pytest.log | head -80 | sed -e 's/%/%25/g' | sed ':a;N;$!ba;s/\n/%0A/g')
             echo "::error title=pytest failures::${summary}"
@@ -128,10 +165,11 @@ jobs:
     runs-on: ubuntu-22.04  # 24.04 runners were queueing for hours (2026-10-05); see #29
     steps:
       - uses: actions/checkout@v5
-      - run: shellcheck scripts/set-key scripts/update-env scripts/set-admin-password scripts/replay scripts/tests/*.sh   # on the runner
+      - run: shellcheck scripts/set-key scripts/update-env scripts/set-admin-password scripts/replay scripts/ci-changes.sh scripts/tests/*.sh   # on the runner
       - run: bash scripts/tests/test-set-key.sh
       - run: bash scripts/tests/test-update-env.sh
       - run: bash scripts/tests/test-set-admin-password.sh
+      - run: bash scripts/tests/test-ci-changes.sh
 
   docker:
     name: docker images

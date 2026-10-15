@@ -43,7 +43,9 @@ log = logging.getLogger(__name__)
 
 Conn = AsyncConnection[DictRow]
 
-# Any constant works; it just has to be the same for every DMbot process.
+# Any constant works; it just has to be the same for every DMbot process. The lock is taken
+# per schema (#1323): DMbot has one schema, so processes still wait for each other, while
+# tests that each build their own schema no longer queue behind one another.
 MIGRATION_LOCK_KEY = 0x0D4B07
 _SCHEMA_NAME = re.compile(r"^[a-z_][a-z0-9_]{0,62}$")
 
@@ -340,7 +342,9 @@ class Database:
         """
         applied: list[str] = []
         async with self.unscoped() as conn:
-            await _take_migration_lock(conn)
+            cur = await conn.execute("SELECT current_schema() AS s")
+            row = await cur.fetchone()
+            await _take_migration_lock(conn, "" if row is None else str(row["s"]))
             await conn.execute(
                 "CREATE TABLE IF NOT EXISTS schema_migrations ("
                 " name TEXT PRIMARY KEY, applied_at TIMESTAMPTZ NOT NULL DEFAULT now())"
@@ -431,11 +435,13 @@ async def _grant_web_role(conn: AsyncConnection[Any]) -> None:
         )
 
 
-async def _take_migration_lock(conn: AsyncConnection[Any]) -> None:
-    """Wait for any other DMbot updating the schema, but not forever."""
+async def _take_migration_lock(conn: AsyncConnection[Any], schema: str) -> None:
+    """Wait for any other DMbot updating this schema, but not forever."""
     await conn.execute("SET LOCAL lock_timeout = '60s'")
     try:
-        await conn.execute("SELECT pg_advisory_xact_lock(%s)", (MIGRATION_LOCK_KEY,))
+        await conn.execute(
+            "SELECT pg_advisory_xact_lock(%s, hashtext(%s))", (MIGRATION_LOCK_KEY, schema)
+        )
     except pg_errors.LockNotAvailable as exc:
         raise DatabaseError(
             "Another copy of DMbot has been updating the database for over a minute. "
@@ -448,7 +454,7 @@ async def _create_schema(url: str, schema: str) -> None:
     try:
         # Under the migration lock, so processes starting together don't race.
         async with conn.transaction():
-            await _take_migration_lock(conn)
+            await _take_migration_lock(conn, schema)
             await conn.execute(
                 sql.SQL("CREATE SCHEMA IF NOT EXISTS {}").format(sql.Identifier(schema))
             )
