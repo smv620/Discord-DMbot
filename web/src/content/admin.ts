@@ -7,7 +7,7 @@ export const text = {
   description: "DMbot's admin page, for the team only.",
   heading: "Admin",
   loading: "Checking if you're signed in…",
-  signInLead: "Sign in to manage free access.",
+  signInLead: "Sign in to manage free access and support tickets.",
   google: "Sign in with Google",
   or: "Or use your admin email and password:",
   email: "Email",
@@ -112,6 +112,26 @@ export const text = {
     stale: "That didn't work. Reload this page and try again.",
     "no-grant": "That person has no free access to revoke. We've updated the list.",
   } as Record<string, string | ((max: number) => string)>,
+
+  // Support tickets (#1340): private messages from people on paid plans.
+  ticketsHeading: "Support tickets",
+  ticketsLead:
+    "Private messages from people on a paid plan, newest first. They are deleted after 12 months, or with the account.",
+  ticketsNone: "No tickets yet.",
+  ticketStatuses: { new: "New", answered: "Answered", closed: "Closed" } as Record<string, string>,
+  ticketFrom: (who: string, dmbotId: string, plan: string, when: string): string =>
+    `${who} (DMbot ID ${dmbotId}), ${plan} plan, ${when}`,
+  replyTo: "Reply to",
+  noEmail: "No email on this account",
+  markAnswered: "Mark answered",
+  closeTicket: "Close",
+  reopenTicket: "Reopen",
+  ticketDone: (status: string): string => `Done. The ticket is now ${status.toLowerCase()}.`,
+  ticketGone: "That ticket is gone, so we've updated the list.",
+  ticketStale: "That didn't work. Reload this page and try again.",
+  ticketFailed: "That didn't save. Try again in a minute.",
+  ticketsDown: "Can't load the tickets right now. Try again in a minute.",
+  ticketsTryAgain: "Try again",
 } as const;
 
 /** What a save did, in words: "Same as Guild, until Dec 31, 2026" or "No limits, no end
