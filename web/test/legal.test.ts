@@ -1,5 +1,7 @@
 // The legal drafts (#433): each has the short version, the draft notice, and facts that
 // match the plan file, so the pages and the pricing never disagree.
+import { readFileSync } from "node:fs";
+
 import { experimental_AstroContainer as AstroContainer } from "astro/container";
 import type { AstroComponentFactory } from "astro/runtime/server/index.js";
 import { beforeAll, describe, expect, it } from "vitest";
@@ -305,6 +307,26 @@ describe("email from DMbot (#1283)", () => {
 
   it("puts no postal address on the page", () => {
     expect(privacy()).not.toMatch(/\b\d{2,5} [A-Z][a-z]+ (Street|St\.?|Road|Rd\.?|Avenue|Ave\.?|Lane|Drive)\b/);
+  });
+});
+
+describe("what the AI company does with the text (#1328)", () => {
+  const privacy = (): string => text(doc("privacy").querySelector("main"));
+
+  it("says the text isn't used to train their AI, in the yes message's own words", () => {
+    const consent = readFileSync(new URL("../../core/src/dmbot/consent_dm.py", import.meta.url), "utf8");
+    // The promise made to a player when they say yes (AI_NOTE) and the page must stay the same.
+    expect(consent).toContain("It isn't used to train their AI.");
+    const anthropic = privacy().slice(privacy().indexOf("Anthropic:"));
+    expect(anthropic.slice(0, 260)).toContain("It gets the text it needs, not sound. That text isn't used to train their AI.");
+  });
+
+  it("makes no such promise for the speech company: it depends on that company's own setting", () => {
+    // Anthropic's commercial terms (Section B) say it may not train on customer content; Deepgram's
+    // use of audio depends on its Model Improvement Program, so nothing is promised for it here.
+    const deepgram = privacy().slice(privacy().indexOf("Deepgram:"), privacy().indexOf("Anthropic:"));
+    expect(deepgram).toContain("turns the sound of people who said yes into text");
+    expect(deepgram).not.toMatch(/train/i);
   });
 });
 
