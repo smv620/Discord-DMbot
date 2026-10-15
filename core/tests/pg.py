@@ -12,6 +12,13 @@ flags, functions, triggers, grants) may have been written. Unchanged: the next t
 process gets it, empty and as freshly migrated (tests/test_pg_reuse.py proves a reused schema
 equals a fresh one). Any change at all (a test that altered the schema): it is dropped and never
 reused.
+What cannot leak between tests, and why: rows and counters are cleared and checked; the
+structure is compared by catalog (see `_STAMP`); a schema built before the website's role
+existed is dropped (the role's rights are cluster-wide, so they follow the role, not the
+schema). Session settings, advisory locks and LISTEN channels live and die with each test's
+own connection pool, which is closed at the end of every test. Objects outside the schema
+(extensions, other schemas, roles) are not touched by a test through here, and a test that
+makes one is not covered: the exactness test (tests/test_pg_reuse.py) is where to add a check.
 Clearing rows needs `DMBOT_TEST_SUPERUSER_URL` (CI sets it); without it, or with
 `DMBOT_TEST_REUSE_SCHEMAS=0`, every test builds its own schema as before. Tests that test
 migrations themselves (`migrations=before`, test_db's Migrations) always migrate from zero: they
@@ -28,6 +35,7 @@ import unittest
 import uuid
 
 import psycopg
+from psycopg import sql
 
 from dmbot.db import Database, drop_schema
 
@@ -102,92 +110,123 @@ def structure(schema: str) -> list[str]:
     with the schema's own name replaced so schemas can be compared. Slow (it prints every
     function and constraint): used by the exactness test, not between tests."""
     with psycopg.connect(SUPERUSER_URL, autocommit=True) as conn:
-        conn.execute(psycopg.sql.SQL("SET search_path = {}").format(psycopg.sql.Identifier(schema)))
+        conn.execute(sql.SQL("SET search_path = {}").format(sql.Identifier(schema)))
         rows = conn.execute(_STRUCTURE, {"s": schema}).fetchall()
     return [str(r[0]).replace(f'"{schema}".', "~.").replace(schema, "~") for r in rows]
 
 
-# The quick check between tests: how many catalog rows describe the schema and the newest
-# transaction that touched any of them. Any DDL (a column, a policy, a grant, a trigger switched
-# off and on again) either adds or removes a row or leaves a newer transaction on one, so a
-# schema is "unchanged" only if nothing in its catalogs was written since it was looked at. Reading
-# this takes a few milliseconds; printing the whole structure takes a tenth of a second.
-_STAMP = """
-WITH ns AS (SELECT oid FROM pg_namespace WHERE nspname = %(s)s),
-cls AS (SELECT c.oid, c.xmin FROM pg_class c JOIN ns ON c.relnamespace = ns.oid)
-SELECT concat_ws('|',
-  (SELECT count(*) || ':' || coalesce(max(xmin::text::bigint), 0) FROM cls),
-  (SELECT count(*) || ':' || coalesce(max(a.xmin::text::bigint), 0)
-     FROM pg_attribute a JOIN cls ON a.attrelid = cls.oid),
-  (SELECT count(*) || ':' || coalesce(max(d.xmin::text::bigint), 0)
-     FROM pg_attrdef d JOIN cls ON d.adrelid = cls.oid),
-  (SELECT count(*) || ':' || coalesce(max(k.xmin::text::bigint), 0)
-     FROM pg_constraint k JOIN ns ON k.connamespace = ns.oid),
-  (SELECT count(*) || ':' || coalesce(max(t.xmin::text::bigint), 0)
-     FROM pg_trigger t JOIN cls ON t.tgrelid = cls.oid),
-  (SELECT count(*) || ':' || coalesce(max(p.xmin::text::bigint), 0)
-     FROM pg_policy p JOIN cls ON p.polrelid = cls.oid),
-  (SELECT count(*) || ':' || coalesce(max(i.xmin::text::bigint), 0)
-     FROM pg_index i JOIN cls ON i.indrelid = cls.oid),
-  (SELECT count(*) || ':' || coalesce(max(f.xmin::text::bigint), 0)
-     FROM pg_proc f JOIN ns ON f.pronamespace = ns.oid),
-  (SELECT count(*) || ':' || coalesce(max(y.xmin::text::bigint), 0)
-     FROM pg_type y JOIN ns ON y.typnamespace = ns.oid),
-  (SELECT count(*) || ':' || coalesce(max(r.xmin::text::bigint), 0)
-     FROM pg_rewrite r JOIN cls ON r.ev_class = cls.oid),
-  (SELECT count(*) || ':' || coalesce(max(n.xmin::text::bigint), 0) FROM pg_namespace n
-     JOIN ns ON n.oid = ns.oid)
+# The quick check between tests: for every catalog that describes the schema, how many rows there
+# are, the sum of the transactions that wrote them and the newest one. Any DDL (a column, a policy,
+# a grant, a trigger switched off and on again) adds or removes a row or leaves a newer transaction
+# on one, so a schema is "unchanged" only if nothing in its catalogs was written since it was
+# built. (The sum, not only the newest, so a later change cannot hide under an old high-water mark
+# after transaction numbers are frozen or wrap.) `pg_class` is the exception: clearing a table
+# rewrites its row, and VACUUM and ANALYZE touch it, so it is compared by what the row *says*
+# (kind, columns, row-level security, owner, grants), not by when it was written.
+# Reading this takes a few milliseconds; printing the whole structure takes a tenth of a second.
+_CATALOGS = [
+    ("pg_attribute", "a", "JOIN cls ON a.attrelid = cls.oid"),
+    ("pg_attrdef", "a", "JOIN cls ON a.adrelid = cls.oid"),
+    ("pg_constraint", "a", "JOIN ns ON a.connamespace = ns.oid"),
+    ("pg_trigger", "a", "JOIN cls ON a.tgrelid = cls.oid"),
+    ("pg_policy", "a", "JOIN cls ON a.polrelid = cls.oid"),
+    ("pg_index", "a", "JOIN cls ON a.indrelid = cls.oid"),
+    ("pg_proc", "a", "JOIN ns ON a.pronamespace = ns.oid"),
+    ("pg_type", "a", "JOIN ns ON a.typnamespace = ns.oid"),
+    ("pg_enum", "a", "JOIN pg_type t ON t.oid = a.enumtypid JOIN ns ON t.typnamespace = ns.oid"),
+    ("pg_rewrite", "a", "JOIN cls ON a.ev_class = cls.oid"),
+    ("pg_sequence", "a", "JOIN cls ON a.seqrelid = cls.oid"),
+    ("pg_description", "a", "JOIN cls ON a.objoid = cls.oid"),
+    ("pg_statistic_ext", "a", "JOIN ns ON a.stxnamespace = ns.oid"),
+    ("pg_inherits", "a", "JOIN cls ON a.inhrelid = cls.oid"),
+    ("pg_default_acl", "a", "JOIN ns ON a.defaclnamespace = ns.oid"),
+    ("pg_namespace", "a", "JOIN ns ON a.oid = ns.oid"),
+]
+_STAMP = (
+    "WITH ns AS (SELECT oid FROM pg_namespace WHERE nspname = %(s)s),"
+    " cls AS (SELECT c.* FROM pg_class c JOIN ns ON c.relnamespace = ns.oid)"
+    " SELECT concat_ws('|', (SELECT count(*) || ':' || coalesce(md5(string_agg("
+    "relname || relkind::text || relnatts || relhasindex || relrowsecurity || relforcerowsecurity"
+    " || relpersistence::text || relhastriggers || relowner || coalesce(relacl::text, '')"
+    " || coalesce(reloptions::text, ''), ',' ORDER BY relname)), '') FROM cls)"
+    + "".join(
+        f", (SELECT count(*) || ':' || coalesce(sum(a.xmin::text::bigint), 0) || ':'"
+        f" || coalesce(max(a.xmin::text::bigint), 0) FROM {table} a {join})"
+        for table, _, join in _CATALOGS
+    )
+    + ")"
 )
-"""
-
-
-def _admin() -> psycopg.Connection[tuple[object, ...]]:
-    """One superuser connection for this process, kept between tests (a connection is not tied
-    to an event loop, and opening one for every test costs more than the check does)."""
-    global _ADMIN
-    if _ADMIN is None or _ADMIN.closed or _ADMIN.broken:
-        _ADMIN = psycopg.connect(SUPERUSER_URL, autocommit=True)
-    return _ADMIN
 
 
 _ADMIN: psycopg.Connection[tuple[object, ...]] | None = None
 
 
+def _admin() -> psycopg.Connection[tuple[object, ...]]:
+    """One superuser connection for this process, kept between tests (a connection is not tied
+    to an event loop, and opening one for every test costs more than the check does). Waits
+    for a lock only a few seconds, so a test that left a connection open in a transaction cannot
+    hang the run: the schema is dropped or left behind instead of reused."""
+    global _ADMIN
+    if _ADMIN is None or _ADMIN.closed or _ADMIN.broken:
+        conn = psycopg.connect(SUPERUSER_URL, autocommit=True)
+        # Clearing rows passes row-level security only as a superuser; without one it would
+        # quietly leave rows behind.
+        row = conn.execute("SELECT rolsuper FROM pg_roles WHERE rolname = current_user").fetchone()
+        if not row or not row[0]:
+            conn.close()
+            raise RuntimeError("DMBOT_TEST_SUPERUSER_URL must be a superuser to reuse schemas")
+        conn.execute("SET lock_timeout = '5s'")
+        conn.execute("SET statement_timeout = '30s'")
+        _ADMIN = conn
+    return _ADMIN
+
+
 def stamp(schema: str) -> str:
-    """The quick fingerprint of a schema (see `_STAMP`), plus its list of migrations."""
+    """The quick fingerprint of a schema (see `_STAMP`), its list of migrations, and whether the
+    website's role existed (a schema built before it has none of its rights)."""
     conn = _admin()
     row = conn.execute(_STAMP, {"s": schema}).fetchone()
     names = conn.execute(
-        psycopg.sql.SQL(
-            "SELECT coalesce(md5(string_agg(name, ',' ORDER BY name)), '') FROM {}"
-        ).format(psycopg.sql.SQL("{}.schema_migrations").format(psycopg.sql.Identifier(schema)))
+        sql.SQL("SELECT coalesce(md5(string_agg(name, ',' ORDER BY name)), '') FROM {}.{}").format(
+            sql.Identifier(schema), sql.Identifier("schema_migrations")
+        )
     ).fetchone()
-    return f"{row[0] if row else ''}|{names[0] if names else ''}"
+    return f"{row[0] if row else ''}|{names[0] if names else ''}|{web_role_exists()}"
+
+
+def web_role_exists() -> bool:
+    row = _admin().execute("SELECT 1 FROM pg_roles WHERE rolname = 'dmbot_web'").fetchone()
+    return row is not None
 
 
 def clear_rows(schema: str) -> None:
     """Empty every table that has rows (except the list of migrations) and restart every counter,
-    as a fresh schema has them. The guard triggers (such as the one refusing a TRUNCATE of
-    campaigns) are off for this one transaction: they protect production, not a test's leftovers."""
+    as a fresh schema has them; then check nothing is left. The guard triggers (such as the one
+    refusing a TRUNCATE of campaigns) are off for this one transaction: they protect production,
+    not a test's leftovers."""
     conn = _admin()
     names = [
         str(r[0])
         for r in conn.execute(
-            "SELECT tablename FROM pg_tables WHERE schemaname = %s"
-            " AND tablename <> 'schema_migrations'",
+            "SELECT c.relname FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace"
+            " WHERE n.nspname = %s AND c.relkind IN ('r', 'p')"
+            " AND c.relname <> 'schema_migrations'",
             (schema,),
         ).fetchall()
     ]
-    ident = psycopg.sql.Identifier
-    probe = psycopg.sql.SQL(" UNION ALL ").join(
+    probe = sql.SQL(" UNION ALL ").join(
         [
-            psycopg.sql.SQL("SELECT {} WHERE EXISTS (SELECT 1 FROM {}.{})").format(
-                psycopg.sql.Literal(n), ident(schema), ident(n)
+            sql.SQL("SELECT {} WHERE EXISTS (SELECT 1 FROM {}.{})").format(
+                sql.Literal(n), sql.Identifier(schema), sql.Identifier(n)
             )
             for n in names
         ]
     )
-    full = [str(r[0]) for r in conn.execute(probe).fetchall()] if names else []
+
+    def full() -> list[str]:
+        return [str(r[0]) for r in conn.execute(probe).fetchall()] if names else []
+
+    filled = full()
     sequences = [
         str(r[0])
         for r in conn.execute(
@@ -197,46 +236,42 @@ def clear_rows(schema: str) -> None:
         ).fetchall()
     ]
     with conn.transaction():
-        # A connection a test left open in a transaction would make this wait for ever: give up
-        # after a few seconds instead (the schema is then dropped, or left behind, never reused).
-        conn.execute("SET LOCAL lock_timeout = '5s'")
-        if full:
+        if filled:
             conn.execute("SET LOCAL session_replication_role = replica")
-            tables = psycopg.sql.SQL(", ").join(
-                psycopg.sql.SQL("{}.{}").format(ident(schema), ident(n)) for n in full
+            tables = sql.SQL(", ").join(
+                sql.SQL("{}.{}").format(sql.Identifier(schema), sql.Identifier(n)) for n in filled
             )
-            conn.execute(psycopg.sql.SQL("TRUNCATE {} RESTART IDENTITY CASCADE").format(tables))
+            conn.execute(sql.SQL("TRUNCATE {} RESTART IDENTITY CASCADE").format(tables))
         for name in sequences:  # a counter moves even when its rows were rolled back
             conn.execute(
-                psycopg.sql.SQL("ALTER SEQUENCE {}.{} RESTART").format(ident(schema), ident(name))
+                sql.SQL("ALTER SEQUENCE {}.{} RESTART").format(
+                    sql.Identifier(schema), sql.Identifier(name)
+                )
             )
+    left = full()
+    if left:  # a table nobody expected (hidden by a rule, say): never hand it on dirty
+        raise RuntimeError(f"rows left after clearing: {left}")
 
 
 def _forget(schema: str) -> None:
     _BUILT.pop(schema, None)
     with psycopg.connect(TEST_URL, autocommit=True) as conn:
         conn.execute("SET lock_timeout = '10s'")
-        conn.execute(
-            psycopg.sql.SQL("DROP SCHEMA IF EXISTS {} CASCADE").format(
-                psycopg.sql.Identifier(schema)
-            )
-        )
+        conn.execute(sql.SQL("DROP SCHEMA IF EXISTS {} CASCADE").format(sql.Identifier(schema)))
 
 
 def recycle(schema: str) -> bool:
     """Take a schema back after a test: True when it is unchanged (nothing in its catalogs was
-    written since it was last looked at), was cleared, and may go to the next test; False when
-    it was dropped because something about it changed. Clearing rewrites the catalog rows of
-    the tables it empties, so the new look is taken after it."""
+    written since it was built), was cleared, and may go to the next test; False when it was
+    dropped because something about it changed or anything at all went wrong."""
     try:
         if stamp(schema) == _BUILT.get(schema):
             clear_rows(schema)
-            _BUILT[schema] = stamp(schema)
             _FREE.append(schema)
             return True
-    except psycopg.Error:
-        pass  # anything odd: do not trust it
-    with contextlib.suppress(psycopg.Error):  # stuck on a lock: left behind, never reused
+    except Exception:  # anything odd: do not trust it
+        pass
+    with contextlib.suppress(Exception):  # stuck on a lock: left behind, never reused
         _forget(schema)
     return False
 
@@ -244,8 +279,8 @@ def recycle(schema: str) -> bool:
 @atexit.register
 def _drop_reusable() -> None:
     """When this process ends, the schemas kept for reuse go too."""
-    for schema in [*_FREE]:
-        with contextlib.suppress(psycopg.Error):
+    for schema in {*_FREE, *_BUILT}:
+        with contextlib.suppress(Exception):
             _forget(schema)
     _FREE.clear()
 
@@ -261,12 +296,30 @@ class DatabaseTest(unittest.IsolatedAsyncioTestCase):
             if REQUIRE_DB:
                 self.fail("DMBOT_TEST_DATABASE_URL is not set but DMBOT_REQUIRE_DB_TESTS=1")
             self.skipTest("set DMBOT_TEST_DATABASE_URL to run database tests")
-        reused = REUSE and bool(_FREE)
-        self.schema = _FREE.pop() if reused else f"t_{uuid.uuid4().hex[:16]}"
-        # A reused schema is already migrated and granted: only check it is up to date.
-        self.db = await Database.open(TEST_URL, schema=self.schema, max_size=4, migrate=not reused)
-        if REUSE and not reused:  # just built: remember how it looks
-            _BUILT[self.schema] = stamp(self.schema)
+        reused = False
+        if REUSE:
+            while _FREE and not reused:
+                self.schema = _FREE.pop()
+                # The website's role may have been made since this schema was: it would have none
+                # of the role's rights. Such a schema is dropped, never reused.
+                if _BUILT.get(self.schema, "").endswith(f"|{web_role_exists()}"):
+                    reused = True
+                else:
+                    await asyncio.to_thread(_forget, self.schema)
+        if not reused:
+            self.schema = f"t_{uuid.uuid4().hex[:16]}"
+        try:
+            # A reused schema is already migrated and granted: only check it is up to date.
+            self.db = await Database.open(
+                TEST_URL, schema=self.schema, max_size=4, migrate=not reused
+            )
+            if REUSE and not reused:  # just built: remember how it looks
+                _BUILT[self.schema] = stamp(self.schema)
+        except BaseException:
+            if REUSE:
+                with contextlib.suppress(Exception):
+                    await asyncio.to_thread(_forget, self.schema)
+            raise
 
     async def asyncTearDown(self) -> None:
         await self.db.close()

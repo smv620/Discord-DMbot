@@ -10,7 +10,7 @@ import uuid
 
 import psycopg
 
-from dmbot.db import Database
+from dmbot.db import MIGRATIONS, Database
 from tests import pg
 
 needs_superuser = unittest.skipUnless(
@@ -129,10 +129,14 @@ class Reuse(unittest.IsolatedAsyncioTestCase):
     async def test_a_recycled_schema_is_handed_on_and_one_with_rows_is_cleared(self) -> None:
         schema = await self.build()
         await self.use(schema)
-        self.assertGreater(sum(n for n, _ in self.rows(schema).values()), 73)  # rows left behind
+        self.assertGreater(
+            sum(n for n, _ in self.rows(schema).values()), len(MIGRATIONS)
+        )  # rows left behind
         self.assertTrue(pg.recycle(schema))
         self.assertIn(schema, pg._FREE)
-        self.assertEqual(sum(n for n, _ in self.rows(schema).values()), 73)  # only the migrations
+        self.assertEqual(
+            sum(n for n, _ in self.rows(schema).values()), len(MIGRATIONS)
+        )  # only the migrations
 
     # ---- any change to a schema keeps it from being handed on ------------------------------
 
