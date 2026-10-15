@@ -12,6 +12,7 @@ const base: string = import.meta.env.PUBLIC_API_BASE ?? "/api";
 export default function AccountIsland() {
   const [api, setApi] = useState<AccountApi | null>(null);
   const search = typeof window === "undefined" ? "" : window.location.search;
+  const hash = typeof window === "undefined" ? "" : window.location.hash;
 
   useEffect(() => {
     if (base !== "mock") {
@@ -25,5 +26,5 @@ export default function AccountIsland() {
   }, [search]);
 
   if (!api) return <p class="muted" role="status">{text.loading}</p>;
-  return <Account api={api} search={search} />;
+  return <Account api={api} search={search} hash={hash} />;
 }
