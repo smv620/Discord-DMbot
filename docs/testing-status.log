@@ -10,6 +10,11 @@ Never put tokens, .env contents or players' personal data here (public repo).
 READY TO DEPLOY (merged into development, not on the server yet; dev1 deploys)
 ------------------------------------------------------------------------------
 (nothing: the big deploy (#1180) and everything before it are live in ee256c7)
+- WebDev, merged 2026-10-15 06:31 UTC (#1237 sign-in by emailed link, #1274 the website's move code; both on top of #1244/#1245): deploy core + web-api
+  with migrations 0066 (email sign-in), 0069 (website's move-code door). Needs SMTP_*, MAIL_FROM, MAIL_POSTAL_ADDRESS and LINK_TOKEN_SECRET set in .env
+  (the owner enters keys; no mailer means no link and move codes answer "off"). Web site: the Account page needs the same build (Cloudflare Pages builds it).
+  Check, with a paid test account that has a payment email: on the Account page ask for a sign-in link by email and use it (works once, ends after
+  15 minutes); press "Get a move code" and see the email arrive at the payment address (not the Discord one); three failed or sent asks in an hour stop the 4th.
 - Waiting on the owner, not a deploy: once the Stripe account exists (#1096), replace the LEMONSQUEEZY_* values in .env
   with the STRIPE_* ones (.env.example) through scripts/set-key (#1110). Payments stay off until then.
 

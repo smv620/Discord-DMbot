@@ -32,6 +32,8 @@ EARS_SHARED_SECRET=
 DEEPGRAM_API_KEY=
 TRANSCRIBER=whisper-local
 SPEECHMATICS_API_KEY=
+SMTP_APP_PASSWORD=
+DMBOT_WEB_DB_PASSWORD=
 EOF
   printf 'DISCORD_TOKEN=old-discord-token\nTRANSCRIBER=deepgram\nDEEPGRAM_API_KEY=\n' >"$DMBOT_ENV_FILE"
   chmod 644 "$DMBOT_ENV_FILE"
@@ -109,6 +111,7 @@ check "menu: shows EARS_SHARED_SECRET as empty" says "2) EARS_SHARED_SECRET (emp
 check "menu: shows DEEPGRAM_API_KEY" says "3) DEEPGRAM_API_KEY (empty)"
 check "menu: leaves out plain settings" never_says "TRANSCRIBER"
 check "menu: leaves out database passwords" never_says "DB_PASSWORD"
+check "menu: offers the Gmail app password" says "SMTP_APP_PASSWORD (empty)"
 check "menu: sets the picked key" has_line "EARS_SHARED_SECRET=$key"
 
 reset
@@ -151,8 +154,24 @@ run "" DEEPGRAM_API_KEY
 check "end of input at the paste: refused" refused
 check "end of input at the paste: says so" says "nothing was pasted"
 
+# The Gmail app password: the one _PASSWORD that is allowed
+reset
+run "abcd efgh ijkl mnop"$'\n' SMTP_APP_PASSWORD
+check "app password: spaces are removed" has_line "SMTP_APP_PASSWORD=abcdefghijklmnop"
+check "app password: saved" ok
+check "app password: never printed" never_says "abcdefghijklmnop"
+check "app password: no part of it shown" never_says "mnop"
+check "app password: says how long" says "Saved SMTP_APP_PASSWORD (16 characters)."
+for bad in "abcd efgh ijkl mno" "abcd efgh ijkl mno1" "abcdefghijklmnopq" "abcd-efgh-ijkl-mnop"; do
+  reset
+  run "$bad"$'\n' SMTP_APP_PASSWORD
+  check "app password: rejects '$bad'" refused
+  check "app password: '$bad' says 16 letters" says "16 letters"
+  check "app password: '$bad' changes nothing" unchanged
+done
+
 # Names
-for name in DMBOT_DB_PASSWORD POSTGRES_ADMIN_PASSWORD TRANSCRIBER NOT_A_SETTING 'DISCORD_TOKEN|.*'; do
+for name in DMBOT_DB_PASSWORD DMBOT_WEB_DB_PASSWORD POSTGRES_ADMIN_PASSWORD ADMIN_PASSWORD_HASH TRANSCRIBER NOT_A_SETTING 'DISCORD_TOKEN|.*'; do
   reset
   run "$key"$'\n' "$name"
   check "refuses $name" refused
