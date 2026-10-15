@@ -692,6 +692,152 @@ DEFINITIONS = """
         ADD COLUMN definition_version INTEGER NOT NULL DEFAULT 1 CHECK (definition_version >= 1);
     """
 
+RULE_SETS = (
+    f"""
+    -- Shared rulesets (#1190; docs/PLAN.md, "Shared rulesets"): the one place rules cross from
+    -- one campaign to another. A DM of a paid campaign publishes a set of its own house rules;
+    -- another campaign's DM may follow it, in the same server or from another with a share
+    -- code. Only rules cross: a set's content is house-rule text and the document link,
+    -- never story, names, transcripts, notes or anything from a shared rulebook or adventure.
+    --   rule_sets          the published set, in its publisher's campaign (server-isolated)
+    --   rule_set_versions  each version's content; version 1 is the rules when it was shared
+    --   rule_set_codes     share codes the publishing DM made (a code is the capability to see
+    --                      the set; unguessable; turned off by the DM)
+    --   rule_set_follows   a follower campaign's own copy of the version it uses, so its
+    --                      rules keep working if the set goes (and for its backup)
+    -- Every table is isolated to its own server and campaign like the rest. The one door
+    -- across servers is `dmbot_set_by_code`: it reads a shared set by an active code and
+    -- returns that set's name, its publisher campaign's name and its latest version, nothing
+    -- else (like the pause and orphan doors, it opens the tables to itself through a setting
+    -- it sets and puts back).
+    CREATE TABLE rule_sets (
+        {_memory_scope()}
+        id         TEXT NOT NULL CHECK (id ~ '^[0-9a-f]{{32}}$'),
+        kind       TEXT NOT NULL CHECK (kind IN ('house_rules', 'homebrew')),
+        name       TEXT NOT NULL CHECK (char_length(name) BETWEEN 1 AND 60),
+        status     TEXT NOT NULL CHECK (status IN ('shared', 'unshared')),
+        created_by BIGINT NOT NULL CHECK (created_by > 0),
+        created_at BIGINT NOT NULL,
+        PRIMARY KEY (guild_id, campaign_id, id),
+        UNIQUE (id)
+    );
+    CREATE TABLE rule_set_versions (
+        {_memory_scope()}
+        set_id     TEXT NOT NULL,
+        version    INTEGER NOT NULL CHECK (version >= 1),
+        content    JSONB NOT NULL CHECK (jsonb_typeof(content) = 'object'),
+        created_by BIGINT NOT NULL CHECK (created_by > 0),
+        created_at BIGINT NOT NULL,
+        PRIMARY KEY (guild_id, campaign_id, set_id, version),
+        FOREIGN KEY (guild_id, campaign_id, set_id)
+            REFERENCES rule_sets (guild_id, campaign_id, id) ON DELETE CASCADE
+    );
+    CREATE TABLE rule_set_codes (
+        {_memory_scope()}
+        code       TEXT NOT NULL CHECK (code ~ '^[A-Z2-7]{{10}}$'),
+        set_id     TEXT NOT NULL,
+        active     BOOLEAN NOT NULL,
+        created_at BIGINT NOT NULL,
+        PRIMARY KEY (guild_id, campaign_id, code),
+        UNIQUE (code),
+        FOREIGN KEY (guild_id, campaign_id, set_id)
+            REFERENCES rule_sets (guild_id, campaign_id, id) ON DELETE CASCADE
+    );
+    CREATE TABLE rule_set_follows (
+        {_memory_scope()}
+        set_id       TEXT NOT NULL,
+        kind         TEXT NOT NULL CHECK (kind IN ('house_rules', 'homebrew')),
+        set_name     TEXT NOT NULL CHECK (char_length(set_name) BETWEEN 1 AND 60),
+        publisher    TEXT NOT NULL CHECK (char_length(publisher) BETWEEN 1 AND 100),
+        version      INTEGER NOT NULL CHECK (version >= 1),
+        content      JSONB NOT NULL CHECK (jsonb_typeof(content) = 'object'),
+        position     INTEGER NOT NULL DEFAULT 0 CHECK (position >= 0),
+        updating     BOOLEAN NOT NULL,
+        followed_by  BIGINT NOT NULL CHECK (followed_by > 0),
+        followed_at  BIGINT NOT NULL,
+        PRIMARY KEY (guild_id, campaign_id, set_id)
+    );
+    -- A campaign shares one house-rules set, and follows one.
+    CREATE UNIQUE INDEX rule_sets_one_house_set
+        ON rule_sets (guild_id, campaign_id) WHERE kind = 'house_rules';
+    CREATE UNIQUE INDEX rule_set_follows_one_house_set
+        ON rule_set_follows (guild_id, campaign_id) WHERE kind = 'house_rules';
+    """
+    + "".join(
+        _isolate(t)
+        for t in ("rule_sets", "rule_set_versions", "rule_set_codes", "rule_set_follows")
+    )
+    + """
+    -- The door. Note: the policies below also let a caller read their OWN server's rows (the
+    -- plain guild_isolation policy already does); what they add is the one set a code opens.
+    -- The `campaigns` policy has no code condition of its own on purpose: its sub-select on
+    -- rule_sets is itself filtered by these row-level rules, so it reaches only a set whose
+    -- active code equals the one the function was given. Both settings are transaction-local,
+    -- so an error inside the function rolls them back; the restore lines are for success.
+    -- TO the role that owns the function (the one running this migration), never the
+    -- website's role. Each policy needs the setting the function sets, and the code it sets.
+    DO $do$
+    BEGIN
+        EXECUTE format(
+            'CREATE POLICY code_door ON rule_set_codes FOR SELECT TO %I
+                USING (dmbot_owner_sync() = ''setcode''
+                       AND code = current_setting(''dmbot.set_code'', true) AND active)',
+            current_user);
+        EXECUTE format(
+            'CREATE POLICY code_door ON rule_sets FOR SELECT TO %I
+                USING (dmbot_owner_sync() = ''setcode'' AND status = ''shared''
+                       AND id IN (SELECT set_id FROM rule_set_codes))',
+            current_user);
+        EXECUTE format(
+            'CREATE POLICY code_door ON rule_set_versions FOR SELECT TO %I
+                USING (dmbot_owner_sync() = ''setcode''
+                       AND set_id IN (SELECT id FROM rule_sets))',
+            current_user);
+        EXECUTE format(
+            'CREATE POLICY code_door ON campaigns FOR SELECT TO %I
+                USING (dmbot_owner_sync() = ''setcode''
+                       AND EXISTS (SELECT 1 FROM rule_sets s
+                                   WHERE s.guild_id = campaigns.guild_id
+                                     AND s.campaign_id = campaigns.id))',
+            current_user);
+    END
+    $do$;
+    CREATE FUNCTION dmbot_set_by_code(wanted TEXT)
+        RETURNS TABLE (set_id TEXT, kind TEXT, set_name TEXT, publisher TEXT, version INTEGER,
+                       content JSONB)
+        LANGUAGE plpgsql SECURITY DEFINER
+        AS $fn$
+    DECLARE
+        before TEXT := COALESCE(current_setting('dmbot.owner_sync', true), '');
+        before_code TEXT := COALESCE(current_setting('dmbot.set_code', true), '');
+    BEGIN
+        PERFORM set_config('dmbot.owner_sync', 'setcode', true);
+        PERFORM set_config('dmbot.set_code', wanted, true);
+        RETURN QUERY
+            SELECT s.id, s.kind, s.name, c.name, v.version, v.content
+            FROM rule_set_codes rc
+            JOIN rule_sets s ON s.id = rc.set_id
+            JOIN campaigns c ON c.guild_id = s.guild_id AND c.id = s.campaign_id
+            JOIN rule_set_versions v ON v.guild_id = s.guild_id AND v.campaign_id = s.campaign_id
+                AND v.set_id = s.id
+            WHERE rc.code = wanted AND rc.active AND s.status = 'shared'
+            ORDER BY v.version DESC
+            LIMIT 1;
+        PERFORM set_config('dmbot.owner_sync', before, true);
+        PERFORM set_config('dmbot.set_code', before_code, true);
+    END
+    $fn$;
+    DO $do$
+    BEGIN
+        EXECUTE format(
+            'ALTER FUNCTION dmbot_set_by_code(TEXT) SET search_path = pg_catalog, %I, pg_temp',
+            current_schema());
+    END
+    $do$;
+    REVOKE ALL ON FUNCTION dmbot_set_by_code(TEXT) FROM PUBLIC;
+"""
+)
+
 OWNER_MISSING = """
     -- When DMbot first saw that a campaign's owner is not in the server any more (#1214):
     -- after 7 days the campaign becomes ownerless, as if the account were deleted. NULL when the
@@ -2107,6 +2253,131 @@ WEB_ROLE_GRANTS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("SELECT, INSERT", ("access_log",)),
 )
 
+SET_UPDATES = (
+    f"""
+    -- Shared rulesets part 2 (#1191): updates to a set, and who may write it.
+    --   rule_set_follows.code   the share code a follower used, so its session start can ask
+    --                           whether the set has a newer version. A code the publisher
+    --                           turned off stops NEW followers only (owner decision): follows
+    --                           made before keep getting updates, until Stop sharing.
+    --   rule_set_codes.deactivated_at  when a code was turned off, for that comparison (codes
+    --                           turned off before this migration have none, and keep their
+    --                           old meaning: they do not update earlier follows)
+    --   rule_set_follows.declined_version  the version an Undo sent back: DMbot does not
+    --                           take it again at a session start, only a newer one; the DM
+    --                           can still choose it with Pick changes
+    --   rule_set_follows.previous_*, taken_*  the copy before the last update was taken, so
+    --                           Undo needs no memory, and who took it (NULL: DMbot did, at a
+    --                           session start; "auto")
+    --   rule_set_versions.source  who made the version: the publisher's DMs or co-editors,
+    --                           an accepted suggestion, or an accepted change found in the
+    --                           shared document (the log of who and when is created_by and
+    --                           created_at)
+    --   rule_set_editors        people the publisher named as co-editors of its set
+    --   house_rules.from_set    a rule that came from a followed set in a Cherry pick, as
+    --                           "<set> house rules, v4": merged rules rank below the
+    --                           campaign's own
+    -- New columns with defaults or NULL: no row is rewritten, so no row-level security to open.
+    ALTER TABLE rule_set_follows
+        ADD COLUMN code TEXT CHECK (code IS NULL OR code ~ '^[A-Z2-7]{{10}}$'),
+        ADD COLUMN previous_version INTEGER,
+        ADD COLUMN previous_content JSONB,
+        ADD COLUMN declined_version INTEGER,
+        ADD COLUMN taken_by BIGINT,
+        ADD COLUMN taken_source TEXT CHECK (taken_source IS NULL OR taken_source IN ('auto', 'dm'));
+    ALTER TABLE rule_set_codes ADD COLUMN deactivated_at BIGINT;
+    ALTER TABLE rule_set_versions
+        ADD COLUMN source TEXT NOT NULL DEFAULT 'publisher'
+        CHECK (source IN ('publisher', 'suggestion', 'document'));
+    ALTER TABLE house_rules
+        ADD COLUMN from_set TEXT CHECK (from_set IS NULL OR char_length(from_set) <= 200);
+    CREATE TABLE rule_set_editors (
+        {_memory_scope()}
+        set_id      TEXT NOT NULL,
+        user_id     BIGINT NOT NULL CHECK (user_id > 0),
+        added_by    BIGINT NOT NULL CHECK (added_by > 0),
+        added_at    BIGINT NOT NULL,
+        PRIMARY KEY (guild_id, campaign_id, set_id, user_id),
+        FOREIGN KEY (guild_id, campaign_id, set_id)
+            REFERENCES rule_sets (guild_id, campaign_id, id) ON DELETE CASCADE
+    );
+    """
+    + _isolate("rule_set_editors")
+    + """
+    -- The update door: like dmbot_set_by_code (0061) but for a follower asking whether the set it
+    -- already follows has a newer version. A code turned off AFTER the follow still answers; one
+    -- turned off before it, or a set that is no longer shared, does not. Same pattern as that
+    -- door: policies for the function's owner only, keyed on the setting it sets.
+    DO $do$
+    BEGIN
+        EXECUTE format(
+            'CREATE POLICY update_door ON rule_set_codes FOR SELECT TO %I
+                USING (dmbot_owner_sync() = ''setupdate''
+                       AND code = current_setting(''dmbot.set_code'', true)
+                       AND (active OR deactivated_at >=
+                            NULLIF(current_setting(''dmbot.set_followed_at'', true),
+                                   '''')::BIGINT))',
+            current_user);
+        EXECUTE format(
+            'CREATE POLICY update_door ON rule_sets FOR SELECT TO %I
+                USING (dmbot_owner_sync() = ''setupdate'' AND status = ''shared''
+                       AND id IN (SELECT set_id FROM rule_set_codes))',
+            current_user);
+        EXECUTE format(
+            'CREATE POLICY update_door ON rule_set_versions FOR SELECT TO %I
+                USING (dmbot_owner_sync() = ''setupdate''
+                       AND set_id IN (SELECT id FROM rule_sets))',
+            current_user);
+        EXECUTE format(
+            'CREATE POLICY update_door ON campaigns FOR SELECT TO %I
+                USING (dmbot_owner_sync() = ''setupdate''
+                       AND EXISTS (SELECT 1 FROM rule_sets s
+                                   WHERE s.guild_id = campaigns.guild_id
+                                     AND s.campaign_id = campaigns.id))',
+            current_user);
+    END
+    $do$;
+    CREATE FUNCTION dmbot_set_update_by_code(wanted TEXT, followed_at BIGINT)
+        RETURNS TABLE (set_id TEXT, kind TEXT, set_name TEXT, publisher TEXT, version INTEGER,
+                       content JSONB)
+        LANGUAGE plpgsql SECURITY DEFINER
+        AS $fn$
+    DECLARE
+        before TEXT := COALESCE(current_setting('dmbot.owner_sync', true), '');
+        before_code TEXT := COALESCE(current_setting('dmbot.set_code', true), '');
+        before_at TEXT := COALESCE(current_setting('dmbot.set_followed_at', true), '');
+    BEGIN
+        PERFORM set_config('dmbot.owner_sync', 'setupdate', true);
+        PERFORM set_config('dmbot.set_code', wanted, true);
+        PERFORM set_config('dmbot.set_followed_at', followed_at::TEXT, true);
+        RETURN QUERY
+            SELECT s.id, s.kind, s.name, c.name, v.version, v.content
+            FROM rule_set_codes rc
+            JOIN rule_sets s ON s.id = rc.set_id
+            JOIN campaigns c ON c.guild_id = s.guild_id AND c.id = s.campaign_id
+            JOIN rule_set_versions v ON v.guild_id = s.guild_id AND v.campaign_id = s.campaign_id
+                AND v.set_id = s.id
+            WHERE rc.code = wanted AND s.status = 'shared'
+            ORDER BY v.version DESC
+            LIMIT 1;
+        PERFORM set_config('dmbot.owner_sync', before, true);
+        PERFORM set_config('dmbot.set_code', before_code, true);
+        PERFORM set_config('dmbot.set_followed_at', before_at, true);
+    END
+    $fn$;
+    DO $do$
+    BEGIN
+        EXECUTE format(
+            'ALTER FUNCTION dmbot_set_update_by_code(TEXT, BIGINT)'
+            ' SET search_path = pg_catalog, %I, pg_temp',
+            current_schema());
+    END
+    $do$;
+    REVOKE ALL ON FUNCTION dmbot_set_update_by_code(TEXT, BIGINT) FROM PUBLIC;
+    """
+)
+
+
 MAIL = """
     -- Sending email (#1229; docs/PLAN.md, "Accounts"). Two small tables of ids and times, never
     -- an address or any text:
@@ -2895,8 +3166,9 @@ MOVES = """
     REVOKE ALL ON FUNCTION dmbot_move_preview(BIGINT) FROM PUBLIC;
     """
 
-# Numbered 0063 on purpose: 0060 to 0062 belong to pull requests still waiting to merge
-# (owner gone, shared rulesets, their updates). A migration list may have gaps.
+
+# Numbered 0063: 0060 to 0062 (owner gone, shared rulesets, their updates) have merged. A
+# migration list may have gaps, so a later number never has to wait for an earlier one.
 DMBOT_ID = """
     -- The DMbot ID (#1228; docs/PLAN.md, "Accounts"): a Discord ID in base 36, the Stripe invoice
     -- prefix, fixed for the life of the account. The database makes it (one source of truth for
@@ -3036,6 +3308,8 @@ MIGRATIONS: tuple[Migration, ...] = (
     ("0058_people", PEOPLE),
     ("0059_definitions", DEFINITIONS),
     ("0060_owner_missing", OWNER_MISSING),
+    ("0061_rule_sets", RULE_SETS),
+    ("0062_set_updates", SET_UPDATES),
     ("0063_dmbot_id", DMBOT_ID),
     ("0064_mail", MAIL),
     ("0065_trial", TRIAL),
@@ -3066,6 +3340,11 @@ ISOLATED_TABLES = (
     "game_effects",
     "memory_rule_links",
     "fightbot_players",
+    "rule_sets",
+    "rule_set_versions",
+    "rule_set_codes",
+    "rule_set_follows",
+    "rule_set_editors",
 )
 # A person's own rows (the website, #435): row-level security on `user_id`, set by
 # Database.user(). Sessions can also be found by their cookie hash (Database.session()),

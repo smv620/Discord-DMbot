@@ -235,6 +235,9 @@ def clean(
     person_keys = {name_key(p) for p in people} | {
         name_key(p.split()[0]) for p in people if p.split()
     }
+    # A table person's own name is never rewritten into a character, even by a DM's rule
+    # ("Mike" → Mikal): people and characters stay apart (#1208).
+    person_keys |= set(lookup.people_by_key)
     n = len(words)
     # Words that are already something DMbot knows: never changed by sound.
     known = [False] * n
@@ -244,6 +247,7 @@ def clean(
             key = " ".join(keys[start:end])
             if (
                 key in lookup.by_key
+                or key in lookup.people_by_key  # a table person's name, as the DM confirmed it
                 or key in lookup.fixes
                 or key in lookup.keep_keys
                 or key in person_keys
@@ -531,6 +535,12 @@ def _sounds_like(lookup: CampaignLookup, said: str, start: int) -> Fix | Questio
                 mine.setdefault(entry.alias_id, entry)
             if len(by_entity) > MAX_OPTIONS:
                 return None  # sounds like too many names to ask about
+    people = _people_sounding_like(lookup, joined)
+    if people:
+        # A word that sounds like a table person is a person's spelling to fix, never a
+        # character, and never both: where it could be either, it is left as heard, whatever
+        # the score ("Mike" the player and "Mikal" the character stay apart, #1208).
+        return None if by_entity else _person_fix(people, said, start)
     if not by_entity:
         return None
     if len(by_entity) == 1:
@@ -563,6 +573,38 @@ def _sounds_like(lookup: CampaignLookup, said: str, start: int) -> Fix | Questio
         return None
     options.sort(key=lambda o: (-o[0], o[1]))
     return Question(start, start + len(said), said, tuple((e, n) for _, n, e in options))
+
+
+def _people_sounding_like(lookup: CampaignLookup, joined: str) -> dict[str, dict[str, NameEntry]]:
+    """The table people's confirmed names that sound like these words: person entity id →
+    its names by alias id. Empty for nearly every word."""
+    found: dict[str, dict[str, NameEntry]] = {}
+    for code in sound_codes(joined):
+        for entry in lookup.people_by_sound.get(code, ()):
+            found.setdefault(entry.entity_id, {}).setdefault(entry.alias_id, entry)
+    return found
+
+
+def _person_fix(people: dict[str, dict[str, NameEntry]], said: str, start: int) -> Fix | None:
+    """Fix a person's spelling when the words sound like exactly one person's confirmed name
+    and are spelled much like it. Two people, or a poor likeness, leave the words alone (the
+    Cleaner never asks the DM about people)."""
+    if len(people) != 1:
+        return None
+    ((entity_id, entries),) = people.items()
+    best = max(entries.values(), key=lambda e: (likeness(said, e.text), e.text))
+    # (A fix of several words below NEAR_CERTAIN is made unsure by the caller, like a
+    # character's, so it shows with Undo.)
+    score = likeness(said, best.text)
+    if score < MIN_LIKENESS or best.text == said:
+        return None
+    if " " not in said:
+        # One word alone ("Mary" and Mara): no scene tells a person from a real name, so it
+        # takes a close spelling, and it is never silent: it shows on the DM screen with Undo.
+        if score < MIN_LIKENESS_ONE_WORD:
+            return None
+        return Fix(start, start + len(said), said, best.text, entity_id, SOUND, sure=False)
+    return Fix(start, start + len(said), said, best.text, entity_id, SOUND)
 
 
 def _one_word_ok(fix: Fix, scene: Collection[str]) -> bool:

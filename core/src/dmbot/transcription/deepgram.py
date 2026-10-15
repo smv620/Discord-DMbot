@@ -148,7 +148,7 @@ def transcript(payload: Any) -> str | None:
     cleaned = clean_text(text) if isinstance(text, str) else None
     if cleaned is None:
         return None
-    return Transcript(cleaned, _confidence(best))
+    return Transcript(cleaned, _confidence(best), "deepgram")
 
 
 def _confidence(best: Any) -> float | None:

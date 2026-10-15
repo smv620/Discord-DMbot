@@ -15,7 +15,8 @@
     "typecheck": "astro check",
     "test": "vitest run",
     "check:links": "node scripts/check-links.mjs",
-    "check:csp": "node scripts/check-csp.mjs"
+    "check:csp": "node scripts/check-csp.mjs",
+    "check:a11y": "node scripts/check-a11y.mjs"
   },
   "dependencies": {
     "@astrojs/preact": "^6.0.6",
@@ -28,6 +29,7 @@
     "@types/node": "^22.20.5",
     "axe-core": "^4.14.0",
     "happy-dom": "^20.14.5",
+    "playwright-core": "1.63.0",
     "typescript": "^6.0.3",
     "vitest": "^5.0.3"
   }
