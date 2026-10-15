@@ -151,6 +151,7 @@ from dmbot.logs import log_context, set_log_context
 from dmbot.mail import Mailer
 from dmbot.memory import definitions, document_reader
 from dmbot.memory.backup import MemorySection
+from dmbot.memory.claims import ClaimStore
 from dmbot.memory.lookup import CampaignLookup, LookupCache
 from dmbot.memory.models import DM, FIX, KEEP, Heard, MemoryRuleError, name_key
 from dmbot.memory.scan import MAX_SUGGESTIONS, find_new_names, group_alike
@@ -215,6 +216,8 @@ from dmbot.transcription.factory import build_transcriber
 from dmbot.transcription.pipeline import TranscriptionPipeline, clip_budget_s, speech_sent_line
 from dmbot.ui import logic as ui_logic
 from dmbot.ui import rule_card
+from dmbot.ui.claims_review import ClaimsReviewButton, claims_review_view
+from dmbot.ui.claims_review import waiting_text as claims_waiting_text
 from dmbot.ui.dmbot_commands import _failed, dmbot_group
 from dmbot.ui.house_rules import dmbot_house_rules  # noqa: F401 (registers it)
 from dmbot.ui.migrate import dmbot_migrate  # noqa: F401 (registers it)
@@ -848,7 +851,7 @@ class DMBot(commands.AutoShardedBot):
         # Consent buttons in private messages, likewise.
         self.add_dynamic_items(*CONSENT_BUTTONS)
         # "Check new names" on the DM screen after a session.
-        self.add_dynamic_items(ReviewButton, PeopleReviewButton)
+        self.add_dynamic_items(ReviewButton, PeopleReviewButton, ClaimsReviewButton)
         self.add_dynamic_items(  # #965, #1117
             clock_screen.ClockButton, clock_screen.ClockUndoButton, clock_screen.SuggestionButton
         )
@@ -1158,6 +1161,7 @@ class DMBot(commands.AutoShardedBot):
                     },
                     "sidebar_prompt": SIDEBAR_PROMPT_VERSION,
                     "sidebar_on": self.settings.sidebar_on,
+                    "story_extractor_on": self.settings.story_extractor_on,
                     "commit": test_files.short_commit(os.environ.get("GIT_COMMIT")),
                 },
             )
@@ -1706,6 +1710,7 @@ class DMBot(commands.AutoShardedBot):
             ("name scan", lambda: self.suggest_names(table)),
             ("who is who", lambda: self.learn_people(table)),
             ("people check", lambda: self.check_people(table)),
+            ("what was said", lambda: self.ask_about_claims(table)),
             ("definitions", lambda: self.recheck_definitions(table)),
             ("stale flags", lambda: self.close_stale_flags(table)),
             ("old undo history", lambda: self.prune_old_changes(table)),
@@ -5074,6 +5079,23 @@ class DMBot(commands.AutoShardedBot):
             if kept:
                 await self.post(
                     table.screen_channel_id, waiting_text(len(kept)), view=people_review_view(cid)
+                )
+
+    async def ask_about_claims(self, table: Table) -> None:
+        """After a session: if the story extractor left proposals waiting (#1297), the DM
+        screen says how many, never what, with a button only the DM can use. With the
+        extractor off (the default) nothing is ever waiting and nothing is posted; this step
+        itself makes no AI call."""
+        if self.memory is None or table.campaign_id is None:
+            return
+        gid, cid = table.guild_id, table.campaign_id
+        with log_context(guild_id=gid, campaign_id=cid):
+            waiting = (await ClaimStore(self.memory).counts(gid, cid)).get("proposed", 0)
+            if waiting:
+                await self.post(
+                    table.screen_channel_id,
+                    claims_waiting_text(waiting),
+                    view=claims_review_view(cid),
                 )
 
     async def recheck_definitions(self, table: Table) -> None:
