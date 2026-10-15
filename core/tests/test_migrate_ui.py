@@ -110,13 +110,33 @@ class GettingACode(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(it.sent[0][0], migrate.NO_EMAIL)
         bot.account_moves.make_code.assert_not_called()
 
+    async def test_a_mailer_that_raises_gives_the_code_back_and_says_so(self) -> None:
+        bot = bot_with()
+        bot.mailer.send = AsyncMock(side_effect=RuntimeError("smtp down"))
+        it = interaction(OLD, bot)
+        with self.assertLogs("dmbot.ui.migrate", "ERROR") as logs:
+            await migrate.get_code(it)
+        self.assertEqual(it.sent[0][0], migrate.EMAIL_FAILED)
+        bot.account_moves.cancel_code.assert_awaited_once_with(OLD, "ABCD2345")
+        self.assertNotIn("ABCD2345", " ".join(logs.output))
+
+    async def test_an_email_already_sent_is_a_failure_here_too(self) -> None:
+        bot = bot_with()
+        bot.mailer.send = AsyncMock(return_value="already_sent")  # each ask has its own kind
+        it = interaction(OLD, bot)
+        await migrate.get_code(it)
+        self.assertEqual(it.sent[0][0], migrate.EMAIL_FAILED)
+        bot.account_moves.cancel_code.assert_awaited_once()
+
     async def test_a_failed_email_says_so_and_a_store_error_still_answers(self) -> None:
         bot = bot_with()
         bot.mailer.send = AsyncMock(return_value="failed")
         it = interaction(OLD, bot)
         await migrate.get_code(it)
         self.assertEqual(it.sent[0][0], migrate.EMAIL_FAILED)
-        bot.account_moves.cancel_code.assert_awaited_once_with(OLD)  # no code nobody has seen
+        bot.account_moves.cancel_code.assert_awaited_once_with(
+            OLD, "ABCD2345"
+        )  # no code nobody has seen
         bad = bot_with(make_code=AsyncMock(side_effect=RuntimeError("down")))
         it2 = interaction(OLD, bad)
         await migrate.get_code(it2)

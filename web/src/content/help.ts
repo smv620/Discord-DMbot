@@ -161,6 +161,33 @@ export const accountSteps: Step[] = [
   },
 ];
 
+/** Emails from DMbot (#1283): every sentence is read from core/src/dmbot/mail.py, trial_jobs.py and
+ * ui/migrate.py. No address appears here: the emails carry the sender's postal address themselves. */
+export const emailSteps: Step[] = [
+  {
+    text: "DMbot sends very few emails. A sign-in link and a move code come only when you ask for one. The only others are two Try It emails, each sent once.",
+  },
+  {
+    text: "Sign-in link: ask for it on your account page and type the email you paid with or the email Discord has for you. We send a link that works once and stops working after 15 minutes.",
+  },
+  {
+    text: "Move code: when you move to a new Discord account, run /dmbot migrate on your old account and press Get a move code. It goes to the email you paid with, and nowhere else. It works once and lasts 30 minutes. A move code is only for you: never give it to anyone.",
+    names: [
+      { name: "/dmbot migrate", file: "ui/migrate.py" },
+      { name: "Get a move code", file: "ui/migrate.py" },
+    ],
+  },
+  {
+    text: "Didn't ask for a sign-in link or a move code? Ignore the email. Nothing changes.",
+  },
+  {
+    text: "Try It emails: one on the last day of Try It, and one if you get 30 more days. Each has a link to stop emails like it. Sign-in and move-code emails have no such link, because you asked for them.",
+  },
+];
+
+/** Said under the list: it is not a step. */
+export const emailNote = "For now, emails are sent from DMbot's own Gmail mailbox.";
+
 /** Not a step to do: what players may notice at the table. */
 export const playerNote =
   'Your game master may show the story\'s day and time, like "Day 5, morning", in your own channel. You do not need to do anything.';
