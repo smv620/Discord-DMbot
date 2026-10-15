@@ -1,6 +1,7 @@
 ---
 // The one layout every page uses: head tags, header with the menu, footer with the legal links.
 import "../styles/global.css";
+import "../styles/transitions.css";
 
 interface Props {
   /** Page name shown in the browser tab, before " · DMbot". */
@@ -11,9 +12,11 @@ interface Props {
   noindex?: boolean;
   /** Also ask search engines not to follow its links (the admin page). */
   nofollow?: boolean;
+  /** No page-change effect into or out of this page (the legal pages, #1289). */
+  plain?: boolean;
 }
 
-const { title, description, noindex = false, nofollow = false } = Astro.props;
+const { title, description, noindex = false, nofollow = false, plain = false } = Astro.props;
 const fullTitle = title === "DMbot" ? title : `${title} · DMbot`;
 
 // Built pages see their file name ("/pricing.html", "/index.html"); links don't have it.
@@ -62,6 +65,20 @@ const menu = [
     <meta name="description" content={description} />
     {noindex && <meta name="robots" content={nofollow ? "noindex, nofollow" : "noindex"} />}
     <link rel="canonical" href={canonical} />
+    {
+      /* Page changes (#1289). A change between two pages is animated only when BOTH opt in, so
+         a plain page (the legal ones) makes the change into and out of it a plain change. Only
+         people who haven't asked for less motion opt in; src/styles/transitions.css has the
+         rest. Inline, so it can differ page by page; styles are allowed inline by the CSP. */
+      plain ? (
+        <style is:inline set:html="@view-transition{navigation:none}h1{view-transition-name:none}" />
+      ) : (
+        <style
+          is:inline
+          set:html="@media (prefers-reduced-motion:no-preference){@view-transition{navigation:auto}}"
+        />
+      )
+    }
     <meta property="og:site_name" content="DMbot" />
     <meta property="og:type" content="website" />
     <meta property="og:title" content={fullTitle} />
@@ -127,6 +144,7 @@ const menu = [
           <li><a href="/legal/privacy">Privacy</a></li>
           <li><a href="/legal/refunds">Refunds</a></li>
           <li><a href="/help">Help</a></li>
+          <li><a href="/whats-new">What's new</a></li>
           <li><a href="/hello">Say hello</a></li>
         </ul>
       </div>

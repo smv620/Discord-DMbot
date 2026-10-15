@@ -23,7 +23,19 @@ MENTION_METHODS = ("exact", "sound", "spelling", "context", "dm")
 FIX, KEEP = "fix", "keep"  # correction actions
 
 # Where a fact came from. "dm" is the DM's own word; everything else needs confirming.
-SOURCES = ("dm", "character", "scan", "cleaner", "undo", "entitybot", "backup")
+SOURCES = ("dm", "character", "scan", "cleaner", "undo", "entitybot", "backup", "extractor")
+
+# What the story extractor's claims are (docs/STORY_MEMORY.md, section 1; #1297): proposals
+# only, in their own table. A claim is dropped (with a reason) when the rules or consent say no,
+# rejected when the DM says no, and confirmed when the DM says yes and the fact is written.
+CLAIM_PROPOSED, CLAIM_CONFIRMED, CLAIM_REJECTED, CLAIM_DROPPED = (
+    "proposed", "confirmed", "rejected", "dropped",
+)  # fmt: skip
+CLAIM_STATUSES = (CLAIM_PROPOSED, CLAIM_CONFIRMED, CLAIM_REJECTED, CLAIM_DROPPED)
+# How a claim was said: what the DM told the table, what a player said or believes, or what
+# someone means to do (never a fact).
+HOW_DM, HOW_PLAYER, HOW_PLAN = "dm_said", "player_said", "plan"
+HOWS = (HOW_DM, HOW_PLAYER, HOW_PLAN)
 
 # What a character is in the story, one at a time (#1034, owner decision 2026-10-10). A role
 # is never a kind of entry: the kind says what a thing fundamentally is ("character"), and
@@ -56,6 +68,19 @@ DETAIL_MAX = 100
 LINE_REF_MAX = 100
 LIST_MAX = 50  # examples, mention IDs: the same cap on write and in backups
 DM = "dm"
+
+# What state facts say (docs/STORY_MEMORY.md, "State facts"): beings have a condition among
+# the first group, items and places among the second. The rules for changing one live in
+# `ontology.STATE_CHANGES`.
+ALIVE, DEAD, MISSING, CAPTURED, TRANSFORMED, UNKNOWN = (
+    "alive", "dead", "missing", "captured", "transformed", "unknown",
+)  # fmt: skip
+INTACT, DESTROYED, LOST = "intact", "destroyed", "lost"
+BEING_CONDITIONS = (ALIVE, DEAD, MISSING, CAPTURED, TRANSFORMED, UNKNOWN)
+THING_CONDITIONS = (INTACT, DESTROYED, LOST, UNKNOWN)
+CONDITIONS = (*BEING_CONDITIONS, INTACT, DESTROYED, LOST)
+# Only these stop something from acting; the rest are soft (a missing NPC turning up is news).
+ENDED = (DEAD, DESTROYED)
 
 _ID = re.compile(r"^[0-9a-f]{32}$")
 
@@ -190,6 +215,15 @@ class Entity:
     played_by: int | None = None  # the Discord user playing this player character
     role: str | None = None  # player character, NPC or god: for a character only (ROLES)
     needs_look: bool = False  # moved here from an older kind: the DM keeps, links or deletes it
+    # An item of which only one exists (Heartseeker, not a longbow). None: nobody said, so a
+    # proper name means yes (`looks_named`); the DM's switch on the name card sets it.
+    unique_item: bool | None = None
+
+    @property
+    def is_unique(self) -> bool:
+        """Only one of this item exists (the DM's word, else whether its name is a proper
+        name). Meaningless for anything but an item."""
+        return looks_named(self.name) if self.unique_item is None else self.unique_item
 
     @property
     def is_player_character(self) -> bool:
@@ -204,6 +238,38 @@ class Entity:
                 self.role or "", "character"
             )
         return self.type
+
+
+_ARTICLES = frozenset({"a", "an", "the"})
+
+
+def looks_named(name: str) -> bool:
+    """Is this a proper name (Heartseeker, The Sun Blade) rather than a kind of thing (a
+    longbow)? A guess to start from: any capitalised word counts, once a leading article is
+    set aside. The DM can switch it on the item's name card, so it never has to be right."""
+    words = name.split()
+    if words and words[0].casefold() in _ARTICLES and len(words) > 1:
+        words = words[1:]
+    return any(w[:1].isupper() for w in words)
+
+
+@dataclass(frozen=True, slots=True)
+class State:
+    """One thing's condition for a time: alive, dead, intact, destroyed… The one with no
+    `closed_at` is the current one; a new condition closes it and the history is kept, with
+    when it changed (`from_session_at`, else `created_at`) and who said so (`source`)."""
+
+    id: str
+    entity_id: str
+    condition: str
+    from_session_at: int | None
+    source: str
+    created_at: int
+    closed_at: int | None = None
+
+    @property
+    def since(self) -> int:
+        return self.created_at if self.from_session_at is None else self.from_session_at
 
 
 @dataclass(frozen=True, slots=True)

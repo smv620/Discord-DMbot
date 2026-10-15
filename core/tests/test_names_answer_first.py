@@ -224,7 +224,7 @@ class AnswerFirst(unittest.IsolatedAsyncioTestCase):
         memory = self.bot.memory
         memory.aliases = self.slow([bell])
         for write in ("set_entity_type", "confirm_entity", "set_main_name", "update_alias",
-                      "add_alias", "update_relation"):  # fmt: skip
+                      "add_alias", "update_relation", "set_unique"):  # fmt: skip
             setattr(memory, write, self.slow())
         memory.add_entity = self.slow(SimpleNamespace(value=ENTITIES[BELL]))
         memory.confirmed_name_for = AsyncMock(return_value=None)  # a new spelling: no clash
@@ -255,6 +255,10 @@ class AnswerFirst(unittest.IsolatedAsyncioTestCase):
                     CAMPAIGN.id, BELL, others=True, longer=False
                 )._edit_others(it),
                 "aliases",
+            ),
+            "NameCard._one_of_a_kind": (
+                lambda it: name_card.NameCard(CAMPAIGN.id, BELL, item=True)._one_of_a_kind(it),
+                "set_unique",
             ),
             "FixSpellingForm": (fix.on_submit, "rename_entity"),
             "AnotherNameForm": (more.on_submit, "add_alias"),

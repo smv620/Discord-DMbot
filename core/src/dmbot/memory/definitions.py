@@ -48,10 +48,13 @@ MEANING = (
 
 def meaning(term: PredicateTerm) -> dict[str, Any]:
     full = definition(term)
-    return {k: full[k] for k in MEANING} | {
+    out = {k: full[k] for k in MEANING} | {
         "max_per_subject": term.max_per_subject,
         "conflicts_with": list(term.conflicts_with),
     }
+    if term.max_per_object is not None:  # only when set, so older fingerprints stay the same
+        out["max_per_object"] = term.max_per_object
+    return out
 
 
 def fingerprint(term: PredicateTerm) -> str:

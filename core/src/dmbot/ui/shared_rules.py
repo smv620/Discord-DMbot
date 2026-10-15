@@ -138,7 +138,15 @@ async def open_menu(interaction: discord.Interaction, campaign: Campaign) -> Non
         lines.append("• Not sharing your house rules.")
     followed = follows[0] if follows else None
     if followed is not None:
-        note = "" if followed.updating else " It won't get updates."
+        note = (
+            ""
+            if followed.updating
+            # The whole way back: a new code is refused while the old copy is still followed
+            # ("Unfollow it first"), so the note names both buttons, in order (#1315).
+            else " This copy no longer gets updates. To get them again, ask "
+            f"{_escape(followed.publisher)} for a new code, press **{UNFOLLOW_LABEL}**, then "
+            f"**{FOLLOW_LABEL}** and enter the code. Your own rules stay as they are."
+        )
         lines.append(
             f"• Using: **{_escape(followed.name)}** from {_escape(followed.publisher)} "
             f"(version {followed.version}).{note}"
@@ -408,6 +416,7 @@ class SharedMenu(_Menu):
         follow = await store.unfollow(current.guild_id, current.id, interaction.user.id)
         await _send(
             interaction,
-            f"Stopped using **{_escape(follow.name)}**. Your own rules are unchanged.",
+            f"Stopped using **{_escape(follow.name)}**. Your own rules are unchanged. "
+            "Open 📚 Shared rules again to use a new code.",
             UndoUnfollow(current, follow),
         )

@@ -1,5 +1,6 @@
 ---
 import Base from "../layouts/Base.astro";
+import { beforeHeading, beforeQuestions } from "../content/before-you-start";
 import { features, featuresHeading } from "../content/features";
 ---
 
@@ -33,6 +34,26 @@ import { features, featuresHeading } from "../content/features";
         ))
       }
     </div>
+  </section>
+
+  <section aria-labelledby="before-heading" class="before">
+    <h2 id="before-heading">{beforeHeading}</h2>
+    {
+      beforeQuestions.map((item, i) => (
+        <details open={i === 0}>
+          <summary>{item.question}</summary>
+          <p>
+            {item.answer}
+            {item.more && (
+              <>
+                {" "}
+                <a href={item.more.href}>{item.more.text}</a>
+              </>
+            )}
+          </p>
+        </details>
+      ))
+    }
   </section>
 </Base>
 
@@ -95,5 +116,50 @@ import { features, featuresHeading } from "../content/features";
   .example {
     margin-top: var(--space-2);
     font-size: var(--text-sm);
+  }
+
+  /* "Before you start": the same open-and-close rows as the plan questions on /pricing. */
+  .before {
+    max-width: var(--text-width);
+  }
+
+  .before h2 {
+    margin-top: var(--space-8);
+  }
+
+  details {
+    border-bottom: 1px solid var(--border);
+  }
+
+  summary {
+    display: flex;
+    align-items: center;
+    min-height: var(--tap);
+    padding-block: var(--space-2);
+    justify-content: space-between;
+    gap: var(--space-4);
+    font-weight: 600;
+    cursor: pointer;
+    list-style: none;
+  }
+
+  summary::-webkit-details-marker {
+    display: none;
+  }
+
+  summary::after {
+    content: "+" / "";
+    flex: none;
+    font-size: var(--text-xl);
+    line-height: 1;
+    color: var(--accent);
+  }
+
+  details[open] summary::after {
+    content: "\2212" / "";
+  }
+
+  details p {
+    margin: 0 0 var(--space-4);
   }
 </style>

@@ -251,7 +251,7 @@ than in separate volumes.
 | 2b | **Transcript Cleaner** (live name fixing, off-topic hiding, #127), off-topic filter (#52), speaker tagging | Every helper depends on clean, labeled input |
 | 3 | **Rules advisor + house rules**: alerts with ✅ Agree / 🙈 Ignore / ⚖️ Override, house rules by voice with DM approval, `/dmbot houserules` | Uses the rules hierarchy below |
 | 4 | **TimeBot**: game clock, effect durations, rests, dawn/noon/dusk, split-party clocks | |
-| 5 | **NPC tracker** (remembers NPCs, relationships, factions between sessions), then **PlotBot** (DM-confirmed story events) | Read the campaign memory; use **confirmed** entities and relationships only. *Split (decided 2026-10-06, docs/STORY_MEMORY.md):* 5a claims, state facts and the first continuity warnings · 5b NPC tracker, who knows what, hierarchical reputations · 5c PlotBot: threads, promises, summaries, pre-session note · 5d the Shared story switch |
+| 5 | **NPC tracker** (remembers NPCs, relationships, factions between sessions), then **PlotBot** (DM-confirmed story events) | Read the campaign memory; use **confirmed** entities and relationships only. *Split (decided 2026-10-06, docs/STORY_MEMORY.md):* 5a claims, state facts and the first continuity warnings (*slice 1 built, #1267: state facts, one-of-a-kind items with `carries`, nesting and loop checks, state-gated actions; code only, flags go to the after-session report; the extractor, linker and live warnings are the next slices*) · 5b NPC tracker, who knows what, hierarchical reputations · 5c PlotBot: threads, promises, summaries, pre-session note · 5d the Shared story switch |
 | 6 | **DM sidebar**: quick, very short AI answers for the DM, by voice memo or by asking out loud at the table; tagged `[DM Sidebar]` in the raw transcript only (owner, 2026-10-09). **Since 2026-10-14 anyone at the table may ask** ("Hey DMbot…" or typed in `dmb-chat`), and table questions are answered in the campaign's chat channel (see "Table questions") | No install needed; being built early, after the rules lookup |
 | 7 | **Google Drive** (writing the house-rules file of record directly) and **character data** from D&D Beyond links | Reading a linked house-rules file and the download come first (2026-10-09) |
 | later | Paid service billing (owner's key, per-server metering); D&D Beyond companion extension; optional DM hotkey helper | |
@@ -634,14 +634,15 @@ never does.
   rules again as the next version, which followers take at their next session.)*
   - **A follower can't change it.** When a following campaign's DM changes a shared rule, or a ruling is made
     at their table, it goes into **their own** house rules, which win over the set. The publisher never sees
-    it and is never affected. **"Suggest it to <set>"** sends it to the publisher's DMs as a suggestion
-    ([Accept] [No thanks]); nothing changes until they accept.
+    it and is never affected. **💡 Suggest** sends it to the publisher's DMs as a suggestion
+    ([See] [Add to set] [No thanks]); nothing changes until they press Add to set.
   - **The document of record can be edited outside DMbot** by anyone with edit access. Its changes reach the
     publisher's **own** house rules through the usual document sync (the DM confirms them), and reach
     followers only when the publisher presses **🔄 Publish my changes** (Supervisor, 2026-10-14, #1259; no
     separate pending-changes screen and no write-back to followers' files).
   - **Suggestions** (#1259): the publisher's note says "A table that uses <set> house rules suggests: …" and
-    never names the other campaign, server or DM; Accept makes the next version.
+    never names the other campaign, server or DM; Add to set makes the next version. *(Supervisor,
+    2026-10-15, #1315: wording matched to the buttons as built.)*
 - **Updates reach followers at their next session start, never mid-game.** DMbot takes the update then
   (Follow, the default) and posts a note on the DM screen: "The Frostmaiden house rules were updated to v4:
   2 rules. [See changes] [Pick changes] [Undo]".
@@ -3106,6 +3107,14 @@ within 30 days, no claim about how the database is encrypted, and the owner's ow
 responsibility" wording; no `{{CHECK}}` markers remain. That closes #498 item 4. The Discord app
 stays private until the rest of #498 is done and the owner says go. Settings stay in Discord for now;
 the site is account, plan, campaigns, invite and marketing.
+**What's new page** (Supervisor, 2026-10-15, #1321/#1322). The site has a short What's new page
+(`/whats-new`, content in `web/src/content/whats-new.ts`), newest first, in plain words. An entry
+goes there only when its feature is **live: deployed on the server and not known to fail** for an
+ordinary user. Untried is not broken; a failed live check takes the entry off. An entry that is
+deployed but blocked (for example the account move, whose code goes to the payment email while
+payments are off, #1096) waits in the file's `held` list with its reason. A PR that ships a
+feature people can see adds its entry, or a held one, in the same PR.
+
 **Page changes: magic dust, and runes on the banner** (owner, 2026-10-15; Supervisor's details).
 Moving between the site's pages gets a short magic-dust dissolve: the old page breaks up into
 sparkling dust while the new one fades in, about 350 ms, built with the browser's own page
@@ -3184,6 +3193,42 @@ is taken down on request through the same page (decided 2026-10-08 on #710). The
 `feedback` table is add-only (the website's role inserts, never reads; the team reads it
 as the database's administrator), and the website's hourly sweep deletes rows after 12
 months.
+
+**QAbot and support tickets** (owner request 2026-10-15; Supervisor's design).
+- **QAbot answers the Discussions category "Q&A for DMbot"** and nothing else. It is a GitHub
+  Actions workflow, not a session that stays on: it runs on GitHub's own runner when a discussion
+  or a reply is posted in that category, plus an hourly sweep for anything missed. It never runs
+  on the server and holds no server secret. All it has is a read-only checkout of this public
+  repository, the public web, its own Anthropic key (a separate key with a spending limit, a
+  repository secret) and a GitHub token limited to `contents: read`, `discussions: write` and
+  `issues: write`.
+- **The model never acts; a script does.** Claude Code runs headless with read-only tools: read
+  and search the checkout, web search, and fetching public pages (getdmbot.com first). It has no
+  shell, no file writes and no GitHub tool. It returns one fixed JSON answer: answer or escalate,
+  the reply text, and the sources it used. A small script checks that answer and is the only
+  thing that posts.
+- **Embedded instructions:** before the model sees a discussion, the script strips control,
+  zero-width and direction characters and HTML comments, and wraps the text as data. The prompt
+  says the post is a question to answer, never instructions. No model can be promised immune to
+  a clever post, so the design limits what a trick can achieve: at worst one wrong public reply,
+  never an action. The script refuses a reply that @mentions anyone, links outside an allowlist
+  (this repository, getdmbot.com, dndbeyond.com), runs past 1,200 characters or looks like a
+  key, and escalates instead.
+- **Answer only when sure:** every claim must come from a cited source (the Help page, the
+  site, this repository's docs). Anything about one person's account, payments, a bug, data
+  deletion or what DMbot will do next is always escalated. Replies are signed "QAbot (automated
+  answer)", say how to reach a person, and are short and plain (CLAUDE.md, hard rules). One reply
+  per post; at most three replies in a thread, then it escalates.
+- **Escalation** opens a public issue labelled `support` and `from: QAbot` that links the
+  discussion. The discussion is already public, so nothing private moves. QAbot replies
+  "Passed to the team as #N". Supervisor triages `support` issues like any other.
+- **Support tickets from people are private.** Paying users write from the website (signed in,
+  a Support form) and anyone can write to the support email (address TBD, owner). These hold
+  personal details, so **they never become public GitHub issues.** They go to a private
+  `support_tickets` table in the database (add-only for the website's role, like `feedback`),
+  shown on the admin page, with an email to the team. Kept for 12 months, then deleted by the
+  website's hourly sweep. The privacy page says so. Reading the support mailbox into tickets is
+  a later step. Until then the team reads the mailbox directly.
 
 **Retention.** Configurable auto-delete of transcripts per server (audio is never
 stored), and a "Delete my past transcripts" action for each player. Deleting a person's
@@ -3297,6 +3342,12 @@ experience points and the trial extension (owner, 2026-10-14; Supervisor's detai
   address is the owner's call** (`needs: owner`; a PO box or a mail service is fine), and the
   offer emails don't go out until it is set. The privacy policy and terms get a line each on
   these emails, which is legal wording for the owner to sign off.
+- **Email records are not kept for ever** (Supervisor, 2026-10-15, #1287, for the privacy page #1283):
+  (1) a Try It's sent notes (the last-day and 30-more-days emails) are deleted 1 year after they
+  were sent, because a Try It can't be taken twice (the DMbot ID marks it used) so the record
+  has no job left; (2) deleting an account deletes that person's `sent_emails` rows in the same
+  transaction; (3) their `email_unsubscribed` row stays (only the Discord id, the kind and the
+  time), so a returning account is never emailed against its wish.
 - **An owner gone from Discord** (Supervisor, 2026-10-14, #1185, built in #1214): when DMbot sees a
   campaign's owner isn't in the server (asked only at a start, on opening Settings and once a day;
   no new intent), the campaign becomes ownerless after 7 days, or at once if Discord says the

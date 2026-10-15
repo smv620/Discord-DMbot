@@ -185,6 +185,14 @@ each with a plain label:
 - states live in their own table (`memory_states`), not as relationships;
 - only `dead` and `destroyed` stop something from acting. `missing`, `captured` and the
   rest are soft: a missing NPC turning up is news, not a contradiction.
+- **As built (#1267):** a change the table doesn't allow, and the way back from `dead` or
+  `destroyed` from anyone but the DM, is **refused when it is written** (the state row has no
+  review status to hold it in), not flagged; the extractor slice turns a refused claim into a
+  question for the DM. A proposal never changes a condition the DM set. Each state row has the
+  session it dates from (`from_session_at`, else when it was stored) and who said it; a new
+  one closes the old with `closed_at`. Moving an entry to another kind closes a condition the
+  new kind can't have. A merge brings the merged entry's condition along unless the kept one
+  has its own.
 
 **Relationships** (each with domain, range, how many, conflicts):
 - `involved_in` (being/group/item/place → thread, detail = role: quest giver, target,
@@ -527,11 +535,41 @@ on embeddings. Apache AGE is still not needed: these are 1–2 hop lookups.
 
 Each step is useful on its own and ships behind the existing phases.
 
-1. **Phase 5a: claims and state** (after the Cleaner and speaker tagging, Phase 2b):
-   the extractor and claim table, `condition` state facts, the unique flag and
-   `carries` with `max_per_object`, nesting and loop checks, the first continuity
-   warnings (dead or destroyed actors, a unique item in two hands, two places), the
-   secret-said-aloud question. Start after-session only, then live.
+1. **Phase 5a: claims and state** (after the Cleaner and speaker tagging, Phase 2b).
+   **Slice 1 is built (#1267):** `memory_states` and `STATE_CHANGES`, the unique flag and
+   `carries` with `max_per_object`, the nesting, loop, held-twice and acts-after-end checks (flags
+   only, no AI), and the "☝️ Only one exists" button on an item's name card. **Slice 2 is built
+   (#1297), with no AI call in it:** the `memory_claims` table (one row for each claim, as
+   text, with how it was said, the lines it cites, who spoke, the prompt version and the model,
+   and a status of proposed, confirmed, rejected or dropped), `dmbot.memory.claims` (parse the
+   extractor's answer, run the rules, drop a plan, an instruction in disguise, an unknown name or
+   relationship and any claim citing a speaker who is not recorded now, and store the rest as
+   proposals that can never confirm themselves), and the DM's after-session "🗣️ Check what was
+   said" questions (✅ writes the fact as the DM's through the same store, keeping which fact it
+   became; ❌ is never asked again; private to the campaign's DM). The one switch,
+   `DMBOT_STORY_EXTRACTOR`, is off, so nothing calls the AI. Names the memory does not know yet
+   are dropped here; resolving them is the linker's job. **Slice 3 is built (#1320), after the
+   session only:** `dmbot.memory.continuity` runs the section-2 checks on a session's unanswered
+   claims against the campaign's *confirmed* facts and current conditions (a dead or destroyed
+   entry acting later, a one-of-a-kind item in two hands, a friend called an enemy, a body that was
+   dead being called alive, being in two places), gives each hit a level by rule (a direct clash
+   with something confirmed is *likely*, an indirect one *possible*; the cut-offs and the critical
+   mass of 50 confirmed facts across 3 sessions are backend settings, `DMBOT_CONTINUITY_*`), and
+   the DM screen says how many (never what) with a button only the campaign's DM can use. The
+   list quotes the earlier line, only while everyone who said it is recorded, and offers [Alive
+   after all / It changed] (a new dated fact; the old one ends, history kept, in one transaction),
+   [Not true] (the claim is not world truth and is not asked again) and [Ignore] (writes nothing;
+   quiet for the rest of that list). The log holds counts only. What is left of 5a: turning the
+   extractor on (after #1282 passes), the linker, live warnings during play and the AI judgment
+   behind them, and the secret-said-aloud question and the pre-session note (slice 4). **The ontology steward is wired into the claims path (#1303):** a claim
+   whose relationship DMbot does not know goes through `decide_term`: an existing term it recognises
+   is reused, and anything else (a rules word, or a new word the meaning check cannot yet vouch for,
+   which today is every new word) is kept on the new core relationship `associated_with`, with the
+   claim's own words as the fact's label, so a refused term never loses the fact; the DM confirms it
+   in plain words like any fact. No new campaign term is made from a claim until the meaning check
+   exists. The session's numbers (refused per reason, reused, accepted) go to the server log once, as
+   counts only.
+   Start after-session only, then live.
 2. **Phase 5b: NPC tracker and reputation:** knowledge (clues, `knows`, `witnessed`),
    deeds, standing, the NPC channel, the recall service.
 3. **Phase 5c: PlotBot:** threads, promises, clues, `led_to`, stalled-thread nudges,

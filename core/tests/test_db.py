@@ -3,9 +3,10 @@
 import asyncio
 import uuid
 
+from psycopg import AsyncConnection
 from psycopg import errors as pg_errors
 
-from dmbot.db import Database, DatabaseError, drop_schema
+from dmbot.db import MIGRATION_LOCK_KEY, Database, DatabaseError, _take_migration_lock, drop_schema
 from dmbot.schema import (
     ISOLATED_TABLES,
     MIGRATIONS,
@@ -152,6 +153,29 @@ class Migrations(DatabaseTest):
 
 
 class StartupChecks(DatabaseTest):
+    async def test_the_migration_lock_is_per_schema(self) -> None:
+        """Processes updating the same schema wait for each other; different schemas (every
+        test has its own, so tests can run in parallel, #1323) never do."""
+        first = await AsyncConnection.connect(TEST_URL, autocommit=True)
+        second = await AsyncConnection.connect(TEST_URL, autocommit=True)
+        try:
+            async with first.transaction(), second.transaction():
+                await _take_migration_lock(first, "one")
+
+                async def try_lock(schema: str) -> bool:
+                    cur = await second.execute(
+                        "SELECT pg_try_advisory_xact_lock(%s, hashtext(%s)) AS got",
+                        (MIGRATION_LOCK_KEY, schema),
+                    )
+                    row = await cur.fetchone()
+                    return bool(row and row[0 if isinstance(row, tuple) else "got"])
+
+                self.assertFalse(await try_lock("one"))
+                self.assertTrue(await try_lock("two"))
+        finally:
+            await first.close()
+            await second.close()
+
     async def test_several_processes_starting_at_once(self) -> None:
         schema = f"t_{uuid.uuid4().hex[:16]}"
         try:

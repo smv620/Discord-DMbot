@@ -142,6 +142,25 @@ class Robustness(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(it.sent[0][0], shared_rules.ONLY_DMS)
         store.make_code.assert_not_called()
 
+    async def test_a_copy_that_no_longer_updates_says_so_without_blaming_the_publisher(
+        self,
+    ) -> None:
+        # Also what a campaign restored from a backup shows: the publisher may still share it.
+        follow = rule_sets.Follow("s", "house_rules", "Red", "Far", 3, {}, False, 5)
+        store = MagicMock()
+        store.published = AsyncMock(return_value=None)
+        store.following = AsyncMock(return_value=[follow])
+        it = interaction(7, bot_with(store))
+        await shared_rules.open_menu(it, campaign())
+        text = it.sent[0][0]
+        self.assertIn("no longer gets updates", text)
+        # The whole way back, in order: a new code is refused while the old copy is followed.
+        self.assertIn("ask Far for a new code", text)
+        self.assertLess(
+            text.index(shared_rules.UNFOLLOW_LABEL), text.index(shared_rules.FOLLOW_LABEL)
+        )
+        self.assertNotIn("isn't shared any more", text)
+
     async def test_undo_rechecks_the_person(self) -> None:
         store = MagicMock()
         store.restore = AsyncMock()

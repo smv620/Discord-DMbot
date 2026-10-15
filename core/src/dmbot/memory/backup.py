@@ -21,6 +21,7 @@ from dmbot.db import Conn
 from dmbot.memory import notify, sheets
 from dmbot.memory._changes import (
     ALIASES,
+    CLAIMS,
     CORRECTIONS,
     ENTITIES,
     FLAGS,
@@ -28,6 +29,7 @@ from dmbot.memory._changes import (
     RELATIONS,
     RULE_LINKS,
     SHEETS,
+    STATES,
     TYPES,
     Table,
     row_of,
@@ -36,10 +38,13 @@ from dmbot.memory._changes import (
 from dmbot.memory.checks import FLAG_KINDS
 from dmbot.memory.models import (
     ALIAS_KINDS,
+    CLAIM_STATUSES,
+    CONDITIONS,
     DESCRIPTION_MAX,
     DETAIL_MAX,
     ENTITY_STATUSES,
     FIX,
+    HOWS,
     KEEP,
     LINE_REF_MAX,
     LINK_EDITIONS,
@@ -62,6 +67,7 @@ from dmbot.memory.ontology import (
     Ontology,
     PredicateTerm,
     TypeTerm,
+    conditions_for,
 )
 from dmbot.memory.sounds import sound_codes
 
@@ -74,6 +80,8 @@ _TAGS: dict[str, Table] = {
     "predicate": PREDICATES,
     "entity": ENTITIES,
     "rule_link": RULE_LINKS,
+    "state": STATES,
+    "claim": CLAIMS,
     "alias": ALIASES,
     "relation": RELATIONS,
     "correction": CORRECTIONS,
@@ -98,26 +106,36 @@ _TEXT_LIMITS = {
     "replaced_by": 40,
     "type": 40,
     "predicate": 40,
+    "subject": NAME_MAX,
+    "relationship": NAME_MAX,
+    "object": NAME_MAX,
+    "details": DETAIL_MAX,
+    "prompt_version": 40,
+    "model": 80,
 }
 _CHOICES: dict[str, Sequence[str]] = {
-    "status": (*ENTITY_STATUSES, ACTIVE, DEPRECATED, "open", "resolved"),
+    "status": (*ENTITY_STATUSES, ACTIVE, DEPRECATED, "open", "resolved", *CLAIM_STATUSES),
+    "how": HOWS,
     "kind": (*ALIAS_KINDS, *FLAG_KINDS, *LINK_KINDS),
+    "condition": CONDITIONS,
     "role": ROLES,
     "edition": LINK_EDITIONS,
     "action": (FIX, KEEP),
     "source": SOURCES,
 }
-_IDS = {"id", "entity_id", "merged_into", "used_by", "subject_id", "object_id", "relation_id",
-        "other_id"}  # fmt: skip
-_INTS = {"played_by", "created_at", "from_session_at", "to_session_at", "from_game_time",
-         "to_game_time", "max_per_subject"}  # fmt: skip
+_IDS = {"id", "entity_id", "fact_id", "merged_into", "used_by", "subject_id", "object_id",
+        "relation_id", "other_id"}  # fmt: skip
+_INTS = {"played_by", "speaker_id", "session_started_at", "decided_at", "created_at",
+         "from_session_at", "to_session_at", "from_game_time", "to_game_time",
+         "max_per_subject", "closed_at"}  # fmt: skip
 _VERSIONS = {"version", "definition_version"}  # from 1 up (#1189)
 _LISTS = {"examples", "subject_types", "object_types", "conflicts_with", "sound_codes",
           "mention_ids", "covers", "not_this", "synonyms"}  # fmt: skip
 _NULLABLE = {
     "role", "edition", "played_by", "merged_into", "used_by", "other_id", "entity_id",
     "replaced_by", "parent", "from_session_at", "to_session_at", "from_game_time",
-    "to_game_time", "max_per_subject",
+    "to_game_time", "max_per_subject", "closed_at", "unique_item", "fact_id",
+    "session_started_at", "decided_at",
 }  # fmt: skip
 
 
@@ -137,7 +155,21 @@ def _valid(column: str, value: object) -> bool:
             and len(value) <= LIST_MAX
             and all(isinstance(v, str) and 0 < len(v) <= DESCRIPTION_MAX for v in value)
         )
-    if column in ("secret", "is_symmetric", "needs_look", "known"):
+    if column == "lines":  # transcript line references
+        return (
+            isinstance(value, list)
+            and len(value) <= LIST_MAX
+            and all(isinstance(v, str) and 0 < len(v) <= LINE_REF_MAX for v in value)
+        )
+    if column == "speaker_ids":  # Discord ids
+        return (
+            isinstance(value, list)
+            and len(value) <= LIST_MAX
+            and all(
+                isinstance(v, int) and not isinstance(v, bool) and 0 < v <= INT64_MAX for v in value
+            )
+        )
+    if column in ("secret", "is_symmetric", "needs_look", "known", "unique_item"):
         return isinstance(value, bool)
     if column == "confidence":
         return isinstance(value, (int, float)) and not isinstance(value, bool) and 0 <= value <= 1
@@ -248,6 +280,10 @@ def _checked_rows(rows: list[Any]) -> dict[str, list[dict[str, Any]]]:
             raw = _checked_sheet(raw)
         elif not all(_valid(c, raw[c]) for c in table.columns):
             raise CampaignError(DAMAGED)
+        if table is CLAIMS:
+            _check_claim(raw)
+        elif raw.get("status") == "dropped":
+            raise CampaignError(DAMAGED)  # only a claim can be dropped
         if table is ALIASES:  # worked out again, not taken from the file
             raw = {**raw, "sound_codes": list(sound_codes(raw["text"]))}
         by_tag[raw["table"]].append(raw)
@@ -290,7 +326,9 @@ def _with_definition_fields(rows: list[Any]) -> list[Any]:
                 known.setdefault(raw["key"], version)
     out: list[Any] = []
     for raw in rows:
-        if isinstance(raw, dict) and raw.get("table") == "predicate":
+        if isinstance(raw, dict) and raw.get("table") == "entity":
+            raw = {"unique_item": None, **raw}  # from before one-of-a-kind items (#1267)
+        elif isinstance(raw, dict) and raw.get("table") == "predicate":
             old_format = "version" not in raw
             raw = {**_NEW_PREDICATE_FIELDS, **raw}
             if old_format and raw.get("key") in core_predicates:
@@ -465,6 +503,7 @@ def _check_terms(by_tag: dict[str, list[dict[str, Any]]]) -> None:
         if r["predicate"] == "plays"
     ):
         raise CampaignError(DAMAGED)
+    _check_states(onto, by_tag)
     characters = {r["id"] for r in by_tag["entity"] if onto.is_a(r["type"], "character")}
     if any(r["entity_id"] not in characters for r in by_tag["rule_link"]):
         raise CampaignError(DAMAGED)
@@ -472,3 +511,35 @@ def _check_terms(by_tag: dict[str, list[dict[str, Any]]]) -> None:
         raise CampaignError(DAMAGED)
     if any(r["predicate"] not in onto.predicates for r in by_tag["relation"]):
         raise CampaignError(DAMAGED)
+
+
+def _check_claim(row: Mapping[str, Any]) -> None:
+    """A claim in a file: a status a claim can have, a fact only when it was confirmed, and
+    never a plan that someone says is waiting for the DM (a plan is never asked)."""
+    if row["status"] not in CLAIM_STATUSES:
+        raise CampaignError(DAMAGED)
+    if row["fact_id"] is not None and row["status"] != "confirmed":
+        raise CampaignError(DAMAGED)
+    if row["status"] == "proposed" and row["how"] == "plan":
+        raise CampaignError(DAMAGED)
+
+
+def _check_states(onto: Ontology, by_tag: dict[str, list[dict[str, Any]]]) -> None:
+    """A condition belongs to an entry in the file, one its kind can have, one current at a
+    time (the database enforces the last; a damaged file must not reach it); only an item is
+    one of a kind (#1267)."""
+    kinds = {r["id"]: r["type"] for r in by_tag["entity"]}
+    if any(
+        r["unique_item"] is not None and not onto.is_a(r["type"], "item") for r in by_tag["entity"]
+    ):
+        raise CampaignError(DAMAGED)
+    open_for: set[str] = set()
+    for r in by_tag["state"]:
+        if r["entity_id"] not in kinds:
+            raise CampaignError(DAMAGED)
+        if r["closed_at"] is not None:
+            continue  # history: an entry that became another kind keeps what it was
+        allowed = conditions_for(onto, kinds[r["entity_id"]])
+        if allowed is None or r["condition"] not in allowed or r["entity_id"] in open_for:
+            raise CampaignError(DAMAGED)
+        open_for.add(r["entity_id"])

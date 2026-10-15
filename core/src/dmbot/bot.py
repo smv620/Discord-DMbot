@@ -87,6 +87,7 @@ from dmbot.dm_screen import (
     house_sync,
     peek_view,
     rules_cards,
+    set_suggestion,
     set_update,
 )
 from dmbot.dm_screen import clock as clock_screen
@@ -151,8 +152,11 @@ from dmbot.logs import log_context, set_log_context
 from dmbot.mail import Mailer
 from dmbot.memory import definitions, document_reader
 from dmbot.memory.backup import MemorySection
+from dmbot.memory.claims import ClaimStore
+from dmbot.memory.continuity import ContinuityStore
 from dmbot.memory.lookup import CampaignLookup, LookupCache
 from dmbot.memory.models import DM, FIX, KEEP, Heard, MemoryRuleError, name_key
+from dmbot.memory.ontology import Tally
 from dmbot.memory.scan import MAX_SUGGESTIONS, find_new_names, group_alike
 from dmbot.memory.scene import HintParts, SceneTracker, mentions, scene_hints
 from dmbot.memory.scene import prepare as prepare_hints
@@ -169,7 +173,7 @@ from dmbot.rules import index as rules_index
 from dmbot.rules.followed import followed_rules, own_first
 from dmbot.rules.house import HouseRule, HouseRulesSection, HouseRuleStore
 from dmbot.rules.house_file_link import HouseFileLinkStore
-from dmbot.rules.rule_sets import RuleSetStore
+from dmbot.rules.rule_sets import FollowedSetsSection, RuleSetStore
 from dmbot.rules.spotter import Mention
 from dmbot.sessions import SavedSession, SessionStore
 from dmbot.sidebar import knowledge
@@ -215,6 +219,10 @@ from dmbot.transcription.factory import build_transcriber
 from dmbot.transcription.pipeline import TranscriptionPipeline, clip_budget_s, speech_sent_line
 from dmbot.ui import logic as ui_logic
 from dmbot.ui import rule_card
+from dmbot.ui.claims_review import ClaimsReviewButton, claims_review_view
+from dmbot.ui.claims_review import waiting_text as claims_waiting_text
+from dmbot.ui.continuity import ContinuityButton, continuity_view
+from dmbot.ui.continuity import waiting_text as continuity_waiting_text
 from dmbot.ui.dmbot_commands import _failed, dmbot_group
 from dmbot.ui.house_rules import dmbot_house_rules  # noqa: F401 (registers it)
 from dmbot.ui.migrate import dmbot_migrate  # noqa: F401 (registers it)
@@ -232,6 +240,7 @@ from dmbot.ui.transcripts import (
     ended_text,
     transcript_command,
 )
+from dmbot.web import accounts
 
 RULES_CARD_DB_S = 5.0  # the longest a rules card waits for the house rules
 log = logging.getLogger(__name__)
@@ -266,6 +275,9 @@ OWNER_ASK_EVERY_S = 3600  # Discord is asked about one campaign's owner at most 
 OWNER_LOOK_TIMEOUT_S = 6  # asking Discord about an owner must not hold up a start
 MOVED_CHECKED_MAX = 100_000  # people remembered as checked; cleared past this
 FORGET_TIMEOUT_S = 10  # removing learned names must not hold up stopping a recording
+DISPLAY_NAME_REFRESH_S = 86400  # a person's Discord name is kept on their account once a day
+DISPLAY_NAME_TIMEOUT_S = 3  # for the background update
+NAMES_NOTED_MAX = 5000  # people remembered as just noted; the oldest half go past this
 METER_INTERVAL_S = 60  # how often listening minutes are written to the hours meter (#437)
 METER_FINAL_TRIES = 3  # at a stop: the last minutes are written nowhere else
 METER_FINAL_RETRY_S = 2
@@ -369,6 +381,8 @@ class Table:
     scene: SceneTracker = field(default_factory=SceneTracker)
     name_lookup: CampaignLookup | None = None
     hint_parts: HintParts | None = None
+    # What the ontology steward decided this session (#1303), for one line in the server log.
+    steward_tally: Tally = field(default_factory=Tally)
     # Spell, feature and item names from the players' D&D Beyond sheets (#723).
     sheet_hints: tuple[str, ...] = ()
     sheet_task: asyncio.Task[None] | None = None  # reading them; cancelled at the end
@@ -632,6 +646,10 @@ class DMBot(commands.AutoShardedBot):
         # started: a command from them costs nothing more. An account that moves is taken
         # out (after_account_move), so it is checked again.
         self._moved_checked: set[int] = set()
+        # When each person's Discord name was last kept on their account (#1242): at most
+        # once a day, in this process only (a restart simply checks again).
+        self._names_noted: dict[int, float] = {}
+        self._name_tasks: set[asyncio.Task[None]] = set()
         if meter is not None:
             self.account_moves = AccountMoves(meter.db)
             self.mailer = Mailer(
@@ -848,7 +866,9 @@ class DMBot(commands.AutoShardedBot):
         # Consent buttons in private messages, likewise.
         self.add_dynamic_items(*CONSENT_BUTTONS)
         # "Check new names" on the DM screen after a session.
-        self.add_dynamic_items(ReviewButton, PeopleReviewButton)
+        self.add_dynamic_items(
+            ReviewButton, PeopleReviewButton, ClaimsReviewButton, ContinuityButton
+        )
         self.add_dynamic_items(  # #965, #1117
             clock_screen.ClockButton, clock_screen.ClockUndoButton, clock_screen.SuggestionButton
         )
@@ -864,6 +884,7 @@ class DMBot(commands.AutoShardedBot):
         )
         self.add_dynamic_items(PutBackButton)  # lines left out as off-topic (#677)
         self.add_dynamic_items(set_update.SetUpdateButton)  # shared rules changed (#1191)
+        self.add_dynamic_items(set_suggestion.SuggestionButton)  # a table's suggestion (#1259)
         self.add_dynamic_items(house_sync.HouseSyncButton)  # the house-rules file (#969)
         self.add_dynamic_items(rules_cards.RulesCardButton)  # rules cards from the table (#931)
         self.add_dynamic_items(house_voice_screen.HouseVoiceButton)  # house rules said aloud (#953)
@@ -978,6 +999,12 @@ class DMBot(commands.AutoShardedBot):
         already = self.consent.has_consent(guild_id, user_id)
         recorded = await self.consent.grant(guild_id, user_id, method=method, outside_to=outside_to)
         log.info("Consent given: user %s", user_id)
+        # Only from the cache: a person not in it is picked up at their next start or consent
+        # (no member intent is asked for just for this).
+        guild = self.get_guild(guild_id)
+        member = guild.get_member(user_id) if guild is not None else None
+        if member is not None:
+            self.note_display_name(user_id, member.global_name or member.name)
         # Only a yes that really counts (it names this server's speech-to-text, and no
         # stop arrived meanwhile) is shown as recording.
         if user_id in recorded and not already:
@@ -991,6 +1018,37 @@ class DMBot(commands.AutoShardedBot):
         except Exception:
             when = None  # saved; only the date for the reply is missing
         return when or int(time.time())
+
+    def note_display_name(self, user_id: int, name: str | None) -> None:
+        """Keep this person's Discord name on their account, at most once a day (#1242).
+        Names only, for an account that exists. It runs in the background, so a consent or a
+        start (both inside Discord's three seconds) never waits for the database on its
+        account, and a consent that was just given is not re-read after an await."""
+        if self.meter is None or not name:
+            return
+        now = time.monotonic()
+        last = self._names_noted.get(user_id)
+        if last is not None and now - last < DISPLAY_NAME_REFRESH_S:
+            return
+        if len(self._names_noted) >= NAMES_NOTED_MAX:  # bounded: the oldest half go
+            for key in sorted(self._names_noted, key=self._names_noted.__getitem__)[
+                : NAMES_NOTED_MAX // 2
+            ]:
+                del self._names_noted[key]
+        self._names_noted[user_id] = now
+        task = asyncio.create_task(self._keep_display_name(self.meter.db, user_id, name))
+        self._name_tasks.add(task)
+        task.add_done_callback(self._name_tasks.discard)
+
+    async def _keep_display_name(self, db: Database, user_id: int, name: str) -> None:
+        """The background part: one short UPDATE. Never raises; on a failure the person is
+        tried again the next time they are seen."""
+        try:
+            async with asyncio.timeout(DISPLAY_NAME_TIMEOUT_S):
+                await accounts.remember_display_name(db, user_id, name)
+        except Exception:
+            self._names_noted.pop(user_id, None)  # try again next time
+            log.warning("Could not keep a Discord name on an account", exc_info=True)
 
     async def recorded(self, guild_id: int, user_id: int) -> bool:
         """Whether they may be recorded in this server now, for the ⚙️ Menu (Stop or I
@@ -1158,6 +1216,7 @@ class DMBot(commands.AutoShardedBot):
                     },
                     "sidebar_prompt": SIDEBAR_PROMPT_VERSION,
                     "sidebar_on": self.settings.sidebar_on,
+                    "story_extractor_on": self.settings.story_extractor_on,
                     "commit": test_files.short_commit(os.environ.get("GIT_COMMIT")),
                 },
             )
@@ -1238,6 +1297,11 @@ class DMBot(commands.AutoShardedBot):
             except Exception:
                 # Never blocks stopping; the learned names are only waiting questions.
                 log.exception("Could not remove the names learned for a stopped speaker")
+            try:  # and what the story extractor proposed from their words (#1297)
+                async with asyncio.timeout(FORGET_TIMEOUT_S):
+                    await ClaimStore(self.memory).forget_speaker(guild_id, user_id)
+            except Exception:
+                log.exception("Could not remove the story claims of a stopped speaker")
         try:
             return await self.consent.revoke(guild_id, user_id)
         finally:
@@ -1259,6 +1323,10 @@ class DMBot(commands.AutoShardedBot):
 
         task.add_done_callback(ended)
         return task
+
+    def track(self, work: Awaitable[Any], name: str) -> asyncio.Task[None] | None:
+        """`_track` for code outside the bot class (a button's own follow-up work)."""
+        return self._track(work, name)
 
     def _track(self, work: Awaitable[Any], name: str) -> asyncio.Task[None] | None:
         """Run `work` in the background; close() cancels it. Failures are logged. The
@@ -1706,6 +1774,9 @@ class DMBot(commands.AutoShardedBot):
             ("name scan", lambda: self.suggest_names(table)),
             ("who is who", lambda: self.learn_people(table)),
             ("people check", lambda: self.check_people(table)),
+            ("what was said", lambda: self.ask_about_claims(table)),
+            ("heads-ups", lambda: self.warn_about_continuity(table)),
+            ("steward numbers", lambda: self.log_steward_tally(table)),
             ("definitions", lambda: self.recheck_definitions(table)),
             ("stale flags", lambda: self.close_stale_flags(table)),
             ("old undo history", lambda: self.prune_old_changes(table)),
@@ -2226,6 +2297,7 @@ class DMBot(commands.AutoShardedBot):
             return False, "Use this in a server."
         if not ui_logic.can_run(campaign, user.id, user.guild_permissions.manage_guild):
             return False, ui_logic.NO_CAMPAIGN_ACCESS
+        self.note_display_name(user.id, user.global_name or user.name)  # not the nickname
         refused = await self.plan_refusal(guild.id, campaign, user.id)
         if refused:
             return False, refused
@@ -5076,6 +5148,61 @@ class DMBot(commands.AutoShardedBot):
                     table.screen_channel_id, waiting_text(len(kept)), view=people_review_view(cid)
                 )
 
+    async def log_steward_tally(self, table: Table) -> None:
+        """After the session's other work: one line in the server log of what the ontology
+        steward decided (#1303), counts only. Never shown to a player or a DM. Nothing is
+        written when it decided nothing, which is every session while the extractor is off.
+        The extractor's landing code passes `table.steward_tally` to `ClaimStore.propose(tally=)`
+        (not wired yet: `propose` has no caller until the extractor runs)."""
+        tally, table.steward_tally = table.steward_tally, Tally()
+        if tally.refused or tally.reused or tally.accepted:
+            tally.write_to_log()
+
+    async def ask_about_claims(self, table: Table) -> None:
+        """After a session: if the story extractor left proposals waiting (#1297), the DM
+        screen says how many, never what, with a button only the DM can use. With the
+        extractor off (the default) nothing is ever waiting and nothing is posted; this step
+        itself makes no AI call."""
+        if self.memory is None or table.campaign_id is None:
+            return
+        gid, cid = table.guild_id, table.campaign_id
+        with log_context(guild_id=gid, campaign_id=cid):
+            agreed = await self.consent.consenting(gid)
+            counts = await ClaimStore(self.memory).counts(gid, cid, opted_in=agreed)
+            waiting = counts.get("proposed", 0)
+            if waiting:
+                await self.post(
+                    table.screen_channel_id,
+                    claims_waiting_text(waiting),
+                    view=claims_review_view(cid),
+                )
+
+    async def warn_about_continuity(self, table: Table) -> None:
+        """After a session: if what was said clashes with the story the DM already confirmed
+        (#1320), the DM screen says how many, never what, with a button only the DM can use.
+        Nothing is posted below the critical mass or with nothing waiting (which is always the
+        case while the extractor is off); this step makes no AI call."""
+        if self.memory is None or table.campaign_id is None:
+            return
+        gid, cid = table.guild_id, table.campaign_id
+        with log_context(guild_id=gid, campaign_id=cid):
+            agreed = await self.consent.consenting(gid)
+            report = await ContinuityStore(self.memory).check(
+                gid, cid, opted_in=agreed, levels=self.settings.continuity
+            )
+            log.info(
+                "Continuity: %d claim(s) looked at, %d heads-up(s), %d confirmed fact(s) in %d "
+                "session(s), %s",
+                report.claims, len(report.conflicts), report.facts, report.sessions,
+                "on" if report.ready else "not enough story yet",
+            )  # fmt: skip
+            if report.conflicts:
+                await self.post(
+                    table.screen_channel_id,
+                    continuity_waiting_text(len(report.conflicts)),
+                    view=continuity_view(cid),
+                )
+
     async def recheck_definitions(self, table: Table) -> None:
         """After a session: facts written under an older meaning of a relationship are looked
         at again; ones that no longer fit become flags for the DM (#1189)."""
@@ -6018,6 +6145,7 @@ async def run(settings: Settings) -> None:
         )
         campaigns.register_section(MemorySection())  # campaign memory goes in backups
         campaigns.register_section(HouseRulesSection())  # and so do house rules (#865)
+        campaigns.register_section(FollowedSetsSection())  # and the sets it follows (#1260)
         campaigns.register_section(ClockSection())  # and the game clock (#965)
         campaigns.register_section(EffectsSection())  # and its timed effects (#998)
         # DMBot sets this too; passing it here means the store never starts out wrong.
