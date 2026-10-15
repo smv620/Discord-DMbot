@@ -2190,6 +2190,95 @@ PLAN_ENDS = """
     REVOKE ALL ON FUNCTION dmbot_hours_used(BIGINT) FROM PUBLIC;
 """
 
+EMAIL_SIGN_IN = (
+    """
+    -- Website sign-in by an emailed link (#1231; docs/PLAN.md, "Accounts"). A link is one use and
+    -- lasts 15 minutes; only its SHA-256 is kept, like a session cookie, so a database copy
+    -- can't sign anyone in. Made under the person's own scope; used (once) by whoever holds the
+    -- token, through the same setting as a session cookie's hash.
+    CREATE TABLE email_sign_in_links (
+        token_hash  TEXT PRIMARY KEY,
+        user_id     BIGINT NOT NULL REFERENCES web_users ON DELETE CASCADE,
+        created_at  BIGINT NOT NULL,
+        expires_at  BIGINT NOT NULL,
+        used_at     BIGINT
+    );
+    CREATE INDEX email_sign_in_links_by_user ON email_sign_in_links (user_id);
+    ALTER TABLE email_sign_in_links ENABLE ROW LEVEL SECURITY;
+    ALTER TABLE email_sign_in_links FORCE ROW LEVEL SECURITY;
+    CREATE POLICY user_isolation ON email_sign_in_links
+        USING (user_id = dmbot_current_user())
+        WITH CHECK (user_id = dmbot_current_user());
+    -- Redeeming: the one unexpired, unused link whose hash was shown. It can be read and
+    -- marked used, never made or changed in any other way.
+    -- (A used link stays readable by its holder until it expires: the update's RETURNING is
+    -- checked against this policy with the new row, which has `used_at` set.)
+    CREATE POLICY by_token_read ON email_sign_in_links FOR SELECT
+        USING (token_hash = dmbot_current_session() AND expires_at > dmbot_now());
+    CREATE POLICY by_token_use ON email_sign_in_links FOR UPDATE
+        USING (token_hash = dmbot_current_session() AND used_at IS NULL
+               AND expires_at > dmbot_now())
+        WITH CHECK (token_hash = dmbot_current_session());
+
+    -- The name the person last signed in with, kept so a personal link can greet them with no
+    -- session open. Nullable: no rows change, so no new policy.
+    ALTER TABLE web_users ADD COLUMN display_name TEXT;
+    -- The email lookup below compares lower case, so it needs this to avoid reading every row.
+    CREATE INDEX web_users_by_email ON web_users (lower(email));
+
+"""
+    + _setting("dmbot_email_lookup", "dmbot.email_lookup", "TEXT")
+    + """
+    -- Who an email address belongs to, for sending a sign-in link. The website's role can't
+    -- read web_users without a person set, and nobody is set yet when someone types an
+    -- address, so this is the one door: an address in, at most one account number out. An
+    -- address shared by two accounts finds neither (a link goes to no one rather than the
+    -- wrong person). The API never says whether it found anyone.
+    CREATE FUNCTION dmbot_user_by_email(addr TEXT) RETURNS BIGINT
+        LANGUAGE plpgsql SECURITY DEFINER
+        AS $fn$
+    DECLARE
+        found BIGINT;
+        before TEXT := COALESCE(current_setting('dmbot.email_lookup', true), '');
+    BEGIN
+        IF addr IS NULL OR addr = '' THEN
+            RETURN NULL;
+        END IF;
+        PERFORM set_config('dmbot.email_lookup', 'on', true);
+        -- The email Discord gave, or the one the payment company has (`payment_email`, added by
+        -- 0067: a function body is looked up when it runs, so this migration may come first).
+        -- Exactly one account must match; an address two accounts share finds neither.
+        SELECT min(user_id) INTO found FROM web_users
+            WHERE lower(email) = lower(addr) OR lower(payment_email) = lower(addr)
+            HAVING count(*) = 1;
+        PERFORM set_config('dmbot.email_lookup', before, true);
+        RETURN found;
+    END
+    $fn$;
+    -- web_users is forced to a person's own row, and the function runs with its owner's rights,
+    -- so it needs a way in: a read-only policy TO the role that owns the function (the one
+    -- running this migration), open only while the function has set its own setting. Never the
+    -- website's role, which could otherwise set the setting itself and read every account's
+    -- email.
+    DO $do$
+    BEGIN
+        EXECUTE format(
+            'CREATE POLICY email_lookup ON web_users FOR SELECT TO %I
+                USING (dmbot_email_lookup() = ''on'')',
+            current_user);
+    END
+    $do$;
+    DO $do$
+    BEGIN
+        EXECUTE format(
+            'ALTER FUNCTION dmbot_user_by_email(TEXT) SET search_path = pg_catalog, %I, pg_temp',
+            current_schema());
+    END
+    $do$;
+    REVOKE ALL ON FUNCTION dmbot_user_by_email(TEXT) FROM PUBLIC;
+    """
+)
+
 # What the website's role may touch at all: its own tables, and only reads of the two
 # server tables /me needs. Everything else (consent, transcripts, memory...) is refused
 # outright. Applied by Database.migrate whenever the role exists, so a new table is never
@@ -2200,6 +2289,9 @@ WEB_ROLE_FUNCTIONS: tuple[tuple[str, str], ...] = (
     ("dmbot_orphan_owned_campaigns", "dmbot_orphan_owned_campaigns(BIGINT)"),
     ("dmbot_hours_used", "dmbot_hours_used(BIGINT)"),
     ("dmbot_claim_email", "dmbot_claim_email(BIGINT, TEXT, BOOLEAN, INTEGER, INTEGER)"),
+    # Sign-in by emailed link (#1231).
+    ("dmbot_user_by_email", "dmbot_user_by_email(TEXT)"),
+    # Experience points (#1228): the one door to the person's all-time minutes.
     ("dmbot_minutes_total", "dmbot_minutes_total()"),
     ("dmbot_user_of", "dmbot_user_of(TEXT)"),  # links made before a move (#1230)
     ("dmbot_moved_to", "dmbot_moved_to(BIGINT, TEXT, TEXT)"),  # payments after a move (#1230)
@@ -2209,6 +2301,10 @@ WEB_ROLE_FUNCTIONS: tuple[tuple[str, str], ...] = (
     ("dmbot_previous_ids", "dmbot_previous_ids()"),  # the export's earlier Discord accounts
     ("dmbot_forget_account_history", "dmbot_forget_account_history()"),  # account deletion
     ("dmbot_set_payment_email", "dmbot_set_payment_email(TEXT, TEXT, BIGINT)"),  # #1242
+    # A move code asked for on the website (#1246).
+    ("dmbot_web_move_code", "dmbot_web_move_code(BIGINT, TEXT, BIGINT, TEXT, BIGINT)"),
+    ("dmbot_web_cancel_move_code", "dmbot_web_cancel_move_code(BIGINT, TEXT, BIGINT)"),
+    ("dmbot_web_forget_move_asks", "dmbot_web_forget_move_asks(BIGINT)"),
 )
 # The columns the website may fill when it creates a hand-over offer (#728): who, where and the
 # two names. Left out on purpose, so they take their defaults: status and decided_at (an offer
@@ -2247,6 +2343,10 @@ WEB_ROLE_GRANTS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("INSERT", ("email_unsubscribed",)),
     ("INSERT, DELETE", ("feedback",)),
     ("SELECT, INSERT, UPDATE, DELETE", ("web_users", "web_sessions")),
+    # Emailed sign-in links (#1231): made and used by the website, never read by anyone else.
+    # (Only `used_at` can be changed: a holder of a link can spend it, never revive or move it.)
+    ("SELECT, INSERT, DELETE", ("email_sign_in_links",)),
+    ("UPDATE (used_at)", ("email_sign_in_links",)),
     # Free access (#771): the admin page gives, changes and revokes grants (through
     # Database.grant_writer()); account deletion deletes the person's own.
     ("SELECT, INSERT, UPDATE, DELETE", ("access_grants",)),
@@ -3247,6 +3347,110 @@ DMBOT_ID = """
     $do$;
     """
 
+# The website's way to a move code (#1246). The website's role has no grant on move_codes or
+# account_moves, so it asks through this one door, which does the whole job in one transaction:
+# the account must be on a paid plan and not have moved in the last 30 days, the code's hash is
+# stored (the earlier code stops working), and the limits are counted here, in the database, so
+# every web process agrees and a restart forgets nothing: 3 codes an hour for an account and 5
+# an hour for a connection. `src` is a keyed hash (HMAC) of the connection's address: the address
+# itself is never stored, and the hash can't be turned back into one without the server's secret.
+# The caps match account_move.py's ASKS and MOVE_GAP_S; a test holds them together.
+WEB_MOVE_CODES = """
+    CREATE TABLE move_code_asks (
+        -- Goes with the account (deletion) and follows it through a move.
+        user_id  BIGINT NOT NULL CHECK (user_id > 0)
+                 REFERENCES web_users ON DELETE CASCADE ON UPDATE CASCADE,
+        source   TEXT   NOT NULL CHECK (char_length(source) = 64),
+        asked_at BIGINT NOT NULL
+    );
+    CREATE INDEX move_code_asks_by_user ON move_code_asks (user_id, asked_at);
+    CREATE INDEX move_code_asks_by_source ON move_code_asks (source, asked_at);
+    CREATE FUNCTION dmbot_web_move_code(who BIGINT, src TEXT, now BIGINT, hash TEXT, ends BIGINT)
+        RETURNS TEXT
+        LANGUAGE plpgsql SECURITY DEFINER
+        AS $fn$
+    #variable_conflict use_column
+    DECLARE
+        before TEXT := COALESCE(current_setting('dmbot.owner_sync', true), '');
+        account TEXT;
+        ent RECORD;
+        outcome TEXT := 'ok';
+    BEGIN
+        PERFORM set_config('dmbot.owner_sync', 'move', true);
+        -- One ask at a time for an account, so two at once can't both pass the count.
+        SELECT u.dmbot_id INTO account FROM web_users u WHERE u.user_id = who FOR UPDATE;
+        IF account IS NULL THEN
+            outcome := 'no_account';
+        ELSE
+            SELECT e.plan, e.status, e.provider_subscription_id INTO ent
+                FROM entitlements e WHERE e.user_id = who;
+            IF NOT FOUND OR ent.plan = 'try-it' OR ent.status <> 'active'
+               OR ent.provider_subscription_id IS NULL THEN
+                outcome := 'not_paid';
+            ELSIF EXISTS (SELECT 1 FROM account_moves m
+                          WHERE m.dmbot_id = account AND m.moved_at > now - 2592000) THEN
+                outcome := 'too_soon';
+            ELSE
+                -- One count at a time for a connection too, so asks from several accounts at
+                -- once can't all see "fewer than 5".
+                PERFORM pg_advisory_xact_lock(hashtextextended('dmbot.move_ask:' || src, 0));
+                DELETE FROM move_code_asks a WHERE a.asked_at <= now - 3600;
+                IF (SELECT count(*) FROM move_code_asks a WHERE a.user_id = who) >= 3
+                   OR (SELECT count(*) FROM move_code_asks a WHERE a.source = src) >= 5 THEN
+                    outcome := 'slow_down';
+                ELSE
+                    INSERT INTO move_code_asks (user_id, source, asked_at) VALUES (who, src, now);
+                    INSERT INTO move_codes (user_id, code_hash, created_at, expires_at)
+                        VALUES (who, hash, now, LEAST(ends, now + 1800))
+                        ON CONFLICT (user_id) DO UPDATE SET code_hash = EXCLUDED.code_hash,
+                            created_at = EXCLUDED.created_at, expires_at = EXCLUDED.expires_at,
+                            used_at = NULL;
+                END IF;
+            END IF;
+        END IF;
+        PERFORM set_config('dmbot.owner_sync', before, true);
+        RETURN outcome;
+    END
+    $fn$;
+    -- The email didn't go, so no code should be waiting that nobody has seen, and the ask
+    -- is given back: a failed send must not use up an hour's three. Only that very code is
+    -- removed (a newer one asked for meanwhile, and already mailed, must stay); `at` is the
+    -- time the ask was made.
+    CREATE FUNCTION dmbot_web_cancel_move_code(who BIGINT, hash TEXT, at BIGINT) RETURNS VOID
+        LANGUAGE sql SECURITY DEFINER
+        AS $fn$
+            DELETE FROM move_codes WHERE user_id = who AND code_hash = hash AND used_at IS NULL;
+            DELETE FROM move_code_asks WHERE ctid = (SELECT a.ctid FROM move_code_asks a
+                WHERE a.user_id = who AND a.asked_at = at LIMIT 1);
+        $fn$;
+    -- The hourly sweep: asks older than the window are of no use.
+    CREATE FUNCTION dmbot_web_forget_move_asks(now BIGINT) RETURNS BIGINT
+        LANGUAGE sql SECURITY DEFINER
+        AS $fn$
+            WITH gone AS (DELETE FROM move_code_asks WHERE asked_at <= now - 3600 RETURNING 1)
+            SELECT count(*) FROM gone
+        $fn$;
+    DO $do$
+    BEGIN
+        EXECUTE format(
+            'ALTER FUNCTION dmbot_web_move_code(BIGINT, TEXT, BIGINT, TEXT, BIGINT)'
+            ' SET search_path = pg_catalog, %I, pg_temp',
+            current_schema());
+        EXECUTE format(
+            'ALTER FUNCTION dmbot_web_cancel_move_code(BIGINT, TEXT, BIGINT)'
+            ' SET search_path = pg_catalog, %I, pg_temp',
+            current_schema());
+        EXECUTE format(
+            'ALTER FUNCTION dmbot_web_forget_move_asks(BIGINT)'
+            ' SET search_path = pg_catalog, %I, pg_temp',
+            current_schema());
+    END
+    $do$;
+    REVOKE ALL ON FUNCTION dmbot_web_move_code(BIGINT, TEXT, BIGINT, TEXT, BIGINT) FROM PUBLIC;
+    REVOKE ALL ON FUNCTION dmbot_web_cancel_move_code(BIGINT, TEXT, BIGINT) FROM PUBLIC;
+    REVOKE ALL ON FUNCTION dmbot_web_forget_move_asks(BIGINT) FROM PUBLIC;
+"""
+
 MEMORY_STATES = (
     f"""
     -- Story memory 5a, slice 1 (#1267; docs/STORY_MEMORY.md, "State facts"):
@@ -3355,9 +3559,11 @@ MIGRATIONS: tuple[Migration, ...] = (
     ("0063_dmbot_id", DMBOT_ID),
     ("0064_mail", MAIL),
     ("0065_trial", TRIAL),
+    ("0066_email_sign_in", EMAIL_SIGN_IN),
     ("0067_payment_email", PAYMENT_EMAIL),
     ("0068_moves", MOVES),  # 0066 is the sign-in-by-email migration (#1237)
-    # 0070: 0069 is kept for the rule suggestions (#1259); RepoManager renumbers on merge if needed.
+    ("0069_web_move_codes", WEB_MOVE_CODES),  # the website's door to a move code (#1246)
+    # 0070: 0069 is the website's move code (#1246); 0071 and 0072 are in other open PRs.
     ("0070_memory_states", MEMORY_STATES),
 )
 
@@ -3400,6 +3606,7 @@ USER_ISOLATED_TABLES = (
     "entitlements",
     "payment_events",
     "web_sessions",
+    "email_sign_in_links",
     "installs",
     # Every Discord account a DMbot account used; keyed by its DMbot ID (#1230).
     "account_id_history",
@@ -3425,5 +3632,6 @@ UNSCOPED_TABLES = (
     "trial_extensions",
     "move_codes",
     "account_moves",
+    "move_code_asks",
     *ROUTING_TABLES,
 )

@@ -3106,6 +3106,17 @@ within 30 days, no claim about how the database is encrypted, and the owner's ow
 responsibility" wording; no `{{CHECK}}` markers remain. That closes #498 item 4. The Discord app
 stays private until the rest of #498 is done and the owner says go. Settings stay in Discord for now;
 the site is account, plan, campaigns, invite and marketing.
+**Page changes: magic dust, and runes on the banner** (owner, 2026-10-15; Supervisor's details).
+Moving between the site's pages gets a short magic-dust dissolve: the old page breaks up into
+sparkling dust while the new one fades in, about 350 ms, built with the browser's own page
+transitions (CSS `@view-transition`, no script, no library, nothing new in the security
+headers). Browsers without it change pages as before. Only the page's banner (its main heading,
+the hero on the home page) gets the rune effect: it breaks into arcane runes as the page leaves,
+and the new banner forms out of runes as it arrives. The runes are decoration, hidden from screen
+readers, with a small rune font served from our own site. **No dice** (owner: not for now).
+**The legal pages stay plain:** terms, privacy and refunds get no dust and no runes. Anyone whose
+device asks for less motion gets a plain page change everywhere. It must never slow a click or move
+the page's layout, and it adds at most about 15 KB.
 **Stripe replaces Lemon Squeezy (owner, 2026-10-13).** The owner moved the payment company
 from Lemon Squeezy to Stripe. The Lemon Squeezy adapter (#1083, #1086: `dmbot.web.lemonsqueezy`)
 is replaced by a Stripe one, `dmbot.web.stripe` (`PAYMENT_PROVIDER=stripe`; keys and ids in

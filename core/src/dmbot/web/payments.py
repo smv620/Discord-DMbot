@@ -86,15 +86,24 @@ class PaymentProvider(Protocol):
         user_id: int,
         email: str | None,
         plan: Plan,
-        first_month_cents: int | None,
         return_url: str,
+        dmbot_id: str | None = None,
+        customer_id: str | None = None,
     ) -> str:
         """The company's checkout page for this plan. `email` prefills it and is sent to
-        the company server-side only, never put in the returned address."""
+        the company server-side only, never put in the returned address. `customer_id`: the
+        company's customer for this person if they have one; otherwise `dmbot_id` (their
+        DMbot ID) is the prefix of the new customer's invoices (#1228)."""
         ...
 
     async def extra_hours_checkout_url(
-        self, *, user_id: int, email: str | None, return_url: str
+        self,
+        *,
+        user_id: int,
+        email: str | None,
+        return_url: str,
+        dmbot_id: str | None = None,
+        customer_id: str | None = None,
     ) -> str:
         """The company's page to buy the extra hours (plans.json `extraHours`) for this
         month. Same rules as `checkout_url`: the email goes server-side only."""
@@ -136,6 +145,8 @@ class FakeProvider:
         self._secret = secret
         self._site_url = site_url.rstrip("/")
         self.cancelled: list[str] = []
+        # What each checkout was given, so tests can see the DMbot ID and customer travel.
+        self.checkouts: list[dict[str, object]] = []
         self.retargeted: list[tuple[str | None, str | None, int]] = []
 
     def sign(self, body: bytes) -> str:
@@ -147,17 +158,28 @@ class FakeProvider:
         user_id: int,
         email: str | None,
         plan: Plan,
-        first_month_cents: int | None,
         return_url: str,
+        dmbot_id: str | None = None,
+        customer_id: str | None = None,
     ) -> str:
+        self.checkouts.append(
+            {"user_id": user_id, "plan": plan.id, "dmbot_id": dmbot_id, "customer_id": customer_id}
+        )
         query: dict[str, str] = {"fake_checkout": plan.id}
-        if first_month_cents is not None:
-            query["first_month"] = str(first_month_cents)
         return f"{return_url}?{urlencode(query)}"
 
     async def extra_hours_checkout_url(
-        self, *, user_id: int, email: str | None, return_url: str
+        self,
+        *,
+        user_id: int,
+        email: str | None,
+        return_url: str,
+        dmbot_id: str | None = None,
+        customer_id: str | None = None,
     ) -> str:
+        self.checkouts.append(
+            {"user_id": user_id, "extra": True, "dmbot_id": dmbot_id, "customer_id": customer_id}
+        )
         return f"{return_url}?{urlencode({'fake_extra_hours': '1'})}"
 
     async def billing_url(self, *, customer_id: str, return_url: str) -> str:

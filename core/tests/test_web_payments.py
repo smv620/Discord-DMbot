@@ -13,6 +13,7 @@ from urllib.parse import parse_qs, urlsplit
 import httpx
 
 from dmbot import entitlements
+from dmbot.account_id import to_dmbot_id
 from dmbot.config import ConfigError
 from dmbot.web import accounts, entitlements_writer, grants
 from dmbot.web.app import create_app
@@ -699,38 +700,21 @@ class Payments(DatabaseTest):
         await grants.revoke(self.db, "admin@example.invalid", ALICE.id, now=self.now)
         self.assertEqual((await self.post("/billing/checkout", {"plan": "table"})).status_code, 200)
 
-    async def test_the_first_month_of_table_after_try_it_is_discounted_once(self) -> None:
+    async def test_table_costs_the_same_from_the_first_month(self) -> None:
+        """No first-month price (owner, 2026-10-14): a checkout carries none, before or
+        after Try It, and a working paid plan still refuses a second checkout."""
         plain = (await self.post("/billing/checkout", {"plan": "table"})).json()["url"]
         self.assertNotIn("first_month", plain)
+        # The DMbot ID travels with the checkout, so the invoices are numbered from it.
+        self.assertEqual(self.provider.checkouts[-1]["dmbot_id"], to_dmbot_id(ALICE.id))
+        self.assertIsNone(self.provider.checkouts[-1]["customer_id"])
         await self.post("/plan/try-it")
         offer = (await self.post("/billing/checkout", {"plan": "table"})).json()["url"]
-        self.assertEqual(parse_qs(urlsplit(offer).query)["first_month"], ["199"])
-        guild = (await self.post("/billing/checkout", {"plan": "guild"})).json()["url"]
-        self.assertNotIn("first_month", guild)
+        self.assertNotIn("first_month", offer)
+        self.assertNotIn("discount", offer)
         await self.start_table()  # paid: a working plan refuses a second checkout
         again = await self.post("/billing/checkout", {"plan": "table"})
         self.assertEqual((again.status_code, again.json()), (409, {"error": "has_paid_plan"}))
-        await self.send(kind="subscription_ended", subscription_id="sub_1")
-        after = (await self.post("/billing/checkout", {"plan": "table"})).json()["url"]
-        self.assertNotIn("first_month", after)  # paid before: no second first month
-
-    async def test_only_a_payment_takes_away_the_first_month_price(self) -> None:
-        # A recorded failure is not a payment; a payment is (#922).
-        async with self.db.plan_writer(ALICE.id) as conn:
-            await conn.execute("INSERT INTO try_it_used (user_id) VALUES (%s)", (ALICE.id,))
-            await conn.execute(
-                "INSERT INTO payment_events (provider, event_id, user_id, kind, received_at)"
-                " VALUES ('fake', 'f1', %s, 'payment_failed', %s)",
-                (ALICE.id, self.now),
-            )
-        self.assertTrue(await accounts.first_paid_month_after_trial(self.db, ALICE.id))
-        async with self.db.plan_writer(ALICE.id) as conn:
-            await conn.execute(
-                "INSERT INTO payment_events (provider, event_id, user_id, kind, received_at)"
-                " VALUES ('fake', 'p1', %s, 'subscription_started', %s)",
-                (ALICE.id, self.now),
-            )
-        self.assertFalse(await accounts.first_paid_month_after_trial(self.db, ALICE.id))
 
     async def test_the_billing_page_needs_a_paid_plan(self) -> None:
         none = await self.post("/billing/portal")
@@ -841,10 +825,11 @@ class Payments(DatabaseTest):
     async def test_extra_hours_when_the_company_fails_or_payments_are_off(self) -> None:
         await self.start_table()
 
-        async def broken(*, user_id: int, email: str | None, return_url: str) -> str:
+        async def broken(**_: object) -> str:
             raise PaymentError("down")
 
-        self.provider.extra_hours_checkout_url = broken  # type: ignore[method-assign]
+        # setattr: mypy objects to a method assigned a stand-in with different arguments
+        setattr(self.provider, "extra_hours_checkout_url", broken)  # noqa: B010
         failed = await self.post("/billing/extra-hours")
         self.assertEqual(
             (failed.status_code, failed.json()), (502, {"error": "payments_unavailable"})
