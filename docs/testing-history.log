@@ -2299,3 +2299,15 @@ Overall ...................................... PASS (Deepgram baseline: 33/33, 1
   would be safe.
   Rows unchanged in both: 3 campaigns, 152 entries, 147 transcript lines; web_users is still 0, so the DMbot-ID backfill
   has still never run on rows (its own test covers it). Still to merge for #1271: see the issue; dry-run each as it lands.
+
+==============================================================================
+2026-10-15  dev1  Dry run on development c99abd25 with 0071 email records (#1271) - PASSED
+  #1288 adds 0071_email_records (one SECURITY DEFINER function, dmbot_forget_email_records: a person's own sent_emails rows
+  can be forgotten). #1278 and #1286 merged too: no schema, consent, compose or ears change. 0070 (#1272) and 0072 (#1261)
+  are not merged yet, so 0071 lands before them: the runner treats the gap as normal (see the 0066 check above).
+  Same method: a fresh pg_dumpall of the live database (at 0062), restored into a throwaway postgres:16, migrated as the
+  dmbot role, deleted after. Result: "Database updated: 0063_dmbot_id ... 0069_web_move_codes, 0071_email_records" in
+  0.25 s; a second run applied nothing; 70 migrations (only 0070 missing, as expected); the function is security definer,
+  executable by dmbot and by the website's role (the website calls it for the person's own rows); 3 campaigns, 152
+  entries, 147 transcript lines unchanged. Still to merge for #1271: #1261 and #1262 (shared rules), #1272 (state
+  facts, 0070); dry-run each as it lands.
