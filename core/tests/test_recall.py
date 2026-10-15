@@ -673,6 +673,7 @@ class Speed(MemoryTest):
             )
             return (time.perf_counter() - started) * 1000, got
 
+        reports: list[str] = []
         for audience in (DM_SCREEN, PLAYERS):
             await once(audience)  # the first call warms the connection and the plans
             asked.clear()
@@ -691,7 +692,9 @@ class Speed(MemoryTest):
                 f" up to {max(asked)} lines asked of the reader"
             )
             note(summary)
+            reports.append(summary)
             self.assertLess(median, 50, summary)
+        self.fail('NUMBERS ' + ' || '.join(reports))  # TEMPORARY: read the numbers off the CI annotation
 
 
 if __name__ == "__main__":
