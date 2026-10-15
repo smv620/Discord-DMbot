@@ -1,0 +1,66 @@
+# TO INSTALL: copy this file to .github/workflows/qabot.yml (#1339). It lives here because the
+# sessions' GitHub token may not create or change workflow files; whoever has that right (the
+# owner, in the web editor) moves it. Steps for the owner are in the pull request that added it.
+name: QAbot
+
+# Answers the Discussions category "Q&A for DMbot", or passes the question to the team as a
+# `support` issue. The design is docs/PLAN.md, "QAbot and support tickets"; the logic is
+# scripts/qabot/qabot.py, tested offline in core/tests/test_qabot.py. The model only returns
+# JSON and has read-only tools: the script checks that JSON and is the only thing that posts.
+on:
+  discussion:
+    types: [created]
+  discussion_comment:
+    types: [created]
+  schedule:
+    - cron: "17 * * * *" # hourly sweep: answers anything left unanswered in the last 2 hours
+  workflow_dispatch: {} # lets the owner run a sweep by hand
+
+# Nothing else. `contents: read` is for the checkout; the other two are what QAbot writes.
+permissions:
+  contents: read
+  discussions: write
+  issues: write
+
+# One run per discussion at a time, so two quick replies cannot both be answered at once. The
+# sweep has its own lane. Nothing is cancelled: a run half-way through a reply finishes first.
+concurrency:
+  group: qabot-${{ github.event.discussion.number || 'sweep' }}
+  cancel-in-progress: false
+
+env:
+  # Current Claude Sonnet. Change it here to try another model. Expected cost per question:
+  # see the pull request that added this file.
+  QABOT_MODEL: claude-sonnet-5-5
+  # Pinned, so a new release of the tool cannot change what runs with the key. Bump it on purpose.
+  CLAUDE_CODE_VERSION: "2.1.300"
+
+jobs:
+  answer:
+    name: answer-or-escalate
+    runs-on: ubuntu-22.04
+    timeout-minutes: 15
+    # The script checks both again; this only saves starting a runner for the wrong category
+    # or for a bot's own comment.
+    if: >-
+      github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' ||
+      (github.event.discussion.category.name == 'Q&A for DMbot' &&
+      github.event.comment.user.type != 'Bot')
+    steps:
+      # The default branch: a discussion can't change the code that reads it. The checkout is
+      # also what the model reads (the docs), so it holds no secret and no token is left in it.
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v5
+        with:
+          node-version: "22"
+      - name: install Claude Code
+        run: npm install --global "@anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}"
+      - name: answer or pass on
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          QABOT_ANTHROPIC_API_KEY: ${{ secrets.QABOT_ANTHROPIC_API_KEY }}
+          # Through the environment, never pasted into the script text.
+          DISCUSSION_NUMBER: ${{ github.event.discussion.number }}
+        run: python3 -I scripts/qabot/qabot.py
