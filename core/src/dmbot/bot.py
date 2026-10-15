@@ -2070,11 +2070,17 @@ class DMBot(commands.AutoShardedBot):
             return []
         rows = await self.memory.table_people(campaign.guild_id, campaign.id)
         agreed = await self.consent.consenting(campaign.guild_id)
+        table = self.tables.get(campaign.guild_id)
+        if table is not None and table.campaign_id == campaign.id:
+            starter: int | None = table.dm_user_id  # who started this session
+        else:
+            starter = next(iter(campaign.dm_user_ids)) if len(campaign.dm_user_ids) == 1 else None
         return people_lines(
             rows,
             agreed,
             campaign.dm_user_ids,
             lambda user_id: self.name_of(campaign.guild_id, user_id),
+            dm_word_user=starter,
         )
 
     async def plan_gate(

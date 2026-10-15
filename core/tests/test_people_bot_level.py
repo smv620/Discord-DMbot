@@ -138,5 +138,38 @@ class Buttons(MemoryTest):
         self.assertIn(people_review.NOTHING_WAITING, it.sent[-1])
 
 
+class TranscriptLabels(unittest.IsolatedAsyncioTestCase):
+    """The download's {character} label (#1208): the entry's player, else the `plays` link;
+    a DM keeps the nickname."""
+
+    async def test_labels_come_from_the_entry_then_the_plays_link_and_never_for_a_dm(self) -> None:
+        from dmbot.memory.lookup import CampaignLookup, LookupData
+        from dmbot.ui import transcripts
+
+        bot = SimpleNamespace(
+            lookup=SimpleNamespace(
+                get=AsyncMock(return_value=CampaignLookup.build(LookupData(1, (), (), (), ())))
+            ),
+            memory=SimpleNamespace(
+                table_people=AsyncMock(
+                    return_value=[(1, ["Cerric", "Vera"], []), (2, [], []), (3, ["Hiro"], [])]
+                )
+            ),
+        )
+        got = await transcripts.player_characters(bot, 1, CAMPAIGN, {3})  # type: ignore[arg-type]
+        self.assertEqual(got, {1: "Vera"})  # the newest link; 2 plays nobody; 3 is a DM
+
+    async def test_a_failing_read_still_gives_a_file(self) -> None:
+        from dmbot.ui import transcripts
+
+        bot = SimpleNamespace(
+            lookup=None,
+            memory=SimpleNamespace(table_people=AsyncMock(side_effect=RuntimeError("down"))),
+        )
+        with self.assertLogs("dmbot.ui.transcripts", level=logging.ERROR):
+            got = await transcripts.player_characters(bot, 1, CAMPAIGN)  # type: ignore[arg-type]
+        self.assertEqual(got, {})
+
+
 if __name__ == "__main__":
     unittest.main()
