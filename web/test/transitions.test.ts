@@ -84,4 +84,19 @@ describe("page changes", () => {
       readdirSync(dir).flatMap((n) => (statSync(join(dir, n)).isDirectory() ? files(join(dir, n)) : [join(dir, n)]));
     expect(files(publicDir).filter((f) => /rune|dust/i.test(f))).toEqual([]);
   });
+
+  it("every page has exactly one h1: two elements named banner would drop the whole transition", () => {
+    // Read from the source, because the islands can't be rendered outside a real build.
+    const pagesDir = fileURLToPath(new URL("../src/pages/", import.meta.url));
+    const files = (dir: string): string[] =>
+      readdirSync(dir).flatMap((n) => (statSync(join(dir, n)).isDirectory() ? files(join(dir, n)) : [join(dir, n)]));
+    const pages = files(pagesDir).filter((f) => f.endsWith(".astro"));
+    expect(pages.length).toBeGreaterThan(8);
+    for (const file of pages) {
+      const source = readFileSync(file, "utf8");
+      const own = source.match(/<h1[\s>]/g)?.length ?? 0;
+      const fromLegalPage = source.includes("<LegalPage") ? 1 : 0; // LegalPage.astro has the h1
+      expect(own + fromLegalPage, file).toBe(1);
+    }
+  });
 });
