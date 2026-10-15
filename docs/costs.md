@@ -157,3 +157,60 @@ Written by dev1 from the numbers above; Supervisor decides and records it in PLA
 - **FAST against STRONG, by the rule written before the run:** FAST's recall is not "within a few points" of STRONG's (all claims 57% against 68%; player said 55% against 70%; plan 52% against 71%), so FAST alone does not pass. On the data so far, use **STRONG for the live extractor, about $1.38 a 4-hour session at 240 calls and $2.76 at 480**, with FAST at $0.53 and $1.07 as the cheaper fallback for the parts it does well, and re-run both after the prompt is fixed.
 - **Cost:** even STRONG is under $3 a 4-hour session. Caching the repeated instructions (the earlier estimate: most of each call's input) is worth looking at before the tier is.
 - **Limits:** one run, 60 invented scenes, wide intervals; the "appears abandoned" wording is not scored yet (see above).
+
+## Speech-to-text: Deepgram (actual) against Speechmatics (estimated)
+
+Added 2026-10-15 (Supervisor, at the owner's request). **Deepgram is what DMbot uses today**, so its column is the actual list price applied to the measured speech. **Speechmatics is an estimate**: the same measured speech priced at Speechmatics' list prices. Nothing below has been billed by Speechmatics; its only real use was the 2026-10-05 quick comparison in `docs/testing-history.log` (two recordings, under 2 minutes).
+
+### Prices used
+
+| What | Price per hour | Per minute | Source | Checked |
+|---|---|---|---|---|
+| Deepgram Nova-3, pre-recorded (in use) | $0.258 | $0.0043 (billed per second) | https://deepgram.com/pricing (the table above) | 2026-10-09 |
+| Speechmatics batch, Standard accuracy | $0.23 | $0.00383 | https://www.speechmatics.com/pricing | 2026-10-15 |
+| Speechmatics batch, Enhanced accuracy (the one compared on 2026-10-05) | $0.38 | $0.00633 | https://www.speechmatics.com/pricing | 2026-10-15 |
+| Speechmatics batch, Melia 1 (cheapest; never tested by DMbot) | $0.121 | $0.00202 | https://www.speechmatics.com/pricing | 2026-10-15 |
+| Speechmatics real-time, Enhanced (for comparison only) | $0.43 | $0.00717 | a price tracker, not Speechmatics: https://usagepricing.com/blueprint/activity/speechmatics-2026-07-06-realtime-stt-price-cut | 2026-10-15 |
+
+How these were read: this session's network blocks speechmatics.com, so the Speechmatics batch prices come from search results quoting its official pricing page, and the real-time price from a tracker. Before a decision, someone should read https://www.speechmatics.com/pricing directly and correct this table. Pay-as-you-go list prices, no discount: Speechmatics offers up to 25% off with volume and a one-time $100 credit for new accounts, and neither is counted here. Batch is the like-for-like price, because core sends each piece of speech as a short file. **Not checked:** whether Speechmatics bills a minimum per file. Core sends many short pieces (8 pieces for the 0.6 speech-minutes of DMOnlyAudio, 20 for the bake-off's 175 s), so a per-file minimum would raise every Speechmatics figure here.
+
+### What the measured speech costs
+
+The real test data: the twin's four sessions (4.8 speech-minutes sent, "What was measured" above) and the dev1 bake-off recording on Deepgram (175 s of speech, `docs/testing-history.log`, 2026-10-07).
+
+| Measured | Speech | Deepgram (actual) | Speechmatics Standard | Speechmatics Enhanced | Speechmatics Melia 1 |
+|---|---|---|---|---|---|
+| Twin, four sessions | 4.8 min | $0.0206 | $0.0184 | $0.0304 | $0.0097 |
+| Bake-off recording | 2.9 min | $0.0125 | $0.0112 | $0.0185 | $0.0059 |
+
+### Per table-hour
+
+These are the same three cases as "Cost per table-hour" above. The AI parts are unchanged: the off-topic filter plus the DM sidebar come to $0.049, $0.063 and $0.077 an hour. Hosting is not included.
+
+| Case | Speech (min/hour) | Deepgram speech / total | Speechmatics Standard speech / total | Speechmatics Enhanced speech / total | Speechmatics Melia 1 speech / total |
+|---|---|---|---|---|---|
+| low | 36 | $0.155 / **$0.203** | $0.138 / **$0.187** | $0.228 / **$0.277** | $0.073 / **$0.122** |
+| typical | 48 | $0.206 / **$0.269** | $0.184 / **$0.247** | $0.304 / **$0.367** | $0.097 / **$0.160** |
+| high | 60 | $0.258 / **$0.335** | $0.230 / **$0.307** | $0.380 / **$0.457** | $0.121 / **$0.198** |
+
+### A 4-hour session and a month of each plan (typical case, speech-to-text only)
+
+Hours are the plan allowances in docs/PLAN.md (Table 18, Two Tables 43, Guild 87).
+
+| | Deepgram | Speechmatics Standard | Speechmatics Enhanced | Speechmatics Melia 1 |
+|---|---|---|---|---|
+| One 4-hour session | $0.83 | $0.74 | $1.22 | $0.39 |
+| Table, 18 hours | $3.72 | $3.31 | $5.47 | $1.74 |
+| Two Tables, 43 hours | $8.88 | $7.91 | $13.07 | $4.16 |
+| Guild, 87 hours | $17.96 | $16.01 | $26.45 | $8.42 |
+
+### What it means
+
+- **Price:** Speechmatics Standard is about 11% cheaper than Deepgram. Enhanced, the tier that was actually tested, is about 47% dearer. Melia 1 is about half Deepgram's price, but DMbot has never tested it.
+- **Accuracy, from the only real comparison (2026-10-05):**
+  - With names hinted, Deepgram and Speechmatics Enhanced tied: 23 of 24 D&D terms each.
+  - On the everyday script, Enhanced made 0 errors and Deepgram 2.
+  - Standard and Melia 1 were not tested.
+  - It was two recordings, under 2 minutes, so it settles nothing.
+- **Speed:** Speechmatics took 2.77 s to connect in that test, against Deepgram's 0.14 s. Live advice needs speed, and nothing has measured Speechmatics batch delay per short piece.
+- **So:** price alone doesn't justify a switch. A switch would be worth measuring only for Standard (cheaper, untested) or Melia 1 (much cheaper, untested). That needs the twin on Speechmatics for accuracy and delay per piece, plus a check of the per-file minimum. That is a developer's issue, not a decision made here.
