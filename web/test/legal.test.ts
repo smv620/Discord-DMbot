@@ -322,6 +322,11 @@ describe("what the AI company does with the text (#1328)", () => {
     expect(anthropic.slice(0, 260)).toContain("It gets the text it needs, not sound. That text isn't used to train Anthropic's AI.");
   });
 
+  it("says it once, under the AI company, and nowhere else on the page", () => {
+    // Not copied to another company or to the short summary (which has no such promise to make).
+    expect(privacy().match(/train/gi)).toHaveLength(1);
+  });
+
   it("makes no such promise for the speech company: it depends on that company's own setting", () => {
     // Anthropic's commercial terms (Section B) say it may not train on customer content; Deepgram's
     // use of audio depends on its Model Improvement Program, so nothing is promised for it here.
