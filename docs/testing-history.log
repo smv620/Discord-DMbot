@@ -2311,3 +2311,20 @@ Overall ...................................... PASS (Deepgram baseline: 33/33, 1
   executable by dmbot and by the website's role (the website calls it for the person's own rows); 3 campaigns, 152
   entries, 147 transcript lines unchanged. Still to merge for #1271: #1261 and #1262 (shared rules), #1272 (state
   facts, 0070); dry-run each as it lands.
+
+==============================================================================
+2026-10-15  dev1  DEPLOY: the accounts and shared-rules stack (#1271) is live as cf4983b6 (migrations 0063-0072)
+  Supervisor said go on #1271 (13:44 UTC). Before: a last dry run on final development cf4983b6, from the live copy straight to
+  final and with 0070 arriving after 0072 (stage 1 the code of 20581351, stage 2 final): both applied cleanly, 72 migrations,
+  rows unchanged (3 campaigns, 152 entries, 237 aliases, 147 transcript lines). active_sessions was 0; ears, consent wording (v6)
+  and cloudflared unchanged, so only core and web-api were rebuilt.
+  Backup: ~/db-backups/dmbot-before-cf4983b6-20261015T134709Z.sql (chmod 600). Then, as separate steps, `GIT_COMMIT=cf4983b6...
+  docker compose build core web-api`, `up -d --no-deps core`, `up -d --no-deps web-api`. The owner had set the SMTP settings and
+  LINK_TOKEN_SECRET in .env earlier (never read by dev1).
+  Result: core logged "Database updated: 0063_dmbot_id ... 0072_rule_suggestions", then "Connected to 1 server(s)" and "ears connected".
+  web-api started and went healthy. 0 ERROR or traceback lines in core and web-api. schema_migrations: 72 rows. Core's start-up
+  check for missing .env settings printed no warning (no setting missing by name). One unrelated warning: .env has both AI_MODEL
+  and AI_MODEL_FAST (only AI_MODEL_FAST is used; the owner can delete the AI_MODEL line).
+  Not yet checked live (needs the owner): one test sign-in email to an address the owner chooses and the signed link accepted;
+  the account page's DMbot ID; "Get a move code" (needs a paid test account with a payment email). Offer emails stay off until
+  MAIL_POSTAL_ADDRESS is set; with 0 website users none can go out today.
