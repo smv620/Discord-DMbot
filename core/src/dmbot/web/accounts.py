@@ -103,6 +103,26 @@ async def link_install(db: Database, user_id: int, guild_id: int, *, session: st
     return "linked" if cur.rowcount == 1 else "already_linked"
 
 
+NAME_MAX = 100  # a Discord name is at most 32 characters; the rest is a ceiling, not a target
+
+
+async def remember_display_name(db: Database, user_id: int, name: str) -> bool:
+    """Keep a person's Discord name on their account, so the personal pages can greet them
+    ("Hello, <name>", #1231) even when they have never signed in to the website since the name
+    was kept (#1242 item 2). Only the name, only for an account that already exists (the bot
+    never makes one), and only when it differs. True if it changed."""
+    name = " ".join(name.split())[:NAME_MAX]
+    if not name:
+        return False
+    async with db.user(user_id) as conn:
+        cur = await conn.execute(
+            "UPDATE web_users SET display_name = %s WHERE user_id = %s"
+            " AND display_name IS DISTINCT FROM %s",
+            (name, user_id, name),
+        )
+        return cur.rowcount == 1
+
+
 async def active_subscription(db: Database, user_id: int) -> tuple[str, str] | None:
     """(payment company, subscription id) of a paid plan that would charge again."""
     async with db.user(user_id) as conn:
