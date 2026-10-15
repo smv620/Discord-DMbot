@@ -44,7 +44,7 @@ export const dmSteps: Step[] = [
     names: [{ name: "Check who is who", file: "ui/people_review.py" }],
   },
   {
-    text: "To say that only one of something exists, like a magic sword, press 🔍 Find a name, open the item, and press ☝️ Only one exists. Press Allow more than one to undo it. A thing with its own proper name is taken as the only one until you say otherwise. Only game masters can change this.",
+    text: "To say an item, like a magic sword, is the only one, press 🔍 Find a name, open the item, and press ☝️ Only one exists. Press Allow more than one to undo it. An item with its own proper name is taken as the only one until you say otherwise. Only game masters can change this.",
     names: [
       { name: "Find a name", file: "ui/name_card.py" },
       { name: "☝️ Only one exists", file: "ui/name_card.py" },
@@ -52,12 +52,11 @@ export const dmSteps: Step[] = [
     ],
   },
   {
-    text: "To say who has something, open the name, press 🧭 Connect to…, and choose carries. If something doesn't fit, DMbot tells you, for example \"Someone else already has that, and there is only one\" or \"They were dead or destroyed before this\", and will ask you about it after the session. DMbot only points it out. You decide.",
+    text: "To say who has something, open the name, press 🧭 Connect to…, and choose carries. It is saved either way. If it looks odd, for example \"Someone else already has that, and there is only one\", DMbot says so and will ask you about it after the session. DMbot only points it out. You decide.",
     names: [
       { name: "Connect to…", file: "ui/name_card.py" },
       { name: "carries", file: "ui/name_card.py" },
       { name: "Someone else already has that, and there is only one", file: "ui/name_card.py" },
-      { name: "They were dead or destroyed before this", file: "ui/name_card.py" },
       { name: "will ask you about it after the session", file: "ui/name_card.py" },
     ],
   },
