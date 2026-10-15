@@ -41,17 +41,19 @@ describe("What DMbot does", () => {
     };
     const share = text("Share house rules");
     expect(share).toContain("(paid plans)");
+    expect(share).not.toMatch(/\bfree\b|anyone can share/i);
     expect(share).toContain("Only the rules are shared, never the story, names or what was said.");
     // Using someone's rules is not paid; only publishing is (PLAN, "Shared rulesets"), so the
     // card says who can share, and it must agree with the pricing page's line.
-    expect(share).toContain("A game master on a paid plan can share");
+    expect(share).toContain("A game master on a paid plan can choose to share");
     // Alive-or-dead is stored but nothing records it yet (STORY_MEMORY.md, 5a "what is left"):
     // the story card must not claim it until the extractor ships.
+    expect(home.querySelector(".does")?.textContent ?? "").not.toMatch(/alive|\bdead\b|destroyed/i);
     const story = text("Remembers your story");
     expect(story).not.toMatch(/alive|dead|destroyed/i);
     expect(story).toContain("one of a kind");
-    expect(story).toContain("who carries what");
-    expect(story).toContain("It never makes up story.");
+    expect(story).toContain("who carries them");
+    expect(story).toContain("never makes up story");
     expect(story).not.toMatch(/knowledge graph|ontology|claims/i);
   });
 
