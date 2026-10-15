@@ -23,7 +23,19 @@ MENTION_METHODS = ("exact", "sound", "spelling", "context", "dm")
 FIX, KEEP = "fix", "keep"  # correction actions
 
 # Where a fact came from. "dm" is the DM's own word; everything else needs confirming.
-SOURCES = ("dm", "character", "scan", "cleaner", "undo", "entitybot", "backup")
+SOURCES = ("dm", "character", "scan", "cleaner", "undo", "entitybot", "backup", "extractor")
+
+# What the story extractor's claims are (docs/STORY_MEMORY.md, section 1; #1297): proposals
+# only, in their own table. A claim is dropped (with a reason) when the rules or consent say no,
+# rejected when the DM says no, and confirmed when the DM says yes and the fact is written.
+CLAIM_PROPOSED, CLAIM_CONFIRMED, CLAIM_REJECTED, CLAIM_DROPPED = (
+    "proposed", "confirmed", "rejected", "dropped",
+)  # fmt: skip
+CLAIM_STATUSES = (CLAIM_PROPOSED, CLAIM_CONFIRMED, CLAIM_REJECTED, CLAIM_DROPPED)
+# How a claim was said: what the DM told the table, what a player said or believes, or what
+# someone means to do (never a fact).
+HOW_DM, HOW_PLAYER, HOW_PLAN = "dm_said", "player_said", "plan"
+HOWS = (HOW_DM, HOW_PLAYER, HOW_PLAN)
 
 # What a character is in the story, one at a time (#1034, owner decision 2026-10-10). A role
 # is never a kind of entry: the kind says what a thing fundamentally is ("character"), and
