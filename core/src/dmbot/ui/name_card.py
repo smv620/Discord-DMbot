@@ -68,6 +68,10 @@ from dmbot.ui.names import (
 )
 
 log = logging.getLogger(__name__)
+ITEM = "item"  # only an item can be one of a kind (extension kinds under it aren't offered)
+ONLY_ONE = "☝️ Only one of these exists."
+ONLY_ONE_BUTTON = "Only one of these exists"
+MORE_THAN_ONE_BUTTON = "There can be more"
 ALSO_CALLED = "🏷️ Also called…"  # adds another name; its own icon, not Add a name's (#393)
 NOTHING_CHANGED = (
     "Something went wrong and nothing was changed. Press 🔍 Find a name to open it and try again."
@@ -184,6 +188,8 @@ def card_text(
     phrase = kind_phrase(entity, lookup.links.get(entity_id, ()))
     what = f"{phrase} · played by **{_md(player)}**" if player else phrase
     lines = [f"🪪 **{_md(entity.name)}** · {what} · {when}"]
+    if entity.type == ITEM and entity.is_unique:
+        lines.append(ONLY_ONE)
     if sheet:
         lines.append(sheet)
     if others:
@@ -300,7 +306,15 @@ async def show_card(
     )
     if note:
         text = f"{note}\n\n{text}"
-    view = NameCard(campaign.id, entity_id, others=others, longer=longer, sheet=has_sheet)
+    view = NameCard(
+        campaign.id,
+        entity_id,
+        others=others,
+        longer=longer,
+        sheet=has_sheet,
+        item=entity.type == ITEM,
+        unique=entity.is_unique,
+    )
     if replace:
         await _replace(interaction, text, view)
     else:
@@ -331,10 +345,13 @@ class NameCard(_Menu):
         others: bool = False,
         longer: bool = False,
         sheet: bool = False,
+        item: bool = False,
+        unique: bool = False,
     ) -> None:
         super().__init__()
         self.campaign_id = campaign_id
         self.entity_id = entity_id
+        self.unique = unique
         grey = discord.ButtonStyle.secondary
         # First row: the three edits the names panel names, in its words (#353). Remove
         # says what it does and still asks first.
@@ -353,6 +370,34 @@ class NameCard(_Menu):
             self.add_item(_Button(self._all, label="Show all", style=grey, row=2))
         if sheet:
             self.add_item(_Button(self._unlink_sheet, label="📜 Forget sheet", style=grey, row=2))
+        if item:
+            # The DM's word on an item: a named one (Heartseeker) is taken as one of a kind
+            # until they say otherwise (#1267). Says what it will do: it flips.
+            label = MORE_THAN_ONE_BUTTON if unique else ONLY_ONE_BUTTON
+            self.add_item(_Button(self._one_of_a_kind, label=label, style=grey, row=3))
+
+    async def _one_of_a_kind(self, interaction: discord.Interaction) -> None:
+        await _answer_first(interaction, in_place=True)
+        found = await _current(interaction, self.campaign_id, self.entity_id)
+        memory = _memory(interaction)
+        if found is None or memory is None:
+            return
+        campaign, name = found
+        now_unique = not self.unique
+        try:
+            await memory.set_unique(
+                campaign.guild_id, campaign.id, self.entity_id, now_unique, source=DM
+            )
+        except MemoryRuleError as exc:
+            await _tell(interaction, f"Couldn't change it. {exc}")
+            return
+        changed(interaction, campaign)
+        note = (
+            f"☝️ **{_md(name)}**: only one exists."
+            if now_unique
+            else f"**{_md(name)}**: there can be more than one."
+        )
+        await show_card(interaction, campaign.id, self.entity_id, replace=True, note=note)
 
     async def _unlink_sheet(self, interaction: discord.Interaction) -> None:
         from dmbot.ui.sheets import dm_unlink

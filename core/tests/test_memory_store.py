@@ -138,6 +138,7 @@ class Isolation(MemoryTest):
         from dmbot.memory.models import Heard
 
         await self.memory.add_session_heard(GUILD_A, self.c, 1_000, [Heard(a, DM, 1)])
+        await self.memory.set_condition(GUILD_A, self.c, a, "missing", source="dm")
         return a, b
 
     async def test_another_server_sees_nothing(self) -> None:

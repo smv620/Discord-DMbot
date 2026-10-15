@@ -33,6 +33,8 @@ RELEASED = {
     ("enemy_of", 1): "fda137c9ea8ad81f",
     ("kin_of", 1): "e1f9d598e3cef251",
     ("owns", 1): "8b44723365895601",
+    ("owns", 2): "c7a7b789cb942d9d",  # "carries" and "wields" moved to the new carries (#1267)
+    ("carries", 1): "df898c860718ce82",
     ("knows", 1): "14954b5521977a9b",
     ("serves", 1): "66d4cd47531358b3",
     ("sworn_to", 1): "924d02543c8d4ae8",
