@@ -4,6 +4,7 @@ refusal. Needs Postgres."""
 from __future__ import annotations
 
 from typing import Any
+from unittest.mock import patch
 
 from psycopg import AsyncConnection, errors
 from psycopg.rows import dict_row
@@ -18,6 +19,7 @@ from dmbot.memory.backup import MemorySection
 from dmbot.memory.store import MemoryStore
 from dmbot.web import accounts, entitlements_writer, move_sync, sessions
 from dmbot.web.discord import DiscordUser
+from dmbot.web.moving import EmailedMoveCodes
 from dmbot.web.payments import FakeProvider, PaymentError, PaymentEvent
 from tests.pg import REQUIRE_DB, SUPERUSER_URL, DatabaseTest
 from tests.test_web_accounts_db import INSERT_PLAN, PLAN_ROW
@@ -240,6 +242,154 @@ class Moves(DatabaseTest):
         with self.assertRaises(MoveError) as err:
             await self.code()
         self.assertEqual(str(err.exception), account_move.TOO_MANY_ASKS)
+
+    # ---- one limit for the bot and the website (#1276) ---------------------------------
+
+    class _Mail:
+        """A mailer that sends nothing and says it did (the website's side needs one)."""
+
+        def __init__(self, result: str = "sent") -> None:
+            self.result = result
+
+        async def send(self, **_: Any) -> str:
+            return self.result
+
+    async def website(self, result: str = "sent") -> EmailedMoveCodes:
+        async with self.db.user(OLD) as conn:
+            await conn.execute(
+                "UPDATE web_users SET payment_email = 'pays@example.org', payment_email_at = 1"
+                " WHERE user_id = %s",
+                (OLD,),
+            )
+        return EmailedMoveCodes(self.db, self._Mail(result), clock=lambda: float(self.now))  # type: ignore[arg-type]
+
+    async def test_the_fourth_ask_in_the_hour_is_refused_whichever_path_makes_it(self) -> None:
+        web = await self.website()
+        await self.moves.make_code(OLD)
+        await self.moves.make_code(OLD)
+        self.assertEqual(await web.send_code(OLD, "c" * 64), "sent")  # the third, on the website
+        with self.assertRaises(MoveError) as err:
+            await self.moves.make_code(OLD)
+        self.assertEqual(str(err.exception), account_move.TOO_MANY_ASKS)
+        self.assertEqual(await web.send_code(OLD, "c" * 64), "slow_down")
+
+    async def test_the_count_survives_a_restart(self) -> None:
+        for _ in range(account_move.ASKS):
+            await self.code()
+        restarted = AccountMoves(self.db, clock=lambda: self.now)
+        with self.assertRaises(MoveError) as err:
+            await restarted.make_code(OLD)
+        self.assertEqual(str(err.exception), account_move.TOO_MANY_ASKS)
+        self.now += account_move.ASK_WINDOW_S + 1  # an hour later it is allowed again
+        await restarted.make_code(OLD)
+
+    async def test_the_bots_refusals_stay_in_plain_words(self) -> None:
+        for user, words in ((THIRD, account_move.NOT_PAID),):
+            with self.assertRaises(MoveError) as err:
+                await self.moves.make_code(user)
+            self.assertEqual(str(err.exception), words)
+        with self.assertRaises(MoveError) as err:
+            await self.moves.make_code(999)  # no account at all
+        self.assertEqual(str(err.exception), account_move.NO_ACCOUNT)
+
+    async def test_giving_back_a_code_removes_only_that_code_and_its_ask(self) -> None:
+        web = await self.website()
+        mine = await self.moves.make_code(OLD)
+        self.now += 5
+        self.assertEqual(await web.send_code(OLD, "c" * 64), "sent")  # newer, and mailed
+        await self.moves.cancel_code(OLD, mine)  # the bot's email failed
+        stored = await self.scalar("SELECT code_hash FROM move_codes WHERE user_id = %s", OLD)
+        self.assertNotEqual(stored, account_move.hash_code(mine))  # the website's code stays
+        self.assertIsNotNone(stored)
+        self.assertEqual(
+            await self.scalar("SELECT count(*) FROM move_code_asks WHERE user_id = %s", OLD), 1
+        )
+
+    async def test_a_given_back_ask_can_be_made_again(self) -> None:
+        issued = [await self.moves.make_code(OLD) for _ in range(account_move.ASKS)]
+        await self.moves.cancel_code(OLD, issued[-1])  # its email failed: the ask comes back
+        await self.moves.make_code(OLD)
+        with self.assertRaises(MoveError):
+            await self.moves.make_code(OLD)
+
+    async def test_an_answer_the_door_did_not_use_to_give_is_refused_not_guessed(self) -> None:
+        class Odd:
+            async def fetchone(self) -> dict[str, str]:
+                return {"outcome": "weird"}
+
+        async def execute(*_: Any, **__: Any) -> Odd:
+            return Odd()
+
+        with (
+            patch.object(self.db, "unscoped") as unscoped,
+            self.assertLogs("dmbot.account_move", "WARNING") as logs,
+            self.assertRaises(MoveError) as err,
+        ):
+            unscoped.return_value.__aenter__.return_value.execute = execute
+            await self.moves.make_code(OLD)
+        self.assertEqual(str(err.exception), account_move.BUSY)
+        self.assertNotIn("weird", " ".join(logs.output))
+
+    async def test_the_precheck_and_the_door_agree(self) -> None:
+        """`can_move` is only a read-only look for the screen; the door decides. They must
+        say the same about the same account."""
+        cases: dict[str, int] = {"never paid": THIRD}
+        await self.give_plan(THIRD_NEW, plan="try-it")
+        cases["try it"] = THIRD_NEW
+        await self.add_user(FOURTH)
+        await self.give_plan(FOURTH)
+        async with self.db.plan_writer(FOURTH) as conn:
+            await conn.execute(
+                "UPDATE entitlements SET provider_subscription_id = NULL WHERE user_id = %s",
+                (FOURTH,),
+            )
+        cases["no subscription"] = FOURTH
+        cases["paid"] = OLD
+        for name, user in cases.items():
+            with self.subTest(name):
+                precheck = await self.moves.can_move(user)
+                try:
+                    await self.moves.make_code(user)
+                    door = None
+                except MoveError as exc:
+                    door = str(exc)
+                self.assertEqual(precheck, door)
+
+    async def test_a_mailer_that_raises_leaves_no_code_and_the_next_ask_works(self) -> None:
+        """The whole path, with the real door: three failed sends in a row use up nothing, and
+        a code asked for afterwards is the only one waiting."""
+        from types import SimpleNamespace
+        from unittest.mock import AsyncMock, MagicMock
+
+        from dmbot.ui import migrate
+
+        async with self.db.user(OLD) as conn:
+            await conn.execute(
+                "UPDATE web_users SET payment_email = 'pays@example.org', payment_email_at = 1"
+                " WHERE user_id = %s",
+                (OLD,),
+            )
+        sent: list[str] = []
+
+        async def reply(text: str, **_: Any) -> None:
+            sent.append(text)
+
+        it = MagicMock()
+        it.user = SimpleNamespace(id=OLD)
+        it.client = SimpleNamespace(
+            account_moves=self.moves,
+            mailer=SimpleNamespace(send=AsyncMock(side_effect=RuntimeError("smtp down"))),
+            meter=SimpleNamespace(db=self.db),
+        )
+        it.response.is_done = lambda: True
+        it.followup.send = reply
+        for _ in range(account_move.ASKS + 1):  # more failures than the hour allows asks
+            await migrate.get_code(it)
+        self.assertEqual(set(sent), {migrate.EMAIL_FAILED})
+        self.assertEqual(await self.scalar("SELECT count(*) FROM move_codes"), 0)
+        self.assertEqual(await self.scalar("SELECT count(*) FROM move_code_asks"), 0)
+        await self.moves.make_code(OLD)  # the next ask works
+        self.assertEqual(await self.scalar("SELECT count(*) FROM move_codes"), 1)
 
     async def test_a_second_move_inside_30_days_is_refused(self) -> None:
         await self.moves.move(OLD, NEW, await self.code())

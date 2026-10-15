@@ -87,6 +87,7 @@ from dmbot.dm_screen import (
     house_sync,
     peek_view,
     rules_cards,
+    set_suggestion,
     set_update,
 )
 from dmbot.dm_screen import clock as clock_screen
@@ -171,7 +172,7 @@ from dmbot.rules import index as rules_index
 from dmbot.rules.followed import followed_rules, own_first
 from dmbot.rules.house import HouseRule, HouseRulesSection, HouseRuleStore
 from dmbot.rules.house_file_link import HouseFileLinkStore
-from dmbot.rules.rule_sets import RuleSetStore
+from dmbot.rules.rule_sets import FollowedSetsSection, RuleSetStore
 from dmbot.rules.spotter import Mention
 from dmbot.sessions import SavedSession, SessionStore
 from dmbot.sidebar import knowledge
@@ -236,6 +237,7 @@ from dmbot.ui.transcripts import (
     ended_text,
     transcript_command,
 )
+from dmbot.web import accounts
 
 RULES_CARD_DB_S = 5.0  # the longest a rules card waits for the house rules
 log = logging.getLogger(__name__)
@@ -270,6 +272,9 @@ OWNER_ASK_EVERY_S = 3600  # Discord is asked about one campaign's owner at most 
 OWNER_LOOK_TIMEOUT_S = 6  # asking Discord about an owner must not hold up a start
 MOVED_CHECKED_MAX = 100_000  # people remembered as checked; cleared past this
 FORGET_TIMEOUT_S = 10  # removing learned names must not hold up stopping a recording
+DISPLAY_NAME_REFRESH_S = 86400  # a person's Discord name is kept on their account once a day
+DISPLAY_NAME_TIMEOUT_S = 3  # for the background update
+NAMES_NOTED_MAX = 5000  # people remembered as just noted; the oldest half go past this
 METER_INTERVAL_S = 60  # how often listening minutes are written to the hours meter (#437)
 METER_FINAL_TRIES = 3  # at a stop: the last minutes are written nowhere else
 METER_FINAL_RETRY_S = 2
@@ -638,6 +643,10 @@ class DMBot(commands.AutoShardedBot):
         # started: a command from them costs nothing more. An account that moves is taken
         # out (after_account_move), so it is checked again.
         self._moved_checked: set[int] = set()
+        # When each person's Discord name was last kept on their account (#1242): at most
+        # once a day, in this process only (a restart simply checks again).
+        self._names_noted: dict[int, float] = {}
+        self._name_tasks: set[asyncio.Task[None]] = set()
         if meter is not None:
             self.account_moves = AccountMoves(meter.db)
             self.mailer = Mailer(
@@ -870,6 +879,7 @@ class DMBot(commands.AutoShardedBot):
         )
         self.add_dynamic_items(PutBackButton)  # lines left out as off-topic (#677)
         self.add_dynamic_items(set_update.SetUpdateButton)  # shared rules changed (#1191)
+        self.add_dynamic_items(set_suggestion.SuggestionButton)  # a table's suggestion (#1259)
         self.add_dynamic_items(house_sync.HouseSyncButton)  # the house-rules file (#969)
         self.add_dynamic_items(rules_cards.RulesCardButton)  # rules cards from the table (#931)
         self.add_dynamic_items(house_voice_screen.HouseVoiceButton)  # house rules said aloud (#953)
@@ -984,6 +994,12 @@ class DMBot(commands.AutoShardedBot):
         already = self.consent.has_consent(guild_id, user_id)
         recorded = await self.consent.grant(guild_id, user_id, method=method, outside_to=outside_to)
         log.info("Consent given: user %s", user_id)
+        # Only from the cache: a person not in it is picked up at their next start or consent
+        # (no member intent is asked for just for this).
+        guild = self.get_guild(guild_id)
+        member = guild.get_member(user_id) if guild is not None else None
+        if member is not None:
+            self.note_display_name(user_id, member.global_name or member.name)
         # Only a yes that really counts (it names this server's speech-to-text, and no
         # stop arrived meanwhile) is shown as recording.
         if user_id in recorded and not already:
@@ -997,6 +1013,37 @@ class DMBot(commands.AutoShardedBot):
         except Exception:
             when = None  # saved; only the date for the reply is missing
         return when or int(time.time())
+
+    def note_display_name(self, user_id: int, name: str | None) -> None:
+        """Keep this person's Discord name on their account, at most once a day (#1242).
+        Names only, for an account that exists. It runs in the background, so a consent or a
+        start (both inside Discord's three seconds) never waits for the database on its
+        account, and a consent that was just given is not re-read after an await."""
+        if self.meter is None or not name:
+            return
+        now = time.monotonic()
+        last = self._names_noted.get(user_id)
+        if last is not None and now - last < DISPLAY_NAME_REFRESH_S:
+            return
+        if len(self._names_noted) >= NAMES_NOTED_MAX:  # bounded: the oldest half go
+            for key in sorted(self._names_noted, key=self._names_noted.__getitem__)[
+                : NAMES_NOTED_MAX // 2
+            ]:
+                del self._names_noted[key]
+        self._names_noted[user_id] = now
+        task = asyncio.create_task(self._keep_display_name(self.meter.db, user_id, name))
+        self._name_tasks.add(task)
+        task.add_done_callback(self._name_tasks.discard)
+
+    async def _keep_display_name(self, db: Database, user_id: int, name: str) -> None:
+        """The background part: one short UPDATE. Never raises; on a failure the person is
+        tried again the next time they are seen."""
+        try:
+            async with asyncio.timeout(DISPLAY_NAME_TIMEOUT_S):
+                await accounts.remember_display_name(db, user_id, name)
+        except Exception:
+            self._names_noted.pop(user_id, None)  # try again next time
+            log.warning("Could not keep a Discord name on an account", exc_info=True)
 
     async def recorded(self, guild_id: int, user_id: int) -> bool:
         """Whether they may be recorded in this server now, for the ⚙️ Menu (Stop or I
@@ -1271,6 +1318,10 @@ class DMBot(commands.AutoShardedBot):
 
         task.add_done_callback(ended)
         return task
+
+    def track(self, work: Awaitable[Any], name: str) -> asyncio.Task[None] | None:
+        """`_track` for code outside the bot class (a button's own follow-up work)."""
+        return self._track(work, name)
 
     def _track(self, work: Awaitable[Any], name: str) -> asyncio.Task[None] | None:
         """Run `work` in the background; close() cancels it. Failures are logged. The
@@ -2240,6 +2291,7 @@ class DMBot(commands.AutoShardedBot):
             return False, "Use this in a server."
         if not ui_logic.can_run(campaign, user.id, user.guild_permissions.manage_guild):
             return False, ui_logic.NO_CAMPAIGN_ACCESS
+        self.note_display_name(user.id, user.global_name or user.name)  # not the nickname
         refused = await self.plan_refusal(guild.id, campaign, user.id)
         if refused:
             return False, refused
@@ -6061,6 +6113,7 @@ async def run(settings: Settings) -> None:
         )
         campaigns.register_section(MemorySection())  # campaign memory goes in backups
         campaigns.register_section(HouseRulesSection())  # and so do house rules (#865)
+        campaigns.register_section(FollowedSetsSection())  # and the sets it follows (#1260)
         campaigns.register_section(ClockSection())  # and the game clock (#965)
         campaigns.register_section(EffectsSection())  # and its timed effects (#998)
         # DMBot sets this too; passing it here means the store never starts out wrong.

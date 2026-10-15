@@ -27,6 +27,7 @@ from typing import Any, Literal, cast
 
 from psycopg.types.json import Jsonb
 
+from dmbot.campaigns.models import CampaignError
 from dmbot.db import Conn, Database
 from dmbot.rules import set_diff
 from dmbot.rules.house import (
@@ -57,6 +58,21 @@ TOO_MANY = "Too many tries. Wait a few minutes, then try again."
 OWN_SET = "That set is this campaign's own."
 ALREADY_FOLLOWING = "This campaign already follows a set of house rules. Unfollow it first."
 NOT_FOLLOWING = "This campaign isn't following a set of house rules."
+NO_SUCH_RULE = "That house rule isn't here any more."
+SUGGEST_FOLLOWER_MAX = 5  # a following campaign's suggestions waiting for an answer
+SUGGEST_SET_MAX = 20  # open suggestions on one set, from every table that follows it
+SUGGEST_WAIT_S = 30 * 86400  # after this long with no answer, the sender is told and may resend
+TOO_MANY_SUGGESTIONS = (
+    f"Your campaign already has {SUGGEST_FOLLOWER_MAX} suggestions waiting for an answer. "
+    "Try again after you hear back."
+)
+SET_HAS_ENOUGH = "That set has plenty of suggestions waiting. Try again next week."
+ALREADY_SUGGESTED = "This campaign already sent that rule. The answer comes at your next session."
+RULE_CHANGED = "That rule was changed since you looked, so nothing was sent. Look at it again."
+NOT_YOURS_TO_SEND = "Only rules your campaign wrote can be suggested. This one came from the set."
+ALREADY_IN_SET = "The set already has that rule, so nothing was added. The suggestion is closed."
+SUGGESTION_GONE = "Someone already answered that suggestion."
+SET_FULL = "The set already has {n} rules, so there is no room for another."
 NO_CHANGES = "Nothing is different from the last version, so no new version was made."
 NOT_EDITOR = "Only this campaign's DMs can change the set."
 NOT_PAID = "Changing a shared set needs the campaign to be on a paid plan."
@@ -139,6 +155,30 @@ class Taken:
 
 
 @dataclass(frozen=True, slots=True)
+class Suggestion:
+    """A rule a table that follows the set suggests. Holds the words and nothing about who sent
+    them: only rules cross between campaigns."""
+
+    id: str
+    set_id: str
+    rule: str
+    instead: str | None
+    status: str
+    created_at: int
+
+
+@dataclass(frozen=True, slots=True)
+class Sent:
+    """A suggestion this campaign sent, and the answer once the publisher has given one."""
+
+    id: str
+    set_name: str
+    rule: str
+    status: str  # 'open', 'accepted', 'declined', 'present', 'gone' or 'expired'
+    version: int | None
+
+
+@dataclass(frozen=True, slots=True)
 class VersionLog:
     version: int
     by: int
@@ -214,6 +254,34 @@ def _follow(row: dict[str, Any]) -> Follow:
         _json(row["previous_content"]) if row.get("previous_content") else None,
         row.get("declined_version"),
     )  # fmt: skip
+
+
+def same_words(a: str | None, b: str | None) -> bool:
+    return " ".join((a or "").lower().split()) == " ".join((b or "").lower().split())
+
+
+def replaced_rule(rules: Sequence[dict[str, Any]], instead: str | None) -> dict[str, Any] | None:
+    """The set's own rule a suggestion says it is instead of, if it names one."""
+    return next((r for r in rules if instead and same_words(r["rule"], instead)), None)
+
+
+def suggested_content(content: dict[str, Any], rule: str, instead: str | None) -> dict[str, Any]:
+    """The set's content with a suggested rule in it. A suggestion that says it is instead of
+    one of the set's own rules replaces that rule (keeping its number and what IT replaces);
+    any other is added as the next number. Raises if the set already holds those words or has
+    no room."""
+    rules = [dict(r) for r in content["rules"]]
+    if any(same_words(r["rule"], rule) for r in rules):
+        raise RuleSetError(NO_CHANGES)
+    target = replaced_rule(rules, instead)
+    if target is not None:
+        target["rule"] = rule
+    else:
+        if len(rules) >= HOUSE_RULES_MAX:
+            raise RuleSetError(SET_FULL.format(n=HOUSE_RULES_MAX))
+        rules.append({"number": max((r["number"] for r in rules), default=0) + 1,
+                      "rule": rule, "instead": instead})  # fmt: skip
+    return {"rules": rules, "link": content.get("link")}
 
 
 class RuleSetStore:
@@ -556,6 +624,23 @@ class RuleSetStore:
         plan_ok: bool,
         expected_version: int | None = None,
     ) -> SharedSet:
+        return await self._save(
+            guild_id, campaign_id, user_id, content, source,
+            plan_ok=plan_ok, expected_version=expected_version,
+        )  # fmt: skip
+
+    async def _save(
+        self,
+        guild_id: int,
+        campaign_id: str,
+        user_id: int,
+        content: Any,
+        source: Literal["publisher", "suggestion", "document"],
+        *,
+        plan_ok: bool,
+        expected_version: int | None,
+        suggestion: str | None = None,
+    ) -> SharedSet:
         """Make `content` the set's next version. Only the publisher's DMs; the set
         must be shared; nothing is made if nothing differs. Followers
         see it at their next session start, never sooner. `plan_ok`: the caller has checked the
@@ -563,7 +648,7 @@ class RuleSetStore:
         read); without it nothing is saved."""
         if not plan_ok:
             raise RuleSetError(NOT_PAID)
-        wanted = valid_content(content)
+        wanted = valid_content(content) if suggestion is None else {}
         now = self._now()
         async with self._db.guild(guild_id) as conn:
             # The campaign row is locked first, in the same
@@ -591,6 +676,21 @@ class RuleSetStore:
             assert last is not None  # a set always has version 1
             if expected_version is not None and int(last["version"]) != expected_version:
                 raise RuleSetError(CHANGED_AGAIN)  # someone published since the DM looked
+            if suggestion is not None:
+                # An accepted suggestion is added to the version that is newest under the lock,
+                # and marked answered in the same transaction, so it can't be added twice.
+                cur = await conn.execute(
+                    "SELECT rule, instead FROM rule_set_suggestions WHERE guild_id = %s"
+                    " AND campaign_id = %s AND id = %s AND set_id = %s AND status = 'open'"
+                    " AND created_at > %s FOR UPDATE",  # past the wait, the sender was told
+                    (guild_id, campaign_id, suggestion, set_id, now - SUGGEST_WAIT_S),
+                )
+                asked = await cur.fetchone()
+                if asked is None:
+                    raise RuleSetError(SUGGESTION_GONE)
+                wanted = suggested_content(
+                    valid_content(_json(last["content"])), asked["rule"], asked["instead"]
+                )
             if valid_content(_json(last["content"])) == wanted:
                 raise RuleSetError(NO_CHANGES)
             version = int(last["version"]) + 1
@@ -600,6 +700,13 @@ class RuleSetStore:
                 " VALUES (%s, %s, %s, %s, %s, %s, %s, %s)",
                 (guild_id, campaign_id, set_id, version, Jsonb(wanted), user_id, now, source),
             )
+            if suggestion is not None:
+                await conn.execute(
+                    "UPDATE rule_set_suggestions SET status = 'accepted', resolved_at = %s,"
+                    " resolved_by = %s, version = %s WHERE guild_id = %s AND campaign_id = %s"
+                    " AND id = %s",
+                    (now, user_id, version, guild_id, campaign_id, suggestion),
+                )
         return SharedSet(set_id, str(row["name"]), True, version)
 
     async def publish_changes(
@@ -626,6 +733,221 @@ class RuleSetStore:
             expected_version=expected_version,
         )
 
+    # ---- suggestions: a follower's rule sent to the publisher (#1259) ------------------
+
+    async def suggest(
+        self, guild_id: int, campaign_id: str, user_id: int, number: int, shown_version: int
+    ) -> tuple[str, int, str]:
+        """A DM of a following campaign sends one of the campaign's own house rules to the set's
+        publisher. Returns (the suggestion's id, the publisher's server, its campaign): the
+        last two are for DMbot to post the note and are never shown. A rule that came from a set
+        is not the campaign's to send. `shown_version`: the rule's version as the DM was shown it;
+        if it was edited since, nothing is sent (what goes out is what they confirmed).
+        Limits: `SUGGEST_FOLLOWER_MAX` waiting from this campaign, `SUGGEST_SET_MAX` open on
+        the set."""
+        now = self._now()
+        sid = secrets.token_hex(16)
+        async with self._db.guild(guild_id) as conn:
+            await require_dm(conn, guild_id, campaign_id, user_id, lock=True)
+            follows = [
+                f
+                for f in await _followed(conn, guild_id, campaign_id)
+                if f.kind == HOUSE_RULES and f.updating
+            ]
+            if not follows:
+                raise RuleSetError(NOT_FOLLOWING)
+            follow = follows[0]
+            cur = await conn.execute(
+                "SELECT rule, supersedes, from_set, version FROM house_rules WHERE guild_id = %s"
+                " AND campaign_id = %s AND number = %s",
+                (guild_id, campaign_id, number),
+            )
+            row = await cur.fetchone()
+            if row is None:
+                raise RuleSetError(NO_SUCH_RULE)
+            if row["from_set"]:
+                raise RuleSetError(NOT_YOURS_TO_SEND)
+            if row["version"] != shown_version:
+                raise RuleSetError(RULE_CHANGED)
+            cur = await conn.execute(
+                "SELECT count(*) AS n, count(*) FILTER (WHERE rule = %s) AS same"
+                " FROM rule_set_suggestions_sent WHERE guild_id = %s AND campaign_id = %s"
+                " AND told_at IS NULL",
+                (row["rule"], guild_id, campaign_id),
+            )
+            counts = await cur.fetchone()
+            assert counts is not None
+            if counts["same"]:
+                raise RuleSetError(ALREADY_SUGGESTED)
+            if counts["n"] >= SUGGEST_FOLLOWER_MAX:
+                raise RuleSetError(TOO_MANY_SUGGESTIONS)
+            cur = await conn.execute(
+                "SELECT outcome, pub_guild, pub_campaign FROM dmbot_suggest_rule("
+                "%s, %s, %s, %s, %s, %s, %s, %s)",
+                (sid, follow.set_id, campaign_id, row["rule"], row["supersedes"], now,
+                 SUGGEST_SET_MAX, SUGGEST_WAIT_S),
+            )  # fmt: skip
+            door = await cur.fetchone()
+            assert door is not None
+            if door["outcome"] == "full":
+                raise RuleSetError(SET_HAS_ENOUGH)
+            if door["outcome"] != "ok":
+                raise RuleSetError(NO_SUCH_SET)
+            await conn.execute(
+                "INSERT INTO rule_set_suggestions_sent (guild_id, campaign_id, id, set_id,"
+                " set_name, rule, sent_by, sent_at) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)",
+                (guild_id, campaign_id, sid, follow.set_id, follow.name, row["rule"],
+                 user_id, now),
+            )  # fmt: skip
+        return sid, int(door["pub_guild"]), str(door["pub_campaign"])
+
+    async def suggestion(
+        self, guild_id: int, campaign_id: str, suggestion_id: str
+    ) -> Suggestion | None:
+        """One suggestion on the campaign's own set (the publisher's side), or None."""
+        async with self._db.guild(guild_id) as conn:
+            cur = await conn.execute(
+                "SELECT id, set_id, rule, instead, status, created_at FROM rule_set_suggestions"
+                " WHERE guild_id = %s AND campaign_id = %s AND id = %s",
+                (guild_id, campaign_id, suggestion_id),
+            )
+            row = await cur.fetchone()
+        if row is None:
+            return None
+        status = str(row["status"])
+        if status == "open" and self._now() - int(row["created_at"]) > SUGGEST_WAIT_S:
+            status = "expired"  # the sender was told they may send it again; it can't be added
+        return Suggestion(
+            str(row["id"]), str(row["set_id"]), str(row["rule"]), row["instead"],
+            status, int(row["created_at"]),
+        )  # fmt: skip
+
+    async def unnoted_suggestions(
+        self, guild_id: int, campaign_id: str
+    ) -> list[tuple[Suggestion, str]]:
+        """Open suggestions whose note never reached the DM screen (no channel, or Discord
+        refused), each with the set's name, oldest first: DMbot posts them at a session's start."""
+        async with self._db.guild(guild_id) as conn:
+            cur = await conn.execute(
+                "SELECT q.id, q.set_id, q.rule, q.instead, q.status, q.created_at, s.name"
+                " FROM rule_set_suggestions q JOIN rule_sets s ON s.guild_id = q.guild_id"
+                " AND s.campaign_id = q.campaign_id AND s.id = q.set_id"
+                " WHERE q.guild_id = %s AND q.campaign_id = %s AND q.status = 'open'"
+                " AND q.noted_at IS NULL AND s.status = 'shared' AND q.created_at > %s"
+                " ORDER BY q.created_at",
+                (guild_id, campaign_id, self._now() - SUGGEST_WAIT_S),
+            )
+            rows = await cur.fetchall()
+        return [
+            (
+                Suggestion(
+                    str(r["id"]), str(r["set_id"]), str(r["rule"]), r["instead"],
+                    str(r["status"]), int(r["created_at"]),
+                ),
+                str(r["name"]),
+            )
+            for r in rows
+        ]  # fmt: skip
+
+    async def mark_noted(self, guild_id: int, campaign_id: str, suggestion_id: str) -> None:
+        async with self._db.guild(guild_id) as conn:
+            await conn.execute(
+                "UPDATE rule_set_suggestions SET noted_at = %s WHERE guild_id = %s"
+                " AND campaign_id = %s AND id = %s",
+                (self._now(), guild_id, campaign_id, suggestion_id),
+            )
+
+    async def accept_suggestion(
+        self,
+        guild_id: int,
+        campaign_id: str,
+        user_id: int,
+        suggestion_id: str,
+        *,
+        plan_ok: bool,
+        expected_version: int | None = None,
+    ) -> SharedSet:
+        """The publisher's DMs make the suggested rule part of the set as its next version
+        (the same checks as any change: paid plan, a DM, the version they saw)."""
+        try:
+            return await self._save(
+                guild_id, campaign_id, user_id, None, "suggestion",
+                plan_ok=plan_ok, expected_version=expected_version, suggestion=suggestion_id,
+            )  # fmt: skip
+        except RuleSetError as exc:
+            if str(exc) == NO_CHANGES:
+                # The set already holds those words (so the DM was already a DM here, checked
+                # before this was raised): close it, so no dead button or slot is left behind.
+                async with self._db.guild(guild_id) as conn:
+                    await conn.execute(
+                        "UPDATE rule_set_suggestions SET status = 'present', resolved_at = %s,"
+                        " resolved_by = %s WHERE guild_id = %s AND campaign_id = %s AND id = %s"
+                        " AND status = 'open'",
+                        (self._now(), user_id, guild_id, campaign_id, suggestion_id),
+                    )
+                raise RuleSetError(ALREADY_IN_SET) from exc
+            raise
+
+    async def decline_suggestion(
+        self, guild_id: int, campaign_id: str, user_id: int, suggestion_id: str
+    ) -> bool:
+        """No thanks: closes the suggestion and changes nothing else. False: it was already
+        answered."""
+        now = self._now()
+        async with self._db.guild(guild_id) as conn:
+            await require_dm(conn, guild_id, campaign_id, user_id, lock=True)
+            cur = await conn.execute(
+                "UPDATE rule_set_suggestions SET status = 'declined', resolved_at = %s,"
+                " resolved_by = %s WHERE guild_id = %s AND campaign_id = %s AND id = %s"
+                " AND status = 'open'",
+                (now, user_id, guild_id, campaign_id, suggestion_id),
+            )
+            return bool(cur.rowcount)
+
+    async def sent_answers(self, guild_id: int, campaign_id: str) -> list[Sent]:
+        """The suggestions this campaign sent that its DM has not been told the end of, with the
+        answers the publisher has given (asked by their random ids; nothing else is reachable)."""
+        async with self._db.guild(guild_id) as conn:
+            cur = await conn.execute(
+                "SELECT id, set_name, rule, sent_at FROM rule_set_suggestions_sent"
+                " WHERE guild_id = %s AND campaign_id = %s AND told_at IS NULL ORDER BY sent_at",
+                (guild_id, campaign_id),
+            )
+            sent = await cur.fetchall()
+            if not sent:
+                return []
+            cur = await conn.execute(
+                "SELECT id, status, version FROM dmbot_suggestion_answers(%s)",
+                (",".join(str(r["id"]) for r in sent),),
+            )
+            answers = {str(r["id"]): r for r in await cur.fetchall()}
+        out = []
+        for r in sent:
+            a = answers.get(str(r["id"]))
+            # No row back: the publisher's set is gone, so there will be no answer. Told once
+            # ("gone"), which frees the slot.
+            status = str(a["status"]) if a else "gone"
+            if status == "open" and self._now() - int(r["sent_at"]) > SUGGEST_WAIT_S:
+                status = "expired"  # told once, so the slot is freed
+            out.append(
+                Sent(
+                    str(r["id"]), str(r["set_name"]), str(r["rule"]), status,
+                    int(a["version"]) if a and a["version"] is not None else None,
+                )
+            )  # fmt: skip
+        return out
+
+    async def mark_told(self, guild_id: int, campaign_id: str, ids: Sequence[str]) -> None:
+        """The DM has been told these were answered: they stop counting toward the limit."""
+        if not ids:
+            return
+        async with self._db.guild(guild_id) as conn:
+            await conn.execute(
+                "UPDATE rule_set_suggestions_sent SET told_at = %s WHERE guild_id = %s"
+                " AND campaign_id = %s AND id = ANY(%s)",
+                (self._now(), guild_id, campaign_id, list(ids)),
+            )
+
     async def version_log(self, guild_id: int, campaign_id: str) -> list[VersionLog]:
         """Each version of the campaign's set: who made it, when and how, newest first."""
         async with self._db.guild(guild_id) as conn:
@@ -649,8 +971,12 @@ class RuleSetStore:
         """The set's newest version as this follower can see it, and whether the set is known
         to be gone. Through the share code it followed by (the update door: a code turned off
         AFTER the follow still answers), or by the set's id when it is in this server. (None,
-        True): the publisher stopped sharing. (None, False): not known, never "gone": a follow
-        from another server with no code, say, can't be told apart from a set we can't see."""
+        True): the publisher stopped sharing, or the set is deleted (its campaign was). A follow
+        with no code was picked from the list in its own server, where a set that is not there
+        any more is deleted. (A restored backup's follow has no code and does not update, so it
+        is never asked.) A follow made from ANOTHER server before share codes were kept has no
+        code either and could not update anyway, so it too reads as gone once, harmlessly (none
+        exist yet: nothing with share codes is deployed)."""
         if follow.code is not None:
             cur = await conn.execute(
                 "SELECT * FROM dmbot_set_update_by_code(%s, %s)", (follow.code, follow.followed_at)
@@ -667,7 +993,7 @@ class RuleSetStore:
         cur = await conn.execute(_LATEST_WITH_STATUS + " WHERE s.id = %s", (follow.set_id,))
         row = await cur.fetchone()
         if row is None:
-            return None, False  # not in this server: unknown
+            return None, True  # picked from this server's list, and no longer in it: deleted
         if row["status"] != "shared":
             return None, True
         return _offer(row), False
@@ -928,6 +1254,111 @@ class RuleSetStore:
                     raise RuleSetError(NOT_FOLLOWING)
                 return 0
             return kept
+
+
+FOLLOWS_MAX = 100  # dump and check agree, so a backup that downloads also restores
+FOLLOWS_DAMAGED = "This backup file is damaged (bad shared house rules)."
+_FOLLOW_KEYS = frozenset(
+    {"set_id", "kind", "name", "publisher", "version", "content", "position", "by", "at"}
+)
+
+
+class FollowedSetsSection:
+    """The sets a campaign follows, in its backup (an `ExportSection`): the name, the version it
+    uses and that version's rules, so the campaign never loses them ("Never lost", PLAN). NEVER
+    the share code, which is a key to the publisher's set and must not travel in a file anyone in
+    the server may download. A restored campaign has no code, so each follow comes back marked
+    **no longer updated**: it keeps its copy and its rules keep working, and it can follow the
+    set again with a code. A forged file could name any set id here; that is harmless because a
+    restored follow has no code and does not update, and nothing authorises by a set id alone
+    (a suggestion needs a follow that is still updating)."""
+
+    name = "rule_set_follows"
+
+    async def dump(self, conn: Conn, guild_id: int, campaign_id: str) -> list[Any]:
+        cur = await conn.execute(
+            "SELECT set_id, kind, set_name, publisher, version, content, position, followed_by,"
+            " followed_at FROM rule_set_follows WHERE guild_id = %s AND campaign_id = %s"
+            " ORDER BY position, set_id LIMIT %s",
+            (guild_id, campaign_id, FOLLOWS_MAX),
+        )
+        return [
+            {
+                "set_id": str(r["set_id"]),
+                "kind": str(r["kind"]),
+                "name": str(r["set_name"]),
+                "publisher": str(r["publisher"]),
+                "version": int(r["version"]),
+                "content": _json(r["content"]),
+                "position": int(r["position"]),
+                "by": str(r["followed_by"]),
+                "at": int(r["followed_at"]),
+            }
+            for r in await cur.fetchall()
+        ]
+
+    def check(self, rows: list[Any]) -> list[dict[str, Any]]:
+        """Every row validated; nothing is written until all are right."""
+        if len(rows) > FOLLOWS_MAX:
+            raise CampaignError(FOLLOWS_DAMAGED)
+        out: list[dict[str, Any]] = []
+        seen: set[str] = set()
+        houses = 0
+        for row in rows:
+            if not isinstance(row, dict) or set(row) != _FOLLOW_KEYS:
+                raise CampaignError(FOLLOWS_DAMAGED)
+            set_id, kind = row["set_id"], row["kind"]
+            name, publisher = row["name"], row["publisher"]
+            by = row["by"]
+            if (
+                not isinstance(set_id, str)
+                or len(set_id) != 32
+                or set_id.strip("0123456789abcdef")
+                or set_id in seen
+                or kind not in (HOUSE_RULES, "homebrew")
+                or not isinstance(name, str)
+                or not 1 <= len(name) <= NAME_MAX
+                or not isinstance(publisher, str)
+                or not 1 <= len(publisher) <= 100
+                or not _plain_int(row["version"], 1)
+                or not _plain_int(row["position"], 0)
+                or not _plain_int(row["at"], 0, 2**63 - 1)
+                or not (isinstance(by, str) and by.isascii() and by.isdigit() and int(by) > 0)
+                or int(by) > 2**63 - 1
+            ):
+                raise CampaignError(FOLLOWS_DAMAGED)
+            seen.add(set_id)
+            houses += kind == HOUSE_RULES
+            try:
+                content = valid_content(row["content"])
+            except RuleSetError:
+                raise CampaignError(FOLLOWS_DAMAGED) from None
+            out.append(row | {"content": content})
+        if houses > 1:  # a campaign follows one house-rules set
+            raise CampaignError(FOLLOWS_DAMAGED)
+        return out
+
+    async def load(self, conn: Conn, guild_id: int, campaign_id: str, rows: Any) -> None:
+        for row in self.check(rows):  # the store has checked them; this is cheap and idempotent
+            await conn.execute(
+                _INSERT_FOLLOW,
+                (
+                    guild_id, campaign_id, row["set_id"], row["kind"], row["name"],
+                    row["publisher"], row["version"], Jsonb(row["content"]), row["position"],
+                    False,  # no code, so no updates: "no longer updated"
+                    int(row["by"]), row["at"], None,
+                ),
+            )  # fmt: skip
+
+    async def clear(self, conn: Conn, guild_id: int, campaign_id: str) -> None:
+        await conn.execute(
+            "DELETE FROM rule_set_follows WHERE guild_id = %s AND campaign_id = %s",
+            (guild_id, campaign_id),
+        )
+
+
+def _plain_int(value: object, low: int, high: int = 2**31 - 1) -> bool:
+    return isinstance(value, int) and not isinstance(value, bool) and low <= value <= high
 
 
 _LATEST_FROM = (
