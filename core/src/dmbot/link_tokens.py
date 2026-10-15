@@ -55,3 +55,30 @@ def check_link_token(dmbot_id: str, token: str, now: int, secret: bytes) -> bool
     if not hmac.compare_digest(signature.encode(), good.encode()):
         return False
     return now <= expires
+
+
+# An unsubscribe link has no expiry (a link in an old email must still work) and its own
+# purpose, so it can't be used as, or made from, a personal-page token.
+_UNSUB_PURPOSE = b"dmbot-unsubscribe-v1."
+
+
+def _unsub_sign(dmbot_id: str, secret: bytes) -> str:
+    from_dmbot_id(dmbot_id)
+    digest = hmac.new(secret, _UNSUB_PURPOSE + dmbot_id.encode(), hashlib.sha256)
+    return digest.hexdigest()[:_SIGNATURE_CHARS]
+
+
+def make_unsubscribe_token(dmbot_id: str, secret: bytes) -> str:
+    if not secret:
+        raise ValueError("Unsubscribe links need a secret.")
+    return _unsub_sign(dmbot_id, secret)
+
+
+def check_unsubscribe_token(dmbot_id: str, token: str, secret: bytes) -> bool:
+    if not secret:
+        return False
+    try:
+        good = _unsub_sign(dmbot_id, secret)
+    except ValueError:
+        return False
+    return hmac.compare_digest(token.encode(), good.encode())

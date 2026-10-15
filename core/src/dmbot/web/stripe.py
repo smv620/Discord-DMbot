@@ -335,6 +335,27 @@ class StripeProvider:
         if status not in (200, 404):
             raise PaymentError(f"Stripe answered {status} to a cancel")
 
+    async def retarget(
+        self, *, customer_id: str | None, subscription_id: str | None, user_id: int
+    ) -> None:
+        """Point the customer's and the subscription's `user_id` metadata at the new Discord
+        ID (an account move, #1230). Stripe merges metadata keys, so only this one changes;
+        repeating it is harmless."""
+        form = {"metadata[user_id]": str(int(user_id))}
+        paths = []
+        if customer_id:
+            paths.append(f"/v1/customers/{_checked(customer_id, _CUSTOMER, 'customer id')}")
+        if subscription_id:
+            paths.append(
+                f"/v1/subscriptions/{_checked(subscription_id, _SUBSCRIPTION, 'subscription id')}"
+            )
+        for path in paths:
+            status, _ = await self._http("POST", path, form)
+            if status == 404:
+                continue  # gone at the company (deleted): nothing left to point
+            if status != 200:
+                raise PaymentError(f"Stripe answered {status} to a metadata update")
+
     # --- Stripe asking us ---
 
     def verify(self, body: bytes, headers: Mapping[str, str]) -> bool:
@@ -384,6 +405,22 @@ class StripeProvider:
         # someone is asked to look at.
         if name in ("checkout.session.completed", "checkout.session.async_payment_succeeded"):
             return self._extra_hours(obj, event_id, when)
+        if name == "customer.updated":
+            # A Customer object has no user_id of ours: the account is found by the customer id
+            # stored with its plan (user_id 0 here means "not known yet"). A customer DMbot
+            # has no plan for is ignored by the writer.
+            email, customer = _email(obj.get("email")), _text(obj.get("id"))
+            if email is None or customer is None:
+                return None
+            return PaymentEvent(
+                provider=self.name,
+                event_id=event_id,
+                kind="email_updated",
+                user_id=0,
+                occurred_at=when,
+                customer_id=customer,
+                email=email,
+            )
         if name.startswith("invoice."):
             return self._invoice(name, obj, event_id, when)
         return self._subscription(name, obj, raw.get("data", {}), event_id, when)
@@ -408,6 +445,7 @@ class StripeProvider:
             user_id=user_id,
             occurred_at=when,
             customer_id=_text(session.get("customer")),
+            email=_email((session.get("customer_details") or {}).get("email")),
         )
 
     def _invoice(
@@ -427,6 +465,7 @@ class StripeProvider:
             "occurred_at": when,
             "customer_id": _text(invoice.get("customer")),
             "subscription_id": subscription_id,
+            "email": _email(invoice.get("customer_email")),
         }
         if name == "invoice.payment_failed":
             return PaymentEvent(kind="payment_failed", user_id=user_id, **common)
@@ -557,6 +596,8 @@ _USED = (
     "customer.subscription.updated",
     "customer.subscription.deleted",
     "checkout.session.completed",
+    # The payer changed their address (the billing page): kept as the payment email (#1242).
+    "customer.updated",
     # A payment method that settles later (a bank debit): paid only when this arrives.
     "checkout.session.async_payment_succeeded",
 )
@@ -639,6 +680,17 @@ def _price_id(line: dict[str, Any]) -> str | None:
     pricing = line.get("pricing")
     details = pricing.get("price_details") if isinstance(pricing, dict) else None
     return _text(details.get("price")) if isinstance(details, dict) else None
+
+
+def _email(value: object) -> str | None:
+    """The payer's address as Stripe gives it, or None if it is missing or not one address.
+    Kept as the account's payment email; never logged."""
+    if not isinstance(value, str):
+        return None
+    text = value.strip()
+    if not 3 <= len(text) <= 254 or text.count("@") != 1 or any(c.isspace() for c in text):
+        return None
+    return text
 
 
 def _text(value: object) -> str | None:

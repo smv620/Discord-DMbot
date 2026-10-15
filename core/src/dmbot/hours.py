@@ -15,7 +15,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Literal
 
-from dmbot.entitlements import Access, Entitlement
+from dmbot.entitlements import Access, Entitlement, cap_minutes
 
 WARN_AT = (80, 90)  # percent of the month's hours (PLAN: warnings at 80% and 90%)
 GRACE_MINUTES = 2 * 60  # a session that hits the cap may finish, once a period
@@ -100,7 +100,9 @@ class Standing:
 
 
 def standing(access: Access, used_minutes: int) -> Standing:
-    cap = None if access.hours_cap is None else access.hours_cap * 60
+    cap = None
+    if access.hours_cap is not None:
+        cap = cap_minutes(access.hours_cap, access.minutes_taken)
     return Standing(cap, used_minutes)
 
 
