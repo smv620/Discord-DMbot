@@ -6,14 +6,29 @@ from __future__ import annotations
 
 import json
 import unittest
+from types import SimpleNamespace
 from typing import Any
 
 from dmbot.campaigns.store import decode_backup, encode_backup
 from dmbot.db import Database, drop_schema
 from dmbot.memory import claims
-from dmbot.memory.claims import ClaimStore, Extracted, Names, Proposed, judge, parse_answer
-from dmbot.memory.models import MemoryRuleError
-from dmbot.memory.ontology import Ontology
+from dmbot.memory.claims import (
+    ClaimStore,
+    Extracted,
+    Names,
+    Proposed,
+    judge,
+    parse_answer,
+    place_relationship,
+)
+from dmbot.memory.models import DETAIL_MAX, MemoryRuleError
+from dmbot.memory.ontology import (
+    FALLBACK_PREDICATE,
+    REASON_BETWEEN,
+    REASON_RULES_WORD,
+    Ontology,
+    Tally,
+)
 from dmbot.schema import MIGRATIONS
 from tests.pg import TEST_URL
 from tests.test_memory_store import DM, GUILD_A, GUILD_B, MemoryTest
@@ -91,10 +106,7 @@ class Judging(unittest.TestCase):
         )
         self.assertEqual(self.judge(said("Bram", "is", "dead", "plan")), claims.PLAN_REASON)
 
-    def test_a_bad_relationship_or_an_unknown_name_or_the_wrong_kind_is_dropped(self) -> None:
-        self.assertEqual(
-            self.judge(said("Bram", "frobnicates", "Hesper")), claims.UNKNOWN_RELATION_REASON
-        )
+    def test_an_unknown_name_or_the_wrong_kind_is_dropped(self) -> None:
         self.assertEqual(self.judge(said("Nobody", "knows", "Hesper")), claims.UNKNOWN_NAME_REASON)
         self.assertEqual(self.judge(said("Bram", "knows", "Ash")), claims.TWO_ENTRIES_REASON)
         self.assertEqual(self.judge(said("Bram", "knows", "Bram")), claims.SAME_ENTRY_REASON)
@@ -115,6 +127,75 @@ class Judging(unittest.TestCase):
         claim = said("Bram", "carries", "Heartseeker", "dm_said", "1", "2")
         self.assertEqual(self.judge(claim, [7, 8]), claims.STOPPED_REASON)  # 8 stopped meanwhile
         self.assertEqual(self.judge(claim, [7, None]), claims.NO_SPEAKER_REASON)
+
+
+class Steward(unittest.TestCase):
+    """What a claim does when its relationship is not one DMbot knows (#1303): the steward
+    decides, and a claim never loses its fact."""
+
+    def place(self, text: str, tally: Tally | None = None) -> tuple[str, bool, str]:
+        term, from_object, label = place_relationship(ONTO, text, "character", "character", tally)
+        return term.key, from_object, label
+
+    def test_a_known_relationship_is_used_as_it_is_with_no_label(self) -> None:
+        self.assertEqual(self.place("owns"), ("owns", False, ""))
+        self.assertEqual(self.place("is owned by"), ("owns", True, ""))
+        self.assertEqual(self.place("pledged to"), ("sworn_to", False, ""))  # a synonym
+
+    def test_a_near_spelling_reuses_the_existing_term(self) -> None:
+        tally = Tally()
+        self.assertEqual(self.place("locatedin", tally), ("located_in", False, ""))
+        self.assertEqual((tally.reused, tally.accepted, sum(tally.refused.values())), (1, 0, 0))
+
+    def test_a_term_nobody_can_vouch_for_goes_on_the_catch_all_with_its_words_as_the_label(
+        self,
+    ) -> None:
+        tally = Tally()
+        self.assertEqual(
+            self.place("blood-bound to", tally), (FALLBACK_PREDICATE, False, "blood-bound to")
+        )
+        # Passed the exact steps, but the meaning check does not exist yet: treated as refused.
+        self.assertEqual(dict(tally.refused), {REASON_BETWEEN: 1})
+        self.assertEqual(tally.accepted, 0)
+
+    def test_a_rules_word_goes_on_the_catch_all_too_and_is_counted_as_that(self) -> None:
+        tally = Tally()
+        self.assertEqual(self.place("saves", tally), (FALLBACK_PREDICATE, False, "saves"))
+        self.assertEqual(dict(tally.refused), {REASON_RULES_WORD: 1})
+
+    def test_the_label_is_kept_to_what_a_fact_can_hold(self) -> None:
+        _, _, label = self.place("x" * 300)
+        self.assertLessEqual(len(label), DETAIL_MAX)
+
+    def test_a_long_label_is_cut_at_a_whole_word(self) -> None:
+        _, _, label = self.place("sworn on the ashes of " * 10)
+        words = {"sworn", "on", "the", "ashes", "of"}
+        self.assertTrue(label.endswith("…"))
+        self.assertLessEqual(set(label[:-1].split()), words)
+        self.assertLessEqual(len(label), DETAIL_MAX)
+
+    def test_blank_words_still_get_a_plain_label(self) -> None:
+        self.assertEqual(self.place("   ")[2], "linked to")
+
+    def test_judge_sends_such_a_claim_to_the_dm_not_to_the_bin(self) -> None:
+        tally = Tally()
+        claim = said("Bram", "frobnicates", "Hesper")
+        self.assertEqual(judge(claim, ONTO, NAMES, [7], {7}, tally), "")
+        self.assertEqual(sum(tally.refused.values()), 1)
+
+    def test_the_same_claim_always_lands_in_the_same_place(self) -> None:
+        self.assertEqual(
+            {self.place("blood-bound to") for _ in range(5)}, {self.place("blood-bound to")}
+        )
+
+    def test_associated_with_is_a_core_relationship_between_any_two_kinds(self) -> None:
+        term = ONTO.active_predicate(FALLBACK_PREDICATE)
+        self.assertTrue(term.core)
+        for kind in ("character", "place", "item", "faction", "concept", "event"):
+            self.assertTrue(ONTO.is_any(kind, term.subject_types), kind)
+            self.assertTrue(ONTO.is_any(kind, term.object_types), kind)
+        self.assertFalse(ONTO.is_any("person", term.subject_types))  # the table's people stay out
+        self.assertEqual(term.synonyms, ())  # no word is ever taken for it by accident
 
 
 class Stored(MemoryTest):
@@ -153,6 +234,46 @@ class Stored(MemoryTest):
         self.assertEqual(await self.memory.relations(GUILD_A, self.c), [])
         counts = await self.claims.counts(GUILD_A, self.c, opted_in=EVERYONE)
         self.assertEqual(counts, {"proposed": 1, "dropped": 2})
+
+    async def test_a_claim_on_the_catch_all_is_confirmed_with_its_words_as_the_label(self) -> None:
+        self.hesper = await self.add("Hesper", type="character")
+        await self.propose(said("Bram", "is blood-bound to", "Hesper"))
+        (waiting,) = await self.claims.waiting(GUILD_A, self.c, opted_in=EVERYONE)
+        done = await self.claims.confirm(GUILD_A, self.c, waiting.id, opted_in={7})
+        (rel,) = await self.memory.relations(GUILD_A, self.c)
+        self.assertEqual(
+            (rel.predicate, rel.status, rel.source), ("associated_with", "confirmed", "dm")
+        )
+        self.assertEqual(rel.detail, "is blood-bound to")
+        self.assertEqual(done.claim.fact_id, rel.id)
+        from dmbot.ui.name_card import sentence
+
+        lookup = SimpleNamespace(
+            entities={e.id: e for e in await self.memory.entities(GUILD_A, self.c)}
+        )
+        self.assertEqual(sentence(lookup, rel), "Bram is blood-bound to Hesper")  # type: ignore[arg-type]
+
+    async def test_such_a_fact_and_its_label_survive_a_backup_and_restore(self) -> None:
+        await self.add("Hesper", type="character")
+        await self.propose(said("Bram", "is blood-bound to", "Hesper"))
+        (waiting,) = await self.claims.waiting(GUILD_A, self.c, opted_in=EVERYONE)
+        await self.claims.confirm(GUILD_A, self.c, waiting.id, opted_in={7})
+        raw = encode_backup(await self.campaigns.export(GUILD_A, self.c))
+        restored = await self.campaigns.import_backup(GUILD_B, decode_backup(raw), DM)
+        (rel,) = await self.memory.relations(GUILD_B, restored.id)
+        self.assertEqual((rel.predicate, rel.detail), ("associated_with", "is blood-bound to"))
+
+    async def test_a_backup_from_before_the_catch_all_still_restores(self) -> None:
+        await self.propose(said("Bram", "carries", "Heartseeker"))
+        (waiting,) = await self.claims.waiting(GUILD_A, self.c, opted_in=EVERYONE)
+        await self.claims.confirm(GUILD_A, self.c, waiting.id, opted_in={7})
+        data = await self.campaigns.export(GUILD_A, self.c)
+        # Predicates are core, not in the file; nothing in an older file names associated_with.
+        self.assertFalse(
+            [r for r in data["sections"]["memory"] if r.get("predicate") == "associated_with"]
+        )
+        restored = await self.campaigns.import_backup(GUILD_B, data, DM)
+        self.assertEqual(len(await self.memory.relations(GUILD_B, restored.id)), 1)
 
     async def test_the_extractor_cannot_confirm_anything_itself(self) -> None:
         with self.assertRaises(MemoryRuleError):

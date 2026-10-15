@@ -37,7 +37,21 @@ from dmbot.memory.models import (
     name_key,
     new_id,
 )
-from dmbot.memory.ontology import SYNONYMS, Ontology, PredicateTerm, conditions_for
+from dmbot.memory.ontology import (
+    FALLBACK_PREDICATE,
+    REASON_BETWEEN,
+    SYNONYMS,
+    Accepted,
+    Fallback,
+    Ontology,
+    PredicateTerm,
+    Proposal,
+    Refused,
+    Reused,
+    Tally,
+    conditions_for,
+    decide_term,
+)
 from dmbot.memory.store import MemoryStore, _load_ontology
 
 EXTRACTOR = "extractor"  # the memory source of everything this module writes on its own
@@ -58,7 +72,6 @@ NO_SPEAKER_REASON = "a line it cites has no known speaker"
 STOPPED_REASON = "a speaker it cites is not being recorded now"
 STOPPED_NOW = "Someone who said that has stopped being recorded, so it can't be kept."
 ODD_NOW = "That doesn't look like something said in the game any more."
-UNKNOWN_RELATION_REASON = "DMbot has no relationship by that name"
 UNKNOWN_NAME_REASON = "a name in it is not one DMbot knows yet"
 TWO_ENTRIES_REASON = "a name in it could be two different entries"
 SAME_ENTRY_REASON = "it connects an entry to itself"
@@ -218,6 +231,41 @@ def resolve_relationship(onto: Ontology, text: str) -> tuple[PredicateTerm, bool
     return None
 
 
+def place_relationship(
+    onto: Ontology, text: str, subject_kind: str, object_kind: str, tally: Tally | None = None
+) -> tuple[PredicateTerm, bool, str]:
+    """The relationship a claim's words go on, whether they are said from the object's side,
+    and the label to keep with the fact ("" when the relationship's own wording is the label).
+
+    A relationship DMbot knows is used as it is. Words it does not know go to the steward
+    (#1303): an existing term it recognises (a near spelling, say) is reused; a rules word, a
+    term the meaning check cannot yet vouch for, or anything else it refuses goes on the
+    catch-all `associated_with` with the claim's own words as the label. A claim is never lost
+    for its relationship, and DMbot never makes a new relationship term from a claim yet:
+    until the meaning check (embeddings) exists, an unchecked new term counts as refused."""
+    known = resolve_relationship(onto, text)
+    if known is not None:
+        return known[0], known[1], ""
+    decision = decide_term(
+        onto,
+        # "link" is only the proposal's key when the words have no letters to make one from.
+        Proposal(_phrase(text) or "link", text, subject_types=(subject_kind,),
+                 object_types=(object_kind,)),
+    )  # fmt: skip
+    if isinstance(decision, Accepted) and not decision.meaning_checked:
+        decision = Refused(REASON_BETWEEN, Fallback(FALLBACK_PREDICATE, text))
+    if tally is not None:
+        tally.record(decision)
+    if isinstance(decision, Reused) and decision.existing in onto.predicates:
+        return onto.predicates[decision.existing], False, ""
+    label = " ".join(text.split())
+    if len(label) > DETAIL_MAX:
+        # Cut at a whole word so the card never shows half a word.
+        label = label[: DETAIL_MAX - 1].rsplit(" ", 1)[0] + "…"
+    # A blank label would leave a nameless link; say it plainly instead.
+    return onto.active_predicate(FALLBACK_PREDICATE), False, label or "linked to"
+
+
 def condition_of(claim: Extracted) -> str | None:
     """The condition a claim says an entry is in ("Roan is dead"), if it is one."""
     if _phrase(claim.relationship) in _STATE_VERBS:
@@ -257,10 +305,12 @@ def names_of(entities: Sequence[Mapping[str, Any]], aliases: Sequence[Mapping[st
 
 def judge(
     claim: Extracted, onto: Ontology, names: Names, speakers: Sequence[int | None],
-    opted_in: Collection[int],
+    opted_in: Collection[int], tally: Tally | None = None,
 ) -> str:  # fmt: skip
     """Why a claim can't go to the DM, or "" when it can. Pure: the rules from memory's
-    ontology, the names as DMbot knows them, and who may be listened to *now*."""
+    ontology, the names as DMbot knows them, and who may be listened to *now*. A relationship
+    DMbot does not know is not a reason: it goes through the steward (`place_relationship`),
+    which puts the claim on a known one or on the catch-all, counted in `tally`."""
     # Consent first: whatever else is wrong with a claim, a speaker who is not recorded now
     # must leave nothing behind.
     if not speakers or any(s is None for s in speakers):
@@ -278,15 +328,14 @@ def judge(
     if condition is not None:
         allowed = conditions_for(onto, who[1])
         return "" if allowed is not None and condition in allowed else STATE_REASON
-    resolved = resolve_relationship(onto, claim.relationship)
-    if resolved is None:
-        return UNKNOWN_RELATION_REASON
-    term, said_from_object = resolved
     other = names.one(claim.object)
     if isinstance(other, str):
         return other
     if who[0] == other[0]:
         return SAME_ENTRY_REASON
+    term, said_from_object, _label = place_relationship(
+        onto, claim.relationship, who[1], other[1], tally
+    )
     s_kind, o_kind = (other[1], who[1]) if said_from_object else (who[1], other[1])
     if term.subject_types and not onto.is_any(s_kind, term.subject_types):
         return f"{term.label} doesn't fit those two"
@@ -319,6 +368,7 @@ class ClaimStore:
         model: str,
         session_started_at: int | None,
         malformed: int = 0,
+        tally: Tally | None = None,
     ) -> Proposed:
         """Store what the extractor said as proposals. `speakers` maps each transcript line
         the call was given to who spoke it; `opted_in` is who may be recorded *now*, read
@@ -345,7 +395,7 @@ class ClaimStore:
             for claim in claims[:MAX_CLAIMS]:
                 key = _repeat_key(claim.subject, claim.relationship, claim.object, claim.how)
                 cited = [speakers.get(ref) for ref in claim.lines]
-                reason = judge(claim, onto, names, cited, opted_in)
+                reason = judge(claim, onto, names, cited, opted_in, tally)
                 if reason in (STOPPED_REASON, NO_SPEAKER_REASON):
                     dropped += 1  # counted, never kept
                     continue
@@ -512,16 +562,14 @@ class ClaimStore:
         who = names.one(claim.subject)
         if isinstance(who, str):
             raise MemoryRuleError(f"Can't write that now: {who}.")
-        resolved = None
+        resolved: tuple[PredicateTerm, bool, str] | None = None
         other: tuple[str, str] | str = ""
         condition = condition_of(wording)
         if condition is None:
-            resolved = resolve_relationship(onto, claim.relationship)
             other = names.one(claim.object)
-            if resolved is None:
-                raise MemoryRuleError(f"Can't write that now: {UNKNOWN_RELATION_REASON}.")
             if isinstance(other, str):
                 raise MemoryRuleError(f"Can't write that now: {other}.")
+            resolved = place_relationship(onto, claim.relationship, who[1], other[1])
         # One transaction (#1301): the question is taken, the fact written and the claim told
         # which fact it became, or none of it happens. The campaign's write lock is held, so a
         # second press waits and then finds the question gone. A fact the rules refuse rolls
@@ -538,11 +586,13 @@ class ClaimStore:
                 fact_id = who[0] if state is None else state.id
             else:
                 assert resolved is not None and not isinstance(other, str)
-                term, from_object = resolved
+                term, from_object, label = resolved
                 subject_id, object_id = (other[0], who[0]) if from_object else (who[0], other[0])
+                # On the catch-all, the words it was said in are the fact's label and nothing
+                # else: the card sets `detail` between the two names, so side notes can't go there.
                 relation, flags = await self._store.add_relation_in(
                     w, subject_id, term.key, object_id, confidence=1.0, status=CONFIRMED,
-                    detail=claim.details, from_session_at=claim.session_started_at,
+                    detail=label or claim.details, from_session_at=claim.session_started_at,
                 )  # fmt: skip
                 fact_id = relation.id
             row = await w.update(
