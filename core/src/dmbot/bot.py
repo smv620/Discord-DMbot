@@ -152,8 +152,11 @@ from dmbot.logs import log_context, set_log_context
 from dmbot.mail import Mailer
 from dmbot.memory import definitions, document_reader
 from dmbot.memory.backup import MemorySection
+from dmbot.memory.claims import ClaimStore
+from dmbot.memory.continuity import ContinuityStore
 from dmbot.memory.lookup import CampaignLookup, LookupCache
 from dmbot.memory.models import DM, FIX, KEEP, Heard, MemoryRuleError, name_key
+from dmbot.memory.ontology import Tally
 from dmbot.memory.scan import MAX_SUGGESTIONS, find_new_names, group_alike
 from dmbot.memory.scene import HintParts, SceneTracker, mentions, scene_hints
 from dmbot.memory.scene import prepare as prepare_hints
@@ -216,6 +219,10 @@ from dmbot.transcription.factory import build_transcriber
 from dmbot.transcription.pipeline import TranscriptionPipeline, clip_budget_s, speech_sent_line
 from dmbot.ui import logic as ui_logic
 from dmbot.ui import rule_card
+from dmbot.ui.claims_review import ClaimsReviewButton, claims_review_view
+from dmbot.ui.claims_review import waiting_text as claims_waiting_text
+from dmbot.ui.continuity import ContinuityButton, continuity_view
+from dmbot.ui.continuity import waiting_text as continuity_waiting_text
 from dmbot.ui.dmbot_commands import _failed, dmbot_group
 from dmbot.ui.house_rules import dmbot_house_rules  # noqa: F401 (registers it)
 from dmbot.ui.migrate import dmbot_migrate  # noqa: F401 (registers it)
@@ -374,6 +381,8 @@ class Table:
     scene: SceneTracker = field(default_factory=SceneTracker)
     name_lookup: CampaignLookup | None = None
     hint_parts: HintParts | None = None
+    # What the ontology steward decided this session (#1303), for one line in the server log.
+    steward_tally: Tally = field(default_factory=Tally)
     # Spell, feature and item names from the players' D&D Beyond sheets (#723).
     sheet_hints: tuple[str, ...] = ()
     sheet_task: asyncio.Task[None] | None = None  # reading them; cancelled at the end
@@ -857,7 +866,9 @@ class DMBot(commands.AutoShardedBot):
         # Consent buttons in private messages, likewise.
         self.add_dynamic_items(*CONSENT_BUTTONS)
         # "Check new names" on the DM screen after a session.
-        self.add_dynamic_items(ReviewButton, PeopleReviewButton)
+        self.add_dynamic_items(
+            ReviewButton, PeopleReviewButton, ClaimsReviewButton, ContinuityButton
+        )
         self.add_dynamic_items(  # #965, #1117
             clock_screen.ClockButton, clock_screen.ClockUndoButton, clock_screen.SuggestionButton
         )
@@ -1205,6 +1216,7 @@ class DMBot(commands.AutoShardedBot):
                     },
                     "sidebar_prompt": SIDEBAR_PROMPT_VERSION,
                     "sidebar_on": self.settings.sidebar_on,
+                    "story_extractor_on": self.settings.story_extractor_on,
                     "commit": test_files.short_commit(os.environ.get("GIT_COMMIT")),
                 },
             )
@@ -1285,6 +1297,11 @@ class DMBot(commands.AutoShardedBot):
             except Exception:
                 # Never blocks stopping; the learned names are only waiting questions.
                 log.exception("Could not remove the names learned for a stopped speaker")
+            try:  # and what the story extractor proposed from their words (#1297)
+                async with asyncio.timeout(FORGET_TIMEOUT_S):
+                    await ClaimStore(self.memory).forget_speaker(guild_id, user_id)
+            except Exception:
+                log.exception("Could not remove the story claims of a stopped speaker")
         try:
             return await self.consent.revoke(guild_id, user_id)
         finally:
@@ -1757,6 +1774,9 @@ class DMBot(commands.AutoShardedBot):
             ("name scan", lambda: self.suggest_names(table)),
             ("who is who", lambda: self.learn_people(table)),
             ("people check", lambda: self.check_people(table)),
+            ("what was said", lambda: self.ask_about_claims(table)),
+            ("heads-ups", lambda: self.warn_about_continuity(table)),
+            ("steward numbers", lambda: self.log_steward_tally(table)),
             ("definitions", lambda: self.recheck_definitions(table)),
             ("stale flags", lambda: self.close_stale_flags(table)),
             ("old undo history", lambda: self.prune_old_changes(table)),
@@ -5126,6 +5146,61 @@ class DMBot(commands.AutoShardedBot):
             if kept:
                 await self.post(
                     table.screen_channel_id, waiting_text(len(kept)), view=people_review_view(cid)
+                )
+
+    async def log_steward_tally(self, table: Table) -> None:
+        """After the session's other work: one line in the server log of what the ontology
+        steward decided (#1303), counts only. Never shown to a player or a DM. Nothing is
+        written when it decided nothing, which is every session while the extractor is off.
+        The extractor's landing code passes `table.steward_tally` to `ClaimStore.propose(tally=)`
+        (not wired yet: `propose` has no caller until the extractor runs)."""
+        tally, table.steward_tally = table.steward_tally, Tally()
+        if tally.refused or tally.reused or tally.accepted:
+            tally.write_to_log()
+
+    async def ask_about_claims(self, table: Table) -> None:
+        """After a session: if the story extractor left proposals waiting (#1297), the DM
+        screen says how many, never what, with a button only the DM can use. With the
+        extractor off (the default) nothing is ever waiting and nothing is posted; this step
+        itself makes no AI call."""
+        if self.memory is None or table.campaign_id is None:
+            return
+        gid, cid = table.guild_id, table.campaign_id
+        with log_context(guild_id=gid, campaign_id=cid):
+            agreed = await self.consent.consenting(gid)
+            counts = await ClaimStore(self.memory).counts(gid, cid, opted_in=agreed)
+            waiting = counts.get("proposed", 0)
+            if waiting:
+                await self.post(
+                    table.screen_channel_id,
+                    claims_waiting_text(waiting),
+                    view=claims_review_view(cid),
+                )
+
+    async def warn_about_continuity(self, table: Table) -> None:
+        """After a session: if what was said clashes with the story the DM already confirmed
+        (#1320), the DM screen says how many, never what, with a button only the DM can use.
+        Nothing is posted below the critical mass or with nothing waiting (which is always the
+        case while the extractor is off); this step makes no AI call."""
+        if self.memory is None or table.campaign_id is None:
+            return
+        gid, cid = table.guild_id, table.campaign_id
+        with log_context(guild_id=gid, campaign_id=cid):
+            agreed = await self.consent.consenting(gid)
+            report = await ContinuityStore(self.memory).check(
+                gid, cid, opted_in=agreed, levels=self.settings.continuity
+            )
+            log.info(
+                "Continuity: %d claim(s) looked at, %d heads-up(s), %d confirmed fact(s) in %d "
+                "session(s), %s",
+                report.claims, len(report.conflicts), report.facts, report.sessions,
+                "on" if report.ready else "not enough story yet",
+            )  # fmt: skip
+            if report.conflicts:
+                await self.post(
+                    table.screen_channel_id,
+                    continuity_waiting_text(len(report.conflicts)),
+                    view=continuity_view(cid),
                 )
 
     async def recheck_definitions(self, table: Table) -> None:

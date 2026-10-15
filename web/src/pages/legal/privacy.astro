@@ -160,15 +160,17 @@ import {
     <li>
       <strong>Stopping emails.</strong> Each Try It email has a link to stop emails like it. We keep
       a list of the Discord account numbers that used it, with the date, so we do not send them
-      another. Sign-in links and move codes have no such link, because you asked for them.
+      another. This list stays even after you delete your account, so we never email you again
+      after you said stop. Sign-in links and move codes have no such link, because you asked for
+      them.
     </li>
     <li>
       <strong>A short note of what was sent.</strong> For each email we keep your Discord account
       number, which kind of email it was and when it went. We do not keep the words of the email or
       the address it went to. We use it so a one-time email is never sent twice, and to keep the
       number of emails we send in a day under a limit. The notes for sign-in links and move codes
-      are deleted after 90 days. The note for a Try It email stays, so that email is never sent
-      twice.
+      are deleted after 90 days. The notes for the Try It emails are deleted a year after they
+      were sent. All your notes are deleted when you delete your account.
     </li>
     <li>
       <strong>Who sends them.</strong> For now the emails go out through DMbot's own Gmail mailbox,
@@ -183,7 +185,7 @@ import {
     <li><strong>Deepgram</strong>: turns the sound of people who said yes into text.</li>
     <li>
       <strong>Anthropic</strong>: the AI that helps with names, rules and story notes. It gets the
-      text it needs, not sound.
+      text it needs, not sound. That text isn't used to train Anthropic's AI.
     </li>
     <li><strong>{paymentProvider}</strong>: takes payments.</li>
     <li><strong>GitHub</strong>: where messages from the Say hello page are posted, for anyone to read.</li>

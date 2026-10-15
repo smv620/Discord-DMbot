@@ -228,6 +228,10 @@ _ANY = tuple(
     t.key for t in CORE_TYPES if t.parent is None and t.status == ACTIVE and t.key != "person"
 )
 
+# The catch-all relationship a refused term's fact is kept on, with the steward's words as its
+# label (in the fact's `detail`), so a refusal never loses the fact (#1298, #1303).
+FALLBACK_PREDICATE = "associated_with"
+
 CORE_PREDICATES: tuple[PredicateTerm, ...] = (
     PredicateTerm(
         "located_in",
@@ -457,6 +461,25 @@ CORE_PREDICATES: tuple[PredicateTerm, ...] = (
         inverse_label="has taking part",
         synonyms=("takes_part_in", "involved_in", "present_at"),
     ),
+    PredicateTerm(
+        FALLBACK_PREDICATE,
+        "is associated with",
+        "The catch-all for a link the table said that DMbot has no relationship for. Each fact "
+        "keeps the words it was said in as its own label, so a refused new term never loses the "
+        "fact. Never chosen on purpose: a better-fitting relationship always wins.",
+        _ANY,
+        _ANY,
+        covers=("a link in the story's own words that no named relationship fits",),
+        not_this=(
+            ("one thing is inside another", "located_in"),
+            ("a person who belongs to a group", "member_of"),
+            ("a person who has heard of another", "knows"),
+        ),
+        examples=(
+            "Aldric is blood-bound to Cerric (the table's words; no relationship is named so).",
+        ),
+        inverse_label="has an association with",
+    ),
 )
 
 # State facts (docs/STORY_MEMORY.md, "State facts"): what a being or a thing is right now. Only
@@ -627,9 +650,6 @@ REASON_SPELLING = "spelled like an existing term"
 REASON_SHAPE = "does not say what it connects"
 REASON_CLOSE_MEANING = "means the same as an existing term"
 REASON_BETWEEN = "not clearly different from an existing term"
-# The catch-all relationship a refused term's fact is kept on, with the steward's words as its
-# label, so a refusal never loses the fact.
-FALLBACK_PREDICATE = "associated_with"
 
 
 @dataclass(frozen=True, slots=True)

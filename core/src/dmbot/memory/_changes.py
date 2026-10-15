@@ -26,6 +26,9 @@ class Table:
     name: str
     key: str  # the column identifying a row within a campaign
     columns: tuple[str, ...]  # excluding guild_id and campaign_id
+    # False: kept out of the change log, so Undo can't reach it (the extractor's claims are
+    # answered once; a fact written from one is undone as a fact, not by flipping the claim).
+    logged: bool = True
 
 
 TYPES = Table(
@@ -67,6 +70,18 @@ STATES = Table(
     "id",
     ("id", "entity_id", "condition", "from_session_at", "source", "created_at", "closed_at"),
 )
+# What the story extractor read out of a session, waiting for the DM (#1297): text only, no
+# links to entries, because a claim names things the memory may not know yet. `fact_id` is not a
+# database link: the fact it became lives in one of two tables (relationships or states) and can
+# be undone or deleted later, so it is a pointer to follow while the fact is still there.
+CLAIMS = Table(
+    "memory_claims",
+    "id",
+    ("id", "subject", "relationship", "object", "details", "how", "lines", "speaker_ids",
+     "source", "prompt_version", "model", "status", "reason", "session_started_at",
+     "created_at", "decided_at", "fact_id"),
+    logged=False,
+)  # fmt: skip
 # A character's links to the rules (#1034): species, creature type, stat block, class,
 # background.
 RULE_LINKS = Table(
@@ -111,7 +126,7 @@ FLAGS = Table(
     ("id", "kind", "relation_id", "other_id", "status", "created_at"),
 )
 ALL = (TYPES, PREDICATES, ENTITIES, ALIASES, MENTIONS, RELATIONS, CORRECTIONS, FLAGS, RULE_LINKS,
-       STATES)  # fmt: skip
+       STATES, CLAIMS)  # fmt: skip
 BY_NAME = {t.name: t for t in ALL}
 
 # What links to a row (table, column, is the column a list), checked before deleting it,
@@ -403,7 +418,7 @@ class Changes(Scope):
         """Log many row changes, each with its own version, in one statement. The rows go
         as one JSON value, so the statement is the same however many there are (no limit
         on values, one prepared statement)."""
-        if not rows:
+        if not rows or not table.logged:
             return
         entries = []
         for row_id, before, after in rows:
@@ -441,6 +456,8 @@ class Changes(Scope):
         before: dict[str, Any] | None,
         after: dict[str, Any] | None,
     ) -> None:
+        if not table.logged:
+            return
         self.version += 1
         self.tables.add(table.name)
         if self.batch is None:
