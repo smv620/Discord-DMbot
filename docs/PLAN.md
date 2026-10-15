@@ -3119,10 +3119,11 @@ feature people can see adds its entry, or a held one, in the same PR.
 Moving between the site's pages gets a short magic-dust dissolve: the old page breaks up into
 sparkling dust while the new one fades in, about 700 ms (owner, 2026-10-15: doubled so the
 runes can be seen), built with the browser's own page transitions (CSS `@view-transition`, no
-script, no library, nothing new in the security headers). Browsers without it change pages as before. Only the page's banner (its main heading,
-the hero on the home page) gets the rune effect: it breaks into arcane runes as the page leaves,
-and the new banner forms out of runes as it arrives. The runes are decoration, hidden from screen
-readers, with a small rune font served from our own site. **No dice** (owner: not for now).
+script, no library, nothing new in the security headers). Browsers without it change pages as
+before. Only the page's banner (its main heading, the hero on the home page) gets the rune
+effect: it breaks into arcane runes as the page leaves, and the new banner forms out of runes as
+it arrives. The runes are decoration, hidden from screen readers, with a small rune font served
+from our own site. **No dice** (owner: not for now).
 **The legal pages stay plain:** terms, privacy and refunds get no dust and no runes. Anyone whose
 device asks for less motion gets a plain page change everywhere. It must never slow a click or move
 the page's layout, and it adds at most about 15 KB.
