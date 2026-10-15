@@ -2378,3 +2378,5 @@ Overall ...................................... PASS (Deepgram baseline: 33/33, 1
   AI_MODEL line next to AI_MODEL_FAST. The owner switches mail to Resend with scripts/set-key (docs/EMAIL.md); after that: one restart
   and one test sign-in email.
   Still to check: 0 ERROR over 10 minutes (next check), and the test sign-in email after the Resend settings.
+  Follow-up, 21:05 UTC (12 minutes after the deploy): 0 ERROR, CRITICAL or traceback lines in core and web-api since 20:53 (Supervisor's
+  "0 ERROR for 10 minutes" check passed); core and web-api still up, web-api healthy.
