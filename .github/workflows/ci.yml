@@ -69,6 +69,8 @@ jobs:
       - run: npm run build
       - run: npm run check:links
       - run: npm run check:csp
+      - run: npm run check:a11y  # real browser: contrast, focus ring, 320 px, reduced motion (#1224)
+        timeout-minutes: 5
 
   core:
     name: core (Python)

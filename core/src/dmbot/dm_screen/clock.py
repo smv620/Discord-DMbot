@@ -1,9 +1,10 @@
 """🕰️ The game clock on the DM screen (#965; docs/PLAN.md, "TimeBot"): one pinned message,
-"🕰️ Day 4, afternoon (14:30)", edited in place, with the DM's buttons: +10 min, +1 hour, Set
-time… and Start a timer. Short rest, Long rest and Skip to dawn are in the private panel that
-**Set time…** opens (rests are rare buttons, because DMbot hears them, and players who peek
-behind the DM screen could take them for D&D Beyond sheet links). The players see only the
-day and a rough time of day, "🕰️ Day 4, afternoon", in their own game-time channel (#1116).
+"🕰️ Day 4, afternoon (14:30)", edited in place, with the DM's buttons: +10 min, +1 hour,
+Rests & time… and Start a timer. Short rest, Long rest and Skip to dawn are in the private
+panel that **Rests & time…** opens (rests are rare buttons, because DMbot hears them, and
+players who peek behind the DM screen could take them for D&D Beyond sheet links). The players
+see only the day and a rough time of day, "🕰️ Day 4, afternoon", in their own game-time
+channel (#1116).
 Only the campaign's DMs can press the buttons (checked on every press, in the database
 transaction that changes the clock), and the buttons keep working after a restart (their
 IDs carry the campaign).
@@ -44,14 +45,14 @@ SET_FIRST = (
     "The clock isn't set yet. Press **Game clock** in ⚙️ Settings and give the day and the hour."
 )
 GONE = "That campaign isn't here any more."
-FAILED = "Sorry, that didn't save. Please try again."
-BAD_TIME = "Couldn't read that time. Press **Set time…** again and try day 4, time 14 (or 14:30)."
-ALREADY_SHOWN = "The clock is already pinned in the DM screen: {where}"
-PANEL_TEXT = "Rest, skip ahead, or type a time. Only you see this."
+FAILED = "That didn't save. Try again in a moment."
+BAD_TIME = "Couldn't read that time. Try day 4 and time 14 (or 14:30)."
+ALREADY_SHOWN = "The clock is already pinned on the DM screen: {where}"
+PANEL_TEXT = "Take a rest, skip to dawn, or type the time. Only you see this."
 PLAYERS_SEE = "\nPlayers see the day and a rough time in <#{channel}>."
 NEEDS_SCREEN = "This campaign has no DM screen yet. Run `/dmbot start` once first."
 OFF_SCREEN = (
-    "I can't post in the DM screen. Give DMbot **Send Messages** there, then press "
+    "DMbot can't post on the DM screen. Give DMbot **Send Messages** there, then press "
     "**Game clock** again."
 )
 SET_DONE = "🕰️ Clock set to {label}. It's pinned here: {where}"
@@ -60,7 +61,7 @@ ACTIONS: dict[str, tuple[str, str, discord.ButtonStyle, int]] = {
     # id: (label, emoji, style, row)
     "m10": ("+10 min", "⏱️", discord.ButtonStyle.primary, 0),
     "h1": ("+1 hour", "⏱️", discord.ButtonStyle.secondary, 0),
-    "set": ("Set time…", "🕰️", discord.ButtonStyle.secondary, 0),
+    "set": ("Rests & time…", "🕰️", discord.ButtonStyle.secondary, 0),
     "short": ("Short rest", "🛌", discord.ButtonStyle.secondary, 0),
     "long": ("Long rest", "🌙", discord.ButtonStyle.secondary, 0),
     "dawn": ("Skip to dawn", "🌅", discord.ButtonStyle.secondary, 0),
@@ -71,7 +72,7 @@ ACTIONS: dict[str, tuple[str, str, discord.ButtonStyle, int]] = {
     "cnext": ("Next round", "⏭️", discord.ButtonStyle.primary, 1),
     "cend": ("End combat", "🏁", discord.ButtonStyle.secondary, 1),
 }
-# On the pinned DM-screen message: no rests, which are in the private Set time… panel.
+# On the pinned DM-screen message: no rests, which are in the private Rests & time… panel.
 PINNED = ("m10", "h1", "set", "timer")
 PANEL = ("short", "long", "dawn", "typed")
 COMBAT_ACTIONS = ("cstart", "cnext", "cend", "cround")  # "cround": a named round, said
@@ -192,7 +193,11 @@ async def press(
         and after.combat_round is None
     ):
         # (Undo of this rest brings the fight back: the round rides in the Undo button.)
-        result.lines.insert(0, f"🏁 Combat is over (round {before.combat_round}).")
+        result.lines.insert(
+            0,
+            f"🏁 Combat is over after {before.combat_round} "
+            f"round{'s' if before.combat_round != 1 else ''}.",
+        )
     if before is not None and after is not None and _speaks(action):
         marks = game.crossings(before.minute, after.minute)
         result.lines = [MARK_LINES[name] for _, name in marks] + result.lines
@@ -232,7 +237,7 @@ def clock_view(campaign_id: str, clock: Clock | None = None) -> discord.ui.View:
 
 
 def panel_view(campaign_id: str) -> discord.ui.View:
-    """What **Set time…** answers with, privately: the rests, skipping to dawn and typing a
+    """What **Rests & time…** answers with, privately: the rests, skipping to dawn and typing a
     time. An ephemeral answer, so only the DM who pressed it sees it."""
     view = discord.ui.View(timeout=600)
     for action in PANEL:
@@ -507,10 +512,10 @@ async def _run_press(
 
 
 NO_COMBAT_CHANGE = {
-    "cstart": "Combat has already started.",
-    "cnext": "DMbot isn't in combat, or this is the last round it counts (99).",
-    "cend": "DMbot isn't in combat.",
-    "cround": "DMbot isn't in combat, or it is already that round.",
+    "cstart": "Combat is already running.",
+    "cnext": "There is no combat running, or it has reached round 99, the most DMbot counts.",
+    "cend": "There is no combat running.",
+    "cround": "There is no combat running, or it is already on that round.",
 }
 
 
@@ -683,7 +688,7 @@ class SuggestionButton(
     template=rf"dmbot:clocksuggest:{_ID}:(?P<kind>short|long):(?P<answer>yes|no)",
 ):
     """A player said "let's take a short rest": the DM decides. **Short rest** moves the clock
-    like the button in the Set time… panel; **Not now** just closes the question. Nothing
+    like the button in the Rests & time… panel; **Not now** just closes the question. Nothing
     moves until a DM of the campaign presses (checked again when the clock changes)."""
 
     def __init__(self, campaign_id: str, kind: str, answer: str) -> None:
@@ -838,8 +843,8 @@ class CombatUndoButton(
         if moved or after is None:
             await _reply(
                 interaction,
-                "The clock or round has changed since, so Undo does nothing. Use **Next round** or "
-                "**End combat** to fix it.",
+                "The clock or round has moved on since, so Undo can't help. Use **Next round** or "
+                "**End combat** instead.",
             )
             return
         stored = await client.clocks.get(guild_id, campaign.id)
@@ -946,8 +951,8 @@ class ClockUndoButton(
         if moved or after is None:
             await _reply(
                 interaction,
-                "The clock has moved since, so there is nothing to undo. "
-                "Use **Set time…** to fix it.",
+                "The clock has moved on since, so there is nothing to undo. "
+                "Use **Rests & time…** to fix it.",
             )
             return
         stored = await client.clocks.get(guild.id, campaign.id)
