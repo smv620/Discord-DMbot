@@ -42,6 +42,7 @@ from dmbot import (
     trial_jobs,
     usage,
 )
+from dmbot.account_move import AccountMoves
 from dmbot.ai import FEATURE_TIERS, AnthropicClient, Feature
 from dmbot.ai_watch import AIWatch
 from dmbot.audio.segmenter import Segmenter, Utterance
@@ -216,6 +217,7 @@ from dmbot.ui import logic as ui_logic
 from dmbot.ui import rule_card
 from dmbot.ui.dmbot_commands import _failed, dmbot_group
 from dmbot.ui.house_rules import dmbot_house_rules  # noqa: F401 (registers it)
+from dmbot.ui.migrate import dmbot_migrate  # noqa: F401 (registers it)
 from dmbot.ui.name_card import UndoButton
 from dmbot.ui.name_lists import UndoListButton
 from dmbot.ui.names import ReviewButton, after_session_text, review_view
@@ -262,6 +264,7 @@ OWNER_CHECK_GAP_S = 0.5  # between campaigns in the daily look
 OWNER_START_WAIT_S = 2  # at a start the table is waiting
 OWNER_ASK_EVERY_S = 3600  # Discord is asked about one campaign's owner at most this often
 OWNER_LOOK_TIMEOUT_S = 6  # asking Discord about an owner must not hold up a start
+MOVED_CHECKED_MAX = 100_000  # people remembered as checked; cleared past this
 FORGET_TIMEOUT_S = 10  # removing learned names must not hold up stopping a recording
 METER_INTERVAL_S = 60  # how often listening minutes are written to the hours meter (#437)
 METER_FINAL_TRIES = 3  # at a stop: the last minutes are written nowhere else
@@ -522,6 +525,7 @@ class DMBotTree(app_commands.CommandTree["DMBot"]):
 
     async def interaction_check(self, interaction: discord.Interaction) -> bool:
         set_log_context(guild_id=interaction.guild_id)
+        self.client.tell_if_moved_later(interaction.user.id)
         return True
 
     async def on_error(
@@ -621,15 +625,24 @@ class DMBot(commands.AutoShardedBot):
         # The last day of Try It and the extension (#1229): only with a database, and the mail
         # sender (which sends nothing until SMTP is set up) for the emails.
         self.trial_jobs: trial_jobs.TrialJobs | None = None
+        self.mailer: Mailer | None = None
+        self.account_moves: AccountMoves | None = None  # moving to a new Discord account (#1230)
+        self._moved_tasks: set[asyncio.Task[None]] = set()
+        # People already checked for a "your account moved" notice since this process
+        # started: a command from them costs nothing more. An account that moves is taken
+        # out (after_account_move), so it is checked again.
+        self._moved_checked: set[int] = set()
         if meter is not None:
+            self.account_moves = AccountMoves(meter.db)
+            self.mailer = Mailer(
+                meter.db,
+                settings.mail,
+                site_url=settings.site_url,
+                link_secret=settings.link_token_secret,
+            )
             self.trial_jobs = trial_jobs.TrialJobs(
                 meter.db,
-                Mailer(
-                    meter.db,
-                    settings.mail,
-                    site_url=settings.site_url,
-                    link_secret=settings.link_token_secret,
-                ),
+                self.mailer,
                 enforce_plans=settings.enforce_plans,
                 site_url=settings.site_url,
                 link_secret=settings.link_token_secret,
@@ -2335,6 +2348,9 @@ class DMBot(commands.AutoShardedBot):
                     await trial_jobs.take_extension_notice(self.meter.db, user.id, int(time.time()))
                     or ""
                 )
+                if self.account_moves is not None:  # an old account that moved (#1230)
+                    moved = await self.account_moves.take_moved_notice(user.id)
+                    trial_line = "\n\n".join(x for x in (trial_line, moved) if x)
             except Exception:
                 log.exception("Couldn't check for a Try It extension notice")
         transcript_line = (
@@ -5160,6 +5176,45 @@ class DMBot(commands.AutoShardedBot):
         except Exception:
             return "retry"
         return "sent"
+
+    async def after_account_move(self, old_user_id: int, new_user_id: int) -> None:
+        """After an account has moved (#1230): tell the old account privately, if it still
+        exists. The payment company's records are brought up to date when its next event
+        arrives (the website's webhook finds a moved person through the marker). Never
+        raises."""
+        from dmbot.account_move import long_date, old_told
+
+        self._moved_checked.discard(old_user_id)  # its next command is checked again
+        try:
+            await self._dm_trial_user(old_user_id, old_told(long_date(int(time.time()))))
+        except Exception:
+            log.exception("Couldn't tell the old account about a move")
+
+    def tell_if_moved_later(self, user_id: int) -> None:
+        """Start the "your account moved" check without making the command wait for it."""
+        if self.account_moves is None or user_id in self._moved_checked:
+            return
+        # Marked before the task starts, so two commands at once start one check.
+        if len(self._moved_checked) >= MOVED_CHECKED_MAX:
+            self._moved_checked.clear()
+        self._moved_checked.add(user_id)
+        task = asyncio.create_task(self.tell_if_moved(user_id))
+        self._moved_tasks.add(task)  # a reference, or the task could be dropped mid-way
+        task.add_done_callback(self._moved_tasks.discard)
+
+    async def tell_if_moved(self, user_id: int) -> None:
+        """An old account whose DMbot account moved (#1230) hears so, privately, the first time
+        it uses any command (marked told as it is read; the line is lost if the message can't
+        be sent, which beats telling twice). Never raises and never holds a command up."""
+        if self.account_moves is None:
+            return
+        try:
+            notice = await self.account_moves.take_moved_notice(user_id)
+            if notice:
+                await self._dm_trial_user(user_id, notice)
+        except Exception:
+            self._moved_checked.discard(user_id)  # try again at their next command
+            log.exception("Couldn't tell an old account that its DMbot account moved")
 
     async def _discord_name(self, user_id: int) -> str:
         try:
