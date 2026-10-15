@@ -37,6 +37,17 @@ Status = Literal["active", "grace", "lapsed"]
 RENEWAL_SLACK_SECONDS = 3 * 24 * 3600
 
 
+def cap_minutes(hours: int, minutes_taken: int) -> int:
+    """Hours less the minutes already taken from them, never below 0."""
+    return max(0, hours * 60 - minutes_taken)
+
+
+def cap_hours(hours: int, minutes_taken: int) -> int | float:
+    """The same in hours for the website: whole when it is, else to one decimal (6.5)."""
+    minutes = cap_minutes(hours, minutes_taken)
+    return minutes // 60 if minutes % 60 == 0 else round(minutes / 60, 1)
+
+
 @dataclass(frozen=True)
 class Entitlement:
     user_id: int
@@ -55,10 +66,20 @@ class Entitlement:
     # The payment company knows this person (a customer id is stored), so its billing page
     # can open; a plan set by hand has none (#824).
     has_customer: bool = False
+    # Minutes of the hours already used before this period began: a Try It that was extended
+    # keeps "8 hours in all", so its new period has the hours cap less these (#1229).
+    minutes_taken: int = 0
 
     @property
     def hours_this_period(self) -> int:
         return self.hours_cap + self.extra_hours
+
+    @property
+    def cap_minutes(self) -> int:
+        """What the meter allows this period, in minutes: the period's hours less those an
+        extended Try It already used (8 hours in all). The one number the bot's meter, /me
+        and the data export all show."""
+        return cap_minutes(self.hours_this_period, self.minutes_taken)
 
     def usable(self, now: int) -> bool:
         """The plan works now: active (and its period not long over), or in the payment
@@ -131,6 +152,7 @@ class Access:
     # The same, but cancelled: the paid plan's name and the moment it ends (#824).
     ending_plan: str | None = None
     ending_at: int | None = None
+    minutes_taken: int = 0  # taken off the hours cap, in minutes (see Entitlement)
 
     @property
     def works(self) -> bool:
@@ -195,6 +217,7 @@ def access_for(user_id: int, plan: Entitlement | None, grant: Grant | None, now:
             plan.hours_this_period,
             plan.campaign_cap,
             bool(known and known.backups),
+            minutes_taken=plan.minutes_taken,
         )
     if grant is not None and grant.active(now):
         if grant.level == "unlimited":
@@ -329,6 +352,7 @@ async def _read_plan(conn: Conn, user_id: int) -> Entitlement | None:
         grace_ends_at=row["grace_ends_at"],
         lapsed_at=row["lapsed_at"],
         plan_changed_at=row["plan_changed_at"],
+        minutes_taken=row.get("minutes_taken") or 0,
         ends_at=row.get("ends_at"),  # older schemas (tests of a backfill) have none
         has_customer=row.get("provider_customer_id") is not None,
     )

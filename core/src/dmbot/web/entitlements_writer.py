@@ -238,7 +238,7 @@ async def apply_event(db: Database, event: PaymentEvent, *, now: int) -> Outcome
                 " %(start)s, %(end)s, NULL, NULL, %(now)s, %(provider)s, %(customer)s,"
                 " %(subscription)s, %(at)s, %(now)s)"
                 " ON CONFLICT (user_id) DO UPDATE SET plan = EXCLUDED.plan,"
-                " status = 'active', hours_cap = EXCLUDED.hours_cap,"
+                " status = 'active', hours_cap = EXCLUDED.hours_cap, minutes_taken = 0,"
                 # Extra hours belong to one period: a new period starts without them.
                 " extra_hours = CASE WHEN %(new_period)s THEN 0"
                 "   ELSE entitlements.extra_hours END,"
@@ -374,7 +374,7 @@ async def start_try_it(db: Database, user_id: int, *, now: int) -> TryItResult:
             " VALUES (%(user)s, 'try-it', 'active', %(hours)s, 0, %(campaigns)s, %(now)s,"
             " %(end)s, %(now)s, %(provider)s, 0, %(now)s)"
             " ON CONFLICT (user_id) DO UPDATE SET plan = 'try-it', status = 'active',"
-            " hours_cap = EXCLUDED.hours_cap, extra_hours = 0,"
+            " hours_cap = EXCLUDED.hours_cap, extra_hours = 0, minutes_taken = 0,"
             " campaign_cap = EXCLUDED.campaign_cap, period_start = EXCLUDED.period_start,"
             " period_end = EXCLUDED.period_end, grace_ends_at = NULL, lapsed_at = NULL,"
             " ends_at = NULL,"
