@@ -15,11 +15,11 @@ from __future__ import annotations
 
 import json
 import re
-from collections.abc import Collection, Mapping, Sequence
+from collections.abc import Awaitable, Callable, Collection, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
 
-from dmbot.memory._changes import ALIASES, CLAIMS, ENTITIES
+from dmbot.memory._changes import ALIASES, CLAIMS, ENTITIES, Changes
 from dmbot.memory.models import (
     CLAIM_CONFIRMED,
     CLAIM_DROPPED,
@@ -525,28 +525,22 @@ class ClaimStore:
             row = await w.update(CLAIMS, claim_id, {"status": CLAIM_REJECTED, "decided_at": w.now})
             return claim_of(row)
 
-    async def _take(self, guild_id: int, campaign_id: str, claim_id: str) -> Claim:
-        """Claim the question for this answer, under the row's lock: a second press, or a no
-        pressed at the same time, finds it taken. Put back by `_give_back` if the fact fails."""
-        async with self._store._write(guild_id, campaign_id, DM) as w:
-            row = await w.get(CLAIMS, claim_id)
-            if row is None or row["status"] != CLAIM_PROPOSED:
-                raise MemoryRuleError(GONE)
-            row = await w.update(CLAIMS, claim_id, {"status": CLAIM_CONFIRMED, "decided_at": w.now})
-            return claim_of(row)
-
-    async def _give_back(self, guild_id: int, campaign_id: str, claim_id: str) -> None:
-        async with self._store._write(guild_id, campaign_id, DM) as w:
-            await w.update(CLAIMS, claim_id, {"status": CLAIM_PROPOSED, "decided_at": None})
-
     async def confirm(
-        self, guild_id: int, campaign_id: str, claim_id: str, *, opted_in: Collection[int]
+        self,
+        guild_id: int,
+        campaign_id: str,
+        claim_id: str,
+        *,
+        opted_in: Collection[int],
+        before: Callable[[Changes], Awaitable[None]] | None = None,
     ) -> Confirmed:
         """The DM says yes: the fact is written as the DM's own, through the store (so every
         rule and check runs as for any fact), and the claim keeps which fact it became. A fact
         the rules refuse leaves the question waiting and says why. `opted_in` is who may be
         recorded now: if anyone whose words it holds has stopped, the claim is deleted instead
-        (the stored row is untrusted too, so the plan and instruction checks run again)."""
+        (the stored row is untrusted too, so the plan and instruction checks run again).
+        `before` runs first inside the same transaction (a continuity answer, #1320, ends the
+        fact it replaces or brings back what had ended): all of it happens, or none."""
         claim = await self.get(guild_id, campaign_id, claim_id)
         if claim is None or claim.status != CLAIM_PROPOSED:
             raise MemoryRuleError(GONE)
@@ -584,15 +578,21 @@ class ClaimStore:
             if isinstance(other, str):
                 raise MemoryRuleError(f"Can't write that now: {other}.")
             resolved = place_relationship(onto, claim.relationship, who[1], other[1])
-        await self._take(guild_id, campaign_id, claim_id)
-        try:
-            flags: list[Flag] = []
+        # One transaction (#1301): the question is taken, the fact written and the claim told
+        # which fact it became, or none of it happens. The campaign's write lock is held, so a
+        # second press waits and then finds the question gone. A fact the rules refuse rolls
+        # the whole thing back and leaves the question waiting. The check at the top of
+        # `confirm` is only an early exit: this one, under the lock, is the one that counts.
+        async with self._store._write(guild_id, campaign_id, DM) as w:
+            current = await w.get(CLAIMS, claim_id)
+            if current is None or current["status"] != CLAIM_PROPOSED:
+                raise MemoryRuleError(GONE)
+            if before is not None:
+                await before(w)
             if condition is not None:
-                written = await self._store.set_condition(
-                    guild_id, campaign_id, who[0], condition, source=DM,
-                    from_session_at=claim.session_started_at,
-                )  # fmt: skip
-                state, flags = written.value[0], list(written.value[1])
+                state, flags = await self._store.set_condition_in(
+                    w, who[0], condition, claim.session_started_at
+                )
                 fact_id = who[0] if state is None else state.id
             else:
                 assert resolved is not None and not isinstance(other, str)
@@ -600,16 +600,14 @@ class ClaimStore:
                 subject_id, object_id = (other[0], who[0]) if from_object else (who[0], other[0])
                 # On the catch-all, the words it was said in are the fact's label and nothing
                 # else: the card sets `detail` between the two names, so side notes can't go there.
-                relation = await self._store.add_relation(
-                    guild_id, campaign_id, subject_id, term.key, object_id,
-                    source=DM, confidence=1.0, status=CONFIRMED,
-                    detail=label or claim.details,
-                    from_session_at=claim.session_started_at,
+                relation, flags = await self._store.add_relation_in(
+                    w, subject_id, term.key, object_id, confidence=1.0, status=CONFIRMED,
+                    detail=label or claim.details, from_session_at=claim.session_started_at,
                 )  # fmt: skip
-                fact_id, flags = relation.value[0].id, list(relation.value[1])
-        except BaseException:
-            await self._give_back(guild_id, campaign_id, claim_id)
-            raise
-        async with self._store._write(guild_id, campaign_id, DM) as w:
-            row = await w.update(CLAIMS, claim_id, {"fact_id": fact_id})
+                fact_id = relation.id
+            row = await w.update(
+                CLAIMS,
+                claim_id,
+                {"status": CLAIM_CONFIRMED, "decided_at": w.now, "fact_id": fact_id},
+            )
         return Confirmed(claim_of(row), tuple(flags))
