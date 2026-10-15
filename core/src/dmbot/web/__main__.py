@@ -23,6 +23,7 @@ from dmbot.web.admin import HttpGoogle
 from dmbot.web.app import create_app
 from dmbot.web.discord import HttpDiscord
 from dmbot.web.feedback import GitHubDiscussions, Turnstile
+from dmbot.web.moving import EmailedMoveCodes
 from dmbot.web.payments import FakeProvider, PaymentProvider
 from dmbot.web.settings import WebSettings, load_web_settings
 from dmbot.web.stripe import StripeProvider
@@ -109,6 +110,8 @@ async def serve(settings: WebSettings) -> None:
         if settings.mail.configured
         else None
     )
+    # A move code is mailed like a sign-in link, so it needs the same mailer (#1246).
+    move_codes = EmailedMoveCodes(db, mailer) if mailer is not None else None
     app = create_app(
         settings,
         db,
@@ -118,6 +121,7 @@ async def serve(settings: WebSettings) -> None:
         human_check=human_check,
         google=google,
         mailer=mailer,
+        move_codes=move_codes,
     )
     sweeper = asyncio.create_task(_sweep(db))
     syncer = asyncio.create_task(_sync_moves(db, payments)) if payments is not None else None

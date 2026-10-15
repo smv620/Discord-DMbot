@@ -2155,6 +2155,9 @@ WEB_ROLE_FUNCTIONS: tuple[tuple[str, str], ...] = (
     ("dmbot_previous_ids", "dmbot_previous_ids()"),  # the export's earlier Discord accounts
     ("dmbot_forget_account_history", "dmbot_forget_account_history()"),  # account deletion
     ("dmbot_set_payment_email", "dmbot_set_payment_email(TEXT, TEXT, BIGINT)"),  # #1242
+    # A move code asked for on the website (#1246).
+    ("dmbot_web_move_code", "dmbot_web_move_code(BIGINT, TEXT, BIGINT, TEXT, BIGINT)"),
+    ("dmbot_web_cancel_move_code", "dmbot_web_cancel_move_code(BIGINT)"),
 )
 # The columns the website may fill when it creates a hand-over offer (#728): who, where and the
 # two names. Left out on purpose, so they take their defaults: status and decided_at (an offer
@@ -3071,6 +3074,86 @@ DMBOT_ID = """
     $do$;
     """
 
+# The website's way to a move code (#1246). The website's role has no grant on move_codes or
+# account_moves, so it asks through this one door, which does the whole job in one transaction:
+# the account must be on a paid plan and not have moved in the last 30 days, the code's hash is
+# stored (the earlier code stops working), and the limits are counted here, in the database, so
+# every web process agrees and a restart forgets nothing: 3 codes an hour for an account and 5
+# an hour for a connection. `src` is a hash of the connection's address (never the address).
+# The caps match account_move.py's ASKS and MOVE_GAP_S; a test holds them together.
+WEB_MOVE_CODES = """
+    CREATE TABLE move_code_asks (
+        user_id  BIGINT NOT NULL CHECK (user_id > 0),
+        source   TEXT   NOT NULL CHECK (char_length(source) = 64),
+        asked_at BIGINT NOT NULL
+    );
+    CREATE INDEX move_code_asks_by_user ON move_code_asks (user_id, asked_at);
+    CREATE INDEX move_code_asks_by_source ON move_code_asks (source, asked_at);
+    CREATE FUNCTION dmbot_web_move_code(who BIGINT, src TEXT, now BIGINT, hash TEXT, ends BIGINT)
+        RETURNS TEXT
+        LANGUAGE plpgsql SECURITY DEFINER
+        AS $fn$
+    #variable_conflict use_column
+    DECLARE
+        before TEXT := COALESCE(current_setting('dmbot.owner_sync', true), '');
+        account TEXT;
+        ent RECORD;
+        outcome TEXT := 'ok';
+    BEGIN
+        PERFORM set_config('dmbot.owner_sync', 'move', true);
+        -- One ask at a time for an account, so two at once can't both pass the count.
+        SELECT u.dmbot_id INTO account FROM web_users u WHERE u.user_id = who FOR UPDATE;
+        IF account IS NULL THEN
+            outcome := 'no_account';
+        ELSE
+            SELECT e.plan, e.status, e.provider_subscription_id INTO ent
+                FROM entitlements e WHERE e.user_id = who;
+            IF NOT FOUND OR ent.plan = 'try-it' OR ent.status <> 'active'
+               OR ent.provider_subscription_id IS NULL THEN
+                outcome := 'not_paid';
+            ELSIF EXISTS (SELECT 1 FROM account_moves m
+                          WHERE m.dmbot_id = account AND m.moved_at > now - 2592000) THEN
+                outcome := 'too_soon';
+            ELSE
+                DELETE FROM move_code_asks a WHERE a.asked_at <= now - 3600;
+                IF (SELECT count(*) FROM move_code_asks a WHERE a.user_id = who) >= 3
+                   OR (SELECT count(*) FROM move_code_asks a WHERE a.source = src) >= 5 THEN
+                    outcome := 'slow_down';
+                ELSE
+                    INSERT INTO move_code_asks (user_id, source, asked_at) VALUES (who, src, now);
+                    INSERT INTO move_codes (user_id, code_hash, created_at, expires_at)
+                        VALUES (who, hash, now, ends)
+                        ON CONFLICT (user_id) DO UPDATE SET code_hash = EXCLUDED.code_hash,
+                            created_at = EXCLUDED.created_at, expires_at = EXCLUDED.expires_at,
+                            used_at = NULL;
+                END IF;
+            END IF;
+        END IF;
+        PERFORM set_config('dmbot.owner_sync', before, true);
+        RETURN outcome;
+    END
+    $fn$;
+    -- The email didn't go, so no code should be waiting that nobody has seen.
+    CREATE FUNCTION dmbot_web_cancel_move_code(who BIGINT) RETURNS VOID
+        LANGUAGE sql SECURITY DEFINER
+        AS $fn$ DELETE FROM move_codes WHERE user_id = who $fn$;
+    DO $do$
+    BEGIN
+        EXECUTE format(
+            'ALTER FUNCTION dmbot_web_move_code(BIGINT, TEXT, BIGINT, TEXT, BIGINT)'
+            ' SET search_path = pg_catalog, %I, pg_temp',
+            current_schema());
+        EXECUTE format(
+            'ALTER FUNCTION dmbot_web_cancel_move_code(BIGINT)'
+            ' SET search_path = pg_catalog, %I, pg_temp',
+            current_schema());
+    END
+    $do$;
+    REVOKE ALL ON FUNCTION dmbot_web_move_code(BIGINT, TEXT, BIGINT, TEXT, BIGINT) FROM PUBLIC;
+    REVOKE ALL ON FUNCTION dmbot_web_cancel_move_code(BIGINT) FROM PUBLIC;
+"""
+
+
 MIGRATIONS: tuple[Migration, ...] = (
     ("0001_initial", INITIAL),
     ("0002_active_sessions", ACTIVE_SESSIONS),
@@ -3138,6 +3221,7 @@ MIGRATIONS: tuple[Migration, ...] = (
     ("0066_email_sign_in", EMAIL_SIGN_IN),
     ("0067_payment_email", PAYMENT_EMAIL),
     ("0068_moves", MOVES),  # 0066 is the sign-in-by-email migration (#1237)
+    ("0069_web_move_codes", WEB_MOVE_CODES),  # the website's door to a move code (#1246)
 )
 
 # Tables that must have row-level security. A test checks every table in the schema
@@ -3199,5 +3283,6 @@ UNSCOPED_TABLES = (
     "trial_extensions",
     "move_codes",
     "account_moves",
+    "move_code_asks",
     *ROUTING_TABLES,
 )

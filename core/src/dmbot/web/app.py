@@ -450,7 +450,7 @@ def create_app(
         }
 
     @app.post("/me/move-code", status_code=202)
-    async def move_code(signed: Signed) -> dict[str, str]:
+    async def move_code(request: Request, signed: Signed) -> dict[str, str]:
         """Email a move code to the account's payment email (#1231; the code itself is #1230's).
         Paid, active plans only, and never shown on screen: it only goes to the email."""
         session, _token = signed
@@ -462,9 +462,21 @@ def create_app(
         # Three an hour per account, on top of the per-connection limit: a code is an email.
         if move_limit.take(f"user-{session.user_id}") != "ok":
             raise HTTPException(status_code=429, detail="slow_down")
-        await move_codes.send_code(session.user_id)
-        log.info("A move code was sent for user %s", session.user_id)
-        return {"message": "We've emailed a move code to your payment email."}
+        # The connection is kept as a hash, never the address, for the database's own count.
+        source = hashlib.sha256(f"move-code:{client_address(request)}".encode()).hexdigest()
+        outcome = await move_codes.send_code(session.user_id, source)
+        if outcome == "sent":
+            log.info("A move code was sent for user %s", session.user_id)
+            return {"message": "We've emailed a move code to your payment email."}
+        # Plain words the page shows; none of them holds the code or the address.
+        refusals = {
+            "not_paid": (403, "not_paid"),
+            "too_soon": (409, "too_soon"),
+            "slow_down": (429, "slow_down"),
+            "no_email": (409, "no_email"),
+        }
+        status, detail = refusals.get(outcome, (502, "email_failed"))
+        raise HTTPException(status_code=status, detail=detail)
 
     @app.get("/me")
     async def me(signed: Signed) -> dict[str, Any]:

@@ -20,7 +20,7 @@ from dmbot.web import email_signin
 from dmbot.web.app import create_app
 from dmbot.web.discord import DiscordUser
 from dmbot.web.limits import LIMITS, RateLimit
-from dmbot.web.moving import can_move
+from dmbot.web.moving import MoveOutcome, can_move
 from dmbot.web.payments import FakeProvider
 from tests.pg import REQUIRE_DB, SUPERUSER_URL, DatabaseTest
 from tests.test_web_api import ALICE, API, SITE, THURSDAY, FakeDiscord, settings
@@ -124,8 +124,9 @@ class FakeMoveCodes:
     def __init__(self) -> None:
         self.asked: list[int] = []
 
-    async def send_code(self, user_id: int) -> None:
+    async def send_code(self, user_id: int, source: str) -> MoveOutcome:
         self.asked.append(user_id)
+        return "sent"
 
 
 def token_in(link: str) -> str:
