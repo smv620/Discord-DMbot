@@ -694,7 +694,7 @@ class Speed(MemoryTest):
             note(summary)
             reports.append(summary)
             self.assertLess(median, 50, summary)
-        self.fail('NUMBERS ' + ' || '.join(reports))  # TEMPORARY: read the numbers off the CI annotation
+        self.fail("NUMBERS " + " || ".join(reports))  # TEMPORARY
 
 
 if __name__ == "__main__":
