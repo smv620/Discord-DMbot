@@ -150,6 +150,9 @@ export type ApiErrorKind =
   | "slow-down" // too many tries from this address (the API limits sign-in, billing, delete)
   | "bad-link" // an emailed sign-in link that is wrong, used or ended (#1231)
   | "not-ready" // the API has no move codes yet (#1231)
+  | "no-email" // no payment email is stored yet, so a move code has nowhere to go (#1246)
+  | "too-soon" // the account moved less than 30 days ago (#1246)
+  | "email-failed" // the move code could not be emailed just now (#1246)
   | "server"; // anything else
 
 export class ApiError extends Error {
@@ -230,6 +233,9 @@ const errorKinds: Record<string, ApiErrorKind> = {
   bad_link: "bad-link",
   move_off: "not-ready",
   not_paid: "no-paid-plan",
+  no_email: "no-email",
+  too_soon: "too-soon",
+  email_failed: "email-failed",
 };
 
 /** The real API over HTTP. `base` is the API's address, e.g. "https://api.example". */
