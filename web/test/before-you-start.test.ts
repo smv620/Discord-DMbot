@@ -1,5 +1,8 @@
 // "Before you start" on the home page (#1324): short, plain answers, no new privacy wording and
 // no prices, a link to a real page where an answer needs more, one h1 on the page.
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+
 import { experimental_AstroContainer as AstroContainer } from "astro/container";
 import { beforeAll, describe, expect, it } from "vitest";
 
@@ -19,7 +22,7 @@ beforeAll(async () => {
 });
 
 describe("Before you start", () => {
-  it("has the six questions, as open-and-close rows under its own heading, after the feature cards", () => {
+  it("has the seven questions, as open-and-close rows under its own heading, after the feature cards", () => {
     const section = home.querySelector(".before");
     expect(section?.querySelector("h2")?.textContent).toBe(beforeHeading);
     const asked = [...(section?.querySelectorAll("details > summary") ?? [])].map((s) => s.textContent);
@@ -30,11 +33,38 @@ describe("Before you start", () => {
       "Can my players see my DM notes?",
       "Will DMbot take over my game?",
       "Who can read the game's written record?",
+      "Does it send what we say to an AI?",
       "Which rules does it use?",
       "What do I need?",
     ]);
     const does = home.querySelector(".does");
     expect(does && section && does.compareDocumentPosition(section) & 4).toBeTruthy(); // 4: after
+  });
+
+  it("names only companies the privacy page and the yes message already name (#1326)", () => {
+    const row = beforeQuestions.find((q) => q.question.startsWith("Does it send"));
+    expect(row?.more?.href).toBe("/legal/privacy");
+    const privacy = readFileSync(fileURLToPath(new URL("../src/pages/legal/privacy.astro", import.meta.url)), "utf8");
+    const consent = readFileSync(fileURLToPath(new URL("../../core/src/dmbot/consent_dm.py", import.meta.url)), "utf8");
+    // Every capitalised company in the answer: the ones it names are on the privacy page, and the AI
+    // company is the one the yes message names too.
+    for (const company of ["Deepgram", "Anthropic"]) {
+      expect(row?.answer, company).toContain(company);
+      expect(privacy, `${company} on the privacy page`).toContain(company);
+    }
+    expect(consent, "the yes message and the privacy page must stay in sync").toContain("AI company (Anthropic)");
+    expect(row?.answer).toContain("thrown away");
+    expect(privacy).toContain("the sound is thrown away");
+    // "It gets the text it needs, not sound" is the privacy page's own phrase (across a line break).
+    expect(privacy.replace(/\s+/g, " ")).toContain("It gets the text it needs, not sound");
+    expect(row?.answer).toContain("gets the text it needs, not sound");
+    // The yes message says the text isn't used to train the AI; the privacy page doesn't, so the
+    // answer must not either until it does.
+    expect(row?.answer).not.toMatch(/train/i);
+    // Any capitalised word, short ones and all-caps ones too ("OVH", "AWS"), apart from the few
+    // plain words that start a sentence or say what it is.
+    const names = (row?.answer.match(/\b[A-Z][A-Za-z]+\b/g) ?? []).filter((w) => !["Yes", "AI", "An", "A"].includes(w));
+    expect(names.sort()).toEqual(["Anthropic", "Deepgram"]);
   });
 
   it("opens the first row, so the recording answer is read without a click", () => {
