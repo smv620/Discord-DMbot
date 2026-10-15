@@ -11,11 +11,12 @@ from __future__ import annotations
 
 import logging
 import secrets
+from typing import Any
 
 import discord
 
 from dmbot import account_move
-from dmbot.account_move import MoveError, Preview
+from dmbot.account_move import IssuedCode, MoveError, Preview
 from dmbot.ui.dmbot_commands import (
     _answer_first,
     _bot,
@@ -127,23 +128,7 @@ async def get_code(interaction: discord.Interaction) -> None:
             await _tell(interaction, NO_EMAIL)
             return
         code = await bot.account_moves.make_code(interaction.user.id)
-        result = await bot.mailer.send(
-            user_id=interaction.user.id,
-            # One email for each code, so a new code is never hidden. The kind is stored and
-            # logged, so it holds a random nonce and nothing derived from the code.
-            kind=f"move-code:{secrets.token_hex(6)}",
-            to=email,
-            subject="Your DMbot move code",
-            body=(
-                f"Your DMbot move code: {code[:4]}-{code[4:]}\n\n"
-                "It works once and lasts 30 minutes.\n"
-                'Type it on your NEW Discord account: run /dmbot migrate, tap "Import my '
-                'account", and enter it.\n'
-                "The code moves your plan, its hours and your campaigns. Never give it to "
-                "anyone else.\n"
-                "Didn't ask for this? Ignore this email. Nothing changes."
-            ),
-        )
+        result = await _send_code(bot, interaction.user.id, email, code)
     except MoveError as exc:
         await _tell(interaction, str(exc))
         return
@@ -151,11 +136,49 @@ async def get_code(interaction: discord.Interaction) -> None:
         log.exception("Couldn't make a move code")
         await _tell(interaction, NOT_READY)
         return
-    if result not in ("sent", "already_sent"):
-        await bot.account_moves.cancel_code(interaction.user.id, code)
+    # Each ask has its own email kind, so "already_sent" can't be right: nobody got this code.
+    if result != "sent":
+        await _give_back(bot, interaction.user.id, code)
         await _tell(interaction, EMAIL_FAILED)
         return
     await _tell(interaction, EMAILED)
+
+
+async def _give_back(bot: Any, user_id: int, code: IssuedCode) -> None:
+    """The email didn't go: no code should be waiting that nobody has seen, and the ask is given
+    back. A failure to do even that is logged, never shown with the code."""
+    try:
+        await bot.account_moves.cancel_code(user_id, code)
+    except Exception:
+        log.exception("Couldn't give back a move code")
+
+
+async def _send_code(bot: Any, user_id: int, email: str, code: IssuedCode) -> str:
+    """Email the code. A mailer that raises is a failed send (the caller gives the code back),
+    not a reason to leave the code live."""
+    try:
+        return str(
+            await bot.mailer.send(
+                user_id=user_id,
+                # One email for each code, so a new code is never hidden. The kind is stored and
+                # logged, so it holds a random nonce and nothing derived from the code.
+                kind=f"move-code:{secrets.token_hex(6)}",
+                to=email,
+                subject="Your DMbot move code",
+                body=(
+                    f"Your DMbot move code: {code[:4]}-{code[4:]}\n\n"
+                    "It works once and lasts 30 minutes.\n"
+                    'Type it on your NEW Discord account: run /dmbot migrate, tap "Import my '
+                    'account", and enter it.\n'
+                    "The code moves your plan, its hours and your campaigns. Never give it to "
+                    "anyone else.\n"
+                    "Didn't ask for this? Ignore this email. Nothing changes."
+                ),
+            )
+        )
+    except Exception:
+        log.exception("Couldn't send a move code")  # (what was raised, never the code)
+        return "failed"
 
 
 class CodeForm(discord.ui.Modal, title="Import my account"):

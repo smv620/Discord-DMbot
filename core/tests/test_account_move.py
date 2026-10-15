@@ -355,6 +355,42 @@ class Moves(DatabaseTest):
                     door = str(exc)
                 self.assertEqual(precheck, door)
 
+    async def test_a_mailer_that_raises_leaves_no_code_and_the_next_ask_works(self) -> None:
+        """The whole path, with the real door: three failed sends in a row use up nothing, and
+        a code asked for afterwards is the only one waiting."""
+        from types import SimpleNamespace
+        from unittest.mock import AsyncMock, MagicMock
+
+        from dmbot.ui import migrate
+
+        async with self.db.user(OLD) as conn:
+            await conn.execute(
+                "UPDATE web_users SET payment_email = 'pays@example.org', payment_email_at = 1"
+                " WHERE user_id = %s",
+                (OLD,),
+            )
+        sent: list[str] = []
+
+        async def reply(text: str, **_: Any) -> None:
+            sent.append(text)
+
+        it = MagicMock()
+        it.user = SimpleNamespace(id=OLD)
+        it.client = SimpleNamespace(
+            account_moves=self.moves,
+            mailer=SimpleNamespace(send=AsyncMock(side_effect=RuntimeError("smtp down"))),
+            meter=SimpleNamespace(db=self.db),
+        )
+        it.response.is_done = lambda: True
+        it.followup.send = reply
+        for _ in range(account_move.ASKS + 1):  # more failures than the hour allows asks
+            await migrate.get_code(it)
+        self.assertEqual(set(sent), {migrate.EMAIL_FAILED})
+        self.assertEqual(await self.scalar("SELECT count(*) FROM move_codes"), 0)
+        self.assertEqual(await self.scalar("SELECT count(*) FROM move_code_asks"), 0)
+        await self.moves.make_code(OLD)  # the next ask works
+        self.assertEqual(await self.scalar("SELECT count(*) FROM move_codes"), 1)
+
     async def test_a_second_move_inside_30_days_is_refused(self) -> None:
         await self.moves.move(OLD, NEW, await self.code())
         # The new account asks to move on at once: refused for 30 days.
