@@ -711,7 +711,6 @@ class Speed(MemoryTest):
         # adds time, so the best run is the fair measure of what the service itself costs. The
         # median and the worst are reported beside it.
         self.assertLess(max(bests), 50, " || ".join(reports))
-        self.fail("NUMBERS " + " || ".join(reports))  # TEMPORARY
 
 
 if __name__ == "__main__":
