@@ -30,6 +30,15 @@ from dmbot.transcript.topic_ai import Completes, prompt
 # guesses: the log shows "confidence 0.xx" for every check, to tune them by.
 GARBLED_BELOW = 0.6
 FINE_FROM = 0.9
+# Local Whisper's number is its own (the chance it gave the words it wrote, #733), not
+# Deepgram's scale: clean speech sits near 0.7-0.8, doubtful speech near 0.4 (average
+# log-probability about -0.9). So it has its own limits; an engine not listed uses the
+# first pair. First guesses too: the log shows the engine with every check, to tune by.
+WHISPER_GARBLED_BELOW = 0.45
+WHISPER_FINE_FROM = 0.7
+LIMITS: dict[str, tuple[float, float]] = {
+    "whisper": (WHISPER_GARBLED_BELOW, WHISPER_FINE_FROM),
+}
 MIN_WORDS = 8
 AI_EVERY_S = 60.0  # one question per person per minute at most
 FINE_FOR_S = 180.0  # an AI "reads fine" is trusted this long, for someone who stays patchy
@@ -65,14 +74,16 @@ def mean_confidence(lines: Sequence[tuple[str, float | None]]) -> tuple[float, i
     return sum(n * c for n, c in weighted) / words, words
 
 
-def by_confidence(found: tuple[float, int] | None) -> bool | None:
+def by_confidence(found: tuple[float, int] | None, engine: str | None = None) -> bool | None:
     """True (garbled) or False (reads fine) from `mean_confidence`, or None if the
-    engine gave none, it's middling, or there are too few words to tell."""
+    engine gave none, it's middling, or there are too few words to tell. `engine`: whose
+    confidence it is, for its own limits."""
     if found is None or found[1] < MIN_WORDS:
         return None
-    if found[0] < GARBLED_BELOW:
+    garbled_below, fine_from = LIMITS.get(engine or "", (GARBLED_BELOW, FINE_FROM))
+    if found[0] < garbled_below:
         return True
-    if found[0] >= FINE_FROM:
+    if found[0] >= fine_from:
         return False
     return None
 
@@ -116,9 +127,10 @@ class AudioChecker:
         if not due.lines:
             return Verdict(True, "no lines came through")
         found = mean_confidence(due.lines)
-        verdict = by_confidence(found)
+        verdict = by_confidence(found, due.engine)
         if verdict is not None and found is not None:
-            return Verdict(verdict, f"confidence {found[0]:.2f} over {found[1]} words")
+            which = f"{due.engine} " if due.engine else ""
+            return Verdict(verdict, f"{which}confidence {found[0]:.2f} over {found[1]} words")
         if ai is None:
             return Verdict(True, "no check possible: audio rule")
         if now < self.fine_until.get(due.user_id, 0.0):
