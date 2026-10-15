@@ -139,6 +139,12 @@ class Isolation(MemoryTest):
 
         await self.memory.add_session_heard(GUILD_A, self.c, 1_000, [Heard(a, DM, 1)])
         await self.memory.set_condition(GUILD_A, self.c, a, "missing", source="dm")
+        from dmbot.memory.claims import ClaimStore, Extracted
+
+        await ClaimStore(self.memory).propose(
+            GUILD_A, self.c, [Extracted("Belleros", "knows", "Cerric", "", ("1",), "dm_said")],
+            {"1": DM}, opted_in={DM}, prompt_version="p1", model="m1", session_started_at=1_000,
+        )  # fmt: skip
         return a, b
 
     async def test_another_server_sees_nothing(self) -> None:

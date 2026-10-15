@@ -67,6 +67,15 @@ STATES = Table(
     "id",
     ("id", "entity_id", "condition", "from_session_at", "source", "created_at", "closed_at"),
 )
+# What the story extractor read out of a session, waiting for the DM (#1297): text only, no
+# links to entries, because a claim names things the memory may not know yet.
+CLAIMS = Table(
+    "memory_claims",
+    "id",
+    ("id", "subject", "relationship", "object", "details", "how", "lines", "speaker_id",
+     "source", "prompt_version", "model", "status", "reason", "session_started_at",
+     "created_at", "decided_at", "fact_id"),
+)  # fmt: skip
 # A character's links to the rules (#1034): species, creature type, stat block, class,
 # background.
 RULE_LINKS = Table(
@@ -111,7 +120,7 @@ FLAGS = Table(
     ("id", "kind", "relation_id", "other_id", "status", "created_at"),
 )
 ALL = (TYPES, PREDICATES, ENTITIES, ALIASES, MENTIONS, RELATIONS, CORRECTIONS, FLAGS, RULE_LINKS,
-       STATES)  # fmt: skip
+       STATES, CLAIMS)  # fmt: skip
 BY_NAME = {t.name: t for t in ALL}
 
 # What links to a row (table, column, is the column a list), checked before deleting it,

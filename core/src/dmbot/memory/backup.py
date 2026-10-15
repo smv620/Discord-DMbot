@@ -21,6 +21,7 @@ from dmbot.db import Conn
 from dmbot.memory import notify, sheets
 from dmbot.memory._changes import (
     ALIASES,
+    CLAIMS,
     CORRECTIONS,
     ENTITIES,
     FLAGS,
@@ -37,11 +38,13 @@ from dmbot.memory._changes import (
 from dmbot.memory.checks import FLAG_KINDS
 from dmbot.memory.models import (
     ALIAS_KINDS,
+    CLAIM_STATUSES,
     CONDITIONS,
     DESCRIPTION_MAX,
     DETAIL_MAX,
     ENTITY_STATUSES,
     FIX,
+    HOWS,
     KEEP,
     LINE_REF_MAX,
     LINK_EDITIONS,
@@ -78,6 +81,7 @@ _TAGS: dict[str, Table] = {
     "entity": ENTITIES,
     "rule_link": RULE_LINKS,
     "state": STATES,
+    "claim": CLAIMS,
     "alias": ALIASES,
     "relation": RELATIONS,
     "correction": CORRECTIONS,
@@ -102,9 +106,16 @@ _TEXT_LIMITS = {
     "replaced_by": 40,
     "type": 40,
     "predicate": 40,
+    "subject": NAME_MAX,
+    "relationship": NAME_MAX,
+    "object": NAME_MAX,
+    "details": DETAIL_MAX,
+    "prompt_version": 40,
+    "model": 80,
 }
 _CHOICES: dict[str, Sequence[str]] = {
-    "status": (*ENTITY_STATUSES, ACTIVE, DEPRECATED, "open", "resolved"),
+    "status": (*ENTITY_STATUSES, ACTIVE, DEPRECATED, "open", "resolved", *CLAIM_STATUSES),
+    "how": HOWS,
     "kind": (*ALIAS_KINDS, *FLAG_KINDS, *LINK_KINDS),
     "condition": CONDITIONS,
     "role": ROLES,
@@ -112,17 +123,19 @@ _CHOICES: dict[str, Sequence[str]] = {
     "action": (FIX, KEEP),
     "source": SOURCES,
 }
-_IDS = {"id", "entity_id", "merged_into", "used_by", "subject_id", "object_id", "relation_id",
-        "other_id"}  # fmt: skip
-_INTS = {"played_by", "created_at", "from_session_at", "to_session_at", "from_game_time",
-         "to_game_time", "max_per_subject", "closed_at"}  # fmt: skip
+_IDS = {"id", "entity_id", "fact_id", "merged_into", "used_by", "subject_id", "object_id",
+        "relation_id", "other_id"}  # fmt: skip
+_INTS = {"played_by", "speaker_id", "session_started_at", "decided_at", "created_at",
+         "from_session_at", "to_session_at", "from_game_time", "to_game_time",
+         "max_per_subject", "closed_at"}  # fmt: skip
 _VERSIONS = {"version", "definition_version"}  # from 1 up (#1189)
 _LISTS = {"examples", "subject_types", "object_types", "conflicts_with", "sound_codes",
-          "mention_ids", "covers", "not_this", "synonyms"}  # fmt: skip
+          "mention_ids", "covers", "not_this", "synonyms", "lines"}  # fmt: skip
 _NULLABLE = {
     "role", "edition", "played_by", "merged_into", "used_by", "other_id", "entity_id",
     "replaced_by", "parent", "from_session_at", "to_session_at", "from_game_time",
-    "to_game_time", "max_per_subject", "closed_at", "unique_item",
+    "to_game_time", "max_per_subject", "closed_at", "unique_item", "speaker_id", "fact_id",
+    "session_started_at", "decided_at",
 }  # fmt: skip
 
 
