@@ -481,14 +481,27 @@ async def check_update(bot: Any, campaign: Campaign, screen_id: int) -> None:
         update = await sets.pending_update(campaign.guild_id, campaign.id, for_dmbot=True)
         if update is None:
             if await sets.is_gone(campaign.guild_id, campaign.id):
-                follows = await sets.following(campaign.guild_id, campaign.id)
-                await sets.stop_updating(campaign.guild_id, campaign.id)
-                name = discord.utils.escape_markdown(follows[0].name) if follows else "The set's"
-                await bot.post(
-                    screen_id,
-                    f"📚 **{name}** house rules aren't shared any more. You keep your copy as it "
-                    "is; it just won't get updates.",
-                )
+                # The house-rules follow is the one is_gone and stop_updating acted on.
+                houses = [
+                    f
+                    for f in await sets.following(campaign.guild_id, campaign.id)
+                    if f.kind == rule_sets.HOUSE_RULES and f.updating
+                ]
+                stopped = await sets.stop_updating(campaign.guild_id, campaign.id)
+                if not stopped:
+                    return  # another check got there first and said it: said once
+                if houses:
+                    name = discord.utils.escape_markdown(houses[0].name)
+                    text = (
+                        f"📚 **{name}** isn't being shared any more. "
+                        f"Your table keeps version {houses[0].version}, and it won't get updates."
+                    )
+                else:
+                    text = (
+                        "📚 A set your table follows isn't being shared any more. "
+                        "You keep your copy, and it won't get updates."
+                    )
+                await bot.post(screen_id, text)
             return
         await sets.take_update(  # DMbot takes it: Follow is the default when the DM does nothing
             campaign.guild_id,
