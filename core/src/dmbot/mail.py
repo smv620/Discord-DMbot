@@ -9,7 +9,8 @@ Two kinds of email:
   empty, and never go to a person who unsubscribed.
 
 `sent_emails` records who got which kind and when, never the text, so a one-off email goes
-once. A daily cap (default 400; keep it at or under the provider's limit) stops a bug from sending a flood.
+once. A daily cap (default 400; keep it at or under the provider's limit) stops a bug from
+sending a flood.
 No address or body is ever logged: the log says only what kind went and what happened.
 Tests use example.com addresses and a fake transport.
 """
