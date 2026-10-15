@@ -26,7 +26,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, RedirectResponse
 
 from dmbot import consent_notify, entitlements, install, mail, plans
-from dmbot.account_id import from_dmbot_id
+from dmbot.account_id import from_dmbot_id, to_dmbot_id
 from dmbot.consent import ConsentStore
 from dmbot.db import Database
 from dmbot.link_tokens import check_link_token, check_unsubscribe_token
@@ -37,6 +37,7 @@ from dmbot.web import (
     feedback,
     offers,
     sessions,
+    support,
     tokens,
 )
 from dmbot.web.accounts import (
@@ -71,6 +72,8 @@ MAX_WEBHOOK_BYTES = 64 * 1024
 # A feedback form: 2,000 characters (up to 4 bytes each, more once JSON-escaped), a
 # contact and a Turnstile token.
 MAX_FEEDBACK_BYTES = 32 * 1024
+# A support ticket: 4,000 characters plus a subject and a Turnstile token (the same slack).
+MAX_SUPPORT_BYTES = 48 * 1024
 Clock = Callable[[], int]
 
 
@@ -95,6 +98,7 @@ def create_app(
     discussions: Discussions | None = None,
     human_check: HumanCheck | None = None,
     feedback_limit: RateLimit | None = None,
+    support_limit: RateLimit | None = None,
     export_limit: RateLimit | None = None,
     email_limit: RateLimit | None = None,
     mailer: mail.Mailer | None = None,
@@ -110,6 +114,10 @@ def create_app(
     no Turnstile check (settings allow that only on localhost)."""
     if feedback_limit is None:
         feedback_limit = RateLimit()
+    if support_limit is None:
+        # Support tickets (#1340): one per account per 10 minutes, counted by account (the
+        # person is signed in), so a shared address can't hold one person's turn.
+        support_limit = RateLimit()
     if email_limit is None:
         # Sign-in links (#1231): three a hour per email address, kept apart from the per-connection
         # limit so one person can't fill someone else's inbox from many connections. Room for a
@@ -939,6 +947,67 @@ def create_app(
             raise
         log.info("Feedback posted: discussion %s", posted.number)
         return {"url": posted.url}
+
+    @app.post("/support", status_code=201)
+    async def send_support(request: Request, signed: Signed) -> dict[str, bool]:
+        """A private support ticket from a paying person (#1340). Never public: it goes to
+        the support_tickets table (support.py), and its words are never logged or emailed."""
+        session, _token = signed
+        with contextlib.suppress(ValueError):
+            if int(request.headers.get("content-length", "0")) > MAX_SUPPORT_BYTES:
+                raise HTTPException(status_code=413, detail="too_long")
+        body = b""
+        async for chunk in request.stream():
+            body += chunk
+            if len(body) > MAX_SUPPORT_BYTES:
+                raise HTTPException(status_code=413, detail="too_long")
+        try:
+            raw = json.loads(body)
+        except (ValueError, RecursionError):  # RecursionError: "[[[[..." nested too deep
+            raw = None
+        ticket = support.read_ticket(raw)
+        if isinstance(ticket, str):
+            raise HTTPException(status_code=400, detail=ticket)
+        now = clock()
+        plan, _grant, _access = await entitlements.plan_grant_access(db, session.user_id, now)
+        if plan is None or not support.is_paying(plan, now):
+            # Everyone else is pointed to the public Q&A, on the page itself.
+            raise HTTPException(status_code=403, detail="not_paying")
+        turn = str(session.user_id)
+        taken = support_limit.take(turn)
+        if taken != "ok":
+            raise HTTPException(status_code=429, detail="slow_down" if taken == "wait" else "busy")
+        try:
+            if human_check is not None:
+                address = client_address(request)
+                token = str((raw.get("turnstile") if isinstance(raw, dict) else None) or "")
+                if not await human_check.verify(token, address):
+                    if token:
+                        # A wrong answer uses the turn, so guessing Turnstile answers is slow.
+                        raise _Refused("not_human")
+                    raise HTTPException(status_code=400, detail="not_human")
+            await support.add(db, session.user_id, plan.plan, ticket, now=now)
+        except _Refused as refused:
+            raise HTTPException(status_code=400, detail=refused.code) from None
+        except FeedbackError as exc:
+            support_limit.give_back(turn)
+            log.warning("A support ticket's human check couldn't run: %s", exc)
+            raise HTTPException(status_code=502, detail="support_unavailable") from exc
+        except BaseException:
+            support_limit.give_back(turn)
+            raise
+        # Ids only: never the subject or the message.
+        log.info("Support ticket added by user %s", session.user_id)
+        if settings.support_team_email and mailer is not None:
+            # The ticket is already kept: a failed email loses nothing, the admin page lists it.
+            await mailer.notify_team(
+                settings.support_team_email,
+                "A DMbot support ticket is waiting",
+                "A paying account sent a support ticket.\n\n"
+                f"DMbot ID: {to_dmbot_id(session.user_id)}\nPlan: {plan.plan}\n\n"
+                f"Read it on the admin page: {settings.site_url}/admin\n",
+            )
+        return {"ok": True}
 
     # The admin page's sign-in (#772); off while ADMIN_EMAILS is empty. Its sessions and
     # locks count seconds on their own steady clock (not `clock`, the wall time used for
