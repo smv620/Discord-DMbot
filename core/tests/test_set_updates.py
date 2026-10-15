@@ -1,4 +1,4 @@
-"""Shared rulesets, part 2 (#1191): new versions by the publisher and named co-editors, and a
+"""Shared rulesets, part 2 (#1191): new versions by the publisher's DMs, and a
 follower taking an update (Follow, or Cherry pick that merges into its own rules). Needs
 Postgres, like the other store tests; CI runs them."""
 
@@ -9,6 +9,7 @@ from typing import Any
 from dmbot.campaigns import CampaignStore
 from dmbot.rules import rule_sets
 from dmbot.rules.house import HOUSE_RULES_MAX, HouseRuleError, HouseRuleStore
+from dmbot.rules.house_file_link import HouseFileLinkStore
 from dmbot.rules.rule_sets import RuleSetError, RuleSetStore
 from tests.pg import DatabaseTest
 
@@ -45,10 +46,8 @@ class Updates(DatabaseTest):
         self.code = await self.sets.make_code(GUILD_A, self.pub, DM_A)
 
     async def make_editor(self) -> None:
-        """EDITOR becomes a DM of the publishing campaign, then a named co-editor."""
-        campaigns = CampaignStore(self.db)
-        await campaigns.add_dm(GUILD_A, self.pub, EDITOR)
-        await self.sets.add_editor(GUILD_A, self.pub, DM_A, EDITOR)
+        """EDITOR becomes a second DM of the publishing campaign (the only way to edit)."""
+        await CampaignStore(self.db).add_dm(GUILD_A, self.pub, EDITOR)
 
     async def follow_far(self) -> rule_sets.Follow:
         offer = await self.sets.by_code(GUILD_B, DM_B, self.code)
@@ -62,8 +61,6 @@ class Updates(DatabaseTest):
                 GUILD_A, self.pub, DM_A, content((1, "x", None)) | {"rules": "no"}, plan_ok=True
             )
         await self.make_editor()
-        with self.assertRaises(HouseRuleError):  # naming co-editors is the publisher's
-            await self.sets.add_editor(GUILD_A, self.pub, EDITOR, PLAYER)
         made = await self.sets.save_version(GUILD_A, self.pub, EDITOR, V2, plan_ok=True)
         self.assertEqual(made.version, 2)
         with self.assertRaises(RuleSetError):  # nothing differs
@@ -73,16 +70,34 @@ class Updates(DatabaseTest):
             [(v.version, v.by, v.source) for v in log],
             [(2, EDITOR, "publisher"), (1, DM_A, "publisher")],
         )
-        self.assertTrue(await self.sets.remove_editor(GUILD_A, self.pub, DM_A, EDITOR))
-        self.assertEqual(await self.sets.editors(GUILD_A, self.pub), [])
-        # A co-editor has to be a DM of the publishing campaign; and the plan must be paid.
+        # Only current DMs write: a DM taken off the campaign can't change the set any more.
+        await CampaignStore(self.db).remove_dm(GUILD_A, self.pub, EDITOR)
         with self.assertRaises(RuleSetError):
-            await self.sets.add_editor(GUILD_A, self.pub, DM_A, PLAYER)
+            await self.sets.save_version(
+                GUILD_A, self.pub, EDITOR, content((7, "Late", None)), plan_ok=True
+            )
+        # The plan must be paid.
         with self.assertRaises(RuleSetError) as err:
             await self.sets.save_version(
                 GUILD_A, self.pub, DM_A, content((9, "z", None)), plan_ok=False
             )
         self.assertEqual(str(err.exception), rule_sets.NOT_PAID)
+
+    async def test_undoing_a_publish_republishes_the_earlier_rules(self) -> None:
+        made = await self.sets.save_version(GUILD_A, self.pub, DM_A, V2, plan_ok=True)
+        first = await self.sets.content_at(GUILD_A, self.pub, made.version - 1)
+        assert first is not None
+        back = await self.sets.save_version(
+            GUILD_A, self.pub, DM_A, first, plan_ok=True, expected_version=made.version
+        )
+        self.assertEqual(back.version, 3)
+        self.assertEqual((await self.sets.content_at(GUILD_A, self.pub, 3)), first)
+        self.assertEqual(len(await self.sets.version_log(GUILD_A, self.pub)), 3)  # nothing erased
+        with self.assertRaises(RuleSetError) as err:  # the publish is no longer the newest
+            await self.sets.save_version(
+                GUILD_A, self.pub, DM_A, V2, plan_ok=True, expected_version=made.version
+            )
+        self.assertEqual(str(err.exception), rule_sets.CHANGED_AGAIN)
 
     async def test_an_update_waits_and_the_follower_keeps_its_copy_until_it_takes_it(self) -> None:
         follow = await self.follow_far()
@@ -172,6 +187,34 @@ class Updates(DatabaseTest):
         update = await self.sets.pending_update(GUILD_A, self.same)
         assert update is not None
         self.assertEqual(update.offer.version, 2)
+
+    async def test_pick_changes_carries_a_changed_link_to_the_campaign(self) -> None:
+        links = HouseFileLinkStore(self.db)
+        await self.follow_far()
+        new = V2 | {"link": "https://example.com/rules"}
+        await self.sets.save_version(GUILD_A, self.pub, DM_A, new, plan_ok=True)
+        taken = await self.sets.take_update(GUILD_B, self.far, DM_B, accepted={3})
+        self.assertTrue(taken.merged)
+        got = await links.get(GUILD_B, self.far)
+        assert got is not None
+        self.assertEqual(got.link, "https://example.com/rules")
+        await self.sets.undo_take(GUILD_B, self.far, DM_B, taken)  # the link goes with the rules
+        self.assertIsNone(await links.get(GUILD_B, self.far))
+
+    async def test_pick_changes_never_replaces_the_campaigns_own_link(self) -> None:
+        links = HouseFileLinkStore(self.db)
+        await links.set_link(GUILD_B, self.far, DM_B, "https://example.com/mine")
+        await self.follow_far()
+        new = V2 | {"link": "https://example.com/rules"}
+        await self.sets.save_version(GUILD_A, self.pub, DM_A, new, plan_ok=True)
+        taken = await self.sets.take_update(GUILD_B, self.far, DM_B, accepted={3})
+        got = await links.get(GUILD_B, self.far)
+        assert got is not None
+        self.assertEqual(got.link, "https://example.com/mine")
+        await self.sets.undo_take(GUILD_B, self.far, DM_B, taken)
+        again = await links.get(GUILD_B, self.far)
+        assert again is not None
+        self.assertEqual(again.link, "https://example.com/mine")
 
     async def test_undo_leaves_a_merged_rule_the_dm_has_edited(self) -> None:
         await self.follow_far()
@@ -368,6 +411,29 @@ class Updates(DatabaseTest):
             row = await cur.fetchone()
         self.assertEqual((row or {})["taken_by"], None)
         self.assertEqual((row or {})["taken_source"], None)
+
+    async def test_a_publish_made_on_an_old_version_is_refused_in_the_store(self) -> None:
+        await self.follow_far()
+        await self.sets.save_version(GUILD_A, self.pub, DM_A, V2, plan_ok=True)  # now version 2
+        v3 = content((1, "Crits double the dice, always", None))
+        with self.assertRaises(RuleSetError):  # the DM was looking at version 1
+            await self.sets.save_version(
+                GUILD_A, self.pub, DM_A, v3, plan_ok=True, expected_version=1
+            )
+        made = await self.sets.save_version(
+            GUILD_A, self.pub, DM_A, v3, plan_ok=True, expected_version=2
+        )
+        self.assertEqual(made.version, 3)
+
+    async def test_current_content_is_the_newest_version_and_none_when_not_shared(self) -> None:
+        await self.follow_far()
+        await self.sets.save_version(GUILD_A, self.pub, DM_A, V2, plan_ok=True)
+        got = await self.sets.current_content(GUILD_A, self.pub)
+        assert got is not None
+        self.assertEqual((got[0].version, got[1]["rules"][0]["number"]), (2, 1))
+        await self.sets.stop_sharing(GUILD_A, self.pub, DM_A)
+        self.assertIsNone(await self.sets.current_content(GUILD_A, self.pub))
+        self.assertIsNone(await self.sets.current_content(GUILD_A, "none"))
 
     async def test_dmbot_cannot_merge_for_a_dm(self) -> None:
         await self.follow_far()
