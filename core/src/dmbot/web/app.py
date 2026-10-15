@@ -37,6 +37,7 @@ from dmbot.web.accounts import (
     first_paid_month_after_trial,
     link_install,
     record_install,
+    user_of_dmbot_id,
 )
 from dmbot.web.admin import CSRF_HEADER, AdminSessions, FailedTries, GoogleSignIn
 from dmbot.web.characters import build_characters
@@ -260,6 +261,11 @@ def create_app(
         except DiscordError as exc:
             log.warning("Sign-in failed: %s", exc)
             return failed
+        except sessions.AccountMoved:
+            # This Discord account's plan moved to another one (#1230): say so plainly.
+            moved = RedirectResponse(f"{account_page}?signin=moved", status_code=302)
+            moved.delete_cookie(state_cookie, path="/", secure=settings.secure_cookies)
+            return moved
         except Exception:
             # A bad answer from Discord or a database problem: the person gets the plain
             # "try again" page, the log gets the details (no token, no names).
@@ -710,7 +716,10 @@ def create_app(
             raise HTTPException(status_code=400, detail="bad_link") from None
         if not check_unsubscribe_token(uid, token, settings.link_token_secret):
             raise HTTPException(status_code=400, detail="bad_link")
-        await mail.unsubscribe(db, user_id, now=int(clock()))
+        # The link carries the ID the account was made with; the account may have moved to a
+        # new Discord ID since (#1230).
+        current = await user_of_dmbot_id(db, uid)
+        await mail.unsubscribe(db, current or user_id, now=int(clock()))
         return {"ok": True}
 
     @app.post("/feedback")

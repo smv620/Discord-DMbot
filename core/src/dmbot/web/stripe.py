@@ -286,6 +286,27 @@ class StripeProvider:
         if status not in (200, 404):
             raise PaymentError(f"Stripe answered {status} to a cancel")
 
+    async def retarget(
+        self, *, customer_id: str | None, subscription_id: str | None, user_id: int
+    ) -> None:
+        """Point the customer's and the subscription's `user_id` metadata at the new Discord
+        ID (an account move, #1230). Stripe merges metadata keys, so only this one changes;
+        repeating it is harmless."""
+        form = {"metadata[user_id]": str(int(user_id))}
+        paths = []
+        if customer_id:
+            paths.append(f"/v1/customers/{_checked(customer_id, _CUSTOMER, 'customer id')}")
+        if subscription_id:
+            paths.append(
+                f"/v1/subscriptions/{_checked(subscription_id, _SUBSCRIPTION, 'subscription id')}"
+            )
+        for path in paths:
+            status, _ = await self._http("POST", path, form)
+            if status == 404:
+                continue  # gone at the company (deleted): nothing left to point
+            if status != 200:
+                raise PaymentError(f"Stripe answered {status} to a metadata update")
+
     # --- Stripe asking us ---
 
     def verify(self, body: bytes, headers: Mapping[str, str]) -> bool:
