@@ -119,6 +119,7 @@ class PlanChecksSetting(unittest.TestCase):
             ("DMBOT_STORY_EXTRACTOR_MAX_CALLS", "0"),
             ("DMBOT_STORY_EXTRACTOR_MAX_CALLS", "5001"),
             ("DMBOT_STORY_EXTRACTOR_MAX_CALLS", "many"),
+            ("DMBOT_STORY_EXTRACTOR_MAX_CALLS", "²"),
         ):
             with self.assertRaisesRegex(ConfigError, name):
                 load_settings({**BASE, name: bad})

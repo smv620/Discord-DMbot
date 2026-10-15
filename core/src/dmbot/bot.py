@@ -1781,13 +1781,14 @@ class DMBot(commands.AutoShardedBot):
             ("name scan", lambda: self.suggest_names(table)),
             ("who is who", lambda: self.learn_people(table)),
             ("people check", lambda: self.check_people(table)),
+            ("definitions", lambda: self.recheck_definitions(table)),
+            ("stale flags", lambda: self.close_stale_flags(table)),
+            ("old undo history", lambda: self.prune_old_changes(table)),
+            # Slow when on (minutes of AI calls), so after the quick steps; the two after it need it.
             ("story extractor", lambda: self.extract_claims(table, ended_at)),
             ("what was said", lambda: self.ask_about_claims(table)),
             ("heads-ups", lambda: self.warn_about_continuity(table)),
             ("steward numbers", lambda: self.log_steward_tally(table)),
-            ("definitions", lambda: self.recheck_definitions(table)),
-            ("stale flags", lambda: self.close_stale_flags(table)),
-            ("old undo history", lambda: self.prune_old_changes(table)),
         ]
         for name, step in steps:
             try:

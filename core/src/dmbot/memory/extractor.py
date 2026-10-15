@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from collections import Counter
 from collections.abc import Awaitable, Callable, Collection, Sequence
 from dataclasses import dataclass, field
@@ -46,6 +47,9 @@ MAX_TOKENS = 1500  # per batch: a minute of talk gives a few dozen claims at mos
 BATCH_LINES = 10  # about 30 to 60 seconds of talk, as in the golden set (docs/costs.md)
 MIN_BATCH_LINES = 5  # a shorter tail joins the batch before it (at most 14 lines then)
 DEFAULT_MAX_CALLS = 480  # one session: the cost ceiling in docs/STORY_MEMORY.md, section 8
+MAX_RUN_S = (
+    90 * 60.0
+)  # one session's whole run: timeouts that alternate with successes can't drag on
 CALL_TIMEOUT_S = 300.0  # above the slowest tier's own request limit (ai.TIER_TIMEOUT_S)
 FAILURES_BEFORE_STOP = 3  # in a row, as the off-topic filter rests after (bot.TOPIC_*)
 
@@ -200,16 +204,26 @@ async def run(
     session_started_at: int | None,
     tally: Tally | None = None,
     max_calls: int = DEFAULT_MAX_CALLS,
+    max_seconds: float = MAX_RUN_S,
 ) -> Report:
     """Read the session's lines and store what the AI found as proposals. `consenting` is asked
     before each batch (a speaker who stopped is left out of what is sent) and again after the
     answer (what `propose` checks the claims against). `model` names the model that answers
-    (it can change on a fallback), recorded with the claims. Stops at `max_calls`, at an AI that
-    is out of money, and after `FAILURES_BEFORE_STOP` failures in a row."""
+    (it can change on a fallback), recorded with the claims. Stops at `max_calls`, after
+    `max_seconds` in all, at an AI that
+    is out of money, and after `FAILURES_BEFORE_STOP` failures in a row. A claim's lines are
+    numbered by their place in the stored session; they are not looked up anywhere yet, so if a
+    stop-recording clean-up removes lines, whatever resolves them later must key on more than
+    the position."""
     report = Report()
     work = batches(readable(lines))
     streak = 0
+    started = time.monotonic()
     for index, batch in enumerate(work):
+        if time.monotonic() - started > max_seconds:
+            report.stopped = "time limit"
+            report.unsent += sum(len(b) for b in work[index:])
+            break
         if report.calls >= max_calls:
             report.stopped = "call limit"
             report.unsent += sum(len(b) for b in work[index:])
@@ -233,6 +247,7 @@ async def run(
         except Exception as exc:  # the AI service, the network or the timeout: never fatal
             log.warning("Story extractor: a call failed (%s)", type(exc).__name__)
             report.failed += 1
+            report.unsent += len(batch)
             streak += 1
             if streak >= FAILURES_BEFORE_STOP:
                 report.stopped = "failures in a row"
@@ -242,18 +257,26 @@ async def run(
         streak = 0
         found, bad = parse_answer(reply.text, speakers.keys())
         agreed = await consenting()  # again: someone may have stopped while the AI worked
-        done = await claims.propose(
-            guild_id,
-            campaign_id,
-            found,
-            speakers,
-            opted_in=agreed,
-            prompt_version=PROMPT_VERSION,
-            model=reply.model or model(),
-            session_started_at=session_started_at,
-            malformed=bad,
-            tally=tally,
-        )
+        try:
+            done = await claims.propose(
+                guild_id,
+                campaign_id,
+                found,
+                speakers,
+                opted_in=agreed,
+                prompt_version=PROMPT_VERSION,
+                model=reply.model or model(),
+                session_started_at=session_started_at,
+                malformed=bad,
+                tally=tally,
+            )
+        except Exception as exc:
+            # Only the type: a database error can quote the row, and the row holds the claim's
+            # words, which the log never gets. The next batch still runs.
+            log.warning("Story extractor: storing a batch failed (%s)", type(exc).__name__)
+            report.failed += 1
+            report.unsent += len(batch)
+            continue
         report.proposed += done.waiting
         report.repeated += done.repeated
         report.malformed += done.malformed

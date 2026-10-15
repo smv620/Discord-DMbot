@@ -188,6 +188,30 @@ class Running(unittest.IsolatedAsyncioTestCase):
         report = await go(ai, Recorder(), session(100))
         self.assertEqual((report.failed, report.stopped), (3, "failures in a row"))
 
+    async def test_a_failed_batch_is_counted_as_not_sent(self) -> None:
+        ai = Canned([AIError("x"), None])
+        report = await go(ai, Recorder(), session(20))
+        self.assertEqual((report.failed, report.unsent), (1, 10))
+        stopped = await go(Canned([AIError("x")] * 3), Recorder(), session(100))
+        self.assertEqual(stopped.unsent, 100)  # the three that failed and everything after
+
+    async def test_a_store_error_neither_stops_the_run_nor_reaches_the_log(self) -> None:
+        class Broken(Recorder):
+            async def propose(self, *a: Any, **kw: Any) -> Proposed:
+                raise RuntimeError("Failing row contains (Zorbax-the-secret)")
+
+        ai = Canned()
+        with self.assertLogs("dmbot.memory.extractor", "WARNING") as logged:
+            report = await go(ai, Broken(), session(20))
+        self.assertEqual((len(ai.sent), report.failed), (2, 2))  # the second batch still ran
+        self.assertNotIn("Zorbax", "\n".join(logged.output))
+        self.assertNotIn("Zorbax", report.line())
+
+    async def test_the_whole_run_has_a_time_limit(self) -> None:
+        ai = Canned(claim=False)
+        report = await go(ai, Recorder(), session(100), max_seconds=-1)
+        self.assertEqual((report.calls, report.stopped, report.unsent), (0, "time limit", 100))
+
     async def test_running_out_of_funds_stops_at_once(self) -> None:
         ai = Canned([AIOutOfFunds("x")])
         report = await go(ai, Recorder(), session(100))

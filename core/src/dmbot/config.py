@@ -155,7 +155,10 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
             + '".'
         )
     extractor_calls_raw = get("DMBOT_STORY_EXTRACTOR_MAX_CALLS") or "480"
-    if not extractor_calls_raw.isdigit() or not 1 <= int(extractor_calls_raw) <= 5000:
+    if (
+        not (extractor_calls_raw.isascii() and extractor_calls_raw.isdigit())
+        or not 1 <= int(extractor_calls_raw) <= 5000
+    ):
         raise ConfigError(
             'DMBOT_STORY_EXTRACTOR_MAX_CALLS must be a whole number from 1 to 5000, got "'
             + extractor_calls_raw
