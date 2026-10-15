@@ -5,7 +5,7 @@ import { transitionProblems } from "./transitions.mjs";
 const dist = process.argv[2] ?? new URL("../dist/", import.meta.url).pathname;
 const problems = transitionProblems(dist);
 if (problems.length > 0) {
-  for (const problem of problems) console.error(`::error title=page changes::${problem}`);
+  for (const problem of problems) console.error(`::error title=page-change check::${problem}`);
   process.exit(1);
 }
 console.log("page changes: within budget, off for less motion, off on the legal pages.");

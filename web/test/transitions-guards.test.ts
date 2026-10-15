@@ -11,6 +11,9 @@ import { afterEach, describe, expect, it } from "vitest";
 import {
   BUDGET_BYTES,
   legalProblems,
+  OPT_IN,
+  OPT_OUT,
+  OPT_OUT_BANNER,
   reducedMotionProblems,
   sizeProblems,
   topLevelRules,
@@ -18,8 +21,7 @@ import {
   transitionProblems,
 } from "../scripts/transitions.mjs";
 
-const OPT_IN = "@media (prefers-reduced-motion:no-preference){@view-transition{navigation:auto}}";
-const PLAIN = "@view-transition{navigation:none}h1{view-transition-name:none}";
+const PLAIN = OPT_OUT + OPT_OUT_BANNER;
 const CSS =
   "@property --dust{syntax:'<length>';inherits:false;initial-value:48px}" +
   "h1{view-transition-name:banner}" +
@@ -55,13 +57,35 @@ describe("a good build", () => {
 });
 
 describe("the size budget", () => {
-  it("counts the rules about the page change, with their inline pictures, and nothing else", () => {
+  it("counts the rules about the page change, with their inline pictures, and not the rest", () => {
     const rules = topLevelRules(CSS);
     expect(rules).toHaveLength(5);
-    const counted = rules.filter((r) => /view-transition|@property --dust/.test(r)).join("");
-    expect(transitionBytes(CSS)).toBe(Buffer.byteLength(counted));
-    expect(transitionBytes(CSS)).toBeGreaterThan(Buffer.byteLength(CSS) - 30); // body{} is the only rest
+    expect(rules[4]).toBe("body{color:red}");
+    expect(transitionBytes(CSS)).toBe(Buffer.byteLength(rules.slice(0, 4).join("")));
     expect(transitionBytes("body{color:red}")).toBe(0);
+  });
+
+  it("counts the effect's keyframes too", () => {
+    const keyframes = `@keyframes dust-in{from{--x:${"a".repeat(100)}}}`;
+    expect(transitionBytes(CSS + keyframes)).toBe(transitionBytes(CSS) + Buffer.byteLength(keyframes));
+    expect(sizeProblems(build({ css: `${CSS}@keyframes runes{from{--x:${"a".repeat(BUDGET_BYTES)}}}` }))).toHaveLength(1);
+  });
+
+  it("is not fooled by braces in strings or pictures, or by an @import", () => {
+    const tricky =
+      '@import "x.css";::view-transition-old(root){content:"}";mask-image:url("data:image/svg+xml,<svg>}</svg>")}' +
+      "::view-transition-new(root){background:url(data:image/png;base64,AAAA)}body{color:red}";
+    const rules = topLevelRules(tricky);
+    expect(rules).toHaveLength(3);
+    expect(rules[0]).toMatch(/^::view-transition-old\(root\)\{content:"\}"/); // the @import is not glued on
+    expect(rules[2]).toBe("body{color:red}");
+  });
+
+  it("counts CSS a build inlined into a page's <style>, but not the small opt-in rules", () => {
+    const css = `@media (prefers-reduced-motion:reduce){${"::view-transition-group(*){animation:none}".repeat(600)}}`;
+    const dist = build({ css: "body{color:red}", pages: { "help.html": `${OPT_IN}${css}` } });
+    expect(sizeProblems(dist)).toEqual([expect.stringContaining("budget is 15360")]);
+    expect(sizeProblems(build({ css: "body{color:red}", pages: { "help.html": `${OPT_IN}${CSS}` } }))).toEqual([]);
   });
 
   it("fails when the page-change CSS is over 15 KB, picture included", () => {
@@ -78,7 +102,7 @@ describe("the size budget", () => {
   });
 
   it("fails with nothing found (a broken effect or a broken check)", () => {
-    expect(sizeProblems(build({ css: "body{color:red}" }))).toEqual([expect.stringContaining("none found")]);
+    expect(sizeProblems(build({ css: "body{color:red}" }))).toEqual([expect.stringContaining("No page-change CSS found")]);
   });
 });
 
@@ -112,6 +136,14 @@ describe("the legal pages", () => {
     rmSync(join(dist, "legal"), { recursive: true });
     mkdirSync(join(dist, "legal"));
     expect(legalProblems(dist)).toEqual([expect.stringContaining("no pages")]);
+  });
+});
+
+describe("Base.astro", () => {
+  it("writes exactly the opt-in and opt-out text the guards look for", () => {
+    const base = readFileSync(fileURLToPath(new URL("../src/layouts/Base.astro", import.meta.url)), "utf8");
+    expect(base).toContain(`set:html="${OPT_IN}"`);
+    expect(base).toContain(`set:html="${OPT_OUT}${OPT_OUT_BANNER}"`);
   });
 });
 
