@@ -49,6 +49,12 @@ describe("Help", () => {
     }
   });
 
+  it("calls the update note's button Undo, as the note itself does (#1254)", () => {
+    const source = readFileSync(join(botDir, "dm_screen/set_update.py"), "utf8");
+    expect(source).toContain('"undo": ("Undo"');
+    expect(dmSteps.map((s) => s.text).join(" ")).not.toContain("↩️ Undo");
+  });
+
   it("links to Add to Discord and Say hello", () => {
     const links = [...help.querySelectorAll("main a")].map((a) => a.getAttribute("href"));
     expect(links).toContain("/install");
