@@ -2268,3 +2268,19 @@ Overall ...................................... PASS (Deepgram baseline: 33/33, 1
   Not yet checked live (needs people at Discord): typed chat, FightBot, table questions, rule sets, the website's
   Stop recording me, the timer seconds fix. Consent is now version 6: everyone is asked again and is not recorded until
   they press yes. Rollback if needed: git checkout fc09d9c, build, up; the migrated database runs the old code.
+
+==============================================================================
+2026-10-15  dev1  Dry run on development 27cdad0: accounts stack so far, 0063, 0064, 0065, 0067, 0068 (#1271) - PASSED
+  Merged so far: #1234 (0063 dmbot_id), #1239 (0064 mail), #1240 (0065 trial), #1245 (0067 payment_email),
+  #1244 (0068 moves). 0066 (the sign-in by email, #1237) is not merged yet. Same method as for #1180: a fresh
+  pg_dumpall of the live database (at 0062), restored into a throwaway postgres:16, migrated as the dmbot role,
+  deleted after.
+  Result: "Database updated: 0063_dmbot_id, 0064_mail, 0065_trial, 0067_payment_email, 0068_moves" in 0.21 s; a second run
+  applied nothing; 3 campaigns, 152 entries, 147 transcript lines unchanged. Six new tables exist (sent_emails,
+  email_unsubscribed, trial_extensions, move_codes, account_moves, account_id_history) and ten new SECURITY DEFINER
+  functions. Only account_id_history has row-level security; the other five hold account data keyed by user id, not
+  campaign data (no guild_id).
+  Limits: the live database has 0 web_users, so 0063's backfill of dmbot_id ran on no rows (its own test covers
+  rows); the new tables are empty and the policies were checked for existence, not through a request. Still to do for
+  #1271: dry-run 0066 and the rest of the stack when they merge, and check that the runner applies a lower number
+  (0066) added after higher ones when the database is already at 0068; deploy only when the whole stack is in.
