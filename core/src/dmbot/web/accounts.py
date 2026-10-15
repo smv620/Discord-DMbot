@@ -143,8 +143,9 @@ async def delete_person(db: Database, user_id: int, *, now: int | None = None) -
     try_it_used (one free trial per person) and payment events with the Discord id and the
     subscription id (so a replayed payment can't apply twice, and a cancelled subscription's
     last news isn't retried): ids only (privacy page, #433, #571). The person's sent-email
-    records go (#1287); the never-email-me-again list (email_unsubscribed: a Discord id, the
-    kind and a time) stays, so a returning account is never emailed against its wish.
+    records go (#1287), and so do their support tickets (#1340); the never-email-me-again
+    list (email_unsubscribed: a Discord id, the kind and a time) stays, so a returning
+    account is never emailed against its wish.
 
     The campaigns the person owns are **kept**, ownerless, so the players can still read and
     download them: they go 120 days later unless another DM takes them on (#1059; owner,
@@ -163,3 +164,7 @@ async def delete_person(db: Database, user_id: int, *, now: int | None = None) -
         # Free access goes with the account (#771). It isn't linked to web_users (a grant
         # works for someone who never signed in), so it's deleted by hand.
         await conn.execute("DELETE FROM access_grants WHERE discord_user_id = %s", (user_id,))
+        # Support tickets are the person's own words, so they go too (#1340). No WHERE on
+        # purpose: a WHERE needs the right to read the rows, which a person doesn't have; the
+        # table's own_delete policy already holds this DELETE to the person's own tickets.
+        await conn.execute("DELETE FROM support_tickets")

@@ -2343,6 +2343,11 @@ WEB_ROLE_GRANTS: tuple[tuple[str, tuple[str, ...]], ...] = (
     # has no grant on sent_emails.
     ("INSERT", ("email_unsubscribed",)),
     ("INSERT, DELETE", ("feedback",)),
+    # Support tickets (#1340): added by the signed-in person, read and closed only through the
+    # admin page's door (the policies hold SELECT and UPDATE to it); the sweep and account
+    # deletion delete. The UPDATE is for the status column alone.
+    ("SELECT, INSERT, DELETE", ("support_tickets",)),
+    ("UPDATE (status)", ("support_tickets",)),
     ("SELECT, INSERT, UPDATE, DELETE", ("web_users", "web_sessions")),
     # Emailed sign-in links (#1231): made and used by the website, never read by anyone else.
     # (Only `used_at` can be changed: a holder of a link can spend it, never revive or move it.)
@@ -3727,6 +3732,53 @@ MEMORY_CLAIMS = (
     """
 )
 
+SUPPORT_TICKETS = (
+    _setting("dmbot_support_admin", "dmbot.support_admin", "TEXT")
+    + """
+    -- Private support tickets from paying people on the website (#1340; docs/PLAN.md,
+    -- "QAbot and support tickets"). They hold personal details, so they never become public
+    -- GitHub issues. `feedback` (0026) is the model: the website adds a row and cannot read
+    -- it back. The one difference is the admin page, which is served by the website's own
+    -- role, so it needs a way to read and close tickets that nobody else has:
+    --   dmbot.support_admin  set only by Database.support_admin(): the admin page's API,
+    --                        the only code allowed to read a ticket or change its status
+    -- The website's role can set that itself (as it can dmbot.grant_writer): which code opens
+    -- the door is a Python boundary (tests/test_support.py), and the admin sign-in guards it.
+    --   user_id  the signed-in account that sent it (a Discord id, as in web_users)
+    --   plan     the plan's id when it was sent, so the team sees who is paying for what
+    --   source   where it came from; 'email' is for a later step (reading the mailbox)
+    CREATE TABLE support_tickets (
+        id          BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+        created_at  BIGINT NOT NULL,
+        user_id     BIGINT NOT NULL CHECK (user_id > 0),
+        plan        TEXT NOT NULL CHECK (char_length(plan) BETWEEN 1 AND 40),
+        subject     TEXT NOT NULL CHECK (char_length(subject) BETWEEN 1 AND 120),
+        message     TEXT NOT NULL CHECK (char_length(message) BETWEEN 1 AND 4000),
+        source      TEXT NOT NULL DEFAULT 'website' CHECK (source IN ('website', 'email')),
+        status      TEXT NOT NULL DEFAULT 'new' CHECK (status IN ('new', 'answered', 'closed'))
+    );
+    CREATE INDEX support_tickets_newest ON support_tickets (created_at DESC);
+    ALTER TABLE support_tickets ENABLE ROW LEVEL SECURITY;
+    ALTER TABLE support_tickets FORCE ROW LEVEL SECURITY;
+    -- A person can add a ticket only for their own account, and only a new one from the
+    -- website: they can't read any ticket (their own included) or change one.
+    CREATE POLICY add_own ON support_tickets FOR INSERT
+        WITH CHECK (user_id = dmbot_current_user() AND source = 'website' AND status = 'new');
+    -- The admin page's door: read every ticket, and change a status (the column grant lets
+    -- nothing else change).
+    CREATE POLICY support_admin_read ON support_tickets FOR SELECT
+        USING (dmbot_support_admin() = 'admin');
+    CREATE POLICY support_admin_status ON support_tickets FOR UPDATE
+        USING (dmbot_support_admin() = 'admin') WITH CHECK (dmbot_support_admin() = 'admin');
+    -- Deleting an account deletes that person's own tickets (like their grant and sessions);
+    -- the hourly sweep deletes tickets older than 12 months without needing to read them.
+    CREATE POLICY own_delete ON support_tickets FOR DELETE
+        USING (user_id = dmbot_current_user());
+    CREATE POLICY forget_after_a_year ON support_tickets FOR DELETE
+        USING (dmbot_cleanup() = 'old-tickets' AND created_at <= dmbot_now() - 365 * 86400);
+    """
+)
+
 MEMORY_CLAIMS_BY_FACT = """
     -- The recall service (#1350) finds the claim a fact came from by the fact's id; without this
     -- it would read every confirmed claim of the campaign to find them. An index only: no row
@@ -3809,8 +3861,9 @@ MIGRATIONS: tuple[Migration, ...] = (
     ("0071_email_records", EMAIL_RECORDS),  # the email records (#1288)
     ("0072_rule_suggestions", RULE_SUGGESTIONS),  # the shared-rules suggestions (#1261)
     ("0073_memory_claims", MEMORY_CLAIMS),
+    ("0074_support_tickets", SUPPORT_TICKETS),  # private support tickets (#1340)
     (
-        "0074_claims_by_fact",
+        "0075_claims_by_fact",
         MEMORY_CLAIMS_BY_FACT,
     ),  # the recall service finds a fact's claim (#1350)
 )
@@ -3865,6 +3918,8 @@ USER_ISOLATED_TABLES = (
     "access_grants",
     # Not per person: only the grant writer adds or reads a row (#771).
     "access_log",
+    # A person adds their own ticket and can read none; only the support admin door reads (#1340).
+    "support_tickets",
     # An owner's hours per plan month; only the meter adds to it (#437).
     "owner_hours",
     # Which campaigns an owner has, across servers; kept by a trigger on campaigns (#437).

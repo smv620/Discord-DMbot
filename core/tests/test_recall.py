@@ -508,7 +508,7 @@ class Recalling(MemoryTest):
     # ---- the claims index ------------------------------------------------------------
 
     async def test_a_fact_finds_its_claim_through_an_index(self) -> None:
-        """Migration 0074 (an index only, no row changes, so no row-level-security opening)."""
+        """Migration 0075 (an index only, no row changes, so no row-level-security opening)."""
         async with self.db.unscoped() as conn:
             cur = await conn.execute(
                 "SELECT indexdef FROM pg_indexes WHERE schemaname = current_schema()"

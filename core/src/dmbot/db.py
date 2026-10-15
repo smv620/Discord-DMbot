@@ -240,11 +240,23 @@ class Database:
             yield conn
 
     @asynccontextmanager
+    async def support_admin(self) -> AsyncIterator[Conn]:
+        """The only way to read support tickets and change their status
+        (`support_tickets`): for the admin page's API (dmbot.web, #1340). Like `grant_writer`,
+        the website's role can set this itself, so which code calls it is the boundary
+        (tests/test_support.py checks it). The website adds a ticket as the signed-in person
+        (`user`) and can read none."""
+        async with self._with(support_admin="admin") as conn:
+            yield conn
+
+    @asynccontextmanager
     async def cleanup(
-        self, what: Literal["expired-sessions", "old-feedback"] = "expired-sessions"
+        self,
+        what: Literal["expired-sessions", "old-feedback", "old-tickets"] = "expired-sessions",
     ) -> AsyncIterator[Conn]:
         """A transaction that can see and delete expired website sessions, or delete
-        "Say hello" messages older than a year (#665), nothing else."""
+        "Say hello" messages (#665) or support tickets (#1340) older than a year, nothing
+        else."""
         async with self._with(cleanup=what) as conn:
             yield conn
 
