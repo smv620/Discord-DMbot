@@ -148,6 +148,23 @@ class Learning(MemoryTest):
         self.assertEqual((len(here), len(there)), (1, 0))  # the other campaign was still cleaned
         self.assertEqual(await self.waiting(), [])  # and the learned name went from this one
 
+    async def test_the_lookup_has_the_names_the_dm_confirmed_for_people_and_nothing_else(
+        self,
+    ) -> None:
+        made = await self.memory.learn_people(GUILD_A, self.c, [("Mike", PLAYER, 2)], limit=10)
+        waiting = await self.memory.lookup_data(GUILD_A, self.c)
+        self.assertEqual(waiting.people, ())  # a waiting question is not true yet
+        await self.memory.accept_person_name(GUILD_A, self.c, made.value[0].row_id)
+        data = await self.memory.lookup_data(GUILD_A, self.c)
+        self.assertEqual([a.text for a in data.people], ["Mike"])  # not "Player 1234"
+        self.assertEqual([e for e in data.entities if e.type == "person"], [])
+        # Not the ones the DM said no to, nor secret ones.
+        await self.memory.learn_people(GUILD_A, self.c, [("Vera", PLAYER, 2)], limit=10)
+        wrong = await self.memory.people_suggestions(GUILD_A, self.c)
+        await self.memory.reject_person_name(GUILD_A, self.c, wrong[0].row_id)
+        again = await self.memory.lookup_data(GUILD_A, self.c)
+        self.assertEqual([a.text for a in again.people], ["Mike"])
+
     async def person_id(self) -> str:
         return next(
             e.id for e in await self.memory.entities(GUILD_A, self.c) if e.played_by == PLAYER
