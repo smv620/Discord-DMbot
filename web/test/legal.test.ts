@@ -297,6 +297,9 @@ describe("email from DMbot (#1283)", () => {
     expect(t).toContain("A move code goes only to the email you paid with");
     expect(t).toContain("two Try It emails");
     expect(t).toContain("deleted after 90 days");
+    expect(t).toContain("The notes for the Try It emails are deleted a year after they were sent");
+    expect(t).toContain("All your notes are deleted when you delete your account");
+    expect(t).toContain("This list stays even after you delete your account, so we never email you again after you said stop");
     expect(t).toContain("We do not keep the words of the email or the address it went to");
     expect(t).toContain("Sign-in links and move codes have no such link, because you asked for them");
   });

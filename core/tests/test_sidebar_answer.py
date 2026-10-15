@@ -96,10 +96,18 @@ def engine(
     async def get_names(c: Campaign) -> None:
         return None
 
-    if clock is None:
-        return Engine(ai, INDEX, gate=gate, houses=get_houses, names=get_names, second_try=second)
+    # The engine decides whether a second try fits by how long the first took (it is skipped after
+    # 3 s). A test that does not set a time must not depend on how fast the machine is: on a
+    # busy runner (four workers side by side) a fake reply could "take" 3 s and the call count
+    # changed (#1331). So time stands still unless a test moves it.
     return Engine(
-        ai, INDEX, gate=gate, houses=get_houses, names=get_names, second_try=second, clock=clock
+        ai,
+        INDEX,
+        gate=gate,
+        houses=get_houses,
+        names=get_names,
+        second_try=second,
+        clock=clock if clock is not None else (lambda: 0.0),
     )
 
 

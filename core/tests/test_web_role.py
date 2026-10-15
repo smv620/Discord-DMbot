@@ -4,6 +4,7 @@ schema. The bot's role is unaffected."""
 
 from __future__ import annotations
 
+import contextlib
 import json
 from typing import Any
 from urllib.parse import parse_qs, urlsplit
@@ -35,7 +36,9 @@ async def ensure_web_role() -> None:
     try:
         cur = await conn.execute("SELECT 1 FROM pg_roles WHERE rolname = %s", (schema.WEB_ROLE,))
         if await cur.fetchone() is None:
-            await conn.execute(f"CREATE ROLE {schema.WEB_ROLE} LOGIN PASSWORD '{WEB_PASSWORD}'")
+            # Another test worker may make it between the check and here (pytest -n 4).
+            with contextlib.suppress(errors.DuplicateObject):
+                await conn.execute(f"CREATE ROLE {schema.WEB_ROLE} LOGIN PASSWORD '{WEB_PASSWORD}'")
     finally:
         await conn.close()
 
@@ -400,7 +403,9 @@ class WebRole(DatabaseTest):
         try:
             cur = await conn.execute("SELECT 1 FROM pg_roles WHERE rolname = 'dmbot_web_member'")
             if await cur.fetchone() is None:
-                await conn.execute(f"CREATE ROLE dmbot_web_member IN ROLE {schema.WEB_ROLE}")
+                # Or another test worker made it meanwhile (pytest -n 4).
+                with contextlib.suppress(errors.DuplicateObject):
+                    await conn.execute(f"CREATE ROLE dmbot_web_member IN ROLE {schema.WEB_ROLE}")
             async with conn.transaction():
                 await conn.execute(f"SET LOCAL search_path = {self.schema}")
                 await conn.execute("SET LOCAL ROLE dmbot_web_member")

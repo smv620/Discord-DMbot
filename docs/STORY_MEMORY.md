@@ -548,9 +548,28 @@ Each step is useful on its own and ships behind the existing phases.
    said" questions (✅ writes the fact as the DM's through the same store, keeping which fact it
    became; ❌ is never asked again; private to the campaign's DM). The one switch,
    `DMBOT_STORY_EXTRACTOR`, is off, so nothing calls the AI. Names the memory does not know yet
-   are dropped here; resolving them is the linker's job. What is left of 5a: turning the
-   extractor on (after #1282 passes), the linker, the continuity warnings shown to the DM, and the
-   secret-said-aloud question. Start after-session only, then live.
+   are dropped here; resolving them is the linker's job. **Slice 3 is built (#1320), after the
+   session only:** `dmbot.memory.continuity` runs the section-2 checks on a session's unanswered
+   claims against the campaign's *confirmed* facts and current conditions (a dead or destroyed
+   entry acting later, a one-of-a-kind item in two hands, a friend called an enemy, a body that was
+   dead being called alive, being in two places), gives each hit a level by rule (a direct clash
+   with something confirmed is *likely*, an indirect one *possible*; the cut-offs and the critical
+   mass of 50 confirmed facts across 3 sessions are backend settings, `DMBOT_CONTINUITY_*`), and
+   the DM screen says how many (never what) with a button only the campaign's DM can use. The
+   list quotes the earlier line, only while everyone who said it is recorded, and offers [Alive
+   after all / It changed] (a new dated fact; the old one ends, history kept, in one transaction),
+   [Not true] (the claim is not world truth and is not asked again) and [Ignore] (writes nothing;
+   quiet for the rest of that list). The log holds counts only. What is left of 5a: turning the
+   extractor on (after #1282 passes), the linker, live warnings during play and the AI judgment
+   behind them, and the secret-said-aloud question and the pre-session note (slice 4). **The ontology steward is wired into the claims path (#1303):** a claim
+   whose relationship DMbot does not know goes through `decide_term`: an existing term it recognises
+   is reused, and anything else (a rules word, or a new word the meaning check cannot yet vouch for,
+   which today is every new word) is kept on the new core relationship `associated_with`, with the
+   claim's own words as the fact's label, so a refused term never loses the fact; the DM confirms it
+   in plain words like any fact. No new campaign term is made from a claim until the meaning check
+   exists. The session's numbers (refused per reason, reused, accepted) go to the server log once, as
+   counts only.
+   Start after-session only, then live.
 2. **Phase 5b: NPC tracker and reputation:** knowledge (clues, `knows`, `witnessed`),
    deeds, standing, the NPC channel, the recall service.
 3. **Phase 5c: PlotBot:** threads, promises, clues, `led_to`, stalled-thread nudges,
