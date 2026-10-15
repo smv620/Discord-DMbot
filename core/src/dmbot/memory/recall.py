@@ -57,8 +57,9 @@ SESSION_SECONDS = 30 * 86400  # a fact a month older than the newest scores half
 # What one recall will read, whatever the story holds: a hub with thousands of facts or a group
 # with hundreds of members must not turn one question into a scan. The newest facts win, and
 # `Recall.truncated` says when this was reached.
-MAX_FACTS_ROUND = 500
-MAX_FACTS_TOTAL = 1000
+MAX_FACTS_ROUND = 100
+MAX_FACTS_TOTAL = 200
+MAX_FRONTIER = 60  # entries expanded in one round (those of the best-ranked facts)
 MAX_ROUNDS = 5  # groups cost no step, so a walk can need a few rounds more than its steps
 EVIDENCE_SHARE = 4  # a quarter of the budget is kept for evidence when it can be had
 QUOTED_FACTS = 10  # evidence is looked up for this many of the best facts
@@ -357,12 +358,15 @@ class RecallService:
             if far not in before or reach < before[far]:
                 reached[far] = min(reach, reached.get(far, reach))
         nxt: set[str] = set()
-        for entity_id, cost in reached.items():
+        for entity_id, cost in reached.items():  # in the order the facts came: best first
             walk.cost[entity_id] = cost
             # An entry at the last step can add nothing, unless it is a group: its members come
             # with it at no step.
             if cost < hops or walk.is_cluster(entity_id):
-                nxt.add(entity_id)
+                if len(nxt) < MAX_FRONTIER:
+                    nxt.add(entity_id)
+                else:
+                    walk.truncated = True
         return nxt
 
     async def _seed_ids(self, scope: Scope, seeds: Sequence[str], audience: str) -> list[str]:
@@ -402,8 +406,10 @@ class RecallService:
         if not ids:
             return {}
         live = ["confirmed"] if audience == PLAYERS else list(_LIVE)
+        # An entry's note is the DM's own: the players' audience never even reads it.
+        note = "description" if audience == DM_SCREEN else "'' AS description"
         cur = await scope.conn.execute(
-            "SELECT id, type, name, description, role FROM memory_entities"
+            f"SELECT id, type, name, {note}, role FROM memory_entities"
             " WHERE guild_id = %s AND campaign_id = %s AND id = ANY(%s)"
             " AND status = ANY(%s) AND type <> 'person'",
             (*scope.ids, list(ids), live),
