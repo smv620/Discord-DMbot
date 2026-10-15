@@ -628,17 +628,20 @@ never does.
 - **What a set may hold:** only content the campaign's DMs wrote themselves. **Never** anything from a shared
   rulebook or adventure (the right to use it was confirmed for one campaign only, CLAUDE.md, IP), checked by
   where each entry came from; never story memory, names, transcripts, DM notes or character sheets.
-- **One writer.** Only the publishing campaign's DMs change a set (and DMs it names as co-editors; every change
-  is logged with who, which campaign and when).
+- **One writer.** Only the publishing campaign's DMs change a set; every change is logged with who, which
+  campaign and when. *(Supervisor, 2026-10-14, #1256: no separate co-editor list. To let another DM edit the
+  set, make them a DM of the publishing campaign. Publishing a version can be undone: Undo publishes the earlier
+  rules again as the next version, which followers take at their next session.)*
   - **A follower can't change it.** When a following campaign's DM changes a shared rule, or a ruling is made
     at their table, it goes into **their own** house rules, which win over the set. The publisher never sees
     it and is never affected. **"Suggest it to <set>"** sends it to the publisher's DMs as a suggestion
     ([Accept] [No thanks]); nothing changes until they accept.
-  - **The document of record can be edited outside DMbot** by anyone with edit access, and DMbot can't see
-    who. So a change DMbot finds in a shared house-rules document (at any following campaign's session
-    start) is **held as pending** and shown to the publisher's DMs as a diff ([See changes] [Accept] [Not
-    these]). Until they accept, every campaign keeps the last accepted version; followers see "New changes
-    are waiting for the <set> DM."
+  - **The document of record can be edited outside DMbot** by anyone with edit access. Its changes reach the
+    publisher's **own** house rules through the usual document sync (the DM confirms them), and reach
+    followers only when the publisher presses **🔄 Publish my changes** (Supervisor, 2026-10-14, #1259; no
+    separate pending-changes screen and no write-back to followers' files).
+  - **Suggestions** (#1259): the publisher's note says "A table that uses <set> house rules suggests: …" and
+    never names the other campaign, server or DM; Accept makes the next version.
 - **Updates reach followers at their next session start, never mid-game.** DMbot takes the update then
   (Follow, the default) and posts a note on the DM screen: "The Frostmaiden house rules were updated to v4:
   2 rules. [See changes] [Pick changes] [Undo]".
@@ -3213,6 +3216,10 @@ experience points and the trial extension (owner, 2026-10-14; Supervisor's detai
      those campaigns (and its `played_by` and person entries there) move to the new Discord ID.
      The old account is left as a **moved** marker: who it moved to and when. Transcripts keep
      the names they were written with.
+  - *History (owner, 2026-10-14):* the current Discord ID and the DMbot ID are separate columns; the DMbot ID
+    never changes. Every move also adds a row to a permanent, append-only history (`account_id_history`: the
+    old and new Discord IDs, when, and the payment email the code went to), kept for the life of the account,
+    shown in the person's data export and deleted with the account.
   4. **Recording consent does not move.** The new account says yes for itself the first time
      it joins a table. Consent belongs to the Discord account whose voice is recorded.
   - *Limits (Supervisor):* one move per 30 days. A moved account can never start a new Try It
