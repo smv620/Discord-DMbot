@@ -1,5 +1,6 @@
-"""Sending email (#1229; docs/PLAN.md, "Accounts"): one small module, SMTP, from the owner's
-mailbox for now (a Google app password in the server's `.env`, never in the repository).
+"""Sending email (#1229; docs/PLAN.md, "Accounts"): one small module, plain SMTP with STARTTLS,
+through Resend (an API key in the server's `.env` as the SMTP password; a Google app password
+works the same way), never in the repository. No SDK.
 
 Two kinds of email:
 - **Account emails** (sign-in links, move codes): wanted, sent when asked, no unsubscribe.
@@ -8,7 +9,7 @@ Two kinds of email:
   empty, and never go to a person who unsubscribed.
 
 `sent_emails` records who got which kind and when, never the text, so a one-off email goes
-once. A daily cap (default 400; Gmail allows about 500) stops a bug from sending a flood.
+once. A daily cap (default 400; keep it at or under the provider's limit) stops a bug from sending a flood.
 No address or body is ever logged: the log says only what kind went and what happened.
 Tests use example.com addresses and a fake transport.
 """
