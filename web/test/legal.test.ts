@@ -328,8 +328,10 @@ describe("what the AI company does with the text (#1328)", () => {
   });
 
   it("makes no such promise for the speech company: it depends on that company's own setting", () => {
-    // Anthropic's commercial terms (Section B) say it may not train on customer content; Deepgram's
-    // use of audio depends on its Model Improvement Program, so nothing is promised for it here.
+    // Anthropic's commercial terms (Section B) say it may not train on customer content. Deepgram's
+    // use of audio depends on its Model Improvement Program: core opts out of it (mip_opt_out=true,
+    // transcription/deepgram.py), but what that covers needs Deepgram's own docs, so nothing is
+    // promised for it here.
     const deepgram = privacy().slice(privacy().indexOf("Deepgram:"), privacy().indexOf("Anthropic:"));
     expect(deepgram).toContain("turns the sound of people who said yes into text");
     expect(deepgram).not.toMatch(/train/i);
