@@ -2360,3 +2360,21 @@ Overall ...................................... PASS (Deepgram baseline: 33/33, 1
   never words (needs a session; nothing is waiting today).
   Follow-up, 18:06 UTC (13 minutes after the deploy): 0 ERROR, CRITICAL or traceback lines in core and web-api since 17:53 (Supervisor's
   "0 ERROR for 10 minutes" check passed); core and web-api still up, web-api healthy; no session since, so the continuity step has not run.
+
+==============================================================================
+2026-10-15  dev1  DEPLOY: migration 0074 support_tickets and the per-schema migration lock are live as cbfd20d8 (#1271)
+  Supervisor said go on #1271 (20:50 UTC). Dry run first, on development cbfd20d8: a fresh pg_dumpall of the live database (at
+  0073), restored into a throwaway postgres:16, migrated as the dmbot role, deleted after. "Database updated: 0074_support_tickets"
+  in 0.12 s; a second run applied nothing; support_tickets has row-level security on and forced (5 policies); rows unchanged
+  (3 campaigns, 152 entries, 147 transcript lines, 0 claims). No game running (active_sessions 0).
+  Backup: ~/db-backups/dmbot-before-cbfd20d8-20261015T205122Z.sql (chmod 600). Then: `docker compose build core web-api` with
+  GIT_COMMIT set, then, because #1331 changes the migration lock from one key to two (the two forms do not block each other),
+  `docker compose stop core web-api` FIRST (20:53:00 UTC; neither listed as running afterwards), then `up -d --no-deps core`, then
+  `up -d --no-deps web-api`. So the old core was fully stopped before the new one migrated.
+  Result: core logged "Database updated: 0074_support_tickets", then "Connected to 1 server(s)" and "ears connected". web-api went
+  healthy. 0 ERROR or traceback lines in core and web-api in the first minutes. schema_migrations: 74 rows.
+  Start-up warnings about .env, both harmless, and dev1 did not touch .env: 2 settings missing from .env, SUPPORT_TEAM_EMAIL
+  (empty: tickets are kept and shown on the admin page, nobody is emailed) and DMBOT_STORY_EXTRACTOR (default 0, off); and the old
+  AI_MODEL line next to AI_MODEL_FAST. The owner switches mail to Resend with scripts/set-key (docs/EMAIL.md); after that: one restart
+  and one test sign-in email.
+  Still to check: 0 ERROR over 10 minutes (next check), and the test sign-in email after the Resend settings.
