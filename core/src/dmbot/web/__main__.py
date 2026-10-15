@@ -12,7 +12,7 @@ from urllib.parse import urlsplit
 
 import uvicorn
 
-from dmbot import entitlements
+from dmbot import entitlements, mail
 from dmbot.config import ConfigError
 from dmbot.db import Database, DatabaseError
 from dmbot.logs import LOG_FORMATS, LOG_LEVELS, configure_logging
@@ -98,6 +98,17 @@ async def serve(settings: WebSettings) -> None:
         else None
     )
     entitlements.configure_free_users(settings.free_users)  # #771
+    # Account emails (sign-in links, #1231); nothing is sent until SMTP is set up in .env.
+    mailer = (
+        mail.Mailer(
+            db,
+            settings.mail,
+            site_url=settings.site_url,
+            link_secret=settings.link_token_secret,
+        )
+        if settings.mail.configured
+        else None
+    )
     app = create_app(
         settings,
         db,
@@ -106,6 +117,7 @@ async def serve(settings: WebSettings) -> None:
         discussions=discussions,
         human_check=human_check,
         google=google,
+        mailer=mailer,
     )
     sweeper = asyncio.create_task(_sweep(db))
     syncer = asyncio.create_task(_sync_moves(db, payments)) if payments is not None else None

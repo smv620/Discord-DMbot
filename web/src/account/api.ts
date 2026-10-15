@@ -95,6 +95,12 @@ export interface Me {
   firstPaymentFailed?: boolean;
   /** Where DMbot may record you. Missing from an API older than #1151. */
   recording?: RecordingEntry[];
+  /** The account number (the Discord ID in base 36) and the minutes DMbot has run for this
+   * account, all time (#1231). Missing from an API older than that. */
+  dmbotId?: string;
+  experiencePoints?: number;
+  /** A paid, active plan: a move code can be asked for. */
+  canMove?: boolean;
   /** Hand-overs offered to you, and the ones you offered (#614). */
   offers: { incoming: Offer[]; outgoing: Offer[] };
 }
@@ -142,6 +148,8 @@ export type ApiErrorKind =
   | "no-paid-plan" // the billing page needs a paid plan
   | "free-access" // free access: there's nothing to pay for
   | "slow-down" // too many tries from this address (the API limits sign-in, billing, delete)
+  | "bad-link" // an emailed sign-in link that is wrong, used or ended (#1231)
+  | "not-ready" // the API has no move codes yet (#1231)
   | "server"; // anything else
 
 export class ApiError extends Error {
@@ -170,6 +178,13 @@ export interface AccountApi {
   /** The file for "Download my data": the person's own data as JSON (#1150). Fetched from the
    * page, so a refusal (once a minute, or signed out) can be said in words. */
   downloadExport(): Promise<Blob>;
+  /** Email a one-use sign-in link if the address has an account (#1231). It always resolves
+   * the same way, so the page can't tell anyone whether an address has an account. */
+  emailSignInRequest?(email: string): Promise<void>;
+  /** Use the token from an emailed link: signs this browser in (#1231). */
+  emailSignInUse?(token: string): Promise<void>;
+  /** Email a move code to the payment email (paid plans, #1231). */
+  getMoveCode?(): Promise<void>;
   /** The person's own characters. Missing from an API older than #1164. */
   characters?(): Promise<Character[]>;
   /** Stop recording me in one server (#1151). Starting again stays in Discord. */
@@ -212,6 +227,9 @@ const errorKinds: Record<string, ApiErrorKind> = {
   has_free_access: "free-access",
   slow_down: "slow-down",
   busy: "slow-down",
+  bad_link: "bad-link",
+  move_off: "not-ready",
+  not_paid: "no-paid-plan",
 };
 
 /** The real API over HTTP. `base` is the API's address, e.g. "https://api.example". */
@@ -268,6 +286,15 @@ export function httpApi(base: string, fetcher: typeof fetch = fetch): AccountApi
     signInUrl: () => `${root}/auth/discord/start`,
     signOut: async () => {
       await call("POST", "/auth/logout");
+    },
+    emailSignInRequest: async (email) => {
+      await call("POST", "/auth/email/request", { email });
+    },
+    emailSignInUse: async (token) => {
+      await call("POST", "/auth/email/verify", { token });
+    },
+    getMoveCode: async () => {
+      await call("POST", "/me/move-code");
     },
     signOutEverywhere: async () => {
       await call("POST", "/me/sign-out-everywhere");

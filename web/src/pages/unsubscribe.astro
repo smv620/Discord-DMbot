@@ -1,0 +1,14 @@
+---
+// Where an offer email's unsubscribe link lands (#1229, #1231). Kept out of search results.
+import { unsubscribe } from "../content/unsubscribe";
+import Base from "../layouts/Base.astro";
+import UnsubscribeIsland from "../unsubscribe/Unsubscribe";
+---
+
+<Base title={unsubscribe.title} description={unsubscribe.description} noindex>
+  <h1>{unsubscribe.heading}</h1>
+  <UnsubscribeIsland client:only="preact" />
+  <noscript>
+    <p>{unsubscribe.noscript}</p>
+  </noscript>
+</Base>
