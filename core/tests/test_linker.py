@@ -90,6 +90,17 @@ class Matching(unittest.TestCase):
         self.assertEqual(groups, {"oskar vane": ["oskar vain"], "mira": []})
 
 
+class DmScreenText(unittest.TestCase):
+    def test_the_post_says_why_some_of_what_was_said_is_not_asked_yet(self) -> None:
+        from dmbot.ui.names import held_back_text
+
+        text = held_back_text(["Mother Ilse", "Oskar Vane"])
+        self.assertIn("2 new names to check", text)
+        self.assertIn("**Mother Ilse**", text)
+        self.assertIn("held back until you check them", text)
+        self.assertNotIn("claim", text.lower())  # plain words: "what was said"
+
+
 class Linking(ConfirmedMemoryTest):
     async def asyncSetUp(self) -> None:
         await super().asyncSetUp()
