@@ -11,7 +11,8 @@ IDs carry the campaign).
 
 The clock only moves when a DM presses a button or clearly says a rest happened (see
 `DMBot.note_clock_phrase`); nothing is guessed from the story. It speaks up only for dawn,
-noon and dusk as they are passed, and for 24 hours without a long rest.
+noon and dusk as they are passed (except on a long rest or Skip to dawn, whose note already
+gives the time), and for 24 hours without a long rest.
 
 Register with `bot.add_dynamic_items(ClockButton, ClockUndoButton, CombatUndoButton)`.
 """
@@ -79,6 +80,11 @@ COMBAT_ACTIONS = ("cstart", "cnext", "cend", "cround")  # "cround": a named roun
 # The actions that move game time: they say dawn, noon and dusk as they pass, and the 24-hour
 # line (#1173: one list instead of two that could drift apart).
 ENDS_COMBAT = ("long", "dawn")
+# A long rest and skipping to dawn pass the night on purpose, and the note the DM gets already
+# says the new time ("Skipped to dawn. Now ..."): saying dawn, noon and dusk too would be the
+# same news up to three more times (#1197 item 6). The tired line and "Combat is over" stay.
+# The same two actions as ENDS_COMBAT on purpose: both are "the night passes" moves.
+QUIET_RESTS = ("long", "dawn")
 TIME_MOVING = ("m10", "h1", "short", "long", "advance", "cnext", "cend", "cround")
 MARK_LINES = {"dawn": "🌅 Dawn", "noon": "☀️ Noon", "dusk": "🌇 Dusk"}
 
@@ -198,7 +204,7 @@ async def press(
             f"🏁 Combat is over after {before.combat_round} "
             f"round{'s' if before.combat_round != 1 else ''}.",
         )
-    if before is not None and after is not None and _speaks(action):
+    if before is not None and after is not None and _speaks(action) and action not in QUIET_RESTS:
         marks = game.crossings(before.minute, after.minute)
         result.lines = [MARK_LINES[name] for _, name in marks] + result.lines
     return result

@@ -58,8 +58,7 @@ OWN_SET = "That set is this campaign's own."
 ALREADY_FOLLOWING = "This campaign already follows a set of house rules. Unfollow it first."
 NOT_FOLLOWING = "This campaign isn't following a set of house rules."
 NO_CHANGES = "Nothing is different from the last version, so no new version was made."
-NOT_EDITOR = "Only this set's DMs and the people they named can change it."
-EDITOR_NOT_DM = "A co-editor has to be a DM of the campaign that shares the set."
+NOT_EDITOR = "Only this campaign's DMs can change the set."
 NOT_PAID = "Changing a shared set needs the campaign to be on a paid plan."
 NOTHING_NEW = "There is nothing new to take."
 NOTHING_TO_UNDO = "There is nothing to undo."
@@ -119,6 +118,11 @@ class Update:
     offer: Offer
     changes: tuple[set_diff.Change, ...]
 
+    @property
+    def link_changed(self) -> bool:
+        """The rules document link differs (it is not a rule, so `changes` doesn't show it)."""
+        return self.follow.content.get("link") != self.offer.content.get("link")
+
 
 @dataclass(frozen=True, slots=True)
 class Taken:
@@ -131,6 +135,7 @@ class Taken:
     added: tuple[int, ...] = ()
     marker: str = ""
     offered: int = 0  # the version of the set that was on offer (an Undo declines it)
+    link_written: str | None = None  # the set's document link, made the campaign's own on a merge
 
 
 @dataclass(frozen=True, slots=True)
@@ -238,6 +243,36 @@ class RuleSetStore:
         return SharedSet(
             str(row["id"]), str(row["name"]), row["status"] == "shared", int(row["version"])
         )
+
+    async def current_content(
+        self, guild_id: int, campaign_id: str
+    ) -> tuple[SharedSet, dict[str, Any]] | None:
+        """The campaign's shared set and what its newest version holds (None: not shared)."""
+        mine = await self.published(guild_id, campaign_id)
+        if mine is None or not mine.shared:
+            return None
+        async with self._db.guild(guild_id) as conn:
+            cur = await conn.execute(
+                "SELECT content FROM rule_set_versions WHERE guild_id = %s AND campaign_id = %s"
+                " AND set_id = %s AND version = %s",
+                (guild_id, campaign_id, mine.id, mine.version),
+            )
+            row = await cur.fetchone()
+        return (mine, valid_content(_json(row["content"]))) if row else None
+
+    async def content_at(
+        self, guild_id: int, campaign_id: str, version: int
+    ) -> dict[str, Any] | None:
+        """What one version of the campaign's own shared set held (None: no such version)."""
+        async with self._db.guild(guild_id) as conn:
+            cur = await conn.execute(
+                "SELECT v.content FROM rule_set_versions v JOIN rule_sets s"
+                " ON s.guild_id = v.guild_id AND s.campaign_id = v.campaign_id AND s.id = v.set_id"
+                " WHERE v.guild_id = %s AND v.campaign_id = %s AND s.kind = %s AND v.version = %s",
+                (guild_id, campaign_id, HOUSE_RULES, version),
+            )
+            row = await cur.fetchone()
+        return valid_content(_json(row["content"])) if row else None
 
     async def publish(
         self,
@@ -498,24 +533,17 @@ class RuleSetStore:
                 ),
             )
 
-    # ---- the publisher's side: new versions, co-editors, the log --------------------
+    # ---- the publisher's side: new versions, the log ------------------------------
 
     async def _may_edit(
         self, conn: Conn, guild_id: int, campaign_id: str, user_id: int, set_id: str
     ) -> None:
-        """A DM of the publishing campaign, or someone its DMs named, may change the set."""
+        """Only the publishing campaign's current DMs change the set (owner decision: no
+        separate co-editor list; adding a DM to the campaign is how someone gets to edit)."""
         try:
             await require_dm(conn, guild_id, campaign_id, user_id, lock=True)
-            return
-        except HouseRuleError:
-            pass
-        cur = await conn.execute(
-            "SELECT 1 AS ok FROM rule_set_editors WHERE guild_id = %s AND campaign_id = %s"
-            " AND set_id = %s AND user_id = %s",
-            (guild_id, campaign_id, set_id, user_id),
-        )
-        if await cur.fetchone() is None:
-            raise RuleSetError(NOT_EDITOR)
+        except HouseRuleError as exc:
+            raise RuleSetError(NOT_EDITOR) from exc
 
     async def save_version(
         self,
@@ -526,9 +554,10 @@ class RuleSetStore:
         source: Literal["publisher", "suggestion", "document"] = "publisher",
         *,
         plan_ok: bool,
+        expected_version: int | None = None,
     ) -> SharedSet:
-        """Make `content` the set's next version. Only the publisher's DMs and its named
-        co-editors; the set must be shared; nothing is made if nothing differs. Followers
+        """Make `content` the set's next version. Only the publisher's DMs; the set
+        must be shared; nothing is made if nothing differs. Followers
         see it at their next session start, never sooner. `plan_ok`: the caller has checked the
         publishing campaign is still on a paid plan (the owner's plan, which this store can't
         read); without it nothing is saved."""
@@ -537,7 +566,7 @@ class RuleSetStore:
         wanted = valid_content(content)
         now = self._now()
         async with self._db.guild(guild_id) as conn:
-            # The campaign row is locked first, for DMs and co-editors alike and in the same
+            # The campaign row is locked first, in the same
             # order as every other writer, so two saves take turns and never both make N+1.
             await conn.execute(
                 "SELECT 1 FROM campaigns WHERE guild_id = %s AND id = %s FOR UPDATE",
@@ -560,6 +589,8 @@ class RuleSetStore:
             )
             last = await cur.fetchone()
             assert last is not None  # a set always has version 1
+            if expected_version is not None and int(last["version"]) != expected_version:
+                raise RuleSetError(CHANGED_AGAIN)  # someone published since the DM looked
             if valid_content(_json(last["content"])) == wanted:
                 raise RuleSetError(NO_CHANGES)
             version = int(last["version"]) + 1
@@ -580,61 +611,20 @@ class RuleSetStore:
         link: str | None,
         *,
         plan_ok: bool,
+        expected_version: int | None = None,
     ) -> SharedSet:
         """The publisher's current house rules as the set's next version. `plan_ok`: see
-        `save_version`."""
+        `save_version`. `expected_version`: the version the DM was looking at; if another has
+        been published since, nothing is made."""
         return await self.save_version(
-            guild_id, campaign_id, user_id, content_of(rules, link), "publisher", plan_ok=plan_ok
+            guild_id,
+            campaign_id,
+            user_id,
+            content_of(rules, link),
+            "publisher",
+            plan_ok=plan_ok,
+            expected_version=expected_version,
         )
-
-    async def add_editor(
-        self, guild_id: int, campaign_id: str, user_id: int, editor_id: int
-    ) -> None:
-        """Name a co-editor. A publisher action: only the publishing campaign's DMs."""
-        if editor_id <= 0:
-            raise RuleSetError(NOT_EDITOR)
-        async with self._db.guild(guild_id) as conn:
-            await require_dm(conn, guild_id, campaign_id, user_id, lock=True)
-            cur = await conn.execute(
-                "SELECT 1 AS ok FROM campaign_dms WHERE guild_id = %s AND campaign_id = %s"
-                " AND user_id = %s",
-                (guild_id, campaign_id, editor_id),
-            )
-            if await cur.fetchone() is None:  # co-editors are DMs of the publishing campaign
-                raise RuleSetError(EDITOR_NOT_DM)
-            cur = await conn.execute(
-                "SELECT id FROM rule_sets WHERE guild_id = %s AND campaign_id = %s AND kind = %s",
-                (guild_id, campaign_id, HOUSE_RULES),
-            )
-            row = await cur.fetchone()
-            if row is None:
-                raise RuleSetError(NOT_SHARED)
-            await conn.execute(
-                "INSERT INTO rule_set_editors (guild_id, campaign_id, set_id, user_id, added_by,"
-                " added_at) VALUES (%s, %s, %s, %s, %s, %s) ON CONFLICT DO NOTHING",
-                (guild_id, campaign_id, row["id"], editor_id, user_id, self._now()),
-            )
-
-    async def remove_editor(
-        self, guild_id: int, campaign_id: str, user_id: int, editor_id: int
-    ) -> bool:
-        async with self._db.guild(guild_id) as conn:
-            await require_dm(conn, guild_id, campaign_id, user_id, lock=True)
-            cur = await conn.execute(
-                "DELETE FROM rule_set_editors WHERE guild_id = %s AND campaign_id = %s"
-                " AND user_id = %s",
-                (guild_id, campaign_id, editor_id),
-            )
-            return bool(cur.rowcount > 0)
-
-    async def editors(self, guild_id: int, campaign_id: str) -> list[int]:
-        async with self._db.guild(guild_id) as conn:
-            cur = await conn.execute(
-                "SELECT user_id FROM rule_set_editors WHERE guild_id = %s AND campaign_id = %s"
-                " ORDER BY added_at, user_id",
-                (guild_id, campaign_id),
-            )
-            return [int(r["user_id"]) for r in await cur.fetchall()]
 
     async def version_log(self, guild_id: int, campaign_id: str) -> list[VersionLog]:
         """Each version of the campaign's set: who made it, when and how, newest first."""
@@ -800,7 +790,8 @@ class RuleSetStore:
                 raise RuleSetError(NOT_FOLLOWING)
             author: int = user_id
             kept = numbers & set(accepted)
-            merged = set_diff.rules_of(set_diff.apply(follow.content, changes, kept))
+            result = set_diff.apply(follow.content, changes, kept, fresh.content if kept else None)
+            merged = set_diff.rules_of(result)
             cur = await conn.execute(
                 "SELECT count(*) AS n FROM house_rules WHERE guild_id = %s AND campaign_id = %s",
                 (guild_id, campaign_id),
@@ -822,7 +813,31 @@ class RuleSetStore:
                 " AND set_id = %s",
                 (guild_id, campaign_id, follow.set_id),
             )
-            return Taken(True, follow, version, tuple(added), marker, fresh.version)
+            link = await self._adopt_link(conn, guild_id, campaign_id, user_id, result, follow, now)
+            return Taken(True, follow, version, tuple(added), marker, fresh.version, link)
+
+    async def _adopt_link(
+        self,
+        conn: Conn,
+        guild_id: int,
+        campaign_id: str,
+        user_id: int,
+        result: dict[str, Any],
+        follow: Follow,
+        now: int,
+    ) -> str | None:
+        """Pick changes with the set's document link changed: the link comes with the rules,
+        as the campaign's own file link. A link the campaign already has is never replaced
+        (its own win). Returns the link written, for Undo."""
+        link = result.get("link")
+        if not link or link == follow.content.get("link"):
+            return None
+        cur = await conn.execute(
+            "INSERT INTO house_rules_file (guild_id, campaign_id, link, ignored, set_by, set_at)"
+            " VALUES (%s, %s, %s, NULL, %s, %s) ON CONFLICT (guild_id, campaign_id) DO NOTHING",
+            (guild_id, campaign_id, link, user_id, now),
+        )
+        return str(link) if cur.rowcount else None
 
     async def undo_last_take(
         self, guild_id: int, campaign_id: str, user_id: int, expected_version: int
@@ -867,6 +882,12 @@ class RuleSetStore:
                     (guild_id, campaign_id, list(taken.added), taken.marker),
                 )
                 kept = len(taken.added) - int(cur.rowcount)
+                if taken.link_written:  # the link the merge made the campaign's own goes too
+                    await conn.execute(
+                        "DELETE FROM house_rules_file WHERE guild_id = %s AND campaign_id = %s"
+                        " AND link = %s",
+                        (guild_id, campaign_id, taken.link_written),
+                    )
                 offer = Offer(
                     before.set_id, before.kind, before.name, before.publisher, before.version,
                     before.content, before.code,
