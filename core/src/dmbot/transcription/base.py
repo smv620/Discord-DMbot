@@ -21,10 +21,11 @@ MIN_UTTERANCE_S = 0.25
 
 
 class Transcript(str):
-    """Text from an engine, with how sure it was (0 to 1, the words' average) when it
-    says (Deepgram does; #699). It is a str, so everything that takes text takes it; the
-    confidence is lost as soon as the text is changed, which is fine: it's read on
-    delivery (`confidence_of`)."""
+    """Text from an engine, with how sure it was (0 to 1) when it says, and which engine's
+    number that is (Deepgram's is the words' average, #699; local Whisper's is the chance it
+    gave the words it wrote, #733: not the same scale). It is a str, so everything that takes
+    text takes it; the confidence is lost as soon as the text is changed, which is fine: it's
+    read on delivery (`confidence_of`)."""
 
     __slots__ = ("confidence", "engine")  # no dict per line: sessions keep many (table.heard)
     confidence: float | None

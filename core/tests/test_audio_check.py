@@ -16,7 +16,7 @@ from dmbot.audio_check import (
 )
 from dmbot.audio_check import by_confidence as _by_found
 from dmbot.capture_log import CaptureLog, Due
-from dmbot.transcription.base import Transcript, confidence_of
+from dmbot.transcription.base import Transcript, confidence_of, engine_of
 from dmbot.transcription.deepgram import transcript
 from tests.test_capture_log import utt
 
@@ -123,7 +123,44 @@ class WhisperLimitsTests(unittest.TestCase):
         (d,) = log.due(10)
         self.assertEqual(d.engine, "whisper")
         self.assertEqual(Transcript("x", 0.5, "whisper").engine, "whisper")
+        self.assertEqual(by_confidence([(self.LONG, 0.70)]), None)  # (default limits)
+        self.assertFalse(_by_found(mean_confidence([(self.LONG, 0.70)]), "whisper"))  # inclusive
         self.assertIsNone(Transcript("x", 0.5).engine)
+
+
+class MixedEnginesTests(unittest.TestCase):
+    """After a switch mid-session the window holds two scales: only one engine's numbers
+    are judged, and which one never depends on the process."""
+
+    def log(self, lines: list[tuple[str, float | None, str | None]]) -> Due:
+        log = CaptureLog()
+        log.add_utterance(utt(1, 2.0))
+        for n in range(5):
+            log.add_health(1, 270, 300, n)
+        for text, conf, engine in lines:
+            log.add_line(1, text, conf, 0, engine=engine)
+        (d,) = log.due(10)
+        return d
+
+    def test_the_engine_with_more_lines_wins_and_the_others_give_no_number(self) -> None:
+        d = self.log(
+            [("a b c", 0.9, "deepgram"), ("d e f", 0.5, "whisper"), ("g h", 0.55, "whisper")]
+        )
+        self.assertEqual(d.engine, "whisper")
+        self.assertEqual([c for _, c in d.lines], [None, 0.5, 0.55])
+
+    def test_a_tie_goes_to_the_first_name_every_time(self) -> None:
+        d = self.log([("a b c", 0.9, "whisper"), ("d e f", 0.5, "deepgram")])
+        self.assertEqual(d.engine, "deepgram")
+
+    def test_a_line_with_an_engine_but_no_number_does_not_count(self) -> None:
+        d = self.log([("a b c", None, "deepgram"), ("d e f", 0.5, "whisper")])
+        self.assertEqual(d.engine, "whisper")
+
+    def test_deepgram_text_names_its_engine(self) -> None:
+        best = {"transcript": "I cast shield", "words": [{"confidence": 0.9}]}
+        text = transcript({"results": {"channels": [{"alternatives": [best]}]}})
+        self.assertEqual(engine_of(text), "deepgram")
 
 
 class CheckTests(unittest.TestCase):

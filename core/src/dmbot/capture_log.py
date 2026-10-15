@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import math
 import time
-from collections import deque
+from collections import Counter, deque
 from collections.abc import Callable
 from dataclasses import dataclass
 
@@ -261,9 +261,15 @@ class CaptureLog:
                 continue  # told already at this level: no check needed either
             large = percent < LARGE_LOSS_PERCENT and lost >= LARGE_LOSS_FRAMES
             kept = self._lines.get(user_id, ())
-            lines = tuple((text, conf) for _, text, conf, _ in kept)
-            engines = [e for _, _, conf, e in kept if conf is not None and e is not None]
-            engine = max(set(engines), key=engines.count) if engines else None
+            # One engine's numbers only: after a switch mid-session the lines hold two scales,
+            # and one pair of limits can't judge both. The engine with more lines wins (a tie:
+            # the first by name, so it never depends on the process); the others' lines are
+            # kept as text but give no number.
+            counts = Counter(e for _, _, conf, e in kept if conf is not None and e is not None)
+            engine = min(counts, key=lambda e: (-counts[e], e)) if counts else None
+            lines = tuple(
+                (text, conf if conf is None or e == engine else None) for _, text, conf, e in kept
+            )
             found.append(Due(user_id, percent, lost, large, lines, engine))
         return found
 

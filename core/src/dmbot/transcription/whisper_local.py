@@ -89,8 +89,16 @@ def confidence_of_segments(segments: list[SegmentScore]) -> float | None:
     """How sure Whisper was of the segments kept, 0 to 1: the chance it gave the words it
     wrote, `exp(avg_logprob)` (its own measure, the geometric mean of the words' chances),
     averaged over the words of each segment. NOT on Deepgram's scale: clean speech sits near
-    0.7 to 0.8 here, so the audio check has its own limits for Whisper (#733)."""
-    weighted = [(len(s.text.split()), math.exp(min(0.0, s.avg_logprob))) for s in segments]
+    0.7 to 0.8 here, so the audio check has its own limits for Whisper (#733). Only the kept
+    segments count: the ones dropped as likely inventions don't pull it down, which is the
+    point of dropping them. A number that isn't finite counts as no confidence at all."""
+    weighted = [
+        (
+            len(s.text.split()),
+            math.exp(min(0.0, s.avg_logprob)) if math.isfinite(s.avg_logprob) else 0.0,
+        )
+        for s in segments
+    ]
     words = sum(n for n, _ in weighted)
     if not words:
         return None
