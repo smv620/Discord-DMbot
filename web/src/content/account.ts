@@ -51,6 +51,9 @@ export function hoursLeftLine(
 
 export const planName = (id: PlanId): string => byId[id].name;
 
+/** The public place for questions (the GitHub Discussions category QAbot answers, #1339). */
+export const QA_URL = "https://github.com/smv620/Discord-DMbot/discussions/categories/q-a-for-dmbot";
+
 export const text = {
   heading: "My Account",
   loading: "Loading your account…",
@@ -295,6 +298,44 @@ export const text = {
   moveTooSoon:
     "You can move once every 30 days, and this account moved less than 30 days ago. Try again after 30 days, or tell us on the Say hello page.",
   moveEmailFailed: "The code couldn't be emailed just now. Try again in a few minutes.",
+
+  // Write to the team, for people on a paid plan (#1340)
+  supportHeading: "Write to the DMbot team",
+  supportIntro: "Something wrong with your plan, an invoice or DMbot itself? Write to us here.",
+  supportPrivacy:
+    "Your message goes privately to the DMbot team, and is not posted anywhere public. We keep it for 12 months, then delete it. Deleting your account deletes it too.",
+  supportPublicLead: "A question anyone could answer? Ask it in the public",
+  supportSubjectLabel: "Subject",
+  supportMessageLabel: "What can we help with?",
+  supportMessageHint: "Please don't type passwords or card numbers.",
+  supportSend: "Send to the team",
+  supportSending: "Sending…",
+  supportSent: "Sent. Thanks, the team will read it.",
+  supportAnother: "Write another",
+  supportErrors: {
+    "ticket-empty": "Please fill in the subject and your message.",
+    "subject-too-long": "The subject is too long. Please keep it to 120 letters or fewer.",
+    "ticket-too-long": "That's too long. Please keep it to 4,000 letters or fewer.",
+    "slow-down":
+      "Too many messages right now. You can send one every 10 minutes. Try again in a few minutes. Your words are still here.",
+    "not-human":
+      "Tick the box that says you're a person, then press Send again. Your words are still here.",
+    "not-paying":
+      "Writing to the team is for paid plans, and your plan doesn't look active right now. Use the public Q&A for DMbot instead. If you think this is wrong, tell us on the Say hello page.",
+    "signed-out": "You were signed out. Sign in again, then send it. Your words are still here.",
+    network: "No connection. Check your internet, then press Send again. Your words are still here.",
+    server:
+      "That didn't send, and it's on our side. Your words are still here. Try again in a few minutes.",
+  } as Record<string, string>,
+  supportCheckAgain: "Try the check again",
+  supportCheckFailed:
+    "The “are you a person?” check didn't load. Reload the page or try another browser. Reloading clears what you typed, so copy it first.",
+  // For everyone who can't write privately (no paid plan, or an API older than #1340)
+  qaHeading: "Questions about DMbot?",
+  qaText:
+    "Ask in the public Q&A, where anyone can read the answers. Don't post private details there. Or tell us what you think on the Say hello page.",
+  qaLink: "Q&A for DMbot",
+  helloLink: "Say hello",
 
   // Download my data (#1150)
   exportHeading: "Download my data",

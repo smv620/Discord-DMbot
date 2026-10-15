@@ -161,6 +161,7 @@ export function scenarioMe(scenario: Scenario): Me | null {
     dmbotId: "1P0Z4F6N2K9",
     experiencePoints: 1245,
     canMove: false,
+    canSupport: false,
     offers: { incoming: [], outgoing: [] },
   };
   switch (scenario) {
@@ -186,6 +187,7 @@ export function scenarioMe(scenario: Scenario): Me | null {
       return {
         ...base,
         canMove: true,
+        canSupport: true,
         plan: {
           id: "table",
           status: "active",
@@ -291,6 +293,10 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
     },
     async getMoveCode() {
       calls.push("move-code");
+      signedIn();
+    },
+    async sendSupport() {
+      calls.push("support");
       signedIn();
     },
     async startTryIt() {
