@@ -550,7 +550,15 @@ Each step is useful on its own and ships behind the existing phases.
    `DMBOT_STORY_EXTRACTOR`, is off, so nothing calls the AI. Names the memory does not know yet
    are dropped here; resolving them is the linker's job. What is left of 5a: turning the
    extractor on (after #1282 passes), the linker, the continuity warnings shown to the DM, and the
-   secret-said-aloud question. Start after-session only, then live.
+   secret-said-aloud question. **The ontology steward is wired into the claims path (#1303):** a claim
+   whose relationship DMbot does not know goes through `decide_term`: an existing term it recognises
+   is reused, and anything else (a rules word, or a new word the meaning check cannot yet vouch for,
+   which today is every new word) is kept on the new core relationship `associated_with`, with the
+   claim's own words as the fact's label, so a refused term never loses the fact; the DM confirms it
+   in plain words like any fact. No new campaign term is made from a claim until the meaning check
+   exists. The session's numbers (refused per reason, reused, accepted) go to the server log once, as
+   counts only.
+   Start after-session only, then live.
 2. **Phase 5b: NPC tracker and reputation:** knowledge (clues, `knows`, `witnessed`),
    deeds, standing, the NPC channel, the recall service.
 3. **Phase 5c: PlotBot:** threads, promises, clues, `led_to`, stalled-thread nudges,

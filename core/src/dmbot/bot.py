@@ -154,6 +154,7 @@ from dmbot.memory.backup import MemorySection
 from dmbot.memory.claims import ClaimStore
 from dmbot.memory.lookup import CampaignLookup, LookupCache
 from dmbot.memory.models import DM, FIX, KEEP, Heard, MemoryRuleError, name_key
+from dmbot.memory.ontology import Tally
 from dmbot.memory.scan import MAX_SUGGESTIONS, find_new_names, group_alike
 from dmbot.memory.scene import HintParts, SceneTracker, mentions, scene_hints
 from dmbot.memory.scene import prepare as prepare_hints
@@ -372,6 +373,8 @@ class Table:
     scene: SceneTracker = field(default_factory=SceneTracker)
     name_lookup: CampaignLookup | None = None
     hint_parts: HintParts | None = None
+    # What the ontology steward decided this session (#1303), for one line in the server log.
+    steward_tally: Tally = field(default_factory=Tally)
     # Spell, feature and item names from the players' D&D Beyond sheets (#723).
     sheet_hints: tuple[str, ...] = ()
     sheet_task: asyncio.Task[None] | None = None  # reading them; cancelled at the end
@@ -1716,6 +1719,7 @@ class DMBot(commands.AutoShardedBot):
             ("who is who", lambda: self.learn_people(table)),
             ("people check", lambda: self.check_people(table)),
             ("what was said", lambda: self.ask_about_claims(table)),
+            ("steward numbers", lambda: self.log_steward_tally(table)),
             ("definitions", lambda: self.recheck_definitions(table)),
             ("stale flags", lambda: self.close_stale_flags(table)),
             ("old undo history", lambda: self.prune_old_changes(table)),
@@ -5085,6 +5089,14 @@ class DMBot(commands.AutoShardedBot):
                 await self.post(
                     table.screen_channel_id, waiting_text(len(kept)), view=people_review_view(cid)
                 )
+
+    async def log_steward_tally(self, table: Table) -> None:
+        """After the session's other work: one line in the server log of what the ontology
+        steward decided (#1303), counts only. Never shown to a player or a DM. Nothing is
+        written when it decided nothing, which is every session while the extractor is off."""
+        tally, table.steward_tally = table.steward_tally, Tally()
+        if tally.refused or tally.reused or tally.accepted:
+            tally.write_to_log()
 
     async def ask_about_claims(self, table: Table) -> None:
         """After a session: if the story extractor left proposals waiting (#1297), the DM

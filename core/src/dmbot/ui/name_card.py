@@ -35,7 +35,7 @@ from dmbot.memory.models import (
     is_id,
     name_key,
 )
-from dmbot.memory.ontology import CORE_TYPES
+from dmbot.memory.ontology import CORE_TYPES, FALLBACK_PREDICATE
 from dmbot.memory.search import MAX_RESULTS, Match, find, said_lately
 from dmbot.ui import logic
 from dmbot.ui.dmbot_commands import (
@@ -122,12 +122,20 @@ def connection_words(predicate: str) -> str:
     return CONNECTION_WORDS.get(predicate, predicate.replace("_", " "))
 
 
+def fact_words(r: Relation) -> str:
+    """How one fact reads between its two names. On the catch-all, the words it was said in
+    ("sworn on the ashes of") are the fact's own label (#1303); otherwise the relationship's."""
+    if r.predicate == FALLBACK_PREDICATE and r.detail:
+        return r.detail
+    return connection_words(r.predicate)
+
+
 def sentence(lookup: CampaignLookup, r: Relation) -> str | None:
     """ "Ulfgar is a member of Frostwolf tribe", or None if either end is gone."""
     subject, obj = lookup.entities.get(r.subject_id), lookup.entities.get(r.object_id)
     if subject is None or obj is None:
         return None
-    return f"{subject.name} {connection_words(r.predicate)} {obj.name}"
+    return f"{subject.name} {fact_words(r)} {obj.name}"
 
 
 def connect_choices(name: str) -> list[tuple[str, str, str | None]]:
@@ -219,9 +227,13 @@ def card_text(
         if other is None or other.status != CONFIRMED or other.id == entity_id:
             continue
         words = (
-            connection_words(r.predicate)
+            fact_words(r)
             if ahead
-            else CARD_BACK.get(r.predicate, "is connected to")
+            else (
+                f"is on the other end of “{r.detail}” from"
+                if r.predicate == FALLBACK_PREDICATE and r.detail
+                else CARD_BACK.get(r.predicate, "is connected to")
+            )
         )
         groups.setdefault(words, []).append(f"**{_md(other.name)}**" + (" 🤫" if r.secret else ""))
     if groups:
