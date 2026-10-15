@@ -313,12 +313,13 @@ describe("email from DMbot (#1283)", () => {
 describe("what the AI company does with the text (#1328)", () => {
   const privacy = (): string => text(doc("privacy").querySelector("main"));
 
-  it("says the text isn't used to train their AI, in the yes message's own words", () => {
+  it("says the text isn't used to train the AI company's AI, as the yes message does", () => {
     const consent = readFileSync(new URL("../../core/src/dmbot/consent_dm.py", import.meta.url), "utf8");
-    // The promise made to a player when they say yes (AI_NOTE) and the page must stay the same.
+    // The promise made to a player when they say yes (AI_NOTE) and the page must say the same.
     expect(consent).toContain("It isn't used to train their AI.");
     const anthropic = privacy().slice(privacy().indexOf("Anthropic:"));
-    expect(anthropic.slice(0, 260)).toContain("It gets the text it needs, not sound. That text isn't used to train their AI.");
+    // Named, so "their" can't be read as covering the speech company listed just above.
+    expect(anthropic.slice(0, 260)).toContain("It gets the text it needs, not sound. That text isn't used to train Anthropic's AI.");
   });
 
   it("makes no such promise for the speech company: it depends on that company's own setting", () => {
