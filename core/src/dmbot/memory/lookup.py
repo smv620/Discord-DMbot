@@ -58,6 +58,10 @@ class LookupData:
     heard: tuple[HeardCount, ...] = ()
     recent_sessions: tuple[int, ...] = ()
     links: tuple[RuleLink, ...] = ()  # characters' links to the rules (#1034)
+    # The table's people (#1208): the names the DM confirmed for each person (never their
+    # placeholder). Kept apart from `entities`, so no list, card or search ever shows a
+    # person as a story name; only the Cleaner reads them.
+    people: tuple[Alias, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -74,6 +78,7 @@ class NameEntry:
     # Cleaner): a proposed one reaches at most a fix with Undo.
     confirmed: bool
     codes: tuple[str, ...]
+    person: bool = False  # a name of someone at the table, not of a story character
 
 
 @dataclass(frozen=True, slots=True)
@@ -96,6 +101,10 @@ class CampaignLookup:
     secret_lengths: frozenset[int] = frozenset()
     # Secret names with no sound codes (not in Latin letters): compared by spelling.
     codeless_secrets: tuple[str, ...] = ()
+    # The names of people at the table, by spelling and by sound (#1208). The Cleaner may
+    # fix the spelling of one; it never maps a word between a person and a character.
+    people_by_key: dict[str, tuple[NameEntry, ...]] = field(default_factory=dict)
+    people_by_sound: dict[str, tuple[NameEntry, ...]] = field(default_factory=dict)
 
     @classmethod
     def build(cls, data: LookupData) -> CampaignLookup:
@@ -114,6 +123,15 @@ class CampaignLookup:
             for a in data.aliases
             if a.entity_id in entities
         )
+        people_by_key: dict[str, list[NameEntry]] = defaultdict(list)
+        people_by_sound: dict[str, list[NameEntry]] = defaultdict(list)
+        for a in data.people:
+            entry = NameEntry(
+                a.id, a.entity_id, a.text, a.key, a.kind, False, True, sound_codes(a.text), True
+            )
+            people_by_key[entry.key].append(entry)
+            for code in entry.codes:
+                people_by_sound[code].append(entry)
         by_key: dict[str, list[NameEntry]] = defaultdict(list)
         by_sound: dict[str, list[NameEntry]] = defaultdict(list)
         for entry in names:
@@ -158,6 +176,8 @@ class CampaignLookup:
             {k: tuple(v) for k, v in links_by.items()},
             frozenset(secret_lengths),
             tuple(sorted({e.key for e in names if e.secret and not e.codes})),
+            {k: tuple(v) for k, v in people_by_key.items()},
+            {k: tuple(v) for k, v in people_by_sound.items()},
         )
 
     def exact(self, heard: str) -> tuple[NameEntry, ...]:

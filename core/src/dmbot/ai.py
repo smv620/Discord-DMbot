@@ -146,7 +146,7 @@ class AIOutOfFunds(AIError):
 class Watcher(Protocol):
     """What the client reports to (`dmbot.ai_watch.AIWatch`)."""
 
-    def record(self, input_tokens: int, output_tokens: int) -> None: ...
+    def record(self, input_tokens: int, output_tokens: int, feature: str | None = None) -> None: ...
 
     def out_of_funds(self) -> None: ...
 
@@ -224,9 +224,12 @@ class TierClient:
     """The client one job uses: always the same tier. This is what a feature holds, so its
     calls name a tier by being made on it, and no feature names a model."""
 
-    def __init__(self, client: AnthropicClient, tier: AIModelTier) -> None:
+    def __init__(
+        self, client: AnthropicClient, tier: AIModelTier, feature: str | None = None
+    ) -> None:
         self._client = client
         self.tier = tier
+        self.feature = feature  # named in the log line and usage totals (#1176)
 
     @property
     def model(self) -> str:
@@ -237,7 +240,9 @@ class TierClient:
         return f"TierClient(tier={self.tier.value!r}, model={self.model!r})"
 
     async def complete(self, system: str, text: str, *, max_tokens: int = 8000) -> Reply:
-        return await self._client.complete(system, text, tier=self.tier, max_tokens=max_tokens)
+        return await self._client.complete(
+            system, text, tier=self.tier, max_tokens=max_tokens, feature=self.feature
+        )
 
 
 class AnthropicClient:
@@ -262,8 +267,10 @@ class AnthropicClient:
     def __repr__(self) -> str:  # never the key
         return f"AnthropicClient(models={self.models!r})"
 
-    def tier(self, tier: AIModelTier) -> TierClient:
-        return TierClient(self, tier)
+    def tier(self, tier: AIModelTier, feature: Feature | None = None) -> TierClient:
+        """The client for one job. `feature` is only a label for the log line and the usage
+        totals, so jobs that share a tier can be counted apart."""
+        return TierClient(self, tier, feature.value if feature is not None else None)
 
     def _chain(self, tier: AIModelTier) -> list[tuple[AIModelTier, str]]:
         """The tier, then each one below it, without repeats and without a model already
@@ -298,7 +305,13 @@ class AnthropicClient:
             await self._session.close()
 
     async def complete(
-        self, system: str, text: str, *, tier: AIModelTier, max_tokens: int = 8000
+        self,
+        system: str,
+        text: str,
+        *,
+        tier: AIModelTier,
+        max_tokens: int = 8000,
+        feature: str | None = None,
     ) -> Reply:
         """One request on `tier`: `system` instructions, `text` as the user's message.
         Returns the answer's text, and whether it was cut off at `max_tokens`. If the
@@ -310,7 +323,14 @@ class AnthropicClient:
             lower = chain[position + 1] if position + 1 < len(chain) else None
             try:
                 reply = await self._request(
-                    system, text, max_tokens, step, model, asked=tier, can_refuse=lower is not None
+                    system,
+                    text,
+                    max_tokens,
+                    step,
+                    model,
+                    asked=tier,
+                    can_refuse=lower is not None,
+                    feature=feature,
                 )
             except _ModelRefused as refused:
                 if lower is None:
@@ -348,6 +368,7 @@ class AnthropicClient:
         *,
         asked: AIModelTier,
         can_refuse: bool,
+        feature: str | None = None,
     ) -> Reply:
         body: dict[str, Any] = {
             "model": model,
@@ -404,7 +425,7 @@ class AnthropicClient:
 
         # One line for each call, for watching the cost: counts only, never the text.
         log.info(
-            "AI call: tier=%s model=%s in=%s out=%s cache_read=%s stop=%s%s",
+            "AI call: tier=%s model=%s in=%s out=%s cache_read=%s stop=%s%s%s",
             tier.value,
             model,
             count("input_tokens"),
@@ -412,6 +433,7 @@ class AnthropicClient:
             count("cache_read_input_tokens"),
             data.get("stop_reason"),
             f" asked={asked.value}" if asked is not tier else "",
+            f" feature={feature}" if feature else "",
         )
         blocks = [b for b in data.get("content", []) if isinstance(b, dict)]
         answer = "".join(str(b.get("text", "")) for b in blocks if b.get("type") == "text")
@@ -424,5 +446,5 @@ class AnthropicClient:
             cache_read_tokens=count("cache_read_input_tokens"),
         )
         if self._watch is not None:
-            self._watch.record(reply.input_tokens, reply.output_tokens)
+            self._watch.record(reply.input_tokens, reply.output_tokens, feature)
         return reply

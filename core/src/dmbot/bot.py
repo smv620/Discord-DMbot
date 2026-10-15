@@ -656,21 +656,33 @@ class DMBot(commands.AutoShardedBot):
             else None
         )
         # AI text calls (a document into a names list).
-        self.ai = self.ai_client.tier(FEATURE_TIERS[Feature.NAMES]) if self.ai_client else None
+        self.ai = (
+            self.ai_client.tier(FEATURE_TIERS[Feature.NAMES], Feature.NAMES)
+            if self.ai_client
+            else None
+        )
         # A player's sheet document read into the sheet fields (#1125).
         self.sheet_ai = (
-            self.ai_client.tier(FEATURE_TIERS[Feature.SHEET]) if self.ai_client else None
+            self.ai_client.tier(FEATURE_TIERS[Feature.SHEET], Feature.SHEET)
+            if self.ai_client
+            else None
         )
         # FightBot's reminders to players in combat (#1129), on the smallest model.
         self.fight_ai = (
-            self.ai_client.tier(FEATURE_TIERS[Feature.FIGHTBOT]) if self.ai_client else None
+            self.ai_client.tier(FEATURE_TIERS[Feature.FIGHTBOT], Feature.FIGHTBOT)
+            if self.ai_client
+            else None
         )
         # The off-topic filter (#52), the audio check and the DM sidebar.
         self.topic_ai = (
-            self.ai_client.tier(FEATURE_TIERS[Feature.TOPIC]) if self.ai_client else None
+            self.ai_client.tier(FEATURE_TIERS[Feature.TOPIC], Feature.TOPIC)
+            if self.ai_client
+            else None
         )
         self.audio_ai = (
-            self.ai_client.tier(FEATURE_TIERS[Feature.AUDIO_CHECK]) if self.ai_client else None
+            self.ai_client.tier(FEATURE_TIERS[Feature.AUDIO_CHECK], Feature.AUDIO_CHECK)
+            if self.ai_client
+            else None
         )
         # The DM sidebar's answer engine (#934), on that same smallest model. #935 calls
         # `bot.sidebar_answers.answer(...)` for voice memos and "hold on, I need to find…"; None
@@ -2038,8 +2050,8 @@ class DMBot(commands.AutoShardedBot):
             async with asyncio.timeout(NAMES_WAIT_S):
                 return await self.sidebar_people(campaign)
 
-        ai = self.ai_client.tier(FEATURE_TIERS[Feature.SIDEBAR])
-        careful = self.ai_client.tier(FEATURE_TIERS[Feature.SIDEBAR_RETRY])
+        ai = self.ai_client.tier(FEATURE_TIERS[Feature.SIDEBAR], Feature.SIDEBAR)
+        careful = self.ai_client.tier(FEATURE_TIERS[Feature.SIDEBAR_RETRY], Feature.SIDEBAR_RETRY)
         return Sidebar(
             ai,
             rules_index.srd,
@@ -2058,11 +2070,17 @@ class DMBot(commands.AutoShardedBot):
             return []
         rows = await self.memory.table_people(campaign.guild_id, campaign.id)
         agreed = await self.consent.consenting(campaign.guild_id)
+        table = self.tables.get(campaign.guild_id)
+        if table is not None and table.campaign_id == campaign.id:
+            starter: int | None = table.dm_user_id  # who started this session
+        else:
+            starter = next(iter(campaign.dm_user_ids)) if len(campaign.dm_user_ids) == 1 else None
         return people_lines(
             rows,
             agreed,
             campaign.dm_user_ids,
             lambda user_id: self.name_of(campaign.guild_id, user_id),
+            dm_word_user=starter,
         )
 
     async def plan_gate(
