@@ -44,6 +44,23 @@ export const dmSteps: Step[] = [
     names: [{ name: "Check who is who", file: "ui/people_review.py" }],
   },
   {
+    text: "To say an item, like a magic sword, is the only one, press 🔍 Find a name, open the item, and press ☝️ Only one exists. Press Allow more than one to undo it. An item with its own proper name is taken as the only one until you say otherwise. Only game masters can change this.",
+    names: [
+      { name: "Find a name", file: "ui/name_card.py" },
+      { name: "☝️ Only one exists", file: "ui/name_card.py" },
+      { name: "Allow more than one", file: "ui/name_card.py" },
+    ],
+  },
+  {
+    text: "To say who has something, open the name, press 🧭 Connect to…, and choose carries. It is saved either way. If it looks odd, for example \"Someone else already has that, and there is only one\", DMbot says so and will ask you about it after the session. DMbot only points it out. You decide.",
+    names: [
+      { name: "Connect to…", file: "ui/name_card.py" },
+      { name: "carries", file: "ui/name_card.py" },
+      { name: "Someone else already has that, and there is only one", file: "ui/name_card.py" },
+      { name: "will ask you about it after the session", file: "ui/name_card.py" },
+    ],
+  },
+  {
     text: 'Ask a quick question out loud: "Hey DMbot, how long does Bless last?" The short answer is posted in the table\'s dmb-chat channel and says how sure DMbot is. You have the final say.',
     names: [{ name: "dmb-chat", file: "dm_screen/dmbchat_channel.py" }],
   },
