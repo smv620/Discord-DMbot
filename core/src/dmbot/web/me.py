@@ -14,6 +14,7 @@ from typing import Any
 from dmbot import consent, entitlements, hours
 from dmbot.campaigns.models import HANDOVER_SECONDS
 from dmbot.db import Database
+from dmbot.web import support
 from dmbot.web.accounts import dmbot_id
 from dmbot.web.entitlements_writer import PAID_EVENT_SQL, PAID_KINDS
 from dmbot.web.moving import can_move
@@ -213,6 +214,8 @@ async def build_me(db: Database, session: Session, *, now: int) -> dict[str, Any
         **({"dmbotId": account_number} if account_number else {}),
         "experiencePoints": experience,
         "canMove": can_move(plan, now),
+        # The Support form is for paying accounts; others see the public Q&A link (#1340).
+        "canSupport": support.is_paying(plan, now),
         # A first payment that failed and no payment since: the page says "try again" (#922).
         # Left out otherwise, so the common reply is unchanged.
         **({"firstPaymentFailed": True} if first_failed else {}),
