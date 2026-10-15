@@ -52,7 +52,7 @@ export const dmSteps: Step[] = [
     ],
   },
   {
-    text: "To say who has something, open the name, press 🧭 Connect to…, and choose carries. If the item is the only one and someone else already has it, or the person was dead or destroyed before, DMbot says so, and will ask you about it after the session. DMbot only points it out. You decide.",
+    text: "To say who has something, open the name, press 🧭 Connect to…, and choose carries. If something doesn't fit, DMbot tells you, for example \"Someone else already has that, and there is only one\" or \"They were dead or destroyed before this\", and will ask you about it after the session. DMbot only points it out. You decide.",
     names: [
       { name: "Connect to…", file: "ui/name_card.py" },
       { name: "carries", file: "ui/name_card.py" },
