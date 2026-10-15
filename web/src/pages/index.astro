@@ -39,8 +39,8 @@ import { features, featuresHeading } from "../content/features";
   <section aria-labelledby="before-heading" class="before">
     <h2 id="before-heading">{beforeHeading}</h2>
     {
-      beforeQuestions.map((item) => (
-        <details>
+      beforeQuestions.map((item, i) => (
+        <details open={i === 0}>
           <summary>{item.question}</summary>
           <p>
             {item.answer}
