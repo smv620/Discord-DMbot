@@ -37,6 +37,7 @@ twin = []
 dev = [
     "numpy>=1.26",
     "pytest>=8",
+    "pytest-xdist>=3.5",  # CI runs the tests on every core (#1323); each test has its own schema
     "ruff>=0.8",
     "mypy>=1.13",
     "httpx>=0.27",  # testing the web API in-process

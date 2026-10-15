@@ -190,7 +190,9 @@ class Edges(unittest.TestCase):
         started = time.perf_counter()
         sp.find("goblin " * 500)
         sp.find("word " * 500)
-        self.assertLess(time.perf_counter() - started, 0.5)  # ~40 ms in practice
+        self.assertLess(
+            time.perf_counter() - started, 2.0
+        )  # ~40 ms in practice; room for parallel tests
 
 
 class Speed(unittest.TestCase):

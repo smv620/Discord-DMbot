@@ -144,7 +144,7 @@ class Reading(unittest.TestCase):
         )
         started = time.monotonic()
         (line,) = parse(text, secrets=True).lines
-        self.assertLess(time.monotonic() - started, 2)
+        self.assertLess(time.monotonic() - started, 10)  # room for parallel tests (#1323)
         self.assertEqual((len(line.others), len(line.secrets)), (20_000, 20_000))
 
     def test_the_same_name_written_again_is_not_more(self) -> None:
