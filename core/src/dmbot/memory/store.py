@@ -937,10 +937,9 @@ class MemoryStore:
             changes: dict[str, Any] = {"type": type, "role": role, "needs_look": False}
             if current["played_by"] is not None and role != PLAYER_CHARACTER:
                 changes["played_by"] = None
-            if not onto.is_a(type, "item"):
-                changes["unique_item"] = None  # only an item can be one of a kind
-            await states.close_for_new_kind(w, onto, entity_id, type)
             row = await w.update(ENTITIES, entity_id, changes)
+            await states.settle_kind(w, onto, [entity_id], type)
+            row = await _entity_row(w, entity_id)
             await _sync_plays(w, entity_id)
             return Written(_entity(row), w.batch)
 
@@ -1147,6 +1146,8 @@ class MemoryStore:
                 ALIASES, " AND entity_id = %s AND status = 'proposed'", [entity_id]
             ):
                 await w.update(ALIASES, alias["id"], {"status": CONFIRMED})
+            await states.settle_kind(w, onto, [entity_id], type)
+            row = await _entity_row(w, entity_id)
             await _sync_plays(w, entity_id)
             return Written(_entity(row), w.batch)
 
@@ -1185,6 +1186,7 @@ class MemoryStore:
                 [sorted(set(entity_ids))],
             )
             ids = [row["id"] for row in confirmed]
+            await states.settle_kind(w, onto, ids, type)
             if ids:
                 await w.update_where(
                     ALIASES,
@@ -1316,6 +1318,7 @@ class MemoryStore:
         if dm_said_same and source != DM:
             raise ValueError("Only a DM source can say two entries are the same")
         async with self._write(guild_id, campaign_id, source) as w:
+            onto = await _load_ontology(w)
             keep = await _entity_row(w, keep_id)
             gone = await _entity_row(w, gone_id)
             if (keep["type"] == PERSON) != (gone["type"] == PERSON):
@@ -1336,12 +1339,13 @@ class MemoryStore:
                     keep_id,
                     {"type": gone["type"], "role": gone["role"], "played_by": gone["played_by"]},
                 )
+                await states.settle_kind(w, onto, [keep_id], gone["type"])
             kept = await _entity_row(w, keep_id)
             if kept["type"] == gone["type"]:  # one role, one look: neither is lost or invented
                 merged = {
                     "role": kept["role"] or gone["role"],
                     "needs_look": kept["needs_look"] and gone["needs_look"],
-                    # One of a kind if either was said to be, the DM's word over a guess.
+                    # The kept entry's word on one of a kind, else the merged one's.
                     "unique_item": (
                         kept["unique_item"]
                         if kept["unique_item"] is not None
@@ -1351,7 +1355,7 @@ class MemoryStore:
                 if merged != {k: kept[k] for k in merged}:
                     await w.update(ENTITIES, keep_id, merged)
             await _move_rule_links(w, keep_id, gone_id)
-            await states.move_states(w, await _load_ontology(w), keep_id, kept["type"], gone_id)
+            await states.move_states(w, onto, keep_id, kept["type"], gone_id)
             if confirm_keys and source != DM:
                 raise ValueError("Only the DM confirms names")
             await _move_aliases(w, keep_id, gone_id, frozenset(confirm_keys))

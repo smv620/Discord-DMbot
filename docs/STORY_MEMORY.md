@@ -537,12 +537,9 @@ Each step is useful on its own and ships behind the existing phases.
 
 1. **Phase 5a: claims and state** (after the Cleaner and speaker tagging, Phase 2b).
    **Slice 1 is built (#1267):** `memory_states` and `STATE_CHANGES`, the unique flag and
-   `carries` with `max_per_object`, the nesting, loop, held-twice and acts-after-end checks, and
-   the "Only one of these exists" button on an item's name card; no AI, flags only. What is
-   left of 5a is below:
-   the extractor and claim table, `condition` state facts, the unique flag and
-   `carries` with `max_per_object`, nesting and loop checks, the first continuity
-   warnings (dead or destroyed actors, a unique item in two hands, two places), the
+   `carries` with `max_per_object`, the nesting, loop, held-twice and acts-after-end checks (flags
+   only, no AI), and the "☝️ Only one exists" button on an item's name card. What is left of 5a:
+   the extractor and claim table, the continuity warnings shown to the DM, and the
    secret-said-aloud question. Start after-session only, then live.
 2. **Phase 5b: NPC tracker and reputation:** knowledge (clues, `knows`, `witnessed`),
    deeds, standing, the NPC channel, the recall service.

@@ -20,6 +20,7 @@ from dmbot.memory.checks import (
     check_relation,
 )
 from dmbot.memory.models import (
+    PROPOSED,
     Entity,
     MemoryRuleError,
     Relation,
@@ -852,6 +853,80 @@ class Storage(MemoryTest):
         entity = await self.memory.entity(GUILD_A, self.c, item)
         assert entity is not None
         self.assertIsNone(entity.unique_item)
+
+    # ---- send-back: every write that changes a kind (#1272) -----------------------------
+
+    async def test_confirming_a_proposed_item_as_a_character_keeps_the_backup_restorable(
+        self,
+    ) -> None:
+        thing = await self.add("Bell", type="item", status=PROPOSED, source="scan")
+        await self.memory.set_condition(GUILD_A, self.c, thing, "intact", source="scan")
+        await self.memory.set_unique(GUILD_A, self.c, thing, True, source="dm")
+        await self.memory.confirm_entity(GUILD_A, self.c, thing, "npc", source="dm")
+        self.assertEqual(await self.memory.states(GUILD_A, self.c), {})
+        entity = await self.memory.entity(GUILD_A, self.c, thing)
+        assert entity is not None
+        self.assertIsNone(entity.unique_item)
+        data = await self.campaigns.export(GUILD_A, self.c)
+        await self.campaigns.import_backup(GUILD_B, data, DM)  # not refused as damaged
+
+    async def test_confirming_a_group_of_names_keeps_the_backup_restorable(self) -> None:
+        things = [
+            await self.add(n, type="item", status=PROPOSED, source="scan") for n in ("Bell", "Ash")
+        ]
+        for t in things:
+            await self.memory.set_condition(GUILD_A, self.c, t, "lost", source="scan")
+        await self.memory.confirm_kinds(GUILD_A, self.c, things, "npc", source="dm")
+        self.assertEqual(await self.memory.states(GUILD_A, self.c), {})
+        data = await self.campaigns.export(GUILD_A, self.c)
+        await self.campaigns.import_backup(GUILD_B, data, DM)
+
+    async def test_a_merge_that_turns_an_item_into_a_players_character_settles_it(self) -> None:
+        keep = await self.add("Bell", type="item", status=PROPOSED, source="scan")
+        await self.memory.set_condition(GUILD_A, self.c, keep, "intact", source="scan")
+        await self.memory.set_unique(GUILD_A, self.c, keep, True, source="dm")
+        gone = (
+            await self.memory.confirm_entity(
+                GUILD_A,
+                self.c,
+                (await self.add("Belleros", type="npc", status=PROPOSED, source="scan")),
+                "player_character",
+                source="dm",
+                played_by=555,
+            )
+        ).value.id
+        await self.memory.merge(GUILD_A, self.c, keep, gone, source="dm", dm_said_same=True)
+        entity = await self.memory.entity(GUILD_A, self.c, keep)
+        assert entity is not None
+        self.assertEqual((entity.type, entity.unique_item), ("character", None))
+        self.assertEqual(await self.memory.states(GUILD_A, self.c), {})
+        data = await self.campaigns.export(GUILD_A, self.c)
+        await self.campaigns.import_backup(GUILD_B, data, DM)
+
+    async def test_only_the_dm_can_merge_two_different_conditions(self) -> None:
+        keep = await self.add("Belleros", status=PROPOSED, source="scan")
+        gone = await self.add("Bell", status=PROPOSED, source="scan")
+        await self.memory.set_condition(GUILD_A, self.c, keep, "alive", source="scan")
+        await self.memory.set_condition(GUILD_A, self.c, gone, "dead", source="scan")
+        before = await self.snapshot()
+        with self.assertRaisesRegex(MemoryRuleError, "Only the DM can say these two"):
+            await self.memory.merge(GUILD_A, self.c, keep, gone, source="entitybot")
+        self.assertEqual(await self.snapshot(), before)  # nothing half-done
+        # The same condition on both is no conflict; the DM may settle different ones.
+        same_keep = await self.add("Tam", status=PROPOSED, source="scan")
+        same_gone = await self.add("Tammy", status=PROPOSED, source="scan")
+        for entry in (same_keep, same_gone):
+            await self.memory.set_condition(GUILD_A, self.c, entry, "dead", source="scan")
+        await self.memory.merge(GUILD_A, self.c, same_keep, same_gone, source="entitybot")
+        other_keep = await self.add("Aldwin", status=PROPOSED, source="scan")
+        other_gone = await self.add("Ald", status=PROPOSED, source="scan")
+        await self.memory.set_condition(GUILD_A, self.c, other_keep, "alive", source="scan")
+        await self.memory.set_condition(GUILD_A, self.c, other_gone, "dead", source="scan")
+        await self.memory.merge(
+            GUILD_A, self.c, other_keep, other_gone, source="dm", dm_said_same=True
+        )
+        states = await self.memory.states(GUILD_A, self.c, [other_keep])
+        self.assertEqual(states[other_keep].condition, "alive")
 
 
 class Migration0070(MemoryTest):

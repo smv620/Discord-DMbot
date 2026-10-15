@@ -134,8 +134,7 @@ def acts_after_end(onto: Ontology, fact: Relation, ended: Mapping[str, Ended]) -
     """Is a dead or destroyed entry the actor of a fact dated after it ended? Like is compared
     with like: a fact with a session date against the end's session date (the end's stored time
     when it has none), a fact with no date by when it was stored against when the end was
-    stored. A fact in the same session as the end is not after it: session dates are as fine
-    as DMbot knows, and a session date is never set against a stored time."""
+    stored. A fact in the same session as the end is not after it."""
     term = onto.predicates.get(fact.predicate)
     if term is None or term.key not in ACTING:
         return False

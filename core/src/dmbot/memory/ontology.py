@@ -346,7 +346,8 @@ CORE_PREDICATES: tuple[PredicateTerm, ...] = (
         "carries",
         "carries",
         "Who has an item right now: in a pack, on a belt, in a hand. Owning is something else. "
-        "For an item of which only one exists, one holder at a time; a move ends the old fact.",
+        "For an item of which only one exists, one holder at a time: a new holder is flagged "
+        "until the old fact is ended.",
         _BEINGS,
         ("item",),
         max_per_object=1,

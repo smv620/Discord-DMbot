@@ -149,8 +149,6 @@ async def set_condition(
     held = (await current_states(w, [entity["id"]])).get(entity["id"])
     old = None if held is None else held.condition
     check_condition_change(onto, entity["type"], entity["name"], old, condition, w.source)
-    if held is None and conditions_for(onto, entity["type"]) is None:
-        raise MemoryRuleError("DMbot keeps track of this only for characters, items and places.")
     if held is not None and held.condition == condition:
         return None
     if held is not None:
@@ -172,13 +170,23 @@ async def set_condition(
     return state_of(row)
 
 
-async def close_for_new_kind(w: Changes, onto: Ontology, entity_id: str, type_key: str) -> None:
-    """An entry that becomes another kind keeps no condition its new kind can't have (an item
-    made a character is no longer `intact`): the current one is closed, the history stays."""
-    held = (await current_states(w, [entity_id])).get(entity_id)
+async def settle_kind(
+    w: Changes, onto: Ontology, entity_ids: Collection[str], type_key: str
+) -> None:
+    """After ANY write that gives entries a new kind: a condition the new kind can't have is
+    closed (an item made a character is no longer `intact`; the history stays) and
+    `unique_item` is cleared unless the new kind is an item. Without it a backup of the
+    campaign would be refused as damaged when restored."""
+    ids = sorted(set(entity_ids))
+    if not ids:
+        return
     allowed = conditions_for(onto, type_key)
-    if held is not None and (allowed is None or held.condition not in allowed):
-        await w.update(STATES, held.id, {"closed_at": w.now})
+    for held in (await current_states(w, ids)).values():
+        if allowed is None or held.condition not in allowed:
+            await w.update(STATES, held.id, {"closed_at": w.now})
+    if not onto.is_a(type_key, "item"):
+        flagged = await w.select(ENTITIES, " AND unique_item IS NOT NULL AND id = ANY(%s)", [ids])
+        await w.update_rows(ENTITIES, {r["id"]: {"unique_item": None} for r in flagged})
 
 
 async def move_states(
@@ -186,14 +194,18 @@ async def move_states(
 ) -> None:
     """A merged entry's current condition goes with it when the kept entry has none and its
     kind can have that condition (an item merged into a character leaves `intact` behind).
-    Otherwise it is closed and stays as history: the one the DM kept wins, and a merged-away
-    entry has no current condition."""
+    Otherwise it is closed and stays as history: the kept entry's word wins. Two different
+    conditions are the DM's to settle: a merge from anyone else is refused, so a scan can't
+    turn "dead" into "alive" by merging two names."""
     current = await current_states(w, [keep_id, gone_id])
     gone = current.get(gone_id)
     if gone is None:
         return
+    mine = current.get(keep_id)
+    if mine is not None and mine.condition != gone.condition and w.source != DM:
+        raise MemoryRuleError("Only the DM can say these two are the same.")
     allowed = conditions_for(onto, keep_type)
-    if keep_id not in current and allowed is not None and gone.condition in allowed:
+    if mine is None and allowed is not None and gone.condition in allowed:
         await w.update(STATES, gone.id, {"entity_id": keep_id})
     else:
         await w.update(STATES, gone.id, {"closed_at": w.now})
