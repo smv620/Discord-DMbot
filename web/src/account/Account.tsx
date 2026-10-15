@@ -1117,11 +1117,13 @@ function MoveSection() {
               setSent(true);
             },
             (error) =>
-              error.kind === "not-ready"
-                ? text.moveNotReady
-                : error.kind === "slow-down"
-                  ? text.moveWait
-                  : null,
+              ({
+                "not-ready": text.moveNotReady,
+                "slow-down": text.moveWait,
+                "no-email": text.moveNoEmail,
+                "too-soon": text.moveTooSoon,
+                "email-failed": text.moveEmailFailed,
+              })[error.kind as string] ?? null,
           )
         }
       >

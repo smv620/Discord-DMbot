@@ -1330,6 +1330,20 @@ describe("sign in by email, DMbot ID, experience points and move code (#1231)", 
     expect(await screen.findByText(text.moveNotReady)).toBeTruthy();
   });
 
+  it.each([
+    ["no-email", text.moveNoEmail],
+    ["too-soon", text.moveTooSoon],
+    ["email-failed", text.moveEmailFailed],
+    ["slow-down", text.moveWait],
+  ] as const)("a move code that is refused for %s says why in plain words (#1246)", async (kind, words) => {
+    const { api } = show("table");
+    api.getMoveCode = async () => {
+      throw new ApiError(kind);
+    };
+    fireEvent.click(await screen.findByRole("button", { name: text.moveButton }));
+    expect(await screen.findByText(words)).toBeTruthy();
+  });
+
   it("no move code for Try It or no plan", async () => {
     show("try-it");
     await screen.findByText(text.greeting("Belleros"));

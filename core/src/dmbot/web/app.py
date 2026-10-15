@@ -99,7 +99,6 @@ def create_app(
     email_limit: RateLimit | None = None,
     mailer: mail.Mailer | None = None,
     move_codes: MoveCodes | None = None,
-    move_limit: RateLimit | None = None,
     route_limits: dict[str, RateLimit] | None = None,
     google: GoogleSignIn | None = None,
     admin_sessions: AdminSessions | None = None,
@@ -117,9 +116,6 @@ def create_app(
         # lot of addresses at once: a full limiter lets links through (see the route), but a
         # flood of made-up addresses shouldn't fill it in the first place.
         email_limit = RateLimit(60 * 60, count=3, most=500_000)
-    if move_limit is None:
-        # A move code is an email and starts a move: three an hour per account.
-        move_limit = RateLimit(60 * 60, count=3)
     if export_limit is None:
         # The data export (#1150): once a minute per person, counted by account, not address.
         export_limit = RateLimit(60)
@@ -450,7 +446,7 @@ def create_app(
         }
 
     @app.post("/me/move-code", status_code=202)
-    async def move_code(signed: Signed) -> dict[str, str]:
+    async def move_code(request: Request, signed: Signed) -> dict[str, str]:
         """Email a move code to the account's payment email (#1231; the code itself is #1230's).
         Paid, active plans only, and never shown on screen: it only goes to the email."""
         session, _token = signed
@@ -459,12 +455,27 @@ def create_app(
         plan, _grant, _access = await entitlements.plan_grant_access(db, session.user_id, clock())
         if not can_move(plan, clock()):
             raise HTTPException(status_code=403, detail="not_paid")
-        # Three an hour per account, on top of the per-connection limit: a code is an email.
-        if move_limit.take(f"user-{session.user_id}") != "ok":
-            raise HTTPException(status_code=429, detail="slow_down")
-        await move_codes.send_code(session.user_id)
-        log.info("A move code was sent for user %s", session.user_id)
-        return {"message": "We've emailed a move code to your payment email."}
+        # The database counts asks per account and per connection. The connection is a keyed
+        # hash (HMAC with the server's secret): a plain hash of an IPv4 address reverses in
+        # seconds, so the address could be read back from the table.
+        source = hmac.new(
+            settings.secret_key,
+            f"move-code:{limit_key(client_address(request))}".encode(),
+            hashlib.sha256,
+        ).hexdigest()
+        outcome = await move_codes.send_code(session.user_id, source)
+        if outcome == "sent":
+            log.info("A move code was sent for user %s", session.user_id)
+            return {"message": "We've emailed a move code to your payment email."}
+        # Plain words the page shows; none of them holds the code or the address.
+        refusals = {
+            "not_paid": (403, "not_paid"),
+            "too_soon": (409, "too_soon"),
+            "slow_down": (429, "slow_down"),
+            "no_email": (409, "no_email"),
+        }
+        status, detail = refusals.get(outcome, (502, "email_failed"))
+        raise HTTPException(status_code=status, detail=detail)
 
     @app.get("/me")
     async def me(signed: Signed) -> dict[str, Any]:
