@@ -2340,3 +2340,23 @@ Overall ...................................... PASS (Deepgram baseline: 33/33, 1
   Not yet checked live (needs the owner): one test sign-in email to an address the owner chooses and the signed link accepted;
   the account page's DMbot ID; "Get a move code" (needs a paid test account with a payment email). Offer emails stay off until
   MAIL_POSTAL_ADDRESS is set; with 0 website users none can go out today.
+
+==============================================================================
+2026-10-15  dev1  DEPLOY: the story-memory deploy (#1271) is live as bc54a3e0 (migration 0073 memory_claims)
+  Supervisor said go on #1271 (17:50 UTC). Dry run first, on development bc54a3e0: a fresh pg_dumpall of the live database (at
+  0072), restored into a throwaway postgres:16, migrated as the dmbot role, deleted after. "Database updated: 0073_memory_claims"
+  in 0.15 s; a second run applied nothing; memory_claims has row-level security on and forced (1 policy); 3 campaigns, 152
+  entries, 237 aliases, 147 transcript lines unchanged. No game running (active_sessions 0); ears, the consent wording (v6),
+  docker-compose.yml and cloudflared unchanged, so only core and web-api were rebuilt.
+  Backup: ~/db-backups/dmbot-before-bc54a3e0-20261015T175144Z.sql (chmod 600). Then, as separate steps, `GIT_COMMIT=bc54a3e0...
+  docker compose build core web-api`, `up -d --no-deps core`, `up -d --no-deps web-api`. #1331's lock change is not in it, so no
+  special restart order.
+  Result: core logged "Database updated: 0073_memory_claims", then "ears connected" and "Connected to 1 server(s)". web-api
+  started and went healthy. 0 ERROR or traceback lines in core and web-api in the first minutes. schema_migrations: 73 rows.
+  Start-up warnings, both about .env and both harmless: one new setting missing from .env (DMBOT_STORY_EXTRACTOR; it defaults to 0,
+  the extractor off, which is what is wanted) and the old AI_MODEL line next to AI_MODEL_FAST (the owner can delete it). dev1
+  did not touch .env.
+  Still to check: 0 ERROR lines over 10 minutes (next checks), and that the continuity step after a session logs only counts,
+  never words (needs a session; nothing is waiting today).
+  Follow-up, 18:06 UTC (13 minutes after the deploy): 0 ERROR, CRITICAL or traceback lines in core and web-api since 17:53 (Supervisor's
+  "0 ERROR for 10 minutes" check passed); core and web-api still up, web-api healthy; no session since, so the continuity step has not run.

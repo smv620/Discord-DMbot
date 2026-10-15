@@ -15,11 +15,11 @@ from __future__ import annotations
 
 import json
 import re
-from collections.abc import Collection, Mapping, Sequence
+from collections.abc import Awaitable, Callable, Collection, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
 
-from dmbot.memory._changes import ALIASES, CLAIMS, ENTITIES
+from dmbot.memory._changes import ALIASES, CLAIMS, ENTITIES, Changes
 from dmbot.memory.models import (
     CLAIM_CONFIRMED,
     CLAIM_DROPPED,
@@ -526,13 +526,21 @@ class ClaimStore:
             return claim_of(row)
 
     async def confirm(
-        self, guild_id: int, campaign_id: str, claim_id: str, *, opted_in: Collection[int]
+        self,
+        guild_id: int,
+        campaign_id: str,
+        claim_id: str,
+        *,
+        opted_in: Collection[int],
+        before: Callable[[Changes], Awaitable[None]] | None = None,
     ) -> Confirmed:
         """The DM says yes: the fact is written as the DM's own, through the store (so every
         rule and check runs as for any fact), and the claim keeps which fact it became. A fact
         the rules refuse leaves the question waiting and says why. `opted_in` is who may be
         recorded now: if anyone whose words it holds has stopped, the claim is deleted instead
-        (the stored row is untrusted too, so the plan and instruction checks run again)."""
+        (the stored row is untrusted too, so the plan and instruction checks run again).
+        `before` runs first inside the same transaction (a continuity answer, #1320, ends the
+        fact it replaces or brings back what had ended): all of it happens, or none."""
         claim = await self.get(guild_id, campaign_id, claim_id)
         if claim is None or claim.status != CLAIM_PROPOSED:
             raise MemoryRuleError(GONE)
@@ -579,6 +587,8 @@ class ClaimStore:
             current = await w.get(CLAIMS, claim_id)
             if current is None or current["status"] != CLAIM_PROPOSED:
                 raise MemoryRuleError(GONE)
+            if before is not None:
+                await before(w)
             if condition is not None:
                 state, flags = await self._store.set_condition_in(
                     w, who[0], condition, claim.session_started_at
