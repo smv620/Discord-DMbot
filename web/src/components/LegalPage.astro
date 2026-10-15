@@ -17,7 +17,7 @@ const { title, description, heading, summary } = Astro.props;
 const summaryLines = Array.isArray(summary) ? summary : [summary];
 ---
 
-<Base title={title} description={description}>
+<Base title={title} description={description} plain>
   <article class="legal prose">
     <p class="draft" role="note">
       Draft for review. These words may still change. If we change them, we'll tell signed-in

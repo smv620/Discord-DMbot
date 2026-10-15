@@ -257,6 +257,34 @@ class Sending(DatabaseTest):
         self.assertEqual(await mail.prune_account_emails(self.db, later), 2)
         self.assertEqual(await self.send(made, "trial-end:1", offer=True), "already_sent")
 
+    async def records(self, user: int) -> set[str]:
+        async with self.db.unscoped() as conn:
+            cur = await conn.execute("SELECT kind FROM sent_emails WHERE user_id = %s", (user,))
+            return {r["kind"] for r in await cur.fetchall()}
+
+    async def test_a_try_it_note_is_pruned_after_a_year_not_before(self) -> None:
+        now = 2_000_000_000
+        async with self.db.unscoped() as conn:
+            await conn.execute(
+                "INSERT INTO sent_emails (user_id, kind, sent_at) VALUES"
+                " (1, 'trial-end:1', %s), (2, 'trial-end:1', %s),"
+                " (3, 'trial-extension:1', %s), (4, 'dm:trial-end:1', %s),"
+                " (5, 'other-offer', %s)",
+                (
+                    now - 366 * 86400,  # old: goes
+                    now - 364 * 86400,  # still inside the year: stays
+                    now - 366 * 86400,
+                    now - 366 * 86400,
+                    now - 366 * 86400,  # not a Try It note: stays
+                ),
+            )
+        self.assertEqual(await mail.prune_account_emails(self.db, now), 3)
+        self.assertEqual(await self.records(1), set())
+        self.assertEqual(await self.records(2), {"trial-end:1"})
+        self.assertEqual(await self.records(3), set())
+        self.assertEqual(await self.records(4), set())
+        self.assertEqual(await self.records(5), {"other-offer"})
+
     def test_the_message_id_uses_the_domain_of_the_from_address(self) -> None:
         made = Mailer(
             None,  # type: ignore[arg-type]
