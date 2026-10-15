@@ -220,8 +220,18 @@ class Clocks(DatabaseTest):
         quiet = await self.press("set", set_to=game.from_day_and_time(5, 23))
         # The DM says what time it is: no dawn, noon or dusk lines (only the 24-hour one, if due).
         self.assertEqual([x for x in quiet.lines if x in ui.MARK_LINES.values()], [])
+        # A long rest passes the night on purpose, and the rest note already gives the new time:
+        # no dawn line on top of it (#1197 item 6).
         long = await self.press("long")  # 23:00 + 8h crosses dawn
-        self.assertIn("🌅 Dawn", long.lines)
+        self.assertEqual([x for x in long.lines if x in ui.MARK_LINES.values()], [])
+
+    async def test_a_rest_or_skipping_to_dawn_adds_no_dawn_noon_dusk_lines(self) -> None:
+        await self.press("set", set_to=game.from_day_and_time(4, 18))
+        dawn = await self.press("dawn")  # "Skipped to dawn. Now ..." says it
+        self.assertEqual(dawn.lines, [])
+        await self.press("set", set_to=game.from_day_and_time(4, 11, 30))
+        short = await self.press("short")  # a short rest still says what it passed
+        self.assertIn("☀️ Noon", short.lines)
 
     async def test_the_twenty_four_hour_line_is_said_once_with_its_source(self) -> None:
         await self.press("set", set_to=NOON4)

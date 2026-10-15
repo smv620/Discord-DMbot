@@ -67,7 +67,13 @@ class Rules(unittest.TestCase):
     def test_every_action_belongs_to_one_rule(self) -> None:
         self.assertEqual(
             plan_rules.RULE_OF,
-            {"ai": "ai", "copy": "backup", "transcript": "backup", "restore": "backup"},
+            {
+                "ai": "ai",
+                "copy": "backup",
+                "transcript": "backup",
+                "restore": "backup",
+                "share": "backup",
+            },
         )
 
     def test_an_owner_of_an_ended_plan_is_told_what_stopped_and_to_pick_one(self) -> None:

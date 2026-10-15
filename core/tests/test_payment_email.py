@@ -110,7 +110,7 @@ class Parsing(unittest.TestCase):
         return StripeProvider(
             StripeConfig(
                 secret_key="sk_test_not_real", prices={"table": "price_table"},
-                extra_hours_price="p", first_month_coupons={},
+                extra_hours_price="p",
             ),
             b"w" * 32,
         )  # fmt: skip

@@ -108,8 +108,33 @@ class Parsing(unittest.TestCase):
                 "hp", "temp_hp", "conditions", "exhaustion", "resistances", "immunities",
                 "vulnerabilities", "expertise", "tools", "weapon_profs", "armor_profs",
                 "background", "inventory", "flags",
+                "slots", "pact",  # numbers only (#1176)
             },
         )  # fmt: skip
+
+    def test_spell_slots_are_kept_as_numbers_only(self) -> None:
+        data = answer()
+        data["data"]["spellSlots"] = [
+            {"level": 2, "used": 1, "available": 3, "note": "LEAK"},
+            {"level": 1, "used": 9, "available": 4},  # used above max: capped
+            {"level": 3, "used": 0, "available": 0},  # none at this level: left out
+            {"level": 12, "used": 0, "available": 1},  # not a spell level
+            {"level": "x", "used": 0, "available": 1},
+            "junk",
+        ]
+        snapshot = sheets.parse(data)
+        self.assertEqual(
+            snapshot["slots"],
+            [{"level": 1, "max": 4, "used": 4}, {"level": 2, "max": 3, "used": 1}],
+        )
+        self.assertNotIn("LEAK", json.dumps(snapshot))
+
+    def test_a_sheet_without_slots_has_none(self) -> None:
+        self.assertEqual(sheets.parse(answer())["slots"], [])
+        old = {k: v for k, v in sheets.parse(answer()).items() if k != "slots"}
+        cleaned = sheets.clean(old)
+        assert cleaned is not None
+        self.assertEqual(cleaned["slots"], [])
 
     def test_text_in_an_allowed_field_is_still_dropped(self) -> None:
         data = answer()
@@ -568,3 +593,76 @@ class Fetching(unittest.IsolatedAsyncioTestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def _rows(table: tuple[tuple[int, ...], ...]) -> list[list[int]]:
+    """A class's `levelSpellSlots` as D&D Beyond shapes it: one row of nine for each class
+    level (row 0 unused)."""
+    return [list(r) + [0] * (9 - len(r)) for r in table]
+
+
+# Made-up characters shaped like D&D Beyond's: the class's own slot table is in
+# `definition.spellRules`, and `spellSlots` / `pactMagic` say what is used (`available` can be 0
+# for an ordinary caster, #1176).
+FULL = _rows(
+    ((), (2,), (3,), (4, 2), (4, 3), (4, 3, 2), (4, 3, 3), (4, 3, 3, 1), (4, 3, 3, 2))
+    + ((4, 3, 3, 3, 1),) * 12
+)
+WARLOCK = _rows(((),) + ((1,),) + ((2,),) + ((0, 2),) * 2 + ((0, 0, 2),) * 2 + ((0, 0, 0, 2),) * 15)
+
+
+def caster(name: str, level: int, rows: list[list[int]], divisor: int = 1) -> dict[str, Any]:
+    return {
+        "level": level,
+        "definition": {
+            "name": name,
+            "spellRules": {"levelSpellSlots": rows, "multiClassSpellSlotDivisor": divisor},
+        },
+    }
+
+
+class SpellSlotsAsDndBeyondShapesThem(unittest.TestCase):
+    def parse(self, classes: list[dict[str, Any]], **extra: Any) -> dict[str, Any]:
+        data = answer()
+        data["data"]["classes"] = classes
+        data["data"].update(extra)
+        return sheets.parse(data)
+
+    def test_a_full_caster_with_available_zero_gets_the_classes_table(self) -> None:
+        got = self.parse(
+            [caster("Wizard", 3, FULL)],
+            spellSlots=[
+                {"level": 1, "used": 1, "available": 0},
+                {"level": 2, "used": 0, "available": 0},
+            ],
+        )
+        self.assertEqual(
+            got["slots"], [{"level": 1, "max": 4, "used": 1}, {"level": 2, "max": 2, "used": 0}]
+        )
+
+    def test_available_wins_when_it_has_a_total(self) -> None:
+        got = self.parse(
+            [caster("Wizard", 3, FULL)], spellSlots=[{"level": 1, "used": 0, "available": 5}]
+        )
+        self.assertEqual(got["slots"][0], {"level": 1, "max": 5, "used": 0})
+
+    def test_a_warlock_has_pact_slots_and_no_ordinary_ones(self) -> None:
+        got = self.parse(
+            [caster("Warlock", 3, WARLOCK)],
+            pactMagic=[{"level": 2, "used": 1, "available": 0}],
+        )
+        self.assertEqual(got["slots"], [])
+        self.assertEqual(got["pact"], {"level": 2, "max": 2, "used": 1})
+
+    def test_a_multiclass_caster_uses_the_multiclass_table(self) -> None:
+        # Wizard 3 + Cleric 2 count as a level 5 caster: 4 / 3 / 2.
+        got = self.parse(
+            [caster("Wizard", 3, FULL), caster("Cleric", 2, FULL)],
+            spellSlots=[{"level": 1, "used": 2, "available": 0}],
+        )
+        self.assertEqual([(s["level"], s["max"]) for s in got["slots"]], [(1, 4), (2, 3), (3, 2)])
+        self.assertEqual(got["slots"][0]["used"], 2)
+
+    def test_a_fighter_has_none(self) -> None:
+        got = self.parse([{"level": 5, "definition": {"name": "Fighter"}}])
+        self.assertEqual((got["slots"], got["pact"]), ([], None))

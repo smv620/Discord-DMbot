@@ -56,11 +56,14 @@ in the text, leave it out (null for a number, [] for a list).
  "saves": ["str"], "skills": ["perception"], "expertise": ["stealth"],
  "tools": [], "weapon_profs": [], "armor_profs": [],
  "languages": [], "senses": {"darkvision": 60},
+ "slots": [{"level": 1, "max": 4, "used": 1}],
  "spells": ["spell names"], "features": ["feature names"], "feats": ["feat names"],
  "items": ["item names"],
  "inventory": {"count": 0, "weight": 0.0, "rarity": {"common": 0, "uncommon": 0, "rare": 0, \
 "very rare": 0, "legendary": 0, "artifact": 0}}
 }
+Spell slots: one entry for each spell level 1 to 9 the sheet gives, with how many there are \
+(max) and how many are used; leave it [] if the sheet lists none.
 Skill names are lower case with hyphens (animal-handling, sleight-of-hand). Ability keys are \
 str, dex, con, int, wis, cha."""
 

@@ -722,5 +722,89 @@ class CharactersTest(unittest.TestCase):
         self.assertIsNone(own_name(names, MARRON))
 
 
+class TablePeople(unittest.TestCase):
+    """People at the table are in the lookup for the Cleaner only (#1208): it fixes a
+    person's spelling and never maps between a person and a character."""
+
+    PERSON = "p" * 32
+
+    def build(self, *, character: str | None = None, person_name: str = "Mikael") -> CampaignLookup:
+        person_alias = alias(self.PERSON, person_name)
+        ents = (entity(CERRIC, character, "player_character"),) if character else ()
+        names = (alias(CERRIC, character),) if character else ()
+        return CampaignLookup.build(LookupData(1, ents, names, (), (), people=(person_alias,)))
+
+    def test_a_persons_spelling_is_fixed(self) -> None:
+        got = clean(self.build(), "Then Mikail went first.")
+        self.assertEqual(got.text, "Then Mikael went first.")
+        self.assertEqual(got.fixes[0].entity_id, self.PERSON)
+        self.assertFalse(got.fixes[0].sure)  # one word alone: shown with Undo, never silent
+        self.assertEqual(clean(self.build(), "Then Mikail went first.", unsure=False).fixes, ())
+
+    def test_a_persons_name_as_the_dm_confirmed_it_is_left_alone(self) -> None:
+        self.assertEqual(
+            clean(self.build(), "Then Mikael went first.").text, "Then Mikael went first."
+        )
+
+    def test_mike_and_mikal_stay_apart_whatever_the_score(self) -> None:
+        both = self.build(character="Mikal", person_name="Mike")
+        # Each is a known name of its own kind, so neither is changed into the other.
+        for line in ("Then Mikal went first.", "Then Mike went first."):
+            self.assertEqual(clean(both, line, scene=(CERRIC,)).text, line)
+
+    def test_a_dm_rule_never_turns_a_persons_name_into_a_character(self) -> None:
+        rule = CampaignLookup.build(
+            LookupData(
+                1,
+                (entity(CERRIC, "Mikal", "player_character"),),
+                (alias(CERRIC, "Mikal"),),
+                (correction("Mike", CERRIC, FIX),),
+                (),
+                people=(alias(self.PERSON, "Mike"),),
+            )
+        )
+        line = "Then Mike went first."
+        # Even with the character in the scene, where a rule or a sound match could act.
+        self.assertEqual(clean(rule, line, scene=(CERRIC,)).text, line)
+        self.assertEqual(clean(rule, line, scene=(CERRIC,)).fixes, ())
+
+    def test_a_word_between_a_person_and_a_character_is_never_fixed_to_either(self) -> None:
+        both = self.build(character="Mikal", person_name="Mikael")
+        self.assertEqual(clean(both, "Then Mikail went first.", scene=(CERRIC,)).fixes, ())
+
+    def test_two_people_alike_are_left_alone(self) -> None:
+        other = alias("q" * 32, "Mikail")
+        two = CampaignLookup.build(
+            LookupData(1, (), (), (), (), people=(alias(self.PERSON, "Mikael"), other))
+        )
+        self.assertEqual(clean(two, "Then Mikel went first.").fixes, ())
+
+    def test_a_secret_character_name_that_sounds_like_the_person_blocks_the_fix(self) -> None:
+        secret = CampaignLookup.build(
+            LookupData(
+                1,
+                (entity(CERRIC, "Cerric"),),
+                (alias(CERRIC, "Cerric"), alias(CERRIC, "Mikal", secret=True)),
+                (),
+                (),
+                people=(alias(self.PERSON, "Mikael"),),
+            )
+        )
+        self.assertEqual(clean(secret, "Then Mikail went first.").fixes, ())
+
+    def test_several_words_close_enough_are_fixed_and_without_a_scene(self) -> None:
+        two = CampaignLookup.build(
+            LookupData(1, (), (), (), (), people=(alias(self.PERSON, "Ka Zet"),))
+        )
+        got = clean(two, "Then Ka Zett went first.", scene=())
+        self.assertEqual([f.entity_id for f in got.fixes], [self.PERSON])
+
+    def test_people_are_not_story_names(self) -> None:
+        built = self.build()
+        self.assertEqual(built.entities, {})
+        self.assertEqual(built.names, ())
+        self.assertEqual(list(built.by_key), [])
+
+
 if __name__ == "__main__":
     unittest.main()
