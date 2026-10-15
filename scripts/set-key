@@ -7,9 +7,9 @@
 #   scripts/set-key DEEPGRAM_API_KEY   set that one
 #
 # Only the keys, tokens and secrets listed in .env.example can be set (names ending in
-# _KEY, _TOKEN or _SECRET), plus SMTP_APP_PASSWORD, named exactly. That Gmail app password
-# is a key in all but name, and the owner can't type it into an editor safely from a
-# phone. No other _PASSWORD is allowed. Other settings are easy to read, so they belong
+# _KEY, _TOKEN or _SECRET), plus SMTP_APP_PASSWORD, named exactly. That one is a Resend API key (or
+# a Google app password) and is a key in all but name, and the owner can't type it into an
+# editor safely from a phone. No other _PASSWORD is allowed. Other settings are easy to read, so they belong
 # in an editor.
 # The new .env replaces the old file, so a symlinked .env becomes a plain file owned by
 # whoever runs this.
@@ -99,11 +99,22 @@ echo
 value=${value//$'\r'/}
 value=${value#"${value%%[![:space:]]*}"}
 value=${value%"${value##*[![:space:]]}"}
-# Google shows the app password as four groups of four letters with spaces between.
-if [[ $name == SMTP_APP_PASSWORD ]]; then
+# Two forms are accepted for the sending password (#1347). Resend's API key: re_ and then
+# letters, digits and _, 20 to 80 characters in all. A Google app password: 16 letters, shown
+# as four groups of four with spaces between. Nothing else, and never a word of the paste
+# in the message.
+if [[ $name == SMTP_APP_PASSWORD && -n $value ]]; then
   value=${value// /}
-  [[ $value =~ ^[A-Za-z]{16}$ ]] || fail "Not saved: a Gmail app password is 16 letters.
-Copy it again from https://myaccount.google.com/apppasswords, then run: scripts/set-key SMTP_APP_PASSWORD"
+  if [[ $value =~ ^re_[A-Za-z0-9_]+$ ]] && ((${#value} >= 20 && ${#value} <= 80)); then
+    :   # a Resend API key
+  elif [[ $value =~ ^[A-Za-z]{16}$ ]]; then
+    :   # a Google app password
+  else
+    fail "Not saved: that is not a key DMbot can send email with.
+A Resend API key starts with re_ (copy it again from https://resend.com/api-keys).
+A Gmail app password is 16 letters (https://myaccount.google.com/apppasswords).
+Then run: scripts/set-key SMTP_APP_PASSWORD"
+  fi
 fi
 
 [[ -n $value ]] || fail "Not saved: nothing was pasted.
@@ -143,7 +154,8 @@ mv -f "$tmp" "$env_file"
 trap - EXIT
 
 # The length makes a double paste easy to spot.
-# A 16-letter app password is too weak to show any of it, so it never gets the suffix.
+# A mail password (a 16-letter app password, or a Resend key that starts the same way for
+# everyone) never gets the suffix: not a character of it is shown.
 if [[ $name == SMTP_APP_PASSWORD ]]; then
   echo "Saved $name (${#value} characters)."
 elif ((${#value} >= 16)); then
