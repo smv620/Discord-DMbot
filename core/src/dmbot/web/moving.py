@@ -7,9 +7,10 @@ the move are #1230's; the website's side of asking for a code is `EmailedMoveCod
 
 from __future__ import annotations
 
+import secrets
 import time
 from collections.abc import Callable
-from typing import Literal, Protocol
+from typing import Literal, Protocol, cast
 
 from dmbot.account_move import CODE_LIFETIME_S, hash_code, new_code
 from dmbot.db import Database
@@ -44,7 +45,7 @@ class EmailedMoveCodes:
     """The real `MoveCodes` (#1246): the code is made and counted by one database door, then
     emailed to the **payment email only** (the address the payment company has; a code goes
     nowhere else). The code is in the email and nowhere else: not in a log, not in the email's
-    kind (that holds the first 8 characters of its hash, which can't be turned back into it),
+    kind (it holds the time and a random part only),
     not in the answer."""
 
     def __init__(
@@ -69,13 +70,16 @@ class EmailedMoveCodes:
             row = await cur.fetchone()
         outcome = str(row["outcome"]) if row else "failed"
         if outcome in ("not_paid", "too_soon", "slow_down"):
-            return outcome  # type: ignore[return-value]  # narrowed by the test above
+            return cast(MoveOutcome, outcome)
+        if outcome == "no_account":
+            return "no_email"  # no account row to ask for: the same plain answer
         if outcome != "ok":
             return "failed"
         try:
             result = await self._mailer.send(
                 user_id=user_id,
-                kind=f"move-code:{code_hash[:8]}",
+                # Unique for each ask, and nothing of the code in it: the kind is stored and logged.
+                kind=f"move-code:{now}:{secrets.token_hex(4)}",
                 to=email,
                 subject="Your DMbot move code",
                 body=(
@@ -91,10 +95,10 @@ class EmailedMoveCodes:
         except Exception:
             result = "failed"
         if result not in ("sent", "already_sent"):
-            await self._cancel(user_id)
+            await self._cancel(user_id, code_hash)
             return "failed"
         return "sent"
 
-    async def _cancel(self, user_id: int) -> None:
+    async def _cancel(self, user_id: int, code_hash: str) -> None:
         async with self._db.unscoped() as conn:
-            await conn.execute("SELECT dmbot_web_cancel_move_code(%s)", (user_id,))
+            await conn.execute("SELECT dmbot_web_cancel_move_code(%s, %s)", (user_id, code_hash))

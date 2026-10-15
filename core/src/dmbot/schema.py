@@ -2157,7 +2157,7 @@ WEB_ROLE_FUNCTIONS: tuple[tuple[str, str], ...] = (
     ("dmbot_set_payment_email", "dmbot_set_payment_email(TEXT, TEXT, BIGINT)"),  # #1242
     # A move code asked for on the website (#1246).
     ("dmbot_web_move_code", "dmbot_web_move_code(BIGINT, TEXT, BIGINT, TEXT, BIGINT)"),
-    ("dmbot_web_cancel_move_code", "dmbot_web_cancel_move_code(BIGINT)"),
+    ("dmbot_web_cancel_move_code", "dmbot_web_cancel_move_code(BIGINT, TEXT)"),
 )
 # The columns the website may fill when it creates a hand-over offer (#728): who, where and the
 # two names. Left out on purpose, so they take their defaults: status and decided_at (an offer
@@ -3115,6 +3115,9 @@ WEB_MOVE_CODES = """
                           WHERE m.dmbot_id = account AND m.moved_at > now - 2592000) THEN
                 outcome := 'too_soon';
             ELSE
+                -- One count at a time for a connection too, so asks from several accounts at
+                -- once can't all see "fewer than 5".
+                PERFORM pg_advisory_xact_lock(hashtextextended('dmbot.move_ask:' || src, 0));
                 DELETE FROM move_code_asks a WHERE a.asked_at <= now - 3600;
                 IF (SELECT count(*) FROM move_code_asks a WHERE a.user_id = who) >= 3
                    OR (SELECT count(*) FROM move_code_asks a WHERE a.source = src) >= 5 THEN
@@ -3122,7 +3125,7 @@ WEB_MOVE_CODES = """
                 ELSE
                     INSERT INTO move_code_asks (user_id, source, asked_at) VALUES (who, src, now);
                     INSERT INTO move_codes (user_id, code_hash, created_at, expires_at)
-                        VALUES (who, hash, now, ends)
+                        VALUES (who, hash, now, LEAST(ends, now + 1800))
                         ON CONFLICT (user_id) DO UPDATE SET code_hash = EXCLUDED.code_hash,
                             created_at = EXCLUDED.created_at, expires_at = EXCLUDED.expires_at,
                             used_at = NULL;
@@ -3133,10 +3136,12 @@ WEB_MOVE_CODES = """
         RETURN outcome;
     END
     $fn$;
-    -- The email didn't go, so no code should be waiting that nobody has seen.
-    CREATE FUNCTION dmbot_web_cancel_move_code(who BIGINT) RETURNS VOID
+    -- The email didn't go, so no code should be waiting that nobody has seen. Only that very
+    -- code: a newer one asked for meanwhile, and already mailed, must stay.
+    CREATE FUNCTION dmbot_web_cancel_move_code(who BIGINT, hash TEXT) RETURNS VOID
         LANGUAGE sql SECURITY DEFINER
-        AS $fn$ DELETE FROM move_codes WHERE user_id = who $fn$;
+        AS $fn$ DELETE FROM move_codes WHERE user_id = who AND code_hash = hash
+                AND used_at IS NULL $fn$;
     DO $do$
     BEGIN
         EXECUTE format(
@@ -3144,13 +3149,13 @@ WEB_MOVE_CODES = """
             ' SET search_path = pg_catalog, %I, pg_temp',
             current_schema());
         EXECUTE format(
-            'ALTER FUNCTION dmbot_web_cancel_move_code(BIGINT)'
+            'ALTER FUNCTION dmbot_web_cancel_move_code(BIGINT, TEXT)'
             ' SET search_path = pg_catalog, %I, pg_temp',
             current_schema());
     END
     $do$;
     REVOKE ALL ON FUNCTION dmbot_web_move_code(BIGINT, TEXT, BIGINT, TEXT, BIGINT) FROM PUBLIC;
-    REVOKE ALL ON FUNCTION dmbot_web_cancel_move_code(BIGINT) FROM PUBLIC;
+    REVOKE ALL ON FUNCTION dmbot_web_cancel_move_code(BIGINT, TEXT) FROM PUBLIC;
 """
 
 

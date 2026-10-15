@@ -3,6 +3,7 @@ and counted by one database door, mailed to the payment email only, and shown no
 
 from __future__ import annotations
 
+import asyncio
 import unittest
 from email.message import EmailMessage
 
@@ -120,9 +121,9 @@ class WebMoveCode(DatabaseTest):
             cur = await conn.execute("SELECT kind FROM sent_emails")
             kinds = [r["kind"] for r in await cur.fetchall()]
         (kind,) = kinds
-        self.assertRegex(kind, r"^move-code:[0-9a-f]{8}$")
+        self.assertRegex(kind, r"^move-code:\d+:[0-9a-f]{8}$")
         self.assertNotIn(code, kind)
-        self.assertTrue(kind.endswith(account_move.hash_code(code)[:8]))
+        self.assertNotIn(account_move.hash_code(code)[:8], kind)  # nothing derived from the code
         async with self.db.unscoped() as conn:
             cur = await conn.execute("SELECT * FROM move_codes")
             self.assertNotIn(code, repr(await cur.fetchall()))  # only a hash is stored
@@ -215,10 +216,45 @@ class WebMoveCode(DatabaseTest):
                 async with self.web.unscoped() as conn:
                     await conn.execute(statement)
 
-    async def test_the_limits_match_the_bots(self) -> None:
+    async def test_the_limits_in_the_door_match_the_bots(self) -> None:
         # The door's numbers are written in SQL; the bot's are Python constants. Same rules.
-        self.assertEqual((account_move.ASKS, account_move.ASK_WINDOW_S), (3, 3600))
-        self.assertEqual(account_move.MOVE_GAP_S, 2_592_000)
+        async with self.db.unscoped() as conn:
+            cur = await conn.execute(
+                "SELECT prosrc FROM pg_proc WHERE proname = 'dmbot_web_move_code'"
+            )
+            row = await cur.fetchone()
+        assert row is not None
+        body = " ".join(str(row["prosrc"]).split())
+        self.assertIn(f">= {account_move.ASKS} ", body)
+        self.assertIn(f"now - {account_move.ASK_WINDOW_S}", body)
+        self.assertIn(f"now - {account_move.MOVE_GAP_S}", body)
+        self.assertIn(f"now + {account_move.CODE_LIFETIME_S}", body)
+
+    async def test_asks_at_once_from_one_connection_still_stop_at_five(self) -> None:
+        users = []
+        for n in range(8):
+            user = DiscordUser(id=4000 + n, name=f"Q{n}", email=f"q{n}@example.com")
+            await sessions.sign_in(self.web, user, [THURSDAY], now=self.now, days=30)
+            await self.give_plan(user, "table", "active", f"sub_q{n}")
+            async with self.web.user(user.id) as conn:
+                await conn.execute(
+                    "UPDATE web_users SET payment_email = %s, payment_email_at = 1",
+                    (f"payq{n}@example.org",),
+                )
+            users.append(user)
+        results = await asyncio.gather(*(self.codes.send_code(u.id, "e" * 64) for u in users))
+        self.assertEqual(results.count("sent"), 5)
+        self.assertEqual(results.count("slow_down"), 3)
+
+    async def test_a_failed_mail_cancels_only_its_own_code(self) -> None:
+        # Ask A makes code A; before A's mail fails, ask B replaces it and is mailed. Cancelling
+        # A must leave B working.
+        await self.codes.send_code(ALICE.id, "a" * 64)
+        second = self.outbox.code()
+        stale = account_move.hash_code("AAAA2222")
+        await self.codes._cancel(ALICE.id, stale)
+        bot = AccountMoves(self.db, clock=lambda: self.now)
+        self.assertEqual(await bot.find(NEW_ACCOUNT, second), ALICE.id)
 
 
 class MoveCodeRoute(WebMoveCode):
@@ -261,6 +297,17 @@ class MoveCodeRoute(WebMoveCode):
                 await conn.execute("UPDATE web_users SET payment_email = %s", (PAYMENT_EMAIL,))
             failed = await client.post("/me/move-code", headers=HEADERS)
             self.assertEqual((failed.status_code, failed.json()), (502, {"error": "email_failed"}))
+
+    async def test_the_route_maps_the_other_refusals(self) -> None:
+        async with await self.signed_in() as client:
+            await self.give_plan(ALICE, "table", "grace", "sub_1")
+            grace = await client.post("/me/move-code", headers=HEADERS)
+            self.assertEqual((grace.status_code, grace.json()), (403, {"error": "not_paid"}))
+            await self.give_plan(ALICE, "table", "active", "sub_1")
+            for _ in range(3):
+                await self.codes.send_code(ALICE.id, "f" * 64)
+            slow = await client.post("/me/move-code", headers=HEADERS)
+            self.assertEqual((slow.status_code, slow.json()), (429, {"error": "slow_down"}))
 
     async def test_no_code_in_the_logs(self) -> None:
         async with await self.signed_in() as client:
