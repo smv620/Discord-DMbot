@@ -1007,7 +1007,8 @@ def create_app(
                 f"DMbot ID: {to_dmbot_id(session.user_id)}\nPlan: {plan.plan}\n\n"
                 f"Read it on the admin page: {settings.site_url}/admin\n",
             )
-        return {"ok": True}
+        # Whether the team can reply by email: the thank-you says so, or says what to do (#1340).
+        return {"ok": True, "reply": await account_email(db, session.user_id) is not None}
 
     # The admin page's sign-in (#772); off while ADMIN_EMAILS is empty. Its sessions and
     # locks count seconds on their own steady clock (not `clock`, the wall time used for

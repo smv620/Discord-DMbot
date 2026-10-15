@@ -6,7 +6,13 @@ import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-li
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import Account from "../src/account/Account";
-import { type AccountApi, ApiError, httpApi, type SupportTicket } from "../src/account/api";
+import {
+  type AccountApi,
+  ApiError,
+  httpApi,
+  type SupportReceipt,
+  type SupportTicket,
+} from "../src/account/api";
 import { mockApi, type Scenario } from "../src/account/mock";
 import { MAX_SUBJECT, MAX_TICKET, Support } from "../src/account/Support";
 import { QA_URL, text } from "../src/content/account";
@@ -86,7 +92,7 @@ describe("who sees the form", () => {
 
 describe("writing to the team", () => {
   function form(over: Partial<AccountApi> = {}) {
-    const sendSupport = vi.fn<(t: SupportTicket) => Promise<void>>(async () => undefined);
+    const sendSupport = vi.fn<(t: SupportTicket) => Promise<SupportReceipt>>(async () => ({ reply: true }));
     const api = { ...mockApi("table"), sendSupport, ...over } as AccountApi;
     render(<Support api={api} siteKey="" />);
     return { sendSupport };
@@ -110,6 +116,29 @@ describe("writing to the team", () => {
     expect((screen.getByLabelText(text.supportMessageLabel) as HTMLTextAreaElement).value).toBe(
       "",
     );
+  });
+
+  it("the thank-you says the team replies by email when the account has an address", async () => {
+    form();
+    type(text.supportSubjectLabel, "Subject");
+    type(text.supportMessageLabel, "Words");
+    send();
+    const thanks = await screen.findByText(text.supportSent);
+    expect(thanks.textContent).toContain("We'll reply by email to the address on your account.");
+  });
+
+  it("the thank-you says what to do when the account has no email", async () => {
+    form({ sendSupport: async () => ({ reply: false }) });
+    type(text.supportSubjectLabel, "Subject");
+    type(text.supportMessageLabel, "Words");
+    send();
+    const thanks = await screen.findByText(text.supportSentNoEmail);
+    // It doesn't promise an email, and it names a way that exists: Discord sign-in is where
+    // the address comes from (nothing on this page adds one).
+    expect(thanks.textContent).toContain("we can't reply");
+    expect(thanks.textContent).toContain("Discord settings");
+    expect(thanks.textContent).not.toContain("We'll reply by email");
+    expect(screen.queryByText(text.supportSent)).toBeNull();
   });
 
   it("an empty subject or message is said at once and nothing is sent", async () => {
@@ -194,8 +223,8 @@ describe("writing to the team", () => {
 
   it("two sends in the same moment send one ticket", async () => {
     let release: () => void = () => undefined;
-    const sendSupport = vi.fn<(t: SupportTicket) => Promise<void>>(
-      () => new Promise<void>((done) => (release = done)),
+    const sendSupport = vi.fn<(t: SupportTicket) => Promise<SupportReceipt>>(
+      () => new Promise<SupportReceipt>((done) => (release = () => done({ reply: true }))),
     );
     render(<Support api={{ ...mockApi("table"), sendSupport } as AccountApi} siteKey="" />);
     type(text.supportSubjectLabel, "Subject");
@@ -236,7 +265,7 @@ describe("writing to the team", () => {
 });
 
 describe("the person check", () => {
-  const sendSupport = vi.fn<(t: SupportTicket) => Promise<void>>(async () => undefined);
+  const sendSupport = vi.fn<(t: SupportTicket) => Promise<SupportReceipt>>(async () => ({ reply: true }));
   const start = () => {
     sendSupport.mockClear();
     render(<Support api={{ ...mockApi("table"), sendSupport } as AccountApi} siteKey="key" />);
@@ -295,6 +324,15 @@ describe("the API calls", () => {
   const reply = (status: number, body: unknown = {}) =>
     vi.fn(async () => new Response(JSON.stringify(body), { status }));
 
+  it("reads whether the team can reply: only an explicit no changes the words", async () => {
+    const ticket = { subject: "S", message: "M", turnstile: "" };
+    const ask = (body: unknown) =>
+      httpApi("https://api.example", reply(201, body)).sendSupport?.(ticket);
+    expect(await ask({ ok: true, reply: true })).toEqual({ reply: true });
+    expect(await ask({ ok: true, reply: false })).toEqual({ reply: false });
+    expect(await ask({ ok: true })).toEqual({ reply: true });
+  });
+
   it("POSTs the ticket as JSON with the cookie and the site's header", async () => {
     const fetcher = reply(201, { ok: true });
     await httpApi("https://api.example", fetcher).sendSupport?.({
@@ -346,6 +384,7 @@ const ROW: SupportTicketRow = {
   message: "Line one\nLine two",
   source: "website",
   status: "new",
+  email: "alice@example.com",
 };
 
 function adminApi(rows: SupportTicketRow[], over: Partial<AdminApi> = {}): AdminApi {
@@ -380,6 +419,23 @@ describe("the admin page's tickets", () => {
     expect(within(item).getByText(/Line one/).textContent).toBe("Line one\nLine two");
     // A person who hasn't signed in lately shows as a shortened number, never as nothing.
     expect(screen.getByText("Older").closest("li")?.textContent).toContain("1234…5678");
+  });
+
+  it("shows the account's email to reply to, as a link, or says there is none", async () => {
+    panel(adminApi([ROW, { ...ROW, id: 6, subject: "No address", email: null }]));
+    const withEmail = (await screen.findByText(ROW.subject)).closest("li") as HTMLElement;
+    const link = within(withEmail).getByRole("link", { name: "alice@example.com" });
+    expect(link.getAttribute("href")).toBe("mailto:alice%40example.com");
+    expect(withEmail.textContent).toContain(`${adminText.replyTo}: alice@example.com`);
+    const without = screen.getByText("No address").closest("li") as HTMLElement;
+    expect(without.textContent).toContain(adminText.noEmail);
+    expect(within(without).queryByRole("link")).toBeNull();
+  });
+
+  it("an address with odd characters can't change the mail link's target", async () => {
+    panel(adminApi([{ ...ROW, email: "a?cc=b@example.com" }]));
+    const link = await screen.findByRole("link", { name: "a?cc=b@example.com" });
+    expect(link.getAttribute("href")).toBe("mailto:a%3Fcc%3Db%40example.com");
   });
 
   it("says when there are none", async () => {

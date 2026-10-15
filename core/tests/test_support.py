@@ -150,7 +150,7 @@ class SupportRoute(SupportBase):
     async def test_a_paying_account_sends_a_ticket_that_is_kept_privately(self) -> None:
         client = await self.client()
         answer = await self.send(client)
-        self.assertEqual((answer.status_code, answer.json()), (201, {"ok": True}))
+        self.assertEqual((answer.status_code, answer.json()), (201, {"ok": True, "reply": True}))
         (row,) = await self.tickets()
         self.assertEqual(
             {k: row[k] for k in ("created_at", "user_id", "plan", "subject", "message")},
@@ -165,6 +165,20 @@ class SupportRoute(SupportBase):
         self.assertEqual((row["source"], row["status"]), ("website", "new"))
         # The answer carries nothing back: not the words, not an id to look the ticket up by.
         self.assertNotIn(MESSAGE, answer.text)
+
+    async def test_the_answer_says_whether_the_team_can_reply_by_email(self) -> None:
+        client = await self.client()
+        # Alice signed in with a Discord email, so there is an address to reply to.
+        self.assertEqual((await self.send(client)).json(), {"ok": True, "reply": True})
+        self.tick += 11 * 60
+        async with self.web.user(ALICE.id) as conn:
+            await conn.execute("UPDATE web_users SET email = NULL, payment_email = NULL")
+        self.assertEqual((await self.send(client)).json(), {"ok": True, "reply": False})
+        # Either address counts: the payment company's alone is enough.
+        self.tick += 11 * 60
+        async with self.web.user(ALICE.id) as conn:
+            await conn.execute("UPDATE web_users SET payment_email = 'pays@example.org'")
+        self.assertEqual((await self.send(client)).json(), {"ok": True, "reply": True})
 
     async def test_the_team_is_emailed_that_one_waits_but_never_the_words(self) -> None:
         await self.send(await self.client())
@@ -379,6 +393,47 @@ class SupportKeptPrivately(SupportBase):
             async with self.web.support_admin() as conn:
                 await conn.execute("UPDATE support_tickets SET message = 'edited'")
 
+    async def test_the_reply_address_is_read_only_through_the_admin_door(self) -> None:
+        await self.add_row(ALICE.id, self.now)
+        # The person can't read it, not even their own (the function answers nothing without the
+        # door), and the website with nobody set can't either.
+        async with self.web.user(ALICE.id) as conn:
+            cur = await conn.execute("SELECT dmbot_support_email(%s) AS e", (ALICE.id,))
+            row = await cur.fetchone()
+            assert row is not None
+            self.assertIsNone(row["e"])
+        async with self.web.unscoped() as conn:
+            cur = await conn.execute("SELECT dmbot_support_email(%s) AS e", (ALICE.id,))
+            row = await cur.fetchone()
+            assert row is not None
+            self.assertIsNone(row["e"])
+        # Through the door it is the Discord address, or the payment company's when there is one.
+        (ticket,) = await support.newest(self.web)
+        self.assertEqual(ticket.email, "belleros@example.com")
+        async with self.web.user(ALICE.id) as conn:
+            await conn.execute("UPDATE web_users SET payment_email = 'pays@example.org'")
+        self.assertEqual((await support.newest(self.web))[0].email, "pays@example.org")
+        async with self.web.user(ALICE.id) as conn:
+            await conn.execute("UPDATE web_users SET email = NULL, payment_email = NULL")
+        self.assertIsNone((await support.newest(self.web))[0].email)
+
+    async def test_the_address_is_never_kept_in_the_ticket(self) -> None:
+        await self.add_row(ALICE.id, self.now)
+        async with self.db.support_admin() as conn:
+            cur = await conn.execute("SELECT * FROM support_tickets")
+            (row,) = await cur.fetchall()
+        self.assertNotIn("email", row)
+        self.assertNotIn("belleros@example.com", repr(row))
+
+    async def test_the_door_does_not_open_other_account_tables_to_the_website(self) -> None:
+        # The function's policy is for its owner only: the website can't use the setting itself.
+        async with self.web.unscoped() as conn:
+            await conn.execute("SELECT set_config('dmbot.support_email_lookup', 'on', true)")
+            cur = await conn.execute("SELECT count(*) AS n FROM web_users")
+            row = await cur.fetchone()
+            assert row is not None
+            self.assertEqual(row["n"], 0)
+
     async def test_the_list_is_newest_first(self) -> None:
         await self.add_row(ALICE.id, self.now - 50, "older")
         await self.add_row(ALICE.id, self.now, "newer")
@@ -467,6 +522,7 @@ class SupportAdmin(SupportBase):
             (first["plan"], first["source"], first["status"], first["at"]),
             ("table", "website", "new", self.now),
         )
+        self.assertEqual(first["email"], "belleros@example.com")
         self.assertEqual((await self.set_status(csrf, first["id"], "answered")).status_code, 204)
         self.assertEqual((await self.set_status(csrf, first["id"], "closed")).status_code, 204)
         after = (await self.client.get("/admin/support")).json()["tickets"]
@@ -521,6 +577,8 @@ class DoorBoundary(unittest.TestCase):
         self.assertEqual(self.callers("db.support_admin("), {"web/support.py"})
         self.assertEqual(self.callers("support.newest("), {"web/admin_api.py"})
         self.assertEqual(self.callers("support.set_status("), {"web/admin_api.py"})
+        # The reply address is read by this one query, and the SQL function only by it.
+        self.assertEqual(self.callers("dmbot_support_email("), {"web/support.py", "schema.py"})
         # The setting's own name is set nowhere else (a hand-made set_config would skip the door).
         self.assertEqual(self.callers("dmbot.support_admin"), {"schema.py"})
 

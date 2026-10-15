@@ -140,6 +140,16 @@ export default function Tickets({ api, csrf, onSignedOut, onOff }: Props) {
                 {text.ticketFrom(who(t.name, t.discordId), t.dmbotId, plan(t.plan), when(t.at))}
               </p>
               <p class="small">
+                {/* The account's address, for replying; it is not part of the ticket. */}
+                {t.email ? (
+                  <>
+                    {text.replyTo}: <a href={`mailto:${encodeURIComponent(t.email)}`}>{t.email}</a>
+                  </>
+                ) : (
+                  text.noEmail
+                )}
+              </p>
+              <p class="small">
                 <strong>{text.ticketStatuses[t.status] ?? t.status}</strong>
               </p>
               <p class="ticket-text">{t.message}</p>

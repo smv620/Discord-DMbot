@@ -310,7 +310,11 @@ export const text = {
   supportMessageHint: "Please don't type passwords or card numbers.",
   supportSend: "Send to the team",
   supportSending: "Sending…",
-  supportSent: "Sent. Thanks, the team will read it.",
+  supportSent: "Sent. Thanks, the team will read it. We'll reply by email to the address on your account.",
+  // The account has no email: nothing on the Account page adds one (the address is the one
+  // Discord gives when you sign in, or the one you pay with), so the way is through Discord.
+  supportSentNoEmail:
+    "Sent. Thanks, the team will read it. But we don't have an email for your account, so we can't reply. Add and confirm an email in your Discord settings, sign in here again, and write to us again.",
   supportAnother: "Write another",
   supportErrors: {
     "ticket-empty": "Please fill in the subject and your message.",

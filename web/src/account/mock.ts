@@ -298,6 +298,7 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
     async sendSupport() {
       calls.push("support");
       signedIn();
+      return { reply: true };
     },
     async startTryIt() {
       calls.push("startTryIt");

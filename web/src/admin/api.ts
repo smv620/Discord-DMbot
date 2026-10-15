@@ -89,6 +89,8 @@ export interface SupportTicketRow {
   message: string;
   source: string;
   status: TicketStatus;
+  /** Where the team replies: the account's email, read for this page only. Null: it has none. */
+  email: string | null;
 }
 
 export class AdminApiError extends Error {
@@ -266,6 +268,7 @@ export function pretendAdminApi(): AdminApi {
       message: "Hello,\nthe last invoice says Guild but I'm on Table.",
       source: "website",
       status: "new",
+      email: "player@example.com",
     },
     {
       id: 1,
@@ -278,6 +281,7 @@ export function pretendAdminApi(): AdminApi {
       message: "Just saying the last session went well.",
       source: "website",
       status: "answered",
+      email: null,
     },
   ];
   return {

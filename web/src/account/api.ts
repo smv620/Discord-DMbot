@@ -134,6 +134,12 @@ export interface RecordingEntry {
   on: boolean;
 }
 
+/** What the API says after a ticket is kept (#1340): whether the team can reply by email, that is,
+ * whether the account has an address. */
+export interface SupportReceipt {
+  reply: boolean;
+}
+
 /** What the Support form sends (#1340). */
 export interface SupportTicket {
   subject: string;
@@ -205,7 +211,7 @@ export interface AccountApi {
   getMoveCode?(): Promise<void>;
   /** Send a private ticket to the DMbot team (paid plans, #1340). Missing from an API older
    * than that. `turnstile` is Cloudflare's token, or "" when the site has no key. */
-  sendSupport?(ticket: SupportTicket): Promise<void>;
+  sendSupport?(ticket: SupportTicket): Promise<SupportReceipt>;
   /** The person's own characters. Missing from an API older than #1164. */
   characters?(): Promise<Character[]>;
   /** Stop recording me in one server (#1151). Starting again stays in Discord. */
@@ -326,7 +332,10 @@ export function httpApi(base: string, fetcher: typeof fetch = fetch): AccountApi
       await call("POST", "/me/move-code");
     },
     sendSupport: async (ticket) => {
-      await call("POST", "/support", ticket);
+      const answer = (await call("POST", "/support", ticket)) as { reply?: unknown } | null;
+      // Only an explicit "no address" changes the words: an answer without the field is a
+      // ticket that was kept, and the team still replies by email.
+      return { reply: answer?.reply !== false };
     },
     signOutEverywhere: async () => {
       await call("POST", "/me/sign-out-everywhere");

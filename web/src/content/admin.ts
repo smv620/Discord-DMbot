@@ -121,6 +121,8 @@ export const text = {
   ticketStatuses: { new: "New", answered: "Answered", closed: "Closed" } as Record<string, string>,
   ticketFrom: (who: string, dmbotId: string, plan: string, when: string): string =>
     `${who} (DMbot ID ${dmbotId}), ${plan} plan, ${when}`,
+  replyTo: "Reply to",
+  noEmail: "No email on this account",
   markAnswered: "Mark answered",
   closeTicket: "Close",
   reopenTicket: "Reopen",

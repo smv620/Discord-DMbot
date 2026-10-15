@@ -30,7 +30,8 @@ export function Support({ api, siteKey }: Props) {
   const [started, setStarted] = useState(false);
   const [checkFailed, setCheckFailed] = useState(false);
   const [problem, setProblem] = useState<string | null>(null);
-  const [sent, setSent] = useState(false);
+  // Sent, and whether the team can reply by email (the account has an address); null: not sent.
+  const [sent, setSent] = useState<{ reply: boolean } | null>(null);
   const subjectBox = useRef<HTMLInputElement>(null);
   const messageBox = useRef<HTMLTextAreaElement>(null);
   const thanks = useRef<HTMLParagraphElement>(null);
@@ -45,7 +46,7 @@ export function Support({ api, siteKey }: Props) {
   useEffect(() => {
     if (sent) thanks.current?.focus();
     else if (wasSent.current) subjectBox.current?.focus();
-    wasSent.current = sent;
+    wasSent.current = sent !== null;
   }, [sent]);
   useEffect(() => {
     if (problem) problemBox.current?.focus();
@@ -80,11 +81,15 @@ export function Support({ api, siteKey }: Props) {
     setBusy(true);
     setProblem(null);
     try {
-      await api.sendSupport({ subject: cleanSubject, message: cleanMessage, turnstile: token });
+      const receipt = await api.sendSupport({
+        subject: cleanSubject,
+        message: cleanMessage,
+        turnstile: token,
+      });
       setSubject("");
       setMessage("");
       setProblem(null);
-      setSent(true);
+      setSent(receipt);
     } catch (error) {
       const kind = error instanceof ApiError ? error.kind : "server";
       // "Tick the box" means nothing when the site has no person check to tick.
@@ -107,14 +112,14 @@ export function Support({ api, siteKey }: Props) {
       <section class="panel" aria-labelledby="support-heading">
         <h2 id="support-heading">{text.supportHeading}</h2>
         <p class="ok" role="status" tabIndex={-1} ref={thanks}>
-          {text.supportSent}
+          {sent.reply ? text.supportSent : text.supportSentNoEmail}
         </p>
         <button
           type="button"
           class="link"
           onClick={() => {
             setProblem(null);
-            setSent(false);
+            setSent(null);
           }}
         >
           {text.supportAnother}
