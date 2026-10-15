@@ -30,12 +30,13 @@ from typing import NamedTuple
 from dmbot.ai import AIError, AIModels, AIModelTier, AIOutOfFunds, AnthropicClient
 from dmbot.config import ConfigError, parse_ai_models
 from dmbot.devtools.claims import cost
-from dmbot.devtools.claims.extract import MAX_TOKENS, SYSTEM, Client, extract, transcript
+from dmbot.devtools.claims.extract import Client, extract, transcript
 from dmbot.devtools.claims.scenes import Scene
 from dmbot.devtools.claims.score import Score, score
 from dmbot.devtools.costs.prices import UnknownPrice, price_of
 from dmbot.devtools.story_measure import report
 from dmbot.devtools.story_measure.golden import GOLDEN, GoldenError, load_golden, summary
+from dmbot.memory.extractor import MAX_TOKENS, SYSTEM
 
 MAX_USD = 5.0  # the whole measurement, every tier together
 TIERS = {"fast": AIModelTier.FAST, "careful": AIModelTier.CAREFUL, "deep": AIModelTier.DEEP}
