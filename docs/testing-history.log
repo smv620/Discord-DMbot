@@ -2358,3 +2358,5 @@ Overall ...................................... PASS (Deepgram baseline: 33/33, 1
   did not touch .env.
   Still to check: 0 ERROR lines over 10 minutes (next checks), and that the continuity step after a session logs only counts,
   never words (needs a session; nothing is waiting today).
+  Follow-up, 18:06 UTC (13 minutes after the deploy): 0 ERROR, CRITICAL or traceback lines in core and web-api since 17:53 (Supervisor's
+  "0 ERROR for 10 minutes" check passed); core and web-api still up, web-api healthy; no session since, so the continuity step has not run.
