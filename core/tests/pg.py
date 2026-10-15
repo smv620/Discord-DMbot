@@ -183,7 +183,11 @@ def _admin() -> psycopg.Connection[tuple[object, ...]]:
 
 def stamp(schema: str) -> str:
     """The quick fingerprint of a schema (see `_STAMP`), its list of migrations, and whether the
-    website's role existed (a schema built before it has none of its rights)."""
+    website's role has its rights in it. Not "whether the role exists": the role may be made by
+    another worker (pytest -n 4) *while* this schema is migrating, after the migration looked and
+    found none (it grants only to a role that exists then). Reading the role afterwards would
+    call such a schema granted when it is not, and a website test handed it fails with "The
+    database isn't set up yet" (Postgres hides a schema the role may not use) (#1357)."""
     conn = _admin()
     row = conn.execute(_STAMP, {"s": schema}).fetchone()
     names = conn.execute(
@@ -191,12 +195,52 @@ def stamp(schema: str) -> str:
             sql.Identifier(schema), sql.Identifier("schema_migrations")
         )
     ).fetchone()
-    return f"{row[0] if row else ''}|{names[0] if names else ''}|{web_role_exists()}"
+    return f"{row[0] if row else ''}|{names[0] if names else ''}|{web_granted(schema)}"
+
+
+_ROLE_MADE = False
+
+
+def make_web_role() -> None:
+    """Make the website's role if it is missing, once per process, before any schema is migrated.
+    A migration grants to the role only if it exists at that moment, so with workers making it
+    at random (pytest -n 4) a schema built a moment too early had no grants and a website test
+    handed it failed with "The database isn't set up yet" (#1357). The role is cluster-wide and
+    harmless to tests that never use it; the password is the one tests/test_web_role.py uses."""
+    global _ROLE_MADE
+    if _ROLE_MADE or not SUPERUSER_URL:
+        return
+    if not web_role_exists():
+        with contextlib.suppress(psycopg.errors.DuplicateObject):  # another worker was first
+            _admin().execute("CREATE ROLE dmbot_web LOGIN PASSWORD 'dmbot_web'")
+    _ROLE_MADE = True
 
 
 def web_role_exists() -> bool:
     row = _admin().execute("SELECT 1 FROM pg_roles WHERE rolname = 'dmbot_web'").fetchone()
     return row is not None
+
+
+def fits_role(schema: str) -> bool:
+    """Whether a kept schema has what a fresh one would have now: the website's role's rights if
+    the role exists, none if it does not."""
+    return _BUILT.get(schema, "").endswith(f"|{web_role_exists()}")
+
+
+def web_granted(schema: str) -> bool:
+    """Whether the website's role can use this schema: true only if the role exists and the
+    migration that built it saw the role (it grants nothing to a role made afterwards)."""
+    row = (
+        _admin()
+        .execute(
+            "SELECT r.oid IS NOT NULL AND has_schema_privilege(r.oid, n.oid, 'USAGE')"
+            " FROM pg_namespace n LEFT JOIN pg_roles r ON r.rolname = 'dmbot_web'"
+            " WHERE n.nspname = %s",
+            (schema,),
+        )
+        .fetchone()
+    )
+    return bool(row and row[0])
 
 
 def clear_rows(schema: str) -> None:
@@ -317,11 +361,12 @@ class DatabaseTest(unittest.IsolatedAsyncioTestCase):
             self.skipTest("set DMBOT_TEST_DATABASE_URL to run database tests")
         reused = False
         if REUSE:
+            await asyncio.to_thread(make_web_role)
             while _FREE and not reused:
                 self.schema = _FREE.pop()
                 # The website's role may have been made since this schema was: it would have none
                 # of the role's rights. Such a schema is dropped, never reused.
-                if _BUILT.get(self.schema, "").endswith(f"|{web_role_exists()}"):
+                if fits_role(self.schema):
                     reused = True
                 else:
                     await asyncio.to_thread(_forget, self.schema)
