@@ -4,6 +4,7 @@ Names are made up; no AI call anywhere."""
 
 from __future__ import annotations
 
+import unittest
 from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
@@ -206,3 +207,24 @@ class DmScreen(MemoryTest):
         )
         await DMBot.ask_about_claims(fake, self.table())  # type: ignore[arg-type]
         fake.post.assert_not_called()
+
+
+class StewardLog(unittest.IsolatedAsyncioTestCase):
+    async def test_the_session_numbers_are_logged_once_and_start_over(self) -> None:
+        from dmbot.memory.ontology import Tally
+
+        table = SimpleNamespace(steward_tally=Tally())
+        table.steward_tally.reused = 2
+        table.steward_tally.refused["rules word"] = 1
+        with self.assertLogs("dmbot.memory.ontology", level="INFO") as logged:
+            await DMBot.log_steward_tally(SimpleNamespace(), table)  # type: ignore[arg-type]
+        self.assertIn("reused 2", logged.output[0])
+        self.assertIn("1 rules word", logged.output[0])
+        self.assertEqual(table.steward_tally.reused, 0)  # a new session starts at zero
+
+    async def test_nothing_is_logged_when_nothing_was_decided(self) -> None:
+        from dmbot.memory.ontology import Tally
+
+        table = SimpleNamespace(steward_tally=Tally())
+        with self.assertNoLogs("dmbot.memory.ontology", level="INFO"):
+            await DMBot.log_steward_tally(SimpleNamespace(), table)  # type: ignore[arg-type]
