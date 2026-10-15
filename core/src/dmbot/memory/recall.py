@@ -60,6 +60,7 @@ SESSION_SECONDS = 30 * 86400  # a fact a month older than the newest scores half
 MAX_FACTS_ROUND = 500
 MAX_FACTS_TOTAL = 1000
 MAX_ROUNDS = 5  # groups cost no step, so a walk can need a few rounds more than its steps
+EVIDENCE_SHARE = 4  # a quarter of the budget is kept for evidence when it can be had
 QUOTED_FACTS = 10  # evidence is looked up for this many of the best facts
 LINES_TIMEOUT_S = 2.0  # a hung transcript read costs the quotes, never the recall
 # A group or a thread holds its members together: walking through one costs no extra step.
@@ -265,7 +266,8 @@ class RecallService:
             # Rank and cut first: the items come before their evidence, and evidence is looked
             # up only for the best few facts, so it can fill what is left but never crowd out
             # an item.
-            first = _cut(audience, as_of, tuple(walk.seeds), found.items(), budget)
+            reserve = budget // EVIDENCE_SHARE if self._lines is not None and agreed else 0
+            first = _cut(audience, as_of, tuple(walk.seeds), found.items(), budget - reserve)
             wanted = [i.id for i in first.items if i.kind == FACT][:QUOTED_FACTS]
             sources = (
                 await self._sources(scope, [walk.facts[f] for f in wanted])

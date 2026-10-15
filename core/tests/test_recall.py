@@ -505,6 +505,17 @@ class Recalling(MemoryTest):
         self.assertTrue({i.id for i in small.items} <= {i.id for i in full.items})
         self.assertEqual(full.items[0].id, small.items[0].id)  # the best is always kept
 
+    async def test_a_quarter_of_the_budget_is_kept_for_evidence(self) -> None:
+        lines, fact = await self.evidence(said("L1", "words", 7))
+        full = await self.recall(DM_SCREEN, "Mira", hops=2, lines=lines)
+        # A budget just big enough for every item bare: evidence still gets its share, so some
+        # lower item is cut rather than the evidence.
+        bare = (await self.recall(DM_SCREEN, "Mira", hops=2)).size
+        tight = await self.recall(DM_SCREEN, "Mira", hops=2, lines=lines, budget=bare + 20)
+        self.assertTrue(self.quotes(full, fact))
+        self.assertTrue(self.quotes(tight, fact))
+        self.assertLessEqual(tight.size, bare + 20)
+
     async def test_the_same_question_gets_the_same_answer(self) -> None:
         one = await self.recall(DM_SCREEN, "Mira", hops=2)
         two = await self.recall(DM_SCREEN, "Mira", hops=2)
