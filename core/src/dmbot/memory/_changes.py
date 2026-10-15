@@ -26,6 +26,9 @@ class Table:
     name: str
     key: str  # the column identifying a row within a campaign
     columns: tuple[str, ...]  # excluding guild_id and campaign_id
+    # False: kept out of the change log, so Undo can't reach it (the extractor's claims are
+    # answered once; a fact written from one is undone as a fact, not by flipping the claim).
+    logged: bool = True
 
 
 TYPES = Table(
@@ -39,7 +42,8 @@ PREDICATES = Table(
     "key",
     ("key", "parent", "label", "description", "examples", "reason", "subject_types",
      "object_types", "is_symmetric", "max_per_subject", "conflicts_with", "status",
-     "replaced_by", "created_at"),
+     "replaced_by", "created_at", "covers", "not_this", "inverse_label", "synonyms",
+     "version"),
 )  # fmt: skip
 ENTITIES = Table(
     "memory_entities",
@@ -56,8 +60,28 @@ ENTITIES = Table(
         "played_by",
         "role",
         "needs_look",
+        "unique_item",
     ),
 )
+# What a being or thing is now, with the history of what it was (#1267): one current row for
+# each entry, a new condition closes it.
+STATES = Table(
+    "memory_states",
+    "id",
+    ("id", "entity_id", "condition", "from_session_at", "source", "created_at", "closed_at"),
+)
+# What the story extractor read out of a session, waiting for the DM (#1297): text only, no
+# links to entries, because a claim names things the memory may not know yet. `fact_id` is not a
+# database link: the fact it became lives in one of two tables (relationships or states) and can
+# be undone or deleted later, so it is a pointer to follow while the fact is still there.
+CLAIMS = Table(
+    "memory_claims",
+    "id",
+    ("id", "subject", "relationship", "object", "details", "how", "lines", "speaker_ids",
+     "source", "prompt_version", "model", "status", "reason", "session_started_at",
+     "created_at", "decided_at", "fact_id"),
+    logged=False,
+)  # fmt: skip
 # A character's links to the rules (#1034): species, creature type, stat block, class,
 # background.
 RULE_LINKS = Table(
@@ -89,7 +113,7 @@ RELATIONS = Table(
     "id",
     ("id", "subject_id", "predicate", "object_id", "detail", "confidence", "status", "source",
      "mention_ids", "from_session_at", "to_session_at", "from_game_time", "to_game_time",
-     "secret", "created_at"),
+     "secret", "created_at", "definition_version"),
 )  # fmt: skip
 CORRECTIONS = Table(
     "memory_corrections",
@@ -101,7 +125,8 @@ FLAGS = Table(
     "id",
     ("id", "kind", "relation_id", "other_id", "status", "created_at"),
 )
-ALL = (TYPES, PREDICATES, ENTITIES, ALIASES, MENTIONS, RELATIONS, CORRECTIONS, FLAGS, RULE_LINKS)
+ALL = (TYPES, PREDICATES, ENTITIES, ALIASES, MENTIONS, RELATIONS, CORRECTIONS, FLAGS, RULE_LINKS,
+       STATES, CLAIMS)  # fmt: skip
 BY_NAME = {t.name: t for t in ALL}
 
 # What links to a row (table, column, is the column a list), checked before deleting it,
@@ -129,6 +154,7 @@ DEPENDENTS: dict[str, tuple[tuple[str, str, bool], ...]] = {
         ("memory_relations", "object_id", False),
         ("memory_corrections", "entity_id", False),
         ("memory_rule_links", "entity_id", False),
+        ("memory_states", "entity_id", False),
     ),
     "memory_mentions": (("memory_relations", "mention_ids", True),),
     "memory_relations": (
@@ -392,7 +418,7 @@ class Changes(Scope):
         """Log many row changes, each with its own version, in one statement. The rows go
         as one JSON value, so the statement is the same however many there are (no limit
         on values, one prepared statement)."""
-        if not rows:
+        if not rows or not table.logged:
             return
         entries = []
         for row_id, before, after in rows:
@@ -430,6 +456,8 @@ class Changes(Scope):
         before: dict[str, Any] | None,
         after: dict[str, Any] | None,
     ) -> None:
+        if not table.logged:
+            return
         self.version += 1
         self.tables.add(table.name)
         if self.batch is None:
@@ -454,11 +482,27 @@ class Changes(Scope):
         )
 
 
+# Columns added after change-log rows were written, with the value an older snapshot reads as
+# (#1189): a fact written before definitions were versioned was written under version 1.
+_ADDED_LATER: dict[str, dict[str, Any]] = {
+    "memory_relations": {"definition_version": 1},
+    "memory_entities": {"unique_item": None},  # nobody said: the name decides (#1267)
+    "memory_predicates": {
+        "covers": [], "not_this": [], "inverse_label": "", "synonyms": [], "version": 1,
+    },
+}  # fmt: skip
+
+
 def _filled(table: Table, snapshot: Any) -> Any:
-    """A change-log snapshot as it would read today (#1034): an entry written before roles
-    existed is read the way the migration moved it (npc becomes a character with the role
-    npc, and so on), so Undo across the migration puts back what the entry is now."""
-    if table.name != "memory_entities" or not isinstance(snapshot, dict) or "role" in snapshot:
+    """A change-log snapshot as it would read today: an entry written before roles existed is
+    read the way the migration moved it (npc becomes a character with the role npc, and so
+    on, #1034), and a row written before a column existed gets that column's starting value
+    (#1189), so Undo across a migration puts back what the row is now."""
+    if not isinstance(snapshot, dict):
+        return snapshot
+    if table.name in _ADDED_LATER:
+        snapshot = {**_ADDED_LATER[table.name], **snapshot}
+    if table.name != "memory_entities" or "role" in snapshot:
         return snapshot
     kind, role, look = MIGRATED_KINDS.get(
         str(snapshot.get("type")), (snapshot.get("type"), None, False)

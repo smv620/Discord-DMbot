@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import re
 import unittest
+from dataclasses import replace
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -13,7 +14,13 @@ import discord
 
 from dmbot.consent_dm import consent_view, options_view, request_view
 from dmbot.memory import sheets
-from dmbot.memory.sheet_store import CharacterSheet, PlayerCharacter, SheetRefused, SheetStore
+from dmbot.memory.sheet_store import (
+    CharacterSheet,
+    FightPlayer,
+    PlayerCharacter,
+    SheetRefused,
+    SheetStore,
+)
 from dmbot.ui import sheets as ui
 from tests.test_sheets import answer
 
@@ -37,11 +44,13 @@ def interaction(found: list[PlayerCharacter], current: CharacterSheet | None = N
     store.save = AsyncMock(return_value=True)
     store.unlink = AsyncMock(return_value=True)
     store.sheets = AsyncMock(return_value=[current] if current else [])
+    store.fight_players = AsyncMock(return_value={})  # FightBot is on for everyone by default
     it = MagicMock()
     it.user = MagicMock(id=PLAYER)
     it.guild = None  # in a private message
     it.type = discord.InteractionType.component
     it.client = MagicMock(sheets=store)
+    it.client.campaigns.get = AsyncMock(return_value=None)  # no rulesets: the defaults
     done = {"yes": False}
 
     async def answered(*_: Any, **__: Any) -> None:
@@ -55,8 +64,17 @@ def interaction(found: list[PlayerCharacter], current: CharacterSheet | None = N
     return it
 
 
+CARD = "DMbot read your sheet"  # the import status card's heading (#1124)
+
+
+def cards(it: Any) -> list[str]:
+    return [str(c.args[0]) for c in it.followup.send.await_args_list if CARD in str(c.args[0])]
+
+
 def said(it: Any) -> str:
-    call = it.followup.send.await_args or it.response.send_message.await_args
+    """What was said last, apart from the import status card that follows a link or typing."""
+    calls = [c for c in it.followup.send.await_args_list if CARD not in str(c.args[0])]
+    call = calls[-1] if calls else it.response.send_message.await_args
     return str(call.args[0])
 
 
@@ -72,6 +90,7 @@ class Words(unittest.TestCase):
         self.assertIn(f"[D&D Beyond](<{URL}>)", linked)
         self.assertIn("read <t:1700000000:R>", linked)
         self.assertIn("Test Species · Test Class 3 / Second Class 2", linked)
+        self.assertIn("max HP 33, AC 17", linked)  # the DM's card shows the basics only
         self.assertIn("not read yet", ui.sheet_status(sheet(read=False), link=True))
         self.assertIn(
             "told DMbot about this character", ui.sheet_status(sheet(url=None), link=True)
@@ -124,7 +143,9 @@ class Button(unittest.IsolatedAsyncioTestCase):
         it.client.sheets.characters_of.assert_any_await(GUILD, PLAYER, CAMPAIGN)
         self.assertIn("**Testa** (Frost\\*maiden): no sheet yet", said(it))
         labels = [b.label for b in sent_view(it).children]
-        self.assertEqual(labels, [ui.LINK_LABEL, ui.TELL_LABEL])  # nothing to unlink yet
+        self.assertEqual(
+            labels, [ui.LINK_LABEL, ui.TELL_LABEL, ui.FILE_LABEL, ui.DOC_LABEL]
+        )  # nothing to unlink yet
 
     async def test_several_characters_ask_which(self) -> None:
         other = PlayerCharacter("d" * 32, "Second", "f" * 32, "Testa Two")
@@ -302,6 +323,32 @@ class Linking(unittest.IsolatedAsyncioTestCase):
         self.assertIn("✅ Linked. DMbot read **Testa Placeholder**'s sheet", said(it))
         it.client.sheets_changed.assert_called_once_with(GUILD, CAMPAIGN)
 
+    async def test_the_import_status_card_follows_a_link_privately_once(self) -> None:
+        it = interaction([TESTA])
+        it.client.sheets_changed = MagicMock()
+        with patch.object(sheets, "fetch", AsyncMock(return_value=sheets.parse(answer()))):
+            await self.form(URL).on_submit(it)
+        [card] = cards(it)
+        self.assertIn("Character:", card)
+        self.assertIn("Testa Placeholder, Test Class 3 + Second Class 2", card)
+        sent = [c for c in it.followup.send.await_args_list if CARD in str(c.args[0])]
+        self.assertTrue(sent[0].kwargs["ephemeral"])  # only the player sees it
+
+    async def test_a_dm_linking_a_sheet_gets_no_card(self) -> None:
+        it = interaction([TESTA])
+        it.client.sheets_changed = MagicMock()
+        with patch.object(sheets, "fetch", AsyncMock(return_value=sheets.parse(answer()))):
+            said_to_dm = await ui.link_and_read(it.client, GUILD, CAMPAIGN, ENTITY, 42)
+        self.assertIn("Linked", said_to_dm)
+        self.assertEqual(cards(it), [])  # the card is the player's, so only they ever get one
+
+    async def test_no_card_when_the_sheet_could_not_be_read(self) -> None:
+        it = interaction([TESTA])
+        refused = sheets.SheetError(sheets.NOT_PUBLIC, refused=True)
+        with patch.object(sheets, "fetch", AsyncMock(side_effect=refused)):
+            await self.form(URL).on_submit(it)
+        self.assertEqual(cards(it), [])
+
     async def test_a_private_sheet_says_how_to_make_it_public(self) -> None:
         it = interaction([TESTA])
         refused = sheets.SheetError(sheets.NOT_PUBLIC, refused=True)
@@ -340,6 +387,9 @@ class Typing(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(sheets.who(snapshot), "Elf · Wizard 5")
         self.assertEqual(snapshot["features"], ["Misty Step", "Shield"])
         self.assertIn("DMbot now listens for those names", said(it))
+        [card] = cards(it)  # a typed sheet is only checked for what the form asked
+        self.assertIn("✅ Character: Testa, Wizard 5", card)
+        self.assertNotIn("Inventory", card)
 
     async def test_names_left_out_are_counted(self) -> None:
         it = interaction([TESTA])
@@ -378,3 +428,62 @@ class Refreshing(unittest.IsolatedAsyncioTestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class FightSwitch(unittest.IsolatedAsyncioTestCase):
+    """The FightBot button flips what is stored now, not what the panel showed (#1174)."""
+
+    async def press(self, shown: bool, never: bool) -> Any:
+        current = sheet(url=sheets.sheet_url(1))
+        it = interaction([PlayerCharacter(CAMPAIGN, "Alpha", ENTITY, "Testa")], current)
+        it.client.sheets.fight_players = AsyncMock(return_value={PLAYER: FightPlayer(never=never)})
+        it.client.sheets.set_fightbot = AsyncMock()
+        it.guild = None
+        panel = ui.SheetPanel(
+            GUILD, PlayerCharacter(CAMPAIGN, "Alpha", ENTITY, "Testa"), has_sheet=True, fight=shown
+        )
+        with patch("dmbot.ui.sheets._still_member", AsyncMock(return_value=True)):
+            await panel._fightbot(it)
+        return it
+
+    async def test_it_turns_off_what_is_on_now_even_if_the_panel_was_old(self) -> None:
+        it = await self.press(shown=False, never=False)  # an old panel says off; it is on
+        it.client.sheets.set_fightbot.assert_awaited_once_with(GUILD, CAMPAIGN, PLAYER, False)
+
+    async def test_and_the_other_way(self) -> None:
+        it = await self.press(shown=True, never=True)
+        it.client.sheets.set_fightbot.assert_awaited_once_with(GUILD, CAMPAIGN, PLAYER, True)
+
+    def test_the_button_says_what_it_does(self) -> None:
+        self.assertEqual(ui.FIGHTBOT_ON, "Turn FightBot off")
+        self.assertEqual(ui.FIGHTBOT_OFF, "Turn FightBot on")
+
+
+class QuestionSwitch(unittest.IsolatedAsyncioTestCase):
+    """The sheet questions button flips what is stored now, not what the panel showed (#1171)."""
+
+    async def press(self, shown: bool, stored: bool) -> Any:
+        current = sheet(url=sheets.sheet_url(1))
+        current = replace(current, asks=stored)
+        it = interaction([PlayerCharacter(CAMPAIGN, "Alpha", ENTITY, "Testa")], current)
+        it.client.sheets.set_questions = AsyncMock(return_value=True)
+        it.guild = None
+        panel = ui.SheetPanel(
+            GUILD, PlayerCharacter(CAMPAIGN, "Alpha", ENTITY, "Testa"), has_sheet=True, asks=shown
+        )
+        with patch("dmbot.ui.sheets._still_member", AsyncMock(return_value=True)):
+            await panel._questions(it)
+        return it
+
+    async def test_it_turns_off_what_is_on_now_even_if_the_panel_was_old(self) -> None:
+        it = await self.press(shown=False, stored=True)  # an old panel says off; it is on
+        self.assertIs(it.client.sheets.set_questions.await_args.args[-1], False)
+
+    async def test_and_the_other_way(self) -> None:
+        it = await self.press(shown=True, stored=False)
+        self.assertIs(it.client.sheets.set_questions.await_args.args[-1], True)
+
+    def test_the_button_says_what_it_does(self) -> None:
+        self.assertEqual(ui.QUESTIONS_ON, "Turn sheet questions off")
+        self.assertEqual(ui.QUESTIONS_OFF, "Turn sheet questions on")
+        self.assertLessEqual(len(ui.QUESTIONS_ON), 80)

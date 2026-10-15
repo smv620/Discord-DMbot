@@ -12,23 +12,25 @@ from urllib.parse import urlsplit
 
 import uvicorn
 
-from dmbot import entitlements
+from dmbot import entitlements, mail
 from dmbot.config import ConfigError
 from dmbot.db import Database, DatabaseError
 from dmbot.logs import LOG_FORMATS, LOG_LEVELS, configure_logging
 from dmbot.schema import WEB_ROLE
 from dmbot.sharding import ShardSettings
-from dmbot.web import feedback, sessions
+from dmbot.web import feedback, move_sync, sessions
 from dmbot.web.admin import HttpGoogle
 from dmbot.web.app import create_app
 from dmbot.web.discord import HttpDiscord
 from dmbot.web.feedback import GitHubDiscussions, Turnstile
+from dmbot.web.moving import EmailedMoveCodes, forget_old_asks
 from dmbot.web.payments import FakeProvider, PaymentProvider
 from dmbot.web.settings import WebSettings, load_web_settings
 from dmbot.web.stripe import StripeProvider
 
 log = logging.getLogger("dmbot.web")
 CLEANUP_SECONDS = 3600
+MOVE_SYNC_SECONDS = 60
 
 
 async def _sweep(db: Database) -> None:
@@ -41,6 +43,12 @@ async def _sweep(db: Database) -> None:
         except Exception:
             log.exception("Removing expired sessions failed; trying again later")
         try:
+            old = await forget_old_asks(db, now=int(time.time()))
+            if old:
+                log.info("Removed %d old move-code asks", old)
+        except Exception as exc:
+            log.error("Removing old move-code asks failed (%s); trying again", type(exc).__name__)
+        try:
             # "Say hello" messages and contacts are kept for a year (privacy page, #665).
             forgotten = await feedback.forget_old(db)
             if forgotten:
@@ -48,6 +56,19 @@ async def _sweep(db: Database) -> None:
         except Exception as exc:
             log.error("Removing old messages failed (%s); trying again later", type(exc).__name__)
         await asyncio.sleep(CLEANUP_SECONDS)
+
+
+async def _sync_moves(db: Database, payments: PaymentProvider) -> None:
+    """Every minute: bring the payment company's records up to date for accounts that moved
+    (#1230). Cheap when nothing waits (a small partial index)."""
+    while True:
+        try:
+            done = await move_sync.sync_moves(db, payments)
+            if done:
+                log.info("Updated the payment records of %d moved accounts", done)
+        except Exception:
+            log.exception("Updating moved accounts' payment records failed; trying again")
+        await asyncio.sleep(MOVE_SYNC_SECONDS)
 
 
 async def serve(settings: WebSettings) -> None:
@@ -84,6 +105,19 @@ async def serve(settings: WebSettings) -> None:
         else None
     )
     entitlements.configure_free_users(settings.free_users)  # #771
+    # Account emails (sign-in links, #1231); nothing is sent until SMTP is set up in .env.
+    mailer = (
+        mail.Mailer(
+            db,
+            settings.mail,
+            site_url=settings.site_url,
+            link_secret=settings.link_token_secret,
+        )
+        if settings.mail.configured
+        else None
+    )
+    # A move code is mailed like a sign-in link, so it needs the same mailer (#1246).
+    move_codes = EmailedMoveCodes(db, mailer) if mailer is not None else None
     app = create_app(
         settings,
         db,
@@ -92,8 +126,11 @@ async def serve(settings: WebSettings) -> None:
         discussions=discussions,
         human_check=human_check,
         google=google,
+        mailer=mailer,
+        move_codes=move_codes,
     )
     sweeper = asyncio.create_task(_sweep(db))
+    syncer = asyncio.create_task(_sync_moves(db, payments)) if payments is not None else None
     config = uvicorn.Config(
         app,
         host=settings.host,
@@ -108,6 +145,10 @@ async def serve(settings: WebSettings) -> None:
         sweeper.cancel()
         with contextlib.suppress(asyncio.CancelledError):
             await sweeper
+        if syncer is not None:
+            syncer.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await syncer
         await discord.close()
         if discussions is not None:
             await discussions.close()

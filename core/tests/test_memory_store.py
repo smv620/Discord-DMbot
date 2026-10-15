@@ -43,8 +43,8 @@ GUILD_A, GUILD_B = 111, 222
 DM = 7
 
 SERVES = PredicateTerm(
-    "sworn_to",
-    "is sworn to",
+    "retained_by",
+    "is retained by",
     "Who someone works for.",
     ("character",),
     ("character",),
@@ -138,6 +138,13 @@ class Isolation(MemoryTest):
         from dmbot.memory.models import Heard
 
         await self.memory.add_session_heard(GUILD_A, self.c, 1_000, [Heard(a, DM, 1)])
+        await self.memory.set_condition(GUILD_A, self.c, a, "missing", source="dm")
+        from dmbot.memory.claims import ClaimStore, Extracted
+
+        await ClaimStore(self.memory).propose(
+            GUILD_A, self.c, [Extracted("Belleros", "knows", "Cerric", "", ("1",), "dm_said")],
+            {"1": DM}, opted_in={DM}, prompt_version="p1", model="m1", session_started_at=1_000,
+        )  # fmt: skip
         return a, b
 
     async def test_another_server_sees_nothing(self) -> None:
@@ -532,9 +539,11 @@ class Rules(MemoryTest):
         )
         cerric = await self.add("Cerric")
         lords = [await self.add(f"Lord {n}") for n in range(4)]
-        facts = [(await self.relate(cerric, "sworn_to", lord)).value for lord in lords[:2]]
-        third = await self.relate(cerric, "sworn_to", lords[2], source="cleaner", confidence=0.5)
-        fourth = await self.relate(cerric, "sworn_to", lords[3], source="cleaner", confidence=0.5)
+        facts = [(await self.relate(cerric, "retained_by", lord)).value for lord in lords[:2]]
+        third = await self.relate(cerric, "retained_by", lords[2], source="cleaner", confidence=0.5)
+        fourth = await self.relate(
+            cerric, "retained_by", lords[3], source="cleaner", confidence=0.5
+        )
         self.assertTrue(third.value[1] and fourth.value[1])  # both over the limit
         await self.memory.update_relation(
             GUILD_A, self.c, facts[0][0].id, status=REJECTED, source="dm"
@@ -664,9 +673,9 @@ class Rules(MemoryTest):
 
         sizes: list[int] = []
 
-        def counted(onto: Any, new: Any, st: str, ot: str, existing: Any) -> Any:
+        def counted(onto: Any, new: Any, st: str, ot: str, existing: Any, **kw: Any) -> Any:
             sizes.append(len(existing))
-            return real(onto, new, st, ot, existing)
+            return real(onto, new, st, ot, existing, **kw)
 
         with patch.object(store_module, "check_relation", counted):
             closed = await self.memory.resolve_stale_flags(GUILD_A, self.c)

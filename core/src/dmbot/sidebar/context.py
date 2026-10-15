@@ -29,8 +29,10 @@ from dmbot.campaigns.models import FALLBACK_NONE
 from dmbot.memory.kinds import kind_phrase
 from dmbot.memory.lookup import CampaignLookup
 from dmbot.memory.models import CONFIRMED
+from dmbot.rules.followed import FollowedRule
 from dmbot.rules.house import HouseRule
 from dmbot.rules.index import Hit, Index, edition_tag, normalize
+from dmbot.sidebar import knowledge
 
 LEGACY_TAG = "[Legacy 2014]"  # the owner's rule: the older ruleset is always tagged
 ENTRY_TEXT_MAX = 1200  # characters of one rules entry sent to the AI
@@ -104,11 +106,6 @@ _STOP = frozenset(
         "got",
     }
 )
-_ABOUT_DMBOT = re.compile(
-    r"(\b(dmbot|discord|commands?|slash|consent|record(ing|ed)?|transcripts?|backups?|restore|"
-    r"dm screen|sidebar)\b|(^|\s)/\w+)",
-    re.IGNORECASE,
-)
 # A question that names an edition or compares them wants both editions' entries.
 _EDITIONS = re.compile(
     r"\b(2014|2024|legacy|old|older|new|newer|versus|vs|compare|compared|comparison|"
@@ -117,6 +114,10 @@ _EDITIONS = re.compile(
 )
 _WORD = re.compile(r"[A-Za-z0-9'’]+")
 _POSSESSIVE = re.compile(r"['’]s$", re.IGNORECASE)
+
+
+PEOPLE_MAX = 12  # a table is small; a long list is never sent
+PEOPLE_LINE_MAX = 160
 
 
 def words_of(text: str) -> list[str]:
@@ -131,7 +132,7 @@ def about_dmbot() -> str:
 
 
 def asks_about_dmbot(question: str) -> bool:
-    return bool(_ABOUT_DMBOT.search(question))
+    return knowledge.names_dmbot(question)
 
 
 def wants_both_editions(question: str) -> bool:
@@ -202,7 +203,13 @@ def relevant_house_rules(
             named.append(rule)
         elif any(f" {w} " in text for w in words):
             shared.append(rule)
-    return [*named, *shared][:HOUSE_RULES_MAX]
+    # The campaign's own rules win: own first, then rules merged in from a set, then the
+    # followed set's. A stable sort keeps "names an entry" ahead inside each group.
+    ranked = sorted(
+        [*named, *shared],
+        key=lambda r: (isinstance(r, FollowedRule), bool(getattr(r, "from_set", None))),
+    )
+    return ranked[:HOUSE_RULES_MAX]
 
 
 def mentioned_names(question: str, lookup: CampaignLookup | None) -> list[str]:
@@ -264,6 +271,7 @@ class Context:
     sources: tuple[str, ...]
     hits: tuple[Hit, ...]
     house_rules: tuple[HouseRule, ...]
+    about_link: str | None = None  # the DMbot section the answer may point to, at this build
 
 
 def build(
@@ -275,6 +283,8 @@ def build(
     house_rules: Sequence[HouseRule],
     lookup: CampaignLookup | None,
     scene: str,
+    people: Sequence[str] = (),
+    table: bool = False,
 ) -> Context:
     """The AI's message for one question about one campaign. `house_rules` and `lookup`
     must already be this campaign's; nothing else is read here."""
@@ -284,12 +294,22 @@ def build(
     names = mentioned_names(question, lookup)
     sources: list[str] = []
     sections = [f"QUESTION: {question}"]
+    if table:  # everyone at the table reads the answer (#1187): see rule 11
+        sections.insert(0, "AUDIENCE: THE TABLE")
     if rules:
         sections.append("HOUSE RULES (they come first):")
         for rule in rules:
             instead = f" (instead of: {rule.supersedes})" if rule.supersedes else ""
-            sections.append(f"- House rule {rule.number}: {rule.rule}{instead}"[:HOUSE_RULE_MAX])
-            sources.append(f"house rule {rule.number}")
+            if isinstance(rule, FollowedRule):  # a shared set the DM chose to follow
+                label = f"Shared rule {rule.number} ({rule.cite})"
+                sources.append(rule.cite)
+            elif rule.from_set:  # merged in from a set: it ranks below the campaign's own
+                label = f"House rule {rule.number} (from {rule.from_set}; the campaign's own win)"
+                sources.append(f"house rule {rule.number}")
+            else:
+                label = f"House rule {rule.number}"
+                sources.append(f"house rule {rule.number}")
+            sections.append(f"- {label}: {rule.rule}{instead}"[:HOUSE_RULE_MAX])
     if hits:
         sections.append("RULES ENTRIES (the free rules, word for word):")
         for hit in hits:
@@ -304,6 +324,10 @@ def build(
         sections.append("CAMPAIGN NAMES (confirmed):")
         sections.extend(f"- {line}" for line in names)
         sources.append("campaign names")
+    if people:  # names only, no ids; a table question gets them too (#1188)
+        sections.append("WHO IS WHO AT THE TABLE (real people and the characters they play):")
+        sections.extend(f"- {line[:PEOPLE_LINE_MAX]}" for line in people[:PEOPLE_MAX])
+        sources.append("who is who")
     scene = " ".join(scene[-SCENE_MAX * 2 :].split())[-SCENE_MAX:]  # cut first: it may be long
     if scene:
         sections.append(
@@ -311,7 +335,19 @@ def build(
             f"<scene>{scene}</scene>"
         )
         sources.append("the scene")
-    if asks_about_dmbot(question):
-        sections.append(f"ABOUT DMBOT:\n{about_dmbot()}")
+    # Ranked against DMbot's own documents for every question, not gated by a word pattern: a
+    # question worded another way still finds its section, and a game question finds nothing
+    # (#1195). The short digest always comes with it.
+    rules_named = bool(hits)  # a question naming a rules entry is a rules question
+    docs = knowledge.retrieve(question, rules_named=rules_named)
+    about_link = None
+    if docs or knowledge.opens_gate(question, rules_named=rules_named):
+        shown = "FROM DMBOT'S DOCUMENTS (each marked how far it is built):\n" + knowledge.render(
+            docs
+        )
+        sections.append("ABOUT DMBOT:\n" + about_dmbot() + ("\n" + shown if docs else ""))
         sources.append("DMbot help")
-    return Context("\n".join(sections), tuple(sources), tuple(hits), tuple(rules))
+        about_link = next((u for c in docs if (u := knowledge.link(c))), None)
+    return Context(
+        "\n".join(sections), tuple(sources), tuple(hits), tuple(rules), about_link=about_link
+    )

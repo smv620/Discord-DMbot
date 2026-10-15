@@ -35,6 +35,7 @@ from dmbot.schema import (
     WEB_ROLE_GRANTS,
     WEB_ROLE_OFFER_POLICY,
     WEB_ROLE_POLICIES,
+    WEB_ROLE_SHEET_POLICY,
     Migration,
 )
 
@@ -183,6 +184,14 @@ class Database:
         if session is not None:
             settings["session"] = session
         async with self._with(**settings) as conn:
+            yield conn
+
+    @asynccontextmanager
+    async def anonymous(self) -> AsyncIterator[Conn]:
+        """A transaction with no person and no session set, for the one question asked before
+        anyone is known: which account an email address belongs to (#1231). Everything row-level
+        is hidden; only the `dmbot_user_by_email` door answers."""
+        async with self._with() as conn:
             yield conn
 
     @asynccontextmanager
@@ -378,6 +387,15 @@ async def _grant_web_role(conn: AsyncConnection[Any]) -> None:
     columns = await cur.fetchone()
     if columns is not None and columns["n"] == 4:
         await conn.execute(WEB_ROLE_OFFER_POLICY)  # #728
+    cur = await conn.execute(
+        "SELECT count(*) AS n FROM information_schema.columns"
+        " WHERE table_schema = current_schema() AND table_name = 'character_sheets'"
+        " AND column_name = 'player_id'"
+    )
+    sheets = await cur.fetchone()
+    sheets_held = sheets is not None and sheets["n"] == 1
+    if sheets_held:
+        await conn.execute(WEB_ROLE_SHEET_POLICY)  # #1150
     # Only tables that exist yet: a database brought up to an older migration (a test of a
     # backfill, say) doesn't have the newer tables the list names. Each gets its rights
     # once its own migration has run, since this runs after every migration.
@@ -399,6 +417,9 @@ async def _grant_web_role(conn: AsyncConnection[Any]) -> None:
             await conn.execute(sql.SQL("GRANT EXECUTE ON FUNCTION {} TO {}").format(door, role))
     for privileges, tables in WEB_ROLE_GRANTS:
         present = [t for t in tables if t in existing]
+        if not sheets_held:
+            # No sheet rights without the rule that holds them to the person's own rows.
+            present = [t for t in present if t != "character_sheets"]
         if not present:
             continue
         await conn.execute(

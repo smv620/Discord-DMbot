@@ -104,8 +104,37 @@ class Parsing(unittest.TestCase):
                 "v", "source", "name", "species", "classes", "level", "abilities", "max_hp",
                 "ac", "speed", "proficiency_bonus", "saves", "skills", "senses",
                 "languages", "spells", "features", "feats", "items",
+                # the full part (#1124)
+                "hp", "temp_hp", "conditions", "exhaustion", "resistances", "immunities",
+                "vulnerabilities", "expertise", "tools", "weapon_profs", "armor_profs",
+                "background", "inventory", "flags",
+                "slots", "pact",  # numbers only (#1176)
             },
         )  # fmt: skip
+
+    def test_spell_slots_are_kept_as_numbers_only(self) -> None:
+        data = answer()
+        data["data"]["spellSlots"] = [
+            {"level": 2, "used": 1, "available": 3, "note": "LEAK"},
+            {"level": 1, "used": 9, "available": 4},  # used above max: capped
+            {"level": 3, "used": 0, "available": 0},  # none at this level: left out
+            {"level": 12, "used": 0, "available": 1},  # not a spell level
+            {"level": "x", "used": 0, "available": 1},
+            "junk",
+        ]
+        snapshot = sheets.parse(data)
+        self.assertEqual(
+            snapshot["slots"],
+            [{"level": 1, "max": 4, "used": 4}, {"level": 2, "max": 3, "used": 1}],
+        )
+        self.assertNotIn("LEAK", json.dumps(snapshot))
+
+    def test_a_sheet_without_slots_has_none(self) -> None:
+        self.assertEqual(sheets.parse(answer())["slots"], [])
+        old = {k: v for k, v in sheets.parse(answer()).items() if k != "slots"}
+        cleaned = sheets.clean(old)
+        assert cleaned is not None
+        self.assertEqual(cleaned["slots"], [])
 
     def test_text_in_an_allowed_field_is_still_dropped(self) -> None:
         data = answer()
@@ -114,6 +143,26 @@ class Parsing(unittest.TestCase):
         snapshot = sheets.parse(data)
         self.assertEqual(snapshot["feats"], ["Test Feat"])
         self.assertIsNone(snapshot["species"])
+
+    def test_odd_modifier_shapes_never_break_the_full_fields(self) -> None:
+        data = answer()
+        data["data"]["modifiers"]["class"] += [
+            {"type": "expertise"},
+            {"type": "expertise", "subType": ["x"]},
+            {"type": "proficiency", "subType": {}},
+            {"type": "proficiency", "subType": ["light-armor"], "friendlySubtypeName": "X"},
+            {"type": "resistance", "friendlySubtypeName": 5},
+            {"type": "proficiency"},
+        ]
+        data["data"]["inventory"] += [
+            "nonsense",
+            {"quantity": "5", "definition": "nonsense"},
+            {"quantity": True, "definition": {"weight": float("nan"), "rarity": 7}},
+        ]
+        data["data"]["conditions"] = [None, {"id": "x"}, {"id": 4, "level": "high"}]
+        snapshot = sheets.parse(data)
+        self.assertEqual((snapshot["expertise"], snapshot["armor_profs"]), (["history"], []))
+        self.assertEqual(snapshot["exhaustion"], 0)
 
     def test_odd_shapes_never_break_it(self) -> None:
         data = answer()
@@ -329,9 +378,10 @@ class FakeContent:
 
 
 class FakeResponse:
-    def __init__(self, status: int, body: bytes) -> None:
+    def __init__(self, status: int, body: bytes, headers: dict[str, str] | None = None) -> None:
         self.status = status
         self.content = FakeContent(body)
+        self.headers = headers or {}
 
     async def __aenter__(self) -> FakeResponse:
         return self
@@ -341,13 +391,60 @@ class FakeResponse:
 
 
 class FakeSession:
-    def __init__(self, status: int, body: bytes = b"{}") -> None:
-        self.response = FakeResponse(status, body)
+    def __init__(
+        self, status: int, body: bytes = b"{}", headers: dict[str, str] | None = None
+    ) -> None:
+        self.response = FakeResponse(status, body, headers)
         self.urls: list[str] = []
 
     def get(self, url: str, **_: Any) -> FakeResponse:
         self.urls.append(url)
         return self.response
+
+
+class Gate(unittest.TestCase):
+    """The bot-wide limit on asking D&D Beyond for sheets (#1171)."""
+
+    def gate(self) -> tuple[sheets._Gate, list[float]]:
+        now = [1000.0]
+        return sheets._Gate(clock=lambda: now[0]), now
+
+    def test_twenty_a_minute_then_the_next_waits_a_few_seconds(self) -> None:
+        gate, now = self.gate()
+        self.assertTrue(all(gate.take() == 0.0 for _ in range(sheets.READS_PER_MINUTE)))
+        wait = gate.take()
+        self.assertGreater(wait, 0.0)
+        self.assertLessEqual(wait, 60.0 / sheets.READS_PER_MINUTE + 0.001)
+        now[0] += wait
+        self.assertEqual(gate.take(), 0.0)  # one token came back
+
+    def test_asking_how_long_takes_nothing(self) -> None:
+        gate, _ = self.gate()
+        for _ in range(100):
+            self.assertEqual(gate.wait(), 0.0)
+        self.assertEqual(gate.take(), 0.0)
+
+    def test_a_pause_holds_everyone_and_ends(self) -> None:
+        gate, now = self.gate()
+        gate.pause(30.0)
+        self.assertAlmostEqual(gate.wait(), 30.0)
+        self.assertAlmostEqual(gate.take(), 30.0)  # nothing is taken while paused
+        now[0] += 31.0
+        self.assertEqual(gate.take(), 0.0)
+
+    def test_a_pause_is_never_longer_than_the_cap_or_shorter_than_a_second(self) -> None:
+        gate, _ = self.gate()
+        gate.pause(10**6)
+        self.assertLessEqual(gate.wait(), sheets.PAUSE_MAX_S)
+        other, _ = self.gate()
+        other.pause(0.0)
+        self.assertGreaterEqual(other.wait(), 1.0)
+
+    def test_a_later_shorter_pause_does_not_cut_a_longer_one(self) -> None:
+        gate, _ = self.gate()
+        gate.pause(100.0)
+        gate.pause(5.0)
+        self.assertGreater(gate.wait(), 90.0)
 
 
 class Fetching(unittest.IsolatedAsyncioTestCase):
@@ -369,6 +466,46 @@ class Fetching(unittest.IsolatedAsyncioTestCase):
                 await sheets.fetch(42, session=session)  # type: ignore[arg-type]
             self.assertTrue(caught.exception.refused)
             self.assertEqual(str(caught.exception), sheets.NOT_PUBLIC)
+
+    async def test_a_429_pauses_every_sheet_for_as_long_as_d_and_d_beyond_asks(self) -> None:
+        with self.assertRaises(sheets.SheetError) as caught:
+            await sheets.fetch(42, session=FakeSession(429, headers={"Retry-After": "90"}))  # type: ignore[arg-type]
+        err = caught.exception
+        self.assertTrue(err.limited)
+        self.assertFalse(err.refused)
+        self.assertEqual((err.status, err.retry_after), (429, 90.0))
+        self.assertGreater(sheets.wait_time(), 80.0)  # every read waits, not just this one
+        other = FakeSession(200, json.dumps(answer()).encode())
+        with self.assertRaises(sheets.SheetError) as held:
+            await sheets.fetch(43, session=other)  # type: ignore[arg-type]
+        self.assertTrue(held.exception.limited)
+        self.assertEqual(other.urls, [])  # D&D Beyond was not asked at all
+
+    async def test_a_server_error_pauses_with_the_default_and_a_refusal_does_not(self) -> None:
+        with self.assertRaises(sheets.SheetError) as caught:
+            await sheets.fetch(42, session=FakeSession(503))  # type: ignore[arg-type]
+        self.assertTrue(caught.exception.limited)
+        self.assertGreater(sheets.wait_time(), sheets.PAUSE_DEFAULT_S - 5)
+        sheets.GATE = sheets._Gate()
+        with self.assertRaises(sheets.SheetError):
+            await sheets.fetch(42, session=FakeSession(404))  # type: ignore[arg-type]
+        self.assertEqual(sheets.wait_time(), 0.0)  # "not public" is the sheet's, not the site's
+
+    async def test_a_read_held_a_moment_by_the_limit_just_waits(self) -> None:
+        for _ in range(sheets.READS_PER_MINUTE):
+            sheets.GATE.take()
+        session = FakeSession(200, json.dumps(answer()).encode())
+        slept: list[float] = []
+
+        async def fake_sleep(seconds: float) -> None:
+            slept.append(seconds)
+            sheets.GATE._tokens = 1.0  # the wait is over: a token has come back
+
+        with mock.patch.object(asyncio, "sleep", fake_sleep):
+            sheets.GATE._tokens = 0.5  # a short wait: well under the hold limit
+            await sheets.fetch(42, session=session)  # type: ignore[arg-type]
+        self.assertEqual(len(slept), 1)
+        self.assertEqual(len(session.urls), 1)
 
     async def test_a_redirect_is_refused(self) -> None:
         with self.assertRaises(sheets.SheetError) as caught:
@@ -456,3 +593,76 @@ class Fetching(unittest.IsolatedAsyncioTestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def _rows(table: tuple[tuple[int, ...], ...]) -> list[list[int]]:
+    """A class's `levelSpellSlots` as D&D Beyond shapes it: one row of nine for each class
+    level (row 0 unused)."""
+    return [list(r) + [0] * (9 - len(r)) for r in table]
+
+
+# Made-up characters shaped like D&D Beyond's: the class's own slot table is in
+# `definition.spellRules`, and `spellSlots` / `pactMagic` say what is used (`available` can be 0
+# for an ordinary caster, #1176).
+FULL = _rows(
+    ((), (2,), (3,), (4, 2), (4, 3), (4, 3, 2), (4, 3, 3), (4, 3, 3, 1), (4, 3, 3, 2))
+    + ((4, 3, 3, 3, 1),) * 12
+)
+WARLOCK = _rows(((),) + ((1,),) + ((2,),) + ((0, 2),) * 2 + ((0, 0, 2),) * 2 + ((0, 0, 0, 2),) * 15)
+
+
+def caster(name: str, level: int, rows: list[list[int]], divisor: int = 1) -> dict[str, Any]:
+    return {
+        "level": level,
+        "definition": {
+            "name": name,
+            "spellRules": {"levelSpellSlots": rows, "multiClassSpellSlotDivisor": divisor},
+        },
+    }
+
+
+class SpellSlotsAsDndBeyondShapesThem(unittest.TestCase):
+    def parse(self, classes: list[dict[str, Any]], **extra: Any) -> dict[str, Any]:
+        data = answer()
+        data["data"]["classes"] = classes
+        data["data"].update(extra)
+        return sheets.parse(data)
+
+    def test_a_full_caster_with_available_zero_gets_the_classes_table(self) -> None:
+        got = self.parse(
+            [caster("Wizard", 3, FULL)],
+            spellSlots=[
+                {"level": 1, "used": 1, "available": 0},
+                {"level": 2, "used": 0, "available": 0},
+            ],
+        )
+        self.assertEqual(
+            got["slots"], [{"level": 1, "max": 4, "used": 1}, {"level": 2, "max": 2, "used": 0}]
+        )
+
+    def test_available_wins_when_it_has_a_total(self) -> None:
+        got = self.parse(
+            [caster("Wizard", 3, FULL)], spellSlots=[{"level": 1, "used": 0, "available": 5}]
+        )
+        self.assertEqual(got["slots"][0], {"level": 1, "max": 5, "used": 0})
+
+    def test_a_warlock_has_pact_slots_and_no_ordinary_ones(self) -> None:
+        got = self.parse(
+            [caster("Warlock", 3, WARLOCK)],
+            pactMagic=[{"level": 2, "used": 1, "available": 0}],
+        )
+        self.assertEqual(got["slots"], [])
+        self.assertEqual(got["pact"], {"level": 2, "max": 2, "used": 1})
+
+    def test_a_multiclass_caster_uses_the_multiclass_table(self) -> None:
+        # Wizard 3 + Cleric 2 count as a level 5 caster: 4 / 3 / 2.
+        got = self.parse(
+            [caster("Wizard", 3, FULL), caster("Cleric", 2, FULL)],
+            spellSlots=[{"level": 1, "used": 2, "available": 0}],
+        )
+        self.assertEqual([(s["level"], s["max"]) for s in got["slots"]], [(1, 4), (2, 3), (3, 2)])
+        self.assertEqual(got["slots"][0]["used"], 2)
+
+    def test_a_fighter_has_none(self) -> None:
+        got = self.parse([{"level": 5, "definition": {"name": "Fighter"}}])
+        self.assertEqual((got["slots"], got["pact"]), ([], None))

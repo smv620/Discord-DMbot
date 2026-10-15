@@ -15,7 +15,7 @@ from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, field
 
 from dmbot.memory.models import NAME_MAX, name_key
-from dmbot.memory.ontology import SPELL_NOT_KEPT, UNNAMED_MONSTER
+from dmbot.memory.ontology import PERSON_NOT_LISTED, SPELL_NOT_KEPT, UNNAMED_MONSTER
 from dmbot.rules import index
 
 MAX_FILE_BYTES = 256 * 1024
@@ -44,8 +44,11 @@ PC = "player_character"
 # Kinds in plain words → the memory rules' kinds. Anything else "needs a look".
 KIND_WORDS: dict[str, str] = {
     "npc": "npc",
-    "person": "npc",
     "character": "npc",
+    "player": "person",  # a real person at the table (#1188); see PERSON_KIND
+    "dm": "person",
+    "person": "person",
+    "player or dm": "person",
     "pc": "player_character",
     "player character": "player_character",
     "player's character": "player_character",
@@ -84,6 +87,7 @@ KIND_OUT: dict[str, str] = {
     "spell": "spell",
     "event": "event",
     "concept": "other",
+    "person": "player",
 }
 
 
@@ -325,6 +329,9 @@ def parse(text: str, *, secrets: bool) -> Parsed:
         if kind_of(word) == "spell":
             out.refused.append((number, SPELL_NOT_KEPT))
             continue
+        if kind_of(word) == "person":
+            out.refused.append((number, PERSON_NOT_LISTED))
+            continue
         if kind_of(word) == "creature" and index.srd().is_monster(name):
             out.refused.append((number, UNNAMED_MONSTER))
             continue
@@ -409,6 +416,8 @@ def render(names: Iterable[OutName], *, campaign: str, secrets: bool) -> str:
     adds nothing that's already known. A name with more other or secret names than a
     line holds goes on more lines, as a person would write it."""
     lines = _prelude(campaign=campaign, secrets=secrets)
+    # Players and the DM are DMbot's own entries and can't be uploaded again (#1188).
+    names = [n for n in names if n.kind != "person"]
     for n in sorted(names, key=lambda n: name_key(n.name)):
         hidden = n.secrets if secrets else ()
         lines += lines_for(n.name, KIND_OUT.get(n.kind, "other"), n.others, hidden)

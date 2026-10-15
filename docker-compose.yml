@@ -30,9 +30,11 @@ services:
       context: ./core
       args:
         EXTRAS: ${CORE_EXTRAS:-whisper}   # set CORE_EXTRAS=dev for cloud transcription only
+        GIT_COMMIT: ${GIT_COMMIT:-}       # baked in: DMbot links to its documents at this commit
     env_file: .env
     environment:
       EARS_WS_HOST: 0.0.0.0   # listen on the private network so ears can reach it
+      DMBOT_DOCS_DIR: /app/knowledge   # its own documents, mounted below (#1195)
       LOG_FORMAT: ${LOG_FORMAT:-json}   # one JSON line per event on servers
       DATABASE_URL: postgresql://dmbot:${DMBOT_DB_PASSWORD}@postgres:5432/dmbot
       POSTGRES_ADMIN_PASSWORD: ""   # only the postgres service needs these
@@ -51,6 +53,13 @@ services:
       - test-recordings:/var/lib/dmbot/test-recordings   # saved test sessions (#1019), test server only
       # Read at start-up to warn when .env is missing newer settings (#31). Names only.
       - ./.env.example:/app/.env.example:ro
+      # What DMbot answers questions about itself from (#1195): the checkout it was built from.
+      # Mounted, not copied into the image: the image is built from ./core alone, and moving the
+      # build to the repository root would change CI's image build too. Deploys always rebuild
+      # (docs/DEPLOY.md), so the files and the code come from the same checkout.
+      - ./docs/PLAN.md:/app/knowledge/docs/PLAN.md:ro
+      - ./README.md:/app/knowledge/README.md:ro
+      - ./web/src/content/help.ts:/app/knowledge/web/src/content/help.ts:ro
     restart: unless-stopped
 
   ears:
@@ -85,6 +94,7 @@ services:
       context: ./core
       args:
         EXTRAS: ${CORE_EXTRAS:-whisper}
+        GIT_COMMIT: ${GIT_COMMIT:-}   # (the same image as core: both builds must agree)
     command: ["python", "-m", "dmbot.web"]
     # Only the settings the API needs, listed by name (no env_file): a secret added to
     # .env later never reaches it by accident. No bot token, voice secret, AI or speech keys.
@@ -107,10 +117,18 @@ services:
       STRIPE_PRICE_TWO_TABLES: ${STRIPE_PRICE_TWO_TABLES:-}
       STRIPE_PRICE_GUILD: ${STRIPE_PRICE_GUILD:-}
       STRIPE_PRICE_EXTRA_HOURS: ${STRIPE_PRICE_EXTRA_HOURS:-}
-      STRIPE_FIRST_MONTH_COUPON_TABLE: ${STRIPE_FIRST_MONTH_COUPON_TABLE:-}
       STRIPE_MANAGED_PAYMENTS: ${STRIPE_MANAGED_PAYMENTS:-}
       # The "Say hello" forms (#665).
       GITHUB_FEEDBACK_TOKEN: ${GITHUB_FEEDBACK_TOKEN:-}
+      LINK_TOKEN_SECRET: ${LINK_TOKEN_SECRET:-}
+      # Account emails, such as sign-in links (#1231): nothing is sent while SMTP_HOST is empty.
+      SMTP_HOST: ${SMTP_HOST:-}
+      SMTP_PORT: ${SMTP_PORT:-587}
+      SMTP_USER: ${SMTP_USER:-}
+      SMTP_APP_PASSWORD: ${SMTP_APP_PASSWORD:-}
+      MAIL_FROM: ${MAIL_FROM:-}
+      MAIL_POSTAL_ADDRESS: ${MAIL_POSTAL_ADDRESS:-}
+      MAIL_DAILY_CAP: ${MAIL_DAILY_CAP:-400}
       GITHUB_FEEDBACK_REPO: ${GITHUB_FEEDBACK_REPO:-}
       TURNSTILE_SECRET_KEY: ${TURNSTILE_SECRET_KEY:-}
       WEB_CLIENT_IP_HEADER: ${WEB_CLIENT_IP_HEADER:-}

@@ -25,8 +25,16 @@ class TranscriptSession:
 
 NARRATING = "narrating"  # a line's `entity` when the DM was narrating (#53)
 SIDEBAR_QUESTION, SIDEBAR_ANSWER = "question", "answer"
+# A player's question to DMbot (#1187), apart from the DM's: it has its own tag in the raw
+# transcript. DMbot's answer to either is a SIDEBAR_ANSWER line.
+SIDEBAR_TABLE_QUESTION = "table_question"
+QUESTION_KINDS = (SIDEBAR_QUESTION, SIDEBAR_TABLE_QUESTION)
 VIA_VOICE, VIA_TYPED, VIA_TABLE = "voice-memo", "typed", "table-trigger"
-VIAS = (VIA_VOICE, VIA_TYPED, VIA_TABLE)
+# Typed in the table's chat (#1118): not speech, so no speech-to-text in its lineage.
+VIA_TABLE_CHAT = "table-chat"
+# Typed in the campaign's DMbot chat channel (#1187).
+VIA_CHAT = "chat"
+VIAS = (VIA_VOICE, VIA_TYPED, VIA_TABLE, VIA_TABLE_CHAT, VIA_CHAT)
 
 
 @dataclass(frozen=True, slots=True)
@@ -75,9 +83,15 @@ class Line:
     # NARRATING, or the confirmed, non-secret name of an NPC the DM was voicing. Never a
     # secret name: whatever sets it checks (the transcript is open to the whole server).
     entity: str = ""
+    # Typed in the table's chat rather than said (#1118): only in the as-heard transcript,
+    # tagged "(typed)", never the cleaned one.
+    typed: bool = False
+    # The Discord message a typed line came from, so deleting it takes the line back while it
+    # is still unsaved (#1118). 0 for speech. Never stored.
+    message_id: int = 0
 
     def __post_init__(self) -> None:
-        if self.sidebar not in ("", SIDEBAR_QUESTION, SIDEBAR_ANSWER):  # not at the database
+        if self.sidebar not in ("", SIDEBAR_ANSWER, *QUESTION_KINDS):  # not at the database
             raise ValueError(f"unknown sidebar kind {self.sidebar!r}")
         tidy = " ".join(self.entity.split())[:ENTITY_MAX].strip()
         if tidy != self.entity:  # one line, never blank, never too long for the database
@@ -107,6 +121,12 @@ class TranscriptBuffer:
             return
         self._waiting.append(line)
         self._trim()
+
+    def drop_message(self, message_id: int) -> None:
+        """A typed message was deleted before its line was saved: the line goes too."""
+        self._waiting = [
+            w for w in self._waiting if not (w.message_id and w.message_id == message_id)
+        ]
 
     def drop_speaker(self, user_id: int) -> None:
         self._waiting = [w for w in self._waiting if w.user_id != user_id]

@@ -69,6 +69,9 @@ jobs:
       - run: npm run build
       - run: npm run check:links
       - run: npm run check:csp
+      - run: npm run check:transitions  # page-change budget, less motion, plain legal pages (#1311)
+      - run: npm run check:a11y  # real browser: contrast, focus ring, 320 px, reduced motion (#1224)
+        timeout-minutes: 5
 
   core:
     name: core (Python)
@@ -126,7 +129,7 @@ jobs:
     runs-on: ubuntu-22.04  # 24.04 runners were queueing for hours (2026-10-05); see #29
     steps:
       - uses: actions/checkout@v5
-      - run: shellcheck scripts/set-key scripts/update-env scripts/set-admin-password scripts/tests/*.sh   # on the runner
+      - run: shellcheck scripts/set-key scripts/update-env scripts/set-admin-password scripts/replay scripts/tests/*.sh   # on the runner
       - run: bash scripts/tests/test-set-key.sh
       - run: bash scripts/tests/test-update-env.sh
       - run: bash scripts/tests/test-set-admin-password.sh

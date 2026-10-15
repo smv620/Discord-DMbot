@@ -11,6 +11,7 @@ from pathlib import Path
 from dmbot.ai import DEFAULT_MODELS, AIModels
 from dmbot.entitlements import parse_free_users
 from dmbot.logs import LOG_FORMATS, LOG_LEVELS
+from dmbot.mail import MailConfigError, MailSettings, load_mail_settings
 from dmbot.sharding import ShardConfigError, ShardSettings, parse_shards
 from dmbot.transcription.config import (
     TranscriptionConfigError,
@@ -57,6 +58,10 @@ class Settings:
     # The DM sidebar's ways in (#935) use the answer engine (#934) only when this is on.
     # Off until the sidebar's 17 test answers have been read (#954).
     sidebar_on: bool = False
+    # The story extractor (phase 5a, #1297) reads each session with one AI call per batch of
+    # lines. Off, and not shown to customers, until it passes its measurement (#1282); with it
+    # off nothing calls the AI and the after-session step has nothing to ask.
+    story_extractor_on: bool = False
     # Test recordings (#1019): servers where people who agreed to it have their voices saved
     # for DMbot's own tests, and where the files go. Empty: nothing is ever saved.
     test_recording_guilds: frozenset[int] = frozenset()
@@ -65,6 +70,10 @@ class Settings:
     # admin, by Discord user ID. None: not set (the problem is only logged). Never logged.
     admin_primary_id: int | None = field(default=None, repr=False)
     admin_secondary_id: int | None = field(default=None, repr=False)
+    # Sending email (#1229). Nothing is sent unless SMTP is set up; offer emails also need a
+    # postal address. The link secret signs unsubscribe links.
+    mail: MailSettings = field(default_factory=MailSettings)
+    link_token_secret: bytes = field(default=b"", repr=False)
 
 
 def load_settings(env: Mapping[str, str] | None = None) -> Settings:
@@ -124,6 +133,11 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
             'DMBOT_ENFORCE_PLANS must be 1 (on) or 0 (off), got "' + enforce_raw + '".'
         )
 
+    extractor_raw = (get("DMBOT_STORY_EXTRACTOR") or "0").lower()
+    if extractor_raw not in ("0", "1", "true", "on", "false", "off"):
+        raise ConfigError(
+            'DMBOT_STORY_EXTRACTOR must be 1 (on) or 0 (off), got "' + extractor_raw + '".'
+        )
     sidebar_raw = (get("DMBOT_SIDEBAR") or "0").lower()
     if sidebar_raw not in ("0", "1", "true", "false", "on", "off"):
         raise ConfigError('DMBOT_SIDEBAR must be 1 (on) or 0 (off), got "' + sidebar_raw + '".')
@@ -137,6 +151,14 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
         test_guilds = parse_server_ids(get("DMBOT_TEST_RECORDING_GUILDS"))
     except ValueError as exc:
         raise ConfigError(str(exc)) from exc
+
+    try:
+        mail = load_mail_settings(env)
+    except MailConfigError as exc:
+        raise ConfigError(str(exc)) from exc
+    link_secret = get("LINK_TOKEN_SECRET")
+    if link_secret and len(link_secret) < 32:
+        raise ConfigError("LINK_TOKEN_SECRET must be at least 32 characters (or empty).")
 
     return Settings(
         discord_token=get("DISCORD_TOKEN"),
@@ -157,7 +179,10 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
         free_users=free_users,
         enforce_plans=enforce_raw in ("1", "true", "on"),
         site_url=get("WEB_SITE_URL").rstrip("/"),
+        mail=mail,
+        link_token_secret=link_secret.encode("utf-8"),
         sidebar_on=sidebar_raw in ("1", "true", "on"),
+        story_extractor_on=extractor_raw in ("1", "true", "on"),
         admin_primary_id=admin_primary,
         admin_secondary_id=admin_secondary,
         test_recording_guilds=test_guilds,

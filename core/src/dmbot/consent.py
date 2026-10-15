@@ -26,7 +26,7 @@ from __future__ import annotations
 
 import asyncio
 import time
-from collections.abc import Iterable
+from collections.abc import Awaitable, Callable, Iterable
 from dataclasses import dataclass, field
 from typing import Literal
 
@@ -43,8 +43,11 @@ from dmbot.db import Conn, Database
 # feature). If a provider or key ever trains on the data, the wording changes and this
 # goes up again. Version 4: DMbot's minimum age is 16 and the button confirms it (owner,
 # 2026-10-10; #1018): no age or birthdate is stored, the yes under this wording is the
-# confirmation.
-TERMS_VERSION = 4
+# confirmation. Version 5: DMbot also reads what is typed in the table's chat while it is
+# listening (owner, 2026-10-13; #1118), so everyone is asked again. Version 6: it also reads
+# what is typed in the campaign's DMbot chat channel, where anyone at the table may ask it a
+# question and the answer is posted for everyone (owner, 2026-10-14; #1187).
+TERMS_VERSION = 6
 # How someone said yes: the button in DMbot's private message, or in the reply to
 # /consent give in the server.
 ConsentMethod = Literal["private_message", "consent_command"]
@@ -128,10 +131,19 @@ class ConsentStore:
         if guild_id in self._cache:
             self._cache[guild_id] = self._cache[guild_id] - {user_id}
 
-    async def revoke(self, guild_id: int, user_id: int) -> bool:
+    async def revoke(
+        self,
+        guild_id: int,
+        user_id: int,
+        *,
+        in_transaction: Callable[[Conn], Awaitable[None]] | None = None,
+    ) -> bool:
         """Revoke and save; True if a saved consent was removed.
 
-        If saving fails, the player stays stopped in this process.
+        If saving fails, the player stays stopped in this process. `in_transaction` runs in
+        the same transaction as the delete, only when a row was removed: the website sends its
+        notification to the bot there, so it is delivered when the delete commits and never
+        without it (#1151).
         """
         self.stop_now(guild_id, user_id)
         async with self._lock(guild_id):
@@ -141,10 +153,26 @@ class ConsentStore:
                     (guild_id, user_id),
                 )
                 removed = await cur.fetchone() is not None
+                if removed and in_transaction is not None:
+                    await in_transaction(conn)
                 users = await _select(conn, guild_id, self._outside)
             self._held_back[guild_id].discard(user_id)
             self._store(guild_id, users)
             return removed
+
+    def cached_guilds(self) -> list[int]:
+        """Servers whose consent is held in memory."""
+        return list(self._cache)
+
+    async def stored(self, guild_id: int) -> frozenset[int]:
+        """Who the database says consents here now, without touching the cache: the bot compares
+        it with what it holds, so it can stop (and tell the DM about) whoever is gone (#1151)."""
+        async with self._db.guild(guild_id) as conn:
+            return await _select(conn, guild_id, self._outside)
+
+    def consenting_now(self, guild_id: int) -> frozenset[int]:
+        """Who the cache says is consenting here, without reading the database."""
+        return self._cache.get(guild_id, frozenset())
 
     async def consenting(self, guild_id: int) -> frozenset[int]:
         if guild_id not in self._cache:

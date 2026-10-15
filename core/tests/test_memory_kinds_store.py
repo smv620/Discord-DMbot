@@ -349,7 +349,12 @@ class Backups(MemoryTest):
         self.assertEqual(len(copied["memory_rule_links"]), 2)
         roles = {r["name"]: (r["type"], r["role"]) for r in copied["memory_entities"]}
         self.assertEqual(
-            roles, {"Snot": ("character", "npc"), "Testa": ("character", "player_character")}
+            roles,
+            {
+                "Snot": ("character", "npc"),
+                "Testa": ("character", "player_character"),
+                "Player 55": ("person", None),  # made for the player (#1188)
+            },
         )
 
     async def test_a_backup_from_before_reads_the_older_kinds(self) -> None:
@@ -361,9 +366,16 @@ class Backups(MemoryTest):
         data = await self.campaigns.export(GUILD_A, self.c)
         rows = data["sections"]["memory"]
         old: list[dict[str, Any]] = []
+        people = {r["id"] for r in rows if r["table"] == "entity" and r["type"] == "person"}
         for row in rows:
+            if row.get("entity_id") in people:
+                continue  # the person's own names
             if row["table"] == "rule_link":
                 continue  # a file from before has no links
+            if row["table"] == "entity" and row["type"] == "person":
+                continue  # a file from before has no people (and no links to them)
+            if row["table"] == "relation" and row["predicate"] == "plays":
+                continue
             if row["table"] == "entity":
                 kind = names[row["name"]]
                 row = {k: v for k, v in row.items() if k not in ("role", "needs_look")}
@@ -470,7 +482,8 @@ class Migration0044(MemoryTest):
             )
         await self.db.migrate()
         memory = MemoryStore(self.db, clock=lambda: 1)
-        got = {e.name: e for e in await memory.entities(GUILD_A, c)}
+        # 0058 gave Testa's player an entry of their own (#1188): that is its own test.
+        got = {e.name: e for e in await memory.entities(GUILD_A, c) if e.type != "person"}
         self.assertEqual(
             {n: (e.type, e.role, e.needs_look, e.played_by) for n, e in got.items()},
             {

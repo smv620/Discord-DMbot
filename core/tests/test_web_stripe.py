@@ -8,14 +8,16 @@ import hashlib
 import hmac
 import json
 import unittest
+from collections.abc import Callable
 from typing import Any, ClassVar
 from unittest import mock
-from urllib.parse import parse_qs, urlsplit
+from urllib.parse import parse_qs, urlencode, urlsplit
 
 import aiohttp
 import httpx
 
 from dmbot import entitlements, plans
+from dmbot.account_id import to_dmbot_id
 from dmbot.config import ConfigError
 from dmbot.web import entitlements_writer
 from dmbot.web.app import create_app
@@ -32,7 +34,6 @@ CONFIG = StripeConfig(
     secret_key="sk_test_not_real",
     prices={"table": "price_table", "two-tables": "price_two", "guild": "price_guild"},
     extra_hours_price="price_extra",
-    first_month_coupons={"table": "FIRST199"},
 )
 CHECKOUT_URL = "https://checkout.stripe.com/c/pay/cs_test_abc"
 PORTAL_URL = "https://billing.stripe.com/p/session/test_abc"
@@ -114,15 +115,24 @@ def sign(body: bytes, *, at: int = int(NOW), secret: bytes = SECRET) -> str:
     return f"t={at},v1={digest}"
 
 
+def _clock_at(moment: float) -> Callable[[], float]:
+    """A clock that always says `moment`."""
+    return lambda: moment
+
+
 class Fake:
     """A fake Stripe API: records calls, answers from `answers`."""
 
     def __init__(self) -> None:
         self.calls: list[tuple[str, str, Any]] = []
+        self.keys: list[str | None] = []  # the idempotency key of each call, in order
         self.answers: dict[tuple[str, str], tuple[int, Any]] = {}
 
-    async def __call__(self, method: str, path: str, form: Any) -> tuple[int, Any]:
+    async def __call__(
+        self, method: str, path: str, form: Any, idempotency_key: str | None = None
+    ) -> tuple[int, Any]:
         self.calls.append((method, path, form))
+        self.keys.append(idempotency_key)
         return self.answers.get((method, path), (404, None))
 
 
@@ -179,6 +189,14 @@ class Provider(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(self.provider.verify(body, {"stripe-signature": header}))
 
     # Started, renewed, failed
+
+    def test_the_payers_address_is_kept_from_the_invoice(self) -> None:
+        parsed = self.provider.parse(event("invoice.paid", invoice()))
+        assert parsed is not None
+        self.assertEqual(parsed.email, "player@example.com")
+        none = self.provider.parse(event("invoice.paid", invoice(customer_email="not an address")))
+        assert none is not None
+        self.assertIsNone(none.email)
 
     def test_a_first_payment_starts_the_plan_with_its_period(self) -> None:
         parsed = self.provider.parse(event("invoice.paid", invoice()))
@@ -296,6 +314,30 @@ class Provider(unittest.IsolatedAsyncioTestCase):
         back = self.provider.parse(resumed)
         assert back is not None
         self.assertEqual(back.kind, "subscription_renewed")  # active again: clears a cancel
+
+    def test_a_plan_change_while_a_cancel_is_pending_is_the_cancel_and_says_so_in_the_log(
+        self,
+    ) -> None:
+        body = event(
+            "customer.subscription.updated",
+            subscription(cancel_at_period_end=True),  # now on the table plan
+            previous={"items": {"data": [{"price": {"id": "price_other"}}]}},
+        )
+        with self.assertLogs("dmbot.web.stripe", level="INFO") as logs:
+            parsed = self.provider.parse(body)
+        assert parsed is not None
+        # Decided on #1122: one event, the cancel; only the end date is stored.
+        self.assertEqual(parsed.kind, "subscription_cancelled")
+        self.assertEqual(parsed.period_end, PERIOD_END)
+        self.assertTrue(any("only the end date is stored" in r.getMessage() for r in logs.records))
+        # A plain cancel logs nothing of the kind.
+        plain = event(
+            "customer.subscription.updated",
+            subscription(cancel_at_period_end=True),
+            previous={"cancel_at_period_end": False},
+        )
+        with self.assertNoLogs("dmbot.web.stripe", level="INFO"):
+            self.provider.parse(plain)
 
     def test_a_cancel_date_works_like_cancel_at_period_end(self) -> None:
         end = PERIOD_END + 86400
@@ -479,7 +521,6 @@ class Provider(unittest.IsolatedAsyncioTestCase):
             user_id=USER,
             email="player@example.com",
             plan=plans.load().by_id["table"],
-            first_month_cents=None,
             return_url="https://dmbot.example/account",
         )
         self.assertEqual(url, CHECKOUT_URL)
@@ -496,18 +537,83 @@ class Provider(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(form["success_url"], "https://dmbot.example/account")
         self.assertNotIn("discounts[0][coupon]", form)
 
-    async def test_the_first_month_uses_the_once_only_coupon(self) -> None:
+    async def test_a_double_click_sends_the_same_idempotency_key_and_expiry(self) -> None:
         self.http.answers[("POST", "/v1/checkout/sessions")] = (200, {"url": CHECKOUT_URL})
-        await self.provider.checkout_url(
-            user_id=USER,
-            email=None,
-            plan=plans.load().by_id["table"],
-            first_month_cents=199,
-            return_url="https://dmbot.example/account",
+
+        async def ask(user: int = USER, email: str | None = None) -> None:
+            await self.provider.checkout_url(
+                user_id=user,
+                email=email,
+                plan=plans.load().by_id["table"],
+                return_url="https://dmbot.example/account",
+            )
+
+        await ask()
+        await ask()  # the same request again, moments later
+        first, second = self.http.keys
+        assert first is not None
+        self.assertEqual(first, second)
+        self.assertTrue(first.startswith("dmbot-checkout-"))
+        self.assertLessEqual(len(first), 255)
+        forms = [call[2] for call in self.http.calls]
+        self.assertEqual(forms[0]["expires_at"], forms[1]["expires_at"])  # or Stripe refuses it
+        # Another person, plan or address is another checkout.
+        await ask(user=USER + 1)
+        await ask(email="player@example.com")
+        self.assertEqual(len({*self.http.keys}), 3)
+        self.assertNotIn("player@example.com", " ".join(k or "" for k in self.http.keys))
+
+    async def test_the_expiry_is_at_least_thirty_minutes_away_and_a_new_window_is_a_new_key(
+        self,
+    ) -> None:
+        self.http.answers[("POST", "/v1/checkout/sessions")] = (200, {"url": CHECKOUT_URL})
+        start = (int(NOW) // 300 + 1) * 300.0  # the first second of a window
+        for now in (start, start + 299.0, start + 301.0):  # its first, its last, the next's
+            provider = StripeProvider(CONFIG, SECRET, transport=self.http, clock=_clock_at(now))
+            await provider.extra_hours_checkout_url(
+                user_id=USER, email=None, return_url="https://dmbot.example/account"
+            )
+            expires = int(self.http.calls[-1][2]["expires_at"])
+            self.assertGreaterEqual(expires - now, 1800 + 60)  # a margin even in the last second
+            self.assertLessEqual(expires - now, 1800 + 120 + 300)
+        keys = self.http.keys
+        self.assertEqual(len(keys), 3)
+        self.assertNotEqual(keys[0], keys[2])  # five minutes later: a new checkout is allowed
+
+    async def test_only_checkout_creation_carries_a_key(self) -> None:
+        self.http.answers[("POST", "/v1/billing_portal/sessions")] = (
+            200,
+            {"url": "https://billing.stripe.com/p/x"},
         )
-        form = self.http.calls[0][2]
-        self.assertEqual(form["discounts[0][coupon]"], "FIRST199")
-        self.assertNotIn("customer_email", form)  # none known: none sent
+        await self.provider.billing_url(customer_id="cus_777", return_url="https://x.example")
+        self.http.answers[("GET", "/v1/subscriptions/sub_55")] = (
+            200,
+            {"status": "active", "cancel_at_period_end": False},
+        )
+        self.http.answers[("POST", "/v1/subscriptions/sub_55")] = (200, {})
+        await self.provider.cancel(subscription_id="sub_55")
+        self.assertEqual(set(self.http.keys), {None})
+
+    async def test_a_moved_account_points_the_customer_and_subscription_at_the_new_id(self) -> None:
+        self.http.answers[("POST", "/v1/customers/cus_777")] = (200, {})
+        self.http.answers[("POST", "/v1/subscriptions/sub_55")] = (200, {})
+        await self.provider.retarget(customer_id="cus_777", subscription_id="sub_55", user_id=99)
+        self.assertEqual(
+            self.http.calls,
+            [
+                ("POST", "/v1/customers/cus_777", {"metadata[user_id]": "99"}),
+                ("POST", "/v1/subscriptions/sub_55", {"metadata[user_id]": "99"}),
+            ],
+        )
+        self.http.answers[("POST", "/v1/customers/cus_777")] = (500, {})
+        with self.assertRaises(PaymentError):
+            await self.provider.retarget(customer_id="cus_777", subscription_id=None, user_id=99)
+        self.http.answers[("POST", "/v1/customers/cus_777")] = (404, {})
+        await self.provider.retarget(
+            customer_id="cus_777", subscription_id=None, user_id=99
+        )  # gone
+        with self.assertRaises(PaymentError):  # an id is checked before it goes into a path
+            await self.provider.retarget(customer_id="../x", subscription_id=None, user_id=99)
 
     async def test_managed_payments_is_asked_for_only_when_switched_on(self) -> None:
         self.http.answers[("POST", "/v1/checkout/sessions")] = (200, {"url": CHECKOUT_URL})
@@ -518,7 +624,6 @@ class Provider(unittest.IsolatedAsyncioTestCase):
             user_id=USER,
             email=None,
             plan=plan,
-            first_month_cents=None,
             return_url="https://x.example",
         )
         for _, _, form in self.http.calls:
@@ -538,7 +643,6 @@ class Provider(unittest.IsolatedAsyncioTestCase):
             user_id=USER,
             email=None,
             plan=plan,
-            first_month_cents=None,
             return_url="https://x.example",
         )
         await managed.extra_hours_checkout_url(
@@ -547,16 +651,93 @@ class Provider(unittest.IsolatedAsyncioTestCase):
         for _, _, form in self.http.calls:
             self.assertEqual(form["managed_payments[enabled]"], "true")
 
-    async def test_a_first_month_without_its_coupon_is_refused_not_charged_in_full(self) -> None:
+    async def test_a_new_customer_gets_the_dmbot_id_as_invoice_prefix(self) -> None:
+        self.http.answers[("POST", "/v1/customers")] = (200, {"id": "cus_new1"})
+        self.http.answers[("POST", "/v1/checkout/sessions")] = (200, {"url": CHECKOUT_URL})
+        await self.provider.checkout_url(
+            user_id=USER,
+            email="player@example.com",
+            plan=plans.load().by_id["table"],
+            return_url="https://dmbot.example/account",
+            dmbot_id="ABC123",
+        )
+        looked, made, session = self.http.calls  # first it looks for one made earlier
+        self.assertEqual(looked[1].split("?")[0], "/v1/customers/search")
+        self.assertEqual(made[1], "/v1/customers")
+        self.assertEqual(made[2]["invoice_prefix"], "ABC123")
+        self.assertEqual(made[2]["metadata[user_id]"], str(USER))
+        self.assertEqual(session[2]["customer"], "cus_new1")
+        self.assertNotIn("customer_email", session[2])  # Stripe takes one or the other
+        self.assertTrue((self.http.keys[1] or "").startswith("dmbot-customer-"))  # same request,
+        # same customer within Stripe's key window
+
+    async def test_a_customer_made_earlier_is_found_not_made_again(self) -> None:
+        query = urlencode({"query": f"metadata['user_id']:'{USER}'", "limit": "1"})
+        self.http.answers[("GET", f"/v1/customers/search?{query}")] = (
+            200,
+            {"data": [{"id": "cus_early7"}]},
+        )
+        self.http.answers[("POST", "/v1/checkout/sessions")] = (200, {"url": CHECKOUT_URL})
+        await self.provider.checkout_url(
+            user_id=USER,
+            email=None,
+            plan=plans.load().by_id["table"],
+            return_url="https://dmbot.example/account",
+            dmbot_id="ABC123",
+        )
+        paths = [(m, p.split("?")[0]) for m, p, _ in self.http.calls]
+        self.assertEqual(
+            paths, [("GET", "/v1/customers/search"), ("POST", "/v1/checkout/sessions")]
+        )
+        self.assertEqual(self.http.calls[-1][2]["customer"], "cus_early7")
+
+    async def test_an_id_too_short_for_stripe_makes_the_customer_without_a_prefix(self) -> None:
+        self.http.answers[("POST", "/v1/customers")] = (200, {"id": "cus_short1"})
+        self.http.answers[("POST", "/v1/checkout/sessions")] = (200, {"url": CHECKOUT_URL})
+        await self.provider.checkout_url(
+            user_id=USER,
+            email=None,
+            plan=plans.load().by_id["table"],
+            return_url="https://dmbot.example/account",
+            dmbot_id="AB",
+        )
+        made = next(f for m, p, f in self.http.calls if (m, p) == ("POST", "/v1/customers"))
+        self.assertNotIn("invoice_prefix", made)
+        with self.assertRaises(PaymentError):
+            await self.provider.set_invoice_prefix("cus_short1", "AB")
+
+    async def test_a_known_customer_is_reused_not_made_again(self) -> None:
+        self.http.answers[("POST", "/v1/checkout/sessions")] = (200, {"url": CHECKOUT_URL})
+        await self.provider.checkout_url(
+            user_id=USER,
+            email=None,
+            plan=plans.load().by_id["table"],
+            return_url="https://dmbot.example/account",
+            dmbot_id="ABC123",
+            customer_id="cus_old9",
+        )
+        [(_, path, form)] = self.http.calls
+        self.assertEqual((path, form["customer"]), ("/v1/checkout/sessions", "cus_old9"))
+
+    async def test_a_customer_stripe_would_not_make_stops_the_checkout(self) -> None:
+        self.http.answers[("POST", "/v1/customers")] = (400, None)
         with self.assertRaises(PaymentError):
             await self.provider.checkout_url(
                 user_id=USER,
                 email=None,
-                plan=plans.load().by_id["two-tables"],
-                first_month_cents=199,
+                plan=plans.load().by_id["table"],
                 return_url="https://dmbot.example/account",
+                dmbot_id="ABC123",
             )
-        self.assertEqual(self.http.calls, [])
+        # It looked, it tried to make the customer, and went no further: no checkout.
+        self.assertEqual(len(self.http.calls), 2)
+
+    async def test_an_existing_customer_can_be_given_the_prefix(self) -> None:
+        self.http.answers[("POST", "/v1/customers/cus_old9")] = (200, {})
+        await self.provider.set_invoice_prefix("cus_old9", "ABC123")
+        self.assertEqual(self.http.calls[0][2], {"invoice_prefix": "ABC123"})
+        with self.assertRaises(PaymentError):
+            await self.provider.set_invoice_prefix("not a customer", "ABC123")
 
     async def test_a_plan_with_no_price_is_refused(self) -> None:
         with self.assertRaises(PaymentError):
@@ -564,7 +745,6 @@ class Provider(unittest.IsolatedAsyncioTestCase):
                 user_id=USER,
                 email=None,
                 plan=plans.load().by_id["pro"],
-                first_month_cents=None,
                 return_url="https://dmbot.example/account",
             )
         self.assertEqual(self.http.calls, [])
@@ -607,7 +787,6 @@ class Provider(unittest.IsolatedAsyncioTestCase):
                     user_id=USER,
                     email=None,
                     plan=plans.load().by_id["table"],
-                    first_month_cents=None,
                     return_url="https://dmbot.example/account",
                 )
 
@@ -621,7 +800,6 @@ class Provider(unittest.IsolatedAsyncioTestCase):
                 user_id=USER,
                 email="player@example.com",
                 plan=plans.load().by_id["table"],
-                first_month_cents=None,
                 return_url="https://dmbot.example/account",
             )
         self.assertNotIn("example.com", str(caught.exception))
@@ -747,6 +925,20 @@ class Transport(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(kwargs["data"], {"mode": "payment"})
         self.assertFalse(kwargs["allow_redirects"])
 
+    async def test_it_sends_the_idempotency_key_as_a_header_only_when_given(self) -> None:
+        transport = HttpTransport("sk_test_not_real")
+        context = _answering(200, {"ok": True})
+        with mock.patch.object(aiohttp.ClientSession, "request", return_value=context) as sent:
+            await transport(
+                "POST", "/v1/checkout/sessions", {"mode": "payment"}, "dmbot-checkout-x"
+            )
+            await transport("GET", "/v1/subscriptions/sub_1", None)
+        await transport.close()
+        with_key, without = (call.kwargs["headers"] for call in sent.call_args_list)
+        self.assertEqual(with_key["Idempotency-Key"], "dmbot-checkout-x")
+        self.assertEqual(with_key["Authorization"], "Bearer sk_test_not_real")
+        self.assertNotIn("Idempotency-Key", without)
+
     async def test_an_answer_that_is_not_json_is_none_not_a_crash(self) -> None:
         transport = HttpTransport("sk_test_not_real")
         context = _answering(502, ValueError("not json"))
@@ -765,7 +957,6 @@ class Config(unittest.TestCase):
         "STRIPE_PRICE_TWO_TABLES": "price_2",
         "STRIPE_PRICE_GUILD": "price_3",
         "STRIPE_PRICE_EXTRA_HOURS": "price_4",
-        "STRIPE_FIRST_MONTH_COUPON_TABLE": "FIRST199",
     }
 
     def test_it_reads_the_ids_and_hides_the_key(self) -> None:
@@ -774,7 +965,6 @@ class Config(unittest.TestCase):
         assert config is not None
         self.assertEqual(config.prices["two-tables"], "price_2")
         self.assertEqual(config.extra_hours_price, "price_4")
-        self.assertEqual(config.first_month_coupons, {"table": "FIRST199"})
         self.assertFalse(config.live)
         self.assertFalse(config.managed_payments)
         self.assertNotIn("key_not_real", repr(loaded))
@@ -805,8 +995,6 @@ class Config(unittest.TestCase):
             load_web_settings({**self.ENV, "STRIPE_SECRET_KEY": "pk_test_publishable"})
         with self.assertRaisesRegex(ConfigError, "STRIPE_PRICE_TABLE"):
             load_web_settings({**self.ENV, "STRIPE_PRICE_TABLE": "prod_1"})
-        with self.assertRaisesRegex(ConfigError, "COUPON"):
-            load_web_settings({**self.ENV, "STRIPE_FIRST_MONTH_COUPON_TABLE": "two words"})
 
     def test_two_plans_cannot_share_a_price(self) -> None:
         with self.assertRaisesRegex(ConfigError, "different"):
@@ -980,11 +1168,20 @@ class Routes(DatabaseTest):
         )
 
     async def test_checkout_through_the_route_builds_a_stripe_checkout(self) -> None:
+        self.http.answers[("POST", "/v1/customers")] = (200, {"id": "cus_route1"})
         self.http.answers[("POST", "/v1/checkout/sessions")] = (200, {"url": CHECKOUT_URL})
         response = await self.client.post(
             "/billing/checkout", headers={"X-DMbot-Request": "1"}, json={"plan": "two-tables"}
         )
         self.assertEqual((response.status_code, response.json()), (200, {"url": CHECKOUT_URL}))
-        form = self.http.calls[0][2]
+        customer = next(f for m, p, f in self.http.calls if (m, p) == ("POST", "/v1/customers"))
+        self.assertEqual(customer["metadata[user_id]"], str(ALICE.id))
+        # Test accounts have small ids, too short for Stripe's 3-character prefix: no prefix.
+        self.assertEqual(
+            customer.get("invoice_prefix"),
+            (to_dmbot_id(ALICE.id) if len(to_dmbot_id(ALICE.id)) >= 3 else None),
+        )
+        form = self.http.calls[-1][2]
+        self.assertEqual(form["customer"], "cus_route1")
         self.assertEqual(form["metadata[user_id]"], str(ALICE.id))
         self.assertEqual(form["line_items[0][price]"], "price_two")

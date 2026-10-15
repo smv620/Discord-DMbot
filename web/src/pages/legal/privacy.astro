@@ -34,13 +34,29 @@ import {
     <li>
       Your <strong>Discord account number</strong>, your <strong>Discord name</strong> and the
       <strong>email</strong> Discord gives us (only if Discord has confirmed it is yours). We use the
-      email only to tell you about your account and plan, and to fill in the payment page when
-      you pick a plan.
+      email for the emails listed under "Email from DMbot" below, and to fill in the payment page
+      when you pick a plan. We keep your Discord name so a personal link we send you can greet you
+      by it.
+    </li>
+    <li>
+      The <strong>email our payment company has for your payments</strong>, once you have paid. We
+      keep it next to the Discord one so a move code can go to the address you pay with.
     </li>
     <li>
       The <strong>names and numbers of the Discord servers you are in</strong>, and whether you
       manage them, so we can show you the ones that use DMbot. We keep this only while you are
       signed in.
+    </li>
+    <li>
+      You can also sign in with a link we email you. It works once and ends after 15 minutes. We
+      keep only a scrambled copy of it, not the link itself, until then. When you ask for a link,
+      our answer is the same whether or not the email has an account.
+    </li>
+    <li>
+      A personal link from us holds your <strong>DMbot ID</strong> (your account number) and a
+      secret part that stops working after 30 days. With it, the Prices and Say hello pages greet
+      you by name and show your experience points (the minutes DMbot has run for you). Without
+      the link, those pages show nothing about you. Don't share it.
     </li>
     <li>
       Sign-in uses Discord. We never see your Discord password. Discord gives us a one-time
@@ -70,6 +86,18 @@ import {
     <li>
       <strong>Your campaign.</strong> The names, places and notes your table makes, the game
       master's notes and settings, and any adventure or rulebook text the game master shares.
+    </li>
+    <li>
+      <strong>What was typed.</strong> While DMbot is listening, it also reads what people who
+      said yes type in the table's chat: the voice channel's chat, one more channel the game
+      master picks, and the dmb-chat channel where anyone can ask a quick rules question. Typed
+      lines go in the written record, marked as typed.
+    </li>
+    <li>
+      <strong>Names at the table.</strong> DMbot notices what people are called at the table,
+      like "Mike", only from people who said yes to being recorded. The game master checks those names. If you
+      press ⚙️ Menu, then Stop recording me, DMbot forgets the names it picked up about you. Names
+      your game master typed in themselves stay.
     </li>
     <li>
       <strong>Your voice is not kept.</strong> The sound is sent to be written down, then thrown
@@ -109,7 +137,41 @@ import {
       secrets, but not what was said, and anyone in the server may download one. This keeps a
       campaign safe if its game master leaves.
     </li>
-    <li>Only people in your server can open your campaign in DMbot. Campaigns never share information.</li>
+    <li>Only people in your server can open your campaign in DMbot. Campaigns never share information, except house rules a game master chooses to share (below).</li>
+    <li>
+      If a game master chooses to share their house rules, only the rules themselves (and the link to their rules document, if they added one) can be read by someone who has the share code. The story, names, notes and what was said are never shared. Tables that use the rules keep their own copy.
+    </li>
+  </ul>
+
+  <h2 id="email-from-dmbot">Email from DMbot</h2>
+  <ul>
+    <li>
+      <strong>Which email.</strong> A move code goes only to the email you paid with. A sign-in
+      link goes to the address you type, if it is the one you paid with or the one Discord has for
+      you. The Try It emails go to the email Discord gave us.
+    </li>
+    <li>
+      <strong>What we send.</strong> A sign-in link and a move code, only when you ask for one, and
+      two Try It emails: one on the last day of Try It, and one if you get 30 more days. Nothing
+      else.
+    </li>
+    <li>
+      <strong>Stopping emails.</strong> Each Try It email has a link to stop emails like it. We keep
+      a list of the Discord account numbers that used it, with the date, so we do not send them
+      another. Sign-in links and move codes have no such link, because you asked for them.
+    </li>
+    <li>
+      <strong>A short note of what was sent.</strong> For each email we keep your Discord account
+      number, which kind of email it was and when it went. We do not keep the words of the email or
+      the address it went to. We use it so a one-time email is never sent twice, and to keep the
+      number of emails we send in a day under a limit. The notes for sign-in links and move codes
+      are deleted after 90 days. The note for a Try It email stays, so that email is never sent
+      twice.
+    </li>
+    <li>
+      <strong>Who sends them.</strong> For now the emails go out through DMbot's own Gmail mailbox,
+      so Google carries them. Every Try It email ends with a link to stop emails like it and the sender's mailing address.
+    </li>
   </ul>
 
   <h2>Companies that help us</h2>
@@ -204,7 +266,15 @@ import {
       someone else's campaign stay there, readable by that server, until that campaign is
       deleted. Your campaigns are not deleted with your account, because the other players may
       still want to read or download them. They are deleted 120 days later, unless another DM
-      of the campaign takes them over.
+      of the campaign takes them over. If the owner's Discord account is gone, or the owner has
+      been out of the server for 7 days, DMbot offers the campaign's other game masters a button
+      to take the campaign on. Only a game master who presses it takes over.
+    </li>
+    <li>
+      <strong>Get a copy of your information.</strong>
+      Press <strong>Download my data</strong> in <a href="/account">My Account</a>. You get one
+      file with your account, plan and payments, where you said yes to recording, campaign names
+      and character sheets.
     </li>
     <li>
       <strong>Ask about your information.</strong> You can ask us to show you, correct, send you

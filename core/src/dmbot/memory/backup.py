@@ -9,7 +9,7 @@ file are untrusted and fully checked before anything is written.
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from typing import Any
 
 from psycopg import errors as pg_errors
@@ -21,6 +21,7 @@ from dmbot.db import Conn
 from dmbot.memory import notify, sheets
 from dmbot.memory._changes import (
     ALIASES,
+    CLAIMS,
     CORRECTIONS,
     ENTITIES,
     FLAGS,
@@ -28,6 +29,7 @@ from dmbot.memory._changes import (
     RELATIONS,
     RULE_LINKS,
     SHEETS,
+    STATES,
     TYPES,
     Table,
     row_of,
@@ -36,10 +38,13 @@ from dmbot.memory._changes import (
 from dmbot.memory.checks import FLAG_KINDS
 from dmbot.memory.models import (
     ALIAS_KINDS,
+    CLAIM_STATUSES,
+    CONDITIONS,
     DESCRIPTION_MAX,
     DETAIL_MAX,
     ENTITY_STATUSES,
     FIX,
+    HOWS,
     KEEP,
     LINE_REF_MAX,
     LINK_EDITIONS,
@@ -62,6 +67,7 @@ from dmbot.memory.ontology import (
     Ontology,
     PredicateTerm,
     TypeTerm,
+    conditions_for,
 )
 from dmbot.memory.sounds import sound_codes
 
@@ -74,6 +80,8 @@ _TAGS: dict[str, Table] = {
     "predicate": PREDICATES,
     "entity": ENTITIES,
     "rule_link": RULE_LINKS,
+    "state": STATES,
+    "claim": CLAIMS,
     "alias": ALIASES,
     "relation": RELATIONS,
     "correction": CORRECTIONS,
@@ -93,29 +101,41 @@ _TEXT_LIMITS = {
     "detail": DETAIL_MAX,
     "line_ref": LINE_REF_MAX,
     "parent": 40,
+    "inverse_label": LABEL_MAX,
     "rules_source": LINK_SOURCE_MAX,
     "replaced_by": 40,
     "type": 40,
     "predicate": 40,
+    "subject": NAME_MAX,
+    "relationship": NAME_MAX,
+    "object": NAME_MAX,
+    "details": DETAIL_MAX,
+    "prompt_version": 40,
+    "model": 80,
 }
 _CHOICES: dict[str, Sequence[str]] = {
-    "status": (*ENTITY_STATUSES, ACTIVE, DEPRECATED, "open", "resolved"),
+    "status": (*ENTITY_STATUSES, ACTIVE, DEPRECATED, "open", "resolved", *CLAIM_STATUSES),
+    "how": HOWS,
     "kind": (*ALIAS_KINDS, *FLAG_KINDS, *LINK_KINDS),
+    "condition": CONDITIONS,
     "role": ROLES,
     "edition": LINK_EDITIONS,
     "action": (FIX, KEEP),
     "source": SOURCES,
 }
-_IDS = {"id", "entity_id", "merged_into", "used_by", "subject_id", "object_id", "relation_id",
-        "other_id"}  # fmt: skip
-_INTS = {"played_by", "created_at", "from_session_at", "to_session_at", "from_game_time",
-         "to_game_time", "max_per_subject"}  # fmt: skip
+_IDS = {"id", "entity_id", "fact_id", "merged_into", "used_by", "subject_id", "object_id",
+        "relation_id", "other_id"}  # fmt: skip
+_INTS = {"played_by", "speaker_id", "session_started_at", "decided_at", "created_at",
+         "from_session_at", "to_session_at", "from_game_time", "to_game_time",
+         "max_per_subject", "closed_at"}  # fmt: skip
+_VERSIONS = {"version", "definition_version"}  # from 1 up (#1189)
 _LISTS = {"examples", "subject_types", "object_types", "conflicts_with", "sound_codes",
-          "mention_ids"}  # fmt: skip
+          "mention_ids", "covers", "not_this", "synonyms"}  # fmt: skip
 _NULLABLE = {
     "role", "edition", "played_by", "merged_into", "used_by", "other_id", "entity_id",
     "replaced_by", "parent", "from_session_at", "to_session_at", "from_game_time",
-    "to_game_time", "max_per_subject",
+    "to_game_time", "max_per_subject", "closed_at", "unique_item", "fact_id",
+    "session_started_at", "decided_at",
 }  # fmt: skip
 
 
@@ -125,6 +145,8 @@ def _valid(column: str, value: object) -> bool:
         return column in _NULLABLE
     if column in _IDS:
         return is_id(value)
+    if column in _VERSIONS:
+        return isinstance(value, int) and not isinstance(value, bool) and 1 <= value <= 10_000
     if column in _INTS:
         return isinstance(value, int) and not isinstance(value, bool) and 0 <= value <= INT64_MAX
     if column in _LISTS:
@@ -133,7 +155,21 @@ def _valid(column: str, value: object) -> bool:
             and len(value) <= LIST_MAX
             and all(isinstance(v, str) and 0 < len(v) <= DESCRIPTION_MAX for v in value)
         )
-    if column in ("secret", "is_symmetric", "needs_look", "known"):
+    if column == "lines":  # transcript line references
+        return (
+            isinstance(value, list)
+            and len(value) <= LIST_MAX
+            and all(isinstance(v, str) and 0 < len(v) <= LINE_REF_MAX for v in value)
+        )
+    if column == "speaker_ids":  # Discord ids
+        return (
+            isinstance(value, list)
+            and len(value) <= LIST_MAX
+            and all(
+                isinstance(v, int) and not isinstance(v, bool) and 0 < v <= INT64_MAX for v in value
+            )
+        )
+    if column in ("secret", "is_symmetric", "needs_look", "known", "unique_item"):
         return isinstance(value, bool)
     if column == "confidence":
         return isinstance(value, (int, float)) and not isinstance(value, bool) and 0 <= value <= 1
@@ -231,7 +267,7 @@ def _checked_rows(rows: list[Any]) -> dict[str, list[dict[str, Any]]]:
     """A backup's memory rows, every value checked, grouped by table tag. Untrusted:
     raises CampaignError(DAMAGED) on anything out of shape."""
     by_tag: dict[str, list[dict[str, Any]]] = {tag: [] for tag in _TAGS}
-    rows = _from_before_kinds(rows)
+    rows = _with_definition_fields(_from_before_kinds(rows))
     for raw in rows:
         if not isinstance(raw, dict) or raw.get("table") not in _TAGS:
             raise CampaignError(DAMAGED)
@@ -244,6 +280,10 @@ def _checked_rows(rows: list[Any]) -> dict[str, list[dict[str, Any]]]:
             raw = _checked_sheet(raw)
         elif not all(_valid(c, raw[c]) for c in table.columns):
             raise CampaignError(DAMAGED)
+        if table is CLAIMS:
+            _check_claim(raw)
+        elif raw.get("status") == "dropped":
+            raise CampaignError(DAMAGED)  # only a claim can be dropped
         if table is ALIASES:  # worked out again, not taken from the file
             raw = {**raw, "sound_codes": list(sound_codes(raw["text"]))}
         by_tag[raw["table"]].append(raw)
@@ -262,6 +302,49 @@ def _checked_rows(rows: list[Any]) -> dict[str, list[dict[str, Any]]]:
 
 
 _OLD_PARENTS = {k: v[0] for k, v in MIGRATED_KINDS.items()}
+_NEW_PREDICATE_FIELDS: dict[str, Any] = {
+    "covers": [], "not_this": [], "inverse_label": "", "synonyms": [], "version": 1,
+}  # fmt: skip
+
+
+def _replaced_by_core(row: Mapping[str, Any]) -> bool:
+    return row.get("status") == DEPRECATED and row.get("replaced_by") == row.get("key")
+
+
+def _with_definition_fields(rows: list[Any]) -> list[Any]:
+    """A backup from before definitions were versioned (#1189) has none of the new columns:
+    its relationships get empty definitions at version 1 and its facts version 1. A fact
+    that names a version this DMbot doesn't know (a backup from a newer release) is read as
+    the oldest known version, 1; the after-session check then looks at it again against the
+    definition it is held to now."""
+    known = {p.key: p.version for p in CORE_PREDICATES}
+    core_predicates = frozenset(known)
+    for raw in rows:
+        if isinstance(raw, dict) and raw.get("table") == "predicate":
+            version = raw.get("version", 1)
+            if isinstance(raw.get("key"), str) and isinstance(version, int):
+                known.setdefault(raw["key"], version)
+    out: list[Any] = []
+    for raw in rows:
+        if isinstance(raw, dict) and raw.get("table") == "entity":
+            raw = {"unique_item": None, **raw}  # from before one-of-a-kind items (#1267)
+        elif isinstance(raw, dict) and raw.get("table") == "predicate":
+            old_format = "version" not in raw
+            raw = {**_NEW_PREDICATE_FIELDS, **raw}
+            if old_format and raw.get("key") in core_predicates:
+                # A file from before the core took this name: never refused. The campaign's
+                # row is kept as replaced by the core one, and `recheck_definitions` looks at
+                # its facts against the core meaning.
+                raw = {**raw, "status": DEPRECATED, "replaced_by": raw["key"], "version": 1}
+        elif isinstance(raw, dict) and raw.get("table") == "relation":
+            version = raw.get("definition_version", 1)
+            name = raw.get("predicate")
+            top = known.get(name, 1) if isinstance(name, str) else 1
+            if isinstance(version, int) and not isinstance(version, bool) and version > top:
+                version = 1
+            raw = {**raw, "definition_version": version}
+        out.append(raw)
+    return out
 
 
 def _from_before_kinds(rows: list[Any]) -> list[Any]:
@@ -377,7 +460,11 @@ def _check_terms(by_tag: dict[str, list[dict[str, Any]]]) -> None:
     """Entities and facts in a backup must use known kinds; extensions can't replace
     the core."""
     core = {t.key for t in CORE_TYPES} | {p.key for p in CORE_PREDICATES}
-    if any(r["key"] in core for r in (*by_tag["type"], *by_tag["predicate"])):
+    # A campaign's own relationship that the core has since taken the name of is kept as a
+    # deprecated row "replaced by" the core one (#1189); any other core key is damage.
+    if any(r["key"] in core for r in by_tag["type"]) or any(
+        r["key"] in core and not _replaced_by_core(r) for r in by_tag["predicate"]
+    ):
         raise CampaignError(DAMAGED)
     onto = Ontology.build(
         (_type_term(r) for r in by_tag["type"]),
@@ -385,14 +472,38 @@ def _check_terms(by_tag: dict[str, list[dict[str, Any]]]) -> None:
     )
     if any(r["type"] not in onto.types for r in by_tag["entity"]):
         raise CampaignError(DAMAGED)
-    # A role belongs to a character; only a player character has a player; a link is on a
-    # character that is in the file.
+    # A role belongs to a character; only a player character (or a person) has a player;
+    # a link is on a character that is in the file.
     if any(
         (r["role"] is not None and not onto.is_a(r["type"], "character"))
-        or (r["played_by"] is not None and r["role"] != "player_character")
+        or (
+            r["played_by"] is not None
+            and r["role"] != "player_character"
+            and r["type"] != "person"  # a person keeps their Discord ID here (#1188)
+        )
         for r in by_tag["entity"]
     ):
         raise CampaignError(DAMAGED)
+    # One live person for each Discord user, and a `plays` link goes from a person to a
+    # character (the database enforces the first; a damaged file must not reach it).
+    live_people = [
+        r["played_by"]
+        for r in by_tag["entity"]
+        if r["type"] == "person" and r["status"] in ("proposed", "confirmed")
+    ]
+    if len(live_people) != len(set(live_people)) or any(
+        r["played_by"] is None for r in by_tag["entity"] if r["type"] == "person"
+    ):
+        raise CampaignError(DAMAGED)
+    kinds = {r["id"]: r["type"] for r in by_tag["entity"]}
+    if any(
+        kinds.get(r["subject_id"]) != "person"
+        or not onto.is_a(kinds.get(r["object_id"], ""), "character")
+        for r in by_tag["relation"]
+        if r["predicate"] == "plays"
+    ):
+        raise CampaignError(DAMAGED)
+    _check_states(onto, by_tag)
     characters = {r["id"] for r in by_tag["entity"] if onto.is_a(r["type"], "character")}
     if any(r["entity_id"] not in characters for r in by_tag["rule_link"]):
         raise CampaignError(DAMAGED)
@@ -400,3 +511,35 @@ def _check_terms(by_tag: dict[str, list[dict[str, Any]]]) -> None:
         raise CampaignError(DAMAGED)
     if any(r["predicate"] not in onto.predicates for r in by_tag["relation"]):
         raise CampaignError(DAMAGED)
+
+
+def _check_claim(row: Mapping[str, Any]) -> None:
+    """A claim in a file: a status a claim can have, a fact only when it was confirmed, and
+    never a plan that someone says is waiting for the DM (a plan is never asked)."""
+    if row["status"] not in CLAIM_STATUSES:
+        raise CampaignError(DAMAGED)
+    if row["fact_id"] is not None and row["status"] != "confirmed":
+        raise CampaignError(DAMAGED)
+    if row["status"] == "proposed" and row["how"] == "plan":
+        raise CampaignError(DAMAGED)
+
+
+def _check_states(onto: Ontology, by_tag: dict[str, list[dict[str, Any]]]) -> None:
+    """A condition belongs to an entry in the file, one its kind can have, one current at a
+    time (the database enforces the last; a damaged file must not reach it); only an item is
+    one of a kind (#1267)."""
+    kinds = {r["id"]: r["type"] for r in by_tag["entity"]}
+    if any(
+        r["unique_item"] is not None and not onto.is_a(r["type"], "item") for r in by_tag["entity"]
+    ):
+        raise CampaignError(DAMAGED)
+    open_for: set[str] = set()
+    for r in by_tag["state"]:
+        if r["entity_id"] not in kinds:
+            raise CampaignError(DAMAGED)
+        if r["closed_at"] is not None:
+            continue  # history: an entry that became another kind keeps what it was
+        allowed = conditions_for(onto, kinds[r["entity_id"]])
+        if allowed is None or r["condition"] not in allowed or r["entity_id"] in open_for:
+            raise CampaignError(DAMAGED)
+        open_for.add(r["entity_id"])

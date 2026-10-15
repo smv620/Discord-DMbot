@@ -1,5 +1,6 @@
 ---
 import PlanCard from "../components/PlanCard.astro";
+import GreetingIsland from "../personal/Greeting";
 import Base from "../layouts/Base.astro";
 import {
   extraHours,
@@ -13,7 +14,9 @@ import {
 } from "../content/pricing";
 ---
 
-<Base title="Prices" description={`${headline.title} ${headline.rest}`}>
+<Base title="Prices" description={`DMbot prices. ${headline.title} ${headline.rest}`}>
+  {/* Only for someone who came from a personal link (?uid=&t=); everyone else sees nothing here. */}
+  <GreetingIsland client:only="preact" />
   <header class="intro">
     <h1>{headline.title}</h1>
     <p class="lead">{headline.rest}</p>

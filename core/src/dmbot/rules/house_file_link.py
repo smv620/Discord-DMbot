@@ -27,7 +27,10 @@ TOO_LONG = f"That link is too long (over {LINK_MAX} characters)."
 
 @dataclass(frozen=True, slots=True)
 class FileLink:
-    link: str = field(repr=False)  # private: never logged, never shown, not even by repr()
+    # Private: never logged, not even by repr(). It is shown only in the table's DMbot chat, when
+    # an answer comes from a house rule (owner decision, 2026-10-14; #1187), and only if it is a
+    # plain https address.
+    link: str = field(repr=False)
     ignored: str | None  # the fingerprint of the file the DM chose to ignore until it changes
     set_by: int
     set_at: int

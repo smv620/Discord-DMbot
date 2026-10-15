@@ -11,10 +11,12 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from typing import Any
 
-from dmbot import entitlements, hours
+from dmbot import consent, entitlements, hours
 from dmbot.campaigns.models import HANDOVER_SECONDS
 from dmbot.db import Database
+from dmbot.web.accounts import dmbot_id
 from dmbot.web.entitlements_writer import PAID_EVENT_SQL, PAID_KINDS
+from dmbot.web.moving import can_move
 from dmbot.web.offers import offer_ref
 from dmbot.web.sessions import Session
 
@@ -43,6 +45,7 @@ async def build_me(db: Database, session: Session, *, now: int) -> dict[str, Any
     campaigns: list[dict[str, Any]] = []
     servers: list[dict[str, Any]] = []
     incoming: list[dict[str, Any]] = []
+    recording: list[dict[str, Any]] = []
     outgoing: list[dict[str, Any]] = []
     names = {g.id: g.name for g in session.guilds}  # for the installs list below
     plan_works = plan is not None and plan.usable(now) and plan.status != "lapsed"
@@ -78,6 +81,12 @@ async def build_me(db: Database, session: Session, *, now: int) -> dict[str, Any
                     " ORDER BY o.created_at",
                     {"g": guild.id, "days": HANDOVER_SECONDS, "now": now, "me": session.user_id},
                 )
+                # Where DMbot may record this person here (#1151): their own consent row.
+                agreed = await conn.execute(
+                    "SELECT granted_at, terms_version FROM consent"
+                    " WHERE guild_id = %s AND user_id = %s",
+                    (guild.id, session.user_id),
+                )
                 here = None
                 if guild.manage:
                     here = await conn.execute(
@@ -89,8 +98,8 @@ async def build_me(db: Database, session: Session, *, now: int) -> dict[str, Any
                         " EXISTS (SELECT 1 FROM campaigns WHERE guild_id = %(g)s) AS played",
                         {"g": guild.id},
                     )
-                pending.append((guild, mine, offered, here))
-        for guild, mine, offered, here in pending:
+                pending.append((guild, mine, offered, here, agreed))
+        for guild, mine, offered, here, agreed in pending:
             for row in await mine.fetchall():
                 campaigns.append(
                     {
@@ -120,6 +129,19 @@ async def build_me(db: Database, session: Session, *, now: int) -> dict[str, Any
                         "expiresAt": _iso_time(row["created_at"] + HANDOVER_SECONDS),
                     }
                 )
+            for row in await agreed.fetchall():
+                recording.append(
+                    {
+                        "serverId": str(guild.id),
+                        "serverName": guild.name,
+                        "agreedOn": _iso_date(row["granted_at"]),
+                        # Said yes under older wording: not recorded until they say yes again.
+                        # (Not checked here: the outside speech company the yes named, #170;
+                        # the bot knows which one is in use. A yes for another company shows
+                        # as on, and DMbot asks again in Discord.)
+                        "on": row["terms_version"] == consent.TERMS_VERSION,
+                    }
+                )
             if here is not None:
                 found = await here.fetchone()
                 installed = bool(found and found["installed"])
@@ -138,6 +160,12 @@ async def build_me(db: Database, session: Session, *, now: int) -> dict[str, Any
                         "installedByYou": installer == session.user_id,
                     }
                 )
+
+        # "Experience points": every minute DMbot has run for this account, all time, through the
+        # one door the website's role has to the hours meter (#1228, #1231).
+        cur = await conn.execute("SELECT dmbot_minutes_total() AS minutes")
+        total_row = await cur.fetchone()
+        experience = int(total_row["minutes"]) if total_row else 0
 
         if month is not None:
             cur = await conn.execute("SELECT dmbot_hours_used(%s) AS minutes", (month.start,))
@@ -175,8 +203,16 @@ async def build_me(db: Database, session: Session, *, now: int) -> dict[str, Any
             for row in await cur.fetchall()
         ]
 
+    # The account's stored DMbot ID, kept for life (a move to a new Discord account keeps it).
+    account_number = await dmbot_id(db, session.user_id)
+
     return {
         "user": {"id": str(session.user_id), "name": session.display_name},
+        # The account number (the Discord ID in base 36) and the minutes DMbot has run (#1231).
+        # A move code is for an active paid plan only (not Try It, a grant or the free list).
+        **({"dmbotId": account_number} if account_number else {}),
+        "experiencePoints": experience,
+        "canMove": can_move(plan, now),
         # A first payment that failed and no payment since: the page says "try again" (#922).
         # Left out otherwise, so the common reply is unchanged.
         **({"firstPaymentFailed": True} if first_failed else {}),
@@ -191,7 +227,7 @@ async def build_me(db: Database, session: Session, *, now: int) -> dict[str, Any
             # Only from the plan's own month (a lapsed plan beside a grant would read the
             # grant's minutes).
             "hoursUsed": round(used_minutes / 60, 1) if plan.usable(now) else 0,
-            "hoursCap": plan.hours_this_period,
+            "hoursCap": entitlements.cap_hours(plan.hours_this_period, plan.minutes_taken),
             "renewsOn": _iso_date(plan.period_end),
             "graceEndsOn": _iso_date(plan.grace_ends_at),
         }
@@ -230,6 +266,7 @@ async def build_me(db: Database, session: Session, *, now: int) -> dict[str, Any
             if access.kind == "grant" and access.hours_cap and month is not None
             else {}
         ),
+        "recording": recording,
         "campaigns": campaigns,
         "servers": servers,
         "installs": installs,

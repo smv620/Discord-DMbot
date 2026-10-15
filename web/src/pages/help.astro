@@ -1,0 +1,93 @@
+---
+import Base from "../layouts/Base.astro";
+import { accountSteps, dmSteps, emailNote, emailSteps, helpHeading, helpIntro, playerNote, playerSteps } from "../content/help";
+---
+
+<Base
+  title="Help"
+  description="How to use DMbot in Discord, step by step, for game masters and players."
+>
+  <h1>{helpHeading}</h1>
+  <p class="lead muted">{helpIntro}</p>
+
+  <section aria-labelledby="dm-heading">
+    <h2 id="dm-heading">For the game master</h2>
+    <ol>
+      {
+        dmSteps.map((s) => (
+          <li>
+            {s.text}
+            {s.text.startsWith("Add DMbot") && (
+              <>
+                {" "}
+                <a href="/install">Add to Discord</a>
+              </>
+            )}
+          </li>
+        ))
+      }
+    </ol>
+  </section>
+
+  <section aria-labelledby="player-heading">
+    <h2 id="player-heading">For players</h2>
+    <ol>
+      {playerSteps.map((s) => <li>{s.text}</li>)}
+    </ol>
+    <p class="muted">{playerNote}</p>
+  </section>
+
+  <section aria-labelledby="account-heading">
+    <h2 id="account-heading">Your account</h2>
+    <ol>
+      {
+        accountSteps.map((s) => (
+          <li>
+            {s.text.startsWith("Forgot") ? (
+              <>
+                {s.text.split("open the Discord sign-in page")[0]}open the{" "}
+                <a href="https://discord.com/login" rel="noopener noreferrer">Discord sign-in page</a>
+                {s.text.split("open the Discord sign-in page")[1]}
+              </>
+            ) : s.text.includes("your account page") ? (
+              <>
+                {s.text.split("your account page")[0]}
+                <a href="/account">your account page</a>
+                {s.text.split("your account page")[1]}
+              </>
+            ) : (
+              s.text
+            )}
+          </li>
+        ))
+      }
+    </ol>
+  </section>
+
+  <section aria-labelledby="emails-heading">
+    <h2 id="emails-heading">Emails from DMbot</h2>
+    <ol>
+      {emailSteps.map((s) => <li>{s.text}</li>)}
+    </ol>
+    <p class="muted">{emailNote}</p>
+  </section>
+
+  <p class="muted">
+    Stuck? <a href="/hello">Say hello</a> and tell us what you saw.
+  </p>
+</Base>
+
+<style>
+  ol {
+    max-width: var(--text-width);
+    padding-left: var(--space-6);
+  }
+
+  li {
+    margin-bottom: var(--space-4);
+  }
+
+  section {
+    margin-top: var(--space-8);
+  }
+</style>

@@ -124,6 +124,13 @@ class Campaign:
     # The live transcript channel (#124); None until the first session.
     transcript_channel_id: int | None = None
     gametime_channel_id: int | None = None  # the players' game-time channel (#1116)
+    dmbchat_channel_id: int | None = None  # where the table asks DMbot questions (#1187)
+    # The DM's D&D Beyond campaign invite link, shown to players on a button (#1119).
+    dndbeyond_invite: str | None = None
+    # Typed chat at the table (#1118): whether DMbot reads it, and the one extra text channel
+    # the DM picked (the voice channel's own chat is always the first place).
+    table_chat: bool = True
+    table_chat_channel_id: int | None = None
     # How much DMbot says in the DM screen (#504): quiet, normal or chatty.
     dm_screen_level: str = DEFAULT_DM_SCREEN_LEVEL
     # Whose plan the campaign uses (#437): its creator or restorer; None for campaigns
@@ -131,6 +138,7 @@ class Campaign:
     owner_user_id: int | None = None
     # Rules cards on the DM screen when a spell or creature is named (#931); off by default.
     rules_cards: bool = False
+    side_initiative: bool = False  # combat tracks rounds only either way (#1127)
     # Paused by its owner, or by DMbot when the owner's plan shrank (#957): it keeps all its
     # data and downloads, can't start, and doesn't count toward the owner's campaign cap.
     paused: bool = False
@@ -140,6 +148,8 @@ class Campaign:
     # When the owner deleted their account (#1059): the campaign is kept, ownerless, and the
     # retention job deletes it 120 days later unless a DM takes it on. None otherwise.
     owner_left_at: int | None = None
+    # When DMbot first saw the owner was not in the server (#1214); None while they are here.
+    owner_missing_since: int | None = None
 
     @property
     def last_active_at(self) -> int:

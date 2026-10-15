@@ -19,3 +19,14 @@ def no_install_link() -> Iterator[None]:
     install.configure(None)
     yield
     install.configure(None)
+
+
+@pytest.fixture(autouse=True)
+def fresh_sheet_gate() -> Iterator[None]:
+    """Every test starts with a full bucket and no pause on D&D Beyond reads (#1171), so one
+    test's reads or 429 never hold back another's."""
+    from dmbot.memory import sheets
+
+    sheets.GATE = sheets._Gate()
+    yield
+    sheets.GATE = sheets._Gate()

@@ -11,9 +11,11 @@ import {
   ApiError,
   type AccountApi,
   type Campaign,
+  type Character,
   type Me,
   type Offer,
   type Person,
+  type RecordingEntry,
 } from "./api";
 import { isSafeRedirect } from "./redirect";
 
@@ -30,6 +32,22 @@ interface Props {
   go?: (url: string) => void;
   /** The page's query string, for the sign-in result (?signin=failed). */
   search?: string;
+  /** The page's `#...`: an emailed sign-in link puts its one-use code there (#1231), so no
+   * server or log ever sees it. */
+  hash?: string;
+}
+
+/** The code in `#email-link=...`, or null. */
+function emailLinkToken(hash: string): string | null {
+  const found = /^#email-link=([\w-]{1,200})$/.exec(hash);
+  return found ? (found[1] ?? null) : null;
+}
+
+/** Take the code out of the address bar, so a reload or a shared screen can't use it again. */
+function forgetEmailLink(): void {
+  if (typeof window !== "undefined") {
+    window.history.replaceState(null, "", window.location.pathname + window.location.search);
+  }
 }
 
 const defaultGo = (url: string): void => {
@@ -134,12 +152,36 @@ function ActionButton({
   );
 }
 
-export default function Account({ api, go = defaultGo, search = "" }: Props) {
+export default function Account({ api, go = defaultGo, search = "", hash = "" }: Props) {
   const [state, setState] = useState<State>({ kind: "loading" });
+  // An emailed link is tried once, even if the page loads again ("Try again").
+  const linkTried = useRef(false);
 
   const load = useCallback(async () => {
     try {
+      const link = emailLinkToken(hash);
+      let linkNotice: string | null = null;
+      if (link && api.emailSignInUse && !linkTried.current) {
+        linkTried.current = true;
+        forgetEmailLink();
+        try {
+          await api.emailSignInUse(link);
+        } catch (error) {
+          // A wrong, used or ended link is said in words. Anything else (the API down) falls
+          // through to the page's own "down" answer from api.me() below.
+          // A refusal for too many tries did not spend the link, so it says to wait, not that the
+          // link was used.
+          if (error instanceof ApiError && error.kind === "bad-link") linkNotice = text.emailLinkBad;
+          else if (error instanceof ApiError && error.kind === "slow-down") {
+            linkNotice = text.emailLinkWait;
+          } else throw error;
+        }
+      }
       const me = await api.me();
+      if (!me && linkNotice) {
+        setState({ kind: "signed-out", notice: linkNotice });
+        return;
+      }
       const params = new URLSearchParams(search);
       if (me && params.get("install") === "sign_in_again") {
         setState({ kind: "signed-out", notice: text.signInAgain });
@@ -151,12 +193,18 @@ export default function Account({ api, go = defaultGo, search = "" }: Props) {
       }
       const why = params.get("signin");
       const notice =
-        why === "failed" ? text.signInFailed : why === "slow" ? text.tooManyTries : null;
+        why === "failed"
+          ? text.signInFailed
+          : why === "slow"
+            ? text.tooManyTries
+            : why === "moved"
+              ? text.signInMoved
+              : null;
       setState(me ? { kind: "signed-in", me } : { kind: "signed-out", notice });
     } catch {
       setState({ kind: "down" });
     }
-  }, [api, search]);
+  }, [api, search, hash]);
 
   useEffect(() => {
     void load();
@@ -261,7 +309,62 @@ function SignedOut({ notice }: { notice: string | null }) {
         </a>
         <p class="muted small">{text.signInNote}</p>
       </div>
+      <EmailSignIn />
     </div>
+  );
+}
+
+/** Sign in without Discord (#1231): type an email, get a one-use link. The answer is always the
+ * same words, so the page can't be used to find out whether an address has an account. */
+function EmailSignIn() {
+  const { api } = useShared();
+  const [email, setEmail] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [answer, setAnswer] = useState<{ text: string; ok: boolean } | null>(null);
+  const request = api.emailSignInRequest;
+  if (!request) return null; // an API older than #1231
+  const send = async (event: Event): Promise<void> => {
+    event.preventDefault();
+    if (busy) return;
+    const address = email.trim();
+    if (address === "") {
+      setAnswer({ text: text.emailMissing, ok: false });
+      return;
+    }
+    setBusy(true);
+    setAnswer(null);
+    try {
+      await request(address);
+      setAnswer({ text: text.emailAnswer, ok: true });
+    } catch (error) {
+      const slow = error instanceof ApiError && error.kind === "slow-down";
+      setAnswer({ text: slow ? text.emailWait : text.actionFailed, ok: false });
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <form class="panel" aria-labelledby="email-heading" onSubmit={(e) => void send(e)}>
+      <h2 id="email-heading">{text.emailHeading}</h2>
+      <label for="email-address">{text.emailLabel}</label>
+      <input
+        id="email-address"
+        type="email"
+        name="email"
+        autocomplete="email"
+        value={email}
+        onInput={(e) => setEmail((e.target as HTMLInputElement).value)}
+      />
+      <button type="submit" class="button secondary" disabled={busy} aria-busy={busy}>
+        {busy ? text.emailSending : text.emailButton}
+      </button>
+      {answer && (
+        <p class={answer.ok ? "ok" : "warn"} role={answer.ok ? "status" : "alert"}>
+          {answer.text}
+        </p>
+      )}
+      <p class="muted small">{text.emailNote}</p>
+    </form>
   );
 }
 
@@ -318,6 +421,23 @@ function SignedIn({
         >
           {text.signOut}
         </button>
+        <button
+          type="button"
+          class="link"
+          disabled={busy}
+          onClick={() =>
+            void run(
+              async () => {
+                await api.signOutEverywhere();
+                onSignedOutByChoice();
+              },
+              (error) => (error.kind === "slow-down" ? text.signOutEverywhereWait : null),
+            )
+          }
+        >
+          {text.signOutEverywhere}
+        </button>
+        <p class="muted small">{text.signOutEverywhereNote}</p>
       </div>
       <Notice message={notice} />
       {installMessage && <ForgetInstallResult />}
@@ -339,8 +459,13 @@ function SignedIn({
         />
       )}
       <PlanSection me={me} />
+      {me.dmbotId !== undefined && <IdSection me={me} />}
+      {me.canMove === true && api.getMoveCode && <MoveSection />}
       <CampaignsSection me={me} />
       <ServersSection me={me} />
+      <CharactersSection />
+      <RecordingSection entries={me.recording ?? []} />
+      <ExportSection />
       <DeleteSection
         paidPlan={me.plan !== null && me.plan.id !== "try-it" && me.plan.status !== "lapsed"}
         free={me.access?.kind === "free"}
@@ -877,6 +1002,252 @@ function ServerRow({ server: s, api }: { server: Me["servers"][number]; api: Acc
       {s.hasDmbot && s.canLink && <p class="muted small row-note">{text.linkNote}</p>}
       <Notice message={notice} />
     </li>
+  );
+}
+
+/** My characters (#1164): the person's own sheets, read-only. Loaded once the page is up; an
+ * API older than this, or a failed load, shows nothing rather than an error. */
+function CharactersSection() {
+  const { api } = useShared();
+  const [list, setList] = useState<Character[] | null>(null);
+  useEffect(() => {
+    let live = true;
+    api
+      .characters?.()
+      .then((found) => live && setList(found))
+      .catch(() => undefined);
+    return () => {
+      live = false;
+    };
+  }, [api]);
+  if (list === null) return null;
+  return (
+    <section aria-labelledby="characters-heading" class="panel">
+      <h2 id="characters-heading">{text.charactersHeading}</h2>
+      {list.length === 0 ? (
+        <p>{text.charactersNone}</p>
+      ) : (
+        <>
+          <p class="muted small">{text.characterChange}</p>
+          <ul class="campaigns">
+            {list.map((c, i) => {
+              const facts = [
+                c.level !== null ? text.characterLevel(c.level) : null,
+                c.maxHp !== null ? text.characterHp(c.maxHp) : null,
+                c.ac !== null ? text.characterAc(c.ac) : null,
+              ].filter((part) => part !== null);
+              return (
+                <li key={`${c.serverName}-${c.campaign}-${c.name}-${i}`} data-character>
+                  <p class="plan-name">{c.name ?? text.characterUnread}</p>
+                  {c.name === null && <p class="muted small">{text.characterUnreadNote}</p>}
+                  {c.classLine && <p>{c.classLine}</p>}
+                  <p class="muted small">{text.characterWhere(c.serverName, c.campaign)}</p>
+                  {facts.length > 0 && (
+                    <p class="small facts">
+                      {facts.map((fact, n) => (
+                        <span key={fact}>
+                          {n > 0 && " · "}
+                          <span class="nowrap">{fact}</span>
+                        </span>
+                      ))}
+                    </p>
+                  )}
+                  {(c.typedIn || c.readAt) && (
+                    <p class="muted small">
+                      {[c.typedIn ? text.characterTyped : null, c.readAt ? text.characterRead(c.readAt) : null]
+                        .filter((part) => part !== null)
+                        .join(" ")}
+                    </p>
+                  )}
+                  {c.sheetLink && (
+                    <a href={c.sheetLink} target="_blank" rel="noopener noreferrer">
+                      {text.characterOpen}
+                    </a>
+                  )}
+                </li>
+              );
+            })}
+          </ul>
+        </>
+      )}
+    </section>
+  );
+}
+
+/** Your DMbot ID and experience points (#1231). The ID is an account number, not a secret. */
+function IdSection({ me }: { me: Me }) {
+  return (
+    <section aria-labelledby="id-heading" class="panel">
+      <h2 id="id-heading">{text.idHeading}</h2>
+      <p>{text.idLine(me.dmbotId ?? "")}</p>
+      <p class="muted small">{text.idNote}</p>
+      {me.experiencePoints !== undefined && (
+        <>
+          <p>{text.pointsLine(me.experiencePoints)}</p>
+          <p class="muted small">{text.pointsNote}</p>
+        </>
+      )}
+    </section>
+  );
+}
+
+/** Moving to a new Discord account (#1231): paid plans get a move code by email, never on screen.
+ * The steps for using it show only after it has been sent. */
+function MoveSection() {
+  const { api } = useShared();
+  const { busy, notice, run } = useAction();
+  const [sent, setSent] = useState(false);
+  return (
+    <section aria-labelledby="move-heading" class="panel">
+      <h2 id="move-heading">{text.moveHeading}</h2>
+      <p>{text.moveText}</p>
+      <Notice message={notice} />
+      {sent && (
+        <p class="ok" role="status">
+          {text.moveSent}
+        </p>
+      )}
+      <ActionButton
+        busy={busy}
+        kind="secondary"
+        onClick={() =>
+          void run(
+            async () => {
+              await api.getMoveCode?.();
+              setSent(true);
+            },
+            (error) =>
+              ({
+                "not-ready": text.moveNotReady,
+                "slow-down": text.moveWait,
+                "no-email": text.moveNoEmail,
+                "too-soon": text.moveTooSoon,
+                "email-failed": text.moveEmailFailed,
+              })[error.kind as string] ?? null,
+          )
+        }
+      >
+        {text.moveButton}
+      </ActionButton>
+    </section>
+  );
+}
+
+/** Where DMbot may record you (#1151): each server with Stop recording me, the same one short
+ * warning and one confirmation as the bot's Menu. Starting again stays in Discord. */
+function RecordingSection({ entries }: { entries: RecordingEntry[] }) {
+  const [done, setDone] = useState<string[]>([]);
+  // The row goes with the refresh after a stop, so what was done is said here, above the list.
+  if (entries.length === 0 && done.length === 0) return null;
+  return (
+    <section aria-labelledby="recording-heading" class="panel">
+      <h2 id="recording-heading">{text.recordingHeading}</h2>
+      {done.map((line) => (
+        <p key={line} class="ok" role="status">
+          {line}
+        </p>
+      ))}
+      <ul class="campaigns">
+        {entries.map((e) => (
+          <RecordingRow
+            key={e.serverId}
+            entry={e}
+            onStopped={() => setDone((now) => [...now, text.stoppedRecording(e.serverName)])}
+          />
+        ))}
+      </ul>
+    </section>
+  );
+}
+
+function RecordingRow({ entry, onStopped }: { entry: RecordingEntry; onStopped: () => void }) {
+  const { api, refresh } = useShared();
+  const { busy, notice, run, clear } = useAction();
+  const [asking, setAsking] = useState(false);
+  if (!entry.on) {
+    return (
+      <li data-recording={entry.serverId}>
+        <p>{text.recordingOld(entry.serverName)}</p>
+      </li>
+    );
+  }
+  return (
+    <li data-recording={entry.serverId}>
+      <p>{text.recordingLine(entry.serverName, entry.agreedOn)}</p>
+      <Notice message={notice} />
+      {asking ? (
+        <>
+          <p role="alert">{text.stopWarning(entry.serverName)}</p>
+          <div class="row">
+            <ActionButton
+              busy={busy}
+              onClick={() =>
+                void run(async () => {
+                  await api.stopRecording(entry.serverId);
+                  onStopped();
+                  await refresh();
+                })
+              }
+            >
+              {text.stopYes}
+            </ActionButton>
+            <button
+              type="button"
+              class="button secondary"
+              disabled={busy}
+              onClick={() => {
+                clear();
+                setAsking(false);
+              }}
+            >
+              {text.stopKeep}
+            </button>
+          </div>
+        </>
+      ) : (
+        <button type="button" class="button secondary" onClick={() => setAsking(true)}>
+          {text.stopRecording}
+        </button>
+      )}
+    </li>
+  );
+}
+
+/** Save a file the page fetched, under the name the browser's download offers. */
+function saveFile(file: Blob, name: string): void {
+  const address = URL.createObjectURL(file);
+  const link = document.createElement("a");
+  link.href = address;
+  link.download = name;
+  link.click();
+  // Some browsers start the download after the click returns, so the address lives a moment.
+  setTimeout(() => URL.revokeObjectURL(address), 1000);
+}
+
+/** Download my data (#1150): one file with what DMbot holds about this person. Fetched here, so
+ * "once a minute" and "sign in again" are said in words, not shown as a raw error page. */
+function ExportSection() {
+  const { api } = useShared();
+  const { busy, notice, run } = useAction();
+  return (
+    <section aria-labelledby="export-heading" class="panel">
+      <h2 id="export-heading">{text.exportHeading}</h2>
+      <p>{text.exportWhat}</p>
+      <ActionButton
+        busy={busy}
+        kind="secondary"
+        onClick={() =>
+          void run(
+            async () => saveFile(await api.downloadExport(), "dmbot-my-data.json"),
+            (error) => (error.kind === "slow-down" ? text.exportTooSoon : null),
+          )
+        }
+      >
+        {text.exportButton}
+      </ActionButton>
+      <Notice message={notice} />
+      <p class="muted small">{text.exportWait}</p>
+    </section>
   );
 }
 

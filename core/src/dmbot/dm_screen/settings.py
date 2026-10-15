@@ -26,6 +26,7 @@ from typing import Any
 import discord
 
 from dmbot.campaigns import Campaign, CampaignStore
+from dmbot.campaigns.invite import parse_invite
 from dmbot.campaigns.models import (
     DEFAULT_DM_SCREEN_LEVEL,
     DM_SCREEN_LEVELS,
@@ -33,10 +34,11 @@ from dmbot.campaigns.models import (
     CampaignError,
     HandoverOffer,
 )
-from dmbot.dm_screen import handover, messages
+from dmbot.dm_screen import handover, messages, table_chat_panel
 from dmbot.dm_screen.buttons import may_change_screen, save_visibility
 from dmbot.dm_screen.clock import ClockButton
 from dmbot.dm_screen.pause import pause_buttons, pause_line
+from dmbot.dm_screen.table_chat_panel import TableChatButton
 from dmbot.logs import set_log_context
 
 log = logging.getLogger(__name__)
@@ -58,7 +60,8 @@ RULES_CARDS_ON = (
 RULES_CARDS_STOP = " Tap 🃏 Turn rules cards off to stop them."
 RULES_CARDS_PEEK = " Players who peek can see them too."
 RULES_CARDS_OPEN = " Players can see them too, because your DM screen is open."
-RULES_CARDS_ONLY_DMS = "Only this campaign's DMs can change this."
+ONLY_DMS = "Only this campaign's DMs can change this."
+RULES_CARDS_ONLY_DMS = ONLY_DMS  # (the old name, kept for its callers)
 RULES_LINE = (
     "• **Rules:** press 📖 Look up a rule to read a spell, condition or creature from the "
     "free rules (SRD). Only you see it."
@@ -68,10 +71,26 @@ GONE = messages.DM_CAMPAIGN_GONE
 FAILED = "Sorry, that didn't save. Please try again."
 LOAD_FAILED = messages.LOAD_FAILED
 SAVED = "Saved. Press ⚙️ Settings again to see your settings."
+INVITE_SET = "• **D&D Beyond invite:** set. Players get a **Join on D&D Beyond** button."
+INVITE_NOT_SET = (
+    "• **D&D Beyond invite:** not set. Tap **D&D Beyond invite** to add your campaign's link "
+    "for players."
+)
+INVITE_SAVED = "✅ Saved. Players get a **Join on D&D Beyond** button on new messages from DMbot."
+INVITE_REMOVED = "✅ Removed. New messages from DMbot won't have the D&D Beyond button."
 
 
 def _tick(label: str, current: bool) -> str:
     return f"✓ {label}" if current else label
+
+
+def _combat_line(campaign: Campaign) -> str:
+    """The combat setting (#1127): DMbot follows rounds either way, never turn order."""
+    way = "on" if campaign.side_initiative else "off"
+    return (
+        f"• **Combat:** DMbot counts the rounds, never whose turn it is. Side-based initiative "
+        f"(each side acts together) is {way}."
+    )
 
 
 def _rules_cards_line(campaign: Campaign, viewer: int | None) -> str:
@@ -104,6 +123,9 @@ def settings_text(
             "`/transcript`. (This can't be changed.)",
             *rules,
             _rules_cards_line(campaign, viewer),
+            *([INVITE_SET if campaign.dndbeyond_invite else INVITE_NOT_SET] if rules else []),
+            table_chat_panel.line(campaign),
+            _combat_line(campaign),
             handover.owner_line(campaign, offer),
             pause_line(campaign, viewer),
             "Tap a button to change it. If DMbot is listening now, it follows the change from "
@@ -130,6 +152,10 @@ def settings_view(campaign: Campaign, offer: HandoverOffer | None, viewer: int) 
         view.add_item(RulesCardsButton(campaign.id, campaign.rules_cards))
         view.add_item(ClockButton(campaign.id, "open"))  # the game clock (#965)
         view.add_item(HouseFileButton(campaign.id))  # the house-rules file (#969)
+        view.add_item(InviteButton(campaign.id))  # the D&D Beyond invite (#1119)
+        view.add_item(TableChatButton(campaign.id))  # which typed chat is read (#1118)
+        view.add_item(SideInitiativeButton(campaign.id, campaign.side_initiative))  # #1127
+        view.add_item(SharedRulesButton(campaign.id))  # shared house rules (#1190)
     return view
 
 
@@ -186,6 +212,9 @@ async def _redraw(interaction: discord.Interaction, campaign: Campaign) -> None:
             await interaction.followup.send(SAVED, ephemeral=True)
 
 
+_OWNER_CHECKS: set[asyncio.Task[Any]] = set()
+
+
 class SettingsButton(
     discord.ui.DynamicItem[discord.ui.Button[discord.ui.View]],
     template=rf"dmbot:settings:{_ID}",
@@ -223,6 +252,14 @@ class SettingsButton(
             ephemeral=True,
             allowed_mentions=NO_PINGS,
         )
+        # Then, without making the card wait, see whether the owner is still in the server
+        # (#1214); if not, the DMs are told and the card's Take it on appears next time.
+        check = getattr(interaction.client, "check_owner_present", None)
+        looking = check(campaign) if callable(check) else None
+        if asyncio.iscoroutine(looking):
+            task = asyncio.create_task(looking, name="owner-check")
+            _OWNER_CHECKS.add(task)  # a task nobody holds can be collected before it ends
+            task.add_done_callback(_OWNER_CHECKS.discard)
 
 
 class RuleLookupButton(
@@ -321,6 +358,150 @@ class HouseFileButton(
         await open_menu(interaction, campaign)
 
 
+class SharedRulesButton(
+    discord.ui.DynamicItem[discord.ui.Button[discord.ui.View]],
+    template=rf"dmbot:sharedrules:{_ID}",
+):
+    """📚 Shared rules, on ⚙️ Settings (#1190): share house rules, or use another table's
+    set. Only the campaign's DMs."""
+
+    def __init__(self, campaign_id: str) -> None:
+        super().__init__(
+            discord.ui.Button(
+                label="Shared rules",
+                emoji="📚",
+                style=discord.ButtonStyle.secondary,
+                row=4,
+                custom_id=f"dmbot:sharedrules:{campaign_id}",
+            )
+        )
+        self.campaign_id = campaign_id
+
+    @classmethod
+    async def from_custom_id(
+        cls, interaction: discord.Interaction, item: discord.ui.Item[Any], match: re.Match[str]
+    ) -> SharedRulesButton:
+        return cls(match["campaign"])
+
+    async def callback(self, interaction: discord.Interaction) -> Any:
+        from dmbot.ui.shared_rules import GONE, ONLY_DMS, open_menu
+
+        set_log_context(guild_id=interaction.guild_id)
+        store = getattr(interaction.client, "campaigns", None)
+        guild = interaction.guild
+        campaign: Campaign | None = None
+        if store is not None and guild is not None:
+            try:
+                campaign = await store.get(guild.id, self.campaign_id)
+            except Exception:
+                log.exception("Couldn't load a campaign for the shared rules")
+                await interaction.response.send_message(LOAD_FAILED, ephemeral=True)
+                return
+        if campaign is None:
+            await interaction.response.send_message(GONE, ephemeral=True)
+            return
+        if interaction.user.id not in campaign.dm_user_ids:
+            await interaction.response.send_message(ONLY_DMS, ephemeral=True)
+            return
+        await open_menu(interaction, campaign)
+
+
+class InviteButton(
+    discord.ui.DynamicItem[discord.ui.Button[discord.ui.View]],
+    template=rf"dmbot:invite:{_ID}",
+):
+    """🔗 D&D Beyond invite, on ⚙️ Settings (#1119): set, change or remove the campaign's
+    invite link. Only the campaign's DMs."""
+
+    def __init__(self, campaign_id: str) -> None:
+        super().__init__(
+            discord.ui.Button(
+                label="D&D Beyond invite",
+                emoji="🔗",
+                style=discord.ButtonStyle.secondary,
+                row=3,
+                custom_id=f"dmbot:invite:{campaign_id}",
+            )
+        )
+        self.campaign_id = campaign_id
+
+    @classmethod
+    async def from_custom_id(
+        cls, interaction: discord.Interaction, item: discord.ui.Item[Any], match: re.Match[str]
+    ) -> InviteButton:
+        return cls(match["campaign"])
+
+    async def callback(self, interaction: discord.Interaction) -> Any:
+        set_log_context(guild_id=interaction.guild_id)
+        store = getattr(interaction.client, "campaigns", None)
+        guild = interaction.guild
+        campaign: Campaign | None = None
+        if store is not None and guild is not None:
+            try:
+                campaign = await store.get(guild.id, self.campaign_id)
+            except Exception:
+                log.exception("Couldn't load a campaign for the D&D Beyond invite")
+                await interaction.response.send_message(LOAD_FAILED, ephemeral=True)
+                return
+        if campaign is None:
+            await interaction.response.send_message(GONE, ephemeral=True)
+            return
+        if interaction.user.id not in campaign.dm_user_ids:
+            await interaction.response.send_message(ONLY_DM, ephemeral=True)
+            return
+        await interaction.response.send_modal(InviteForm(campaign))
+
+
+class InviteForm(discord.ui.Modal, title="D&D Beyond invite"):
+    link: discord.ui.TextInput[InviteForm] = discord.ui.TextInput(
+        label="Campaign invite link",
+        placeholder="Paste your D&D Beyond invite link. Blank removes it.",
+        required=False,
+        max_length=200,
+    )
+
+    def __init__(self, campaign: Campaign) -> None:
+        super().__init__(timeout=600)
+        self.campaign_id = campaign.id
+        if campaign.dndbeyond_invite:
+            self.link.default = campaign.dndbeyond_invite
+
+    async def on_error(  # type: ignore[override]  # a form's has no item (discord.py)
+        self, interaction: discord.Interaction, error: Exception
+    ) -> None:
+        log.exception("The D&D Beyond invite form failed", exc_info=error)
+        with contextlib.suppress(discord.HTTPException):
+            await interaction.response.send_message(FAILED, ephemeral=True)
+
+    async def on_submit(self, interaction: discord.Interaction) -> None:
+        campaign = await _allowed(interaction, self.campaign_id)
+        if campaign is None:
+            return
+        try:
+            invite = parse_invite(self.link.value)
+        except CampaignError as exc:
+            await interaction.response.send_message(str(exc), ephemeral=True)
+            return
+        try:
+            saved = await interaction.client.campaigns.set_dndbeyond_invite(  # type: ignore[attr-defined]
+                campaign.guild_id, campaign.id, invite
+            )
+        except CampaignError as exc:
+            await interaction.response.send_message(str(exc), ephemeral=True)
+            return
+        except Exception:
+            log.exception("Couldn't save the D&D Beyond invite")
+            await interaction.response.send_message(FAILED, ephemeral=True)
+            return
+        follow = getattr(interaction.client, "after_invite_change", None)
+        if follow is not None:
+            # A running session and the transcript channel's pinned card follow at once.
+            await follow(saved)
+        await interaction.response.send_message(
+            INVITE_SAVED if invite else INVITE_REMOVED, ephemeral=True
+        )
+
+
 class RulesCardsButton(
     discord.ui.DynamicItem[discord.ui.Button[discord.ui.View]],
     template=rf"dmbot:rulescards:{_ID}:(?P<to>on|off)",
@@ -375,6 +556,58 @@ class RulesCardsButton(
             saved: Campaign = await save(campaign.guild_id, campaign.id, self.turn_on)
         except Exception:
             log.exception("Couldn't change rules cards")
+            await interaction.followup.send(FAILED, ephemeral=True)
+            return
+        await _redraw(interaction, saved)
+
+
+class SideInitiativeButton(
+    discord.ui.DynamicItem[discord.ui.Button[discord.ui.View]],
+    template=rf"dmbot:sideinit:{_ID}:(?P<to>on|off)",
+):
+    """⚔️ Side-based initiative: On or Off, one tap changes it (#1127). Only the campaign's
+    DMs have it. DMbot tracks rounds only either way; this records how the table runs a fight."""
+
+    def __init__(self, campaign_id: str, on: bool) -> None:
+        super().__init__(
+            discord.ui.Button(
+                label=f"Turn side initiative {'off' if on else 'on'}",
+                emoji="⚔️",
+                style=discord.ButtonStyle.primary if on else discord.ButtonStyle.secondary,
+                row=4,
+                custom_id=f"dmbot:sideinit:{campaign_id}:{'off' if on else 'on'}",
+            )
+        )
+        self.campaign_id = campaign_id
+        self.turn_on = not on  # what a press does
+
+    @classmethod
+    async def from_custom_id(
+        cls, interaction: discord.Interaction, item: discord.ui.Item[Any], match: re.Match[str]
+    ) -> SideInitiativeButton:
+        return cls(match["campaign"], on=match["to"] == "off")  # "to off" means it is on now
+
+    async def callback(self, interaction: discord.Interaction) -> Any:
+        set_log_context(guild_id=interaction.guild_id)
+        store = getattr(interaction.client, "campaigns", None)
+        guild = interaction.guild
+        if store is None or guild is None:
+            await interaction.response.send_message(GONE, ephemeral=True)
+            return
+        await interaction.response.defer()  # saving may take a moment
+        try:
+            campaign: Campaign | None = await store.get(guild.id, self.campaign_id)
+            if campaign is None:
+                await interaction.followup.send(GONE, ephemeral=True)
+                return
+            if interaction.user.id not in campaign.dm_user_ids:  # the campaign's DMs only
+                await interaction.followup.send(RULES_CARDS_ONLY_DMS, ephemeral=True)
+                return
+            saved: Campaign = await store.set_side_initiative(
+                campaign.guild_id, campaign.id, self.turn_on
+            )
+        except Exception:
+            log.exception("Couldn't change side-based initiative")
             await interaction.followup.send(FAILED, ephemeral=True)
             return
         await _redraw(interaction, saved)

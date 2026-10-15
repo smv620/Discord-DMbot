@@ -138,6 +138,11 @@ before PlotBot (phase 5c) builds on the memory.
 | `event` | event | and threads and promises hang off it |
 | `concept` | idea | a prophecy, a curse, a clue |
 
+**Not a story kind:** `person` ("player or DM", owner, 2026-10-14) is a real person at this campaign's
+table, tied to their Discord account. Each one `plays` one or more characters (inverse label "played by"; `controls` maps to it), or is one of the
+campaign's DMs and answers to "DM", "GM", "Dungeon Master" and "Game Master". Story checks and PlotBot
+ignore it. See docs/PLAN.md, "Players and the DM in the names".
+
 **Traits and links:**
 - **Role:** `player_character`, `npc` or `god`, on a character, one at a time (a state fact).
 - **Links to rules entries** (SRD 5.2.1 / 5.1, the campaign's homebrew and shared rulebooks, by
@@ -180,6 +185,14 @@ each with a plain label:
 - states live in their own table (`memory_states`), not as relationships;
 - only `dead` and `destroyed` stop something from acting. `missing`, `captured` and the
   rest are soft: a missing NPC turning up is news, not a contradiction.
+- **As built (#1267):** a change the table doesn't allow, and the way back from `dead` or
+  `destroyed` from anyone but the DM, is **refused when it is written** (the state row has no
+  review status to hold it in), not flagged; the extractor slice turns a refused claim into a
+  question for the DM. A proposal never changes a condition the DM set. Each state row has the
+  session it dates from (`from_session_at`, else when it was stored) and who said it; a new
+  one closes the old with `closed_at`. Moving an entry to another kind closes a condition the
+  new kind can't have. A merge brings the merged entry's condition along unless the kept one
+  has its own.
 
 **Relationships** (each with domain, range, how many, conflicts):
 - `involved_in` (being/group/item/place → thread, detail = role: quest giver, target,
@@ -249,6 +262,81 @@ Rules for every role:
 - **Each role has a golden test set** (offline, PyCharm session): planted contradictions,
   NPC lies, plans versus facts, secrets, injection lines. Each role's prompt and model
   version is recorded with what it wrote.
+
+**How the ontology steward decides a new term (owner, 2026-10-14).** Fixed rules decide, never an AI.
+The DM never sees or approves terms; they are an expert's job under the hood. The DM confirms only
+story facts, in plain words ("Is **Aldric** sworn to **Auril**? [Yes] [No]").
+- **Rules words are never terms.** Feat, spell, class, species, ability, saving throw and the rest live
+  in the rules data; campaign memory only links to them. So the ontology is mostly story relationships
+  (`serves`, `sworn_to`, `plays`, `located_in`), whose D&D meaning is close to their English meaning.
+- **The check, in order:**
+  1. The hand-written synonym list (`ontology.SYNONYMS`), extended with D&D words that plain English
+     misleads on ("check" is an ability check, "save" is a saving throw, "turn" is a round or turning
+     undead). Free and exact.
+  2. Exact name or label, and spelling at least 85% alike (as today).
+  3. **Meaning, by embedding distance**, compared only with terms that connect the same kinds of things
+     (same domain and range), so `sworn_to` (character → god) is compared with `serves`, never with
+     `located_in`. **Very close:** refused; reuse the existing term. **Clearly far:** accepted if the
+     other rules pass. **In between:** refused, counted in the health report.
+- **Embeddings are made in context, never from a bare word.** The text embedded starts "In a Dungeons &
+  Dragons campaign:" and holds the term's name, label, description, what it connects and an example
+  (`sworn_to`: "a character who has taken an oath to a god or person; character → character; e.g.
+  Aldric is sworn to Auril"). Context pulls a word toward its D&D meaning.
+- **Where embeddings are stored:**
+  - **On the predicate's definition** (`memory_predicates`, one vector per term, core and campaign
+    terms alike): the term's in-context embedding. The meaning check compares against these. It is
+    stored once per term, never copied onto every edge.
+  - **In each edge's properties** (`memory_relations`): the fact's own in-context embedding (subject,
+    the relationship's wording, object, and the line it was heard in). Needed first for the catch-all
+    edges below, so the steward can see that "sworn to", "pledged to" and "took an oath to" keep coming
+    back as one idea; later, for search by meaning.
+  - **Every vector records the model and version that made it**: vectors from different models are
+    never compared. A model change re-embeds the campaign's terms and edges after the session.
+  - Same isolation as all memory (`guild_id`, `campaign_id`, row-level security). Vectors are not put in
+    backups: they are rebuilt from the text after a restore.
+- **A refused term never loses the fact.** The fact is stored on the catch-all `associated_with` edge,
+  with the steward's words as its label ("sworn to") and its in-context embedding; the DM confirms it in
+  plain words like any fact. When the same idea keeps coming back in a campaign, that is the evidence to
+  create a real term (through the same check), or for a reviewed release to add one to the core.
+- **Thresholds are set offline, not tuned by DMs.** A golden set of term pairs labelled "same" or
+  "different", D&D traps included, sets the two thresholds for a target wrong-merge rate; they are
+  measured again whenever the embedding model changes. Real use feeds back only through review: the
+  health report counts terms later found to hold the same facts, facts on a new term the DM keeps
+  rejecting, and refusals in the in-between band; a developer adds those cases to the golden set and
+  changes the thresholds in a release. Never per campaign or per DM: the same proposal must get the same
+  answer everywhere, approvals are few and noisy, and what is said at the table must not be able to steer
+  the rules.
+- **Provider:** an embeddings model (Voyage AI, which Anthropic recommends, or a small local model in the
+  worker), decided with its cost when the steward is built. A campaign has dozens of terms, so the term
+  check runs in Python; `pgvector` is needed only for meaning search over many edges.
+
+**The official list of relationships, traceable in the database (owner, 2026-10-14).** Every
+relationship, core and campaign alike, carries a **real-world definition**, and the database keeps it, so
+any fact can be traced to exactly what its relationship meant when the fact was written.
+- **Each definition holds:** the key and label; a plain real-world description; **covers** (the D&D cases it
+  is meant for); **not this** (near cases that belong to another relationship, and which one); examples;
+  what it connects (domain and range) and how many are allowed; the label read from the other side; synonyms
+  that map to it; and the in-context embedding with its model (above).
+- **Example, a new core relationship `sworn_to`** ("is sworn to"; read back "has sworn"):
+  - *Description:* bound by an oath, vow or pact to a person, a god, a power or a cause.
+  - *Covers:* a paladin's oath (to a god, an order or an ideal), a warlock's pact with their patron, a
+    knight's fealty, a blood oath, a geas.
+  - *Not this:* worshipping or working for someone without a binding oath is `serves`; belonging to an
+    order is `member_of` (a paladin can be both a member of the order and sworn to its cause).
+  - *Connects:* a character → a character, a group or an idea. A named patron (Zariel, the Raven Queen) is a
+    character; an ideal ("the Oath of Vengeance's cause") is an idea. The **subclass** itself (Oath of
+    Devotion, the Fiend patron) is rules data and stays a link to the rules, never a relationship.
+  - *Synonyms:* `pledged_to`, `oath_to`, `pact_with`, `bound_to`.
+- **Where it lives:** the core vocabulary is written in code (it changes only in a reviewed release) and
+  **copied into a database table of definitions at every start**, one row per relationship **and version**.
+  It holds no campaign data, so it is shared by all campaigns like the rules data. A campaign's own
+  relationships stay in its own table with the same fields. **Each fact records the version of the
+  definition it was written under**, so a later change of meaning never silently changes old facts: they
+  can be found and checked again.
+- **Changing a definition** (a reviewed release): a wording fix keeps the version; a change of meaning
+  (what it covers or connects) is a new version, and the facts on the old one are checked against the new
+  one after the session (anything that no longer fits becomes a flag, never a silent fix).
+- **All core relationships get full definitions** in the same release (today's are one line each).
 
 ### 4. Continuity warnings
 
@@ -447,11 +535,30 @@ on embeddings. Apache AGE is still not needed: these are 1–2 hop lookups.
 
 Each step is useful on its own and ships behind the existing phases.
 
-1. **Phase 5a: claims and state** (after the Cleaner and speaker tagging, Phase 2b):
-   the extractor and claim table, `condition` state facts, the unique flag and
-   `carries` with `max_per_object`, nesting and loop checks, the first continuity
-   warnings (dead or destroyed actors, a unique item in two hands, two places), the
-   secret-said-aloud question. Start after-session only, then live.
+1. **Phase 5a: claims and state** (after the Cleaner and speaker tagging, Phase 2b).
+   **Slice 1 is built (#1267):** `memory_states` and `STATE_CHANGES`, the unique flag and
+   `carries` with `max_per_object`, the nesting, loop, held-twice and acts-after-end checks (flags
+   only, no AI), and the "☝️ Only one exists" button on an item's name card. **Slice 2 is built
+   (#1297), with no AI call in it:** the `memory_claims` table (one row for each claim, as
+   text, with how it was said, the lines it cites, who spoke, the prompt version and the model,
+   and a status of proposed, confirmed, rejected or dropped), `dmbot.memory.claims` (parse the
+   extractor's answer, run the rules, drop a plan, an instruction in disguise, an unknown name or
+   relationship and any claim citing a speaker who is not recorded now, and store the rest as
+   proposals that can never confirm themselves), and the DM's after-session "🗣️ Check what was
+   said" questions (✅ writes the fact as the DM's through the same store, keeping which fact it
+   became; ❌ is never asked again; private to the campaign's DM). The one switch,
+   `DMBOT_STORY_EXTRACTOR`, is off, so nothing calls the AI. Names the memory does not know yet
+   are dropped here; resolving them is the linker's job. What is left of 5a: turning the
+   extractor on (after #1282 passes), the linker, the continuity warnings shown to the DM, and the
+   secret-said-aloud question. **The ontology steward is wired into the claims path (#1303):** a claim
+   whose relationship DMbot does not know goes through `decide_term`: an existing term it recognises
+   is reused, and anything else (a rules word, or a new word the meaning check cannot yet vouch for,
+   which today is every new word) is kept on the new core relationship `associated_with`, with the
+   claim's own words as the fact's label, so a refused term never loses the fact; the DM confirms it
+   in plain words like any fact. No new campaign term is made from a claim until the meaning check
+   exists. The session's numbers (refused per reason, reused, accepted) go to the server log once, as
+   counts only.
+   Start after-session only, then live.
 2. **Phase 5b: NPC tracker and reputation:** knowledge (clues, `knows`, `witnessed`),
    deeds, standing, the NPC channel, the recall service.
 3. **Phase 5c: PlotBot:** threads, promises, clues, `led_to`, stalled-thread nudges,

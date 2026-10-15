@@ -6,16 +6,30 @@ import logging
 import time
 
 from dmbot.db import Database
-from dmbot.web.entitlements_writer import PAID_EVENT_SQL, PAID_KINDS
 
 log = logging.getLogger(__name__)
 
 
 async def account_email(db: Database, user_id: int) -> str | None:
+    """The account's address: the one the payment company has, else the Discord one."""
     async with db.user(user_id) as conn:
-        cur = await conn.execute("SELECT email FROM web_users WHERE user_id = %s", (user_id,))
+        cur = await conn.execute(
+            "SELECT COALESCE(payment_email, email) AS email FROM web_users WHERE user_id = %s",
+            (user_id,),
+        )
         row = await cur.fetchone()
     return None if row is None else row["email"]
+
+
+async def payment_email(db: Database, user_id: int) -> str | None:
+    """Only the address the payment company has (move codes go here and nowhere else), or
+    None while the account has none stored."""
+    async with db.user(user_id) as conn:
+        cur = await conn.execute(
+            "SELECT payment_email FROM web_users WHERE user_id = %s", (user_id,)
+        )
+        row = await cur.fetchone()
+    return None if row is None else row["payment_email"]
 
 
 async def customer_id(db: Database, user_id: int) -> str | None:
@@ -28,17 +42,21 @@ async def customer_id(db: Database, user_id: int) -> str | None:
     return None if row is None else row["provider_customer_id"]
 
 
-async def first_paid_month_after_trial(db: Database, user_id: int) -> bool:
-    """Used Try It and never paid before: the first month of Table is $1.99 (#432)."""
+async def dmbot_id(db: Database, user_id: int) -> str | None:
+    """The account's DMbot ID (base 36, fixed for life), or None if they have no account on
+    the website yet."""
     async with db.user(user_id) as conn:
-        cur = await conn.execute(
-            "SELECT EXISTS (SELECT 1 FROM try_it_used WHERE user_id = %(u)s) AS tried,"
-            f" EXISTS (SELECT 1 FROM payment_events WHERE user_id = %(u)s AND {PAID_EVENT_SQL})"
-            " AS paid",
-            {"u": user_id, "paid": PAID_KINDS},
-        )
+        cur = await conn.execute("SELECT dmbot_id FROM web_users WHERE user_id = %s", (user_id,))
         row = await cur.fetchone()
-    return bool(row and row["tried"] and not row["paid"])
+    return None if row is None else str(row["dmbot_id"])
+
+
+async def user_of_dmbot_id(db: Database, dmbot_id: str) -> int | None:
+    """The Discord ID that holds this DMbot ID now (it changes when the account moves)."""
+    async with db.unscoped() as conn:
+        cur = await conn.execute("SELECT dmbot_user_of(%s) AS u", (dmbot_id,))
+        row = await cur.fetchone()
+    return None if row is None or row["u"] is None else int(row["u"])
 
 
 async def record_install(
@@ -85,6 +103,26 @@ async def link_install(db: Database, user_id: int, guild_id: int, *, session: st
     return "linked" if cur.rowcount == 1 else "already_linked"
 
 
+NAME_MAX = 100  # a Discord name is at most 32 characters; the rest is a ceiling, not a target
+
+
+async def remember_display_name(db: Database, user_id: int, name: str) -> bool:
+    """Keep a person's Discord name on their account, so the personal pages can greet them
+    ("Hello, <name>", #1231) even when they have never signed in to the website since the name
+    was kept (#1242 item 2). Only the name, only for an account that already exists (the bot
+    never makes one), and only when it differs. True if it changed."""
+    name = " ".join(name.split())[:NAME_MAX]
+    if not name:
+        return False
+    async with db.user(user_id) as conn:
+        cur = await conn.execute(
+            "UPDATE web_users SET display_name = %s WHERE user_id = %s"
+            " AND display_name IS DISTINCT FROM %s",
+            (name, user_id, name),
+        )
+        return cur.rowcount == 1
+
+
 async def active_subscription(db: Database, user_id: int) -> tuple[str, str] | None:
     """(payment company, subscription id) of a paid plan that would charge again."""
     async with db.user(user_id) as conn:
@@ -104,7 +142,9 @@ async def delete_person(db: Database, user_id: int, *, now: int | None = None) -
     installs keep the server but lose the person. What's kept: the Discord id in
     try_it_used (one free trial per person) and payment events with the Discord id and the
     subscription id (so a replayed payment can't apply twice, and a cancelled subscription's
-    last news isn't retried): ids only (privacy page, #433, #571).
+    last news isn't retried): ids only (privacy page, #433, #571). The person's sent-email
+    records go (#1287); the never-email-me-again list (email_unsubscribed: a Discord id, the
+    kind and a time) stays, so a returning account is never emailed against its wish.
 
     The campaigns the person owns are **kept**, ownerless, so the players can still read and
     download them: they go 120 days later unless another DM takes them on (#1059; owner,
@@ -116,6 +156,9 @@ async def delete_person(db: Database, user_id: int, *, now: int | None = None) -
         )
         row = await cur.fetchone()
         log.info("Account deletion: %s campaign(s) kept, ownerless", row["n"] if row else 0)
+        # The account's history of earlier Discord accounts goes with it (#1230).
+        await conn.execute("SELECT dmbot_forget_account_history()")
+        await conn.execute("SELECT dmbot_forget_email_records()")
         await conn.execute("DELETE FROM web_users WHERE user_id = %s", (user_id,))
         # Free access goes with the account (#771). It isn't linked to web_users (a grant
         # works for someone who never signed in), so it's deleted by hand.

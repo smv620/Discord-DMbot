@@ -607,6 +607,245 @@ SHEET_PLAYER = """
     ALTER TABLE character_sheets ALTER COLUMN player_id SET NOT NULL;
     """
 
+PEOPLE = """
+    -- The table's people are entries of their own (#1188): a player or the DM is a
+    -- `person`, and a `plays` link goes from the person to the character. Every character
+    -- played by someone today gets its person (named `Player` and the last four digits of
+    -- the Discord ID until a better name is known) and the link. `played_by` stays on the
+    -- character as a mirror that the sheets and fights still read. Migrations run with no
+    -- server set, so row-level security hides every row: the backfill opens every table
+    -- it reads or writes for itself (CLAUDE.md).
+    CREATE POLICY migrate_backfill ON memory_entities FOR ALL USING (true) WITH CHECK (true);
+    CREATE POLICY migrate_backfill ON memory_aliases FOR ALL USING (true) WITH CHECK (true);
+    CREATE POLICY migrate_backfill ON memory_relations FOR ALL USING (true) WITH CHECK (true);
+    INSERT INTO memory_entities (guild_id, campaign_id, id, type, name, description, status,
+            merged_into, source, created_at, played_by, role, needs_look)
+        SELECT guild_id, campaign_id, md5(random()::text || clock_timestamp()::text),
+            'person', 'Player ' || right(played_by::text, 4), '', 'confirmed', NULL,
+            'migration', extract(epoch FROM now())::bigint, played_by, NULL, false
+        FROM (SELECT DISTINCT guild_id, campaign_id, played_by FROM memory_entities
+              WHERE role = 'player_character' AND played_by IS NOT NULL
+                AND status IN ('proposed', 'confirmed')) players;
+    INSERT INTO memory_aliases (guild_id, campaign_id, id, entity_id, text, key, kind, used_by,
+            secret, status, sound_codes, source, created_at)
+        SELECT guild_id, campaign_id, md5(random()::text || clock_timestamp()::text), id, name,
+            lower(name), 'full', NULL, false, 'confirmed', ARRAY[]::text[], 'migration',
+            extract(epoch FROM now())::bigint
+        FROM memory_entities WHERE type = 'person' AND source = 'migration';
+    INSERT INTO memory_relations (guild_id, campaign_id, id, subject_id, predicate, object_id,
+            detail, confidence, status, source, mention_ids, from_session_at, to_session_at,
+            from_game_time, to_game_time, secret, created_at)
+        SELECT c.guild_id, c.campaign_id, md5(random()::text || clock_timestamp()::text),
+            p.id, 'plays', c.id, '', 1.0, 'confirmed', 'migration', ARRAY[]::text[], NULL, NULL,
+            NULL, NULL, false, extract(epoch FROM now())::bigint
+        FROM memory_entities c
+        JOIN memory_entities p ON p.guild_id = c.guild_id AND p.campaign_id = c.campaign_id
+            AND p.type = 'person' AND p.played_by = c.played_by
+            AND p.status IN ('proposed', 'confirmed')
+        WHERE c.role = 'player_character' AND c.played_by IS NOT NULL
+            AND c.status IN ('proposed', 'confirmed');
+    DROP POLICY migrate_backfill ON memory_relations;
+    DROP POLICY migrate_backfill ON memory_aliases;
+    DROP POLICY migrate_backfill ON memory_entities;
+    -- The table's links to its entries are checked at the end of a transaction, and an
+    -- index can't be built while checks are waiting: run them now.
+    SET CONSTRAINTS ALL IMMEDIATE;
+    -- One person entry for each Discord user in a campaign.
+    CREATE UNIQUE INDEX memory_entities_one_person
+        ON memory_entities (guild_id, campaign_id, played_by)
+        WHERE type = 'person' AND status IN ('proposed', 'confirmed');
+    """
+
+DEFINITIONS = """
+    -- The official relationships, traceable (#1189). The definitions the code ships are kept
+    -- here by version, written at every start (a key and version already here are never
+    -- rewritten), so a fact can say which definition it was written under. Shared by every
+    -- campaign and holding no campaign data: no guild_id, so no row-level security (like
+    -- schema_migrations).
+    CREATE TABLE ontology_predicate_versions (
+        key             TEXT NOT NULL CHECK (key ~ '^[a-z][a-z0-9_]{1,39}$'),
+        version         INTEGER NOT NULL CHECK (version >= 1),
+        label           TEXT NOT NULL,
+        inverse_label   TEXT NOT NULL,
+        description     TEXT NOT NULL,
+        covers          TEXT[] NOT NULL,
+        not_this        TEXT[] NOT NULL,
+        examples        TEXT[] NOT NULL,
+        synonyms        TEXT[] NOT NULL,
+        subject_types   TEXT[] NOT NULL,
+        object_types    TEXT[] NOT NULL,
+        is_symmetric    BOOLEAN NOT NULL,
+        created_at      BIGINT NOT NULL,
+        PRIMARY KEY (key, version)
+    );
+    -- A campaign's own relationships carry the same fields, with a version.
+    ALTER TABLE memory_predicates
+        ADD COLUMN covers        TEXT[] NOT NULL DEFAULT '{}',
+        ADD COLUMN not_this      TEXT[] NOT NULL DEFAULT '{}',
+        ADD COLUMN inverse_label TEXT NOT NULL DEFAULT '',
+        ADD COLUMN synonyms      TEXT[] NOT NULL DEFAULT '{}',
+        ADD COLUMN version       INTEGER NOT NULL DEFAULT 1 CHECK (version >= 1);
+    -- Every fact says which version of its relationship's definition it was written under.
+    -- Facts from before were all written under version 1: the column's default gives them
+    -- that without an UPDATE, so no row-level security has to be opened for it.
+    ALTER TABLE memory_relations
+        ADD COLUMN definition_version INTEGER NOT NULL DEFAULT 1 CHECK (definition_version >= 1);
+    """
+
+RULE_SETS = (
+    f"""
+    -- Shared rulesets (#1190; docs/PLAN.md, "Shared rulesets"): the one place rules cross from
+    -- one campaign to another. A DM of a paid campaign publishes a set of its own house rules;
+    -- another campaign's DM may follow it, in the same server or from another with a share
+    -- code. Only rules cross: a set's content is house-rule text and the document link,
+    -- never story, names, transcripts, notes or anything from a shared rulebook or adventure.
+    --   rule_sets          the published set, in its publisher's campaign (server-isolated)
+    --   rule_set_versions  each version's content; version 1 is the rules when it was shared
+    --   rule_set_codes     share codes the publishing DM made (a code is the capability to see
+    --                      the set; unguessable; turned off by the DM)
+    --   rule_set_follows   a follower campaign's own copy of the version it uses, so its
+    --                      rules keep working if the set goes (and for its backup)
+    -- Every table is isolated to its own server and campaign like the rest. The one door
+    -- across servers is `dmbot_set_by_code`: it reads a shared set by an active code and
+    -- returns that set's name, its publisher campaign's name and its latest version, nothing
+    -- else (like the pause and orphan doors, it opens the tables to itself through a setting
+    -- it sets and puts back).
+    CREATE TABLE rule_sets (
+        {_memory_scope()}
+        id         TEXT NOT NULL CHECK (id ~ '^[0-9a-f]{{32}}$'),
+        kind       TEXT NOT NULL CHECK (kind IN ('house_rules', 'homebrew')),
+        name       TEXT NOT NULL CHECK (char_length(name) BETWEEN 1 AND 60),
+        status     TEXT NOT NULL CHECK (status IN ('shared', 'unshared')),
+        created_by BIGINT NOT NULL CHECK (created_by > 0),
+        created_at BIGINT NOT NULL,
+        PRIMARY KEY (guild_id, campaign_id, id),
+        UNIQUE (id)
+    );
+    CREATE TABLE rule_set_versions (
+        {_memory_scope()}
+        set_id     TEXT NOT NULL,
+        version    INTEGER NOT NULL CHECK (version >= 1),
+        content    JSONB NOT NULL CHECK (jsonb_typeof(content) = 'object'),
+        created_by BIGINT NOT NULL CHECK (created_by > 0),
+        created_at BIGINT NOT NULL,
+        PRIMARY KEY (guild_id, campaign_id, set_id, version),
+        FOREIGN KEY (guild_id, campaign_id, set_id)
+            REFERENCES rule_sets (guild_id, campaign_id, id) ON DELETE CASCADE
+    );
+    CREATE TABLE rule_set_codes (
+        {_memory_scope()}
+        code       TEXT NOT NULL CHECK (code ~ '^[A-Z2-7]{{10}}$'),
+        set_id     TEXT NOT NULL,
+        active     BOOLEAN NOT NULL,
+        created_at BIGINT NOT NULL,
+        PRIMARY KEY (guild_id, campaign_id, code),
+        UNIQUE (code),
+        FOREIGN KEY (guild_id, campaign_id, set_id)
+            REFERENCES rule_sets (guild_id, campaign_id, id) ON DELETE CASCADE
+    );
+    CREATE TABLE rule_set_follows (
+        {_memory_scope()}
+        set_id       TEXT NOT NULL,
+        kind         TEXT NOT NULL CHECK (kind IN ('house_rules', 'homebrew')),
+        set_name     TEXT NOT NULL CHECK (char_length(set_name) BETWEEN 1 AND 60),
+        publisher    TEXT NOT NULL CHECK (char_length(publisher) BETWEEN 1 AND 100),
+        version      INTEGER NOT NULL CHECK (version >= 1),
+        content      JSONB NOT NULL CHECK (jsonb_typeof(content) = 'object'),
+        position     INTEGER NOT NULL DEFAULT 0 CHECK (position >= 0),
+        updating     BOOLEAN NOT NULL,
+        followed_by  BIGINT NOT NULL CHECK (followed_by > 0),
+        followed_at  BIGINT NOT NULL,
+        PRIMARY KEY (guild_id, campaign_id, set_id)
+    );
+    -- A campaign shares one house-rules set, and follows one.
+    CREATE UNIQUE INDEX rule_sets_one_house_set
+        ON rule_sets (guild_id, campaign_id) WHERE kind = 'house_rules';
+    CREATE UNIQUE INDEX rule_set_follows_one_house_set
+        ON rule_set_follows (guild_id, campaign_id) WHERE kind = 'house_rules';
+    """
+    + "".join(
+        _isolate(t)
+        for t in ("rule_sets", "rule_set_versions", "rule_set_codes", "rule_set_follows")
+    )
+    + """
+    -- The door. Note: the policies below also let a caller read their OWN server's rows (the
+    -- plain guild_isolation policy already does); what they add is the one set a code opens.
+    -- The `campaigns` policy has no code condition of its own on purpose: its sub-select on
+    -- rule_sets is itself filtered by these row-level rules, so it reaches only a set whose
+    -- active code equals the one the function was given. Both settings are transaction-local,
+    -- so an error inside the function rolls them back; the restore lines are for success.
+    -- TO the role that owns the function (the one running this migration), never the
+    -- website's role. Each policy needs the setting the function sets, and the code it sets.
+    DO $do$
+    BEGIN
+        EXECUTE format(
+            'CREATE POLICY code_door ON rule_set_codes FOR SELECT TO %I
+                USING (dmbot_owner_sync() = ''setcode''
+                       AND code = current_setting(''dmbot.set_code'', true) AND active)',
+            current_user);
+        EXECUTE format(
+            'CREATE POLICY code_door ON rule_sets FOR SELECT TO %I
+                USING (dmbot_owner_sync() = ''setcode'' AND status = ''shared''
+                       AND id IN (SELECT set_id FROM rule_set_codes))',
+            current_user);
+        EXECUTE format(
+            'CREATE POLICY code_door ON rule_set_versions FOR SELECT TO %I
+                USING (dmbot_owner_sync() = ''setcode''
+                       AND set_id IN (SELECT id FROM rule_sets))',
+            current_user);
+        EXECUTE format(
+            'CREATE POLICY code_door ON campaigns FOR SELECT TO %I
+                USING (dmbot_owner_sync() = ''setcode''
+                       AND EXISTS (SELECT 1 FROM rule_sets s
+                                   WHERE s.guild_id = campaigns.guild_id
+                                     AND s.campaign_id = campaigns.id))',
+            current_user);
+    END
+    $do$;
+    CREATE FUNCTION dmbot_set_by_code(wanted TEXT)
+        RETURNS TABLE (set_id TEXT, kind TEXT, set_name TEXT, publisher TEXT, version INTEGER,
+                       content JSONB)
+        LANGUAGE plpgsql SECURITY DEFINER
+        AS $fn$
+    DECLARE
+        before TEXT := COALESCE(current_setting('dmbot.owner_sync', true), '');
+        before_code TEXT := COALESCE(current_setting('dmbot.set_code', true), '');
+    BEGIN
+        PERFORM set_config('dmbot.owner_sync', 'setcode', true);
+        PERFORM set_config('dmbot.set_code', wanted, true);
+        RETURN QUERY
+            SELECT s.id, s.kind, s.name, c.name, v.version, v.content
+            FROM rule_set_codes rc
+            JOIN rule_sets s ON s.id = rc.set_id
+            JOIN campaigns c ON c.guild_id = s.guild_id AND c.id = s.campaign_id
+            JOIN rule_set_versions v ON v.guild_id = s.guild_id AND v.campaign_id = s.campaign_id
+                AND v.set_id = s.id
+            WHERE rc.code = wanted AND rc.active AND s.status = 'shared'
+            ORDER BY v.version DESC
+            LIMIT 1;
+        PERFORM set_config('dmbot.owner_sync', before, true);
+        PERFORM set_config('dmbot.set_code', before_code, true);
+    END
+    $fn$;
+    DO $do$
+    BEGIN
+        EXECUTE format(
+            'ALTER FUNCTION dmbot_set_by_code(TEXT) SET search_path = pg_catalog, %I, pg_temp',
+            current_schema());
+    END
+    $do$;
+    REVOKE ALL ON FUNCTION dmbot_set_by_code(TEXT) FROM PUBLIC;
+"""
+)
+
+OWNER_MISSING = """
+    -- When DMbot first saw that a campaign's owner is not in the server any more (#1214):
+    -- after 7 days the campaign becomes ownerless, as if the account were deleted. NULL when the
+    -- owner is here (or not known to be gone). A column with no default: no rows change, so no
+    -- row-level-security policy is needed.
+    ALTER TABLE campaigns ADD COLUMN owner_missing_since BIGINT;
+    """
+
 SHARED_CONFIRMATIONS = f"""
     -- Who confirmed the right to use shared material, and when (CLAUDE.md, IP rule:
     -- "Record who confirmed and when"; #252): one row per confirmation, what it was for
@@ -1062,6 +1301,14 @@ WEB_ROLE_POLICIES = """
                                   AND o.campaign_id = campaign_dms.campaign_id
                                   AND o.to_user_id = dmbot_current_user() AND o.status = 'open'
                                   AND o.created_at + 7 * 86400 > dmbot_now()));
+    -- The person's own consent, in the session's servers (#1150: the data export; #1151: where
+    -- DMbot may record them). It may read and delete (stop) its own row, never add or change one.
+    DROP POLICY IF EXISTS web_own_rows ON consent;
+    CREATE POLICY web_own_rows ON consent AS RESTRICTIVE TO dmbot_web
+        USING (user_id = dmbot_current_user()
+               AND guild_id = ANY ((SELECT dmbot_web_guilds())::BIGINT[]))
+        WITH CHECK (user_id = dmbot_current_user()
+                    AND guild_id = ANY ((SELECT dmbot_web_guilds())::BIGINT[]));
     -- Hand-over offers (#614): only ones the signed-in person sent or was sent, in the
     -- session's servers. The store's own checks (owner, recipient, 7 days) come on top.
     DROP POLICY IF EXISTS web_session_servers ON campaign_handover_offers;
@@ -1071,6 +1318,17 @@ WEB_ROLE_POLICIES = """
         WITH CHECK (guild_id = ANY ((SELECT dmbot_web_guilds())::BIGINT[])
                     AND dmbot_current_user() IN (from_user_id, to_user_id));
     """
+
+# The person's own character sheets (#1150), applied once the table has its player column (an
+# older schema, as in a test of a backfill, doesn't).
+WEB_ROLE_SHEET_POLICY = """
+    DROP POLICY IF EXISTS web_own_rows ON character_sheets;
+    CREATE POLICY web_own_rows ON character_sheets AS RESTRICTIVE TO dmbot_web
+        USING (player_id = dmbot_current_user()
+               AND guild_id = ANY ((SELECT dmbot_web_guilds())::BIGINT[]))
+        WITH CHECK (player_id = dmbot_current_user()
+                    AND guild_id = ANY ((SELECT dmbot_web_guilds())::BIGINT[]));
+"""
 
 # Applied only once the offers table has all four bot-only columns (an older schema, as in a test
 # of a backfill, doesn't, and a rule can't name a column that isn't there).
@@ -1598,6 +1856,101 @@ GAMETIME_CHANNEL = """
     ALTER TABLE game_clocks ADD COLUMN players_message_id BIGINT;
 """
 
+DMBCHAT_CHANNEL = """
+    -- The table's DMbot chat channel (docs/PLAN.md, "Table questions: anyone may ask"; #1187):
+    -- `dmb-chat-<slug>`, where anyone at the table asks DMbot a quick rules question and the
+    -- answer is posted for everyone. Its id is a channel id: it means nothing in another
+    -- server, so (like the DM screen's) none goes into a backup. A nullable column: no row
+    -- changes, so no row-level-security policy is needed.
+    ALTER TABLE campaigns ADD COLUMN dmbchat_channel_id BIGINT;
+"""
+
+TABLE_QUESTIONS = """
+    -- A player's question to DMbot, and the answer posted in the table's DMbot chat (#1187):
+    -- a new kind of sidebar line, `table_question`, shown in the as-heard (raw) transcript as
+    -- `[Table Q via=...]`, never in the cleaned one. A question typed in the DMbot chat has
+    -- the new "via" `chat`. Only two CHECK constraints are replaced to allow the new values:
+    -- no row changes, so no row-level-security policy is needed.
+    ALTER TABLE transcript_lines DROP CONSTRAINT transcript_lines_sidebar_check;
+    ALTER TABLE transcript_lines ADD CONSTRAINT transcript_lines_sidebar_check
+        CHECK (sidebar IN ('question', 'answer', 'table_question'));
+    ALTER TABLE transcript_lines DROP CONSTRAINT transcript_lines_sidebar_via_check;
+    ALTER TABLE transcript_lines ADD CONSTRAINT transcript_lines_sidebar_via_check
+        CHECK (sidebar_via IN ('voice-memo', 'typed', 'table-trigger', 'table-chat', 'chat'));
+"""
+
+DNDBEYOND_INVITE = """
+    -- The DM's own D&D Beyond campaign invite link (#1119; docs/PLAN.md, "The D&D Beyond
+    -- campaign invite"), passed on to players on a button. Only the one standard form is
+    -- kept (dmbot.campaigns.invite checks it too). A nullable column: no row changes, so no
+    -- backfill policy.
+    ALTER TABLE campaigns ADD COLUMN dndbeyond_invite TEXT
+        CHECK (dndbeyond_invite IS NULL OR dndbeyond_invite ~
+            '^https://www[.]dndbeyond[.]com/campaigns/join/[A-Za-z0-9]{4,64}$');
+"""
+
+TABLE_CHAT = """
+    -- Typed chat at the table (#1118; docs/PLAN.md, "Typed chat at the table"). The voice
+    -- channel's own text chat is read while DMbot listens (and only from people who agreed);
+    -- `table_chat_channel_id` is at most one more text channel the DM picked, and
+    -- `table_chat` is the DM's switch (on for everyone, because the consent wording that
+    -- covers it was asked again, version 5). A typed line is stored with `typed`, shown only
+    -- in the as-heard transcript and tagged "(typed)". Nullable or defaulted columns: no row
+    -- changes, so no backfill policy.
+    ALTER TABLE campaigns
+        ADD COLUMN table_chat BOOLEAN NOT NULL DEFAULT TRUE,
+        ADD COLUMN table_chat_channel_id BIGINT;
+    ALTER TABLE transcript_lines ADD COLUMN typed BOOLEAN NOT NULL DEFAULT FALSE;
+    -- A DM sidebar question typed in the table's chat has its own "via" (no speech-to-text).
+    ALTER TABLE transcript_lines DROP CONSTRAINT transcript_lines_sidebar_via_check;
+    ALTER TABLE transcript_lines ADD CONSTRAINT transcript_lines_sidebar_via_check
+        CHECK (sidebar_via IN ('voice-memo', 'typed', 'table-trigger', 'table-chat'));
+"""
+
+COMBAT_STATE = """
+    -- Combat state (#1127; docs/PLAN.md, "Combat state"): in combat or not, and which round,
+    -- kept with the game clock so it survives a restart. `combat_round` is NULL out of combat.
+    -- `combat_secs` is the game seconds already spent toward the next whole minute (a round
+    -- is 6 seconds; the clock itself counts whole minutes). `side_initiative` is a campaign
+    -- switch (off): DMbot tracks rounds only, never turn order, either way. Nullable or
+    -- defaulted columns: no row changes, so no backfill policy.
+    ALTER TABLE game_clocks
+        ADD COLUMN combat_round INTEGER
+            CHECK (combat_round IS NULL OR combat_round BETWEEN 1 AND 99),
+        ADD COLUMN combat_secs INTEGER NOT NULL DEFAULT 0 CHECK (combat_secs BETWEEN 0 AND 59);
+    ALTER TABLE campaigns ADD COLUMN side_initiative BOOLEAN NOT NULL DEFAULT FALSE;
+"""
+
+SHEET_QUESTIONS = """
+    -- Sheet re-reads (#1128; docs/PLAN.md, "Re-reading D&D Beyond"): whether DMbot may ask this
+    -- sheet's player, privately, when a re-read doesn't show what was said at the table. On
+    -- unless the player turns it off from their character sheet panel. Defaulted column: no
+    -- row changes, so no backfill policy.
+    ALTER TABLE character_sheets ADD COLUMN ask_mismatch BOOLEAN NOT NULL DEFAULT TRUE;
+"""
+
+FIGHTBOT = f"""
+    -- FightBot (#1129; docs/PLAN.md, "FightBot"): one row per player per campaign, in that
+    -- campaign's own server scope, deleted with the campaign. Kept on its own (not on a
+    -- character's sheet row) so that forgetting a sheet, or having a second character, never
+    -- turns reminders back on.
+    --   never          the player chose Never, or turned FightBot off: no reminders at all
+    --   quiet_since    the start (Unix seconds) of the session they said "Quiet until next
+    --                  session" in: quiet for that session only, restarts included
+    --   snoozed_until  Unix seconds: no reminders before then
+    --   last_call_at   Unix seconds of the last reminder DMbot worked out for them, so a
+    --                  restart cannot send another within two minutes
+    CREATE TABLE fightbot_players (
+        {_memory_scope()}
+        player_id     BIGINT NOT NULL,
+        never         BOOLEAN NOT NULL DEFAULT FALSE,
+        quiet_since   BIGINT,
+        snoozed_until BIGINT,
+        last_call_at  BIGINT,
+        PRIMARY KEY (guild_id, campaign_id, player_id)
+    );
+    """ + _isolate("fightbot_players")
+
 OWNER_CAMPAIGNS = (
     _setting("dmbot_owner_sync", "dmbot.owner_sync", "TEXT")
     + """
@@ -1837,6 +2190,95 @@ PLAN_ENDS = """
     REVOKE ALL ON FUNCTION dmbot_hours_used(BIGINT) FROM PUBLIC;
 """
 
+EMAIL_SIGN_IN = (
+    """
+    -- Website sign-in by an emailed link (#1231; docs/PLAN.md, "Accounts"). A link is one use and
+    -- lasts 15 minutes; only its SHA-256 is kept, like a session cookie, so a database copy
+    -- can't sign anyone in. Made under the person's own scope; used (once) by whoever holds the
+    -- token, through the same setting as a session cookie's hash.
+    CREATE TABLE email_sign_in_links (
+        token_hash  TEXT PRIMARY KEY,
+        user_id     BIGINT NOT NULL REFERENCES web_users ON DELETE CASCADE,
+        created_at  BIGINT NOT NULL,
+        expires_at  BIGINT NOT NULL,
+        used_at     BIGINT
+    );
+    CREATE INDEX email_sign_in_links_by_user ON email_sign_in_links (user_id);
+    ALTER TABLE email_sign_in_links ENABLE ROW LEVEL SECURITY;
+    ALTER TABLE email_sign_in_links FORCE ROW LEVEL SECURITY;
+    CREATE POLICY user_isolation ON email_sign_in_links
+        USING (user_id = dmbot_current_user())
+        WITH CHECK (user_id = dmbot_current_user());
+    -- Redeeming: the one unexpired, unused link whose hash was shown. It can be read and
+    -- marked used, never made or changed in any other way.
+    -- (A used link stays readable by its holder until it expires: the update's RETURNING is
+    -- checked against this policy with the new row, which has `used_at` set.)
+    CREATE POLICY by_token_read ON email_sign_in_links FOR SELECT
+        USING (token_hash = dmbot_current_session() AND expires_at > dmbot_now());
+    CREATE POLICY by_token_use ON email_sign_in_links FOR UPDATE
+        USING (token_hash = dmbot_current_session() AND used_at IS NULL
+               AND expires_at > dmbot_now())
+        WITH CHECK (token_hash = dmbot_current_session());
+
+    -- The name the person last signed in with, kept so a personal link can greet them with no
+    -- session open. Nullable: no rows change, so no new policy.
+    ALTER TABLE web_users ADD COLUMN display_name TEXT;
+    -- The email lookup below compares lower case, so it needs this to avoid reading every row.
+    CREATE INDEX web_users_by_email ON web_users (lower(email));
+
+"""
+    + _setting("dmbot_email_lookup", "dmbot.email_lookup", "TEXT")
+    + """
+    -- Who an email address belongs to, for sending a sign-in link. The website's role can't
+    -- read web_users without a person set, and nobody is set yet when someone types an
+    -- address, so this is the one door: an address in, at most one account number out. An
+    -- address shared by two accounts finds neither (a link goes to no one rather than the
+    -- wrong person). The API never says whether it found anyone.
+    CREATE FUNCTION dmbot_user_by_email(addr TEXT) RETURNS BIGINT
+        LANGUAGE plpgsql SECURITY DEFINER
+        AS $fn$
+    DECLARE
+        found BIGINT;
+        before TEXT := COALESCE(current_setting('dmbot.email_lookup', true), '');
+    BEGIN
+        IF addr IS NULL OR addr = '' THEN
+            RETURN NULL;
+        END IF;
+        PERFORM set_config('dmbot.email_lookup', 'on', true);
+        -- The email Discord gave, or the one the payment company has (`payment_email`, added by
+        -- 0067: a function body is looked up when it runs, so this migration may come first).
+        -- Exactly one account must match; an address two accounts share finds neither.
+        SELECT min(user_id) INTO found FROM web_users
+            WHERE lower(email) = lower(addr) OR lower(payment_email) = lower(addr)
+            HAVING count(*) = 1;
+        PERFORM set_config('dmbot.email_lookup', before, true);
+        RETURN found;
+    END
+    $fn$;
+    -- web_users is forced to a person's own row, and the function runs with its owner's rights,
+    -- so it needs a way in: a read-only policy TO the role that owns the function (the one
+    -- running this migration), open only while the function has set its own setting. Never the
+    -- website's role, which could otherwise set the setting itself and read every account's
+    -- email.
+    DO $do$
+    BEGIN
+        EXECUTE format(
+            'CREATE POLICY email_lookup ON web_users FOR SELECT TO %I
+                USING (dmbot_email_lookup() = ''on'')',
+            current_user);
+    END
+    $do$;
+    DO $do$
+    BEGIN
+        EXECUTE format(
+            'ALTER FUNCTION dmbot_user_by_email(TEXT) SET search_path = pg_catalog, %I, pg_temp',
+            current_schema());
+    END
+    $do$;
+    REVOKE ALL ON FUNCTION dmbot_user_by_email(TEXT) FROM PUBLIC;
+    """
+)
+
 # What the website's role may touch at all: its own tables, and only reads of the two
 # server tables /me needs. Everything else (consent, transcripts, memory...) is refused
 # outright. Applied by Database.migrate whenever the role exists, so a new table is never
@@ -1846,6 +2288,24 @@ WEB_ROLE_FUNCTIONS: tuple[tuple[str, str], ...] = (
     ("dmbot_owned_campaigns", "dmbot_owned_campaigns()"),
     ("dmbot_orphan_owned_campaigns", "dmbot_orphan_owned_campaigns(BIGINT)"),
     ("dmbot_hours_used", "dmbot_hours_used(BIGINT)"),
+    ("dmbot_claim_email", "dmbot_claim_email(BIGINT, TEXT, BOOLEAN, INTEGER, INTEGER)"),
+    # Sign-in by emailed link (#1231).
+    ("dmbot_user_by_email", "dmbot_user_by_email(TEXT)"),
+    # Experience points (#1228): the one door to the person's all-time minutes.
+    ("dmbot_minutes_total", "dmbot_minutes_total()"),
+    ("dmbot_user_of", "dmbot_user_of(TEXT)"),  # links made before a move (#1230)
+    ("dmbot_moved_to", "dmbot_moved_to(BIGINT, TEXT, TEXT)"),  # payments after a move (#1230)
+    ("dmbot_moves_to_sync", "dmbot_moves_to_sync()"),  # the job that updates Stripe (#1230)
+    ("dmbot_move_synced", "dmbot_move_synced(BIGINT)"),
+    ("dmbot_move_failed", "dmbot_move_failed(BIGINT)"),
+    ("dmbot_previous_ids", "dmbot_previous_ids()"),  # the export's earlier Discord accounts
+    ("dmbot_forget_account_history", "dmbot_forget_account_history()"),  # account deletion
+    ("dmbot_set_payment_email", "dmbot_set_payment_email(TEXT, TEXT, BIGINT)"),  # #1242
+    ("dmbot_forget_email_records", "dmbot_forget_email_records()"),  # account deletion, #1287
+    # A move code asked for on the website (#1246).
+    ("dmbot_web_move_code", "dmbot_web_move_code(BIGINT, TEXT, BIGINT, TEXT, BIGINT)"),
+    ("dmbot_web_cancel_move_code", "dmbot_web_cancel_move_code(BIGINT, TEXT, BIGINT)"),
+    ("dmbot_web_forget_move_asks", "dmbot_web_forget_move_asks(BIGINT)"),
 )
 # The columns the website may fill when it creates a hand-over offer (#728): who, where and the
 # two names. Left out on purpose, so they take their defaults: status and decided_at (an offer
@@ -1864,6 +2324,12 @@ OFFER_INSERT_COLUMNS: tuple[str, ...] = (
 )
 WEB_ROLE_GRANTS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("SELECT", ("schema_migrations",)),
+    # The person's own consent and character sheets, for the data export (#1150); the
+    # restrictive web_own_rows policies hold it to their own rows in their servers. The right
+    # to stop (DELETE) on consent is the website's Stop recording me (#1151): the same
+    # policies hold it to the person's own row; it can never add or change a yes.
+    ("SELECT", ("character_sheets",)),
+    ("SELECT, DELETE", ("consent",)),
     # Accepting a hand-over (#614) makes the person the owner and one of the DMs; the
     # store locks the campaign row first (FOR UPDATE needs an UPDATE right), and answering
     # changes only an offer's status.
@@ -1872,12 +2338,1393 @@ WEB_ROLE_GRANTS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("SELECT, UPDATE (status, decided_at)", ("campaign_handover_offers",)),
     ("SELECT, INSERT, UPDATE", ("installs", "entitlements")),
     ("SELECT, INSERT", ("payment_events", "try_it_used")),
+    # The unsubscribe link (#1229) may be written, never read: the list stays the bot's. The
+    # website sends its own account emails through dmbot_claim_email (WEB_ROLE_FUNCTIONS), and
+    # has no grant on sent_emails.
+    ("INSERT", ("email_unsubscribed",)),
     ("INSERT, DELETE", ("feedback",)),
     ("SELECT, INSERT, UPDATE, DELETE", ("web_users", "web_sessions")),
+    # Emailed sign-in links (#1231): made and used by the website, never read by anyone else.
+    # (Only `used_at` can be changed: a holder of a link can spend it, never revive or move it.)
+    ("SELECT, INSERT, DELETE", ("email_sign_in_links",)),
+    ("UPDATE (used_at)", ("email_sign_in_links",)),
     # Free access (#771): the admin page gives, changes and revokes grants (through
     # Database.grant_writer()); account deletion deletes the person's own.
     ("SELECT, INSERT, UPDATE, DELETE", ("access_grants",)),
     ("SELECT, INSERT", ("access_log",)),
+)
+
+SET_UPDATES = (
+    f"""
+    -- Shared rulesets part 2 (#1191): updates to a set, and who may write it.
+    --   rule_set_follows.code   the share code a follower used, so its session start can ask
+    --                           whether the set has a newer version. A code the publisher
+    --                           turned off stops NEW followers only (owner decision): follows
+    --                           made before keep getting updates, until Stop sharing.
+    --   rule_set_codes.deactivated_at  when a code was turned off, for that comparison (codes
+    --                           turned off before this migration have none, and keep their
+    --                           old meaning: they do not update earlier follows)
+    --   rule_set_follows.declined_version  the version an Undo sent back: DMbot does not
+    --                           take it again at a session start, only a newer one; the DM
+    --                           can still choose it with Pick changes
+    --   rule_set_follows.previous_*, taken_*  the copy before the last update was taken, so
+    --                           Undo needs no memory, and who took it (NULL: DMbot did, at a
+    --                           session start; "auto")
+    --   rule_set_versions.source  who made the version: the publisher's DMs or co-editors,
+    --                           an accepted suggestion, or an accepted change found in the
+    --                           shared document (the log of who and when is created_by and
+    --                           created_at)
+    --   rule_set_editors        people the publisher named as co-editors of its set
+    --   house_rules.from_set    a rule that came from a followed set in a Cherry pick, as
+    --                           "<set> house rules, v4": merged rules rank below the
+    --                           campaign's own
+    -- New columns with defaults or NULL: no row is rewritten, so no row-level security to open.
+    ALTER TABLE rule_set_follows
+        ADD COLUMN code TEXT CHECK (code IS NULL OR code ~ '^[A-Z2-7]{{10}}$'),
+        ADD COLUMN previous_version INTEGER,
+        ADD COLUMN previous_content JSONB,
+        ADD COLUMN declined_version INTEGER,
+        ADD COLUMN taken_by BIGINT,
+        ADD COLUMN taken_source TEXT CHECK (taken_source IS NULL OR taken_source IN ('auto', 'dm'));
+    ALTER TABLE rule_set_codes ADD COLUMN deactivated_at BIGINT;
+    ALTER TABLE rule_set_versions
+        ADD COLUMN source TEXT NOT NULL DEFAULT 'publisher'
+        CHECK (source IN ('publisher', 'suggestion', 'document'));
+    ALTER TABLE house_rules
+        ADD COLUMN from_set TEXT CHECK (from_set IS NULL OR char_length(from_set) <= 200);
+    CREATE TABLE rule_set_editors (
+        {_memory_scope()}
+        set_id      TEXT NOT NULL,
+        user_id     BIGINT NOT NULL CHECK (user_id > 0),
+        added_by    BIGINT NOT NULL CHECK (added_by > 0),
+        added_at    BIGINT NOT NULL,
+        PRIMARY KEY (guild_id, campaign_id, set_id, user_id),
+        FOREIGN KEY (guild_id, campaign_id, set_id)
+            REFERENCES rule_sets (guild_id, campaign_id, id) ON DELETE CASCADE
+    );
+    """
+    + _isolate("rule_set_editors")
+    + """
+    -- The update door: like dmbot_set_by_code (0061) but for a follower asking whether the set it
+    -- already follows has a newer version. A code turned off AFTER the follow still answers; one
+    -- turned off before it, or a set that is no longer shared, does not. Same pattern as that
+    -- door: policies for the function's owner only, keyed on the setting it sets.
+    DO $do$
+    BEGIN
+        EXECUTE format(
+            'CREATE POLICY update_door ON rule_set_codes FOR SELECT TO %I
+                USING (dmbot_owner_sync() = ''setupdate''
+                       AND code = current_setting(''dmbot.set_code'', true)
+                       AND (active OR deactivated_at >=
+                            NULLIF(current_setting(''dmbot.set_followed_at'', true),
+                                   '''')::BIGINT))',
+            current_user);
+        EXECUTE format(
+            'CREATE POLICY update_door ON rule_sets FOR SELECT TO %I
+                USING (dmbot_owner_sync() = ''setupdate'' AND status = ''shared''
+                       AND id IN (SELECT set_id FROM rule_set_codes))',
+            current_user);
+        EXECUTE format(
+            'CREATE POLICY update_door ON rule_set_versions FOR SELECT TO %I
+                USING (dmbot_owner_sync() = ''setupdate''
+                       AND set_id IN (SELECT id FROM rule_sets))',
+            current_user);
+        EXECUTE format(
+            'CREATE POLICY update_door ON campaigns FOR SELECT TO %I
+                USING (dmbot_owner_sync() = ''setupdate''
+                       AND EXISTS (SELECT 1 FROM rule_sets s
+                                   WHERE s.guild_id = campaigns.guild_id
+                                     AND s.campaign_id = campaigns.id))',
+            current_user);
+    END
+    $do$;
+    CREATE FUNCTION dmbot_set_update_by_code(wanted TEXT, followed_at BIGINT)
+        RETURNS TABLE (set_id TEXT, kind TEXT, set_name TEXT, publisher TEXT, version INTEGER,
+                       content JSONB)
+        LANGUAGE plpgsql SECURITY DEFINER
+        AS $fn$
+    DECLARE
+        before TEXT := COALESCE(current_setting('dmbot.owner_sync', true), '');
+        before_code TEXT := COALESCE(current_setting('dmbot.set_code', true), '');
+        before_at TEXT := COALESCE(current_setting('dmbot.set_followed_at', true), '');
+    BEGIN
+        PERFORM set_config('dmbot.owner_sync', 'setupdate', true);
+        PERFORM set_config('dmbot.set_code', wanted, true);
+        PERFORM set_config('dmbot.set_followed_at', followed_at::TEXT, true);
+        RETURN QUERY
+            SELECT s.id, s.kind, s.name, c.name, v.version, v.content
+            FROM rule_set_codes rc
+            JOIN rule_sets s ON s.id = rc.set_id
+            JOIN campaigns c ON c.guild_id = s.guild_id AND c.id = s.campaign_id
+            JOIN rule_set_versions v ON v.guild_id = s.guild_id AND v.campaign_id = s.campaign_id
+                AND v.set_id = s.id
+            WHERE rc.code = wanted AND s.status = 'shared'
+            ORDER BY v.version DESC
+            LIMIT 1;
+        PERFORM set_config('dmbot.owner_sync', before, true);
+        PERFORM set_config('dmbot.set_code', before_code, true);
+        PERFORM set_config('dmbot.set_followed_at', before_at, true);
+    END
+    $fn$;
+    DO $do$
+    BEGIN
+        EXECUTE format(
+            'ALTER FUNCTION dmbot_set_update_by_code(TEXT, BIGINT)'
+            ' SET search_path = pg_catalog, %I, pg_temp',
+            current_schema());
+    END
+    $do$;
+    REVOKE ALL ON FUNCTION dmbot_set_update_by_code(TEXT, BIGINT) FROM PUBLIC;
+    """
+)
+
+MAIL = """
+    -- Sending email (#1229; docs/PLAN.md, "Accounts"). Two small tables of ids and times, never
+    -- an address or any text:
+    --   sent_emails         who was sent which kind of email and when, so a one-off email goes
+    --                       once and the daily cap can be counted (a kind that may repeat has
+    --                       a round number in its name)
+    --   email_unsubscribed  people who asked for no offer emails; written by the website's
+    --                       unsubscribe link (which proves it with a signed token) and read by
+    --                       the sender
+    -- Like the routing tables they belong to no server, and they are written by jobs with no
+    -- person set, so there is no row-level security to open.
+    CREATE TABLE sent_emails (
+        user_id BIGINT NOT NULL CHECK (user_id > 0),
+        kind    TEXT   NOT NULL CHECK (char_length(kind) BETWEEN 1 AND 60),
+        sent_at BIGINT NOT NULL,
+        PRIMARY KEY (user_id, kind)
+    );
+    CREATE INDEX sent_emails_by_day ON sent_emails (sent_at);
+    CREATE TABLE email_unsubscribed (
+        user_id BIGINT PRIMARY KEY CHECK (user_id > 0),
+        at      BIGINT NOT NULL
+    );
+    -- The one door for sending an email, for the bot and the website alike (the website's
+    -- role has no grant on sent_emails: the table is everyone's email history). Under one
+    -- lock it counts today's rows, applies the caps the caller passes (never above 400 in
+    -- all and 300 for offers, so the sign-in links and move codes people ask for always have
+    -- room), writes the row (an email of this kind goes once) and answers with a status:
+    -- 'sent' (go ahead), 'duplicate' (already sent), 'capped' (the day is full) or 'refused'
+    -- (not an email kind). The day and the time are the database's own. A failed send keeps
+    -- its row (at most once), except an offer, which the bot gives back with
+    -- dmbot_release_email so one hiccup doesn't lose it. Kinds starting "dm:" are private
+    -- message records, not emails, and are refused here.
+    CREATE FUNCTION dmbot_claim_email(who BIGINT, what TEXT, offer BOOLEAN, cap INTEGER,
+                                      offer_cap INTEGER) RETURNS TEXT
+        LANGUAGE plpgsql SECURITY DEFINER
+        AS $fn$
+    #variable_conflict use_column
+    DECLARE
+        stamp BIGINT := extract(epoch FROM now())::BIGINT;
+        today BIGINT;
+        added INTEGER;
+        most INTEGER := LEAST(COALESCE(cap, 400), 400);
+        most_offers INTEGER := LEAST(COALESCE(offer_cap, 300), 300, most);
+    BEGIN
+        IF who IS NULL OR who <= 0 OR what IS NULL OR char_length(what) NOT BETWEEN 1 AND 60
+           OR what LIKE 'dm:%' THEN
+            RETURN 'refused';
+        END IF;
+        PERFORM pg_advisory_xact_lock(hashtextextended('dmbot.email_day', 0));
+        SELECT count(*) INTO today FROM sent_emails s
+            WHERE s.sent_at >= stamp - stamp % 86400 AND s.kind NOT LIKE 'dm:%';
+        IF EXISTS (SELECT 1 FROM sent_emails s WHERE s.user_id = who AND s.kind = what) THEN
+            RETURN 'duplicate';
+        END IF;
+        IF today >= most OR (offer AND today >= most_offers) THEN
+            RETURN 'capped';
+        END IF;
+        INSERT INTO sent_emails (user_id, kind, sent_at) VALUES (who, what, stamp)
+            ON CONFLICT DO NOTHING;
+        GET DIAGNOSTICS added = ROW_COUNT;
+        RETURN CASE WHEN added = 1 THEN 'sent' ELSE 'duplicate' END;
+    END
+    $fn$;
+    -- Gives back the claim of an email that did not go (bot only: the website's role has no
+    -- EXECUTE), so the next run tries again.
+    CREATE FUNCTION dmbot_release_email(who BIGINT, what TEXT) RETURNS VOID
+        LANGUAGE sql SECURITY DEFINER
+        AS $fn$
+        DELETE FROM sent_emails s WHERE s.user_id = who AND s.kind = what;
+    $fn$;
+    DO $do$
+    BEGIN
+        EXECUTE format(
+            'ALTER FUNCTION dmbot_claim_email(BIGINT, TEXT, BOOLEAN, INTEGER, INTEGER)'
+            ' SET search_path = pg_catalog, %I, pg_temp',
+            current_schema());
+        EXECUTE format(
+            'ALTER FUNCTION dmbot_release_email(BIGINT, TEXT)'
+            ' SET search_path = pg_catalog, %I, pg_temp',
+            current_schema());
+    END
+    $do$;
+    REVOKE ALL ON FUNCTION dmbot_claim_email(BIGINT, TEXT, BOOLEAN, INTEGER, INTEGER) FROM PUBLIC;
+    REVOKE ALL ON FUNCTION dmbot_release_email(BIGINT, TEXT) FROM PUBLIC;
+    """
+
+EMAIL_RECORDS = """
+    -- Deleting an account also deletes the person's sent-email records (#1287; docs/PLAN.md,
+    -- "Accounts"). The website's role has no grant on sent_emails (it is everyone's email
+    -- history), so this door deletes the signed-in person's own rows and nobody else's.
+    -- email_unsubscribed stays on purpose: it is the never-email-me-again list.
+    CREATE FUNCTION dmbot_forget_email_records() RETURNS INTEGER
+        LANGUAGE plpgsql SECURITY DEFINER
+        AS $fn$
+    DECLARE
+        gone INTEGER;
+    BEGIN
+        DELETE FROM sent_emails s WHERE s.user_id = dmbot_current_user();
+        GET DIAGNOSTICS gone = ROW_COUNT;
+        RETURN gone;
+    END
+    $fn$;
+    DO $do$
+    BEGIN
+        EXECUTE format(
+            'ALTER FUNCTION dmbot_forget_email_records()'
+            ' SET search_path = pg_catalog, %I, pg_temp',
+            current_schema());
+    END
+    $do$;
+    REVOKE ALL ON FUNCTION dmbot_forget_email_records() FROM PUBLIC;
+    """
+
+TRIAL = """
+    -- Try It's last-day message and automatic extension (#1229; docs/PLAN.md, "Accounts").
+    --   trial_extensions   one row for each 30 days added after Try It ended, so the bot can
+    --                      tell the person at their next /dmbot start (told_at) and the next
+    --                      extension counts from this one. Ids and times only.
+    -- And two doors for the bot's daily job, which acts for no one person: it may list who is
+    -- in Try It (with the facts the rules need) and extend one person's Try It. Both are
+    -- SECURITY DEFINER, granted to the bot's role only, never the website's.
+    -- Like try_it_used, these rows are ids and times only and are not removed with an account:
+    -- a person who deletes their account and signs up again is not messaged twice.
+    -- (sent_emails also holds the private-message records of these jobs, kinds starting "dm:";
+    -- they are not emails and do not count toward the daily cap.)
+    CREATE TABLE trial_extensions (
+        user_id     BIGINT NOT NULL CHECK (user_id > 0),
+        extended_at BIGINT NOT NULL,
+        told_at     BIGINT,
+        PRIMARY KEY (user_id, extended_at)
+    );
+    -- Like the orphan and pause doors (0037, 0044), the functions open the tables they read to
+    -- themselves through a setting they set and put back, and only for this one purpose.
+    DO $do$
+    BEGIN
+        EXECUTE format(
+            'CREATE POLICY trial_read ON entitlements FOR SELECT TO %I
+                USING (dmbot_owner_sync() = ''trial'')', current_user);
+        EXECUTE format(
+            'CREATE POLICY trial_update ON entitlements FOR UPDATE TO %I
+                USING (dmbot_owner_sync() = ''trial'' AND plan = ''try-it'')
+                WITH CHECK (dmbot_owner_sync() = ''trial'' AND plan = ''try-it'')',
+            current_user);
+        EXECUTE format(
+            'CREATE POLICY trial_read ON web_users FOR SELECT TO %I
+                USING (dmbot_owner_sync() = ''trial'')', current_user);
+        EXECUTE format(
+            'CREATE POLICY trial_read ON owner_hours FOR SELECT TO %I
+                USING (dmbot_owner_sync() = ''trial'')', current_user);
+        EXECUTE format(
+            'CREATE POLICY trial_read ON payment_events FOR SELECT TO %I
+                USING (dmbot_owner_sync() = ''trial'')', current_user);
+        EXECUTE format(
+            'CREATE POLICY trial_read ON access_grants FOR SELECT TO %I
+                USING (dmbot_owner_sync() = ''trial'')', current_user);
+    END
+    $do$;
+    CREATE FUNCTION dmbot_trial_people(since BIGINT, now BIGINT)
+        RETURNS TABLE (user_id BIGINT, dmbot_id TEXT, email TEXT, period_end BIGINT,
+                       minutes BIGINT, paid BOOLEAN, extensions INTEGER, granted BOOLEAN)
+        LANGUAGE plpgsql SECURITY DEFINER
+        AS $fn$
+    #variable_conflict use_column
+    DECLARE
+        before TEXT := COALESCE(current_setting('dmbot.owner_sync', true), '');
+    BEGIN
+        PERFORM set_config('dmbot.owner_sync', 'trial', true);
+        RETURN QUERY
+        SELECT e.user_id, u.dmbot_id, u.email, e.period_end,
+               COALESCE((SELECT sum(h.minutes) FROM owner_hours h
+                         WHERE h.owner_user_id = e.user_id), 0)::BIGINT,
+               EXISTS (SELECT 1 FROM payment_events p WHERE p.user_id = e.user_id
+                       AND (p.kind IS NULL OR p.kind = ANY(
+                            ARRAY['subscription_started', 'subscription_renewed',
+                                  'extra_hours_bought']))),
+               (SELECT count(*)::INTEGER FROM trial_extensions t WHERE t.user_id = e.user_id),
+               EXISTS (SELECT 1 FROM access_grants g WHERE g.discord_user_id = e.user_id
+                       AND g.revoked_at IS NULL
+                       AND (g.ends_at IS NULL OR g.ends_at > now))
+        FROM entitlements e JOIN web_users u ON u.user_id = e.user_id
+        WHERE e.plan = 'try-it' AND e.status = 'active' AND e.period_end >= since;
+        PERFORM set_config('dmbot.owner_sync', before, true);
+    END
+    $fn$;
+    -- Try It's 8 hours are 8 hours in all: an extension has a cap of 8 hours less the minutes
+    -- already used, counted in minutes (`minutes_taken` comes off the cap). The new cap is
+    -- worked out here from the meter, whatever the caller thinks.
+    ALTER TABLE entitlements ADD COLUMN minutes_taken INTEGER NOT NULL DEFAULT 0
+        CHECK (minutes_taken >= 0);
+    CREATE FUNCTION dmbot_extend_trial(who BIGINT, now BIGINT, days INTEGER)
+        RETURNS BOOLEAN
+        LANGUAGE plpgsql SECURITY DEFINER
+        AS $fn$
+    #variable_conflict use_column
+    DECLARE
+        before TEXT := COALESCE(current_setting('dmbot.owner_sync', true), '');
+        used BIGINT;
+        changed INTEGER;
+    BEGIN
+        PERFORM set_config('dmbot.owner_sync', 'trial', true);
+        -- Only a Try It that has ended and is still the person's plan, for 30 days, three
+        -- days after the end, for someone who never paid and has used under 4 hours in all.
+        IF days <> 30 THEN
+            PERFORM set_config('dmbot.owner_sync', before, true);
+            RETURN FALSE;
+        END IF;
+        SELECT COALESCE(sum(h.minutes), 0) INTO used FROM owner_hours h
+            WHERE h.owner_user_id = who;
+        UPDATE entitlements
+           SET period_start = now, period_end = now + days * 86400, hours_cap = 8,
+               minutes_taken = used, extra_hours = 0, plan_changed_at = now, updated_at = now
+         WHERE entitlements.user_id = who AND plan = 'try-it' AND status = 'active'
+           AND period_end + 259200 <= now AND used < 240
+           AND NOT EXISTS (SELECT 1 FROM payment_events p WHERE p.user_id = who
+                           AND (p.kind IS NULL OR p.kind = ANY(
+                                ARRAY['subscription_started', 'subscription_renewed',
+                                      'extra_hours_bought'])));
+        GET DIAGNOSTICS changed = ROW_COUNT;
+        PERFORM set_config('dmbot.owner_sync', before, true);
+        IF changed = 0 THEN
+            RETURN FALSE;
+        END IF;
+        INSERT INTO trial_extensions (user_id, extended_at) VALUES (who, now);
+        RETURN TRUE;
+    END
+    $fn$;
+    DO $do$
+    BEGIN
+        EXECUTE format(
+            'ALTER FUNCTION dmbot_trial_people(BIGINT, BIGINT)'
+            ' SET search_path = pg_catalog, %I, pg_temp',
+            current_schema());
+        EXECUTE format(
+            'ALTER FUNCTION dmbot_extend_trial(BIGINT, BIGINT, INTEGER)'
+            ' SET search_path = pg_catalog, %I, pg_temp',
+            current_schema());
+    END
+    $do$;
+    REVOKE ALL ON FUNCTION dmbot_trial_people(BIGINT, BIGINT) FROM PUBLIC;
+    REVOKE ALL ON FUNCTION dmbot_extend_trial(BIGINT, BIGINT, INTEGER) FROM PUBLIC;
+    """
+
+PAYMENT_EMAIL = """
+    -- The email Stripe has for the account's payments (#1242; docs/PLAN.md, "Accounts"),
+    -- kept from the payment webhook beside the Discord email the website sign-in gives.
+    -- Sign-in links and Try It emails use it before the Discord email; move codes go to it
+    -- and nowhere else. Never logged or shown back in full.
+    ALTER TABLE web_users ADD COLUMN payment_email TEXT
+        CHECK (payment_email IS NULL OR char_length(payment_email) BETWEEN 3 AND 254);
+    -- When the company said so (its event time): an older event never replaces a newer one.
+    ALTER TABLE web_users ADD COLUMN payment_email_at BIGINT;
+    -- Sign-in by emailed link finds an account by lower(email) or lower(payment_email); without
+    -- this every request would scan web_users.
+    CREATE INDEX web_users_by_payment_email ON web_users (lower(payment_email))
+        WHERE payment_email IS NOT NULL;
+    -- A changed address arrives with the company's customer id, not ours: this door finds the
+    -- account by the customer id stored with its plan and sets the address, only for an event
+    -- newer than the one already kept. The website's role has no other way to look an account
+    -- up by customer id.
+    DO $do$
+    BEGIN
+        EXECUTE format(
+            'CREATE POLICY paymail ON web_users FOR ALL TO %I'
+            ' USING (dmbot_owner_sync() = ''paymail'')'
+            ' WITH CHECK (dmbot_owner_sync() = ''paymail'')',
+            current_user);
+        EXECUTE format(
+            'CREATE POLICY paymail ON entitlements FOR SELECT TO %I'
+            ' USING (dmbot_owner_sync() = ''paymail'')',
+            current_user);
+    END
+    $do$;
+    CREATE FUNCTION dmbot_set_payment_email(cust TEXT, addr TEXT, happened BIGINT)
+        RETURNS BOOLEAN
+        LANGUAGE plpgsql SECURITY DEFINER
+        AS $fn$
+    #variable_conflict use_column
+    DECLARE
+        before TEXT := COALESCE(current_setting('dmbot.owner_sync', true), '');
+        changed INTEGER;
+    BEGIN
+        IF cust IS NULL OR addr IS NULL OR char_length(addr) NOT BETWEEN 3 AND 254 THEN
+            RETURN FALSE;
+        END IF;
+        PERFORM set_config('dmbot.owner_sync', 'paymail', true);
+        UPDATE web_users u SET payment_email = addr, payment_email_at = happened
+            FROM entitlements e
+            WHERE e.user_id = u.user_id AND e.provider_customer_id = cust
+              AND (u.payment_email_at IS NULL OR u.payment_email_at < happened);
+        GET DIAGNOSTICS changed = ROW_COUNT;
+        PERFORM set_config('dmbot.owner_sync', before, true);
+        RETURN changed > 0;
+    END
+    $fn$;
+    DO $do$
+    BEGIN
+        EXECUTE format(
+            'ALTER FUNCTION dmbot_set_payment_email(TEXT, TEXT, BIGINT)'
+            ' SET search_path = pg_catalog, %I, pg_temp',
+            current_schema());
+    END
+    $do$;
+    REVOKE ALL ON FUNCTION dmbot_set_payment_email(TEXT, TEXT, BIGINT) FROM PUBLIC;
+    -- Try It's job reads the address through its door: the payment email first.
+    CREATE OR REPLACE FUNCTION dmbot_trial_people(since BIGINT, now BIGINT)
+        RETURNS TABLE (user_id BIGINT, dmbot_id TEXT, email TEXT, period_end BIGINT,
+                       minutes BIGINT, paid BOOLEAN, extensions INTEGER, granted BOOLEAN)
+        LANGUAGE plpgsql SECURITY DEFINER
+        AS $fn$
+    #variable_conflict use_column
+    DECLARE
+        before TEXT := COALESCE(current_setting('dmbot.owner_sync', true), '');
+    BEGIN
+        PERFORM set_config('dmbot.owner_sync', 'trial', true);
+        RETURN QUERY
+        SELECT e.user_id, u.dmbot_id, COALESCE(u.payment_email, u.email), e.period_end,
+               COALESCE((SELECT sum(h.minutes) FROM owner_hours h
+                         WHERE h.owner_user_id = e.user_id), 0)::BIGINT,
+               EXISTS (SELECT 1 FROM payment_events p WHERE p.user_id = e.user_id
+                       AND (p.kind IS NULL OR p.kind = ANY(
+                            ARRAY['subscription_started', 'subscription_renewed',
+                                  'extra_hours_bought']))),
+               (SELECT count(*)::INTEGER FROM trial_extensions t WHERE t.user_id = e.user_id),
+               EXISTS (SELECT 1 FROM access_grants g WHERE g.discord_user_id = e.user_id
+                       AND g.revoked_at IS NULL
+                       AND (g.ends_at IS NULL OR g.ends_at > now))
+        FROM entitlements e JOIN web_users u ON u.user_id = e.user_id
+        WHERE e.plan = 'try-it' AND e.status = 'active' AND e.period_end >= since;
+        PERFORM set_config('dmbot.owner_sync', before, true);
+    END
+    $fn$;
+    DO $do$
+    BEGIN
+        EXECUTE format(
+            'ALTER FUNCTION dmbot_trial_people(BIGINT, BIGINT)'
+            ' SET search_path = pg_catalog, %I, pg_temp',
+            current_schema());
+    END
+    $do$;
+    """
+
+MOVES = """
+    -- Moving an account to a new Discord account (#1230; docs/PLAN.md, "Accounts"). A paid
+    -- account may move once in 30 days; the plan, its hours, the Stripe link, the campaigns it
+    -- owns and its place in them go to the new Discord ID in ONE transaction. The DMbot ID
+    -- stays. Recording consent does not move.
+    --   move_codes      the one move code an account has asked for: only its hash, when it
+    --                   was made and runs out, and when it was used
+    --   account_moves   the "moved" marker: which Discord ID moved to which, when, and the
+    --                   DMbot ID that went with it; told_at is when the old account was
+    --                   told (the first time it uses DMbot again). Unscoped like try_it_used.
+    CREATE TABLE move_codes (
+        user_id    BIGINT PRIMARY KEY CHECK (user_id > 0),
+        code_hash  TEXT NOT NULL UNIQUE CHECK (char_length(code_hash) = 64),
+        created_at BIGINT NOT NULL,
+        expires_at BIGINT NOT NULL,
+        used_at    BIGINT
+    );
+    CREATE TABLE account_moves (
+        old_user_id BIGINT PRIMARY KEY CHECK (old_user_id > 0),
+        new_user_id BIGINT NOT NULL CHECK (new_user_id > 0),  -- not unique: A to B to C to B
+        dmbot_id    TEXT NOT NULL,
+        moved_at    BIGINT NOT NULL,
+        told_at     BIGINT,
+        -- The payment company's ids at the move, so the website's job can point them at the
+        -- new Discord ID after the commit (stripe_done_at NULL = still to do).
+        customer_id        TEXT,
+        subscription_id    TEXT,
+        stripe_done_at     BIGINT,
+        -- Backoff for the update, kept here so it survives a restart and every web process
+        -- agrees: tries so far, and when the last one was (database time).
+        stripe_attempts    INTEGER NOT NULL DEFAULT 0,
+        stripe_last_try_at BIGINT
+    );
+    CREATE INDEX account_moves_by_id ON account_moves (dmbot_id, moved_at);
+    CREATE INDEX account_moves_by_new ON account_moves (new_user_id);
+    -- Every Discord account a DMbot account has used (owner request, 2026-10-14): ONE row for
+    -- each move, written inside dmbot_move_account in the same transaction, and never
+    -- changed. The only deletion is the account's own deletion (dmbot_forget_account_history).
+    -- email_used is the payment email at the time of the move (where the move code went).
+    -- account_moves stays the routing marker; this is the record. Row-level security by
+    -- person: a row is visible to the account that holds its DMbot ID; the website reads
+    -- through dmbot_previous_ids(), and has no grant on the table.
+    CREATE TABLE account_id_history (
+        id          BIGSERIAL PRIMARY KEY,
+        dmbot_id    TEXT   NOT NULL,
+        old_user_id BIGINT NOT NULL CHECK (old_user_id > 0),
+        new_user_id BIGINT NOT NULL CHECK (new_user_id > 0),
+        moved_at    BIGINT NOT NULL,
+        email_used  TEXT
+    );
+    CREATE INDEX account_id_history_by_id ON account_id_history (dmbot_id, id);
+    ALTER TABLE account_id_history ENABLE ROW LEVEL SECURITY;
+    ALTER TABLE account_id_history FORCE ROW LEVEL SECURITY;
+    CREATE POLICY user_isolation ON account_id_history FOR SELECT
+        USING (dmbot_id IN (SELECT u.dmbot_id FROM web_users u
+                            WHERE u.user_id = dmbot_current_user()));
+    DO $do$
+    BEGIN
+        EXECUTE format(
+            'CREATE POLICY move_insert ON account_id_history FOR INSERT TO %I'
+            ' WITH CHECK (dmbot_owner_sync() = ''move'')',
+            current_user);
+        EXECUTE format(
+            'CREATE POLICY forget_delete ON account_id_history FOR DELETE TO %I'
+            ' USING (dmbot_owner_sync() = ''forget_history'')',
+            current_user);
+    END
+    $do$;
+    CREATE INDEX account_moves_to_sync ON account_moves (moved_at) WHERE stripe_done_at IS NULL;
+    -- Rows that point at the account follow its Discord ID when the move changes it.
+    ALTER TABLE entitlements DROP CONSTRAINT entitlements_user_id_fkey,
+        ADD CONSTRAINT entitlements_user_id_fkey FOREIGN KEY (user_id)
+            REFERENCES web_users ON DELETE CASCADE ON UPDATE CASCADE;
+    ALTER TABLE installs DROP CONSTRAINT installs_installed_by_user_id_fkey,
+        ADD CONSTRAINT installs_installed_by_user_id_fkey FOREIGN KEY (installed_by_user_id)
+            REFERENCES web_users ON DELETE SET NULL ON UPDATE CASCADE;
+    -- A move changes the Discord ID on the account's own row (the DMbot ID stays), so the
+    -- unique check on the DMbot ID is never in play. Only the move may do that; any other
+    -- change of either still fails. An old Discord ID that moved away can't make a new
+    -- account on the website: its DMbot ID is the moved account's.
+    -- (SECURITY DEFINER: it reads account_moves, which the website's role can't.)
+    CREATE OR REPLACE FUNCTION dmbot_web_users_id() RETURNS trigger
+        LANGUAGE plpgsql SECURITY DEFINER
+        AS $fn$
+    BEGIN
+        IF TG_OP = 'INSERT' THEN
+            IF EXISTS (SELECT 1 FROM account_moves WHERE old_user_id = NEW.user_id) THEN
+                RAISE EXCEPTION 'This account moved'
+                    USING ERRCODE = 'P0001', HINT = 'account_moved';
+            END IF;
+            NEW.dmbot_id := dmbot_base36(NEW.user_id);
+        ELSIF NEW.dmbot_id IS DISTINCT FROM OLD.dmbot_id THEN
+            RAISE EXCEPTION 'A DMbot ID never changes';
+        ELSIF NEW.user_id <> OLD.user_id AND dmbot_owner_sync() <> 'move' THEN
+            RAISE EXCEPTION 'A DMbot ID never changes';
+        END IF;
+        RETURN NEW;
+    END
+    $fn$;
+    -- The move door opens the tables it touches to itself through a setting it sets and puts
+    -- back (like the orphan and Try It doors). One policy for each table, for the function's
+    -- owner only.
+    DO $do$
+    DECLARE
+        t TEXT;
+    BEGIN
+        FOREACH t IN ARRAY ARRAY['web_users', 'entitlements', 'web_sessions', 'installs',
+                                 'payment_events', 'owner_hours', 'session_usage',
+                                 'try_it_used', 'campaigns', 'campaign_dms',
+                                 'memory_entities', 'active_sessions',
+                                 'campaign_handover_offers']
+        LOOP
+            EXECUTE format(
+                'CREATE POLICY move_all ON %I FOR ALL TO %I
+                    USING (dmbot_owner_sync() = ''move'')
+                    WITH CHECK (dmbot_owner_sync() = ''move'')',
+                t, current_user);
+        END LOOP;
+        EXECUTE format(
+            'ALTER FUNCTION dmbot_web_users_id() SET search_path = pg_catalog, %I, pg_temp',
+            current_schema());
+    END
+    $do$;
+    CREATE FUNCTION dmbot_move_account(old BIGINT, new BIGINT, now BIGINT, which TEXT)
+        RETURNS TEXT
+        LANGUAGE plpgsql SECURITY DEFINER
+        AS $fn$
+    #variable_conflict use_column
+    DECLARE
+        before TEXT := COALESCE(current_setting('dmbot.owner_sync', true), '');
+        acct RECORD;
+        ent RECORD;
+        owned TEXT[];
+        outcome TEXT := 'moved';
+    BEGIN
+        PERFORM set_config('dmbot.owner_sync', 'move', true);
+        IF old IS NULL OR new IS NULL OR old <= 0 OR new <= 0 OR old = new THEN
+            outcome := 'same';
+        END IF;
+        -- Same lock order as the hand-over and the pause door: the campaigns (in a fixed
+        -- order), then the people. A payment for either account waits for the move.
+        IF old IS NOT NULL AND new IS NOT NULL AND old > 0 AND new > 0 AND old <> new THEN
+            PERFORM 1 FROM campaigns c WHERE c.owner_user_id IN (old, new)
+                ORDER BY c.guild_id, c.id FOR UPDATE;
+            PERFORM pg_advisory_xact_lock(
+                hashtextextended('dmbot.owner_slots:' || least(old, new)::text, 0));
+            PERFORM pg_advisory_xact_lock(
+                hashtextextended('dmbot.owner_slots:' || greatest(old, new)::text, 0));
+            PERFORM pg_advisory_xact_lock(
+                hashtextextended('dmbot.plan_writer:' || least(old, new)::text, 0));
+            PERFORM pg_advisory_xact_lock(
+                hashtextextended('dmbot.plan_writer:' || greatest(old, new)::text, 0));
+        END IF;
+        IF outcome = 'moved' THEN
+            SELECT * INTO acct FROM web_users WHERE user_id = old FOR UPDATE;
+            IF NOT FOUND THEN
+                outcome := 'no_account';
+            END IF;
+        END IF;
+        IF outcome = 'moved' THEN
+            SELECT * INTO ent FROM entitlements WHERE user_id = old FOR UPDATE;
+            IF NOT FOUND OR ent.plan = 'try-it' OR ent.status <> 'active'
+               OR ent.provider_subscription_id IS NULL THEN
+                outcome := 'not_paid';
+            END IF;
+        END IF;
+        IF outcome <> 'moved' THEN  -- nothing below reads a record that was never found
+            PERFORM set_config('dmbot.owner_sync', before, true);
+            RETURN outcome;
+        END IF;
+        -- The code is checked and spent here, in the same transaction as the move, so two
+        -- moves with one code can't both happen.
+        IF outcome = 'moved' THEN
+            PERFORM 1 FROM move_codes m WHERE m.user_id = old AND m.code_hash = which
+                AND m.used_at IS NULL AND m.expires_at > now FOR UPDATE;
+            IF NOT FOUND THEN
+                outcome := 'bad_code';
+            END IF;
+        END IF;
+        IF outcome <> 'moved' THEN
+            PERFORM set_config('dmbot.owner_sync', before, true);
+            RETURN outcome;
+        END IF;
+        IF outcome = 'moved' AND EXISTS (
+                SELECT 1 FROM active_sessions a JOIN campaigns c
+                    ON c.id = a.campaign_id AND c.guild_id = a.guild_id
+                WHERE c.owner_user_id = new) THEN
+            outcome := 'target_listening';
+        END IF;
+        IF outcome = 'moved' AND EXISTS (SELECT 1 FROM account_moves
+                                         WHERE dmbot_id = acct.dmbot_id
+                                           AND moved_at > now - 30 * 86400) THEN
+            outcome := 'too_soon';
+        END IF;
+        IF outcome = 'moved' AND EXISTS (SELECT 1 FROM entitlements
+                                         WHERE user_id = new AND plan <> 'try-it'
+                                           AND status <> 'lapsed') THEN
+            outcome := 'new_has_plan';
+        END IF;
+        -- The target must be a fresh account, or the account this one came from (moving back).
+        -- Any plan it ever had, or being the target of an earlier move, is its own history.
+        IF outcome = 'moved' AND (
+               EXISTS (SELECT 1 FROM entitlements e WHERE e.user_id = new AND e.plan <> 'try-it')
+            OR EXISTS (SELECT 1 FROM payment_events p WHERE p.user_id = new
+                       AND (p.kind IS NULL OR p.kind = ANY(
+                            ARRAY['subscription_started', 'subscription_renewed',
+                                  'extra_hours_bought'])))
+            OR EXISTS (SELECT 1 FROM account_moves m
+                       WHERE m.new_user_id = new AND m.dmbot_id <> acct.dmbot_id)
+            OR EXISTS (SELECT 1 FROM account_moves m
+                       WHERE m.old_user_id = new AND m.dmbot_id <> acct.dmbot_id)) THEN
+            outcome := 'target_history';
+        END IF;
+        IF outcome = 'moved' AND EXISTS (
+                SELECT 1 FROM active_sessions a JOIN campaigns c
+                    ON c.id = a.campaign_id AND c.guild_id = a.guild_id
+                WHERE c.owner_user_id = old) THEN
+            outcome := 'listening';
+        END IF;
+        IF outcome = 'moved' AND (SELECT count(*) FROM campaigns
+                                  WHERE owner_user_id IN (old, new)) > ent.campaign_cap THEN
+            outcome := 'too_many_campaigns';
+        END IF;
+        IF outcome <> 'moved' THEN
+            PERFORM set_config('dmbot.owner_sync', before, true);
+            RETURN outcome;
+        END IF;
+
+        SELECT COALESCE(array_agg(id), '{}') INTO owned FROM campaigns WHERE owner_user_id = old;
+        -- Whatever the new account had of its own that is not a paid plan goes: a Try It
+        -- or a stopped plan, and its sign-ins.
+        DELETE FROM entitlements WHERE user_id = new;
+        DELETE FROM web_users WHERE user_id = new;
+        DELETE FROM web_sessions WHERE user_id = old;
+        -- The account's own row takes the new Discord ID; its plan and installs follow it.
+        UPDATE web_users SET user_id = new WHERE user_id = old;
+        UPDATE payment_events SET user_id = new WHERE user_id = old;
+
+        -- The new account's own Try It minutes don't count toward the paid plan: they go.
+        DELETE FROM owner_hours WHERE owner_user_id = new;
+        INSERT INTO owner_hours (owner_user_id, month_start, minutes, grace_session)
+            SELECT new, month_start, minutes, grace_session FROM owner_hours
+             WHERE owner_user_id = old
+            ON CONFLICT (owner_user_id, month_start)
+            DO UPDATE SET minutes = owner_hours.minutes + EXCLUDED.minutes;
+        DELETE FROM owner_hours WHERE owner_user_id = old;
+        UPDATE session_usage SET owner_user_id = new WHERE owner_user_id = old;
+
+        -- An offer to hand a campaign over, to or from the old account, ends with the move.
+        UPDATE campaign_handover_offers SET status = 'withdrawn', decided_at = now
+            WHERE status = 'open' AND (from_user_id = old OR to_user_id = old
+                                       OR from_user_id = new OR to_user_id = new);
+        UPDATE campaigns SET owner_user_id = new WHERE owner_user_id = old;
+        DELETE FROM campaign_dms d WHERE d.user_id = old AND d.campaign_id = ANY(owned)
+            AND EXISTS (SELECT 1 FROM campaign_dms n
+                        WHERE n.campaign_id = d.campaign_id AND n.user_id = new);
+        UPDATE campaign_dms SET user_id = new WHERE user_id = old AND campaign_id = ANY(owned);
+        UPDATE memory_entities e SET played_by = new
+            WHERE e.played_by = old AND e.campaign_id = ANY(owned)
+              AND NOT EXISTS (SELECT 1 FROM memory_entities x
+                              WHERE x.guild_id = e.guild_id AND x.campaign_id = e.campaign_id
+                                AND x.type = 'person' AND x.played_by = new
+                                AND x.status IN ('proposed', 'confirmed'));
+
+        -- One free trial for each person, and a moved ID can never start another.
+        INSERT INTO try_it_used (user_id) VALUES (old), (new) ON CONFLICT DO NOTHING;
+        DELETE FROM move_codes WHERE user_id = old;
+        -- "No offer emails" is about the person, so it goes with the account.
+        INSERT INTO email_unsubscribed (user_id, at)
+            SELECT new, at FROM email_unsubscribed WHERE user_id = old
+            ON CONFLICT DO NOTHING;
+        -- Moving back: the earlier marker for this Discord ID ends, it is the account again.
+        DELETE FROM account_moves WHERE old_user_id = new;
+        INSERT INTO account_id_history (dmbot_id, old_user_id, new_user_id, moved_at, email_used)
+            VALUES (acct.dmbot_id, old, new, now, acct.payment_email);
+        INSERT INTO account_moves (old_user_id, new_user_id, dmbot_id, moved_at, customer_id,
+                                   subscription_id, stripe_done_at)
+            VALUES (old, new, acct.dmbot_id, now, ent.provider_customer_id,
+                    ent.provider_subscription_id,
+                    CASE WHEN ent.provider_customer_id IS NULL
+                          AND ent.provider_subscription_id IS NULL THEN now END);
+        PERFORM set_config('dmbot.owner_sync', before, true);
+        RETURN 'moved';
+    END
+    $fn$;
+    DO $do$
+    BEGIN
+        EXECUTE format(
+            'ALTER FUNCTION dmbot_move_account(BIGINT, BIGINT, BIGINT, TEXT)'
+            ' SET search_path = pg_catalog, %I, pg_temp',
+            current_schema());
+    END
+    $do$;
+    REVOKE ALL ON FUNCTION dmbot_move_account(BIGINT, BIGINT, BIGINT, TEXT) FROM PUBLIC;
+    -- Two small doors for the website's role, which has no grant on account_moves:
+    --   dmbot_user_of(id)   the Discord ID that holds a DMbot ID now (an unsubscribe or
+    --                       personal link carries the ID the account was made with, and the
+    --                       account may have moved since), or no row
+    --   dmbot_moved_to(old, subscription, customer)
+    --                       the Discord ID a moved account's plan went to, only when that
+    --                       plan is the one the payment event names, so a plan the old
+    --                       account buys later is never sent to the new one
+    CREATE FUNCTION dmbot_user_of(id TEXT) RETURNS BIGINT
+        LANGUAGE plpgsql SECURITY DEFINER
+        AS $fn$
+    #variable_conflict use_column
+    DECLARE
+        before TEXT := COALESCE(current_setting('dmbot.owner_sync', true), '');
+        found BIGINT;
+    BEGIN
+        PERFORM set_config('dmbot.owner_sync', 'move', true);
+        SELECT u.user_id INTO found FROM web_users u WHERE u.dmbot_id = id;
+        PERFORM set_config('dmbot.owner_sync', before, true);
+        RETURN found;
+    END
+    $fn$;
+    CREATE FUNCTION dmbot_moved_to(old BIGINT, sub TEXT, cust TEXT) RETURNS BIGINT
+        LANGUAGE plpgsql SECURITY DEFINER
+        AS $fn$
+    #variable_conflict use_column
+    DECLARE
+        before TEXT := COALESCE(current_setting('dmbot.owner_sync', true), '');
+        found BIGINT;
+        here BIGINT := old;
+        hop BIGINT;
+    BEGIN
+        PERFORM set_config('dmbot.owner_sync', 'move', true);
+        -- Follow the moves (a few at most) to the account that holds the plan now.
+        FOR i IN 1..5 LOOP
+            SELECT m.new_user_id INTO hop FROM account_moves m WHERE m.old_user_id = here;
+            EXIT WHEN hop IS NULL;
+            here := hop;
+            IF EXISTS (SELECT 1 FROM entitlements e
+                       WHERE e.user_id = here
+                         AND ((sub IS NOT NULL AND e.provider_subscription_id = sub)
+                              OR (cust IS NOT NULL AND e.provider_customer_id = cust))) THEN
+                found := here;
+                EXIT;
+            END IF;
+            hop := NULL;
+        END LOOP;
+        PERFORM set_config('dmbot.owner_sync', before, true);
+        RETURN found;
+    END
+    $fn$;
+    DO $do$
+    BEGIN
+        EXECUTE format(
+            'ALTER FUNCTION dmbot_user_of(TEXT) SET search_path = pg_catalog, %I, pg_temp',
+            current_schema());
+        EXECUTE format(
+            'ALTER FUNCTION dmbot_moved_to(BIGINT, TEXT, TEXT)'
+            ' SET search_path = pg_catalog, %I, pg_temp',
+            current_schema());
+    END
+    $do$;
+    REVOKE ALL ON FUNCTION dmbot_user_of(TEXT) FROM PUBLIC;
+    REVOKE ALL ON FUNCTION dmbot_moved_to(BIGINT, TEXT, TEXT) FROM PUBLIC;
+    -- The payment company's records name the Discord ID the plan was bought with. After a
+    -- move commits, the website's job points them at the new one: these two doors say which
+    -- moves still need it, and that one is done (nothing else of account_moves is readable).
+    CREATE FUNCTION dmbot_moves_to_sync()
+        RETURNS TABLE (old_user_id BIGINT, new_user_id BIGINT, customer_id TEXT,
+                       subscription_id TEXT)
+        LANGUAGE sql SECURITY DEFINER
+        AS $fn$
+        -- Never tried first, then the longest ago; one that failed waits a minute, two,
+        -- four... up to an hour, so a few stuck moves can't crowd out a new one.
+        SELECT m.old_user_id, m.new_user_id, m.customer_id, m.subscription_id
+            FROM account_moves m
+            WHERE m.stripe_done_at IS NULL
+              AND (m.stripe_last_try_at IS NULL
+                   OR m.stripe_last_try_at + LEAST(60 * (2 ^ LEAST(m.stripe_attempts, 6))::BIGINT,
+                                                   3600) <= extract(epoch FROM now())::BIGINT)
+            ORDER BY m.stripe_last_try_at NULLS FIRST, m.moved_at
+            LIMIT 20;
+    $fn$;
+    CREATE FUNCTION dmbot_move_failed(who BIGINT) RETURNS VOID
+        LANGUAGE sql SECURITY DEFINER
+        AS $fn$
+        UPDATE account_moves SET stripe_attempts = stripe_attempts + 1,
+                                 stripe_last_try_at = extract(epoch FROM now())::BIGINT
+            WHERE old_user_id = who AND stripe_done_at IS NULL;
+    $fn$;
+    CREATE FUNCTION dmbot_move_synced(who BIGINT) RETURNS VOID
+        LANGUAGE sql SECURITY DEFINER
+        AS $fn$
+        UPDATE account_moves SET stripe_done_at = extract(epoch FROM now())::BIGINT
+            WHERE old_user_id = who AND stripe_done_at IS NULL;
+    $fn$;
+    DO $do$
+    BEGIN
+        EXECUTE format(
+            'ALTER FUNCTION dmbot_moves_to_sync() SET search_path = pg_catalog, %I, pg_temp',
+            current_schema());
+        EXECUTE format(
+            'ALTER FUNCTION dmbot_move_synced(BIGINT) SET search_path = pg_catalog, %I, pg_temp',
+            current_schema());
+        EXECUTE format(
+            'ALTER FUNCTION dmbot_move_failed(BIGINT) SET search_path = pg_catalog, %I, pg_temp',
+            current_schema());
+    END
+    $do$;
+    REVOKE ALL ON FUNCTION dmbot_moves_to_sync() FROM PUBLIC;
+    REVOKE ALL ON FUNCTION dmbot_move_synced(BIGINT) FROM PUBLIC;
+    REVOKE ALL ON FUNCTION dmbot_move_failed(BIGINT) FROM PUBLIC;
+    -- The signed-in person's earlier Discord accounts, oldest first, for the data export. The
+    -- function runs as the table's owner, whose row-level security is the same person-only
+    -- policy, so it can only ever return the caller's own rows.
+    CREATE FUNCTION dmbot_previous_ids()
+        RETURNS TABLE (old_user_id BIGINT, moved_at BIGINT, email_used TEXT)
+        LANGUAGE sql STABLE SECURITY DEFINER
+        AS $fn$
+        SELECT h.old_user_id, h.moved_at, h.email_used FROM account_id_history h ORDER BY h.id;
+    $fn$;
+    -- Account deletion takes the history with it: the person's own DMbot ID only.
+    CREATE FUNCTION dmbot_forget_account_history() RETURNS INTEGER
+        LANGUAGE plpgsql SECURITY DEFINER
+        AS $fn$
+    DECLARE
+        before TEXT := COALESCE(current_setting('dmbot.owner_sync', true), '');
+        mine TEXT;
+        gone INTEGER;
+    BEGIN
+        SELECT u.dmbot_id INTO mine FROM web_users u WHERE u.user_id = dmbot_current_user();
+        IF mine IS NULL THEN
+            RETURN 0;
+        END IF;
+        PERFORM set_config('dmbot.owner_sync', 'forget_history', true);
+        DELETE FROM account_id_history h WHERE h.dmbot_id = mine;
+        GET DIAGNOSTICS gone = ROW_COUNT;
+        PERFORM set_config('dmbot.owner_sync', before, true);
+        RETURN gone;
+    END
+    $fn$;
+    DO $do$
+    BEGIN
+        EXECUTE format(
+            'ALTER FUNCTION dmbot_previous_ids() SET search_path = pg_catalog, %I, pg_temp',
+            current_schema());
+        EXECUTE format(
+            'ALTER FUNCTION dmbot_forget_account_history()'
+            ' SET search_path = pg_catalog, %I, pg_temp',
+            current_schema());
+    END
+    $do$;
+    REVOKE ALL ON FUNCTION dmbot_previous_ids() FROM PUBLIC;
+    REVOKE ALL ON FUNCTION dmbot_forget_account_history() FROM PUBLIC;
+    -- What a move would take, for the confirmation screen: the plan and the name of each
+    -- campaign. Names only; nothing else of a campaign leaves.
+    CREATE FUNCTION dmbot_move_preview(old BIGINT) RETURNS TABLE (kind TEXT, label TEXT)
+        LANGUAGE plpgsql SECURITY DEFINER
+        AS $fn$
+    #variable_conflict use_column
+    DECLARE
+        before TEXT := COALESCE(current_setting('dmbot.owner_sync', true), '');
+    BEGIN
+        PERFORM set_config('dmbot.owner_sync', 'move', true);
+        RETURN QUERY SELECT 'plan'::TEXT, e.plan FROM entitlements e WHERE e.user_id = old;
+        RETURN QUERY SELECT 'campaign'::TEXT, c.name FROM campaigns c
+            WHERE c.owner_user_id = old ORDER BY c.name, c.id;
+        PERFORM set_config('dmbot.owner_sync', before, true);
+    END
+    $fn$;
+    DO $do$
+    BEGIN
+        EXECUTE format(
+            'ALTER FUNCTION dmbot_move_preview(BIGINT) SET search_path = pg_catalog, %I, pg_temp',
+            current_schema());
+    END
+    $do$;
+    REVOKE ALL ON FUNCTION dmbot_move_preview(BIGINT) FROM PUBLIC;
+    """
+
+
+# Numbered 0063: 0060 to 0062 (owner gone, shared rulesets, their updates) have merged. A
+# migration list may have gaps, so a later number never has to wait for an earlier one.
+DMBOT_ID = """
+    -- The DMbot ID (#1228; docs/PLAN.md, "Accounts"): a Discord ID in base 36, the Stripe invoice
+    -- prefix, fixed for the life of the account. The database makes it (one source of truth for
+    -- every account, including the ones made before this), a trigger fills it on insert whatever
+    -- the caller says, and another refuses any later change. dmbot.account_id is the same
+    -- function in Python, and a test holds the two together.
+    CREATE FUNCTION dmbot_base36(n BIGINT) RETURNS TEXT
+        LANGUAGE plpgsql IMMUTABLE
+        SET search_path = pg_catalog
+        AS $fn$
+    DECLARE
+        digits CONSTANT TEXT := '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ';
+        rest BIGINT := n;
+        out TEXT := '';
+    BEGIN
+        IF n IS NULL OR n <= 0 THEN
+            RAISE EXCEPTION 'A Discord ID is a positive number';
+        END IF;
+        WHILE rest > 0 LOOP
+            out := substr(digits, (rest % 36)::INTEGER + 1, 1) || out;
+            rest := rest / 36;
+        END LOOP;
+        IF char_length(out) > 12 THEN
+            RAISE EXCEPTION 'That ID is too big for a DMbot ID';
+        END IF;
+        RETURN out;
+    END
+    $fn$;
+    ALTER TABLE web_users ADD COLUMN dmbot_id TEXT;
+    -- Migrations run with no server or person set, so row-level security hides every row:
+    -- open the table to this one UPDATE, dropped again inside the migration's transaction.
+    CREATE POLICY migrate_backfill ON web_users FOR ALL USING (true) WITH CHECK (true);
+    UPDATE web_users SET dmbot_id = dmbot_base36(user_id);
+    DROP POLICY migrate_backfill ON web_users;
+    ALTER TABLE web_users
+        ALTER COLUMN dmbot_id SET NOT NULL,
+        ADD CONSTRAINT web_users_dmbot_id_form CHECK (dmbot_id ~ '^[1-9A-Z][0-9A-Z]{0,11}$'),
+        ADD CONSTRAINT web_users_dmbot_id_unique UNIQUE (dmbot_id);
+    CREATE FUNCTION dmbot_web_users_id() RETURNS trigger
+        LANGUAGE plpgsql
+        AS $fn$
+    BEGIN
+        IF TG_OP = 'INSERT' THEN
+            NEW.dmbot_id := dmbot_base36(NEW.user_id);
+        ELSIF NEW.dmbot_id IS DISTINCT FROM OLD.dmbot_id OR NEW.user_id <> OLD.user_id THEN
+            RAISE EXCEPTION 'A DMbot ID never changes';
+        END IF;
+        RETURN NEW;
+    END
+    $fn$;
+    -- Experience points (#1228): all-time minutes of the person set for the transaction. The
+    -- website's role has no grant on owner_hours, so, like dmbot_hours_used, this is the one
+    -- door: it takes no person, uses the one set for the transaction, and returns one number.
+    CREATE FUNCTION dmbot_minutes_total() RETURNS BIGINT
+        LANGUAGE sql STABLE SECURITY DEFINER
+        AS $fn$
+        SELECT COALESCE((SELECT sum(minutes) FROM owner_hours
+            WHERE owner_user_id = dmbot_current_user()), 0)::BIGINT
+    $fn$;
+    DO $do$
+    BEGIN
+        EXECUTE format(
+            'ALTER FUNCTION dmbot_minutes_total() SET search_path = pg_catalog, %I, pg_temp',
+            current_schema());
+    END
+    $do$;
+    REVOKE ALL ON FUNCTION dmbot_minutes_total() FROM PUBLIC;
+    CREATE TRIGGER web_users_dmbot_id BEFORE INSERT OR UPDATE ON web_users
+        FOR EACH ROW EXECUTE FUNCTION dmbot_web_users_id();
+    DO $do$
+    BEGIN
+        EXECUTE format(
+            'ALTER FUNCTION dmbot_web_users_id() SET search_path = pg_catalog, %I, pg_temp',
+            current_schema());
+    END
+    $do$;
+    """
+
+# The website's way to a move code (#1246). The website's role has no grant on move_codes or
+# account_moves, so it asks through this one door, which does the whole job in one transaction:
+# the account must be on a paid plan and not have moved in the last 30 days, the code's hash is
+# stored (the earlier code stops working), and the limits are counted here, in the database, so
+# every web process agrees and a restart forgets nothing: 3 codes an hour for an account and 5
+# an hour for a connection. `src` is a keyed hash (HMAC) of the connection's address: the address
+# itself is never stored, and the hash can't be turned back into one without the server's secret.
+# The caps match account_move.py's ASKS and MOVE_GAP_S; a test holds them together.
+WEB_MOVE_CODES = """
+    CREATE TABLE move_code_asks (
+        -- Goes with the account (deletion) and follows it through a move.
+        user_id  BIGINT NOT NULL CHECK (user_id > 0)
+                 REFERENCES web_users ON DELETE CASCADE ON UPDATE CASCADE,
+        source   TEXT   NOT NULL CHECK (char_length(source) = 64),
+        asked_at BIGINT NOT NULL
+    );
+    CREATE INDEX move_code_asks_by_user ON move_code_asks (user_id, asked_at);
+    CREATE INDEX move_code_asks_by_source ON move_code_asks (source, asked_at);
+    CREATE FUNCTION dmbot_web_move_code(who BIGINT, src TEXT, now BIGINT, hash TEXT, ends BIGINT)
+        RETURNS TEXT
+        LANGUAGE plpgsql SECURITY DEFINER
+        AS $fn$
+    #variable_conflict use_column
+    DECLARE
+        before TEXT := COALESCE(current_setting('dmbot.owner_sync', true), '');
+        account TEXT;
+        ent RECORD;
+        outcome TEXT := 'ok';
+    BEGIN
+        PERFORM set_config('dmbot.owner_sync', 'move', true);
+        -- One ask at a time for an account, so two at once can't both pass the count.
+        SELECT u.dmbot_id INTO account FROM web_users u WHERE u.user_id = who FOR UPDATE;
+        IF account IS NULL THEN
+            outcome := 'no_account';
+        ELSE
+            SELECT e.plan, e.status, e.provider_subscription_id INTO ent
+                FROM entitlements e WHERE e.user_id = who;
+            IF NOT FOUND OR ent.plan = 'try-it' OR ent.status <> 'active'
+               OR ent.provider_subscription_id IS NULL THEN
+                outcome := 'not_paid';
+            ELSIF EXISTS (SELECT 1 FROM account_moves m
+                          WHERE m.dmbot_id = account AND m.moved_at > now - 2592000) THEN
+                outcome := 'too_soon';
+            ELSE
+                -- One count at a time for a connection too, so asks from several accounts at
+                -- once can't all see "fewer than 5".
+                PERFORM pg_advisory_xact_lock(hashtextextended('dmbot.move_ask:' || src, 0));
+                DELETE FROM move_code_asks a WHERE a.asked_at <= now - 3600;
+                IF (SELECT count(*) FROM move_code_asks a WHERE a.user_id = who) >= 3
+                   OR (SELECT count(*) FROM move_code_asks a WHERE a.source = src) >= 5 THEN
+                    outcome := 'slow_down';
+                ELSE
+                    INSERT INTO move_code_asks (user_id, source, asked_at) VALUES (who, src, now);
+                    INSERT INTO move_codes (user_id, code_hash, created_at, expires_at)
+                        VALUES (who, hash, now, LEAST(ends, now + 1800))
+                        ON CONFLICT (user_id) DO UPDATE SET code_hash = EXCLUDED.code_hash,
+                            created_at = EXCLUDED.created_at, expires_at = EXCLUDED.expires_at,
+                            used_at = NULL;
+                END IF;
+            END IF;
+        END IF;
+        PERFORM set_config('dmbot.owner_sync', before, true);
+        RETURN outcome;
+    END
+    $fn$;
+    -- The email didn't go, so no code should be waiting that nobody has seen, and the ask
+    -- is given back: a failed send must not use up an hour's three. Only that very code is
+    -- removed (a newer one asked for meanwhile, and already mailed, must stay); `at` is the
+    -- time the ask was made.
+    CREATE FUNCTION dmbot_web_cancel_move_code(who BIGINT, hash TEXT, at BIGINT) RETURNS VOID
+        LANGUAGE sql SECURITY DEFINER
+        AS $fn$
+            DELETE FROM move_codes WHERE user_id = who AND code_hash = hash AND used_at IS NULL;
+            DELETE FROM move_code_asks WHERE ctid = (SELECT a.ctid FROM move_code_asks a
+                WHERE a.user_id = who AND a.asked_at = at LIMIT 1);
+        $fn$;
+    -- The hourly sweep: asks older than the window are of no use.
+    CREATE FUNCTION dmbot_web_forget_move_asks(now BIGINT) RETURNS BIGINT
+        LANGUAGE sql SECURITY DEFINER
+        AS $fn$
+            WITH gone AS (DELETE FROM move_code_asks WHERE asked_at <= now - 3600 RETURNING 1)
+            SELECT count(*) FROM gone
+        $fn$;
+    DO $do$
+    BEGIN
+        EXECUTE format(
+            'ALTER FUNCTION dmbot_web_move_code(BIGINT, TEXT, BIGINT, TEXT, BIGINT)'
+            ' SET search_path = pg_catalog, %I, pg_temp',
+            current_schema());
+        EXECUTE format(
+            'ALTER FUNCTION dmbot_web_cancel_move_code(BIGINT, TEXT, BIGINT)'
+            ' SET search_path = pg_catalog, %I, pg_temp',
+            current_schema());
+        EXECUTE format(
+            'ALTER FUNCTION dmbot_web_forget_move_asks(BIGINT)'
+            ' SET search_path = pg_catalog, %I, pg_temp',
+            current_schema());
+    END
+    $do$;
+    REVOKE ALL ON FUNCTION dmbot_web_move_code(BIGINT, TEXT, BIGINT, TEXT, BIGINT) FROM PUBLIC;
+    REVOKE ALL ON FUNCTION dmbot_web_cancel_move_code(BIGINT, TEXT, BIGINT) FROM PUBLIC;
+    REVOKE ALL ON FUNCTION dmbot_web_forget_move_asks(BIGINT) FROM PUBLIC;
+"""
+
+MEMORY_STATES = (
+    f"""
+    -- Story memory 5a, slice 1 (#1267; docs/STORY_MEMORY.md, "State facts"):
+    --   memory_states         one current condition for a character, item or place (alive, dead,
+    --                         intact, destroyed…). A new one closes the old (closed_at), so the
+    --                         history is kept with when and who said so. Own table, not a
+    --                         relationship. Like every memory table it is one campaign's.
+    --   memory_entities.unique_item  an item of which only one exists. NULL: nobody said, so the
+    --                         code decides from the name (a proper name means yes). Nullable so
+    --                         this migration changes no existing row.
+    --   memory_flags.kind     three new kinds from the new checks.
+    CREATE TABLE memory_states (
+        {_memory_scope()}
+        id              TEXT NOT NULL CHECK (id ~ '^[0-9a-f]{{32}}$'),
+        entity_id       TEXT NOT NULL,
+        condition       TEXT NOT NULL CHECK (condition IN
+            ('alive', 'dead', 'missing', 'captured', 'transformed', 'unknown',
+             'intact', 'destroyed', 'lost')),
+        from_session_at BIGINT,
+        source          TEXT NOT NULL,
+        created_at      BIGINT NOT NULL,
+        closed_at       BIGINT,
+        PRIMARY KEY (guild_id, campaign_id, id),
+        {_entity_link("entity_id")}
+    );
+    -- One current condition for each entry.
+    CREATE UNIQUE INDEX memory_states_one_current
+        ON memory_states (guild_id, campaign_id, entity_id) WHERE closed_at IS NULL;
+    CREATE INDEX memory_states_by_entity ON memory_states (guild_id, campaign_id, entity_id);
+    """
+    + _isolate("memory_states")
+    + """
+
+    ALTER TABLE memory_entities ADD COLUMN unique_item BOOLEAN;
+
+    ALTER TABLE memory_flags DROP CONSTRAINT memory_flags_kind_check;
+    ALTER TABLE memory_flags ADD CONSTRAINT memory_flags_kind_check CHECK (kind IN
+        ('wrong_subject', 'wrong_object', 'too_many', 'contradiction',
+         'held_twice', 'place_loop', 'acts_after_end'));
+    """
+)
+
+RULE_SUGGESTIONS = (
+    f"""
+    -- "Suggest to <set>" (#1259, #1191 part 2b): a following campaign's DM sends one of its own
+    -- house rules to the set's publisher. Only the rule's words cross, never who sent it.
+    --   rule_set_suggestions       in the PUBLISHER's campaign: the words, the answer, nothing
+    --                              that says which campaign, server or DM sent them
+    --   rule_set_suggestions_sent  in the FOLLOWER's campaign: what its DM sent, to which set,
+    --                              and when it was told the answer. The two are linked only by
+    --                              the random id the follower made, which is a key to one row.
+    -- The doors across servers are the functions below: one adds a suggestion to a set the
+    -- caller follows (and answers where it went, for DMbot to post the note), one tells the
+    -- answers to the ids it is given. Like the other doors they open the tables to
+    -- themselves through a setting they set and put back.
+    CREATE TABLE rule_set_suggestions (
+        {_memory_scope()}
+        id          TEXT NOT NULL CHECK (id ~ '^[0-9a-f]{{32}}$'),
+        set_id      TEXT NOT NULL,
+        rule        TEXT NOT NULL CHECK (char_length(rule) BETWEEN 1 AND 500),
+        instead     TEXT CHECK (instead IS NULL OR char_length(instead) BETWEEN 1 AND 500),
+        status      TEXT NOT NULL CHECK (status IN ('open', 'accepted', 'declined', 'present')),
+        created_at  BIGINT NOT NULL,
+        resolved_at BIGINT,
+        resolved_by BIGINT,
+        version     INTEGER,
+        noted_at    BIGINT,  -- when the note reached the publisher's DM screen (NULL: not yet)
+        PRIMARY KEY (guild_id, campaign_id, id),
+        UNIQUE (id),
+        FOREIGN KEY (guild_id, campaign_id, set_id)
+            REFERENCES rule_sets (guild_id, campaign_id, id) ON DELETE CASCADE
+    );
+    CREATE INDEX rule_set_suggestions_open ON rule_set_suggestions (set_id) WHERE status = 'open';
+    CREATE TABLE rule_set_suggestions_sent (
+        {_memory_scope()}
+        id          TEXT NOT NULL CHECK (id ~ '^[0-9a-f]{{32}}$'),
+        set_id      TEXT NOT NULL,
+        set_name    TEXT NOT NULL CHECK (char_length(set_name) BETWEEN 1 AND 60),
+        rule        TEXT NOT NULL CHECK (char_length(rule) BETWEEN 1 AND 500),
+        sent_by     BIGINT NOT NULL CHECK (sent_by > 0),
+        sent_at     BIGINT NOT NULL,
+        told_at     BIGINT,
+        PRIMARY KEY (guild_id, campaign_id, id)
+    );
+    """
+    + _isolate("rule_set_suggestions")
+    + _isolate("rule_set_suggestions_sent")
+    + """
+    DO $do$
+    BEGIN
+        EXECUTE format(
+            'CREATE POLICY suggest_door ON rule_sets FOR SELECT TO %I
+                USING (dmbot_owner_sync() = ''suggest'' AND status = ''shared''
+                       AND id = current_setting(''dmbot.set_id'', true))',
+            current_user);
+        EXECUTE format(
+            'CREATE POLICY suggest_door_read ON rule_set_suggestions FOR SELECT TO %I
+                USING (dmbot_owner_sync() = ''suggest''
+                       AND set_id = current_setting(''dmbot.set_id'', true))',
+            current_user);
+        EXECUTE format(
+            'CREATE POLICY suggest_door_add ON rule_set_suggestions FOR INSERT TO %I
+                WITH CHECK (dmbot_owner_sync() = ''suggest''
+                            AND set_id = current_setting(''dmbot.set_id'', true))',
+            current_user);
+        EXECUTE format(
+            'CREATE POLICY answer_door ON rule_set_suggestions FOR SELECT TO %I
+                USING (dmbot_owner_sync() = ''suggestanswer''
+                       AND id = ANY(string_to_array(
+                           COALESCE(current_setting(''dmbot.suggestion_ids'', true), $q$$q$),
+                           $q$,$q$)))',
+            current_user);
+    END
+    $do$;
+    -- Adds a suggestion to a set the caller's campaign follows. 'ok' (with the publisher's
+    -- server and campaign, which DMbot uses to post the note and never shows anyone), 'full'
+    -- (the set already has `set_cap` open suggestions), or 'gone' (the caller does not follow it,
+    -- or it is not shared any more).
+    CREATE FUNCTION dmbot_suggest_rule(
+        sid TEXT, wanted_set TEXT, follower_campaign TEXT, new_rule TEXT, new_instead TEXT,
+        now_at BIGINT, set_cap INTEGER, wait_s INTEGER)
+        RETURNS TABLE (outcome TEXT, pub_guild BIGINT, pub_campaign TEXT)
+        LANGUAGE plpgsql SECURITY DEFINER
+        AS $fn$
+    DECLARE
+        before TEXT := COALESCE(current_setting('dmbot.owner_sync', true), '');
+        before_set TEXT := COALESCE(current_setting('dmbot.set_id', true), '');
+        found_guild BIGINT;
+        found_campaign TEXT;
+        waiting INTEGER;
+    BEGIN
+        IF NOT EXISTS (SELECT 1 FROM rule_set_follows f
+                       WHERE f.guild_id = dmbot_current_guild()
+                         AND f.campaign_id = follower_campaign
+                         AND f.set_id = wanted_set AND f.updating) THEN
+            RETURN QUERY SELECT 'gone'::TEXT, NULL::BIGINT, NULL::TEXT;
+            RETURN;
+        END IF;
+        PERFORM set_config('dmbot.owner_sync', 'suggest', true);
+        PERFORM set_config('dmbot.set_id', wanted_set, true);
+        SELECT s.guild_id, s.campaign_id INTO found_guild, found_campaign
+            FROM rule_sets s WHERE s.id = wanted_set AND s.status = 'shared';
+        IF found_guild IS NULL THEN
+            PERFORM set_config('dmbot.owner_sync', before, true);
+            PERFORM set_config('dmbot.set_id', before_set, true);
+            RETURN QUERY SELECT 'gone'::TEXT, NULL::BIGINT, NULL::TEXT;
+            RETURN;
+        END IF;
+        -- Two tables suggesting at once take turns, so the cap holds.
+        PERFORM pg_advisory_xact_lock(hashtext(wanted_set));
+        SELECT count(*) INTO waiting FROM rule_set_suggestions q
+            WHERE q.set_id = wanted_set AND q.status = 'open'
+              AND q.created_at > now_at - wait_s;  -- an unanswered one stops counting
+        IF waiting >= set_cap THEN
+            PERFORM set_config('dmbot.owner_sync', before, true);
+            PERFORM set_config('dmbot.set_id', before_set, true);
+            RETURN QUERY SELECT 'full'::TEXT, NULL::BIGINT, NULL::TEXT;
+            RETURN;
+        END IF;
+        INSERT INTO rule_set_suggestions (guild_id, campaign_id, id, set_id, rule, instead,
+                                          status, created_at)
+            VALUES (found_guild, found_campaign, sid, wanted_set, new_rule, new_instead,
+                    'open', now_at);
+        PERFORM set_config('dmbot.owner_sync', before, true);
+        PERFORM set_config('dmbot.set_id', before_set, true);
+        RETURN QUERY SELECT 'ok'::TEXT, found_guild, found_campaign;
+    END
+    $fn$;
+    -- The answers to the suggestions with these ids (a comma-separated list the caller made
+    -- itself): the id is the key, so nothing else of the publisher's can be reached.
+    CREATE FUNCTION dmbot_suggestion_answers(ids TEXT)
+        RETURNS TABLE (id TEXT, status TEXT, version INTEGER)
+        LANGUAGE plpgsql SECURITY DEFINER
+        AS $fn$
+    DECLARE
+        before TEXT := COALESCE(current_setting('dmbot.owner_sync', true), '');
+        before_ids TEXT := COALESCE(current_setting('dmbot.suggestion_ids', true), '');
+    BEGIN
+        PERFORM set_config('dmbot.owner_sync', 'suggestanswer', true);
+        PERFORM set_config('dmbot.suggestion_ids', ids, true);
+        RETURN QUERY
+            SELECT q.id, q.status, q.version FROM rule_set_suggestions q
+            WHERE q.id = ANY(string_to_array(ids, ','));
+        PERFORM set_config('dmbot.owner_sync', before, true);
+        PERFORM set_config('dmbot.suggestion_ids', before_ids, true);
+    END
+    $fn$;
+    DO $do$
+    BEGIN
+        EXECUTE format(
+            'ALTER FUNCTION dmbot_suggest_rule('
+            'TEXT, TEXT, TEXT, TEXT, TEXT, BIGINT, INTEGER, INTEGER)'
+            ' SET search_path = pg_catalog, %I, pg_temp',
+            current_schema());
+        EXECUTE format(
+            'ALTER FUNCTION dmbot_suggestion_answers(TEXT)'
+            ' SET search_path = pg_catalog, %I, pg_temp',
+            current_schema());
+    END
+    $do$;
+    REVOKE ALL ON FUNCTION dmbot_suggest_rule(
+        TEXT, TEXT, TEXT, TEXT, TEXT, BIGINT, INTEGER, INTEGER) FROM PUBLIC;
+    REVOKE ALL ON FUNCTION dmbot_suggestion_answers(TEXT) FROM PUBLIC;
+    """
+)
+
+MEMORY_CLAIMS = (
+    """
+    -- Story memory 5a, slice 2 (#1297; docs/STORY_MEMORY.md, section 1): what the story
+    -- extractor read out of a session, held as proposals until the DM says yes or no. One row
+    -- for each claim, as text (the memory may not know the names yet), with how it was said, the
+    -- transcript lines it cites, who spoke them (all of them: consent is checked again when the
+    -- DM answers, and a person who stops being recorded has their claims deleted), which prompt
+    -- and model made it, and its status: proposed, confirmed, rejected or dropped (the rules
+    -- refused it; the reason is kept). A claim is never a fact: a confirmed one has been written
+    -- through the store as the DM's own, and fact_id says which (the relationship's id, or the
+    -- entry for a change of state), so a fact can always be traced back to the claim and the
+    -- lines it came from. Not in the undo log. Like every memory table it is one campaign's.
+    CREATE TABLE memory_claims (
+        """
+    + _memory_scope()
+    + """
+        id                 TEXT NOT NULL CHECK (id ~ '^[0-9a-f]{32}$'),
+        subject            TEXT NOT NULL,
+        relationship       TEXT NOT NULL,
+        object             TEXT NOT NULL,
+        details            TEXT NOT NULL DEFAULT '',
+        how                TEXT NOT NULL CHECK (how IN ('dm_said', 'player_said', 'plan')),
+        lines              TEXT[] NOT NULL,
+        speaker_ids        BIGINT[] NOT NULL DEFAULT '{}',
+        source             TEXT NOT NULL,
+        prompt_version     TEXT NOT NULL,
+        model              TEXT NOT NULL,
+        status             TEXT NOT NULL CHECK (status IN
+            ('proposed', 'confirmed', 'rejected', 'dropped')),
+        reason             TEXT NOT NULL DEFAULT '',
+        session_started_at BIGINT,
+        created_at         BIGINT NOT NULL,
+        decided_at         BIGINT,
+        fact_id            TEXT,
+        PRIMARY KEY (guild_id, campaign_id, id)
+    );
+    CREATE INDEX memory_claims_waiting ON memory_claims (guild_id, campaign_id, status);
+    """
+    + _isolate("memory_claims")
+    + """
+    """
 )
 
 MIGRATIONS: tuple[Migration, ...] = (
@@ -1931,6 +3778,29 @@ MIGRATIONS: tuple[Migration, ...] = (
     ("0048_plan_ends", PLAN_ENDS),
     ("0049_game_effects_extended", GAME_EFFECTS_EXTENDED),
     ("0050_gametime_channel", GAMETIME_CHANNEL),
+    ("0051_dndbeyond_invite", DNDBEYOND_INVITE),
+    ("0052_table_chat", TABLE_CHAT),
+    ("0053_combat_state", COMBAT_STATE),
+    ("0054_sheet_questions", SHEET_QUESTIONS),
+    ("0055_fightbot", FIGHTBOT),
+    ("0056_dmbchat_channel", DMBCHAT_CHANNEL),
+    ("0057_table_questions", TABLE_QUESTIONS),
+    ("0058_people", PEOPLE),
+    ("0059_definitions", DEFINITIONS),
+    ("0060_owner_missing", OWNER_MISSING),
+    ("0061_rule_sets", RULE_SETS),
+    ("0062_set_updates", SET_UPDATES),
+    ("0063_dmbot_id", DMBOT_ID),
+    ("0064_mail", MAIL),
+    ("0065_trial", TRIAL),
+    ("0066_email_sign_in", EMAIL_SIGN_IN),
+    ("0067_payment_email", PAYMENT_EMAIL),
+    ("0068_moves", MOVES),  # 0066 is the sign-in-by-email migration (#1237)
+    ("0069_web_move_codes", WEB_MOVE_CODES),  # the website's door to a move code (#1246)
+    ("0070_memory_states", MEMORY_STATES),  # 0069 is the website's move code (#1246)
+    ("0071_email_records", EMAIL_RECORDS),  # the email records (#1288)
+    ("0072_rule_suggestions", RULE_SUGGESTIONS),  # the shared-rules suggestions (#1261)
+    ("0073_memory_claims", MEMORY_CLAIMS),
 )
 
 # Tables that must have row-level security. A test checks every table in the schema
@@ -1955,6 +3825,16 @@ ISOLATED_TABLES = (
     "game_clocks",
     "game_effects",
     "memory_rule_links",
+    "fightbot_players",
+    "rule_sets",
+    "rule_set_versions",
+    "rule_set_codes",
+    "rule_set_follows",
+    "rule_set_editors",
+    "memory_states",
+    "memory_claims",
+    "rule_set_suggestions",
+    "rule_set_suggestions_sent",
 )
 # A person's own rows (the website, #435): row-level security on `user_id`, set by
 # Database.user(). Sessions can also be found by their cookie hash (Database.session()),
@@ -1965,7 +3845,10 @@ USER_ISOLATED_TABLES = (
     "entitlements",
     "payment_events",
     "web_sessions",
+    "email_sign_in_links",
     "installs",
+    # Every Discord account a DMbot account used; keyed by its DMbot ID (#1230).
+    "account_id_history",
     # Keyed by Discord account (#771): the person's own grant, or the grant writer.
     "access_grants",
     # Not per person: only the grant writer adds or reads a row (#771).
@@ -1980,4 +3863,14 @@ USER_ISOLATED_TABLES = (
 WRITE_ONLY_TABLES = ("feedback",)
 # Hold only server IDs (see the rules at the top of this file).
 ROUTING_TABLES = ("live_session_guilds", "campaign_guilds")
-UNSCOPED_TABLES = ("schema_migrations", *ROUTING_TABLES)
+UNSCOPED_TABLES = (
+    "schema_migrations",
+    "ontology_predicate_versions",
+    "sent_emails",
+    "email_unsubscribed",
+    "trial_extensions",
+    "move_codes",
+    "account_moves",
+    "move_code_asks",
+    *ROUTING_TABLES,
+)

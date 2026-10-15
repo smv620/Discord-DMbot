@@ -88,6 +88,8 @@ describe("retention and warnings", () => {
       "kept for 120 days. We message the game master on Discord 14 days and 3 days before",
     );
     expect(text(doc("terms").querySelector("main"))).toContain("campaigns are kept for 120 days");
+    // No $1.99 first month any more (2026-10-14): not on the rendered terms either.
+    expect(text(doc("terms").querySelector("main"))).not.toMatch(/\$1\.99|first month/i);
     expect(text(doc("refunds").querySelector("main"))).toContain("kept for 120 days");
   });
 });
@@ -105,6 +107,19 @@ describe("the facts #433 asks for", () => {
   it("says voices are not kept and transcripts are visible to the whole server", () => {
     expect(privacy()).toContain("Your voice is not kept.");
     expect(privacy()).toContain("everyone in the Discord server");
+  });
+
+  it("says typed chat is read only from people who said yes and kept as typed (#1155)", () => {
+    expect(privacy()).toContain("What was typed.");
+    expect(privacy()).toContain("people who said yes type in the table's chat");
+    expect(privacy()).toContain("dmb-chat");
+    expect(privacy()).toContain("marked as typed");
+  });
+
+  it("says DMbot learns the names people are called, from people who said yes, and what stop removes (#1210)", () => {
+    expect(privacy()).toContain("Names at the table.");
+    expect(privacy()).toContain("only from people who said yes to being recorded");
+    expect(privacy()).toContain("Names your game master typed in themselves stay.");
   });
 
   it("sets the minimum age at 16, with no 'older where local law requires' marker", () => {
@@ -131,11 +146,11 @@ describe("the facts #433 asks for", () => {
     }
   });
 
-  it("names OVH US as the host and the US companies, with Lemon Squeezy as seller of record", () => {
+  it("names OVH US as the host and the US companies, with Stripe as seller of record", () => {
     expect(privacy()).toContain("OVH US LLC (OVHcloud, U.S.A.)");
     expect(privacy()).toContain("Its servers are in the United States");
-    expect(privacy()).toMatch(/Deepgram, Anthropic, OVH US, Cloudflare, GitHub and Lemon Squeezy/);
-    expect(privacy()).toContain("Lemon Squeezy is the seller of record and handles withdrawal rights, invoices and tax");
+    expect(privacy()).toMatch(/Deepgram, Anthropic, OVH US, Cloudflare, GitHub and Stripe/);
+    expect(privacy()).toContain("Stripe is the seller of record and handles withdrawal rights, invoices and tax");
     expect(privacy()).not.toContain("HOSTING PROVIDER");
   });
 
@@ -152,7 +167,7 @@ describe("the facts #433 asks for", () => {
     expect(refunds).toContain("within 14 days of paying and we'll refund it. A monthly renewal is not a new plan.");
     expect(refunds).toContain("can't be refunded, used or not.");
     expect(refunds).toContain("within 5 working days");
-    expect(refunds).toContain("Lemon Squeezy is the seller");
+    expect(refunds).toContain("Stripe is the seller");
     expect(refunds).not.toContain("{{CHECK");
   });
 
@@ -188,6 +203,12 @@ describe("the facts #433 asks for", () => {
     }
   });
 
+  it("points to the Download my data button for a copy (#1150)", () => {
+    expect(privacy()).toContain("Press Download my data in My Account. You get one file with your account, plan and payments");
+    const link = doc("privacy").querySelector('a[href="/account"]');
+    expect(link?.textContent).toBe("My Account");
+  });
+
   it("tells people how to ask about their information, with a 30-day answer", () => {
     expect(privacy()).toContain(
       "You can ask us to show you, correct, send you a copy of, or delete the information we hold about you, by emailing dmbot.admin@gmail.com. We answer within 30 days.",
@@ -199,6 +220,15 @@ describe("the facts #433 asks for", () => {
     expect(terms()).toContain(
       "DMbot LLC, its affiliates and any contributors to the DMbot project make no claims or promises towards the accuracy or stability of the product's performance. DMbot LLC does not warrant or guarantee the goods or services purchased. By using the DMbot agent and the associated tools, users agree to hold DMbot LLC and its affiliates harmless towards any losses, material, non-material or deemed.",
     );
+  });
+
+  it("says a campaign whose owner's Discord account is gone can be taken on, in terms and privacy (#1220)", () => {
+    for (const name of ["terms", "privacy"]) {
+      const body = text(doc(name).querySelector("main"));
+      expect(body, name).toContain("If the owner's Discord account is gone, or the owner has");
+      expect(body, name).toContain("out of the server for 7 days");
+      expect(body, name).toContain("button to take the campaign on. Only a game master who presses it takes over.");
+    }
   });
 
   it("keeps the 120 days in the deletion sentence in step with the plan file", () => {
@@ -223,9 +253,9 @@ describe("the facts #433 asks for", () => {
     expect(terms()).not.toMatch(/\d+ days to fix it/);
   });
 
-  it("names Lemon Squeezy as the payment company on every legal page", () => {
+  it("names Stripe as the payment company on every legal page", () => {
     for (const page of ["terms", "privacy", "refunds"]) {
-      expect(text(doc(page).querySelector("main"))).toContain("Lemon Squeezy");
+      expect(text(doc(page).querySelector("main"))).toContain("Stripe");
     }
     expect(terms()).not.toMatch(/PAYMENT PROVIDER|Paddle/);
   });
@@ -254,5 +284,34 @@ describe("the facts #433 asks for", () => {
     expect(terms()).toContain("The laws of the State of Ohio, USA, apply to these terms");
     expect(terms()).toContain("heard in the courts of the State of Ohio, USA");
     expect(terms()).not.toContain("governing law and courts");
+  });
+});
+
+describe("email from DMbot (#1283)", () => {
+  const privacy = (): string => text(doc("privacy").querySelector("main"));
+
+  it("says which email each kind goes to, what is sent, and how long the notes stay", () => {
+    const t = privacy();
+    expect(t).toContain("A move code goes only to the email you paid with");
+    expect(t).toContain("two Try It emails");
+    expect(t).toContain("deleted after 90 days");
+    expect(t).toContain("We do not keep the words of the email or the address it went to");
+    expect(t).toContain("Sign-in links and move codes have no such link, because you asked for them");
+  });
+
+  it("no longer promises emails about the account and plan that nothing sends", () => {
+    expect(privacy()).not.toContain("tell you about your account and plan");
+  });
+
+  it("puts no postal address on the page", () => {
+    expect(privacy()).not.toMatch(/\b\d{2,5} [A-Z][a-z]+ (Street|St\.?|Road|Rd\.?|Avenue|Ave\.?|Lane|Drive)\b/);
+  });
+});
+
+describe("shared house rules (#1254)", () => {
+  it("the privacy page says only rules are shared, never story or transcripts", () => {
+    const t = text(doc("privacy").querySelector("main"));
+    expect(t).toContain("only the rules themselves");
+    expect(t).toContain("The story, names, notes and what was said are never shared");
   });
 });

@@ -1,7 +1,7 @@
 """The players' game-time channel (#1116): the 14 approximate words at every boundary, the
 channel made at start (and repaired, and its failure not blocking), the players' pinned clock
 edited in place with no exact time, timer or button, the one line for a finished rest or a new
-day, the rests moved off the pinned DM clock into the private Set time… panel, and the
+day, the rests moved off the pinned DM clock into the private Rests & time… panel, and the
 migration. The store and channel tests need Postgres."""
 
 from __future__ import annotations
@@ -469,9 +469,14 @@ class Buttons(unittest.TestCase):
 
     def test_the_pinned_dm_clock_has_no_rest_buttons(self) -> None:
         view = ui.clock_view(self.CID)
-        self.assertEqual(self.labels(view), ["+10 min", "+1 hour", "Set time…", "Start a timer"])
+        self.assertEqual(
+            self.labels(view),
+            ["+10 min", "+1 hour", "Rests & time…", "Start a timer", "Start combat"],  # #1127
+        )
+        # (the opener "Rests & time…" is the one label that names them; the buttons are inside)
+        others = [label for label in self.labels(view) if label != "Rests & time…"]
         for banned in ("rest", "dawn"):
-            self.assertFalse(any(banned in label.lower() for label in self.labels(view)))
+            self.assertFalse(any(banned in label.lower() for label in others))
 
     def test_the_set_time_panel_has_them(self) -> None:
         view = ui.panel_view(self.CID)
@@ -499,7 +504,7 @@ class Buttons(unittest.TestCase):
 
 
 class SetTimePanel(PlayersClock):
-    """Pressing **Set time…** opens the private panel (once a clock exists)."""
+    """Pressing **Rests & time…** opens the private panel (once a clock exists)."""
 
     def interaction(self, message: Any = None) -> Any:
         self.discord.campaigns.get = self.campaigns.get
@@ -535,7 +540,7 @@ class SetTimePanel(PlayersClock):
         it = self.interaction()
         await ui.ClockButton(self.a.id, "typed").callback(cast(Any, it))
         it.response.send_modal.assert_awaited_once()
-        # Before any clock exists, Set time… goes straight to the form.
+        # Before any clock exists, Rests & time… goes straight to the form.
         other = await self.campaigns.create(GUILD, "Beta", DM)
         it2 = self.interaction()
         await ui.ClockButton(other.id, "set").callback(cast(Any, it2))
@@ -684,3 +689,21 @@ class NoSecondClock(PlayersClock):
         sent = it.followup.send.await_args
         self.assertIn("Clock set to Day 4, about noon", sent.args[0])
         self.assertIn(f"<#{PLAYERS_CHANNEL}>", sent.args[0])
+
+
+class Wording(unittest.TestCase):
+    """The plain-words pass from the ux-critic (#1197)."""
+
+    def test_the_bad_time_message_does_not_point_back_at_a_button(self) -> None:
+        from dmbot.dm_screen import clock
+
+        self.assertNotIn("**", clock.BAD_TIME)  # no button name to press again
+        self.assertIn("day 4", clock.BAD_TIME)
+
+    def test_the_combat_lines_use_the_buttons_word(self) -> None:
+        from dmbot.dm_screen import clock
+
+        for line in clock.NO_COMBAT_CHANGE.values():
+            self.assertIn("combat", line.lower())
+            self.assertNotIn("fight", line.lower())
+        self.assertIn("round 99", clock.NO_COMBAT_CHANGE["cnext"])

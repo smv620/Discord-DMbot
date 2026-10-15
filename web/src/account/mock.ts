@@ -6,7 +6,7 @@
  * The names are our own invented cast (docs/test-scripts/), never real people.
  */
 import type { PlanId } from "../content/pricing";
-import type { AccountApi, Campaign, Me, Offer, Person } from "./api";
+import type { AccountApi, Campaign, Character, Me, Offer, Person, RecordingEntry } from "./api";
 import { ApiError } from "./api";
 
 /** Found in the built files only if the pretend API was included; check-csp fails a real
@@ -120,8 +120,49 @@ export const outgoingOffer: Offer = {
   expiresAt: "2026-10-13T18:00:00Z",
 };
 
+export const characters: Character[] = [
+  {
+    serverName: "Thursday Table",
+    campaign: "The Brynwater Crossing",
+    name: "Testa",
+    classLine: "Bard 2",
+    level: 2,
+    maxHp: 14,
+    ac: 13,
+    sheetLink: null,
+    typedIn: true,
+    readAt: "2026-10-02T19:30:00Z",
+  },
+  {
+    serverName: "Gorrak's Hall",
+    campaign: "Ashen Crown",
+    name: "Brannoch",
+    classLine: "Ranger 3 / Druid 3",
+    level: 6,
+    maxHp: 52,
+    ac: 16,
+    sheetLink: "https://sheets.example/characters/12345678",
+    typedIn: false,
+    readAt: "2026-10-03T10:00:00Z",
+  },
+];
+
+export const recording: RecordingEntry[] = [
+  { serverId: "srv-thursday", serverName: "Thursday Table", agreedOn: "2026-09-20", on: true },
+  { serverId: "srv-gorrak", serverName: "Gorrak's Hall", agreedOn: "2026-08-02", on: true },
+];
+
 export function scenarioMe(scenario: Scenario): Me | null {
-  const base = { user, campaigns, servers, offers: { incoming: [], outgoing: [] } };
+  const base = {
+    user,
+    campaigns,
+    servers,
+    recording,
+    dmbotId: "1P0Z4F6N2K9",
+    experiencePoints: 1245,
+    canMove: false,
+    offers: { incoming: [], outgoing: [] },
+  };
   switch (scenario) {
     case "signed-out":
     case "down":
@@ -144,6 +185,7 @@ export function scenarioMe(scenario: Scenario): Me | null {
     case "table":
       return {
         ...base,
+        canMove: true,
         plan: {
           id: "table",
           status: "active",
@@ -231,9 +273,25 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
       return me;
     },
     signInUrl: () => "#demo-sign-in",
+    async signOutEverywhere() {
+      calls.push("signOutEverywhere");
+      me = null;
+    },
     async signOut() {
       calls.push("signOut");
       me = null;
+    },
+    async emailSignInRequest(email) {
+      calls.push(`email-request:${email}`);
+    },
+    async emailSignInUse(token) {
+      calls.push(`email-use:${token}`);
+      if (token !== "good-link") throw new ApiError("bad-link");
+      me = scenarioMe("table");
+    },
+    async getMoveCode() {
+      calls.push("move-code");
+      signedIn();
     },
     async startTryIt() {
       calls.push("startTryIt");
@@ -261,6 +319,15 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
     async extraHoursUrl() {
       calls.push("extra-hours");
       return "#demo-extra-hours";
+    },
+    async characters() {
+      calls.push("characters");
+      signedIn();
+      return characters;
+    },
+    async downloadExport() {
+      calls.push("export");
+      return new Blob(['{"about":"pretend export"}'], { type: "application/json" });
     },
     installUrl: (serverId: string) => `#demo-install-${serverId}`,
     async linkServer(serverId: string) {
@@ -322,6 +389,11 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
         ...now,
         offers: { ...now.offers, incoming: now.offers.incoming.filter((o) => o.id !== offerId) },
       };
+    },
+    async stopRecording(serverId: string) {
+      calls.push(`stop-recording:${serverId}`);
+      const now = signedIn();
+      me = { ...now, recording: (now.recording ?? []).filter((r) => r.serverId !== serverId) };
     },
     async withdrawOffer(offerId: string) {
       calls.push(`withdraw:${offerId}`);

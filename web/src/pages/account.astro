@@ -43,6 +43,11 @@ import Base from "../layouts/Base.astro";
     font-size: var(--text-sm);
   }
 
+  /* A number never lands alone on the next line of a character card (#1164). */
+  .account :global(.nowrap) {
+    white-space: nowrap;
+  }
+
   .account :global(.panel) {
     display: flex;
     flex-direction: column;

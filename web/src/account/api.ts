@@ -93,8 +93,42 @@ export interface Me {
   // already says "You added DMbot here", so the page doesn't use it (#497).
   /** A first payment failed and none has gone through since (#922): the page says to try again. */
   firstPaymentFailed?: boolean;
+  /** Where DMbot may record you. Missing from an API older than #1151. */
+  recording?: RecordingEntry[];
+  /** The account number (the Discord ID in base 36) and the minutes DMbot has run for this
+   * account, all time (#1231). Missing from an API older than that. */
+  dmbotId?: string;
+  experiencePoints?: number;
+  /** A paid, active plan: a move code can be asked for. */
+  canMove?: boolean;
   /** Hand-overs offered to you, and the ones you offered (#614). */
   offers: { incoming: Offer[]; outgoing: Offer[] };
+}
+
+/** One of the person's own characters (#1164), read-only. Fields are missing when the sheet has
+ * not been read yet (a link only) or does not hold them. */
+export interface Character {
+  serverName: string;
+  campaign: string | null;
+  name: string | null;
+  classLine: string | null;
+  level: number | null;
+  maxHp: number | null;
+  ac: number | null;
+  /** The online sheet's link, if there is one. */
+  sheetLink: string | null;
+  typedIn: boolean;
+  readAt: string | null;
+}
+
+/** A server where this person said yes to recording (#1151). `on` is false when their yes was
+ * given under older wording: DMbot records nobody until they say yes again in Discord. */
+export interface RecordingEntry {
+  serverId: string;
+  serverName: string;
+  /** ISO date they said yes. */
+  agreedOn: string;
+  on: boolean;
 }
 
 /** Why a call failed, in a form the page can turn into plain words. */
@@ -114,6 +148,11 @@ export type ApiErrorKind =
   | "no-paid-plan" // the billing page needs a paid plan
   | "free-access" // free access: there's nothing to pay for
   | "slow-down" // too many tries from this address (the API limits sign-in, billing, delete)
+  | "bad-link" // an emailed sign-in link that is wrong, used or ended (#1231)
+  | "not-ready" // the API has no move codes yet (#1231)
+  | "no-email" // no payment email is stored yet, so a move code has nowhere to go (#1246)
+  | "too-soon" // the account moved less than 30 days ago (#1246)
+  | "email-failed" // the move code could not be emailed just now (#1246)
   | "server"; // anything else
 
 export class ApiError extends Error {
@@ -129,6 +168,8 @@ export interface AccountApi {
   /** Where the "Sign in with Discord" button goes. */
   signInUrl(): string;
   signOut(): Promise<void>;
+  /** End every sign-in this person has, this one too (#1163). */
+  signOutEverywhere(): Promise<void>;
   /** Start the free Try It plan (no card). */
   startTryIt(): Promise<void>;
   /** The payment company's checkout page for a paid plan. */
@@ -137,6 +178,20 @@ export interface AccountApi {
   billingPortalUrl(): Promise<string>;
   /** The payment company's page to buy more hours for this month (a paid, working plan). */
   extraHoursUrl(): Promise<string>;
+  /** The file for "Download my data": the person's own data as JSON (#1150). Fetched from the
+   * page, so a refusal (once a minute, or signed out) can be said in words. */
+  downloadExport(): Promise<Blob>;
+  /** Email a one-use sign-in link if the address has an account (#1231). It always resolves
+   * the same way, so the page can't tell anyone whether an address has an account. */
+  emailSignInRequest?(email: string): Promise<void>;
+  /** Use the token from an emailed link: signs this browser in (#1231). */
+  emailSignInUse?(token: string): Promise<void>;
+  /** Email a move code to the payment email (paid plans, #1231). */
+  getMoveCode?(): Promise<void>;
+  /** The person's own characters. Missing from an API older than #1164. */
+  characters?(): Promise<Character[]>;
+  /** Stop recording me in one server (#1151). Starting again stays in Discord. */
+  stopRecording(serverId: string): Promise<void>;
   /** Where "Add DMbot" goes: the API, which sends the browser on to Discord. */
   installUrl(serverId: string): string;
   /** Say you added DMbot to a server it joined through a plain link. */
@@ -175,13 +230,24 @@ const errorKinds: Record<string, ApiErrorKind> = {
   has_free_access: "free-access",
   slow_down: "slow-down",
   busy: "slow-down",
+  bad_link: "bad-link",
+  move_off: "not-ready",
+  not_paid: "no-paid-plan",
+  no_email: "no-email",
+  too_soon: "too-soon",
+  email_failed: "email-failed",
 };
 
 /** The real API over HTTP. `base` is the API's address, e.g. "https://api.example". */
 export function httpApi(base: string, fetcher: typeof fetch = fetch): AccountApi {
   const root = base.replace(/\/+$/, "");
 
-  async function call(method: "GET" | "POST", path: string, body?: unknown): Promise<unknown> {
+  async function call(
+    method: "GET" | "POST",
+    path: string,
+    body?: unknown,
+    asFile = false,
+  ): Promise<unknown> {
     let response: Response;
     try {
       const init: RequestInit = {
@@ -208,7 +274,7 @@ export function httpApi(base: string, fetcher: typeof fetch = fetch): AccountApi
       throw new ApiError(errorKinds[code] ?? (response.status === 403 ? "not-allowed" : "server"));
     }
     if (response.status === 204) return null;
-    return response.json();
+    return asFile ? response.blob() : response.json();
   }
 
   const url = async (path: string, body?: unknown): Promise<string> =>
@@ -227,12 +293,27 @@ export function httpApi(base: string, fetcher: typeof fetch = fetch): AccountApi
     signOut: async () => {
       await call("POST", "/auth/logout");
     },
+    emailSignInRequest: async (email) => {
+      await call("POST", "/auth/email/request", { email });
+    },
+    emailSignInUse: async (token) => {
+      await call("POST", "/auth/email/verify", { token });
+    },
+    getMoveCode: async () => {
+      await call("POST", "/me/move-code");
+    },
+    signOutEverywhere: async () => {
+      await call("POST", "/me/sign-out-everywhere");
+    },
     startTryIt: async () => {
       await call("POST", "/plan/try-it");
     },
     checkoutUrl: (plan) => url("/billing/checkout", { plan }),
     billingPortalUrl: () => url("/billing/portal"),
     extraHoursUrl: () => url("/billing/extra-hours"),
+    downloadExport: async () => (await call("GET", "/me/export", undefined, true)) as Blob,
+    characters: async () =>
+      ((await call("GET", "/me/characters")) as { characters: Character[] }).characters,
     installUrl: (serverId) => `${root}/install?server_id=${encodeURIComponent(serverId)}`,
     linkServer: async (serverId) => {
       await call("POST", `/servers/${encodeURIComponent(serverId)}/link`);
@@ -247,6 +328,9 @@ export function httpApi(base: string, fetcher: typeof fetch = fetch): AccountApi
     },
     withdrawOffer: async (offerId) => {
       await call("POST", `/offers/${encodeURIComponent(offerId)}/withdraw`);
+    },
+    stopRecording: async (serverId) => {
+      await call("POST", `/me/recording/${encodeURIComponent(serverId)}/stop`);
     },
     requestDelete: async () =>
       ((await call("POST", "/account/delete/request")) as { confirm_token: string })
