@@ -10,7 +10,7 @@ from urllib.parse import urlsplit
 
 from dmbot.config import ConfigError
 from dmbot.entitlements import parse_free_users
-from dmbot.mail import MailConfigError, MailSettings, load_mail_settings
+from dmbot.mail import MailConfigError, MailSettings, load_mail_settings, one_address
 from dmbot.web.admin_hash import decode_hash
 from dmbot.web.payments import paid_plan_ids
 from dmbot.web.stripe import StripeConfig
@@ -56,6 +56,9 @@ class WebSettings:
     # Account emails, such as sign-in links (#1231). Nothing is sent until SMTP is set up.
     mail: MailSettings = field(default_factory=MailSettings)
     feedback_repo: str = "smv620/Discord-DMbot"
+    # Where "a support ticket is waiting" goes (#1340). Empty: tickets are still kept and shown on
+    # the admin page, and nobody is emailed. The email never holds the ticket's words.
+    support_team_email: str = ""
     # Cloudflare Turnstile's secret key, the check that a person sent the form. Needed
     # whenever the forms are on, except when testing on localhost.
     turnstile_secret: str = field(default="", repr=False)
@@ -165,6 +168,9 @@ def load_web_settings(env: Mapping[str, str] | None = None) -> WebSettings:
     feedback_repo = get("GITHUB_FEEDBACK_REPO") or "smv620/Discord-DMbot"
     if not re.fullmatch(r"[\w.-]+/[\w.-]+", feedback_repo):
         raise ConfigError("GITHUB_FEEDBACK_REPO must look like owner/name.")
+    support_team_email = get("SUPPORT_TEAM_EMAIL")
+    if support_team_email and not one_address(support_team_email):
+        raise ConfigError("SUPPORT_TEAM_EMAIL must be one email address, like team@example.com.")
     turnstile_secret = get("TURNSTILE_SECRET_KEY")
     if (
         feedback_token
@@ -243,6 +249,7 @@ def load_web_settings(env: Mapping[str, str] | None = None) -> WebSettings:
         link_token_secret=link_secret.encode("utf-8"),
         mail=mail,
         feedback_repo=feedback_repo,
+        support_team_email=support_team_email,
         turnstile_secret=turnstile_secret,
         client_ip_header=client_ip_header,
         admin_emails=admin_emails,

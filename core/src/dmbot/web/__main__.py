@@ -18,7 +18,7 @@ from dmbot.db import Database, DatabaseError
 from dmbot.logs import LOG_FORMATS, LOG_LEVELS, configure_logging
 from dmbot.schema import WEB_ROLE
 from dmbot.sharding import ShardSettings
-from dmbot.web import feedback, move_sync, sessions
+from dmbot.web import feedback, move_sync, sessions, support
 from dmbot.web.admin import HttpGoogle
 from dmbot.web.app import create_app
 from dmbot.web.discord import HttpDiscord
@@ -34,7 +34,8 @@ MOVE_SYNC_SECONDS = 60
 
 
 async def _sweep(db: Database) -> None:
-    """Hourly: expired sign-in sessions, and "Say hello" messages over a year old."""
+    """Hourly: expired sign-in sessions, "Say hello" messages over a year old, and support
+    tickets over 12 months old."""
     while True:
         try:
             removed = await sessions.delete_expired(db, now=int(time.time()))
@@ -55,6 +56,13 @@ async def _sweep(db: Database) -> None:
                 log.info("Removed %d messages older than a year", forgotten)
         except Exception as exc:
             log.error("Removing old messages failed (%s); trying again later", type(exc).__name__)
+        try:
+            # Support tickets are kept for 12 months (privacy page, #1340).
+            expired = await support.forget_old(db)
+            if expired:
+                log.info("Removed %d support tickets older than 12 months", expired)
+        except Exception as exc:
+            log.error("Removing old support tickets failed (%s); trying again", type(exc).__name__)
         await asyncio.sleep(CLEANUP_SECONDS)
 
 

@@ -211,12 +211,15 @@ _KEEP = {"\n", "\t"}
 _REORDER = set("\u202a\u202b\u202c\u202d\u202e\u2066\u2067\u2068\u2069")
 
 
-def _clean(value: str) -> str:
+def clean_text(value: str) -> str:
+    """A typed message with its line ends made plain and its control and reordering
+    characters removed (the support form uses it too, #1340)."""
     value = value.replace("\r\n", "\n").replace("\r", "\n")
     return "".join(
         ch
         for ch in value
-        if ch in _KEEP or (unicodedata.category(ch) != "Cc" and ch not in _REORDER)
+        # Cs: a lone surrogate (JSON can hold one) can't be stored and would be a server error.
+        if ch in _KEEP or (unicodedata.category(ch) not in ("Cc", "Cs") and ch not in _REORDER)
     ).strip()
 
 
@@ -233,12 +236,12 @@ def read_message(raw: object) -> Message | str:
         return "bad_request"
     if raw.get("turnstile") is not None and not isinstance(raw.get("turnstile"), str):
         return "bad_request"
-    text = _clean(text)
+    text = clean_text(text)
     if not text:
         return "empty"
     if len(text) > MAX_MESSAGE:
         return "too_long"
-    contact = _clean(contact or "").replace("\n", " ") or None
+    contact = clean_text(contact or "").replace("\n", " ") or None
     if contact is not None and len(contact) > MAX_CONTACT:
         return "contact_too_long"
     return Message(kind=kind, text=text, contact=contact)

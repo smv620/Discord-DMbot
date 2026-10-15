@@ -58,13 +58,18 @@ describe("Before you start", () => {
     // "It gets the text it needs, not sound" is the privacy page's own phrase (across a line break).
     expect(privacy.replace(/\s+/g, " ")).toContain("It gets the text it needs, not sound");
     expect(row?.answer).toContain("gets the text it needs, not sound");
-    // The yes message says the text isn't used to train the AI; the privacy page doesn't, so the
-    // answer must not either until it does.
-    expect(row?.answer).not.toMatch(/train/i);
+    // The training claim is said by the yes message and, since #1329, the privacy page: the answer
+    // repeats the privacy page's own sentence and nothing stronger, and names no other company.
+    const training = "That text isn't used to train Anthropic's AI.";
+    expect(privacy.replace(/\s+/g, " ")).toContain(training);
+    expect(consent, "the yes message says the same").toContain("It isn't used to train their AI");
+    expect(row?.answer).toContain(training);
+    expect(row?.answer.match(/train/gi)).toHaveLength(1);
+    expect(row?.answer).not.toMatch(/never|nobody|no one|guarantee|delete/i);
     // Any capitalised word, short ones and all-caps ones too ("OVH", "AWS"), apart from the few
     // plain words that start a sentence or say what it is.
-    const names = (row?.answer.match(/\b[A-Z][A-Za-z]+\b/g) ?? []).filter((w) => !["Yes", "AI", "An", "A"].includes(w));
-    expect(names.sort()).toEqual(["Anthropic", "Deepgram"]);
+    const names = (row?.answer.match(/\b[A-Z][A-Za-z]+\b/g) ?? []).filter((w) => !["Yes", "AI", "An", "A", "That"].includes(w));
+    expect([...new Set(names)].sort()).toEqual(["Anthropic", "Deepgram"]);
   });
 
   it("opens the first row, so the recording answer is read without a click", () => {
