@@ -23,9 +23,11 @@ from fastapi import Depends, FastAPI, HTTPException, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, RedirectResponse
 
-from dmbot import consent_notify, entitlements, install, plans
+from dmbot import consent_notify, entitlements, install, mail, plans
+from dmbot.account_id import from_dmbot_id
 from dmbot.consent import ConsentStore
 from dmbot.db import Database
+from dmbot.link_tokens import check_unsubscribe_token
 from dmbot.web import admin_api, entitlements_writer, feedback, offers, sessions, tokens
 from dmbot.web.accounts import (
     account_email,
@@ -35,6 +37,7 @@ from dmbot.web.accounts import (
     first_paid_month_after_trial,
     link_install,
     record_install,
+    user_of_dmbot_id,
 )
 from dmbot.web.admin import CSRF_HEADER, AdminSessions, FailedTries, GoogleSignIn
 from dmbot.web.characters import build_characters
@@ -258,6 +261,11 @@ def create_app(
         except DiscordError as exc:
             log.warning("Sign-in failed: %s", exc)
             return failed
+        except sessions.AccountMoved:
+            # This Discord account's plan moved to another one (#1230): say so plainly.
+            moved = RedirectResponse(f"{account_page}?signin=moved", status_code=302)
+            moved.delete_cookie(state_cookie, path="/", secure=settings.secure_cookies)
+            return moved
         except Exception:
             # A bad answer from Discord or a database problem: the person gets the plain
             # "try again" page, the log gets the details (no token, no names).
@@ -691,6 +699,28 @@ def create_app(
             with contextlib.suppress(ValueError):
                 return str(ipaddress.ip_address(forwarded))
         return request.client.host if request.client else "unknown"
+
+    @app.post("/email/unsubscribe")
+    async def email_unsubscribe(request: Request) -> dict[str, bool]:
+        """The unsubscribe link in an offer email (#1229): the page sends the `uid` and `t`
+        from the link. A signed token proves the link came from us, so this needs no
+        sign-in; it never says whether the person has an account."""
+        body = await request.body()
+        if len(body) > 1024:
+            raise HTTPException(status_code=413, detail="too_long")
+        try:
+            raw = json.loads(body)
+            uid, token = str(raw["uid"]), str(raw["t"])
+            user_id = from_dmbot_id(uid)
+        except (ValueError, KeyError, TypeError):
+            raise HTTPException(status_code=400, detail="bad_link") from None
+        if not check_unsubscribe_token(uid, token, settings.link_token_secret):
+            raise HTTPException(status_code=400, detail="bad_link")
+        # The link carries the ID the account was made with; the account may have moved to a
+        # new Discord ID since (#1230).
+        current = await user_of_dmbot_id(db, uid)
+        await mail.unsubscribe(db, current or user_id, now=int(clock()))
+        return {"ok": True}
 
     @app.post("/feedback")
     async def send_feedback(request: Request) -> dict[str, str]:

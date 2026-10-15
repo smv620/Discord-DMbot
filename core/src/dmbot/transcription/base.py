@@ -21,23 +21,33 @@ MIN_UTTERANCE_S = 0.25
 
 
 class Transcript(str):
-    """Text from an engine, with how sure it was (0 to 1, the words' average) when it
-    says (Deepgram does; #699). It is a str, so everything that takes text takes it; the
-    confidence is lost as soon as the text is changed, which is fine: it's read on
-    delivery (`confidence_of`)."""
+    """Text from an engine, with how sure it was (0 to 1) when it says, and which engine's
+    number that is (Deepgram's is the words' average, #699; local Whisper's is the chance it
+    gave the words it wrote, #733: not the same scale). It is a str, so everything that takes
+    text takes it; the confidence is lost as soon as the text is changed, which is fine: it's
+    read on delivery (`confidence_of`)."""
 
-    __slots__ = ("confidence",)  # no dict per line: sessions keep many (table.heard)
+    __slots__ = ("confidence", "engine")  # no dict per line: sessions keep many (table.heard)
     confidence: float | None
+    engine: str | None  # whose number it is: engines' scales differ, so each has its own limits
 
-    def __new__(cls, text: str, confidence: float | None = None) -> Transcript:
+    def __new__(
+        cls, text: str, confidence: float | None = None, engine: str | None = None
+    ) -> Transcript:
         made = super().__new__(cls, text)
         made.confidence = confidence
+        made.engine = engine
         return made
 
 
 def confidence_of(text: str | None) -> float | None:
     """How sure the engine was of this text, or None if it didn't say."""
     return text.confidence if isinstance(text, Transcript) else None
+
+
+def engine_of(text: str | None) -> str | None:
+    """Which engine wrote this text, if it said (see `Transcript.engine`)."""
+    return text.engine if isinstance(text, Transcript) else None
 
 
 class TranscriberUnavailable(RuntimeError):

@@ -211,7 +211,7 @@ async def build_me(db: Database, session: Session, *, now: int) -> dict[str, Any
             # Only from the plan's own month (a lapsed plan beside a grant would read the
             # grant's minutes).
             "hoursUsed": round(used_minutes / 60, 1) if plan.usable(now) else 0,
-            "hoursCap": plan.hours_this_period,
+            "hoursCap": entitlements.cap_hours(plan.hours_this_period, plan.minutes_taken),
             "renewsOn": _iso_date(plan.period_end),
             "graceEndsOn": _iso_date(plan.grace_ends_at),
         }

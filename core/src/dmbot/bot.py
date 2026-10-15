@@ -33,13 +33,16 @@ from dmbot import (
     fightbot,
     hours,
     install,
+    mail,
     owner_presence,
     plan_rules,
     retention,
     sheet_reread,
     table_chat,
+    trial_jobs,
     usage,
 )
+from dmbot.account_move import AccountMoves
 from dmbot.ai import FEATURE_TIERS, AnthropicClient, Feature
 from dmbot.ai_watch import AIWatch
 from dmbot.audio.segmenter import Segmenter, Utterance
@@ -145,6 +148,7 @@ from dmbot.ears.protocol import (
 from dmbot.ears.server import EarsServer
 from dmbot.fightbot import FightState
 from dmbot.logs import log_context, set_log_context
+from dmbot.mail import Mailer
 from dmbot.memory import definitions, document_reader
 from dmbot.memory.backup import MemorySection
 from dmbot.memory.lookup import CampaignLookup, LookupCache
@@ -201,13 +205,19 @@ from dmbot.transcript.stream import TranscriptStream
 from dmbot.transcript.topic_ai import classify
 from dmbot.transcript.topics import GAME, OFF_TOPIC, TopicWindow, Waiting, obviously_game
 from dmbot.transcript.topics import marker as topic_marker
-from dmbot.transcription.base import PlaceholderTranscriber, Transcriber, confidence_of
+from dmbot.transcription.base import (
+    PlaceholderTranscriber,
+    Transcriber,
+    confidence_of,
+    engine_of,
+)
 from dmbot.transcription.factory import build_transcriber
 from dmbot.transcription.pipeline import TranscriptionPipeline, clip_budget_s, speech_sent_line
 from dmbot.ui import logic as ui_logic
 from dmbot.ui import rule_card
 from dmbot.ui.dmbot_commands import _failed, dmbot_group
 from dmbot.ui.house_rules import dmbot_house_rules  # noqa: F401 (registers it)
+from dmbot.ui.migrate import dmbot_migrate  # noqa: F401 (registers it)
 from dmbot.ui.name_card import UndoButton
 from dmbot.ui.name_lists import UndoListButton
 from dmbot.ui.names import ReviewButton, after_session_text, review_view
@@ -254,6 +264,7 @@ OWNER_CHECK_GAP_S = 0.5  # between campaigns in the daily look
 OWNER_START_WAIT_S = 2  # at a start the table is waiting
 OWNER_ASK_EVERY_S = 3600  # Discord is asked about one campaign's owner at most this often
 OWNER_LOOK_TIMEOUT_S = 6  # asking Discord about an owner must not hold up a start
+MOVED_CHECKED_MAX = 100_000  # people remembered as checked; cleared past this
 FORGET_TIMEOUT_S = 10  # removing learned names must not hold up stopping a recording
 METER_INTERVAL_S = 60  # how often listening minutes are written to the hours meter (#437)
 METER_FINAL_TRIES = 3  # at a stop: the last minutes are written nowhere else
@@ -514,6 +525,7 @@ class DMBotTree(app_commands.CommandTree["DMBot"]):
 
     async def interaction_check(self, interaction: discord.Interaction) -> bool:
         set_log_context(guild_id=interaction.guild_id)
+        self.client.tell_if_moved_later(interaction.user.id)
         return True
 
     async def on_error(
@@ -610,6 +622,34 @@ class DMBot(commands.AutoShardedBot):
         # The hours meter (#437 part 2): listening minutes are written here; None records
         # nothing (tests and tools that run no real sessions).
         self.meter = meter
+        # The last day of Try It and the extension (#1229): only with a database, and the mail
+        # sender (which sends nothing until SMTP is set up) for the emails.
+        self.trial_jobs: trial_jobs.TrialJobs | None = None
+        self.mailer: Mailer | None = None
+        self.account_moves: AccountMoves | None = None  # moving to a new Discord account (#1230)
+        self._moved_tasks: set[asyncio.Task[None]] = set()
+        # People already checked for a "your account moved" notice since this process
+        # started: a command from them costs nothing more. An account that moves is taken
+        # out (after_account_move), so it is checked again.
+        self._moved_checked: set[int] = set()
+        if meter is not None:
+            self.account_moves = AccountMoves(meter.db)
+            self.mailer = Mailer(
+                meter.db,
+                settings.mail,
+                site_url=settings.site_url,
+                link_secret=settings.link_token_secret,
+            )
+            self.trial_jobs = trial_jobs.TrialJobs(
+                meter.db,
+                self.mailer,
+                enforce_plans=settings.enforce_plans,
+                site_url=settings.site_url,
+                link_secret=settings.link_token_secret,
+                send_dm=self._dm_trial_user,
+                name_of=self._discord_name,
+                skip=settings.free_users,
+            )
         # The daily job that warns about and deletes campaigns past their keep date (#964).
         # Needs the meter (the owners' plans); without one nothing is ever deleted.
         self._owner_asked: dict[str, float] = {}  # campaign id -> when Discord was last asked
@@ -656,21 +696,33 @@ class DMBot(commands.AutoShardedBot):
             else None
         )
         # AI text calls (a document into a names list).
-        self.ai = self.ai_client.tier(FEATURE_TIERS[Feature.NAMES]) if self.ai_client else None
+        self.ai = (
+            self.ai_client.tier(FEATURE_TIERS[Feature.NAMES], Feature.NAMES)
+            if self.ai_client
+            else None
+        )
         # A player's sheet document read into the sheet fields (#1125).
         self.sheet_ai = (
-            self.ai_client.tier(FEATURE_TIERS[Feature.SHEET]) if self.ai_client else None
+            self.ai_client.tier(FEATURE_TIERS[Feature.SHEET], Feature.SHEET)
+            if self.ai_client
+            else None
         )
         # FightBot's reminders to players in combat (#1129), on the smallest model.
         self.fight_ai = (
-            self.ai_client.tier(FEATURE_TIERS[Feature.FIGHTBOT]) if self.ai_client else None
+            self.ai_client.tier(FEATURE_TIERS[Feature.FIGHTBOT], Feature.FIGHTBOT)
+            if self.ai_client
+            else None
         )
         # The off-topic filter (#52), the audio check and the DM sidebar.
         self.topic_ai = (
-            self.ai_client.tier(FEATURE_TIERS[Feature.TOPIC]) if self.ai_client else None
+            self.ai_client.tier(FEATURE_TIERS[Feature.TOPIC], Feature.TOPIC)
+            if self.ai_client
+            else None
         )
         self.audio_ai = (
-            self.ai_client.tier(FEATURE_TIERS[Feature.AUDIO_CHECK]) if self.ai_client else None
+            self.ai_client.tier(FEATURE_TIERS[Feature.AUDIO_CHECK], Feature.AUDIO_CHECK)
+            if self.ai_client
+            else None
         )
         # The DM sidebar's answer engine (#934), on that same smallest model. #935 calls
         # `bot.sidebar_answers.answer(...)` for voice memos and "hold on, I need to find…"; None
@@ -831,6 +883,7 @@ class DMBot(commands.AutoShardedBot):
             self._watched(self._idle_sweeper(), "idle-sweep"),
             self._watched(self._summary_poster(), "summaries"),
             self._watched(self._meter_loop(), "hours-meter"),
+            *([self._watched(self._trial_loop(), "trial-jobs")] if self.trial_jobs else []),
             *([self._watched(self._retention_loop(), "retention")] if self.retention else []),
             *(
                 [self._watched(self._test_recordings_loop(), "test-recordings")]
@@ -2038,8 +2091,8 @@ class DMBot(commands.AutoShardedBot):
             async with asyncio.timeout(NAMES_WAIT_S):
                 return await self.sidebar_people(campaign)
 
-        ai = self.ai_client.tier(FEATURE_TIERS[Feature.SIDEBAR])
-        careful = self.ai_client.tier(FEATURE_TIERS[Feature.SIDEBAR_RETRY])
+        ai = self.ai_client.tier(FEATURE_TIERS[Feature.SIDEBAR], Feature.SIDEBAR)
+        careful = self.ai_client.tier(FEATURE_TIERS[Feature.SIDEBAR_RETRY], Feature.SIDEBAR_RETRY)
         return Sidebar(
             ai,
             rules_index.srd,
@@ -2058,11 +2111,17 @@ class DMBot(commands.AutoShardedBot):
             return []
         rows = await self.memory.table_people(campaign.guild_id, campaign.id)
         agreed = await self.consent.consenting(campaign.guild_id)
+        table = self.tables.get(campaign.guild_id)
+        if table is not None and table.campaign_id == campaign.id:
+            starter: int | None = table.dm_user_id  # who started this session
+        else:
+            starter = next(iter(campaign.dm_user_ids)) if len(campaign.dm_user_ids) == 1 else None
         return people_lines(
             rows,
             agreed,
             campaign.dm_user_ids,
             lambda user_id: self.name_of(campaign.guild_id, user_id),
+            dm_word_user=starter,
         )
 
     async def plan_gate(
@@ -2279,6 +2338,21 @@ class DMBot(commands.AutoShardedBot):
             await self.post(screen_id, dmbchat_problem)
         self._check_house_file(campaign, screen_id)
         self._track(set_update.check_update(self, campaign, screen_id), "shared-rules-update")
+        trial_line = ""
+        # Told once, privately, at their next start (#1229). It is marked told as it is read,
+        # before the reply is sent: a reply that fails to send loses this one line, which is
+        # better than telling the same person twice, and the start itself is not held up.
+        if self.meter is not None:
+            try:
+                trial_line = (
+                    await trial_jobs.take_extension_notice(self.meter.db, user.id, int(time.time()))
+                    or ""
+                )
+                if self.account_moves is not None:  # an old account that moved (#1230)
+                    moved = await self.account_moves.take_moved_notice(user.id)
+                    trial_line = "\n\n".join(x for x in (trial_line, moved) if x)
+            except Exception:
+                log.exception("Couldn't check for a Try It extension notice")
         transcript_line = (
             f"📜 Transcript (anyone in the server can read it): <#{transcript_id}>\n"
             if transcript_id
@@ -2289,6 +2363,7 @@ class DMBot(commands.AutoShardedBot):
             f"{transcript_line}🛡️ Notes for the DM: <#{screen_id}>"
             f"{ui_logic.screen_note(campaign.dm_screen_visibility)}\n"
             "Only people who said yes are recorded, the DM included."
+            + (f"\n\n{trial_line}" if trial_line else "")
         )
 
     async def stop_session(
@@ -3108,7 +3183,9 @@ class DMBot(commands.AutoShardedBot):
             # What the audio check reads if their audio rule fires (#699): the line as the
             # transcript has it (before the off-topic filter, which may hide it later),
             # with the engine's confidence; kept as plain text.
-            table.capture_log.add_line(utterance.user_id, str(cleaned or text), confidence_of(text))
+            table.capture_log.add_line(
+                utterance.user_id, str(cleaned or text), confidence_of(text), engine=engine_of(text)
+            )
         if text and table.transcript_channel_id is not None:
             guild = self.get_guild(utterance.guild_id)
             member = guild.get_member(utterance.user_id) if guild else None
@@ -5084,6 +5161,82 @@ class DMBot(commands.AutoShardedBot):
                     after_session_text(added),
                     view=review_view(cid),
                 )
+
+    async def _dm_trial_user(self, user_id: int, text: str) -> trial_jobs.DmResult:
+        """A private message to a person who is not at a table now. "closed" when Discord
+        refuses for good (messages closed, no shared server); "retry" for anything that may
+        pass. Never raises."""
+        try:
+            user = await self.fetch_user(user_id)
+            await user.send(text, allowed_mentions=discord.AllowedMentions.none())
+        except discord.Forbidden:
+            return "closed"
+        except discord.NotFound:
+            return "closed"
+        except Exception:
+            return "retry"
+        return "sent"
+
+    async def after_account_move(self, old_user_id: int, new_user_id: int) -> None:
+        """After an account has moved (#1230): tell the old account privately, if it still
+        exists. The payment company's records are brought up to date when its next event
+        arrives (the website's webhook finds a moved person through the marker). Never
+        raises."""
+        from dmbot.account_move import long_date, old_told
+
+        self._moved_checked.discard(old_user_id)  # its next command is checked again
+        try:
+            await self._dm_trial_user(old_user_id, old_told(long_date(int(time.time()))))
+        except Exception:
+            log.exception("Couldn't tell the old account about a move")
+
+    def tell_if_moved_later(self, user_id: int) -> None:
+        """Start the "your account moved" check without making the command wait for it."""
+        if self.account_moves is None or user_id in self._moved_checked:
+            return
+        # Marked before the task starts, so two commands at once start one check.
+        if len(self._moved_checked) >= MOVED_CHECKED_MAX:
+            self._moved_checked.clear()
+        self._moved_checked.add(user_id)
+        task = asyncio.create_task(self.tell_if_moved(user_id))
+        self._moved_tasks.add(task)  # a reference, or the task could be dropped mid-way
+        task.add_done_callback(self._moved_tasks.discard)
+
+    async def tell_if_moved(self, user_id: int) -> None:
+        """An old account whose DMbot account moved (#1230) hears so, privately, the first time
+        it uses any command (marked told as it is read; the line is lost if the message can't
+        be sent, which beats telling twice). Never raises and never holds a command up."""
+        if self.account_moves is None:
+            return
+        try:
+            notice = await self.account_moves.take_moved_notice(user_id)
+            if notice:
+                await self._dm_trial_user(user_id, notice)
+        except Exception:
+            self._moved_checked.discard(user_id)  # try again at their next command
+            log.exception("Couldn't tell an old account that its DMbot account moved")
+
+    async def _discord_name(self, user_id: int) -> str:
+        try:
+            user = await self.fetch_user(user_id)
+        except discord.HTTPException:
+            return "there"
+        return user.display_name
+
+    async def _trial_loop(self) -> None:
+        """Every hour: the last-day messages and the automatic extensions (#1229). Waits a
+        few minutes first so a restart loop can't send anything twice in a hurry (each message
+        is also recorded, so none goes out twice anyway)."""
+        await asyncio.sleep(300)
+        while True:
+            try:
+                if self.trial_jobs is not None:
+                    await self.trial_jobs.run()
+                    if self.meter is not None:  # old sign-in and move-code records (#1229)
+                        await mail.prune_account_emails(self.meter.db, int(time.time()))
+            except Exception:
+                log.exception("The Try It jobs failed")
+            await asyncio.sleep(3600)
 
     async def _meter_loop(self) -> None:
         """Once a minute, write each running session's listening minutes to the hours

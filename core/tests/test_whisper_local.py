@@ -1,12 +1,18 @@
 import asyncio
 import importlib.util
+import math
 import threading
 import unittest
 from dataclasses import dataclass
 from typing import Any
 
 from dmbot.audio.segmenter import Utterance
-from dmbot.transcription.base import TranscriberUnavailable
+from dmbot.transcription.base import (
+    TranscriberUnavailable,
+    Transcript,
+    confidence_of,
+    engine_of,
+)
 from dmbot.transcription.config import TranscriptionSettings
 from dmbot.transcription.whisper_local import (
     MAX_NEW_TOKENS,
@@ -15,6 +21,7 @@ from dmbot.transcription.whisper_local import (
     WHISPER_MAX_LENGTH,
     LocalWhisperTranscriber,
     SegmentScore,
+    confidence_of_segments,
     keep_segment,
     max_new_tokens,
 )
@@ -124,6 +131,64 @@ class LocalWhisperTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(call["language"], "en")
         self.assertTrue(call["vad_filter"])
         self.assertEqual(call["beam_size"], 1)
+
+    async def test_the_text_carries_whispers_own_confidence(self) -> None:
+        t = LocalWhisperTranscriber(TranscriptionSettings())
+        t._model = FakeModel(
+            [FakeSegment(" I cast", 0.0, -0.2), FakeSegment(" shield now", 0.0, -0.6)]
+        )
+        text = await t.transcribe(Utterance(1, 2, 0, 0, bytes(32000)), [])
+        self.assertEqual(text, "I cast shield now")
+        self.assertEqual(engine_of(text), "whisper")
+        # exp(-0.2) over 2 words and exp(-0.6) over 2 words, averaged per word.
+        expected = (2 * math.exp(-0.2) + 2 * math.exp(-0.6)) / 4
+        self.assertAlmostEqual(confidence_of(text) or 0, expected)
+
+    async def test_dropped_segments_do_not_pull_the_confidence_down(self) -> None:
+        t = LocalWhisperTranscriber(TranscriptionSettings())
+        t._model = FakeModel(
+            [FakeSegment(" I cast shield", 0.0, -0.2), FakeSegment(" ghost", 0.95, -2.0)]
+        )
+        text = await t.transcribe(Utterance(1, 2, 0, 0, bytes(32000)), [])
+        self.assertEqual(text, "I cast shield")
+        self.assertAlmostEqual(confidence_of(text) or 0, math.exp(-0.2))
+
+    async def test_only_blank_segments_is_nothing(self) -> None:
+        t = LocalWhisperTranscriber(TranscriptionSettings())
+        t._model = FakeModel([FakeSegment("  "), FakeSegment(" ")])
+        self.assertIsNone(await t.transcribe(Utterance(1, 2, 0, 0, bytes(32000)), []))
+
+    def test_a_number_that_is_not_finite_is_no_confidence(self) -> None:
+        nan = float("nan")
+        self.assertIsNone(confidence_of_segments([SegmentScore("a b", 0.0, nan)]))
+        self.assertIsNone(confidence_of_segments([SegmentScore("a b", 0.0, -math.inf)]))
+        self.assertIsNone(
+            confidence_of_segments(
+                [SegmentScore("a b", 0.0, nan), SegmentScore("c d", 0.0, -math.inf)]
+            )
+        )
+
+    def test_a_bad_segment_is_left_out_not_counted_as_zero(self) -> None:
+        # One bad number on a clean line must not look like a garbled one.
+        mixed = [SegmentScore("a b c d", 0.0, -0.2), SegmentScore("e f g h i j", 0.0, float("nan"))]
+        self.assertAlmostEqual(confidence_of_segments(mixed) or 0, math.exp(-0.2))
+
+    def test_the_text_survives_copy_and_pickle_with_its_engine(self) -> None:
+        import copy
+        import pickle
+
+        made = Transcript("hi there", 0.6, "whisper")
+        for other in (copy.copy(made), copy.deepcopy(made), pickle.loads(pickle.dumps(made, 2))):
+            self.assertEqual(
+                (str(other), other.confidence, other.engine), ("hi there", 0.6, "whisper")
+            )
+
+    def test_confidence_of_segments_is_the_chance_of_the_words(self) -> None:
+        self.assertIsNone(confidence_of_segments([]))
+        self.assertAlmostEqual(
+            confidence_of_segments([SegmentScore("a b c", 0.0, -0.5)]) or 0, math.exp(-0.5)
+        )
+        self.assertEqual(confidence_of_segments([SegmentScore("a", 0.0, 0.3)]), 1.0)  # capped
 
     async def test_auto_language_passes_none(self) -> None:
         t = LocalWhisperTranscriber(TranscriptionSettings(language=""))

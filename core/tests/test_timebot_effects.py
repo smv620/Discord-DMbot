@@ -67,6 +67,22 @@ class Durations(unittest.TestCase):
         self.assertFalse(durations.parse("0 minutes").timed)
         self.assertFalse(durations.parse("soon").timed)
 
+    def test_seconds_round_up_to_the_clocks_whole_minute(self) -> None:
+        for text, minutes in (
+            ("60 seconds", 1), ("30 sec", 1), ("45 s", 1), ("1 second", 1),
+            ("61 seconds", 2), ("90 sec", 2), ("120 seconds", 2),
+        ):  # fmt: skip
+            self.assertEqual(durations.parse(text).minutes, minutes, text)
+        self.assertFalse(durations.parse("0 seconds").timed)
+        self.assertFalse(durations.parse("5 spells").timed)  # an "s" that starts a word
+        self.assertFalse(durations.parse("2 sessions").timed)
+        self.assertFalse(durations.parse("10 feet").timed)
+        # A word that only looks like a length must not hide the real one after it.
+        self.assertEqual(durations.parse("Dismiss, up to 1 hour").minutes, 60)
+        self.assertEqual(durations.parse("Class: 8 hours").minutes, 480)
+        self.assertEqual(durations.parse("3 uses, 1 hour").minutes, 60)
+        self.assertEqual(durations.parse("1 minute").minutes, 1)  # minutes still read as before
+
     def test_every_spell_in_the_index_parses_or_is_plainly_untimed(self) -> None:
         unread = []
         for entry in srd().entries:
@@ -174,6 +190,31 @@ class Timers(DatabaseTest):
         await fx.start_timer(it, self.a.id, "Torch", "", "")
         await fx.start_timer(it, self.a.id, "Fireball", "", "")  # instantaneous
         self.assertEqual(await self.effects.running(GUILD_A, self.a.id), [])
+
+    async def test_sixty_seconds_starts_a_one_minute_timer(self) -> None:
+        await self.set_clock()
+        await fx.start_timer(self.interaction(), self.a.id, "Bless", "Mira", "60 seconds")
+        [effect] = await self.effects.running(GUILD_A, self.a.id)
+        self.assertEqual(effect.minutes, 1)
+
+    async def test_no_length_known_names_the_spell_and_says_no_timer_started(self) -> None:
+        await self.set_clock()
+        it = self.interaction()
+        await fx.start_timer(it, self.a.id, "Torch", "", "")
+        said = it.followup.send.await_args.args[0]
+        self.assertIn("No length found for Torch", said)
+        self.assertIn("No timer started", said)
+
+    async def test_a_length_that_cannot_be_read_is_named_and_not_swapped_for_the_spells(
+        self,
+    ) -> None:
+        await self.set_clock()
+        it = self.interaction()
+        await fx.start_timer(it, self.a.id, "Bless", "Mira", "a fortnight")
+        self.assertEqual(await self.effects.running(GUILD_A, self.a.id), [])
+        said = it.followup.send.await_args.args[0]
+        self.assertIn("couldn't read 'a fortnight'", said)
+        self.assertIn("Try a length like 10 minutes or 1 hour", said)
 
     async def test_without_a_clock_nothing_starts(self) -> None:
         it = self.interaction()
