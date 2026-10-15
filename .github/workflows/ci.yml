@@ -33,7 +33,7 @@ jobs:
         # A job is skipped only on an explicit "false": empty outputs (a crash here) run everything.
         run: |
           set -o pipefail
-          scripts/ci-changes.sh | tee -a "$GITHUB_OUTPUT"
+          scripts/ci-changes.sh origin/clouddev-1323-proof-base | tee -a "$GITHUB_OUTPUT"
 
   ears:
     name: ears (Node voice service)
