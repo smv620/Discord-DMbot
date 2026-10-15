@@ -281,6 +281,10 @@ def recycle(schema: str) -> bool:
         now = stamp(schema)
         if now == _BUILT.get(schema):
             clear_rows(schema)
+            # Restarting a counter rewrites its row in pg_sequence, so the fingerprint moves
+            # even though nothing but the counter changed. Take it again now: the check above
+            # has already shown the schema was untouched until this moment.
+            _BUILT[schema] = stamp(schema)
             _FREE.append(schema)
             return True
         WHY = "changed: " + _what_differs(now, _BUILT.get(schema, ""))
