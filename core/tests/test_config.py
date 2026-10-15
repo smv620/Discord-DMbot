@@ -103,6 +103,13 @@ class PlanChecksSetting(unittest.TestCase):
         with self.assertRaisesRegex(ConfigError, "DMBOT_STORY_EXTRACTOR must be 1"):
             load_settings({**BASE, "DMBOT_STORY_EXTRACTOR": "maybe"})
 
+    def test_the_recall_budget_has_a_default_and_is_checked(self) -> None:
+        self.assertEqual(load_settings(BASE).recall_budget, 4000)
+        self.assertEqual(load_settings({**BASE, "DMBOT_RECALL_BUDGET": "9000"}).recall_budget, 9000)
+        for bad in ("100", "50001", "lots", "-5"):
+            with self.subTest(bad), self.assertRaisesRegex(ConfigError, "DMBOT_RECALL_BUDGET"):
+                load_settings({**BASE, "DMBOT_RECALL_BUDGET": bad})
+
     def test_continuity_levels_have_defaults_and_are_checked(self) -> None:
         levels = load_settings(BASE).continuity
         self.assertEqual((levels.possible, levels.probable, levels.likely), (0.25, 0.5, 0.8))

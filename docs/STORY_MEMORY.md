@@ -571,7 +571,18 @@ Each step is useful on its own and ships behind the existing phases.
    counts only.
    Start after-session only, then live.
 2. **Phase 5b: NPC tracker and reputation:** knowledge (clues, `knows`, `witnessed`),
-   deeds, standing, the NPC channel, the recall service.
+   deeds, standing, the NPC channel, the recall service. **Slice 1 is built (#1350): the recall
+   service,** `dmbot.memory.recall`, in code only (no AI, no screen, used nowhere yet). From some
+   names or entry ids, an audience (`dm_screen`, `players` or `transcript`), a story time and a
+   size budget (`DMBOT_RECALL_BUDGET`, 4000 characters unless set) it walks one or two steps over
+   the facts the DM confirmed that are true at that time (a group or a thread brings its members
+   at no extra step), ranks them by how recent they are and how often their names are heard,
+   filters by audience before returning anything, adds up to three quoted lines to each fact
+   (only from people recorded now; the DM's sidebar lines never), cuts to the budget, and gives
+   every item the id of its entry, fact or line; `check_citations` checks an answer cites only
+   those. The players' audience gets no secret fact, secret name, entry note, condition or
+   story-plan fact; the transcript's gets nothing. One recall on a campaign of 3,000 entries and
+   10,000 facts is checked to take under 50 ms.
 3. **Phase 5c: PlotBot:** threads, promises, clues, `led_to`, stalled-thread nudges,
    summaries, the pre-session note, the AI recap.
 4. **Phase 5d: Shared story:** the story plan, `same_as` links, divergence ("Watch
