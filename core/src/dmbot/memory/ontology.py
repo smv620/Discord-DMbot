@@ -10,14 +10,18 @@ description, examples and a reason.
 from __future__ import annotations
 
 import difflib
+import functools
+import logging
 import re
-from collections.abc import Iterable, Mapping, Sequence
+from collections import Counter
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 
 from dmbot.memory.models import (
     ALIVE,
     BEING_CONDITIONS,
     CAPTURED,
+    CONDITIONS,
     DEAD,
     DESCRIPTION_MAX,
     DESTROYED,
@@ -33,6 +37,8 @@ from dmbot.memory.models import (
     UNKNOWN,
     MemoryRuleError,
 )
+
+log = logging.getLogger(__name__)
 
 ACTIVE, DEPRECATED = "active", "deprecated"
 KEY_PATTERN = re.compile(r"^[a-z][a-z0-9_]{1,39}$")
@@ -544,6 +550,222 @@ def _words(text: str) -> str:
 # each relationship's own `synonyms` (#1189), so there is one place to say it.
 SYNONYMS: Mapping[str, str] = {s: p.key for p in CORE_PREDICATES for s in p.synonyms}
 
+# ---- the ontology steward's rules (docs/STORY_MEMORY.md, "How the ontology steward decides a new
+# term"; #1298). Fixed rules decide, never an AI, and the same proposal always gets the same
+# answer: nothing here reads a campaign.
+
+# Words from the game's rules. They live in the rules data, and campaign memory only links to them,
+# so none of them may become a kind of thing or a relationship. Compared as plain words (case,
+# spaces, _ and - ignored). The SRD's condition names are added from the rules data itself.
+RULES_WORDS = frozenset(
+    {
+        "feat", "spell", "cantrip", "class", "subclass", "species", "race", "background",
+        "ability", "ability score", "skill", "saving throw", "death saving throw",
+        "proficiency", "proficiency bonus", "expertise", "condition", "action", "bonus action",
+        "reaction", "attack", "initiative", "hit points", "hit die", "armor class",
+        "difficulty class", "damage type", "spell slot", "concentration", "advantage",
+        "disadvantage", "attunement", "inspiration", "short rest", "long rest", "cover",
+        "ability check", "level", "experience points", "stat block", "creature type", "round",
+    }
+)  # fmt: skip
+# Plain-English words that mean a rules word in the game, so a proposal named like this is the
+# rules concept, not a story relationship. Each says why (the value is the rules word it is).
+# These are kept apart from SYNONYMS, which map a word to a story relationship to reuse.
+RULES_SYNONYMS: Mapping[str, str] = {
+    "check": "ability check",  # "make a check" is an ability check, not an inspection
+    "save": "saving throw",  # "a save" is a saving throw, not rescuing someone
+    "saves": "saving throw",  # the plural, said the same way
+    "turn": "round",  # a turn in a round, or turning undead: never a story link
+    "round": "round",  # six seconds of combat
+    "rest": "short rest",  # a short or long rest, not a pause
+    "attune": "attunement",  # bonding to a magic item, not a link between two names
+    "attuned": "attunement",  # the same, as it is said at the table
+    "ac": "armor class",  # how hard something is to hit
+    "hp": "hit points",  # a number on a sheet
+    "dc": "difficulty class",  # the number a roll must reach
+    "prof": "proficiency",  # short for proficiency
+    "proficient": "proficiency",  # trained in a skill or tool
+    "dis": "disadvantage",  # said for "rolls with disadvantage"
+    "adv": "advantage",  # said for "rolls with advantage"
+    "slot": "spell slot",  # not a place in a list
+    "reach": "reach",  # how far a creature can strike in melee
+    "bless": "spell",  # a spell's name, not an act of favour between names
+}
+
+
+@functools.cache
+def rules_words() -> frozenset[str]:
+    """Every rules word as plain words: the list above and the SRD's condition names (read
+    from the rules data, once, so they are not typed twice), without the words slice 1 of
+    story memory uses for what a being or thing is now (alive, dead, intact…)."""
+    from dmbot.rules.index import srd  # the data is only read when a term is first judged
+
+    conditions = {_words(n) for n in srd().names("condition", "2024")}
+    state_words = {_words(c) for c in CONDITIONS}
+    return frozenset(_words(w) for w in RULES_WORDS) | (conditions - state_words)
+
+
+def rules_word_for(*texts: str, everyday: bool = True) -> str | None:
+    """The rules word that any of these texts is (or, with `everyday`, names through
+    RULES_SYNONYMS), or None. The everyday words ("reach", "turn", "rest") can be a fair
+    label for a story relationship, so the live new-term check passes everyday=False for a
+    label and only refuses them as a key."""
+    known = rules_words()
+    for text in texts:
+        words = _words(text)
+        if words in known:
+            return words
+        if everyday and words in RULES_SYNONYMS:
+            return RULES_SYNONYMS[words]
+    return None
+
+
+REASON_RULES_WORD = "rules word"
+REASON_SYNONYM = "synonym of an existing term"
+REASON_EXACT = "same name or label as an existing term"
+REASON_SPELLING = "spelled like an existing term"
+REASON_SHAPE = "does not say what it connects"
+REASON_CLOSE_MEANING = "means the same as an existing term"
+REASON_BETWEEN = "not clearly different from an existing term"
+# The catch-all relationship a refused term's fact is kept on, with the steward's words as its
+# label, so a refusal never loses the fact.
+FALLBACK_PREDICATE = "associated_with"
+
+
+@dataclass(frozen=True, slots=True)
+class Proposal:
+    """A term the steward is asked about: a kind of thing or a relationship, in the words the
+    AI used, with (for a relationship) the kinds of things it connects."""
+
+    key: str
+    label: str
+    kind: str = "relationship"  # "relationship" or "type"
+    subject_types: tuple[str, ...] = ()
+    object_types: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
+class Accepted:
+    """A new term the rules let in. `meaning_checked` is False until the meaning check
+    (embeddings) exists, so the health numbers can say how many passed unchecked."""
+
+    key: str
+    meaning_checked: bool = False
+
+
+@dataclass(frozen=True, slots=True)
+class Reused:
+    """An existing term the proposal should use instead."""
+
+    existing: str
+    reason: str
+
+
+@dataclass(frozen=True, slots=True)
+class Fallback:
+    """Where a refused term's fact goes: the catch-all, labelled with the proposal's words."""
+
+    predicate: str
+    label: str
+
+
+@dataclass(frozen=True, slots=True)
+class Refused:
+    """No new term. The fact is not lost: it goes on `fallback` (never the term itself)."""
+
+    reason: str
+    fallback: Fallback
+
+
+Decision = Accepted | Reused | Refused
+# What the meaning check says about a proposal: "far" (accept), "close" (reuse `existing`),
+# "between" (refuse), or "not_checked" (nothing to say yet).
+Meaning = tuple[str, str | None]
+MeaningCheck = Callable[["Proposal", "Ontology"], Meaning]
+
+
+def not_checked_yet(proposal: Proposal, onto: Ontology) -> Meaning:
+    """Step 3, meaning by embedding, is not built (it needs its own measurement). Until it is,
+    it has nothing to say against a proposal that passed the exact steps."""
+    return ("not_checked", None)
+
+
+def decide_term(
+    onto: Ontology, proposal: Proposal, meaning: MeaningCheck = not_checked_yet
+) -> Decision:
+    """Whether a proposed term is accepted, replaced by an existing one, or refused. Fixed
+    rules in a fixed order, so the same proposal always gets the same answer:
+    1. a rules word is refused; 2. a synonym of an existing term reuses it; 3. the same name
+    or label reuses it; 4. a spelling at least 85% alike reuses it; 5. then its meaning (a
+    stub until embeddings exist): very close reuses, in between is refused, far is accepted.
+    A refusal always names where the fact goes (`Fallback`), so the fact is never lost."""
+    fallback = Fallback(FALLBACK_PREDICATE, proposal.label.strip() or proposal.key)
+    if rules_word_for(proposal.key, proposal.label) is not None:
+        return Refused(REASON_RULES_WORD, fallback)
+    key = _words(proposal.key).replace(" ", "_")
+    label_key = _words(proposal.label).replace(" ", "_")
+    for text in (key, label_key):
+        if text in SYNONYMS:
+            return Reused(SYNONYMS[text], REASON_SYNONYM)
+    terms: Sequence[TypeTerm | PredicateTerm] = list(
+        onto.types.values() if proposal.kind == "type" else onto.predicates.values()
+    )
+    live = [t for t in terms if t.status == ACTIVE]
+    for term in live:
+        if key == term.key or label_key in (term.key, _words(term.label).replace(" ", "_")):
+            return Reused(term.key, REASON_EXACT)
+    for term in live:
+        if difflib.SequenceMatcher(None, key, term.key).ratio() >= SIMILAR_KEY_RATIO:
+            return Reused(term.key, REASON_SPELLING)
+    if proposal.kind == "relationship" and not _connects_something(onto, proposal):
+        return Refused(REASON_SHAPE, fallback)
+    verdict, existing = meaning(proposal, onto)
+    if verdict == "close" and existing is not None:
+        return Reused(existing, REASON_CLOSE_MEANING)
+    if verdict == "between":
+        return Refused(REASON_BETWEEN, fallback)
+    return Accepted(key, meaning_checked=verdict == "far")
+
+
+def _connects_something(onto: Ontology, proposal: Proposal) -> bool:
+    """A relationship says what it connects, and only kinds of things that exist."""
+    return bool(proposal.subject_types and proposal.object_types) and all(
+        t in onto.types and onto.types[t].status == ACTIVE
+        for t in (*proposal.subject_types, *proposal.object_types)
+    )
+
+
+@dataclass(slots=True)
+class Tally:
+    """The steward's health numbers for one session: how many terms were refused (and why),
+    reused and accepted (and how many of those without a meaning check). For the server log
+    only; never shown to a player or a DM."""
+
+    refused: Counter[str] = field(default_factory=Counter)
+    reused: int = 0
+    accepted: int = 0
+    unchecked: int = 0
+
+    def record(self, decision: Decision) -> None:
+        if isinstance(decision, Refused):
+            self.refused[decision.reason] += 1
+        elif isinstance(decision, Reused):
+            self.reused += 1
+        else:
+            self.accepted += 1
+            self.unchecked += not decision.meaning_checked
+
+    def line(self) -> str:
+        """Counts only, never a term's words (those are the campaign's)."""
+        refused = ", ".join(f"{n} {why}" for why, n in sorted(self.refused.items())) or "none"
+        return (
+            f"accepted {self.accepted} ({self.unchecked} without a meaning check), "
+            f"reused {self.reused}, refused: {refused}"
+        )
+
+    def write_to_log(self) -> None:
+        log.info("Ontology steward this session: %s", self.line())
+
 
 @dataclass(slots=True)
 class Ontology:
@@ -621,6 +843,14 @@ class Ontology:
             )
         if key in self.types or key in self.predicates:
             raise MemoryRuleError(f"{key} already exists.")
+        if (
+            rules_word_for(key) is not None  # a key may not be any rules word, even an everyday one
+            or rules_word_for(label, everyday=False) is not None  # a label only a true one
+        ):
+            raise MemoryRuleError(
+                f"{label.strip() or key} is a word from the game's rules: DMbot links to the "
+                "rules, it doesn't make a term of it."
+            )
         match = self.existing_match(key, label)
         if match is not None:
             raise MemoryRuleError(f"Use the existing {match} instead of adding {key}.")
