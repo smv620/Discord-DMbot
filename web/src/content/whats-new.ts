@@ -24,12 +24,12 @@ export const entries: Entry[] = [
   {
     date: "2026-10-15",
     title: "Your DMbot ID",
-    what: "Your account page now shows your DMbot ID, which is your account number and not a password, and your experience points: the minutes DMbot has run for you.",
+    what: "Your account page now shows your DMbot ID, which is your account number and not a password, and your experience points, which count the minutes DMbot has run for you.",
   },
   {
     date: "2026-10-15",
     title: "Move to a new Discord account",
-    what: "To bring your plan, hours and campaigns to a new Discord account, press Get a move code on your account page. On the new account, type /dmbot migrate, press Import my account, and type the code we email you.",
+    what: "To move to a new Discord account, press Get a move code on your account page. On the new account, type /dmbot migrate, press Import my account, and type the emailed code; you will be asked to say yes to being recorded again.",
   },
   {
     date: "2026-10-15",
@@ -49,12 +49,12 @@ export const entries: Entry[] = [
   {
     date: "2026-10-15",
     title: "Ask DMbot by typing",
-    what: "Anyone who said yes can type a quick rules question in the table's dmb-chat channel. The short answer is posted there, and the game master has the final say.",
+    what: "Anyone who said yes can type a quick rules question in the table's dmb-chat channel. The short answer is posted there for everyone, with its source, and the game master has the final say.",
   },
   {
     date: "2026-10-13",
     title: "The game clock",
-    what: "Players see the story's day and time in their own channel. The game master sees the exact time.",
+    what: "The game master keeps the story's day and time in DMbot. Players see it in their own channel, and the game master sees the exact time.",
   },
 ];
 

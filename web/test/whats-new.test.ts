@@ -90,7 +90,8 @@ describe("What's new", () => {
   it("says the same as the Help page and the account page about the emailed link and the move code", () => {
     const text = (title: string): string => entries.find((e) => e.title.startsWith(title))?.what ?? "";
     expect(text("Sign in")).toContain("works once and stops working after 15 minutes");
-    expect(text("Move to")).toContain("we email");
+    expect(text("Move to")).toContain("emailed code");
+    expect(text("Move to")).toContain("say yes to being recorded again"); // account.ts moveSent
     expect(text("Share house rules")).toContain("paid plan");
     expect(text("Suggest")).toContain("It goes with no name");
     expect(text("Suggest")).toContain("nothing changes until that game master adds it");
