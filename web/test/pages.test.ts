@@ -36,6 +36,7 @@ const pages: [path: string, file: string, title: string, noindex: boolean][] = [
   ["/help", "help.astro", "Help · DMbot", false],
   ["/hello", "hello.astro", "Say hello · DMbot", false],
   ["/admin", "admin.astro", "Admin · DMbot", true],
+  ["/unsubscribe", "unsubscribe.astro", "Stop these emails · DMbot", true],
   ["/404", "404.astro", "Page not found · DMbot", true],
 ];
 
@@ -290,6 +291,7 @@ describe("search files", () => {
     const robots = readFileSync(join(webRoot, "public/robots.txt"), "utf8");
     expect(robots).toMatch(/^Disallow: \/account$/m);
     expect(robots).toMatch(/^Disallow: \/admin$/m);
+    expect(robots).toMatch(/^Disallow: \/unsubscribe$/m);
     expect(robots).toMatch(/^Sitemap: https:\/\/getdmbot\.com\/sitemap\.xml$/m);
   });
 });

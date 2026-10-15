@@ -248,3 +248,23 @@ a {
     scroll-behavior: auto !important;
   }
 }
+
+/* The greeting for a personal link on /pricing and /hello (#1231). */
+.personal {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  margin-bottom: var(--space-6);
+}
+
+.personal p {
+  margin: 0;
+}
+
+.personal .lead {
+  font-size: var(--text-lg);
+}
+
+.personal .small {
+  font-size: var(--text-sm);
+}
