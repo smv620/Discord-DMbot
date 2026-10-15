@@ -92,13 +92,17 @@ class Row:
     message: str
     source: str
     status: Status
+    # The account's address (the one the team replies to), read through the admin door and never
+    # stored in the ticket; None when the account has none. Never logged.
+    email: str | None
 
 
 async def newest(db: Database, *, limit: int = LIST_LIMIT) -> list[Row]:
     """The tickets, newest first, for the admin page."""
     async with db.support_admin() as conn:
         cur = await conn.execute(
-            "SELECT id, created_at, user_id, plan, subject, message, source, status"
+            "SELECT id, created_at, user_id, plan, subject, message, source, status,"
+            " dmbot_support_email(user_id) AS email"
             " FROM support_tickets ORDER BY created_at DESC, id DESC LIMIT %s",
             (limit,),
         )
