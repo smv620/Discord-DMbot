@@ -40,6 +40,7 @@ RELEASED = {
     ("sworn_to", 1): "924d02543c8d4ae8",
     ("plays", 1): "8e243f3375034f3a",
     ("appears_in", 1): "e35920d115999396",
+    ("associated_with", 1): "9b1afee4b882cde9",  # the catch-all for a refused term (#1303)
 }
 
 

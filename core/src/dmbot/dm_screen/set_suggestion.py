@@ -2,12 +2,12 @@
 
 A DM of a campaign that follows a set can send one of its own house rules to the set's
 publisher ("💡 Suggest to <set>"). It lands on the publisher's DM screen at once as one note:
-"A table that uses **<set> house rules** suggests: <rule> [See] [Accept] [No thanks]".
+"A table that uses **<set> house rules** suggests: <rule> [See] [Add to set] [No thanks]".
 
 **The note never says which campaign, server or DM sent it.** Only rules cross between
 campaigns (CLAUDE.md, isolation), and the publisher's side of the database holds no sender
 either (see `RULE_SUGGESTIONS` in the schema). Nothing changes until a DM of the publishing
-campaign presses Accept, which makes the next version of the set through the same checks as any
+campaign presses Add to set, which makes the next version of the set through the same checks as any
 other change (paid plan, a DM, the version they saw). The sender hears the outcome in one line at
 its next session start. Buttons survive a restart (`bot.add_dynamic_items(SuggestionButton)`).
 """
