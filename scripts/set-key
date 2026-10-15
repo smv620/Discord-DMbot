@@ -7,7 +7,10 @@
 #   scripts/set-key DEEPGRAM_API_KEY   set that one
 #
 # Only the keys, tokens and secrets listed in .env.example can be set (names ending in
-# _KEY, _TOKEN or _SECRET). Other settings are easy to read, so they belong in an editor.
+# _KEY, _TOKEN or _SECRET), plus SMTP_APP_PASSWORD, named exactly. That Gmail app password
+# is a key in all but name, and the owner can't type it into an editor safely from a
+# phone. No other _PASSWORD is allowed. Other settings are easy to read, so they belong
+# in an editor.
 # The new .env replaces the old file, so a symlinked .env becomes a plain file owned by
 # whoever runs this.
 #
@@ -34,7 +37,7 @@ Get it back with: git checkout .env.example"
 scripts/set-key"
 
 # Every key, token and secret in .env.example, in file order.
-mapfile -t choices < <(sed -nE 's/^([A-Z][A-Z0-9_]*(_KEY|_TOKEN|_SECRET))=.*/\1/p' "$example")
+mapfile -t choices < <(sed -nE 's/^([A-Z][A-Z0-9_]*(_KEY|_TOKEN|_SECRET)|SMTP_APP_PASSWORD)=.*/\1/p' "$example")
 
 is_choice() {
   local k
@@ -80,7 +83,7 @@ Run scripts/set-key to see it again."
 fi
 
 case $name in
-  POSTGRES_ADMIN_PASSWORD | DMBOT_DB_PASSWORD)
+  POSTGRES_ADMIN_PASSWORD | DMBOT_DB_PASSWORD | DMBOT_WEB_DB_PASSWORD)
     fail "Not saved: $name is a database password.
 Changing it here would lock DMbot out of its saved data." ;;
 esac
@@ -96,6 +99,12 @@ echo
 value=${value//$'\r'/}
 value=${value#"${value%%[![:space:]]*}"}
 value=${value%"${value##*[![:space:]]}"}
+# Google shows the app password as four groups of four letters with spaces between.
+if [[ $name == SMTP_APP_PASSWORD ]]; then
+  value=${value// /}
+  [[ $value =~ ^[A-Za-z]{16}$ ]] || fail "Not saved: a Gmail app password is 16 letters.
+Copy it again from https://myaccount.google.com/apppasswords, then run: scripts/set-key SMTP_APP_PASSWORD"
+fi
 
 [[ -n $value ]] || fail "Not saved: nothing was pasted.
 Copy the key again, then run: scripts/set-key $name"
@@ -134,7 +143,10 @@ mv -f "$tmp" "$env_file"
 trap - EXIT
 
 # The length makes a double paste easy to spot.
-if ((${#value} >= 16)); then
+# A 16-letter app password is too weak to show any of it, so it never gets the suffix.
+if [[ $name == SMTP_APP_PASSWORD ]]; then
+  echo "Saved $name (${#value} characters)."
+elif ((${#value} >= 16)); then
   echo "Saved $name (${#value} characters, ends in ${value: -4})."
 else
   echo "Saved $name (${#value} characters)."

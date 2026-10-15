@@ -22,6 +22,7 @@ import discord
 from discord import app_commands
 
 from dmbot.campaigns import Campaign
+from dmbot.dm_screen import set_suggestion
 from dmbot.logs import set_log_context
 from dmbot.rules import house
 from dmbot.rules.house import RULE_MAX, HouseRule, HouseRuleError, HouseRuleStore
@@ -85,6 +86,9 @@ EDIT_LABEL = "Edit"
 REMOVE_LABEL = "Remove"
 YES_REMOVE_LABEL = "Yes, remove it"
 KEEP_LABEL = "Keep it"
+SUGGEST_LABEL = "💡 Suggest"
+SEND_LABEL = "Yes, send it"
+KEEP_PRIVATE_LABEL = "No, keep it here"
 PICK_PLACEHOLDER = "Pick a rule to change…"
 
 
@@ -177,12 +181,33 @@ async def show_list(
     is_dm = interaction.user.id in campaign.dm_user_ids
     page = min(max(page, 0), len(pages(rules)) - 1)
     text = list_text(campaign, rules, page, is_dm=is_dm, note=note)
-    menu = ListMenu(campaign, rules, page, is_dm=is_dm)
+    menu = ListMenu(
+        campaign,
+        rules,
+        page,
+        is_dm=is_dm,
+        suggest_to=await _suggest_target(interaction, campaign, is_dm),
+    )
     view = menu if menu.children else None
     if first:
         await _send(interaction, text, view)
     else:
         await _show(interaction, text, view)
+
+
+async def _suggest_target(
+    interaction: discord.Interaction, campaign: Campaign, is_dm: bool
+) -> str | None:
+    """The name of the set the campaign follows, when its DM may suggest a rule to it (#1259)."""
+    sets = getattr(_bot(interaction), "rule_sets", None)
+    if sets is None or not is_dm:
+        return None
+    try:
+        follows = await sets.following(campaign.guild_id, campaign.id)
+    except Exception:
+        log.warning("Couldn't look up the followed set for the house rules list", exc_info=True)
+        return None
+    return next((f.name for f in follows if f.kind == "house_rules" and f.updating), None)
 
 
 async def _show(interaction: discord.Interaction, text: str, view: _Menu | None) -> None:
@@ -213,10 +238,17 @@ class ListMenu(_Menu):
     rules on this page only."""
 
     def __init__(
-        self, campaign: Campaign, rules: list[HouseRule], page: int, *, is_dm: bool
+        self,
+        campaign: Campaign,
+        rules: list[HouseRule],
+        page: int,
+        *,
+        is_dm: bool,
+        suggest_to: str | None = None,
     ) -> None:
         super().__init__()
         self.campaign, self.rules, self.page = campaign, rules, page
+        self.suggest_to = suggest_to  # the followed set, when a rule may be suggested to it
         shown = pages(rules)
         if is_dm:
             self.add_item(_Button(self._add, label=ADD_LABEL, style=discord.ButtonStyle.primary))
@@ -248,6 +280,14 @@ class ListMenu(_Menu):
                         row=row,
                     )
                 )
+                if suggest_to and not rule.from_set:
+                    self.add_item(
+                        _Button(
+                            partial(ask_suggest, campaign, rule, page, suggest_to),
+                            label=f"{SUGGEST_LABEL} {rule.number}",
+                            row=row,
+                        )
+                    )
         else:
             options = [
                 discord.SelectOption(
@@ -283,13 +323,15 @@ class ListMenu(_Menu):
             await _redraw(interaction, self.campaign, note=STALE, page=self.page)
             return
         text = f"📜 **House rule {rule.number}**\n{entry_words(rule)}"
-        await _show(interaction, text, RuleMenu(self.campaign, rule, self.page))
+        await _show(interaction, text, RuleMenu(self.campaign, rule, self.page, self.suggest_to))
 
 
 class RuleMenu(_Menu):
     """One rule picked from the menu: Edit, Remove, or back to the list (to the same page)."""
 
-    def __init__(self, campaign: Campaign, rule: HouseRule, page: int) -> None:
+    def __init__(
+        self, campaign: Campaign, rule: HouseRule, page: int, suggest_to: str | None = None
+    ) -> None:
         super().__init__()
         self.campaign, self.page = campaign, page
         # Labelled with the number, as in the list's own buttons ("Edit 12"), so the texts
@@ -304,9 +346,67 @@ class RuleMenu(_Menu):
                 style=discord.ButtonStyle.danger,
             )
         )
+        if suggest_to and not rule.from_set:
+            self.add_item(
+                _Button(
+                    partial(ask_suggest, campaign, rule, page, suggest_to),
+                    label=f"{SUGGEST_LABEL} {rule.number}",
+                )
+            )
         self.add_item(_Button(self._back, label=BACK_LABEL))
 
     async def _back(self, interaction: discord.Interaction) -> None:
+        await _redraw(interaction, self.campaign, page=self.page)
+
+
+async def ask_suggest(
+    campaign: Campaign,
+    rule: HouseRule,
+    page: int,
+    set_name: str,
+    interaction: discord.Interaction,
+) -> None:
+    """Never send at once: say where it goes, that nobody is named, and that nothing changes."""
+    text = (
+        f"Send house rule {rule.number} to the **{_md(set_name)}** DM?\n{entry_text(rule)}\n"
+        "It goes exactly as written, with nobody named. Check it names no one. Your table's "
+        "rules stay as they are. If they add it, you'll hear at your next session."
+    )
+    await _show(interaction, text, ConfirmSuggest(campaign, rule, page, set_name))
+
+
+class ConfirmSuggest(_Menu):
+    def __init__(self, campaign: Campaign, rule: HouseRule, page: int, set_name: str) -> None:
+        super().__init__()
+        self.campaign, self.rule, self.page, self.set_name = campaign, rule, page, set_name
+        self.add_item(_Button(self._yes, label=SEND_LABEL, style=discord.ButtonStyle.primary))
+        self.add_item(_Button(self._keep, label=KEEP_PRIVATE_LABEL))
+
+    async def _yes(self, interaction: discord.Interaction) -> None:
+        await _answer_first(interaction, in_place=True)
+        bot = _bot(interaction)
+        sets = bot.rule_sets
+        if sets is None:
+            await _tell(interaction, NOT_READY)
+            return
+        c = self.campaign
+        try:
+            sid, pub_guild, pub_campaign = await sets.suggest(
+                c.guild_id, c.id, interaction.user.id, self.rule.number, self.rule.version
+            )  # the version the DM was shown: what goes out is what they confirmed
+        except HouseRuleError as exc:
+            await _redraw(interaction, c, note=str(exc), page=self.page)
+            return
+        self.stop()
+        set_suggestion.send_note(bot, pub_guild, pub_campaign, sid, self.set_name)
+        await _redraw(
+            interaction,
+            c,
+            note="💡 Sent, with no name. You'll hear the answer at your next session.",
+            page=self.page,
+        )
+
+    async def _keep(self, interaction: discord.Interaction) -> None:
         await _redraw(interaction, self.campaign, page=self.page)
 
 
