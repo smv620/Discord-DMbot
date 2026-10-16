@@ -6,7 +6,17 @@
  * The names are our own invented cast (docs/test-scripts/), never real people.
  */
 import type { PlanId } from "../content/pricing";
-import type { AccountApi, Campaign, Character, Me, Offer, Person, RecordingEntry } from "./api";
+import type {
+  AccountApi,
+  Campaign,
+  Character,
+  Me,
+  Offer,
+  Person,
+  Recap,
+  RecordingEntry,
+  SupportQuestion,
+} from "./api";
 import { ApiError } from "./api";
 
 /** Found in the built files only if the pretend API was included; check-csp fails a real
@@ -161,6 +171,7 @@ export function scenarioMe(scenario: Scenario): Me | null {
     dmbotId: "1P0Z4F6N2K9",
     experiencePoints: 1245,
     canMove: false,
+    canSupport: false,
     offers: { incoming: [], outgoing: [] },
   };
   switch (scenario) {
@@ -186,6 +197,7 @@ export function scenarioMe(scenario: Scenario): Me | null {
       return {
         ...base,
         canMove: true,
+        canSupport: true,
         plan: {
           id: "table",
           status: "active",
@@ -252,10 +264,60 @@ export function scenarioMe(scenario: Scenario): Me | null {
   }
 }
 
+/** Two pretend recaps for the DM's review page (#1386): one ready, one posted. */
+export function mockRecaps(): Recap[] {
+  const base = {
+    campaign: "The Brynwater Crossing",
+    serverName: "Thursday Table",
+    gameDay: null,
+    state: "ready",
+    working: false,
+    error: "",
+  };
+  return [
+    {
+      ...base,
+      ref: "200000000000000001.cmp1.1791000000",
+      sessionAt: 1791000000,
+      status: "draft",
+      title: "The ferry at dusk",
+      text: "The party crossed the Brynwater at dusk.\n\nThe ferryman asked for a story, not coin.",
+      summary:
+        "[music: calm] The party crossed the Brynwater at dusk.\n\nThe ferryman asked for a story, not coin.",
+      housekeeping: [
+        "Mira is down to 4 hit points.",
+        "The party owes the ferryman a story.",
+      ],
+      canEdit: true,
+      canPost: true,
+      canTryAgain: true,
+      triesLeft: 2,
+      canDrop: true,
+    },
+    {
+      ...base,
+      ref: "200000000000000001.cmp1.1790000000",
+      sessionAt: 1790000000,
+      status: "posted",
+      title: "The vault door",
+      text: "The vault stayed shut.",
+      summary: "The vault stayed shut.",
+      housekeeping: [],
+      canEdit: false,
+      canPost: false,
+      canTryAgain: false,
+      triesLeft: 2,
+      canDrop: false,
+    },
+  ];
+}
+
 /** A pretend API with in-memory state. `calls` records what the page asked for. */
 export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
   console.info(MOCK_MARKER, "pretend API in use:", scenario);
   let me = scenarioMe(scenario);
+  // The questions sent in this visit (#1373): the pretend API starts with none, as a new account has.
+  let questions: SupportQuestion[] = [];
   const calls: string[] = [];
   const reachable = async (): Promise<void> => {
     if (scenario === "down") throw new ApiError("network");
@@ -265,8 +327,50 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
     return me;
   };
 
+  const recaps = mockRecaps();
+  const find = async (ref: string): Promise<Recap> => {
+    await reachable();
+    signedIn();
+    const found = recaps.find((r) => r.ref === ref);
+    if (!found) throw new ApiError("not-found");
+    return found;
+  };
+
+
   return {
     calls,
+    async recaps() {
+      calls.push("recaps");
+      await reachable();
+      signedIn();
+      return recaps.map((r) => ({ ...r }));
+    },
+    async recap(ref) {
+      calls.push(`recap:${ref}`);
+      return { ...(await find(ref)) };
+    },
+    async saveRecap(ref, summary, housekeeping) {
+      calls.push(`saveRecap:${ref}`);
+      const r = await find(ref);
+      if (!r.canEdit) throw new ApiError("not-editable");
+      Object.assign(r, { summary, text: summary, housekeeping });
+      return { ...r };
+    },
+    async decideRecap(ref, action) {
+      calls.push(`${action}Recap:${ref}`);
+      const r = await find(ref);
+      if (action === "again" && !r.canTryAgain)
+        throw new ApiError("not-allowed");
+      if (action === "post")
+        Object.assign(r, { status: "posting", canEdit: false, canPost: false });
+      if (action === "drop")
+        Object.assign(r, { status: "dropped", canEdit: false, canPost: false });
+      if (action === "again") r.triesLeft -= 1;
+      if (r.status !== "draft")
+        Object.assign(r, { canTryAgain: false, canDrop: false });
+      else r.canTryAgain = r.triesLeft > 0;
+      return { ...r };
+    },
     async me() {
       calls.push("me");
       await reachable();
@@ -292,6 +396,20 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
     async getMoveCode() {
       calls.push("move-code");
       signedIn();
+    },
+    async sendSupport(ticket) {
+      calls.push("support");
+      signedIn();
+      questions = [
+        { at: Math.floor(Date.now() / 1000), subject: ticket.subject, status: "new" },
+        ...questions,
+      ];
+      return { reply: true };
+    },
+    async mySupport() {
+      calls.push("my-support");
+      signedIn();
+      return { tickets: questions, reply: true };
     },
     async startTryIt() {
       calls.push("startTryIt");

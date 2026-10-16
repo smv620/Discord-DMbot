@@ -506,6 +506,13 @@ does Mira know about the cult?", Phase 6), the **pre-session note** ("Before ton
 open threads, a promise due to Mother Ilse, 2 NPCs who may show up"), and the end-of-session
 AI recap.
 
+**Built (#1403):** the pre-session note is `dmbot.memory.presession`: when a session starts
+(not after a restart) the DM screen gets the last posted recap's title, what is open about the
+names heard last session (recall, `dm_screen` audience, one hop), conditions worth remembering
+(dead, lost, destroyed, missing, captured) and the count of questions waiting to be checked, in at
+most 8 lines and 1,000 characters. No AI call. `DMBOT_PRESESSION_NOTE` (default on); plans with
+story memory only; nothing confirmed, no note.
+
 Meaning-based search (`pgvector` over summaries and claims) is optional and only if
 tests show names and connections miss too much; it's in the existing open decision
 on embeddings. Apache AGE is still not needed: these are 1–2 hop lookups.
@@ -559,7 +566,24 @@ Each step is useful on its own and ships behind the existing phases.
    list quotes the earlier line, only while everyone who said it is recorded, and offers [Alive
    after all / It changed] (a new dated fact; the old one ends, history kept, in one transaction),
    [Not true] (the claim is not world truth and is not asked again) and [Ignore] (writes nothing;
-   quiet for the rest of that list). The log holds counts only. What is left of 5a: turning the
+   quiet for the rest of that list). The log holds counts only. **The after-session extractor path is built (#1363) and left off:**
+   `dmbot.memory.extractor` (the prompt, moved from the measuring tool unchanged, so both use one text)
+   reads a session's stored lines in batches of 10 (a short tail joins the last batch), never sidebar or
+   table-question lines, nothing the off-topic filter left out, and only from people recorded at that
+   moment; asks about consent again after each answer (inside `propose`); and stops at
+   `DMBOT_STORY_EXTRACTOR_MAX_CALLS` (480), an AI out of money, or three failed calls in a row. The tier
+   is `DMBOT_STORY_EXTRACTOR_TIER` (default fast). The log gets counts only. Turning it on is one setting
+   once #1282 passes. **The linker is built too (#1364):** a name in a claim that DMbot does not know
+   no longer costs the claim. The most-said new names of a session (at most 20; the rest wait for the
+   next session) become *proposed* entries, of the kind the claim's relationship fixes or "unsure",
+   and the DM checks them in the same 📝 Check new names list the name scan uses (Yes, Same as a known
+   name, Not a name, Later). A claim waits on its names: it is asked only when each name is a
+   confirmed entry, and a name the DM turns down drops its claims for good. Nothing is ever joined to
+   a confirmed entry by itself, and a likely match is shown to the DM by that list. The one thing
+   matched automatically is a second spelling of a name already waiting (one letter apart for names of
+   5 to 8 letters, two for 9 or more, never for shorter ones; `dmbot.memory.link`). A secret name is
+   matched only in the DM's own lines, and the table's people are never story names. The session's
+   claims go to the store in one hand-over, so the memory is read once, not once a batch. What is left of 5a: turning the
    extractor on (after #1282 passes), the linker, live warnings during play and the AI judgment
    behind them, and the secret-said-aloud question and the pre-session note (slice 4). **The ontology steward is wired into the claims path (#1303):** a claim
    whose relationship DMbot does not know goes through `decide_term`: an existing term it recognises
@@ -571,7 +595,30 @@ Each step is useful on its own and ships behind the existing phases.
    counts only.
    Start after-session only, then live.
 2. **Phase 5b: NPC tracker and reputation:** knowledge (clues, `knows`, `witnessed`),
-   deeds, standing, the NPC channel, the recall service.
+   deeds, standing, the NPC channel, the recall service. **Slice 1 is built (#1350): the recall
+   service,** `dmbot.memory.recall`, in code only (no AI, no screen, used nowhere yet). From some
+   names or entry ids, an audience (`dm_screen`, `players` or `transcript`), a story time and a
+   size budget (`DMBOT_RECALL_BUDGET`, 4000 characters unless set) it walks one or two steps over
+   the facts the DM confirmed that are true at that time (a group or a thread brings its members
+   at no extra step), ranks them by how recent they are and how often their names are heard,
+   filters by audience before returning anything, adds up to three quoted lines to each fact
+   (only from people recorded now; the DM's sidebar lines never), cuts to the budget, and gives
+   every item the id of its entry, fact or line; `check_citations` checks an answer cites only
+   those. The players' audience gets no secret fact, secret name, entry note, condition or
+   story-plan fact; the transcript's gets nothing. One recall on a campaign of 3,000 entries and
+   10,000 facts is checked to take under 50 ms.
+   **Slice 2 is built (#1370): the DM sidebar is the first helper to use recall.** A question that
+   names confirmed entries adds the facts around them to the sidebar's prompt, from recall for the
+   audience **players** (not the DM screen): a sidebar reply can reach the raw transcript, which
+   everyone who may read it may read, so recall adds no secret fact, no secret name and no entry note.
+   (The older "campaign names" section sends only a name, its kind and its other names that are
+   not secret, never an entry's description or links: a description is the DM's note, #1378.) Each fact has a short label (F1, F2…) in the prompt; the reply names the labels it used
+   on a CITED line, `check_citations` checks them against what was given, a reply citing anything
+   else is asked again once and then dropped for "I don't have that. Your call.", and no label or
+   id is ever shown. No transcript lines are quoted. Table questions never get it. It adds up to
+   `DMBOT_SIDEBAR_RECALL_BUDGET` (1000) characters beside today's "campaign names" section, which
+   stays (names, kinds and other names only). `DMBOT_SIDEBAR_RECALL=0` makes the prompt exactly
+   the names-only one.
 3. **Phase 5c: PlotBot:** threads, promises, clues, `led_to`, stalled-thread nudges,
    summaries, the pre-session note, the AI recap.
 4. **Phase 5d: Shared story:** the story plan, `same_as` links, divergence ("Watch

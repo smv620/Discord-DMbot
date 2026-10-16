@@ -116,6 +116,19 @@ class Reuse(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.rows(used), self.rows(fresh))  # same rows, content included
         self.assertEqual(self.counter(used), self.counter(fresh))  # counters start over
 
+    async def test_a_schema_built_just_before_the_role_was_made_is_not_reused(self) -> None:
+        # Another worker can make the website's role while a schema is migrating, after the
+        # migration looked and gave the role nothing. The role exists by the time the schema is
+        # remembered, so asking "does the role exist?" calls it granted; the website's tests
+        # then fail with "The database isn't set up yet" (#1357). Reproduced by taking the rights
+        # away, which leaves the schema as that migration did.
+        schema = await self.build()
+        self.assertTrue(pg.fits_role(schema))
+        run(f'REVOKE USAGE ON SCHEMA "{schema}" FROM dmbot_web')
+        pg._BUILT[schema] = pg.stamp(schema)  # what DatabaseTest does after migrating
+        self.assertTrue(pg.web_role_exists())
+        self.assertFalse(pg.fits_role(schema))
+
     async def test_the_two_checks_agree_on_what_a_fresh_schema_looks_like(self) -> None:
         fresh = await self.build()
         self.assertEqual(pg.stamp(fresh), pg._BUILT[fresh])

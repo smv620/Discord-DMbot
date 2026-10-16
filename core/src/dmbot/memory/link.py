@@ -1,0 +1,92 @@
+"""The linker's matching rules (docs/STORY_MEMORY.md, section 9; #1364): when a claim names
+someone DMbot does not know yet, is it a spelling of a name that is already waiting for the DM?
+
+Pure: no database, no AI. A name that matches an entry exactly is not the linker's business (the
+claim rules already resolve it). Everything else becomes a *proposed* entry for the DM, who says
+whether it is new or the same as a known name, or not a name; the linker never confirms one and
+never joins a name to a confirmed entry by itself (a likely match is only shown to the DM, by the
+names review that already does it). The one thing it matches on its own is a second spelling of a
+name already waiting, so the DM is asked once, not twice.
+"""
+
+from __future__ import annotations
+
+from collections import Counter
+from collections.abc import Iterable, Mapping, Sequence
+
+MIN_FUZZY_LEN = 5  # shorter names are never matched loosely: "Bryn" and "Bran" are two people
+MIN_WORD = 5  # a word shorter than this is never taken for another: "Mira" and "Kira" are two
+
+
+def allowed_distance(key: str) -> int:
+    """How many single-letter changes (add, drop, change) still count as the same name, for a
+    name key of this length: none below `MIN_FUZZY_LEN`, one from there on."""
+    return 1 if len(key) >= MIN_FUZZY_LEN else 0
+
+
+def within(a: str, b: str, limit: int) -> bool:
+    """Whether the two are at most `limit` single-letter changes apart (Levenshtein), quickly:
+    names are short, and a gap in length beyond the limit settles it at once."""
+    if a == b:
+        return True
+    if abs(len(a) - len(b)) > limit:
+        return False
+    previous = list(range(len(b) + 1))
+    for i, x in enumerate(a, start=1):
+        row = [i]
+        for j, y in enumerate(b, start=1):
+            row.append(min(previous[j] + 1, row[j - 1] + 1, previous[j - 1] + (x != y)))
+        if min(row) > limit:
+            return False
+        previous = row
+    return previous[-1] <= limit
+
+
+def same_name(a: str, b: str) -> bool:
+    """Whether two name keys may be one name spelt two ways: one letter apart, and only inside
+    a word of 5 or more letters that has no digit. So "Oskar Vance" and "Oskar Vence" are, while
+    "Mira Stone" and "Kira Stone" (two people), "Room 12" and "Room 13", "Goblin Cave A" and
+    "Goblin Cave B" are not."""
+    if a == b:
+        return True
+    first, second = a.split(), b.split()
+    if len(first) != len(second):
+        return False
+    for x, y in zip(first, second, strict=True):
+        if x == y:
+            continue
+        if min(len(x), len(y)) < MIN_WORD or any(c.isdigit() for c in x + y):
+            return False
+        if not within(x, y, 1):
+            return False
+    return True
+
+
+def alike(key: str, candidates: Mapping[str, str]) -> str | None:
+    """The one entry a name key is near, among `candidates` (name key → entry id): its id when
+    exactly one entry has a key `same_name` as it, None when none or more than one (two entries
+    that close are the DM's to tell apart)."""
+    found = {entry for other, entry in candidates.items() if same_name(key, other)}
+    return next(iter(found)) if len(found) == 1 else None
+
+
+def most_mentioned(names: Iterable[str], limit: int) -> tuple[list[str], int]:
+    """The `limit` name keys said most often (ties: the one first said), and how many were left
+    for next time. The input is every mention, in the order said."""
+    counts = Counter(names)
+    order = {k: i for i, k in enumerate(dict.fromkeys(names))}
+    ranked = sorted(counts, key=lambda k: (-counts[k], order[k]))
+    return ranked[:limit], max(0, len(ranked) - limit)
+
+
+def spellings(keys: Sequence[str]) -> dict[str, list[str]]:
+    """Group the name keys that are near each other (a name said two ways in one session), so the
+    DM is asked once: first-said key → the other keys near it. Each key lands in one group."""
+    groups: dict[str, list[str]] = {}
+    for key in keys:
+        home = alike(key, {k: k for k in groups})
+        if home is None:
+            groups[key] = []
+        elif key != home:
+            groups[home].append(key)
+    return groups

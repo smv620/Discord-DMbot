@@ -5,6 +5,7 @@ import type { ComponentChildren, JSX } from "preact";
 import { createContext } from "preact";
 import { useCallback, useContext, useEffect, useRef, useState } from "preact/hooks";
 
+import { text as recapText } from "../content/recaps";
 import { hoursLeftLine, hoursUsedLine, planName, text } from "../content/account";
 import { formatPrice, plans as paidPlans, type PlanId } from "../content/pricing";
 import {
@@ -18,6 +19,8 @@ import {
   type RecordingEntry,
 } from "./api";
 import { isSafeRedirect } from "./redirect";
+import { MyQuestions } from "./MyQuestions";
+import { PublicQuestions, Support } from "./Support";
 
 type State =
   | { kind: "loading" }
@@ -35,6 +38,8 @@ interface Props {
   /** The page's `#...`: an emailed sign-in link puts its one-use code there (#1231), so no
    * server or log ever sees it. */
   hash?: string;
+  /** Cloudflare Turnstile's site key for the Support form, or "" to skip the check (#1340). */
+  siteKey?: string;
 }
 
 /** The code in `#email-link=...`, or null. */
@@ -64,6 +69,8 @@ interface Shared {
   signedOut: (notice?: string) => void;
   /** Free access with no hours or campaign limit: no "your hours" or "slots" wording (#824). */
   noLimits: boolean;
+  /** Cloudflare Turnstile's site key for the Support form, or "" (#1340). */
+  siteKey: string;
 }
 
 const SharedContext = createContext<Shared | null>(null);
@@ -152,7 +159,13 @@ function ActionButton({
   );
 }
 
-export default function Account({ api, go = defaultGo, search = "", hash = "" }: Props) {
+export default function Account({
+  api,
+  go = defaultGo,
+  search = "",
+  hash = "",
+  siteKey = "",
+}: Props) {
   const [state, setState] = useState<State>({ kind: "loading" });
   // An emailed link is tried once, even if the page loads again ("Try again").
   const linkTried = useRef(false);
@@ -233,7 +246,7 @@ export default function Account({ api, go = defaultGo, search = "", hash = "" }:
 
   const access = state.kind === "signed-in" ? state.me.access : undefined;
   const noLimits = access?.kind === "free" && access.unlimited === true;
-  const shared: Shared = { api, go: safeGo, refresh, signedOut, noLimits };
+  const shared: Shared = { api, go: safeGo, refresh, signedOut, noLimits, siteKey };
 
   let body: JSX.Element;
   switch (state.kind) {
@@ -461,6 +474,7 @@ function SignedIn({
       <PlanSection me={me} />
       {me.dmbotId !== undefined && <IdSection me={me} />}
       {me.canMove === true && api.getMoveCode && <MoveSection />}
+      <SupportOrQuestions me={me} />
       <CampaignsSection me={me} />
       <ServersSection me={me} />
       <CharactersSection />
@@ -792,6 +806,7 @@ function CampaignsSection({ me }: { me: Me }) {
           ))}
         </ul>
       )}
+      {me.campaigns.length > 0 && <a href="/account/recaps">{recapText.linkToList}</a>}
     </section>
   );
 }
@@ -1088,6 +1103,24 @@ function IdSection({ me }: { me: Me }) {
         </>
       )}
     </section>
+  );
+}
+
+/** Paying accounts write to the team in private; everyone else is pointed to the public Q&A.
+ * An API older than #1340 has no canSupport, so it shows the Q&A (#1340). */
+function SupportOrQuestions({ me }: { me: Me }) {
+  const { api, siteKey } = useShared();
+  // Bumped when a question is sent, so the list below the form reads again (#1373).
+  const [sentCount, setSentCount] = useState(0);
+  return (
+    <>
+      {me.canSupport === true && api.sendSupport ? (
+        <Support api={api} siteKey={siteKey} onSent={() => setSentCount((n) => n + 1)} />
+      ) : (
+        <PublicQuestions />
+      )}
+      <MyQuestions api={api} version={sentCount} canWrite={me.canSupport === true && !!api.sendSupport} />
+    </>
   );
 }
 

@@ -6,10 +6,11 @@ index and passes them in, so a test can prove another campaign's data never reac
 - **Rules entries:** the question's words are looked up in the index first; only the matching
   entries are sent (never the whole index), each cut short.
 - **House rules:** those that name a matched entry or share a word with the question.
-- **Names:** the confirmed names the question mentions, with a line of what DMbot knows. Secret
-  names are left out, and someone with a secret name is given by name only. Why: a reply can
-  reach the raw transcript, which everyone who may read transcripts may read (#933), so a secret
-  name or a description that holds one in a reply would leak it to the players.
+- **Names:** the confirmed names the question mentions, with their kind and other names. Secret
+  names are left out, and someone with a secret name is given by name only. Never an entry's
+  description or links: a reply can reach the raw transcript, which everyone who may read
+  transcripts may read (#933), and a description is the DM's own note (#1378). The story facts come
+  from recall, for the players' audience (#1370).
 - **The scene:** the caller's last few minutes of cleaned transcript, trimmed again here.
 - **DMbot's own help:** a short reviewed digest (`about_dmbot.md`), only for questions about
   DMbot or Discord. Never the whole PLAN and never fetched at run time.
@@ -28,7 +29,8 @@ from pathlib import Path
 from dmbot.campaigns.models import FALLBACK_NONE
 from dmbot.memory.kinds import kind_phrase
 from dmbot.memory.lookup import CampaignLookup
-from dmbot.memory.models import CONFIRMED
+from dmbot.memory.models import CONFIRMED, Entity
+from dmbot.memory.recall import Recall
 from dmbot.rules.followed import FollowedRule
 from dmbot.rules.house import HouseRule
 from dmbot.rules.index import Hit, Index, edition_tag, normalize
@@ -40,7 +42,6 @@ ENTRIES_MAX = 3
 HOUSE_RULES_MAX = 5
 HOUSE_RULE_MAX = 300
 NAMES_MAX = 5
-NAME_NOTE_MAX = 200
 SCENE_MAX = 1500  # the last characters of the scene
 QUESTION_MAX = 500
 WINDOW = 4  # longest name looked for, in words
@@ -212,14 +213,12 @@ def relevant_house_rules(
     return ranked[:HOUSE_RULES_MAX]
 
 
-def mentioned_names(question: str, lookup: CampaignLookup | None) -> list[str]:
-    """Lines about the confirmed names the question mentions: `Belleros (npc): what DMbot
-    knows`. Secret names and unconfirmed ones are left out."""
-    if lookup is None:
-        return []
+def _mentioned(question: str, lookup: CampaignLookup) -> list[tuple[str, Entity]]:
+    """The confirmed entries the question mentions by a name that is not secret, longest names
+    first, each once: (entry id, entry). The one place the question is matched to names, for
+    the names section and for the recall seeds alike."""
     words = words_of(question)
-    secret_entities = {n.entity_id for n in lookup.names if n.secret}
-    lines: list[str] = []
+    found: list[tuple[str, Entity]] = []
     seen: set[str] = set()
     for size in range(WINDOW, 0, -1):
         for start in range(len(words) - size + 1):
@@ -233,26 +232,47 @@ def mentioned_names(question: str, lookup: CampaignLookup | None) -> list[str]:
                 ):
                     continue
                 seen.add(entry.entity_id)
-                # Someone with a secret name (an identity the DM is hiding): only the name is
-                # given, since the description may hold the secret and replies can reach the
-                # raw transcript (#933).
-                hiding = entry.entity_id in secret_entities
-                note = "" if hiding else " ".join(entity.description.split())[:NAME_NOTE_MAX]
-                links = (
-                    []
-                    if hiding
-                    else sorted(
-                        lookup.entities[i].name
-                        for i in lookup.confirmed_neighbours.get(entry.entity_id, ())
-                        if i in lookup.entities
-                    )[:3]
-                )
-                line = f"{entity.name} ({kind_phrase(entity)})"
-                if note:
-                    line += f": {note}"
-                if links:
-                    line += f" Linked to: {', '.join(links)}."
-                lines.append(line)
+                found.append((entry.entity_id, entity))
+    return found
+
+
+def mentioned_ids(question: str, lookup: CampaignLookup | None) -> list[str]:
+    """The ids of the confirmed entries the question mentions: what the recall service starts
+    from (#1370). The same matching, and the same limit, as `mentioned_names`."""
+    if lookup is None:
+        return []
+    return [entity_id for entity_id, _ in _mentioned(question, lookup)][:NAMES_MAX]
+
+
+def mentioned_names(question: str, lookup: CampaignLookup | None) -> list[str]:
+    """Lines about the confirmed names the question mentions: `Belleros (NPC). Also called: Bel.`
+    Only the name, its kind and its other names that are not secret. **Never the entry's
+    description** (the DM's own note, which may hold a secret or a plot twist) **nor its links**:
+    a sidebar reply goes into the raw transcript, which everyone who may read transcripts may
+    read (#933, #1378). What the story says about the entry comes from recall, for the players'
+    audience (#1370). Secret names and unconfirmed ones are left out, and someone with a secret
+    name is given by name only."""
+    if lookup is None:
+        return []
+    secret_entities = {n.entity_id for n in lookup.names if n.secret}
+    secret_keys = {n.key for n in lookup.names if n.secret}  # in any entry: never given as a name
+    lines: list[str] = []
+    for entity_id, entity in _mentioned(question, lookup):
+        line = f"{entity.name} ({kind_phrase(entity)})"
+        if entity_id not in secret_entities:  # an identity the DM is hiding: the name, no more
+            others = [
+                n.text
+                for n in lookup.names
+                if n.entity_id == entity_id
+                and not n.secret
+                and n.confirmed
+                and not n.person
+                and n.text != entity.name
+                and n.key not in secret_keys
+            ]
+            if others:
+                line += f". Also called: {', '.join(list(dict.fromkeys(others))[:3])}."
+        lines.append(line)
     return lines[:NAMES_MAX]
 
 
@@ -272,6 +292,10 @@ class Context:
     hits: tuple[Hit, ...]
     house_rules: tuple[HouseRule, ...]
     about_link: str | None = None  # the DMbot section the answer may point to, at this build
+    # What recall gave the prompt (#1370), and the short label each item goes by in it (F1, F2…)
+    # → its id. The reply cites the labels; the ids themselves are never shown to anyone.
+    recall: Recall | None = None
+    labels: tuple[tuple[str, str], ...] = ()
 
 
 def build(
@@ -285,6 +309,7 @@ def build(
     scene: str,
     people: Sequence[str] = (),
     table: bool = False,
+    recalled: Recall | None = None,
 ) -> Context:
     """The AI's message for one question about one campaign. `house_rules` and `lookup`
     must already be this campaign's; nothing else is read here."""
@@ -324,6 +349,16 @@ def build(
         sections.append("CAMPAIGN NAMES (confirmed):")
         sections.extend(f"- {line}" for line in names)
         sources.append("campaign names")
+    labels: list[tuple[str, str]] = []
+    if recalled is not None and recalled.items and not table:
+        # What the DM has confirmed around those names (#1370). Written for the audience
+        # "players" (no secrets, no notes): a reply can reach the raw transcript. Each item has a
+        # short label; the reply says which it used, and the code checks that against this list.
+        sections.append("WHAT THE DM HAS CONFIRMED ABOUT THEM (cite the labels you use in CITED):")
+        for number, item in enumerate(recalled.items, start=1):
+            labels.append((f"F{number}", item.id))
+            sections.append(f"- [F{number}] {item.text}")
+        sources.append("facts you confirmed")
     if people:  # names only, no ids; a table question gets them too (#1188)
         sections.append("WHO IS WHO AT THE TABLE (real people and the characters they play):")
         sections.extend(f"- {line[:PEOPLE_LINE_MAX]}" for line in people[:PEOPLE_MAX])
@@ -349,5 +384,11 @@ def build(
         sources.append("DMbot help")
         about_link = next((u for c in docs if (u := knowledge.link(c))), None)
     return Context(
-        "\n".join(sections), tuple(sources), tuple(hits), tuple(rules), about_link=about_link
+        "\n".join(sections),
+        tuple(sources),
+        tuple(hits),
+        tuple(rules),
+        about_link=about_link,
+        recall=recalled if labels else None,
+        labels=tuple(labels),
     )

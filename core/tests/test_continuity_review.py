@@ -12,7 +12,7 @@ from dmbot.memory.claims import ClaimStore, Extracted
 from dmbot.memory.continuity import Levels
 from dmbot.memory.models import ALIVE, DEAD
 from dmbot.ui import continuity
-from tests.test_memory_store import DM, GUILD_A, MemoryTest
+from tests.test_memory_store import DM, GUILD_A, ConfirmedMemoryTest
 
 STRANGER = 99
 SMALL = Levels(min_facts=1, min_sessions=1)
@@ -22,7 +22,7 @@ def said(subject: str, relationship: str, obj: str) -> Extracted:
     return Extracted(subject, relationship, obj, "", ("1",), "dm_said")
 
 
-class Review(MemoryTest):
+class Review(ConfirmedMemoryTest):
     async def asyncSetUp(self) -> None:
         await super().asyncSetUp()
         self.claims = ClaimStore(self.memory)

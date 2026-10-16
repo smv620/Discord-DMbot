@@ -65,11 +65,67 @@ export interface Held extends Entry {
 
 export const held: Held[] = [
   {
+    date: "2026-10-16",
+    title: "Recaps for your table",
+    what: "After a session, DMbot can write a short story-style recap. You read it first, change it if you like, and press Post to the table. Nothing goes to your players until you do. Paid plans only.",
+    reason:
+      "Recaps are off until dev1 has checked a real one (#1382). When they are on, move this up and turn on the recap words (RECAPS_LIVE in recap-words.ts).",
+  },
+  {
+    date: "2026-10-16",
+    title: "Quick answers use your facts",
+    what: "When you ask DMbot a quick question about someone in your campaign, it now uses the facts you confirmed, like who they work for. If it has nothing confirmed, it says so.",
+    reason:
+      "Not live until this change is deployed; dev1 moves it up once it is (#1370).",
+  },
+  {
+    date: "2026-10-16",
+    title: "Your questions to the team",
+    what: "After you write to the DMbot team, your account page lists your questions, with the date you sent each one and whether it is waiting, answered or closed.",
+    reason:
+      "The list needs the API deployed with its new list route (#1373); until dev1 deploys it the page shows nothing there.",
+  },
+  {
+    date: "2026-10-15",
+    title: "Ask a question in public",
+    what: "Post a question in the Q&A for DMbot. A helper called QAbot, a bot and not a person, answers what it can from the Help page and the site, and passes the rest to the team.",
+    reason:
+      "QAbot answers only once it is installed and live (the owner's steps on #1341). Until then a post there waits for the team.",
+  },
+  {
     date: "2026-10-15",
     title: "Move to a new Discord account",
     what: "To move to a new Discord account, press Get a move code on your account page. On the new account, type /dmbot migrate, press Import my account, and type the emailed code; you will be asked to say yes to being recorded again.",
     reason:
       "The move code goes to the payment email, and payments stay off until the Stripe account exists (#1096), so nobody can use it yet.",
+  },
+  {
+    date: "2026-10-16",
+    title: "A recap of last session",
+    what: "After a session, DMbot can write a short story of what happened to read at the start of the next one. It emails the DM when it's ready. They read it on the website, change it, ask for another, leave it out, or post it to the table. It only uses the words of people who agreed to be recorded.",
+    reason:
+      "Stays off until the first check on a real session (#1382).",
+  },
+  {
+    date: "2026-10-15",
+    title: "New names from what was said",
+    what: "After a session, DMbot can spot a name it does not know yet and ask the game master who or what it is. Anything said about that name waits until the game master has checked it. A name they turn down is forgotten, along with what was said about it.",
+    reason:
+      "It needs the story extractor, which stays off until its prompt passes the measurement (#1282).",
+  },
+  {
+    date: "2026-10-16",
+    title: "A note before tonight's session",
+    what: "When a session starts, DMbot can post a short note on the DM screen, for the game master only. It lists last time's recap, what you confirmed about the names heard last time, anything lost or ended, and how many things said at the table wait for your check. It shows nothing until you have confirmed something. Players do not see it.",
+    reason:
+      "Held until it has been seen working on the test server (#1403).",
+  },
+  {
+    date: "2026-10-16",
+    title: "When a player says a secret name",
+    what: "If a player says a name you've marked secret, it ends up in the transcript, which anyone in your server can read. After the session DMbot asks you privately, one name at a time (up to five), whether it should stay secret from players or be opened up. Only you can answer, and DMbot never decides for you.",
+    reason:
+      "Held until it has been seen working on the test server (#1407).",
   },
 ];
 

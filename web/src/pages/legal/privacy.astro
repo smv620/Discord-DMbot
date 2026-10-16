@@ -1,5 +1,9 @@
 ---
 import LegalPage from "../../components/LegalPage.astro";
+import QabotPrivacy from "../../components/QabotPrivacy.astro";
+import RecapsPrivacy from "../../components/RecapsPrivacy.astro";
+import { RECAP_AUDIO_LIVE, RECAPS_LIVE } from "../../content/recap-words";
+import { QABOT_LIVE } from "../../content/qabot";
 import {
   deletionWarnings,
   keepAfterStopPaying,
@@ -88,12 +92,16 @@ import {
       master's notes and settings, and any adventure or rulebook text the game master shares. That
       includes which items are the only one of their kind and who carries what, and whether the game
       master or the bot said so. A backup holds it, and it is deleted when the campaign is deleted.
+      <strong>What DMbot makes from a session belongs to the campaign.</strong> That means a recap,
+      story facts, notes for the game master, and anything else DMbot writes from what was said.
+      It is part of the campaign, and the campaign belongs to its game master.
     </li>
     <li>
       <strong>What was typed.</strong> While DMbot is listening, it also reads what people who
       said yes type in the table's chat: the voice channel's chat, one more channel the game
       master picks, and the dmb-chat channel where anyone can ask a quick rules question. Typed
-      lines go in the written record, marked as typed.
+      lines go in the written record, marked as typed. Questions put to DMbot, and its answers
+      about the game, go in the written record too, marked as such.
     </li>
     <li>
       <strong>Names at the table.</strong> DMbot notices what people are called at the table,
@@ -112,6 +120,15 @@ import {
     Your message is posted on GitHub, where anyone can read it. If you tell us how to reach
     you, we keep that with your message for a year; only the team sees it. To have a post
     taken down, ask on the same page.
+  </p>
+
+  <h3>When you write to the team</h3>
+  <p>
+    If you are on a paid plan, you can write to the DMbot team from your account page. That
+    message goes only to the team, privately, and is not posted anywhere public. The team replies
+    by email to the address on your account. We keep it for 12 months, then delete it. After you
+    send it, your account page shows you its subject, when you sent it and whether it was
+    answered, never the message itself. If you delete your account, we delete your messages too.
   </p>
 
   <h3>When you pay</h3>
@@ -154,7 +171,9 @@ import {
     </li>
     <li>
       <strong>What we send.</strong> A sign-in link and a move code, only when you ask for one, and
-      two Try It emails: one on the last day of Try It, and one if you get 30 more days. Nothing
+      two Try It emails: one on the last day of Try It, and one if you get 30 more days.{
+        RECAPS_LIVE ? " A game master also gets an email when a recap is ready or could not be written (see Recaps below)." : ""
+      } Nothing
       else.
     </li>
     <li>
@@ -210,6 +229,9 @@ import {
     for that server, and never show it in full.
   </p>
 
+  <QabotPrivacy live={QABOT_LIVE} />
+  <RecapsPrivacy live={RECAPS_LIVE} audio={RECAP_AUDIO_LIVE} />
+
   <h2>How long we keep it</h2>
   <p>A campaign is deleted this long after its last game:</p>
   <div class="table-wrap">
@@ -259,7 +281,10 @@ import {
     <li>
       <strong>Stop being recorded</strong> at any time: press ⚙️ Menu in DMbot's
       private message to you, then "Stop recording me", then "Yes". Or type
-      <code>/consent revoke</code> in Discord.
+      <code>/consent revoke</code> in Discord. DMbot stops recording you and removes what this
+      page says it removes. What DMbot already made from sessions you took part in, such as a
+      recap or the story facts your game master kept, stays with the campaign. Your voice was
+      never kept.
     </li>
     <li>
       <strong>Delete your account</strong> from <a href="/account">My Account</a>. This removes
@@ -268,11 +293,17 @@ import {
       money back, ask before you delete (see <a href="/legal/refunds#stopping">Refunds</a>). Lines
       you said in
       someone else's campaign stay there, readable by that server, until that campaign is
-      deleted. Your campaigns are not deleted with your account, because the other players may
+      deleted. What DMbot made from those sessions stays with the campaign too: deleting your
+      account does not remove it. Your campaigns are not deleted with your account, because the other players may
       still want to read or download them. They are deleted 120 days later, unless another DM
       of the campaign takes them over. If the owner's Discord account is gone, or the owner has
       been out of the server for 7 days, DMbot offers the campaign's other game masters a button
       to take the campaign on. Only a game master who presses it takes over.
+    </li>
+    <li>
+      <strong>Delete a campaign.</strong> Only the campaign's game master can. Deleting it is the
+      only thing that removes what DMbot made for it, such as its recaps, story facts and notes.
+      A player who wants something removed can ask their game master.
     </li>
     <li>
       <strong>Get a copy of your information.</strong>

@@ -7,7 +7,7 @@ export const text = {
   description: "DMbot's admin page, for the team only.",
   heading: "Admin",
   loading: "Checking if you're signed in…",
-  signInLead: "Sign in to manage free access.",
+  signInLead: "Sign in to manage free access and support tickets.",
   google: "Sign in with Google",
   or: "Or use your admin email and password:",
   email: "Email",
@@ -112,6 +112,54 @@ export const text = {
     stale: "That didn't work. Reload this page and try again.",
     "no-grant": "That person has no free access to revoke. We've updated the list.",
   } as Record<string, string | ((max: number) => string)>,
+
+  // Support tickets (#1340): private messages from people on paid plans.
+  ticketsHeading: "Support tickets",
+  ticketsLead:
+    "Private messages from people on a paid plan, newest first. They are deleted after 12 months, or with the account.",
+  ticketsNone: "No tickets yet.",
+  // The filter above the list (#1375): what needs a reply first, and how many of each.
+  ticketsFilterLabel: "Show tickets",
+  ticketFilters: {
+    new: "Needs a reply",
+    answered: "Answered",
+    closed: "Closed",
+    all: "All",
+  } as Record<string, string>,
+  // A non-breaking space, so the count never drops onto a line of its own on a phone.
+  ticketFilterCount: (label: string, count: number): string => `${label}\u00a0(${count})`,
+  // The same words on a ticket as on the button that finds it ("New" and "Needs a reply" were one
+  // state under two names).
+  ticketRowStatuses: {
+    new: "Needs a reply",
+    answered: "Answered",
+    closed: "Closed",
+  } as Record<string, string>,
+  ticketsNoneFor: {
+    new: "Nothing needs a reply. All caught up.",
+    answered: "No answered tickets.",
+    closed: "No closed tickets.",
+    all: "No tickets yet.",
+  } as Record<string, string>,
+  copyAddress: "Copy address",
+  // The button's name for a screen reader, so each one in the list is told apart.
+  copyAddressFor: (subject: string): string => `Copy address for ${subject}`,
+  addressCopied: "Address copied.",
+  copyFailed: "Couldn't copy. Tap the address to open your email instead.",
+  ticketStatuses: { new: "New", answered: "Answered", closed: "Closed" } as Record<string, string>,
+  ticketFrom: (who: string, dmbotId: string, plan: string, when: string): string =>
+    `${who} (DMbot ID ${dmbotId}), ${plan} plan, ${when}`,
+  replyTo: "Reply to",
+  noEmail: "No email on this account",
+  markAnswered: "Mark answered",
+  closeTicket: "Close",
+  reopenTicket: "Reopen",
+  ticketDone: (status: string): string => `Done. The ticket is now ${status.toLowerCase()}.`,
+  ticketGone: "That ticket is gone, so we've updated the list.",
+  ticketStale: "That didn't work. Reload this page and try again.",
+  ticketFailed: "That didn't save. Try again in a minute.",
+  ticketsDown: "Can't load the tickets right now. Try again in a minute.",
+  ticketsTryAgain: "Try again",
 } as const;
 
 /** What a save did, in words: "Same as Guild, until Dec 31, 2026" or "No limits, no end

@@ -37,6 +37,7 @@ from dmbot.web import (
     feedback,
     offers,
     sessions,
+    strays,
     support,
     tokens,
 )
@@ -59,6 +60,7 @@ from dmbot.web.limits import LIMITS, RateLimit
 from dmbot.web.me import build_me
 from dmbot.web.moving import MoveCodes, can_move
 from dmbot.web.payments import PaymentError, PaymentProvider, paid_plan_ids
+from dmbot.web.recaps import RecapError, decide, edit_recap, list_recaps, read_recap
 from dmbot.web.sessions import Session
 from dmbot.web.settings import WebSettings
 
@@ -488,13 +490,70 @@ def create_app(
     @app.get("/me")
     async def me(signed: Signed) -> dict[str, Any]:
         session, _token = signed
-        return await build_me(db, session, now=clock())
+        return await build_me(
+            db,
+            session,
+            now=clock(),
+            recap_audio_for_sale=payments is not None and payments.recap_audio_for_sale,
+        )
 
     @app.get("/me/characters")
     async def me_characters(signed: Signed) -> dict[str, Any]:
         """The signed-in person's own character sheets, read-only (#1164)."""
         session, _token = signed
         return {"characters": await build_characters(db, session)}
+
+    recap_refusals = {
+        "not_found": (404, "not_found"),
+        "not_allowed": (409, "not_allowed"),
+        "not_editable": (409, "not_editable"),
+        "bad_text": (422, "bad_text"),
+    }
+
+    @app.get("/me/recaps")
+    async def me_recaps(signed: Signed) -> dict[str, Any]:
+        """The signed-in DM's latest session recaps (#1382). A player sees none."""
+        session, _token = signed
+        return {"recaps": await list_recaps(db, session)}
+
+    @app.get("/me/recaps/{ref}")
+    async def me_recap(ref: str, signed: Signed) -> dict[str, Any]:
+        session, _token = signed
+        try:
+            return await read_recap(db, session, ref)
+        except RecapError as err:
+            status, detail = recap_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+
+    @app.put("/me/recaps/{ref}")
+    async def me_recap_edit(ref: str, signed: Signed, request: Request) -> dict[str, Any]:
+        """Save the DM's edit of the text and the housekeeping (never logged)."""
+        session, _token = signed
+        try:
+            body = await request.json()
+        except ValueError:
+            body = None
+        summary = body.get("summary") if isinstance(body, dict) else None
+        bullets = body.get("housekeeping") if isinstance(body, dict) else None
+        if not isinstance(summary, str) or not (
+            isinstance(bullets, list) and all(isinstance(b, str) for b in bullets)
+        ):
+            raise HTTPException(status_code=422, detail="bad_text")
+        try:
+            return await edit_recap(db, session, ref, summary=summary, housekeeping=bullets)
+        except RecapError as err:
+            status, detail = recap_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+
+    @app.post("/me/recaps/{ref}/{action}")
+    async def me_recap_decide(ref: str, action: str, signed: Signed) -> dict[str, Any]:
+        """Post to the table (the bot sends it), Try again, or Don't post."""
+        session, _token = signed
+        try:
+            return await decide(db, session, ref, action)
+        except RecapError as err:
+            status, detail = recap_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
 
     @app.post("/me/recording/{server_id}/stop", status_code=204)
     async def stop_recording(server_id: str, signed: Signed) -> Response:
@@ -704,6 +763,15 @@ def create_app(
             except PaymentError as exc:
                 log.warning("Couldn't stop a subscription for a deletion: %s", exc)
                 raise HTTPException(status_code=502, detail="payments_unavailable") from exc
+        add_on = await entitlements_writer.recap_audio_subscription(db, session.user_id)
+        if add_on is not None:  # the recap audio add-on is a second subscription (#1389)
+            if payments is None:
+                raise HTTPException(status_code=503, detail="payments_unavailable")
+            try:
+                await payments.cancel(subscription_id=add_on)
+            except PaymentError as exc:
+                log.warning("Couldn't stop the recap audio add-on for a deletion: %s", exc)
+                raise HTTPException(status_code=502, detail="payments_unavailable") from exc
         await delete_person(db, session.user_id, now=clock())
         log.info("Account deleted: user %s", session.user_id)
         response = Response(status_code=204)
@@ -822,6 +890,42 @@ def create_app(
             raise HTTPException(status_code=502, detail="payments_unavailable") from exc
         return {"url": url}
 
+    @app.post("/billing/recap-audio")
+    async def recap_audio(signed: Signed) -> dict[str, str]:
+        """The page to subscribe to the recap audio add-on (#1389). Hidden (404) until its price
+        is set, as if the route did not exist. Only for a working paid plan that does not
+        already have spoken recaps: Guild and Pro include them, free access has them, and a
+        second subscription would charge for nothing."""
+        provider = require_payments()
+        if not provider.recap_audio_for_sale:
+            raise HTTPException(status_code=404, detail="not_found")
+        session, _token = signed
+        current, access = await entitlements.plan_and_access(db, session.user_id, clock())
+        if access.recap_audio:
+            raise HTTPException(status_code=409, detail="already_included")
+        if current is None or current.plan == "try-it" or not current.usable(clock()):
+            raise HTTPException(status_code=409, detail="no_paid_plan")
+        if not current.has_customer:
+            # A plan set by hand has no customer at the company: the add-on's would be a
+            # different one, and its events could not follow an account move (#1230).
+            raise HTTPException(status_code=409, detail="no_paid_plan")
+        if await entitlements_writer.recap_audio_subscription(db, session.user_id) is not None:
+            # One already exists (it may have run out unpaid): a second would charge twice.
+            raise HTTPException(status_code=409, detail="already_subscribed")
+        email = await account_email(db, session.user_id)
+        try:
+            url = await provider.recap_audio_checkout_url(
+                user_id=session.user_id,
+                email=email,
+                return_url=account_page,
+                dmbot_id=await dmbot_id(db, session.user_id),
+                customer_id=await customer_id(db, session.user_id),
+            )
+        except PaymentError as exc:
+            log.warning("Recap audio checkout failed: %s", exc)
+            raise HTTPException(status_code=502, detail="payments_unavailable") from exc
+        return {"url": url}
+
     @app.post("/billing/portal")
     async def billing_portal(signed: Signed) -> dict[str, str]:
         provider = require_payments()
@@ -836,6 +940,51 @@ def create_app(
             log.warning("Billing page failed: %s", exc)
             raise HTTPException(status_code=502, detail="payments_unavailable") from exc
         return {"url": url}
+
+    async def release_recap_audio(user_id: int) -> None:
+        """Cancel this person's add-on subscription at the company and clear it here (#1389):
+        its plan ended, or now includes audio, so it would only keep charging. Never raises: a
+        failure is logged loudly for a person (the add-on gives nothing without a working plan,
+        and the entitlement checks that, so nobody gets it free)."""
+        try:
+            sub = await entitlements_writer.recap_audio_subscription(db, user_id)
+            if sub is None or payments is None:
+                return
+            try:
+                await payments.cancel(subscription_id=sub)
+            except Exception:
+                await strays.note(db, sub)  # the hourly sweep tries again (#1399)
+                raise
+            await entitlements_writer.forget_recap_audio(db, user_id, now=clock())
+        except Exception as exc:  # the company, the database: nothing here may fail the webhook
+            log.error("Couldn't cancel a recap audio add-on: %s", type(exc).__name__)
+
+    async def cancel_stray_add_on(subscription_id: str | None) -> None:
+        """An add-on subscription that must not exist (a second one, or one bought with no
+        working plan): cancelled at the company so it stops charging."""
+        if subscription_id is None or payments is None:
+            return
+        try:
+            await payments.cancel(subscription_id=subscription_id)
+        except Exception as exc:
+            await strays.note(db, subscription_id)  # the hourly sweep tries again (#1399)
+            log.error(
+                "Couldn't cancel a stray recap audio subscription: %s: kept for a retry",
+                type(exc).__name__,
+            )
+
+    async def recap_audio_follow_up(event: Any, outcome: str) -> None:
+        """What a payment event means for the add-on's billing, after it is applied (#1389)."""
+        if event.kind == "subscription_ended" and outcome == "applied":
+            await release_recap_audio(event.user_id)  # the add-on goes with the plan
+        elif (
+            event.kind in ("subscription_started", "subscription_renewed")
+            and outcome == "applied"
+            and event.plan in entitlements.RECAP_AUDIO_PLANS
+        ):
+            await release_recap_audio(event.user_id)  # the plan now includes audio
+        elif event.kind in ("recap_audio_started", "recap_audio_renewed") and outcome == "ignored":
+            await cancel_stray_add_on(event.subscription_id)
 
     @app.post("/webhooks/{provider_name}")
     async def webhook(provider_name: str, request: Request) -> Response:
@@ -865,6 +1014,7 @@ def create_app(
             raise HTTPException(status_code=503, detail="retry_later")
         if outcome == "rejected":
             raise HTTPException(status_code=422, detail="bad_event")
+        await recap_audio_follow_up(event, outcome)
         return Response(status_code=200)
 
     # The "Say hello" forms (#665): no sign-in needed.
@@ -1007,7 +1157,23 @@ def create_app(
                 f"DMbot ID: {to_dmbot_id(session.user_id)}\nPlan: {plan.plan}\n\n"
                 f"Read it on the admin page: {settings.site_url}/admin\n",
             )
-        return {"ok": True}
+        # Whether the team can reply by email: the thank-you says so, or says what to do (#1340).
+        return {"ok": True, "reply": await account_email(db, session.user_id) is not None}
+
+    @app.get("/support/mine")
+    async def my_support(signed: Signed) -> dict[str, Any]:
+        """The signed-in person's own questions to the team, newest first (#1373): when they were
+        sent, the subject and where each stands. Never the words and never anyone else's. `reply`
+        says whether the team can answer by email, so "answered" can tell them where to look."""
+        session, _token = signed
+        rows = await support.mine(db, session.user_id)
+        reply = bool(rows) and await account_email(db, session.user_id) is not None
+        return {
+            "tickets": [
+                {"at": r.created_at, "subject": r.subject, "status": r.status} for r in rows
+            ],
+            "reply": reply,
+        }
 
     # The admin page's sign-in (#772); off while ADMIN_EMAILS is empty. Its sessions and
     # locks count seconds on their own steady clock (not `clock`, the wall time used for

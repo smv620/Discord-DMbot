@@ -66,6 +66,9 @@ class Feature(enum.StrEnum):
     RULES_CONFIRM = "rules_confirm"  # a rules alert's candidate, confirmed before the DM sees it
     SHEET = "sheet"  # a player's own sheet document read into the allow-listed fields (#1125)
     FIGHTBOT = "fightbot"  # a short reminder of a player's own options in combat (#1129)
+    RECAP = "recap"  # the cinematic recap after a session (#1382); off by default
+    RECAP_RETRY = "recap_retry"  # its one more try, when the first draft fails the checks
+    EXTRACTOR = "extractor"  # the story extractor after a session (#1363); off by default
 
 
 # The tier of each job. Nothing else chooses: a job names its tier here, never a model.
@@ -81,6 +84,10 @@ FEATURE_TIERS = {
     Feature.RULES_CONFIRM: AIModelTier.CAREFUL,  # (rules alerts: FAST spots, CAREFUL confirms)
     Feature.SHEET: AIModelTier.CAREFUL,  # its numbers and names are checked, but only once
     Feature.FIGHTBOT: AIModelTier.FAST,  # a short reminder every couple of minutes at most
+    # The default; DMBOT_STORY_EXTRACTOR_TIER picks it, because the measurement (#1282) decides.
+    Feature.EXTRACTOR: AIModelTier.FAST,
+    Feature.RECAP: AIModelTier.FAST,
+    Feature.RECAP_RETRY: AIModelTier.CAREFUL,
 }
 
 # The setting that picks each tier's model (named in the log when one isn't available).
@@ -186,6 +193,7 @@ class Reply:
     output_tokens: int = 0
     model: str = ""  # the model that answered (after any fallback)
     cache_read_tokens: int = 0  # input tokens read from the cache
+    cache_write_tokens: int = 0  # input tokens written to the cache (charged a little extra)
 
 
 def _model_unavailable(status: int, body_text: str) -> bool:
@@ -225,11 +233,17 @@ class TierClient:
     calls name a tier by being made on it, and no feature names a model."""
 
     def __init__(
-        self, client: AnthropicClient, tier: AIModelTier, feature: str | None = None
+        self,
+        client: AnthropicClient,
+        tier: AIModelTier,
+        feature: str | None = None,
+        *,
+        cache_system: bool = False,
     ) -> None:
         self._client = client
         self.tier = tier
         self.feature = feature  # named in the log line and usage totals (#1176)
+        self.cache_system = cache_system  # the system text is the same on every call (#1367)
 
     @property
     def model(self) -> str:
@@ -241,7 +255,12 @@ class TierClient:
 
     async def complete(self, system: str, text: str, *, max_tokens: int = 8000) -> Reply:
         return await self._client.complete(
-            system, text, tier=self.tier, max_tokens=max_tokens, feature=self.feature
+            system,
+            text,
+            tier=self.tier,
+            max_tokens=max_tokens,
+            feature=self.feature,
+            cache_system=self.cache_system,
         )
 
 
@@ -267,10 +286,14 @@ class AnthropicClient:
     def __repr__(self) -> str:  # never the key
         return f"AnthropicClient(models={self.models!r})"
 
-    def tier(self, tier: AIModelTier, feature: Feature | None = None) -> TierClient:
+    def tier(
+        self, tier: AIModelTier, feature: Feature | None = None, *, cache_system: bool = False
+    ) -> TierClient:
         """The client for one job. `feature` is only a label for the log line and the usage
         totals, so jobs that share a tier can be counted apart."""
-        return TierClient(self, tier, feature.value if feature is not None else None)
+        return TierClient(
+            self, tier, feature.value if feature is not None else None, cache_system=cache_system
+        )
 
     def _chain(self, tier: AIModelTier) -> list[tuple[AIModelTier, str]]:
         """The tier, then each one below it, without repeats and without a model already
@@ -312,6 +335,7 @@ class AnthropicClient:
         tier: AIModelTier,
         max_tokens: int = 8000,
         feature: str | None = None,
+        cache_system: bool = False,
     ) -> Reply:
         """One request on `tier`: `system` instructions, `text` as the user's message.
         Returns the answer's text, and whether it was cut off at `max_tokens`. If the
@@ -331,6 +355,7 @@ class AnthropicClient:
                     asked=tier,
                     can_refuse=lower is not None,
                     feature=feature,
+                    cache_system=cache_system,
                 )
             except _ModelRefused as refused:
                 if lower is None:
@@ -369,11 +394,19 @@ class AnthropicClient:
         asked: AIModelTier,
         can_refuse: bool,
         feature: str | None = None,
+        cache_system: bool = False,
     ) -> Reply:
+        # `cache_system`: ask the service to remember the system text between calls, which it
+        # charges much less to read again. It only does so above a minimum length that depends on
+        # the model, and otherwise just answers as usual; the log line's cache_read says if it did.
         body: dict[str, Any] = {
             "model": model,
             "max_tokens": max_tokens,
-            "system": system,
+            "system": (
+                [{"type": "text", "text": system, "cache_control": {"type": "ephemeral"}}]
+                if cache_system
+                else system
+            ),
             "messages": [{"role": "user", "content": text}],
         }
         headers = {
@@ -425,12 +458,13 @@ class AnthropicClient:
 
         # One line for each call, for watching the cost: counts only, never the text.
         log.info(
-            "AI call: tier=%s model=%s in=%s out=%s cache_read=%s stop=%s%s%s",
+            "AI call: tier=%s model=%s in=%s out=%s cache_read=%s cache_write=%s stop=%s%s%s",
             tier.value,
             model,
             count("input_tokens"),
             count("output_tokens"),
             count("cache_read_input_tokens"),
+            count("cache_creation_input_tokens"),
             data.get("stop_reason"),
             f" asked={asked.value}" if asked is not tier else "",
             f" feature={feature}" if feature else "",
@@ -444,7 +478,11 @@ class AnthropicClient:
             output_tokens=count("output_tokens"),
             model=model,
             cache_read_tokens=count("cache_read_input_tokens"),
+            cache_write_tokens=count("cache_creation_input_tokens"),
         )
         if self._watch is not None:
-            self._watch.record(reply.input_tokens, reply.output_tokens, feature)
+            # `input_tokens` leaves out what the cache wrote or read. Count a write in full and
+            # a read at a tenth (what it is charged about), so the spend watch does not undercount.
+            billed = reply.input_tokens + reply.cache_write_tokens + reply.cache_read_tokens // 10
+            self._watch.record(billed, reply.output_tokens, feature)
         return reply

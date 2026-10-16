@@ -12,7 +12,8 @@ on:
     types: [submitted, edited, dismissed]
     branches: [development]
   pull_request:
-    types: [opened, synchronize, reopened]
+    # labeled and unlabeled: the owner's `approved: owner` label approves a Supervisor PR (#1387).
+    types: [opened, synchronize, reopened, labeled, unlabeled]
     branches: [development]
 
 # Read the pull request and its reviews, write one commit status. `contents: read` is only for
@@ -44,6 +45,11 @@ jobs:
           ref: ${{ github.event.pull_request.base.sha }}
           path: trusted
           persist-credentials: false
+      # The same Python as ci.yml, so a newer standard-library name works here too (#1409: the
+      # runner's own 3.10 has no datetime.UTC).
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
       - name: post the check
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

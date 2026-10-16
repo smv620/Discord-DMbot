@@ -8,6 +8,7 @@ from __future__ import annotations
 import importlib.util
 import sys
 import unittest
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -246,13 +247,25 @@ class FakeGitHub:
         self.posted: list[tuple[str, str, str, str | None]] = []
         self.asked: list[str] = []
         self.fail_on: str | None = None
+        self.body = "Fixes #1.\n\nSession: CloudDev."
+        self.labels: list[str] = []
+        self.events: list[dict[str, Any]] = []
+        self.head_made = "2026-10-16T01:00:00Z"
+        self.statuses: list[dict[str, Any]] = []
 
     def get(self, path: str) -> Any:
         self.asked.append(path)
         if self.fail_on and self.fail_on in path:
             raise OSError("GitHub is down")
         if path.startswith("/pulls/"):
-            return {"head": {"sha": HEAD}, "base": {"sha": BASE, "ref": "development"}}
+            return {
+                "head": {"sha": HEAD},
+                "base": {"sha": BASE, "ref": "development"},
+                "body": self.body,
+                "labels": [{"name": n} for n in self.labels],
+            }
+        if path.startswith("/commits/"):
+            return {"commit": {"committer": {"date": self.head_made}}}
         sha = path.split("...")[1]
         if sha not in self.diffs:
             raise OSError("no such commit")  # a force-pushed-away commit
@@ -263,6 +276,10 @@ class FakeGitHub:
             raise OSError("GitHub is down")
         if path.endswith("/files"):
             return [{"filename": f} for f in self.files]
+        if path.endswith("/events"):
+            return self.events
+        if path.endswith("/statuses"):
+            return self.statuses
         return self.reviews
 
     def set_status(self, sha: str, state: str, description: str, url: str | None) -> None:
@@ -319,6 +336,139 @@ class Run(unittest.TestCase):
     def test_a_log_only_pull_request_never_asks_for_a_comparison(self) -> None:
         fake = FakeGitHub([], ["docs/testing-status.log"], {})
         self.assertEqual(sr.run(fake, 7, ["smv620"])[0], "success")
+
+
+def labeled(at: str, who: str = "smv620", name: str = "approved: owner") -> dict[str, Any]:
+    return {"event": "labeled", "created_at": at, "actor": {"login": who}, "label": {"name": name}}
+
+
+class OwnersLabel(unittest.TestCase):
+    """A Supervisor PR outside the docs-only rule is approved by the owner's label (#1387)."""
+
+    def setUp(self) -> None:
+        self.saved = sr.now
+        sr.now = lambda: datetime(2026, 10, 16, 5, 0, tzinfo=timezone.utc)  # type: ignore[attr-defined]  # noqa: UP017
+
+    def tearDown(self) -> None:
+        sr.now = self.saved  # type: ignore[attr-defined]
+
+    def pull(self, **kw: Any) -> FakeGitHub:
+        fake = FakeGitHub([], ["docs/costs.md"], {})
+        fake.body = "Session: Supervisor.\n\nNumbers."
+        fake.labels = ["approved: owner"]
+        fake.events = [labeled("2026-10-16T02:00:00Z")]
+        fake.statuses = [{"created_at": "2026-10-16T01:30:00Z"}]  # the head arrived at 01:30
+        for key, value in kw.items():
+            setattr(fake, key, value)
+        return fake
+
+    def state(self, fake: FakeGitHub) -> tuple[str, str]:
+        verdict: tuple[str, str] = sr.run(fake, 7, ["smv620"])
+        return verdict
+
+    def test_the_label_on_a_supervisor_pr_is_a_success_with_its_own_words(self) -> None:
+        self.assertEqual(
+            self.state(self.pull()), ("success", "Approved by the owner (a Supervisor PR)")
+        )
+
+    def test_without_the_label_it_waits_as_before(self) -> None:
+        state, text = self.state(self.pull(labels=[], events=[]))
+        self.assertEqual((state, text), ("pending", "Waiting for Supervisor's review"))
+
+    def test_a_label_on_someone_elses_pr_is_not_an_approval(self) -> None:
+        fake = self.pull(body="Fixes #1.\n\nSession: CloudDev.")
+        self.assertEqual(self.state(fake)[0], "pending")
+        self.assertFalse([p for p in fake.asked if "events" in p or "statuses" in p])  # not read
+
+    def test_a_label_added_by_anyone_but_the_owner_does_not_count(self) -> None:
+        fake = self.pull(events=[labeled("2026-10-16T02:00:00Z", who="someone-else")])
+        self.assertEqual(self.state(fake)[0], "pending")
+
+    def test_a_label_put_back_by_someone_else_does_not_count_for_the_owners_earlier_one(
+        self,
+    ) -> None:
+        fake = self.pull(
+            events=[
+                labeled("2026-10-16T02:00:00Z"),
+                {"event": "unlabeled", "created_at": "2026-10-16T02:30:00Z",
+                 "actor": {"login": "smv620"}, "label": {"name": "approved: owner"}},
+                labeled("2026-10-16T03:00:00Z", who="someone-else"),
+            ]
+        )  # fmt: skip
+        self.assertEqual(self.state(fake)[0], "pending")
+
+    def test_a_label_taken_off_and_put_on_again_by_the_owner_counts_from_the_second_time(
+        self,
+    ) -> None:
+        fake = self.pull(
+            head_made="2026-10-16T01:00:00Z",
+            statuses=[{"created_at": "2026-10-16T02:30:00Z"}],  # a push after the first label
+        )
+        self.assertEqual(self.state(fake)[0], "pending")
+        fake.events += [
+            {"event": "unlabeled", "created_at": "2026-10-16T02:40:00Z",
+             "actor": {"login": "smv620"}, "label": {"name": "approved: owner"}},
+            labeled("2026-10-16T02:50:00Z"),
+        ]  # fmt: skip
+        self.assertEqual(self.state(fake)[0], "success")
+
+    def test_a_commit_made_long_ago_but_pushed_after_the_label_waits(self) -> None:
+        # Its own date says 01:00, before the label; its first status says it arrived at 03:00.
+        fake = self.pull(head_made="2026-10-16T01:00:00Z",
+                         statuses=[{"created_at": "2026-10-16T03:00:00Z"}])  # fmt: skip
+        self.assertEqual(self.state(fake)[0], "pending")
+
+    def test_a_head_nobody_has_seen_yet_is_not_approved_by_an_older_label(self) -> None:
+        # No status on the head: it arrives with this run (05:00), after the label (02:00).
+        self.assertEqual(self.state(self.pull(statuses=[]))[0], "pending")
+
+    def test_a_commit_dated_after_the_label_waits_whatever_the_statuses_say(self) -> None:
+        self.assertEqual(self.state(self.pull(head_made="2026-10-16T03:00:00Z"))[0], "pending")
+
+    def test_times_with_an_offset_are_compared_as_times(self) -> None:
+        # 01:30+02:00 is 23:30 the evening before; the label at 02:00Z is after it.
+        fake = self.pull(
+            head_made="2026-10-16T01:30:00+02:00",
+            statuses=[{"created_at": "2026-10-16T01:30:00+02:00"}],
+        )
+        self.assertEqual(self.state(fake)[0], "success")
+        # 03:30+02:00 is 01:30Z: before the label too. 04:30+02:00 is 02:30Z: after it.
+        late = self.pull(
+            head_made="2026-10-16T04:30:00+02:00",
+            statuses=[{"created_at": "2026-10-16T04:30:00+02:00"}],
+        )
+        self.assertEqual(self.state(late)[0], "pending")
+
+    def test_a_time_that_cannot_be_read_approves_nothing(self) -> None:
+        self.assertEqual(self.state(self.pull(head_made="yesterday"))[0], "pending")
+        self.assertEqual(self.state(self.pull(events=[labeled("soon")]))[0], "pending")
+
+    def test_another_label_does_not_count(self) -> None:
+        fake = self.pull(
+            labels=["session: Supervisor"],
+            events=[labeled("2026-10-16T02:00:00Z", name="session: Supervisor")],
+        )
+        self.assertEqual(self.state(fake)[0], "pending")
+
+    def test_a_label_taken_off_is_gone_even_if_it_was_added_once(self) -> None:
+        self.assertEqual(self.state(self.pull(labels=[]))[0], "pending")
+
+    def test_changes_needed_still_wins_over_the_label(self) -> None:
+        fake = self.pull()
+        fake.reviews = [review("Supervisor review: changes needed. 1. x")]
+        self.assertEqual(self.state(fake)[0], "failure")
+
+    def test_the_session_line_is_matched_at_the_start_of_a_line_only(self) -> None:
+        self.assertTrue(sr.is_supervisors("text\nSession: Supervisor.\n"))
+        self.assertFalse(sr.is_supervisors("I asked Session: Supervisor. about it"))
+        self.assertFalse(sr.is_supervisors(None))
+
+    def test_a_github_failure_reading_the_label_history_ends_pending_not_green(self) -> None:
+        fake = self.pull()
+        fake.fail_on = "events"
+        with self.assertRaises(OSError):
+            self.state(fake)
+        # And main() turns that into a pending status on the head (Main's tests cover the rest).
 
 
 class Main(unittest.TestCase):
@@ -382,7 +532,7 @@ class Workflow(unittest.TestCase):
             "pull_request_review:",
             "types: [submitted, edited, dismissed]",
             "pull_request:",
-            "types: [opened, synchronize, reopened]",
+            "types: [opened, synchronize, reopened, labeled, unlabeled]",
             "branches: [development]",
             "statuses: write",
             "pull-requests: read",

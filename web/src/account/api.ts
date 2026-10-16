@@ -101,6 +101,9 @@ export interface Me {
   experiencePoints?: number;
   /** A paid, active plan: a move code can be asked for. */
   canMove?: boolean;
+  /** A paid plan that still works: the Support form is for this account (#1340). Missing from
+   * an API older than that, which shows no form. */
+  canSupport?: boolean;
   /** Hand-overs offered to you, and the ones you offered (#614). */
   offers: { incoming: Offer[]; outgoing: Offer[] };
 }
@@ -131,6 +134,64 @@ export interface RecordingEntry {
   on: boolean;
 }
 
+/** What the API says after a ticket is kept (#1340): whether the team can reply by email, that is,
+ * whether the account has an address. */
+export interface SupportReceipt {
+  reply: boolean;
+}
+
+/** One of the person's own questions to the team (#1373): when it was sent (Unix seconds), the
+ * subject, and where it stands. Never the words, and never anyone else's. */
+export interface SupportQuestion {
+  at: number;
+  subject: string;
+  status: "new" | "answered" | "closed";
+}
+
+/** The person's own questions, newest first, and whether the team can reply by email (the
+ * account has an address), so "answered" can say where to look (#1373). */
+export interface MySupport {
+  tickets: SupportQuestion[];
+  reply: boolean;
+}
+
+/** What the Support form sends (#1340). */
+export interface SupportTicket {
+  subject: string;
+  message: string;
+  turnstile: string;
+}
+
+/** One session recap the DM reviews (#1382, #1386). The words come from the API already clean of
+ * the music and voice cues the bot's own tools use, so the page shows `text` as it is. */
+export interface Recap {
+  /** The id in the page's address: `<server>.<campaign>.<session>`. */
+  ref: string;
+  campaign: string | null;
+  serverName?: string;
+  /** Unix seconds the session started. */
+  sessionAt: number;
+  gameDay: string | null;
+  state: string;
+  status: "draft" | "posting" | "posted" | "dropped";
+  /** Still being made: nothing to read yet. */
+  working: boolean;
+  title: string;
+  text: string;
+  /** The text with its cues, which is what an edit sends back. */
+  summary: string;
+  housekeeping: string[];
+  /** Why it couldn't be made, if it couldn't. */
+  error: string;
+  canEdit: boolean;
+  canPost: boolean;
+  canTryAgain: boolean;
+  triesLeft: number;
+  canDrop: boolean;
+}
+
+export type RecapAction = "post" | "again" | "drop";
+
 /** Why a call failed, in a form the page can turn into plain words. */
 export type ApiErrorKind =
   | "network" // couldn't reach the API
@@ -153,6 +214,14 @@ export type ApiErrorKind =
   | "no-email" // no payment email is stored yet, so a move code has nowhere to go (#1246)
   | "too-soon" // the account moved less than 30 days ago (#1246)
   | "email-failed" // the move code could not be emailed just now (#1246)
+  | "not-paying" // a support ticket needs a paid plan that works (#1340)
+  | "not-human" // the person check wasn't passed or wasn't there (#1340)
+  | "ticket-empty" // the subject or the message was empty (#1340)
+  | "ticket-too-long" // the message is over 4,000 letters (#1340)
+  | "subject-too-long" // the subject is over 120 letters (#1340)
+  | "not-found" // a recap that isn't there, or isn't yours to see (#1386)
+  | "not-editable" // the recap was posted, dropped or is being made, so it can't change (#1386)
+  | "bad-text" // the recap text is empty or too long (#1386)
   | "server"; // anything else
 
 export class ApiError extends Error {
@@ -188,6 +257,18 @@ export interface AccountApi {
   emailSignInUse?(token: string): Promise<void>;
   /** Email a move code to the payment email (paid plans, #1231). */
   getMoveCode?(): Promise<void>;
+  /** Send a private ticket to the DMbot team (paid plans, #1340). Missing from an API older
+   * than that. `turnstile` is Cloudflare's token, or "" when the site has no key. */
+  sendSupport?(ticket: SupportTicket): Promise<SupportReceipt>;
+  /** The DM's recent session recaps, newest first (#1386). Missing from an API older than that. */
+  recaps?(): Promise<Recap[]>;
+  recap?(ref: string): Promise<Recap>;
+  /** Save the DM's edit of the recap text and its housekeeping bullets. */
+  saveRecap?(ref: string, summary: string, housekeeping: string[]): Promise<Recap>;
+  /** Post to the table (the bot sends it), Try again, or Don't post. */
+  decideRecap?(ref: string, action: RecapAction): Promise<Recap>;
+  /** The person's own questions to the team (#1373). Missing from an API older than that. */
+  mySupport?(): Promise<MySupport>;
   /** The person's own characters. Missing from an API older than #1164. */
   characters?(): Promise<Character[]>;
   /** Stop recording me in one server (#1151). Starting again stays in Discord. */
@@ -236,6 +317,14 @@ const errorKinds: Record<string, ApiErrorKind> = {
   no_email: "no-email",
   too_soon: "too-soon",
   email_failed: "email-failed",
+  not_paying: "not-paying",
+  not_human: "not-human",
+  empty: "ticket-empty",
+  too_long: "ticket-too-long",
+  subject_too_long: "subject-too-long",
+  not_found: "not-found",
+  not_editable: "not-editable",
+  bad_text: "bad-text",
 };
 
 /** The real API over HTTP. `base` is the API's address, e.g. "https://api.example". */
@@ -243,7 +332,7 @@ export function httpApi(base: string, fetcher: typeof fetch = fetch): AccountApi
   const root = base.replace(/\/+$/, "");
 
   async function call(
-    method: "GET" | "POST",
+    method: "GET" | "POST" | "PUT",
     path: string,
     body?: unknown,
     asFile = false,
@@ -302,6 +391,32 @@ export function httpApi(base: string, fetcher: typeof fetch = fetch): AccountApi
     getMoveCode: async () => {
       await call("POST", "/me/move-code");
     },
+    sendSupport: async (ticket) => {
+      const answer = (await call("POST", "/support", ticket)) as { reply?: unknown } | null;
+      // Only an explicit "no address" changes the words: an answer without the field is a
+      // ticket that was kept, and the team still replies by email.
+      return { reply: answer?.reply !== false };
+    },
+    mySupport: async () => {
+      const answer = (await call("GET", "/support/mine")) as {
+        tickets?: unknown;
+        reply?: unknown;
+      } | null;
+      // Anything that is not a list of questions is no list: the page shows nothing rather
+      // than guess.
+      const tickets = Array.isArray(answer?.tickets) ? answer.tickets : [];
+      return {
+        tickets: tickets.filter(
+          (t): t is SupportQuestion =>
+            typeof t === "object" &&
+            t !== null &&
+            typeof t.at === "number" &&
+            typeof t.subject === "string" &&
+            (t.status === "new" || t.status === "answered" || t.status === "closed"),
+        ),
+        reply: answer?.reply !== false,
+      };
+    },
     signOutEverywhere: async () => {
       await call("POST", "/me/sign-out-everywhere");
     },
@@ -312,6 +427,15 @@ export function httpApi(base: string, fetcher: typeof fetch = fetch): AccountApi
     billingPortalUrl: () => url("/billing/portal"),
     extraHoursUrl: () => url("/billing/extra-hours"),
     downloadExport: async () => (await call("GET", "/me/export", undefined, true)) as Blob,
+    recaps: async () => ((await call("GET", "/me/recaps")) as { recaps: Recap[] }).recaps,
+    recap: async (ref) => (await call("GET", `/me/recaps/${encodeURIComponent(ref)}`)) as Recap,
+    saveRecap: async (ref, summary, housekeeping) =>
+      (await call("PUT", `/me/recaps/${encodeURIComponent(ref)}`, {
+        summary,
+        housekeeping,
+      })) as Recap,
+    decideRecap: async (ref, action) =>
+      (await call("POST", `/me/recaps/${encodeURIComponent(ref)}/${action}`)) as Recap,
     characters: async () =>
       ((await call("GET", "/me/characters")) as { characters: Character[] }).characters,
     installUrl: (serverId) => `${root}/install?server_id=${encodeURIComponent(serverId)}`,

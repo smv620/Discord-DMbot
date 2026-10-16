@@ -1,6 +1,7 @@
 ---
 import Base from "../layouts/Base.astro";
-import { accountSteps, dmSteps, emailNote, emailSteps, helpHeading, helpIntro, playerNote, playerSteps } from "../content/help";
+import { RECAPS_LIVE, recapsHeading } from "../content/recap-words";
+import { recapSteps, accountSteps, dmSteps, quickAnswers, quickAnswersHeading, emailNote, emailSteps, gettingHelp, helpHeading, helpIntro, playerNote, playerSteps } from "../content/help";
 ---
 
 <Base
@@ -9,7 +10,10 @@ import { accountSteps, dmSteps, emailNote, emailSteps, helpHeading, helpIntro, p
 >
   <h1>{helpHeading}</h1>
   <p class="lead muted">{helpIntro}</p>
-  <p class="muted">Looking for something new? See <a href="/whats-new">what's new</a>.</p>
+  <p class="muted">
+    Looking for something new? See <a href="/whats-new">what's new</a>. Need more help? See{" "}
+    <a href={`#${gettingHelp.id}`}>getting help</a>.
+  </p>
 
   <section aria-labelledby="dm-heading">
     <h2 id="dm-heading">For the game master</h2>
@@ -28,6 +32,22 @@ import { accountSteps, dmSteps, emailNote, emailSteps, helpHeading, helpIntro, p
         ))
       }
     </ol>
+    <h3 id="quick-heading">{quickAnswersHeading}</h3>
+    <ul aria-labelledby="quick-heading">
+      {quickAnswers.map((s) => <li>{s.text}</li>)}
+    </ul>
+    {
+      RECAPS_LIVE && (
+        <>
+          <h3 id="recaps-heading">{recapsHeading}</h3>
+          <ul aria-labelledby="recaps-heading">
+            {recapSteps.map((s) => (
+              <li>{s.text}</li>
+            ))}
+          </ul>
+        </>
+      )
+    }
   </section>
 
   <section aria-labelledby="player-heading">
@@ -71,6 +91,22 @@ import { accountSteps, dmSteps, emailNote, emailSteps, helpHeading, helpIntro, p
       {emailSteps.map((s) => <li>{s.text}</li>)}
     </ol>
     <p class="muted">{emailNote}</p>
+  </section>
+
+  <section aria-labelledby="getting-help-heading" id={gettingHelp.id}>
+    <h2 id="getting-help-heading">{gettingHelp.heading}</h2>
+    <ol>
+      {
+        gettingHelp.items.map((item) => (
+          <li>
+            <strong>{item.lead}</strong>{" "}
+            {item.parts.map((part) =>
+              typeof part === "string" ? part : <a href={part.href}>{part.text}</a>,
+            )}
+          </li>
+        ))
+      }
+    </ol>
   </section>
 
   <p class="muted">

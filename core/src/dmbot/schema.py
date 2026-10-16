@@ -1330,6 +1330,24 @@ WEB_ROLE_SHEET_POLICY = """
                     AND guild_id = ANY ((SELECT dmbot_web_guilds())::BIGINT[]));
 """
 
+# The DM's recaps on the website (#1382): the signed-in person's own campaigns' recaps only, in
+# their session's servers. The campaign's DM list is read under the same rule, so being a DM is
+# what opens a row. Applied once the recap table exists.
+WEB_ROLE_RECAP_POLICY = """
+    DROP POLICY IF EXISTS web_dm_recaps ON recap_jobs;
+    CREATE POLICY web_dm_recaps ON recap_jobs AS RESTRICTIVE TO dmbot_web
+        USING (guild_id = ANY ((SELECT dmbot_web_guilds())::BIGINT[])
+               AND EXISTS (SELECT 1 FROM campaign_dms d
+                           WHERE d.guild_id = recap_jobs.guild_id
+                             AND d.campaign_id = recap_jobs.campaign_id
+                             AND d.user_id = dmbot_current_user()))
+        WITH CHECK (guild_id = ANY ((SELECT dmbot_web_guilds())::BIGINT[])
+                    AND EXISTS (SELECT 1 FROM campaign_dms d
+                                WHERE d.guild_id = recap_jobs.guild_id
+                                  AND d.campaign_id = recap_jobs.campaign_id
+                                  AND d.user_id = dmbot_current_user()));
+"""
+
 # Applied only once the offers table has all four bot-only columns (an older schema, as in a test
 # of a backfill, doesn't, and a rule can't name a column that isn't there).
 WEB_ROLE_OFFER_POLICY = """
@@ -2298,10 +2316,19 @@ WEB_ROLE_FUNCTIONS: tuple[tuple[str, str], ...] = (
     ("dmbot_moves_to_sync", "dmbot_moves_to_sync()"),  # the job that updates Stripe (#1230)
     ("dmbot_move_synced", "dmbot_move_synced(BIGINT)"),
     ("dmbot_move_failed", "dmbot_move_failed(BIGINT)"),
+    # Add-on subscriptions that must be cancelled, kept until the company says yes (#1399).
+    ("dmbot_note_stray_addon", "dmbot_note_stray_addon(TEXT)"),
+    ("dmbot_strays_to_cancel", "dmbot_strays_to_cancel()"),
+    ("dmbot_stray_addon_tried", "dmbot_stray_addon_tried(TEXT)"),
+    ("dmbot_stray_addon_done", "dmbot_stray_addon_done(TEXT)"),
     ("dmbot_previous_ids", "dmbot_previous_ids()"),  # the export's earlier Discord accounts
     ("dmbot_forget_account_history", "dmbot_forget_account_history()"),  # account deletion
     ("dmbot_set_payment_email", "dmbot_set_payment_email(TEXT, TEXT, BIGINT)"),  # #1242
     ("dmbot_forget_email_records", "dmbot_forget_email_records()"),  # account deletion, #1287
+    # The admin page reads a ticket's reply address, and only while its door is open (#1340).
+    ("dmbot_support_email", "dmbot_support_email(BIGINT)"),
+    # ... and its words, the same way (#1373): the website's role has no right to the column.
+    ("dmbot_support_message", "dmbot_support_message(BIGINT)"),
     # A move code asked for on the website (#1246).
     ("dmbot_web_move_code", "dmbot_web_move_code(BIGINT, TEXT, BIGINT, TEXT, BIGINT)"),
     ("dmbot_web_cancel_move_code", "dmbot_web_cancel_move_code(BIGINT, TEXT, BIGINT)"),
@@ -2329,6 +2356,13 @@ WEB_ROLE_GRANTS: tuple[tuple[str, tuple[str, ...]], ...] = (
     # to stop (DELETE) on consent is the website's Stop recording me (#1151): the same
     # policies hold it to the person's own row; it can never add or change a yes.
     ("SELECT", ("character_sheets",)),
+    # A DM's recaps (#1382): read, edit the text, Post, Try again and Don't post. Never the
+    # speakers, the call count, the original draft or the grade, which only the bot writes.
+    ("SELECT", ("recap_jobs",)),
+    (
+        "UPDATE (summary, housekeeping, status, tries, state)",
+        ("recap_jobs",),
+    ),
     ("SELECT, DELETE", ("consent",)),
     # Accepting a hand-over (#614) makes the person the owner and one of the DMs; the
     # store locks the campaign row first (FOR UPDATE needs an UPDATE right), and answering
@@ -2343,10 +2377,12 @@ WEB_ROLE_GRANTS: tuple[tuple[str, tuple[str, ...]], ...] = (
     # has no grant on sent_emails.
     ("INSERT", ("email_unsubscribed",)),
     ("INSERT, DELETE", ("feedback",)),
-    # Support tickets (#1340): added by the signed-in person, read and closed only through the
-    # admin page's door (the policies hold SELECT and UPDATE to it); the sweep and account
-    # deletion delete. The UPDATE is for the status column alone.
-    ("SELECT, INSERT, DELETE", ("support_tickets",)),
+    # Support tickets (#1340, #1373): added by the signed-in person; read back by them only as a
+    # list of their own (`read_own`: when, subject, status), never the message, which has no
+    # column right at all. The admin page reads the message through dmbot_support_message (a
+    # door), and closes with the status UPDATE; the sweep and account deletion delete.
+    ("INSERT, DELETE", ("support_tickets",)),
+    ("SELECT (id, created_at, user_id, plan, subject, source, status)", ("support_tickets",)),
     ("UPDATE (status)", ("support_tickets",)),
     ("SELECT, INSERT, UPDATE, DELETE", ("web_users", "web_sessions")),
     # Emailed sign-in links (#1231): made and used by the website, never read by anyone else.
@@ -3732,6 +3768,262 @@ MEMORY_CLAIMS = (
     """
 )
 
+EXTRACTOR_PROGRESS = """
+    -- How far the story extractor got through a stored session (#1367), kept on the session's
+    -- own row (so it is that campaign's, behind the same row-level security, and goes with the
+    -- session). `extracted_through_ms` is when the last line it read began (the lines' own
+    -- clock, not a position, so removing a person's lines cannot move it): a restart reads only
+    -- lines that began after it and never sends the same lines twice. `extractor_calls` is how
+    -- many AI calls the session has used, and `extracted_at` when it last ran, for the
+    -- campaign's daily ceiling. All zero for a session never read.
+    ALTER TABLE transcript_sessions ADD COLUMN extracted_through_ms BIGINT NOT NULL DEFAULT 0
+        CHECK (extracted_through_ms >= 0);
+    ALTER TABLE transcript_sessions ADD COLUMN extractor_calls INT NOT NULL DEFAULT 0
+        CHECK (extractor_calls >= 0);
+    ALTER TABLE transcript_sessions ADD COLUMN extracted_at BIGINT;
+"""
+
+RECAP_JOBS = (
+    _setting("dmbot_recap_mail_lookup", "dmbot.recap_mail_lookup", "TEXT")
+    + _setting("dmbot_recap_mail", "dmbot.recap_mail", "TEXT")
+    + f"""
+    -- The cinematic recap of a session (#1382; docs/PLAN.md, "Cinematic recaps"): a job that runs
+    -- after the session, away from the table, and emails the DM when it is ready. The DM reads,
+    -- edits and posts it on the website; nothing is ever posted without them. Per campaign,
+    -- never shared between campaigns or servers; in its backups; deleted with the campaign. One
+    -- row for each session (by when it started); the latest earlier posted one is the bridge.
+    --   state      the last stage that finished: queued, beats, checked, prose, housekeeping,
+    --              ready, or failed. Each stage can be run again, so a restart picks up where it
+    --              stopped (as the extractor does).
+    --   attempt    failed checks of the stage now running (0 or 1: the second is the last)
+    --   errors     calls that failed (the AI service, the network) in the stage now running
+    --   next_at    not before this time (backoff after an error)
+    --   leased_to  a worker has it until this time, so two never work on one job
+    --   calls      AI calls for the recap now being written, against the per-recap cap
+    --   window_count  how many parts the transcript is read in (a long session is read in
+    --              overlapping windows), and window_done how many of them are done
+    --   spent      AI calls ever made for this session (a Try again does not reset it), for
+    --              the campaign's cap for the day
+    --   last_error a short fixed reason (a type or a plain phrase), never the recap
+    --   beats      the cited beat sheet: what happened, who, and the lines each rests on
+    --   summary    the narration with its 《emotion》 and ((performance)) cues
+    --   original   the draft as written, so the DM's edits can be counted against it
+    --   music      one prompt for each emotion section (slice 2 turns them into audio)
+    --   status     draft (the DM has not decided), posting (the DM pressed Post; the bot sends
+    --              it), posted, or dropped
+    --   tries      how many times the DM asked for another (at most 2)
+    --   speakers   whose lines the recap was built from: asked about again at every stage
+    --   grade      the grader's numbers (counts only, for quality over time)
+    CREATE TABLE recap_jobs (
+        {_memory_scope()}
+        session_at   BIGINT NOT NULL CHECK (session_at > 0),
+        dm_user_id   BIGINT NOT NULL CHECK (dm_user_id > 0),
+        state        TEXT NOT NULL DEFAULT 'queued' CHECK (state IN
+                         ('queued', 'beats', 'checked', 'prose', 'housekeeping', 'audio',
+                          'ready', 'failed')),
+        attempt      INTEGER NOT NULL DEFAULT 0 CHECK (attempt BETWEEN 0 AND 2),
+        errors       INTEGER NOT NULL DEFAULT 0 CHECK (errors BETWEEN 0 AND 3),
+        restarts     INTEGER NOT NULL DEFAULT 0 CHECK (restarts BETWEEN 0 AND 3),
+        next_at      BIGINT NOT NULL DEFAULT 0,
+        leased_to    BIGINT NOT NULL DEFAULT 0,
+        calls        INTEGER NOT NULL DEFAULT 0 CHECK (calls >= 0),
+        spent        INTEGER NOT NULL DEFAULT 0 CHECK (spent >= 0),
+        window_count INTEGER NOT NULL DEFAULT 0 CHECK (window_count BETWEEN 0 AND 12),
+        window_done  INTEGER NOT NULL DEFAULT 0 CHECK (window_done BETWEEN 0 AND 12),
+        last_error   TEXT NOT NULL DEFAULT '' CHECK (char_length(last_error) <= 200),
+        problems     TEXT[] NOT NULL DEFAULT '{{}}',
+        beats        JSONB NOT NULL DEFAULT '[]',
+        title        TEXT NOT NULL DEFAULT '' CHECK (char_length(title) <= 120),
+        summary      TEXT NOT NULL DEFAULT '' CHECK (char_length(summary) <= 6000),
+        original     TEXT NOT NULL DEFAULT '' CHECK (char_length(original) <= 6000),
+        housekeeping TEXT[] NOT NULL DEFAULT '{{}}',
+        music        TEXT[] NOT NULL DEFAULT '{{}}',
+        game_day     INTEGER CHECK (game_day IS NULL OR game_day > 0),
+        status       TEXT NOT NULL DEFAULT 'draft'
+                         CHECK (status IN ('draft', 'posting', 'posted', 'dropped')),
+        tries        INTEGER NOT NULL DEFAULT 0 CHECK (tries BETWEEN 0 AND 2),
+        speakers     BIGINT[] NOT NULL DEFAULT '{{}}',
+        grade        JSONB NOT NULL DEFAULT '{{}}',
+        emailed_at   BIGINT,
+        created_at   BIGINT NOT NULL,
+        updated_at   BIGINT NOT NULL DEFAULT 0,
+        decided_at   BIGINT,
+        PRIMARY KEY (guild_id, campaign_id, session_at)
+    );
+    CREATE INDEX recap_jobs_due ON recap_jobs (guild_id, state) WHERE state NOT IN
+        ('ready', 'failed');
+    """
+    + _isolate("recap_jobs")
+    + """
+    -- The account address a recap's email goes to (the same one the Support replies use: the
+    -- payment company's, else the one Discord gave). web_users is forced to a person's own row,
+    -- so reading the DM's needs a door like dmbot_user_by_email's: a function with its owner's
+    -- rights that answers only while Database.recap_mail() has opened it, and only for a person
+    -- who is a DM of a campaign with a recap job in the server it was opened for. A read-only
+    -- policy TO the owner role, open only while the function has set its own setting.
+    CREATE FUNCTION dmbot_recap_address(who BIGINT) RETURNS TEXT
+        LANGUAGE plpgsql SECURITY DEFINER
+        AS $fn$
+    DECLARE
+        found TEXT;
+        before TEXT := COALESCE(current_setting('dmbot.recap_mail_lookup', true), '');
+    BEGIN
+        IF dmbot_recap_mail() IS DISTINCT FROM 'mail' THEN
+            RETURN NULL;
+        END IF;
+        IF NOT EXISTS (SELECT 1 FROM recap_jobs WHERE dm_user_id = who) THEN
+            RETURN NULL;
+        END IF;
+        PERFORM set_config('dmbot.recap_mail_lookup', 'on', true);
+        SELECT COALESCE(payment_email, email) INTO found FROM web_users WHERE user_id = who;
+        PERFORM set_config('dmbot.recap_mail_lookup', before, true);
+        RETURN found;
+    END
+    $fn$;
+    DO $do$
+    BEGIN
+        EXECUTE format(
+            'CREATE POLICY recap_mail_lookup ON web_users FOR SELECT TO %I
+                USING (dmbot_recap_mail_lookup() = ''on'')',
+            current_user);
+    END
+    $do$;
+    DO $do$
+    BEGIN
+        EXECUTE format(
+            'ALTER FUNCTION dmbot_recap_address(BIGINT)'
+            ' SET search_path = pg_catalog, %I, pg_temp',
+            current_schema());
+    END
+    $do$;
+    REVOKE ALL ON FUNCTION dmbot_recap_address(BIGINT) FROM PUBLIC;
+    """
+)
+
+RECAP_AUDIO_ADDON = """
+    -- The recap audio add-on (#1389; owner decision on #1381): a second, monthly subscription
+    -- that adds spoken and musical recaps to a paid plan that does not include them (Guild and
+    -- Pro do). Like extra hours it is a row on the account, written only by the payment writer
+    -- (the guard on `entitlements` already allows nothing else).
+    --   recap_audio_until            the end of the period paid for; the add-on works until then
+    --   recap_audio_subscription_id  the company's subscription, so it can be cancelled with the
+    --                                plan or the account
+    --   recap_audio_event_at         the newest add-on event applied, so a late one is ignored
+    ALTER TABLE entitlements ADD COLUMN recap_audio_until BIGINT;
+    ALTER TABLE entitlements ADD COLUMN recap_audio_subscription_id TEXT;
+    ALTER TABLE entitlements ADD COLUMN recap_audio_event_at BIGINT NOT NULL DEFAULT 0;
+    """
+
+RECAP_AUDIO_FOLLOW_UPS = """
+    -- Follow-ups to the recap audio add-on (#1399).
+    -- 1. A move retargets the add-on's subscription too. The move records the add-on's
+    --    subscription id next to the plan's (a trigger fills it in from the account's row, which
+    --    has already followed the move when the marker is added), and the job that updates the
+    --    payment company is told about it.
+    ALTER TABLE account_moves ADD COLUMN addon_subscription_id TEXT;
+    CREATE FUNCTION dmbot_move_addon() RETURNS trigger
+        LANGUAGE plpgsql
+        AS $fn$
+    BEGIN
+        SELECT e.recap_audio_subscription_id INTO NEW.addon_subscription_id
+            FROM entitlements e WHERE e.user_id = NEW.new_user_id;
+        IF NEW.addon_subscription_id IS NOT NULL THEN
+            NEW.stripe_done_at := NULL;  -- there is a record at the company still to point
+        END IF;
+        RETURN NEW;
+    END
+    $fn$;
+    CREATE TRIGGER account_moves_addon BEFORE INSERT ON account_moves
+        FOR EACH ROW EXECUTE FUNCTION dmbot_move_addon();
+    DROP FUNCTION dmbot_moves_to_sync();
+    CREATE FUNCTION dmbot_moves_to_sync()
+        RETURNS TABLE (old_user_id BIGINT, new_user_id BIGINT, customer_id TEXT,
+                       subscription_id TEXT, addon_subscription_id TEXT)
+        LANGUAGE sql SECURITY DEFINER
+        AS $fn$
+        -- Never tried first, then the longest ago; one that failed waits a minute, two,
+        -- four... up to an hour, so a few stuck moves can't crowd out a new one.
+        SELECT m.old_user_id, m.new_user_id, m.customer_id, m.subscription_id,
+               m.addon_subscription_id
+            FROM account_moves m
+            WHERE m.stripe_done_at IS NULL
+              AND (m.stripe_last_try_at IS NULL
+                   OR m.stripe_last_try_at + LEAST(60 * (2 ^ LEAST(m.stripe_attempts, 6))::BIGINT,
+                                                   3600) <= extract(epoch FROM now())::BIGINT)
+            ORDER BY m.stripe_last_try_at NULLS FIRST, m.moved_at
+            LIMIT 20;
+    $fn$;
+    DO $do$
+    BEGIN
+        EXECUTE format(
+            'ALTER FUNCTION dmbot_moves_to_sync() SET search_path = pg_catalog, %I, pg_temp',
+            current_schema());
+        EXECUTE format(
+            'ALTER FUNCTION dmbot_move_addon() SET search_path = pg_catalog, %I, pg_temp',
+            current_schema());
+    END
+    $do$;
+    REVOKE ALL ON FUNCTION dmbot_moves_to_sync() FROM PUBLIC;
+    -- 2. An add-on subscription that must not exist and could not be cancelled is kept here, so
+    --    the hourly sweep tries again. It holds only the company's subscription id (no person's
+    --    data); the website reaches it through four doors, never the table.
+    CREATE TABLE recap_audio_strays (
+        subscription_id TEXT PRIMARY KEY
+                        CHECK (subscription_id ~ '^sub_[A-Za-z0-9_]{1,90}$'),  -- a company id only
+        found_at        BIGINT NOT NULL,
+        attempts        INTEGER NOT NULL DEFAULT 0,
+        last_try_at     BIGINT
+    );
+    CREATE FUNCTION dmbot_note_stray_addon(sub TEXT) RETURNS VOID
+        LANGUAGE sql SECURITY DEFINER
+        AS $fn$
+        INSERT INTO recap_audio_strays (subscription_id, found_at, attempts, last_try_at)
+            VALUES (sub, extract(epoch FROM now())::BIGINT, 1, extract(epoch FROM now())::BIGINT)
+            ON CONFLICT (subscription_id) DO UPDATE SET attempts = recap_audio_strays.attempts + 1,
+                last_try_at = EXCLUDED.last_try_at;
+    $fn$;
+    CREATE FUNCTION dmbot_strays_to_cancel() RETURNS TABLE (subscription_id TEXT, attempts INTEGER)
+        LANGUAGE sql SECURITY DEFINER
+        AS $fn$
+        -- At most once an hour each, oldest first, a few at a time.
+        SELECT s.subscription_id, s.attempts FROM recap_audio_strays s
+            WHERE s.last_try_at IS NULL
+               OR s.last_try_at + 3600 <= extract(epoch FROM now())::BIGINT
+            ORDER BY s.found_at LIMIT 20;
+    $fn$;
+    CREATE FUNCTION dmbot_stray_addon_tried(sub TEXT) RETURNS VOID
+        LANGUAGE sql SECURITY DEFINER
+        AS $fn$
+        UPDATE recap_audio_strays SET attempts = attempts + 1,
+            last_try_at = extract(epoch FROM now())::BIGINT WHERE subscription_id = sub;
+    $fn$;
+    CREATE FUNCTION dmbot_stray_addon_done(sub TEXT) RETURNS VOID
+        LANGUAGE sql SECURITY DEFINER
+        AS $fn$
+        DELETE FROM recap_audio_strays WHERE subscription_id = sub;
+    $fn$;
+    DO $do$
+    BEGIN
+        EXECUTE format(
+            'ALTER FUNCTION dmbot_note_stray_addon(TEXT)'
+            ' SET search_path = pg_catalog, %I, pg_temp', current_schema());
+        EXECUTE format(
+            'ALTER FUNCTION dmbot_strays_to_cancel() SET search_path = pg_catalog, %I, pg_temp',
+            current_schema());
+        EXECUTE format(
+            'ALTER FUNCTION dmbot_stray_addon_tried(TEXT)'
+            ' SET search_path = pg_catalog, %I, pg_temp', current_schema());
+        EXECUTE format(
+            'ALTER FUNCTION dmbot_stray_addon_done(TEXT)'
+            ' SET search_path = pg_catalog, %I, pg_temp', current_schema());
+    END
+    $do$;
+    REVOKE ALL ON FUNCTION dmbot_note_stray_addon(TEXT) FROM PUBLIC;
+    REVOKE ALL ON FUNCTION dmbot_strays_to_cancel() FROM PUBLIC;
+    REVOKE ALL ON FUNCTION dmbot_stray_addon_tried(TEXT) FROM PUBLIC;
+    REVOKE ALL ON FUNCTION dmbot_stray_addon_done(TEXT) FROM PUBLIC;
+    """
+
 SUPPORT_TICKETS = (
     _setting("dmbot_support_admin", "dmbot.support_admin", "TEXT")
     + """
@@ -3778,6 +4070,108 @@ SUPPORT_TICKETS = (
         USING (dmbot_cleanup() = 'old-tickets' AND created_at <= dmbot_now() - 365 * 86400);
     """
 )
+
+MEMORY_CLAIMS_BY_FACT = """
+    -- The recall service (#1350) finds the claim a fact came from by the fact's id; without this
+    -- it would read every confirmed claim of the campaign to find them. An index only: no row
+    -- changes, so no row-level-security opening is needed.
+    CREATE INDEX memory_claims_by_fact ON memory_claims (guild_id, campaign_id, fact_id)
+        WHERE fact_id IS NOT NULL;
+    """
+SUPPORT_EMAIL = (
+    _setting("dmbot_support_email_lookup", "dmbot.support_email_lookup", "TEXT")
+    + """
+    -- The email a support ticket's answer goes to (#1340; Supervisor, 2026-10-15: the team replies
+    -- by email to the address on the person's account). The admin page shows it beside
+    -- each ticket; it is never copied into the ticket, so it stays the account's own and goes with
+    -- the account. Same address the site uses for the account: the payment company's, else the
+    -- one Discord gave (web.accounts.account_email).
+    -- web_users is forced to a person's own row, so reading another person's needs a door like
+    -- dmbot_user_by_email's: a function with its owner's rights that answers only while the admin
+    -- door (Database.support_admin) is open, and a read-only policy TO the owner role, open only
+    -- while the function has set its own setting. Never the website's role, which could otherwise
+    -- set that setting itself and read every account's email.
+    CREATE FUNCTION dmbot_support_email(who BIGINT) RETURNS TEXT
+        LANGUAGE plpgsql SECURITY DEFINER
+        AS $fn$
+    DECLARE
+        found TEXT;
+        before TEXT := COALESCE(current_setting('dmbot.support_email_lookup', true), '');
+    BEGIN
+        IF dmbot_support_admin() IS DISTINCT FROM 'admin' THEN
+            RETURN NULL;
+        END IF;
+        -- Only for an account that has sent a ticket: the door is one the website's role can open
+        -- itself, so it must not be a way to read any account's address. (The ticket check runs
+        -- under the admin door the caller already holds; support_tickets is forced to it.)
+        IF NOT EXISTS (SELECT 1 FROM support_tickets WHERE user_id = who) THEN
+            RETURN NULL;
+        END IF;
+        PERFORM set_config('dmbot.support_email_lookup', 'on', true);
+        SELECT COALESCE(payment_email, email) INTO found FROM web_users WHERE user_id = who;
+        PERFORM set_config('dmbot.support_email_lookup', before, true);
+        RETURN found;
+    END
+    $fn$;
+    DO $do$
+    BEGIN
+        EXECUTE format(
+            'CREATE POLICY support_email_lookup ON web_users FOR SELECT TO %I
+                USING (dmbot_support_email_lookup() = ''on'')',
+            current_user);
+    END
+    $do$;
+    DO $do$
+    BEGIN
+        EXECUTE format(
+            'ALTER FUNCTION dmbot_support_email(BIGINT)'
+            ' SET search_path = pg_catalog, %I, pg_temp',
+            current_schema());
+    END
+    $do$;
+    REVOKE ALL ON FUNCTION dmbot_support_email(BIGINT) FROM PUBLIC;
+    """
+)
+
+SUPPORT_OWN = """
+    -- A person sees their own questions (#1373): when they sent it, the subject and where it
+    -- stands. Never the message, and never anyone else's.
+    --   * `read_own` lets a person's session read only rows with their own user_id.
+    --   * The website's role has a column right on every column of support_tickets EXCEPT
+    --     `message` (WEB_ROLE_GRANTS), so even their own words can't be read back through that
+    --     role. The admin page reads the words through dmbot_support_message below, a door that
+    --     answers only while the admin door is open (Database.support_admin), exactly like
+    --     dmbot_support_email: a Python boundary (tests/test_support.py) whose limits are the
+    --     same as before this migration, when the admin page could read the column itself.
+    CREATE POLICY read_own ON support_tickets FOR SELECT
+        USING (user_id = dmbot_current_user());
+    -- The list is one person's tickets, newest first.
+    CREATE INDEX support_tickets_by_person ON support_tickets (user_id, created_at DESC);
+    CREATE FUNCTION dmbot_support_message(ticket BIGINT) RETURNS TEXT
+        LANGUAGE plpgsql SECURITY DEFINER
+        AS $fn$
+    DECLARE
+        words TEXT;
+    BEGIN
+        IF dmbot_support_admin() IS DISTINCT FROM 'admin' THEN
+            RETURN NULL;
+        END IF;
+        -- support_tickets is forced to its policies: with the door open, support_admin_read
+        -- lets this read the row (the function's owner has the column right).
+        SELECT message INTO words FROM support_tickets WHERE id = ticket;
+        RETURN words;
+    END
+    $fn$;
+    DO $do$
+    BEGIN
+        EXECUTE format(
+            'ALTER FUNCTION dmbot_support_message(BIGINT)'
+            ' SET search_path = pg_catalog, %I, pg_temp',
+            current_schema());
+    END
+    $do$;
+    REVOKE ALL ON FUNCTION dmbot_support_message(BIGINT) FROM PUBLIC;
+    """
 
 MIGRATIONS: tuple[Migration, ...] = (
     ("0001_initial", INITIAL),
@@ -3854,6 +4248,16 @@ MIGRATIONS: tuple[Migration, ...] = (
     ("0072_rule_suggestions", RULE_SUGGESTIONS),  # the shared-rules suggestions (#1261)
     ("0073_memory_claims", MEMORY_CLAIMS),
     ("0074_support_tickets", SUPPORT_TICKETS),  # private support tickets (#1340)
+    ("0075_support_email", SUPPORT_EMAIL),  # the admin page's door to a ticket's reply address
+    (
+        "0076_claims_by_fact",
+        MEMORY_CLAIMS_BY_FACT,
+    ),  # the recall service finds a fact's claim (#1350)
+    ("0077_extractor_progress", EXTRACTOR_PROGRESS),  # a restart resumes the extractor (#1367)
+    ("0078_support_own", SUPPORT_OWN),  # a person's own questions (0077: another PR)
+    ("0079_recap_jobs", RECAP_JOBS),  # the cinematic recap job of a session (#1382)
+    ("0080_recap_audio_addon", RECAP_AUDIO_ADDON),  # the recap audio add-on (#1389)
+    ("0081_recap_audio_follow_ups", RECAP_AUDIO_FOLLOW_UPS),  # move + stray sweep (#1399)
 )
 
 # Tables that must have row-level security. A test checks every table in the schema
@@ -3877,6 +4281,7 @@ ISOLATED_TABLES = (
     "session_usage",
     "game_clocks",
     "game_effects",
+    "recap_jobs",
     "memory_rule_links",
     "fightbot_players",
     "rule_sets",
@@ -3906,7 +4311,8 @@ USER_ISOLATED_TABLES = (
     "access_grants",
     # Not per person: only the grant writer adds or reads a row (#771).
     "access_log",
-    # A person adds their own ticket and can read none; only the support admin door reads (#1340).
+    # A person adds their own ticket and reads back only their own list, never the words; the
+    # support admin door reads everything (#1340, #1373).
     "support_tickets",
     # An owner's hours per plan month; only the meter adds to it (#437).
     "owner_hours",
@@ -3926,6 +4332,7 @@ UNSCOPED_TABLES = (
     "trial_extensions",
     "move_codes",
     "account_moves",
+    "recap_audio_strays",
     "move_code_asks",
     *ROUTING_TABLES,
 )

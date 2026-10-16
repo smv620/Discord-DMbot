@@ -2,7 +2,9 @@
 // name is copied from what the bot shows, and web/test/help.test.ts checks each one still
 // appears in core/src/dmbot, so the page can't drift. Only built features; no game trademarks
 // (CLAUDE.md), so the character-sheet steps name no company.
+import { QA_URL } from "./account";
 import { minimumAge } from "./legal";
+import { RECAPS_LIVE, emailsIntroTail, recapEmailStep, recapSteps } from "./recap-words";
 
 export interface Step {
   /** The words people read. Names in `names` must appear in the bot's code. */
@@ -146,6 +148,38 @@ export const dmSteps: Step[] = [
   },
 ];
 
+/**
+ * What a quick question to DMbot can use (#1379), under the game master's steps. Each sentence is
+ * what the code does after #1377 and #1380: sidebar/context.py (the material a question is given:
+ * rules, house rules, names, the scene; recall for the players' audience, never secrets or entry
+ * notes), sidebar/answer.py (NO_INFO_ANSWER, and the rule "use only the material given") and
+ * sidebar/service.py (the question and the in-game answer are saved in the raw transcript).
+ */
+export const quickAnswersHeading = "What DMbot knows when you ask it";
+export const quickAnswers: Step[] = [
+  {
+    text: "Quick answers work while your game is running and you have said yes to being recorded.",
+  },
+  {
+    text: 'Message DMbot privately, by voice or by typing, and the answer comes to you alone. Say "Hey DMbot" when the table has a dmb-chat channel, and the answer is posted there for everyone. It then uses only the free rules, your house rules and what was just said. If it needs your story, you get that answer privately.',
+  },
+  {
+    text: "DMbot answers from the free rules, your house rules, what was said in the last few minutes, and the story facts you have confirmed about the names in your question. It leaves out names you marked secret, and your own notes on names and places.",
+  },
+  {
+    text: 'If an answer is not from DMbot\'s rules, it says "check your book". When it has nothing to go on, it says so, for example "I don\'t have that. Your call." You decide.',
+    names: [
+      { name: "check your book", file: "sidebar/answer.py" },
+      { name: "I don't have that. Your call.", file: "sidebar/answer.py" },
+    ],
+  },
+  {
+    text: "Your question, and DMbot's answer when it is about the game, are saved in the game's full written record. Everyone in your Discord server can read that record.",
+  },
+];
+
+export { recapSteps };
+
 export const playerSteps: Step[] = [
   {
     text: `DMbot sends you a private message. Press ${consent} to say yes.`,
@@ -216,7 +250,7 @@ export const accountSteps: Step[] = [
  * ui/migrate.py. No address appears here: the emails carry the sender's postal address themselves. */
 export const emailSteps: Step[] = [
   {
-    text: "DMbot sends very few emails. A sign-in link and a move code come only when you ask for one. The only others are two Try It emails, each sent once.",
+    text: `DMbot sends very few emails. A sign-in link and a move code come only when you ask for one. ${emailsIntroTail}`,
   },
   {
     text: "Sign-in link: ask for it on your account page and type the email you paid with or the email Discord has for you. We send a link that works once and stops working after 15 minutes.",
@@ -234,6 +268,7 @@ export const emailSteps: Step[] = [
   {
     text: "Try It emails: one on the last day of Try It, and one if you get 30 more days. Each has a link to stop emails like it. Sign-in and move-code emails have no such link, because you asked for them.",
   },
+  ...(RECAPS_LIVE ? [{ text: recapEmailStep }] : []),
 ];
 
 /** Said under the list: it is not a step. */
@@ -242,3 +277,43 @@ export const emailNote = "For now, emails are sent from DMbot's own Gmail mailbo
 /** Not a step to do: what players may notice at the table. */
 export const playerNote =
   'Your game master may show the story\'s day and time, like "Day 5, morning", in your own channel. You do not need to do anything.';
+
+/** The one support address (docs/EMAIL.md, owner's setup, #1341). Every other place on the site
+ * that names a way to write to us uses this constant, and a test fails if a different
+ * @getdmbot.com address shows up. */
+export const SUPPORT_EMAIL = "support@getdmbot.com";
+
+/** A line of text and its links: plain strings, and link objects in between. */
+export type Part = string | { text: string; href: string };
+
+/** Getting help (#1352): one plain place that says where to ask, in the order to try them.
+ * No privacy promises are made here: the Support form says its own, and the privacy page holds
+ * them. The public Q&A is said to be public, so nobody posts account or payment details. */
+export const gettingHelp: { id: string; heading: string; items: { lead: string; parts: Part[] }[] } =
+  {
+    id: "getting-help",
+    heading: "Getting help",
+    items: [
+      { lead: "Look here first.", parts: ["The steps above may answer it."] },
+      {
+        lead: "Ask in public.",
+        parts: [
+          "Post a question in the ",
+          { text: "Q&A for DMbot", href: QA_URL },
+          ". A helper called QAbot (a bot, not a person) may answer first. Everything there is public, so don't post account or payment details.",
+        ],
+      },
+      {
+        lead: "On a paid plan?",
+        parts: [
+          "Write to the team in private from ",
+          { text: "your account page", href: "/account" },
+          ". The team replies by email to the address on your account, if it has one.",
+        ],
+      },
+      {
+        lead: "Anyone, on any plan.",
+        parts: ["Email ", { text: SUPPORT_EMAIL, href: `mailto:${SUPPORT_EMAIL}` }, "."],
+      },
+    ],
+  };

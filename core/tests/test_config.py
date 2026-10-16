@@ -23,6 +23,24 @@ class ConfigTests(unittest.TestCase):
             load_settings({**BASE, "DISCORD_DEV_GUILD_ID": "abc"})
 
 
+class SidebarRecall(unittest.TestCase):
+    def test_the_sidebar_uses_the_confirmed_story_unless_switched_off(self) -> None:
+        s = load_settings(BASE)
+        self.assertEqual((s.sidebar_recall, s.sidebar_recall_budget), (True, 1000))
+        off = load_settings(
+            {**BASE, "DMBOT_SIDEBAR_RECALL": "0", "DMBOT_SIDEBAR_RECALL_BUDGET": "400"}
+        )
+        self.assertEqual((off.sidebar_recall, off.sidebar_recall_budget), (False, 400))
+        for name, bad in (
+            ("DMBOT_SIDEBAR_RECALL", "maybe"),
+            ("DMBOT_SIDEBAR_RECALL_BUDGET", "199"),
+            ("DMBOT_SIDEBAR_RECALL_BUDGET", "4001"),
+            ("DMBOT_SIDEBAR_RECALL_BUDGET", "lots"),
+        ):
+            with self.assertRaisesRegex(ConfigError, name):
+                load_settings({**BASE, name: bad})
+
+
 class ShardAndLogSettings(unittest.TestCase):
     def test_defaults(self) -> None:
         from dmbot.sharding import ShardSettings
@@ -102,6 +120,44 @@ class PlanChecksSetting(unittest.TestCase):
         self.assertTrue(load_settings({**BASE, "DMBOT_STORY_EXTRACTOR": "1"}).story_extractor_on)
         with self.assertRaisesRegex(ConfigError, "DMBOT_STORY_EXTRACTOR must be 1"):
             load_settings({**BASE, "DMBOT_STORY_EXTRACTOR": "maybe"})
+
+    def test_recaps_are_off_unless_switched_on(self) -> None:
+        self.assertFalse(load_settings(BASE).recaps_on)
+        self.assertTrue(load_settings({**BASE, "DMBOT_RECAPS": "1"}).recaps_on)
+        with self.assertRaisesRegex(ConfigError, "DMBOT_RECAPS must be 1"):
+            load_settings({**BASE, "DMBOT_RECAPS": "sometimes"})
+
+    def test_the_recall_budget_has_a_default_and_is_checked(self) -> None:
+        self.assertEqual(load_settings(BASE).recall_budget, 4000)
+        self.assertEqual(load_settings({**BASE, "DMBOT_RECALL_BUDGET": "9000"}).recall_budget, 9000)
+        for bad in ("100", "50001", "lots", "-5"):
+            with self.subTest(bad), self.assertRaisesRegex(ConfigError, "DMBOT_RECALL_BUDGET"):
+                load_settings({**BASE, "DMBOT_RECALL_BUDGET": bad})
+
+    def test_the_extractors_tier_and_call_limit(self) -> None:
+        s = load_settings(BASE)
+        self.assertEqual((s.story_extractor_tier, s.story_extractor_max_calls), ("fast", 480))
+        self.assertEqual(s.story_extractor_max_calls_day, 960)
+        s = load_settings(
+            {
+                **BASE,
+                "DMBOT_STORY_EXTRACTOR_TIER": "Careful",
+                "DMBOT_STORY_EXTRACTOR_MAX_CALLS": "9",
+            }
+        )
+        self.assertEqual((s.story_extractor_tier, s.story_extractor_max_calls), ("careful", 9))
+        for name, bad in (
+            ("DMBOT_STORY_EXTRACTOR_TIER", "best"),
+            ("DMBOT_STORY_EXTRACTOR_MAX_CALLS", "0"),
+            ("DMBOT_STORY_EXTRACTOR_MAX_CALLS", "5001"),
+            ("DMBOT_STORY_EXTRACTOR_MAX_CALLS", "many"),
+            ("DMBOT_STORY_EXTRACTOR_MAX_CALLS", "²"),
+            ("DMBOT_STORY_EXTRACTOR_MAX_CALLS_DAY", "0"),
+            ("DMBOT_STORY_EXTRACTOR_MAX_CALLS_DAY", "50001"),
+            ("DMBOT_STORY_EXTRACTOR_MAX_CALLS_DAY", "lots"),
+        ):
+            with self.assertRaisesRegex(ConfigError, name):
+                load_settings({**BASE, name: bad})
 
     def test_continuity_levels_have_defaults_and_are_checked(self) -> None:
         levels = load_settings(BASE).continuity

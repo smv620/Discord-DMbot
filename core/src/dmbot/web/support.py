@@ -2,9 +2,10 @@
 support tickets").
 
 Privacy: a ticket holds personal details, so it never becomes a public GitHub issue and its
-words are never logged or emailed. It goes to the `support_tickets` table, which the signed-in
-person can add to but not read (not even their own ticket), and which only the admin page's
-door (`Database.support_admin`) can read or close. The email to the team says only that a ticket
+words are never logged or emailed. It goes to the `support_tickets` table. The signed-in person
+can add to it and read back only their own list (when, subject, status; #1373), never the words,
+which no one but the admin page's door (`Database.support_admin`) can read, and only that door
+can close a ticket. The email to the team says only that a ticket
 is waiting, and from which account and plan, so the words stay in the database. Tickets older
 than 12 months are deleted by the website's hourly sweep, and deleting an account deletes the
 person's own.
@@ -92,17 +93,67 @@ class Row:
     message: str
     source: str
     status: Status
+    # The account's address (the one the team replies to), read through the admin door and never
+    # stored in the ticket; None when the account has none. Never logged.
+    email: str | None
 
 
-async def newest(db: Database, *, limit: int = LIST_LIMIT) -> list[Row]:
-    """The tickets, newest first, for the admin page."""
+async def newest(
+    db: Database, *, status: Status | None = None, limit: int = LIST_LIMIT
+) -> list[Row]:
+    """The tickets, newest first, for the admin page; only those with this status when one is
+    given (#1375). `status` is one of STATUSES (the route checks it); it goes in as a parameter."""
+    where, args = ("", (limit,)) if status is None else (" WHERE status = %s", (status, limit))
     async with db.support_admin() as conn:
         cur = await conn.execute(
-            "SELECT id, created_at, user_id, plan, subject, message, source, status"
-            " FROM support_tickets ORDER BY created_at DESC, id DESC LIMIT %s",
-            (limit,),
+            # The words come through a door function: the website's role has no right to the column.
+            # One call per row (at most LIST_LIMIT): fine for an admin page read now and then.
+            "SELECT id, created_at, user_id, plan, subject,"
+            " COALESCE(dmbot_support_message(id), '') AS message, source, status,"
+            " dmbot_support_email(user_id) AS email"
+            f" FROM support_tickets{where} ORDER BY created_at DESC, id DESC LIMIT %s",
+            args,
         )
         return [Row(**r) for r in await cur.fetchall()]
+
+
+async def counts(db: Database) -> dict[Status, int]:
+    """How many tickets have each status, for the filter buttons (#1375). Every status is there,
+    with 0 for none, and the counts cover all tickets, not just the newest LIST_LIMIT."""
+    async with db.support_admin() as conn:
+        cur = await conn.execute(
+            "SELECT status, count(*) AS n FROM support_tickets GROUP BY status"
+        )
+        found = {r["status"]: int(r["n"]) for r in await cur.fetchall()}
+    return {status: found.get(status, 0) for status in STATUSES}
+
+
+# How many of their own questions a person sees at once (#1373).
+MINE_LIMIT = 20
+
+
+@dataclass(frozen=True)
+class Mine:
+    """One of a person's own questions as the account page lists it: when, the subject and where
+    it stands. Not the words, and not the ticket's number (it would show how many other people
+    write)."""
+
+    created_at: int
+    subject: str
+    status: Status
+
+
+async def mine(db: Database, user_id: int) -> list[Mine]:
+    """The signed-in person's own tickets, newest first. The table's `read_own` policy already
+    holds a person's session to their own rows; the WHERE says it again, so one wrong line in
+    either place does not show anyone else's."""
+    async with db.user(user_id) as conn:
+        cur = await conn.execute(
+            "SELECT created_at, subject, status FROM support_tickets WHERE user_id = %s"
+            " ORDER BY created_at DESC, id DESC LIMIT %s",
+            (user_id, MINE_LIMIT),
+        )
+        return [Mine(**r) for r in await cur.fetchall()]
 
 
 async def set_status(db: Database, ticket_id: int, status: Status) -> bool:
