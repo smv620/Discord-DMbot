@@ -189,6 +189,7 @@ from dmbot.rules import house_voice
 from dmbot.rules import index as rules_index
 from dmbot.rules.followed import followed_rules, own_first
 from dmbot.rules.homebrew import Homebrew, HomebrewSection, HomebrewStore
+from dmbot.rules.homebrew_packs import HomebrewPackStore, HomebrewReader
 from dmbot.rules.homebrew_spotter import HomebrewMention, HomebrewSpotter
 from dmbot.rules.house import HouseRule, HouseRulesSection, HouseRuleStore
 from dmbot.rules.house_file_link import HouseFileLinkStore
@@ -2443,9 +2444,9 @@ class DMBot(commands.AutoShardedBot):
         async def brews(campaign: Campaign) -> Sequence[Homebrew]:
             # All of the campaign's own entries: the sidebar engine keeps the hidden ones out of
             # every prompt and answer (#1520), but needs them to know a name is overridden.
-            if self.homebrew is None:
+            if self.homebrew_reader is None:
                 return []
-            return await self.homebrew.list(campaign.guild_id, campaign.id)
+            return await self.homebrew_reader.list(campaign.guild_id, campaign.id)
 
         async def names(campaign: Campaign) -> CampaignLookup | None:
             if self.lookup is None:
@@ -4198,18 +4199,24 @@ class DMBot(commands.AutoShardedBot):
     async def _load_homebrew_spotter(self, table: Table) -> None:
         """Read this campaign's homebrew names for its rules cards (#1524). Only this
         campaign's own; a failure costs the homebrew cards, never the session."""
-        if self.homebrew is None or table.campaign_id is None:
+        if self.homebrew_reader is None or table.campaign_id is None:
             return
         table.homebrew_read += 1
         mine = table.homebrew_read
         try:
-            entries = await self.homebrew.list(table.guild_id, table.campaign_id)
+            entries = await self.homebrew_reader.list(table.guild_id, table.campaign_id)
         except Exception:
             log.exception("Couldn't read the homebrew names for the rules cards")
             return
         if mine != table.homebrew_read:  # a newer read started meanwhile: its result stands
             return
         table.homebrew_spotter = HomebrewSpotter.from_entries(entries) if entries else None
+
+    @property
+    def homebrew_reader(self) -> HomebrewReader | None:
+        """What a campaign reads: its own homebrew, then its followed packs' in the DM's order
+        (#1527). Built on use from the two stores, so it always matches them."""
+        return HomebrewReader(self.homebrew, self.rule_sets) if self.homebrew else None
 
     def homebrew_changed(self, guild_id: int, campaign_id: str) -> None:
         """A DM added, changed, removed or loaded homebrew (#1524): a session running for that
@@ -4281,13 +4288,15 @@ class DMBot(commands.AutoShardedBot):
         """The card for one of the campaign's own homebrew entries (#1524), on the DM screen only:
         the entry is read again (it may have been removed or changed since the spotter was built),
         and the speaker must still be recorded and the session still running."""
-        if self.homebrew is None or table.campaign_id is None:
+        if self.homebrew_reader is None or table.campaign_id is None:
             table.rules.forget(card_id, before)
             return
         rules: list[HouseRule] = []
         try:
             async with asyncio.timeout(RULES_CARD_DB_S):
-                own = await self.homebrew.find(table.guild_id, table.campaign_id, mention.name)
+                own = await self.homebrew_reader.find(
+                    table.guild_id, table.campaign_id, mention.name
+                )
                 rules = await self.all_house_rules(table.guild_id, table.campaign_id)
         except Exception:
             log.exception("Couldn't read the homebrew for a rules card")
@@ -7544,7 +7553,7 @@ async def run(settings: Settings) -> None:
             HouseFileLinkStore(db),
             EffectStore(db),
             TestVoiceStore(db),
-            RuleSetStore(db),
+            HomebrewPackStore(db),  # shared sets and homebrew packs (#1190, #1527)
             RecapStore(db),
             SuggestionStore(db),
             HomebrewStore(db),

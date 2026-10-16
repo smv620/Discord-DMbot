@@ -273,11 +273,14 @@ def card_parts(hit: Hit, typed: str, rules: Sequence[HouseRule]) -> list[str]:
 
 HOMEBREW_TAG = "[Homebrew]"
 HOMEBREW_FOOTER = "_Your own homebrew, as you wrote it. You decide._"
+PACK_FOOTER = "_From a homebrew pack this campaign follows, as published. You decide._"
 
 
 def homebrew_citation(entry: Homebrew, campaign_name: str) -> str:
     """Where homebrew comes from, as every answer names its source: `Frostmaiden's homebrew:
-    Hollow King`."""
+    Hollow King`. A followed pack's entry names its pack: `Frost Pack homebrew, v2: Hollow King`."""
+    if entry.source:
+        return f"{entry.source}: {entry.name}"
     return f"{campaign_name}'s homebrew: {entry.name}"
 
 
@@ -329,7 +332,7 @@ def homebrew_alert_text(
     lines.append(_fit(_md(own.shown()), ALERT_FACTS_MAX))
     lines.append(f"_Source: {_md(_fit(homebrew_citation(own, campaign_name), 200))}_")
     lines.append(f"_Heard: “{_fit(_md(heard), ALERT_HEARD_MAX)}”_")
-    lines.append(HOMEBREW_FOOTER)
+    lines.append(PACK_FOOTER if own.source else HOMEBREW_FOOTER)
     return "\n".join(lines)
 
 
