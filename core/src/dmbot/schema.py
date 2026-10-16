@@ -2331,6 +2331,9 @@ WEB_ROLE_FUNCTIONS: tuple[tuple[str, str], ...] = (
     ("dmbot_support_message", "dmbot_support_message(BIGINT)"),
     # "Make the audio again" on a DM's recap (#1418): the only write to its audio columns.
     ("dmbot_recap_audio_again", "dmbot_recap_audio_again(BIGINT, TEXT, BIGINT)"),
+    # The campaign's names with the narrator's spelling (#1451): read and write, DM only.
+    ("dmbot_web_names", "dmbot_web_names(BIGINT, TEXT)"),
+    ("dmbot_web_set_said_as", "dmbot_web_set_said_as(BIGINT, TEXT, TEXT, TEXT)"),
     # A move code asked for on the website (#1246).
     ("dmbot_web_move_code", "dmbot_web_move_code(BIGINT, TEXT, BIGINT, TEXT, BIGINT)"),
     ("dmbot_web_cancel_move_code", "dmbot_web_cancel_move_code(BIGINT, TEXT, BIGINT)"),
@@ -4116,6 +4119,126 @@ RECAP_AUDIO_AGAIN = """
     REVOKE ALL ON FUNCTION dmbot_recap_audio_again(BIGINT, TEXT, BIGINT) FROM PUBLIC;
 """
 
+WEB_NAMES = """
+    -- The campaign's names on the website, with the narrator's "said as" spelling (#1451, on
+    -- #1419). The website's role has NO grant on the memory tables (secret names live there), so
+    -- both the read and the write go through these two doors. Each answers only a DM of the
+    -- campaign, in a server on the session's list, with that server set for the transaction (the
+    -- caller does the same for every server table), and never a secret name or a person.
+    --
+    -- dmbot_web_names: the confirmed, public names of things and places (not people at the table,
+    -- not a sound-alike "misheard" note), at most 200, as JSON; NULL when the caller is no DM of
+    -- the campaign, so the page says "not found" exactly as for a missing campaign.
+    CREATE FUNCTION dmbot_web_names(g BIGINT, c TEXT) RETURNS JSONB
+    LANGUAGE plpgsql SECURITY DEFINER AS $fn$
+    BEGIN
+        IF dmbot_current_guild() IS DISTINCT FROM g
+           OR NOT (g = ANY ((SELECT dmbot_web_guilds())::BIGINT[]))
+           OR NOT EXISTS (SELECT 1 FROM campaign_dms d
+                          WHERE d.guild_id = g AND d.campaign_id = c
+                            AND d.user_id = dmbot_current_user()) THEN
+            RETURN NULL;
+        END IF;
+        RETURN COALESCE((
+            SELECT jsonb_agg(jsonb_build_object(
+                       'id', n.id, 'text', n.text, 'kind', n.kind, 'saidAs', n.said_as))
+            FROM (
+                SELECT a.id, a.text, a.kind, a.said_as
+                FROM memory_aliases a
+                JOIN memory_entities e
+                  ON e.guild_id = a.guild_id AND e.campaign_id = a.campaign_id
+                 AND e.id = a.entity_id
+                WHERE a.guild_id = g AND a.campaign_id = c
+                  AND NOT a.secret AND a.status = 'confirmed'
+                  AND e.status = 'confirmed' AND e.type <> 'person'
+                  AND a.kind <> 'misheard' AND a.used_by IS NULL
+                ORDER BY lower(e.name), lower(a.text), a.id
+                LIMIT 200
+            ) n), '[]'::jsonb);
+    END
+    $fn$;
+
+    -- dmbot_web_set_said_as: set or clear (NULL or empty) one name's spelling. The same rules as
+    -- MemoryStore.set_said_as: only a DM, up to 80 characters, no control characters, never on a
+    -- secret name. It writes through the change log exactly as the bot does (one numbered batch,
+    -- the row's before and after, the campaign's memory version, the change notice the bot's
+    -- name lists follow), so Undo on the Discord name card still takes it back. Answers
+    -- 'ok', 'not_allowed' (not this campaign's DM), 'not_found' (no such name, or a secret one) or
+    -- 'too_long'. The 80-character limit and the control-character check are the database's own
+    -- floor; the API (web/names.py) applies the bot's fuller printable-characters rule first.
+    -- Any listed name may be given a spelling, not only an entry's main name: the narrator reads
+    -- the spelling from every name (#1419), and the page lists exactly what the read door lists.
+    CREATE FUNCTION dmbot_web_set_said_as(g BIGINT, c TEXT, alias_id TEXT, spelling TEXT)
+    RETURNS TEXT
+    LANGUAGE plpgsql SECURITY DEFINER AS $fn$
+    DECLARE
+        clean TEXT := NULLIF(
+            btrim(regexp_replace(COALESCE(spelling, ''), '[[:space:]]+', ' ', 'g')), '');
+        alias_row memory_aliases%ROWTYPE;
+        v BIGINT;
+        now_s BIGINT := floor(extract(epoch FROM clock_timestamp()))::BIGINT;
+    BEGIN
+        IF dmbot_current_guild() IS DISTINCT FROM g
+           OR NOT (g = ANY ((SELECT dmbot_web_guilds())::BIGINT[]))
+           OR NOT EXISTS (SELECT 1 FROM campaign_dms d
+                          WHERE d.guild_id = g AND d.campaign_id = c
+                            AND d.user_id = dmbot_current_user()) THEN
+            RETURN 'not_allowed';
+        END IF;
+        IF clean IS NOT NULL AND (char_length(clean) > 80 OR clean ~ '[[:cntrl:]]') THEN
+            RETURN 'too_long';
+        END IF;
+        -- Changes to one campaign's memory happen one at a time (the bot takes the same lock).
+        SELECT memory_version INTO v FROM campaigns
+            WHERE guild_id = g AND id = c FOR NO KEY UPDATE;
+        IF NOT FOUND THEN
+            RETURN 'not_found';
+        END IF;
+        SELECT a.* INTO alias_row FROM memory_aliases a
+            JOIN memory_entities e
+              ON e.guild_id = a.guild_id AND e.campaign_id = a.campaign_id AND e.id = a.entity_id
+            WHERE a.guild_id = g AND a.campaign_id = c AND a.id = alias_id
+              AND NOT a.secret AND a.status = 'confirmed' AND e.status = 'confirmed'
+              AND e.type <> 'person' AND a.kind <> 'misheard' AND a.used_by IS NULL;
+        -- A secret name is "not found", the same answer as an id that does not exist, so the
+        -- caller cannot learn that a secret name with that id exists.
+        IF NOT FOUND THEN
+            RETURN 'not_found';
+        END IF;
+        IF alias_row.said_as IS NOT DISTINCT FROM clean THEN
+            RETURN 'ok';  -- nothing to change, nothing to log (as the bot does)
+        END IF;
+        UPDATE memory_aliases SET said_as = clean
+            WHERE guild_id = g AND campaign_id = c AND id = alias_id;
+        v := v + 1;
+        INSERT INTO memory_changes (guild_id, campaign_id, version, batch, table_name, row_id, op,
+                                    before, after, source, undoes, made_at)
+            SELECT g, c, v, v, 'memory_aliases', alias_id, 'update',
+                   to_jsonb(alias_row) - 'guild_id' - 'campaign_id',
+                   to_jsonb(a) - 'guild_id' - 'campaign_id', 'dm', NULL, now_s
+            FROM memory_aliases a
+            WHERE a.guild_id = g AND a.campaign_id = c AND a.id = alias_id;
+        UPDATE campaigns SET memory_version = v WHERE guild_id = g AND id = c;
+        PERFORM pg_notify('dmbot_memory', c || ':' || v || ':1');
+        RETURN 'ok';
+    END
+    $fn$;
+    DO $do$
+    BEGIN
+        EXECUTE format(
+            'ALTER FUNCTION dmbot_web_names(BIGINT, TEXT)'
+            ' SET search_path = pg_catalog, %I, pg_temp',
+            current_schema());
+        EXECUTE format(
+            'ALTER FUNCTION dmbot_web_set_said_as(BIGINT, TEXT, TEXT, TEXT)'
+            ' SET search_path = pg_catalog, %I, pg_temp',
+            current_schema());
+    END
+    $do$;
+    REVOKE ALL ON FUNCTION dmbot_web_names(BIGINT, TEXT) FROM PUBLIC;
+    REVOKE ALL ON FUNCTION dmbot_web_set_said_as(BIGINT, TEXT, TEXT, TEXT) FROM PUBLIC;
+"""
+
 MEMORY_SAID_AS = """
     -- A spelling for the recap's narrator (#1419): "Kah-zeth" for Ka'zeth. Set by the DM on a name,
     -- through the same change path as every other edit (so it can be undone), and only on a name
@@ -4375,6 +4498,7 @@ MIGRATIONS: tuple[Migration, ...] = (
     ("0083_memory_said_as", MEMORY_SAID_AS),  # a spelling for the narrator (#1419)
     ("0084_recap_switches", RECAP_SWITCHES),  # the DM's recap choices (#1421)
     ("0085_recap_audio_again", RECAP_AUDIO_AGAIN),  # the website's door to new audio (#1418)
+    ("0086_web_names", WEB_NAMES),  # the website's doors to the names and their spelling (#1451)
 )
 
 # Tables that must have row-level security. A test checks every table in the schema

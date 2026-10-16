@@ -13,6 +13,7 @@ import type {
   Me,
   Offer,
   Person,
+  CampaignName,
   Recap,
   RecordingEntry,
   SupportQuestion,
@@ -349,6 +350,11 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
   };
 
   const recaps = mockRecaps();
+  // The campaign's public names, as the API lists them (#1451).
+  const names: CampaignName[] = [
+    { id: "a".repeat(32), text: "Ka'zeth", kind: "full", saidAs: null },
+    { id: "b".repeat(32), text: "Brynwater", kind: "full", saidAs: "Brin-water" },
+  ];
   const audioAsked = new Set<string>(); // a recap asked for again once: the next ask is "too soon"
   const find = async (ref: string): Promise<Recap> => {
     await reachable();
@@ -376,6 +382,20 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
       if (!r.canEdit) throw new ApiError("not-editable");
       Object.assign(r, { summary, text: summary, housekeeping });
       return { ...r };
+    },
+    async campaignNames(campaignRef) {
+      calls.push(`campaignNames:${campaignRef}`);
+      await reachable();
+      signedIn();
+      return names.map((n) => ({ ...n }));
+    },
+    async saveSaidAs(campaignRef, nameId, saidAs) {
+      calls.push(`saveSaidAs:${campaignRef}:${nameId}:${saidAs ?? ""}`);
+      await reachable();
+      signedIn();
+      const found = names.find((n) => n.id === nameId);
+      if (!found) throw new ApiError("not-found");
+      found.saidAs = saidAs === null || saidAs.trim() === "" ? null : saidAs.trim();
     },
     async recapAudioLinks(ref) {
       calls.push(`recapAudioLinks:${ref}`);
