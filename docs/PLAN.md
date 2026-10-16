@@ -682,6 +682,50 @@ or servers; only the campaign's DMs change anything (the store checks in the sam
     (version + 1); a file that would take the campaign over 200 entries loads nothing and says the count.
 - Sharing as a pack (part 2) is built: see "Shared rulesets" (#1527).
 
+**Homebrew (part 2): links, sources and on/off (owner, 2026-10-16).** This changes part 1. Where the two
+differ, this wins.
+- **Rules are house rules, not homebrew.** Homebrew is game content: spells, monsters, items, feats,
+  conditions and other things. There is no "rule" kind; migration 0111 moves rule entries into house rules
+  (#1628).
+- **Homebrew can be added from a link.** The DM pastes the address of a **published** homebrew page,
+  for example `https://www.dndbeyond.com/magic-items/2302039-amulet-of-trueshot`, and DMbot reads that one
+  page and saves the entry. **Typing an entry in (➕ Add) and 📥 Load file stay**, because they already
+  work (owner, 2026-10-16), each recording its own source (below).
+  - **Only approved sites are fetched**, starting with dndbeyond.com. One address, fetched once, at the
+    direction of the one DM who pasted it: never a crawl, never a list of pages, never following links
+    from the page. https only, the site's own address after any redirect, a size and time limit, and no
+    D&D Beyond sign-in (no password or cookies, ever).
+  - **Not published:** D&D Beyond answers an unpublished homebrew page with "page not found". DMbot then
+    says: "That page isn't public. Publish your homebrew on D&D Beyond first, then paste the link again."
+  - **The risk is accepted (owner, 2026-10-16):** D&D Beyond's terms limit automated access. The owner
+    reads them as aimed at automated scraping, which this is not: a single page, pulled when a single
+    user asks for it. Revisit if D&D Beyond objects or blocks it.
+- **Permission once per site, per campaign.** The first time a campaign imports from a site, the DM sees
+  the right-to-use warning ("DMbot doesn't check this…") and confirms once. That approval sticks: every
+  later link from the same site in that campaign needs no new confirmation. Who confirmed and when is kept
+  (table of approved sites per campaign). A campaign that has not approved a site cannot use content from
+  it, whether imported there or reached through a pack.
+- **Every entry records its source.** The database keeps, for every entry:
+  - **Link:** the address it came from and its site (the domain), plus who added it.
+  - **Typed:** the Discord user who typed it.
+  - **Uploaded** (📥 Load file): the Discord user by default, or a credit the uploader gives instead: a website
+    (its domain then needs the same once-per-site approval) or a typed name.
+  Entries saved before this record "typed" by the DM who made them.
+- **One copy of a published page.** A page imported by link is public content, not a campaign's own data,
+  so DMbot keeps **one copy per address** and each campaign's entry points to it. This is the second
+  exception to campaign isolation, next to shared rulesets: only the published page's content is shared.
+  Who imported it, from which campaign, and that campaign's on/off choice stay with the campaign.
+- **On/off replaces hidden.** Homebrew and house rules are not hidden from players any more; the 🙈/👀
+  "players may know" switch goes. Instead each entry is **on** (used everywhere: rule lookups, rules cards,
+  the DM sidebar, table questions) or **off** (kept, but DMbot doesn't use it at the table). **Remove**
+  deletes it. Existing entries are all on.
+- **Packs carry imported entries.** A pack holds pointers to entries, so imported pages travel by
+  reference, never as copies. A campaign that follows a pack must have approved each site the pack's
+  entries come from, once per site, before those entries are used. Entries from a shared rulebook
+  (`from_book`) still never go into a pack.
+- **Build order:** #1628 (rules out, PR #1630) → #1629 (on/off replaces hidden) → sources and site approvals
+  (schema) → import by link → packs with imported entries → the website.
+
 **Shared rulesets: homebrew packs and house-rules sets (owner, 2026-10-14).** Rules can be shared between
 campaigns, in the same server or another one, when both sides choose to. Only rules cross; a campaign's story
 never does.
@@ -1272,9 +1316,9 @@ building:
 - **Delete my past transcripts is built (#1532):** 🗑 in the ⚙️ Menu on the consent messages, and
   `/dmbot delete-my-lines`. One warning with the numbers ("N lines in M sessions"), one confirmation, one
   transaction per server. What goes and what stays is in "Retention" below.
-- **Keep transcripts for is built (#1533, migration 0101):** see "Retention". Still to come: cleaned
-  and both downloads (Phase 2b), and `{entity}` labels for the DM's lines (narrating, which NPC;
-  #53; the `in_character` flag exists, nothing sets it).
+- **Keep transcripts for is built (#1533, migration 0101):** see "Retention". The cleaned version,
+  both downloads and the `{entity}` labels for the DM's lines (narrating, or which NPC; #53) are
+  built too; see "Transcripts and downloads" below.
 
 **Transcripts and downloads (decided 2026-10-05, #124, #125).** Sessions and their
 participants are stored. Each line is kept in two versions: **as heard** (exactly what
@@ -2531,9 +2575,14 @@ table isn't left waiting while the DM looks something up.
     `ANTHROPIC_API_KEY`); off, a DM gets "Quick answers aren't switched on yet." and the table
     trigger stays quiet. Turn it on after the sidebar's test answers have been read (#954). One
     question at a time per campaign.
-  - **Not built yet:** a line the Cleaner tags as in character is not told apart from the DM
-    speaking (the `in_character` flag exists, nothing sets it); only the "hold on" lead-in
-    guards against it.
+  - **A line said as an NPC never asks DMbot (2026-10-16, #1624):** the spoken triggers ("hold on, I
+    need to find…" and "Hey DMbot") fire only when the line's `entity` is empty or narrating; a line
+    said as a named NPC never does. The label comes from the speaker-label AI call over a window of
+    the DM's lines, so it is not known when a line is first handled: for a line that clearly asks
+    DMbot something, the window is closed at once and the question waits for that one call (bounded
+    by its timeout), then is asked unless the line was said as an NPC. With no label (no AI, no names
+    to choose from, a "maybe", a failed or slow call) it is asked as before. Typed questions and voice
+    memos are always out of character and unaffected.
   - **Limits:** DMs reach only the first shard's process, so a table on another shard's process
     is not found (single process today).
 
