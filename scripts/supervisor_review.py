@@ -10,6 +10,12 @@ Run by .github/workflows/supervisor-review.yml. The rule is CLAUDE.md's:
   approval carries over. Otherwise the check waits for a new review.
 - "changes needed" is a failure until a newer review approves.
 - A PR that changes only the testing logs needs no review (log-only, CLAUDE.md).
+- A PR written by Supervisor itself ("Session: Supervisor." in its body) is never reviewed by
+  Supervisor. Outside the docs-only rule it is approved by the owner's label `approved: owner`:
+  the status is green only while that label is on the PR, was added by the owner's account, and
+  was added after the head commit was made. A push after the label keeps the status pending
+  until the label is added again (#1387). Any other PR with that label is still judged by
+  Supervisor's review alone.
 
 Who may give the verdict: only the repository owner's account. Anyone can post a review on a
 public repository, so a body alone proves nothing. Standard library only; the token is the
@@ -33,6 +39,8 @@ from typing import Any
 CONTEXT = "supervisor-review"
 API = "https://api.github.com"
 LOG_ONLY = frozenset({"docs/testing-status.log", "docs/testing-history.log"})
+OWNER_LABEL = "approved: owner"
+SUPERVISOR_PR = re.compile(r"^\s*Session:\s*Supervisor\b", re.IGNORECASE | re.MULTILINE)
 PREFIX = re.compile(r"^\s*supervisor review:\s*(approved|changes needed)\b", re.IGNORECASE)
 DESCRIPTION_MAX = 140  # GitHub's limit for a status description
 COMPARE_FILE_CAP = 300  # GitHub's compare lists at most this many files
@@ -94,18 +102,47 @@ def patch_id(files: Sequence[Mapping[str, Any]]) -> str | None:
     return digest.hexdigest()
 
 
+def is_supervisors(body: str | None) -> bool:
+    """The PR says Supervisor wrote it (its "Session: Supervisor." line)."""
+    return bool(SUPERVISOR_PR.search(body or ""))
+
+
+def owner_approved(
+    labels: Iterable[str],
+    events: Iterable[Mapping[str, Any]],
+    head_time: str,
+    allowed: Iterable[str],
+) -> bool:
+    """The owner's label is on the PR now, the owner's own account added it (the newest time it
+    was added), and that was after the head commit was made. ISO times compare as text."""
+    if OWNER_LABEL not in set(labels):
+        return False
+    names = {a.casefold() for a in allowed}
+    added = [
+        str(e.get("created_at") or "")
+        for e in events
+        if e.get("event") == "labeled"
+        and (e.get("label") or {}).get("name") == OWNER_LABEL
+        and ((e.get("actor") or {}).get("login") or "").casefold() in names
+    ]
+    return bool(added) and bool(head_time) and max(added) > head_time
+
+
 def decide(
     *,
     head: str,
     changed_files: Sequence[str],
     review: Mapping[str, Any] | None,
     same_change_as_reviewed: Callable[[str], bool],
+    owner_approved_supervisor_pr: bool = False,
 ) -> Verdict:
     """The check for one pull request. `same_change_as_reviewed(sha)`: whether the PR's own
     change at `head` is the same as at `sha` (asked only when the approval is for an older
     commit)."""
     if changed_files and all(name in LOG_ONLY for name in changed_files):
         return SUCCESS, "Log-only, no review needed (CLAUDE.md)"
+    if owner_approved_supervisor_pr:
+        return SUCCESS, "Approved by the owner (a Supervisor PR)"
     if review is None:
         return PENDING, "Waiting for Supervisor's review"
     said = verdict_of(review)
@@ -185,6 +222,13 @@ def run(github: GitHub, number: int, allowed: Iterable[str]) -> Verdict:
     tip = urllib.parse.quote(pull["base"]["ref"], safe="")  # the live branch, not an old sha
     names = [f["filename"] for f in github.pages(f"/pulls/{number}/files")]
     review = latest_verdict(github.pages(f"/pulls/{number}/reviews"), allowed)
+    approved = False
+    if is_supervisors(pull.get("body")):  # only then are the label and its history read
+        labels = [(item or {}).get("name", "") for item in pull.get("labels") or []]
+        if OWNER_LABEL in labels:
+            events = github.pages(f"/issues/{number}/events")
+            made = github.get(f"/commits/{head}")["commit"]["committer"]["date"]
+            approved = owner_approved(labels, events, str(made), allowed)
 
     def same_change(sha: str) -> bool:
         try:
@@ -195,7 +239,11 @@ def run(github: GitHub, number: int, allowed: Iterable[str]) -> Verdict:
         return old is not None and old == new
 
     state, description = decide(
-        head=head, changed_files=names, review=review, same_change_as_reviewed=same_change
+        head=head,
+        changed_files=names,
+        review=review,
+        same_change_as_reviewed=same_change,
+        owner_approved_supervisor_pr=approved,
     )
     github.set_status(head, state, description, review.get("html_url") if review else None)
     return state, description

@@ -12,7 +12,8 @@ on:
     types: [submitted, edited, dismissed]
     branches: [development]
   pull_request:
-    types: [opened, synchronize, reopened]
+    # labeled and unlabeled: the owner's `approved: owner` label approves a Supervisor PR (#1387).
+    types: [opened, synchronize, reopened, labeled, unlabeled]
     branches: [development]
 
 # Read the pull request and its reviews, write one commit status. `contents: read` is only for

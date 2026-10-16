@@ -79,6 +79,10 @@ CI runs all of the above on every pull request. Never merge red CI.
   (`GET /repos/smv620/Discord-DMbot/pulls/N/reviews`, `commit_id` and `body`), never infers an
   approval from a missing line. **The owner's approval** is the label `approved: owner`
   (the owner adds it in GitHub). RepoManager removes it when the PR's own change changes.
+  **A Supervisor PR outside the docs-only rule** (2026-10-16, #1387) has no Supervisor review
+  (Supervisor never reviews its own); the `supervisor-review` status is green while the owner's
+  label is on it, was added by the owner after the head commit, and shows "Approved by the
+  owner (a Supervisor PR)". A push after the label keeps it pending until the label is re-added.
 - Promotions (`development` → `beta`, `beta` → `main`) are PRs, opened only when the
   owner asks (through Supervisor); RepoManager opens and merges them.
 - One concern per PR. Link the GitHub issue it closes.
