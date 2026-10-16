@@ -109,6 +109,7 @@ class SettingsCardTest(unittest.TestCase):
                 False,
                 False,
                 False,
+                False,
             ],
         )
         for item in items:
