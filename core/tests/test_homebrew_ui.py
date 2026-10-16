@@ -396,7 +396,7 @@ class TheFile(HomebrewUiTest):
         form.site._value = "https://www.DNDBeyond.com/magic-items/1-x"
         it = self.press()
         await form.on_submit(it)
-        self.assertIn("right to use dndbeyond.com's homebrew", self.said(it))
+        self.assertIn("right to use homebrew from dndbeyond.com", self.said(it))
         self.assertEqual(await self.store.list(GUILD, self.campaign.id), [])  # nothing yet
         self.assertEqual(await self.sources.approvals(GUILD, self.campaign.id), [])
         right = self.view_of(it)
@@ -509,7 +509,7 @@ class FromALink(HomebrewUiTest):
         self,
     ) -> None:
         it = await self.submit(URL)
-        self.assertIn("right to use dndbeyond.com's homebrew", self.said(it))
+        self.assertIn("right to use homebrew from dndbeyond.com", self.said(it))
         self.assertEqual(self.net.asked, [])  # nothing is read before the confirmation
         self.assertEqual(await self.sources.approvals(GUILD, self.campaign.id), [])
         right = self.view_of(it)
@@ -523,7 +523,7 @@ class FromALink(HomebrewUiTest):
         self.assertEqual(len(await self.sources.approvals(GUILD, self.campaign.id)), 1)
         self.assertEqual(len(self.net.asked), 1)
         self.assertIn("Moonlit Charm", self.said(shown))
-        self.assertIn("Add it to your homebrew?", self.said(shown))
+        self.assertIn("Not saved yet. Press **Save**", self.said(shown))
         self.assertEqual(await self.store.list(GUILD, self.campaign.id), [])  # not saved yet
         preview = self.view_of(shown)
         done = self.press()
@@ -535,7 +535,7 @@ class FromALink(HomebrewUiTest):
         self.assertIn("Added **Moonlit Charm**", self.said(done))
         # A second page from the same site in this campaign asks nothing.
         second = await self.submit(URL.replace("2302039-moonlit-charm", "9-other") + "")
-        self.assertIn("Add it to your homebrew?", self.said(second))
+        self.assertIn("Not saved yet. Press **Save**", self.said(second))
         self.assertEqual(len(await self.sources.approvals(GUILD, self.campaign.id)), 1)
 
     async def test_another_campaign_asks_again_and_cancel_adds_and_approves_nothing(self) -> None:

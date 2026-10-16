@@ -62,7 +62,7 @@ class Reading(ImportTest):
             self.assertEqual(await self.refused(bad), dndbeyond.NOT_SUPPORTED)
         self.assertEqual(self.net.asked, [])  # nothing was fetched for any of them
         # Another campaign has not said it: it is told so, and nothing is fetched for it.
-        self.assertIn("hasn't been approved", await self.refused(URL, self.two))
+        self.assertIn("Add this site first", await self.refused(URL, self.two))
         self.assertEqual(self.net.asked, [])
 
     async def test_a_page_is_read_once_and_a_kept_page_is_not_fetched_again(self) -> None:

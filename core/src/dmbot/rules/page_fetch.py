@@ -44,7 +44,7 @@ USER_AGENT = (
 PER_WINDOW = 6  # pages a campaign may read in a window...
 WINDOW_S = 600  # ...of ten minutes
 BUSY = "DMbot is already reading a page for this campaign. Wait a moment, then try again."
-TOO_OFTEN = "That's a lot of links in a short time. Try again in a few minutes."
+TOO_OFTEN = "DMbot needs a short break from reading links. Try again in a few minutes."
 
 
 class PageError(Exception):

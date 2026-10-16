@@ -27,6 +27,10 @@ log = logging.getLogger(__name__)
 Fetcher = Callable[[str], Awaitable[page_fetch.Reply]]
 
 
+NOT_YET = "Add this site first: press **Add from a link** again and say you have the right."
+TAKEN_BACK = "This site was taken off the list. Press **Add from a link** again to start over."
+
+
 class ImportRefused(Exception):
     """Why the link was not added, in plain words for the DM."""
 
@@ -80,7 +84,7 @@ class HomebrewImporter:
         campaign (the caller asked). Re-uses a page kept here; else fetches it once."""
         url, domain = self.check_address(text)
         if not await self._sources.approved(guild_id, campaign_id, domain):
-            raise ImportRefused("This site hasn't been approved for this campaign yet.")
+            raise ImportRefused(NOT_YET)
         kept = await self._sources.page_for(url)
         if kept is not None:
             return Preview(
@@ -116,7 +120,7 @@ class HomebrewImporter:
         campaign's DMs; a name the campaign has, or a full campaign, is refused like any add. The
         site must be approved here still (checked again: it could have been taken back)."""
         if not await self._sources.approved(guild_id, campaign_id, preview.domain):
-            raise ImportRefused("This site hasn't been approved for this campaign yet.")
+            raise ImportRefused(TAKEN_BACK)
         page = await self._sources.page_for(preview.url)
         if page is None:
             page = await self._sources.save_page(

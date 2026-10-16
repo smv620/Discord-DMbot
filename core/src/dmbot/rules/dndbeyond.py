@@ -35,7 +35,10 @@ NOT_PUBLIC = (
     "That page isn't public. Publish your homebrew on D&D Beyond first, then paste the link again."
 )
 NO_ANSWER = "D&D Beyond didn't answer. Try again in a minute."
-NO_WORDS = "DMbot couldn't find the words on that page. Check the link opens a homebrew page."
+NO_WORDS = (
+    "DMbot found no homebrew text on that page. Check that the link is for a homebrew page, "
+    "then try again."
+)
 
 # The first part of the address says what the page is (PLAN): anything else is "other".
 _KINDS = {

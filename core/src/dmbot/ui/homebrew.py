@@ -117,11 +117,11 @@ FROM_BOOK_WARNING = (
 
 WHO_MADE_ASK = "**Who made these?** Pick one. The name stays with the entries."
 SITE_WARNING = (
-    "**Do you have the right to use {site}'s homebrew?**\n"
-    "DMbot doesn't check. If you press **I have the right**, you are saying you may use it in "
-    "this campaign. DMbot records that you said so, and when.\n"
-    "It stays in this campaign only and is never shared. You can remove it any time. You won't "
-    "be asked again for {site} in this campaign."
+    "**Do you have the right to use homebrew from {site}?**\n"
+    "DMbot doesn't check. Press **I have the right** to say you may use it in this campaign. "
+    "DMbot records that you said so, and when.\n"
+    "It stays in this campaign only and is never shared. You can remove it any time. DMbot "
+    "won't ask again for {site} here."
 )
 BAD_SITE = "DMbot can't read that as a website. Try something like dndbeyond.com."
 
@@ -1067,13 +1067,11 @@ async def read_link(
 def link_preview_text(preview: Preview) -> str:
     words = preview.text
     shown = words if len(words) <= PREVIEW_SHOWN else words[: PREVIEW_SHOWN - 1].rstrip() + "…"
-    lines = [
-        f"🔗 **{_md(preview.name)}** ({preview.kind.capitalize()}), from {preview.domain}",
-        _md(shown),
-    ]
+    what = "" if preview.kind == "other" else f" ({preview.kind.capitalize()})"
+    lines = [f"🔗 **{_md(preview.name)}**{what}, from {preview.domain}", _md(shown)]
     if preview.truncated:
         lines.append("_The page was longer than DMbot keeps, so the end was cut._")
-    lines.append("Add it to your homebrew?")
+    lines.append("Not saved yet. Press **Save** to add it to your homebrew.")
     return _fit("\n".join(lines), 1900)
 
 
@@ -1136,7 +1134,7 @@ class LinkPreview(_Menu):
             await _tell(interaction, ONLY_DMS)
             return
         if self.used:
-            await _tell(interaction, "That is already being added.")
+            await _tell(interaction, "Already saving this. Give it a second.")
             return
         self.used = True  # before any await below
         c = self.campaign
