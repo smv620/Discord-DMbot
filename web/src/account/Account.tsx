@@ -7,6 +7,8 @@ import { useCallback, useContext, useEffect, useRef, useState } from "preact/hoo
 
 import { RECAPS_LIVE } from "../content/recap-words";
 import { text as recapText } from "../content/recaps";
+import { RECAP_AUDIO_LIVE } from "../content/recap-words";
+import { accountWords as audioWords, price as audioPrice } from "../content/recap-audio";
 import { hoursLeftLine, hoursUsedLine, planName, text } from "../content/account";
 import { formatPrice, plans as paidPlans, type PlanId } from "../content/pricing";
 import {
@@ -524,6 +526,22 @@ function PlanSection({ me }: { me: Me }) {
         return null;
       },
     );
+  const recapAudio = (): void =>
+    void run(
+      async () => {
+        if (!api.recapAudioUrl) throw new ApiError("server");
+        go(await api.recapAudioUrl());
+      },
+      (error) => {
+        // The plan changed since the page opened (it came with audio, or the add-on was bought
+        // elsewhere): show what's true now.
+        if (error.kind === "already-included" || error.kind === "already-subscribed") {
+          void refresh();
+          return audioWords.errors[error.kind];
+        }
+        return null;
+      },
+    );
   const portal = (): void =>
     void run(
       async () => go(await api.billingPortalUrl()),
@@ -671,6 +689,25 @@ function PlanSection({ me }: { me: Me }) {
                   <ActionButton busy={busy} kind="secondary" onClick={portal}>
                     {text.changePlan}
                   </ActionButton>
+                  {RECAP_AUDIO_LIVE && me.recapAudio && (
+                    <div class="addon" aria-labelledby="recap-audio-heading">
+                      <h3 id="recap-audio-heading">{audioWords.heading}</h3>
+                      {me.recapAudio.included ? (
+                        <p>{audioWords.included}</p>
+                      ) : me.recapAudio.addOn ? (
+                        <p>{audioWords.addOn(me.recapAudio.endsOn)}</p>
+                      ) : (
+                        me.recapAudio.canBuy && (
+                          <>
+                            <ActionButton busy={busy} onClick={recapAudio}>
+                              {audioWords.buy}
+                            </ActionButton>
+                            <p class="muted small">{audioWords.buyNote(audioPrice())}</p>
+                          </>
+                        )
+                      )}
+                    </div>
+                  )}
                 </>
               )}
             </>

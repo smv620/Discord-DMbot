@@ -477,6 +477,10 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
       calls.push("portal");
       return "#demo-billing";
     },
+    async recapAudioUrl() {
+      calls.push("recap-audio");
+      return "#demo-recap-audio";
+    },
     async extraHoursUrl() {
       calls.push("extra-hours");
       return "#demo-extra-hours";

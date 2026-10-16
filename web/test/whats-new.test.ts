@@ -48,6 +48,7 @@ describe("What's new", () => {
       "Recaps for your table", // until dev1 has checked a real recap (#1382, #1384)
       "Ask a question in public", // until QAbot is live (#1352)
       "Move to a new Discord account",
+      "Choose what recaps do",
       "New names from what was said",
       "A note before tonight's session",
       "When a player says a secret name",
@@ -61,7 +62,7 @@ describe("What's new", () => {
     expect(shown).not.toContain("New names from what was said");
     expect(shown).not.toContain("A note before tonight");
     expect(shown).not.toContain("When a player says a secret name");
-    expect(shown).not.toContain("A recap of last session");
+    expect(shown).not.toContain("Choose what recaps do");
     expect(shown).not.toContain("move code");
     expect(shown).not.toContain("Ask a question in public"); // not until QAbot is live
     expect(shown).not.toContain("QAbot");

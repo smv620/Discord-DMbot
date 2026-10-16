@@ -607,6 +607,31 @@ class Working(Base):
         assert job is not None
         self.assertEqual((job.state, job.audio, job.audio_tries), ("ready", "failed", 1))
 
+    async def test_the_dms_own_switch_turns_the_audio_off_quietly_and_the_plan_still_wins(
+        self,
+    ) -> None:
+        async def off(gid: int, cid: str, job: Any) -> bool:
+            return False
+
+        worker = self.worker()
+        worker._switched = off
+        job = await worker.run(1, self.one.id, 100)
+        assert job is not None
+        self.assertEqual((job.state, job.audio, job.audio_error), ("ready", "off", ""))
+        self.assertEqual(self.fake.calls, [])
+        # On is only a yes to the switch: a plan without it is still refused.
+        await self.store.set_audio(1, self.one.id, 100, audio="queued", tries=0)
+
+        async def on(gid: int, cid: str, job: Any) -> bool:
+            return True
+
+        self.allowed = False
+        worker = self.worker()
+        worker._switched = on
+        job = await worker.run(1, self.one.id, 100)
+        assert job is not None
+        self.assertEqual((job.audio, job.audio_error), ("failed", NOT_INCLUDED))
+
     async def test_no_mixer_on_the_server_fails_before_any_paid_call(self) -> None:
         worker = self.worker()
         worker._have_ffmpeg = lambda: False

@@ -286,8 +286,12 @@ _SETTABLE = frozenset(
         "dndbeyond_invite",
         "rules_cards",
         "side_initiative",
+        "recaps_text",
+        "recaps_audio",
+        "recaps_email",
     }
 )
+RECAP_SWITCHES = ("text", "audio", "email")  # the DM's recap choices (#1421)
 
 
 # Hand-over (#437 part 1b): plain words for the person who tried.
@@ -655,6 +659,14 @@ class CampaignStore:
         """Side-based initiative (#1127): a DM's setting, off by default. DMbot tracks rounds
         only either way; it is kept so the table's way of running a fight is recorded."""
         return await self._set(guild_id, campaign_id, "side_initiative", bool(on))
+
+    async def set_recap_switch(
+        self, guild_id: int, campaign_id: str, which: str, on: bool
+    ) -> Campaign:
+        """One of the DM's recap choices (#1421): "text", "audio" or "email"."""
+        if which not in RECAP_SWITCHES:
+            raise ValueError(which)
+        return await self._set(guild_id, campaign_id, f"recaps_{which}", bool(on))
 
     async def set_rules_cards(self, guild_id: int, campaign_id: str, on: bool) -> Campaign:
         """Whether rules cards show on the DM screen when a spell or creature is named
@@ -1163,6 +1175,9 @@ class CampaignStore:
                 "dm_screen_level": campaign.dm_screen_level,
                 "rules_cards": campaign.rules_cards,
                 "side_initiative": campaign.side_initiative,
+                "recaps_text": campaign.recaps_text,
+                "recaps_audio": campaign.recaps_audio,
+                "recaps_email": campaign.recaps_email,
                 "dndbeyond_invite": campaign.dndbeyond_invite,
                 # Only the switch (#1118): a channel ID means nothing in another server.
                 "table_chat": campaign.table_chat,
@@ -1228,6 +1243,7 @@ class CampaignStore:
                     " optional_rules_default = %s, last_played_at = %s,"
                     " dm_screen_visibility = %s, dm_screen_level = %s, rules_cards = %s,"
                     " table_chat = %s, side_initiative = %s,"
+                    " recaps_text = %s, recaps_audio = %s, recaps_email = %s,"
                     # The invite link is not touched: it is the DM's join link for this
                     # server's table, and a backup doesn't record which server it came from,
                     # so its link could be another server's (#1119).
@@ -1245,6 +1261,9 @@ class CampaignStore:
                         info["rules_cards"],
                         info["table_chat"],
                         info["side_initiative"],
+                        info["recaps_text"],
+                        info["recaps_audio"],
+                        info["recaps_email"],
                         importer_id,
                         guild_id,
                         campaign_id,
@@ -1273,6 +1292,13 @@ class CampaignStore:
                             " WHERE guild_id = %s AND id = %s",
                             (guild_id, campaign_id),
                         )
+                    for switch in RECAP_SWITCHES:  # a new campaign starts with them on
+                        if not info[f"recaps_{switch}"]:
+                            await conn.execute(
+                                f"UPDATE campaigns SET recaps_{switch} = FALSE"
+                                " WHERE guild_id = %s AND id = %s",
+                                (guild_id, campaign_id),
+                            )
                     if info["side_initiative"]:  # a new campaign starts with it off
                         await conn.execute(
                             "UPDATE campaigns SET side_initiative = TRUE"
@@ -1453,6 +1479,9 @@ def _to_campaign(row: dict[str, Any], dms: set[int]) -> Campaign:
         owner_user_id=row_int(row, "owner_user_id"),
         rules_cards=bool(row.get("rules_cards", False)),  # older schemas (tests) have none
         side_initiative=bool(row.get("side_initiative", False)),
+        recaps_text=bool(row.get("recaps_text", True)),  # older schemas (tests) have none
+        recaps_audio=bool(row.get("recaps_audio", True)),
+        recaps_email=bool(row.get("recaps_email", True)),
         paused=bool(row.get("paused", False)),
         retention_warned_stage=int(row.get("retention_warned_stage", 0) or 0),
         retention_warned_for=(
@@ -1641,6 +1670,14 @@ def _validate_backup(
     if not isinstance(side_initiative, bool):
         raise CampaignError(DAMAGED)
 
+    # Backups made before the recap choices existed have them all on, as a new campaign does.
+    recap_choices = {}
+    for switch in RECAP_SWITCHES:
+        value = campaign.get(f"recaps_{switch}", True)
+        if not isinstance(value, bool):
+            raise CampaignError(DAMAGED)
+        recap_choices[f"recaps_{switch}"] = value
+
     # Backups made before typed chat existed have it on, as a new campaign does.
     table_chat = campaign.get("table_chat", True)
     if not isinstance(table_chat, bool):
@@ -1675,6 +1712,7 @@ def _validate_backup(
         "dm_screen_level": level,
         "rules_cards": rules_cards,
         "side_initiative": side_initiative,
+        **recap_choices,
         "dndbeyond_invite": invite,
         "table_chat": table_chat,
     }

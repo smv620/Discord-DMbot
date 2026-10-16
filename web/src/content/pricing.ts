@@ -6,6 +6,7 @@
  * Keep this free of page markup: the bot and the web API's /me will reuse the wording.
  */
 import facts from "./plans.json";
+import { RECAP_AUDIO_LIVE } from "./recap-words";
 
 export type PlanId = "try-it" | "table" | "two-tables" | "guild" | "pro";
 
@@ -73,6 +74,11 @@ function hoursLine(p: PlanFacts): string {
 function campaignsLine(p: PlanFacts): string {
   return p.campaigns === 1 ? "1 campaign" : `Up to ${p.campaigns} campaigns`;
 }
+
+/** The plans question's answer while the audio add-on is live: "everything" stays true. Lives here,
+ * not in recap-audio.ts, which imports this file (a cycle would crash the page once it is on). */
+export const plansAnswer = (featureList: string, tryItName: string): string =>
+  `Every plan has the same DMbot. Plans differ only in hours and campaigns (the free ${tryItName} has no backups or downloads): it ${featureList}. Narrated recaps with music are an extra: Guild and Pro include them, and you can add them to the other paid plans.`;
 
 const tryItName = data.plans["try-it"].name;
 
@@ -171,7 +177,9 @@ export const questions: readonly Question[] = [
   },
   {
     question: "What's different between the plans?",
-    answer: `Only the hours and how many campaigns you can run. The free ${tryItName} has no backups or downloads; everything else is the same on every plan: it ${featureList}.`,
+    answer: RECAP_AUDIO_LIVE
+      ? plansAnswer(featureList, tryItName)
+      : `Only the hours and how many campaigns you can run. The free ${tryItName} has no backups or downloads; everything else is the same on every plan: it ${featureList}.`,
   },
   {
     question: "Can I change my plan?",

@@ -139,6 +139,11 @@ class Campaign:
     # Rules cards on the DM screen when a spell or creature is named (#931); off by default.
     rules_cards: bool = False
     side_initiative: bool = False  # combat tracks rounds only either way (#1127)
+    # The DM's recap choices (#1421): write a recap after each session, make the narration and
+    # music, email when it is ready. They only ever turn things off: the plan decides the rest.
+    recaps_text: bool = True
+    recaps_audio: bool = True
+    recaps_email: bool = True
     # Paused by its owner, or by DMbot when the owner's plan shrank (#957): it keeps all its
     # data and downloads, can't start, and doesn't count toward the owner's campaign cap.
     paused: bool = False
