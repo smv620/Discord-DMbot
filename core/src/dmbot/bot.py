@@ -162,6 +162,7 @@ from dmbot.memory.recall import PLAYERS, AsOf, Recall, RecallService
 from dmbot.memory.scan import MAX_SUGGESTIONS, find_new_names, group_alike
 from dmbot.memory.scene import HintParts, SceneTracker, mentions, scene_hints
 from dmbot.memory.scene import prepare as prepare_hints
+from dmbot.memory.secret_aloud import MAX_ASKED, players_lines, secret_names, spoken
 from dmbot.memory.sheet_questions import Questions as SheetQuestions
 from dmbot.memory.sheet_refresh import hint_names as sheet_hint_names
 from dmbot.memory.sheet_refresh import refresh as refresh_sheets
@@ -240,6 +241,12 @@ from dmbot.ui.names import ReviewButton, after_session_text, held_back_text, rev
 from dmbot.ui.optional_rules import dmbot_optional_rules  # noqa: F401 (registers it)
 from dmbot.ui.people_review import PeopleReviewButton, people_review_view, waiting_text
 from dmbot.ui.rule_lookup import dmbot_rule  # noqa: F401 (registers it)
+from dmbot.ui.secret_aloud import (
+    SecretAloudButton,
+    more_text,
+    question_text,
+    secret_aloud_view,
+)
 from dmbot.ui.sheets import MySheetButton, OpenCardButton
 from dmbot.ui.transcripts import (
     DownloadButton,
@@ -915,6 +922,7 @@ class DMBot(commands.AutoShardedBot):
         self.add_dynamic_items(
             ReviewButton, PeopleReviewButton, ClaimsReviewButton, ContinuityButton
         )
+        self.add_dynamic_items(SecretAloudButton)  # the secret-said-aloud question (#1407)
         self.add_dynamic_items(  # #965, #1117
             clock_screen.ClockButton, clock_screen.ClockUndoButton, clock_screen.SuggestionButton
         )
@@ -1873,6 +1881,7 @@ class DMBot(commands.AutoShardedBot):
             # Slow when on (minutes of AI calls): after the quick steps; the next two need it.
             ("story extractor", lambda: self.extract_claims(table, ended_at)),
             ("what was said", lambda: self.ask_about_claims(table)),
+            ("secrets said aloud", lambda: self.ask_about_secrets(table)),
             ("heads-ups", lambda: self.warn_about_continuity(table)),
             ("steward numbers", lambda: self.log_steward_tally(table)),
         ]
@@ -5573,6 +5582,43 @@ class DMBot(commands.AutoShardedBot):
         tally, table.steward_tally = table.steward_tally, Tally()
         if tally.refused or tally.reused or tally.accepted:
             tally.write_to_log()
+
+    async def ask_about_secrets(self, table: Table) -> None:
+        """After a session: a name the DM keeps secret was said by a player, so it is now in the
+        transcript everyone may read (#1407). The DM screen asks, privately, once for each such
+        name (at most five, most said first), with two buttons. Only players who are recorded
+        now count: not the DM, not DMbot, not someone who stopped. No AI call. The log gets a
+        count, never a name."""
+        if (
+            self.memory is None
+            or self.transcripts is None
+            or table.campaign_id is None
+            or table.transcript_session_id is None
+        ):
+            return
+        gid, cid = table.guild_id, table.campaign_id
+        with log_context(guild_id=gid, campaign_id=cid):
+            campaign = await self.campaigns.get(gid, cid)
+            if campaign is None:
+                return
+            secrets = await secret_names(self.memory, gid, cid)
+            if not secrets:
+                return
+            lines = await self.transcripts.lines(gid, table.transcript_session_id)
+            agreed = await self.consent.consenting(gid)  # asked after the lines were read
+            players = {line.user_id for line in lines} & set(agreed) - set(campaign.dm_user_ids)
+            every = spoken(secrets, players_lines(lines, players=players))
+            found = every[:MAX_ASKED]
+            for said in found:
+                await self.post(
+                    table.screen_channel_id,
+                    question_text(said.text),
+                    view=secret_aloud_view(cid, said.alias_id),
+                )
+            if len(every) > len(found):  # the DM should know the rest exist
+                await self.post(table.screen_channel_id, more_text(len(every) - len(found)))
+            if found:
+                log.info("Secret name(s) said by players: %d asked", len(found))  # a count only
 
     async def ask_about_claims(self, table: Table) -> None:
         """After a session: if the story extractor left proposals waiting (#1297), the DM
