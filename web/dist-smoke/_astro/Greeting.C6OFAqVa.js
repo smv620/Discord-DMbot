@@ -1,0 +1,1 @@
+export{t as Greeting,n as default,r as forgetPersonalLink}from"./Greeting.Chys4j7C.js";
