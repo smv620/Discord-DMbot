@@ -337,3 +337,13 @@ class TheFile(HomebrewUiTest):
         await ask._own(it)
         self.assertIn("would make 201 entries", self.said(it))
         self.assertEqual(len(await self.store.list(GUILD, self.campaign.id)), 200)
+
+
+class OnlyOnce(HomebrewUiTest):
+    async def test_a_double_press_records_the_confirmation_and_loads_once(self) -> None:
+        right = ui.RightToUse(self.campaign, (FileEntry("rule", "Booked", "Words."),), "e" * 64, 0)
+        await right._confirmed(self.press())
+        again = self.press()
+        await right._confirmed(again)
+        self.assertEqual(len(await self.campaigns.confirmations(GUILD, self.campaign.id)), 1)
+        self.assertIn("already being loaded", self.said(again))

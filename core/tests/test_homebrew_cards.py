@@ -220,3 +220,30 @@ class Reading(TableTest):
 
 
 GUILD_ID = 1
+
+
+class NewestReadWins(TableTest):
+    async def test_an_older_read_that_finishes_last_does_not_overwrite_a_newer_one(self) -> None:
+        brews = FakeBrew()
+        self.bot.homebrew = brews  # type: ignore[assignment]
+        gate = asyncio.Event()
+        calls = 0
+        real = brews.list
+
+        async def slow_then_fast(guild_id: int, cid: str) -> list[Homebrew]:
+            nonlocal calls
+            calls += 1
+            if calls == 1:
+                await gate.wait()  # the first read is slow...
+                return [brew("Old Name")]
+            return await real(guild_id, cid)
+
+        brews.list = slow_then_fast  # type: ignore[method-assign]
+        brews.entries[C1] = [brew("New Name")]
+        first = asyncio.create_task(self.bot._load_homebrew_spotter(self.table))
+        await asyncio.sleep(0)
+        await self.bot._load_homebrew_spotter(self.table)  # ...a newer one finishes first
+        gate.set()
+        await first
+        assert self.table.homebrew_spotter is not None
+        self.assertEqual(names(self.table.homebrew_spotter, "New Name and Old Name"), ["New Name"])

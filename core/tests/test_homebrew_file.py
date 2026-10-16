@@ -142,3 +142,27 @@ class TheTemplate(unittest.TestCase):
         self.assertIn("# ## Hollow King (monster)", text)  # commented out: nothing to load
         parsed = hf.parse(text)
         self.assertEqual((parsed.entries, parsed.problems), ((), ()))
+
+
+class Untrusted(unittest.TestCase):
+    def test_a_heading_of_spaces_does_not_stall_the_parser(self) -> None:
+        import time
+
+        for line in (
+            "## a" + " " * 3999 + "(",
+            "## a" + " " * 2000 + "(b" + " " * 1900,
+            "## " + "(" * 3990,
+        ):
+            started = time.monotonic()
+            hf.parse(f"{line}\n\nWords.\n" * 20)
+            self.assertLess(time.monotonic() - started, 1.0)
+
+    def test_headings_with_odd_brackets_are_reported_not_guessed(self) -> None:
+        for heading in ("## Name (kind", "## Name kind)", "## Name ((item))"):
+            parsed = hf.parse(f"{heading}\n\nWords.\n")
+            self.assertEqual(parsed.entries, (), heading)
+            self.assertEqual(len(parsed.problems), 1, heading)
+
+    def test_a_very_long_heading_is_not_an_entry(self) -> None:
+        parsed = hf.parse("## " + "n" * 400 + " (item)\n\nWords.\n")
+        self.assertEqual(parsed.entries, ())

@@ -474,6 +474,7 @@ class Table:
     rules_rulesets: tuple[str, str] = ("2024", "2014")
     # The campaign's own homebrew names, for the rules cards (#1524); None until read.
     homebrew_spotter: HomebrewSpotter | None = None
+    homebrew_read: int = 0  # which read of the names is the newest (an older one is dropped)
     rules: rules_cards.RulesCards = field(default_factory=rules_cards.RulesCards)
     # A house rule the DM said at the table, offered with Save / Edit / Cancel (#953).
     house_voice: house_voice.HouseVoice = field(default_factory=house_voice.HouseVoice)
@@ -4107,10 +4108,14 @@ class DMBot(commands.AutoShardedBot):
         campaign's own; a failure costs the homebrew cards, never the session."""
         if self.homebrew is None or table.campaign_id is None:
             return
+        table.homebrew_read += 1
+        mine = table.homebrew_read
         try:
             entries = await self.homebrew.list(table.guild_id, table.campaign_id)
         except Exception:
             log.exception("Couldn't read the homebrew names for the rules cards")
+            return
+        if mine != table.homebrew_read:  # a newer read started meanwhile: its result stands
             return
         table.homebrew_spotter = HomebrewSpotter.from_entries(entries) if entries else None
 

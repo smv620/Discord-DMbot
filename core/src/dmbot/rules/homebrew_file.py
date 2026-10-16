@@ -24,7 +24,7 @@ keep, edit and load back; loading checks everything again (the store's limits ap
 from __future__ import annotations
 
 import re
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 
 from dmbot.rules.homebrew import (
@@ -79,7 +79,7 @@ TWICE = "another entry already has this name, so this one was skipped"
 TOO_MANY = f"more than {HOMEBREW_MAX} entries; the rest are left out"
 LINE_TOO_LONG = f"a line is over {MAX_LINE} characters. Split it into shorter lines"
 
-_HEADING = re.compile(r"^##\s+(?P<name>.*?)\s*(?:\((?P<kind>[^()]*)\))?\s*$")
+MAX_HEADING = 300  # a longer heading is not an entry (and is never matched)
 _ESCAPED = re.compile(r"^(\\+)(##.*)$")
 _UNESCAPE = re.compile(r"^\\(\\*##.*)$")
 
@@ -177,19 +177,19 @@ def parse(text: str) -> Parsed:
     return Parsed(tuple(entries.values()), tuple(problems))
 
 
-def _entry(n: int, heading: str, lines: list[str], report: object) -> FileEntry | None:
-    problem = report  # (a function; typed loosely so the callers' closure can be passed)
+def _entry(
+    n: int, heading: str, lines: list[str], report: Callable[[int, str, str], None]
+) -> FileEntry | None:
 
     def bad(why: str) -> None:
-        problem(n, heading, why)  # type: ignore[operator]
+        report(n, heading, why)
 
-    match = _HEADING.match(heading)
-    assert match is not None  # the heading starts with ##, which the pattern accepts
-    name, kind = match.group("name").strip(), (match.group("kind") or "").strip().lower()
+    name, bracket = _heading(heading)
+    kind = (bracket or "").strip().lower()
     if not name:
         bad(NO_NAME)
         return None
-    if match.group("kind") is None:
+    if bracket is None:
         bad(NO_KIND)
         return None
     if kind not in KINDS:
@@ -222,6 +222,20 @@ def _entry(n: int, heading: str, lines: list[str], report: object) -> FileEntry 
         bad(_why(str(exc)))
         return None
     return FileEntry(kind, clean_name_, text, shortened, players)
+
+
+def _heading(line: str) -> tuple[str, str | None]:
+    """(name, kind in brackets or None) from a `## Name (kind)` line, by plain string work: a
+    pattern with nested whitespace quantifiers can take minutes on a line of spaces (an untrusted
+    file must never stall the bot)."""
+    body = line[2:].strip()
+    if len(body) > MAX_HEADING:
+        return body[:MAX_HEADING].strip(), None
+    if body.endswith(")") and "(" in body:
+        name, _, rest = body[:-1].rpartition("(")
+        if "(" not in rest and ")" not in rest:
+            return name.strip(), rest
+    return body, None
 
 
 def _why(message: str) -> str:

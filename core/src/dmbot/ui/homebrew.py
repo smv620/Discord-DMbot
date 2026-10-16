@@ -728,11 +728,17 @@ class FromBookAsk(_Menu):
     async def _cancel(self, interaction: discord.Interaction) -> None:
         await _redraw(interaction, self.campaign, note="Nothing was loaded.", page=self.page)
 
+    used = False  # one answer only: a double press must not record the confirmation twice
+
     async def _load(self, interaction: discord.Interaction, *, from_book: bool) -> None:
         await _answer_first(interaction, in_place=True)
         if not await _is_dm(interaction, self.campaign):
             await _tell(interaction, ONLY_DMS)
             return
+        if self.used:
+            await _tell(interaction, "That is already being loaded.")
+            return
+        self.used = True  # before any await below
         store, c = _store(interaction), self.campaign
         if store is None:
             await _tell(interaction, NOT_READY)
