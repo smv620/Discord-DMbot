@@ -900,6 +900,25 @@ class SupportAdmin(SupportBase):
         self.assertEqual(listed["handed over, then answered"]["handedOverAt"], self.now)
         self.assertIsNone(listed["never handed over"]["handedOverAt"])
 
+    async def test_a_second_hand_over_keeps_the_latest_reason_and_time_and_counts_once(
+        self,
+    ) -> None:
+        await self.add_row(ALICE.id, self.now - 500, "handed over twice")
+        (ticket,) = [t["id"] for t in await self.tickets()]
+        await support.escalate(self.web, ticket, "asked", self.now - 100)
+        await support.add_reply(self.web, ticket, "person", "Hi.", now=self.now - 90)
+        await support.set_status(self.web, ticket, "answered")
+        await support.add_reply(self.web, ticket, "customer", "Still stuck.", now=self.now - 80)
+        await support.set_status(self.web, ticket, "new")
+        self.assertTrue(await support.escalate(self.web, ticket, "unhappy", self.now))
+        await self.sign_in()
+        got = (await self.client.get("/admin/support")).json()
+        self.assertEqual(
+            got["week"]["reasons"],
+            {"unhappy": 1, "asked": 0, "limit": 0, "no-email": 0, "helper-down": 0},
+        )
+        self.assertEqual(got["tickets"][0]["handedOverAt"], self.now)
+
     async def test_this_week_is_all_zeros_with_no_tickets_and_holds_no_words(self) -> None:
         await self.sign_in()
         week = (await self.client.get("/admin/support")).json()["week"]

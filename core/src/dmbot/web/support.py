@@ -180,9 +180,11 @@ class Week:
     `helper` and `team` count the tickets that are answered or closed whose latest answer was
     DMbot's helper's or the team's; `waiting` the ones still new or escalated; `reasons` how many
     tickets came to a person for each code, from `handed_over_reason`, which stays after a person
-    answers (#1487), so every hand-over of the week is counted, whatever happened since. (Tickets
-    handed over before that column existed have none.) The admin list's `reason` is a different
-    thing: why a ticket is waiting now."""
+    answers (#1487), so every hand-over the helper makes is counted, whatever happened since,
+    among the tickets opened this week (like the other numbers here: a ticket counts once, under
+    its latest reason). Tickets handed over before that column existed have none, and a ticket a
+    customer reopens after the team's answer comes back to the team with no new reason. The admin list's
+    `reason` is a different thing: why a ticket is waiting now."""
 
     questions: int
     helper: int
