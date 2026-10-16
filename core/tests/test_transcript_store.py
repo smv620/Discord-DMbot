@@ -912,7 +912,7 @@ class BotTests(DatabaseTest):
     def posted(self) -> list[tuple[str, Any]]:
         return [
             (c.args[1], c.args[2] if len(c.args) > 2 else None)
-            for c in self.bot.post_message.await_args_list
+            for c in cast(Any, self.bot.post_message).await_args_list
         ]
 
     async def test_a_waiting_suggestion_is_put_on_the_dm_screen_again_at_session_start(
@@ -927,7 +927,7 @@ class BotTests(DatabaseTest):
             [c.item.custom_id for c in view.children],
             [f"dmbot:linefix:yes:{sid}", f"dmbot:linefix:no:{sid}"],
         )
-        self.assertEqual(self.bot.post_message.await_args_list[0].args[0], SCREEN)
+        self.assertEqual(cast(Any, self.bot.post_message).await_args_list[0].args[0], SCREEN)
 
     async def test_nothing_for_an_answered_or_dropped_suggestion(self) -> None:
         table, (first, second) = await self.waiting_setup(2)
@@ -936,7 +936,7 @@ class BotTests(DatabaseTest):
         await store.decide(GUILD, first, "declined", DM)
         await store.decide(GUILD, second, "dropped", DM)
         await self.bot._waiting_suggestions(table)
-        self.bot.post_message.assert_not_awaited()
+        cast(Any, self.bot.post_message).assert_not_awaited()
 
     async def test_at_most_three_are_shown_oldest_first_and_the_rest_counted(self) -> None:
         table, ids = await self.waiting_setup(5)
@@ -952,19 +952,19 @@ class BotTests(DatabaseTest):
         table, _ = await self.waiting_setup(1)
         table.resumed = True
         await self.bot._waiting_suggestions(table)
-        self.bot.post_message.assert_not_awaited()
+        cast(Any, self.bot.post_message).assert_not_awaited()
 
     async def test_nothing_if_the_session_ended_meanwhile(self) -> None:
         table, _ = await self.waiting_setup(1)
         del self.bot.tables[GUILD]
         await self.bot._waiting_suggestions(table)
-        self.bot.post_message.assert_not_awaited()
+        cast(Any, self.bot.post_message).assert_not_awaited()
 
     async def test_nothing_for_a_speaker_who_is_no_longer_recorded(self) -> None:
         table, _ = await self.waiting_setup(1)
         await self.consent.revoke(GUILD, PLAYER)
         await self.bot._waiting_suggestions(table)
-        self.bot.post_message.assert_not_awaited()
+        cast(Any, self.bot.post_message).assert_not_awaited()
 
     async def test_a_person_who_stops_while_the_lines_go_up_is_left_out(self) -> None:
         table, _ = await self.waiting_setup(2)  # one line each from two people
@@ -975,7 +975,7 @@ class BotTests(DatabaseTest):
 
         self.bot.post_message = AsyncMock(side_effect=stop_the_other)  # type: ignore[method-assign]
         await self.bot._waiting_suggestions(table)
-        self.assertEqual(self.bot.post_message.await_count, 1)  # only the first went up
+        self.assertEqual(cast(Any, self.bot.post_message).await_count, 1)  # only the first went up
 
     async def test_a_failure_costs_the_lines_not_the_session(self) -> None:
         table, _ = await self.waiting_setup(1)
