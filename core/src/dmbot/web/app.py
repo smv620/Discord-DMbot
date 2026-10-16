@@ -41,6 +41,7 @@ from dmbot.web import (
     support,
     tokens,
 )
+from dmbot.web import homebrew as homebrew_pages
 from dmbot.web import house_rules as house_rule_pages
 from dmbot.web import recap_audio as audio_links
 from dmbot.web import transcripts as transcript_pages
@@ -787,6 +788,39 @@ def create_app(
             text.encode(),
             media_type="text/plain; charset=utf-8",
             # `name` is `house_file.filename`'s slug (letters, digits, dashes): safe in a header.
+            headers={"Content-Disposition": f'attachment; filename="{name}"'},
+        )
+
+    # A campaign's homebrew the DM let the players know (#1525): any member of the server; hidden
+    # entries never leave the database. No plan rule, as the bot has none for homebrew.
+    @app.get("/me/homebrew")
+    async def me_homebrew_campaigns(signed: Signed) -> dict[str, Any]:
+        """The campaigns with a shown homebrew entry in the person's servers."""
+        session, _token = signed
+        return {"campaigns": await homebrew_pages.list_campaigns(db, session)}
+
+    @app.get("/me/campaigns/{ref}/homebrew")
+    async def me_homebrew(ref: str, signed: Signed) -> dict[str, Any]:
+        session, _token = signed
+        try:
+            return await homebrew_pages.read_homebrew(db, session, ref)
+        except RecapError as err:
+            status, detail = recap_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+
+    @app.get("/me/campaigns/{ref}/homebrew/download")
+    async def me_homebrew_download(ref: str, signed: Signed) -> Response:
+        """The bot's homebrew file for the shown entries, byte for byte."""
+        session, _token = signed
+        try:
+            name, text = await homebrew_pages.render(db, session, ref)
+        except RecapError as err:
+            status, detail = recap_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+        return Response(
+            text.encode(),
+            media_type="text/plain; charset=utf-8",
+            # `name` is `homebrew_file.filename`'s slug (letters, digits, dashes): safe in a header.
             headers={"Content-Disposition": f'attachment; filename="{name}"'},
         )
 

@@ -6,6 +6,7 @@ import { createContext } from "preact";
 import { useCallback, useContext, useEffect, useRef, useState } from "preact/hooks";
 
 import { RECAPS_LIVE } from "../content/recap-words";
+import { text as homebrewText } from "../content/homebrew";
 import { text as houseRulesText } from "../content/house-rules";
 import { text as recapText } from "../content/recaps";
 import { text as transcriptText } from "../content/transcripts";
@@ -482,6 +483,7 @@ function SignedIn({
       <SupportOrQuestions me={me} />
       <CampaignsSection me={me} />
       {api.houseRuleCampaigns && <HouseRulesSection />}
+      {api.homebrewCampaigns && <HomebrewSection />}
       {api.transcriptCampaigns && <TranscriptsSection />}
       <ServersSection me={me} />
       <CharactersSection />
@@ -861,6 +863,18 @@ function HouseRulesSection() {
       <h2 id="house-rules-heading">{houseRulesText.heading}</h2>
       <p>{houseRulesText.lead}</p>
       <a href="/account/house-rules">{houseRulesText.link}</a>
+    </section>
+  );
+}
+
+/** A link to the homebrew the DM shared (#1525): for anyone in a server, not only a DM. Hidden on
+ * an API older than the homebrew pages. */
+function HomebrewSection() {
+  return (
+    <section aria-labelledby="homebrew-heading" class="panel">
+      <h2 id="homebrew-heading">{homebrewText.heading}</h2>
+      <p>{homebrewText.lead}</p>
+      <a href="/account/homebrew">{homebrewText.link}</a>
     </section>
   );
 }
