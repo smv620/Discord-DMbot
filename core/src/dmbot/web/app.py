@@ -56,7 +56,7 @@ from dmbot.web.characters import build_characters
 from dmbot.web.discord import DiscordError, DiscordOAuth
 from dmbot.web.export import build_export
 from dmbot.web.feedback import Discussions, FeedbackError, HumanCheck
-from dmbot.web.limits import LIMITS, RateLimit
+from dmbot.web.limits import LIMITS, RateLimit, free_ticket_refusal
 from dmbot.web.me import build_me
 from dmbot.web.moving import MoveCodes, can_move
 from dmbot.web.payments import PaymentError, PaymentProvider, paid_plan_ids
@@ -1111,7 +1111,8 @@ def create_app(
 
     @app.post("/support", status_code=201)
     async def send_support(request: Request, signed: Signed) -> dict[str, bool]:
-        """A private support ticket from a paying person (#1340). Never public: it goes to
+        """A private support ticket from a signed-in person with an account (#1340, #1435: Try It
+        too). Never public: it goes to
         the support_tickets table (support.py), and its words are never logged or emailed."""
         session, _token = signed
         with contextlib.suppress(ValueError):
@@ -1131,9 +1132,13 @@ def create_app(
             raise HTTPException(status_code=400, detail=ticket)
         now = clock()
         plan, _grant, _access = await entitlements.plan_grant_access(db, session.user_id, now)
-        if plan is None or not support.is_paying(plan, now):
-            # Everyone else is pointed to the public Q&A, on the page itself.
+        if plan is None or not support.may_write(plan):
+            # No account yet: pointed to the public Q&A, on the page itself.
             raise HTTPException(status_code=403, detail="not_paying")
+        if support.is_free(plan, now):
+            waiting, today = await support.recent(db, session.user_id, now=now)
+            if (why := free_ticket_refusal(waiting, today)) is not None:
+                raise HTTPException(status_code=429, detail=why)
         turn = str(session.user_id)
         taken = support_limit.take(turn)
         if taken != "ok":
@@ -1164,7 +1169,7 @@ def create_app(
             await mailer.notify_team(
                 settings.support_team_email,
                 "A DMbot support ticket is waiting",
-                "A paying account sent a support ticket.\n\n"
+                "An account sent a support ticket.\n\n"
                 f"DMbot ID: {to_dmbot_id(session.user_id)}\nPlan: {plan.plan}\n\n"
                 f"Read it on the admin page: {settings.site_url}/admin\n",
             )
