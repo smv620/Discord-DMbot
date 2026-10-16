@@ -101,13 +101,13 @@ class TheCleaner(unittest.TestCase):
             clean(lookup(), line, close_calls=calls)
         return calls
 
-    # "Beleros" and Belleros are alike by 0.933.
+    # "Beleros" and Belleros are alike by 0.933. One word alone is held to the one-word bar.
     def test_a_fix_just_above_the_threshold_is_counted_as_fixed_near(self) -> None:
-        calls = self.counted("We met Beleros today", MIN_LIKENESS=0.93)
+        calls = self.counted("We met Beleros today", MIN_LIKENESS_ONE_WORD=0.93)
         self.assertEqual((calls.fixed_near, calls.left_near, calls.lines), (1, 0, 1))
 
     def test_words_left_just_below_the_threshold_are_counted_as_left_near(self) -> None:
-        calls = self.counted("We met Beleros today", MIN_LIKENESS=0.96)
+        calls = self.counted("We met Beleros today", MIN_LIKENESS_ONE_WORD=0.96)
         self.assertEqual((calls.fixed_near, calls.left_near), (0, 1))
 
     def test_far_from_the_threshold_nothing_is_counted(self) -> None:
@@ -116,7 +116,25 @@ class TheCleaner(unittest.TestCase):
 
     def test_one_word_against_the_one_word_threshold_is_counted(self) -> None:
         calls = self.counted("We met Beleros today", MIN_LIKENESS_ONE_WORD=0.95)
-        self.assertEqual(calls.one_word, 1)
+        self.assertEqual((calls.one_word, calls.left_near), (1, 1))
+
+    def test_one_word_is_not_judged_by_the_joined_name_bar(self) -> None:
+        """0.933 sits by MIN_LIKENESS here, but a single word is decided by the one-word bar,
+        so it must not be counted against the other (it would read as 'fixed' when not)."""
+        calls = self.counted("We met Beleros today", MIN_LIKENESS=0.93)
+        self.assertEqual((calls.fixed_near, calls.left_near), (0, 0))
+
+    def test_a_joined_name_is_judged_by_the_joined_name_bar(self) -> None:
+        calls = self.counted("The mage Ka Zeth came", MIN_LIKENESS=1.0)
+        self.assertEqual((calls.fixed_near, calls.left_near, calls.one_word), (1, 0, 0))
+
+    def test_counting_never_changes_what_is_cleaned(self) -> None:
+        lines = ["We met Beleros today", "Beleros again", "The mage Ka Zeth came", "Cerric spoke"]
+        for ones in (0.5, 0.93, 0.96):
+            with patch.multiple(cleaner, MIN_LIKENESS_ONE_WORD=ones):
+                counted = [clean(lookup(), x, close_calls=CloseCalls()) for x in lines]
+                plain = [clean(lookup(), x) for x in lines]
+            self.assertEqual(counted, plain)
 
     def test_no_counter_means_nothing_changes(self) -> None:
         with_calls = clean(lookup(), "We met Beleros today", close_calls=CloseCalls())
@@ -139,7 +157,7 @@ class SessionEnd(unittest.IsolatedAsyncioTestCase):
     async def test_table_speech_is_counted_and_the_session_end_line_is_said_once(self) -> None:
         table = self.table()
         fake = SimpleNamespace(_clean_failed_at=0.0)
-        with patch.object(cleaner, "MIN_LIKENESS", 0.93):
+        with patch.object(cleaner, "MIN_LIKENESS_ONE_WORD", 0.93):
             for _ in range(3):
                 DMBot._clean(fake, table, "We met Beleros today", unsure=True, count=True)  # type: ignore[arg-type]
         DMBot._clean(fake, table, "Beleros again", unsure=True)  # type: ignore[arg-type]  # not counted
@@ -172,7 +190,7 @@ class Devtool(unittest.TestCase):
             names.write_text("Belleros | NPC\n", encoding="utf-8")
             transcript = Path(folder, "t.txt")
             transcript.write_text("We met Beleros today\n\nBeleros again\n", encoding="utf-8")
-            with patch.object(cleaner, "MIN_LIKENESS", 0.96):
+            with patch.object(cleaner, "MIN_LIKENESS_ONE_WORD", 0.96):
                 code, text = self.run_tool("--names", str(names), str(transcript))
         self.assertEqual(code, 0)
         self.assertIn("Cleaner close calls: fixed-near 0, left-near 2", text)

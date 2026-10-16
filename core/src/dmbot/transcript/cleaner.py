@@ -518,13 +518,8 @@ def _by_sound(
                 asking = asking or (found, size)
                 continue
             # A fix with Undo needs no scene: it's always shown to the DM.
-            if found is not None and size == 1 and found.sure:
-                _weigh(
-                    close_calls, likeness(said, found.written), MIN_LIKENESS_ONE_WORD,
-                    one_word=True, person=False, at=start, heard=said, candidate=found.written,
-                )  # fmt: skip
-                if not _one_word_ok(found, scene):
-                    found = None
+            if found is not None and size == 1 and found.sure and not _one_word_ok(found, scene):
+                found = None
             if found is not None and found.sure and likeness(said, found.written) < NEAR_CERTAIN:
                 found = replace(found, sure=False)  # a close look-alike: noted, with Undo
             if found is not None:
@@ -606,9 +601,12 @@ def _sounds_like(
         if usable:
             best = max(usable, key=lambda e: (likeness(said, e.text), e.text))
             score = likeness(said, best.text)
+            # One word alone must be spelled closer (`_one_word_ok`), so that is the bar that
+            # decides it; a joined name is decided by MIN_LIKENESS (#1577).
+            one_word = " " not in said
             _weigh(
-                close_calls, score, MIN_LIKENESS, one_word=" " not in said, person=False,
-                at=start, heard=said, candidate=best.text,
+                close_calls, score, MIN_LIKENESS_ONE_WORD if one_word else MIN_LIKENESS,
+                one_word=one_word, person=False, at=start, heard=said, candidate=best.text,
             )  # fmt: skip
             if score < MIN_LIKENESS or best.text == said:
                 return None
@@ -664,11 +662,11 @@ def _person_fix(
     # character's, so it shows with Undo.)
     score = likeness(said, best.text)
     one_word = " " not in said
-    for bar in (MIN_LIKENESS, MIN_LIKENESS_ONE_WORD) if one_word else (MIN_LIKENESS,):
-        _weigh(
-            close_calls, score, bar, one_word=bar == MIN_LIKENESS_ONE_WORD, person=True,
-            at=start, heard=said, candidate=best.text,
-        )  # fmt: skip
+    # The bar that decides: one word alone is held to MIN_LIKENESS_ONE_WORD (below).
+    _weigh(
+        close_calls, score, MIN_LIKENESS_ONE_WORD if one_word else MIN_LIKENESS,
+        one_word=one_word, person=True, at=start, heard=said, candidate=best.text,
+    )  # fmt: skip
     if score < MIN_LIKENESS or best.text == said:
         return None
     if " " not in said:

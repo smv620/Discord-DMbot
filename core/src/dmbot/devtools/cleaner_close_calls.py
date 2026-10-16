@@ -80,7 +80,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     except (OSError, ValueError, SessionError) as exc:
         print(f"Can't read it: {exc}", file=sys.stderr)
         return 1
-    print(render(count(known, lines)))
+    calls = count(known, lines)
+    if calls.nearest:
+        print("Contains words players said: do not paste this into GitHub.", file=sys.stderr)
+    print(render(calls))
     return 0
 
 

@@ -61,7 +61,8 @@ class CloseCalls:
         candidate: str = "",
     ) -> None:
         """Weigh one candidate found at offset `at` of the line: count it if its `score` is within
-        `BAND` of `threshold`. `heard` and `candidate` are kept only with `keep_words`."""
+        `BAND` of `threshold`. `heard` and `candidate` are dropped at once unless `keep_words` is on
+        (only the offline devtool): the bot's counter never holds text."""
         if abs(score - threshold) > BAND + 1e-9:
             return
         key = (at, threshold)
