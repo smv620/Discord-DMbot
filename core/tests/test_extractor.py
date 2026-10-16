@@ -246,9 +246,11 @@ class Landing(MemoryTest):
             calls += 1
             return {DM, ALICE} if calls == 1 else {DM}  # Alice stops while the AI is answering
 
-        report = await go(
-            Canned(), ClaimStore(self.memory), [line(n, ALICE) for n in range(1, 11)], consenting
-        )
+        report = await extractor.run(
+            Canned(), ClaimStore(self.memory), [line(n, ALICE) for n in range(1, 11)],
+            guild_id=GUILD_A, campaign_id=self.c, dm_ids={DM}, consenting=consenting,
+            model=lambda: "m", session_started_at=1,
+        )  # fmt: skip
         self.assertEqual(report.proposed, 0)
         self.assertEqual(report.dropped["stopped"], 1)  # counted, by a fixed reason
         self.assertEqual(
