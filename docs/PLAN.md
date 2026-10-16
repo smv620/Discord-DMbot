@@ -3499,6 +3499,21 @@ confirmed and the claims they came from, recaps already built, and the session r
 line by `transcript.models.line_ref(session, started_ms, user)`; anything that writes mentions uses that
 form (nothing writes them yet).
 
+*Keep transcripts for, built (2026-10-16, #1533; migration 0101).* ⚙️ Settings → 📜 Transcripts: Forever
+(the default) / 1 year / 90 days / 30 days, DMs only; a shorter choice shows one warning ("Sessions older
+than 90 days will be deleted every night, with their downloads on the website. Recaps and what you
+confirmed into story memory stay. Players can't get the deleted transcripts back.") and saves only on its
+button. The daily retention run (03:00 UTC, catch-up as for the rest) then deletes, per campaign with a
+limit and oldest first, every session that **ended** more than that long ago: its lines (both versions),
+its fix suggestions and the mentions of those lines, one transaction per session (a failing session rolls
+back alone and is tried again tomorrow; at most 200 a night per campaign). A session still running, or
+saved without an end, is never deleted. The session row stays with its number, start and end
+(`transcripts_deleted_at` marks it, `line_count` 0), so numbers never shift (the bot and the website door
+count it); recaps and confirmed facts stay. The DM screen says "🗑 Deleted 3 old transcripts (kept 90
+days)." once (the first night something goes; changing the choice lets it say so again); players are told
+nothing. The setting is in campaign backups. Not done here: marking the session "transcript deleted" in
+the website's Recaps list (WebDev: `transcripts_deleted_at` is on the session row).
+
 **Bots are never transcribed** (music bots etc.) — enforced in ears by an allowlist.
 
 **Accounts: the DMbot ID, email sign-in, moving to a new Discord account, trial emails,

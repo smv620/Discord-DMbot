@@ -137,6 +137,7 @@ from dmbot.dm_screen.transcript_channel import (
     refresh_card,
     setup_transcript_channel,
 )
+from dmbot.dm_screen.transcript_keep import KEEP_BUTTONS
 from dmbot.ears.protocol import (
     AudioFrame,
     EarsMessage,
@@ -224,6 +225,7 @@ from dmbot.transcript.cleaner import (
     with_ending,
 )
 from dmbot.transcript.export import clock
+from dmbot.transcript.keep import KeepJob
 from dmbot.transcript.models import NARRATING, Line, TranscriptBuffer
 from dmbot.transcript.store import TranscriptStore
 from dmbot.transcript.stream import TranscriptStream
@@ -741,6 +743,16 @@ class DMBot(commands.AutoShardedBot):
         # Needs the meter (the owners' plans); without one nothing is ever deleted.
         self._owner_asked: dict[str, float] = {}  # campaign id -> when Discord was last asked
         self.retention: RetentionJob | None = None
+        # The transcripts a DM asked to be kept only so long are deleted in the same daily run
+        # (#1533). It needs the transcript store; the DM's choice applies on any plan.
+        self.keep_job: KeepJob | None = None
+        if transcripts is not None:
+            self.keep_job = KeepJob(
+                campaigns=campaigns,
+                transcripts=transcripts,
+                guild_ids=campaigns.guilds_with_campaigns,
+                post_screen=self._post_to_screen,
+            )
         if meter is not None:
             self.retention = RetentionJob(
                 campaigns=campaigns,
@@ -1014,6 +1026,7 @@ class DMBot(commands.AutoShardedBot):
         )
         self.add_dynamic_items(PutBackButton)  # lines left out as off-topic (#677)
         self.add_dynamic_items(set_update.SetUpdateButton)  # shared rules changed (#1191)
+        self.add_dynamic_items(*KEEP_BUTTONS)  # how long transcripts are kept (#1533)
         self.add_dynamic_items(set_suggestion.SuggestionButton)  # a table's suggestion (#1259)
         self.add_dynamic_items(house_sync.HouseSyncButton)  # the house-rules file (#969)
         self.add_dynamic_items(rules_cards.RulesCardButton)  # rules cards from the table (#931)
@@ -2197,10 +2210,22 @@ class DMBot(commands.AutoShardedBot):
             log.exception("The daily retention job failed")
             return
         retention.write_last_run(state_dir, int(time.time()))
+        if self.keep_job is not None:  # (a campaign's own limit; the plan's job is above)
+            try:
+                await self.keep_job.run_once(int(time.time()))
+            except Exception:
+                log.exception("The daily keep-transcripts job failed")
         try:
             await self.check_owners_daily()
         except Exception:
             log.exception("The daily owner check failed")
+
+    async def _post_to_screen(self, campaign: Campaign, text: str) -> bool:
+        """Say something on a campaign's DM screen (for the daily jobs); False if it has none
+        or the post failed."""
+        if campaign.dm_screen_channel_id is None:
+            return False
+        return await self.post(campaign.dm_screen_channel_id, text)
 
     async def _tell_admin(self, user_id: int, text: str) -> None:
         """A private message to one of DMbot's admins (#972). Raises if it can't be sent, so

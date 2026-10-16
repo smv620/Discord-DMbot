@@ -7,7 +7,7 @@ change anything.
   session follows the change from now on (`DMBot.set_screen_level`).
 - **Who can see the DM screen:** saved the same way as the help card's buttons
   (`save_visibility`).
-- **Saved transcripts:** where to find them (there's nothing to change).
+- **Saved transcripts:** where to find them and how long they are kept (📜 Transcripts, #1533).
 
 Each tap redraws the card, so it always shows what's saved. The buttons' IDs carry the
 campaign, so they work after a restart. Register with
@@ -40,7 +40,9 @@ from dmbot.dm_screen.clock import ClockButton
 from dmbot.dm_screen.pause import pause_buttons, pause_line
 from dmbot.dm_screen.recap_panel import RecapsButton
 from dmbot.dm_screen.table_chat_panel import TableChatButton
+from dmbot.dm_screen.transcript_keep import TranscriptsButton
 from dmbot.logs import set_log_context
+from dmbot.transcript.keep import KEEP_LABELS
 
 log = logging.getLogger(__name__)
 
@@ -94,6 +96,20 @@ def _combat_line(campaign: Campaign) -> str:
     )
 
 
+def _transcripts_line(campaign: Campaign) -> str:
+    """Who can read the transcripts, and (#1533) how long they are kept."""
+    days = campaign.transcript_keep_days
+    kept = (
+        "kept until the campaign is deleted"
+        if days is None
+        else f"deleted {KEEP_LABELS[days]} after each session"
+    )
+    return (
+        "• **Saved transcripts:** anyone in the server can read and download them with "
+        f"`/transcript`, {kept}."
+    )
+
+
 def _rules_cards_line(campaign: Campaign, viewer: int | None) -> str:
     if not campaign.rules_cards:
         return RULES_CARDS_OFF
@@ -120,8 +136,7 @@ def settings_text(
             f"• **How much DMbot says:** {level.capitalize()}{recommended}. "
             f"{what[:1].upper()}{what[1:]}. Warnings always show.",
             f"• **Who can see the DM screen:** {who}",
-            "• **Saved transcripts:** anyone in the server can read and download them with "
-            "`/transcript`. (This can't be changed.)",
+            _transcripts_line(campaign),
             *rules,
             _rules_cards_line(campaign, viewer),
             *([INVITE_SET if campaign.dndbeyond_invite else INVITE_NOT_SET] if rules else []),
@@ -159,6 +174,7 @@ def settings_view(campaign: Campaign, offer: HandoverOffer | None, viewer: int) 
         view.add_item(SideInitiativeButton(campaign.id, campaign.side_initiative))  # #1127
         view.add_item(SharedRulesButton(campaign.id))  # shared house rules (#1190)
         view.add_item(HomebrewButton(campaign.id))  # the campaign's own homebrew (#1520)
+        view.add_item(TranscriptsButton(campaign.id))  # how long transcripts are kept (#1533)
     return view
 
 

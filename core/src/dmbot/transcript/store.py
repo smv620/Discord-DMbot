@@ -241,13 +241,15 @@ class TranscriptStore:
         self, guild_id: int, campaign_id: str, *, limit: int = RECENT_SESSIONS
     ) -> list[TranscriptSession]:
         """The campaign's sessions that have lines, newest first, numbered from the
-        first (Session 1). Reads sessions only, never their lines."""
+        first (Session 1). Reads sessions only, never their lines. A session whose transcript
+        was deleted (#1533) is not listed but still has its number, so the others never shift."""
         async with self._db.guild(guild_id) as conn:
             cur = await conn.execute(
                 "SELECT * FROM (SELECT *,"
                 " row_number() OVER (ORDER BY started_at, id) AS number"
-                " FROM transcript_sessions WHERE campaign_id = %s AND line_count > 0) AS s"
-                " ORDER BY started_at DESC, id DESC LIMIT %s",
+                " FROM transcript_sessions WHERE campaign_id = %s"
+                " AND (line_count > 0 OR transcripts_deleted_at IS NOT NULL)) AS s"
+                " WHERE line_count > 0 ORDER BY started_at DESC, id DESC LIMIT %s",
                 (campaign_id, limit),
             )
             return [_session(r) for r in await cur.fetchall()]
@@ -266,7 +268,8 @@ class TranscriptStore:
         async with self._db.guild(guild_id) as conn:
             cur = await conn.execute(
                 "SELECT s.*, (SELECT count(*) FROM transcript_sessions e"
-                "   WHERE e.campaign_id = s.campaign_id AND e.line_count > 0"
+                "   WHERE e.campaign_id = s.campaign_id"
+                "   AND (e.line_count > 0 OR e.transcripts_deleted_at IS NOT NULL)"
                 "   AND (e.started_at, e.id) <= (s.started_at, s.id)) AS number"
                 " FROM transcript_sessions s WHERE s.id = %s",
                 (session_id,),
@@ -371,6 +374,63 @@ class TranscriptStore:
             )
             return Deleted(len(gone), len(sessions))
 
+    # ---- Keep transcripts for (#1533) ---------------------------------------------------
+
+    async def expired_sessions(self, guild_id: int, campaign_id: str, cutoff: int) -> list[str]:
+        """Ids of the campaign's sessions that ended before `cutoff` (Unix seconds) and still
+        have a transcript, oldest first. A session still running, or saved without an end, is
+        never listed."""
+        async with self._db.guild(guild_id) as conn:
+            cur = await conn.execute(
+                "SELECT id FROM transcript_sessions WHERE guild_id = %s AND campaign_id = %s"
+                " AND ended_at IS NOT NULL AND ended_at < %s AND transcripts_deleted_at IS NULL"
+                " AND (line_count > 0 OR EXISTS (SELECT 1 FROM transcript_lines l"
+                "   WHERE l.session_id = transcript_sessions.id))"
+                " ORDER BY started_at, id",
+                (guild_id, campaign_id, cutoff),
+            )
+            return [str(r["id"]) for r in await cur.fetchall()]
+
+    async def delete_session_transcript(
+        self, guild_id: int, session_id: str, cutoff: int, now: int
+    ) -> int:
+        """Delete one old session's transcript in ONE transaction (so one failing session rolls
+        back only itself): its lines in both versions, its fix suggestions and the story-memory
+        mentions that point at its lines; the count and speaker list are cleared and the row
+        marked. The row stays with its number, start and end. Re-checks that the session ended
+        before `cutoff` and is not already done, so a session that resumed meanwhile or a second
+        run does nothing. Returns how many lines went (0: nothing to do)."""
+        async with self._db.guild(guild_id) as conn:
+            cur = await conn.execute(
+                "SELECT id FROM transcript_sessions WHERE guild_id = %s AND id = %s"
+                " AND ended_at IS NOT NULL AND ended_at < %s AND transcripts_deleted_at IS NULL"
+                " FOR UPDATE",
+                (guild_id, session_id, cutoff),
+            )
+            if await cur.fetchone() is None:
+                return 0
+            cur = await conn.execute(
+                "DELETE FROM transcript_lines WHERE guild_id = %s AND session_id = %s"
+                " RETURNING started_ms, user_id",
+                (guild_id, session_id),
+            )
+            gone = await cur.fetchall()
+            await conn.execute(
+                "DELETE FROM transcript_suggestions WHERE guild_id = %s AND session_id = %s",
+                (guild_id, session_id),
+            )
+            await _forget_mentions(
+                conn,
+                guild_id,
+                [line_ref(session_id, int(r["started_ms"]), int(r["user_id"])) for r in gone],
+            )
+            await conn.execute(
+                "UPDATE transcript_sessions SET line_count = 0, speakers = '{}',"
+                " transcripts_deleted_at = %s WHERE guild_id = %s AND id = %s",
+                (now, guild_id, session_id),
+            )
+            return len(gone)
+
 
 def _lineage_columns(lines: Sequence[Line]) -> list[list[str | None]]:
     """The sidebar lineage of each line as one list per column; NULL for table speech."""
@@ -416,15 +476,12 @@ def _session(row: dict[str, Any]) -> TranscriptSession:
         speakers=tuple(sorted(int(u) for u in row["speakers"])),
         number=int(row["number"]),
         engines=tuple(row["engines"]),
+        deleted_at=row_int(row, "transcripts_deleted_at"),
     )
 
 
-async def _forget_memory_traces(
-    conn: Any, guild_id: int, user_id: int, refs: Sequence[str]
-) -> None:
-    """The story-memory rows that exist only because of this person's lines (see
-    `delete_person`), in the caller's transaction. Memory relations may still list a deleted
-    mention's id; recall skips ids it can't find."""
+async def _forget_mentions(conn: Any, guild_id: int, refs: Sequence[str]) -> None:
+    """The story-memory mentions that point at these lines, and their undo-log rows."""
     mentions: dict[str, list[str]] = {}
     for batch in (refs[i : i + 1000] for i in range(0, len(refs), 1000)):
         cur = await conn.execute(
@@ -435,6 +492,15 @@ async def _forget_memory_traces(
         for mention in await cur.fetchall():
             mentions.setdefault(str(mention["campaign_id"]), []).append(str(mention["id"]))
     await _drop_log_rows(conn, guild_id, "memory_mentions", mentions)
+
+
+async def _forget_memory_traces(
+    conn: Any, guild_id: int, user_id: int, refs: Sequence[str]
+) -> None:
+    """The story-memory rows that exist only because of this person's lines (see
+    `delete_person`), in the caller's transaction. Memory relations may still list a deleted
+    mention's id; recall skips ids it can't find."""
+    await _forget_mentions(conn, guild_id, refs)
     await conn.execute(
         "DELETE FROM memory_heard WHERE guild_id = %s AND speaker_id = %s", (guild_id, user_id)
     )
