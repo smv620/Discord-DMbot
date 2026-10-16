@@ -2,3 +2,7 @@
 # for every id (a rewrite, status 200, so the address stays) and the page reads the id from
 # the address (#1386).
 /account/recaps/*  /account/recaps  200
+
+# The transcript pages (#1501): one page for the list, a campaign and a session; it reads which
+# from the address.
+/account/transcripts/*  /account/transcripts  200

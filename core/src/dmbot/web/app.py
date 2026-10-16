@@ -42,6 +42,7 @@ from dmbot.web import (
     tokens,
 )
 from dmbot.web import recap_audio as audio_links
+from dmbot.web import transcripts as transcript_pages
 from dmbot.web.accounts import (
     account_email,
     active_subscription,
@@ -680,6 +681,77 @@ def create_app(
         except RecapError as err:
             status, detail = recap_refusals.get(err.code, (404, "not_found"))
             raise HTTPException(status_code=status, detail=detail) from None
+
+    # A campaign's session transcripts, for anyone in the server (#1501): shared by the project's
+    # rule, so not DM-only. The words are the same text Discord's download carries.
+    @app.get("/me/transcripts")
+    async def me_transcript_campaigns(signed: Signed) -> dict[str, Any]:
+        """The campaigns with a saved transcript in the person's servers (those the plan rule lets
+        them read)."""
+        session, _token = signed
+        return {
+            "campaigns": await transcript_pages.list_campaigns(
+                db, session, now=clock(), enforce_plans=settings.enforce_plans
+            )
+        }
+
+    @app.get("/me/campaigns/{ref}/transcripts")
+    async def me_transcripts(ref: str, signed: Signed) -> dict[str, Any]:
+        """The campaign's sessions that have lines, newest first."""
+        session, _token = signed
+        try:
+            return await transcript_pages.list_sessions(
+                db, session, ref, now=clock(), enforce_plans=settings.enforce_plans
+            )
+        except RecapError as err:
+            status, detail = recap_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+
+    @app.get("/me/campaigns/{ref}/transcripts/{number}")
+    async def me_transcript(
+        ref: str, number: int, signed: Signed, version: str = "cleaned"
+    ) -> dict[str, Any]:
+        """One session to read: `?version=cleaned` (the default) or `heard`."""
+        session, _token = signed
+        try:
+            return await transcript_pages.read_session(
+                db,
+                session,
+                ref,
+                number,
+                version,
+                now=clock(),
+                enforce_plans=settings.enforce_plans,
+            )
+        except RecapError as err:
+            status, detail = recap_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+
+    @app.get("/me/campaigns/{ref}/transcripts/{number}/download")
+    async def me_transcript_download(
+        ref: str, number: int, signed: Signed, version: str = "cleaned"
+    ) -> Response:
+        """The same text file Discord's download button gives, `export.render`'s bytes."""
+        session, _token = signed
+        try:
+            name, text = await transcript_pages.render(
+                db,
+                session,
+                ref,
+                number,
+                version,
+                now=clock(),
+                enforce_plans=settings.enforce_plans,
+            )
+        except RecapError as err:
+            status, detail = recap_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+        return Response(
+            text.encode("utf-8"),
+            media_type="text/plain; charset=utf-8",
+            # `name` is a slug of letters, digits and dashes (export.file_name): safe in a header.
+            headers={"Content-Disposition": f'attachment; filename="{name}"'},
+        )
 
     @app.post("/me/recaps/{ref}/{action}")
     async def me_recap_decide(ref: str, action: str, signed: Signed) -> dict[str, Any]:
