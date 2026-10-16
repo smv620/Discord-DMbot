@@ -2508,3 +2508,9 @@ Overall ...................................... PASS (Deepgram baseline: 33/33, 1
   10-minute check, 07:52 UTC (10 minutes after the start): 0 ERROR, CRITICAL or traceback lines in core and web-api since 07:42; core "ears connected" and "Connected to 1 server(s)";
   web-api healthy; schema_migrations 88 rows, last 0088_support_mine_answer. The DM-screen recap buttons (#1457) register in setup_hook with no log line; a bad registration would have stopped the start, and it did not.
   Nothing turned on for users (recaps off, no ElevenLabs key, no mail sender set, the extractor off).
+2026-10-16  dev1  DEPLOY: migrations 0089 memory_from_set, 0090 support_reason and 0091 web_recap_choices, and the code behind #1471, #1473, #1476, #1469 and #1477 are live as be0d42fd (Supervisor's "go", cross-session message ~08:35 UTC). Core CI on the head: success.
+  Dry run (08:3x UTC) on a copy of the live database (pg_dumpall into a throwaway postgres:16 on its own network, at 0088): "Database updated: 0089_memory_from_set, 0090_support_reason, 0091_web_recap_choices"
+  in 0.16 s; a second run applied nothing; 91 migrations; rows unchanged (147 transcript lines, 3 campaigns, 0 memory claims). Copy deleted. No game running. Backup: ~/db-backups/dmbot-before-be0d42fd-1016-0835.sql (chmod 600).
+  `docker compose build core web-api` with GIT_COMMIT set; `docker compose stop core web-api` at 08:43:11 UTC, `up -d --no-deps core`, then web-api. No compose or .env change.
+  Result: core logged "Database updated: 0089_memory_from_set, 0090_support_reason, 0091_web_recap_choices", "ears connected" and "Connected to 1 server(s)"; web-api healthy; schema_migrations 91 rows, last 0091_web_recap_choices.
+  Supervisor's check: GET /me/campaigns/<ref>/recap-choices signed out answers 401 (inside web-api).

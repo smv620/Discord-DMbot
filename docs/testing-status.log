@@ -1,6 +1,6 @@
 DMbot - TESTING STATUS (current testing only)
 =============================================
-Last updated: 2026-10-16 07:5x UTC by dev1 (support-flow deploy 1ba2c3d3 live)
+Last updated: 2026-10-16 08:5x UTC by dev1 (deploy be0d42fd live)
 
 **For the people at the table: docs/next-test-step.md has the one next small test (#569).**
 Short by design: see CLAUDE.md "Testing logs". Full record: docs/testing-history.log.
@@ -9,14 +9,14 @@ Never put tokens, .env contents or players' personal data here (public repo).
 ------------------------------------------------------------------------------
 READY TO DEPLOY (merged into development, not on the server yet; dev1 deploys)
 ------------------------------------------------------------------------------
-(nothing: the support-flow deploy (1ba2c3d3, migrations 0086-0088) and everything before it are live; #1467 and #1469 (migration 0091) are still merging and go in the next deploy)
+(nothing: the deploy of be0d42fd (migrations 0089-0091) and everything before it are live)
 - Waiting on the owner, not a deploy: once the Stripe account exists (#1096), replace the LEMONSQUEEZY_* values in .env
   with the STRIPE_* ones (.env.example) through scripts/set-key (#1110). Payments stay off until then.
 
 ------------------------------------------------------------------------------
 LIVE NOW
 ------------------------------------------------------------------------------
-core + web-api 1ba2c3d3 (2026-10-16 07:42 UTC, migrations 0086 support_thread (support_replies), 0087 web_names, 0088 support_mine_answer (a policy and a door on support_replies); a rebuild; #1454 aliases, #1452 support flow, #1453 web names, #1457 DM-screen recap buttons, #1458, #1462, #1464, #1465; web-api now receives the support settings and ANTHROPIC_API_KEY; MAIL_SUPPORT_FROM, MAIL_ALERTS_FROM, MAIL_INBOUND_SECRET and SUPPORT_AI_MODEL are empty (nothing mails); old containers stopped first); before that e8555e2c (2026-10-16 06:28 UTC, migration 0085 recap_audio_again (recap_jobs.audio_asked_at and the function dmbot_recap_audio_again for the website's "new audio" door, #1430); a rebuild;
+core + web-api be0d42fd (2026-10-16 08:43 UTC, migrations 0089 memory_from_set (#1471, shared sets carry relationship definitions), 0090 support_reason (#1473), 0091 web_recap_choices (#1469, two SECURITY DEFINER doors); #1476 waiting recap said at session start, #1477; a rebuild, no compose or .env change; old containers stopped first); before that 1ba2c3d3 (2026-10-16 07:42 UTC, migrations 0086 support_thread (support_replies), 0087 web_names, 0088 support_mine_answer (a policy and a door on support_replies); a rebuild; #1454 aliases, #1452 support flow, #1453 web names, #1457 DM-screen recap buttons, #1458, #1462, #1464, #1465; web-api now receives the support settings and ANTHROPIC_API_KEY; MAIL_SUPPORT_FROM, MAIL_ALERTS_FROM, MAIL_INBOUND_SECRET and SUPPORT_AI_MODEL are empty (nothing mails); old containers stopped first); before that e8555e2c (2026-10-16 06:28 UTC, migration 0085 recap_audio_again (recap_jobs.audio_asked_at and the function dmbot_recap_audio_again for the website's "new audio" door, #1430); a rebuild;
 the new named volume discord-dmbot_recap-audio: core writes it at /data/recap-audio, web-api reads it read-only at /recap-audio (WEB_RECAP_AUDIO_DIR); ffmpeg 7.1.5; recaps and recap audio built and OFF;
 old containers stopped first); before that e49cdb00 (2026-10-16 04:52 UTC, migrations 0077 extractor_progress, 0079 recap_jobs, 0080 recap_audio_addon, 0081 recap_audio_follow_ups, 0082 recap_audio_jobs,
 0083 memory_said_as, 0084 recap_switches; ffmpeg 7.1.5 in the core image; the extractor-gates plan gate and ceiling (#1369), the pre-session note (#1406), the secret-name question (#1410),
