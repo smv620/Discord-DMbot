@@ -62,7 +62,7 @@ describe("the privacy section", () => {
     expect(t).toContain("the email has the title (or the reason) and a link, never the recap");
     expect(t).toContain("DMbot won't post a recap if a player has stopped being recorded");
     expect(t).toContain("are kept with the campaign and deleted when the campaign is deleted");
-    expect(t).toContain("with no words in it, until you delete your account");
+    expect(t).toContain("with no words in it, and delete it after 90 days");
   });
 
   it("names ElevenLabs only when audio is live", () => {
