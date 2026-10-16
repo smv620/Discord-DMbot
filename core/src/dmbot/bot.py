@@ -99,6 +99,7 @@ from dmbot.dm_screen import house_voice as house_voice_screen
 from dmbot.dm_screen import levels as screen_levels
 from dmbot.dm_screen import messages as screen_messages
 from dmbot.dm_screen.dmbchat_channel import DmbchatChannelError, setup_dmbchat_channel
+from dmbot.dm_screen.game_masters import GameMastersButton
 from dmbot.dm_screen.gametime_channel import GametimeChannelError, setup_gametime_channel
 from dmbot.dm_screen.handover import (
     AcceptOfferButton,
@@ -1002,6 +1003,7 @@ class DMBot(commands.AutoShardedBot):
             InviteButton,
             TableChatButton,
             RecapsButton,
+            GameMastersButton,  # who the DMs are (#1600)
         )
         # Hand-over (#437): on ⚙️ Settings, in private messages, and after /dmbot start.
         self.add_dynamic_items(
