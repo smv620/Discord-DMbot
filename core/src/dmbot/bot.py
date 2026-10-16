@@ -247,7 +247,7 @@ from dmbot.transcript.waiting_questions import (
     ANSWERED,
     KEPT,
     MAX_PER_SESSION,
-    SAVE_FAILED,
+    ANSWER_NOT_SAVED,
     Unanswered,
     WaitingQuestionStore,
     find_once,
@@ -6183,7 +6183,7 @@ class DMBot(commands.AutoShardedBot):
         except MemoryRuleError:
             await store.reopen(guild_id, question_id)
             if chosen is None:  # Keep as heard: nothing about a name
-                return SAVE_FAILED, False
+                return ANSWER_NOT_SAVED, False
             if chosen[0] is None:
                 return name_questions.TYPED_REFUSED, False
             return name_questions.NAME_GONE, True

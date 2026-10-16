@@ -30,7 +30,7 @@ from dmbot.transcript.cleaner import with_ending
 MAX_PER_SESSION = 25
 EXPIRE_S = 7 * 24 * 60 * 60  # an unanswered one expires quietly after a week
 OPEN, ANSWERED, KEPT, EXPIRED = "open", "answered", "kept", "expired"
-SAVE_FAILED = "Couldn't save that. Nothing was changed. Press it again."
+ANSWER_NOT_SAVED = "Couldn't save that. Nothing was changed. Press it again."
 
 
 @dataclass(frozen=True, slots=True)
