@@ -675,8 +675,10 @@ never does.
   follower's next start when a set is gone (#1262). Homebrew packs wait until homebrew is stored.
 - **Relationship definitions travel with a set (#1456; Supervisor decision, 2026-10-16).** At Share the DM
   sees a tick list of the campaign's own relationships (each with its label and what it means; all ticked to
-  start) and only the ticked ones go into the set's content: words only, built from the official kinds of
-  thing, never a fact, name or note. A follower gets them read-only and marked as the set's (they can't be
+  start) and only the ticked ones go into the set's content: words only (the name, how it reads from the
+  other side, what it means, the kinds it connects: exactly what the list shows), built from the official
+  kinds of thing, never a fact, name, note or example (examples and the free-text lists hold the publisher's
+  names). A follower gets them read-only and marked as the set's (they can't be
   retired by the table); one the follower already has by the same name, or an official one, is never
   overwritten (its own wins, with one line at Follow time). Unfollow removes a definition no fact uses and
   **deprecates** one facts use (old facts still read; no new fact can use it). A new version's changes to

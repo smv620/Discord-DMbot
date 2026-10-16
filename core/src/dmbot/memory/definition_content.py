@@ -14,7 +14,11 @@ MAX_DEFINITIONS = 20  # in one set
 LIST_MAX = 12
 ITEM_MAX = 200
 TEXT_FIELDS = ("key", "label", "inverse_label", "description")
-LIST_FIELDS = ("covers", "not_this", "examples", "synonyms", "subject_types", "object_types")
+# Only words the DM sees in the tick list travel. A relationship's examples, the cases it covers,
+# its "not this" cases and its synonyms are free text the list doesn't show, and they hold the
+# publisher's own names ("Mira mentors Tobin"), so none of them ever leaves (the isolation rule:
+# only rules and their definitions cross, never names).
+LIST_FIELDS = ("subject_types", "object_types")
 CORE_TYPE_KEYS = frozenset(t.key for t in CORE_TYPES)
 CORE_PREDICATE_KEYS = frozenset(p.key for p in CORE_PREDICATES)
 FROM_SET_REASON = "From the shared set {name}."
@@ -65,18 +69,16 @@ def valid_definitions(raw: Any) -> list[dict[str, Any]]:
 
 
 def definition_of(term: PredicateTerm) -> dict[str, Any]:
-    """A campaign's own relationship as a set carries it. Built field by field: what a fact
-    used it for, who made it and when never travel; neither do its parent or conflicts, which
-    point at other terms of the publisher's."""
+    """A campaign's own relationship as a set carries it: its name, what it reads as from each
+    side, what it means and the kinds of thing it connects, all shown to the DM before sharing.
+    Built field by field: its examples, covers, "not this" cases and synonyms (free text with the
+    publisher's names), what a fact used it for, who made it and when never travel; neither do
+    its parent or conflicts, which point at other terms of the publisher's."""
     return {
         "key": term.key,
         "label": term.label,
         "inverse_label": term.inverse_label,
         "description": term.description,
-        "covers": list(term.covers),
-        "not_this": [f"{near} -> {key}" for near, key in term.not_this],
-        "examples": list(term.examples),
-        "synonyms": list(term.synonyms),
         "subject_types": list(term.subject_types),
         "object_types": list(term.object_types),
         "symmetric": term.symmetric,
@@ -96,6 +98,9 @@ def shareable(term: PredicateTerm) -> bool:
 
 
 def tick_line(definition: Mapping[str, Any]) -> str:
-    """One definition as the DM sees it in the tick list: its label and what it means."""
+    """One definition as the DM sees it in the tick list: its label, how it reads from the other
+    side if it says, and what it means. This is all of what travels."""
     text = " ".join(str(definition.get("description", "")).split())
-    return f"{definition['label']}: {text}"[:140]
+    back = definition.get("inverse_label")
+    reads = f" (back: {back})" if back else ""
+    return f"{definition['label']}{reads}: {text}"[:140]

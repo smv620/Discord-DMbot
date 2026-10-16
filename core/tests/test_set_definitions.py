@@ -42,8 +42,8 @@ class Shaping(unittest.TestCase):
         self.assertEqual(
             set(d),
             {
-                "key", "label", "inverse_label", "description", "covers", "not_this", "examples",
-                "synonyms", "subject_types", "object_types", "symmetric", "version",
+                "key", "label", "inverse_label", "description", "subject_types", "object_types",
+                "symmetric", "version",
             },
         )  # fmt: skip
         self.assertNotIn("parent", d)
@@ -55,7 +55,7 @@ class Shaping(unittest.TestCase):
             "nope",
             {**good, "key": "x" * 301},
             {**good, "subject_types": ["ship"]},  # a custom kind can't cross
-            {**good, "covers": "not a list"},
+            {**good, "subject_types": "not a list"},
             {**good, "version": 0},
             {k: v for k, v in good.items() if k != "label"},
         ]
@@ -68,7 +68,9 @@ class Shaping(unittest.TestCase):
 
     def test_the_tick_line_shows_the_label_and_the_description(self) -> None:
         line = sd.tick_line(sd.definition_of(term()))
-        self.assertTrue(line.startswith("vows loyalty to: Has made a binding oath"))
+        self.assertTrue(
+            line.startswith("vows loyalty to (back: is vowed to by): Has made a binding oath")
+        )
         self.assertLessEqual(len(line), 140)
 
 

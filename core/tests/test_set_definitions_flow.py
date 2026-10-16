@@ -56,7 +56,7 @@ class Pure(unittest.TestCase):
                 {**good, "key": "Bad Key!"},  # (kept out when the memory checks it as new)
                 {**good, "label": "x" * 400},
                 {**good, "subject_types": ["character"] * 30},
-                {**good, "examples": ["y" * 500]},
+                {**good, "subject_types": ["character"] * 30},
                 {**good, "extra": "ignored", "secret_note": "never"},
             ],
         }
@@ -179,6 +179,26 @@ class Flow(DatabaseTest):
         self.assertEqual(
             set(offer.content["definitions"][0]), set(sd.definition_of(term()))
         )  # words only
+
+    async def test_the_followers_copy_has_a_plain_example_and_none_of_the_publishers_names(
+        self,
+    ) -> None:
+        await self.memory.add_predicate(
+            GUILD_A, self.pub, term("watches", "watches", examples=("Mira watches Tobin.",)),
+            examples=["Mira watches Tobin."], reason="y", source="dm",
+        )  # fmt: skip
+        await self.follow(await self.publish(["watches"]))
+        async with self.db.guild(GUILD_B) as conn:
+            cur = await conn.execute(
+                "SELECT examples, covers, not_this, synonyms FROM memory_predicates"
+                " WHERE campaign_id = %s AND key = 'watches'",
+                (self.far,),
+            )
+            row = await cur.fetchone()
+        assert row is not None
+        self.assertEqual(row["examples"], ["X watches Y."])
+        self.assertNotIn("Tobin", repr(dict(row)))
+        self.assertEqual((row["covers"], row["not_this"], row["synonyms"]), ([], [], []))
 
     async def test_follow_brings_them_read_only_and_unfollow_takes_them_away(self) -> None:
         code = await self.publish(["vowed_to", "guards"])

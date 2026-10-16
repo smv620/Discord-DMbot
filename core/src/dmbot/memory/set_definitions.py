@@ -36,7 +36,7 @@ from dmbot.memory.definition_content import (
     valid_definitions,
 )
 from dmbot.memory.models import MemoryRuleError
-from dmbot.memory.ontology import ACTIVE, DEPRECATED, Ontology, PredicateTerm, decode_not_this
+from dmbot.memory.ontology import ACTIVE, DEPRECATED, Ontology, PredicateTerm
 from dmbot.memory.store import MemoryStore, _load_ontology, _predicate_term, _type_term
 
 # The pure parts live in definition_content (the rules layer imports them without the store);
@@ -129,7 +129,7 @@ async def sync(
                 continue  # already as the set has it
             onto = await _ontology_without(w, key)
             try:
-                onto.check_new_term(key, d["label"], d["description"], d["examples"], reason)
+                onto.check_new_term(key, d["label"], d["description"], [_example_of(d)], reason)
                 onto.check_new_predicate(_term_of(d))
             except MemoryRuleError:
                 refused.append(d["label"])
@@ -235,18 +235,24 @@ async def _ontology_without(w: Any, key: str) -> Ontology:
     return Ontology.build(types, predicates)
 
 
+def _example_of(d: Mapping[str, Any]) -> str:
+    """The one example a new term needs, made from the definition itself: a followed set carries no
+    examples (they hold the publisher's names), so the follower's copy gets a plain one."""
+    return f"X {d['label']} Y."[:200]
+
+
 def _fields(d: Mapping[str, Any]) -> dict[str, Any]:
     return {
         "label": d["label"],
         "description": d["description"],
-        "examples": list(d["examples"]),
+        "examples": [_example_of(d)],
         "subject_types": list(d["subject_types"]),
         "object_types": list(d["object_types"]),
         "is_symmetric": bool(d["symmetric"]),
-        "covers": list(d["covers"]),
-        "not_this": list(d["not_this"]),
+        "covers": [],
+        "not_this": [],
         "inverse_label": d["inverse_label"],
-        "synonyms": list(d["synonyms"]),
+        "synonyms": [],
         "version": int(d["version"]),
     }
 
@@ -260,10 +266,7 @@ def _term_of(d: Mapping[str, Any]) -> PredicateTerm:
         object_types=tuple(d["object_types"]),
         symmetric=bool(d["symmetric"]),
         core=False,
-        covers=tuple(d["covers"]),
-        not_this=decode_not_this(d["not_this"]),
-        examples=tuple(d["examples"]),
+        examples=(_example_of(d),),
         inverse_label=d["inverse_label"],
-        synonyms=tuple(d["synonyms"]),
         version=int(d["version"]),
     )
