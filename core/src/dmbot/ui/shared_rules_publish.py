@@ -39,8 +39,9 @@ HOW = {  # how a version came about, when it wasn't a DM's own publish
 }
 LINK_ONLY = "Only the rules document link changed."
 UNDO_LABEL = "↩️ Undo"
-COULD_NOT_ADD = (
-    "DMbot couldn't add every relationship you ticked. Press 🔄 Publish my changes to try again."
+COULD_NOT_CHANGE = (
+    "Nothing was published. DMbot couldn't make every relationship change you picked. "
+    "Press 🔄 Publish my changes and pick again. If it keeps happening, untick one."
 )
 NOTHING_NEW = "Your house rules are the same as the shared version, so there is nothing to publish."
 
@@ -73,39 +74,44 @@ async def carried(
     interaction: discord.Interaction,
     current: Campaign,
     before: dict[str, Any],
-    extra: Collection[str] = (),
+    keep: Collection[str] | None = None,
 ) -> list[dict[str, Any]]:
-    """The relationship definitions the next version carries (#1456): the ones the set carries
-    now, each as the campaign has it today (a changed meaning travels; one the campaign no
-    longer has, or can no longer share, drops out), then the `extra` ones the DM ticked to add
-    (#1475). When the memory can't be read the set's definitions stay as they are, so a hiccup
-    never takes them away."""
+    """The relationship definitions the next version carries (#1456): exactly the `keep` ones the
+    DM ticked (#1475 adds, #1479 removes), each as the campaign has it today (a changed meaning
+    travels; one the campaign no longer has, or can no longer share, drops out). `keep` None
+    means the ones the set carries now. When the memory can't be read the set's definitions stay
+    as they are, so a hiccup never takes them away (the caller then sees the ticks weren't met)."""
     held = list(set_diff.definitions_of(before).values())
     memory = getattr(_bot(interaction), "memory", None)
-    if memory is None or not (held or extra):
+    if keep is None:
+        keep = [d["key"] for d in held]
+    if memory is None or not (held or keep):
         return held
     try:
         now = {d["key"]: d for d in await sd.own_definitions(memory, current.guild_id, current.id)}
     except Exception:
         return held
-    kept = [now[d["key"]] for d in held if d["key"] in now]
-    have = {d["key"] for d in held}
-    return kept + [now[k] for k in sorted(extra) if k in now and k not in have]
+    order = [d["key"] for d in held if d["key"] in keep]
+    order += sorted(k for k in keep if k not in order)
+    return [now[k] for k in order if k in now]
 
 
-async def new_offers(
+async def choices(
     interaction: discord.Interaction, current: Campaign, before: dict[str, Any]
-) -> list[dict[str, Any]]:
-    """The campaign's own shareable relationships the set doesn't carry yet (#1475), as many as
-    the set has room for. The same ones Share offers, minus what is already in the set."""
+) -> tuple[list[dict[str, Any]], list[str]]:
+    """What the tick list at Publish offers (#1475, #1479) and what starts ticked: first the
+    relationships the set carries that the campaign still has (ticked), then its own shareable
+    ones the set doesn't carry yet (not ticked), as many as the set has room for. The same ones
+    Share offers."""
     have = set_diff.definitions_of(before)
-    # Counts every definition the set holds, even one the campaign no longer has: a little room
-    # may go unoffered, never a set over its limit.
-    room = min(MAX_DEFINITIONS - len(have), defs_ui.MENU_MAX)
-    if room <= 0:
-        return []
     offered = await defs_ui.offered_for(_bot(interaction), current)
-    return [d for d in offered if d["key"] not in have][:room]
+    mine = {d["key"]: d for d in offered}
+    held = [mine[k] for k in have if k in mine]
+    # The room counts every definition the set holds, even one the campaign no longer has: a
+    # little room may go unoffered, never a set over its limit.
+    room = min(MAX_DEFINITIONS - len(have), defs_ui.MENU_MAX - len(held))
+    new = [d for d in offered if d["key"] not in have][: max(room, 0)]
+    return held + new, [d["key"] for d in held]
 
 
 async def _gate(
@@ -138,9 +144,9 @@ async def show_changes(interaction: discord.Interaction, campaign: Campaign) -> 
     if shared is None:
         await _tell(interaction, NOT_SHARED_HERE)
         return
-    offers = await new_offers(interaction, current, shared[1])
+    offers, start = await choices(interaction, current, shared[1])
     if not offers:
-        await _show_diff(interaction, current, store, ())
+        await _show_diff(interaction, current, store, None)
         return
 
     @_guarded
@@ -155,18 +161,19 @@ async def show_changes(interaction: discord.Interaction, campaign: Campaign) -> 
         defs_ui.ShareChoose(
             offers,
             chosen,
-            start_ticked=False,
-            go_label="Add ticked",
-            skip_label="Not now",
-            placeholder="Tick the ones to add",
+            start=start,
+            skip_keeps_start=True,
+            go_label="Use ticked",
+            skip_label="Keep as it is",
+            placeholder="Tick the ones to share",
         ),
     )
 
 
 async def _show_diff(
-    interaction: discord.Interaction, current: Campaign, store: Any, add: Collection[str]
+    interaction: discord.Interaction, current: Campaign, store: Any, keep: Collection[str] | None
 ) -> None:
-    """The changes a publish would make, with the relationships the DM ticked to add, and the
+    """The changes a publish would make, with the relationships the DM left ticked, and the
     button to publish them. Reads the set again: a press on the tick list may come minutes later."""
     shared = await store.current_content(current.guild_id, current.id)  # again: see above
     if shared is None:
@@ -177,12 +184,12 @@ async def _show_diff(
     if got is None:
         return
     rules, link = got
-    after = rule_sets.content_of(rules, link, await carried(interaction, current, before, add))
+    after = rule_sets.content_of(rules, link, await carried(interaction, current, before, keep))
     kept = {d["key"] for d in after["definitions"]}
-    if any(k not in kept for k in add):
-        # One ticked is gone or can't be read now (or the set is full): say so, never publish a
-        # version without what the DM asked for.
-        await _tell(interaction, COULD_NOT_ADD)
+    if keep is not None and kept != set(keep):
+        # One ticked is gone or can't be read now (or the set is full), or an unticked one
+        # couldn't be taken out: say so, never publish a version that isn't what the DM asked for.
+        await _tell(interaction, COULD_NOT_CHANGE)
         return
     changes = set_diff.diff(before, after)
     def_changes = set_diff.diff_definitions(before, after)
@@ -205,17 +212,22 @@ async def _show_diff(
         f"**{_escape(mine.name[:60])}**: publish as version {mine.version + 1}? "
         f"{count}:\n{body}\n"
         "Tables using it get the new version at their next session start.",
-        ConfirmPublish(current, mine.version, after, tuple(add)),
+        ConfirmPublish(current, mine.version, after, keep),
     )
 
 
 class ConfirmPublish(_Menu):
     def __init__(
-        self, campaign: Campaign, version: int, shown: dict[str, Any], extra: Collection[str] = ()
+        self,
+        campaign: Campaign,
+        version: int,
+        shown: dict[str, Any],
+        keep: Collection[str] | None = None,
     ) -> None:
         super().__init__()
         self.campaign, self.version, self.shown = campaign, version, shown
-        self.extra = tuple(extra)  # the new relationships the DM ticked (#1475)
+        # The relationships the DM left ticked (#1475, #1479); None: the ones the set carries.
+        self.keep = None if keep is None else tuple(keep)
         self.add_item(_Button(self._yes, label="Yes, publish", style=discord.ButtonStyle.primary))
         self.add_item(_Button(self._no, label=CANCEL_LABEL))
 
@@ -241,7 +253,7 @@ class ConfirmPublish(_Menu):
         if shared[0].version != self.version:
             await _tell(interaction, rule_sets.CHANGED_AGAIN)  # someone else published meanwhile
             return
-        again = await carried(interaction, current, shared[1], self.extra)
+        again = await carried(interaction, current, shared[1], self.keep)
         if rule_sets.content_of(rules, link, again) != self.shown:
             # What would be published is not what the DM saw: they look again first.
             await _tell(interaction, YOUR_RULES_CHANGED)
