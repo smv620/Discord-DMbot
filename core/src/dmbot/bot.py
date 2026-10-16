@@ -244,10 +244,10 @@ from dmbot.transcript.topic_ai import classify
 from dmbot.transcript.topics import GAME, OFF_TOPIC, TopicWindow, Waiting, obviously_game
 from dmbot.transcript.topics import marker as topic_marker
 from dmbot.transcript.waiting_questions import (
+    ANSWER_NOT_SAVED,
     ANSWERED,
     KEPT,
     MAX_PER_SESSION,
-    ANSWER_NOT_SAVED,
     Unanswered,
     WaitingQuestionStore,
     find_once,
