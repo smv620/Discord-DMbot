@@ -83,6 +83,7 @@ from dmbot.dm_screen import (
     PeekButton,
     StopListeningButton,
     VisibilityButton,
+    delete_campaign,
     ensure_dm_screen,
     house_sync,
     pack_suggestion,
@@ -1028,6 +1029,7 @@ class DMBot(commands.AutoShardedBot):
             clock_screen.ClockButton, clock_screen.ClockUndoButton, clock_screen.SuggestionButton
         )
         self.add_dynamic_items(clock_screen.CombatUndoButton)  # #1127
+        self.add_dynamic_items(delete_campaign.DeleteButton)  # #1608
         self.add_dynamic_items(fightbot.FightButton)  # #1129
         self.add_dynamic_items(timer_screen.EffectButton)  # timed effects (#998)
         # Undo after forgetting a name (its card), after a restart too.
@@ -7348,14 +7350,27 @@ class DMBot(commands.AutoShardedBot):
             await asyncio.sleep(TRANSCRIPT_SAVE_S)
             await asyncio.gather(*(one(t) for t in self._all_tables()))
 
-    async def _retire_campaign_channels(self, campaign: Campaign, now: int) -> ChannelCounts:
-        """Retention deleted this campaign: delete its DM screen and game-time channels and close
-        its transcript and dmb-chat channels (#1598). Only the channels recorded on it."""
+    async def _retire_campaign_channels(
+        self, campaign: Campaign, now: int, *, by_hand: bool = False
+    ) -> ChannelCounts:
+        """Retention (or the plan holder, `by_hand`, #1608) deleted this campaign: delete its DM
+        screen and game-time channels and close its transcript and dmb-chat channels (#1598).
+        Only the channels recorded on it."""
         me = self.user
         guild = self.get_guild(campaign.guild_id)
         if me is None:
-            return await retire_channels(None, campaign, 0, now)
-        return await retire_channels(guild, campaign, me.id, now)
+            return await retire_channels(None, campaign, 0, now, by_hand=by_hand)
+        return await retire_channels(guild, campaign, me.id, now, by_hand=by_hand)
+
+    async def retire_campaign_channels(
+        self, campaign: Campaign, now: int, *, by_hand: bool = False
+    ) -> ChannelCounts:
+        """The same, for the screens that delete a campaign (the settings card, #1608)."""
+        return await self._retire_campaign_channels(campaign, now, by_hand=by_hand)
+
+    async def dm_user(self, user_id: int, text: str) -> bool:
+        """A private message that may fail; False if it did (for the screens, #1608)."""
+        return await self._dm_user(user_id, text)
 
     async def _drop_old_suggestions(self, table: Table, session_id: str) -> None:
         """A suggested line fix that waited past the end of the next session is dropped, with no

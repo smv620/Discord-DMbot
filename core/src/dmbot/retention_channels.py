@@ -42,6 +42,11 @@ CLOSING_NOTE = (
     "This campaign was deleted on {date} because nobody played it for a long time. "
     "DMbot no longer uses this channel. A server admin can delete it."
 )
+# When the campaign's plan holder deleted it by hand (#1608).
+DELETED_NOTE = (
+    "This campaign was deleted on {date}. "
+    "DMbot no longer uses this channel. A server admin can delete it."
+)
 
 
 @dataclass(slots=True)
@@ -59,12 +64,17 @@ class ChannelCounts:
 
 
 async def retire_channels(
-    guild: discord.Guild | None, campaign: Campaign, me_id: int, now: int
+    guild: discord.Guild | None,
+    campaign: Campaign,
+    me_id: int,
+    now: int,
+    *,
+    by_hand: bool = False,
 ) -> ChannelCounts:
     """Do the above for a campaign that was just deleted. `guild`: the campaign's server as the
     bot has it (None: the bot is no longer there, so every recorded channel is skipped)."""
     counts = ChannelCounts()
-    note = CLOSING_NOTE.format(date=f"<t:{now}:D>")
+    note = (DELETED_NOTE if by_hand else CLOSING_NOTE).format(date=f"<t:{now}:D>")
     # (id, delete it?, the name it must still have to be deleted): the same trust rule the bot uses
     # everywhere else, so a channel an admin renamed and reused is never deleted.
     plan: tuple[tuple[int | None, bool, Callable[[str], bool]], ...] = (
