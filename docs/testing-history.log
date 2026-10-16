@@ -2554,3 +2554,11 @@ Overall ...................................... PASS (Deepgram baseline: 33/33, 1
   docs/next-test-step.md stays Test J (Keep, Delete's warning with Cancel, Homebrew packs): it still needs the owner.
   10-minute check, 16:49 UTC (10 minutes after the start): 0 ERROR, CRITICAL or traceback lines in core and web-api since 16:38; both up, web-api healthy; schema_migrations 103 rows, last 0103_web_transcript_deleted.
   Nothing turned on for users (recaps off, no ElevenLabs key, the extractor off).
+2026-10-16  dev1  DEPLOY: migration 0104 homebrew_book_edition and the code behind #1568 are live as 1df5a4e5 (Supervisor's "go", cross-session message). Core CI on the head: success.
+  Dry run (17:0x UTC) on a copy of the live database (pg_dumpall into a throwaway postgres:16 on its own network, at 0103): "Database updated: 0104_homebrew_book_edition" in 0.14 s; a second run applied nothing; 104 migrations;
+  rows unchanged (147 transcript lines, 3 campaigns, 0 homebrew entries); homebrew_entries.book_edition exists and is nullable. Copy deleted. No game running. Backup: ~/db-backups/dmbot-before-1df5a4e5-1016-1705.sql (chmod 600).
+  docker-compose.yml, core/Dockerfile and ears are unchanged since 47d4ccf4 (checked). `docker compose build core web-api` with GIT_COMMIT set; `docker compose stop core web-api` at 17:08:52 UTC, `up -d --no-deps core`;
+  web-api started once core was connected.
+  Result: core logged "Database updated: 0104_homebrew_book_edition", "ears connected" and "Connected to 1 server(s)"; web-api healthy; schema_migrations 104 rows, last 0104_homebrew_book_edition; /health 200 inside web-api.
+  Not checked (needs the owner in Discord): a DM loads a from-book homebrew file and sees "Which rules is this book written for?" after "I have the right"; /dmbot rule ranking by edition with the [Shared book] tag.
+  docs/next-test-step.md stays Test J (Keep, Delete's warning with Cancel, Homebrew packs): it still needs the owner.
