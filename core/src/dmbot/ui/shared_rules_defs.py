@@ -96,15 +96,22 @@ class ShareChoose(_Menu):
         self,
         offered: Sequence[dict[str, Any]],
         done: Callable[[discord.Interaction, list[dict[str, Any]]], Any],
+        *,
+        start_ticked: bool = True,
+        go_label: str = "Share with ticked",
+        skip_label: str = "Rules only",
+        placeholder: str = "Relationships to share",
     ) -> None:
         super().__init__()
         self.offered = list(offered)[:MENU_MAX]
-        self.ticked = {d["key"] for d in self.offered}
+        # At Share everything starts ticked. When a set is published again, nothing does: the
+        # DM adds a relationship on purpose (#1475).
+        self.ticked = {d["key"] for d in self.offered} if start_ticked else set()
         self._done = done
         self.add_item(
             _Select(
                 self._picked,
-                placeholder="Relationships to share",
+                placeholder=placeholder,
                 min_values=0,
                 max_values=len(self.offered),
                 options=tick_options(self.offered, self.ticked),
@@ -112,11 +119,9 @@ class ShareChoose(_Menu):
             )
         )
         self.add_item(
-            _Button(
-                self._share, label="Share with ticked", style=discord.ButtonStyle.primary, row=1
-            )
+            _Button(self._share, label=go_label, style=discord.ButtonStyle.primary, row=1)
         )
-        self.add_item(_Button(self._none, label="Rules only", row=1))
+        self.add_item(_Button(self._none, label=skip_label, row=1))
 
     async def _picked(self, interaction: discord.Interaction) -> None:
         select = next(c for c in self.children if isinstance(c, discord.ui.Select))
@@ -142,12 +147,19 @@ CHOOSE_TEXT = (
 )
 
 
+NEW_TEXT = (
+    "You made new relationships since you shared. Tick any to add to your shared rules.\n"
+    "Other tables get each one's name and what it means, not your facts, names or notes. The "
+    "ones you shared before stay.\n"
+    "You'll see the changes before anything is published."
+)
+
 TEXT_MAX = 1800  # under Discord's 2,000
 
 
-def tick_list_text(offered: Sequence[dict[str, Any]]) -> str:
+def tick_list_text(offered: Sequence[dict[str, Any]], head: str = CHOOSE_TEXT) -> str:
     """The question and, under it, what each relationship says (as far as the message holds)."""
-    text = CHOOSE_TEXT
+    text = head
     shown = 0
     for d in offered[:MENU_MAX]:
         line = f"\n• {_md(sd.tick_line(d))}"
