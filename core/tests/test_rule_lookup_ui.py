@@ -18,6 +18,7 @@ from dmbot.bot import DMBot
 from dmbot.campaigns import Campaign
 from dmbot.dm_screen.settings import RuleLookupButton, settings_view
 from dmbot.rules import index
+from dmbot.rules.homebrew import Homebrew
 from dmbot.rules.house import HouseRule
 from dmbot.ui import rule_card
 from dmbot.ui import rule_lookup as ui
@@ -57,10 +58,31 @@ class FakeStore:
         return list(self.rules.get(cid, []))
 
 
+class FakeBrew:
+    """Like `HomebrewStore.list`: the campaign's own entries, and no one else's."""
+
+    def __init__(self) -> None:
+        self.entries: dict[str, list[Homebrew]] = {}
+        self.asked: list[str] = []
+
+    async def find(self, guild_id: int, cid: str, name: str) -> Homebrew | None:
+        self.asked.append(cid)
+        key = " ".join(name.casefold().split())
+        return next(
+            (e for e in self.entries.get(cid, []) if " ".join(e.name.casefold().split()) == key),
+            None,
+        )
+
+
+def brew(cid: str, name: str, text: str, *, kind: str = "monster", known: bool = False) -> Homebrew:
+    return Homebrew(1, cid, kind, name, text, None, known, DM, NOW, NOW)
+
+
 class LookupTest(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self) -> None:
         self.campaigns = {C1: campaign()}
         self.store = FakeStore()
+        self.brew = FakeBrew()
         self.playing: str | None = C1
         self.bot = SimpleNamespace(
             campaigns=SimpleNamespace(
@@ -68,6 +90,7 @@ class LookupTest(unittest.IsolatedAsyncioTestCase):
                 list_campaigns=AsyncMock(side_effect=lambda g: list(self.campaigns.values())),
             ),
             house_rules=self.store,
+            homebrew=self.brew,
             active_campaign_id=lambda guild_id: self.playing,
             rule_sets=None,
         )
@@ -489,3 +512,46 @@ class Words(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class HomebrewLookup(LookupTest):
+    async def test_the_campaigns_homebrew_is_tagged_with_its_source_and_shadows_the_book(
+        self,
+    ) -> None:
+        self.brew.entries[C1] = [brew(C1, "Goblin", "A very different goblin.")]
+        it = await self.command("goblin")
+        self.assertEqual(len(it.followup.send.await_args_list), 1)  # not the book's card too
+        text = self.sent(it, 0)[0]
+        self.assertIn("[Homebrew]", text)
+        self.assertIn("Frostmaiden's homebrew: Goblin", text)
+        self.assertIn("A very different goblin.", text)
+        self.assertIn("🙈 only you", text)  # a hidden entry is still the DM's own private answer
+        self.assertNotIn("SRD", text)
+
+    async def test_a_name_only_the_campaign_has_is_answered_without_couldnt_find(self) -> None:
+        self.brew.entries[C1] = [brew(C1, "Hollow King", "A crowned skeleton.", known=True)]
+        it = await self.command("HOLLOW  king")
+        self.assertEqual(len(it.followup.send.await_args_list), 1)
+        text = self.sent(it, 0)[0]
+        self.assertIn("Hollow King", text)
+        self.assertIn("players may know it", text)
+        self.assertNotIn("couldn't find", text)
+
+    async def test_another_campaigns_homebrew_never_shows(self) -> None:
+        self.campaigns[C2] = campaign(C2, "Strahd", dms=frozenset({DM}))
+        self.brew.entries[C2] = [brew(C2, "Hollow King", "Strahd's secret.")]
+        it = await self.command("Hollow King")
+        self.assertEqual(self.brew.asked, [C1])  # only this campaign's entries were read
+        self.assertNotIn("Strahd's secret", self.sent(it, 0)[0])
+        self.assertIn("couldn't find", self.sent(it, 0)[0])
+
+    async def test_a_player_still_cannot_look_up_anything(self) -> None:
+        self.brew.entries[C1] = [brew(C1, "Hollow King", "Secret.")]
+        it = await self.command("Hollow King", PLAYER)
+        self.assertNotIn("Secret.", " ".join(str(c) for c in it.followup.send.await_args_list))
+        self.assertEqual(self.brew.asked, [])
+
+    async def test_a_homebrew_store_that_cannot_be_read_still_shows_the_free_rules(self) -> None:
+        self.brew.find = AsyncMock(side_effect=RuntimeError("down"))  # type: ignore[method-assign]
+        it = await self.command("goblin")
+        self.assertIn("📖", self.sent(it, 0)[0])

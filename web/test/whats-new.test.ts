@@ -48,6 +48,7 @@ describe("What's new", () => {
   it("holds back what people can't use yet, with the reason, and shows none of it (#1322)", () => {
     expect(held.map((h) => h.title)).toEqual([
       "Fix a line", // until it has been seen working on the test server (#1491, #1499)
+      "Your own homebrew", // until it has been seen working on the test server (#1520)
       "Recaps for your table", // until dev1 has checked a real recap (#1382, #1384)
       "Narrated recaps with music", // until narration is on (RECAP_AUDIO_LIVE, #1385)
       "DMbot's helper answers questions", // until the support helper runs (SUPPORT_AI_LIVE)

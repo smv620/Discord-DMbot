@@ -92,6 +92,12 @@ export const held: Held[] = [
   },
   {
     date: "2026-10-16",
+    title: "Your own homebrew",
+    what: "Your campaign can keep its own spells, monsters, items and rules. Open Settings, then Homebrew, to add them in your own words. Only you see an entry until you let players know. When you look up a rule, your homebrew comes before the free rules.",
+    reason: "Held until it has been seen working on the test server (#1520).",
+  },
+  {
+    date: "2026-10-16",
     title: "Recaps for your table",
     what: "After a session, DMbot can write a short story-style recap. You read it first, change it if you like, and press Post to the table. Nothing goes to your players until you do. You can also read, post or skip it right on the DM screen, and the next session start reminds you once if you forgot. If your plan reads recaps aloud, you can tell the narrator how to say a name. On the recap page you choose what recaps do. Paid plans only.",
     reason:

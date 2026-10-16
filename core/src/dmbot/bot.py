@@ -116,6 +116,7 @@ from dmbot.dm_screen.name_questions import (
 from dmbot.dm_screen.pause import PauseButton
 from dmbot.dm_screen.recap_panel import PlanFacts, RecapsButton, audio_how
 from dmbot.dm_screen.settings import (
+    HomebrewButton,
     HouseFileButton,
     InviteButton,
     LevelButton,
@@ -187,6 +188,7 @@ from dmbot.retention import RetentionJob
 from dmbot.rules import house_voice
 from dmbot.rules import index as rules_index
 from dmbot.rules.followed import followed_rules, own_first
+from dmbot.rules.homebrew import Homebrew, HomebrewSection, HomebrewStore
 from dmbot.rules.house import HouseRule, HouseRulesSection, HouseRuleStore
 from dmbot.rules.house_file_link import HouseFileLinkStore
 from dmbot.rules.rule_sets import FollowedSetsSection, RuleSetStore
@@ -244,6 +246,7 @@ from dmbot.ui.continuity import ContinuityButton, continuity_view
 from dmbot.ui.continuity import waiting_text as continuity_waiting_text
 from dmbot.ui.decision_lines import DecisionLines
 from dmbot.ui.dmbot_commands import _failed, dmbot_group
+from dmbot.ui.homebrew import dmbot_homebrew  # noqa: F401 (registers it)
 from dmbot.ui.house_rules import dmbot_house_rules  # noqa: F401 (registers it)
 from dmbot.ui.line_fix import (
     MORE_WAITING,
@@ -641,6 +644,7 @@ class DMBot(commands.AutoShardedBot):
         rule_sets: RuleSetStore | None = None,
         recaps: RecapStore | None = None,
         suggestions: SuggestionStore | None = None,
+        homebrew: HomebrewStore | None = None,
     ) -> None:
         intents = discord.Intents.none()
         intents.guilds = True
@@ -687,6 +691,9 @@ class DMBot(commands.AutoShardedBot):
         self.rule_sets = rule_sets  # shared house rules (#1190)
         self.recaps = recaps  # the cinematic recap of each session (#1382)
         self.suggestions = suggestions  # players' suggested line fixes (#1491)
+        self.homebrew = homebrew  # a campaign's own homebrew entries (#1520)
+        # The last entries a DM removed, per campaign, so the list can put them back (memory only).
+        self.homebrew_removed: dict[tuple[int, str], list[Any]] = {}
         self.decision_lines = DecisionLines()  # DM-screen lines to clear once decided (#1509)
         self.house_syncs = house_sync.Pendings()
         # Timed effects on that clock (#998); None without a database.
@@ -964,6 +971,7 @@ class DMBot(commands.AutoShardedBot):
             SideInitiativeButton,
             HouseFileButton,
             SharedRulesButton,
+            HomebrewButton,
             InviteButton,
             TableChatButton,
             RecapsButton,
@@ -2428,6 +2436,13 @@ class DMBot(commands.AutoShardedBot):
         async def houses(campaign: Campaign) -> Sequence[HouseRule]:
             return await self.all_house_rules(campaign.guild_id, campaign.id)
 
+        async def brews(campaign: Campaign) -> Sequence[Homebrew]:
+            # All of the campaign's own entries: the sidebar engine keeps the hidden ones out of
+            # every prompt and answer (#1520), but needs them to know a name is overridden.
+            if self.homebrew is None:
+                return []
+            return await self.homebrew.list(campaign.guild_id, campaign.id)
+
         async def names(campaign: Campaign) -> CampaignLookup | None:
             if self.lookup is None:
                 return None
@@ -2472,6 +2487,7 @@ class DMBot(commands.AutoShardedBot):
             names=names,
             people=people,
             recall=recall if self.settings.sidebar_recall else None,
+            brews=brews,
             second_try=careful,
         )
 
@@ -7412,6 +7428,7 @@ async def run(settings: Settings) -> None:
         )
         campaigns.register_section(MemorySection())  # campaign memory goes in backups
         campaigns.register_section(HouseRulesSection())  # and so do house rules (#865)
+        campaigns.register_section(HomebrewSection())  # and its own homebrew (#1520)
         campaigns.register_section(FollowedSetsSection())  # and the sets it follows (#1260)
         campaigns.register_section(ClockSection())  # and the game clock (#965)
         campaigns.register_section(EffectsSection())  # and its timed effects (#998)
@@ -7438,6 +7455,7 @@ async def run(settings: Settings) -> None:
             RuleSetStore(db),
             RecapStore(db),
             SuggestionStore(db),
+            HomebrewStore(db),
         )
         _close_on_sigterm(bot)
         async with bot:

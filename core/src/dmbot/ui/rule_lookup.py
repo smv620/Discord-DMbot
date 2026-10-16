@@ -25,6 +25,7 @@ from dmbot.campaigns import Campaign
 from dmbot.campaigns.models import DEFAULT_FALLBACK, DEFAULT_TARGET
 from dmbot.logs import set_log_context
 from dmbot.rules import index
+from dmbot.rules.homebrew import Homebrew
 from dmbot.rules.house import HouseRule
 from dmbot.ui import logic, rule_card
 from dmbot.ui.dmbot_commands import (
@@ -79,6 +80,21 @@ async def _house_rules(interaction: discord.Interaction, campaign: Campaign) -> 
     return rules
 
 
+async def _homebrew(
+    interaction: discord.Interaction, campaign: Campaign, typed: str
+) -> Homebrew | None:
+    """This campaign's own homebrew entry with exactly this name (any case), none if there isn't
+    one or it can't be read, so the free rules' card still shows."""
+    store = _bot(interaction).homebrew
+    if store is None:
+        return None
+    try:
+        return await store.find(campaign.guild_id, campaign.id, typed)
+    except Exception:
+        log.exception("Couldn't read the homebrew for a rule lookup")
+        return None
+
+
 async def look_up(
     interaction: discord.Interaction,
     campaign_id: str,
@@ -107,6 +123,15 @@ async def look_up(
     rules = await _house_rules(interaction, campaign)
     srd = index.srd()
     hit = srd.lookup(typed, campaign.target_ruleset, campaign.fallback_ruleset, kind=kind)
+    # The campaign's own homebrew sits between its house rules and the book (PLAN, rules
+    # precedence), and a homebrew name shadows the book's, hidden or not: the book's card for the
+    # same name is not shown. This is the DM's private answer, so an entry players may not know
+    # is shown too.
+    own = await _homebrew(interaction, campaign, typed)
+    if own is not None:
+        mine = rule_card.homebrew_parts(own, campaign.name)
+        await _send(interaction, mine[0], Card(mine, 1) if len(mine) > 1 else None)
+        return
     if hit is None:
         close = srd.suggest(typed, campaign.target_ruleset, campaign.fallback_ruleset)
         text = rule_card.no_match_text(typed, rules, bool(close))

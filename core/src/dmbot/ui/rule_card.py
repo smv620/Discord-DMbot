@@ -18,6 +18,7 @@ import discord
 from dmbot.rules import facts as rule_facts
 from dmbot.rules import index
 from dmbot.rules.followed import FollowedRule
+from dmbot.rules.homebrew import Homebrew
 from dmbot.rules.house import HouseRule
 from dmbot.rules.index import Entry, Hit, monster_keys, normalize
 
@@ -267,6 +268,43 @@ def card_parts(hit: Hit, typed: str, rules: Sequence[HouseRule]) -> list[str]:
     total = len(chunks)
     for number, chunk in enumerate(chunks[1:], start=2):
         parts.append(f"📖 **{title}** (part {number} of {total})\n{chunk}")
+    return parts
+
+
+HOMEBREW_TAG = "[Homebrew]"
+
+
+def homebrew_citation(entry: Homebrew, campaign_name: str) -> str:
+    """Where homebrew comes from, as every answer names its source: `Frostmaiden's homebrew:
+    Hollow King`."""
+    return f"{campaign_name}'s homebrew: {entry.name}"
+
+
+def homebrew_parts(own: Homebrew, campaign_name: str) -> list[str]:
+    """The card for one of the campaign's own homebrew entries, for the DM (private): tagged
+    `[Homebrew]`, its source named, who may know it, then its words. It goes above the free
+    rules' card and below any house rule (the order is house rules, homebrew, the target
+    ruleset, the fallback)."""
+    who = "👀 players may know it" if own.players_may_know else "🙈 only you"
+    head = "\n".join(
+        [
+            f"📚 **{_fit(_md(own.name), NAME_MAX)}** ({own.kind.capitalize()}) "
+            f"{HOMEBREW_TAG} {who}",
+            f"_Source: {_md(_fit(homebrew_citation(own, campaign_name), 200))}_",
+        ]
+    )
+    text = _md(own.text)
+    room = PART_MAX - len(head) - 1
+    rest = PART_MAX - CONTINUED_MAX
+    chunks = (
+        split_text(text, room, rest)
+        if room >= MIN_TEXT_ROOM
+        else ["", *split_text(text, rest, rest)]
+    )
+    parts = [f"{head}\n{chunks[0]}" if chunks[0] else head]
+    title = _fit(_md(own.name), NAME_MAX)
+    for number, chunk in enumerate(chunks[1:], start=2):
+        parts.append(f"📚 **{title}** (part {number} of {len(chunks)})\n{chunk}")
     return parts
 
 
