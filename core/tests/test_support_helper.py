@@ -37,6 +37,7 @@ from tests.test_web_api import ALICE, API, SITE, FakeDiscord, settings
 from tests.test_web_email_signin import LINK_SECRET
 
 SECRET = LINK_SECRET
+ALICE_EMAIL: str = ALICE.email or ""
 WEBHOOK_KEY = b"k" * 24
 WEBHOOK_SECRET = "whsec_" + base64.b64encode(WEBHOOK_KEY).decode()
 SUPPORT_FROM = "DMbot support <info@example.org>"
@@ -194,7 +195,7 @@ class HelperBase(SupportBase):
         to: str,
         text: str,
         *,
-        sender: str = ALICE.email,
+        sender: str = ALICE_EMAIL,
         secret: bytes = WEBHOOK_KEY,
         at: int | None = None,
     ) -> httpx.Response:
@@ -246,9 +247,6 @@ class TheThankYou(HelperBase):
         client.cookies.set("__Host-dmbot_session", token, domain="api.dmbot.example")
         self.addAsyncCleanup(client.aclose)
         return client
-
-
-ALICE_EMAIL = ALICE.email
 
 
 class TheAnswers(HelperBase):
@@ -444,7 +442,7 @@ class TheInboundDoor(HelperBase):
         number = await self.ticket()
         await support.set_status(self.web, number, "closed")
         to = str(self.mails()[-1]["Reply-To"])
-        await self.inbound(to, "One more thing", sender=ALICE.email.upper())
+        await self.inbound(to, "One more thing", sender=ALICE_EMAIL.upper())
         self.assertEqual(await self.status(number), "new")
         (reply,) = await support.thread(self.web, number)
         self.assertEqual((reply.who, reply.text), ("customer", "One more thing"))
@@ -493,7 +491,7 @@ class TheCarefulWrites(HelperBase):
     async def test_a_repeated_webhook_is_read_once(self) -> None:
         number = await self.ticket()
         to = str(self.mails()[-1]["Reply-To"])
-        body = json.dumps({"from": ALICE.email, "to": [to], "text": "Hello"}).encode()
+        body = json.dumps({"from": ALICE_EMAIL, "to": [to], "text": "Hello"}).encode()
         headers = sign(body, at=self.now, message_id="msg_same")
         async with httpx.AsyncClient(
             transport=httpx.ASGITransport(app=self.app), base_url=API
