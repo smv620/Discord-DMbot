@@ -59,6 +59,10 @@ PAGE_ENTRIES = 25  # a menu holds 25 choices
 UNDO_KEPT = 5  # removed entries that can be put back, per campaign
 UNDO_SHOWN = 1  # ...and the newest is the one button on the list
 
+WHICH_RULES = (
+    "**Which rules is this book for?** DMbot shows it in that edition's place: a 2014 book "
+    "after the 2024 rules, a supplement between the two."
+)
 NOT_READY = "Homebrew isn't available right now. Please try again in a moment."
 SUGGEST_LABEL = "💡 Suggest to the pack"
 SEND_LABEL = "Yes, send it"
@@ -891,7 +895,9 @@ class FromBookAsk(_Menu):
 
     used = False  # one answer only: a double press must not record the confirmation twice
 
-    async def _load(self, interaction: discord.Interaction, *, from_book: bool) -> None:
+    async def _load(
+        self, interaction: discord.Interaction, *, from_book: bool, edition: str | None = None
+    ) -> None:
         await _answer_first(interaction, in_place=True)
         if not await _is_dm(interaction, self.campaign):
             await _tell(interaction, ONLY_DMS)
@@ -918,7 +924,12 @@ class FromBookAsk(_Menu):
                     self.digest[:12],
                 )
             done = await store.load_file(
-                c.guild_id, c.id, interaction.user.id, self.entries, from_book=from_book
+                c.guild_id,
+                c.id,
+                interaction.user.id,
+                self.entries,
+                from_book=from_book,
+                book_edition=edition,
             )
         except HomebrewError as exc:
             await _redraw(interaction, c, note=str(exc), page=self.page)
@@ -945,7 +956,35 @@ class RightToUse(FromBookAsk):
         )
 
     async def _confirmed(self, interaction: discord.Interaction) -> None:
-        await self._load(interaction, from_book=True)
+        # One more question before anything is stored: which rules the book is for, so its
+        # entries rank in that edition's place (#1563). The confirmation is recorded with the load.
+        if not await _is_dm(interaction, self.campaign):
+            await _tell(interaction, ONLY_DMS)
+            return
+        self.stop()
+        await _show(
+            interaction,
+            WHICH_RULES,
+            BookEdition(self.campaign, self.entries, self.digest, self.page),
+        )
+
+
+class BookEdition(FromBookAsk):
+    """Which rules is this book for? Asked once, after "I have the right"."""
+
+    def __init__(
+        self, campaign: Campaign, entries: tuple[FileEntry, ...], digest: str, page: int
+    ) -> None:
+        _Menu.__init__(self)
+        self.campaign, self.entries, self.digest, self.page = campaign, entries, digest, page
+        self.add_item(_Button(self._cancel, label="Cancel"))
+        primary = discord.ButtonStyle.primary
+        self.add_item(_Button(partial(self._pick, "2024"), label="2024 rules", style=primary))
+        self.add_item(_Button(partial(self._pick, "2014"), label="2014 rules", style=primary))
+        self.add_item(_Button(partial(self._pick, "other"), label="Other / a supplement"))
+
+    async def _pick(self, edition: str, interaction: discord.Interaction) -> None:
+        await self._load(interaction, from_book=True, edition=edition)
 
 
 @dmbot_group.command(
