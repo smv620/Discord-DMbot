@@ -450,6 +450,7 @@ class HomebrewReader:
 
     async def list(self, guild_id: int, campaign_id: str) -> list[Homebrew]:
         # Only entries the DM has not turned off (#1629): this is what DMbot *uses* at the table.
+        # (A followed pack's entry of the same name is a different entry and still answers.)
         own = await self._store.list(guild_id, campaign_id, usable_only=True)
         packs = await self._from_packs(guild_id, campaign_id)
         # A shared book's entry ranks below a followed pack's (#1563): a pack's entry of the same

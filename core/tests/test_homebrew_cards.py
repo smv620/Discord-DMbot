@@ -29,15 +29,21 @@ class FakeBrew:
         self.entries: dict[str, list[Homebrew]] = {}
         self.asked: list[str] = []
 
-    async def list(self, guild_id: int, cid: str) -> list[Homebrew]:
+    async def list(self, guild_id: int, cid: str, *, usable_only: bool = False) -> list[Homebrew]:
         self.asked.append(cid)
-        return list(self.entries.get(cid, []))
+        return [e for e in self.entries.get(cid, []) if e.enabled or not usable_only]
 
-    async def find(self, guild_id: int, cid: str, name: str) -> Homebrew | None:
+    async def find(
+        self, guild_id: int, cid: str, name: str, *, usable_only: bool = False
+    ) -> Homebrew | None:
         self.asked.append(cid)
         key = " ".join(name.casefold().split())
         return next(
-            (e for e in self.entries.get(cid, []) if " ".join(e.name.casefold().split()) == key),
+            (
+                e
+                for e in self.entries.get(cid, [])
+                if (e.enabled or not usable_only) and " ".join(e.name.casefold().split()) == key
+            ),
             None,
         )
 
@@ -160,9 +166,11 @@ class Cards(TableTest):
         self.own(brew("Hollow King"))
         real = self.brews.find
 
-        async def stop_then_find(guild_id: int, cid: str, name: str) -> Homebrew | None:
+        async def stop_then_find(
+            guild_id: int, cid: str, name: str, *, usable_only: bool = False
+        ) -> Homebrew | None:
             self.consented.discard(SPEAKER)
-            return await real(guild_id, cid, name)
+            return await real(guild_id, cid, name, usable_only=usable_only)
 
         self.brews.find = stop_then_find  # type: ignore[method-assign]
         await self.say("the Hollow King rises")
@@ -295,13 +303,15 @@ class NewestReadWins(TableTest):
         calls = 0
         real = brews.list
 
-        async def slow_then_fast(guild_id: int, cid: str) -> list[Homebrew]:
+        async def slow_then_fast(
+            guild_id: int, cid: str, *, usable_only: bool = False
+        ) -> list[Homebrew]:
             nonlocal calls
             calls += 1
             if calls == 1:
                 await gate.wait()  # the first read is slow...
                 return [brew("Old Name")]
-            return await real(guild_id, cid)
+            return await real(guild_id, cid, usable_only=usable_only)
 
         brews.list = slow_then_fast  # type: ignore[method-assign]
         brews.entries[C1] = [brew("New Name")]
