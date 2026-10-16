@@ -97,6 +97,7 @@ Kept as they were (real values, not part of Checkout Studio): `mode`, `success_u
 - [ ] Turn on Stripe Tax in the Dashboard (see above).
 - [ ] The sandbox run: #1096.
 - [ ] Set the `STRIPE_PRICE_*` ids for the environment you are testing in.
+- [ ] In that run, try each purchase with `STRIPE_MANAGED_PAYMENTS=1` as well as `0`: we could not check from the reference whether Managed Payments accepts every parameter above (promotion codes, phone collection, automatic tax), and a refusal would show only when it is on.
 - [ ] Decide on `STRIPE_MANAGED_PAYMENTS` after that run.
 
 ## Resources
