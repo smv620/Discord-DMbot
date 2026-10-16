@@ -232,11 +232,11 @@ class Guards(unittest.IsolatedAsyncioTestCase):
         st.followed_packs = AsyncMock(return_value=[follow()])
         menu = shared_packs.SharedPacksMenu(campaign(), sharing=False, follows=[follow()])
         assert menu.pick is not None
-        menu.pick._values = [follow().set_id]  # type: ignore[attr-defined]
+        menu.pick._values = [follow().set_id]
         await menu._pick(interaction(99, bot_with(st)))
         choose = shared_packs.FollowChoose(campaign(), [offer()])
         assert choose.pick is not None
-        choose.pick._values = [offer().set_id]  # type: ignore[attr-defined]
+        choose.pick._values = [offer().set_id]
         it = interaction(99, bot_with(st))
         await choose._picked(it)
         st.followed_packs.assert_not_called()
