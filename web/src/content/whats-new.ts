@@ -19,6 +19,16 @@ export const whatsNewIntro =
 
 export const entries: Entry[] = [
   {
+    date: "2026-10-16",
+    title: "Your questions to the team",
+    what: "After you write to the DMbot team, your account page lists your questions, with the date you sent each one and whether it is waiting, answered or closed.",
+  },
+  {
+    date: "2026-10-16",
+    title: "Quick answers use your facts",
+    what: "When you ask DMbot a quick question about someone in your campaign, it now uses the facts you confirmed, like who they work for. If it has nothing confirmed, it says so.",
+  },
+  {
     date: "2026-10-15",
     title: "Sign in with an emailed link",
     what: "On your account page, type your email and we send you a link that signs you in. It works once and stops working after 15 minutes.",
@@ -70,20 +80,6 @@ export const held: Held[] = [
     what: "After a session, DMbot can write a short story-style recap. You read it first, change it if you like, and press Post to the table. Nothing goes to your players until you do. Paid plans only.",
     reason:
       "Recaps are off until dev1 has checked a real one (#1382). When they are on, move this up and turn on the recap words (RECAPS_LIVE in recap-words.ts).",
-  },
-  {
-    date: "2026-10-16",
-    title: "Quick answers use your facts",
-    what: "When you ask DMbot a quick question about someone in your campaign, it now uses the facts you confirmed, like who they work for. If it has nothing confirmed, it says so.",
-    reason:
-      "Not live until this change is deployed; dev1 moves it up once it is (#1370).",
-  },
-  {
-    date: "2026-10-16",
-    title: "Your questions to the team",
-    what: "After you write to the DMbot team, your account page lists your questions, with the date you sent each one and whether it is waiting, answered or closed.",
-    reason:
-      "The list needs the API deployed with its new list route (#1373); until dev1 deploys it the page shows nothing there.",
   },
   {
     date: "2026-10-15",
