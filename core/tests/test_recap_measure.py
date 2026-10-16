@@ -10,6 +10,7 @@ from typing import Any
 from dmbot.devtools.recap_measure import __main__ as measure
 from dmbot.devtools.recap_measure.golden import GoldenError, load_golden, parse
 from dmbot.recaps import draft as rd
+from dmbot.recaps.text import names_a_secret
 
 SESSIONS = load_golden()
 
@@ -52,7 +53,7 @@ class TheSet(unittest.TestCase):
             "beats": [{"keys": ["a"]}] * 3,
         }))  # fmt: skip
         parse("ok", good)
-        for change in (
+        changes: list[dict[str, Any]] = [
             {"lines": []},
             {"lines": [["zed", "x"]] * 10},
             {"lines": [["dm"]] * 10},
@@ -61,7 +62,8 @@ class TheSet(unittest.TestCase):
             {"window_chars": 5},
             {"window_chars": "big"},
             {"title": None, "beats": None},
-        ):
+        ]
+        for change in changes:
             with self.assertRaises(GoldenError, msg=str(change)):
                 parse("bad.json", {**good, **change})
         with self.assertRaises(GoldenError):
@@ -70,7 +72,7 @@ class TheSet(unittest.TestCase):
     def test_a_secret_name_is_never_said_in_its_own_session(self) -> None:
         for s in SESSIONS:
             said = " ".join(line.text for line in s.lines)
-            self.assertFalse(measure.names_a_secret(said, s.secret, []), s.name)
+            self.assertFalse(names_a_secret(said, s.secret, []), s.name)
 
 
 class TheScoring(unittest.TestCase):
