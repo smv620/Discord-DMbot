@@ -90,7 +90,7 @@ describe("followed packs (#1586)", () => {
     expect(screen.getByText(text.packsNote)).toBeTruthy();
   });
 
-  it("says so under a pack that has shared nothing with players", async () => {
+  it("says so under a pack with no entries", async () => {
     const mock = mockApi("table");
     const api = {
       ...mock,
@@ -188,12 +188,10 @@ describe("a campaign's entries", () => {
     expect(screen.getByText(/3d6 cold damage/)).toBeTruthy();
   });
 
-  it("says the DM may have more, and where the DM changes them; it is read-only", async () => {
+  it("says what (off) means, and where the DM changes things; it is read-only", async () => {
     page(mockApi("table"), `/account/homebrew/${REF}`);
     expect(await screen.findByText(text.leadOneCampaign)).toBeTruthy();
-    expect(text.leadOneCampaign).toContain(
-      "Your DM may have more that stays behind the DM screen.",
-    );
+    expect(text.leadOneCampaign).toContain("An entry marked (off) is kept");
     expect(screen.getByText(text.dmChanges)).toBeTruthy();
     expect(text.dmChanges).toContain("⚙️ Settings → 📚 Homebrew");
     expect(
@@ -233,6 +231,31 @@ describe("a campaign's entries", () => {
     expect(
       screen.getAllByRole("heading", { level: 3 }).map((h) => h.textContent),
     ).toEqual(["Other", "vehicle"]);
+  });
+
+  it("marks a turned-off entry (off), muted, and keeps it in the list", async () => {
+    const mock = mockApi("table");
+    const api = {
+      ...mock,
+      homebrew: async (ref: string) => {
+        const found = await mock.homebrew!(ref);
+        return {
+          ...found,
+          entries: [
+            ...found.entries,
+            { kind: "item", name: "Old Bell", summary: null, text: "Rings.", enabled: false },
+            { kind: "item", name: "New Bell", summary: null, text: "Chimes.", enabled: true },
+          ],
+        };
+      },
+    } as AccountApi;
+    page(api, `/account/homebrew/${REF}`);
+    const off = (await screen.findByText("Old Bell")).closest("li")!;
+    expect(off.textContent).toContain(text.off);
+    expect(off.classList.contains("muted")).toBe(true);
+    const on = screen.getByText("New Bell").closest("li")!;
+    expect(on.textContent).not.toContain(text.off);
+    expect(screen.getByText("Frost Lance").closest("li")!.textContent).not.toContain(text.off);
   });
 
   it("has no Rules kind: made-up rules are House rules, with a link", async () => {
@@ -296,5 +319,24 @@ describe("a campaign's entries", () => {
       text.notFound,
     );
     expect(problem("not-found")).toBe(text.notFound);
+  });
+});
+
+describe("nothing is hidden from players (#1643)", () => {
+  it("the homebrew words no longer say the DM lets players know or keeps things behind the screen", async () => {
+    const { text: homebrew } = await import("../src/content/homebrew");
+    const { entries } = await import("../src/content/whats-new");
+    const help = await import("../src/content/help");
+    const homebrewHelp = [...help.dmSteps, ...help.playerSteps].filter((st) =>
+      /homebrew/i.test(st.text),
+    );
+    expect(homebrewHelp.length).toBeGreaterThan(0);
+    const words = JSON.stringify([
+      homebrew,
+      entries.filter((e) => /homebrew/i.test(e.title + e.what)),
+      homebrewHelp,
+    ]);
+    expect(words).not.toMatch(/let (the )?players know|lets players know|players may know|marked for players/i);
+    expect(words).not.toMatch(/behind the DM screen|shares with players/i);
   });
 });

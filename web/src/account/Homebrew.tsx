@@ -1,8 +1,8 @@
 /** @jsxImportSource preact */
-// The homebrew (#1525): every campaign with an entry the DM let the players know, and one
+// The homebrew (#1525): every campaign with homebrew, and one
 // campaign's entries to read and download. Anyone in the Discord server may read them, so this is
-// for players as much as DMs; the DM adds and changes entries in Discord, never here. The API
-// sends only the entries the DM let the players know, so a hidden one is never on this page.
+// for players as much as DMs; the DM adds and changes entries in Discord, never here. Nothing is
+// hidden from players (#1643); an entry the DM turned off shows muted, marked (off).
 import { useEffect, useRef, useState } from "preact/hooks";
 
 import { kindOrder, problem, text } from "../content/homebrew";
@@ -172,9 +172,15 @@ function EntryGroups({
               {entries
                 .filter((e) => e.kind === kind)
                 .map((e) => (
-                  <li key={e.name}>
+                  <li key={e.name} class={e.enabled === false ? "muted" : undefined}>
                     <span>
                       <strong>{e.name}</strong>
+                      {e.enabled === false && (
+                        <>
+                          {" "}
+                          <span class="muted homebrew-tag">{text.off}</span>
+                        </>
+                      )}
                       {e.fromBook && (
                         <>
                           {" "}

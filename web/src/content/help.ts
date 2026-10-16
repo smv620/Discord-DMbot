@@ -311,7 +311,7 @@ export const playerSteps: Step[] = [
     link: { text: "Read your table's house rules", href: "/account/house-rules" },
   },
   {
-    text: "The homebrew your game master shares (extra monsters, spells and items made for your game) is on this website too. Sign in, open My Account, and read it there. Entries from a shared book say From a shared book. If that book is for older rules than your table plays, they also say [Legacy 2014]. Homebrew your table follows from another table is listed too, but only the parts that table shares with players. You can save your table's own homebrew as a text file. You can't change it here. Your game master does that in Discord. Rules your table made up are under House rules, not Homebrew.",
+    text: "The homebrew your game master shares (extra monsters, spells and items made for your game) is on this website too. Sign in, open My Account, and read it there. Entries from a shared book say From a shared book. If that book is for older rules than your table plays, they also say [Legacy 2014]. Homebrew your table follows from another table is listed too, but only what that table shares. You can save your table's own homebrew as a text file. You can't change it here. Your game master does that in Discord. Rules your table made up are under House rules, not Homebrew.",
     link: { text: "Read your table's homebrew", href: "/account/homebrew" },
   },
   {
@@ -319,7 +319,7 @@ export const playerSteps: Step[] = [
     link: { text: "Read your game transcripts", href: "/account/transcripts" },
   },
   {
-    text: "To look up a rule, type /dmbot rule and a few words, in any of the campaign's channels. Only you see the answer. It comes from the free rules, your table's house rules, and the homebrew your game master marked for players. Entries from a shared book are tagged [Shared book], and [Shared book] [Legacy 2014] if that book is for older rules than your table plays. Each person can ask once every 3 seconds. The answer ends with \"Your DM decides what applies at your table.\"",
+    text: "To look up a rule, type /dmbot rule and a few words, in any of the campaign's channels. Only you see the answer. It comes from the free rules, your table's house rules, and the homebrew your game master turned on. Entries from a shared book are tagged [Shared book], and [Shared book] [Legacy 2014] if that book is for older rules than your table plays. Each person can ask once every 3 seconds. The answer ends with \"Your DM decides what applies at your table.\"",
     names: [{ name: "/dmbot rule", file: "ui/rule_lookup.py" }],
   },
   {

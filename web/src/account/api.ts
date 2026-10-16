@@ -329,7 +329,7 @@ export interface HouseRules {
   sets: HouseRuleSet[];
 }
 
-/** A campaign with homebrew the DM let the players know, in one of the person's servers (#1525).
+/** A campaign with homebrew in one of the person's servers (#1525).
  * `ref` is `<server>.<campaign>`. */
 export interface HomebrewCampaign {
   ref: string;
@@ -340,7 +340,7 @@ export interface HomebrewCampaign {
   packs?: number;
 }
 
-/** One shown homebrew entry: the API sends only what the DM let the players know. */
+/** One homebrew entry. */
 export interface HomebrewEntry {
   kind: string;
   name: string;
@@ -351,9 +351,12 @@ export interface HomebrewEntry {
   fromBook?: boolean;
   /** A 2014 book while the campaign plays a newer ruleset: tagged [Legacy 2014]. */
   legacy?: boolean;
+  /** False when the game master turned it off (#1629): kept in the list, marked (off). Missing
+   * from an older API, which means on. */
+  enabled?: boolean;
 }
 
-/** A homebrew pack the campaign follows: only the entries the pack marks known to players. */
+/** A homebrew pack the campaign follows, with its entries. */
 export interface HomebrewPack {
   name: string;
   version: number;
