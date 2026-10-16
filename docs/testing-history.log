@@ -2536,3 +2536,11 @@ Overall ...................................... PASS (Deepgram baseline: 33/33, 1
   docs/next-test-step.md stays Test I (consent v6, not yet run): one test at a time; the new checks are in docs/testing-status.log.
   10-minute check, 13:30 UTC (10 minutes after the start): 0 ERROR, CRITICAL or traceback lines in core and web-api since 13:19; both up, web-api healthy; schema_migrations 99 rows, last 0099_homebrew_from_book.
   Nothing turned on for users (recaps off, no ElevenLabs key, the extractor off, homebrew's What's new entry held).
+2026-10-16  dev1  DEPLOY: migrations 0100 web_homebrew, 0101 transcript_keep and 0102 pack_suggestions, and the code behind #1536, #1539, #1540, #1544, #1545 and #1549 are live as 11f794f0 (Supervisor's "go", cross-session message). Core CI on the head: success.
+  Dry run (15:0x UTC) on a copy of the live database (pg_dumpall into a throwaway postgres:16 on its own network, at 0099): "Database updated: 0100_web_homebrew, 0101_transcript_keep, 0102_pack_suggestions" in 0.25 s;
+  a second run applied nothing; 102 migrations; rows unchanged (147 transcript lines, 3 campaigns); pack_suggestions and pack_suggestions_sent have row-level security on and forced; new columns
+  campaigns.transcript_keep_days and recap_jobs.housekeeping. Copy deleted. No game running. Backup: ~/db-backups/dmbot-before-11f794f0-1016-1507.sql (chmod 600). docker-compose.yml, core/Dockerfile and ears are
+  unchanged since 1cc09299 (checked). `docker compose build core web-api` with GIT_COMMIT set; `docker compose stop core web-api` at 15:14:42 UTC, `up -d --no-deps core`; web-api started after core was connected, as Supervisor asked.
+  Result: core logged "Database updated: 0100 ... 0102", "ears connected" and "Connected to 1 server(s)"; web-api healthy; schema_migrations 102 rows, last 0102_pack_suggestions. Signed-out GET /me/campaigns/<ref>/homebrew and /transcripts answer 401, /health 200.
+  Not checked (need the owner in Discord): Settings -> Transcripts opens and saves a choice; the Menu shows Delete my transcripts with its one warning; Homebrew packs opens; the name card's Show all select.
+  docs/next-test-step.md is now Test J (Keep, Delete's warning with cancel, Homebrew packs); Test I (consent v6) moves to after it.
