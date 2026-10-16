@@ -2337,6 +2337,9 @@ WEB_ROLE_FUNCTIONS: tuple[tuple[str, str], ...] = (
     # The DM's recap choices, read and written on the recap page (#1468): DM only.
     ("dmbot_web_recap_choices", "dmbot_web_recap_choices(BIGINT, TEXT)"),
     ("dmbot_web_set_recap_choice", "dmbot_web_set_recap_choice(BIGINT, TEXT, TEXT, BOOLEAN)"),
+    # A campaign's house rules, read by any member of the server (#1521).
+    ("dmbot_web_house_rules", "dmbot_web_house_rules(BIGINT, TEXT)"),
+    ("dmbot_web_house_rules_campaigns", "dmbot_web_house_rules_campaigns(BIGINT)"),
     # The campaign's names with the narrator's spelling (#1451): read and write, DM only.
     ("dmbot_web_names", "dmbot_web_names(BIGINT, TEXT)"),
     ("dmbot_web_set_said_as", "dmbot_web_set_said_as(BIGINT, TEXT, TEXT, TEXT)"),
@@ -4660,6 +4663,96 @@ TRANSCRIPT_SUGGESTIONS = """
         ON transcript_suggestions (session_id, user_id, started_ms) WHERE state = 'open';
     """ + _isolate("transcript_suggestions")
 
+WEB_HOUSE_RULES = """
+    -- A campaign's house rules on the website (#1521). They are the table's rules and every member
+    -- of the Discord server may read them with /dmbot houserules (the bot does not gate that by
+    -- plan), so these two doors answer any signed-in person whose session lists the server
+    -- (`dmbot_web_guilds()`), with that server set for the transaction, and only read. The
+    -- website's role has no grant on house_rules or rule_set_follows.
+    --
+    -- What leaves: each rule's number, words, the book rule it replaces and whether it was merged
+    -- in from a set; the followed house-rules sets' name, version and rules (the bot cites them as
+    -- "<set> house rules, vN"). NEVER a rule's scenario (the story event behind it: the Discord
+    -- list does not show it), who wrote it, the session it came from, a set's publisher or share
+    -- code, or the campaign's linked rules document (a private share link the bot shows only to
+    -- its DMs).
+    --
+    -- dmbot_web_house_rules: NULL when the caller is not in the server or there is no campaign.
+    CREATE FUNCTION dmbot_web_house_rules(g BIGINT, c TEXT) RETURNS JSONB
+    LANGUAGE plpgsql SECURITY DEFINER AS $fn$
+    DECLARE
+        camp campaigns%ROWTYPE;
+    BEGIN
+        IF dmbot_current_guild() IS DISTINCT FROM g
+           OR NOT (g = ANY ((SELECT dmbot_web_guilds())::BIGINT[])) THEN
+            RETURN NULL;
+        END IF;
+        SELECT * INTO camp FROM campaigns WHERE guild_id = g AND id = c;
+        IF NOT FOUND THEN
+            RETURN NULL;
+        END IF;
+        RETURN jsonb_build_object(
+            'name', camp.name,
+            'rules', COALESCE((
+                SELECT jsonb_agg(jsonb_build_object(
+                           'number', r.number, 'rule', r.rule, 'supersedes', r.supersedes,
+                           'fromSet', r.from_set) ORDER BY r.number DESC)
+                FROM house_rules r WHERE r.guild_id = g AND r.campaign_id = c), '[]'::jsonb),
+            'sets', COALESCE((
+                SELECT jsonb_agg(jsonb_build_object(
+                           'name', f.set_name, 'version', f.version,
+                           'rules', CASE WHEN jsonb_typeof(f.content -> 'rules') = 'array'
+                                         THEN f.content -> 'rules' ELSE '[]'::jsonb END)
+                       ORDER BY f.position, f.followed_at, f.set_id)
+                FROM rule_set_follows f
+                WHERE f.guild_id = g AND f.campaign_id = c AND f.kind = 'house_rules'),
+                '[]'::jsonb));
+    END
+    $fn$;
+
+    -- dmbot_web_house_rules_campaigns: the server's campaigns that have a house rule or follow a
+    -- house-rules set, with how many of each; at most 100. NULL when the caller is not in the
+    -- server. A person who only plays has no other list of campaigns on the site.
+    CREATE FUNCTION dmbot_web_house_rules_campaigns(g BIGINT) RETURNS JSONB
+    LANGUAGE plpgsql SECURITY DEFINER AS $fn$
+    BEGIN
+        IF dmbot_current_guild() IS DISTINCT FROM g
+           OR NOT (g = ANY ((SELECT dmbot_web_guilds())::BIGINT[])) THEN
+            RETURN NULL;
+        END IF;
+        RETURN COALESCE((
+            SELECT jsonb_agg(jsonb_build_object(
+                       'id', x.id, 'name', x.name, 'rules', x.rules, 'sets', x.sets)
+                       ORDER BY lower(x.name), x.id)
+            FROM (
+                SELECT c.id, c.name,
+                       (SELECT count(*) FROM house_rules r
+                        WHERE r.guild_id = c.guild_id AND r.campaign_id = c.id) AS rules,
+                       (SELECT count(*) FROM rule_set_follows f
+                        WHERE f.guild_id = c.guild_id AND f.campaign_id = c.id
+                          AND f.kind = 'house_rules') AS sets
+                FROM campaigns c WHERE c.guild_id = g
+                ORDER BY lower(c.name), c.id LIMIT 100
+            ) x
+            WHERE x.rules > 0 OR x.sets > 0), '[]'::jsonb);
+    END
+    $fn$;
+    DO $do$
+    BEGIN
+        EXECUTE format(
+            'ALTER FUNCTION dmbot_web_house_rules(BIGINT, TEXT)'
+            ' SET search_path = pg_catalog, %I, pg_temp',
+            current_schema());
+        EXECUTE format(
+            'ALTER FUNCTION dmbot_web_house_rules_campaigns(BIGINT)'
+            ' SET search_path = pg_catalog, %I, pg_temp',
+            current_schema());
+    END
+    $do$;
+    REVOKE ALL ON FUNCTION dmbot_web_house_rules(BIGINT, TEXT) FROM PUBLIC;
+    REVOKE ALL ON FUNCTION dmbot_web_house_rules_campaigns(BIGINT) FROM PUBLIC;
+"""
+
 MIGRATIONS: tuple[Migration, ...] = (
     ("0001_initial", INITIAL),
     ("0002_active_sessions", ACTIVE_SESSIONS),
@@ -4757,6 +4850,7 @@ MIGRATIONS: tuple[Migration, ...] = (
     ("0091_web_recap_choices", WEB_RECAP_CHOICES),  # the DM's recap choices on the site (#1468)
     ("0092_support_handed_over", SUPPORT_HANDED_OVER),  # every hand-over, kept (#1487)
     ("0093_transcript_suggestions", TRANSCRIPT_SUGGESTIONS),  # a player's suggested fix (#1491)
+    ("0098_web_house_rules", WEB_HOUSE_RULES),  # the website reads a campaign's house rules (#1521)
 )
 
 # Tables that must have row-level security. A test checks every table in the schema
