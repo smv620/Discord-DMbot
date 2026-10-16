@@ -20,7 +20,7 @@ from dmbot.memory.claims import ClaimStore
 from dmbot.memory.recall import DM_SCREEN, FACT, RecallService
 from dmbot.memory.store import MemoryStore
 
-HEADER = "📜 **Before tonight**"
+HEADER = "📜 **Before tonight**\n*From what you confirmed. Only you see this.*"
 MAX_LINES = 8  # lines under the header
 MAX_CHARS = 1000  # the whole note
 LINE_CHARS = 140  # one line
@@ -75,10 +75,10 @@ def _clip(text: str, limit: int = LINE_CHARS) -> str:
 
 def _plain(text: str) -> str:
     """A name or a title as plain text inside the note's own bold and italics: nothing in it can
-    open or close markdown (`*`, `_`, `~`, `|`, backticks and `>` get a backslash)."""
+    open or close markdown or make a link (`* _ ~ | ` > [ ] ( ) <` get a backslash)."""
     out = []
     for ch in " ".join(text.split()):
-        out.append("\\" + ch if ch in "*_~|`>\\" else ch)
+        out.append("\\" + ch if ch in "*_~|`>[]()<\\" else ch)
     return "".join(out)
 
 
@@ -89,8 +89,8 @@ def compose(facts: Facts) -> Note | None:
     (never cut mid-way)."""
     lines: list[str] = []
     if facts.recap_title:
-        day = f" (Day {facts.recap_day})" if facts.recap_day else ""
-        lines.append(_clip(f"Last time: *{_plain(facts.recap_title)}*{day}"))
+        day = f" (story day {facts.recap_day})" if facts.recap_day else ""
+        lines.append(_clip(f"Last recap: *{_plain(facts.recap_title)}*{day}"))
     for sentence in list(facts.open_facts)[:FACT_LINES]:
         lines.append(_clip(f"• {_plain(sentence)}"))
     for name, condition in list(facts.conditions)[:CONDITION_LINES]:
@@ -98,8 +98,12 @@ def compose(facts: Facts) -> Note | None:
         if words:
             lines.append(_clip(f"• {_plain(name)} {words}"))
     if facts.waiting > 0:
-        what = "thing" if facts.waiting == 1 else "things"
-        lines.append(f"🗣️ {facts.waiting} {what} said at the table to check")
+        said = (
+            "1 thing someone said is"
+            if facts.waiting == 1
+            else f"{facts.waiting} things people said are"
+        )
+        lines.append(f"🗣️ {said} waiting for your check")
     lines = lines[:MAX_LINES]
     if not lines:
         return None
@@ -136,26 +140,35 @@ class PreSession:
         recorded now: the waiting-questions count drops those citing anyone who is not (as the
         after-session count does)."""
         async with self._memory._read(guild_id, campaign_id) as scope:
+            # The latest session that has a confirmed name heard in it (a session in which only
+            # people or unconfirmed names were heard says nothing to start from).
             cur = await scope.conn.execute(
-                "SELECT h.entity_id, sum(h.times)::int AS n FROM memory_heard h"
-                " JOIN memory_entities e ON e.guild_id = h.guild_id"
+                "WITH heard AS (SELECT h.entity_id, h.session_started_at, h.times"
+                "   FROM memory_heard h JOIN memory_entities e ON e.guild_id = h.guild_id"
                 "   AND e.campaign_id = h.campaign_id AND e.id = h.entity_id"
-                " WHERE h.guild_id = %s AND h.campaign_id = %s"
-                " AND h.session_started_at = (SELECT max(session_started_at) FROM memory_heard"
-                "   WHERE guild_id = %s AND campaign_id = %s)"
-                " AND e.status = 'confirmed' AND e.type <> 'person'"
-                " GROUP BY h.entity_id ORDER BY n DESC, h.entity_id LIMIT %s",
-                (*scope.ids, *scope.ids, SEEDS),
+                "   WHERE h.guild_id = %s AND h.campaign_id = %s"
+                "   AND e.status = 'confirmed' AND e.type <> 'person')"
+                " SELECT entity_id, sum(times)::int AS n FROM heard"
+                " WHERE session_started_at = (SELECT max(session_started_at) FROM heard)"
+                " GROUP BY entity_id ORDER BY n DESC, entity_id LIMIT %s",
+                (*scope.ids, SEEDS),
             )
             seeds = [str(r["entity_id"]) for r in await cur.fetchall()]
+            cur = await scope.conn.execute(
+                "SELECT max(session_started_at) AS at FROM memory_heard"
+                " WHERE guild_id = %s AND campaign_id = %s",
+                scope.ids,
+            )
+            last = await cur.fetchone()
+            since = int(last["at"]) if last and last["at"] is not None else 0
             cur = await scope.conn.execute(
                 "SELECT e.name, s.condition FROM memory_states s"
                 " JOIN memory_entities e ON e.guild_id = s.guild_id"
                 "   AND e.campaign_id = s.campaign_id AND e.id = s.entity_id"
                 " WHERE s.guild_id = %s AND s.campaign_id = %s AND s.closed_at IS NULL"
-                " AND s.condition = ANY(%s) AND e.status = 'confirmed'"
+                " AND s.condition = ANY(%s) AND e.status = 'confirmed' AND s.created_at >= %s"
                 " ORDER BY s.created_at DESC, s.id LIMIT %s",
-                (*scope.ids, list(CONDITION_WORDS), CONDITION_LINES),
+                (*scope.ids, list(CONDITION_WORDS), since, CONDITION_LINES),
             )
             conditions = [(str(r["name"]), str(r["condition"])) for r in await cur.fetchall()]
         sentences: list[str] = []
@@ -169,10 +182,10 @@ class PreSession:
                 hops=1,
             )  # no one is passed as recorded: no transcript line is read or quoted
             sentences = [i.text for i in found.items if i.kind == FACT]
-        counts = await self._claims.counts(guild_id, campaign_id, opted_in=opted_in)
+        waiting = await self._claims.waiting_for_check(guild_id, campaign_id, opted_in=opted_in)
         title, day = None, None
         if self._recaps is not None:
             last = await self._recaps.bridge(guild_id, campaign_id, now + 1)
             if last is not None and last.title:
                 title, day = last.title, last.game_day
-        return compose(Facts(title, day, sentences, conditions, int(counts.get("proposed", 0))))
+        return compose(Facts(title, day, sentences, conditions, waiting))

@@ -286,6 +286,7 @@ FORGET_TIMEOUT_S = 10  # removing learned names must not hold up stopping a reco
 DISPLAY_NAME_REFRESH_S = 86400  # a person's Discord name is kept on their account once a day
 DISPLAY_NAME_TIMEOUT_S = 3  # for the background update
 NAMES_NOTED_MAX = 5000  # people remembered as just noted; the oldest half go past this
+PRESESSION_NOTE_WAIT_S = 15.0  # the longest the pre-session note may take (#1403)
 RECAPS_PER_ROUND = 2  # recap jobs worked in one minute, across all servers (a small global limit)
 RECAP_ROUND_S = 60
 METER_INTERVAL_S = 60  # how often listening minutes are written to the hours meter (#437)
@@ -1639,7 +1640,8 @@ class DMBot(commands.AutoShardedBot):
                 presession = PreSession(
                     self.memory, RecallService(self.memory), ClaimStore(self.memory), self.recaps
                 )
-                note = await presession.note(gid, cid, now=int(time.time()), opted_in=agreed)
+                async with asyncio.timeout(PRESESSION_NOTE_WAIT_S):  # never a stuck connection
+                    note = await presession.note(gid, cid, now=int(time.time()), opted_in=agreed)
                 if note is None or self.tables.get(gid) is not table:
                     return  # nothing confirmed, or the session ended meanwhile
                 await self.post(

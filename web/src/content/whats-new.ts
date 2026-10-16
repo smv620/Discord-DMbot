@@ -109,7 +109,7 @@ export const held: Held[] = [
   {
     date: "2026-10-16",
     title: "A note before tonight's session",
-    what: "When a session starts, DMbot can post a short note for the game master on the DM screen: last time's recap, who was talked about and what is open about them, anything lost or ended, and how many things said at the table wait to be checked. Players do not see it.",
+    what: "When a session starts, DMbot can post a short note on the DM screen, for the game master only. It lists last time's recap, what you confirmed about the names heard last time, anything lost or ended, and how many things said at the table wait for your check. It shows nothing until you have confirmed something. Players do not see it.",
     reason:
       "Held until it has been seen working on the test server (#1403).",
   },

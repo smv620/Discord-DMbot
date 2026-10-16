@@ -41,19 +41,25 @@ class Wording(unittest.TestCase):
         self.assertEqual(
             note.lines,
             (
-                "Last time: *The Ferry at Dusk* (Day 12)",
+                "Last recap: *The Ferry at Dusk* (story day 12)",
                 "• Mira owes Mother Ilse a favour",
                 "• Heartseeker is lost",
-                "🗣️ 3 things said at the table to check",
+                "🗣️ 3 things people said are waiting for your check",
             ),
         )
-        self.assertTrue(note.text.startswith("📜 **Before tonight**\n"))
+        self.assertTrue(
+            note.text.startswith(
+                "📜 **Before tonight**\n*From what you confirmed. Only you see this.*\n"
+            )
+        )
         self.assertEqual(note.waiting, 3)
 
     def test_one_thing_is_singular_and_no_day_means_no_day(self) -> None:
         note = compose(Facts("Dusk", None, [], [], 1))
         assert note is not None
-        self.assertEqual(note.lines, ("Last time: *Dusk*", "🗣️ 1 thing said at the table to check"))
+        self.assertEqual(
+            note.lines, ("Last recap: *Dusk*", "🗣️ 1 thing someone said is waiting for your check")
+        )
 
     def test_it_never_runs_over_eight_lines_or_a_thousand_characters(self) -> None:
         many = Facts("T", 1, [f"Name {n} owes a favour" for n in range(20)],
@@ -127,7 +133,7 @@ class Selecting(MemoryTest):
     ) -> None:
         got = await self.note()
         assert got is not None
-        self.assertEqual(got.lines[0], "Last time: *The Ferry at Dusk* (Day 12)")
+        self.assertEqual(got.lines[0], "Last recap: *The Ferry at Dusk* (story day 12)")
         text = got.text
         self.assertIn("Mira", text)
         self.assertIn("Mother Ilse", text)
@@ -164,7 +170,7 @@ class Selecting(MemoryTest):
         got = await self.note()
         assert got is not None
         self.assertEqual(got.waiting, 1)
-        self.assertIn("1 thing said at the table to check", got.text)
+        self.assertIn("1 thing someone said is waiting for your check", got.text)
 
     async def test_a_name_that_is_only_a_proposal_is_not_in_the_note(self) -> None:
         guess = await self.entry("Stray Wolf", status="proposed")
@@ -212,11 +218,44 @@ class Selecting(MemoryTest):
     async def test_no_recap_yet_means_no_last_time_line(self) -> None:
         got = await self.note(recaps=SimpleNamespace(bridge=AsyncMock(return_value=None)))
         assert got is not None
-        self.assertFalse([line for line in got.lines if line.startswith("Last time")])
+        self.assertFalse([line for line in got.lines if line.startswith("Last recap")])
 
     async def test_it_asks_for_the_latest_posted_recap_before_now(self) -> None:
         await self.note()
         self.recaps.bridge.assert_awaited_once_with(GUILD_A, self.c, LATER + 1)
+
+    async def test_a_claim_citing_someone_not_recorded_now_is_not_counted_and_not_wiped(
+        self,
+    ) -> None:
+        claims = ClaimStore(self.memory)
+        await claims.propose(
+            GUILD_A, self.c, [Extracted("Mira", "carries", "Heartseeker", "", ("C1",), "dm_said")],
+            {"C1": 7}, opted_in=AGREED, prompt_version="p", model="m", session_started_at=S2,
+        )  # fmt: skip
+        stopped = await self.note(opted_in={8})  # the speaker of C1 (7) is not recorded now
+        assert stopped is not None
+        self.assertEqual(stopped.waiting, 0)
+        self.assertNotIn("waiting for your check", stopped.text)
+        # And nothing was wiped: when they agree again the question is still there.
+        again = await self.note(opted_in={7})
+        assert again is not None
+        self.assertEqual(again.waiting, 1)
+
+    async def test_when_the_latest_session_heard_nothing_confirmed_the_one_before_is_used(
+        self,
+    ) -> None:
+        guess = await self.entry("Stray Wolf", status="proposed")
+        await self.memory.add_session_heard(GUILD_A, self.c, LATER, [Heard(guess, 7, 50)])
+        got = await self.note()
+        assert got is not None
+        self.assertIn("Mira", got.text)
+
+    async def test_a_condition_from_before_last_session_is_not_news(self) -> None:
+        self.now = S1  # set long ago, before the last session (S2) began
+        await self.memory.set_condition(GUILD_A, self.c, self.sword, "lost", source="dm")
+        got = await self.note()
+        assert got is not None
+        self.assertNotIn("Heartseeker is lost", got.text)
 
     async def test_it_reads_no_transcript_line(self) -> None:
         # The recall is given no one as recorded, so it quotes nothing and reads no line.
@@ -236,12 +275,28 @@ class FastEnough(Speed):
 
     async def test_the_note_on_a_big_campaign_is_fast(self) -> None:
         await Speed.build(self)  # type: ignore[arg-type]
-        service = PreSession(self.memory, RecallService(self.memory), ClaimStore(self.memory), None)
-        await service.note(GUILD_A, self.c, now=LATER, opted_in=AGREED)  # warm the plans
+        async with self.db.guild(GUILD_A) as conn:  # a last session to start from
+            await conn.execute(
+                "INSERT INTO memory_heard (guild_id, campaign_id, entity_id, session_started_at,"
+                " speaker_id, times) SELECT %s, %s, md5('e' || n), %s, 7, 1 + n %% 9"
+                " FROM generate_series(1, 300) AS n",
+                (GUILD_A, self.c, S2),
+            )
+            await conn.execute("ANALYZE memory_heard")
+
+        def fresh() -> PreSession:  # a new service each time: the ontology is not cached
+            return PreSession(
+                self.memory, RecallService(self.memory), ClaimStore(self.memory), None
+            )
+
+        first = await fresh().note(GUILD_A, self.c, now=LATER, opted_in=AGREED)
+        assert first is not None  # it really found something to say
+        self.assertGreater(len(first.lines), 0)
+        self.assertLessEqual(len(first.text), presession.MAX_CHARS)
         times = []
         for _ in range(7):
             started = time.perf_counter()
-            await service.note(GUILD_A, self.c, now=LATER, opted_in=AGREED)
+            await fresh().note(GUILD_A, self.c, now=LATER, opted_in=AGREED)
             times.append((time.perf_counter() - started) * 1000)
         self.assertLess(
             min(times), 100, f"best {min(times):.1f} ms, median {statistics.median(times):.1f} ms"
@@ -302,7 +357,7 @@ class OnTheDmScreen(unittest.IsolatedAsyncioTestCase):
             patch.undo()
         return bot
 
-    NOTE = Note("📜 **Before tonight**\nLast time: *X*", ("Last time: *X*",), 0)
+    NOTE = Note("📜 **Before tonight**\nLast recap: *X*", ("Last recap: *X*",), 0)
 
     async def test_it_goes_to_the_dm_screen_and_only_there(self) -> None:
         bot = await self.go(self.NOTE)
