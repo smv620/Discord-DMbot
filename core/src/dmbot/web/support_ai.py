@@ -367,7 +367,7 @@ class SupportHelper:
         *,
         tell_person: bool = True,
     ) -> None:
-        if not await support.escalate(self._db, ticket.id, reason):
+        if not await support.escalate(self._db, ticket.id, reason, int(self._clock())):
             return
         lines = [
             f"Why: {WHY[reason]}",

@@ -129,6 +129,15 @@ export const text = {
   } as Record<string, string>,
   // A non-breaking space, so the count never drops onto a line of its own on a phone.
   ticketFilterCount: (label: string, count: number): string => `${label}\u00a0(${count})`,
+  // How support went in the last seven days (#1480): counts only, zero-safe.
+  weekNone: "No questions this week.",
+  weekReasonWords: {
+    unhappy: "unhappy",
+    asked: "asked",
+    limit: "five answers used",
+    "no-email": "no email",
+    "helper-down": "helper down",
+  } as Record<string, string>,
   // The same words on a ticket as on the button that finds it ("New" and "Needs a reply" were one
   // state under two names).
   ticketRowStatuses: {
@@ -197,8 +206,44 @@ export const text = {
   ticketsTryAgain: "Try again",
 } as const;
 
+/** How long a ticket has waited, as one short phrase (#1485): "waiting 10 min", "waiting 3 h",
+ * "waiting 2 days". Everything is rounded down, so "1 day" always means at
+ * least a day and nothing shows "60 min" or "24 h"; under a minute counts as 1 min; a clock a
+ * little behind the ticket's time never shows a negative. */
+export function waitingFor(seconds: number): string {
+  const s = Math.max(0, seconds);
+  if (s < 3600) return `waiting ${Math.max(1, Math.floor(s / 60))} min`;
+  const hours = Math.max(1, Math.floor(s / 3600));
+  if (s < 86_400) return `waiting ${hours} h`;
+  const days = Math.floor(s / 86_400);
+  return `waiting ${days} ${days === 1 ? "day" : "days"}`;
+}
+
 /** What a save did, in words: "Same as Guild, until Dec 31, 2026" or "No limits, no end
  * date". `date` is the already-formatted last day. */
+/** "This week: 12 questions, 9 answered by DMbot's helper, 2 by the team, 1 waiting. Helper handed
+ * over 2 (unhappy 1, asked 1)." (#1480). No questions: one plain line. A code we don't know is left
+ * out of the brackets (the count still includes it). */
+export function weekLine(week: {
+  questions: number;
+  helper: number;
+  team: number;
+  waiting: number;
+  reasons: Record<string, number>;
+}): string {
+  if (week.questions <= 0) return text.weekNone;
+  const noun = week.questions === 1 ? "question" : "questions";
+  let line = `This week: ${week.questions} ${noun}, ${week.helper} answered by DMbot's helper, ${week.team} by the team, ${week.waiting} waiting.`;
+  const handed = Object.values(week.reasons).reduce((sum, n) => sum + n, 0);
+  if (handed > 0) {
+    const parts = Object.entries(week.reasons)
+      .filter(([code, n]) => n > 0 && text.weekReasonWords[code])
+      .map(([code, n]) => `${text.weekReasonWords[code]} ${n}`);
+    line += ` Helper handed over ${handed}${parts.length ? ` (${parts.join(", ")})` : ""}.`;
+  }
+  return line;
+}
+
 export function saved(level: string, date: string | null): string {
   return `${text.levels[level] ?? level}, ${date ? `until ${date}` : "no end date"}`;
 }

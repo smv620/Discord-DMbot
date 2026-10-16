@@ -5,7 +5,7 @@ shown before using a set, and the one-line notes after Follow and Unfollow. The 
 
 from __future__ import annotations
 
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Collection, Sequence
 from typing import Any
 
 import discord
@@ -97,16 +97,20 @@ class ShareChoose(_Menu):
         offered: Sequence[dict[str, Any]],
         done: Callable[[discord.Interaction, list[dict[str, Any]]], Any],
         *,
-        start_ticked: bool = True,
+        start: Collection[str] | None = None,
+        skip_keeps_start: bool = False,
         go_label: str = "Share with ticked",
         skip_label: str = "Rules only",
         placeholder: str = "Relationships to share",
     ) -> None:
         super().__init__()
         self.offered = list(offered)[:MENU_MAX]
-        # At Share everything starts ticked. When a set is published again, nothing does: the
-        # DM adds a relationship on purpose (#1475).
-        self.ticked = {d["key"] for d in self.offered} if start_ticked else set()
+        # At Share everything starts ticked. When a set is published again, what the set carries
+        # starts ticked and a new one does not: the DM adds one on purpose (#1475), and takes one
+        # out by unticking it (#1479).
+        self.ticked = {d["key"] for d in self.offered} if start is None else set(start)
+        self._start = set(self.ticked)  # what "Keep as it is" keeps, whatever is picked later
+        self._skip_keeps_start = skip_keeps_start
         self._done = done
         self.add_item(
             _Select(
@@ -137,7 +141,11 @@ class ShareChoose(_Menu):
 
     async def _none(self, interaction: discord.Interaction) -> None:
         self.stop()
-        await self._done(interaction, [])
+        keep = (
+            [d for d in self.offered if d["key"] in self._start] if self._skip_keeps_start else []
+        )
+        # (the select may have been changed first: "Keep as it is" means the starting ticks)
+        await self._done(interaction, keep)
 
 
 CHOOSE_TEXT = (
@@ -148,9 +156,12 @@ CHOOSE_TEXT = (
 
 
 NEW_TEXT = (
-    "You made new relationships since you shared. Tick any to add to your shared rules.\n"
-    "Other tables get each one's name and what it means, not your facts, names or notes. The "
-    "ones you shared before stay.\n"
+    "Ticked relationships are shared with your rules.\n"
+    "Tick a new one to add it.\n"
+    "Untick one to stop sharing it. It stays in your campaign. Other tables lose it at their "
+    "next session start.\n"
+    "They get each one's name and meaning, never your facts, names or notes.\n"
+    "**Use ticked** applies your ticks. **Keep as it is** ignores any change you made here.\n"
     "You'll see the changes before anything is published."
 )
 
