@@ -673,6 +673,36 @@ class Moves(DatabaseTest):
         self.assertEqual(fake.retargeted, [("cus_old1", "sub_old1", NEW)])
         self.assertEqual(await move_sync.sync_moves(web, fake), 0)  # done once
 
+    async def test_the_recap_audio_add_on_follows_the_move_and_no_second_one_appears(self) -> None:
+        async with self.db.plan_writer(OLD) as conn:
+            await conn.execute(
+                "UPDATE entitlements SET recap_audio_until = %s, recap_audio_subscription_id ="
+                " 'sub_audio' WHERE user_id = %s",
+                (NOW + 86400, OLD),
+            )
+        web = await self.web()
+        await self.moves.move(OLD, NEW, await self.code())
+        fake = FakeProvider(b"s" * 32, "https://site.example.com")
+        self.assertEqual(await move_sync.sync_moves(web, fake), 1)
+        # The plan's records, then the add-on's subscription alone (the customer was done).
+        self.assertEqual(fake.retargeted, [("cus_old1", "sub_old1", NEW), (None, "sub_audio", NEW)])
+        # The new account has the add-on and the old one has nothing.
+        self.assertEqual(
+            await self.scalar("SELECT recap_audio_subscription_id FROM entitlements", person=NEW),
+            "sub_audio",
+        )
+        self.assertIsNone(
+            await self.scalar("SELECT 1 FROM entitlements WHERE user_id = %s", OLD, person=OLD)
+        )
+        self.assertEqual(await move_sync.sync_moves(web, fake), 0)  # done once
+
+    async def test_a_move_without_an_add_on_retargets_only_the_plan(self) -> None:
+        web = await self.web()
+        await self.moves.move(OLD, NEW, await self.code())
+        fake = FakeProvider(b"s" * 32, "https://site.example.com")
+        await move_sync.sync_moves(web, fake)
+        self.assertEqual(fake.retargeted, [("cus_old1", "sub_old1", NEW)])
+
     async def test_twenty_stuck_moves_do_not_crowd_out_a_new_one(self) -> None:
         web = await self.web()
         async with self.db.unscoped() as conn:

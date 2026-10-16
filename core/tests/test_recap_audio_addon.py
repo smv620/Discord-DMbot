@@ -21,7 +21,7 @@ from dmbot.entitlements import (
     access_for,
     configure_free_users,
 )
-from dmbot.web import accounts, entitlements_writer
+from dmbot.web import accounts, entitlements_writer, strays
 from dmbot.web.app import create_app
 from dmbot.web.payments import FakeProvider, PaymentError
 from dmbot.web.stripe import RECAP_AUDIO_ITEM, StripeConfig, StripeProvider
@@ -495,6 +495,66 @@ class Billing(Payments):
 
         self.provider.cancel = broken  # type: ignore[method-assign]
         self.assertEqual((await self.audio()).status_code, 200)
+
+    async def stray_rows(self) -> list[str]:
+        async with self.db.unscoped() as conn:
+            cur = await conn.execute("SELECT subscription_id FROM recap_audio_strays")
+            return [str(r["subscription_id"]) for r in await cur.fetchall()]
+
+    async def test_a_stray_the_company_refused_is_swept_later_once_an_hour_until_it_works(
+        self,
+    ) -> None:
+        down = True
+        tried: list[str] = []
+        real = self.provider.cancel
+
+        async def flaky(*, subscription_id: str) -> None:
+            tried.append(subscription_id)
+            if down:
+                raise PaymentError("down")
+            await real(subscription_id=subscription_id)
+
+        self.provider.cancel = flaky  # type: ignore[method-assign]
+        self.assertEqual((await self.audio()).status_code, 200)  # no plan: a stray, refused
+        self.assertEqual(await self.stray_rows(), ["sub_audio"])
+        self.assertEqual(await strays.sweep(self.db, self.provider), 0)  # tried a moment ago
+        self.assertEqual(tried, ["sub_audio"])
+        async with self.db.unscoped() as conn:
+            await conn.execute("UPDATE recap_audio_strays SET last_try_at = 0")  # an hour on
+        self.assertEqual(await strays.sweep(self.db, self.provider), 0)  # still refused
+        self.assertEqual(tried, ["sub_audio", "sub_audio"])
+        self.assertEqual(await strays.sweep(self.db, self.provider), 0)  # not due again yet
+        self.assertEqual(len(tried), 2)
+        down = False
+        async with self.db.unscoped() as conn:
+            await conn.execute("UPDATE recap_audio_strays SET last_try_at = 0")
+        self.assertEqual(await strays.sweep(self.db, self.provider), 1)
+        self.assertEqual(self.provider.cancelled, ["sub_audio"])
+        self.assertEqual(await self.stray_rows(), [])  # done: nothing is kept
+
+    async def test_a_cancel_that_works_at_once_keeps_nothing(self) -> None:
+        await self.audio()
+        self.assertEqual(self.provider.cancelled, ["sub_audio"])
+        self.assertEqual(await self.stray_rows(), [])
+
+    async def test_an_add_on_whose_plan_ended_and_whose_cancel_failed_is_swept_too(self) -> None:
+        await self.start_table()
+        await self.audio()
+
+        async def broken(*, subscription_id: str) -> None:
+            raise PaymentError("down")
+
+        real = self.provider.cancel
+        self.provider.cancel = broken  # type: ignore[method-assign]
+        await self.send(
+            kind="subscription_ended", subscription_id="sub_1", occurred_at=self.now + 9
+        )
+        self.assertEqual(await self.stray_rows(), ["sub_audio"])
+        self.provider.cancel = real  # type: ignore[method-assign]
+        async with self.db.unscoped() as conn:
+            await conn.execute("UPDATE recap_audio_strays SET last_try_at = 0")
+        self.assertEqual(await strays.sweep(self.db, self.provider), 1)
+        self.assertEqual(self.provider.cancelled, ["sub_audio"])
 
     async def test_no_second_checkout_while_a_subscription_is_held(self) -> None:
         await self.start_table()
