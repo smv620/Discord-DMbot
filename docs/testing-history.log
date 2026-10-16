@@ -2423,3 +2423,15 @@ Overall ...................................... PASS (Deepgram baseline: 33/33, 1
   form; (3) a quick question naming a confirmed entry on the test server gets a reply, and nothing from that entry's description
   appears in the raw transcript line. Follow-ups: the sidebar checker on #1370 (needs the key, run by the owner) and the recall speed
   numbers on #1350 (dev1, on a throwaway Postgres on this server).
+
+==============================================================================
+2026-10-16  dev1  Follow-ups to the quick-answers deploy (4d7aea9b, 02:17 UTC): error check, recall speed, a CI bug
+  10-minute error check (Supervisor's): at 02:25 UTC, 8 minutes after the deploy, and again at 02:41: 0 ERROR, CRITICAL or traceback lines in core and
+  web-api since 02:17; both up, web-api healthy. No quick-answer session and no ticket in the logs yet, so checks 2 and 3 of the handover (a paying test
+  account sees its own ticket with a status; a quick question naming a confirmed entry gets a reply and nothing of the entry's description is in the raw
+  transcript line) wait for the owner or WebDev.
+  Recall speed (#1350), tests/test_recall.py::Speed on development 4d7aea9b: a throwaway Postgres 16 on this server (4 CPUs, 7.7 GB, default settings), not the live
+  database; 3 runs of 7 recalls on 3,000 entries and 10,000 facts. DM screen best 54.0 / 43.5 / 49.4 ms, median 65.8 / 52.3 / 61.8, worst 76.2 / 58.7 / 80.6; players
+  best 42.2 / 45.6 / 46.7, median 57.5 / 63.4 / 59.4, worst 68.7 / 75.1 / 82.6. The best case meets the 50 ms goal (5 of 6 under it); a typical recall (median 52 to
+  66 ms) does not quite. Numbers and caveats on #1350.
+  Found: the CI check post-supervisor-status fails on every pull request (scripts/supervisor_review.py imports datetime.UTC, Python 3.11+, and the job runs Python 3.10): #1409.
