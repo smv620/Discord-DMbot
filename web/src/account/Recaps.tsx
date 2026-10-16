@@ -11,7 +11,15 @@ import {
   statusLine,
   text,
 } from "../content/recaps";
-import { ApiError, type AccountApi, type Recap, type RecapAction } from "./api";
+import { panelWords } from "../content/recap-panel";
+import { RECAP_AUDIO_LIVE } from "../content/recap-words";
+import {
+  ApiError,
+  type AccountApi,
+  type Recap,
+  type RecapAction,
+  type RecapAudioLinks,
+} from "./api";
 
 const POLL_MS = 5000;
 
@@ -127,6 +135,125 @@ function List({ api }: { api: AccountApi }) {
   );
 }
 
+/** The narration and music (#1418): three players while the audio matches the text, otherwise a
+ * line saying where it is, and a button to make it again. Only while the audio is on. */
+function AudioPanel({
+  api,
+  recap,
+  onRecap,
+}: {
+  api: AccountApi;
+  recap: Recap;
+  onRecap: (next: Recap) => void;
+}) {
+  const audio = recap.audio;
+  const [links, setLinks] = useState<RecapAudioLinks>({});
+  const [lost, setLost] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [note, setNote] = useState<{ ok: boolean; message: string } | null>(
+    null,
+  );
+  const playable = audio?.state === "ready" && audio.current;
+
+  // The links last 15 minutes; one fresh read when a player cannot load its file.
+  const load = async (): Promise<void> => {
+    try {
+      setLinks((await api.recapAudioLinks?.(recap.ref)) ?? {});
+      setLost(false);
+    } catch {
+      setLost(true);
+    }
+  };
+  useEffect(() => {
+    if (!RECAP_AUDIO_LIVE || !playable) {
+      setLinks({});
+      return;
+    }
+    void load();
+  }, [api, recap.ref, playable]);
+
+  if (!RECAP_AUDIO_LIVE || !audio) return null;
+
+  const ask = async (): Promise<void> => {
+    if (!api.askRecapAudioAgain || busy) return;
+    setBusy(true);
+    setNote(null);
+    try {
+      onRecap(await api.askRecapAudioAgain(recap.ref));
+      setNote({ ok: true, message: panelWords.asked });
+    } catch (error) {
+      const kind = error instanceof ApiError ? error.kind : "server";
+      setNote({
+        ok: false,
+        message:
+          kind === "too-soon"
+            ? panelWords.tooSoon
+            : (errors[kind] ?? errors.other),
+      });
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const players: [keyof RecapAudioLinks, string][] = [
+    ["voice", panelWords.voice],
+    ["music", panelWords.music],
+    ["mix", panelWords.mix],
+  ];
+  const line =
+    audio.state === "queued"
+      ? panelWords.queued
+      : audio.state === "failed"
+        ? audio.error || panelWords.failed
+        : audio.state === "ready" && !audio.current
+          ? panelWords.stale
+          : audio.state === "off"
+            ? panelWords.off
+            : null;
+  return (
+    <section class="panel" aria-labelledby="recap-audio-panel">
+      <h3 id="recap-audio-panel">{panelWords.heading}</h3>
+      {playable &&
+        players.map(
+          ([kind, label]) =>
+            links[kind] && (
+              <div key={kind}>
+                <p class="small">{label}</p>
+                <audio
+                  controls
+                  preload="none"
+                  src={links[kind]}
+                  aria-label={label}
+                  onError={() => void load()}
+                />
+              </div>
+            ),
+        )}
+      {playable && lost && (
+        <p class="warn" role="alert">
+          {panelWords.expired}
+        </p>
+      )}
+      {line && <p role="status">{line}</p>}
+      {audio.canAskAgain && (
+        <button
+          type="button"
+          class="button secondary"
+          disabled={busy}
+          onClick={() => void ask()}
+        >
+          {busy ? text.busy : panelWords.again}
+        </button>
+      )}
+      {note && (
+        <p class={note.ok ? "ok" : "warn"} role={note.ok ? "status" : "alert"}>
+          {note.message}
+        </p>
+      )}
+    </section>
+  );
+}
+
 function Review({ api, recapRef }: { api: AccountApi; recapRef: string }) {
   const [load, setLoad] = useState<Load>({ kind: "loading" });
   const [recap, setRecap] = useState<Recap | null>(null);
@@ -167,7 +294,10 @@ function Review({ api, recapRef }: { api: AccountApi; recapRef: string }) {
 
   // While DMbot is writing it or posting it, look again every few seconds.
   const waiting =
-    recap !== null && (recap.working || recap.status === "posting");
+    recap !== null &&
+    (recap.working ||
+      recap.status === "posting" ||
+      recap.audio?.state === "queued");
   useEffect(() => {
     if (!waiting || !api.recap) return;
     const timer = setInterval(() => {
@@ -365,6 +495,7 @@ function Review({ api, recapRef }: { api: AccountApi; recapRef: string }) {
         )
       )}
 
+      {!editing && <AudioPanel api={api} recap={recap} onRecap={setRecap} />}
       {!editing &&
         (recap.canEdit ||
           recap.canPost ||
