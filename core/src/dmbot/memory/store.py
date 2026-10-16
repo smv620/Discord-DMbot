@@ -2535,7 +2535,7 @@ class MemoryStore:
         can't touch it. Refused, with nothing written, if the connection changed since."""
         async with self._write(guild_id, campaign_id, "undo", undoes=batch) as w:
             cur = await w.conn.execute(
-                "SELECT row_id, op, source, made_at, before FROM memory_changes"
+                "SELECT row_id, op, source, made_at, before, after FROM memory_changes"
                 " WHERE guild_id = %s AND campaign_id = %s AND batch = %s AND table_name = %s",
                 (*w.ids, batch, RELATIONS.name),
             )
@@ -2549,12 +2549,13 @@ class MemoryStore:
             if not rows or total is None or total["n"] != 1:
                 raise TooLateToUndo(self._too_late())
             (row,) = rows
-            if row["op"] != "update" or row["source"] != DM:
-                raise MemoryRuleError(NOT_FOUND)
+            after = row["after"] or {}
+            if row["op"] != "update" or row["source"] != DM or after.get("status") != REJECTED:
+                raise MemoryRuleError(NOT_FOUND)  # only a removal by the DM
+            if (row["before"] or {}).get("secret") and not secrets:
+                raise MemoryRuleError(NOT_FOUND)  # a secret is not even mentioned, old or not
             if w.now - row["made_at"] > within:
                 raise TooLateToUndo(self._too_late())
-            if (row["before"] or {}).get("secret") and not secrets:
-                raise MemoryRuleError(NOT_FOUND)  # a secret is not even mentioned
             await undo_batch(w, batch)
             back = await w.get(RELATIONS, row["row_id"])
             if back is None:

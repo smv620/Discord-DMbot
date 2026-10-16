@@ -1142,10 +1142,12 @@ class UndoConnectionButton(
                 secrets=sees_secrets(campaign, interaction.user.id),
             )
         except TooLateToUndo:
-            await _tell(interaction, "Too late to undo that. Press 🧭 Connect to… to add it again.")
+            await _tell(
+                interaction, "Too late to undo (10 minutes). Press 🧭 Connect to… to add it again."
+            )
             return
         except MemoryRuleError:
-            await _tell(interaction, NOTHING_MORE)  # changed since, or already undone
+            await _tell(interaction, f"Not undone. {NOTHING_MORE}")  # changed, or already undone
             return
         changed(interaction, campaign)
         names = await _names(interaction, campaign)
@@ -1664,7 +1666,7 @@ class Connect(_Menu):
         changed(interaction, campaign)
         self.stop()
         said = sentence(names, relation) or "that connection"
-        note = f"Removed: {_md(said)}."
+        note = f"Removed: {_md(said)}. Wrong? Press **Undo** within 10 minutes."
         await show_card(
             interaction,
             campaign.id,

@@ -224,8 +224,9 @@ class AnswerFirst(unittest.IsolatedAsyncioTestCase):
         memory = self.bot.memory
         memory.aliases = self.slow([bell])
         for write in ("set_entity_type", "confirm_entity", "set_main_name", "update_alias",
-                      "add_alias", "update_relation", "set_unique"):  # fmt: skip
+                      "add_alias", "set_unique"):  # fmt: skip
             setattr(memory, write, self.slow())
+        memory.update_relation = self.slow(SimpleNamespace(batch=7))  # the Undo needs the batch
         memory.add_entity = self.slow(SimpleNamespace(value=ENTITIES[BELL]))
         memory.confirmed_name_for = AsyncMock(return_value=None)  # a new spelling: no clash
         memory.rename_entity = self.slow(SimpleNamespace(value=ENTITIES[BELL]))

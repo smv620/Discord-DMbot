@@ -738,8 +738,7 @@ class NameCards(NamesTest):
         it = self.it()
         await view._remove_picked(it)
         note, card = it.response.edited[0]
-        self.assertIn("Removed: Ulfgar is a member of Frostwolf tribe.", note)
-        self.assertNotIn("Wrong?", note)
+        self.assertIn("Removed: Ulfgar is a member of Frostwolf tribe. Wrong? Press **Undo**", note)
         (undo,) = [c for c in card.children if isinstance(c, name_card.UndoConnectionButton)]
         return before, ulfgar, undo
 
@@ -758,7 +757,7 @@ class NameCards(NamesTest):
         await undo.callback(manager)
         from dmbot.ui import name_card
 
-        self.assertEqual(manager.response.sent[0][0], name_card.NOTHING_MORE)
+        self.assertEqual(manager.response.sent[0][0], f"Not undone. {name_card.NOTHING_MORE}")
         self.assertEqual(  # nothing written
             await self.memory.relations(
                 GUILD, self.campaign.id, entity_id=ulfgar.id, include_secret=True
@@ -784,11 +783,50 @@ class NameCards(NamesTest):
         )
         it = self.it()
         await undo.callback(it)
-        self.assertEqual(it.response.sent[0][0], name_card.NOTHING_MORE)
+        self.assertEqual(it.response.sent[0][0], f"Not undone. {name_card.NOTHING_MORE}")
         (now,) = await self.memory.relations(
             GUILD, self.campaign.id, entity_id=ulfgar.id, include_secret=True
         )
         self.assertTrue(now.secret)  # the later change stands
+
+    async def test_someone_who_cannot_manage_names_cannot_undo(self) -> None:
+        _, ulfgar, undo = await self.removed_connection(secret=False)
+        it = self.it(PLAYER)
+        await undo.callback(it)
+        self.assertEqual(
+            await self.memory.relations(GUILD, self.campaign.id, entity_id=ulfgar.id), []
+        )  # refused, nothing put back
+
+    async def test_the_store_only_undoes_one_removal_by_the_dm(self) -> None:
+        from dmbot.memory.models import TooLateToUndo
+
+        before, _ulfgar, _ = await self.removed_connection(secret=False)
+        # The removal's batch is the newest change: find it, then try other kinds of batch.
+        async with self.db.guild(GUILD) as conn:
+            cur = await conn.execute(
+                "SELECT batch, op FROM memory_changes WHERE table_name = 'memory_relations'"
+                " ORDER BY version"
+            )
+            rows = await cur.fetchall()
+        insert_batch = rows[0]["batch"]  # the connection being saved: an insert, not a removal
+        with self.assertRaises(MemoryRuleError):
+            await self.memory.undo_connection(
+                GUILD, self.campaign.id, insert_batch, within=600, secrets=True
+            )
+        with self.assertRaises(TooLateToUndo):  # a batch number that is not there
+            await self.memory.undo_connection(
+                GUILD, self.campaign.id, 10**9, within=600, secrets=True
+            )
+        other = await self.campaigns.create(GUILD, "Other", DM)
+        with self.assertRaises(TooLateToUndo):  # another campaign's log has no such batch
+            await self.memory.undo_connection(
+                GUILD, other.id, rows[-1]["batch"], within=600, secrets=True
+            )
+        self.memory._clock = lambda: time.time() + 590  # just inside the window
+        back = await self.memory.undo_connection(
+            GUILD, self.campaign.id, rows[-1]["batch"], within=600, secrets=True
+        )
+        self.assertEqual(back.value, before)
 
     async def test_undo_stops_after_ten_minutes(self) -> None:
         _, ulfgar, undo = await self.removed_connection(secret=False)
@@ -807,7 +845,7 @@ class NameCards(NamesTest):
         await undo.callback(self.it())
         again = self.it()
         await undo.callback(again)
-        self.assertEqual(again.response.sent[0][0], name_card.NOTHING_MORE)
+        self.assertEqual(again.response.sent[0][0], f"Not undone. {name_card.NOTHING_MORE}")
         self.assertEqual(
             len(await self.memory.relations(GUILD, self.campaign.id, entity_id=ulfgar.id)), 1
         )
