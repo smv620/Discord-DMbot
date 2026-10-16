@@ -121,6 +121,12 @@ class PlanChecksSetting(unittest.TestCase):
         with self.assertRaisesRegex(ConfigError, "DMBOT_STORY_EXTRACTOR must be 1"):
             load_settings({**BASE, "DMBOT_STORY_EXTRACTOR": "maybe"})
 
+    def test_recaps_are_off_unless_switched_on(self) -> None:
+        self.assertFalse(load_settings(BASE).recaps_on)
+        self.assertTrue(load_settings({**BASE, "DMBOT_RECAPS": "1"}).recaps_on)
+        with self.assertRaisesRegex(ConfigError, "DMBOT_RECAPS must be 1"):
+            load_settings({**BASE, "DMBOT_RECAPS": "sometimes"})
+
     def test_the_recall_budget_has_a_default_and_is_checked(self) -> None:
         self.assertEqual(load_settings(BASE).recall_budget, 4000)
         self.assertEqual(load_settings({**BASE, "DMBOT_RECALL_BUDGET": "9000"}).recall_budget, 9000)
@@ -131,6 +137,7 @@ class PlanChecksSetting(unittest.TestCase):
     def test_the_extractors_tier_and_call_limit(self) -> None:
         s = load_settings(BASE)
         self.assertEqual((s.story_extractor_tier, s.story_extractor_max_calls), ("fast", 480))
+        self.assertEqual(s.story_extractor_max_calls_day, 960)
         s = load_settings(
             {
                 **BASE,
@@ -145,6 +152,9 @@ class PlanChecksSetting(unittest.TestCase):
             ("DMBOT_STORY_EXTRACTOR_MAX_CALLS", "5001"),
             ("DMBOT_STORY_EXTRACTOR_MAX_CALLS", "many"),
             ("DMBOT_STORY_EXTRACTOR_MAX_CALLS", "²"),
+            ("DMBOT_STORY_EXTRACTOR_MAX_CALLS_DAY", "0"),
+            ("DMBOT_STORY_EXTRACTOR_MAX_CALLS_DAY", "50001"),
+            ("DMBOT_STORY_EXTRACTOR_MAX_CALLS_DAY", "lots"),
         ):
             with self.assertRaisesRegex(ConfigError, name):
                 load_settings({**BASE, name: bad})

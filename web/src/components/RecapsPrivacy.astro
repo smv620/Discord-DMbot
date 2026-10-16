@@ -1,0 +1,55 @@
+---
+// The privacy page's section on recaps (#1384). Every sentence rests on the code (the pull request
+// lists the lines): recaps/ and bot.py (what the AI is given, Post, the checks), recaps/notify.py
+// (the email), campaigns/store.py (a recap goes with its campaign). It renders nothing until recaps
+// are live (content/recap-words.ts), and the narration part nothing until audio is.
+import { aiTrainingSentence } from "../content/legal";
+
+interface Props {
+  live: boolean;
+  audio: boolean;
+}
+const { live, audio } = Astro.props;
+---
+
+{
+  live && (
+    <>
+      <h2 id="recaps">Recaps</h2>
+      <ul>
+        <li>
+          <strong>What it is.</strong> After a session, DMbot can write a short story-style recap of
+          it for the game master. Only paid plans have it.
+        </li>
+        <li>
+          <strong>Who writes it.</strong> The AI company named above (Anthropic). It gets the text of
+          what people who said yes said in that session (marked only "DM" or "Player"), the names
+          the game master confirmed (never the ones marked secret), the game's last posted recap and
+          the day in the story. It does not get sound. {aiTrainingSentence}
+        </li>
+        <li>
+          <strong>Who sees it.</strong> Only the game masters of that campaign, until one of them
+          presses Post. Posting puts it in the table's chat channel (dmb-chat), where everyone who
+          can see that channel can read it. DMbot emails a game master when it is ready or could
+          not be written: the email has the title (or the reason) and a link, never the recap, and
+          has no link to stop it. DMbot won't post a recap if a player has stopped being recorded
+          since it was written.
+        </li>
+        <li>
+          <strong>How long it is kept.</strong> A recap, and the list of what happened that it was
+          made from, are kept with the campaign and deleted when the campaign is deleted. Trying
+          again replaces the old text, and Don't post keeps the draft saved. We keep a short note
+          that the email was sent, with no words in it, and delete it after 90 days. The email
+          itself holds the recap's title and goes through Google, like our other email.
+        </li>
+        {audio && (
+          <li>
+            <strong>Narrated recaps.</strong> To make the voice and the music, the words to be read
+            aloud and short descriptions of the music go to ElevenLabs. We do not keep the audio
+            files on our server.
+          </li>
+        )}
+      </ul>
+    </>
+  )
+}

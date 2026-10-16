@@ -45,9 +45,13 @@ describe("What's new", () => {
 
   it("holds back what people can't use yet, with the reason, and shows none of it (#1322)", () => {
     expect(held.map((h) => h.title)).toEqual([
+      "Recaps for your table", // until dev1 has checked a real recap (#1382, #1384)
       "Ask a question in public", // until QAbot is live (#1352)
       "Move to a new Discord account",
+      "A recap of last session",
       "New names from what was said",
+      "A note before tonight's session",
+      "When a player says a secret name",
     ]);
     for (const h of held) {
       expect(h.reason.length, h.title).toBeGreaterThan(20);
@@ -56,6 +60,9 @@ describe("What's new", () => {
     const shown = page.querySelector("main")?.textContent ?? "";
     expect(shown).not.toContain("Move to a new Discord account");
     expect(shown).not.toContain("New names from what was said");
+    expect(shown).not.toContain("A note before tonight");
+    expect(shown).not.toContain("When a player says a secret name");
+    expect(shown).not.toContain("A recap of last session");
     expect(shown).not.toContain("move code");
     expect(shown).not.toContain("Ask a question in public"); // not until QAbot is live
     expect(shown).not.toContain("QAbot");

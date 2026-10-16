@@ -116,7 +116,16 @@ LIMITS: dict[str, Group] = {
         redirect_param="signin",
     ),
     "install": Group(20, 10 * 60, ("/install", "/install/callback"), redirect_param="install"),
-    "billing": Group(10, 10 * 60, ("/billing/checkout", "/billing/portal", "/billing/extra-hours")),
+    "billing": Group(
+        10,
+        10 * 60,
+        (
+            "/billing/checkout",
+            "/billing/portal",
+            "/billing/extra-hours",
+            "/billing/recap-audio",
+        ),
+    ),
     "delete": Group(5, 60 * 60, ("/account/delete/request",)),
     # Ending every sign-in is safe (signing in again is one click) but is still a write per
     # call, so a few a minute is far above real use (#1163). Like the other groups it counts

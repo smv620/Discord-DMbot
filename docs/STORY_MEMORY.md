@@ -506,6 +506,13 @@ does Mira know about the cult?", Phase 6), the **pre-session note** ("Before ton
 open threads, a promise due to Mother Ilse, 2 NPCs who may show up"), and the end-of-session
 AI recap.
 
+**Built (#1403):** the pre-session note is `dmbot.memory.presession`: when a session starts
+(not after a restart) the DM screen gets the last posted recap's title, what is open about the
+names heard last session (recall, `dm_screen` audience, one hop), conditions worth remembering
+(dead, lost, destroyed, missing, captured) and the count of questions waiting to be checked, in at
+most 8 lines and 1,000 characters. No AI call. `DMBOT_PRESESSION_NOTE` (default on); plans with
+story memory only; nothing confirmed, no note.
+
 Meaning-based search (`pgvector` over summaries and claims) is optional and only if
 tests show names and connections miss too much; it's in the existing open decision
 on embeddings. Apache AGE is still not needed: these are 1–2 hop lookups.
