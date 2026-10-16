@@ -1,0 +1,196 @@
+"""The pre-session note (#1403, docs/STORY_MEMORY.md section 7): a few lines on the DM screen when
+a session starts, from what the DM has confirmed: "Before tonight: last time, who was talked
+about and what is open about them, what was lost or ended, what is still waiting to be checked".
+
+It is DM-screen content and is built for the DM alone: secret names and facts are included
+(recall for the `dm_screen` audience), and nothing here is written anywhere else or put in a
+transcript. No AI is called. Pure wording is in `compose`; `PreSession` does the reads, a few
+indexed lookups plus one recall, so it takes milliseconds on a campaign of thousands of entries.
+
+The note is never empty padding: a campaign with nothing confirmed gets no note at all.
+"""
+
+from __future__ import annotations
+
+from collections.abc import Collection, Sequence
+from dataclasses import dataclass
+from typing import Protocol
+
+from dmbot.memory.claims import ClaimStore
+from dmbot.memory.recall import DM_SCREEN, FACT, RecallService
+from dmbot.memory.store import MemoryStore
+
+HEADER = "📜 **Before tonight**\n*From what you confirmed. Only you see this.*"
+MAX_LINES = 8  # lines under the header
+MAX_CHARS = 1000  # the whole note
+LINE_CHARS = 140  # one line
+SEEDS = 5  # the names most heard last session
+FACT_LINES = 3
+CONDITION_LINES = 3
+RECALL_BUDGET = 1500  # characters one recall may hold
+# What a condition reads as. Only the ones worth remembering: "alive" and "intact" are the
+# ordinary state of things, so they are not news.
+CONDITION_WORDS = {
+    "dead": "is dead",
+    "lost": "is lost",
+    "destroyed": "is destroyed",
+    "missing": "is missing",
+    "captured": "is captured",
+}
+
+
+class _LastRecap(Protocol):
+    # Read-only properties: the recap store's `Job` is a frozen dataclass, whose fields a plain
+    # protocol attribute (settable) would refuse.
+    @property
+    def title(self) -> str: ...
+
+    @property
+    def game_day(self) -> int | None: ...
+
+
+class RecapBridge(Protocol):
+    """What the note asks of the recap store: its latest *posted* recap before a time."""
+
+    async def bridge(self, guild_id: int, campaign_id: str, before: int) -> _LastRecap | None: ...
+
+
+@dataclass(frozen=True, slots=True)
+class Note:
+    text: str
+    lines: tuple[str, ...]
+    waiting: int  # claims waiting to be checked: the poster adds the button when this is above 0
+
+
+@dataclass(frozen=True, slots=True)
+class Facts:
+    """What the note is made of, already selected (so the wording needs no database)."""
+
+    recap_title: str | None = None
+    recap_day: int | None = None
+    open_facts: Sequence[str] = ()  # plain sentences, best first
+    conditions: Sequence[tuple[str, str]] = ()  # (name, condition), newest first
+    waiting: int = 0
+
+
+def _clip(text: str, limit: int = LINE_CHARS) -> str:
+    text = " ".join(text.split())
+    return text if len(text) <= limit else text[: limit - 1].rstrip() + "…"
+
+
+def _plain(text: str) -> str:
+    """A name or a title as plain text inside the note's own bold and italics: nothing in it can
+    open or close markdown or make a link (`* _ ~ | ` > [ ] ( ) <` get a backslash)."""
+    out = []
+    for ch in " ".join(text.split()):
+        out.append("\\" + ch if ch in "*_~|`>[]()<\\" else ch)
+    return "".join(out)
+
+
+def compose(facts: Facts) -> Note | None:
+    """The note, or None when there is nothing to say. Newest first: the last recap, what is
+    open about the names heard last time, what was lost or ended, then what waits to be checked.
+    At most `MAX_LINES` lines and `MAX_CHARS` characters; a line that doesn't fit is left out
+    (never cut mid-way)."""
+    lines: list[str] = []
+    if facts.recap_title:
+        day = f" (story day {facts.recap_day})" if facts.recap_day else ""
+        lines.append(_clip(f"Last recap: *{_plain(facts.recap_title)}*{day}"))
+    for sentence in list(facts.open_facts)[:FACT_LINES]:
+        lines.append(_clip(f"• {_plain(sentence)}"))
+    for name, condition in list(facts.conditions)[:CONDITION_LINES]:
+        words = CONDITION_WORDS.get(condition)
+        if words:
+            lines.append(_clip(f"• {_plain(name)} {words}"))
+    if facts.waiting > 0:
+        said = (
+            "1 thing someone said is"
+            if facts.waiting == 1
+            else f"{facts.waiting} things people said are"
+        )
+        lines.append(f"🗣️ {said} waiting for your check")
+    lines = lines[:MAX_LINES]
+    if not lines:
+        return None
+    kept: list[str] = []
+    size = len(HEADER)
+    for line in lines:
+        if size + 1 + len(line) > MAX_CHARS:
+            continue
+        kept.append(line)
+        size += 1 + len(line)
+    if not kept:
+        return None
+    return Note("\n".join([HEADER, *kept]), tuple(kept), max(0, facts.waiting))
+
+
+class PreSession:
+    def __init__(
+        self,
+        memory: MemoryStore,
+        recall: RecallService,
+        claims: ClaimStore,
+        recaps: RecapBridge | None = None,
+    ) -> None:
+        self._memory = memory
+        self._recall = recall
+        self._claims = claims
+        self._recaps = recaps
+
+    async def note(
+        self, guild_id: int, campaign_id: str, *, now: int, opted_in: Collection[int]
+    ) -> Note | None:
+        """The note for one campaign, from its confirmed facts only (this campaign's: every read
+        names the server and the campaign). None when nothing is confirmed. `opted_in` is who is
+        recorded now: the waiting-questions count drops those citing anyone who is not (as the
+        after-session count does)."""
+        async with self._memory._read(guild_id, campaign_id) as scope:
+            # The latest session that has a confirmed name heard in it (a session in which only
+            # people or unconfirmed names were heard says nothing to start from).
+            cur = await scope.conn.execute(
+                "WITH heard AS (SELECT h.entity_id, h.session_started_at, h.times"
+                "   FROM memory_heard h JOIN memory_entities e ON e.guild_id = h.guild_id"
+                "   AND e.campaign_id = h.campaign_id AND e.id = h.entity_id"
+                "   WHERE h.guild_id = %s AND h.campaign_id = %s"
+                "   AND e.status = 'confirmed' AND e.type <> 'person')"
+                " SELECT entity_id, sum(times)::int AS n FROM heard"
+                " WHERE session_started_at = (SELECT max(session_started_at) FROM heard)"
+                " GROUP BY entity_id ORDER BY n DESC, entity_id LIMIT %s",
+                (*scope.ids, SEEDS),
+            )
+            seeds = [str(r["entity_id"]) for r in await cur.fetchall()]
+            cur = await scope.conn.execute(
+                "SELECT max(session_started_at) AS at FROM memory_heard"
+                " WHERE guild_id = %s AND campaign_id = %s",
+                scope.ids,
+            )
+            last = await cur.fetchone()
+            since = int(last["at"]) if last and last["at"] is not None else 0
+            cur = await scope.conn.execute(
+                "SELECT e.name, s.condition FROM memory_states s"
+                " JOIN memory_entities e ON e.guild_id = s.guild_id"
+                "   AND e.campaign_id = s.campaign_id AND e.id = s.entity_id"
+                " WHERE s.guild_id = %s AND s.campaign_id = %s AND s.closed_at IS NULL"
+                " AND s.condition = ANY(%s) AND e.status = 'confirmed' AND s.created_at >= %s"
+                " ORDER BY s.created_at DESC, s.id LIMIT %s",
+                (*scope.ids, list(CONDITION_WORDS), since, CONDITION_LINES),
+            )
+            conditions = [(str(r["name"]), str(r["condition"])) for r in await cur.fetchall()]
+        sentences: list[str] = []
+        if seeds:
+            found = await self._recall.recall(
+                guild_id,
+                campaign_id,
+                seeds=seeds,
+                audience=DM_SCREEN,
+                budget=RECALL_BUDGET,
+                hops=1,
+            )  # no one is passed as recorded: no transcript line is read or quoted
+            sentences = [i.text for i in found.items if i.kind == FACT]
+        waiting = await self._claims.waiting_for_check(guild_id, campaign_id, opted_in=opted_in)
+        title, day = None, None
+        if self._recaps is not None:
+            recap = await self._recaps.bridge(guild_id, campaign_id, now + 1)
+            if recap is not None and recap.title:
+                title, day = recap.title, recap.game_day
+        return compose(Facts(title, day, sentences, conditions, waiting))

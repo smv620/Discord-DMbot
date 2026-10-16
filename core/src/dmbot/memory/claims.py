@@ -845,6 +845,25 @@ class ClaimStore:
             found["names"] = len(pending)
         return found
 
+    async def waiting_for_check(
+        self, guild_id: int, campaign_id: str, *, opted_in: Collection[int]
+    ) -> int:
+        """How many proposed claims the DM could answer now, counted WITHOUT changing anything:
+        `counts` first wipes the claims that cite someone not recorded now, which is right after
+        a session but not at its start, when a player may be about to agree again (#1403). Only
+        claims whose every speaker is recorded now are counted, and those waiting on a new name
+        are left out, as `counts` leaves them out of "proposed". A claim `counts` would drop
+        for a name turned down may still be counted here; the review drops it when it opens."""
+        async with self._store._read(guild_id, campaign_id) as scope:
+            cur = await scope.conn.execute(
+                "SELECT count(*) AS n FROM memory_claims WHERE guild_id = %s AND campaign_id = %s"
+                " AND status = 'proposed' AND reason <> %s AND cardinality(speaker_ids) > 0"
+                " AND speaker_ids <@ %s::bigint[]",
+                (*scope.ids, WAITING_NAME_REASON, list(opted_in)),
+            )
+            row = await cur.fetchone()
+        return int(row["n"]) if row else 0
+
     async def forget_speaker(self, guild_id: int, user_id: int) -> int:
         """Stop recording me: in every campaign of the server, delete the claims that cite
         this person's words and were not turned into a fact (waiting, turned down or dropped).
