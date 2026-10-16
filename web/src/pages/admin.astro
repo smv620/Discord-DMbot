@@ -85,6 +85,7 @@ import Base from "../layouts/Base.astro";
   }
 
   .admin :global(.grants),
+  .admin :global(.tickets),
   .admin :global(.history) {
     list-style: none;
     margin: 0;
@@ -94,13 +95,21 @@ import Base from "../layouts/Base.astro";
     gap: var(--space-3);
   }
 
-  .admin :global(.grants li) {
+  .admin :global(.grants li),
+  .admin :global(.tickets li) {
     display: flex;
     flex-direction: column;
     gap: var(--space-2);
     padding: var(--space-3);
     border: 1px solid var(--border);
     border-radius: var(--radius);
+    overflow-wrap: anywhere;
+  }
+
+  /* A ticket's words keep the person's own line breaks. */
+  .admin :global(.ticket-text) {
+    margin: 0;
+    white-space: pre-wrap;
     overflow-wrap: anywhere;
   }
 
