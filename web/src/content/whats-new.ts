@@ -81,7 +81,7 @@ export const held: Held[] = [
   {
     date: "2026-10-16",
     title: "A recap of last session",
-    what: "After a session, DMbot can write a short story of what happened, to read at the start of the next one. It goes only to the game master first, who can post it, change it, ask for another or leave it out.",
+    what: "After a session, DMbot can write a short story of what happened, to read at the start of the next one. It emails the game master when it is ready. They read it on the website, change it, ask for another, leave it out, or post it to the table.",
     reason:
       "Stays off until the first check on a real session (#1382).",
   },

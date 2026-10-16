@@ -1,0 +1,104 @@
+{
+ "title": "The ferry at Dunmere",
+ "names": [
+  "Tamsin",
+  "Brogan",
+  "Dunmere",
+  "Old Pell"
+ ],
+ "secret": [
+  "Veyra"
+ ],
+ "lines": [
+  [
+   "dm",
+   "The ferry at Dunmere is tied up and Old Pell is asleep on the dock."
+  ],
+  [
+   "a",
+   "Tamsin shakes Old Pell awake and asks for a crossing."
+  ],
+  [
+   "dm",
+   "Old Pell grumbles that the river is too high tonight, but he names a price of ten silver."
+  ],
+  [
+   "b",
+   "Brogan pays the ten silver and climbs aboard."
+  ],
+  [
+   "dm",
+   "Halfway across, the ferry rope snaps with a crack."
+  ],
+  [
+   "a",
+   "Tamsin grabs the broken rope and ties it around the mast."
+  ],
+  [
+   "b",
+   "Brogan throws his weight on the pole and steers for the far bank."
+  ],
+  [
+   "dm",
+   "The ferry grinds onto the gravel and Old Pell sits down, shaking."
+  ],
+  [
+   "dm",
+   "On the far bank a hooded figure waits with a lantern and watches them land."
+  ],
+  [
+   "a",
+   "Tamsin asks the figure who they are."
+  ],
+  [
+   "dm",
+   "The figure says only that the party is late, and walks into the trees."
+  ],
+  [
+   "b",
+   "Brogan wants to follow, but Tamsin holds him back until morning."
+  ]
+ ],
+ "beats": [
+  {
+   "keys": [
+    "tamsin",
+    "wakes",
+    "pell"
+   ]
+  },
+  {
+   "keys": [
+    "brogan",
+    "pays",
+    "silver"
+   ]
+  },
+  {
+   "keys": [
+    "rope",
+    "snaps"
+   ]
+  },
+  {
+   "keys": [
+    "tamsin",
+    "ties",
+    "rope"
+   ]
+  },
+  {
+   "keys": [
+    "brogan",
+    "steers"
+   ]
+  },
+  {
+   "keys": [
+    "hooded",
+    "figure",
+    "lantern"
+   ]
+  }
+ ]
+}

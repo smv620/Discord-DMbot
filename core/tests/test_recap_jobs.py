@@ -1,0 +1,468 @@
+"""The recap job (#1382) against a real database: queued once, leased to one worker, resumed
+where it stopped, retried, failed plainly, restarted when a player stops being recorded, kept per
+campaign, in backups, and gone with the campaign."""
+
+from __future__ import annotations
+
+from collections.abc import Collection
+from typing import Any
+
+from dmbot.ai import AIError, AIOutOfFunds
+from dmbot.campaigns.models import CampaignError
+from dmbot.campaigns.store import CampaignStore
+from dmbot.recaps import pipeline as pl
+from dmbot.recaps.store import Job, RecapSection, RecapStore
+from tests import recap_fixtures as fx
+from tests.pg import DatabaseTest
+
+NOW = 1_800_000_000
+
+
+class Clock:
+    def __init__(self) -> None:
+        self.now = float(NOW)
+
+    def __call__(self) -> float:
+        return self.now
+
+
+class Base(DatabaseTest):
+    async def asyncSetUp(self) -> None:
+        await super().asyncSetUp()
+        self.campaigns = CampaignStore(self.db)
+        self.one = await self.campaigns.create(1, "One", fx.DM)
+        self.two = await self.campaigns.create(1, "Two", fx.DM)
+        self.clock = Clock()
+        self.store = RecapStore(self.db, clock=self.clock)
+
+
+class Keeping(Base):
+    async def test_one_job_for_each_session(self) -> None:
+        self.assertTrue(await self.store.enqueue(1, self.one.id, 100, dm_user_id=fx.DM))
+        self.assertFalse(await self.store.enqueue(1, self.one.id, 100, dm_user_id=fx.DM))
+        job = await self.store.get(1, self.one.id, 100)
+        assert job is not None
+        self.assertEqual(
+            (job.state, job.status, job.tries, job.dm_user_id), ("queued", "draft", 0, fx.DM)
+        )
+
+    async def test_a_job_is_leased_to_one_worker_and_a_campaign_runs_one_at_a_time(self) -> None:
+        await self.store.enqueue(1, self.one.id, 100, dm_user_id=fx.DM)
+        await self.store.enqueue(1, self.one.id, 200, dm_user_id=fx.DM)
+        await self.store.enqueue(1, self.two.id, 100, dm_user_id=fx.DM)
+        due = await self.store.due(1)
+        self.assertEqual(sorted(due), sorted([(self.one.id, 100), (self.two.id, 100)]))  # one each
+        self.assertTrue(await self.store.lease(1, self.one.id, 100))
+        self.assertFalse(await self.store.lease(1, self.one.id, 100))  # taken
+        self.assertFalse(await self.store.lease(1, self.one.id, 200))  # same campaign: it waits
+        self.assertEqual(await self.store.due(1), [(self.two.id, 100)])
+        await self.store.release(1, self.one.id, 100)
+        self.assertTrue(await self.store.lease(1, self.one.id, 200))
+
+    async def test_a_lease_that_runs_out_frees_the_job(self) -> None:
+        await self.store.enqueue(1, self.one.id, 100, dm_user_id=fx.DM)
+        self.assertTrue(await self.store.lease(1, self.one.id, 100))
+        self.clock.now += 20 * 60
+        self.assertTrue(await self.store.lease(1, self.one.id, 100))
+
+    async def test_a_job_that_must_wait_is_not_due_until_its_time(self) -> None:
+        await self.store.enqueue(1, self.one.id, 100, dm_user_id=fx.DM)
+        await self.store.update(1, self.one.id, 100, next_at=NOW + 60)
+        self.assertEqual(await self.store.due(1), [])
+        self.clock.now += 61
+        self.assertEqual(await self.store.due(1), [(self.one.id, 100)])
+
+    async def test_only_the_listed_columns_can_be_written(self) -> None:
+        await self.store.enqueue(1, self.one.id, 100, dm_user_id=fx.DM)
+        with self.assertRaises(ValueError):
+            await self.store.update(1, self.one.id, 100, status="posted")
+        with self.assertRaises(ValueError):
+            await self.store.update(1, self.one.id, 100, **{"state = 'ready', status": "x"})
+
+    async def test_a_job_is_only_ever_seen_in_its_own_server_and_campaign(self) -> None:
+        await self.store.enqueue(1, self.one.id, 100, dm_user_id=fx.DM)
+        self.assertIsNone(await self.store.get(2, self.one.id, 100))
+        self.assertIsNone(await self.store.get(1, self.two.id, 100))
+        self.assertEqual(await self.store.due(2), [])
+
+    async def test_only_a_posted_recap_is_a_bridge_and_only_this_campaigns_own(self) -> None:
+        for at in (100, 200):
+            await self.store.enqueue(1, self.one.id, at, dm_user_id=fx.DM)
+            await self.store.update(
+                1, self.one.id, at, state="ready", summary=f"《Calm》 Recap {at}."
+            )
+        await self.store.enqueue(1, self.two.id, 150, dm_user_id=fx.DM)
+        await self.store.update(1, self.two.id, 150, state="ready", summary="《Calm》 Other.")
+        self.assertIsNone(await self.store.bridge(1, self.one.id, 300))  # nothing posted yet
+        await self.mark_posted(self.one.id, 100)
+        await self.mark_posted(self.two.id, 150)
+        bridge = await self.store.bridge(1, self.one.id, 300)
+        assert bridge is not None
+        self.assertEqual(bridge.summary, "《Calm》 Recap 100.")
+        self.assertIsNone(await self.store.bridge(1, self.one.id, 100))
+
+    async def mark_posted(self, campaign: str, at: int) -> None:
+        async with self.db.guild(1) as conn:
+            await conn.execute(
+                "UPDATE recap_jobs SET status = 'posting'"
+                " WHERE campaign_id = %s AND session_at = %s",
+                (campaign, at),
+            )
+        self.assertTrue(await self.store.posted(1, campaign, at))
+        self.assertFalse(await self.store.posted(1, campaign, at))  # once
+
+    async def test_a_post_that_cannot_be_sent_goes_back_with_a_note(self) -> None:
+        await self.store.enqueue(1, self.one.id, 100, dm_user_id=fx.DM)
+        await self.mark_posted(self.one.id, 100)
+        await self.store.reopen(1, self.one.id, 100, note="No channel.")
+        job = await self.store.get(1, self.one.id, 100)
+        assert job is not None
+        self.assertEqual((job.status, job.last_error), ("draft", "No channel."))
+
+    async def test_calls_are_counted_for_the_day(self) -> None:
+        await self.store.enqueue(1, self.one.id, 100, dm_user_id=fx.DM)
+        await self.store.update(1, self.one.id, 100, calls=5)
+        self.assertEqual(await self.store.calls_since(1, self.one.id, NOW - 10), 5)
+        self.assertEqual(await self.store.calls_since(1, self.two.id, NOW - 10), 0)
+        self.clock.now += 100
+        self.assertEqual(await self.store.calls_since(1, self.one.id, NOW + 50), 0)
+
+    async def test_it_goes_in_a_backup_and_comes_back_as_a_draft_never_posted(self) -> None:
+        await self.store.enqueue(1, self.one.id, 100, dm_user_id=fx.DM)
+        await self.store.update(
+            1, self.one.id, 100, state="ready", title="T", summary="《Calm》 It began.",
+            housekeeping=["a"], music=["m"], game_day=3,
+        )  # fmt: skip
+        await self.store.enqueue(1, self.one.id, 200, dm_user_id=fx.DM)  # not finished: not saved
+        section = RecapSection()
+        async with self.db.guild(1) as conn:
+            rows = await section.dump(conn, 1, self.one.id)
+        self.assertEqual([r["session_at"] for r in rows], [100])
+        async with self.db.guild(1) as conn:
+            await section.clear(conn, 1, self.one.id)
+        self.assertIsNone(await self.store.get(1, self.one.id, 100))
+        async with self.db.guild(1) as conn:
+            await section.load(conn, 1, self.one.id, rows)
+        back = await self.store.get(1, self.one.id, 100)
+        assert back is not None
+        self.assertEqual((back.state, back.status, back.title), ("ready", "draft", "T"))
+
+    async def test_a_damaged_backup_is_refused(self) -> None:
+        section = RecapSection()
+        good = {
+            "session_at": 1, "title": "T", "summary": "S", "housekeeping": [], "music": [],
+            "game_day": None,
+        }  # fmt: skip
+        section.check([good])
+        for bad in (
+            {**good, "extra": 1},
+            {**good, "session_at": 0},
+            {**good, "title": ""},
+            {**good, "summary": "x" * 7000},
+            {**good, "housekeeping": "no"},
+            {**good, "game_day": -1},
+            "nope",
+        ):
+            with self.assertRaises(CampaignError):
+                section.check([bad])
+        with self.assertRaises(CampaignError):
+            section.check([good] * 51)
+
+    async def test_it_goes_with_the_campaign(self) -> None:
+        await self.store.enqueue(1, self.one.id, 100, dm_user_id=fx.DM)
+        self.campaigns.register_section(RecapSection())
+        await self.campaigns.delete(1, self.one.id)
+        self.assertIsNone(await self.store.get(1, self.one.id, 100))
+
+
+class Told:
+    def __init__(self) -> None:
+        self.jobs: list[Job] = []
+
+    async def __call__(self, gid: int, cid: str, job: Job) -> None:
+        self.jobs.append(job)
+
+
+class Working(Base):
+    """The worker with canned answers. The fast client answers first tries, the careful one
+    retries; each is given its answers in order."""
+
+    async def setUpWorker(
+        self,
+        fast: fx.Canned,
+        careful: fx.Canned | None = None,
+        *,
+        secret: Collection[str] = (),
+        consenting: Any = None,
+        allowed: bool = True,
+        inputs: bool = True,
+        names: Collection[str] = fx.NAMES,
+    ) -> None:
+        self.fast = fast
+        self.careful = careful or fx.Canned()
+        self.told = Told()
+        self.agreed = consenting or fx.everyone
+        self.allowed = allowed
+        self.secret = list(secret)
+
+        async def load(gid: int, cid: str, job: Job) -> pl.Inputs | None:
+            if not inputs:
+                return None
+            return pl.Inputs(
+                lines=fx.lines(),
+                dm_ids={fx.DM},
+                allowed_names=list(names),
+                secret_names=self.secret,
+                previous="",
+                day=4,
+            )
+
+        async def ok(gid: int, cid: str, job: Job) -> bool:
+            return self.allowed
+
+        self.worker = pl.RecapWorker(
+            self.store,
+            self.fast,
+            self.careful,
+            load=load,
+            consenting=lambda gid: self.agreed,
+            allowed=ok,
+            notify=self.told,
+            clock=self.clock,
+        )
+        await self.store.enqueue(1, self.one.id, 100, dm_user_id=fx.DM)
+
+    async def go(self) -> Job:
+        job = await self.worker.run(1, self.one.id, 100)
+        assert job is not None
+        return job
+
+    def happy(self) -> fx.Canned:
+        return fx.Canned(fx.BEATS_ANSWER, fx.PROSE_ANSWER, fx.GRADE_ANSWER, fx.FINISH_ANSWER)
+
+    async def test_a_good_session_goes_all_the_way_and_the_dm_is_told_once(self) -> None:
+        await self.setUpWorker(self.happy())
+        job = await self.go()
+        self.assertEqual((job.state, job.status), ("ready", "draft"))
+        self.assertEqual(job.title, "The Silver Lock")
+        self.assertEqual(job.housekeeping, ("Mira drew her blade.",))
+        self.assertEqual(job.summary, job.original)
+        self.assertEqual(job.game_day, 4)
+        self.assertEqual(job.speakers, (fx.DM, fx.ALICE, fx.BOB))
+        self.assertEqual(job.calls, 4)
+        self.assertEqual(job.grade["tension"], 4)
+        self.assertEqual(len(job.beats), 5)
+        self.assertEqual([j.state for j in self.told.jobs], ["ready"])
+        again = await self.worker.run(1, self.one.id, 100)  # nothing more to do
+        assert again is None or again.finished
+        self.assertEqual(len(self.told.jobs), 1)
+
+    async def test_the_prose_is_written_from_the_beats_not_the_transcript(self) -> None:
+        await self.setUpWorker(self.happy())
+        await self.go()
+        prose_message = self.fast.sent[1]
+        self.assertIn("<beats>", prose_message)
+        self.assertNotIn("Greywater Keep at dusk and the gate stands open", prose_message)
+        self.assertIn("<transcript>", self.fast.sent[0])
+
+    async def test_a_restart_resumes_at_the_stage_it_stopped_in(self) -> None:
+        # The first process finishes the beats and "dies" (its AI errors) in the prose stage.
+        down = fx.Canned(fx.BEATS_ANSWER, AIError("down"))
+        await self.setUpWorker(down)
+        job = await self.go()
+        self.assertEqual(job.state, "checked")
+        self.assertEqual(job.errors, 1)
+        self.assertGreater(job.next_at, NOW)
+        # A new process, a little later, does only the rest: no second beats call.
+        self.clock.now += 120
+        await self.setUpWorkerAgain(fx.Canned(fx.PROSE_ANSWER, fx.GRADE_ANSWER, fx.FINISH_ANSWER))
+        job = await self.go()
+        self.assertEqual(job.state, "ready")
+        self.assertEqual(len(self.fast.sent), 3)
+        self.assertNotIn("<transcript>", self.fast.sent[0])
+
+    async def setUpWorkerAgain(self, fast: fx.Canned) -> None:
+        told = self.told
+        await self.setUpWorker(fast)
+        self.told = told
+
+    async def test_a_call_that_errors_waits_longer_each_time_and_fails_on_the_third(self) -> None:
+        await self.setUpWorker(fx.Canned(AIError("x"), AIError("x"), AIError("x")))
+        job = await self.go()
+        self.assertEqual((job.state, job.errors, job.next_at - NOW), ("queued", 1, 60))
+        self.assertIsNone(await self.worker.run(1, self.one.id, 100))  # not due yet
+        self.clock.now += 61
+        job = await self.go()
+        self.assertEqual((job.errors, job.next_at - int(self.clock.now)), (2, 240))
+        self.clock.now += 241
+        job = await self.go()
+        self.assertEqual(job.state, "failed")
+        self.assertEqual(job.last_error, pl.SERVICE)
+        self.assertEqual([j.state for j in self.told.jobs], ["failed"])
+
+    async def test_running_out_of_credit_fails_at_once_and_plainly(self) -> None:
+        await self.setUpWorker(fx.Canned(AIOutOfFunds("no credit")))
+        job = await self.go()
+        self.assertEqual((job.state, job.last_error), ("failed", pl.FUNDS))
+        self.assertNotIn("no credit", job.last_error)
+
+    async def test_a_beat_sheet_that_fails_its_checks_is_asked_for_again_on_the_careful_tier(
+        self,
+    ) -> None:
+        bad = '{"beats":[{"what":"A dragon came","who":[],"lines":[99],"kind":"event"}]}'
+        await self.setUpWorker(fx.Canned(bad), fx.Canned(fx.BEATS_ANSWER))
+        self.fast.answers += [fx.PROSE_ANSWER, fx.GRADE_ANSWER, fx.FINISH_ANSWER]
+        job = await self.go()
+        self.assertEqual(job.state, "ready")
+        self.assertEqual(len(self.careful.sent), 1)
+        self.assertIn("rejected", self.careful.sent[0])
+        self.assertIn("only 0 usable", self.careful.sent[0])
+
+    async def test_two_bad_beat_sheets_fail_the_job_without_inventing_a_story(self) -> None:
+        bad = '{"beats":[{"what":"A dragon came","who":[],"lines":[99],"kind":"event"}]}'
+        await self.setUpWorker(fx.Canned(bad), fx.Canned(bad))
+        job = await self.go()
+        self.assertEqual(job.state, "failed")
+        self.assertIn(job.last_error, (pl.FAILED_CHECKS, pl.TOO_LITTLE))
+        self.assertEqual(len(self.told.jobs), 1)
+
+    async def test_prose_that_invents_a_name_is_rewritten_once_told_what_is_wrong(self) -> None:
+        invented = fx.PROSE_ANSWER.replace("Nothing answered.", "Lord Varkus laughed.")
+        await self.setUpWorker(
+            fx.Canned(fx.BEATS_ANSWER, fx.GRADE_ANSWER, fx.FINISH_ANSWER),
+            fx.Canned(fx.PROSE_ANSWER),
+        )
+        self.fast.answers.insert(1, invented)
+        job = await self.go()
+        self.assertEqual(job.state, "ready")
+        self.assertIn("Varkus", self.careful.sent[0])
+        self.assertNotIn("Varkus", job.summary)
+
+    async def test_prose_that_fails_twice_fails_the_job(self) -> None:
+        invented = fx.PROSE_ANSWER.replace("Nothing answered.", "Lord Varkus laughed.")
+        await self.setUpWorker(fx.Canned(fx.BEATS_ANSWER, invented), fx.Canned(invented))
+        job = await self.go()
+        self.assertEqual((job.state, job.last_error), ("failed", pl.FAILED_CHECKS))
+        self.assertEqual(job.summary, "")  # a failed draft is never kept
+
+    async def test_a_secret_name_never_reaches_the_prose_stage(self) -> None:
+        await self.setUpWorker(
+            fx.Canned(fx.BEATS_ANSWER, fx.PROSE_ANSWER),
+            fx.Canned(fx.PROSE_ANSWER),
+            secret=["Oskar"],
+            names=["Mira", "Greywater Keep"],  # the bot never offers a secret as a known name
+        )
+        job = await self.go()
+        # The beats that name Oskar were cut, so the prose is told none of them...
+        self.assertNotIn("Oskar", self.fast.sent[1])
+        # ...and a draft that names him anyway is refused, twice, and nothing is kept.
+        self.assertEqual((job.state, job.summary), ("failed", ""))
+        self.assertIn("secret", self.careful.sent[0])
+
+    async def test_too_few_beats_left_after_the_cuts_fails_plainly(self) -> None:
+        await self.setUpWorker(
+            fx.Canned(fx.BEATS_ANSWER), fx.Canned(fx.BEATS_ANSWER), secret=["Mira"]
+        )
+        job = await self.go()
+        self.assertEqual((job.state, job.last_error), ("failed", pl.TOO_LITTLE))
+
+    async def test_a_weak_grade_gets_one_rewrite_then_the_better_draft_is_kept(self) -> None:
+        await self.setUpWorker(
+            fx.Canned(fx.BEATS_ANSWER, fx.PROSE_ANSWER, fx.WEAK_GRADE),
+            fx.Canned(fx.PROSE_ANSWER),
+        )
+        self.fast.answers += [fx.WEAK_GRADE, fx.FINISH_ANSWER]
+        job = await self.go()
+        self.assertEqual(job.state, "ready")
+        self.assertIn("keep the stakes", self.careful.sent[0])
+        self.assertEqual(job.grade["tension"], 2)  # recorded as it was, never hidden
+
+    async def test_a_grader_that_fails_never_stops_a_recap_that_passed_its_checks(self) -> None:
+        await self.setUpWorker(
+            fx.Canned(fx.BEATS_ANSWER, fx.PROSE_ANSWER, AIError("grader down"), fx.FINISH_ANSWER)
+        )
+        job = await self.go()
+        self.assertEqual((job.state, job.grade), ("ready", {}))
+
+    async def test_a_player_who_stops_being_recorded_while_it_is_written_restarts_it(self) -> None:
+        calls = {"n": 0}
+
+        async def flaky() -> Collection[int]:
+            calls["n"] += 1
+            # Fine before the beats call; Bob has stopped by the time the answer is back; and the
+            # second pass reads only Alice and the DM.
+            if calls["n"] == 3:
+                return {fx.DM, fx.ALICE}
+            return {fx.DM, fx.ALICE, fx.BOB} if calls["n"] < 3 else {fx.DM, fx.ALICE}
+
+        await self.setUpWorker(fx.Canned(fx.BEATS_ANSWER, fx.BEATS_ANSWER), consenting=flaky)
+        job = await self.go()
+        self.assertEqual(job.restarts, 1)
+        self.assertEqual(job.summary, "")
+        self.assertNotIn(fx.BOB, job.speakers)
+        second = self.fast.sent[1]
+        self.assertNotIn("Oskar lights a torch", second)  # Bob's words are not sent again
+
+    async def test_nobody_recorded_means_no_call_and_a_plain_reason(self) -> None:
+        async def nobody() -> Collection[int]:
+            return set()
+
+        await self.setUpWorker(fx.Canned(), consenting=nobody)
+        job = await self.go()
+        self.assertEqual((job.state, job.last_error, job.calls), ("failed", pl.NOTHING, 0))
+        self.assertEqual(self.fast.sent, [])
+
+    async def test_a_plan_that_lacks_recaps_or_a_switch_that_is_off_stops_it_before_any_call(
+        self,
+    ) -> None:
+        await self.setUpWorker(fx.Canned(), allowed=False)
+        job = await self.go()
+        self.assertEqual(job.state, "failed")
+        self.assertEqual(self.fast.sent, [])
+
+    async def test_names_that_cannot_be_read_mean_a_wait_not_a_guess(self) -> None:
+        await self.setUpWorker(fx.Canned(), inputs=False)
+        job = await self.go()
+        self.assertEqual((job.state, job.errors), ("queued", 1))
+        self.assertEqual(self.fast.sent, [])
+
+    async def test_a_job_has_a_ceiling_on_calls(self) -> None:
+        await self.setUpWorker(fx.Canned())
+        await self.store.update(1, self.one.id, 100, calls=pl.MAX_CALLS)
+        job = await self.go()
+        self.assertEqual((job.state, job.last_error), ("failed", pl.CAP))
+
+    async def test_a_campaign_has_a_ceiling_for_the_day(self) -> None:
+        await self.setUpWorker(fx.Canned())
+        await self.store.enqueue(1, self.one.id, 50, dm_user_id=fx.DM)
+        await self.store.update(1, self.one.id, 50, state="ready", calls=pl.DAILY_CALLS)
+        job = await self.go()
+        self.assertEqual((job.state, job.last_error), ("failed", pl.DAILY))
+
+    async def test_a_job_the_dm_has_decided_is_not_worked(self) -> None:
+        await self.setUpWorker(fx.Canned())
+        async with self.db.guild(1) as conn:
+            await conn.execute("UPDATE recap_jobs SET status = 'dropped'")
+        self.assertIsNone(await self.worker.run(1, self.one.id, 100))
+        self.assertEqual(self.fast.sent, [])
+
+    async def test_try_again_makes_a_fresh_recap(self) -> None:
+        await self.setUpWorker(self.happy())
+        await self.go()
+        # The page's "Try again": back to queued, one try used.
+        async with self.db.guild(1) as conn:
+            await conn.execute(
+                "UPDATE recap_jobs SET tries = 1, state = 'queued', beats = '[]', attempt = 0,"
+                " errors = 0, next_at = 0"
+            )
+        self.fast.answers += [fx.BEATS_ANSWER, fx.PROSE_ANSWER, fx.GRADE_ANSWER, fx.FINISH_ANSWER]
+        job = await self.go()
+        self.assertEqual((job.state, job.tries, job.calls), ("ready", 1, 4))
+        self.assertEqual(len(self.told.jobs), 2)  # told again
+
+    async def test_a_decided_recap_is_never_the_bridge_for_a_dropped_one(self) -> None:
+        await self.setUpWorker(self.happy())
+        await self.go()
+        async with self.db.guild(1) as conn:
+            await conn.execute("UPDATE recap_jobs SET status = 'dropped'")
+        self.assertIsNone(await self.store.bridge(1, self.one.id, 10_000))
