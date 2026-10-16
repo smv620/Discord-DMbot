@@ -2287,8 +2287,18 @@ one) moves a clock the DM has set, with a one-line note and **Undo** (a rest fro
 pressed it alone; it only undoes while the clock is still where the rest left it); a player's line never does. **Speaks up only for** dawn,
 noon and dusk as a button or rest passes them (not when the DM sets the time), and **24 hours
 without a long rest**, once per stretch, with its source ("Check: 24 hours since the last long rest… Optional rule, Xanathar's… Your call."); on by default, and off if the DM turns the "Going without a long rest" optional rule
-off. The first time the clock is set the party counts as rested then. Not built yet: split-party
-clocks, reading time from narration, periodic notes.
+off. The first time the clock is set the party counts as rested then. **Reading time from the DM's
+narration is built for hours, the next morning and days (2026-10-16, #1117, #1594):** "an hour
+later", "the next morning", "at dawn", and now a skip of days ("Three days later, you reach the
+city", "A week later, the party…", "The next day, you…"; 1 to 30 days, a week as 7). It lands at the
+same time of day that many days on and counts as a long rest for the party (a journey of days
+includes nights' sleep) unless the DM said "without resting" or "no rest" in the same line; the
+one-line note says which ("⏩ 3 days later (counted as rested)"), with **Undo**, which brings back
+the clock and the rest record. Only a DM's line that opens the scene and is followed by the
+narration's subject or ends the sentence; never "in three days", "for three days", "three days
+ago", a question, a wish, a condition, quoted speech, more than 30 days, or a player's line; the
+same skip twice in five minutes is one. A rested skip leaves no "24 hours without a long rest" note;
+one without rest over 24 hours says it once. Not built yet: split-party clocks, periodic notes.
 
 *Built, part 2: timed effects the DM starts (2026-10-10, #998):* `game_effects` (migration 0042): per
 campaign, own server scope, deleted with the campaign, in backups (`EffectsSection`, validated),

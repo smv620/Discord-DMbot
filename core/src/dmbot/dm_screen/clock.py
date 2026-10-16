@@ -85,7 +85,9 @@ ENDS_COMBAT = ("long", "dawn")
 # same news up to three more times (#1197 item 6). The tired line and "Combat is over" stay.
 # The same two actions as ENDS_COMBAT on purpose: both are "the night passes" moves.
 QUIET_RESTS = ("long", "dawn")
-TIME_MOVING = ("m10", "h1", "short", "long", "advance", "cnext", "cend", "cround")
+# "Three days later", said by the DM (#1594): rested, or without rest when the DM said so.
+DAY_SKIPS = ("days", "days_norest")
+TIME_MOVING = ("m10", "h1", "short", "long", "advance", *DAY_SKIPS, "cnext", "cend", "cround")
 MARK_LINES = {"dawn": "🌅 Dawn", "noon": "☀️ Noon", "dusk": "🌇 Dusk"}
 
 
@@ -140,6 +142,10 @@ def _apply(
         return game.advance(clock, 10)
     if action == "advance":  # "an hour later", said by the DM (#1117)
         return None if minutes is None else game.advance(clock, minutes)
+    if action in DAY_SKIPS:
+        if minutes is None or minutes % game.MINUTES_PER_DAY:
+            return None
+        return game.skip_days(clock, minutes // game.MINUTES_PER_DAY, rested=action == "days")
     if action in ("h1", "short"):
         return game.advance(clock, game.SHORT_REST_MIN)
     if action == "long":
@@ -204,7 +210,12 @@ async def press(
             f"🏁 Combat is over after {before.combat_round} "
             f"round{'s' if before.combat_round != 1 else ''}.",
         )
-    if before is not None and after is not None and _speaks(action) and action not in QUIET_RESTS:
+    if (
+        before is not None
+        and after is not None
+        and _speaks(action)
+        and action not in QUIET_RESTS + DAY_SKIPS
+    ):
         marks = game.crossings(before.minute, after.minute)
         result.lines = [MARK_LINES[name] for _, name in marks] + result.lines
     return result
@@ -539,6 +550,10 @@ def combat_note(action: str, before: Clock, after: Clock) -> str:
 def rest_note(action: str, clock: Clock, minutes: int | None = None) -> str:
     if action == "dawn":
         return f"🌅 Skipped to dawn. Now {game.short_label(clock.minute)}."
+    if action in DAY_SKIPS and minutes is not None:
+        counted = "counted as rested" if action == "days" else "no rest counted"
+        later = durations.words(minutes)
+        return f"⏩ {later} later ({counted}). Now {game.short_label(clock.minute)}."
     if action == "advance" and minutes is not None:
         later = durations.words(minutes).capitalize()
         return f"⏩ {later} later. Now {game.short_label(clock.minute)}."
