@@ -27,3 +27,7 @@ export const privacyParagraph = (): string =>
 /** Added to the Anthropic line under "Companies that help us" while the helper is on. */
 export const anthropicAddition =
   " It also writes the first answer to a question sent to the team. For that it is sent the subject, the message and the plan's name.";
+
+/** Under "Getting help" on the Help page, while the helper is on (#1460). Four short sentences. */
+export const helpNote =
+  "We email you at once to say we have your question. DMbot's AI helper (a program, not a person) answers first, by email. A person on the team takes over if the helper can't help, or if you ask for one. Your account page shows the first line of the last reply.";
