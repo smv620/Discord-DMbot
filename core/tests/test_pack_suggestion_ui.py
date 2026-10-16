@@ -91,7 +91,7 @@ class Words(unittest.TestCase):
         self.assertIn("added your suggestion (now version 3)", line("accepted", 3))
         self.assertIn("already had that entry", line("present"))
         self.assertIn("isn't being shared any more", line("gone"))
-        self.assertIn("You can send it again", line("expired"))
+        self.assertIn("can send it again", line("expired"))
         self.assertIn("said no thanks", line("declined"))
 
     def test_the_buttons_fit_discords_custom_id_limit_and_match_their_template(self) -> None:
@@ -257,7 +257,7 @@ class OnAnEntry(unittest.IsolatedAsyncioTestCase):
             await menu._suggest(it)
         shown = it.response.edit_message.await_args.kwargs
         self.assertIn("Send **Ember Lamp** to the **Frost Pack** DM?", shown["content"])
-        self.assertIn("with nobody named", shown["content"])
+        self.assertIn("not your name, table or server", shown["content"])
         st.suggest_entry.assert_not_called()  # nothing before the confirmation
         confirm = shown["view"]
         yes = interaction(7, bot)
@@ -281,11 +281,18 @@ class OnAnEntry(unittest.IsolatedAsyncioTestCase):
         with patch.object(ui, "_is_dm", AsyncMock(return_value=True)):
             await menu._suggest(it)
         shown = it.response.edit_message.await_args.kwargs
-        self.assertIn("Which pack should **Ember Lamp** go to?", shown["content"])
+        self.assertIn("Send **Ember Lamp** to which pack?", shown["content"])
         self.assertEqual(
             [c.label for c in shown["view"].children],
             ["To Frost Pack", "To Rope Pack", ui.KEEP_PRIVATE_LABEL],
         )
+
+    def test_five_followed_packs_all_get_a_button(self) -> None:
+        packs = [(f"{n}" * 32, f"Pack {n}") for n in range(5)]
+        menu = ui.PickPack(campaign(), entry(), 0, packs)
+        labels = [str(getattr(c, "label", "")) for c in menu.children]
+        self.assertEqual(labels[:5], [f"To Pack {n}" for n in range(5)])
+        self.assertEqual(labels[5], ui.KEEP_PRIVATE_LABEL)
 
     async def test_a_player_pressing_it_is_refused(self) -> None:
         menu = self.menu([("a" * 32, "Frost Pack")])

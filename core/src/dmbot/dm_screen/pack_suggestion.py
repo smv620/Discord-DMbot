@@ -33,7 +33,7 @@ ONLY_DMS = "Only this campaign's DMs can answer this."
 GONE = "That campaign isn't here any more."
 COULDNT = "That didn't work, and nothing changed. Press the button again in a moment."
 ANSWERED = "Someone already answered this suggestion."
-EXPIRED = "That suggestion is too old to add. The table was told it can send it again."
+EXPIRED = "That suggestion is too old to add. Its sender can send it again."
 SHOWN_MAX = 120  # an entry quoted in a one-line message
 TEXT_MAX = 1800
 
@@ -48,11 +48,9 @@ def _md(text: str) -> str:
     return str(discord.utils.escape_markdown(text))
 
 
-def _first_line(entry: PackSuggestion | PackSent, limit: int = SHOWN_MAX) -> str:
-    if isinstance(entry, PackSuggestion):
-        shown = " ".join((entry.summary or entry.text).split())
-        return shown if len(shown) <= limit else shown[: limit - 1] + "…"
-    return ""
+def _first_line(entry: PackSuggestion, limit: int = SHOWN_MAX) -> str:
+    shown = " ".join((entry.summary or entry.text).split())
+    return shown if len(shown) <= limit else shown[: limit - 1] + "…"
 
 
 def note_text(pack_name: str, entry: PackSuggestion, replaces: bool = False) -> str:
@@ -62,7 +60,8 @@ def note_text(pack_name: str, entry: PackSuggestion, replaces: bool = False) -> 
     return (
         f"💡 A table using **{_md(pack_name)} homebrew** suggests (sender not shown):\n"
         f"**{_md(entry.name)}** ({entry.kind.capitalize()}, {who}): {_md(_first_line(entry))}\n"
-        f"{what} Add to pack puts it in your homebrew and in the pack for every table that uses it."
+        f"{what} Add to pack puts it in your homebrew and in the pack for every table that uses it,"
+        " with any other changes you haven't published yet."
     )
 
 

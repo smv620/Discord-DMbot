@@ -133,7 +133,7 @@ class Sending(Base):
         await self.packs.publish_pack(GUILD_A, other, DM_A, "Rope Pack",
                                       await self.brew.list(GUILD_A, other))  # fmt: skip
         code = await self.packs.make_pack_code(GUILD_A, other, DM_A)
-        await self.packs.follow_pack(
+        other_follow = await self.packs.follow_pack(
             GUILD_B, self.far, DM_B, await self.packs.by_code(GUILD_B, DM_B, code)
         )
         entry = await self.mine("Ember Lamp")
@@ -143,6 +143,11 @@ class Sending(Base):
         sid, _, campaign, pack = await self.send(entry, set_id=self.follow.set_id)
         self.assertEqual((campaign, pack), (self.pub, "Frost Pack"))
         self.assertIsNotNone(await self.packs.pack_suggestion(GUILD_A, self.pub, sid))
+        # one open suggestion is per entry *per pack*: the same entry may go to the other too
+        _, _, other_campaign, other_pack = await self.send(entry, set_id=other_follow.set_id)
+        self.assertEqual((other_campaign, other_pack), (other, "Rope Pack"))
+        with self.assertRaises(RuleSetError):  # but not twice to the same one
+            await self.send(entry, set_id=self.follow.set_id)
 
     async def test_a_pack_that_stopped_sharing_takes_none(self) -> None:
         entry = await self.mine("Ember Lamp")
@@ -194,6 +199,8 @@ class Answering(Base):
 
     async def test_the_same_words_already_in_the_pack_closes_it(self) -> None:
         same = await self.mine("Hollow King", "A crowned skeleton.", kind="monster")
+        before = await self.brew.find(GUILD_A, self.pub, "Hollow King")
+        assert before is not None
         sid, *_ = await self.send(same)
         with self.assertRaises(RuleSetError) as err:
             await self.packs.accept_pack_suggestion(GUILD_A, self.pub, DM_A, sid, plan_ok=True)
@@ -201,6 +208,9 @@ class Answering(Base):
         closed = await self.packs.pack_suggestion(GUILD_A, self.pub, sid)
         assert closed is not None
         self.assertEqual(closed.status, "present")
+        after = await self.brew.find(GUILD_A, self.pub, "Hollow King")
+        assert after is not None
+        self.assertEqual(after.version, before.version)  # nothing changed, so no version bump
         self.assertEqual((await self.packs.published_pack(GUILD_A, self.pub)).version, 1)  # type: ignore[union-attr]
 
     async def test_no_thanks_changes_nothing(self) -> None:

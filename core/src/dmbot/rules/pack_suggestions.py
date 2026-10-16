@@ -45,7 +45,7 @@ FROM_A_BOOK = "That entry came from a book you shared, so it stays in this campa
 ENTRY_CHANGED = "That entry was changed since you looked, so nothing was sent. Look at it again."
 ALREADY_SENT = "This campaign already sent that entry. The answer comes at your next session."
 PICK_A_PACK = "This campaign follows more than one pack. Pick which one to send it to."
-NOT_THAT_PACK = "This campaign doesn't follow that pack."
+NOT_THAT_PACK = "This campaign doesn't follow that pack any more. Open the entry again."
 PACK_HAS_ENOUGH = "That pack has plenty of suggestions waiting. Try again next week."
 PACK_HAS_THAT = "That pack already has a suggestion for that name waiting. Try again later."
 TOO_MANY_SENT = (
@@ -53,7 +53,7 @@ TOO_MANY_SENT = (
     "Try again after you hear back."
 )
 NOT_SHARED_ANY_MORE = "That pack isn't shared any more."
-EXPIRED = "That suggestion is too old to add. The table was told it can send it again."
+EXPIRED = "That suggestion is too old to add. Its sender can send it again."
 ALREADY_IN_PACK = "The pack already has that entry as written, so nothing was added. It is closed."
 BOOK_NAME = (
     "You have an entry of that name from a book, which stays as it is, so it wasn't replaced."
@@ -149,10 +149,10 @@ class PackSuggestionStore(PackUpdateStore):
             if entry.version != shown_version:
                 raise RuleSetError(ENTRY_CHANGED)
             cur = await conn.execute(
-                "SELECT count(*) AS n, count(*) FILTER (WHERE lower(name) = lower(%s)) AS same"
-                " FROM pack_suggestions_sent WHERE guild_id = %s AND campaign_id = %s"
-                " AND told_at IS NULL",
-                (entry.name, guild_id, campaign_id),
+                "SELECT count(*) AS n, count(*) FILTER (WHERE lower(name) = lower(%s)"
+                " AND set_id = %s) AS same FROM pack_suggestions_sent"
+                " WHERE guild_id = %s AND campaign_id = %s AND told_at IS NULL",
+                (entry.name, follow.set_id, guild_id, campaign_id),
             )
             counts = await cur.fetchone()
             assert counts is not None
@@ -328,8 +328,15 @@ class PackSuggestionStore(PackUpdateStore):
             mine = await cur.fetchone()
             if mine is not None and mine["from_book"]:
                 raise RuleSetError(BOOK_NAME)
+            unchanged = mine is not None and (
+                (mine["kind"], mine["name"], mine["text"], mine["summary"])
+                == (row["kind"], row["name"], row["text"], row["summary"])
+                and bool(mine["players_may_know"]) == bool(row["known"])
+            )
             try:
-                if mine is not None:
+                if unchanged:
+                    pass  # same as the publisher's own: no needless version bump
+                elif mine is not None:
                     await conn.execute(
                         "UPDATE homebrew_entries SET kind = %s, name = %s, name_key = %s,"
                         " text = %s, summary = %s, players_may_know = %s, updated_at = %s,"

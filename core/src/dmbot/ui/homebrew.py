@@ -61,8 +61,8 @@ UNDO_SHOWN = 1  # ...and the newest is the one button on the list
 
 NOT_READY = "Homebrew isn't available right now. Please try again in a moment."
 SUGGEST_LABEL = "💡 Suggest to the pack"
-SEND_LABEL = "Send it"
-KEEP_PRIVATE_LABEL = "Keep it private"
+SEND_LABEL = "Yes, send it"
+KEEP_PRIVATE_LABEL = "No, keep it here"
 FROM_A_BOOK = "That entry came from a book you shared, so it stays in this campaign."
 ONLY_DMS = "Only this campaign's DM can open its homebrew. Ask your DM."
 CAMPAIGN_GONE = "That campaign isn't here any more."
@@ -505,7 +505,7 @@ class EntryMenu(_Menu):
             return
         await _show(
             interaction,
-            f"Which pack should **{_md(self.entry.name)}** go to? It goes with nobody named.",
+            f"Send **{_md(self.entry.name)}** to which pack? Your name isn't sent.",
             PickPack(self.campaign, self.entry, self.page, self.packs),
         )
 
@@ -517,9 +517,15 @@ def suggest_text(entry: Homebrew, pack_name: str) -> str:
     """Never send at once: say where it goes, that nobody is named, and that nothing changes."""
     return (
         f"Send **{_md(entry.name)}** to the **{_md(pack_name)}** DM?\n{entry_text(entry)}\n"
-        "It goes exactly as written, with nobody named. Check it names no one. Your own "
-        "homebrew stays as it is. If they add it, you'll hear at your next session."
+        "They see only this text, not your name, table or server. Read it for any you typed in. "
+        "Your own copy stays. You'll hear the answer at your next session."
     )
+
+
+def _short_label(pack_name: str) -> str:
+    """A phone cuts button text near 25 characters, and pack names are free text."""
+    label = f"To {pack_name}"
+    return label if len(label) <= 25 else label[:24] + "…"
 
 
 class PickPack(_Menu):
@@ -530,9 +536,9 @@ class PickPack(_Menu):
     ) -> None:
         super().__init__()
         self.campaign, self.entry, self.page = campaign, entry, page
-        for pack in packs[:4]:  # (a campaign follows at most five packs; a row holds five)
-            self.add_item(_Button(partial(self._pick, pack), label=f"To {pack[1]}"[:80]))
-        self.add_item(_Button(self._keep, label=KEEP_PRIVATE_LABEL))
+        for pack in packs:  # up to five, a whole row; "keep it here" sits on the row below
+            self.add_item(_Button(partial(self._pick, pack), label=_short_label(pack[1]), row=0))
+        self.add_item(_Button(self._keep, label=KEEP_PRIVATE_LABEL, row=1))
 
     async def _pick(self, pack: tuple[str, str], interaction: discord.Interaction) -> None:
         await _show(
