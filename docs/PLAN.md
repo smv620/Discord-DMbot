@@ -338,8 +338,10 @@ fallback is where the free rules have the name, and "other" sits between (after 
 the fallback). A 2014 book entry is tagged `[Legacy 2014]` while the campaign plays the newer rules.
 Its source line names the campaign's copy ("Frostmaiden's shared book (2014): Fireball"), never the
 book's title, which DMbot does not keep. A followed pack's entry beats a book entry of the same name.
-A book entry still never goes into a pack. Not yet: rules *alerts* and the sidebar still treat a
-book entry as homebrew (it shadows the free rules' entry of the same name whatever its edition).
+A book entry still never goes into a pack. *Built, alerts and the sidebar follow the same order
+(2026-10-16, #1569):* a book entry that ranks behind the free rules' entry of the same name steps
+aside there too (the free rules' card or entry answers), and one that answers carries `[Shared book]`
+and, for a 2014 book under newer rules, `[Legacy 2014]`.
 
 *Built, the rules index (2026-10-09, #866):* `dmbot.rules.index` looks a spell or a
 condition up by name. The data is the **SRD 5.2.1** (CC-BY-4.0), taken from Wizards of

@@ -196,6 +196,7 @@ from dmbot.recaps.text import names_a_secret
 from dmbot.retention import RetentionJob
 from dmbot.rules import house_voice
 from dmbot.rules import index as rules_index
+from dmbot.rules.book_rank import book_is_legacy, book_wins
 from dmbot.rules.followed import followed_rules, own_first
 from dmbot.rules.homebrew import Homebrew, HomebrewSection, HomebrewStore
 from dmbot.rules.homebrew_packs import HomebrewPackStore, HomebrewReader
@@ -3905,8 +3906,13 @@ class DMBot(commands.AutoShardedBot):
         own = table.homebrew_spotter.find(line) if table.homebrew_spotter is not None else []
         if own and table.homebrew_spotter is not None:
             # The campaign's own homebrew comes before the book, and a homebrew name shadows the
-            # book's (hidden or not: the card is for the DM screen only).
-            shadowed = table.homebrew_spotter.names
+            # book's (hidden or not: the card is for the DM screen only). A shared book's entry
+            # ranks in its edition's place, so one that comes after the free rules' entry of the
+            # same name steps aside and the free rules' card stands (#1569).
+            target, fallback = table.rules_rulesets
+            behind = self._books_behind(table.homebrew_spotter, own, target, fallback)
+            own = [m for m in own if rules_index.normalize(m.name) not in behind]
+            shadowed = table.homebrew_spotter.names - behind
             mentions = [
                 m
                 for m in mentions
@@ -4365,6 +4371,23 @@ class DMBot(commands.AutoShardedBot):
         if posted is None:
             table.rules.forget(card_id, before)
 
+    @staticmethod
+    def _books_behind(
+        spotter: HomebrewSpotter, found: Sequence[HomebrewMention], target: str, fallback: str
+    ) -> frozenset[str]:
+        """Normalized names of the shared-book entries just found that rank behind the free rules'
+        entry of the same name (#1569): they give way to its card."""
+        srd = rules_index.srd()
+        behind: set[str] = set()
+        for mention in found:
+            entry = spotter.entry(mention.name)
+            if entry is None or not entry.from_book:
+                continue
+            hit = srd.lookup(mention.name, target, fallback, kind=mention.kind)
+            if not book_wins(entry, hit, target, fallback):
+                behind.add(rules_index.normalize(mention.name))
+        return frozenset(behind)
+
     async def _post_homebrew_card(
         self,
         table: Table,
@@ -4399,7 +4422,12 @@ class DMBot(commands.AutoShardedBot):
             table.rules.forget(card_id, before)
             return
         text = rule_card.homebrew_alert_text(
-            own, table.campaign_name, mention.said, mention.heard, rules
+            own,
+            table.campaign_name,
+            mention.said,
+            mention.heard,
+            rules,
+            legacy=book_is_legacy(own, table.rules_rulesets[0]),
         )
         posted = await self.post_message(
             table.screen_channel_id, text, rules_cards.card_view(table.guild_id, card_id)
