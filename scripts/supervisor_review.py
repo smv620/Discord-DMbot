@@ -37,7 +37,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from collections.abc import Callable, Iterable, Mapping, Sequence
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 from typing import Any
 
 CONTEXT = "supervisor-review"
@@ -235,7 +235,7 @@ class GitHub:
 
 
 def now() -> datetime:
-    return datetime.now(UTC)
+    return datetime.now(timezone.utc)
 
 
 def head_arrived(github: GitHub, head: str, moment: datetime) -> datetime | None:

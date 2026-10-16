@@ -8,7 +8,7 @@ from __future__ import annotations
 import importlib.util
 import sys
 import unittest
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -347,7 +347,7 @@ class OwnersLabel(unittest.TestCase):
 
     def setUp(self) -> None:
         self.saved = sr.now
-        sr.now = lambda: datetime(2026, 10, 16, 5, 0, tzinfo=UTC)  # type: ignore[attr-defined]
+        sr.now = lambda: datetime(2026, 10, 16, 5, 0, tzinfo=timezone.utc)  # type: ignore[attr-defined]
 
     def tearDown(self) -> None:
         sr.now = self.saved  # type: ignore[attr-defined]
