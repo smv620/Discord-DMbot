@@ -163,3 +163,17 @@ Written by dev1 from the numbers above; Supervisor decides and records it in PLA
 Each extractor call sends the same instructions (about 1,130 tokens by the measuring tool's cautious count of 3 characters a token; nearer 850 at the usual 4) and 5 to 15 lines of talk (about 196 tokens on the golden set). The instructions are about **85%** of every call's input. They are now sent marked for caching (`cache_system`, only for this feature). The service charges about a tenth to read a cached prompt again and a quarter more to write it, so while the cache holds (calls follow each other within a few minutes) the **input** would cost about **a quarter** of what it did (1,326 token-prices a call down to about 309). Output is not cheaper, so the whole bill falls by much less than that.
 
 **Not measured, and it may not apply to the default tier.** A real measurement needs paid calls (`python -m dmbot.devtools.claims --extractor anthropic`, about $0.04 on the golden set). The service only caches a prompt above a minimum length that depends on the model; for some models it is about 1,024 tokens and for others 2,048 or more, and this prompt (850 to 1,130) is below some of them. Below the minimum nothing is cached and nothing extra is charged: the call is the same. The log line of every AI call shows `cache_read=` and `cache_write=`, so the first live session says whether it works for the tier chosen. The spend watch counts a cache write in full and a read at a tenth.
+
+
+## Recap narration and music (#1383, ElevenLabs)
+
+Read from the provider's pricing page for the design (#1381, review 2, 2026-10-16); the live run on the server (dev1) is the check that these still hold, and this table is then updated with the real figures.
+
+| What | Price | Used for |
+|---|---|---|
+| Text to speech | 1 credit per character | the narration: about 3,000 characters |
+| Music | 900 credits per minute | about 4 minutes of music |
+| Sound effects | 200 credits per generation | one ambience loop, made once for each campaign and scene kind, then kept |
+| Plans | Creator $22 for 121,000 credits; Pro $99 for 600,000 | commercial use of the music is listed from Creator |
+
+One recap is about 3,000 + 3,600 (+ 200 for a new ambience loop) = **about 7,000 credits, roughly $1.30 on Creator**, plus about $0.05 of DMbot's own AI for the text. `DMBOT_RECAP_AUDIO_MAX_CREDITS` (default 15,000, about $3) is the most one recap may use: a recap whose estimate is over it is not made, and its text goes out as usual. The credits each make used are kept on the recap (`audio_credits`), counts only.

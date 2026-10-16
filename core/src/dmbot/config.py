@@ -69,6 +69,16 @@ class Settings:
     # off nothing calls the AI and the after-session step has nothing to ask.
     story_extractor_on: bool = False
     recaps_on: bool = False  # cinematic recaps (#1382): off until dev1's quality check
+    # The recap's narration and music (#1383): made only when recaps are on, a key and a voice
+    # are set and the campaign's plan includes spoken recaps. No key: text-only, nothing fails.
+    elevenlabs_key: str = field(default="", repr=False)
+    elevenlabs_voice_id: str = ""
+    recap_audio_max_credits: int = 15000  # provider credits one recap may use (about $3)
+
+    @property
+    def recap_audio_on(self) -> bool:
+        return self.recaps_on and bool(self.elevenlabs_key) and bool(self.elevenlabs_voice_id)
+
     # Which model tier reads the transcript, and how many calls one session may make (#1363).
     story_extractor_tier: str = "fast"
     story_extractor_max_calls: int = 480
@@ -205,6 +215,18 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
     recaps_raw = (get("DMBOT_RECAPS") or "0").lower()
     if recaps_raw not in ("0", "1", "true", "false", "on", "off"):
         raise ConfigError('DMBOT_RECAPS must be 1 (on) or 0 (off), got "' + recaps_raw + '".')
+    audio_credits_raw = get("DMBOT_RECAP_AUDIO_MAX_CREDITS") or "15000"
+    if not (audio_credits_raw.isascii() and audio_credits_raw.isdigit()) or not (
+        1000 <= int(audio_credits_raw) <= 200000
+    ):
+        raise ConfigError(
+            'DMBOT_RECAP_AUDIO_MAX_CREDITS must be a whole number from 1000 to 200000, got "'
+            + audio_credits_raw
+            + '".'
+        )
+    voice_id = get("ELEVENLABS_VOICE_ID")
+    if voice_id and not (voice_id.isascii() and voice_id.isalnum() and len(voice_id) <= 64):
+        raise ConfigError("ELEVENLABS_VOICE_ID must be the voice's id: letters and digits only.")
     sidebar_raw = (get("DMBOT_SIDEBAR") or "0").lower()
     if sidebar_raw not in ("0", "1", "true", "false", "on", "off"):
         raise ConfigError('DMBOT_SIDEBAR must be 1 (on) or 0 (off), got "' + sidebar_raw + '".')
@@ -251,6 +273,9 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
         sidebar_on=sidebar_raw in ("1", "true", "on"),
         story_extractor_on=extractor_raw in ("1", "true", "on"),
         recaps_on=recaps_raw in ("1", "true", "on"),
+        elevenlabs_key=get("ELEVENLABS_API_KEY"),
+        elevenlabs_voice_id=voice_id,
+        recap_audio_max_credits=int(audio_credits_raw),
         story_extractor_tier=extractor_tier,
         story_extractor_max_calls=int(extractor_calls_raw),
         story_extractor_max_calls_day=int(extractor_day_raw),

@@ -424,6 +424,10 @@ class RecapSection:
     """Recaps in campaign backups (an `ExportSection`)."""
 
     name = "recaps"
+
+    def __init__(self, forget_audio: Callable[[int, str], None] | None = None) -> None:
+        self._forget_audio = forget_audio  # removes a campaign's audio files from the disk
+
     _KEYS = frozenset({"session_at", "title", "summary", "housekeeping", "music", "game_day"})
 
     async def dump(self, conn: Conn, guild_id: int, campaign_id: str) -> list[Any]:
@@ -508,3 +512,5 @@ class RecapSection:
             "DELETE FROM recap_jobs WHERE guild_id = %s AND campaign_id = %s",
             (guild_id, campaign_id),
         )
+        if self._forget_audio is not None:
+            self._forget_audio(guild_id, campaign_id)  # the narration and music go with it

@@ -169,6 +169,10 @@ from dmbot.memory.sheet_watch import SheetWatch
 from dmbot.memory.store import MemoryStore
 from dmbot.memory.table_names import NameThenAnswer
 from dmbot.recaps import post as recap_post
+from dmbot.recaps.audio import names as audio_names
+from dmbot.recaps.audio.eleven import ElevenLabs, HttpTransport
+from dmbot.recaps.audio.files import FILE_NAMES, MUSIC, VOICE, AudioFiles
+from dmbot.recaps.audio.worker import AudioInputs, AudioWorker
 from dmbot.recaps.notify import page_link, tell_the_dm
 from dmbot.recaps.pipeline import Inputs, RecapWorker
 from dmbot.recaps.store import Job, RecapSection, RecapStore
@@ -285,6 +289,7 @@ FORGET_TIMEOUT_S = 10  # removing learned names must not hold up stopping a reco
 DISPLAY_NAME_REFRESH_S = 86400  # a person's Discord name is kept on their account once a day
 DISPLAY_NAME_TIMEOUT_S = 3  # for the background update
 NAMES_NOTED_MAX = 5000  # people remembered as just noted; the oldest half go past this
+RECAP_ATTACHMENT_MAX = 24 * 1024 * 1024  # Discord's limit is 25 MB a file for a server
 RECAPS_PER_ROUND = 2  # recap jobs worked in one minute, across all servers (a small global limit)
 RECAP_ROUND_S = 60
 METER_INTERVAL_S = 60  # how often listening minutes are written to the hours meter (#437)
@@ -774,6 +779,23 @@ class DMBot(commands.AutoShardedBot):
                 consenting=lambda gid: lambda: self.consent.consenting(gid),
                 allowed=self.recap_allowed,
                 notify=self.recap_told,
+                audio_wanted=self.recap_audio_wanted,
+            )
+        # The recap's narration and music (#1383): a second job after the text is ready. Built
+        # only with the switch on and a key and voice set; with none, recaps go out text-only.
+        self.recap_audio_files = AudioFiles(settings.data_dir / "recap-audio")
+        self._eleven_http: HttpTransport | None = None
+        self.audio_worker: AudioWorker | None = None
+        if self.recap_worker is not None and recaps is not None and settings.recap_audio_on:
+            self._eleven_http = HttpTransport(settings.elevenlabs_key)
+            self.audio_worker = AudioWorker(
+                recaps,
+                ElevenLabs(self._eleven_http, voice_id=settings.elevenlabs_voice_id),
+                self.recap_audio_files,
+                load=self.recap_audio_inputs,
+                consenting=self.consent.consenting,
+                allowed=self.recap_audio_allowed,
+                max_credits=settings.recap_audio_max_credits,
             )
         # The off-topic filter (#52), the audio check and the DM sidebar.
         self.topic_ai = (
@@ -981,6 +1003,9 @@ class DMBot(commands.AutoShardedBot):
         with contextlib.suppress(Exception):
             await asyncio.wait_for(self.ai_watch.wait(), 3)
         document_reader.shutdown()  # files being read: end them, don't wait out their limit
+        if self._eleven_http is not None:
+            with contextlib.suppress(Exception):
+                await self._eleven_http.close()
         # Stopped sessions stop waiting for their last words and finish now (saving
         # first), alongside everything below.
         self.pipeline.stop_waiting()
@@ -5417,6 +5442,42 @@ class DMBot(commands.AutoShardedBot):
             "recap", gid, campaign, fail_open=False
         )
 
+    async def recap_audio_wanted(self, gid: int, cid: str, job: Job) -> bool:
+        """Whether the audio is to be made for a recap that has just become ready: the switch,
+        the key and voice, and a plan that includes spoken recaps (closed when it can't be
+        checked). Without them the recap is text-only and nothing fails."""
+        if not self.settings.recap_audio_on:
+            return False
+        return await self.recap_audio_allowed(gid, cid, job)
+
+    async def recap_audio_allowed(self, gid: int, cid: str, job: Job) -> bool:
+        campaign = await self.campaigns.get(gid, cid)
+        return campaign is not None and await self.plan_allows(
+            "recap_audio", gid, campaign, fail_open=False
+        )
+
+    async def recap_audio_inputs(self, gid: int, cid: str, job: Job) -> AudioInputs | None:
+        """What the audio step reads: the campaign's names, secret ones fresh. None when they
+        can't be read (then nothing is sent, since a secret name couldn't be kept out)."""
+        if self.lookup is None:
+            return None
+        try:
+            lookup = await self.lookup.get(gid, cid)
+        except Exception:
+            log.exception("Recap audio: couldn't load the campaign's names")
+            return None
+        return AudioInputs(
+            secret_names=sorted({n.text for n in lookup.names if n.secret}),
+            # No "said as" spelling is kept anywhere yet (the website's review page will add it),
+            # so no rule is made until one is; the names themselves are read fresh all the same.
+            names=[
+                audio_names.SpokenName(
+                    n.text, None, secret=n.secret, confirmed=n.confirmed, person=n.person
+                )
+                for n in lookup.names
+            ],
+        )
+
     async def recap_told(self, gid: int, cid: str, job: Job) -> None:
         """Email the DM that their recap is ready, or could not be written."""
         if self.mailer is not None and self.recaps is not None:
@@ -5448,6 +5509,26 @@ class DMBot(commands.AutoShardedBot):
                         await self.recap_worker.run(guild.id, cid, at)
                     except Exception:
                         log.exception("Recap: a job failed unexpectedly")
+        await self.run_recap_audio()
+
+    async def run_recap_audio(self) -> None:
+        """One round of the audio step: recaps whose text is ready and whose narration and music
+        wait to be made, one at a time (each is minutes of provider work)."""
+        if self.audio_worker is None or self.recaps is None:
+            return
+        for guild in list(self.guilds):
+            try:
+                due = await self.recaps.audio_due(guild.id, limit=1)
+            except Exception:
+                log.exception("Recap audio: couldn't list the waiting recaps for a server")
+                continue
+            for cid, at in due:
+                with log_context(guild_id=guild.id, campaign_id=cid):
+                    try:
+                        await self.audio_worker.run(guild.id, cid, at)
+                    except Exception:
+                        log.exception("Recap audio: a job failed unexpectedly")
+                return  # one recap's audio a round: the next round takes the next
 
     async def post_recaps(self, guild_id: int) -> None:
         """Send the recaps the DM pressed Post on, after checking again what may have changed
@@ -5508,8 +5589,13 @@ class DMBot(commands.AutoShardedBot):
         # Sent first and marked posted after, so a failed send is never recorded as a post. The
         # consent read just above is the last await before the send.
         try:
-            for part in recap_post.parts_of(text):
-                await channel.send(part, allowed_mentions=discord.AllowedMentions.none())
+            parts = recap_post.parts_of(text)
+            for i, part in enumerate(parts):
+                files = (
+                    await self._recap_audio_files(gid, campaign, job) if i == len(parts) - 1 else []
+                )
+                extra = {"files": files} if files else {}
+                await channel.send(part, allowed_mentions=discord.AllowedMentions.none(), **extra)
         except Exception:
             log.warning("Recap: the send failed")
             return await back(
@@ -5521,6 +5607,26 @@ class DMBot(commands.AutoShardedBot):
             await self.post(campaign.dm_screen_channel_id, "📜 Recap posted to the table.")
         changed = job.summary != job.original
         log.info("Recap: posted%s", " after an edit" if changed else "")  # counts only
+
+    async def _recap_audio_files(
+        self, gid: int, campaign: Campaign, job: Job
+    ) -> list[discord.File]:
+        """The narration and the music as attachments, if the recap has them and the plan still
+        includes them (fails closed). Files over Discord's size limit are left out; the text is
+        posted either way."""
+        if job.audio != "ready" or not await self.plan_allows(
+            "recap_audio", gid, campaign, fail_open=False
+        ):
+            return []
+        found = await asyncio.to_thread(
+            self.recap_audio_files.present, gid, campaign.id, job.session_at
+        )
+        out: list[discord.File] = []
+        for kind in (VOICE, MUSIC):
+            path = found.get(kind)
+            if path is not None and path.stat().st_size <= RECAP_ATTACHMENT_MAX:
+                out.append(discord.File(path, filename=FILE_NAMES[kind]))
+        return out
 
     async def log_steward_tally(self, table: Table) -> None:
         """After the session's other work: one line in the server log of what the ontology
@@ -5728,11 +5834,20 @@ class DMBot(commands.AutoShardedBot):
         """Every minute: the recap jobs that are due and the recaps the DM has pressed Post on
         (#1382). A job resumes where it stopped, so a restart loses nothing."""
         await asyncio.sleep(90)
+        rounds = 0
         while True:
             try:
                 await self.run_recaps()
             except Exception:
                 log.exception("The recap jobs failed")
+            rounds += 1
+            if rounds % 60 == 0:  # about hourly: audio older than 180 days goes
+                try:
+                    gone = await asyncio.to_thread(self.recap_audio_files.sweep)
+                    if gone:
+                        log.info("Removed the audio of %d old recaps", gone)
+                except Exception:
+                    log.exception("Removing old recap audio failed")
             await asyncio.sleep(RECAP_ROUND_S)
 
     async def _trial_loop(self) -> None:
@@ -6533,7 +6648,9 @@ async def run(settings: Settings) -> None:
         campaigns.register_section(FollowedSetsSection())  # and the sets it follows (#1260)
         campaigns.register_section(ClockSection())  # and the game clock (#965)
         campaigns.register_section(EffectsSection())  # and its timed effects (#998)
-        campaigns.register_section(RecapSection())  # and its session recaps (#1382)
+        # and its session recaps (#1382), whose audio files go with the campaign (#1383)
+        recap_audio_forgetter = AudioFiles(settings.data_dir / "recap-audio").forget_campaign
+        campaigns.register_section(RecapSection(forget_audio=recap_audio_forgetter))
         # DMBot sets this too; passing it here means the store never starts out wrong.
         consent = ConsentStore(db, outside=settings.transcription.outside_engine)
         bot = DMBot(

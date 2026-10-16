@@ -345,7 +345,8 @@ class TheEmail(Base):
 
 
 def fake_bot(job: Job | None, *, allowed: bool = True, secrets: list[str] | None = None,
-             channel: Any = "default", agreed: set[int] | None = None) -> Any:  # fmt: skip
+             channel: Any = "default", agreed: set[int] | None = None,
+             present: dict[str, Any] | None = None) -> Any:  # fmt: skip
     from dmbot.bot import DMBot
 
     sent = AsyncMock()
@@ -368,7 +369,9 @@ def fake_bot(job: Job | None, *, allowed: bool = True, secrets: list[str] | None
             consenting=AsyncMock(return_value=agreed if agreed is not None else {fx.ALICE})
         ),
     )
+    bot.recap_audio_files = SimpleNamespace(present=lambda g, c, s: present or {})
     bot._post_one_recap = lambda g, c, a: DMBot._post_one_recap(cast(Any, bot), g, c, a)
+    bot._recap_audio_files = lambda g, camp, j: DMBot._recap_audio_files(cast(Any, bot), g, camp, j)
     bot.sent = sent
     return bot
 
@@ -395,6 +398,47 @@ class ThePostStep(unittest.IsolatedAsyncioTestCase):
         bot.recaps.posted.assert_awaited_once()  # marked after the send, not before
         kwargs = bot.sent.send.await_args.kwargs
         self.assertEqual(kwargs["allowed_mentions"].users, False)
+
+    async def test_the_narration_and_music_go_as_attachments_on_the_last_message(self) -> None:
+        import tempfile
+        from pathlib import Path
+
+        with tempfile.TemporaryDirectory() as tmp:
+            voice, music_, mix_ = (Path(tmp) / n for n in ("v.mp3", "m.mp3", "x.mp3"))
+            for f in (voice, music_, mix_):
+                f.write_bytes(b"mp3")
+            files = {"voice": voice, "music": music_, "mix": mix_}
+            bot = fake_bot(self.job(audio="ready"), present=files)
+            await bot._post_one_recap(THURSDAY.id, "c" * 32, 100)
+            calls = bot.sent.send.await_args_list
+            for call in calls[:-1]:
+                self.assertNotIn("files", call.kwargs)
+            sent = calls[-1].kwargs["files"]
+            self.assertEqual([f.filename for f in sent], ["recap-voice.mp3", "recap-music.mp3"])
+            for f in sent:
+                f.close()
+
+    async def test_no_attachments_without_audio_or_when_the_plan_no_longer_has_it(self) -> None:
+        import tempfile
+        from pathlib import Path
+
+        with tempfile.TemporaryDirectory() as tmp:
+            voice = Path(tmp) / "v.mp3"
+            voice.write_bytes(b"mp3")
+            for name, job, lapsed in (
+                ("no audio", self.job(audio="off"), False),
+                ("failed", self.job(audio="failed"), False),
+                ("lapsed", self.job(audio="ready"), True),
+            ):
+                with self.subTest(name):
+                    bot = fake_bot(job, present={"voice": voice, "music": voice})
+                    if lapsed:
+                        bot.plan_allows = AsyncMock(
+                            side_effect=lambda a, *_, **__: a != "recap_audio"
+                        )
+                    await bot._post_one_recap(THURSDAY.id, "c" * 32, 100)
+                    self.assertNotIn("files", bot.sent.send.await_args.kwargs)
+                    bot.recaps.posted.assert_awaited_once()  # the text is posted either way
 
     async def test_each_check_that_fails_posts_nothing_and_tells_the_dm_why(self) -> None:
         cases = {
