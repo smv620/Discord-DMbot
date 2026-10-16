@@ -34,7 +34,7 @@ CHOICES: tuple[tuple[str, int | None], ...] = (
 )
 LABEL_OF: dict[str, str] = {"forever": "Forever", **{str(d): w for d, w in KEEP_LABELS.items()}}
 ONLY_DMS = "Only this campaign's DMs can change that."
-GONE = "That campaign isn't here any more."
+GONE = "That campaign isn't here any more. Open ⚙️ Settings again."
 COULDNT = "That didn't work, and nothing changed. Please try again in a moment."
 INTRO = "📜 **Keep transcripts for**"
 
@@ -57,31 +57,29 @@ def choice_of(campaign: Campaign) -> str:
 
 def panel_text(campaign: Campaign) -> str:
     current = LABEL_OF[choice_of(campaign)]
+    days = campaign.transcript_keep_days
     after = (
         "DMbot keeps them until the campaign is deleted."
-        if campaign.transcript_keep_days is None
-        else "After a session is that old, its transcript is deleted every night, with its "
-        "downloads on the website. Recaps and what you confirmed into story memory stay."
+        if days is None
+        else f"Each night, sessions older than {KEEP_LABELS[days]} are deleted, with their "
+        "downloads on the website. Recaps and the facts you confirmed stay."
     )
-    return (
-        f"{INTRO}: **{current}**.\n"
-        "Transcripts are the written-down words of your sessions. Anyone in the server can read "
-        f"them. {after}"
-    )
+    return f"{INTRO}: **{current}**\nAnyone in the server can read them. {after}"
 
 
 def warning_text(days: int) -> str:
-    """The one warning before a shorter limit is saved."""
+    """The one warning before a shorter limit is saved. It says when the first clean-up is, since
+    a DM's first worry is whether old sessions go at once."""
     return (
         f"Sessions older than {KEEP_LABELS[days]} will be deleted every night, with their "
-        "downloads on the website. Recaps and what you confirmed into story memory stay. "
-        "Players can't get the deleted transcripts back."
+        "downloads on the website. The first clean-up is tonight. Recaps and the facts you "
+        "confirmed stay. Nobody can get the deleted transcripts back."
     )
 
 
 def saved_text(days: int | None) -> str:
     if days is None:
-        return "Saved. DMbot keeps transcripts for ever."
+        return "Saved. DMbot keeps transcripts until the campaign is deleted."
     return f"Saved. Sessions older than {KEEP_LABELS[days]} are deleted every night."
 
 
@@ -215,12 +213,13 @@ class KeepYesButton(
     discord.ui.DynamicItem[discord.ui.Button[discord.ui.View]],
     template=rf"dmbot:keepyes:{_ID}:{_CHOICE}",
 ):
-    """Keep N days: saves the shorter limit the warning was about."""
+    """Delete after N days: saves the shorter limit the warning was about. Named for what it
+    does, since it sits in red beside Cancel and a "Keep" label would read as the safe one."""
 
     def __init__(self, campaign_id: str, choice: str) -> None:
         super().__init__(
             discord.ui.Button(
-                label=f"Keep {LABEL_OF[choice]}",
+                label=f"Delete after {LABEL_OF[choice]}",
                 style=discord.ButtonStyle.danger,
                 custom_id=f"dmbot:keepyes:{campaign_id}:{choice}",
             )
@@ -245,12 +244,12 @@ class KeepNoButton(
     discord.ui.DynamicItem[discord.ui.Button[discord.ui.View]],
     template=rf"dmbot:keepno:{_ID}",
 ):
-    """Cancel: nothing changes, and the panel comes back."""
+    """Keep as it is: nothing changes, and the panel comes back."""
 
     def __init__(self, campaign_id: str) -> None:
         super().__init__(
             discord.ui.Button(
-                label="Cancel",
+                label="Keep as it is",
                 style=discord.ButtonStyle.secondary,
                 custom_id=f"dmbot:keepno:{campaign_id}",
             )

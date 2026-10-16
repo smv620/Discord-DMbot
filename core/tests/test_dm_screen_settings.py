@@ -227,7 +227,7 @@ class SettingsWordsTest(unittest.IsolatedAsyncioTestCase):
 
     def test_the_card_says_what_cant_be_changed_and_what_follows(self) -> None:
         text = settings_text(campaign())
-        self.assertIn("`/transcript`, kept until the campaign is deleted.", text)
+        self.assertIn("`/transcript`. Kept until the campaign is deleted.", text)
         self.assertIn("If DMbot is listening now, it follows the change from now on.", text)
         self.assertNotIn("next line", text)
         self.assertEqual(LOAD_FAILED, "Sorry, something went wrong. Please try again.")

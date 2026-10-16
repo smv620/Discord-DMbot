@@ -392,7 +392,7 @@ class TranscriptStore:
             return [str(r["id"]) for r in await cur.fetchall()]
 
     async def delete_session_transcript(
-        self, guild_id: int, session_id: str, cutoff: int, now: int
+        self, guild_id: int, campaign_id: str, session_id: str, cutoff: int, now: int
     ) -> int:
         """Delete one old session's transcript in ONE transaction (so one failing session rolls
         back only itself): its lines in both versions, its fix suggestions and the story-memory
@@ -402,10 +402,10 @@ class TranscriptStore:
         run does nothing. Returns how many lines went (0: nothing to do)."""
         async with self._db.guild(guild_id) as conn:
             cur = await conn.execute(
-                "SELECT id FROM transcript_sessions WHERE guild_id = %s AND id = %s"
-                " AND ended_at IS NOT NULL AND ended_at < %s AND transcripts_deleted_at IS NULL"
-                " FOR UPDATE",
-                (guild_id, session_id, cutoff),
+                "SELECT id FROM transcript_sessions WHERE guild_id = %s AND campaign_id = %s"
+                " AND id = %s AND ended_at IS NOT NULL AND ended_at < %s"
+                " AND transcripts_deleted_at IS NULL FOR UPDATE",
+                (guild_id, campaign_id, session_id, cutoff),
             )
             if await cur.fetchone() is None:
                 return 0

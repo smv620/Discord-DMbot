@@ -51,7 +51,7 @@ class Panel(unittest.IsolatedAsyncioTestCase):
         await keep.TranscriptsButton(CID).callback(it)
         text = it.response.send_message.await_args.args[0]
         self.assertIn("**90 days**", text)
-        self.assertIn("Recaps and what you confirmed into story memory stay", text)
+        self.assertIn("Recaps and the facts you confirmed stay", text)
         view = it.response.send_message.await_args.kwargs["view"]
         self.assertEqual(
             [i.item.label for i in view.children], ["Forever", "1 year", "90 days", "30 days"]
@@ -68,10 +68,12 @@ class Panel(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(
             edit["content"],
             "Sessions older than 90 days will be deleted every night, with their downloads on "
-            "the website. Recaps and what you confirmed into story memory stay. Players can't "
-            "get the deleted transcripts back.",
+            "the website. The first clean-up is tonight. Recaps and the facts you confirmed "
+            "stay. Nobody can get the deleted transcripts back.",
         )
-        self.assertEqual([i.item.label for i in edit["view"].children], ["Keep 90 days", "Cancel"])
+        self.assertEqual(
+            [i.item.label for i in edit["view"].children], ["Delete after 90 days", "Keep as it is"]
+        )
 
     async def test_its_button_saves_it(self) -> None:
         it = press(7, campaign(None), saved=campaign(90))
@@ -136,3 +138,57 @@ class Panel(unittest.IsolatedAsyncioTestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class NightlyRun(unittest.IsolatedAsyncioTestCase):
+    """The plan job and the transcript job are independent (#1533): one failing, or the plan
+    job not existing at all, never stops the other."""
+
+    def bot(self, plan: Any, keep: Any) -> Any:
+        from pathlib import Path
+
+        from dmbot.bot import DMBot
+
+        bot: Any = DMBot.__new__(DMBot)
+        bot.retention, bot.keep_job = plan, keep
+        bot.check_owners_daily = AsyncMock()
+        bot.settings = SimpleNamespace(data_dir=Path("/nonexistent"))
+        return bot
+
+    async def test_a_failing_plan_job_still_lets_the_transcripts_go(self) -> None:
+        from unittest.mock import patch
+
+        keep_job = SimpleNamespace(run_once=AsyncMock())
+        plan = SimpleNamespace(run_once=AsyncMock(side_effect=RuntimeError("down")))
+        bot = self.bot(plan, keep_job)
+        with (
+            self.assertLogs("dmbot.bot", "ERROR"),
+            patch("dmbot.bot.retention.write_last_run") as wrote,
+        ):
+            await bot._retention_once(bot.settings.data_dir)
+        keep_job.run_once.assert_awaited_once()
+        wrote.assert_not_called()  # the plan job didn't run, so the run isn't counted as done
+
+    async def test_with_no_plan_job_the_transcripts_still_go(self) -> None:
+        from unittest.mock import patch
+
+        keep_job = SimpleNamespace(run_once=AsyncMock())
+        bot = self.bot(None, keep_job)
+        with patch("dmbot.bot.retention.write_last_run") as wrote:
+            await bot._retention_once(bot.settings.data_dir)
+        keep_job.run_once.assert_awaited_once()
+        wrote.assert_called_once()
+
+    async def test_a_failing_transcript_job_never_stops_the_plan_job(self) -> None:
+        from unittest.mock import patch
+
+        keep_job = SimpleNamespace(run_once=AsyncMock(side_effect=RuntimeError("down")))
+        plan = SimpleNamespace(run_once=AsyncMock())
+        bot = self.bot(plan, keep_job)
+        with (
+            self.assertLogs("dmbot.bot", "ERROR"),
+            patch("dmbot.bot.retention.write_last_run") as wrote,
+        ):
+            await bot._retention_once(bot.settings.data_dir)
+        plan.run_once.assert_awaited_once()
+        wrote.assert_called_once()

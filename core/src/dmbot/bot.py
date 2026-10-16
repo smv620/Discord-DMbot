@@ -1058,7 +1058,11 @@ class DMBot(commands.AutoShardedBot):
                 if self.audio_worker is not None
                 else []
             ),
-            *([self._watched(self._retention_loop(), "retention")] if self.retention else []),
+            *(
+                [self._watched(self._retention_loop(), "retention")]
+                if self.retention or self.keep_job
+                else []
+            ),
             *(
                 [self._watched(self._test_recordings_loop(), "test-recordings")]
                 if self.settings.test_recording_guilds
@@ -2188,8 +2192,8 @@ class DMBot(commands.AutoShardedBot):
 
     async def _retention_loop(self) -> None:
         """Once a day, after hours (UTC), warn about and delete campaigns past their keep
-        date (#964). Safe to run twice; a failed run is logged and tried again tomorrow."""
-        assert self.retention is not None
+        date (#964), and delete the transcripts older than a campaign's own limit (#1533). Safe to
+        run twice; a failed run is logged and tried again tomorrow."""
         state_dir = self.settings.data_dir
         # A bot that was down at 03:00 would skip that day: if the last run was over a day
         # ago, run once shortly after start-up (#989).
@@ -2203,18 +2207,24 @@ class DMBot(commands.AutoShardedBot):
             await self._retention_once(state_dir)
 
     async def _retention_once(self, state_dir: Path) -> None:
-        assert self.retention is not None
-        try:
-            await self.retention.run_once(int(time.time()))
-        except Exception:
-            log.exception("The daily retention job failed")
-            return
-        retention.write_last_run(state_dir, int(time.time()))
-        if self.keep_job is not None:  # (a campaign's own limit; the plan's job is above)
+        """The plan job and the transcript job are independent: one failing never stops the
+        other. The run counts as done (for the catch-up check) when the plan job ran, or when
+        there is no plan job."""
+        ran = self.retention is None
+        if self.retention is not None:
+            try:
+                await self.retention.run_once(int(time.time()))
+                ran = True
+            except Exception:
+                log.exception("The daily retention job failed")
+        if self.keep_job is not None:  # a campaign's own limit (#1533)
             try:
                 await self.keep_job.run_once(int(time.time()))
             except Exception:
                 log.exception("The daily keep-transcripts job failed")
+        if not ran:
+            return
+        retention.write_last_run(state_dir, int(time.time()))
         try:
             await self.check_owners_daily()
         except Exception:

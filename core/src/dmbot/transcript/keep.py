@@ -42,9 +42,10 @@ class Result:
 
 
 def note_text(sessions: int, days: int) -> str:
-    """What the DM screen says once: "🗑 Deleted 3 old transcripts (kept 90 days)."."""
-    things = "1 old transcript" if sessions == 1 else f"{sessions} old transcripts"
-    return f"🗑 Deleted {things} (kept {KEEP_LABELS.get(days, f'{days} days')})."
+    """What the DM screen says once: "🗑 Deleted 3 transcripts older than 90 days. …"."""
+    things = "1 transcript" if sessions == 1 else f"{sessions} transcripts"
+    age = KEEP_LABELS.get(days, f"{days} days")
+    return f"🗑 Deleted {things} older than {age}. Change this under ⚙️ Settings → 📜 Transcripts."
 
 
 class KeepJob:
@@ -96,7 +97,7 @@ class KeepJob:
         for session_id in due[:MAX_SESSIONS_PER_RUN]:
             try:
                 lines = await self._transcripts.delete_session_transcript(
-                    campaign.guild_id, session_id, cutoff, now
+                    campaign.guild_id, campaign.id, session_id, cutoff, now
                 )
             except Exception:  # this session rolled back by itself; the others go on
                 result.failed += 1
@@ -107,8 +108,9 @@ class KeepJob:
             result.lines += lines
         if not deleted or campaign.transcript_deleted_noted:
             return
-        marked = await self._campaigns.mark_transcript_deletion_noted(
-            campaign.guild_id, campaign.id
-        )  # (the first to mark it posts it: two checks can't both)
-        if marked and not await self._post_screen(campaign, note_text(deleted, days)):
+        # Post first and mark only when it went out: a post that fails is tried again the next
+        # time something is deleted, rather than the note being lost.
+        if await self._post_screen(campaign, note_text(deleted, days)):
+            await self._campaigns.mark_transcript_deletion_noted(campaign.guild_id, campaign.id)
+        else:
             log.warning("Keep transcripts: couldn't post the DM-screen note")

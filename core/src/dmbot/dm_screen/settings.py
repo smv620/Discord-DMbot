@@ -106,7 +106,7 @@ def _transcripts_line(campaign: Campaign) -> str:
     )
     return (
         "• **Saved transcripts:** anyone in the server can read and download them with "
-        f"`/transcript`, {kept}."
+        f"`/transcript`. {kept[:1].upper()}{kept[1:]}. Change it with 📜 Transcripts."
     )
 
 

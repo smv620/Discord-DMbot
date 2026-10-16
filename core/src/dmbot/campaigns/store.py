@@ -1274,7 +1274,7 @@ class CampaignStore:
                     "UPDATE campaigns SET target_ruleset = %s, fallback_ruleset = %s,"
                     " optional_rules_default = %s, last_played_at = %s,"
                     " dm_screen_visibility = %s, dm_screen_level = %s, rules_cards = %s,"
-                    " table_chat = %s, side_initiative = %s, transcript_keep_days = %s,"
+                    " table_chat = %s, side_initiative = %s,"
                     " recaps_text = %s, recaps_audio = %s, recaps_email = %s,"
                     # The invite link is not touched: it is the DM's join link for this
                     # server's table, and a backup doesn't record which server it came from,
@@ -1293,7 +1293,6 @@ class CampaignStore:
                         info["rules_cards"],
                         info["table_chat"],
                         info["side_initiative"],
-                        info["transcript_keep_days"],
                         info["recaps_text"],
                         info["recaps_audio"],
                         info["recaps_email"],
@@ -1715,7 +1714,7 @@ def _validate_backup(
 
     # Backups made before the keep setting existed keep transcripts forever.
     keep_days = campaign.get("transcript_keep_days")
-    if keep_days not in KEEP_CHOICES or isinstance(keep_days, bool):
+    if keep_days is not None and (type(keep_days) is not int or keep_days not in KEEP_CHOICES):
         raise CampaignError(DAMAGED)
 
     # Backups made before the recap choices existed have them all on, as a new campaign does.

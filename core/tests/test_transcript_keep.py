@@ -89,6 +89,24 @@ class Setting(KeepTest):
         with self.assertRaises(CampaignError):
             await self.campaigns.import_backup(OTHER_GUILD, backup, DM)
 
+    async def test_a_restore_into_a_campaign_keeps_that_campaigns_own_limit(self) -> None:
+        await self.campaigns.set_transcript_keep(GUILD, self.camp.id, 90)
+        backup = await self.campaigns.export(GUILD, self.camp.id)
+        await self.campaigns.set_transcript_keep(GUILD, self.camp.id, None)
+        await self.campaigns.import_backup(GUILD, backup, DM, replace_campaign_id=self.camp.id)
+        got = await self.campaigns.get(GUILD, self.camp.id)
+        assert got is not None
+        # Old transcripts are never deleted by a restore: it does not bring a limit into a
+        # campaign that has its own.
+        self.assertIsNone(got.transcript_keep_days)
+
+    async def test_a_malformed_limit_in_a_backup_is_refused(self) -> None:
+        backup = await self.campaigns.export(GUILD, self.camp.id)
+        for bad in (90.0, "90", True, 0):
+            backup["campaign"]["transcript_keep_days"] = bad
+            with self.assertRaises(CampaignError):
+                await self.campaigns.import_backup(OTHER_GUILD, backup, DM)
+
     async def test_changing_it_lets_the_screen_say_so_again(self) -> None:
         self.assertTrue(await self.campaigns.mark_transcript_deletion_noted(GUILD, self.camp.id))
         self.assertFalse(await self.campaigns.mark_transcript_deletion_noted(GUILD, self.camp.id))
@@ -169,7 +187,14 @@ class Job(KeepTest):
         await self.session(GUILD, self.camp.id, 150)
         await self.job().run_once(NOW)
         self.assertEqual(
-            self.posts, [(self.camp.id, "🗑 Deleted 2 old transcripts (kept 90 days).")]
+            self.posts,
+            [
+                (
+                    self.camp.id,
+                    "🗑 Deleted 2 transcripts older than 90 days. "
+                    "Change this under ⚙️ Settings → 📜 Transcripts.",
+                )
+            ],
         )
         await self.session(GUILD, self.camp.id, 140)
         await self.job().run_once(NOW)
@@ -190,10 +215,10 @@ class Job(KeepTest):
         good = await self.session(GUILD, self.camp.id, 200)
         real = self.store.delete_session_transcript
 
-        async def flaky(guild: int, sid: str, cutoff: int, now: int) -> int:
+        async def flaky(guild: int, camp: str, sid: str, cutoff: int, now: int) -> int:
             if sid == bad:
                 raise RuntimeError("down")
-            return await real(guild, sid, cutoff, now)
+            return await real(guild, camp, sid, cutoff, now)
 
         self.store.delete_session_transcript = flaky  # type: ignore[method-assign,assignment]
         with self.assertLogs("dmbot.transcript.keep", "ERROR"):
@@ -202,24 +227,38 @@ class Job(KeepTest):
         self.assertEqual(len(await self.store.lines(GUILD, bad)), 2)  # untouched, tried tomorrow
         self.assertEqual(await self.store.lines(GUILD, good), [])
 
-    async def test_the_note_is_not_lost_to_a_screen_that_cant_be_posted_to(self) -> None:
+    async def test_a_note_that_could_not_be_posted_is_tried_again_next_time(self) -> None:
         await self.campaigns.set_transcript_keep(GUILD, self.camp.id, 30)
         await self.session(GUILD, self.camp.id, 200)
-        job = KeepJob(
+        failing = KeepJob(
             campaigns=self.campaigns,
             transcripts=self.store,
             guild_ids=self.campaigns.guilds_with_campaigns,
             post_screen=AsyncMock(return_value=False),
         )
         with self.assertLogs("dmbot.transcript.keep", "WARNING"):
-            result = await job.run_once(NOW)
+            result = await failing.run_once(NOW)
         self.assertEqual(result.sessions, 1)  # the deletion itself still happened
+        got = await self.campaigns.get(GUILD, self.camp.id)
+        assert got is not None
+        self.assertFalse(got.transcript_deleted_noted)  # not marked, so not lost
+        await self.session(GUILD, self.camp.id, 190)
+        await self.job().run_once(NOW)
+        self.assertEqual(len(self.posts), 1)
 
 
 class Words(DatabaseTest):
     def test_the_note_names_the_limit_and_the_count(self) -> None:
-        self.assertEqual(note_text(3, 90), "🗑 Deleted 3 old transcripts (kept 90 days).")
-        self.assertEqual(note_text(1, 365), "🗑 Deleted 1 old transcript (kept 1 year).")
+        self.assertEqual(
+            note_text(3, 90),
+            "🗑 Deleted 3 transcripts older than 90 days. "
+            "Change this under ⚙️ Settings → 📜 Transcripts.",
+        )
+        self.assertEqual(
+            note_text(1, 365),
+            "🗑 Deleted 1 transcript older than 1 year. "
+            "Change this under ⚙️ Settings → 📜 Transcripts.",
+        )
 
 
 _ = SimpleNamespace

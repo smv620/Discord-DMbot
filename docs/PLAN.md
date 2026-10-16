@@ -3511,7 +3511,9 @@ saved without an end, is never deleted. The session row stays with its number, s
 (`transcripts_deleted_at` marks it, `line_count` 0), so numbers never shift (the bot and the website door
 count it); recaps and confirmed facts stay. The DM screen says "🗑 Deleted 3 old transcripts (kept 90
 days)." once (the first night something goes; changing the choice lets it say so again); players are told
-nothing. The setting is in campaign backups. Not done here: marking the session "transcript deleted" in
+nothing. The setting is in campaign backups (a restore into a new campaign brings it; a restore into an existing
+campaign leaves that campaign's own limit, so a restore never deletes anything). The plan job and this one
+run side by side: one failing never stops the other. Not done here: marking the session "transcript deleted" in
 the website's Recaps list (WebDev: `transcripts_deleted_at` is on the session row).
 
 **Bots are never transcribed** (music bots etc.) — enforced in ears by an allowlist.
