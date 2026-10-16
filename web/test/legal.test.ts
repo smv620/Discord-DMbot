@@ -1,5 +1,7 @@
 // The legal drafts (#433): each has the short version, the draft notice, and facts that
 // match the plan file, so the pages and the pricing never disagree.
+import { readFileSync } from "node:fs";
+
 import { experimental_AstroContainer as AstroContainer } from "astro/container";
 import type { AstroComponentFactory } from "astro/runtime/server/index.js";
 import { beforeAll, describe, expect, it } from "vitest";
@@ -295,6 +297,9 @@ describe("email from DMbot (#1283)", () => {
     expect(t).toContain("A move code goes only to the email you paid with");
     expect(t).toContain("two Try It emails");
     expect(t).toContain("deleted after 90 days");
+    expect(t).toContain("The notes for the Try It emails are deleted a year after they were sent");
+    expect(t).toContain("All your notes are deleted when you delete your account");
+    expect(t).toContain("This list stays even after you delete your account, so we never email you again after you said stop");
     expect(t).toContain("We do not keep the words of the email or the address it went to");
     expect(t).toContain("Sign-in links and move codes have no such link, because you asked for them");
   });
@@ -308,11 +313,59 @@ describe("email from DMbot (#1283)", () => {
   });
 });
 
+describe("what the AI company does with the text (#1328)", () => {
+  const privacy = (): string => text(doc("privacy").querySelector("main"));
+
+  it("says the text isn't used to train the AI company's AI, as the yes message does", () => {
+    const consent = readFileSync(new URL("../../core/src/dmbot/consent_dm.py", import.meta.url), "utf8");
+    // The promise made to a player when they say yes (AI_NOTE) and the page must say the same.
+    expect(consent).toContain("It isn't used to train their AI.");
+    const anthropic = privacy().slice(privacy().indexOf("Anthropic:"));
+    // Named, so "their" can't be read as covering the speech company listed just above.
+    expect(anthropic.slice(0, 260)).toContain("It gets the text it needs, not sound. That text isn't used to train Anthropic's AI.");
+  });
+
+  it("says it once, under the AI company, and nowhere else on the page", () => {
+    // Not copied to another company or to the short summary (which has no such promise to make).
+    expect(privacy().match(/train/gi)).toHaveLength(1);
+  });
+
+  it("makes no such promise for the speech company: it depends on that company's own setting", () => {
+    // Anthropic's commercial terms (Section B) say it may not train on customer content. Deepgram's
+    // use of audio depends on its Model Improvement Program: core opts out of it (mip_opt_out=true,
+    // transcription/deepgram.py), but what that covers needs Deepgram's own docs, so nothing is
+    // promised for it here.
+    const deepgram = privacy().slice(privacy().indexOf("Deepgram:"), privacy().indexOf("Anthropic:"));
+    expect(deepgram).toContain("turns the sound of people who said yes into text");
+    expect(deepgram).not.toMatch(/train/i);
+  });
+});
+
 describe("shared house rules (#1254)", () => {
   it("the privacy page says only rules are shared, never story or transcripts", () => {
     const t = text(doc("privacy").querySelector("main"));
     expect(t).toContain("only the rules themselves");
     expect(t).toContain("The story, names, notes and what was said are never shared");
+  });
+  it("says a suggestion back to the publisher carries only the rule, never the sender (#1313)", () => {
+    const t = text(doc("privacy").querySelector("main"));
+    expect(t).toContain("can suggest a rule back to the game master who shares them");
+    expect(t).toContain("A suggestion carries only the rule's words (and the rule it would replace), never who sent it");
+    expect(t).toContain("keeps no record of the sender");
+  });
+  it("is true: the publisher's table of suggestions has no column for who sent one (#1313)", () => {
+    const schema = readFileSync(new URL("../../core/src/dmbot/schema.py", import.meta.url), "utf8");
+    const table = /CREATE TABLE rule_set_suggestions \(([\s\S]*?)\n    \);/.exec(schema)?.[1] ?? "";
+    expect(table).toContain("set_id");
+    expect(table).not.toMatch(/sent_by|follower|sender|from_guild|from_campaign/);
+  });
+});
+
+describe("story state (#1284)", () => {
+  it("the privacy page says which items are one of a kind and who carries what are kept per campaign", () => {
+    const t = text(doc("privacy").querySelector("main"));
+    expect(t).toContain("which items are the only one of their kind and who carries what, and whether the game master or the bot said so");
+    expect(t).toContain("A backup holds it, and it is deleted when the campaign is deleted");
   });
 });
 

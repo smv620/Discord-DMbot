@@ -50,6 +50,20 @@ export const beforeQuestions: readonly Question[] = [
     more: { text: "Read the privacy page", href: "/legal/privacy" },
   },
   {
+    // Only what is already said to people: the yes message (consent_dm.py: AI_NOTE, AI_SHORT and
+    // outside_note: an outside company writes the voice down, an AI company, Anthropic, reads the
+    // text) and the privacy page ("Companies that help us": Deepgram turns the sound into text,
+    // Anthropic is the AI that helps with names, rules and story notes and gets text, not sound;
+    // "the sound is thrown away", and, since #1329, "That text isn't used to train Anthropic's
+    // AI", the same claim the yes message makes). A test checks every company named here is on
+    // the privacy page and that the training sentence is the privacy page's own words. No new
+    // privacy wording: it repeats that sentence and links there.
+    question: "Does it send what we say to an AI?",
+    answer:
+      "Yes, in two steps: a speech company (Deepgram) turns the sound of people who said yes into text, and the sound is thrown away. An AI company (Anthropic) then gets the text it needs, not sound, to help with names, rules and story notes. That text isn't used to train Anthropic's AI.",
+    more: { text: "Read the privacy page", href: "/legal/privacy" },
+  },
+  {
     // CLAUDE.md "Rules edition" (newest first, older tagged) and the order in rules/index.py:
     // house rules sit above everything else.
     question: "Which rules does it use?",

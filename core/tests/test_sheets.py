@@ -231,7 +231,7 @@ class Cleaning(unittest.TestCase):
                 "classes": long_classes,
             }
         )
-        self.assertLess(time.monotonic() - started, 1)
+        self.assertLess(time.monotonic() - started, 5)  # room for parallel tests (#1323)
         assert snapshot is not None
         stored = json.dumps(snapshot, ensure_ascii=False).encode()
         self.assertLessEqual(len(stored), sheets.SNAPSHOT_MAX_BYTES)

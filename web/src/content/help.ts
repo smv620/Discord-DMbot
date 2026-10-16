@@ -45,6 +45,23 @@ export const dmSteps: Step[] = [
     names: [{ name: "Check who is who", file: "ui/people_review.py" }],
   },
   {
+    text: "To say an item, like a magic sword, is the only one, press 🔍 Find a name, open the item, and press ☝️ Only one exists. Press Allow more than one to undo it. An item with its own proper name is taken as the only one until you say otherwise. Only game masters can change this.",
+    names: [
+      { name: "Find a name", file: "ui/name_card.py" },
+      { name: "☝️ Only one exists", file: "ui/name_card.py" },
+      { name: "Allow more than one", file: "ui/name_card.py" },
+    ],
+  },
+  {
+    text: "To say who has something, open the name, press 🧭 Connect to…, and choose carries. It is saved either way. If it looks odd, for example \"Someone else already has that, and there is only one\", DMbot says so and will ask you about it after the session. DMbot only points it out. You decide.",
+    names: [
+      { name: "Connect to…", file: "ui/name_card.py" },
+      { name: "carries", file: "ui/name_card.py" },
+      { name: "Someone else already has that, and there is only one", file: "ui/name_card.py" },
+      { name: "will ask you about it after the session", file: "ui/name_card.py" },
+    ],
+  },
+  {
     text: 'Ask a quick question out loud: "Hey DMbot, how long does Bless last?" The short answer is posted in the table\'s dmb-chat channel and says how sure DMbot is. You have the final say.',
     names: [{ name: "dmb-chat", file: "dm_screen/dmbchat_channel.py" }],
   },
@@ -77,6 +94,40 @@ export const dmSteps: Step[] = [
       { name: "See changes", file: "dm_screen/set_update.py" },
       { name: "Pick changes", file: "dm_screen/set_update.py" },
       { name: "Undo", file: "dm_screen/set_update.py" },
+    ],
+  },
+  {
+    text: "To suggest one of your own house rules to the game master whose rules you use, type /dmbot houserules, press 💡 Suggest next to your rule, then press Yes, send it. It goes exactly as written, with no name on it, so check that the rule names no one. Your own rules stay as they are.",
+    names: [
+      { name: "/dmbot houserules", file: "ui/house_rules.py" },
+      { name: "💡 Suggest", file: "ui/house_rules.py" },
+      { name: "Yes, send it", file: "ui/house_rules.py" },
+    ],
+  },
+  {
+    text: "You hear the answer on your DM screen at your next session. You only see 💡 Suggest for rules your table wrote, and only while your copy still gets updates.",
+  },
+  {
+    text: "When another table suggests a rule for the rules you share, a note appears on your DM screen. It never says which table sent it. Press See to preview the change, Add to set to make a new version for every table that uses your rules, or No thanks. Nothing changes until you press Add to set.",
+    names: [
+      { name: "See", file: "dm_screen/set_suggestion.py" },
+      { name: "Add to set", file: "dm_screen/set_suggestion.py" },
+      { name: "No thanks", file: "dm_screen/set_suggestion.py" },
+    ],
+  },
+  {
+    text: "If the rules you use stop being shared, your table keeps its copy and the rules keep working, but they won't get updates any more. The 📚 Shared rules screen says \"This copy no longer gets updates.\" To get updates again, ask that game master to share the rules again and send you the new code. Then press Stop using shared rules (your own rules stay, and Undo puts the copy back), then 📥 Use shared rules, and type the code.",
+    names: [
+      { name: "This copy no longer gets updates", file: "ui/shared_rules.py" },
+      { name: "Stop using shared rules", file: "ui/shared_rules.py" },
+      { name: "📥 Use shared rules", file: "ui/shared_rules.py" },
+    ],
+  },
+  {
+    text: "A backup keeps the rules your table uses: the set's name, the version you had, and its rules. It does not keep the share code. After /dmbot restore, the Shared rules screen says \"This copy no longer gets updates\", and the rules keep working. To get updates again, ask the game master for a share code. Press Stop using shared rules, then 📥 Use shared rules, and type the code.",
+    names: [
+      { name: "/dmbot restore", file: "ui/dmbot_commands.py" },
+      { name: "Stop using shared rules", file: "ui/shared_rules.py" },
     ],
   },
   {
