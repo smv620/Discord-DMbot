@@ -85,6 +85,7 @@ from dmbot.dm_screen import (
     VisibilityButton,
     ensure_dm_screen,
     house_sync,
+    pack_suggestion,
     pack_update,
     peek_view,
     rules_cards,
@@ -194,7 +195,7 @@ from dmbot.rules.homebrew_packs import HomebrewPackStore, HomebrewReader
 from dmbot.rules.homebrew_spotter import HomebrewMention, HomebrewSpotter
 from dmbot.rules.house import HouseRule, HouseRulesSection, HouseRuleStore
 from dmbot.rules.house_file_link import HouseFileLinkStore
-from dmbot.rules.pack_updates import PackUpdateStore
+from dmbot.rules.pack_suggestions import PackSuggestionStore
 from dmbot.rules.rule_sets import FollowedSetsSection, RuleSetStore
 from dmbot.rules.spotter import Mention
 from dmbot.sessions import SavedSession, SessionStore
@@ -1018,6 +1019,7 @@ class DMBot(commands.AutoShardedBot):
         self.add_dynamic_items(PutBackButton)  # lines left out as off-topic (#677)
         self.add_dynamic_items(set_update.SetUpdateButton)  # shared rules changed (#1191)
         self.add_dynamic_items(pack_update.PackUpdateButton)  # a followed pack changed (#1527)
+        self.add_dynamic_items(pack_suggestion.PackSuggestionButton)  # an entry suggested (#1537)
         self.add_dynamic_items(set_suggestion.SuggestionButton)  # a table's suggestion (#1259)
         self.add_dynamic_items(house_sync.HouseSyncButton)  # the house-rules file (#969)
         self.add_dynamic_items(rules_cards.RulesCardButton)  # rules cards from the table (#931)
@@ -7560,7 +7562,7 @@ async def run(settings: Settings) -> None:
             HouseFileLinkStore(db),
             EffectStore(db),
             TestVoiceStore(db),
-            PackUpdateStore(db),  # shared sets and homebrew packs (#1190, #1527)
+            PackSuggestionStore(db),  # shared sets and homebrew packs (#1190, #1527, #1537)
             RecapStore(db),
             SuggestionStore(db),
             HomebrewStore(db),
