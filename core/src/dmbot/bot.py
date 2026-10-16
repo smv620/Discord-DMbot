@@ -202,6 +202,7 @@ from dmbot.rules.book_rank import book_is_legacy, book_wins
 from dmbot.rules.followed import followed_rules, own_first
 from dmbot.rules.homebrew import Homebrew, HomebrewSection, HomebrewStore
 from dmbot.rules.homebrew_packs import HomebrewPackStore, HomebrewReader
+from dmbot.rules.homebrew_sources import SiteApprovalsSection
 from dmbot.rules.homebrew_spotter import HomebrewMention, HomebrewSpotter
 from dmbot.rules.house import HouseRule, HouseRulesSection, HouseRuleStore
 from dmbot.rules.house_file_link import HouseFileLinkStore
@@ -8006,6 +8007,7 @@ async def run(settings: Settings) -> None:
         campaigns.register_section(MemorySection())  # campaign memory goes in backups
         campaigns.register_section(HouseRulesSection())  # and so do house rules (#865)
         campaigns.register_section(HomebrewSection())  # and its own homebrew (#1520)
+        campaigns.register_section(SiteApprovalsSection())  # the sites it approved (#1633)
         campaigns.register_section(FollowedSetsSection())  # and the sets it follows (#1260)
         campaigns.register_section(ClockSection())  # and the game clock (#965)
         campaigns.register_section(EffectsSection())  # and its timed effects (#998)
