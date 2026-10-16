@@ -1880,14 +1880,14 @@ IMPROVEMENT_OPT_OUTS = """
 
 HOMEBREW_RULES_TO_HOUSE_RULES = """
     -- Rules are house rules, not homebrew (owner decision 2026-10-16, #1628; docs/PLAN.md,
-    -- "Homebrew (part 1)"). Every homebrew entry of the kind 'rule' that is the DM's own, is one
-    -- the players may know (house rules are read by everyone in the server, so a hidden rule
-    -- must not become one), and fits a house rule (one line of at most 500 characters, the name
-    -- in front unless the text already starts with it; at most 200 house rules a campaign)
+    -- "Homebrew (part 1)"). Every homebrew entry of the kind 'rule' that is the DM's own
+    -- and fits a house rule (one line of at most 500 characters, the name in front unless the
+    -- text already starts with it; at most 200 house rules a campaign)
     -- becomes the campaign's next numbered house rule, and the entry goes. A rule from a shared
-    -- book keeps its book confirmation, which a house rule cannot hold; a hidden one, one that
-    -- does not fit and one past the 200 would lose their words or their privacy: all stay as
-    -- homebrew, retagged 'other'. A linked house-rules file is not rewritten. Open suggestions
+    -- book keeps its book confirmation, which a house rule cannot hold; one that does not fit
+    -- and one past the 200 would lose their words: all stay as homebrew, retagged 'other'. A
+    -- hidden rule moves too (owner, 2026-10-16, "Homebrew (part 2)": nothing is hidden from
+    -- players any more). A linked house-rules file is not rewritten. Open suggestions
     -- of a 'rule' to a pack are dropped (a pack cannot hold one). The kind 'rule' leaves
     -- homebrew_entries' list.
     -- Row-level security (CLAUDE.md, migrations that change rows): migrations run with no server
@@ -1909,7 +1909,7 @@ HOMEBREW_RULES_TO_HOUSE_RULES = """
                             THEN text ELSE name || ': ' || text END,
                        '[[:space:]]+', ' ', 'g')) AS rule_text
             FROM homebrew_entries
-            WHERE kind = 'rule' AND NOT from_book AND players_may_know
+            WHERE kind = 'rule' AND NOT from_book
         ) AS composed
         WHERE char_length(rule_text) <= 500;
     DELETE FROM moved_rules m

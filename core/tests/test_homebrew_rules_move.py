@@ -137,8 +137,9 @@ class Migration(DatabaseTest):
                 (1, "Old rule 1"),
                 (2, "Old rule 2"),
                 (3, "Fast Travel: Everyone moves at double speed."),
+                (5, "Secret Law: Nobody may know this."),  # (hidden no more: part 2)
                 (4, "flanking gives advantage when two allies..."),  # (it starts with the name)
-                (5, "Two Lines: First line. Second line."),  # (one line, like every house rule)
+                (6, "Two Lines: First line. Second line."),  # (one line, like every house rule)
             },
         )
         theirs = [(r.number, r.rule) for r in await houses.list(GUILD, two.id)]
@@ -150,19 +151,16 @@ class Migration(DatabaseTest):
             {
                 ("Booked", "other"),  # from a book
                 ("Long One", "other"),  # too long for a house rule
-                ("Secret Law", "other"),  # hidden: a house rule is read by the whole server
                 ("Hollow King", "monster"),
             },
         )
-        secret = next(e for e in await store.list(GUILD, one.id) if e.name == "Secret Law")
-        self.assertFalse(secret.players_may_know)  # still hidden
         self.assertEqual(await store.list(GUILD, two.id), [])
         async with self.db.guild(GUILD) as conn:
             cur = await conn.execute(
                 "SELECT id, house_rules_made FROM campaigns ORDER BY house_rules_made"
             )
             made = {r["id"]: r["house_rules_made"] for r in await cur.fetchall()}
-        self.assertEqual((made[one.id], made[two.id]), (5, 1))
+        self.assertEqual((made[one.id], made[two.id]), (6, 1))
         async with self.db.unscoped() as conn:  # the openings are gone again
             cur = await conn.execute(
                 "SELECT count(*) AS n FROM pg_policies WHERE policyname = 'migrate_backfill'"
