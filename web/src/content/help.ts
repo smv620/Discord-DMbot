@@ -48,6 +48,22 @@ export const dmSteps: Step[] = [
     names: [{ name: "Check who is who", file: "ui/people_review.py" }],
   },
   {
+    text: "During a game, DMbot may ask \"Did they mean…?\" when it isn't sure it heard a name right. If nobody answers, DMbot keeps the question for you. After the session, your DM screen says how many are waiting. Press ❓ Check names (only you can press it). For each one, pick a name, press Type it…, Keep \"the word\", or press ⏳ Later. Your answer fixes that one line of the cleaned-up transcript, not the raw one. DMbot writes the name that way from then on. Questions you leave for a week go away on their own. Nothing changes until you answer.",
+    names: [
+      { name: "❓ Check names", file: "ui/heard_review.py" },
+      { name: "Type it…", file: "transcript/questions.py" },
+      { name: "⏳ Later", file: "ui/heard_review.py" },
+    ],
+  },
+  {
+    text: "To keep your homebrew in a text file, press ⚙️ Settings, then 📚 Homebrew, then 📤 Download file. To load a file back, press 📥 Load file. An entry that came from a book you shared gets a note line under its name: [Shared book], and also [Legacy 2014] if the book is for older rules than your table plays. The note is only for you to read. Loading the file ignores it. Entries you load are your own homebrew unless you confirm \"I have the right\" for a book.",
+    names: [
+      { name: "Homebrew", file: "dm_screen/settings.py" },
+      { name: "📤 Download file", file: "ui/homebrew.py" },
+      { name: "📥 Load file", file: "ui/homebrew.py" },
+    ],
+  },
+  {
     text: "To say an item, like a magic sword, is the only one, press 🔍 Find a name, open the item, and press ☝️ Only one exists. Press Allow more than one to undo it. An item with its own proper name is taken as the only one until you say otherwise. Only game masters can change this.",
     names: [
       { name: "Find a name", file: "ui/name_card.py" },
