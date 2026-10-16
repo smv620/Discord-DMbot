@@ -246,7 +246,7 @@ describe("the facts #433 asks for", () => {
 
   it("describes the three DM-screen settings and that peeks are seen", () => {
     expect(privacy()).toMatch(/players who choose to peek \(the usual setting/);
-    expect(privacy()).toContain("the game master can see who peeked");
+    expect(privacy()).toContain("the game masters can see who peeked");
   });
 
   it("tells people a failed payment has a short grace period, with no number of days", () => {

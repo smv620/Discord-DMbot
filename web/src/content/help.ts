@@ -197,6 +197,14 @@ export const dmSteps: Step[] = [
     ],
   },
   {
+    text: "To see or change who your game masters are, press ⚙️ Settings, then 👑 Game masters. To add one, press ➕ Add a game master and pick someone from your server (people only, not bots). A campaign can have up to 5. They get a private message, and right away they can see the DM screen and change settings. To remove one, press ➖ Remove a game master, pick them, then press Remove once to confirm. They lose access right away, even in the middle of a game. You can remove yourself too. You can't remove the last game master, or the one whose plan the campaign uses; hand the campaign over first (⚙️ Settings, then Hand over). Being made a game master doesn't record anyone. Being recorded is still each person's own yes.",
+    names: [
+      { name: "Game masters", file: "dm_screen/game_masters.py" },
+      { name: "Add a game master", file: "dm_screen/game_masters.py" },
+      { name: "Remove a game master", file: "dm_screen/game_masters.py" },
+    ],
+  },
+  {
     text: "To give a campaign to another game master, press ⚙️ Settings, then Hand over. They must say yes.",
     names: [{ name: "Hand over", file: "dm_screen/handover.py" }],
   },
