@@ -18,7 +18,7 @@ from dmbot.bot import DMBot
 from dmbot.campaigns import Campaign
 from dmbot.dm_screen.settings import RuleLookupButton, settings_view
 from dmbot.rules import index
-from dmbot.rules.homebrew import Homebrew
+from dmbot.rules.homebrew import FULL, SAME_NAME, Homebrew, HomebrewError
 from dmbot.rules.house import HouseRule
 from dmbot.ui import rule_card
 from dmbot.ui import rule_lookup as ui
@@ -513,6 +513,120 @@ class Words(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def from_pack(cid: str, name: str, text: str) -> Homebrew:
+    """As the reader makes a followed pack's entry: no id of its own, a source."""
+    return Homebrew(
+        -1001, cid, "item", name, text, "A short version", True, 0, NOW, NOW, 2,
+        source="Frost Pack homebrew, v2",
+    )  # fmt: skip
+
+
+class MakeItMine(LookupTest):
+    """✏️ Make it my own on a followed pack's entry (#1541)."""
+
+    async def card(self, name: str = "Ember Lamp") -> Any:
+        it = await self.command(name)
+        return self.sent(it, 0)[1]
+
+    async def test_the_button_is_on_a_pack_entry_and_not_on_an_own_one(self) -> None:
+        self.brew.entries[C1] = [from_pack(C1, "Ember Lamp", "Glows warmly.")]
+        view = await self.card()
+        self.assertEqual(self.labels(view), [ui.MAKE_MINE_LABEL])
+        self.brew.entries[C1] = [brew(C1, "Ember Lamp", "Mine.")]
+        it = await self.command("Ember Lamp")
+        self.assertIsNone(self.sent(it, 0)[1])  # an own entry has nothing to copy
+
+    async def test_a_player_never_gets_a_card_so_never_the_button(self) -> None:
+        self.brew.entries[C1] = [from_pack(C1, "Ember Lamp", "Glows warmly.")]
+        it = await self.command("Ember Lamp", user_id=PLAYER)
+        self.assertNotIn(ui.MAKE_MINE_LABEL, str(it.followup.send.await_args_list))
+
+    async def test_the_copy_is_the_pack_entry_as_it_is_then_edit_opens(self) -> None:
+        self.brew.entries[C1] = [from_pack(C1, "Ember Lamp", "Glows warmly.")]
+        view = await self.card()
+        saved = brew(C1, "Ember Lamp", "Glows warmly.", kind="item", known=True)
+        self.brew.add = AsyncMock(return_value=saved)  # type: ignore[attr-defined]
+        self.bot.homebrew_changed = MagicMock()
+        it = self.it()
+        await self.press(view, ui.MAKE_MINE_LABEL).callback(it)
+        add = self.brew.add  # type: ignore[attr-defined]
+        add.assert_awaited_once()
+        self.assertEqual(add.await_args.args, (GUILD, C1, DM))
+        self.assertEqual(
+            add.await_args.kwargs,
+            {"kind": "item", "name": "Ember Lamp", "text": "Glows warmly.",
+             "summary": "A short version", "players_may_know": True},
+        )  # fmt: skip
+        self.assertNotIn("from_book", add.await_args.kwargs)  # never a book's
+        self.bot.homebrew_changed.assert_called_once_with(GUILD, C1)
+        self.assertEqual(type(it.response.modal).__name__, "MakeMineForm")
+
+    async def test_only_a_dm_can_press_it_and_nothing_is_copied_otherwise(self) -> None:
+        self.brew.entries[C1] = [from_pack(C1, "Ember Lamp", "Glows warmly.")]
+        view = await self.card()
+        self.brew.add = AsyncMock()  # type: ignore[attr-defined]
+        it = self.it(user_id=PLAYER)
+        await self.press(view, ui.MAKE_MINE_LABEL).callback(it)
+        self.brew.add.assert_not_called()  # type: ignore[attr-defined]
+        self.assertIsNone(it.response.modal)
+        self.assertEqual(it.response.sent[0][0], ui.ONLY_DMS)
+
+    async def test_a_full_homebrew_or_a_name_clash_copies_nothing_and_says_so(self) -> None:
+        self.brew.entries[C1] = [from_pack(C1, "Ember Lamp", "Glows warmly.")]
+        view = await self.card()
+        self.brew.add = AsyncMock(side_effect=HomebrewError("Full."))  # type: ignore[attr-defined]
+        it = self.it()
+        await self.press(view, ui.MAKE_MINE_LABEL).callback(it)
+        self.assertIsNone(it.response.modal)
+        self.assertEqual(it.response.sent[0][0], "Full.")  # an unknown refusal passes through
+        for refusal, words in ((SAME_NAME, ui.ALREADY_MINE), (FULL, ui.FULL_COPY)):
+            self.brew.add = AsyncMock(side_effect=HomebrewError(refusal))  # type: ignore[attr-defined]
+            again = self.it()
+            await self.press(view, ui.MAKE_MINE_LABEL).callback(again)
+            self.assertEqual(again.response.sent[0][0], words)
+
+    async def test_a_long_pack_entry_keeps_the_button_when_the_rest_is_read(self) -> None:
+        self.brew.entries[C1] = [from_pack(C1, "Ember Lamp", "Glows warmly. " * 400)]
+        view = await self.card()
+        self.assertEqual(len(self.labels(view)), 2)  # Read the rest + Make it my own
+        it = self.it()
+        await self.press(view, f"{ui.READ_REST_LABEL} (2 of {len(view.parts)})").callback(it)
+        kept = it.response.edited[0][1]
+        self.assertEqual(self.labels(kept), [ui.MAKE_MINE_LABEL])
+
+    async def test_an_unexpected_failure_is_said_and_logged(self) -> None:
+        self.brew.entries[C1] = [from_pack(C1, "Ember Lamp", "Glows warmly.")]
+        view = await self.card()
+        self.brew.add = AsyncMock(side_effect=RuntimeError("down"))  # type: ignore[attr-defined]
+        it = self.it()
+        with self.assertLogs("dmbot.ui.rule_lookup", level="ERROR"):
+            await self.press(view, ui.MAKE_MINE_LABEL).callback(it)
+        self.assertEqual(it.response.sent[0][0], ui.COULDNT_COPY)
+
+    async def test_the_button_comes_off_the_card_once_the_copy_exists(self) -> None:
+        self.brew.entries[C1] = [from_pack(C1, "Ember Lamp", "Glows warmly.")]
+        view = await self.card()
+        self.brew.add = AsyncMock(return_value=brew(C1, "Ember Lamp", "x"))  # type: ignore[attr-defined]
+        it = self.it()
+        await self.press(view, ui.MAKE_MINE_LABEL).callback(it)
+        it.edit_original_response.assert_awaited_once_with(view=None)
+
+    async def test_saving_the_form_shows_the_entry_as_the_campaigns_own(self) -> None:
+        from dmbot.ui.homebrew import MINE_NOTE, EntryMenu, MakeMineForm
+
+        saved = brew(C1, "Ember Lamp", "Glows warmly.", kind="item")
+        form = MakeMineForm(campaign(), saved, 0)
+        form.saved = saved
+        it = self.it(kind=discord.InteractionType.modal_submit)
+        with unittest.mock.patch("dmbot.ui.homebrew._show", AsyncMock()) as show:
+            await form.finish(it, "x")
+        assert show.await_args is not None
+        text, view = show.await_args.args[1:]
+        self.assertIn(MINE_NOTE, text)
+        self.assertIn("now your own", text)
+        self.assertIsInstance(view, EntryMenu)
 
 
 class HomebrewLookup(LookupTest):

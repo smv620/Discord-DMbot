@@ -728,6 +728,16 @@ never does.
   reaching the sidebar, rules lookup, rules cards and alerts (a followed set's rules come after the campaign's
   own, each cited as "<set> house rules, v4"), follower backups (never the share code) and the note at a
   follower's next start when a set is gone (#1262).
+- **Build status (#1541, Make it my own), built:** the card of a followed pack's entry (`/dmbot rule`, and
+  the rules card's Read it all) has a **✏️ Make it my own** button for the campaign's DMs, re-checked on the
+  press. It copies the entry as it is (kind, name, summary, text, players-may-know) into the campaign's own
+  homebrew, tells a running session, and opens Edit on the copy; saving shows the entry's own card with
+  "This is now your own, and it replaces the pack's version in this campaign." Cancel on the form keeps
+  the copy as it is, and the button comes off the card (a second press says the entry is already the
+  campaign's own). The campaign's own entry then wins over the
+  pack's, and a later pack change to that name is reported as "yours wins". A full homebrew or a name that
+  became the campaign's own meanwhile copies nothing and says so. A pack holds no book text, so the copy is
+  never marked from a book.
 - **Build status (#1527, homebrew packs), part A, built:** a pack is a shared ruleset of kind `homebrew` on
   the same tables, codes and door as sets (no new migration: `rule_sets.kind` and `rule_set_follows.position`
   were there). Its content is the campaign's own entries only (`rules/pack_content.py`); an entry with
@@ -1632,12 +1642,18 @@ names panel nor the speech-to-text hints can be a fixed list.
   never can be; 🤫 keep it secret or 👁️ stop, for the campaign's DMs only; ✖ not this
   name), **🔗 Same as…** (find the other name, then "Call it X" or "Call it Y"; the two
   become one, with **Undo** on the card), **🧭 Connect to…** (pick how, from this
-  name's side or the other way round, then the other name; saved as confirmed, and a
-  **Remove a connection…** menu takes one back), and a **Show all ▾** select when a
+  name's side or the other way round, then the other name; saved as confirmed; for the
+  campaign's DMs only, a **🤫 Secret: no / yes** toggle sits beside Back (it starts off each time the
+  menu opens and applies to the next connection saved); a secret connection never shows on players'
+  cards or Show all, and the DM's cards mark it 🤫; a name found through a secret name makes the
+  connection secret by itself; and a
+  **Remove a connection…** menu takes one back, secret ones listed, marked 🤫, only to DMs), and a **Show all ▾** select when a
   section is cut. Decided while building: a card groups connections by how they read from that
   name's side ("is a member of **Frostwolf tribe**"; on the tribe's card "has as
-  members **Ulfgar**"; ally, enemy and family read the same both ways); connections the
-  DM adds are not secret for now (a 🤫 secret connection comes later); a connection that
+  members **Ulfgar**"; ally, enemy and family read the same both ways); a connection is
+  secret only when the DM keeps it secret (#1546: the save checks again that the person is a DM,
+  and saves it as not secret, with a line saying players can see it, if not; a connection already
+  secret is never made public by saving it again); a connection that
   breaks the usual rules (a member of a place) is still saved, flagged for the
   after-session check.
 
