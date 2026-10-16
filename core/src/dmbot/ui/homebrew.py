@@ -34,6 +34,7 @@ from dmbot.rules.homebrew import (
     Homebrew,
     HomebrewError,
     HomebrewStore,
+    credit_label,
     name_key,
 )
 from dmbot.rules.homebrew_import import ImportRefused, Preview, Refresh
@@ -175,7 +176,9 @@ def list_text(campaign: Campaign, entries: list[Homebrew], page: int, note: str 
 
 def entry_text(entry: Homebrew, note: str = "") -> str:
     off = "" if entry.enabled else " It is off, so DMbot skips it. It is still saved."
-    head = f"📚 **{_md(entry.name)}** ({entry.kind.capitalize()}).{off}"
+    credit = credit_label(entry)
+    by = f" _{_md(credit)}_" if credit else ""
+    head = f"📚 **{_md(entry.name)}** ({entry.kind.capitalize()}).{by}{off}"
     body = _fit(_md(entry.text), 1500)
     summary = f"\n_Shown in alerts as:_ {_md(entry.shown())}" if entry.summary else ""
     return _fit((f"{note}\n" if note else "") + f"{head}\n{body}{summary}", 1900)

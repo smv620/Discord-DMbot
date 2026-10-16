@@ -112,6 +112,18 @@ def name_key(name: str) -> str:
     return " ".join(name.casefold().split())
 
 
+def credit_label(entry: Homebrew) -> str:
+    """Who or what an entry is credited to, in plain words, for the card and the entry view
+    (#1646): "from dndbeyond.com" (a page), "credited to dndbeyond.com" (a website's upload),
+    "by Jo" (an upload credited to a person), or "" (the DM's own). Unescaped: the caller
+    escapes it for Discord."""
+    if entry.credit_domain:
+        return f"{'from' if entry.source_kind == 'link' else 'credited to'} {entry.credit_domain}"
+    if entry.credit_kind == "name" and entry.credit_text:
+        return f"by {entry.credit_text}"
+    return ""
+
+
 def clean_name(raw: str) -> str:
     """The name on one line. Raises HomebrewError if empty or too long."""
     name = " ".join(_plain(raw).split())

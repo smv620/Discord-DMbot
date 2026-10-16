@@ -18,7 +18,7 @@ import discord
 from dmbot.rules import facts as rule_facts
 from dmbot.rules import index
 from dmbot.rules.followed import FollowedRule
-from dmbot.rules.homebrew import Homebrew
+from dmbot.rules.homebrew import Homebrew, credit_label
 from dmbot.rules.house import HouseRule
 from dmbot.rules.index import Entry, Hit, monster_keys, normalize
 
@@ -296,9 +296,10 @@ def for_player(parts: list[str]) -> list[str]:
 def homebrew_citation(entry: Homebrew, campaign_name: str) -> str:
     """Where homebrew comes from, as every answer names its source: `Frostmaiden's homebrew:
     Hollow King`. A followed pack's entry names its pack: `Frost Pack homebrew, v2: Hollow King`."""
-    # A page's entry is "from" its site; a website's upload is only "credited to" it (#1635).
-    verb = "from" if entry.source_kind == "link" else "credited to"
-    site = f" ({verb} {entry.credit_domain})" if entry.credit_domain else ""
+    # A page's entry is "from" its site, a website's upload "credited to" it (#1635), a person's
+    # upload "by" their name (#1646). (The caller escapes the whole line for Discord.)
+    label = credit_label(entry)
+    site = f" ({label})" if label else ""
     if entry.source:
         return f"{entry.source}: {entry.name}{site}"
     if entry.from_book:  # the book's title is never kept (CLAUDE.md, IP rule): the campaign's copy

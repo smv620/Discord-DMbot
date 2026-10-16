@@ -2323,6 +2323,11 @@ class DMBot(commands.AutoShardedBot):
                 await self.keep_job.run_once(int(time.time()))
             except Exception:
                 log.exception("The daily keep-transcripts job failed")
+        if self.sources is not None:  # pages nothing uses any more (#1646)
+            try:
+                await self.sources.sweep_pages(await self.campaigns.guilds_with_campaigns())
+            except Exception:
+                log.exception("The daily homebrew-page clean-up failed")
         if not ran:
             return
         retention.write_last_run(state_dir, int(time.time()))
