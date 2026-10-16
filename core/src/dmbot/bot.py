@@ -194,6 +194,7 @@ from dmbot.recaps.pipeline import Inputs, RecapWorker
 from dmbot.recaps.store import Job, RecapSection, RecapStore
 from dmbot.recaps.text import names_a_secret
 from dmbot.retention import RetentionJob
+from dmbot.retention_channels import ChannelCounts, retire_channels
 from dmbot.rules import house_voice
 from dmbot.rules import index as rules_index
 from dmbot.rules.book_rank import book_is_legacy, book_wins
@@ -793,6 +794,7 @@ class DMBot(commands.AutoShardedBot):
                 forget_guild=campaigns.forget_guild_if_empty,
                 running=lambda: {t.campaign_id for t in self.tables.values() if t.campaign_id},
                 send=self._dm_user,
+                retire_channels=self._retire_campaign_channels,
                 enforce=settings.enforce_plans,
                 server_name=lambda gid: g.name if (g := self.get_guild(gid)) else "your server",
                 site_url=settings.site_url,
@@ -7544,6 +7546,15 @@ class DMBot(commands.AutoShardedBot):
         while True:
             await asyncio.sleep(TRANSCRIPT_SAVE_S)
             await asyncio.gather(*(one(t) for t in self._all_tables()))
+
+    async def _retire_campaign_channels(self, campaign: Campaign, now: int) -> ChannelCounts:
+        """Retention deleted this campaign: delete its DM screen and game-time channels and close
+        its transcript and dmb-chat channels (#1598). Only the channels recorded on it."""
+        me = self.user
+        guild = self.get_guild(campaign.guild_id)
+        if me is None:
+            return await retire_channels(None, campaign, 0, now)
+        return await retire_channels(guild, campaign, me.id, now)
 
     async def _drop_old_suggestions(self, table: Table, session_id: str) -> None:
         """A suggested line fix that waited past the end of the next session is dropped, with no
