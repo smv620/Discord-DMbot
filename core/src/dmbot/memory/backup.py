@@ -95,6 +95,7 @@ _TEXT_LIMITS = {
     "reason": DESCRIPTION_MAX,
     "name": NAME_MAX,
     "text": NAME_MAX,
+    "said_as": 80,
     "key": NAME_MAX,
     "heard": NAME_MAX,
     "heard_key": NAME_MAX,
@@ -135,7 +136,7 @@ _NULLABLE = {
     "role", "edition", "played_by", "merged_into", "used_by", "other_id", "entity_id",
     "replaced_by", "parent", "from_session_at", "to_session_at", "from_game_time",
     "to_game_time", "max_per_subject", "closed_at", "unique_item", "fact_id",
-    "session_started_at", "decided_at",
+    "session_started_at", "decided_at", "said_as",
 }  # fmt: skip
 
 
@@ -284,6 +285,8 @@ def _checked_rows(rows: list[Any]) -> dict[str, list[dict[str, Any]]]:
             _check_claim(raw)
         elif raw.get("status") == "dropped":
             raise CampaignError(DAMAGED)  # only a claim can be dropped
+        if table is ALIASES and raw["secret"] and raw["said_as"] is not None:
+            raise CampaignError(DAMAGED)  # a secret name is never given to the narrator
         if table is ALIASES:  # worked out again, not taken from the file
             raw = {**raw, "sound_codes": list(sound_codes(raw["text"]))}
         by_tag[raw["table"]].append(raw)
@@ -328,6 +331,8 @@ def _with_definition_fields(rows: list[Any]) -> list[Any]:
     for raw in rows:
         if isinstance(raw, dict) and raw.get("table") == "entity":
             raw = {"unique_item": None, **raw}  # from before one-of-a-kind items (#1267)
+        elif isinstance(raw, dict) and raw.get("table") == "alias":
+            raw = {"said_as": None, **raw}  # from before the narrator's spelling (#1419)
         elif isinstance(raw, dict) and raw.get("table") == "predicate":
             old_format = "version" not in raw
             raw = {**_NEW_PREDICATE_FIELDS, **raw}

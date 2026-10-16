@@ -6,8 +6,8 @@ its before and after values under one batch number. `undo_batch` reverses a batc
 
 from __future__ import annotations
 
-from collections.abc import Sequence
-from dataclasses import dataclass
+from collections.abc import Mapping, Sequence
+from dataclasses import dataclass, field
 from typing import Any, LiteralString
 
 from psycopg import errors, sql
@@ -29,6 +29,17 @@ class Table:
     # False: kept out of the change log, so Undo can't reach it (the extractor's claims are
     # answered once; a fact written from one is undone as a fact, not by flipping the claim).
     logged: bool = True
+    # A column added later: a row built without it gets this (code that predates the column
+    # keeps working, and no other column is ever filled in silently).
+    defaults: Mapping[str, Any] = field(default_factory=dict, hash=False, compare=False)
+
+
+def _cell(table: Table, row: Mapping[str, Any], column: str) -> Any:
+    """A row's value for a column, or the column's default when it was added after the code that
+    built the row."""
+    if column in row or column not in table.defaults:
+        return row[column]
+    return table.defaults[column]
 
 
 TYPES = Table(
@@ -100,7 +111,8 @@ ALIASES = Table(
     "memory_aliases",
     "id",
     ("id", "entity_id", "text", "key", "kind", "used_by", "secret", "status", "sound_codes",
-     "source", "created_at"),
+     "source", "created_at", "said_as"),
+    defaults={"said_as": None},
 )  # fmt: skip
 MENTIONS = Table(
     "memory_mentions",
@@ -235,7 +247,9 @@ class Changes(Scope):
             sql.SQL(", ").join(sql.Placeholder() * len(cols)),
             sql.SQL(", ").join(sql.Identifier(c) for c in table.columns),
         )
-        cur = await self.conn.execute(query, (*self.ids, *(row[c] for c in table.columns)))
+        cur = await self.conn.execute(
+            query, (*self.ids, *(_cell(table, row, c) for c in table.columns))
+        )
         raw = await cur.fetchone()
         assert raw is not None
         after = row_of(raw, table)
@@ -307,7 +321,7 @@ class Changes(Scope):
                 "INSERT INTO {} (guild_id, campaign_id, {}) SELECT %s, %s, {}"
                 " FROM jsonb_populate_recordset(NULL::{}, %s) RETURNING {}"
             ).format(sql.Identifier(table.name), cols, cols, sql.Identifier(table.name), cols),
-            (*self.ids, Jsonb([{c: row[c] for c in table.columns} for row in rows])),
+            (*self.ids, Jsonb([{c: _cell(table, row, c) for c in table.columns} for row in rows])),
         )
         written = {r[table.key]: row_of(r, table) for r in await cur.fetchall()}
         after = [written[row[table.key]] for row in rows]

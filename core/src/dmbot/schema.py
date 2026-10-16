@@ -4064,6 +4064,17 @@ RECAP_AUDIO_JOBS = (
 )
 RECAP_AUDIO_JOBS = RECAP_AUDIO_JOBS.replace("{scope}", _memory_scope())
 
+MEMORY_SAID_AS = """
+    -- A spelling for the recap's narrator (#1419): "Kah-zeth" for Ka'zeth. Set by the DM on a name,
+    -- through the same change path as every other edit (so it can be undone), and only on a name
+    -- that is not secret: the voice company is sent these, and a secret name never leaves DMbot.
+    -- The check makes the database refuse the pair even if code forgot.
+    ALTER TABLE memory_aliases ADD COLUMN said_as TEXT
+        CHECK (said_as IS NULL OR char_length(said_as) BETWEEN 1 AND 80);
+    ALTER TABLE memory_aliases ADD CONSTRAINT memory_aliases_secret_not_said
+        CHECK (NOT secret OR said_as IS NULL);
+    """
+
 SUPPORT_TICKETS = (
     _setting("dmbot_support_admin", "dmbot.support_admin", "TEXT")
     + """
@@ -4299,6 +4310,7 @@ MIGRATIONS: tuple[Migration, ...] = (
     ("0080_recap_audio_addon", RECAP_AUDIO_ADDON),  # the recap audio add-on (#1389)
     ("0081_recap_audio_follow_ups", RECAP_AUDIO_FOLLOW_UPS),  # move + stray sweep (#1399)
     ("0082_recap_audio_jobs", RECAP_AUDIO_JOBS),  # the recap's audio tracks (#1383)
+    ("0083_memory_said_as", MEMORY_SAID_AS),  # a spelling for the narrator (#1419)
 )
 
 # Tables that must have row-level security. A test checks every table in the schema
