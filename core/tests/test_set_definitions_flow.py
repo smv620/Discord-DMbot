@@ -254,6 +254,25 @@ class Flow(DatabaseTest):
         self.assertEqual((done.updated, done.removed), (("vows loyalty to",), ("guards",)))
         self.assertEqual(set(await self.borrowed()), {"vowed_to"})
 
+    async def test_a_relationship_added_at_publish_reaches_the_follower_as_new_and_marked(
+        self,
+    ) -> None:
+        # Published with one; the DM later ticks a second at "Publish my changes" (#1475): the new
+        # version holds both, the follower is told it is new and gets it marked as the set's.
+        await self.follow(await self.publish(["vowed_to"]))
+        mine = {d["key"]: d for d in await sd.own_definitions(self.memory, GUILD_A, self.pub)}
+        await self.sets.publish_changes(
+            GUILD_A, self.pub, DM_A, self.rules, None, plan_ok=True,
+            definitions=[mine["vowed_to"], mine["guards"]],
+        )  # fmt: skip
+        update = await self.sets.pending_update(GUILD_B, self.far)
+        assert update is not None
+        self.assertEqual({(c.kind, c.key) for c in update.def_changes}, {("added", "guards")})
+        await self.sets.take_update(GUILD_B, self.far, DM_B)
+        done = await set_sync.reconcile(self.memory, self.sets, GUILD_B, self.far)
+        self.assertEqual(done.added, ("guards",))
+        self.assertEqual(set(await self.borrowed()), {"vowed_to", "guards"})
+
     async def test_cherry_pick_takes_the_relationships_one_by_one_and_keeps_them_as_its_own(
         self,
     ) -> None:
