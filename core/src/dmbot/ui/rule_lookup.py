@@ -50,9 +50,16 @@ BOX_LABEL = "Spell, condition or creature"
 BOX_PLACEHOLDER = "For example: Fireball, Grappled or Goblin"
 BOX_MAX = 100
 READ_REST_LABEL = "Read the rest"
+MAKE_MINE_LABEL = "✏️ Make it my own"
 NO_CAMPAIGNS = "There's no campaign in this server yet. A DM can set one up with `/dmbot start`."
 ONLY_DMS = "Only this campaign's DM can look up rules for now. Ask your DM."
 ONLY_DMS_ANY = "Only a campaign's DM can look up rules for now. Ask your DM."
+COULDNT_COPY = "Couldn't copy that. Nothing was changed. Try again in a moment."
+NO_HOMEBREW = "Homebrew isn't available right now. Ask whoever runs DMbot."
+ALREADY_MINE = "You already made this one your own. Find it in `/dmbot homebrew` to change it."
+FULL_COPY = (
+    "This campaign's homebrew is full. Remove one in `/dmbot homebrew`, then press this again."
+)
 CAMPAIGN_GONE = "That campaign isn't here any more. Use `/dmbot rule` again."
 WHICH_CAMPAIGN = "**Which campaign is this for?** Pick one and DMbot looks it up."
 EMPTY = "Type a spell, a condition or a creature, then try again."
@@ -130,7 +137,9 @@ async def look_up(
     own = await _homebrew(interaction, campaign, typed)
     if own is not None:
         mine = rule_card.homebrew_parts(own, campaign.name)
-        await _send(interaction, mine[0], Card(mine, 1) if len(mine) > 1 else None)
+        # A followed pack's entry can be copied into the campaign's own homebrew (#1541).
+        copy = own if own.source else None
+        await _send(interaction, mine[0], Card(mine, 1, copy) if len(mine) > 1 or copy else None)
         return
     if hit is None:
         close = srd.suggest(typed, campaign.target_ruleset, campaign.fallback_ruleset)
@@ -154,19 +163,85 @@ class _KeepsItsText(_Menu):
 class Card(_KeepsItsText):
     """The card's later parts: a **Read the rest** button sends the next one, privately."""
 
-    def __init__(self, parts: list[str], next_part: int) -> None:
+    def __init__(
+        self, parts: list[str], next_part: int, pack_entry: Homebrew | None = None
+    ) -> None:
         super().__init__()
-        self.parts, self.next_part = parts, next_part
-        label = f"{READ_REST_LABEL} ({next_part + 1} of {len(parts)})"
-        self.add_item(_Button(self._more, label=label, style=discord.ButtonStyle.primary))
+        self.parts, self.next_part, self.pack_entry = parts, next_part, pack_entry
+        if next_part < len(parts):
+            label = f"{READ_REST_LABEL} ({next_part + 1} of {len(parts)})"
+            self.add_item(_Button(self._more, label=label, style=discord.ButtonStyle.primary))
+        if pack_entry is not None:
+            self.add_item(_Button(partial(make_mine, pack_entry), label=MAKE_MINE_LABEL))
 
     async def _more(self, interaction: discord.Interaction) -> None:
         # The pressed message loses its button (so a part is never sent twice), then the
         # next part comes as a new private message with its own button.
-        await interaction.response.edit_message(view=None)
+        # The Make-it-my-own button stays on the first message (it is the entry's, not a part's).
+        keep = Card(self.parts, len(self.parts), self.pack_entry) if self.pack_entry else None
+        await interaction.response.edit_message(view=keep)
         follow = self.next_part + 1
         view = Card(self.parts, follow) if follow < len(self.parts) else None
         await _send(interaction, self.parts[self.next_part], view)
+
+
+async def make_mine(entry: Homebrew, interaction: discord.Interaction) -> None:
+    """✏️ Make it my own on a followed pack's entry: copy it into the campaign's own homebrew as it
+    is, then open Edit on the copy. The campaign's own entry of that name wins over the pack's from
+    now on (PLAN, rules precedence). The person is checked again here: a card can be pressed
+    minutes later, and the copy is a change to the campaign. A pack holds no book text (#1529), so
+    the copy is never marked from_book."""
+    from dmbot.rules.homebrew import FULL, SAME_NAME, HomebrewError
+    from dmbot.ui.homebrew import MakeMineForm
+
+    bot = _bot(interaction)
+    campaign = (
+        await bot.campaigns.get(interaction.guild.id, entry.campaign_id)
+        if interaction.guild is not None
+        else None
+    )
+    if campaign is None:
+        await _tell(interaction, CAMPAIGN_GONE)
+        return
+    if not may_look_up(campaign, interaction.user.id):
+        await _tell(interaction, ONLY_DMS)
+        return
+    store = bot.homebrew
+    if store is None:
+        await _tell(interaction, NO_HOMEBREW)
+        return
+    try:
+        saved = await store.add(
+            campaign.guild_id,
+            campaign.id,
+            interaction.user.id,
+            kind=entry.kind,
+            name=entry.name,
+            text=entry.text,
+            summary=entry.summary,
+            players_may_know=entry.players_may_know,
+        )
+    except Exception as exc:
+        if not isinstance(exc, HomebrewError):
+            log.exception("Couldn't copy a pack entry into the campaign's homebrew")
+            await _tell(interaction, COULDNT_COPY)
+            return
+        # Full, or an own entry of that name already exists (a second press, or another device).
+        # Each case gets its own sentence; the store's words would say to pick another name.
+        text = (
+            ALREADY_MINE if str(exc) == SAME_NAME else FULL_COPY if str(exc) == FULL else str(exc)
+        )
+        await _tell(interaction, text)
+        return
+    notify = getattr(bot, "homebrew_changed", None)
+    if notify is not None:
+        notify(campaign.guild_id, campaign.id)
+    await interaction.response.send_modal(MakeMineForm(campaign, saved, 0))
+    # The copy exists now, so the button has done its job: take it off this card, so Cancel on
+    # the form leaves a plain card. If Discord won't let the card change, a second press says
+    # ALREADY_MINE.
+    with contextlib.suppress(discord.HTTPException):
+        await interaction.edit_original_response(view=None)
 
 
 class Suggestions(_KeepsItsText):
