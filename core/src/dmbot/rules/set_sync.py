@@ -80,7 +80,8 @@ async def safely(call: Any) -> sd.Synced | None:
     must not undo the DM's follow or take, which already happened. The next session start
     reconciles again. Returns None when it failed."""
     try:
-        return await call
+        done: sd.Synced | None = await call  # `call` is Any: type it here, not at each caller
+        return done
     except MemoryRuleError as exc:
         log.warning("Shared set definitions: the memory refused (%s)", exc)
     except Exception:
