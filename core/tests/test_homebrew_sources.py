@@ -196,7 +196,9 @@ class Saving(SourcesTest):
         with self.assertRaisesRegex(HomebrewError, "already has homebrew with that name"):
             await self.link(self.one)
 
-    async def test_a_link_or_a_websites_text_is_never_copied_into_a_pack_as_words(self) -> None:
+    async def test_a_link_travels_in_a_pack_as_a_pointer_and_a_websites_upload_names_its_site(
+        self,
+    ) -> None:
         entry = await self.link(self.one)
         typed = await self.brew.add(GUILD_A, self.one.id, DM, kind="item", name="Lamp", text="x")
         await self.raw(
@@ -205,8 +207,11 @@ class Saving(SourcesTest):
         )  # fmt: skip
         everything = await self.brew.list(GUILD_A, self.one.id)
         content, left = pack_content.content_of(everything)
-        self.assertEqual([e["name"] for e in content["entries"]], ["Lamp"])
-        self.assertEqual(sorted(left), sorted([entry.name, "Rope"]))
+        by = {e["name"]: e for e in content["entries"]}
+        self.assertEqual(left, [])
+        self.assertEqual((by[entry.name]["text"], by[entry.name]["page"]), (None, entry.page_url))
+        self.assertEqual(by["Rope"]["domain"], "example.org")
+        self.assertNotIn("domain", by["Lamp"])
         assert typed.id
 
 

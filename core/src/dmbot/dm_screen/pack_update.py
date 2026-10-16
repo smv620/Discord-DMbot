@@ -22,7 +22,7 @@ from __future__ import annotations
 
 import logging
 import re
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from typing import Any
 
 import discord
@@ -53,6 +53,10 @@ UNDONE_AND_WAITING = (
 COULDNT = "That didn't work, and nothing changed. Press the button again in a moment."
 UNDO_LABEL = "↩️ Undo"
 YOURS_WIN = "Your own homebrew has the same name as {names}. Yours still applies."
+WAITING = (
+    "{entries} from {site} {verb} until you say you have the right to use that site's "
+    "homebrew: ⚙️ Settings → Shared rules → Homebrew packs."
+)
 
 
 def _md(text: str) -> str:
@@ -74,12 +78,13 @@ def note_text(
     version: int,
     changes: int,
     overridden: Sequence[str] = (),
+    waiting: Mapping[str, int] | None = None,
 ) -> str:
     text = (
         f"📦 **{_md(pack_name)}** homebrew updated to v{version}: {entries_phrase(changes)}. "
         "DMbot took the new version."
     )
-    extras = extra_lines(overridden)
+    extras = extra_lines(overridden, waiting)
     return "\n".join([text, *extras])
 
 
@@ -91,9 +96,13 @@ def entries_phrase(changes: int) -> str:
     )
 
 
-def extra_lines(overridden: Sequence[str]) -> list[str]:
-    """What the DM should know beyond the count: the campaign's own homebrew still wins."""
+def extra_lines(overridden: Sequence[str], waiting: Mapping[str, int] | None = None) -> list[str]:
+    """What the DM should know beyond the count: the campaign's own homebrew still wins, and
+    entries from a site the campaign hasn't approved wait (#1635)."""
     lines = []
+    for site, n in sorted((waiting or {}).items()):
+        entries = "1 entry" if n == 1 else f"{n} entries"
+        lines.append(WAITING.format(entries=entries, site=site, verb="waits" if n == 1 else "wait"))
     if overridden:
         lines.append(YOURS_WIN.format(names=_shown(overridden)))
     return lines
@@ -462,6 +471,12 @@ class PickView(_Menu):
             await _tell(interaction, COULDNT)
 
 
+async def _waiting(bot: Any, campaign: Campaign) -> dict[str, int]:
+    """Entries of the followed packs that wait for a site's approval, by site (#1635)."""
+    reader = getattr(bot, "homebrew_reader", None)
+    return await reader.waiting(campaign.guild_id, campaign.id) if reader is not None else {}
+
+
 async def _overridden(bot: Any, campaign: Campaign, update: PackUpdate) -> list[str]:
     """The names of changed entries that the campaign's own homebrew also has (a note is worth
     posting without this line if the homebrew can't be read)."""
@@ -529,13 +544,14 @@ async def _update_note(bot: Any, campaign: Campaign, update: PackUpdate) -> shar
     name, version, set_id = update.offer.name, update.offer.version, update.follow.set_id
     try:
         overridden = await _overridden(bot, campaign, update)
+        waiting = await _waiting(bot, campaign)
     except Exception:
         log.exception("Couldn't work out the extra lines of a pack update note")
-        overridden = []
+        overridden, waiting = [], {}
     return shared_update.Update(
         line=f"**{_md(name)}** homebrew, now v{version}: {entries_phrase(len(update.changes))}",
-        single_text=note_text(name, version, len(update.changes), overridden),
+        single_text=note_text(name, version, len(update.changes), overridden, waiting),
         single_view=lambda: note_view(campaign.id, set_id, version),
         buttons=lambda row, tag: note_buttons(campaign.id, set_id, version, row, tag),
-        extras=extra_lines(overridden),
+        extras=extra_lines(overridden, waiting),
     )

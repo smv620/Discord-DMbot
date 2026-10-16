@@ -748,9 +748,19 @@ never does.
   with a name. Within the server, other DMs pick it from a list; for another server, the publishing DM gets a
   **share code** to hand out (it can be turned off, which stops new followers only). Try It campaigns can
   follow but not publish (they have no backups either).
-- **What a set may hold:** only content the campaign's DMs wrote themselves. **Never** anything from a shared
+- **What a set may hold** (updated 2026-10-16, #1635, "Homebrew (part 2)"): a homebrew pack holds the campaign's
+  homebrew: anything but an entry from a shared rulebook or adventure. **Never** anything from a shared
   rulebook or adventure (the right to use it was confirmed for one campaign only, CLAUDE.md, IP), checked by
   where each entry came from; never story memory, names, transcripts, DM notes or character sheets.
+  **Imported entries travel by reference:** an entry imported from a published page is a pointer in the pack
+  (the page's address and site, no words and no summary), because the page is kept once in `homebrew_pages`.
+  An upload credited to a website carries its words and names the site. **A follower must approve each site
+  once per campaign** before its entries are used (the same right-to-use step as importing): the Homebrew
+  packs card says how many entries from which site are waiting and has a button for each (**Use dndbeyond.com**),
+  the follow step and an update's DM-screen note say so too, and approving turns the entries on with no other
+  step. A new site in an update waits the same way; a site already approved asks nothing. A pointer whose page
+  isn't kept here (or was only recreated from a backup) is skipped, not shown. A declined change that holds a
+  pointer lands in the campaign's own homebrew as the same page.
 - **One writer.** Only the publishing campaign's DMs change a set; every change is logged with who, which
   campaign and when. *(Supervisor, 2026-10-14, #1256: no separate co-editor list. To let another DM edit the
   set, make them a DM of the publishing campaign. Publishing a version can be undone: Undo publishes the earlier
