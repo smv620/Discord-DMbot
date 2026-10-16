@@ -399,6 +399,80 @@ class LoadingAFile(HomebrewTest):
         flags = {e.name: e.from_book for e in await self.store.list(GUILD_A, self.campaign.id)}
         self.assertTrue(flags["Mine"])
 
+    async def editions(self) -> dict[str, str | None]:
+        found = await self.store.list(GUILD_A, self.campaign.id)
+        return {e.name: e.book_edition for e in found}
+
+    async def test_the_edition_of_a_book_is_stored_changed_and_never_set_without_a_book(
+        self,
+    ) -> None:
+        await self.store.load_file(
+            GUILD_A, self.campaign.id, DM, self.file(("rule", "Booked", "Words.")),
+            from_book=True, book_edition="2014",
+        )  # fmt: skip
+        self.assertEqual(await self.editions(), {"Booked": "2014"})
+        # The same words said to be for other rules is a change, not "the same".
+        done = await self.store.load_file(
+            GUILD_A, self.campaign.id, DM, self.file(("rule", "Booked", "Words.")),
+            from_book=True, book_edition="2024",
+        )  # fmt: skip
+        self.assertEqual((done.updated, done.same), (1, 0))
+        self.assertEqual(await self.editions(), {"Booked": "2024"})
+        # DM's own words later keep the mark and the edition.
+        await self.store.load_file(
+            GUILD_A, self.campaign.id, DM, self.file(("rule", "Booked", "Own again."))
+        )
+        self.assertEqual(await self.editions(), {"Booked": "2024"})
+        # An edition with no book, or one DMbot doesn't know, is refused.
+        for bad in ({"book_edition": "2024"}, {"from_book": True, "book_edition": "5e"}):
+            with self.assertRaises(HomebrewError):
+                await self.store.load_file(
+                    GUILD_A, self.campaign.id, DM, self.file(("rule", "X", "y")), **bad
+                )
+        self.assertEqual(await self.names(), ["Booked"])
+
+    async def test_the_database_only_takes_the_three_editions(self) -> None:
+        from psycopg import errors
+
+        async with self.db.guild(GUILD_A) as conn:
+            await self.store.add(GUILD_A, self.campaign.id, DM, kind="rule", name="Own", text="x")
+            with self.assertRaises(errors.CheckViolation):
+                await conn.execute(
+                    "UPDATE homebrew_entries SET book_edition = '5e' WHERE guild_id = %s",
+                    (GUILD_A,),
+                )
+
+    async def test_the_edition_goes_into_a_backup_and_comes_back(self) -> None:
+        await self.store.load_file(
+            GUILD_A, self.campaign.id, DM, self.file(("rule", "Booked", "x")),
+            from_book=True, book_edition="other",
+        )  # fmt: skip
+        await self.add("Own", "y")
+        backup = await self.campaigns.export(GUILD_A, self.campaign.id)
+        rows = {r["name"]: r for r in backup["sections"]["homebrew"]}
+        self.assertEqual(rows["Booked"]["book_edition"], "other")
+        self.assertNotIn("book_edition", rows["Own"])
+        restored = await self.campaigns.import_backup(GUILD_B, backup, PLAYER)
+        back = {e.name: e.book_edition for e in await self.store.list(GUILD_B, restored.id)}
+        self.assertEqual(back, {"Booked": "other", "Own": None})
+        # A row claiming an edition without a book, or a wrong one, is a damaged file.
+        for row in (
+            {**rows["Own"], "book_edition": "2024"},
+            {**rows["Booked"], "book_edition": "5e"},
+        ):
+            with self.assertRaises(CampaignError):
+                homebrew.HomebrewSection().check([row])
+
+    async def test_a_removed_book_entry_comes_back_with_its_edition(self) -> None:
+        await self.store.load_file(
+            GUILD_A, self.campaign.id, DM, self.file(("rule", "Booked", "x")),
+            from_book=True, book_edition="2014",
+        )  # fmt: skip
+        (entry,) = await self.store.list(GUILD_A, self.campaign.id)
+        await self.store.remove(GUILD_A, self.campaign.id, DM, entry.id)
+        back = await self.store.put_back(GUILD_A, self.campaign.id, DM, entry)
+        self.assertEqual((back.from_book, back.book_edition), (True, "2014"))
+
     async def test_only_a_dm_loads_and_another_server_cannot(self) -> None:
         rows = self.file(("rule", "Sneaky", "x"))
         with self.assertRaisesRegex(HomebrewError, "Only this campaign's DMs"):
