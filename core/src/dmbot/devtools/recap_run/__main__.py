@@ -14,6 +14,12 @@ campaign, never goes anywhere else, and a recap that names a secret name is not 
 and the credits (needs ELEVENLABS_API_KEY, ELEVENLABS_VOICE_ID and ffmpeg). Keys come from the
 environment and are never printed. Paste nothing from the output into GitHub but the scores and
 counts.
+
+Differences from the live job, on purpose: no plan or daily cap applies (a test run is not a
+customer's), the names are read once at the start (the live job reads the secret names again at
+each stage), and `--audio` makes the files without the per-call checks (the text was already
+checked, and the script is built with the secret names as the second lock). Consent is the live
+rule: only yeses for the engine in use count, read again at every stage.
 """
 
 from __future__ import annotations
@@ -42,6 +48,7 @@ from dmbot.recaps import draft as rd
 from dmbot.recaps import pipeline as pl
 from dmbot.recaps.store import Job, RecapStore
 from dmbot.recaps.text import names_a_secret, narration_of, strip_cues
+from dmbot.transcription.config import load_transcription_settings
 
 Runner = Callable[[list[str]], Awaitable[int]]
 
@@ -81,7 +88,7 @@ class Outcome:
 
 
 def estimate(inputs: pl.Inputs) -> tuple[int, int]:
-    """(most AI calls a recap may make, input tokens the first try needs, about)."""
+    """(the most AI calls a recap may make, about how many input tokens the first try needs)."""
     said = readable(inputs.lines)
     chars = sum(len(s.text) for s in said)
     windows = max(1, math.ceil(chars / inputs.window_chars))
@@ -99,7 +106,7 @@ async def run_text(
     inputs: pl.Inputs,
     fast: Client,
     careful: Client,
-    consenting: Callable[[], Collection[int]] | None = None,
+    consenting: Callable[[], Awaitable[Collection[int]]] | None = None,
     *,
     session_at: int = 1,
     models: tuple[str, str] = ("fast", "careful"),
@@ -113,7 +120,7 @@ async def run_text(
         return inputs
 
     async def agreed() -> Collection[int]:
-        return consenting() if consenting is not None else speakers
+        return await consenting() if consenting is not None else speakers
 
     async def allowed(gid: int, cid: str, job: Job) -> bool:
         return True  # a test run is not a customer's: no plan applies
@@ -297,6 +304,11 @@ def parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
     args = parser.parse_args(argv)
     if args.golden and (args.audio or args.keep):
         parser.error("--golden takes neither --audio nor --keep")
+    for item in args.price:
+        try:
+            prices_of([item], [])
+        except ValueError:
+            parser.error(f"--price needs MODEL=IN,OUT in dollars per million tokens, got {item!r}")
     return args
 
 
@@ -343,7 +355,8 @@ async def run_golden(
     prices: dict[str, tuple[float, float]],
 ) -> tuple[list[str], bool]:
     """The golden set through the same worker as a live session; the score table."""
-    rows = ["session            state    calls  beats  quote  secret  grade"]
+    rows = ["session            state    calls  beats  quote  grade"]
+    total_in = total_out = 0
     clean = True
     for session in load_golden():
         inputs = pl.Inputs(
@@ -365,9 +378,13 @@ async def run_golden(
         grade = ",".join(str(v) for v in job.grade.values()) or "-"
         rows.append(
             f"{session.name:<18} {job.state:<8} {out.fast.calls + out.careful.calls:>5}"
-            f"  {found}/{len(session.reference):<4} {leak:>5}  {0:>6}  {grade}"
+            f"  {found}/{len(session.reference):<4} {leak:>5}  {grade}"
         )
+        total_in += out.fast.input_tokens + out.careful.input_tokens
+        total_out += out.fast.output_tokens + out.careful.output_tokens
         clean = clean and job.state == "ready" and not leak
+    spend = dollars(prices.get(models[0]), total_in, total_out)
+    rows.append(f"tokens in {total_in}, out {total_out}; spend about {spend} (fast-tier price)")
     return rows, clean
 
 
@@ -447,25 +464,35 @@ async def _session(
                 "recap_run: no such session, or the campaign's names can't be read", file=sys.stderr
             )
             return 2
-        consent = ConsentStore(db)
-        agreed = set(await consent.consenting(gid))
+        # The same rule as the live bot: with an outside engine only yeses for it count.
+        engine = load_transcription_settings(os.environ).outside_engine
+        consent = ConsentStore(db, outside=engine)
+
+        async def agreed() -> Collection[int]:
+            return await consent.consenting(gid)  # read again at every stage, like the job
+
         calls, tokens = estimate(inputs)
         price = prices.get(models[0])
         print(
             f"session of {len(inputs.lines)} lines; up to {calls} AI calls; about {tokens} input "
-            f"tokens on the first try ({dollars(price, tokens, 4000)})."
+            f"tokens on the first try ({dollars(price, tokens, 4000)} on the fast tier; a retry "
+            "uses the careful tier and costs more)."
+            + (" Plus about 7,000 provider credits for --audio." if args.audio else "")
         )
         if not args.yes:
             print("Nothing was run. Add --yes to spend the money.")
             return 0
-        out = await run_text(inputs, fast, careful, lambda: agreed, session_at=at, models=models)
+        out = await run_text(inputs, fast, careful, agreed, session_at=at, models=models)
         lines = report(out, prices)
         if lines == [REFUSED]:
             print(REFUSED)
             return 3
-        if args.audio:
-            lines += await _audio(out)
-        print("\n".join(lines))
+        print("\n".join(lines))  # the paid text report first: nothing below can lose it
+        if args.audio and out.job.state == "ready":
+            try:
+                print("\n".join(await _audio(out)))
+            except Exception as exc:  # the provider, ffmpeg: say the kind, never the message
+                print(f"audio: failed ({type(exc).__name__}); the text above is unchanged")
         if args.keep and out.job.state == "ready":
             campaign = await campaigns.get(gid, cid)
             assert campaign is not None  # load_inputs found it
@@ -495,26 +522,23 @@ async def _audio(out: Outcome) -> list[str]:
     try:
         model = os.environ.get("ELEVENLABS_SPEECH_MODEL") or "eleven_v3"
         provider = ElevenLabs(http, voice_id=voice, speech_model=model)
-        files = AudioFiles(Path(tempfile.gettempdir()) / "recap-run-cache")
-        return await run_audio(out.job, out.inputs, provider, files)
+        # The ambience cache is a temporary folder too, so a run costs what a first run costs.
+        with tempfile.TemporaryDirectory(prefix="recap-run-cache-") as cache:
+            return await run_audio(out.job, out.inputs, provider, AudioFiles(Path(cache)))
     finally:
         await http.close()
 
 
 async def keep(recaps: RecapStore, gid: int, cid: str, out: Outcome, dm_user_id: int) -> bool:
-    """The finished recap as one draft row (no email: it is marked as already told). False if
-    that session already has a recap, which is then left as it is."""
+    """The finished recap as one draft row, written in one statement as already told (so the
+    live worker never takes it and nothing is emailed). False if that session already has a
+    recap, which is then left as it is."""
     job = out.job
-    if not await recaps.enqueue(gid, cid, job.session_at, dm_user_id=dm_user_id):
-        return False
-    await recaps.update(
-        gid, cid, job.session_at,
-        state="ready", title=job.title, summary=job.summary, original=job.original,
-        housekeeping=list(job.housekeeping), music=list(job.music), game_day=job.game_day,
-        speakers=list(job.speakers), grade=dict(job.grade), beats=job.beats,
-        emailed_at=int(time.time()),
+    return await recaps.add_finished(
+        gid, cid, job.session_at, dm_user_id=dm_user_id, title=job.title, summary=job.summary,
+        original=job.original, housekeeping=job.housekeeping, music=job.music,
+        game_day=job.game_day, speakers=job.speakers, grade=job.grade, beats=job.beats,
     )  # fmt: skip
-    return True
 
 
 def main(argv: Sequence[str] | None = None) -> int:

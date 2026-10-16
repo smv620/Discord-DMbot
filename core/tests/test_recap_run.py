@@ -68,7 +68,10 @@ class TheRun(unittest.IsolatedAsyncioTestCase):
         self.assertIn("wasn't available", text)  # the live job's own reason
 
     async def test_a_player_who_has_not_agreed_is_left_out_like_in_the_live_job(self) -> None:
-        out = await run.run_text(inputs(), happy(), fx.Canned(), lambda: {fx.DM, fx.ALICE, fx.BOB})
+        async def agreed() -> set[int]:
+            return {fx.DM, fx.ALICE, fx.BOB}
+
+        out = await run.run_text(inputs(), happy(), fx.Canned(), agreed)
         self.assertEqual(out.job.state, "ready")
         self.assertEqual(set(out.job.speakers), {fx.DM, fx.ALICE, fx.BOB})
 
@@ -171,10 +174,24 @@ class TheKeep(DatabaseTest):
         self.assertEqual(job.summary, out.job.summary)
         self.assertEqual(job.speakers, out.job.speakers)
         self.assertIsNotNone(job.emailed_at)  # marked as told: the worker never emails it
+        self.assertEqual(await recaps.due(1), [])  # and never offered to the live worker
         self.assertFalse(await run.keep(recaps, 1, camp.id, out, fx.DM))  # left as it is
         async with self.db.guild(1) as conn:
             cur = await conn.execute("SELECT count(*) AS n FROM recap_jobs")
             self.assertEqual((await cur.fetchone())["n"], 1)
+
+
+class TheConsent(DatabaseTest):
+    async def test_only_yeses_for_the_engine_in_use_count_like_in_the_live_bot(self) -> None:
+        from dmbot.consent import ConsentStore
+        from dmbot.transcription.config import load_transcription_settings
+
+        local = ConsentStore(self.db)
+        await local.grant(1, fx.ALICE, outside_to=None)  # a yes given for local transcription only
+        await local.grant(1, fx.BOB, outside_to="deepgram")
+        engine = load_transcription_settings({"TRANSCRIBER": "deepgram", "DEEPGRAM_API_KEY": "k"})
+        live = ConsentStore(self.db, outside=engine.outside_engine)
+        self.assertEqual(await live.consenting(1), {fx.BOB})  # what the bot, and now the tool, use
 
 
 class TheSharedLoader(DatabaseTest):

@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import asyncio
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from typing import Any
 
@@ -180,6 +180,42 @@ class RecapStore:
                 " ON CONFLICT (guild_id, campaign_id, session_at) DO NOTHING",
                 (guild_id, campaign_id, session_at, dm_user_id, now, now),
             )
+            return bool(cur.rowcount)
+
+    async def add_finished(
+        self,
+        guild_id: int,
+        campaign_id: str,
+        session_at: int,
+        *,
+        dm_user_id: int,
+        title: str,
+        summary: str,
+        original: str,
+        housekeeping: Sequence[str],
+        music: Sequence[str],
+        game_day: int | None,
+        speakers: Sequence[int],
+        grade: dict[str, int],
+        beats: Any,
+    ) -> bool:
+        """A finished recap as a draft in ONE statement (the test run's `--keep`, #1424): it is
+        `ready` and already marked told from the start, so the job worker never sees it as work
+        to do and no email goes out. False if that session already has a recap."""
+        now = int(self._now())
+        async with self._db.guild(guild_id) as conn:
+            cur = await conn.execute(
+                "INSERT INTO recap_jobs (guild_id, campaign_id, session_at, dm_user_id, state,"
+                " title, summary, original, housekeeping, music, game_day, speakers, grade,"
+                " beats, emailed_at, created_at, updated_at)"
+                " VALUES (%s, %s, %s, %s, 'ready', %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)"
+                " ON CONFLICT (guild_id, campaign_id, session_at) DO NOTHING",
+                (
+                    guild_id, campaign_id, session_at, dm_user_id, title, summary, original,
+                    list(housekeeping), list(music), game_day, list(speakers), Jsonb(grade),
+                    Jsonb(beats), now, now, now,
+                ),
+            )  # fmt: skip
             return bool(cur.rowcount)
 
     async def due(self, guild_id: int, *, limit: int = 20) -> list[tuple[str, int]]:
