@@ -3,9 +3,11 @@
 export const text = {
   heading: "Homebrew",
   link: "Read your table's homebrew",
-  lead: "Spells, monsters, items and rules your DM made for your table. Everyone in your Discord server can read them.",
+  lead: "Spells, monsters, items and other game content your DM made for your table. Everyone in your Discord server can read them.",
   leadOneCampaign:
     "Your DM chose to share these. Your DM may have more that stays behind the DM screen.",
+  rulesNote: "Looking for rules your table made up?",
+  rulesLink: "See House rules",
   dmChanges:
     "You can't change these here. Your DM does that in Discord: ⚙️ Settings → 📚 Homebrew.",
   loading: "Loading…",
@@ -37,7 +39,6 @@ export const text = {
     item: "Items",
     feat: "Feats",
     condition: "Conditions",
-    rule: "Rules",
     other: "Other",
   } as Record<string, string>,
   fromBook: "From a shared book",
@@ -61,7 +62,6 @@ export const kindOrder = [
   "item",
   "feat",
   "condition",
-  "rule",
   "other",
 ];
 
