@@ -316,7 +316,9 @@ class NameCards(NamesTest):
     async def test_only_an_item_card_has_that_button(self) -> None:
         from dmbot.ui import name_card
 
-        card = name_card.NameCard(self.campaign.id, self.bell.id, others=True, longer=True)
+        card = name_card.NameCard(
+            self.campaign.id, self.bell.id, others=True, cut=[("names", "Other names (5)")]
+        )
         self.assertFalse([c for c in card.children if c.row == 3])
         self.assertTrue(
             all(
@@ -418,13 +420,17 @@ class NameCards(NamesTest):
         first_row = [getattr(c, "label", "") for c in card.children if c.row in (None, 0)]
         # The three edits the panel names, in its words (#353).
         self.assertEqual(first_row, ["✏️ Fix spelling", "Change what it is", "🗑 Remove this name"])
-        longer = name_card.NameCard(self.campaign.id, self.bell.id, others=True, longer=True)
+        longer = name_card.NameCard(
+            self.campaign.id, self.bell.id, others=True, cut=[("names", "Other names (5)")]
+        )
         rows: dict[int, list[str]] = {}
         for c in longer.children:
             rows.setdefault(c.row or 0, []).append(getattr(c, "label", ""))
         # Three short buttons a row at most, so nothing clips on a phone (#393).
         self.assertEqual(rows[1], [name_card.ALSO_CALLED, "Edit other names", "🔗 Same as…"])
-        self.assertEqual(rows[2], ["🧭 Connect to…", "Show all"])
+        self.assertEqual(rows[2], ["🧭 Connect to…"])
+        (picker,) = [c for c in longer.children if c.row == 4]  # one select, on the last row
+        self.assertEqual(getattr(picker, "placeholder", None), name_card.SHOW_ALL)
         self.assertTrue(all(len(getattr(c, "label", "")) <= 25 for c in card.children))
         (remove,) = [c for c in card.children if getattr(c, "label", "") == "🗑 Remove this name"]
         it = self.it()
@@ -721,7 +727,7 @@ class NameCards(NamesTest):
         self.fresh()
         it = self.it()
         note = "✅ " + "y" * 1500
-        await name_card.show_card(it, self.campaign.id, self.bell.id, full=True, note=note)
+        await name_card.show_card(it, self.campaign.id, self.bell.id, note=note)
         self.assertLessEqual(len(it.response.sent[0][0]), 2000)
 
     async def test_a_manager_never_gets_the_secret_button(self) -> None:
@@ -737,27 +743,194 @@ class NameCards(NamesTest):
         self.assertIn("Only the campaign's DMs", it.response.sent[0][0])
         self.assertFalse((await self.alias("Bell")).secret)
 
-    async def test_show_all_lists_every_other_name(self) -> None:
-        from dmbot.ui import name_card
-
-        for n in range(5):
+    async def add_names(self, n: int, *, secret: bool = False) -> None:
+        for k in range(n):
             await self.memory.add_alias(
-                GUILD, self.campaign.id, self.bell.id, f"Bell {n}", kind="nickname",
-                source="dm", status=CONFIRMED,
+                GUILD, self.campaign.id, self.bell.id, f"{'Hush' if secret else 'Bell'} {k:02d}",
+                kind="nickname", source="dm", status=CONFIRMED, secret=secret,
             )  # fmt: skip
         self.fresh()
+
+    @staticmethod
+    def select(kw: dict[str, Any]) -> Any:
+        found = [c for c in kw["view"].children if isinstance(c, discord.ui.Select)]
+        return found[0] if found else None
+
+    async def test_show_all_is_one_select_with_a_choice_for_each_cut_section(self) -> None:
+        from dmbot.ui import name_card
+
+        await self.add_names(5)  # and the name's own "Bell": six in all
         it = self.it()
         await name_card.show_card(it, self.campaign.id, self.bell.id)
         text, kw = it.response.sent[0]
         self.assertIn("… and 3 more", text)
-        labels = [getattr(c, "label", None) for c in kw["view"].children]
-        self.assertIn("Show all", labels)
+        select = self.select(kw)
+        self.assertEqual(select.placeholder, name_card.SHOW_ALL)
+        self.assertEqual([(o.value, o.label) for o in select.options],
+                         [("names", "Other names (6)")])  # fmt: skip
+        self.assertFalse(
+            [c for c in kw["view"].children if getattr(c, "label", None) == "Show all"]
+        )  # no button any more
+
+    async def test_nothing_cut_means_no_select(self) -> None:
+        from dmbot.ui import name_card
+
+        await self.add_names(2)  # with its own "Bell", three: exactly what the card shows
         it = self.it()
-        await name_card.show_card(it, self.campaign.id, self.bell.id, full=True)
+        await name_card.show_card(it, self.campaign.id, self.bell.id)
+        self.assertIsNone(self.select(it.response.sent[0][1]))
+
+    async def test_choosing_a_section_sends_every_entry_in_order_and_leaves_the_card(self) -> None:
+        from dmbot.ui import name_card
+
+        await self.add_names(5)
+        it = self.it()
+        await name_card.show_section(it, self.campaign.id, self.bell.id, "names")
         text, kw = it.response.sent[0]
-        self.assertNotIn("… and", text)
-        self.assertIn("Bell 4", text)
-        self.assertNotIn("Show all", [getattr(c, "label", None) for c in kw["view"].children])
+        self.assertIn("other names (6)", text)
+        lines = text.splitlines()[1:]
+        self.assertEqual(sorted(lines), sorted(["Bell", *[f"Bell {k:02d}" for k in range(5)]]))
+        card = self.it()
+        await name_card.show_card(card, self.campaign.id, self.bell.id)
+        shown = card.response.sent[0][0].split("**Also called:** ")[1].split(" …")[0].split(", ")
+        self.assertEqual(lines[:3], shown)  # the card's first three, then the rest, same order
+        self.assertIsNone(kw.get("view"))  # one page: no Older / Newer
+        self.assertEqual(it.response.edited, [])  # the card is not changed
+
+    async def test_a_long_section_is_paged_by_25_lines(self) -> None:
+        from dmbot.ui import name_card
+
+        await self.add_names(60)
+        it = self.it()
+        await name_card.show_section(it, self.campaign.id, self.bell.id, "names")
+        text, kw = it.response.sent[0]
+        self.assertEqual(len(text.splitlines()), 1 + 25 + 1)  # head, 25 lines, the page line
+        self.assertIn("Page 1 of 3", text)
+        view = kw["view"]
+        self.assertEqual([c.label for c in view.children], ["Later ▶"])
+        it = self.it()
+        await view._later(it)
+        text, kw = it.response.edited[0]
+        self.assertIn("Page 2 of 3", text)
+        self.assertEqual(len(text.splitlines()), 1 + 25 + 1)
+        self.assertEqual([c.label for c in kw.children], ["◀ Earlier", "Later ▶"])
+        it = self.it()
+        await name_card.show_section(it, self.campaign.id, self.bell.id, "names", page=9)
+        self.assertIn("Page 3 of 3", it.response.sent[0][0])  # past the end: the last page
+
+    async def test_a_player_or_manager_never_gets_the_secret_names(self) -> None:
+        from dmbot.ui import name_card
+
+        await self.add_names(5, secret=True)
+        dm_it = self.it()
+        await name_card.show_card(dm_it, self.campaign.id, self.bell.id)
+        values = [o.value for o in self.select(dm_it.response.sent[0][1]).options]
+        self.assertIn("secret", values)
+        asked = self.it(MANAGER)
+        await name_card.show_card(asked, self.campaign.id, self.bell.id)
+        text, kw = asked.response.sent[0]
+        self.assertNotIn("Hush", text)
+        self.assertIsNone(self.select(kw))  # nothing visible is cut
+        sneaky = self.it(MANAGER)  # an old card, or a made-up press
+        await name_card.show_section(sneaky, self.campaign.id, self.bell.id, "secret")
+        self.assertEqual(sneaky.response.sent[0][0], name_card.NOTHING_MORE)
+        self.assertNotIn("Hush", str(sneaky.response.sent))
+
+    async def test_connections_are_listed_in_full_and_nothing_is_written(self) -> None:
+        from dmbot.ui import name_card
+
+        for k in range(5):
+            other = await ui.save_name(self.memory, self.campaign, f"Friend {k}", "npc", [], [])
+            await self.memory.add_relation(
+                GUILD, self.campaign.id, self.bell.id, "knows", other.id,
+                source="dm", confidence=1.0, status=CONFIRMED,
+            )  # fmt: skip
+        self.fresh()
+        before = await self.memory.aliases(GUILD, self.campaign.id, include_secret=True)
+        it = self.it()
+        await name_card.show_card(it, self.campaign.id, self.bell.id)
+        select = self.select(it.response.sent[0][1])
+        self.assertEqual([o.label for o in select.options], ["Connections (5)"])
+        it = self.it()
+        await name_card.show_section(it, self.campaign.id, self.bell.id, "links")
+        text = it.response.sent[0][0]
+        for k in range(5):
+            self.assertIn(f"knows **Friend {k}**", text)
+        after = await self.memory.aliases(GUILD, self.campaign.id, include_secret=True)
+        self.assertEqual(len(before), len(after))
+
+    async def friends(self, n: int, *, secret: bool = False, predicate: str = "knows") -> None:
+        for k in range(n):
+            other = await ui.save_name(
+                self.memory,
+                self.campaign,
+                f"{'Hidden' if secret else 'Pal'} {predicate} {k}",
+                "npc",
+                [],
+                [],
+            )
+            await self.memory.add_relation(
+                GUILD, self.campaign.id, self.bell.id, predicate, other.id,
+                source="dm", confidence=1.0, status=CONFIRMED, secret=secret,
+            )  # fmt: skip
+        self.fresh()
+
+    async def test_a_secret_connection_is_listed_for_a_dm_and_never_for_anyone_else(self) -> None:
+        from dmbot.ui import name_card
+
+        await self.friends(5, secret=True)
+        dm_it = self.it()
+        await name_card.show_section(dm_it, self.campaign.id, self.bell.id, "links")
+        self.assertIn("🤫", dm_it.response.sent[0][0])
+        for who in (MANAGER, STRANGER):
+            it = self.it(who)
+            await name_card.show_section(it, self.campaign.id, self.bell.id, "links")
+            self.assertNotIn("Hidden", str(it.response.sent))
+
+    async def test_a_group_of_three_is_not_cut_and_a_group_of_four_is(self) -> None:
+        from dmbot.ui import name_card
+
+        await self.friends(3)
+        names = await self.bot.lookup.get(GUILD, self.campaign.id)  # type: ignore[union-attr]
+        rel = await self.memory.relations(GUILD, self.campaign.id, entity_id=self.bell.id)
+        self.assertEqual(name_card.cut_sections(names, self.bell.id, rel, secrets=False), [])
+        await self.friends(1, predicate="serves")  # a second group; each is still three or fewer
+        names = await self.bot.lookup.get(GUILD, self.campaign.id)  # type: ignore[union-attr]
+        rel = await self.memory.relations(GUILD, self.campaign.id, entity_id=self.bell.id)
+        self.assertEqual(name_card.cut_sections(names, self.bell.id, rel, secrets=False), [])
+        await self.friends(1, predicate="serves")
+        await self.friends(1, predicate="serves")
+        await self.friends(1, predicate="serves")  # now one group holds four
+        names = await self.bot.lookup.get(GUILD, self.campaign.id)  # type: ignore[union-attr]
+        rel = await self.memory.relations(GUILD, self.campaign.id, entity_id=self.bell.id)
+        self.assertEqual(
+            [label for _, label in name_card.cut_sections(names, self.bell.id, rel, secrets=False)],
+            ["Connections (7)"],  # the count covers every connection, not only the cut group
+        )
+
+    async def test_an_unknown_section_or_a_gone_name_says_so(self) -> None:
+        from dmbot.ui import name_card
+
+        it = self.it()
+        await name_card.show_section(it, self.campaign.id, self.bell.id, "bogus")
+        self.assertEqual(it.response.sent[0][0], name_card.NOTHING_MORE)
+        it = self.it()
+        await name_card.show_section(it, self.campaign.id, "no-such-name", "names")
+        self.assertEqual(it.response.sent[0][0], ui.GONE)
+
+    async def test_the_earlier_button_goes_back(
+        self,
+    ) -> None:
+        from dmbot.ui import name_card
+
+        await self.add_names(30)
+        it = self.it()
+        await name_card.show_section(it, self.campaign.id, self.bell.id, "names", page=1)
+        view = it.response.sent[0][1]["view"]
+        self.assertEqual([c.label for c in view.children], ["◀ Earlier"])  # the last page
+        back = self.it()
+        await view._earlier(back)
+        self.assertIn("Page 1 of 2", back.response.edited[0][0])
 
     async def test_the_type_ahead_suggests_nothing_to_strangers(self) -> None:
         from dmbot.ui import name_card

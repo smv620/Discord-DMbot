@@ -733,6 +733,14 @@ never does.
   of Pick changes copies the pack into the campaign's own homebrew (its own entries win) and ends the follow,
   one Undo for all; a pack whose publisher stopped sharing is marked "no longer updated", said once. No
   Compare button: the note says when a changed entry shares a name with the campaign's own (which wins).
+  Suggestions built (#1537, migration 0102): a following campaign's DM presses 💡 Suggest to the pack on the
+  campaign's own entry (Settings → Homebrew → the entry; a pick when several packs are followed; an entry
+  that came from a book says it stays home). The publisher gets one DM-screen note, "A table using **<pack>
+  homebrew** suggests (sender not shown)", with See / Add to pack / No thanks, and the sender is never
+  named. Add to pack puts the entry in the publisher's own homebrew (a new name, or replacing their own
+  entry of that name) and makes the next pack version through the same checks as Publish my changes (paid
+  plan, a DM, nothing from a book). Limits as for sets (#1259): one open per entry per pack, an open cap,
+  stale ones expire; the sender hears the outcome once at its next session start.
 - **Relationship definitions travel with a set (#1456; Supervisor decision, 2026-10-16).** At Share the DM
   sees a tick list of the campaign's own relationships (each with its label and what it means; all ticked to
   start) and only the ticked ones go into the set's content: words only (the name, how it reads from the
@@ -1384,7 +1392,7 @@ names panel nor the speech-to-text hints can be a fixed list.
     in-memory copy, never a database query per keystroke; copies loaded only for
     searching expire after a while.
   - **Name card**, under 2,000 characters, each section about 3 entries then "… and N
-    more [Show all]": what it is, last heard, **Also called**, **🤫 Secret**,
+    more", and one **Show all ▾** select under the card for the cut sections: what it is, last heard, **Also called**, **🤫 Secret**,
     **Connections**. Buttons: **✏️ Fix spelling** (one field, filled in), **Edit other
     names** (each: ⭐ make it the main name, 🤫 make it secret or not, ✖ not this
     name, which also undoes a wrong **Same as**), **Add another name** (with a secret-name field, as when adding
@@ -1527,8 +1535,14 @@ names panel nor the speech-to-text hints can be a fixed list.
   🧑 Add a player's character), **🔍 Find a name** (the form and `/dmbot names find:`
   with type-ahead), and the **name card** with ✏️ Fix spelling, Add another name (with
   a secret-name field for the campaign's DMs only), Change what it is, and Remove
-  (asks first; Undo). Still to come in step 2: Edit other names, Same as…, 🧭 Connect
-  to…, and "Show all" on long sections. The type-ahead answers from the copy the
+  (asks first; Undo). The rest of step 2 is built too: Edit other names, 🔗 Same as…,
+  🧭 Connect to… (#126, #1528), and **Show all ▾** on long sections (#1542): the card
+  cuts other names, secret names and connections to three, and one select under it
+  lists each cut section ("Other names (12)"); choosing one sends the whole section as
+  a private message of its own, in the card's words and order, 25 lines a page with
+  Earlier / Later, worked out again on every press. Secret names and connections are
+  listed only to the campaign's DMs (the card's own check). The card does not change,
+  and nothing is written. The type-ahead answers from the copy the
   session already keeps (no expiry for search-only copies yet). Decided while building:
   after DMbot's own change the copy is marked stale at once (not waiting for the change
   notification), so the redrawn card and the next search are right; Fix spelling and
@@ -1607,8 +1621,8 @@ names panel nor the speech-to-text hints can be a fixed list.
   name), **🔗 Same as…** (find the other name, then "Call it X" or "Call it Y"; the two
   become one, with **Undo** on the card), **🧭 Connect to…** (pick how, from this
   name's side or the other way round, then the other name; saved as confirmed, and a
-  **Remove a connection…** menu takes one back), and **Show all** when a section is
-  cut. Decided while building: a card groups connections by how they read from that
+  **Remove a connection…** menu takes one back), and a **Show all ▾** select when a
+  section is cut. Decided while building: a card groups connections by how they read from that
   name's side ("is a member of **Frostwolf tribe**"; on the tribe's card "has as
   members **Ulfgar**"; ally, enemy and family read the same both ways); connections the
   DM adds are not secret for now (a 🤫 secret connection comes later); a connection that
