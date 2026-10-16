@@ -238,6 +238,7 @@ from dmbot.transcript.cleaner import (
     with_ending,
 )
 from dmbot.transcript.export import clock
+from dmbot.transcript.improvement import OptOutStore
 from dmbot.transcript.keep import KeepJob
 from dmbot.transcript.models import NARRATING, Line, TranscriptBuffer
 from dmbot.transcript.store import TranscriptStore
@@ -683,6 +684,7 @@ class DMBot(commands.AutoShardedBot):
         suggestions: SuggestionStore | None = None,
         homebrew: HomebrewStore | None = None,
         heard_questions: WaitingQuestionStore | None = None,
+        improvement: OptOutStore | None = None,
     ) -> None:
         intents = discord.Intents.none()
         intents.guilds = True
@@ -931,6 +933,8 @@ class DMBot(commands.AutoShardedBot):
         # the answer runs out (monotonic seconds) (#1118).
         self._chat_blocked: dict[int, tuple[float, frozenset[int]]] = {}
         self.test_voice = test_voice  # the second yes, for test servers (#1019)
+        # Who chose not to have their words used to improve DMbot (#1609): the recorder asks.
+        self.improvement = improvement
         self._test_key: bytes | None = None
         self._test_delete_locks: dict[tuple[int, int], asyncio.Lock] = {}
         self._test_pending = 0  # utterances waiting to be saved
@@ -1395,6 +1399,10 @@ class DMBot(commands.AutoShardedBot):
         if not self.test_voice_listed(table.guild_id) or table.test_session is not None:
             return
         assert self.test_voice is not None
+        if self.improvement is None:
+            # A path that can't honour the improvement opt-out must not run (#1609).
+            log.error("Test recordings need the improvement opt-out store; not saving")
+            return
         root = self.settings.test_recordings_dir
         try:
             await self.test_voice.load(table.guild_id)
@@ -1437,6 +1445,21 @@ class DMBot(commands.AutoShardedBot):
             session.gap()
             log.warning("Dropped a test recording: %d already waiting", self._test_pending)
             return
+        # The improvement opt-out (#1609): a person who chose it is not saved, and what was
+        # saved of them earlier in this session goes. Read now (a few seconds old at most). If the
+        # choice can't be read nothing is saved: better a gap than their words against their
+        # wish.
+        if self.improvement is None:  # (no session starts without it; belt and braces)
+            return
+        try:
+            out = await self.improvement.is_opted_out_recently(user_id)
+        except Exception:
+            log.exception("Couldn't read the improvement opt-out; not saving a test recording")
+            return
+        if out:
+            if session.has(user_id):
+                session.forget(user_id)
+            return
         self._test_pending += 1
 
         def allowed() -> bool:  # both yeses, checked again before and after the file is made
@@ -1461,10 +1484,25 @@ class DMBot(commands.AutoShardedBot):
         finally:
             self._test_pending -= 1
 
-    def _finish_test_session(self, table: Table, caught_up: bool) -> None:
+    async def _purge_opted_out(self, session: TestSession) -> None:
+        """When a test session ends (#1609): read the improvement choice again, fresh, for
+        everyone saved in it, and drop anyone who opted out meanwhile, even if they never spoke
+        again. A choice that can't be read drops that person: better a gap than their words
+        against their wish."""
+        for user_id in session.people():
+            try:
+                out = self.improvement is None or await self.improvement.is_opted_out(user_id)
+            except Exception:
+                log.exception("Couldn't read the improvement opt-out; dropping a saved speaker")
+                out = True
+            if out:
+                session.forget(user_id)
+
+    async def _finish_test_session(self, table: Table, caught_up: bool) -> None:
         if table.test_session is None:
             return
         try:
+            await self._purge_opted_out(table.test_session)
             table.test_session.finish({"complete": caught_up})
         except Exception:
             log.exception("Couldn't finish a test session")
@@ -2086,7 +2124,7 @@ class DMBot(commands.AutoShardedBot):
                         *table.topic_tokens,
                     )
                 await self._after_session(table, ended_at, caught_up)
-                self._finish_test_session(table, caught_up)
+                await self._finish_test_session(table, caught_up)
                 # After it: the end-of-session capture check runs the last audio checks.
                 if checks := table.audio_checker.log_line():  # cost of #699's checks
                     log.info(checks)
@@ -7912,6 +7950,7 @@ async def run(settings: Settings) -> None:
             SuggestionStore(db),
             HomebrewStore(db),
             WaitingQuestionStore(db),
+            OptOutStore(db),
         )
         _close_on_sigterm(bot)
         async with bot:

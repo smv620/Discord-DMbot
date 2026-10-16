@@ -1863,6 +1863,21 @@ GAME_EFFECTS_EXTENDED = """
         CHECK (extended >= 0);
 """
 
+IMPROVEMENT_OPT_OUTS = """
+    -- A person's choice not to have their words used to improve DMbot (#1609; docs/PLAN.md,
+    -- "Data, ownership and deletion"). Per Discord account, across all servers: it is the
+    -- person's choice, not a campaign's. A row means "opted out"; no row is the default (DMbot
+    -- may use their words). Nothing is deleted by it, and running their table is unaffected.
+    -- Kept when an account is deleted (no link to web_users): forgetting the choice would put
+    -- their words back in. A person reads and writes only their own row (user_isolation); the
+    -- exports read it one person at a time through Database.user(), so nothing here lets one
+    -- person see another's choice. A new table: no rows change, so no backfill policy.
+    CREATE TABLE improvement_opt_outs (
+        user_id      BIGINT PRIMARY KEY CHECK (user_id > 0),
+        opted_out_at BIGINT NOT NULL
+    );
+    """ + _isolate_user("improvement_opt_outs")
+
 GAMETIME_CHANNEL = """
     -- The players' game-time channel (docs/PLAN.md, "TimeBot"; #1116): `dmb-gametime-<slug>`,
     -- everyone reads, only DMbot posts, with the players' pinned clock ("Day 5, morning")
@@ -2424,6 +2439,8 @@ WEB_ROLE_GRANTS: tuple[tuple[str, tuple[str, ...]], ...] = (
     # The weekly support email's once-only mark, through the admin door only (#1514).
     ("SELECT, INSERT, UPDATE", ("support_week_mail",)),
     ("SELECT, INSERT, UPDATE, DELETE", ("web_users", "web_sessions")),
+    # The improvement opt-out (#1609): the person's own row, through the website's switch.
+    ("SELECT, INSERT, DELETE", ("improvement_opt_outs",)),
     # Emailed sign-in links (#1231): made and used by the website, never read by anyone else.
     # (Only `used_at` can be changed: a holder of a link can spend it, never revive or move it.)
     ("SELECT, INSERT, DELETE", ("email_sign_in_links",)),
@@ -5892,6 +5909,7 @@ MIGRATIONS: tuple[Migration, ...] = (
     ("0106_waiting_name_questions", WAITING_NAME_QUESTIONS),  # unanswered "Did they mean…?" (#1572)
     ("0107_web_homebrew_book", WEB_HOMEBREW_BOOK),  # the page tags shared-book entries (#1579)
     ("0108_web_homebrew_packs", WEB_HOMEBREW_PACKS),  # the page shows followed packs (#1586)
+    ("0110_improvement_opt_outs", IMPROVEMENT_OPT_OUTS),  # the improvement opt-out (#1609)
 )
 
 # Tables that must have row-level security. A test checks every table in the schema
@@ -5962,6 +5980,8 @@ USER_ISOLATED_TABLES = (
     "owner_hours",
     # Which campaigns an owner has, across servers; kept by a trigger on campaigns (#437).
     "owner_campaigns",
+    # A person's choice not to have their words used to improve DMbot (#1609).
+    "improvement_opt_outs",
 )
 # Add-only: no policy allows reading a row; the team reads them as the database's
 # administrator (#665).
