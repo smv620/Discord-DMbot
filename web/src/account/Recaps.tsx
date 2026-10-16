@@ -23,6 +23,7 @@ import {
   type RecapMonth,
   type RecapAudioLinks,
 } from "./api";
+import RecapNames from "./RecapNames";
 
 const POLL_MS = 5000;
 
@@ -592,6 +593,7 @@ function Review({ api, recapRef }: { api: AccountApi; recapRef: string }) {
 
       {!editing && <AudioPanel api={api} recap={recap} onRecap={setRecap} />}
       {!editing && <AudioOffer api={api} />}
+      {!editing && <RecapNames api={api} recapRef={recap.ref} />}
       {!editing &&
         (recap.canEdit ||
           recap.canPost ||
