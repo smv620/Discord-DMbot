@@ -2525,3 +2525,14 @@ Overall ...................................... PASS (Deepgram baseline: 33/33, 1
   Not checked: a recorded player types /dmbot fix after a session and sees the picker (needs a game session).
   10-minute check, 10:32 UTC (11 minutes after the start): 0 ERROR, CRITICAL or traceback lines in core and web-api since 10:20; both up, web-api healthy; schema_migrations 93 rows, last 0093_transcript_suggestions.
   Nothing turned on for users (recaps off, no ElevenLabs key, the extractor off).
+2026-10-16  dev1  DEPLOY: migrations 0094 web_transcripts, 0095 web_transcript_pages, 0096 support_week_mail, 0097 homebrew_entries, 0098 web_house_rules and 0099 homebrew_from_book, and the code behind #1501-#1526 are live as 1cc09299 (Supervisor's "go", cross-session message 13:12 UTC). Core CI on the head: success.
+  Dry run (13:0x UTC) on a copy of the live database (pg_dumpall into a throwaway postgres:16 on its own network, at 0093): "Database updated: 0094 ... 0099" (all six) in 0.19 s; a second run applied nothing; 99 migrations;
+  rows unchanged (147 transcript lines, 3 campaigns, 0 memory claims); homebrew_entries and support_week_mail have row-level security on and forced; homebrew_entries has from_book. Copy deleted. No game running.
+  Backup: ~/db-backups/dmbot-before-1cc09299-1016-1307.sql (chmod 600). docker-compose.yml, core/Dockerfile and ears are unchanged since bbaab1bd (checked). `docker compose build core web-api` with GIT_COMMIT set;
+  `docker compose stop core web-api` at 13:19:49 UTC, `up -d --no-deps core`, then web-api.
+  Result: core logged "Database updated: 0094 ... 0099", "ears connected" and "Connected to 1 server(s)"; web-api healthy; schema_migrations 99 rows, last 0099_homebrew_from_book.
+  Supervisor's checks: signed-out GET /me/campaigns/<ref>/transcripts and /me/campaigns/<ref>/house-rules answer 401, /health 200 (inside web-api).
+  Not checked (need a game session or a signed-in member): the Transcripts and House rules pages for a signed-in member; Settings -> Homebrew (Add, Download file, Load file); /dmbot fix after a session.
+  docs/next-test-step.md stays Test I (consent v6, not yet run): one test at a time; the new checks are in docs/testing-status.log.
+  10-minute check, 13:30 UTC (10 minutes after the start): 0 ERROR, CRITICAL or traceback lines in core and web-api since 13:19; both up, web-api healthy; schema_migrations 99 rows, last 0099_homebrew_from_book.
+  Nothing turned on for users (recaps off, no ElevenLabs key, the extractor off, homebrew's What's new entry held).
