@@ -311,6 +311,24 @@ def safe_answer(
     return answer in kept and not near.ran_out
 
 
+def text_names_a_secret(lookup: CampaignLookup, text: str) -> bool:
+    """Whether free text (a player's suggested words, #1491) is, holds, or sounds like a secret
+    name, anywhere in it: word for word, or a run of words about as long as a secret name that
+    sounds like one ("Silas Vain" for the secret "Silas Vane"). When the checks run out, the
+    answer is yes: unsure counts as a secret, since the cleaned transcript is open to the whole
+    server."""
+    if not lookup.secret_lengths:
+        return False
+    words = list(WORD.finditer(text))
+    if _secret_spans(lookup, words):
+        return True
+    near = _SecretChecks(left=SECRET_CHECKS_PER_LINE * 8)  # a whole suggestion, not one fix
+    for word in words:
+        if _near_secret(lookup, words, word.start(), word.end(), near):
+            return True
+    return near.ran_out
+
+
 def _around(heard: str, start: int, end: int, reach: int = 30) -> str:
     """A few words either side of the heard words, so the DM sees what was said."""
     left = (

@@ -156,7 +156,7 @@ class TranscriptStore:
             cur = await conn.execute(
                 "UPDATE transcript_lines SET text = NULLIF(%s, heard)"
                 " WHERE session_id = %s AND user_id = %s AND started_ms = %s"
-                " AND sidebar IS NULL",
+                " AND sidebar IS NULL AND NOT typed",
                 (text, session_id, user_id, started_ms),
             )
             return cur.rowcount

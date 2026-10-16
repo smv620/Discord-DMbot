@@ -133,6 +133,9 @@ class Row:
     # Why it went to a person (#1459): one of REASONS, null when it hasn't (or has since been
     # answered).
     reason: str | None
+    # When the helper last handed it to a person (Unix seconds); null if it never was. Set with
+    # the hand-over and never cleared (#1487), unlike `reason`.
+    handed_over_at: int | None
     # The account's address (the one the team replies to), read through the admin door and never
     # stored in the ticket; None when the account has none. Never logged.
     email: str | None
@@ -150,7 +153,7 @@ async def newest(
             # One call per row (at most LIST_LIMIT): fine for an admin page read now and then.
             "SELECT id, created_at, user_id, plan, subject,"
             " COALESCE(dmbot_support_message(id), '') AS message, source, status,"
-            " escalated_reason AS reason, dmbot_support_email(user_id) AS email"
+            " escalated_reason AS reason, handed_over_at, dmbot_support_email(user_id) AS email"
             f" FROM support_tickets{where} ORDER BY created_at DESC, id DESC LIMIT %s",
             args,
         )
@@ -166,6 +169,65 @@ async def counts(db: Database) -> dict[Status, int]:
         )
         found = {r["status"]: int(r["n"]) for r in await cur.fetchall()}
     return {status: found.get(status, 0) for status in STATUSES}
+
+
+WEEK_S = 7 * 86400
+
+
+@dataclass(frozen=True)
+class Week:
+    """How support went in the last seven days (#1480): numbers only, never a word of a ticket.
+    `helper` and `team` count the tickets that are answered or closed whose latest answer was
+    DMbot's helper's or the team's; `waiting` the ones still new or escalated; `reasons` how many
+    tickets came to a person for each code, from `handed_over_reason`, which stays after a person
+    answers (#1487), so every hand-over the helper makes is counted, whatever happened since,
+    among the tickets opened this week (like the other numbers here: a ticket counts once, under
+    its latest reason). Tickets handed over before that column existed have none, and a ticket a
+    customer reopens after the team's answer comes back to the team with no new reason. The
+    admin list's `reason` is a different thing: why a ticket is waiting now."""
+
+    questions: int
+    helper: int
+    team: int
+    waiting: int
+    reasons: dict[Reason, int]
+
+
+async def week(db: Database, now: int) -> Week:
+    """The last seven days from the tickets and who wrote each one's latest answer. Only the
+    columns the admin door may read are used (`support_replies`'s words are not among them)."""
+    since = now - WEEK_S
+    async with db.support_admin() as conn:
+        cur = await conn.execute(
+            "SELECT count(*) AS questions,"
+            " count(*) FILTER (WHERE t.status IN ('answered', 'closed') AND a.who = 'ai')"
+            "   AS helper,"
+            " count(*) FILTER (WHERE t.status IN ('answered', 'closed') AND a.who = 'person')"
+            "   AS team,"
+            " count(*) FILTER (WHERE t.status IN ('new', 'escalated')) AS waiting"
+            " FROM support_tickets t LEFT JOIN LATERAL ("
+            "   SELECT r.who FROM support_replies r"
+            "   WHERE r.ticket_id = t.id AND r.who IN ('ai', 'person')"
+            "   ORDER BY r.id DESC LIMIT 1) a ON true"
+            " WHERE t.created_at >= %s",
+            (since,),
+        )
+        row = await cur.fetchone()
+        assert row is not None
+        cur = await conn.execute(
+            "SELECT handed_over_reason AS reason, count(*) AS n FROM support_tickets"
+            " WHERE created_at >= %s AND handed_over_reason IS NOT NULL"
+            " GROUP BY handed_over_reason",
+            (since,),
+        )
+        found = {r["reason"]: int(r["n"]) for r in await cur.fetchall()}
+    return Week(
+        questions=int(row["questions"]),
+        helper=int(row["helper"]),
+        team=int(row["team"]),
+        waiting=int(row["waiting"]),
+        reasons={reason: found.get(reason, 0) for reason in REASONS},
+    )
 
 
 # How many of their own questions a person sees at once (#1373).
@@ -418,13 +480,16 @@ async def defer(db: Database, ticket_id: int, *, now: int, wait: int) -> int:
     return now if row is None else int(row["ai_failed_at"])
 
 
-async def escalate(db: Database, ticket_id: int, reason: Reason) -> bool:
+async def escalate(db: Database, ticket_id: int, reason: Reason, now: int) -> bool:
     """Hand a ticket to a person, saying why. True only the first time (so the team is told
-    once)."""
+    once). The reason and the time are also kept in `handed_over_*`, which a person's answer
+    does not clear (#1487): a ticket handed over again after an answer keeps the latest of
+    each."""
     async with db.support_admin() as conn:
         cur = await conn.execute(
-            "UPDATE support_tickets SET status = 'escalated', escalated_reason = %s"
+            "UPDATE support_tickets SET status = 'escalated', escalated_reason = %s,"
+            " handed_over_reason = %s, handed_over_at = %s"
             " WHERE id = %s AND status <> 'escalated'",
-            (reason, ticket_id),
+            (reason, reason, now, ticket_id),
         )
         return cur.rowcount == 1

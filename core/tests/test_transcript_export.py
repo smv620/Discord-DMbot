@@ -224,11 +224,13 @@ class DownloadButtons(unittest.TestCase):
         from dmbot.ui import transcripts as ui
 
         view = ui.download_view(1, "a" * 32)
-        ids = [item.custom_id for item in view.children]  # type: ignore[attr-defined]
+        every = [item.custom_id for item in view.children]  # type: ignore[attr-defined]
+        ids = every[:3]  # the downloads; the fourth is a player's suggested fix (#1491)
         self.assertEqual(
             ids,
             [f"dmbot:transcript:1:{'a' * 32}:{c}" for c in ("cleaned", "heard", "both")],
         )
+        self.assertEqual(every[3:], [f"dmbot:fixline:1:{'a' * 32}"])
         template = ui.DownloadButton.__discord_ui_compiled_template__
         for custom_id in [*ids, f"dmbot:transcript:1:{'a' * 32}"]:
             with self.subTest(custom_id=custom_id):

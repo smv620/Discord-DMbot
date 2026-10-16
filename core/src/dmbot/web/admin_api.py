@@ -414,6 +414,7 @@ def router(
             raise HTTPException(status_code=400, detail="bad_status")
         rows = await support.newest(db, status=wanted)
         counts = await support.counts(db)
+        this_week = await support.week(db, clock())
         # One lookup per distinct person, so the list is kept short (support.LIST_LIMIT).
         names = await sessions.display_names(db, sorted({r.user_id for r in rows}), now=clock())
         threads = {
@@ -435,6 +436,9 @@ def router(
                     "status": r.status,
                     # Why it came to a person: one of support.REASONS, or null.
                     "reason": r.reason,
+                    # When it was handed to a person (Unix seconds), null if never; kept after an
+                    # answer, unlike the reason.
+                    "handedOverAt": r.handed_over_at,
                     # Where the team replies; null when the account has no email.
                     "email": r.email,
                     # The helper's answers, the person's emailed replies and the team's replies.
@@ -446,6 +450,14 @@ def router(
                 for r in rows
             ],
             "counts": counts,
+            # How support went in the last seven days (#1480): numbers only.
+            "week": {
+                "questions": this_week.questions,
+                "helper": this_week.helper,
+                "team": this_week.team,
+                "waiting": this_week.waiting,
+                "reasons": this_week.reasons,
+            },
         }
 
     @api.post("/support/{ticket_id}/status", status_code=204)
