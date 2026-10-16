@@ -218,10 +218,36 @@ class TheThankYou(HelperBase):
         self.assertEqual(str(mail["To"]), ALICE_EMAIL)
         text = f"{mail['Subject']}\n{mail.get_content()}"
         self.assertIn(SUBJECT, str(mail["Subject"]))
-        self.assertIn("a person on the team", text)
+        self.assertIn("person on the team", text)
         self.assertNotIn(MESSAGE, text)
         reply_to = str(mail["Reply-To"])
         self.assertEqual(sm.ticket_of([reply_to], SECRET), number)
+
+    async def test_with_the_helper_on_it_says_the_helper_answers_first(self) -> None:
+        await self.ticket()
+        (mail,) = self.mails()
+        body = mail.get_content()
+        self.assertEqual(body.strip(), ai.ACK_WITH_HELPER)
+        self.assertIn("a program and not a person", body)
+        self.assertIn("will answer first by email", body)
+        self.assertIn("Reply to this email to reach it", body)
+        self.assertIn("If it can't help, or you ask, a person on the team takes over", body)
+        self.assertNotIn(MESSAGE, body)  # the person's own words are not echoed
+        self.assertNotIn(SUBJECT, body)  # and the subject only in the subject line
+
+    async def test_with_the_helper_off_it_says_a_person_will_reply(self) -> None:
+        self.helper = ai.SupportHelper(
+            self.web, None, self.mailer, team_email=TEAM, site_url=SITE, link_secret=SECRET,
+            clock=lambda: float(self.now),
+        )  # fmt: skip
+        await self.ticket()
+        (mail,) = self.mails()
+        body = mail.get_content()
+        self.assertEqual(body.strip(), ai.ACK_PERSON)
+        self.assertNotIn("helper", body)
+        self.assertNotIn("program", body)
+        self.assertNotIn(MESSAGE, body)
+        self.assertNotIn(SUBJECT, body)
 
     async def test_nothing_is_sent_to_an_account_with_no_address(self) -> None:
         async with self.web.user(ALICE.id) as conn:
@@ -406,6 +432,60 @@ class TheAnswers(HelperBase):
         joined = "\n".join(logs.output)
         for needle in (MESSAGE, SUBJECT, "Secret answer text.", ALICE_EMAIL):
             self.assertNotIn(needle, joined)
+
+
+class TheAutoClose(HelperBase):
+    """An answered ticket nobody has written to for 14 days is closed by the hourly sweep
+    (#1505); a reply from the person reopens it. The clock is moved instead of ageing rows: the
+    website's role may not edit replies."""
+
+    async def answered(self, days_ago: float = 0) -> int:
+        """A ticket the helper answered `days_ago` days before the clock's `self.now`."""
+        real = self.now
+        self.now = real - int(days_ago * DAY)
+        number = await self.ticket()
+        self.fake.answers.append(answer("First."))
+        await self.helper.run_once()
+        self.now = real
+        self.assertEqual(await self.status(number), "answered")
+        return number
+
+    async def test_an_answered_ticket_older_than_14_days_closes_and_a_younger_one_does_not(
+        self,
+    ) -> None:
+        old, young = await self.answered(14.5), await self.answered(13.5)
+        self.assertEqual(await support.close_stale(self.web, self.now), 1)
+        self.assertEqual(await self.status(old), "closed")
+        self.assertEqual(await self.status(young), "answered")
+        self.assertEqual(await support.close_stale(self.web, self.now), 0)  # once
+
+    async def test_the_newest_reply_counts_not_only_the_ticket_date(self) -> None:
+        number = await self.answered()
+        async with self.db.support_admin() as conn:  # the ticket is old, its answer is not
+            await conn.execute(
+                "UPDATE support_tickets SET created_at = %s WHERE id = %s",
+                (self.now - 30 * DAY, number),
+            )
+        self.assertEqual(await support.close_stale(self.web, self.now), 0)
+        self.assertEqual(await self.status(number), "answered")
+
+    async def test_new_and_escalated_tickets_are_never_touched(self) -> None:
+        self.now -= 60 * DAY
+        waiting, handed = await self.ticket(), await self.ticket()
+        await support.set_status(self.web, handed, "escalated")
+        self.now += 60 * DAY
+        self.assertEqual(await support.close_stale(self.web, self.now), 0)
+        self.assertEqual(await self.status(waiting), "new")
+        self.assertEqual(await self.status(handed), "escalated")
+
+    async def test_a_reply_from_the_person_reopens_a_closed_ticket(self) -> None:
+        number = await self.answered(20)
+        to = str(self.mails(to_alice=True)[-1]["Reply-To"])
+        await support.close_stale(self.web, self.now)
+        self.assertEqual(await self.status(number), "closed")
+        sent = await self.inbound(to, "Thanks, but it came back.")
+        self.assertEqual(sent.status_code, 200, sent.text)
+        self.assertEqual(await self.status(number), "new")  # the helper answers it again
 
 
 class TheInboundDoor(HelperBase):
