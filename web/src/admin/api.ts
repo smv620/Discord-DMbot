@@ -80,9 +80,18 @@ export type TicketStatus = "new" | "answered" | "closed" | "escalated";
 export type TicketFilter = TicketStatus | "all";
 /** How many tickets have each status, over all of them, for the filter buttons (#1375). */
 export type TicketCounts = Record<TicketStatus, number>;
+/** How support went in the last seven days (#1480): counts only. Missing from an older API. */
+export interface TicketWeek {
+  questions: number;
+  helper: number;
+  team: number;
+  waiting: number;
+  reasons: Record<string, number>;
+}
 export interface TicketList {
   tickets: SupportTicketRow[];
   counts: TicketCounts;
+  week?: TicketWeek;
 }
 
 /** One message after the first, in the order they came (#1432): the person's emailed reply, DMbot's
@@ -264,11 +273,16 @@ export function httpAdminApi(base: string, fetcher: typeof fetch = fetch): Admin
     async tickets(filter = "all") {
       const response = await call(`/admin/support?status=${encodeURIComponent(filter)}`);
       if (!response.ok) throw new AdminApiError(await grantProblem(response));
-      const body = (await response.json()) as { tickets: SupportTicketRow[]; counts?: TicketCounts };
+      const body = (await response.json()) as {
+        tickets: SupportTicketRow[];
+        counts?: TicketCounts;
+        week?: TicketWeek;
+      };
+      const week = readWeek(body.week);
       const c = body.counts;
       if (c && [c.new, c.answered, c.closed].every((n) => typeof n === "number")) {
         // An API older than #1431 has no escalated count: none.
-        return { tickets: body.tickets, counts: { ...c, escalated: c.escalated ?? 0 } };
+        return { tickets: body.tickets, counts: { ...c, escalated: c.escalated ?? 0 }, ...(week ? { week } : {}) };
       }
       // An API older than #1375 sends every ticket and no counts: count and filter here, so the
       // buttons still work until it is deployed. (It sends only its newest tickets, so until then
@@ -278,6 +292,7 @@ export function httpAdminApi(base: string, fetcher: typeof fetch = fetch): Admin
       return {
         tickets: filter === "all" ? body.tickets : body.tickets.filter((t) => t.status === filter),
         counts,
+        ...(week ? { week } : {}),
       };
     },
     async replyToTicket(csrf, id, text) {
@@ -297,6 +312,18 @@ export function httpAdminApi(base: string, fetcher: typeof fetch = fetch): Admin
       if (!response.ok) throw new AdminApiError(await grantProblem(response));
     },
   };
+}
+
+/** The week's numbers if the API sent them and they are all numbers; otherwise none (an older API). */
+function readWeek(raw: TicketWeek | undefined): TicketWeek | undefined {
+  if (!raw || typeof raw !== "object") return undefined;
+  const numbers = [raw.questions, raw.helper, raw.team, raw.waiting];
+  if (!numbers.every((n) => typeof n === "number" && Number.isFinite(n))) return undefined;
+  const reasons: Record<string, number> = {};
+  for (const [code, n] of Object.entries(raw.reasons ?? {})) {
+    if (typeof n === "number" && Number.isFinite(n)) reasons[code] = n;
+  }
+  return { questions: raw.questions, helper: raw.helper, team: raw.team, waiting: raw.waiting, reasons };
 }
 
 /** The pretend API for preview builds (PUBLIC_API_BASE=mock): any password works. */
@@ -346,7 +373,14 @@ export function pretendAdminApi(): AdminApi {
       const counts: TicketCounts = { new: 0, answered: 0, closed: 0, escalated: 0 };
       for (const t of tickets) counts[t.status] += 1;
       const shown = tickets.filter((t) => filter === "all" || t.status === filter);
-      return { tickets: structuredClone(shown), counts };
+      const week: TicketWeek = {
+        questions: tickets.length,
+        helper: 0,
+        team: 0,
+        waiting: counts.new + counts.escalated,
+        reasons: { unhappy: 1 },
+      };
+      return { tickets: structuredClone(shown), counts, week };
     },
     replyToTicket: async (_csrf, id, text) => {
       const ticket = tickets.find((t) => t.id === id);

@@ -168,6 +168,61 @@ async def counts(db: Database) -> dict[Status, int]:
     return {status: found.get(status, 0) for status in STATUSES}
 
 
+WEEK_S = 7 * 86400
+
+
+@dataclass(frozen=True)
+class Week:
+    """How support went in the last seven days (#1480): numbers only, never a word of a ticket.
+    `helper` and `team` count the tickets that are answered or closed whose latest answer was
+    DMbot's helper's or the team's; `waiting` the ones still new or escalated; `reasons` how many
+    tickets came to a person for each code. A reason is cleared when a person answers (the ticket
+    is no longer waiting for them), so it counts the hand-overs still open plus those closed
+    without an answer, not every one that ever happened."""
+
+    questions: int
+    helper: int
+    team: int
+    waiting: int
+    reasons: dict[Reason, int]
+
+
+async def week(db: Database, now: int) -> Week:
+    """The last seven days from the tickets and who wrote each one's latest answer. Only the
+    columns the admin door may read are used (`support_replies`'s words are not among them)."""
+    since = now - WEEK_S
+    async with db.support_admin() as conn:
+        cur = await conn.execute(
+            "SELECT count(*) AS questions,"
+            " count(*) FILTER (WHERE t.status IN ('answered', 'closed') AND a.who = 'ai')"
+            "   AS helper,"
+            " count(*) FILTER (WHERE t.status IN ('answered', 'closed') AND a.who = 'person')"
+            "   AS team,"
+            " count(*) FILTER (WHERE t.status IN ('new', 'escalated')) AS waiting"
+            " FROM support_tickets t LEFT JOIN LATERAL ("
+            "   SELECT r.who FROM support_replies r"
+            "   WHERE r.ticket_id = t.id AND r.who IN ('ai', 'person')"
+            "   ORDER BY r.id DESC LIMIT 1) a ON true"
+            " WHERE t.created_at >= %s",
+            (since,),
+        )
+        row = await cur.fetchone()
+        assert row is not None
+        cur = await conn.execute(
+            "SELECT escalated_reason AS reason, count(*) AS n FROM support_tickets"
+            " WHERE created_at >= %s AND escalated_reason IS NOT NULL GROUP BY escalated_reason",
+            (since,),
+        )
+        found = {r["reason"]: int(r["n"]) for r in await cur.fetchall()}
+    return Week(
+        questions=int(row["questions"]),
+        helper=int(row["helper"]),
+        team=int(row["team"]),
+        waiting=int(row["waiting"]),
+        reasons={reason: found.get(reason, 0) for reason in REASONS},
+    )
+
+
 # How many of their own questions a person sees at once (#1373).
 MINE_LIMIT = 20
 
