@@ -1058,6 +1058,9 @@ Code changes: #87.
   and the card) is sent silently, so nobody gets a pop-up or phone notification for it;
   the channel still shows as unread. Misheard names are fixed since 2026-10-07 (#127);
   the channel has no `{entity}` labels (#53).
+- The end-of-session message on the DM screen ends its facts with one line of name counts when any is
+  above zero (#1510): "✏️ Names: DMbot fixed 3 by itself, asked you about 2 (1 not answered), you
+  corrected 1, players suggested 2 (1 still waiting)." Counts of the session only; nothing is stored.
 - `/dmbot stop` posts the "Session ended" divider in the background, so it answers in
   time. Words still being written down when the session stops are lost (as before,
   #109); at shutdown, waiting lines are posted first.
