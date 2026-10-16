@@ -916,7 +916,7 @@ class NameCards(NamesTest):
         self.assertEqual(it.response.sent[0][0], name_card.NOTHING_MORE)
         it = self.it()
         await name_card.show_section(it, self.campaign.id, "no-such-name", "names")
-        self.assertEqual(it.response.sent[0][0], name_card.GONE)
+        self.assertEqual(it.response.sent[0][0], ui.GONE)
 
     async def test_the_earlier_button_goes_back(
         self,
