@@ -113,7 +113,7 @@ export const text = {
     "no-grant": "That person has no free access to revoke. We've updated the list.",
   } as Record<string, string | ((max: number) => string)>,
 
-  // Support tickets (#1340): private messages from people on paid plans.
+  // Support tickets (#1340): private messages from signed-in people (Try It too, #1435).
   ticketsHeading: "Support tickets",
   ticketsLead:
     "Private messages from people on a paid plan, newest first. They are deleted after 12 months, or with the account.",
