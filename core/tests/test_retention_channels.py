@@ -139,6 +139,39 @@ class Retire(unittest.IsolatedAsyncioTestCase):
         chans[SCREEN].delete.assert_not_awaited()
         chans[TRANSCRIPT].send.assert_not_awaited()
 
+    async def test_an_id_of_another_server_raises_invalid_data_and_is_skipped(self) -> None:
+        """discord.py refuses it itself in fetch_channel; the later channels still get done."""
+        chans = self.all_four()
+        chans[SCREEN] = discord.InvalidData("Guild ID resolved to a different guild")
+        got = await rc.retire_channels(guild_with(chans), campaign(), ME, NOW)
+        self.assertEqual((got.deleted, got.closed, got.skipped), (1, 2, 1))
+
+    async def test_a_failed_edit_does_not_stop_the_note_or_the_other_edits(self) -> None:
+        first, second = message(ME, True, 1), message(ME, True, 2)
+        first.edit = AsyncMock(side_effect=discord.Forbidden(MagicMock(status=403), "no"))
+        chans = self.all_four()
+        chans[TRANSCRIPT] = channel(TRANSCRIPT, recent=[first, second])
+        got = await rc.retire_channels(guild_with(chans), campaign(), ME, NOW)
+        self.assertEqual(got.closed, 2)  # the note went, whatever the buttons did
+        chans[TRANSCRIPT].send.assert_awaited_once()
+
+    async def test_the_note_is_sent_before_the_buttons_are_touched(self) -> None:
+        order: list[str] = []
+        mine = message(ME, True, 1)
+        mine.edit = AsyncMock(side_effect=lambda **_: order.append("edit"))
+        chans = self.all_four()
+        chans[TRANSCRIPT] = channel(TRANSCRIPT, recent=[mine])
+        chans[TRANSCRIPT].send = AsyncMock(side_effect=lambda *_a, **_k: order.append("note"))
+        await rc.retire_channels(guild_with(chans), campaign(), ME, NOW)
+        self.assertEqual(order, ["note", "edit"])
+
+    async def test_at_most_25_buttons_are_taken_off_a_channel(self) -> None:
+        many = [message(ME, True, n) for n in range(40)]
+        chans = self.all_four()
+        chans[CHAT] = channel(CHAT, recent=many)
+        await rc.retire_channels(guild_with(chans), campaign(), ME, NOW)
+        self.assertEqual(sum(m.edit.await_count for m in many), rc.MAX_EDITS)
+
     async def test_something_that_is_not_a_text_channel_is_left_alone(self) -> None:
         chans = self.all_four()
         chans[SCREEN] = MagicMock(spec=discord.VoiceChannel)

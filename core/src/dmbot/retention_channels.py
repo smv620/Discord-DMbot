@@ -5,9 +5,10 @@ What happens to each channel follows whose words are in it:
 
 - **The DM screen and the game-time channel are deleted.** They hold only DMbot's own messages,
   the DM screen holds DM-only notes, and the data behind both is gone.
-- **The transcript channel and `dmb-chat` are kept**, with one closing note, and DMbot's own
-  messages there lose their buttons (so nothing answers "I can't find that campaign"). They hold
-  what people wrote or said, which is not DMbot's to delete; a server admin can.
+- **The transcript channel and `dmb-chat` are kept**, with one closing note (sent first), and
+  DMbot's own messages there lose their buttons (best effort, at most 25), so nothing answers
+  "I can't find that campaign". They hold what people wrote or said, which is not DMbot's to
+  delete; a server admin can.
 
 Only the channels recorded on the campaign, found by id in the campaign's own server (a channel
 of another server is never reached: it is looked up through this campaign's guild and its guild
@@ -30,6 +31,7 @@ log = logging.getLogger(__name__)
 
 CHANNEL_TIMEOUT_S = 15  # per Discord call; a slow channel is skipped, the job goes on
 SCANNED_MESSAGES = 100  # the newest messages looked at for DMbot's own buttons
+MAX_EDITS = 25  # buttons taken off per channel: bounded, so a busy channel cannot hold the job
 NO_PINGS = discord.AllowedMentions.none()
 CLOSING_NOTE = (
     "This campaign was deleted on {date} because nobody played it for a long time. "
@@ -80,10 +82,15 @@ async def retire_channels(
                     if delete:
                         await channel.delete(reason="DMbot: the campaign was deleted")
                     else:
-                        await _close(channel, me_id, note)
+                        # The note first: it is the part that matters, and the campaign is
+                        # gone, so nothing would try again if the buttons took too long.
+                        await channel.send(note, allowed_mentions=NO_PINGS)
                     ok = True
-            except (discord.HTTPException, TimeoutError, _NotOurs):
+            # (an id of another server raises InvalidData from fetch_channel itself: also skipped)
+            except (discord.DiscordException, TimeoutError, _NotOurs):
                 ok = False
+            if ok and not delete and isinstance(channel, discord.TextChannel):
+                await _drop_buttons(channel, me_id)
         if not ok:
             counts.skipped += 1
         elif delete:
@@ -95,22 +102,31 @@ async def retire_channels(
     return counts
 
 
-async def _close(channel: discord.TextChannel, me_id: int, note: str) -> None:
-    """Take the buttons off DMbot's own messages (the pinned ones and the newest), then say the
-    closing note. Other people's messages are never touched."""
-    seen: set[int] = set()
-    messages: list[Any] = [*(await channel.pins())]
-    async for message in channel.history(limit=SCANNED_MESSAGES):
-        messages.append(message)
-    for message in messages:
-        if message.id in seen or message.author.id != me_id or not message.components:
-            continue
-        seen.add(message.id)
-        try:
-            await message.edit(view=None)
-        except discord.NotFound:
-            continue  # deleted meanwhile
-    await channel.send(note, allowed_mentions=NO_PINGS)
+async def _drop_buttons(channel: discord.TextChannel, me_id: int) -> None:
+    """Take the buttons off DMbot's own messages (the pinned ones and the newest), as far as
+    Discord lets it in the time given: a failure or a rate limit just stops here. Other people's
+    messages are never touched. (A crash between the campaign's delete and this leaves the
+    channels as they were: the ids went with the row, so nothing could find them again.)"""
+    try:
+        async with asyncio.timeout(CHANNEL_TIMEOUT_S):
+            seen: set[int] = set()
+            messages: list[Any] = [*(await channel.pins())]
+            async for message in channel.history(limit=SCANNED_MESSAGES):
+                messages.append(message)
+            edited = 0
+            for message in messages:
+                if message.id in seen or message.author.id != me_id or not message.components:
+                    continue
+                seen.add(message.id)
+                if edited >= MAX_EDITS:
+                    break
+                try:
+                    await message.edit(view=None)
+                    edited += 1
+                except discord.NotFound:
+                    continue  # deleted meanwhile
+    except (discord.DiscordException, TimeoutError):
+        log.info("Retention: some buttons were left on a closed channel")
 
 
 class _NotOurs(Exception):
