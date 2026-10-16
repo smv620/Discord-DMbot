@@ -43,6 +43,7 @@ function fileFor(url) {
   }
   if (/^\/account\/recaps\/[^/]+$/.test(path)) path = "/account/recaps";
   if (/^\/account\/house-rules\/[^/]+$/.test(path)) path = "/account/house-rules";
+  if (/^\/account\/homebrew\/[^/]+$/.test(path)) path = "/account/homebrew";
   if (/^\/account\/transcripts\/[^/]+(\/\d+)?$/.test(path)) path = "/account/transcripts";
   const base = path === "/" ? "/index.html" : path;
   return [resolve(dist, "." + base), resolve(dist, "." + `${base}.html`)].find(
@@ -149,6 +150,17 @@ await visit("House rules: campaigns, a campaign's rules and its followed set", "
   await step("the download button", () => page.getByRole("button", { name: "Save as a text file" }).waitFor());
 });
 
+await visit("Homebrew: campaigns, a campaign's shared entries by kind", "/account/homebrew", async (page) => {
+  await page.getByRole("heading", { level: 1, name: "Homebrew" }).waitFor();
+  await step("the campaign list", () => seen(page, "The Brynwater Crossing"));
+  await step("a campaign's entries", async () => {
+    await page.getByRole("link", { name: "Read: The Brynwater Crossing" }).click();
+    await seen(page, "Frost Lance");
+  });
+  await step("grouped by kind", () => page.getByRole("heading", { name: "Spells" }).waitFor());
+  await step("the download button", () => page.getByRole("button", { name: "Save as a text file" }).waitFor());
+});
+
 await visit("Transcripts: campaigns, sessions, a session, the two versions", "/account/transcripts", async (page) => {
   await page.getByRole("heading", { level: 1, name: "Session transcripts" }).waitFor();
   await step("the campaign list", () => seen(page, "The Brynwater Crossing"));
@@ -191,4 +203,4 @@ if (failures.length > 0) {
   console.error(`\nSmoke run failed:\n${failures.map((f) => `  ${f}`).join("\n")}`);
   process.exit(1);
 }
-console.log("\nSmoke run passed on 6 pages.");
+console.log("\nSmoke run passed on 7 pages.");
