@@ -42,8 +42,8 @@ DECLINE_LABEL = "No thanks"
 STOP_LABEL = "Stop recording me"
 MENU_LABEL = "Menu"  # with the ⚙️ emoji
 STOP_YES_LABEL = "Yes, stop recording me"
-DELETE_LABEL = "🗑 Delete my past transcripts"  # in the ⚙️ Menu (#1532)
-DELETE_YES_LABEL = "Delete my lines"
+DELETE_LABEL = "🗑 Delete my transcripts"  # in the ⚙️ Menu (#1532); the issue says "past"
+DELETE_YES_LABEL = "Yes, delete my lines"
 DELETE_NO_LABEL = "Cancel"
 KEEP_LABEL = "Keep recording"
 CLOSE_LABEL = "Close"
@@ -97,7 +97,7 @@ ALREADY_RECORDED = (
     "What DMbot already wrote down stays, and anyone in this server can still read it."
 )
 # How to remove it (#1532): said with the stop message, whose buttons carry the ⚙️ Menu.
-HOW_TO_DELETE = f"To remove what it already wrote down, press {DELETE_LABEL} in the ⚙️ {MENU_LABEL}."
+HOW_TO_DELETE = f"Want it gone? Press ⚙️ {MENU_LABEL}, then **{DELETE_LABEL}**."
 
 
 def _plain(name: str) -> str:
@@ -306,19 +306,22 @@ def delete_warning_text(server: str, lines: int, sessions: int) -> str:
     """The one warning before deleting (#1532): plain facts, what it covers and that it can't be
     undone. Others' lines stay, and so does anything already downloaded."""
     return (
-        f"This deletes everything DMbot wrote down from you in **{_plain(server)}**: "
+        f"This deletes everything you said that DMbot wrote down in **{_plain(server)}**: "
         f"{lines} line{'' if lines == 1 else 's'} in {sessions} session"
-        f"{'' if sessions == 1 else 's'}. Transcripts others downloaded already are not "
-        "affected. This can't be undone."
+        f"{'' if sessions == 1 else 's'}. Other people's lines and the DM's story notes stay. "
+        "Copies people already downloaded stay too. This can't be undone."
     )
 
 
 def delete_done_text(server: str) -> str:
-    return f"🗑 Done. Your lines are gone from **{_plain(server)}**'s transcripts."
+    return f"🗑 Done. What you said is deleted from **{_plain(server)}**'s transcripts."
 
 
 def delete_nothing_text(server: str) -> str:
-    return f"DMbot has nothing written down from you in **{_plain(server)}**."
+    return (
+        f"DMbot has nothing written down from you in **{_plain(server)}**, "
+        "so there is nothing to delete."
+    )
 
 
 DELETE_FAILED = "Sorry, that didn't work and nothing was deleted. Please try again in a minute."
@@ -729,7 +732,8 @@ class DeleteButton(
 
 async def ask_delete(interaction: discord.Interaction, guild_id: int) -> None:
     """The warning (or "nothing written down") as an only-you message, for the menu button and
-    the `/dmbot delete-my-lines` command alike."""
+    the `/dmbot delete-my-lines` command alike. Membership is not checked: removing your own
+    words is a right, and the presser's own id is the only one ever used."""
     with log_context(guild_id=guild_id):
         guild = _served_here(interaction, guild_id)
         if guild is None:

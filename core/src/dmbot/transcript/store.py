@@ -331,6 +331,18 @@ class TranscriptStore:
         recaps, and the session rows. Only this server and this person: every statement filters
         on both, and `Database.guild` hides every other server's rows as well."""
         async with self._db.guild(guild_id) as conn:
+            # The sessions' rows are locked first, so a save adding lines at the same moment
+            # can't make the recount below come out one batch short.
+            await conn.execute(
+                "SELECT 1 FROM transcript_sessions WHERE guild_id = %s AND id IN"
+                " (SELECT session_id FROM transcript_lines WHERE guild_id = %s AND user_id = %s)"
+                " ORDER BY id FOR UPDATE",
+                (guild_id, guild_id, user_id),
+            )
+            await conn.execute(
+                "DELETE FROM transcript_suggestions WHERE guild_id = %s AND user_id = %s",
+                (guild_id, user_id),
+            )
             cur = await conn.execute(
                 "DELETE FROM transcript_lines WHERE guild_id = %s AND user_id = %s"
                 " RETURNING session_id, started_ms",
@@ -342,10 +354,6 @@ class TranscriptStore:
                 await _forget_memory_traces(conn, guild_id, user_id, [])
                 return Deleted(0, 0)
             sessions = sorted({str(r["session_id"]) for r in gone})
-            await conn.execute(
-                "DELETE FROM transcript_suggestions WHERE guild_id = %s AND user_id = %s",
-                (guild_id, user_id),
-            )
             await _forget_memory_traces(
                 conn,
                 guild_id,
@@ -415,24 +423,42 @@ async def _forget_memory_traces(
     conn: Any, guild_id: int, user_id: int, refs: Sequence[str]
 ) -> None:
     """The story-memory rows that exist only because of this person's lines (see
-    `delete_person`), in the caller's transaction."""
+    `delete_person`), in the caller's transaction. Memory relations may still list a deleted
+    mention's id; recall skips ids it can't find."""
+    mentions: dict[str, list[str]] = {}
     for batch in (refs[i : i + 1000] for i in range(0, len(refs), 1000)):
         cur = await conn.execute(
             "DELETE FROM memory_mentions WHERE guild_id = %s AND line_ref = ANY(%s)"
             " RETURNING campaign_id, id",
             (guild_id, list(batch)),
         )
-        for mention in await cur.fetchall():  # an Undo must not bring the pointer back
-            await conn.execute(
-                "DELETE FROM memory_changes WHERE guild_id = %s AND campaign_id = %s"
-                " AND table_name = 'memory_mentions' AND row_id = %s",
-                (guild_id, mention["campaign_id"], mention["id"]),
-            )
+        for mention in await cur.fetchall():
+            mentions.setdefault(str(mention["campaign_id"]), []).append(str(mention["id"]))
+    await _drop_log_rows(conn, guild_id, "memory_mentions", mentions)
     await conn.execute(
         "DELETE FROM memory_heard WHERE guild_id = %s AND speaker_id = %s", (guild_id, user_id)
     )
-    await conn.execute(
+    # A claim that cites this person goes even if it cites others too: it is only a waiting
+    # proposal, and keeping it would keep their words in its details.
+    cur = await conn.execute(
         "DELETE FROM memory_claims WHERE guild_id = %s AND %s = ANY(speaker_ids)"
-        " AND status <> 'confirmed'",
+        " AND status <> 'confirmed' RETURNING campaign_id, id",
         (guild_id, user_id),
     )
+    claims: dict[str, list[str]] = {}
+    for claim in await cur.fetchall():
+        claims.setdefault(str(claim["campaign_id"]), []).append(str(claim["id"]))
+    await _drop_log_rows(conn, guild_id, "memory_claims", claims)
+
+
+async def _drop_log_rows(
+    conn: Any, guild_id: int, table: str, ids_by_campaign: dict[str, list[str]]
+) -> None:
+    """Take deleted rows out of the memory undo log too, so an Undo can't bring them back and
+    the log doesn't keep their words: one statement per campaign."""
+    for campaign_id, ids in ids_by_campaign.items():
+        await conn.execute(
+            "DELETE FROM memory_changes WHERE guild_id = %s AND campaign_id = %s"
+            " AND table_name = %s AND row_id = ANY(%s)",
+            (guild_id, campaign_id, table, ids),
+        )

@@ -200,7 +200,7 @@ def test_every_label_fits() -> None:
             label = str(button(item).label or "")
             # Short labels sit well on a phone; the consent button says its whole promise
             # ("I'm 16 or older, record me", #1018), so it gets a little more.
-            limit = CONSENT_LABEL_MAX if label in (CONSENT_LABEL, c.DELETE_LABEL) else 25
+            limit = CONSENT_LABEL_MAX if label == CONSENT_LABEL else 25
             assert 0 < len(label) <= limit, label
 
 

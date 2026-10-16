@@ -181,6 +181,48 @@ class DeleteTest(DatabaseTest):
         self.assertEqual(heard, [FRIEND])
         self.assertEqual(claims, ["confirmed"])  # the DM's own fact stays
 
+    async def test_a_deleted_claim_leaves_nothing_in_the_undo_log(self) -> None:
+        async with self.db.guild(GUILD) as conn:
+            await conn.execute(
+                "INSERT INTO memory_claims (guild_id, campaign_id, id, subject, relationship,"
+                " object, details, how, lines, speaker_ids, source, prompt_version, model,"
+                " status, created_at) VALUES (%s, %s, %s, 'a', 'b', 'c', 'my words', 'dm_said',"
+                " '{1}', %s, 'x', 'v', 'm', 'proposed', 1)",
+                (GUILD, self.campaign.id, "a" * 32, [ME, FRIEND]),  # cites others too
+            )
+            await conn.execute(
+                "INSERT INTO memory_changes (guild_id, campaign_id, version, batch, table_name,"
+                " row_id, op, after, source, made_at) VALUES (%s, %s, 1, 1, 'memory_claims', %s,"
+                " 'insert', '{\"details\": \"my words\"}', 'extractor', 1)",
+                (GUILD, self.campaign.id, "a" * 32),
+            )
+        await self.store.delete_person(GUILD, ME)
+        async with self.db.guild(GUILD) as conn:
+            cur = await conn.execute(
+                "SELECT (SELECT count(*) FROM memory_claims) AS claims,"
+                " (SELECT count(*) FROM memory_changes WHERE table_name = 'memory_claims') AS log"
+            )
+            row = await cur.fetchone()
+        assert row is not None
+        self.assertEqual((row["claims"], row["log"]), (0, 0))
+
+    async def test_suggestions_go_even_when_no_line_is_left(self) -> None:
+        lines = await self.store.lines(GUILD, self.first)
+        mine = next(x for x in lines if x.user_id == ME)
+        made = await self.suggestions.suggest(
+            GUILD, self.campaign.id, self.first, ME, mine.started_ms, "A fix"
+        )
+        assert not isinstance(made, str)
+        async with self.db.guild(GUILD) as conn:  # their lines went another way (a removed save)
+            await conn.execute("DELETE FROM transcript_lines WHERE user_id = %s", (ME,))
+        gone = await self.store.delete_person(GUILD, ME)
+        self.assertEqual(gone.lines, 0)
+        async with self.db.guild(GUILD) as conn:
+            cur = await conn.execute("SELECT count(*) AS n FROM transcript_suggestions")
+            row = await cur.fetchone()
+        assert row is not None
+        self.assertEqual(row["n"], 0)
+
     async def test_i_am_taken_out_of_an_aliass_who_uses_it(self) -> None:
         me = (
             await self.memory.add_entity(

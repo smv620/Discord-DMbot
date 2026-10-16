@@ -3486,10 +3486,11 @@ at once and they're told: "🛑 Stopped. DMbot won't record you anymore in <serv
 DMbot already wrote down stays, and anyone in this server can still read it." (When
 "Delete my past transcripts" ships, that message must also say how to use it.)
 
-*Delete my past transcripts, built (2026-10-16, #1532).* The stop message now ends "To remove what it
-already wrote down, press 🗑 Delete my past transcripts in the ⚙️ Menu." (its buttons carry the Menu).
+*Delete my past transcripts, built (2026-10-16, #1532).* The stop message now ends "Want it gone? Press
+⚙️ Menu, then 🗑 Delete my transcripts." (its buttons carry the Menu; the button is short so it fits a phone).
 The action covers one server and the pressing person only, in one transaction (nothing deleted if it
-fails). **Goes:** their lines in both versions (including their `[DM Sidebar]` / `[Table Q]` questions and
+fails); a running session's waiting lines of theirs are dropped under its save lock, and if they are still
+recorded, new lines are written from then on. **Goes:** their lines in both versions (including their `[DM Sidebar]` / `[Table Q]` questions and
 DMbot's replies, which carry their id), their fix suggestions in any state, the story-memory mentions of
 those lines and their undo-log rows, the name counts kept per speaker, and the story claims that cite them
 and were never confirmed; each session's line count and speaker list are recomputed; and they are taken

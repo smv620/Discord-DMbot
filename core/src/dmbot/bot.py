@@ -1466,18 +1466,24 @@ class DMBot(commands.AutoShardedBot):
         """Delete my past transcripts (#1532): this person's words from every transcript in this
         server, and what exists only because of them, in one transaction (see
         `TranscriptStore.delete_person`). Raises if it failed, and then nothing is deleted.
-        Returns (lines, sessions) removed. Their name is first taken out of any alias's "who
-        uses it" (idempotent), so a failure there deletes no lines."""
+        Returns (lines, sessions) removed. They are then taken out of any alias's "who uses it"
+        (best effort; the next press tries it again)."""
         if self.transcripts is None:
             return 0, 0
+        tables = [t for t in (self.tables.get(guild_id), *self._ending.get(guild_id, [])) if t]
+        async with contextlib.AsyncExitStack() as stack:
+            # A running session's save is held while this runs, and what this person has said
+            # and not yet saved is dropped, so a batch can't write their lines back afterwards.
+            for table in tables:
+                await stack.enter_async_context(table.save_lock)
+                table.unsaved.drop_speaker(user_id)
+            gone = await self.transcripts.delete_person(guild_id, user_id)
+        log.info("Deleted past transcripts: %s lines in %s sessions", gone.lines, gone.sessions)
         if self.memory is not None:
-            await self.memory.forget_alias_user(guild_id, user_id)
-        gone = await self.transcripts.delete_person(guild_id, user_id)
-        log.info(
-            "Deleted a person's past transcripts: %s lines in %s sessions",
-            gone.lines,
-            gone.sessions,
-        )
+            try:  # after the lines: a failure here costs only this tidy-up, never the delete
+                await self.memory.forget_alias_user(guild_id, user_id)
+            except Exception:
+                log.exception("Couldn't take a deleted person out of an alias's user field")
         return gone.lines, gone.sessions
 
     @staticmethod
