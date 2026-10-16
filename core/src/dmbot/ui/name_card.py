@@ -608,8 +608,8 @@ async def _spoken_recaps(interaction: discord.Interaction, campaign: Campaign) -
         return False
 
 
-SAID_AS_LABEL = "How should the narrator say it? (optional)"
-SAID_AS_HELP = "For example Kah-zeth. Leave empty to say it as written."
+SAID_AS_LABEL = "How to say it in spoken recaps (optional)"
+SAID_AS_HELP = "Spell it how it sounds, like Kah-zeth. Empty: as written."
 
 
 class FixSpellingForm(discord.ui.Modal, title="Fix spelling"):
@@ -669,18 +669,25 @@ class FixSpellingForm(discord.ui.Modal, title="Fix spelling"):
         if self.spoken:
             spelling = " ".join(self.said_as.value.split()) or None
             renamed = name_key(new) != name_key(old)
+            if renamed and spelling is None and self.before:
+                note += (
+                    " Spoken recaps now say it as written; the old spelling was for the old name."
+                )
             if spelling != (None if renamed else self.before):
                 try:
                     await memory.set_said_as(
                         campaign.guild_id, campaign.id, self.entity_id, spelling, source=DM
                     )
                     note += (
-                        f" The narrator will say it as **{_md(spelling)}**."
+                        f" Spoken recaps will say it as **{_md(spelling)}**."
                         if spelling
-                        else " The narrator will say it as written."
+                        else " Spoken recaps will say it as written."
                     )
                 except MemoryRuleError as exc:
-                    note += f" The narrator's spelling wasn't saved. {exc}"
+                    note += (
+                        f" The name is saved, but how recaps say it wasn't. {exc}"
+                        " Open Fix spelling to try again."
+                    )
         changed(interaction, campaign)
         await show_card(interaction, campaign.id, self.entity_id, replace=True, note=note)
 

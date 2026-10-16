@@ -349,7 +349,7 @@ class NameCards(NamesTest):
         )
         self.assertIn(spoken.said_as, spoken.children)
         self.assertEqual(spoken.said_as.default, "Bell-air-os")
-        self.assertIn("narrator", spoken.said_as.label or "")
+        self.assertIn("spoken recaps", spoken.said_as.label or "")
 
     async def test_a_spelling_for_the_narrator_is_saved_changed_and_cleared_on_the_card(
         self,

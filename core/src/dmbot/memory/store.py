@@ -1334,7 +1334,7 @@ class MemoryStore:
         Ka'zeth), or none to clear it. Changed through the usual path, so it can be undone.
         Refused on a secret name: the narrator's dictionary goes to the voice company."""
         if source != DM:
-            raise MemoryRuleError("Only the DM can say how a name is said.")
+            raise MemoryRuleError("Only the DM can change how recaps say a name.")
         clean = " ".join((spelling or "").split()) or None
         if clean is not None and (len(clean) > SAID_AS_MAX or not clean.isprintable()):
             raise MemoryRuleError(f"Use up to {SAID_AS_MAX} letters, with no odd characters.")
@@ -1348,7 +1348,10 @@ class MemoryStore:
             if not rows:
                 raise MemoryRuleError(NOT_FOUND)
             if rows[0]["secret"] and clean is not None:
-                raise MemoryRuleError("That name is secret, so the narrator never says it.")
+                raise MemoryRuleError(
+                    "That name is secret, so recaps never say it. "
+                    "Make it public first, or leave this empty."
+                )
             row = await w.update(ALIASES, rows[0]["id"], {"said_as": clean})
             return Written(_alias(row), w.batch)
 
