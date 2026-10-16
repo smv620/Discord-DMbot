@@ -60,7 +60,7 @@ export const dmSteps: Step[] = [
     names: [{ name: "Show all ▾", file: "ui/name_card.py" }],
   },
   {
-    text: "To keep a connection from your players, open the name, press 🧭 Connect to…, press the 🤫 Secret button until it says 🤫 Secret: yes, then pick the other name. Players' cards never show that connection. Only the game masters see it. A connection that is already secret stays secret.",
+    text: "To keep a connection from your players, open the name, press 🧭 Connect to…, press 🤫 Secret once, so it reads 🤫 Secret: yes, then pick the other name. Players' cards never show that connection. Only a game master of the campaign can turn Secret on. If a connection is already secret, it stays secret.",
     names: [
       { name: "Connect to…", file: "ui/name_card.py" },
       { name: "🤫 Secret: yes", file: "ui/name_card.py" },
@@ -181,7 +181,7 @@ export const dmSteps: Step[] = [
     ],
   },
   {
-    text: "To change an entry that comes from a pack you follow, look it up (for example with /dmbot rule) and press ✏️ Make it my own on its card. DMbot copies it into your own homebrew and opens it so you can edit it. From then on your copy is used instead of the pack's. The pack itself does not change.",
+    text: "To change an entry that comes from a pack you follow, look it up (for example with /dmbot rule) and press ✏️ Make it my own on its card. DMbot copies it into your campaign's own homebrew and opens it so you can edit it. From then on this campaign uses your copy instead of the pack's. The pack itself does not change.",
     names: [{ name: "✏️ Make it my own", file: "ui/rule_lookup.py" }],
   },
   {
