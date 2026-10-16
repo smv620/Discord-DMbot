@@ -19,10 +19,20 @@ import discord
 
 log = logging.getLogger(__name__)
 
-HEADER = "📚 Shared rules updated at this start (DMbot took the new versions):"
+HEADER = (
+    "📚 Shared rules updated at this start. DMbot took the new versions. Buttons are by number:"
+)
 ROWS_MAX = 4  # updates that get their own buttons; the rest are named, then handled in Settings
-OVERFLOW = "and {n} more: open ⚙️ Settings → 📚 Shared rules."
+OVERFLOW = "{n} without buttons here: open ⚙️ Settings → 📚 Shared rules."
 TEXT_MAX = 1900  # a Discord message holds 2000
+
+
+def numbered(label: str, tag: str) -> str:
+    """A button's label: as it is alone, or short with its line's number in a combined note (a
+    phone cuts a label from the right, so the number comes straight after one short word)."""
+    if not tag:
+        return label
+    return f"{label.split()[0]} {tag}"
 
 
 @dataclass
@@ -34,7 +44,7 @@ class Update:
     single_text: str
     single_view: Callable[[], discord.ui.View]
     buttons: Callable[[int, str], list[discord.ui.Item[Any]]]
-    extras: list[str] = field(default_factory=list)
+    extras: list[str] = field(default_factory=list)  # "{n}" becomes the line's number
 
 
 @dataclass
@@ -44,15 +54,27 @@ class Collected:
 
 
 def combined_text(collected: Collected) -> str:
-    lines = [HEADER]
-    for number, update in enumerate(collected.updates[:ROWS_MAX], 1):
-        lines.append(f"{number}. {update.line}")
-        lines.extend(f"   {extra}" for extra in update.extras)
-    if len(collected.updates) > ROWS_MAX:
-        lines.append(OVERFLOW.format(n=len(collected.updates) - ROWS_MAX))
-    lines.extend(collected.gone)
-    text = "\n".join(lines)
-    return text if len(text) <= TEXT_MAX else text[: TEXT_MAX - 1].rsplit("\n", 1)[0] + "\n…"
+    """Every update is named and every "no longer updated" line is kept (they are said only once,
+    so they can't be lost); only the extra lines under an update give way when the text is long."""
+    updates = collected.updates
+    head = [HEADER]
+    for number, update in enumerate(updates, 1):
+        head.append(f"{number}. {update.line}")
+    if len(updates) > ROWS_MAX:
+        head.append(OVERFLOW.format(n=len(updates) - ROWS_MAX))
+    tail = ["", *collected.gone] if collected.gone else []
+    lines = [*head, *tail]
+    size = len("\n".join(lines))
+    # Extras go in behind their update's line while they fit, in order.
+    for number, update in enumerate(updates[:ROWS_MAX], 1):
+        extras = [f"   {e.replace('{n}', str(number))}" for e in update.extras]
+        cost = sum(len(e) + 1 for e in extras)
+        if size + cost > TEXT_MAX:
+            continue
+        at = lines.index(f"{number}. {update.line}") + 1
+        lines[at:at] = extras
+        size += cost
+    return "\n".join(lines)[:TEXT_MAX]
 
 
 def combined_view(collected: Collected) -> discord.ui.View:
@@ -75,6 +97,11 @@ async def post(bot: Any, campaign_id: str, screen_id: int, collected: Collected)
     else:
         text, view = combined_text(collected), combined_view(collected)
     posted = await bot.post_message(screen_id, text, view)
-    if posted is None:  # taken, but the DM has no note and no Undo button for it
-        log.warning("Took %d shared-rules update(s) for campaign %s without a note",
-                    len(updates), campaign_id)  # fmt: skip
+    if posted is None:  # one more try: the update is taken, and the DM needs its Undo
+        posted = await bot.post_message(screen_id, text, view)
+    if posted is None:
+        log.warning(
+            "Took %d shared-rules update(s) for campaign %s without a note",
+            len(updates),
+            campaign_id,
+        )

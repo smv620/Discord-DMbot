@@ -159,7 +159,7 @@ class PackUpdateButton(
         label = _LABELS[action]
         super().__init__(
             discord.ui.Button(
-                label=f"{label} {tag}" if tag else label,
+                label=shared_update.numbered(label, tag),
                 style=discord.ButtonStyle.secondary,
                 custom_id=f"dmbot:packupd:{action}:{campaign_id}:{set_id}:{version}",
                 row=row,
@@ -540,11 +540,17 @@ async def collect(
 
 
 async def _update_note(bot: Any, campaign: Campaign, update: PackUpdate) -> shared_update.Update:
+    """The note for a pack just taken. If its extra lines can't be worked out, the update still gets
+    its buttons: the take already happened, so the DM must have an Undo."""
     name, version, set_id = update.offer.name, update.offer.version, update.follow.set_id
-    overridden = await _overridden(bot, campaign, update)
-    visible = now_visible(update.changes)
+    try:
+        overridden = await _overridden(bot, campaign, update)
+        visible = now_visible(update.changes)
+    except Exception:
+        log.exception("Couldn't work out the extra lines of a pack update note")
+        overridden, visible = [], []
     return shared_update.Update(
-        line=f"**{_md(name)}** homebrew → v{version}: {entries_phrase(len(update.changes))}",
+        line=f"**{_md(name)}** homebrew, now v{version}: {entries_phrase(len(update.changes))}",
         single_text=note_text(name, version, len(update.changes), overridden, visible),
         single_view=lambda: note_view(campaign.id, set_id, version),
         buttons=lambda row, tag: note_buttons(campaign.id, set_id, version, row, tag),

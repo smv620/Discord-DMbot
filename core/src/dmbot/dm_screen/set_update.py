@@ -63,6 +63,10 @@ OVERRIDDEN = (
 )
 
 
+# A combined note may have several Compare buttons, so the line says which ("{n}" is its number).
+OVERRIDDEN_HERE = "Your own version still applies. Press Compare {n} to see both."
+
+
 async def settle(bot: Any, campaign: Campaign) -> None:
     """The relationship definitions borrowed from the followed set match it again (#1456). A
     failure never undoes what the DM or DMbot just did; the next session start tries again."""
@@ -170,7 +174,7 @@ class SetUpdateButton(
         label, style = _LABELS[action]
         super().__init__(
             discord.ui.Button(
-                label=f"{label} {tag}" if tag else label,
+                label=shared_update.numbered(label, tag),
                 style=style,
                 custom_id=f"dmbot:setupd:{action}:{campaign_id}:{version}",
                 row=row,
@@ -625,7 +629,8 @@ async def collect(
         found.updates.append(
             shared_update.Update(
                 line=(
-                    f"**{discord.utils.escape_markdown(name)}** house rules → v{version}: {rules}"
+                    f"**{discord.utils.escape_markdown(name)}** house rules, "
+                    f"now v{version}: {rules}"
                 ),
                 single_text=note_text(
                     name,
@@ -637,7 +642,7 @@ async def collect(
                 ),
                 single_view=lambda: note_view(campaign.id, version, overridden),
                 buttons=lambda row, tag: note_buttons(campaign.id, version, overridden, row, tag),
-                extras=[OVERRIDDEN] if overridden else [],
+                extras=[OVERRIDDEN_HERE] if overridden else [],
             )
         )
     except Exception:

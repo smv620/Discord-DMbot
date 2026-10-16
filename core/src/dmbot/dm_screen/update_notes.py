@@ -15,8 +15,12 @@ log = logging.getLogger(__name__)
 async def check_all(bot: Any, campaign: Campaign, screen_id: int) -> None:
     """Never raises: each check catches its own trouble and hands back what it did finish."""
     found = shared_update.Collected()
-    await set_update.collect(bot, campaign, screen_id, found)
-    await pack_update.collect(bot, campaign, screen_id, found)
+    # Each check on its own, as when they were two tasks: one failing never loses the other's note.
+    for check in (set_update.collect, pack_update.collect):
+        try:
+            await check(bot, campaign, screen_id, found)
+        except Exception:
+            log.exception("A shared-rules check failed")
     try:
         await shared_update.post(bot, campaign.id, screen_id, found)
     except Exception:
