@@ -290,7 +290,7 @@ class TheFile(HomebrewUiTest):
         said = it.followup.send.await_args.args[0]
         self.assertIn("2 entries", said)
         self.assertIn("1 new, 1 changed, 0 unchanged. Nothing is saved yet", said)
-        self.assertIn("could not be used", said)
+        self.assertIn("because DMbot couldn't read them", said)
         self.assertIn(ui.FROM_BOOK_ASK, said)
         self.assertEqual(
             [e.name for e in await self.store.list(GUILD, self.campaign.id)], ["Hollow King"]
