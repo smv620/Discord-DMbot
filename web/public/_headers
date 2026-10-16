@@ -32,3 +32,7 @@
 /account/house-rules*
   Cache-Control: no-store
   X-Robots-Tag: noindex, nofollow
+
+/account/transcripts*
+  Cache-Control: no-store
+  X-Robots-Tag: noindex, nofollow
