@@ -573,8 +573,9 @@ async def take_list(interaction: discord.Interaction, campaign_id: str, upload: 
             )
             return
         # Every line fits, or the only problem is secret names from someone who may not
-        # add them (the AI must never turn those into names everyone sees).
-        if all(why.startswith(ONLY_DM_SECRETS) for _, why in parsed.refused):
+        # add them (the AI must never turn those into names everyone sees). A list with
+        # players or DMs in it never goes to the AI: it holds Discord ids (#1559).
+        if parsed.people or all(why.startswith(ONLY_DM_SECRETS) for _, why in parsed.refused):
             await import_list(interaction, campaign.id, upload.text)
             return
     if _bot(interaction).ai is None:
@@ -761,7 +762,7 @@ async def show_ai_list(
 ) -> None:
     """The AI's list, in full as a file and the start in the message, with Add and Cancel.
     Nothing is saved until the DM presses Add."""
-    parsed = parse(listed, secrets=secrets)
+    parsed = parse(listed, secrets=secrets, people=False)  # (no player rows from an AI, #1559)
     if not parsed.lines:
         await interaction.edit_original_response(
             content=f"🤖 DMbot's AI found no names in {_md(upload.label)}. Nothing was added."
@@ -814,7 +815,7 @@ class AIPreview(_Menu):
     async def _add(self, interaction: discord.Interaction) -> None:
         self.stop()
         await interaction.response.edit_message(view=None)
-        await import_list(interaction, self.campaign_id, self.listed)
+        await import_list(interaction, self.campaign_id, self.listed, people=False)
 
     async def _cancel(self, interaction: discord.Interaction) -> None:
         self.stop()
@@ -823,7 +824,9 @@ class AIPreview(_Menu):
         )
 
 
-async def import_list(interaction: discord.Interaction, campaign_id: str, text: str) -> None:
+async def import_list(
+    interaction: discord.Interaction, campaign_id: str, text: str, *, people: bool = True
+) -> None:
     """Save a list of names in one go, then say what happened, with one Undo for all."""
     campaign = await _campaign_for(interaction, campaign_id)
     memory = _memory(interaction)
@@ -835,7 +838,7 @@ async def import_list(interaction: discord.Interaction, campaign_id: str, text: 
     if names is None:
         return
     secrets_ok = sees_secrets(campaign, interaction.user.id)
-    parsed = await asyncio.to_thread(parse, text, secrets=secrets_ok)
+    parsed = await asyncio.to_thread(parse, text, secrets=secrets_ok, people=people)
     # Same names fold in, near names are asked about (#369). For anyone but the campaign's
     # DMs, a clash with a secret name looks exactly like no clash: they never learn one
     # exists.
@@ -915,6 +918,10 @@ async def import_list(interaction: discord.Interaction, campaign_id: str, text: 
 PEOPLE_SHOWN = 5  # refused player or DM rows named in the summary, then "and N more"
 
 
+def _and_more(items: Sequence[str], shown: int) -> str:
+    return f" and {len(items) - shown} more" if len(items) > shown else ""
+
+
 async def _add_people(
     interaction: discord.Interaction, campaign: Campaign, parsed: Parsed
 ) -> list[str]:
@@ -931,8 +938,13 @@ async def _add_people(
     flagged: list[str] = []
     refused: list[str] = []
     for row in parsed.people:
+        # Checked again before every row: this loop waits on Discord between them.
+        now = await _bot(interaction).campaigns.get(campaign.guild_id, campaign.id)
+        if now is None or not sees_secrets(now, interaction.user.id):
+            refused.append(f"line {row.number}: only the campaign's DM can add players and DMs")
+            break
         try:
-            member = await guild.fetch_member(row.who)
+            member = guild.get_member(row.who) or await guild.fetch_member(row.who)
         except discord.NotFound:
             refused.append(f"line {row.number}: that Discord id isn't in this server")
             continue
@@ -949,9 +961,13 @@ async def _add_people(
         except MemoryRuleError as exc:
             refused.append(f"line {row.number}: {exc}")
             continue
-        except Exception:
-            log.exception("Adding a player's names from a list failed")
-            refused.append(f"line {row.number}: something went wrong, nothing was added")
+        except Exception as exc:
+            # (the type only: the text of a database error can hold the Discord id)
+            log.error("Adding a player's names from a list failed (%s)", type(exc).__name__)
+            refused.append(
+                f"line {row.number}: something went wrong, so nothing was added for this row. "
+                "Try uploading again"
+            )
             continue
         done += 1
         names_added += written.value.names_added
@@ -963,20 +979,21 @@ async def _add_people(
     if done:
         lines.append(
             f"🧑 **Players and DMs:** {done} updated, {names_added} table "
-            f"name{'' if names_added == 1 else 's'} added"
-            + (f", linked to {_md(', '.join(linked))}" if linked else "")
-            + "."
+            f"name{'' if names_added == 1 else 's'} added. (Undo doesn't take these back.)"
+            + (f" Linked to {_md(', '.join(linked[:5]))}{_and_more(linked, 5)}." if linked else "")
         )
     if flagged:
         lines.append(
-            f"❓ Not linked, because the character is played by someone else or DMbot doesn't "
-            f"know it: {_md(', '.join(flagged[:5]))}. Check them in 🧑 Check who is who."
+            f"❓ Not linked: {_md(', '.join(flagged[:5]))}{_and_more(flagged, 5)}. Someone else "
+            "already plays them, or DMbot doesn't know them yet. Open 🧑 Check who is who to "
+            "fix this."
         )
     for why in refused[:PEOPLE_SHOWN]:
         lines.append(f"⚠️ {_md(why)}")
     if len(refused) > PEOPLE_SHOWN:
         lines.append(
-            f"…and {len(refused) - PEOPLE_SHOWN} more rows for players and DMs were left out."
+            f"…and {len(refused) - PEOPLE_SHOWN} more player or DM rows had problems and were "
+            "left out."
         )
     return lines
 

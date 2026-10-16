@@ -479,6 +479,21 @@ class People(unittest.TestCase):
             (row.who, row.names, row.plays), (WHO, ("Mike", "Mikey", "Mike S"), ("Cerric", "Maren"))
         )
 
+    def test_a_number_too_big_for_an_id_is_refused(self) -> None:
+        for who in ("1" * 20, "9" * 19):
+            self.assertEqual(parse(f"Mike | player or DM | | | {who}", secrets=True).people, [])
+
+    def test_a_download_holds_fifty_people_a_file_so_each_uploads_again(self) -> None:
+        people = [OutPerson(WHO + i, (f"P{i}",), (), "x") for i in range(120)]
+        files = render_files([], campaign="Frost", secrets=True, people=people)
+        self.assertGreater(len(files), 1)
+        for text in files:
+            parsed = parse(text, secrets=True)
+            self.assertEqual(parsed.refused, [])
+            self.assertLessEqual(len(parsed.people), 50)
+        self.assertEqual({r.who for t in files for r in parse(t, secrets=True).people},
+                         {WHO + i for i in range(120)})  # fmt: skip
+
     def test_the_same_person_on_two_lines_is_one(self) -> None:
         text = f"Mike | player or DM | | | {WHO}\nMikey | player or DM | Mike | | {WHO} | Cerric"
         (row,) = parse(text, secrets=True).people

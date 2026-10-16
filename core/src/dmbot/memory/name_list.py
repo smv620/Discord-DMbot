@@ -43,14 +43,20 @@ PC = "player_character"
 # A player or DM row (the campaign's DMs only, #1559): `table names | player or DM | other
 # names | | who | plays`. `who` is the Discord user id; `plays` the characters they play.
 MAX_PEOPLE = 50  # people in one list: each is checked against the server one by one
-WHO_DIGITS = re.compile(r"^[0-9]{15,20}$")  # a Discord user id (a snowflake), as a number
+WHO_DIGITS = re.compile(r"^[0-9]{15,19}$")  # a Discord user id (a snowflake), as a number
+WHO_MAX = 2**63 - 1  # (and a snowflake fits a signed 64-bit number)
 NEEDS_WHO = (
-    "a player or DM needs their Discord user id in the 5th part (see the notes at the top). "
-    "DMbot adds players by itself, so you only need this to give someone table names"
+    "a player or DM needs their Discord id in the 5th part (how to get it is in the notes at "
+    "the top)"
 )
-NO_SECRETS_FOR_PEOPLE = "a player or DM row has no secret names. Leave the 4th part empty"
-ONLY_PEOPLE_HAVE = "the 5th and 6th parts are only for a player or DM row"
-TOO_MANY_PEOPLE = f"more than {MAX_PEOPLE} players and DMs in one list. Add the rest in another"
+NO_SECRETS_FOR_PEOPLE = "players and DMs can't have secret names. Leave the 4th part empty"
+ONLY_PEOPLE_HAVE = (
+    "the 5th and 6th parts are only for a player or DM. Leave them empty, or change the kind "
+    "to player or DM"
+)
+TOO_MANY_PEOPLE = (
+    f"only {MAX_PEOPLE} players and DMs fit in one list. Put the rest in a second file"
+)
 
 # Kinds in plain words → the memory rules' kinds. Anything else "needs a look".
 KIND_WORDS: dict[str, str] = {
@@ -134,12 +140,15 @@ def header(*, secrets: bool, download: bool = False) -> str:
             "###   or ; between them. Up to 20 on a line and 50 for one name, as for other",
             "###   names.",
             "###   Only the campaign's DM can add them. Players never see them.",
-            "### - A player or DM (kind: player or DM, for the campaign's DM only) is written:",
+            "### - A player or DM is written like this (only the campaign's DM can add these):",
             "###     table names | player or DM | more table names | | who | plays",
-            "###   who: their Discord user id (the long number; Settings > Advanced >",
-            "###   Developer Mode, then right-click them > Copy User ID). plays: the",
-            "###   characters they play, with ; between. The names are what the table calls",
-            "###   them (Mike, Mikey). They are added, never replaced.",
+            "###   who: their Discord id, a long number. To get it, turn on Developer Mode",
+            "###   (Settings > Advanced). Then open the person's profile (right-click on a",
+            "###   PC, tap their name on a phone) and choose Copy User ID. Paste it here.",
+            "###   plays: the characters they play, with ; between them.",
+            "###   table names: what the table calls them (Mike, Mikey).",
+            "###   Example: Mike, Mikey | player | | | 123456789012345678 | Ulfgar; Bell",
+            "###   Names are added to what DMbot knows, never replaced.",
         ]
     lines += [
         "### - Names only: no descriptions or notes. Each name is up to 100 characters.",
@@ -312,12 +321,13 @@ class _Taking:
                 into.append(n)
 
 
-def parse(text: str, *, secrets: bool) -> Parsed:
+def parse(text: str, *, secrets: bool, people: bool = True) -> Parsed:
     """The names in a list. `secrets`: whether this person may add secret names (the
-    campaign's DMs); otherwise a line with secret names is refused, never half-saved."""
+    campaign's DMs); otherwise a line with secret names is refused, never half-saved. `people`:
+    whether player or DM rows may be read (never from an AI's reply, #1559)."""
     out = Parsed()
     taking: dict[str, _Taking] = {}  # name key → the name, in the order first given
-    people: dict[int, tuple[int, list[str], list[str]]] = {}  # who → line, names, plays
+    found_people: dict[int, tuple[int, list[str], list[str]]] = {}  # who → line, names, plays
     for number, raw in enumerate(text.splitlines(), start=1):
         line = raw.strip().lstrip("\ufeff")
         if not line or line.startswith("#"):
@@ -334,8 +344,8 @@ def parse(text: str, *, secrets: bool) -> Parsed:
         if not name:
             out.refused.append((number, "no name before the first |"))
             continue
-        if kind_of(" ".join(cells[1].split())) == "person" and secrets:
-            _person(out, people, number, cells)
+        if kind_of(" ".join(cells[1].split())) == "person" and secrets and people:
+            _person(out, found_people, number, cells)
             continue
         if (cells[4] or cells[5]) and kind_of(" ".join(cells[1].split())) != "person":
             out.refused.append((number, ONLY_PEOPLE_HAVE))
@@ -387,7 +397,8 @@ def parse(text: str, *, secrets: bool) -> Parsed:
         for t in taking.values()
     ]
     out.people = [
-        PersonLine(n, who, tuple(names), tuple(plays)) for who, (n, names, plays) in people.items()
+        PersonLine(n, who, tuple(names), tuple(plays))
+        for who, (n, names, plays) in found_people.items()
     ]
     return out
 
@@ -418,6 +429,9 @@ def _person(
     # The DM words are never a name (#1208); the person is still listed.
     names = [n for n in names if not is_dm_word(n)]
     who = int(who_text)
+    if who > WHO_MAX:
+        out.refused.append((number, NEEDS_WHO))
+        return
     if who not in people and len(people) >= MAX_PEOPLE:
         out.refused.append((number, TOO_MANY_PEOPLE))
         return
@@ -428,6 +442,9 @@ def _person(
     for n in plays:
         if name_key(n) not in {name_key(h) for h in have_plays}:
             have_plays.append(n)
+    if len(have_names) > MAX_PER_NAME or len(have_plays) > MAX_PER_NAME:  # (all the rows joined)
+        del have_names[MAX_PER_NAME:], have_plays[MAX_PER_NAME:]
+        out.refused.append((number, f"more than {MAX_PER_NAME} names for one person"))
 
 
 @dataclass(frozen=True, slots=True)
@@ -563,8 +580,10 @@ def render_files(
         for n in ordered
     ]
     adds = [len(n.others) + (len(n.secrets) if secrets else 0) for n in ordered]
+    person_at: set[int] = set()  # which groups are people: a file holds MAX_PEOPLE of them
     if secrets:  # after the names; each person's lines stay together
         listed = sorted(people, key=lambda q: q.who)
+        person_at = set(range(len(groups), len(groups) + len(listed)))
         groups += [person_lines(q) for q in listed]
         adds += [len(q.names) + len(q.plays) for q in listed]
 
@@ -577,20 +596,23 @@ def render_files(
         # comes first; a lone name is always accepted (its own size is capped elsewhere).
         base_lines, base_bytes = budget(_prelude(campaign=campaign, secrets=secrets, part=part))
         chunks: list[list[str]] = [[]]
-        used_lines, used_bytes, used_adds = base_lines, base_bytes, 0
-        for group, add in zip(groups, adds, strict=True):
+        used_lines, used_bytes, used_adds, used_people = base_lines, base_bytes, 0, 0
+        for at, (group, add) in enumerate(zip(groups, adds, strict=True)):
             size = sum(len(line.encode("utf-8")) + 1 for line in group)
+            is_person = at in person_at
             if chunks[-1] and (
                 used_lines + len(group) > MAX_LINES
                 or used_bytes + size > MAX_FILE_BYTES
                 or used_adds + add > MAX_ADDED
+                or (is_person and used_people >= MAX_PEOPLE)  # the way in takes this many
             ):
                 chunks.append([])
-                used_lines, used_bytes, used_adds = base_lines, base_bytes, 0
+                used_lines, used_bytes, used_adds, used_people = base_lines, base_bytes, 0, 0
             chunks[-1].extend(group)
             used_lines += len(group)
             used_bytes += size
             used_adds += add
+            used_people += is_person
         return chunks
 
     chunks = pack(None)

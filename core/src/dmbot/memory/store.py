@@ -1759,21 +1759,31 @@ class MemoryStore:
         confirmed, never replacing, never twice, and never the `Player 1234` placeholder. A
         character that exists and has no player (or is already theirs) is linked as theirs;
         any other (played by someone else, or not known) is left alone and the person is marked
-        "needs a look", as the learner does. One change, so one Undo takes it all back."""
+        "needs a look", as the learner does. This is a change of its own per person: the list's Undo
+        does not take it back."""
         async with self._write(guild_id, campaign_id, DM) as w:
             person = await _ensure_person(w, user_id)
-            have = {str(r["key"]) for r in await w.select(ALIASES, " AND entity_id = %s", [person])}
-            have.add(lookup_key(_placeholder_name(user_id)))
+            entry = await w.get(ENTITIES, person)
+            if entry is not None and entry["status"] != CONFIRMED:  # DMbot only suggested it
+                await w.update(ENTITIES, person, {"status": CONFIRMED})
+            seen = {
+                str(r["key"]): r for r in await w.select(ALIASES, " AND entity_id = %s", [person])
+            }
+            seen[lookup_key(_placeholder_name(user_id))] = {"status": CONFIRMED}
             added = 0
             for text in names:
                 key = lookup_key(text)
-                if key in have:
-                    continue
-                have.add(key)
-                await w.insert(
-                    ALIASES, _new_alias(w, person, text, "nickname", CONFIRMED, False, None)
-                )
-                added += 1
+                old = seen.get(key)
+                if old is None:
+                    seen[key] = {"status": CONFIRMED}
+                    await w.insert(
+                        ALIASES, _new_alias(w, person, text, "nickname", CONFIRMED, False, None)
+                    )
+                    added += 1
+                elif old["status"] == PROPOSED:  # DMbot only guessed it: the DM has said it now
+                    await w.update(ALIASES, str(old["id"]), {"status": CONFIRMED, "source": DM})
+                    old["status"] = CONFIRMED
+                    added += 1
             characters = {
                 lookup_key(str(r["name"])): r
                 for r in await w.select(
@@ -1784,12 +1794,16 @@ class MemoryStore:
             flagged: list[str] = []
             for text in plays:
                 row = characters.get(lookup_key(text))
-                if row is not None and row["played_by"] in (None, user_id):
+                # An NPC or a god is not turned into a player character by a list: it is left
+                # alone and flagged like any other character that can't be linked.
+                if (
+                    row is not None
+                    and row["played_by"] in (None, user_id)
+                    and row["role"] in (None, PLAYER_CHARACTER)
+                ):
                     if row["played_by"] is None or row["role"] != PLAYER_CHARACTER:
                         await w.update(
-                            ENTITIES,
-                            row["id"],
-                            {"role": PLAYER_CHARACTER, "played_by": user_id, "needs_look": False},
+                            ENTITIES, row["id"], {"role": PLAYER_CHARACTER, "played_by": user_id}
                         )
                     await _sync_plays(w, str(row["id"]))
                     linked.append(str(row["name"]))

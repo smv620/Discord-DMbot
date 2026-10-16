@@ -1589,7 +1589,7 @@ class Lists(NamesTest):
                 raise d.NotFound(MagicMock(status=404, reason="x"), "Unknown Member")
             return SimpleNamespace(id=user_id, bot=members[user_id])
 
-        it.guild = SimpleNamespace(id=GUILD, fetch_member=fetch_member)
+        it.guild = SimpleNamespace(id=GUILD, fetch_member=fetch_member, get_member=lambda _id: None)
         return it
 
     async def person_names(self, user_id: int) -> list[str]:
@@ -1611,7 +1611,9 @@ class Lists(NamesTest):
         await name_lists.send_download(it, self.campaign.id)
         body = it.followup.send.call_args.kwargs["files"][0].fp.getvalue().decode()
         self.assertIn(f"Mike | player or DM | Mikey |  | {self.MIA_ID} | Cerric", body)
-        self.assertIn("who: their Discord user id", body)  # the header says what the column is
+        self.assertIn(
+            "who: their Discord id, a long number", body
+        )  # the header says what the column is
         parsed = parse(body, secrets=True)
         self.assertEqual(
             [(r.who, r.names, r.plays) for r in parsed.people],
@@ -1637,10 +1639,12 @@ class Lists(NamesTest):
         await name_lists.import_list(
             again, self.campaign.id, body + f"\nMike | player or DM | Mikey | | {self.MIA_ID}\n"
         )
-        self.assertEqual(await self.person_names(self.MIA_ID), ["Mike", "Mikey"])
+        self.assertEqual(sorted(await self.person_names(self.MIA_ID)), ["Mike", "Mikey"])
         again = self.with_members(self.it(), {self.MIA_ID: False})
         await name_lists.import_list(again, self.campaign.id, body)
-        self.assertEqual(await self.person_names(self.MIA_ID), ["Mike", "Mikey"])  # no doubles
+        self.assertEqual(
+            sorted(await self.person_names(self.MIA_ID)), ["Mike", "Mikey"]
+        )  # no doubles
 
     async def test_a_bot_an_outsider_and_a_row_without_who_are_refused_by_row(self) -> None:
         from dmbot.ui import name_lists
@@ -1659,7 +1663,7 @@ class Lists(NamesTest):
         self.assertIn("Players and DMs:** 1 updated", summary)
         self.assertIn("line 2: that is a bot, not a person", summary)
         self.assertIn("line 3: that Discord id isn't in this server", summary)
-        self.assertIn("line 4: a player or DM needs their Discord user id", summary)
+        self.assertIn("line 4: a player or DM needs their Discord id", summary)
         self.assertEqual(await self.person_names(self.MIA_ID), ["Mike"])
         self.assertIn("Bryn Shander", await self.names())  # the rest still loaded
 
@@ -1675,7 +1679,9 @@ class Lists(NamesTest):
     async def test_a_character_without_a_player_is_linked_and_others_are_flagged(self) -> None:
         from dmbot.ui import name_lists
 
-        cerric = await ui.save_name(self.memory, self.campaign, "Cerric", "npc", [], [])
+        cerric = await ui.save_name(
+            self.memory, self.campaign, "Cerric", "player_character", [], []
+        )
         taken = await ui.save_name(self.memory, self.campaign, "Maren", "npc", [], [])
         await self.memory.confirm_entity(
             GUILD, self.campaign.id, taken.id, "player_character", source="dm",
@@ -1688,7 +1694,7 @@ class Lists(NamesTest):
             f"Mike | player or DM | | | {self.MIA_ID} | Cerric; Maren; Nobody Known",
         )
         summary = it.followup.send.call_args_list[0].args[0]
-        self.assertIn("linked to Cerric", summary)
+        self.assertIn("Linked to Cerric", summary)
         self.assertIn("Not linked", summary)
         self.assertIn("Maren, Nobody Known", summary)
         rows = await self.memory.table_people(GUILD, self.campaign.id)
@@ -1701,6 +1707,60 @@ class Lists(NamesTest):
         )  # fmt: skip
         self.assertTrue(mia.needs_look)  # the flag the learner uses
         self.assertIsNotNone(cerric)
+
+    async def test_an_npc_is_never_turned_into_a_player_character_by_a_list(self) -> None:
+        from dmbot.ui import name_lists
+
+        bell = await ui.save_name(self.memory, self.campaign, "Kesh", "npc", [], [])
+        it = self.with_members(self.it(), {self.MIA_ID: False})
+        await name_lists.import_list(
+            it, self.campaign.id, f"Mike | player or DM | | | {self.MIA_ID} | Kesh"
+        )
+        self.assertIn("Not linked: Kesh", it.followup.send.call_args_list[0].args[0])
+        entity = await self.memory.entity(GUILD, self.campaign.id, bell.id)
+        self.assertEqual((entity.role, entity.played_by), ("npc", None))  # type: ignore[union-attr]
+
+    async def test_a_name_dmbot_only_guessed_is_confirmed_when_the_dm_lists_it(self) -> None:
+        from dmbot.memory.models import PROPOSED
+
+        written = await self.memory.add_person_names(GUILD, self.campaign.id, self.MIA_ID, ["Mike"])
+        self.assertEqual(written.value.names_added, 1)
+        person = next(
+            e for e in await self.memory.entities(GUILD, self.campaign.id) if e.type == "person"
+        )
+        alias = await self.memory.add_alias(
+            GUILD, self.campaign.id, person.id, "Mikey", kind="nickname", source="scan",
+            status=PROPOSED,
+        )  # fmt: skip
+        self.assertIsNotNone(alias)
+        again = await self.memory.add_person_names(
+            GUILD, self.campaign.id, self.MIA_ID, ["Mike", "Mikey"]
+        )
+        self.assertEqual(again.value.names_added, 1)  # Mikey, now the DM's word
+        self.assertEqual(sorted(await self.person_names(self.MIA_ID)), ["Mike", "Mikey"])
+
+    async def test_a_list_with_people_never_goes_to_the_ai(self) -> None:
+        from dmbot.ui import name_lists
+
+        self.bot.ai = MagicMock()
+        it = self.with_members(self.it(), {self.MIA_ID: False})
+        upload = name_lists.Upload(
+            f"Mike | player or DM | | | {self.MIA_ID}\n"
+            "this line | has | too | many | parts | here | now",
+            "names.txt",
+        )
+        await name_lists.take_list(it, self.campaign.id, upload)
+        self.bot.ai.complete.assert_not_called()
+        summary = it.followup.send.call_args_list[0].args[0]
+        self.assertIn("Players and DMs", summary)
+        self.assertNotIn(str(self.MIA_ID), summary)
+
+    async def test_player_rows_in_an_ai_reply_are_not_read(self) -> None:
+        from dmbot.memory.name_list import parse
+
+        parsed = parse(f"Mike | player or DM | | | {self.MIA_ID}", secrets=True, people=False)
+        self.assertEqual(parsed.people, [])
+        self.assertEqual(len(parsed.refused), 1)
 
     async def test_too_many_other_names_for_one_name_adds_nothing(self) -> None:
         from dmbot.memory.name_list import lines_for
