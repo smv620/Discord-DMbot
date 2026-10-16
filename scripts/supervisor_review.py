@@ -235,7 +235,7 @@ class GitHub:
 
 
 def now() -> datetime:
-    return datetime.now(timezone.utc)
+    return datetime.now(timezone.utc)  # noqa: UP017 (datetime.UTC needs Python 3.11; the runner has 3.10)
 
 
 def head_arrived(github: GitHub, head: str, moment: datetime) -> datetime | None:

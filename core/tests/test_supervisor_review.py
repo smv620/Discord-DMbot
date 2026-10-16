@@ -347,7 +347,7 @@ class OwnersLabel(unittest.TestCase):
 
     def setUp(self) -> None:
         self.saved = sr.now
-        sr.now = lambda: datetime(2026, 10, 16, 5, 0, tzinfo=timezone.utc)  # type: ignore[attr-defined]
+        sr.now = lambda: datetime(2026, 10, 16, 5, 0, tzinfo=timezone.utc)  # type: ignore[attr-defined]  # noqa: UP017
 
     def tearDown(self) -> None:
         sr.now = self.saved  # type: ignore[attr-defined]
