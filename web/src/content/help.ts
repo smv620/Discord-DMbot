@@ -279,7 +279,7 @@ export const playerSteps: Step[] = [
     names: [{ name: "/transcript", file: "ui/transcripts.py" }],
   },
   {
-    text: "To look up a rule, type /dmbot rule and a few words, in any of the campaign's channels. Only you see the answer. It comes from the free rules, your table's house rules, and the homebrew your game master marked for players. Entries from a shared book say From a shared book, and [Legacy 2014] if that book is for older rules than your table plays. Each person can ask once every 3 seconds. The answer ends with \"Your DM decides what applies at your table.\"",
+    text: "To look up a rule, type /dmbot rule and a few words, in any of the campaign's channels. Only you see the answer. It comes from the free rules, your table's house rules, and the homebrew your game master marked for players. Entries from a shared book are tagged [Shared book], and [Shared book] [Legacy 2014] if that book is for older rules than your table plays. Each person can ask once every 3 seconds. The answer ends with \"Your DM decides what applies at your table.\"",
     names: [{ name: "/dmbot rule", file: "ui/rule_lookup.py" }],
   },
   {
