@@ -378,7 +378,11 @@ describe("writing to the team (#1340)", () => {
     expect(t).toContain("goes only to the team, privately, and is not posted anywhere public");
     expect(t).toContain("We keep it for 12 months, then delete it");
     expect(t).toContain("The team replies by email to the address on your account");
-    expect(t).toContain("the website does not show it to you again");
+    // #1373: the account page lists the person's own questions, never the words.
+    expect(t).toContain(
+      "your account page shows you its subject, when you sent it and whether it was answered, never the message itself",
+    );
+    expect(t).not.toContain("does not show it to you again");
     expect(t).toContain("If you delete your account, we delete your messages too");
   });
 
