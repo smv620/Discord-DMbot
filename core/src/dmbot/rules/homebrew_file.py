@@ -76,8 +76,7 @@ NAME_TOO_LONG = f"the name is over {NAME_MAX} characters"
 NO_TEXT = "add the words after a blank line under the heading"
 TEXT_TOO_LONG = f"the words are over {TEXT_MAX} characters"
 SUMMARY_TOO_LONG = f"the summary is over {SUMMARY_MAX} characters"
-BAD_OFF = "write Off: yes  or  Off: no"
-OLD_PLAYERS = "write Players may know: yes  or  Players may know: no (or leave the line out)"
+BAD_OFF = "write Off: yes  or  Off: no (or leave the line out)"
 TWICE = "another entry already has this name, so this one was skipped"
 TOO_MANY = f"more than {HOMEBREW_MAX} entries; the rest are left out"
 LINE_TOO_LONG = f"a line is over {MAX_LINE} characters. Split it into shorter lines"
@@ -218,11 +217,9 @@ def _entry(
                 return None
             switch = answer == "no"  # (the entry is on)
         elif colon and key == "players may know":
-            # An older file's line: nothing is hidden from players any more (part 2). Accepted
-            # and ignored, so those files still load.
-            if value.strip().lower() not in ("yes", "no"):
-                bad(OLD_PLAYERS)
-                return None
+            # An older file's line: nothing is hidden from players any more (part 2). Whatever it
+            # says is ignored, so an old file never stops on a setting that no longer exists.
+            pass
         else:
             break  # words with no blank line before them: they are the words
         i += 1

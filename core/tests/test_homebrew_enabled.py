@@ -212,8 +212,8 @@ class TheMenu(DatabaseTest):
         ]
         self.assertIn("Turn on", labels)
         self.assertIn("(off)", ui.list_text(self.campaign, [off], 0))
-        self.assertIn("turned off", ui.entry_text(off))
-        self.assertNotIn("turned off", ui.entry_text(self.entry))
+        self.assertIn("It is off", ui.entry_text(off))
+        self.assertNotIn("It is off", ui.entry_text(self.entry))
 
     async def test_pressing_it_turns_the_entry_off_then_on(self) -> None:
         bot = SimpleNamespace(

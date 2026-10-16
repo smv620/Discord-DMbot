@@ -55,7 +55,7 @@ LATER_LABEL = "▼ Later"
 UNFOLLOW_LABEL = "Stop following"
 UNDO_LABEL = "↩️ Undo"
 CODE_NOTE = (
-    "Any DM in this server, and anyone who has this code, can read ALL the shared entries. "
+    "Any DM in this server, and anyone who has this code, can read all the shared entries. "
     "Old codes still work until you press Stop sharing."
 )
 NAMES_SHOWN = 5  # names quoted for entries that stay, so a long list stays short

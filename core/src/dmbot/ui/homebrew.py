@@ -4,7 +4,7 @@ the person is a DM on every change.
 
 DMbot never writes or decides homebrew: it only keeps what the DM typed. An entry is the DM's own
 creation, so the form says so in one line and points a published book to "Share a rulebook". Each
-entry is **only for the DM** until the DM presses 👀 (a homebrew monster is a spoiler).
+entry is on or off for DMbot's use; nothing is hidden from players.
 
 Remove can be undone while the bot keeps running: the last few removed entries are held in memory
 (`bot.homebrew_removed`, nothing stored), shown as ↩️ buttons on the list.
@@ -81,9 +81,8 @@ NOT_YOUR_CAMPAIGN = (
 MINE_NOTE = "✏️ Saved. This is now your own, and it replaces the pack's version in this campaign."
 ENTRY_GONE = "That entry is gone, maybe removed by another DM. Here is the list now."
 INTRO = (
-    "Your own spells, monsters, items and other game content. DMbot uses every entry that is on "
-    "and ignores the ones you turn off. DMbot only keeps what you write. For a published book, "
-    "use **Share a rulebook**."
+    "Your own spells, monsters, items and more. DMbot uses each entry that is on and skips the "
+    "ones you turn off. For a published book, use **Share a rulebook**."
 )
 SHORT_INTRO = "Your own creations only. Turn an entry off and DMbot ignores it."
 NONE_YET = "No homebrew yet. Press **➕ Add** to write the first one, or **📥 Load file**."
@@ -161,7 +160,7 @@ def list_text(campaign: Campaign, entries: list[Homebrew], page: int, note: str 
 
 
 def entry_text(entry: Homebrew, note: str = "") -> str:
-    off = "" if entry.enabled else " It is turned off, so DMbot ignores it."
+    off = "" if entry.enabled else " It is off, so DMbot skips it. It is still saved."
     head = f"📚 **{_md(entry.name)}** ({entry.kind.capitalize()}).{off}"
     body = _fit(_md(entry.text), 1500)
     summary = f"\n_Shown in alerts as:_ {_md(entry.shown())}" if entry.summary else ""
@@ -539,7 +538,8 @@ def suggest_text(entry: Homebrew, pack_name: str) -> str:
     """Never send at once: say where it goes, that nobody is named, and that nothing changes."""
     return (
         f"Send **{_md(entry.name)}** to the **{_md(pack_name)}** DM?\n{entry_text(entry)}\n"
-        "They see only this text, not your name, table or server. Read it for any you typed in. "
+        "They see only this text, not your name, table or server. "
+        "Check it for anything private you typed in. "
         "Your own copy stays. You'll hear the answer at your next session."
     )
 
@@ -731,8 +731,8 @@ class AddForm(_EntryForm, title="Add homebrew"):
             summary=self.summary.value,
         )
         return (
-            f"➕ Added **{_md(saved.name)}**. DMbot uses it now. Open it to turn it off if you "
-            "don't want that."
+            f"➕ Added **{_md(saved.name)}**. DMbot uses it now. To switch it off, open it and "
+            "press **Turn off**."
         )
 
 
