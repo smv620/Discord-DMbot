@@ -167,6 +167,9 @@ from dmbot.memory.sheet_store import CharacterSheet, SheetStore
 from dmbot.memory.sheet_watch import SheetWatch
 from dmbot.memory.store import MemoryStore
 from dmbot.memory.table_names import NameThenAnswer
+from dmbot.recaps import draft as recap_draft
+from dmbot.recaps.generate import generate as generate_recap
+from dmbot.recaps.store import Recap, RecapSection, RecapStore
 from dmbot.retention import RetentionJob
 from dmbot.rules import house_voice
 from dmbot.rules import index as rules_index
@@ -188,6 +191,7 @@ from dmbot.test_recording.session import TestSession
 from dmbot.test_recording.store import TestVoiceStore
 from dmbot.timebot import combat_phrases, durations
 from dmbot.timebot import phrases as clock_phrases
+from dmbot.timebot.clock import day_of as clock_day_of
 from dmbot.timebot.effects import EffectsSection, EffectStore
 from dmbot.timebot.store import ClockSection, ClockStore
 from dmbot.transcript import fix_notes, left_out, speaker_ai
@@ -231,6 +235,7 @@ from dmbot.ui.name_lists import UndoListButton
 from dmbot.ui.names import ReviewButton, after_session_text, held_back_text, review_view
 from dmbot.ui.optional_rules import dmbot_optional_rules  # noqa: F401 (registers it)
 from dmbot.ui.people_review import PeopleReviewButton, people_review_view, waiting_text
+from dmbot.ui.recap import NO_RECAP, RecapButton, for_the_dm, recap_view
 from dmbot.ui.rule_lookup import dmbot_rule  # noqa: F401 (registers it)
 from dmbot.ui.sheets import MySheetButton, OpenCardButton
 from dmbot.ui.transcripts import (
@@ -586,6 +591,7 @@ class DMBot(commands.AutoShardedBot):
         effects: EffectStore | None = None,
         test_voice: TestVoiceStore | None = None,
         rule_sets: RuleSetStore | None = None,
+        recaps: RecapStore | None = None,
     ) -> None:
         intents = discord.Intents.none()
         intents.guilds = True
@@ -630,6 +636,7 @@ class DMBot(commands.AutoShardedBot):
         # The linked house-rules file (#969), and what is waiting for a DM's press.
         self.house_file_links = house_file_links
         self.rule_sets = rule_sets  # shared house rules (#1190)
+        self.recaps = recaps  # the cinematic recap of each session (#1382)
         self.house_syncs = house_sync.Pendings()
         # Timed effects on that clock (#998); None without a database.
         self.effects = effects
@@ -738,6 +745,18 @@ class DMBot(commands.AutoShardedBot):
                 AIModelTier(settings.story_extractor_tier), Feature.EXTRACTOR, cache_system=True
             )
             if self.ai_client and settings.story_extractor_on
+            else None
+        )
+        # The cinematic recap (#1382): the first draft on the fast tier, one more try on the
+        # careful one. Built only with the switch on, so off means no client to call.
+        self.recap_ai = (
+            self.ai_client.tier(FEATURE_TIERS[Feature.RECAP], Feature.RECAP)
+            if self.ai_client and settings.recaps_on
+            else None
+        )
+        self.recap_retry_ai = (
+            self.ai_client.tier(FEATURE_TIERS[Feature.RECAP_RETRY], Feature.RECAP_RETRY)
+            if self.ai_client and settings.recaps_on
             else None
         )
         # The off-topic filter (#52), the audio check and the DM sidebar.
@@ -884,6 +903,7 @@ class DMBot(commands.AutoShardedBot):
         self.add_dynamic_items(clock_screen.CombatUndoButton)  # #1127
         self.add_dynamic_items(fightbot.FightButton)  # #1129
         self.add_dynamic_items(timer_screen.EffectButton)  # timed effects (#998)
+        self.add_dynamic_items(RecapButton)  # the recap's four buttons (#1382)
         # Undo after forgetting a name (its card), after a restart too.
         self.add_dynamic_items(UndoButton, UndoListButton)
         # "Download transcript" in the private message when a session ends.
@@ -1786,6 +1806,8 @@ class DMBot(commands.AutoShardedBot):
             ("definitions", lambda: self.recheck_definitions(table)),
             ("stale flags", lambda: self.close_stale_flags(table)),
             ("old undo history", lambda: self.prune_old_changes(table)),
+            # Slow when on (an AI call or two), so last; nothing above waits for it.
+            ("session recap", lambda: self.recap_session(table)),
             # Slow when on (minutes of AI calls): after the quick steps; the next two need it.
             ("story extractor", lambda: self.extract_claims(table, ended_at)),
             ("what was said", lambda: self.ask_about_claims(table)),
@@ -5254,6 +5276,122 @@ class DMBot(commands.AutoShardedBot):
                     view=review_view(cid),
                 )
 
+    async def recap_session(self, table: Table) -> None:
+        """After a session, only with DMBOT_RECAPS on and a plan that includes it (#1382): write
+        the cinematic recap and show it to the DM on the DM screen, with the buttons. Off means
+        off: no client, no stored line read. Nothing reaches the table unless the DM presses
+        Post. A plan that can't be checked is not run. The log gets counts only."""
+        if (
+            not self.settings.recaps_on
+            or self.recap_ai is None
+            or self.recap_retry_ai is None
+            or self.recaps is None
+            or self.transcripts is None
+            or table.campaign_id is None
+            or table.transcript_session_id is None
+        ):
+            return
+        gid, cid = table.guild_id, table.campaign_id
+        with log_context(guild_id=gid, campaign_id=cid):
+            campaign = await self.campaigns.get(gid, cid)
+            if campaign is None or not await self.plan_allows(
+                "recap", gid, campaign, fail_open=False
+            ):
+                log.info("Recap: not run (the plan lacks it, or can't be checked)")
+                return
+            session = await self.transcripts.session(gid, table.transcript_session_id)
+            if session is None or session.lines == 0:
+                return
+            if await self.recaps.get(gid, cid, session.started_at) is not None:
+                return  # already written (a restart)
+            recap = await self._make_recap(campaign, session.id, session.started_at, tries=0)
+            if recap is None:
+                await self.post(table.screen_channel_id, NO_RECAP)
+                return
+            await self.post(
+                table.screen_channel_id,
+                for_the_dm(recap),
+                view=recap_view(cid, recap.session_at, tries=recap.tries),
+            )
+
+    async def write_recap_again(self, campaign: Campaign, recap: Recap) -> Recap | None:
+        """The DM pressed Try again (at most twice for one session): a new draft in place of the
+        old one, or None, leaving the old one. The plan is checked again, closed."""
+        if (
+            self.recap_ai is None
+            or self.recaps is None
+            or self.transcripts is None
+            or not await self.plan_allows("recap", campaign.guild_id, campaign, fail_open=False)
+        ):
+            return None
+        found = [
+            s
+            for s in await self.transcripts.sessions(campaign.guild_id, campaign.id, limit=50)
+            if s.started_at == recap.session_at
+        ]
+        if not found:
+            return None
+        with log_context(guild_id=campaign.guild_id, campaign_id=campaign.id):
+            return await self._make_recap(
+                campaign, found[0].id, recap.session_at, tries=recap.tries + 1
+            )
+
+    async def _make_recap(
+        self, campaign: Campaign, session_id: str, session_at: int, *, tries: int
+    ) -> Recap | None:
+        """Write and store one recap draft for a session of `campaign`, or None. Reads only
+        this campaign: its transcript, its names, its earlier recap and its game clock."""
+        if (
+            self.recap_ai is None
+            or self.recap_retry_ai is None
+            or self.recaps is None
+            or self.transcripts is None
+            or self.lookup is None
+        ):
+            return None
+        gid, cid = campaign.guild_id, campaign.id
+        try:
+            lookup = await self.lookup.get(gid, cid)
+        except Exception:
+            log.exception("Recap: couldn't load the campaign's names, so none was written")
+            return None  # without them a secret name can't be kept out: no recap
+        lines = await self.transcripts.lines(gid, session_id)
+        bridge = await self.recaps.bridge(gid, cid, session_at)
+        stored = await self.clocks.get(gid, cid) if self.clocks is not None else None
+        day = clock_day_of(stored.clock.minute) if stored is not None else None
+        result = await generate_recap(
+            self.recap_ai,
+            self.recap_retry_ai,
+            lines,
+            dm_ids=set(campaign.dm_user_ids),
+            consenting=lambda: self.consent.consenting(gid),
+            allowed_names=sorted(
+                {n.text for n in lookup.names if n.confirmed and not n.secret and not n.person}
+            ),
+            secret_names=sorted({n.text for n in lookup.names if n.secret}),
+            previous=recap_draft.strip_cues(bridge.summary) if bridge is not None else "",
+            setting=None,  # a campaign has no setting name yet; none is ever written in
+            day=day,
+        )
+        log.info(
+            "Recap: %d call(s), %s", result.calls, "written" if result.draft else "no recap"
+        )  # counts only
+        if result.draft is None:
+            return None
+        d = result.draft
+        await self.recaps.save(
+            gid,
+            cid,
+            session_at,
+            title=d.title,
+            summary=d.summary,
+            housekeeping=d.housekeeping,
+            music=d.music,
+            game_day=day,
+            tries=tries,
+        )
+        return await self.recaps.get(gid, cid, session_at)
+
     async def log_steward_tally(self, table: Table) -> None:
         """After the session's other work: one line in the server log of what the ontology
         steward decided (#1303), counts only. Never shown to a player or a DM. Nothing is
@@ -6254,6 +6392,7 @@ async def run(settings: Settings) -> None:
         campaigns.register_section(FollowedSetsSection())  # and the sets it follows (#1260)
         campaigns.register_section(ClockSection())  # and the game clock (#965)
         campaigns.register_section(EffectsSection())  # and its timed effects (#998)
+        campaigns.register_section(RecapSection())  # and its session recaps (#1382)
         # DMBot sets this too; passing it here means the store never starts out wrong.
         consent = ConsentStore(db, outside=settings.transcription.outside_engine)
         bot = DMBot(
@@ -6272,6 +6411,7 @@ async def run(settings: Settings) -> None:
             EffectStore(db),
             TestVoiceStore(db),
             RuleSetStore(db),
+            RecapStore(db),
         )
         _close_on_sigterm(bot)
         async with bot:

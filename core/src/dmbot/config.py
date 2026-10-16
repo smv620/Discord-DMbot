@@ -63,6 +63,7 @@ class Settings:
     # lines. Off, and not shown to customers, until it passes its measurement (#1282); with it
     # off nothing calls the AI and the after-session step has nothing to ask.
     story_extractor_on: bool = False
+    recaps_on: bool = False  # cinematic recaps (#1382): off until dev1's quality check
     # Which model tier reads the transcript, and how many calls one session may make (#1363).
     story_extractor_tier: str = "fast"
     story_extractor_max_calls: int = 480
@@ -174,6 +175,9 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
             + extractor_day_raw
             + '".'
         )
+    recaps_raw = (get("DMBOT_RECAPS") or "0").lower()
+    if recaps_raw not in ("0", "1", "true", "false", "on", "off"):
+        raise ConfigError('DMBOT_RECAPS must be 1 (on) or 0 (off), got "' + recaps_raw + '".')
     sidebar_raw = (get("DMBOT_SIDEBAR") or "0").lower()
     if sidebar_raw not in ("0", "1", "true", "false", "on", "off"):
         raise ConfigError('DMBOT_SIDEBAR must be 1 (on) or 0 (off), got "' + sidebar_raw + '".')
@@ -219,6 +223,7 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
         link_token_secret=link_secret.encode("utf-8"),
         sidebar_on=sidebar_raw in ("1", "true", "on"),
         story_extractor_on=extractor_raw in ("1", "true", "on"),
+        recaps_on=recaps_raw in ("1", "true", "on"),
         story_extractor_tier=extractor_tier,
         story_extractor_max_calls=int(extractor_calls_raw),
         story_extractor_max_calls_day=int(extractor_day_raw),

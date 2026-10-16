@@ -3747,6 +3747,32 @@ EXTRACTOR_PROGRESS = """
     ALTER TABLE transcript_sessions ADD COLUMN extracted_at BIGINT;
 """
 
+SESSION_RECAPS = f"""
+    -- The cinematic recap of a session (#1382; docs/PLAN.md, "Cinematic recaps"): an in-world
+    -- cold open written after the session, shown only to the campaign's DM, who posts it, edits
+    -- it, asks again or drops it. Per campaign, never shared between campaigns or servers; in its
+    -- backups; deleted with the campaign. One row for each session (by when it started), and the
+    -- latest earlier one is the bridge for the next recap.
+    --   summary    the narration with its 《emotion》 and ((performance)) cues
+    --   music      one prompt for each emotion section (slice 2 turns them into audio)
+    --   status     draft (the DM has not decided), posted, or dropped
+    --   tries      how many times the DM asked for another (at most 2)
+    CREATE TABLE session_recaps (
+        {_memory_scope()}
+        session_at   BIGINT NOT NULL CHECK (session_at > 0),
+        title        TEXT NOT NULL CHECK (char_length(title) BETWEEN 1 AND 120),
+        summary      TEXT NOT NULL CHECK (char_length(summary) BETWEEN 1 AND 4000),
+        housekeeping TEXT[] NOT NULL DEFAULT '{{}}',
+        music        TEXT[] NOT NULL DEFAULT '{{}}',
+        game_day     INTEGER CHECK (game_day IS NULL OR game_day > 0),
+        status       TEXT NOT NULL CHECK (status IN ('draft', 'posted', 'dropped')),
+        tries        INTEGER NOT NULL DEFAULT 0 CHECK (tries BETWEEN 0 AND 2),
+        created_at   BIGINT NOT NULL,
+        decided_at   BIGINT,
+        PRIMARY KEY (guild_id, campaign_id, session_at)
+    );
+    """ + _isolate("session_recaps")
+
 SUPPORT_TICKETS = (
     _setting("dmbot_support_admin", "dmbot.support_admin", "TEXT")
     + """
@@ -3871,6 +3897,7 @@ MIGRATIONS: tuple[Migration, ...] = (
     ("0074_support_tickets", SUPPORT_TICKETS),  # private support tickets (#1340)
     # (0075 is the support email #1345 and 0076 the claims index #1350: numbers kept for them)
     ("0077_extractor_progress", EXTRACTOR_PROGRESS),  # a restart resumes the extractor (#1367)
+    ("0078_session_recaps", SESSION_RECAPS),  # the cinematic recap of a session (#1382)
 )
 
 # Tables that must have row-level security. A test checks every table in the schema
@@ -3894,6 +3921,7 @@ ISOLATED_TABLES = (
     "session_usage",
     "game_clocks",
     "game_effects",
+    "session_recaps",
     "memory_rule_links",
     "fightbot_players",
     "rule_sets",

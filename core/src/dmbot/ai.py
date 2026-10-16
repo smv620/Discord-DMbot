@@ -66,6 +66,8 @@ class Feature(enum.StrEnum):
     RULES_CONFIRM = "rules_confirm"  # a rules alert's candidate, confirmed before the DM sees it
     SHEET = "sheet"  # a player's own sheet document read into the allow-listed fields (#1125)
     FIGHTBOT = "fightbot"  # a short reminder of a player's own options in combat (#1129)
+    RECAP = "recap"  # the cinematic recap after a session (#1382); off by default
+    RECAP_RETRY = "recap_retry"  # its one more try, when the first draft fails the checks
     EXTRACTOR = "extractor"  # the story extractor after a session (#1363); off by default
 
 
@@ -84,6 +86,8 @@ FEATURE_TIERS = {
     Feature.FIGHTBOT: AIModelTier.FAST,  # a short reminder every couple of minutes at most
     # The default; DMBOT_STORY_EXTRACTOR_TIER picks it, because the measurement (#1282) decides.
     Feature.EXTRACTOR: AIModelTier.FAST,
+    Feature.RECAP: AIModelTier.FAST,
+    Feature.RECAP_RETRY: AIModelTier.CAREFUL,
 }
 
 # The setting that picks each tier's model (named in the log when one isn't available).

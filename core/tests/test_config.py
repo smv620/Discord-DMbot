@@ -103,6 +103,12 @@ class PlanChecksSetting(unittest.TestCase):
         with self.assertRaisesRegex(ConfigError, "DMBOT_STORY_EXTRACTOR must be 1"):
             load_settings({**BASE, "DMBOT_STORY_EXTRACTOR": "maybe"})
 
+    def test_recaps_are_off_unless_switched_on(self) -> None:
+        self.assertFalse(load_settings(BASE).recaps_on)
+        self.assertTrue(load_settings({**BASE, "DMBOT_RECAPS": "1"}).recaps_on)
+        with self.assertRaisesRegex(ConfigError, "DMBOT_RECAPS must be 1"):
+            load_settings({**BASE, "DMBOT_RECAPS": "sometimes"})
+
     def test_the_extractors_tier_and_call_limit(self) -> None:
         s = load_settings(BASE)
         self.assertEqual((s.story_extractor_tier, s.story_extractor_max_calls), ("fast", 480))

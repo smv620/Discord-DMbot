@@ -17,7 +17,7 @@ from typing import Literal
 from dmbot.entitlements import Access
 from dmbot.hours import account_link
 
-Rule = Literal["ai", "backup", "memory"]
+Rule = Literal["ai", "backup", "memory", "recap"]
 
 
 def can_use_ai(access: Access | None) -> bool:
@@ -41,13 +41,24 @@ def can_use_story_memory(access: Access | None) -> bool:
     return access is not None and access.works and access.backups
 
 
+def can_recap(access: Access | None) -> bool:
+    """A cinematic recap reads a whole session with the AI (#1382): the same plans as story
+    memory, none for Try It. `None` is a campaign with no owner."""
+    return can_use_story_memory(access)
+
+
 def allowed(rule: Rule, access: Access | None) -> bool:
     # explicit: a new rule can't inherit another's answer
-    rules = {"ai": can_use_ai, "backup": can_backup, "memory": can_use_story_memory}
+    rules = {
+        "ai": can_use_ai,
+        "backup": can_backup,
+        "memory": can_use_story_memory,
+        "recap": can_recap,
+    }
     return rules[rule](access)
 
 
-Action = Literal["ai", "copy", "transcript", "restore", "share", "story"]
+Action = Literal["ai", "copy", "transcript", "restore", "share", "story", "recap"]
 # Each thing a person can press belongs to exactly one rule, so the pair can't drift apart.
 RULE_OF: dict[Action, Rule] = {
     "ai": "ai",
@@ -56,6 +67,7 @@ RULE_OF: dict[Action, Rule] = {
     "restore": "backup",
     "share": "backup",  # sharing house rules needs a paid plan (#1190)
     "story": "memory",  # the story extractor after a session (#1367)
+    "recap": "recap",  # the cinematic recap after a session (#1382)
 }
 
 # What a person pressed, in the words the refusal uses, so it names what they tried and not a
@@ -68,6 +80,7 @@ _UNAVAILABLE: dict[Action, str] = {
     "restore": "Loading a copy isn't available",
     "share": "Sharing house rules isn't available for this campaign",
     "story": "Remembering the story from a session isn't available for this campaign",
+    "recap": "Recaps aren't available for this campaign",
 }
 _CANT: dict[Action, str] = {
     "ai": "find names with its AI",
@@ -76,6 +89,7 @@ _CANT: dict[Action, str] = {
     "restore": "load copies",
     "share": "share house rules",
     "story": "remember the story",
+    "recap": "write recaps",
 }
 _ASK_OWNER: dict[Action, str] = {
     action: f"{text}. Ask the campaign's owner to take a look."
@@ -122,6 +136,8 @@ def refusal(
         return f"Sharing house rules needs a paid plan. Pick one {where}"
     if action == "story":
         return f"Remembering the story from a session needs a paid plan. Pick one {where}"
+    if action == "recap":
+        return f"Recaps need a paid plan. Pick one {where}"
     if action == "restore":
         return f"Nothing was loaded. Loading a copy needs a paid plan. Pick one {where}"
     return f"Try It campaigns can't make copies or transcripts. A paid plan can. See plans {where}"
