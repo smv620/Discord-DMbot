@@ -819,6 +819,68 @@ class BotTests(DatabaseTest):
         (line,) = await self.store.lines(GUILD, sid)
         self.assertEqual(line.text, "I saw Beleros")
 
+    async def test_a_dms_own_edit_is_noted_with_undo_and_learns_no_rule(self) -> None:
+        table, sid = await self.fix_setup()
+        memory = MagicMock(add_correction=AsyncMock())
+        self.bot.memory = memory
+        started = START * 1000 + 1000
+        done = await self.bot.apply_line_fix(
+            GUILD, table.campaign_id or "", sid, PLAYER, started, "I saw Belleros there", noted=True
+        )
+        self.assertTrue(done)
+        (line,) = await self.store.lines(GUILD, sid)
+        self.assertEqual((line.heard, line.text), ("I saw Beleros", "I saw Belleros there"))
+        (note,) = table.fix_notes.shown()  # listed with Undo, as a whole-line DM edit
+        self.assertEqual((note.fix.how, note.fix.written), ("edit", "I saw Belleros there"))
+        # A second edit of the same line waits for the first to be undone.
+        self.assertFalse(
+            await self.bot.apply_line_fix(
+                GUILD, table.campaign_id or "", sid, PLAYER, started, "again", noted=True
+            )
+        )
+        text, allow = await self.bot.undo_fix(GUILD, note.id, DM)
+        self.assertIn("Undone", text)
+        self.assertIsNone(allow)  # no "Allow again": nothing was learned
+        memory.add_correction.assert_not_awaited()  # and no "keep as heard" rule for a whole line
+        (line,) = await self.store.lines(GUILD, sid)
+        self.assertEqual(line.text, "I saw Beleros")  # as heard again
+
+    async def test_a_dm_edit_is_refused_over_a_line_with_a_name_fix_waiting(self) -> None:
+        from dmbot.transcript.cleaner import Fix
+
+        table, sid = await self.fix_setup()
+        started = START * 1000 + 1000
+        fix = Fix(6, 13, "Beleros", "Belleros", "e" * 32, "sound", sure=False)
+        table.fix_notes.add(PLAYER, started, "I saw Beleros", (fix,))
+        done = await self.bot.apply_line_fix(
+            GUILD, table.campaign_id or "", sid, PLAYER, started, "something else", noted=True
+        )
+        self.assertFalse(done)  # undoing the older fix would bring its words back over this
+        (line,) = await self.store.lines(GUILD, sid)
+        self.assertEqual(line.text, "I saw Beleros")
+
+    async def test_a_dm_edit_is_refused_over_a_line_with_an_open_question(self) -> None:
+        from dmbot.transcript.questions import Asked
+
+        table, sid = await self.fix_setup()
+        started = START * 1000 + 1000
+        table.questions.open = Asked("q1", PLAYER, "Beleros", (), 0.0, started_ms=started)
+        done = await self.bot.apply_line_fix(
+            GUILD, table.campaign_id or "", sid, PLAYER, started, "something else", noted=True
+        )
+        self.assertFalse(done)  # answering it later would write over the edit
+        (line,) = await self.store.lines(GUILD, sid)
+        self.assertEqual(line.text, "I saw Beleros")
+
+    async def test_the_dm_screens_summary_carries_the_fix_a_line_button(self) -> None:
+        table, sid = await self.fix_setup()
+        self.bot.post_message = AsyncMock(return_value=MagicMock())  # type: ignore[method-assign]
+        await self.bot.post_session_summary(table, START + 60, True, 0)
+        _, _, view = self.bot.post_message.await_args.args
+        ids = [c.item.custom_id for c in view.children]
+        self.assertEqual(ids, [f"dmbot:fixline:{GUILD}:{sid}"])
+        self.assertEqual(view.children[0].item.label, "✏️ Fix a line")
+
     async def test_when_a_session_ends_only_its_own_suggestions_stay(self) -> None:
         table, sid = await self.fix_setup()
         store = self.bot.suggestions

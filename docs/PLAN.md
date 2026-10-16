@@ -1774,8 +1774,9 @@ reads the campaign memory and never changes it.
   once and deletes the person's files from every session; a kept session that lost a speaker
   is marked incomplete. Sessions nobody keeps (`python -m dmbot.devtools.test_library keep`)
   are deleted after 7 days by a daily job. Replaying them is a later issue.
-- **Learning is immediate:** a confirmed correction becomes a `misheard` alias and
-  reaches the Cleaner within about a second. Earlier lines of the same session with the
+- **Learning is immediate:** a confirmed correction is saved as its own rule (a
+  campaign's corrections are their own table; a card's `misheard` spelling is a known
+  word the Cleaner never rewrites) and reaches the Cleaner within about a second. Earlier lines of the same session with the
   same mishearing are re-checked from "as heard" and fixed, with each change logged.
   Previous sessions change only if the DM asks.
 - **Measured** on a test set of mishearings ("Sara" → Cerric, "Bell or us" → Belleros)
@@ -1930,6 +1931,18 @@ told once in a private message. Nothing is posted publicly. One suggestion per l
 session is dropped with no message. Checks: the speaker must still be recorded when they send it and
 when it is accepted; the words must not write, or stand next to, a secret name (refused with
 "That can't be used", no reason, so it cannot hint at one); everything is escaped on the DM screen.
+
+**The DM fixes any line at once (decided 2026-10-16 by Supervisor, built #1499).** `/dmbot fix` run
+by a DM of the campaign, or **✏️ Fix a line** under the end-of-session message on the DM screen,
+opens the same picker over the newest ten spoken lines of any recorded speaker (never sidebar or
+typed lines), then the same one-line box. The words are written at once through the same path as
+an accepted suggestion (`text` only, never what was heard; the secret-name check with the same
+refusal words; the line must still be as shown; its speaker still recorded), while the session
+runs it is listed in the DM screen's fix-notes message as a "DM edit" with the usual **Undo** (it
+puts the line's words back as they were, and saves no "keep as heard" rule); a finished session's
+edit has no Undo and no list. A line with a name fix, an answer or an open "Did they mean…?" is
+not edited until that is settled. Nothing goes to the player and nothing is public;
+the DM is checked on every press.
 
 **Transcript Cleaner step 3: built (2026-10-16, #127): earlier lines are re-checked after an
 answer.** When the DM answers "Did they mean…?" (by picking a name or by Type it…), the
