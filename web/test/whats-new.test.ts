@@ -46,6 +46,8 @@ describe("What's new", () => {
   it("holds back what people can't use yet, with the reason, and shows none of it (#1322)", () => {
     expect(held.map((h) => h.title)).toEqual([
       "Recaps for your table", // until dev1 has checked a real recap (#1382, #1384)
+      "Narrated recaps with music", // until narration is on (RECAP_AUDIO_LIVE, #1385)
+      "DMbot's helper answers questions", // until the support helper runs (SUPPORT_AI_LIVE)
       "Ask a question in public", // until QAbot is live (#1352)
       "Move to a new Discord account",
       "Choose what recaps do",
