@@ -733,6 +733,14 @@ never does.
   of Pick changes copies the pack into the campaign's own homebrew (its own entries win) and ends the follow,
   one Undo for all; a pack whose publisher stopped sharing is marked "no longer updated", said once. No
   Compare button: the note says when a changed entry shares a name with the campaign's own (which wins).
+  Suggestions built (#1537, migration 0102): a following campaign's DM presses 💡 Suggest to the pack on the
+  campaign's own entry (Settings → Homebrew → the entry; a pick when several packs are followed; an entry
+  that came from a book says it stays home). The publisher gets one DM-screen note, "A table using **<pack>
+  homebrew** suggests (sender not shown)", with See / Add to pack / No thanks, and the sender is never
+  named. Add to pack puts the entry in the publisher's own homebrew (a new name, or replacing their own
+  entry of that name) and makes the next pack version through the same checks as Publish my changes (paid
+  plan, a DM, nothing from a book). Limits as for sets (#1259): one open per entry per pack, an open cap,
+  stale ones expire; the sender hears the outcome once at its next session start.
 - **Relationship definitions travel with a set (#1456; Supervisor decision, 2026-10-16).** At Share the DM
   sees a tick list of the campaign's own relationships (each with its label and what it means; all ticked to
   start) and only the ticked ones go into the set's content: words only (the name, how it reads from the
@@ -3526,6 +3534,23 @@ out of any alias's "who uses it" (the alias stays). **Stays:** other people's li
 confirmed and the claims they came from, recaps already built, and the session rows. A mention names its
 line by `transcript.models.line_ref(session, started_ms, user)`; anything that writes mentions uses that
 form (nothing writes them yet).
+
+*Keep transcripts for, built (2026-10-16, #1533; migration 0101).* ⚙️ Settings → 📜 Transcripts: Forever
+(the default) / 1 year / 90 days / 30 days, DMs only; a shorter choice shows one warning ("Sessions older
+than 90 days will be deleted every night, with their downloads on the website. Recaps and what you
+confirmed into story memory stay. Players can't get the deleted transcripts back.") and saves only on its
+button. The daily retention run (03:00 UTC, catch-up as for the rest) then deletes, per campaign with a
+limit and oldest first, every session that **ended** more than that long ago: its lines (both versions),
+its fix suggestions and the mentions of those lines, one transaction per session (a failing session rolls
+back alone and is tried again tomorrow; at most 200 a night per campaign). A session still running, or
+saved without an end, is never deleted. The session row stays with its number, start and end
+(`transcripts_deleted_at` marks it, `line_count` 0), so numbers never shift (the bot and the website door
+count it); recaps and confirmed facts stay. The DM screen says "🗑 Deleted 3 old transcripts (kept 90
+days)." once (the first night something goes; changing the choice lets it say so again); players are told
+nothing. The setting is in campaign backups (a restore into a new campaign brings it; a restore into an existing
+campaign leaves that campaign's own limit, so a restore never deletes anything). The plan job and this one
+run side by side: one failing never stops the other. Not done here: marking the session "transcript deleted" in
+the website's Recaps list (WebDev: `transcripts_deleted_at` is on the session row).
 
 **Bots are never transcribed** (music bots etc.) — enforced in ears by an allowlist.
 

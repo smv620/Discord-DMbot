@@ -28,6 +28,7 @@ from typing import Any
 import discord
 
 from dmbot.campaigns import Campaign
+from dmbot.dm_screen import pack_suggestion
 from dmbot.rules import pack_diff
 from dmbot.rules.homebrew import name_key
 from dmbot.rules.house import HouseRuleError
@@ -466,6 +467,10 @@ async def check_updates(bot: Any, campaign: Campaign, screen_id: int) -> None:
     sets = _store(bot)
     if sets is None:
         return
+    # Suggestions first, as for sets: the answers to the ones this campaign sent, and notes for
+    # its own pack that never reached the screen (#1537). Each never raises.
+    await pack_suggestion.tell_answers(bot, campaign, screen_id)
+    await pack_suggestion.post_waiting(bot, campaign)
     try:
         for update in await sets.pending_pack_updates(
             campaign.guild_id, campaign.id, for_dmbot=True

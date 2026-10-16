@@ -85,6 +85,7 @@ from dmbot.dm_screen import (
     VisibilityButton,
     ensure_dm_screen,
     house_sync,
+    pack_suggestion,
     pack_update,
     peek_view,
     rules_cards,
@@ -137,6 +138,12 @@ from dmbot.dm_screen.transcript_channel import (
     is_transcript_name,
     refresh_card,
     setup_transcript_channel,
+)
+from dmbot.dm_screen.transcript_keep import (
+    KeepChoiceButton,
+    KeepNoButton,
+    KeepYesButton,
+    TranscriptsButton,
 )
 from dmbot.ears.protocol import (
     AudioFrame,
@@ -194,7 +201,7 @@ from dmbot.rules.homebrew_packs import HomebrewPackStore, HomebrewReader
 from dmbot.rules.homebrew_spotter import HomebrewMention, HomebrewSpotter
 from dmbot.rules.house import HouseRule, HouseRulesSection, HouseRuleStore
 from dmbot.rules.house_file_link import HouseFileLinkStore
-from dmbot.rules.pack_updates import PackUpdateStore
+from dmbot.rules.pack_suggestions import PackSuggestionStore
 from dmbot.rules.rule_sets import FollowedSetsSection, RuleSetStore
 from dmbot.rules.spotter import Mention
 from dmbot.sessions import SavedSession, SessionStore
@@ -227,6 +234,7 @@ from dmbot.transcript.cleaner import (
     with_ending,
 )
 from dmbot.transcript.export import clock
+from dmbot.transcript.keep import KeepJob
 from dmbot.transcript.models import NARRATING, Line, TranscriptBuffer
 from dmbot.transcript.store import TranscriptStore
 from dmbot.transcript.stream import TranscriptStream
@@ -744,6 +752,16 @@ class DMBot(commands.AutoShardedBot):
         # Needs the meter (the owners' plans); without one nothing is ever deleted.
         self._owner_asked: dict[str, float] = {}  # campaign id -> when Discord was last asked
         self.retention: RetentionJob | None = None
+        # The transcripts a DM asked to be kept only so long are deleted in the same daily run
+        # (#1533). It needs the transcript store; the DM's choice applies on any plan.
+        self.keep_job: KeepJob | None = None
+        if transcripts is not None:
+            self.keep_job = KeepJob(
+                campaigns=campaigns,
+                transcripts=transcripts,
+                guild_ids=campaigns.guilds_with_campaigns,
+                post_screen=self._post_to_screen,
+            )
         if meter is not None:
             self.retention = RetentionJob(
                 campaigns=campaigns,
@@ -1017,7 +1035,10 @@ class DMBot(commands.AutoShardedBot):
         )
         self.add_dynamic_items(PutBackButton)  # lines left out as off-topic (#677)
         self.add_dynamic_items(set_update.SetUpdateButton)  # shared rules changed (#1191)
+        # how long transcripts are kept (#1533); named one by one so the registration test sees them
+        self.add_dynamic_items(TranscriptsButton, KeepChoiceButton, KeepYesButton, KeepNoButton)
         self.add_dynamic_items(pack_update.PackUpdateButton)  # a followed pack changed (#1527)
+        self.add_dynamic_items(pack_suggestion.PackSuggestionButton)  # an entry suggested (#1537)
         self.add_dynamic_items(set_suggestion.SuggestionButton)  # a table's suggestion (#1259)
         self.add_dynamic_items(house_sync.HouseSyncButton)  # the house-rules file (#969)
         self.add_dynamic_items(rules_cards.RulesCardButton)  # rules cards from the table (#931)
@@ -1049,7 +1070,11 @@ class DMBot(commands.AutoShardedBot):
                 if self.audio_worker is not None
                 else []
             ),
-            *([self._watched(self._retention_loop(), "retention")] if self.retention else []),
+            *(
+                [self._watched(self._retention_loop(), "retention")]
+                if self.retention or self.keep_job
+                else []
+            ),
             *(
                 [self._watched(self._test_recordings_loop(), "test-recordings")]
                 if self.settings.test_recording_guilds
@@ -2179,8 +2204,8 @@ class DMBot(commands.AutoShardedBot):
 
     async def _retention_loop(self) -> None:
         """Once a day, after hours (UTC), warn about and delete campaigns past their keep
-        date (#964). Safe to run twice; a failed run is logged and tried again tomorrow."""
-        assert self.retention is not None
+        date (#964), and delete the transcripts older than a campaign's own limit (#1533). Safe to
+        run twice; a failed run is logged and tried again tomorrow."""
         state_dir = self.settings.data_dir
         # A bot that was down at 03:00 would skip that day: if the last run was over a day
         # ago, run once shortly after start-up (#989).
@@ -2194,17 +2219,35 @@ class DMBot(commands.AutoShardedBot):
             await self._retention_once(state_dir)
 
     async def _retention_once(self, state_dir: Path) -> None:
-        assert self.retention is not None
-        try:
-            await self.retention.run_once(int(time.time()))
-        except Exception:
-            log.exception("The daily retention job failed")
+        """The plan job and the transcript job are independent: one failing never stops the
+        other. The run counts as done (for the catch-up check) when the plan job ran, or when
+        there is no plan job."""
+        ran = self.retention is None
+        if self.retention is not None:
+            try:
+                await self.retention.run_once(int(time.time()))
+                ran = True
+            except Exception:
+                log.exception("The daily retention job failed")
+        if self.keep_job is not None:  # a campaign's own limit (#1533)
+            try:
+                await self.keep_job.run_once(int(time.time()))
+            except Exception:
+                log.exception("The daily keep-transcripts job failed")
+        if not ran:
             return
         retention.write_last_run(state_dir, int(time.time()))
         try:
             await self.check_owners_daily()
         except Exception:
             log.exception("The daily owner check failed")
+
+    async def _post_to_screen(self, campaign: Campaign, text: str) -> bool:
+        """Say something on a campaign's DM screen (for the daily jobs); False if it has none
+        or the post failed."""
+        if campaign.dm_screen_channel_id is None:
+            return False
+        return await self.post(campaign.dm_screen_channel_id, text)
 
     async def _tell_admin(self, user_id: int, text: str) -> None:
         """A private message to one of DMbot's admins (#972). Raises if it can't be sent, so
@@ -7592,7 +7635,7 @@ async def run(settings: Settings) -> None:
             HouseFileLinkStore(db),
             EffectStore(db),
             TestVoiceStore(db),
-            PackUpdateStore(db),  # shared sets and homebrew packs (#1190, #1527)
+            PackSuggestionStore(db),  # shared sets and homebrew packs (#1190, #1527, #1537)
             RecapStore(db),
             SuggestionStore(db),
             HomebrewStore(db),

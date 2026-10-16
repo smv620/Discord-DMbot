@@ -19,8 +19,9 @@ from typing import cast
 
 import discord
 
-from dmbot.campaigns import Campaign
+from dmbot.campaigns import Campaign, CampaignError
 from dmbot.campaigns.models import RULEBOOK, fingerprint
+from dmbot.dm_screen import pack_suggestion
 from dmbot.logs import set_log_context
 from dmbot.rules import homebrew_file
 from dmbot.rules.homebrew import (
@@ -59,6 +60,10 @@ UNDO_KEPT = 5  # removed entries that can be put back, per campaign
 UNDO_SHOWN = 1  # ...and the newest is the one button on the list
 
 NOT_READY = "Homebrew isn't available right now. Please try again in a moment."
+SUGGEST_LABEL = "💡 Suggest to the pack"
+SEND_LABEL = "Yes, send it"
+KEEP_PRIVATE_LABEL = "No, keep it here"
+FROM_A_BOOK = "That entry came from a book you shared, so it stays in this campaign."
 ONLY_DMS = "Only this campaign's DM can open its homebrew. Ask your DM."
 CAMPAIGN_GONE = "That campaign isn't here any more."
 NO_CAMPAIGNS = "There's no campaign in this server yet. A DM can set one up with `/dmbot start`."
@@ -318,7 +323,10 @@ class ListMenu(_Menu):
         if entry is None:
             await _redraw(interaction, self.campaign, note=ENTRY_GONE, page=self.page)
             return
-        await _show(interaction, entry_text(entry), EntryMenu(self.campaign, entry, self.page))
+        packs = await _packs_followed(interaction, self.campaign)
+        await _show(
+            interaction, entry_text(entry), EntryMenu(self.campaign, entry, self.page, packs)
+        )
 
     async def _undo(self, gone: Homebrew, interaction: discord.Interaction) -> None:
         await _answer_first(interaction, in_place=True)
@@ -367,12 +375,38 @@ class KindPick(_Menu):
         await _redraw(interaction, self.campaign, page=self.page)
 
 
-class EntryMenu(_Menu):
-    """One entry: Edit, who may know it, its kind, Remove, back."""
+async def _packs_followed(
+    interaction: discord.Interaction, campaign: Campaign
+) -> list[tuple[str, str]]:
+    """(id, name) of the homebrew packs the campaign follows and still gets updates from, in its
+    order: where a DM may suggest an entry (#1537). None when packs aren't available."""
+    sets = getattr(_bot(interaction), "rule_sets", None)
+    followed = getattr(sets, "followed_packs", None)
+    if followed is None:
+        return []
+    try:
+        return [
+            (f.set_id, f.name) for f in await followed(campaign.guild_id, campaign.id) if f.updating
+        ]
+    except Exception:
+        log.warning("Couldn't look up the followed packs for a homebrew entry", exc_info=True)
+        return []
 
-    def __init__(self, campaign: Campaign, entry: Homebrew, page: int) -> None:
+
+class EntryMenu(_Menu):
+    """One entry: Edit, who may know it, its kind, Remove, back, and (when the campaign follows a
+    homebrew pack) 💡 Suggest to the pack's publisher."""
+
+    def __init__(
+        self,
+        campaign: Campaign,
+        entry: Homebrew,
+        page: int,
+        packs: list[tuple[str, str]] | None = None,
+    ) -> None:
         super().__init__()
         self.campaign, self.entry, self.page = campaign, entry, page
+        self.packs = packs or []
         self.add_item(_Button(self._edit, label="✏️ Edit"))
         self.add_item(
             _Button(
@@ -381,6 +415,8 @@ class EntryMenu(_Menu):
             )
         )
         self.add_item(_Button(self._remove, label="🗑 Remove", style=discord.ButtonStyle.danger))
+        if self.packs:
+            self.add_item(_Button(self._suggest, label=SUGGEST_LABEL))
         self.add_item(_Button(self._back, label="↩ To the list"))
         self.kind = _Select(
             self._kind,
@@ -431,8 +467,11 @@ class EntryMenu(_Menu):
             await _redraw(interaction, c, note=str(exc), page=self.page)
             return
         _changed(interaction, c)
+        packs = await _packs_followed(interaction, c)
         await _show(
-            interaction, entry_text(saved, "✅ Saved."), EntryMenu(self.campaign, saved, self.page)
+            interaction,
+            entry_text(saved, "✅ Saved."),
+            EntryMenu(self.campaign, saved, self.page, packs),
         )
 
     async def _toggle(self, interaction: discord.Interaction) -> None:
@@ -451,7 +490,107 @@ class EntryMenu(_Menu):
                 ConfirmRemove(self.campaign, self.entry, self.page),
             )
 
+    async def _suggest(self, interaction: discord.Interaction) -> None:
+        if not await self._guard(interaction):
+            return
+        if self.entry.from_book:  # book text stays in this campaign (CLAUDE.md, IP rule)
+            await _tell(interaction, FROM_A_BOOK)
+            return
+        if len(self.packs) == 1:
+            await _show(
+                interaction,
+                suggest_text(self.entry, self.packs[0][1]),
+                ConfirmSuggest(self.campaign, self.entry, self.page, self.packs[0]),
+            )
+            return
+        await _show(
+            interaction,
+            f"Send **{_md(self.entry.name)}** to which pack? Your name isn't sent.",
+            PickPack(self.campaign, self.entry, self.page, self.packs),
+        )
+
     async def _back(self, interaction: discord.Interaction) -> None:
+        await _redraw(interaction, self.campaign, page=self.page)
+
+
+def suggest_text(entry: Homebrew, pack_name: str) -> str:
+    """Never send at once: say where it goes, that nobody is named, and that nothing changes."""
+    return (
+        f"Send **{_md(entry.name)}** to the **{_md(pack_name)}** DM?\n{entry_text(entry)}\n"
+        "They see only this text, not your name, table or server. Read it for any you typed in. "
+        "Your own copy stays. You'll hear the answer at your next session."
+    )
+
+
+def _short_label(pack_name: str) -> str:
+    """A phone cuts button text near 25 characters, and pack names are free text."""
+    label = f"To {pack_name}"
+    return label if len(label) <= 25 else label[:24] + "…"
+
+
+class PickPack(_Menu):
+    """More than one followed pack: one button for each."""
+
+    def __init__(
+        self, campaign: Campaign, entry: Homebrew, page: int, packs: list[tuple[str, str]]
+    ) -> None:
+        super().__init__()
+        self.campaign, self.entry, self.page = campaign, entry, page
+        for pack in packs:  # up to five, a whole row; "keep it here" sits on the row below
+            self.add_item(_Button(partial(self._pick, pack), label=_short_label(pack[1]), row=0))
+        self.add_item(_Button(self._keep, label=KEEP_PRIVATE_LABEL, row=1))
+
+    async def _pick(self, pack: tuple[str, str], interaction: discord.Interaction) -> None:
+        await _show(
+            interaction,
+            suggest_text(self.entry, pack[1]),
+            ConfirmSuggest(self.campaign, self.entry, self.page, pack),
+        )
+
+    async def _keep(self, interaction: discord.Interaction) -> None:
+        await _redraw(interaction, self.campaign, page=self.page)
+
+
+class ConfirmSuggest(_Menu):
+    def __init__(
+        self, campaign: Campaign, entry: Homebrew, page: int, pack: tuple[str, str]
+    ) -> None:
+        super().__init__()
+        self.campaign, self.entry, self.page, self.pack = campaign, entry, page, pack
+        self.add_item(_Button(self._yes, label=SEND_LABEL, style=discord.ButtonStyle.primary))
+        self.add_item(_Button(self._keep, label=KEEP_PRIVATE_LABEL))
+
+    async def _yes(self, interaction: discord.Interaction) -> None:
+        await _answer_first(interaction, in_place=True)
+        bot = _bot(interaction)
+        sets = getattr(bot, "rule_sets", None)
+        suggest = getattr(sets, "suggest_entry", None)
+        if suggest is None:
+            await _tell(interaction, NOT_READY)
+            return
+        c = self.campaign
+        try:
+            sid, pub_guild, pub_campaign, pack_name = await suggest(
+                c.guild_id,
+                c.id,
+                interaction.user.id,
+                self.entry.id,
+                self.entry.version,
+                self.pack[0],
+            )  # the version the DM was shown: what goes out is what they confirmed
+        except CampaignError as exc:  # (HouseRuleError and HomebrewError are both of these)
+            await _redraw(interaction, c, note=str(exc), page=self.page)
+            return
+        self.stop()
+        pack_suggestion.send_note(bot, pub_guild, pub_campaign, sid, pack_name)
+        await _redraw(
+            interaction,
+            c,
+            note="💡 Sent, with no name. You'll hear the answer at your next session.",
+            page=self.page,
+        )
+
+    async def _keep(self, interaction: discord.Interaction) -> None:
         await _redraw(interaction, self.campaign, page=self.page)
 
 
