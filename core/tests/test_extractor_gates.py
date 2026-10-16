@@ -200,6 +200,23 @@ class Gates(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(me.plan_allows.await_args.args[0], "story")
         me.transcripts.lines.assert_not_called()  # not even read
 
+    async def test_a_plan_check_that_fails_means_no_run_and_no_progress_noted(self) -> None:
+        """The real `plan_allows`, with a meter that raises: closed for the extractor."""
+        meter = SimpleNamespace(access=AsyncMock(side_effect=RuntimeError("down")))
+        me = self.fake()
+        me.settings.enforce_plans = True
+        me.meter = meter
+        me.plan_allows = lambda *a, **kw: DMBot.plan_allows(me, *a, **kw)
+        owned = SimpleNamespace(id="c", owner_user_id=7)
+        me.campaigns.get = AsyncMock(return_value=owned)
+        with patch.object(extractor, "run", AsyncMock()) as run:
+            await DMBot.extract_claims(me, self.table(), 0)  # type: ignore[arg-type]
+        run.assert_not_called()
+        me.transcripts.lines.assert_not_called()
+        me.transcripts.record_extraction.assert_not_called()
+        # The other plan-gated actions still fail open (unchanged).
+        self.assertTrue(await DMBot.plan_allows(me, "ai", 1, owned))  # type: ignore[arg-type]
+
     async def test_a_campaign_whose_plan_has_it_runs_and_its_progress_is_noted(self) -> None:
         me = self.fake(used=(4000, 30), day=100)
         done = extractor.Report(calls=2, through_ms=7000)

@@ -2235,11 +2235,18 @@ class DMBot(commands.AutoShardedBot):
         )
 
     async def plan_allows(
-        self, action: plan_rules.Action, guild_id: int, campaign: Campaign
+        self,
+        action: plan_rules.Action,
+        guild_id: int,
+        campaign: Campaign,
+        *,
+        fail_open: bool = True,
     ) -> bool:
         """Does the campaign's owner's plan allow `action`, as a plain yes or no (no words, so
         no question of who is asking)? Fails open (True) like `plan_gate`, and is True when
-        plans aren't enforced. A campaign with no owner has no plan to allow anything."""
+        plans aren't enforced. A campaign with no owner has no plan to allow anything.
+        `fail_open=False` (the story extractor, #1367: a background job, the biggest spend) makes
+        a plan that can't be checked a no."""
         if not self.settings.enforce_plans or self.meter is None:
             return True
         owner = campaign.owner_user_id
@@ -2249,8 +2256,10 @@ class DMBot(commands.AutoShardedBot):
                 async with asyncio.timeout(GATE_TIMEOUT_S):
                     access = await self.meter.access(guild_id, owner, int(time.time()))
             except Exception:
-                log.exception("Couldn't check the plan; allowing it")
-                return True
+                log.exception(
+                    "Couldn't check the plan; %s it", "allowing" if fail_open else "not running"
+                )
+                return fail_open
         return plan_rules.allowed(plan_rules.RULE_OF[action], access)
 
     async def restore_gate(
@@ -5182,8 +5191,13 @@ class DMBot(commands.AutoShardedBot):
             if session is None or session.lines == 0:
                 return
             campaign = await self.campaigns.get(gid, cid)
-            if campaign is None or not await self.plan_allows("story", gid, campaign):
-                log.info("Story extractor: not run, the campaign's plan does not include it")
+            # Closed, not open: a plan that can't be checked is not run, and nothing is recorded.
+            if campaign is None or not await self.plan_allows(
+                "story", gid, campaign, fail_open=False
+            ):
+                log.info(
+                    "Story extractor: not run, the plan does not include it or can't be checked"
+                )
                 return
             sid = table.transcript_session_id
             after_ms, used = await self.transcripts.extraction(gid, sid)
