@@ -18,6 +18,7 @@ from __future__ import annotations
 from typing import Any
 
 from dmbot.db import Conn, Database
+from dmbot.recaps.allowance import month_bounds
 from dmbot.recaps.audio.worker import text_hash
 from dmbot.recaps.draft import BULLET_MAX, HOUSEKEEPING_BULLETS, SUMMARY_MAX
 from dmbot.recaps.notify import job_ref, parse_ref
@@ -112,6 +113,41 @@ async def list_recaps(db: Database, session: Session) -> list[dict[str, Any]]:
             out += [{**_view(r), "serverName": guild.name} for r in await cur.fetchall()]
     out.sort(key=lambda v: v["sessionAt"], reverse=True)
     return out[:LIST_LIMIT]
+
+
+async def month_usage(
+    db: Database, session: Session, *, now: float, recaps_allowed: int, audio_allowed: int
+) -> list[dict[str, Any]]:
+    """For each of the signed-in DM's campaigns that has recaps this month: how many were made
+    and how many are allowed, for the page's quiet "N of M this month" line (#1428). The same
+    counting as the bot's (`RecapStore.used_in_month`); the row rule shows only the campaigns
+    this person is a DM of."""
+    start, end = month_bounds(now)
+    out: list[dict[str, Any]] = []
+    async with db.user(session.user_id, session=session.id_hash) as conn:
+        for guild in session.guilds[:MAX_GUILDS]:
+            await _scoped(conn, int(guild.id))
+            cur = await conn.execute(
+                "SELECT r.campaign_id, c.name AS campaign,"
+                " sum((CASE WHEN r.state = 'ready' THEN 1 ELSE 0 END) + r.tries) AS recaps,"
+                " sum((CASE WHEN r.audio = 'ready' THEN 1 ELSE 0 END)"
+                " + (CASE WHEN r.audio <> 'off' THEN r.tries ELSE 0 END)) AS narrated"
+                f" {_FROM} WHERE r.guild_id = %s AND r.created_at >= %s AND r.created_at < %s"
+                " GROUP BY r.campaign_id, c.name ORDER BY c.name",
+                (int(guild.id), start, end),
+            )
+            for r in await cur.fetchall():
+                out.append(
+                    {
+                        "serverName": guild.name,
+                        "campaign": r["campaign"],
+                        "used": int(r["recaps"]),
+                        "allowed": recaps_allowed,
+                        "audioUsed": int(r["narrated"]),
+                        "audioAllowed": audio_allowed,
+                    }
+                )
+    return out
 
 
 async def _one(conn: Conn, ref: str, session: Session) -> tuple[int, str, int, dict[str, Any]]:

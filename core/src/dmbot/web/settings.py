@@ -56,6 +56,10 @@ class WebSettings:
     # Account emails, such as sign-in links (#1231). Nothing is sent until SMTP is set up.
     mail: MailSettings = field(default_factory=MailSettings)
     feedback_repo: str = "smv620/Discord-DMbot"
+    # The monthly recap allowances (#1428), the same two settings the bot reads, so the page
+    # can say "N of M recaps this month".
+    recaps_per_month: int = 10
+    recap_audio_per_month: int = 8
     # Where "a support ticket is waiting" goes (#1340). Empty: tickets are still kept and shown on
     # the admin page, and nobody is emailed. The email never holds the ticket's words.
     support_team_email: str = ""
@@ -117,6 +121,13 @@ def load_web_settings(env: Mapping[str, str] | None = None) -> WebSettings:
 
     def get(name: str) -> str:
         return env.get(name, "").strip()
+
+    monthly: dict[str, int] = {}
+    for name, default in (("DMBOT_RECAPS_PER_MONTH", "10"), ("DMBOT_RECAP_AUDIO_PER_MONTH", "8")):
+        raw = get(name) or default
+        if not (raw.isascii() and raw.isdigit()) or not 1 <= int(raw) <= 1000:
+            raise ConfigError(f'{name} must be a whole number from 1 to 1000, got "{raw}".')
+        monthly[name] = int(raw)
 
     missing = [name for name in REQUIRED if not get(name)]
     if missing:
@@ -252,6 +263,8 @@ def load_web_settings(env: Mapping[str, str] | None = None) -> WebSettings:
         link_token_secret=link_secret.encode("utf-8"),
         mail=mail,
         feedback_repo=feedback_repo,
+        recaps_per_month=monthly["DMBOT_RECAPS_PER_MONTH"],
+        recap_audio_per_month=monthly["DMBOT_RECAP_AUDIO_PER_MONTH"],
         support_team_email=support_team_email,
         recap_audio_dir=get("WEB_RECAP_AUDIO_DIR"),
         turnstile_secret=turnstile_secret,

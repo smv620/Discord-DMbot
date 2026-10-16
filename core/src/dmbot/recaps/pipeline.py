@@ -53,6 +53,10 @@ NO_NAMES = (
     "DMbot couldn't check your campaign's secret names, so it wrote nothing to be safe. "
     "Try again in a minute."
 )
+NO_COUNT = (
+    "DMbot couldn't check this month's recap allowance, so it didn't write the recap, to be "
+    "safe. Press Try again in a minute."
+)
 STOPPED = "Players stopped being recorded while this was written, so nothing was left to tell."
 # Reasons where trying again would fail the same way: the email offers no retry for these.
 NO_RETRY = (NOTHING, TOO_LITTLE, STOPPED)
@@ -89,6 +93,7 @@ class RecapWorker:
         allowed: Callable[[int, str, Job], Awaitable[bool]],
         notify: Notify,
         audio_wanted: Callable[[int, str, Job], Awaitable[bool]] | None = None,
+        allowance: Callable[[int, str, Job], Awaitable[str | None]] | None = None,
         clock: Callable[[], float] = time.time,
     ) -> None:
         self._store = store
@@ -99,6 +104,7 @@ class RecapWorker:
         self._allowed = allowed
         self._notify = notify
         self._audio_wanted = audio_wanted
+        self._allowance = allowance
         self._now = clock
 
     async def run(self, guild_id: int, campaign_id: str, session_at: int) -> Job | None:
@@ -156,7 +162,23 @@ class RecapWorker:
     # --- one step -----------------------------------------------------------------------
 
     async def _step(self, gid: int, cid: str, job: Job) -> Job | None:
-        if job.state == "queued" and job.emailed_at is not None:
+        retry = job.state == "queued" and job.emailed_at is not None
+        if retry and self._allowance is not None:
+            # Try again counts as a new recap against the month, checked before anything of the
+            # old one is wiped: a refusal leaves the DM's recap as it was.
+            try:
+                over = await self._allowance(gid, cid, job)
+            except Exception as exc:
+                log.warning("Recap: couldn't read the month's count (%s)", type(exc).__name__)
+                return await self._wait(gid, cid, job, NO_COUNT, error=type(exc).__name__)
+            if over:
+                await self._store.give_back_try(gid, cid, job.session_at)
+                await self._store.update(
+                    gid, cid, job.session_at,
+                    state="ready" if job.summary else "failed", last_error=over,
+                )  # fmt: skip
+                return await self._store.get(gid, cid, job.session_at)
+        if retry:
             # The DM pressed Try again (the page set the job back to queued): a fresh recap, with
             # a fresh share of calls and a fresh email. The day's tally (`spent`) is kept, and
             # this comes before the ceiling, which is what a failed-at-the-ceiling job needs.
@@ -170,6 +192,16 @@ class RecapWorker:
             return await self._store.get(gid, cid, job.session_at)
         if not await self._allowed(gid, cid, job):
             return await self._fail(gid, cid, job, "recaps aren't on for this campaign")
+        if self._allowance is not None and job.state == "queued" and job.calls == 0:
+            # The monthly allowance (#1428), before the first paid call of this recap. A count
+            # that can't be read spends nothing: the job waits, and fails if it keeps failing.
+            try:
+                over = await self._allowance(gid, cid, job)
+            except Exception as exc:
+                log.warning("Recap: couldn't read the month's count (%s)", type(exc).__name__)
+                return await self._wait(gid, cid, job, NO_COUNT, error=type(exc).__name__)
+            if over:
+                return await self._fail(gid, cid, job, over)
         if job.calls >= self._ceiling(job):
             return await self._fail(gid, cid, job, CAP)
         if await self._store.calls_since(gid, cid, int(self._now()) - DAY_S) >= DAILY_CALLS:
