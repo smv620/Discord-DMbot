@@ -42,10 +42,12 @@ def book_is_legacy(entry: Homebrew, target: str) -> bool:
     return entry.from_book and entry.book_edition == "2014" and target != "2014"
 
 
-def book_tag(entry: Homebrew, target: str) -> str | None:
+def book_tag(entry: Homebrew, target: str, legacy: bool | None = None) -> str | None:
     """The tag a shared book's entry carries wherever it is shown: `[Shared book]`, with
     `[Legacy 2014]` when it is for the older rules and the campaign plays the newer. None for an
-    entry that is not from a book."""
+    entry that is not from a book. `legacy`: the answer when it is already known (the website's
+    door works it out in the database with the same test), instead of judging by `target`."""
     if not entry.from_book:
         return None
-    return f"{BOOK_TAG} {LEGACY_TAG}" if book_is_legacy(entry, target) else BOOK_TAG
+    is_legacy = book_is_legacy(entry, target) if legacy is None else legacy
+    return f"{BOOK_TAG} {LEGACY_TAG}" if is_legacy else BOOK_TAG

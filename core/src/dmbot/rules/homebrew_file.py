@@ -118,17 +118,25 @@ def _unescape(line: str) -> str:
 _TAG_LINES = frozenset({BOOK_TAG, f"{BOOK_TAG} {LEGACY_TAG}"})
 
 
-def write(campaign_name: str, entries: Sequence[Homebrew], target_ruleset: str) -> str:
+def write(
+    campaign_name: str,
+    entries: Sequence[Homebrew],
+    target_ruleset: str,
+    *,
+    legacy: Callable[[Homebrew], bool] | None = None,
+) -> str:
     """The file for these entries (this campaign's), by name. An entry from a shared rulebook
     carries its tags under the heading; `target_ruleset` is the one the campaign plays, which
-    decides `[Legacy 2014]`."""
+    decides `[Legacy 2014]`. The website has no ruleset to hand, only its door's answer for each
+    entry (the same test, worked out in the database), so it passes `legacy` instead: then the
+    two files are byte-equal for the same entries (#1593)."""
     title = " ".join(campaign_name.split()) or "Campaign"
     out = [f"Homebrew: {title}", HELP]
     if not entries:  # a template to start from
         out += ["", *(f"# {line}" if line else "#" for line in EXAMPLE.split("\n"))]
     for entry in sorted(entries, key=lambda e: name_key(e.name)):
         out += ["", f"## {entry.name} ({entry.kind})"]
-        tag = book_tag(entry, target_ruleset)
+        tag = book_tag(entry, target_ruleset, None if legacy is None else legacy(entry))
         if tag is not None:
             out.append(tag)
         if entry.summary:
