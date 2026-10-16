@@ -28,7 +28,7 @@ from typing import Any
 import discord
 
 from dmbot.campaigns import Campaign
-from dmbot.dm_screen import pack_suggestion
+from dmbot.dm_screen import pack_suggestion, shared_update
 from dmbot.rules import pack_diff
 from dmbot.rules.homebrew import name_key
 from dmbot.rules.house import HouseRuleError
@@ -88,20 +88,31 @@ def note_text(
     overridden: Sequence[str] = (),
     visible: Sequence[str] = (),
 ) -> str:
-    entries = (
+    text = (
+        f"📦 **{_md(pack_name)}** homebrew updated to v{version}: {entries_phrase(changes)}. "
+        "DMbot took the new version."
+    )
+    extras = extra_lines(overridden, visible)
+    return "\n".join([text, *extras])
+
+
+def entries_phrase(changes: int) -> str:
+    return (
         "no entry is different"
         if changes == 0
         else f"{changes} entr" + ("y" if changes == 1 else "ies") + " changed"
     )
-    text = (
-        f"📦 **{_md(pack_name)}** homebrew updated to v{version}: {entries}. "
-        "DMbot took the new version."
-    )
+
+
+def extra_lines(overridden: Sequence[str], visible: Sequence[str]) -> list[str]:
+    """What the DM should know beyond the count: players may now know something, or the campaign's
+    own homebrew still wins."""
+    lines = []
     if visible:
-        text += f"\nPlayers may now know: {_shown(visible)}."
+        lines.append(f"Players may now know: {_shown(visible)}.")
     if overridden:
-        text += "\n" + YOURS_WIN.format(names=_shown(overridden))
-    return text
+        lines.append(YOURS_WIN.format(names=_shown(overridden)))
+    return lines
 
 
 def gone_text(pack_name: str, version: int) -> str:
@@ -113,9 +124,19 @@ def gone_text(pack_name: str, version: int) -> str:
 
 def note_view(campaign_id: str, set_id: str, version: int) -> discord.ui.View:
     view = discord.ui.View(timeout=None)
-    for action in ("see", "pick", "undo"):
-        view.add_item(PackUpdateButton(campaign_id, set_id, action, version))
+    for item in note_buttons(campaign_id, set_id, version, None, ""):
+        view.add_item(item)
     return view
+
+
+def note_buttons(
+    campaign_id: str, set_id: str, version: int, row: int | None, tag: str
+) -> list[discord.ui.Item[Any]]:
+    """The buttons of one update; in a combined note `tag` is the number of its line."""
+    return [
+        PackUpdateButton(campaign_id, set_id, action, version, row=row, tag=tag)
+        for action in ("see", "pick", "undo")
+    ]
 
 
 _LABELS = {"see": "See changes", "pick": "Pick changes", "undo": "Undo"}
@@ -125,12 +146,23 @@ class PackUpdateButton(
     discord.ui.DynamicItem[discord.ui.Button[discord.ui.View]],
     template=r"dmbot:packupd:(?P<action>see|pick|undo):(?P<campaign>[0-9a-f]{32}):(?P<pack>[0-9a-f]{32}):(?P<version>[0-9]{1,9})",
 ):
-    def __init__(self, campaign_id: str, set_id: str, action: str, version: int) -> None:
+    def __init__(
+        self,
+        campaign_id: str,
+        set_id: str,
+        action: str,
+        version: int,
+        *,
+        row: int | None = None,
+        tag: str = "",
+    ) -> None:
+        label = _LABELS[action]
         super().__init__(
             discord.ui.Button(
-                label=_LABELS[action],
+                label=f"{label} {tag}" if tag else label,
                 style=discord.ButtonStyle.secondary,
                 custom_id=f"dmbot:packupd:{action}:{campaign_id}:{set_id}:{version}",
+                row=row,
             )
         )
         self.campaign_id, self.set_id, self.action, self.version = (
@@ -461,9 +493,21 @@ async def _overridden(bot: Any, campaign: Campaign, update: PackUpdate) -> list[
 
 
 async def check_updates(bot: Any, campaign: Campaign, screen_id: int) -> None:
-    """At a session's start: take a newer version of each followed pack at once and say so on the
-    DM screen; a pack whose publisher stopped sharing is marked "no longer updated" and said so
-    once. Never raises."""
+    """The packs' check on its own: collect, then post (session starts use `update_notes`)."""
+    found = shared_update.Collected()
+    await collect(bot, campaign, screen_id, found)
+    try:
+        await shared_update.post(bot, campaign.id, screen_id, found)
+    except Exception:
+        log.exception("Couldn't post a homebrew pack update note")
+
+
+async def collect(
+    bot: Any, campaign: Campaign, screen_id: int, found: shared_update.Collected
+) -> None:
+    """At a session's start: take a newer version of each followed pack at once and add it to
+    `found` for the DM-screen note; a pack whose publisher stopped sharing is marked "no longer
+    updated" and said once (a line in `found`). Never raises."""
     sets = _store(bot)
     if sets is None:
         return
@@ -487,21 +531,22 @@ async def check_updates(bot: Any, campaign: Campaign, screen_id: int) -> None:
             except HouseRuleError:
                 continue  # someone got there first, or nothing is new
             _changed(bot, campaign)
-            posted = await bot.post_message(
-                screen_id,
-                note_text(
-                    update.offer.name,
-                    update.offer.version,
-                    len(update.changes),
-                    await _overridden(bot, campaign, update),
-                    now_visible(update.changes),
-                ),
-                note_view(campaign.id, update.follow.set_id, update.offer.version),
-            )
-            if posted is None:  # taken, but the DM has no note and no Undo button for it
-                log.warning("Took a pack update for campaign %s without a note", campaign.id)
+            found.updates.append(await _update_note(bot, campaign, update))
         for gone in await sets.gone_packs(campaign.guild_id, campaign.id):
             if await sets.stop_updating_pack(campaign.guild_id, campaign.id, gone.set_id):
-                await bot.post(screen_id, gone_text(gone.name, gone.version))
+                found.gone.append(gone_text(gone.name, gone.version))
     except Exception:
         log.exception("Couldn't check for a homebrew pack update")
+
+
+async def _update_note(bot: Any, campaign: Campaign, update: PackUpdate) -> shared_update.Update:
+    name, version, set_id = update.offer.name, update.offer.version, update.follow.set_id
+    overridden = await _overridden(bot, campaign, update)
+    visible = now_visible(update.changes)
+    return shared_update.Update(
+        line=f"**{_md(name)}** homebrew → v{version}: {entries_phrase(len(update.changes))}",
+        single_text=note_text(name, version, len(update.changes), overridden, visible),
+        single_view=lambda: note_view(campaign.id, set_id, version),
+        buttons=lambda row, tag: note_buttons(campaign.id, set_id, version, row, tag),
+        extras=extra_lines(overridden, visible),
+    )

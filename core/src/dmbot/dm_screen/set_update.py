@@ -33,7 +33,7 @@ from typing import Any
 import discord
 
 from dmbot.campaigns import Campaign
-from dmbot.dm_screen import set_suggestion
+from dmbot.dm_screen import set_suggestion, shared_update
 from dmbot.rules import rule_sets, set_diff, set_sync
 from dmbot.rules.house import HouseRule, HouseRuleError
 from dmbot.ui.dmbot_commands import _answer_first, _bot, _Button, _Menu, _Select, _tell
@@ -104,14 +104,7 @@ def compare_text(name: str, pairs: Sequence[tuple[set_diff.Change, HouseRule]]) 
     return f"**{md(name)}**: {OVERRIDDEN}\n\n{text}"
 
 
-def note_text(
-    follow_name: str,
-    version: int,
-    changes: int,
-    link_changed: bool = False,
-    overridden: bool = False,
-    relationships: int = 0,
-) -> str:
+def rules_phrase(changes: int, link_changed: bool = False, relationships: int = 0) -> str:
     rules = f"{changes} rule" + ("" if changes == 1 else "s")
     if relationships:
         more = f"{relationships} relationship" + ("" if relationships == 1 else "s")
@@ -122,6 +115,18 @@ def note_text(
             if changes == 0 and not relationships
             else f"{rules} and the rules document link"
         )
+    return rules
+
+
+def note_text(
+    follow_name: str,
+    version: int,
+    changes: int,
+    link_changed: bool = False,
+    overridden: bool = False,
+    relationships: int = 0,
+) -> str:
+    rules = rules_phrase(changes, link_changed, relationships)
     text = (
         f"📚 **{discord.utils.escape_markdown(follow_name)}** house rules updated to "
         f"v{version}: {rules}. DMbot took the new version."
@@ -129,11 +134,22 @@ def note_text(
     return f"{text}\n{OVERRIDDEN}" if overridden else text
 
 
-def note_view(campaign_id: str, version: int, compare: bool = False) -> discord.ui.View:
+def note_view(
+    campaign_id: str, version: int, compare: bool = False, *, row: int | None = None, tag: str = ""
+) -> discord.ui.View:
     view = discord.ui.View(timeout=None)
-    for action in ("see", "pick") + (("compare",) if compare else ()) + ("undo",):
-        view.add_item(SetUpdateButton(campaign_id, action, version))
+    for item in note_buttons(campaign_id, version, compare, row, tag):
+        view.add_item(item)
     return view
+
+
+def note_buttons(
+    campaign_id: str, version: int, compare: bool, row: int | None, tag: str
+) -> list[discord.ui.Item[Any]]:
+    """The buttons of one update. In a combined note each row carries its line's number (`tag`),
+    so "Undo 2" is plainly the second line's."""
+    actions = ("see", "pick") + (("compare",) if compare else ()) + ("undo",)
+    return [SetUpdateButton(campaign_id, a, version, row=row, tag=tag) for a in actions]
 
 
 _LABELS = {
@@ -148,13 +164,16 @@ class SetUpdateButton(
     discord.ui.DynamicItem[discord.ui.Button[discord.ui.View]],
     template=r"dmbot:setupd:(?P<action>see|pick|undo|compare):(?P<campaign>[0-9a-f]{32}):(?P<version>[0-9]{1,9})",
 ):
-    def __init__(self, campaign_id: str, action: str, version: int) -> None:
+    def __init__(
+        self, campaign_id: str, action: str, version: int, *, row: int | None = None, tag: str = ""
+    ) -> None:
         label, style = _LABELS[action]
         super().__init__(
             discord.ui.Button(
-                label=label,
+                label=f"{label} {tag}" if tag else label,
                 style=style,
                 custom_id=f"dmbot:setupd:{action}:{campaign_id}:{version}",
+                row=row,
             )
         )
         self.campaign_id, self.action, self.version = campaign_id, action, version
@@ -540,9 +559,22 @@ class PickView(_Menu):
 
 
 async def check_update(bot: Any, campaign: Campaign, screen_id: int) -> None:
-    """At a session's start: take a newer version of the followed set at once and say so on
-    the DM screen. Never raises; a set whose publisher stopped sharing is marked "no longer
-    updated" and said so once."""
+    """This set's check on its own: collect, then post (session starts use `update_notes`)."""
+    found = shared_update.Collected()
+    await collect(bot, campaign, screen_id, found)
+    try:
+        await shared_update.post(bot, campaign.id, screen_id, found)
+    except Exception:
+        log.exception("Couldn't post a shared-rules update note")
+
+
+async def collect(
+    bot: Any, campaign: Campaign, screen_id: int, found: shared_update.Collected
+) -> None:
+    """At a session's start: take a newer version of the followed set at once and add it to
+    `found` for the DM-screen note. Never raises; a set whose publisher stopped sharing is marked
+    "no longer updated" and said once (as a line in `found`). The suggestion answers and notes
+    are told here, on the screen, as they come."""
     sets = bot.rule_sets
     if sets is None:
         return
@@ -577,7 +609,7 @@ async def check_update(bot: Any, campaign: Campaign, screen_id: int) -> None:
                         "📚 A set your table follows isn't being shared any more. "
                         "You keep your copy, and it won't get updates."
                     )
-                await bot.post(screen_id, text)
+                found.gone.append(text)
             return
         await sets.take_update(  # DMbot takes it: Follow is the default when the DM does nothing
             campaign.guild_id,
@@ -588,22 +620,25 @@ async def check_update(bot: Any, campaign: Campaign, screen_id: int) -> None:
         )
         await settle(bot, campaign)
         overridden = bool(overrides(await _own_rules(bot, campaign), update.changes))
-        posted = await bot.post_message(
-            screen_id,
-            note_text(
-                update.offer.name,
-                update.offer.version,
-                len(update.changes),
-                update.link_changed,
-                overridden,
-                len(update.def_changes),
-            ),
-            note_view(campaign.id, update.offer.version, overridden),
-        )
-        if posted is None:  # taken, but the DM has no note and no Undo button for it
-            log.warning(
-                "Took a shared-rules update for campaign %s but couldn't post its note",
-                campaign.id,
+        name, version = update.offer.name, update.offer.version
+        rules = rules_phrase(len(update.changes), update.link_changed, len(update.def_changes))
+        found.updates.append(
+            shared_update.Update(
+                line=(
+                    f"**{discord.utils.escape_markdown(name)}** house rules → v{version}: {rules}"
+                ),
+                single_text=note_text(
+                    name,
+                    version,
+                    len(update.changes),
+                    update.link_changed,
+                    overridden,
+                    len(update.def_changes),
+                ),
+                single_view=lambda: note_view(campaign.id, version, overridden),
+                buttons=lambda row, tag: note_buttons(campaign.id, version, overridden, row, tag),
+                extras=[OVERRIDDEN] if overridden else [],
             )
+        )
     except Exception:
         log.exception("Couldn't check for a shared-rules update")

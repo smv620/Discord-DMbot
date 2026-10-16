@@ -91,6 +91,7 @@ from dmbot.dm_screen import (
     rules_cards,
     set_suggestion,
     set_update,
+    update_notes,
 )
 from dmbot.dm_screen import clock as clock_screen
 from dmbot.dm_screen import effects as timer_screen
@@ -2745,8 +2746,7 @@ class DMBot(commands.AutoShardedBot):
         if dmbchat_problem:
             await self.post(screen_id, dmbchat_problem)
         self._check_house_file(campaign, screen_id)
-        self._track(set_update.check_update(self, campaign, screen_id), "shared-rules-update")
-        self._track(pack_update.check_updates(self, campaign, screen_id), "homebrew-pack-update")
+        self._track(update_notes.check_all(self, campaign, screen_id), "shared-rules-update")
         trial_line = ""
         # Told once, privately, at their next start (#1229). It is marked told as it is read,
         # before the reply is sent: a reply that fails to send loses this one line, which is

@@ -688,8 +688,16 @@ never does.
     never names the other campaign, server or DM; Add to set makes the next version. *(Supervisor,
     2026-10-15, #1315: wording matched to the buttons as built.)*
 - **Updates reach followers at their next session start, never mid-game.** DMbot takes the update then
-  (Follow, the default) and posts a note on the DM screen: "The Frostmaiden house rules were updated to v4:
-  2 rules. [See changes] [Pick changes] [Undo]".
+  (Follow, the default) and posts a note on the DM screen: "📚 **Frostmaiden** house rules updated to v4:
+  2 rules. DMbot took the new version. [See changes] [Pick changes] [Undo]".
+  **When several shared rules changed at one start (#1538)** the notes are combined into one: "📚 Shared
+  rules updated at this start (DMbot took the new versions):" with a numbered line for each update ("1.
+  **Frostmaiden** house rules → v4: 2 rules", "2. **Frost Pack** homebrew → v3: 2 entries changed"), the
+  lines about players now knowing something or the campaign's own entries still winning under their update,
+  and each update's own See changes / Pick changes / Undo row, its buttons numbered to match ("Undo 2"). Four
+  updates get rows; a fifth and later are named ("and 2 more: open ⚙️ Settings → 📚 Shared rules") and
+  handled there. A set or pack that stopped being shared joins as a plain line. A single update keeps the
+  note above, unchanged. The buttons are the same restart-proof ones, each tied to its own version.
   - **Follow** (the default, also what happens if the DM does nothing): the changes are taken and the campaign
     keeps following. **Undo** goes back to the earlier version and keeps it: DMbot does not take that same
     version again at the next session, only a newer one.
