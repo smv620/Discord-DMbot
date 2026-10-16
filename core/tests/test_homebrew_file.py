@@ -55,9 +55,13 @@ class RoundTrip(unittest.TestCase):
         self.assertEqual((parsed.entries, parsed.problems), ((), ()))
 
 
-def book(name: str, edition: str | None, **kw: object) -> Homebrew:
+def book(
+    name: str, edition: str | None, *, summary: str | None = None, players_may_know: bool = False
+) -> Homebrew:
     return dataclasses.replace(
-        entry(name, "From the book.", kind="spell"), from_book=True, book_edition=edition, **kw
+        entry(name, "From the book.", kind="spell", summary=summary, known=players_may_know),
+        from_book=True,
+        book_edition=edition,
     )
 
 
