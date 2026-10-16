@@ -470,8 +470,8 @@ async def start(
         candidates.sort(key=lambda s: s.started_at, reverse=True)
     recorded = bot.consent.has_consent(gid, user_id)
     for session in candidates:
-        campaign = await bot.campaigns.get(gid, session.campaign_id)
-        is_dm = campaign is not None and user_id in campaign.dm_user_ids
+        found = await bot.campaigns.get(gid, session.campaign_id)
+        is_dm = found is not None and user_id in found.dm_user_ids
         if is_dm:
             lines = await store.recent_lines(gid, session.id)
         elif recorded:
