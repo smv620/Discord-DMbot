@@ -1,6 +1,6 @@
 DMbot - TESTING STATUS (current testing only)
 =============================================
-Last updated: 2026-10-16 00:25 UTC by dev1 (support form deploy live, #1345)
+Last updated: 2026-10-16 02:25 UTC by dev1 (quick-answers deploy live)
 
 **For the people at the table: docs/next-test-step.md has the one next small test (#569).**
 Short by design: see CLAUDE.md "Testing logs". Full record: docs/testing-history.log.
@@ -9,7 +9,7 @@ Never put tokens, .env contents or players' personal data here (public repo).
 ------------------------------------------------------------------------------
 READY TO DEPLOY (merged into development, not on the server yet; dev1 deploys)
 ------------------------------------------------------------------------------
-(nothing: the support form deploy (#1345) and everything before it are live in 3a001d41)
+(nothing: the quick-answers deploy (#1377, #1380, #1374, #1351) and everything before it are live in 4d7aea9b; #1369 (migration 0077) is not merged yet)
 - Still to check live for #1271 (needs the owner): one test sign-in email to an address the owner chooses, and the signed link accepted (#1237); the
   Account page's "Get a move code" email goes to the payment address, not the Discord one (#1274; needs a paid test account with a payment email).
 - Waiting on the owner, not a deploy: once the Stripe account exists (#1096), replace the LEMONSQUEEZY_* values in .env
@@ -18,7 +18,9 @@ READY TO DEPLOY (merged into development, not on the server yet; dev1 deploys)
 ------------------------------------------------------------------------------
 LIVE NOW
 ------------------------------------------------------------------------------
-core + web-api 3a001d41 (2026-10-16 00:09 UTC, migration 0075 support_email (a function), the web API's /support routes and the admin Tickets list, the site's Support form (#1345);
+core + web-api 4d7aea9b (2026-10-16 02:17 UTC, migrations 0076 claims_by_fact (recall service #1351) and 0078 support_own (a person's own support questions #1374); quick answers use
+the facts the DM confirmed (#1377) and no longer carry a DM's notes on a name into a reply that reaches the raw transcript (#1380, a privacy fix); the linker #1368 and the extractor
+path #1365 are in but the extractor is OFF; old containers stopped first; 0077 (#1369) not in it); before that 3a001d41 (2026-10-16 00:09 UTC, migration 0075 support_email (a function), the web API's /support routes and the admin Tickets list, the site's Support form (#1345);
 old containers stopped first); before that cbfd20d8 (2026-10-15 20:53 UTC, migration 0074 support_tickets (private support tickets, web-api POST /support and the admin list, #1344),
 the per-schema migration lock (#1331), set-key takes a Resend key (#1348), website and docs changes; old containers stopped first; SUPPORT_TEAM_EMAIL not set (optional);
 mail still on the old Gmail settings until the owner switches to Resend); before that bc54a3e0 (2026-10-15 17:53 UTC, story memory 5a: migration 0073 memory_claims (claims store), the DM's after-session questions #1299, the steward wired in #1306,
