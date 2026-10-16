@@ -2564,3 +2564,12 @@ Overall ...................................... PASS (Deepgram baseline: 33/33, 1
   docs/next-test-step.md stays Test J (Keep, Delete's warning with Cancel, Homebrew packs): it still needs the owner.
   10-minute check, 17:19 UTC (10 minutes after the start): 0 ERROR, CRITICAL or traceback lines in core and web-api since 17:08; both up, web-api healthy; schema_migrations 104 rows, last 0104_homebrew_book_edition.
   Nothing turned on for users (recaps off, no ElevenLabs key, the extractor off).
+2026-10-16  dev1  DEPLOY: migration 0105 web_transcript_keep and the code behind #1573, #1574, #1575 and #1578 are live as 257f5b67 (Supervisor's "go", cross-session message; I first built 5bd12b1e, then #1578 merged during the build and I took the newer head with 0105). Core CI on the head: success.
+  Dry run (17:5x UTC) on a copy of the live database (pg_dumpall into a throwaway postgres:16 on its own network, at 0104): "Database updated: 0105_web_transcript_keep" in 0.18 s; a second run applied nothing; 105 migrations;
+  rows unchanged (147 transcript lines, 3 campaigns). Copy deleted. No game running. Backup: ~/db-backups/dmbot-before-257f5b67-1016-1755.sql (chmod 600). docker-compose.yml, core/Dockerfile and ears are unchanged since
+  1df5a4e5 (checked). `docker compose build core web-api` with GIT_COMMIT set; `docker compose stop core web-api` at 18:02:39 UTC, `up -d --no-deps core`; web-api started once core was connected.
+  Result: core logged "Database updated: 0105_web_transcript_keep", "ears connected" and "Connected to 1 server(s)"; web-api healthy; schema_migrations 105 rows, last 0105_web_transcript_keep; /health 200 inside web-api.
+  Not checked (needs the owner in Discord or a signed-in member): a non-DM /dmbot rule card; the Transcripts page of a campaign with a keep limit showing "Transcripts are kept for N days after each session, then deleted."
+  docs/next-test-step.md stays Test J (Keep, Delete's warning with Cancel, Homebrew packs): it still needs the owner.
+  10-minute check, 18:13 UTC (10 minutes after the start): 0 ERROR, CRITICAL or traceback lines in core and web-api since 18:02; both up, web-api healthy; schema_migrations 105 rows, last 0105_web_transcript_keep.
+  Nothing turned on for users (recaps off, no ElevenLabs key, the extractor off).
