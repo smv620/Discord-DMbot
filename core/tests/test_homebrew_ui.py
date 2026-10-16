@@ -10,10 +10,13 @@ from unittest.mock import AsyncMock
 
 from dmbot.campaigns import CampaignStore
 from dmbot.dm_screen.settings import HomebrewButton
+from dmbot.rules import page_fetch
 from dmbot.rules.homebrew import FileEntry, HomebrewSection, HomebrewStore
+from dmbot.rules.homebrew_import import HomebrewImporter
 from dmbot.rules.homebrew_sources import SiteApprovalsSection, SourceStore
 from dmbot.ui import homebrew as ui
 from tests.pg import DatabaseTest
+from tests.test_homebrew_import import URL, Fetches
 from tests.test_memory_names import FakeResponse
 
 GUILD, DM, PLAYER = 111, 7, 9
@@ -27,11 +30,14 @@ class HomebrewUiTest(DatabaseTest):
         self.campaigns.register_section(SiteApprovalsSection())
         self.store = HomebrewStore(self.db)
         self.sources = SourceStore(self.db)
+        self.net = Fetches()
+        self.importer = HomebrewImporter(self.store, self.sources, fetch=self.net)
         self.campaign = await self.campaigns.create(GUILD, "Frostmaiden", DM)
         self.bot = SimpleNamespace(
             campaigns=self.campaigns,
             homebrew=self.store,
             sources=self.sources,
+            importer=self.importer,
             homebrew_removed={},
             active_campaign_id=lambda g: None,
         )
@@ -459,3 +465,101 @@ class OnlyOnce(HomebrewUiTest):
         await right._pick("2024", again)
         self.assertEqual(len(await self.campaigns.confirmations(GUILD, self.campaign.id)), 1)
         self.assertIn("already being loaded", self.said(again))
+
+
+class FromALink(HomebrewUiTest):
+    """🔗 Add from a link (#1634): the address, the once-per-site warning, the preview, Save."""
+
+    async def submit(self, address: str, user: int = DM) -> Any:
+        form = ui.LinkForm(self.campaign, 0)
+        form.address._value = address
+        it = self.press(user)
+        await form.on_submit(it)
+        return it
+
+    def test_the_button_is_beside_add_and_the_old_ones_stay(self) -> None:
+        labels = [
+            str(getattr(c, "label", "")) for c in ui.ListMenu(self.campaign, [], 0, []).children
+        ]
+        self.assertIn("🔗 Add from a link", labels)
+        self.assertTrue({"➕ Add", ui.LOAD_LABEL, ui.DOWNLOAD_LABEL} <= set(labels))
+
+    async def test_only_a_dm_gets_the_form(self) -> None:
+        menu = ui.ListMenu(self.campaign, [], 0, [])
+        it = self.press(PLAYER)
+        await menu._link(it)
+        self.assertIsNone(it.response.modal)
+        it = self.press()
+        await menu._link(it)
+        self.assertIsInstance(it.response.modal, ui.LinkForm)
+        it = await self.submit(URL, PLAYER)
+        self.assertEqual(self.net.asked, [])
+
+    async def test_another_site_is_told_what_is_allowed_and_nothing_is_fetched(self) -> None:
+        for address in (
+            "https://example.com/spells/1-x",
+            "http://www.dndbeyond.com/spells/1-x",
+            "x",
+        ):
+            it = await self.submit(address)
+            self.assertIn("only add homebrew from D&D Beyond", self.said(it))
+        self.assertEqual(self.net.asked, [])
+
+    async def test_the_first_link_asks_once_then_reads_then_saves_and_the_second_asks_nothing(
+        self,
+    ) -> None:
+        it = await self.submit(URL)
+        self.assertIn("right to use dndbeyond.com's homebrew", self.said(it))
+        self.assertEqual(self.net.asked, [])  # nothing is read before the confirmation
+        self.assertEqual(await self.sources.approvals(GUILD, self.campaign.id), [])
+        right = self.view_of(it)
+        self.assertEqual(
+            [getattr(c, "label", "") for c in right.children], ["Cancel", "I have the right"]
+        )
+        await right._confirmed(self.press(PLAYER))  # a player's press changes nothing
+        self.assertEqual(await self.sources.approvals(GUILD, self.campaign.id), [])
+        shown = self.press()
+        await right._confirmed(shown)
+        self.assertEqual(len(await self.sources.approvals(GUILD, self.campaign.id)), 1)
+        self.assertEqual(len(self.net.asked), 1)
+        self.assertIn("Moonlit Charm", self.said(shown))
+        self.assertIn("Add it to your homebrew?", self.said(shown))
+        self.assertEqual(await self.store.list(GUILD, self.campaign.id), [])  # not saved yet
+        preview = self.view_of(shown)
+        done = self.press()
+        await preview._save(done)
+        (saved,) = await self.store.list(GUILD, self.campaign.id)
+        self.assertEqual(
+            (saved.name, saved.source_kind, saved.page_url), ("Moonlit Charm", "link", URL)
+        )
+        self.assertIn("Added **Moonlit Charm**", self.said(done))
+        # A second page from the same site in this campaign asks nothing.
+        second = await self.submit(URL.replace("2302039-moonlit-charm", "9-other") + "")
+        self.assertIn("Add it to your homebrew?", self.said(second))
+        self.assertEqual(len(await self.sources.approvals(GUILD, self.campaign.id)), 1)
+
+    async def test_another_campaign_asks_again_and_cancel_adds_and_approves_nothing(self) -> None:
+        other = await self.campaigns.create(GUILD, "Other", DM)
+        await self.sources.approve(GUILD, other.id, DM, "dndbeyond.com")
+        it = await self.submit(URL)  # this campaign has not approved the site
+        right = self.view_of(it)
+        await right._cancel(self.press())
+        self.assertEqual(await self.sources.approvals(GUILD, self.campaign.id), [])
+        self.assertEqual(await self.store.list(GUILD, self.campaign.id), [])
+        self.assertEqual(self.net.asked, [])
+
+    async def test_not_public_and_no_answer_are_plain_and_a_double_save_adds_once(self) -> None:
+        await self.sources.approve(GUILD, self.campaign.id, DM, "dndbeyond.com")
+        self.net.reply = page_fetch.Reply(404, "")
+        it = await self.submit(URL)
+        self.assertIn("That page isn't public", self.said(it))
+        self.net.reply = page_fetch.Reply(500, "")
+        it = await self.submit(URL)
+        self.assertIn("D&D Beyond didn't answer", self.said(it))
+        self.net.reply = page_fetch.Reply(200, "<h1>Zap</h1><p>It zaps.</p>")
+        shown = await self.submit(URL)
+        preview = self.view_of(shown)
+        await preview._save(self.press())
+        again = self.press()
+        await preview._save(again)
+        self.assertEqual(len(await self.store.list(GUILD, self.campaign.id)), 1)
