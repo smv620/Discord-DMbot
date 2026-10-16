@@ -281,8 +281,8 @@ def homebrew_citation(entry: Homebrew, campaign_name: str) -> str:
 
 
 def homebrew_parts(own: Homebrew, campaign_name: str) -> list[str]:
-    """The card for one of the campaign's own homebrew entries, for the DM (private): tagged `[Homebrew]`,
-    its source named, who may know it, then its words. It goes above the free rules' card and
+    """The card for one of the campaign's own homebrew entries, for the DM (private): tagged
+    `[Homebrew]`, its source named, who may know it, then its words. It goes above the free rules' card and
     below any house rule (the order is house rules, homebrew, the target ruleset, the fallback)."""
     who = "👀 players may know it" if own.players_may_know else "🙈 only you"
     head = "\n".join(
