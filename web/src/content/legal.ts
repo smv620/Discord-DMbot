@@ -24,6 +24,14 @@ export const operator = {
 /** The payment company, chosen by the owner (2026-10-13, #1096). It is the seller (merchant of record). */
 export const paymentProvider = "Stripe";
 
+/**
+ * The training sentence (#1328, #1329) as the Anthropic line in privacy.astro says it. The public
+ * Q&A section (QabotPrivacy.astro) uses this constant, and qabot-privacy.test.ts checks that the
+ * rendered Anthropic line still holds it word for word, so the two can never drift apart. The
+ * yes message says the same in its own words (core/src/dmbot/consent_dm.py; legal.test.ts).
+ */
+export const aiTrainingSentence = "That text isn't used to train Anthropic's AI.";
+
 /** The day the owner signed the legal pages off (2026-10-09); shown on all three. */
 export const effectiveDate = "9 October 2026";
 

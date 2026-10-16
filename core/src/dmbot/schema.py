@@ -3938,6 +3938,13 @@ SUPPORT_TICKETS = (
     """
 )
 
+MEMORY_CLAIMS_BY_FACT = """
+    -- The recall service (#1350) finds the claim a fact came from by the fact's id; without this
+    -- it would read every confirmed claim of the campaign to find them. An index only: no row
+    -- changes, so no row-level-security opening is needed.
+    CREATE INDEX memory_claims_by_fact ON memory_claims (guild_id, campaign_id, fact_id)
+        WHERE fact_id IS NOT NULL;
+    """
 SUPPORT_EMAIL = (
     _setting("dmbot_support_email_lookup", "dmbot.support_email_lookup", "TEXT")
     + """
@@ -4069,7 +4076,10 @@ MIGRATIONS: tuple[Migration, ...] = (
     ("0073_memory_claims", MEMORY_CLAIMS),
     ("0074_support_tickets", SUPPORT_TICKETS),  # private support tickets (#1340)
     ("0075_support_email", SUPPORT_EMAIL),  # the admin page's door to a ticket's reply address
-    # (0075 is the support email #1345 and 0076 the claims index #1350: numbers kept for them)
+    (
+        "0076_claims_by_fact",
+        MEMORY_CLAIMS_BY_FACT,
+    ),  # the recall service finds a fact's claim (#1350)
     ("0077_extractor_progress", EXTRACTOR_PROGRESS),  # a restart resumes the extractor (#1367)
     ("0078_recap_jobs", RECAP_JOBS),  # the cinematic recap job of a session (#1382)
 )
