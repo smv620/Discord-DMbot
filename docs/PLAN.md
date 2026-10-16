@@ -672,6 +672,14 @@ or servers; only the campaign's DMs change anything (the store checks in the sam
     (`shared_confirmations`, purpose `rulebook`) and loads it with `from_book` set (migration 0099): that
     text can never go into a shared pack. An entry whose name the campaign has (any case) is updated
     (version + 1); a file that would take the campaign over 200 entries loads nothing and says the count.
+  - **On the website** (#1525, #1545, migration 0100; tags 2026-10-16, #1579, migration 0107): the signed-in
+    Homebrew page shows a campaign's entries marked 👀 players may know, to anyone in the server, with a
+    text-file download that is byte-equal to the bot's file. Since #1564 those entries include ones loaded
+    from a shared book, and the page tags them like the Discord players' card: "From a shared book", and
+    "[Legacy 2014]" for a 2014 book while the campaign plays newer rules (legacy content is tagged wherever
+    it appears). That revises #1525's "never whether it came from a book", decided when book entries never
+    reached players. Still never: who wrote an entry, its id, the book's name, or a hidden entry. The bot's
+    file (and so the download) gets the same tags in #1584.
 - Sharing as a pack (part 2) is built: see "Shared rulesets" (#1527).
 
 **Shared rulesets: homebrew packs and house-rules sets (owner, 2026-10-14).** Rules can be shared between
@@ -2660,7 +2668,7 @@ answer **where the whole table can read it**, so nobody waits while someone look
   transcript or the live transcript channel.
 - **Consent:** the consent message adds that questions typed in `dmb-chat` are read, so the consent terms
   version goes up (everyone is asked again once).
-- **Not built yet:** #1187 (CloudDev). The site's help and privacy pages follow (WebDev, with #1155).
+- **Built** (#1187, CloudDev; the site's help and privacy pages with #1155, WebDev).
 
 **Who pays for AI and speech (decided 2026-10-04, replaced 2026-10-07).** Bring-your-own
 keys is dropped: it asked ordinary DMs to open developer accounts, fund them and paste
