@@ -375,7 +375,7 @@ transcript. A player gets the same card as the DM but with house rules and only 
 DM let players know (a hidden entry, from the campaign or a followed pack, is never named, not
 even as a close name, and a from-book entry follows the same flag): no DM-screen content, no
 secret names, no rulings, no AI and no cost; the card ends with "Your DM decides what applies at
-your table."; one lookup per person every 3 seconds ("One at a time: try again in a moment.");
+your table."; one lookup per person every 3 seconds ("Try again in a few seconds."); a player's card has no "you decide" line of the DM's and a player searching a hidden name gets the same "couldn't find" as for a name that does not exist;
 the 📖 Look up a rule button stays on the DM's Settings card. A person who runs a campaign looks
 in the campaigns they run, as before; anyone else in the campaigns of the server. And
 **precedence is shown, not decided**: a house rule of that campaign (and no other's) that

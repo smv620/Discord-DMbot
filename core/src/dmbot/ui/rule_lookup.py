@@ -56,9 +56,9 @@ BOX_MAX = 100
 READ_REST_LABEL = "Read the rest"
 MAKE_MINE_LABEL = "✏️ Make it my own"
 NO_CAMPAIGNS = "There's no campaign in this server yet. A DM can set one up with `/dmbot start`."
-NOT_HERE = "Use /dmbot rule in the server where your campaign is."
-ONE_AT_A_TIME = "One at a time: try again in a moment."
-ONLY_DMS = "Only this campaign's DM can do that. Ask your DM."
+NOT_HERE = "Use `/dmbot rule` in your campaign's server."
+ONE_AT_A_TIME = "Try again in a few seconds."
+ONLY_DMS = "That button is for this campaign's DM."
 PLAYER_WAIT_S = 3.0  # one lookup per person this often, so a table can't flood DMbot (#1562)
 COULDNT_COPY = "Couldn't copy that. Nothing was changed. Try again in a moment."
 NO_HOMEBREW = "Homebrew isn't available right now. Ask whoever runs DMbot."
@@ -133,6 +133,7 @@ async def look_up(
     *,
     guild_id: int,
     kind: str | None = None,
+    paced: bool = True,
 ) -> None:
     """Find `typed` for this campaign and send the card privately. The campaign is read
     again and the person checked again: a button or a form can be used minutes later."""
@@ -155,7 +156,7 @@ async def look_up(
         if interaction.guild_id != campaign.guild_id:
             await _tell(interaction, NOT_HERE)
             return
-        if _too_soon(campaign.guild_id, interaction.user.id):
+        if paced and _too_soon(campaign.guild_id, interaction.user.id):
             await _tell(interaction, ONE_AT_A_TIME)
             return
     rules = await _house_rules(interaction, campaign)
@@ -171,7 +172,7 @@ async def look_up(
         # entry follows the same flag). The book's card answers, as if it weren't there.
         own = None
     if own is not None:
-        mine = rule_card.homebrew_parts(own, campaign.name)
+        mine = rule_card.homebrew_parts(own, campaign.name, player=not is_dm)
         if not is_dm:
             mine = rule_card.for_player(mine)
         # A followed pack's entry can be copied into the campaign's own homebrew (#1541): the
@@ -181,10 +182,10 @@ async def look_up(
         return
     if hit is None:
         close = srd.suggest(typed, campaign.target_ruleset, campaign.fallback_ruleset)
-        text = rule_card.no_match_text(typed, rules, bool(close))
+        text = rule_card.no_match_text(typed, rules, bool(close), player=not is_dm)
         await _send(interaction, text, Suggestions(campaign, close) if close else None)
         return
-    parts = rule_card.card_parts(hit, typed, rules)
+    parts = rule_card.card_parts(hit, typed, rules, player=not is_dm)
     if not is_dm:
         parts = rule_card.for_player(parts)
     await _send(interaction, parts[0], Card(parts, 1) if len(parts) > 1 else None)
@@ -306,7 +307,10 @@ async def look_up_name(
     campaign: Campaign, name: str, kind: str, interaction: discord.Interaction
 ) -> None:
     """A suggested name was pressed: read that name, of that kind."""
-    await look_up(interaction, campaign.id, name, guild_id=campaign.guild_id, kind=kind)
+    # (not paced again: the person just looked this up and is pressing a close name)
+    await look_up(
+        interaction, campaign.id, name, guild_id=campaign.guild_id, kind=kind, paced=False
+    )
 
 
 class LookupForm(discord.ui.Modal, title=FORM_TITLE):
@@ -380,8 +384,8 @@ async def _typeahead(
 
 
 async def _rulesets(interaction: discord.Interaction) -> tuple[str, str]:
-    """The ruleset order for the list of names: the playing campaign's, if the person is its
-    DM. Discord waits 3 seconds for the list, so the database gets one: slower, or broken,
+    """The ruleset order for the list of names: the playing campaign's (nothing secret).
+    Discord waits 3 seconds for the list, so the database gets one: slower, or broken,
     and the defaults are used (the names are the same, only the order differs)."""
     guild = interaction.guild
     bot = _bot(interaction)
@@ -421,8 +425,9 @@ async def dmbot_rule(interaction: discord.Interaction, name: str) -> None:
     if not everyone:
         await _tell(interaction, NO_CAMPAIGNS)
         return
-    # A DM looks in the campaigns they run, as before. Anyone else looks in the server's
-    # campaigns as a player (#1562).
+    # A DM looks in the campaigns they run, as before (even while another DM's campaign is the
+    # one being played: theirs is the one they mean). Anyone else looks in the server's
+    # campaigns as a player (#1562): the playing one, else the pick.
     mine = [c for c in everyone if may_look_up(c, interaction.user.id)] or everyone
     playing = bot.active_campaign_id(guild.id)
     current = next((c for c in mine if c.id == playing), None)

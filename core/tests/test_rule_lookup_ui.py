@@ -175,6 +175,58 @@ class Command(LookupTest):
         other = await self.command("fireball", OTHER_DM)
         self.assertIn("Fireball", self.sent(other)[0])
 
+    async def test_a_players_no_match_has_no_closing_line_and_no_dm_tags(self) -> None:
+        text = self.sent(await self.command("Xyzzyplugh", PLAYER))[0]
+        self.assertNotIn(rule_card.PLAYER_LINE, text)
+        self.assertIn("ask your DM", text)
+        self.assertNotIn("your own books", text)
+
+    async def test_a_players_free_rules_card_has_no_you_decide_line(self) -> None:
+        player = self.sent(await self.command("fireball", PLAYER))[0]
+        dm = self.sent(await self.command("fireball", DM))[0]
+        self.assertNotIn("you decide", player)
+        self.assertIn("you decide", dm)
+
+    async def test_a_players_homebrew_card_leaves_out_the_dms_tags(self) -> None:
+        self.brew.entries[C1] = [brew(C1, "Hollow King", "A crowned skeleton.", known=True)]
+        player = self.sent(await self.command("Hollow King", PLAYER))[0]
+        dm = self.sent(await self.command("Hollow King", DM))[0]
+        self.assertNotIn("players may know", player)
+        self.assertIn("players may know", dm)
+
+    async def test_a_dm_of_one_campaign_who_asks_gets_their_own_view(self) -> None:
+        # Runs C2 while C1 (someone else's) is the one being played: C2 is the one they mean.
+        self.campaigns[C2] = campaign(C2, "Mine", frozenset({OTHER_DM}))
+        self.brew.entries[C2] = [brew(C2, "Hollow King", "Mine only.")]
+        text = self.sent(await self.command("Hollow King", OTHER_DM))[0]
+        self.assertIn("Mine only.", text)
+
+    async def test_a_player_in_a_server_with_two_campaigns_picks_one(self) -> None:
+        self.campaigns[C2] = campaign(C2, "Other", frozenset({OTHER_DM}))
+        self.playing = None
+        it = await self.command("fireball", PLAYER)
+        text, view, _ = self.sent(it)
+        self.assertEqual(text, ui.WHICH_CAMPAIGN)
+        self.assertIsInstance(view, ui.CampaignChoice)
+
+    async def test_a_close_name_press_is_not_paced_again(self) -> None:
+        first = await self.command("Firball", PLAYER)
+        view = self.sent(first)[1]
+        pressed = self.it(PLAYER)
+        await self.press(view, "Fireball").callback(pressed)  # straight after: not "try again"
+        self.assertIn("Fireball", self.sent(pressed)[0])
+
+    async def test_each_server_has_its_own_pace(self) -> None:
+        self.assertFalse(ui._too_soon(1, PLAYER))
+        self.assertTrue(ui._too_soon(1, PLAYER))
+        self.assertFalse(ui._too_soon(2, PLAYER))  # another server's table
+        self.assertFalse(ui._too_soon(1, OTHER_DM))  # another person
+
+    def test_the_closing_line_still_fits_when_the_last_part_is_full(self) -> None:
+        full = ["x" * 1990]
+        self.assertEqual(rule_card.for_player(full), [full[0], rule_card.PLAYER_LINE])
+        self.assertEqual(rule_card.for_player(["a", "b"]), ["a", f"b\n{rule_card.PLAYER_LINE}"])
+
     async def test_house_rules_come_first_for_a_player_too(self) -> None:
         self.store.rules[C1] = [house(12, "Fireball needs a free hand.", C1)]
         for who in (DM, PLAYER):
