@@ -74,7 +74,7 @@ describe("the QAbot privacy section (#1356)", () => {
     expect(text(privacy.querySelector("main"))).toContain(`It gets the text it needs, not sound. ${aiTrainingSentence}`);
     // Said once in the section, not twice.
     expect(text(on.body).match(/train/gi)).toHaveLength(1);
-    expect(text(on.body)).toContain(`${aiTrainingSentence} It may also look things up on the web.`);
+    expect(text(on.body)).toContain(`${aiTrainingSentence} It may also search the web, using words from your post.`);
   });
 
   it("links the Q&A and the one support address, and tells people to keep private things out", () => {
