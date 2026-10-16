@@ -2552,3 +2552,5 @@ Overall ...................................... PASS (Deepgram baseline: 33/33, 1
   Signed-out GET /me/campaigns/<ref>/transcripts answers 401, /health 200 (inside web-api).
   Not checked (need the owner in Discord): /dmbot rule as a non-DM member (private card ending "Your DM decides what applies at your table."); Connect to... shows Secret: no for a DM; a DM's Download all names file has the player rows section.
   docs/next-test-step.md stays Test J (Keep, Delete's warning with Cancel, Homebrew packs): it still needs the owner.
+  10-minute check, 16:49 UTC (10 minutes after the start): 0 ERROR, CRITICAL or traceback lines in core and web-api since 16:38; both up, web-api healthy; schema_migrations 103 rows, last 0103_web_transcript_deleted.
+  Nothing turned on for users (recaps off, no ElevenLabs key, the extractor off).
