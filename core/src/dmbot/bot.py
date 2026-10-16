@@ -187,6 +187,7 @@ from dmbot.retention import RetentionJob
 from dmbot.rules import house_voice
 from dmbot.rules import index as rules_index
 from dmbot.rules.followed import followed_rules, own_first
+from dmbot.rules.homebrew import HomebrewSection, HomebrewStore
 from dmbot.rules.house import HouseRule, HouseRulesSection, HouseRuleStore
 from dmbot.rules.house_file_link import HouseFileLinkStore
 from dmbot.rules.rule_sets import FollowedSetsSection, RuleSetStore
@@ -626,6 +627,7 @@ class DMBot(commands.AutoShardedBot):
         rule_sets: RuleSetStore | None = None,
         recaps: RecapStore | None = None,
         suggestions: SuggestionStore | None = None,
+        homebrew: HomebrewStore | None = None,
     ) -> None:
         intents = discord.Intents.none()
         intents.guilds = True
@@ -672,6 +674,7 @@ class DMBot(commands.AutoShardedBot):
         self.rule_sets = rule_sets  # shared house rules (#1190)
         self.recaps = recaps  # the cinematic recap of each session (#1382)
         self.suggestions = suggestions  # players' suggested line fixes (#1491)
+        self.homebrew = homebrew  # a campaign's own homebrew entries (#1520)
         self.house_syncs = house_sync.Pendings()
         # Timed effects on that clock (#998); None without a database.
         self.effects = effects
@@ -7273,6 +7276,7 @@ async def run(settings: Settings) -> None:
         )
         campaigns.register_section(MemorySection())  # campaign memory goes in backups
         campaigns.register_section(HouseRulesSection())  # and so do house rules (#865)
+        campaigns.register_section(HomebrewSection())  # and its own homebrew (#1520)
         campaigns.register_section(FollowedSetsSection())  # and the sets it follows (#1260)
         campaigns.register_section(ClockSection())  # and the game clock (#965)
         campaigns.register_section(EffectsSection())  # and its timed effects (#998)
@@ -7299,6 +7303,7 @@ async def run(settings: Settings) -> None:
             RuleSetStore(db),
             RecapStore(db),
             SuggestionStore(db),
+            HomebrewStore(db),
         )
         _close_on_sigterm(bot)
         async with bot:
