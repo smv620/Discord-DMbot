@@ -59,7 +59,8 @@ HELP = (
     "# Under the heading you can add:  Summary: one short line\n"
     "#                                 Players may know: yes   (or no)\n"
     "# Then a blank line, then the words.\n"
-    "# Lines starting with a single # before the first entry are notes and are ignored."
+    "# Lines starting with a single # before the first entry are notes and are ignored.\n"
+    "# A line like [Shared book] under a heading is a note from DMbot; leave it or delete it."
 )
 EXAMPLE = (
     "## Hollow King (monster)\n"
@@ -117,7 +118,7 @@ def _unescape(line: str) -> str:
 _TAG_LINES = frozenset({BOOK_TAG, f"{BOOK_TAG} {LEGACY_TAG}"})
 
 
-def write(campaign_name: str, entries: Sequence[Homebrew], target_ruleset: str = "2024") -> str:
+def write(campaign_name: str, entries: Sequence[Homebrew], target_ruleset: str) -> str:
     """The file for these entries (this campaign's), by name. An entry from a shared rulebook
     carries its tags under the heading; `target_ruleset` is the one the campaign plays, which
     decides `[Legacy 2014]`."""

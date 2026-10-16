@@ -120,4 +120,6 @@ async def render(db: Database, session: Session, ref: str) -> tuple[str, str]:
         )
         for e in found["entries"]
     ]
-    return homebrew_file.filename(found["name"]), homebrew_file.write(found["name"], entries)
+    return homebrew_file.filename(found["name"]), homebrew_file.write(
+        found["name"], entries, "2024"
+    )

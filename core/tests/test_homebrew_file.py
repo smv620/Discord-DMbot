@@ -30,7 +30,7 @@ class RoundTrip(unittest.TestCase):
             entry("Moonblade", "A silver sword.", kind="item"),
             entry("Frost Lance", "Cold.", kind="spell", known=True),
         ]
-        parsed = hf.parse(hf.write("Frostmaiden", entries))
+        parsed = hf.parse(hf.write("Frostmaiden", entries, "2024"))
         self.assertEqual(parsed.problems, ())
         got = {e.name: e for e in parsed.entries}
         for original in entries:
@@ -43,7 +43,7 @@ class RoundTrip(unittest.TestCase):
 
     def test_words_that_look_like_the_file_s_own_marks_survive(self) -> None:
         tricky = "## not a heading\n\\## also not\nSummary: not a summary\nPlayers may know: yes"
-        parsed = hf.parse(hf.write("X", [entry("Odd", tricky)]))
+        parsed = hf.parse(hf.write("X", [entry("Odd", tricky)], "2024"))
         self.assertEqual(parsed.problems, ())
         (back,) = parsed.entries
         self.assertEqual(back.text, tricky)
@@ -51,7 +51,7 @@ class RoundTrip(unittest.TestCase):
         self.assertFalse(back.players_may_know)
 
     def test_an_empty_campaign_writes_a_file_that_reads_as_nothing(self) -> None:
-        parsed = hf.parse(hf.write("Empty", []))
+        parsed = hf.parse(hf.write("Empty", [], "2024"))
         self.assertEqual((parsed.entries, parsed.problems), ((), ()))
 
 
@@ -105,7 +105,7 @@ class SharedBookTags(unittest.TestCase):
             book("Moonlance", "2024"),
             entry("Hollow King", "Mine."),
         ]
-        parsed = hf.parse(hf.write("Frostmaiden", entries))
+        parsed = hf.parse(hf.write("Frostmaiden", entries, "2024"))
         self.assertEqual(parsed.problems, ())
         got = {e.name: e for e in parsed.entries}
         self.assertEqual(set(got), {"Fireball", "Moonlance", "Hollow King"})
@@ -113,6 +113,22 @@ class SharedBookTags(unittest.TestCase):
         self.assertEqual(got["Fireball"].summary, "A ball of fire.")
         self.assertTrue(got["Fireball"].players_may_know)
         self.assertFalse(hasattr(got["Fireball"], "from_book"))  # a file never says it
+
+    def test_a_tag_with_no_blank_line_after_it_is_skipped_and_the_words_follow(self) -> None:
+        (back,) = hf.parse("## X (spell)\n[Shared book]\nwords").entries
+        self.assertEqual(back.text, "words")
+
+    def test_another_bracketed_line_under_the_heading_stays_as_words(self) -> None:
+        (back,) = hf.parse("## X (spell)\n[Something else]\nwords").entries
+        self.assertEqual(back.text, "[Something else]\nwords")
+
+    def test_the_tag_reads_with_windows_line_ends_and_the_short_form_alone(self) -> None:
+        parsed = hf.parse("## X (spell)\r\n[Shared book]\r\nPlayers may know: yes\r\n\r\nwords")
+        (back,) = parsed.entries
+        self.assertEqual((back.text, back.players_may_know), ("words", True))
+
+    def test_the_help_text_explains_the_note(self) -> None:
+        self.assertIn("[Shared book]", hf.HELP)
 
     def test_only_the_exact_tag_lines_directly_under_the_heading_are_skipped(self) -> None:
         text = "## A (spell)\n\n[Shared book]\n"  # words after a blank line stay the words
@@ -198,7 +214,7 @@ if __name__ == "__main__":
 
 class TheTemplate(unittest.TestCase):
     def test_an_empty_campaign_downloads_a_file_with_an_example_that_is_not_an_entry(self) -> None:
-        text = hf.write("Empty", [])
+        text = hf.write("Empty", [], "2024")
         self.assertIn("# ## Hollow King (monster)", text)  # commented out: nothing to load
         parsed = hf.parse(text)
         self.assertEqual((parsed.entries, parsed.problems), ((), ()))

@@ -150,9 +150,11 @@ class TheFile(HomebrewBase):
         name, text = await pages.render(self.web, self.carol, self.cref)
         shown = await self.shown_entries()
         self.assertEqual(len(shown), 3)
-        self.assertEqual(text.encode(), homebrew_file.write("One", shown).encode())
+        self.assertEqual(text.encode(), homebrew_file.write("One", shown, "2024").encode())
         self.assertEqual(name, homebrew_file.filename("One"))
         self.assertNotIn(SECRET, text)
+        # (the help text mentions the tag, but no entry carries one: the door never says it)
+        self.assertNotIn("[Shared book]", text.replace(homebrew_file.HELP, ""))
         self.assertNotIn("The Lich", text)
 
     async def test_a_campaign_with_nothing_shown_has_no_file(self) -> None:
@@ -233,7 +235,7 @@ class TheRoutes(HomebrewBase):
             file.headers["content-disposition"], 'attachment; filename="homebrew-one.txt"'
         )
         self.assertEqual(
-            file.content, homebrew_file.write("One", await self.shown_entries()).encode()
+            file.content, homebrew_file.write("One", await self.shown_entries(), "2024").encode()
         )
 
     async def test_someone_outside_the_server_gets_404_and_the_list_is_empty(self) -> None:
