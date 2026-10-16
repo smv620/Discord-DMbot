@@ -4,6 +4,9 @@ music and ambience requests and the mix plan. No network, no database."""
 from __future__ import annotations
 
 import json
+import shutil
+import subprocess
+import tempfile
 import unittest
 
 from dmbot.recaps.audio import mix, music, names, script
@@ -11,11 +14,11 @@ from dmbot.recaps.audio.script import EMOTION, MAX_CHARS, PERFORMANCE_KIND
 
 SUMMARY = (
     "《Tense》 The party crept into the cave ((pause)) and the torches guttered, "
-    "((slow)) one by one.\\n\\n"
-    "《whisper》 Mira bent low ((hushed)) and spoke of the old door.\\n\\n"
-    "* * *\\n\\n"
+    "((slow)) one by one.\n\n"
+    "《whisper》 Mira bent low ((hushed)) and spoke of the old door.\n\n"
+    "* * *\n\n"
     "《Hopeful》 At dawn the rain stopped. Garrick laughed, ((long pause)) and the road opened."
-).replace("\\n", "\n")
+)
 SECRET = "Vaelithor"
 
 
@@ -100,6 +103,42 @@ class Narration(unittest.TestCase):
         self.assertTrue(all(c.kind == EMOTION for c in built().emotions))
 
 
+class Edges(unittest.TestCase):
+    def test_a_cue_at_the_end_of_a_paragraph_sits_at_its_end_not_past_it(self) -> None:
+        s = script.build("T", None, "《Calm》 Next. ((pause))")
+        para = s.paragraphs[1]
+        cue = next(c for c in para.cues if c.name == "pause")
+        self.assertEqual(cue.offset - para.start, len(para.spoken))
+        self.assertEqual(cue.tagged_offset, para.tagged.index("[short pause]"))
+
+    def test_a_scene_break_at_the_length_limit_still_fits_one_request(self) -> None:
+        s = script.build("T", None, "w" * (MAX_CHARS - 20) + "\n\n***\n\nnext")
+        for p in s.paragraphs:
+            self.assertLessEqual(len(p.tagged), MAX_CHARS)
+        self.assertTrue(s.paragraphs[1].tagged.endswith("[long pause]"))
+
+    def test_the_split_path_keeps_the_tags_and_the_cues_in_the_part_they_fall_in(self) -> None:
+        sentence = "The wind rose over the hills ((pause)) and the party walked on. "
+        text = "《Calm》 " + sentence * 100 + "《Hopeful》 Then dawn came."
+        s = script.build("T", None, text)
+        self.assertGreater(len(s.paragraphs), 2)
+        for p in s.paragraphs:
+            self.assertLessEqual(len(p.tagged), MAX_CHARS)
+            for cue in p.cues:
+                self.assertTrue(cue.tag == "" or cue.tag in p.tagged)
+        self.assertEqual(len([c for c in s.cues if c.name == "pause"]), 100)
+        self.assertEqual([c.name for c in s.emotions], ["calm", "hopeful"])
+        hopeful = next(c for c in s.emotions if c.name == "hopeful")
+        self.assertTrue(s.spoken[hopeful.offset :].startswith("Then dawn"))
+
+    def test_a_secret_name_in_the_text_is_refused_before_anything_is_built(self) -> None:
+        with self.assertRaises(script.SecretInScript):
+            script.build("T", None, f"《Calm》 {SECRET}'s keep fell.", secret_names=[SECRET])
+        with self.assertRaises(script.SecretInScript):
+            script.build(f"The {SECRET}-gate", None, "《Calm》 Quiet.", secret_names=[SECRET])
+        script.build("T", None, "《Calm》 Quiet.", secret_names=[SECRET])  # absent: fine
+
+
 class Pronunciation(unittest.TestCase):
     def test_a_rule_for_each_confirmed_name_with_a_spelling_and_none_for_the_rest(self) -> None:
         got = names.rules(
@@ -128,6 +167,10 @@ class Pronunciation(unittest.TestCase):
                 names.SpokenName(SECRET, secret=True),
                 names.SpokenName("The Tomb of Vaelithor", said_as="The Tomb of Vay-lith-or"),
                 names.SpokenName("Hall", said_as="Haul the vaelithor"),  # in the spelling
+                names.SpokenName("Vaelithor's Keep", said_as="Vay Keep"),  # a possessive
+                names.SpokenName("Vaelithor-Keep", said_as="Vay Keep"),  # hyphen-joined
+                names.SpokenName("Vaelithors", said_as="Vay"),  # a plural
+                names.SpokenName("Keep", said_as="Vaelithor's"),  # in the spelling
                 names.SpokenName("Bree", said_as="Bree-ah"),
             ]
         )
@@ -174,9 +217,7 @@ class Music(unittest.TestCase):
         self.assertTrue(all(x["duration_ms"] >= 3000 for x in sections))
 
     def test_the_same_mood_twice_in_a_row_is_one_section(self) -> None:
-        s = script.build(
-            "T", None, "《Tense》 One two three.\\n\\n《tense》 Four five six.".replace("\\n", "\n")
-        )
+        s = script.build("T", None, "《Tense》 One two three.\n\n《tense》 Four five six.")
         names_ = [
             x["section_name"] for x in music.composition_request(s)["composition_plan"]["sections"]
         ]
@@ -186,6 +227,27 @@ class Music(unittest.TestCase):
         s = script.build("T", None, "Before any cue. 《Battle》 Then swords.")
         parts = music.sections(s)
         self.assertEqual(parts[0].emotion, "calm")
+
+    def test_a_long_run_is_split_under_the_providers_longest_section(self) -> None:
+        s = script.build("T", None, "《Tense》 " + "word " * 8000)
+        parts = music.sections(s)
+        self.assertTrue(all(3000 <= p.duration_ms <= music.MAX_SECTION_MS for p in parts))
+        self.assertEqual(sum(p.duration_ms for p in parts), 600_000)
+        self.assertEqual({p.emotion for p in parts}, {"calm", "tense"})
+
+    def test_synonyms_are_one_run_and_too_many_moods_keep_the_first_and_the_last(self) -> None:
+        s = script.build("T", None, "《Tense》 One two three.\n\n《tension》 Four five six.")
+        self.assertEqual([p.emotion for p in music.sections(s)], ["calm", "tense"])
+        moods = ["tense", "somber", "hopeful", "eerie", "urgent", "tender", "dread", "wonder",
+                 "playful", "battle", "grim", "defiant"]  # fmt: skip
+        text = "\n\n".join(f"《{m}》 " + "word " * (5 + i) for i, m in enumerate(moods))
+        built_ = script.build("T", None, text)
+        many = music.sections(built_)
+        self.assertLessEqual(len(many), music.MAX_SECTIONS)
+        self.assertEqual(many[-1].emotion, "defiant")  # the closing mood is kept
+        self.assertEqual(
+            sum(p.duration_ms for p in many), music.total_seconds(len(built_.spoken)) * 1000
+        )
 
     def test_the_request_is_instrumental_with_a_positive_and_negative_list_for_every_mood(
         self,
@@ -239,11 +301,7 @@ class Music(unittest.TestCase):
             "and the tavern again.",
         )
         got = music.ambience_requests(s)
-        self.assertEqual(
-            [a.kind for a in got], ["tavern", "rain", "cave"][:0] or [a.kind for a in got]
-        )
-        self.assertEqual({a.kind for a in got}, {"tavern", "cave", "rain"})
-        self.assertEqual(got[0].kind, "tavern")
+        self.assertEqual([a.kind for a in got], ["tavern", "cave", "rain"])
         for a in got:
             req = a.as_request()
             self.assertIs(req["loop"], True)
@@ -251,6 +309,11 @@ class Music(unittest.TestCase):
         self.assertEqual(
             music.ambience_requests(script.build("T", None, "《Calm》 Plain words.")), []
         )
+
+    def test_a_word_that_only_starts_like_a_scene_word_is_not_one(self) -> None:
+        text = "《Calm》 The campaign went on. The public warned of an inner war. Warm rainbow."
+        kinds = [a.kind for a in music.ambience_requests(script.build("T", None, text))]
+        self.assertEqual(kinds, ["battle"])  # only "war" itself
 
     def test_the_performance_cues_count_as_setting_words(self) -> None:
         s = script.build("T", None, "《Calm》 They rested. ((campfire)) The night went on.")
@@ -262,6 +325,7 @@ class Mixing(unittest.TestCase):
         graph = mix.plan(215.5).filter_complex
         self.assertIn("loudnorm=I=-16:TP=-1", graph)
         self.assertIn("loudnorm=I=-22", graph)
+        self.assertEqual(graph.count("aresample=44100"), 4)  # loudnorm's 192 kHz is brought down
         self.assertIn("loudnorm=I=-28", graph)
         self.assertIn("sidechaincompress", graph)
         self.assertIn("ratio=4", graph)
@@ -295,7 +359,45 @@ class Mixing(unittest.TestCase):
         self.assertNotIn("[1:a]", voice_only)
 
     def test_the_mix_is_held_at_the_voices_ceiling(self) -> None:
-        self.assertIn("alimiter=limit=0.891", mix.plan(10).filter_complex)
+        # The mix is levelled again to the voice's target with the same ceiling.
+        self.assertTrue(mix.plan(10).filter_complex.count("loudnorm=I=-16:TP=-1") == 2)
+
+    def test_tracks_that_do_not_match_the_plan_are_refused(self) -> None:
+        p = mix.plan(10, with_music=False)
+        with self.assertRaises(ValueError):
+            mix.command(
+                p, voice="v", music="m", ambience="a", out_voice="1", out_bed="2", out_mix="3"
+            )
+
+    @unittest.skipUnless(shutil.which("ffmpeg"), "ffmpeg is not installed")
+    def test_the_graph_runs_in_every_combination_and_keeps_the_voices_length(self) -> None:
+        for music_on in (True, False):
+            for ambience_on in (True, False):
+                with tempfile.TemporaryDirectory() as tmp:
+                    p = mix.plan(3, with_music=music_on, with_ambience=ambience_on)
+                    args = mix.command(
+                        p, voice="", music="m" if music_on else None,
+                        ambience="a" if ambience_on else None,
+                        out_voice=f"{tmp}/v.wav", out_bed=f"{tmp}/b.wav", out_mix=f"{tmp}/x.wav",
+                    )  # fmt: skip
+                    lavfi = ["-f", "lavfi", "-i"]
+                    inputs = [*lavfi, "sine=f=220:d=3"]
+                    if music_on:
+                        inputs += [*lavfi, "anoisesrc=d=2:c=pink:a=0.2"]
+                    if ambience_on:
+                        inputs += [*lavfi, "sine=f=110:d=1"]
+                    cut = args.index("-filter_complex")
+                    argv = [*args[:2], "-loglevel", "error", *inputs, *args[cut:]]
+                    done = subprocess.run(argv, capture_output=True, text=True, check=False)
+                    self.assertEqual(done.returncode, 0, done.stderr)
+                    probe = subprocess.run(
+                        ["ffprobe", "-v", "error", "-of", "default=nw=1",
+                         "-show_entries", "stream=sample_rate:format=duration", f"{tmp}/x.wav"],
+                        capture_output=True, text=True, check=False,
+                    )  # fmt: skip
+                    self.assertIn("sample_rate=44100", probe.stdout)
+                    seconds = float(probe.stdout.split("duration=")[1].split()[0])
+                    self.assertAlmostEqual(seconds, 3.0, delta=0.1)
 
 
 if __name__ == "__main__":

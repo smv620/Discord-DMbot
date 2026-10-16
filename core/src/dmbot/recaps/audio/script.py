@@ -15,8 +15,10 @@ words (`previous_text`, `next_text`) so the voice stays consistent across reques
 from __future__ import annotations
 
 import re
+from collections.abc import Collection
 from dataclasses import dataclass
 
+from dmbot.memory.models import name_key
 from dmbot.recaps.text import CUE, PERFORMANCE
 
 MAX_CHARS = 4000  # one request's limit for the voice
@@ -79,31 +81,6 @@ def title_line(title: str, day: int | None) -> str:
     return f"Session Summary: {clean}" + (f", Day {day}" if day else "")
 
 
-def _split_long(text: str) -> list[str]:
-    """A paragraph over the limit, cut at sentence ends (a single over-long sentence at a space)."""
-    if len(text) <= MAX_CHARS:
-        return [text]
-    out: list[str] = []
-    current = ""
-    for sentence in _SENTENCE_END.split(text):
-        while len(sentence) > MAX_CHARS:  # no sentence end in reach: cut at the last space
-            cut = sentence.rfind(" ", 0, MAX_CHARS)
-            cut = cut if cut > 0 else MAX_CHARS
-            if current:
-                out.append(current)
-                current = ""
-            out.append(sentence[:cut].strip())
-            sentence = sentence[cut:].strip()
-        if current and len(current) + 1 + len(sentence) > MAX_CHARS:
-            out.append(current)
-            current = sentence
-        else:
-            current = f"{current} {sentence}".strip()
-    if current:
-        out.append(current)
-    return [p for p in out if p]
-
-
 def _walk(block: str) -> tuple[str, str, list[tuple[int, int, str, str, str]]]:
     """One block of the summary as (spoken, tagged, cues). A cue is (spoken offset, tagged
     offset, kind, name, tag); offsets are within this block. Taking a cue out never leaves a
@@ -141,10 +118,20 @@ def _walk(block: str) -> tuple[str, str, list[tuple[int, int, str, str, str]]]:
         if tag:
             tagged += tag + " "
         pos = match.end()
-    return (
-        spoken.strip(),
-        tagged.strip(),
-        [(int(str(c[0])), int(str(c[1])), str(c[2]), str(c[3]), str(c[4])) for c in cues],
+    spoken, tagged = spoken.strip(), tagged.strip()
+    return (  # a cue at the very end sits at the end of the trimmed text, not past it
+        spoken,
+        tagged,
+        [
+            (
+                min(int(str(c[0])), len(spoken)),
+                min(int(str(c[1])), len(tagged)),
+                str(c[2]),
+                str(c[3]),
+                str(c[4]),
+            )
+            for c in cues
+        ],
     )
 
 
@@ -163,36 +150,77 @@ def _blocks(summary: str) -> list[tuple[str, bool]]:
     return out
 
 
-def build(title: str, day: int | None, summary: str) -> Script:
+class SecretInScript(ValueError):
+    """A secret name stands in the text meant for the voice (the caller must not send it)."""
+
+
+def _holds(text: str, secret_keys: Collection[str]) -> bool:
+    """Whether a secret name is in the text, however it is joined to other letters (a possessive,
+    a plural, a hyphen): a leak costs far more than a false alarm."""
+    compact = name_key(text).replace(" ", "")
+    return any(key and key in compact for key in secret_keys)
+
+
+def _chunks(block: str, room: int) -> list[str]:
+    """A paragraph as pieces whose sent text fits in `room` characters: cut at sentence ends,
+    and a single over-long sentence at a space that is not inside a cue."""
+    if len(_walk(block)[1]) <= room:
+        return [block]
+    pieces: list[str] = []
+    current = ""
+    for sentence in _SENTENCE_END.split(block):
+        while len(_walk(sentence)[1]) > room:
+            cut = len(sentence[:room].rstrip())
+            while cut > 0:
+                cut = sentence.rfind(" ", 0, cut)
+                head = sentence[:cut] if cut > 0 else ""
+                if (
+                    cut > 0
+                    and head.count("《") == head.count("》")
+                    and head.count("((") == head.count("))")
+                ):
+                    break
+            if cut <= 0:
+                cut = room  # no space to cut at: a hard cut (a cue could split; very rare)
+            if current:
+                pieces.append(current)
+                current = ""
+            pieces.append(sentence[:cut].strip())
+            sentence = sentence[cut:].strip()
+        candidate = f"{current} {sentence}".strip()
+        if current and len(_walk(candidate)[1]) > room:
+            pieces.append(current)
+            current = sentence
+        else:
+            current = candidate
+    if current:
+        pieces.append(current)
+    return [p for p in pieces if p.strip()]
+
+
+def build(
+    title: str, day: int | None, summary: str, *, secret_names: Collection[str] = ()
+) -> Script:
     """The script for one recap: the title line, then each paragraph of the summary. Housekeeping
-    is not an input, so it can never be read."""
+    is not an input, so it can never be read. `secret_names`: if any stands in the title, the
+    summary or a cue, `SecretInScript` is raised (the recap's own checks already refuse such a
+    summary; this is the second lock, because what is built here goes to a provider)."""
+    keys = {k for n in secret_names if len(k := name_key(n).replace(" ", "")) >= 3}
+    if keys and _holds(f"{title} {summary}", keys):
+        raise SecretInScript("a secret name is in the recap text")
     pieces: list[tuple[str, str, list[tuple[int, int, str, str, str]]]] = []
     head = title_line(title, day)
     pieces.append((head, head, []))
-    # A cue only stands for the part it opens; a split paragraph keeps its cues in the part
-    # where they fall.
+    room = MAX_CHARS - len(SCENE_BREAK_TAG) - 1  # a scene break's tag is added to the last part
     for block, scene_break in _blocks(summary):
-        spoken, tagged, cues = _walk(block)
-        if not spoken.strip():
-            continue
-        if len(tagged) <= MAX_CHARS:
-            parts = [(spoken, tagged, cues)]
-        else:  # rare: cut the plain words, and carry the cues to the part they fall in
-            parts = []
-            consumed = 0
-            for part in _split_long(spoken):
-                begin = spoken.find(part, consumed)
-                end = begin + len(part)
-                consumed = end
-                inside = [
-                    (o - begin, o - begin, k, n, t) for o, _, k, n, t in cues if begin <= o < end
-                ]
-                parts.append((part, part, inside))
-        for i, (sp, tg, cs) in enumerate(parts):
-            last = i == len(parts) - 1
-            if last and scene_break:
-                tg = f"{tg} {SCENE_BREAK_TAG}"
-            pieces.append((sp, tg, cs))
+        parts = _chunks(block, room)
+        for i, part in enumerate(parts):
+            spoken, tagged, cues = _walk(part)
+            if not spoken.strip():
+                continue
+            if i == len(parts) - 1 and scene_break:
+                tagged = f"{tagged} {SCENE_BREAK_TAG}"
+            pieces.append((spoken, tagged, cues))
     paragraphs: list[Paragraph] = []
     cursor = 0
     spoken_all: list[str] = []

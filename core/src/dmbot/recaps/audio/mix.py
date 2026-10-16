@@ -6,9 +6,9 @@ voice speaks (a side-chain compressor keyed by the voice), the ambience at -28 L
 cut or padded to the voice's length, so the stems line up when played together. Outputs: the
 voice stem, the bed stem (music plus ambience) and the mix of both.
 
-Loudness here is a single pass of `loudnorm`, which is close, not exact; the 6 dB of ducking
-depends on how loud the speech is, so the numbers are a starting point for the by-ear test on the
-server (dev1), kept as constants for that reason.
+Needs ffmpeg 4.4 or newer (`amix normalize=0`). Loudness here is a single pass of `loudnorm`,
+which is close, not exact; the 6 dB of ducking depends on how loud the speech is, so the numbers
+are a starting point for the by-ear test on the server (dev1), kept as constants for that reason.
 """
 
 from __future__ import annotations
@@ -30,8 +30,11 @@ DUCK_RELEASE_MS = 500
 LRA = 11
 
 
+RATE = 44100  # loudnorm hands back 192 kHz: every branch is brought down to this
+
+
 def _norm(lufs: int, peak: int) -> str:
-    return f"loudnorm=I={lufs}:TP={peak}:LRA={LRA}"
+    return f"loudnorm=I={lufs}:TP={peak}:LRA={LRA},aresample={RATE}"
 
 
 def _fit(seconds: float) -> str:
@@ -42,6 +45,8 @@ def _fit(seconds: float) -> str:
 @dataclass(frozen=True, slots=True)
 class MixPlan:
     filter_complex: str
+    with_music: bool = True
+    with_ambience: bool = True
     voice_out: str = "[voice_out]"
     bed_out: str = "[bed_out]"
     mix_out: str = "[mix_out]"
@@ -80,13 +85,14 @@ def plan(voice_seconds: float, *, with_music: bool = True, with_ambience: bool =
     else:
         graph.append(f"anullsrc=r=44100:cl=stereo,{_fit(seconds)}[bed_mixed]")
     graph.append("[bed_mixed]asplit=2[bed_mix][bed_out]")
-    # The sum of voice and bed can pass the voice's own ceiling: a limiter holds it at -1 dB.
+    # Voice plus bed is louder than the voice alone: the mix is levelled again to the voice's
+    # target, which also holds its true peak at the ceiling.
     graph.append(
         "[voice_main][bed_mix]amix=inputs=2:duration=first:normalize=0,"
-        f"alimiter=limit={_db_to_linear(VOICE_PEAK_DB):.3f}[mix_out]"
+        f"{_norm(VOICE_LUFS, VOICE_PEAK_DB)}[mix_out]"
     )
     graph.append("[voice_stem]anull[voice_out]")
-    return MixPlan(";".join(graph))
+    return MixPlan(";".join(graph), with_music, with_ambience)
 
 
 def _db_to_linear(db: float) -> float:
@@ -105,6 +111,8 @@ def command(
 ) -> list[str]:
     """The ffmpeg argument list (not run here). The ambience loops without end; the graph cuts
     it to the voice's length."""
+    if (music is not None) != mix.with_music or (ambience is not None) != mix.with_ambience:
+        raise ValueError("the plan was made for different tracks than these")
     args = ["ffmpeg", "-y", "-i", voice]
     if music:
         args += ["-i", music]

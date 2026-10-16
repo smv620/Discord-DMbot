@@ -49,10 +49,13 @@ def _plain(text: str) -> str:
 
 
 def _mentions(text: str, secret_keys: Collection[str]) -> bool:
-    """Whether a secret name stands in the text as whole words (names are compared the way they
-    are everywhere: case, accents, apostrophes and hyphens ignored)."""
-    padded = f" {name_key(text)} "
-    return any(f" {key} " in padded for key in secret_keys)
+    """Whether a secret name is in the text, however it is joined to other letters: a possessive,
+    a plural or a hyphen ("Vaelithor's Keep", "Vaelithor-Keep"). Names are compared the way they
+    are everywhere (case, accents, apostrophes and hyphens ignored); a name written with a space
+    where the secret has none ("Ka Zeth" for "Ka'zeth") is a different thing heard and is not
+    caught. A false alarm only drops a rule; a leak would send a secret to the provider."""
+    compact = name_key(text).replace(" ", "")
+    return any(key in compact for key in secret_keys)
 
 
 def rules(names: Sequence[SpokenName]) -> list[Rule]:

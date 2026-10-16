@@ -24,6 +24,7 @@ from dmbot.recaps.audio.script import PERFORMANCE_KIND, Script
 MIN_SECONDS = 180
 MAX_SECONDS = 600
 MIN_SECTION_MS = 3000  # the provider's shortest section
+MAX_SECTION_MS = 120_000  # and its longest
 SPOKEN_CHARS_PER_SECOND = 14.0  # about 150 words a minute
 MAX_SECTIONS = 10
 AMBIENCE_SECONDS = 25.0  # inside the 20 to 30 asked for
@@ -70,7 +71,8 @@ SYNONYMS = {
 DENY = (
     "dungeons", "d&d", "zelda", "skyrim", "witcher", "star wars", "lord of the rings", "tolkien",
     "hans zimmer", "john williams", "howard shore", "game of thrones", "elder scrolls", "baldur",
-    "final fantasy", "harry potter", "mozart", "beethoven", "disney", "marvel", "pixar",
+    "final fantasy", "harry potter", "mozart", "beethoven", "disney", "marvel", "pixar", "dnd",
+    "warcraft", "pokemon", "nintendo", "hobbit", "narnia", "lotr",
 )  # fmt: skip
 
 
@@ -94,48 +96,65 @@ def total_seconds(spoken_chars: int) -> int:
     return int(min(MAX_SECONDS, max(MIN_SECONDS, round(spoken_chars / SPOKEN_CHARS_PER_SECOND))))
 
 
+def _merge_shortest(spans: list[tuple[str, int, int]]) -> None:
+    """Fold the shortest run into its neighbour (the one before it, or after if it is first), so
+    no mood at either end of the piece is lost and the opening and closing keep their place."""
+    i = min(range(len(spans)), key=lambda j: spans[j][2])
+    into = i - 1 if i > 0 else i + 1
+    name, start, chars = spans[into]
+    spans[into] = (name, min(start, spans[i][1]), chars + spans[i][2])
+    del spans[i]
+
+
 def sections(script: Script, *, seconds: int | None = None) -> list[Section]:
-    """One section for each run of the same emotion cue, from the cue map. Text before the first
-    cue is a calm opening. The durations add up to exactly the total, none under the provider's
-    3 seconds."""
+    """One section for each run of the same mood, from the cue map (two cues with the same style,
+    such as "tense" and "tension", are one run). Text before the first cue is a calm opening.
+    More than `MAX_SECTIONS` moods are merged, shortest first. A run longer than the provider's
+    longest section is split into equal parts of the same style. The durations add up to exactly
+    the total (3 to 10 minutes), none under the provider's 3 seconds."""
     spoken_len = max(1, len(script.spoken))
     total_ms = (seconds if seconds is not None else total_seconds(spoken_len)) * 1000
     total_ms = max(MIN_SECONDS * 1000, min(MAX_SECONDS * 1000, total_ms))
     marks: list[tuple[int, str]] = []
     for cue in script.emotions:
-        if marks and marks[-1][1] == cue.name:
-            continue  # the same mood again: one run
-        marks.append((cue.offset, cue.name))
+        mood = style_key(cue.name) or "calm"
+        if marks and marks[-1][1] == mood:
+            continue  # the same style again: one run
+        marks.append((cue.offset, mood))
     if not marks or marks[0][0] > 0:
-        marks.insert(0, (0, "calm"))
-    while len(marks) > MAX_SECTIONS:  # too many moods: drop the shortest-lived last ones
-        marks.pop()
-    spans = []
+        if not marks or marks[0][1] != "calm":
+            marks.insert(0, (0, "calm"))
+        else:
+            marks[0] = (0, "calm")
+    spans: list[tuple[str, int, int]] = []
     for i, (start, name) in enumerate(marks):
         end = marks[i + 1][0] if i + 1 < len(marks) else spoken_len
         spans.append((name, start, max(1, end - start)))
-    # Proportional shares, none under the provider's 3 seconds; the rounding and the lifting of
-    # short ones are settled on the longest section, so the sum is exactly the total.
+    while len(spans) > MAX_SECTIONS:
+        _merge_shortest(spans)
+    # Shares of the total in proportion to the words each covers, none under 3 s; the rounding
+    # and the lifting of short ones are settled on the longest, so the sum is exact.
     sum_w = sum(c for _, _, c in spans)
     base = [max(MIN_SECTION_MS, total_ms * c // sum_w) for _, _, c in spans]
     longest = max(range(len(base)), key=lambda i: base[i])
-    base[longest] += total_ms - sum(base)
-    if base[longest] < MIN_SECTION_MS:  # only when the sections can't all fit: fewer moods
-        raise ValueError("too many moods for the length")
-    return [
-        Section(name, start, chars, ms)
-        for (name, start, chars), ms in zip(spans, base, strict=True)
-    ]
+    base[longest] += total_ms - sum(base)  # MAX_SECTIONS * 3 s is far under the 3-minute floor
+    out: list[Section] = []
+    for (name, start, chars), ms in zip(spans, base, strict=True):
+        parts = -(-ms // MAX_SECTION_MS)
+        each, left = divmod(ms, parts)
+        for k in range(parts):
+            out.append(Section(name, start, chars // parts, each + (left if k == parts - 1 else 0)))
+    return out
 
 
 def composition_request(script: Script, *, seconds: int | None = None) -> dict[str, Any]:
     """The music request: a composition plan with one section for each mood, instrumental."""
     plan_sections = []
     for s in sections(script, seconds=seconds):
-        pos, neg = STYLES.get(style_key(s.emotion), DEFAULT_STYLE)
+        pos, neg = STYLES.get(s.emotion, DEFAULT_STYLE)
         plan_sections.append(
             {
-                "section_name": (style_key(s.emotion) or "calm").capitalize(),
+                "section_name": s.emotion.capitalize(),
                 "positive_local_styles": list(pos),
                 "negative_local_styles": list(neg),
                 "duration_ms": s.duration_ms,
@@ -204,9 +223,10 @@ def ambience_requests(script: Script) -> list[Ambience]:
     scene words are looked for in the performance cues and in the narration."""
     hits: list[tuple[int, str]] = []
     cue_text = " ".join(c.name for c in script.cues if c.kind == PERFORMANCE_KIND)
-    haystack = f"{script.spoken.lower()} {cue_text}"
+    haystack = f"{script.spoken.lower()}\n{cue_text}"
     for kind, (words, _) in SCENES.items():
-        found = [m.start() for w in words if (m := re.search(rf"\b{re.escape(w)}", haystack))]
+        # Whole words (and their plurals): "campaign" is not a camp, nor "public" a pub.
+        found = [m.start() for w in words if (m := re.search(rf"\b{re.escape(w)}s?\b", haystack))]
         if found:
             hits.append((min(found), kind))
     hits.sort()
