@@ -45,6 +45,7 @@ from dataclasses import dataclass, field, replace
 
 from dmbot.memory.lookup import CampaignLookup, NameEntry
 from dmbot.memory.models import CONFIRMED, PROPOSED, name_key
+from dmbot.memory.ontology import is_dm_word
 from dmbot.memory.scan import COMMON, GAME_TERMS
 from dmbot.memory.scene import WORD, find_mentions, group_sizes
 from dmbot.memory.sounds import sound_codes
@@ -254,6 +255,7 @@ def clean(
                 or key in lookup.fixes
                 or key in lookup.keep_keys
                 or key in person_keys
+                or is_dm_word(key)  # "DM", "Game Master"...: never fixed into a name (#1547)
             ):
                 known[start:end] = [True] * (end - start)
 
@@ -410,6 +412,8 @@ def _known_names(lookup: CampaignLookup, heard: str, person_keys: set[str]) -> l
         if any(span[0] < end and start < span[1] for start, end in taken):
             continue
         taken.append(span)
+        if is_dm_word(_stem(heard[span[0] : span[1]])):
+            continue  # "GM" is the person running the game, never rewritten, even by a DM's rule
         said_words = [name_key(_stem(w)) for w in heard[span[0] : span[1]].split()]
         if name_key(_stem(heard[span[0] : span[1]])) in person_keys or any(
             w in person_keys for w in said_words

@@ -56,6 +56,17 @@ export const dmSteps: Step[] = [
     ],
   },
   {
+    text: "A name with a long list of other names or connections shows the first few on its card. Open the Show all ▾ list under the card to read the rest, one page at a time.",
+    names: [{ name: "Show all ▾", file: "ui/name_card.py" }],
+  },
+  {
+    text: "To keep a connection from your players, open the name, press 🧭 Connect to…, press 🤫 Secret once, so it reads 🤫 Secret: yes, then pick the other name. Players' cards never show that connection. Only a game master of the campaign can turn Secret on. If a connection is already secret, it stays secret.",
+    names: [
+      { name: "Connect to…", file: "ui/name_card.py" },
+      { name: "🤫 Secret: yes", file: "ui/name_card.py" },
+    ],
+  },
+  {
     text: "To say who has something, open the name, press 🧭 Connect to…, and choose carries. It is saved either way. If it looks odd, for example \"Someone else already has that, and there is only one\", DMbot says so and will ask you about it after the session. DMbot only points it out. You decide.",
     names: [
       { name: "Connect to…", file: "ui/name_card.py" },
@@ -149,6 +160,41 @@ export const dmSteps: Step[] = [
   {
     text: "You can choose how long a campaign keeps its transcripts: Forever, 1 year, 90 days or 30 days (⚙️ Settings → 📜 Transcripts). Older ones are deleted within a day. Recaps stay.",
     names: [{ name: "Transcripts", file: "dm_screen/transcript_keep.py" }],
+  },
+  {
+    text: "To share your homebrew with another table, press ⚙️ Settings, then 📚 Shared rules, then 📦 Homebrew packs, then 📤 Share my homebrew (paid campaigns only). DMbot gives you a share code. Any game master in your server can read everything you share, and so can anyone you give the code to. That includes entries you hide from players. Only share what you are happy for them to see. Followers get a new version only when you press 🔄 Publish my changes. Only homebrew is shared, never your story, names or notes.",
+    names: [
+      { name: "📦 Homebrew packs", file: "ui/shared_rules.py" },
+      { name: "📤 Share my homebrew", file: "ui/shared_packs.py" },
+      { name: "🔄 Publish my changes", file: "ui/shared_packs.py" },
+    ],
+  },
+  {
+    text: "To use another table's homebrew, press ⚙️ Settings, then 📚 Shared rules, then 📦 Homebrew packs, then 📥 Follow a pack, and type the share code they gave you. DMbot shows you what is in the pack first. Press Yes, follow this pack only if you want it. If you have homebrew with the same name, yours is used. Press Stop following any time to stop.",
+    names: [
+      { name: "📥 Follow a pack", file: "ui/shared_packs.py" },
+      { name: "Yes, follow this pack", file: "ui/shared_packs.py" },
+      { name: "Stop following", file: "ui/shared_packs.py" },
+    ],
+  },
+  {
+    text: "When a pack you follow changes, DMbot tells you in one note at the start of your next session. The changes are added unless you step in. Press Pick changes to choose which ones to keep, or Undo to put things back how they were.",
+    names: [
+      { name: "Pick changes", file: "dm_screen/pack_update.py" },
+      { name: "Undo", file: "dm_screen/pack_update.py" },
+    ],
+  },
+  {
+    text: "To change an entry that comes from a pack you follow, look it up (for example with /dmbot rule) and press ✏️ Make it my own on its card. DMbot copies it into your campaign's own homebrew and opens it so you can edit it. From then on this campaign uses your copy instead of the pack's. The pack itself does not change.",
+    names: [{ name: "✏️ Make it my own", file: "ui/rule_lookup.py" }],
+  },
+  {
+    text: "To suggest one of your own homebrew entries to the pack you follow, open the entry in your homebrew and press 💡 Suggest to the pack. The game master who shares the pack sees the entry with Add to pack or No thanks. They never see who sent it. The pack stays as it is unless they press Add to pack.",
+    names: [
+      { name: "💡 Suggest to the pack", file: "ui/homebrew.py" },
+      { name: "Add to pack", file: "dm_screen/pack_suggestion.py" },
+      { name: "No thanks", file: "dm_screen/pack_suggestion.py" },
+    ],
   },
   {
     text: "To give a campaign to another game master, press ⚙️ Settings, then Hand over. They must say yes.",
