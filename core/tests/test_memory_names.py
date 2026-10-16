@@ -339,6 +339,54 @@ class NameCards(NamesTest):
         self.assertIn("bellaros", keys)
         self.assertNotIn("belleros", keys)
 
+    async def test_the_narrators_spelling_is_asked_only_when_spoken_recaps_are_on(self) -> None:
+        from dmbot.ui import name_card
+
+        plain = name_card.FixSpellingForm(self.campaign.id, self.bell.id, "Belleros")
+        self.assertNotIn(plain.said_as, plain.children)  # not in the campaign's plan: no field
+        spoken = name_card.FixSpellingForm(
+            self.campaign.id, self.bell.id, "Belleros", spoken=True, said_as="Bell-air-os"
+        )
+        self.assertIn(spoken.said_as, spoken.children)
+        self.assertEqual(spoken.said_as.default, "Bell-air-os")
+        self.assertIn("narrator", spoken.said_as.label or "")
+
+    async def test_a_spelling_for_the_narrator_is_saved_changed_and_cleared_on_the_card(
+        self,
+    ) -> None:
+        from dmbot.ui import name_card
+
+        before: str | None = None
+        for typed, told in (
+            ("Bell-air-os", "say it as **Bell-air-os**"),
+            ("", "say it as written"),
+        ):
+            form = name_card.FixSpellingForm(
+                self.campaign.id, self.bell.id, "Belleros", spoken=True, said_as=before
+            )
+            form.name = SimpleNamespace(value="Belleros")  # type: ignore[assignment]
+            form.said_as = SimpleNamespace(value=typed)  # type: ignore[assignment]
+            it = self.it()
+            await form.on_submit(it)
+            self.assertIn(told, it.response.edited[0][0])
+            self.assertEqual(
+                await self.memory.said_as(GUILD, self.campaign.id, self.bell.id), typed or None
+            )
+            before = typed or None
+
+    async def test_a_form_without_the_field_never_touches_the_spelling(self) -> None:
+        from dmbot.ui import name_card
+
+        await self.memory.set_said_as(
+            GUILD, self.campaign.id, self.bell.id, "Bell-air-os", source="dm"
+        )
+        form = name_card.FixSpellingForm(self.campaign.id, self.bell.id, "Belleros")
+        form.name = SimpleNamespace(value="Belleros")  # type: ignore[assignment]
+        await form.on_submit(self.it())
+        self.assertEqual(
+            await self.memory.said_as(GUILD, self.campaign.id, self.bell.id), "Bell-air-os"
+        )
+
     async def test_another_name_and_a_secret_one(self) -> None:
         from dmbot.ui import name_card
 

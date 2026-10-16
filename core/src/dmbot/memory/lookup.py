@@ -79,6 +79,7 @@ class NameEntry:
     confirmed: bool
     codes: tuple[str, ...]
     person: bool = False  # a name of someone at the table, not of a story character
+    said_as: str | None = None  # the DM's spelling for the recap's narrator (#1419)
 
 
 @dataclass(frozen=True, slots=True)
@@ -119,6 +120,8 @@ class CampaignLookup:
                 a.secret,
                 a.status == CONFIRMED and entities[a.entity_id].status == CONFIRMED,
                 sound_codes(a.text),  # the same function as for heard words
+                False,
+                a.said_as,
             )
             for a in data.aliases
             if a.entity_id in entities

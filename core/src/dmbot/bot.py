@@ -5474,11 +5474,11 @@ class DMBot(commands.AutoShardedBot):
             return None
         return AudioInputs(
             secret_names=sorted({n.text for n in lookup.names if n.secret}),
-            # No "said as" spelling is kept anywhere yet (the website's review page will add it),
-            # so no rule is made until one is; the names themselves are read fresh all the same.
+            # The DM's "said as" spelling (#1419); a secret name never has one, and the names are
+            # read fresh all the same, so a secret one is always known to the filter.
             names=[
                 audio_names.SpokenName(
-                    n.text, None, secret=n.secret, confirmed=n.confirmed, person=n.person
+                    n.text, n.said_as, secret=n.secret, confirmed=n.confirmed, person=n.person
                 )
                 for n in lookup.names
             ],

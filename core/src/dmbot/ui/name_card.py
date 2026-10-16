@@ -12,6 +12,7 @@ checks again.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import re
 from typing import Any
@@ -37,6 +38,7 @@ from dmbot.memory.models import (
 )
 from dmbot.memory.ontology import CORE_TYPES, FALLBACK_PREDICATE
 from dmbot.memory.search import MAX_RESULTS, Match, find, said_lately
+from dmbot.memory.store import SAID_AS_MAX
 from dmbot.ui import logic
 from dmbot.ui.dmbot_commands import (
     VIEW_TIMEOUT_S,
@@ -532,8 +534,17 @@ class NameCard(_Menu):
         found = await _current(interaction, self.campaign_id, self.entity_id)
         if found:
             self.origin = None  # the form's answer replaces this message; cancel keeps it
+            # The narrator's spelling is asked for only where spoken recaps are on for the
+            # campaign (#1419); a form must open within 3 seconds, so a slow check means no field.
+            spoken = await _spoken_recaps(interaction, found[0])
+            said = None
+            memory = _memory(interaction)
+            if spoken and memory is not None:
+                said = await memory.said_as(found[0].guild_id, found[0].id, self.entity_id)
             await interaction.response.send_modal(
-                FixSpellingForm(self.campaign_id, self.entity_id, found[1])
+                FixSpellingForm(
+                    self.campaign_id, self.entity_id, found[1], spoken=spoken, said_as=said
+                )
             )
 
     async def _add(self, interaction: discord.Interaction) -> None:
@@ -581,16 +592,53 @@ class NameCard(_Menu):
         )
 
 
+async def _spoken_recaps(interaction: discord.Interaction, campaign: Campaign) -> bool:
+    """Whether the narrator's spelling is offered: spoken recaps are switched on and the
+    campaign's plan includes them. False when it can't be told (the field is only a help)."""
+    bot = interaction.client
+    settings = getattr(bot, "settings", None)
+    if settings is None or not getattr(settings, "recap_audio_on", False):
+        return False
+    try:
+        async with asyncio.timeout(2):
+            return bool(
+                await bot.plan_allows("recap_audio", campaign.guild_id, campaign, fail_open=False)  # type: ignore[attr-defined]
+            )
+    except Exception:
+        return False
+
+
+SAID_AS_LABEL = "How should the narrator say it? (optional)"
+SAID_AS_HELP = "For example Kah-zeth. Leave empty to say it as written."
+
+
 class FixSpellingForm(discord.ui.Modal, title="Fix spelling"):
     name: discord.ui.TextInput[FixSpellingForm] = discord.ui.TextInput(
         label="Name", max_length=NAME_LIMIT
     )
+    said_as: discord.ui.TextInput[FixSpellingForm] = discord.ui.TextInput(
+        label=SAID_AS_LABEL, placeholder=SAID_AS_HELP, max_length=SAID_AS_MAX, required=False
+    )
 
-    def __init__(self, campaign_id: str, entity_id: str, current: str) -> None:
+    def __init__(
+        self,
+        campaign_id: str,
+        entity_id: str,
+        current: str,
+        *,
+        spoken: bool = False,
+        said_as: str | None = None,
+    ) -> None:
         super().__init__(timeout=VIEW_TIMEOUT_S)
         self.campaign_id = campaign_id
         self.entity_id = entity_id
         self.name.default = current[:NAME_LIMIT]
+        self.spoken = spoken
+        self.before = said_as
+        if spoken:
+            self.said_as.default = (said_as or "")[:SAID_AS_MAX]
+        else:
+            self.remove_item(self.said_as)  # not part of this campaign's plan: no field
 
     async def on_error(  # type: ignore[override]  # a form's has no item (discord.py)
         self, interaction: discord.Interaction, error: Exception
@@ -617,8 +665,23 @@ class FixSpellingForm(discord.ui.Modal, title="Fix spelling"):
         except MemoryRuleError as exc:
             await _tell(interaction, f"Couldn't change it. {exc}")
             return
-        changed(interaction, campaign)
         note = f"✏️ Now spelled **{_md(written.value.name)}**."
+        if self.spoken:
+            spelling = " ".join(self.said_as.value.split()) or None
+            renamed = name_key(new) != name_key(old)
+            if spelling != (None if renamed else self.before):
+                try:
+                    await memory.set_said_as(
+                        campaign.guild_id, campaign.id, self.entity_id, spelling, source=DM
+                    )
+                    note += (
+                        f" The narrator will say it as **{_md(spelling)}**."
+                        if spelling
+                        else " The narrator will say it as written."
+                    )
+                except MemoryRuleError as exc:
+                    note += f" The narrator's spelling wasn't saved. {exc}"
+        changed(interaction, campaign)
         await show_card(interaction, campaign.id, self.entity_id, replace=True, note=note)
 
 
