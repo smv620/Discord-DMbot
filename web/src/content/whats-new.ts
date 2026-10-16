@@ -106,6 +106,13 @@ export const held: Held[] = [
     reason:
       "It needs the story extractor, which stays off until its prompt passes the measurement (#1282).",
   },
+  {
+    date: "2026-10-16",
+    title: "A note before tonight's session",
+    what: "When a session starts, DMbot can post a short note for the game master on the DM screen: last time's recap, who was talked about and what is open about them, anything lost or ended, and how many things said at the table wait to be checked. Players do not see it.",
+    reason:
+      "Held until it has been seen working on the test server (#1403).",
+  },
 ];
 
 const months = [

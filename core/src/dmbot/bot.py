@@ -157,6 +157,7 @@ from dmbot.memory.continuity import ContinuityStore
 from dmbot.memory.lookup import CampaignLookup, LookupCache
 from dmbot.memory.models import DM, FIX, KEEP, Heard, MemoryRuleError, name_key
 from dmbot.memory.ontology import Tally
+from dmbot.memory.presession import PreSession
 from dmbot.memory.recall import PLAYERS, AsOf, Recall, RecallService
 from dmbot.memory.scan import MAX_SUGGESTIONS, find_new_names, group_alike
 from dmbot.memory.scene import HintParts, SceneTracker, mentions, scene_hints
@@ -1607,9 +1608,48 @@ class DMBot(commands.AutoShardedBot):
             self._sheet_hints(table, refresh=not table.resumed), "sheets"
         )
         self._track(self._fight_left_over(table), "fight-left-over")  # #1173
+        self._track(self._pre_session_note(table), "pre-session-note")  # #1403
         table.watch_task = self._track_loop(sheet_reread.run(self, table), "sheet-watch")  # #1128
         table.fight_task = self._track_loop(fightbot.run(self, table), "fightbot")  # #1129
         return sent
+
+    async def _pre_session_note(self, table: Table) -> None:
+        """A session starts: a few lines on the DM screen from what the DM confirmed (#1403) —
+        the last recap, what is open about the names heard last time, what was lost or ended, and
+        how many things said at the table are waiting to be checked. DM screen only; no AI call.
+        Once a session (not again after a restart), for a campaign whose plan includes story
+        memory (closed if that can't be checked, like the extractor), with the switch on, and
+        only when something is confirmed. A failure costs the note, never the session."""
+        if (
+            not self.settings.presession_note
+            or self.memory is None
+            or table.campaign_id is None
+            or table.resumed
+        ):
+            return
+        gid, cid = table.guild_id, table.campaign_id
+        with log_context(guild_id=gid, campaign_id=cid):
+            try:
+                campaign = await self.campaigns.get(gid, cid)
+                if campaign is None or not await self.plan_allows(
+                    "story", gid, campaign, fail_open=False
+                ):
+                    return
+                agreed = await self.consent.consenting(gid)
+                presession = PreSession(
+                    self.memory, RecallService(self.memory), ClaimStore(self.memory), self.recaps
+                )
+                note = await presession.note(gid, cid, now=int(time.time()), opted_in=agreed)
+                if note is None or self.tables.get(gid) is not table:
+                    return  # nothing confirmed, or the session ended meanwhile
+                await self.post(
+                    table.screen_channel_id,
+                    note.text,
+                    view=claims_review_view(cid) if note.waiting else None,
+                )
+                log.info("Pre-session note: %d line(s)", len(note.lines))  # counts only
+            except Exception:
+                log.exception("The pre-session note failed")
 
     async def _fight_left_over(self, table: Table) -> None:
         """A session starts with a fight still running from last time: one line on the DM
