@@ -6,6 +6,7 @@ import { useEffect, useRef, useState } from "preact/hooks";
 
 import {
   againLabel,
+  allowanceLines,
   errors,
   sessionDay,
   statusLine,
@@ -19,6 +20,7 @@ import {
   type AccountApi,
   type Recap,
   type RecapAction,
+  type RecapMonth,
   type RecapAudioLinks,
 } from "./api";
 
@@ -28,7 +30,7 @@ type Load =
   | { kind: "loading" }
   | { kind: "signed-out" }
   | { kind: "error"; message: string }
-  | { kind: "ready"; recaps: Recap[] };
+  | { kind: "ready"; recaps: Recap[]; thisMonth: RecapMonth[] };
 
 export function messageFor(error: unknown): string {
   const kind = error instanceof ApiError ? error.kind : "server";
@@ -78,8 +80,12 @@ function List({ api }: { api: AccountApi }) {
       setLoad({ kind: "error", message: errors.other });
       return;
     }
-    api.recaps().then(
-      (recaps) => live && setLoad({ kind: "ready", recaps }),
+    // The list with the month's allowance when the API has it (#1444), else the plain list.
+    const read = api.recapList
+      ? api.recapList()
+      : api.recaps().then((recaps) => ({ recaps, thisMonth: [] as RecapMonth[] }));
+    read.then(
+      ({ recaps, thisMonth }) => live && setLoad({ kind: "ready", recaps, thisMonth }),
       (error: unknown) => {
         if (!live) return;
         if (error instanceof ApiError && error.kind === "signed-out")
@@ -134,6 +140,13 @@ function List({ api }: { api: AccountApi }) {
           ))}
         </ul>
       )}
+      {/* Behind the same switch as the list's other promises (#1423): nothing while recaps are off. */}
+      {RECAPS_LIVE &&
+        allowanceLines(load.thisMonth, RECAP_AUDIO_LIVE, new Date()).map((line) => (
+          <p key={line} class="small muted">
+            {line}
+          </p>
+        ))}
     </>
   );
 }
@@ -362,7 +375,7 @@ function Review({ api, recapRef }: { api: AccountApi; recapRef: string }) {
       (r) => {
         if (!live) return;
         setRecap(r);
-        setLoad({ kind: "ready", recaps: [r] });
+        setLoad({ kind: "ready", recaps: [r], thisMonth: [] });
       },
       (error: unknown) => {
         if (!live) return;
