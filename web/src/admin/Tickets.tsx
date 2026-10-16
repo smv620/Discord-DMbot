@@ -4,7 +4,7 @@
 // the signed-in admin; the API checks the session and the CSRF token on every change.
 import { useEffect, useRef, useState } from "preact/hooks";
 
-import { text, who } from "../content/admin";
+import { text, weekLine, who } from "../content/admin";
 import { planName } from "../content/account";
 import { type PlanId } from "../content/pricing";
 import {
@@ -15,6 +15,7 @@ import {
   type TicketCounts,
   type TicketFilter,
   type TicketStatus,
+  type TicketWeek,
 } from "./api";
 
 /** The filter buttons in the order the team needs them: what still needs a reply first. */
@@ -169,6 +170,7 @@ export default function Tickets({ api, csrf, onSignedOut, onOff }: Props) {
   const [rows, setRows] = useState<SupportTicketRow[] | "loading" | "down">("loading");
   const [filter, setFilter] = useState<TicketFilter>("new");
   const [counts, setCounts] = useState<TicketCounts | null>(null);
+  const [week, setWeek] = useState<TicketWeek | null>(null);
   // The ticket whose address was just copied (or failed to), so its row can say so.
   const [copied, setCopied] = useState<{ id: number; ok: boolean } | null>(null);
   const [news, setNews] = useState<{ text: string; ok: boolean } | null>(null);
@@ -191,6 +193,7 @@ export default function Tickets({ api, csrf, onSignedOut, onOff }: Props) {
       if (mine !== newest.current) return;
       setRows(found.tickets);
       setCounts(found.counts);
+      setWeek(found.week ?? null);
     } catch (error) {
       if (mine !== newest.current) return;
       const kind = error instanceof AdminApiError ? error.kind : "down";
@@ -275,6 +278,7 @@ export default function Tickets({ api, csrf, onSignedOut, onOff }: Props) {
           {news.text}
         </p>
       )}
+      {week && <p>{weekLine(week)}</p>}
       <div class="row" role="group" aria-label={text.ticketsFilterLabel}>
         {FILTERS.map((f) => (
           <button
