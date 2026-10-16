@@ -1909,6 +1909,14 @@ reads the campaign memory and never changes it.
   it (never queued, never in Redis, never logged, never stored). **Consent is re-checked
   right before every re-listen request**, and the audio is dropped at once on revoke.
   Re-listen is added after the first version, once close calls can be measured.
+  **Built, close calls are counted (2026-10-16, #1577):** the Cleaner counts, per session and in
+  memory, the candidates whose spelling-likeness lands within 0.05 of a threshold (fixed just
+  above, left just below, one word or more, people apart), counts only (no words, names or
+  speakers). One INFO log line at the session's end, "Cleaner close calls: fixed-near 3,
+  left-near 7, one-word 2 of 412 lines", is where dev1 reads it; nothing goes to the DM screen
+  or to players. `python -m dmbot.devtools.cleaner_close_calls --names FILE SOURCE` runs the
+  Cleaner offline over a kept session or a transcript file and also lists the ten nearest misses
+  as words, for dev1 on the owner's recordings (never in GitHub).
 - **Test recordings (owner, 2026-10-10; #1019, built): the one place audio is kept.** On a
   test server only (`DMBOT_TEST_RECORDING_GUILDS`, empty by default), and only for people who
   pressed a second, separate button, **Save my voice for tests**, in their consent message

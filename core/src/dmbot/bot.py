@@ -235,6 +235,7 @@ from dmbot.transcript.cleaner import (
     safe_answer,
     with_ending,
 )
+from dmbot.transcript.close_calls import CloseCalls
 from dmbot.transcript.export import clock
 from dmbot.transcript.keep import KeepJob
 from dmbot.transcript.models import NARRATING, Line, TranscriptBuffer
@@ -463,6 +464,8 @@ class Table:
     # "Did they mean…?" for the DM (#296): one open at a time, each word once a session.
     questions: name_questions.QuestionBook = field(default_factory=name_questions.QuestionBook)
     question_message: discord.Message | None = None
+    # How often a line landed near one of the Cleaner's likeness thresholds (#1577): counts only.
+    close_calls: CloseCalls = field(default_factory=CloseCalls)
     # The words each piece has in the helpers' copies (heard, recent, held, counts), by
     # (speaker, started_ms), so a later change can bring those copies up to date (#127). Bounded.
     piece_words: dict[tuple[int, int], tuple[str, float]] = field(default_factory=dict)
@@ -2091,6 +2094,7 @@ class DMBot(commands.AutoShardedBot):
             ("summary", lambda: self.post_session_summary(table, ended_at, caught_up, sent)),
             ("names heard", lambda: self.keep_heard_names(table)),
             ("name scan", lambda: self.suggest_names(table)),
+            ("close calls", lambda: self.log_close_calls(table)),
             ("who is who", lambda: self.learn_people(table)),
             ("people check", lambda: self.check_people(table)),
             ("definitions", lambda: self.recheck_definitions(table)),
@@ -3633,7 +3637,7 @@ class DMBot(commands.AutoShardedBot):
             noted = self.tables.get(table.guild_id) is table and screen_levels.allows(
                 table.screen_level, screen_levels.FIX_NOTE
             )
-            result = self._clean(table, text, unsure=noted)
+            result = self._clean(table, text, unsure=noted, count=True)
             cleaned = result.text
             table.names_fixed += len(result.fixes)
             seam = self._look_back(table, utterance, text, result)
@@ -4853,11 +4857,11 @@ class DMBot(commands.AutoShardedBot):
                         EDIT_TIMEOUT_S,
                     )
 
-    def _clean(self, table: Table, heard: str, *, unsure: bool) -> Cleaned:
+    def _clean(self, table: Table, heard: str, *, unsure: bool, count: bool = False) -> Cleaned:
         """The line with misheard names fixed (#127), from the campaign's names as last
         loaded; as heard if cleaning fails. `unsure`: also fixes from names DMbot only
-        suggested and close look-alikes (shown with Undo). No await: the consent check just
-        made still holds."""
+        suggested and close look-alikes (shown with Undo). `count`: table speech, whose close calls
+        are counted for the session (#1577). No await: the consent check just made still holds."""
         assert table.name_lookup is not None
         try:
             result = clean(
@@ -4867,6 +4871,7 @@ class DMBot(commands.AutoShardedBot):
                 people=table.people,
                 scene=table.scene.scene(time.monotonic()).keys(),
                 unsure=unsure,
+                close_calls=table.close_calls if count else None,
             )
         except Exception:
             now = time.monotonic()
@@ -6066,6 +6071,15 @@ class DMBot(commands.AutoShardedBot):
         # (an unknown member comes back as a mention, which is not a name: the DM still counts)
         table.name_answers.set_dms({u: "" if n.startswith("<@") else n for u, n in dms.items()})
         table.name_answers.feed(user_id, at_ms, text, consented=True)
+
+    async def log_close_calls(self, table: Table) -> None:
+        """One INFO line at the session's end for dev1 (#1577): how many lines landed near the
+        Cleaner's likeness thresholds. Counts only (no words, names or speakers); nothing goes to
+        the DM screen or to players. Said once: the counter is emptied as it is read."""
+        calls, table.close_calls = table.close_calls, CloseCalls()
+        if calls.lines:
+            with log_context(guild_id=table.guild_id, campaign_id=table.campaign_id):
+                log.info("%s", calls.report())
 
     async def learn_people(self, table: Table) -> None:
         """After a session: turn the names people answered to at least twice into waiting
