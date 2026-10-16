@@ -204,6 +204,17 @@ export interface Recap {
   canDrop: boolean;
 }
 
+/** One campaign's recaps used this month, as `GET /me/recaps` says (`recapsThisMonth`, #1428,
+ * #1444). `audio*` count the narrated ones. Missing from an API older than #1428. */
+export interface RecapMonth {
+  serverName?: string;
+  campaign: string | null;
+  used: number;
+  allowed: number;
+  audioUsed: number;
+  audioAllowed: number;
+}
+
 export type RecapAction = "post" | "again" | "drop";
 
 /** Why a call failed, in a form the page can turn into plain words. */
@@ -282,6 +293,9 @@ export interface AccountApi {
   sendSupport?(ticket: SupportTicket): Promise<SupportReceipt>;
   /** The DM's recent session recaps, newest first (#1386). Missing from an API older than that. */
   recaps?(): Promise<Recap[]>;
+  /** The same list with each campaign's recaps used this month (#1444). The page prefers it;
+   * `thisMonth` is empty from an API older than #1428. */
+  recapList?(): Promise<{ recaps: Recap[]; thisMonth: RecapMonth[] }>;
   recap?(ref: string): Promise<Recap>;
   /** Save the DM's edit of the recap text and its housekeeping bullets. */
   saveRecap?(ref: string, summary: string, housekeeping: string[]): Promise<Recap>;
@@ -453,6 +467,13 @@ export function httpApi(base: string, fetcher: typeof fetch = fetch): AccountApi
     recapAudioUrl: () => url("/billing/recap-audio"),
     downloadExport: async () => (await call("GET", "/me/export", undefined, true)) as Blob,
     recaps: async () => ((await call("GET", "/me/recaps")) as { recaps: Recap[] }).recaps,
+    recapList: async () => {
+      const got = (await call("GET", "/me/recaps")) as {
+        recaps: Recap[];
+        recapsThisMonth?: RecapMonth[];
+      };
+      return { recaps: got.recaps, thisMonth: got.recapsThisMonth ?? [] };
+    },
     recap: async (ref) => (await call("GET", `/me/recaps/${encodeURIComponent(ref)}`)) as Recap,
     saveRecap: async (ref, summary, housekeeping) =>
       (await call("PUT", `/me/recaps/${encodeURIComponent(ref)}`, {
