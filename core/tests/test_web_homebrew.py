@@ -115,7 +115,9 @@ class ThePage(HomebrewBase):
     async def test_only_the_wanted_fields_leave(self) -> None:
         got = await pages.read_homebrew(self.web, self.carol, self.cref)
         self.assertEqual(set(got), {"name", "fileName", "entries"})
-        self.assertEqual(set(got["entries"][0]), {"kind", "name", "summary", "text"})
+        self.assertEqual(
+            set(got["entries"][0]), {"kind", "name", "summary", "text", "fromBook", "legacy"}
+        )
         self.assertEqual(got["fileName"], homebrew_file.filename("One"))
         self.assertNotIn(str(ALICE.id), json.dumps(got))
 
@@ -143,6 +145,65 @@ class ThePage(HomebrewBase):
         )
         names = [c["name"] for c in await pages.list_campaigns(self.web, self.carol)]
         self.assertEqual(names, ["One", "Two", "Zed"])
+
+
+class BookTags(HomebrewBase):
+    """A shared book's entries are tagged like the Discord players' card (#1579)."""
+
+    async def mark(self, name: str, edition: str | None, *, target: str | None = None) -> None:
+        async with self.db.guild(THURSDAY.id) as conn:
+            await conn.execute(
+                "UPDATE homebrew_entries SET from_book = TRUE, book_edition = %s"
+                " WHERE guild_id = %s AND campaign_id = %s AND name = %s",
+                (edition, THURSDAY.id, self.one.id, name),
+            )
+            if target is not None:
+                await conn.execute(
+                    "UPDATE campaigns SET target_ruleset = %s WHERE guild_id = %s AND id = %s",
+                    (target, THURSDAY.id, self.one.id),
+                )
+
+    async def tags(self) -> dict[str, tuple[bool, bool]]:
+        got = await pages.read_homebrew(self.web, self.carol, self.cref)
+        return {e["name"]: (e["fromBook"], e["legacy"]) for e in got["entries"]}
+
+    async def test_a_2014_book_in_a_newer_campaign_is_legacy_a_2024_book_is_not(self) -> None:
+        await self.mark("Zap", "2014", target="2024")
+        await self.mark("Arc", "2024")
+        self.assertEqual(
+            await self.tags(),
+            {"Arc": (True, False), "Zap": (True, True), "Moon Lamp": (False, False)},
+        )
+
+    async def test_the_same_test_as_the_bots(self) -> None:
+        from dmbot.rules.book_rank import book_is_legacy
+
+        for edition, target in (
+            ("2014", "2024"),
+            ("2014", "2014"),
+            ("2024", "2024"),
+            (None, "2024"),
+        ):
+            with self.subTest(edition=edition, target=target):
+                await self.mark("Zap", edition, target=target)
+                entries = await self.store_b.list(THURSDAY.id, self.one.id)
+                zap = next(e for e in entries if e.name == "Zap")
+                self.assertEqual((await self.tags())["Zap"][1], book_is_legacy(zap, target))
+
+    async def test_a_hidden_book_entry_still_never_leaves_and_no_book_name_or_author(self) -> None:
+        await self.mark("The Lich", "2014", target="2024")
+        shown = json.dumps(await pages.read_homebrew(self.web, self.carol, self.cref))
+        self.assertNotIn("The Lich", shown)
+        self.assertNotIn(str(ALICE.id), shown)
+
+    async def test_a_non_member_gets_nothing_and_the_file_ignores_the_tags(self) -> None:
+        await self.mark("Zap", "2014", target="2024")
+        elsewhere = await self.session_of(CAROL, [QUILLON])
+        with self.assertRaises(RecapError):
+            await pages.read_homebrew(self.web, elsewhere, self.cref)
+        _name, text = await pages.render(self.web, self.carol, self.cref)
+        shown = [e for e in await self.store_b.list(THURSDAY.id, self.one.id) if e.players_may_know]
+        self.assertEqual(text.encode(), homebrew_file.write("One", shown).encode())
 
 
 class TheFile(HomebrewBase):

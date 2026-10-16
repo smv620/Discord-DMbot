@@ -175,6 +175,7 @@ function Entries({
             <h2>{found.name}</h2>
             <p class="small">{text.leadOneCampaign}</p>
             <p class="small">{text.dmChanges}</p>
+            {found.entries.some((e) => e.fromBook) && <p class="small">{text.bookNote}</p>}
             {found.entries.length === 0 ? (
               <p class="panel" role="status">
                 {text.empty}
@@ -189,7 +190,21 @@ function Entries({
                         .filter((e) => e.kind === kind)
                         .map((e) => (
                           <li key={e.name}>
-                            <strong>{e.name}</strong>
+                            <span>
+                              <strong>{e.name}</strong>
+                              {e.fromBook && (
+                                <>
+                                  {" "}
+                                  <span class="muted homebrew-tag">{text.fromBook}</span>
+                                </>
+                              )}
+                              {e.legacy && (
+                                <>
+                                  {" "}
+                                  <span class="muted homebrew-tag">{text.legacy}</span>
+                                </>
+                              )}
+                            </span>
                             {e.summary && (
                               <span class="small muted">{e.summary}</span>
                             )}
