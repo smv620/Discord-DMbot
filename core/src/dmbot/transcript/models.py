@@ -137,6 +137,10 @@ class TranscriptBuffer:
         self._waiting = []
         return batch
 
+    def lines(self) -> list[Line]:
+        """The lines waiting now (a copy), for a re-check of the session after an answer."""
+        return list(self._waiting)
+
     def relabel(self, user_id: int, started_ms: int, text: str) -> bool:
         """A waiting line's cleaned words changed (an Undo or an answer, #296, #503);
         True if it was here."""

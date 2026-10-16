@@ -2258,9 +2258,9 @@ class SaveAndResume(SessionTests):
         self.bot.stop_recording(GUILD, PLAYER)
         self.assertFalse(table.vocabulary.is_name("beleros"))  # forgotten with them
 
-    def two_alike(self, *more: Any) -> Any:
+    def two_alike(self, *more: Any, corrections: tuple[Any, ...] = ()) -> Any:
         """A campaign where "Marin" sounds like both Maren and Marron (#296); `more`:
-        other aliases."""
+        other aliases; `corrections`: the DM's fixed spellings."""
         from dmbot.memory.lookup import CampaignLookup, LookupData
         from dmbot.memory.models import CONFIRMED, Alias, Entity
 
@@ -2286,7 +2286,7 @@ class SaveAndResume(SessionTests):
                     for e, n in names
                 )
                 + more,
-                (),
+                corrections,
                 (),
             )
         )
@@ -2370,6 +2370,125 @@ class SaveAndResume(SessionTests):
         self.assertIs(back, True)
         self.assertEqual(self.waiting_text(table), "then Marin speaks")  # as heard again
         self.assertIsNone(await self.bot.answer_undone(GUILD, table.campaign_id, undo[1]))
+
+    async def test_an_answer_also_fixes_earlier_lines_and_undo_puts_them_all_back(self) -> None:
+        """#127, "Learning is immediate": earlier lines that said the same words are written
+        the same way, and one Undo takes the answer and those lines back together."""
+        from dmbot.memory.models import FIX, Correction, name_key
+
+        table, _, _, _ = await self.asked_about_marin(saving=True)
+        asked = table.questions.open
+        assert asked is not None
+        self.said(table, "Marin waits", at_ms=1000)
+        self.said(table, "and Marin leaves", at_ms=2000)
+        self.said(table, "Marin and Beleros", at_ms=3000)
+        entity_id, name = asked.options[0]
+        # The DM's answer is in the names by now (the stand-in memory doesn't save it).
+        fixed = Correction(
+            name_key("Marin").ljust(32, "0")[:32],
+            "Marin",
+            name_key("Marin"),
+            entity_id,
+            FIX,
+            "dm",
+            0,
+        )
+        self.bot._names_now = AsyncMock(  # type: ignore[method-assign]
+            return_value=self.two_alike(corrections=(fixed,))
+        )
+        text, _, undo = await self.bot.answer_name_question(GUILD, asked.id, "0", DM)
+        self.assertIn("3 earlier lines were fixed too.", text)
+        texts = [str(w.text) for w in table.unsaved._waiting]
+        self.assertEqual(
+            texts,
+            [
+                f"then {name} speaks",
+                f"{name} waits",
+                f"and {name} leaves",
+                f"{name} and Beleros",
+            ],
+        )
+        assert undo is not None
+        self.assertIs(await self.bot.answer_undone(GUILD, table.campaign_id, undo[1]), True)
+        self.assertEqual(
+            [str(w.text) for w in table.unsaved._waiting],
+            ["then Marin speaks", "Marin waits", "and Marin leaves", "Marin and Beleros"],
+        )
+
+    async def test_undo_reports_the_asked_line_even_when_only_earlier_lines_were_fixed(
+        self,
+    ) -> None:
+        from dmbot.memory.models import FIX, Correction, name_key
+
+        table, _, _, _ = await self.asked_about_marin(saving=True)
+        asked = table.questions.open
+        assert asked is not None
+        self.said(table, "Marin waits", at_ms=1000)
+        entity_id, _ = asked.options[0]
+        fixed = Correction(
+            name_key("Marin").ljust(32, "0")[:32],
+            "Marin",
+            name_key("Marin"),
+            entity_id,
+            FIX,
+            "dm",
+            0,
+        )
+        self.bot._names_now = AsyncMock(  # type: ignore[method-assign]
+            return_value=self.two_alike(corrections=(fixed,))
+        )
+        # The asked line itself can't be written (its words aren't there to change).
+        self.bot._fix_asked_line = AsyncMock(return_value=False)  # type: ignore[method-assign]
+        text, _, undo = await self.bot.answer_name_question(GUILD, asked.id, "0", DM)
+        self.assertIn("1 earlier line was fixed too.", text)
+        self.assertIn("That line stays as heard.", text)
+        assert undo is not None
+        back = await self.bot.answer_undone(GUILD, table.campaign_id, undo[1])
+        self.assertIsNone(back)  # nothing to say about the asked line
+        self.assertEqual(
+            [str(w.text) for w in table.unsaved._waiting], ["then Marin speaks", "Marin waits"]
+        )  # but the earlier line is back as heard
+
+    async def test_a_line_that_already_has_an_answer_is_not_written_twice(self) -> None:
+        from dmbot.memory.models import FIX, Correction, name_key
+        from dmbot.transcript import fix_notes
+
+        table, _, _, _ = await self.asked_about_marin(saving=True)
+        asked = table.questions.open
+        assert asked is not None
+        self.said(table, "Marin waits", at_ms=1000)
+        entity_id, _ = asked.options[0]
+        fixed = Correction(
+            name_key("Marin").ljust(32, "0")[:32],
+            "Marin",
+            name_key("Marin"),
+            entity_id,
+            FIX,
+            "dm",
+            0,
+        )
+        self.bot._names_now = AsyncMock(  # type: ignore[method-assign]
+            return_value=self.two_alike(corrections=(fixed,))
+        )
+        # An earlier answer already wrote into that line.
+        table.fix_notes.answered(
+            fix_notes.Answer(7, PLAYER, 1000, "Marin waits", (), 0, 5, "Other", True)
+        )
+        text, _, _ = await self.bot.answer_name_question(GUILD, asked.id, "0", DM)
+        self.assertIn("Earlier lines stay as heard.", text)
+        self.assertEqual(len(table.fix_notes.answers), 2)  # the asked line's and the old one
+
+    async def test_an_answer_that_cannot_read_the_saved_lines_still_answers(self) -> None:
+        table, _, _, _ = await self.asked_about_marin(saving=True)
+        asked = table.questions.open
+        assert asked is not None
+        table.transcript_session_id = "s5"
+        self.bot.transcripts = MagicMock(
+            relabel_line=AsyncMock(return_value=1), lines=AsyncMock(side_effect=RuntimeError("db"))
+        )
+        text, done, _ = await self.bot.answer_name_question(GUILD, asked.id, "0", DM)
+        self.assertTrue(done)
+        self.assertIn("Earlier lines stay as heard.", text)
 
     async def test_an_answer_fixes_the_saved_line(self) -> None:
         table, _, _, _ = await self.asked_about_marin(saving=True)

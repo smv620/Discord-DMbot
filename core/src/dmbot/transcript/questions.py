@@ -240,20 +240,35 @@ def keep_label(heard: str) -> str:
 
 
 def fixed_text(
-    heard: str, name: str, *, line_fixed: bool = False, line_kept: bool = False, new: bool = False
+    heard: str,
+    name: str,
+    *,
+    line_fixed: bool = False,
+    line_kept: bool = False,
+    new: bool = False,
+    earlier: int = 0,
 ) -> str:
     """After the DM picked or typed a name (both already escaped). `line_fixed`: the line
     that was asked about was fixed too; `line_kept`: it couldn't be (it would have put a
-    secret name there, or saving failed); `new`: a typed name DMbot didn't know."""
+    secret name there, or saving failed); `new`: a typed name DMbot didn't know;
+    `earlier`: how many earlier lines of this session were written the same way (#127)."""
+    if earlier:
+        tail = (
+            " 1 earlier line was fixed too."
+            if earlier == 1
+            else f" {earlier} earlier lines were fixed too."
+        )
+    else:
+        tail = " Earlier lines stay as heard."
     if line_fixed:
         text = (
             f'✅ Got it: "{_short(heard)}" is now written **{_short(name)}**, in that line '
-            "and from now on in this campaign. Earlier lines stay as heard."
+            f"and from now on in this campaign.{tail}"
         )
     else:
         text = (
             f'✅ Got it: from now on, "{_short(heard)}" is written **{_short(name)}** in '
-            "this campaign. Earlier lines stay as heard."
+            f"this campaign.{tail}"
         )
         if line_kept:
             text += " That line stays as heard."
