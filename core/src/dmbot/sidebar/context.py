@@ -31,6 +31,7 @@ from dmbot.memory.kinds import kind_phrase
 from dmbot.memory.lookup import CampaignLookup
 from dmbot.memory.models import CONFIRMED, Entity
 from dmbot.memory.recall import Recall
+from dmbot.rules.book_rank import book_is_legacy, book_wins
 from dmbot.rules.followed import FollowedRule
 from dmbot.rules.homebrew import Homebrew
 from dmbot.rules.house import HouseRule
@@ -303,6 +304,17 @@ def mentioned_names(question: str, lookup: CampaignLookup | None) -> list[str]:
     return lines[:NAMES_MAX]
 
 
+def _book_answers(entry: Homebrew, hits: Sequence[Hit], target: str, fallback: str) -> bool:
+    """Does this entry answer, rather than the free rules' entry of the same name? Only a shared
+    book's entry can lose, and only to a free-rules entry it ranks behind (`book_wins`)."""
+    if not entry.from_book:
+        return True
+    key = normalize(entry.name)
+    same = [h for h in hits if key in (normalize(h.entry.name), normalize(h.found_as))]
+    best = min(same, key=lambda h: h.from_fallback, default=None)  # the target's first
+    return book_wins(entry, best, target, fallback)
+
+
 def homebrew_source(entry: Homebrew, campaign_name: str) -> str:
     """Where a homebrew answer comes from: `Frostmaiden's homebrew: Hollow King [Homebrew]`."""
     if entry.source:  # an entry of a followed pack (#1527)
@@ -356,6 +368,10 @@ def build(
     question = " ".join(question.split())[:QUESTION_MAX]
     hits = mentioned_rules(question, index, target, fallback, both=wants_both_editions(question))
     known, hidden = relevant_homebrew(homebrew, question)
+    # A shared book's entry ranks in its edition's place (#1569): one that would come after the
+    # free rules' entry of the same name is left out, and the free rules answer.
+    known = [e for e in known if _book_answers(e, hits, target, fallback)]
+    hidden = [e for e in hidden if _book_answers(e, hits, target, fallback)]
     # A homebrew name shadows the book's, hidden or not (#1520): the book is not used for it.
     shadowed = {normalize(e.name) for e in (*known, *hidden)}
     hits = [
@@ -388,7 +404,8 @@ def build(
         for own in known:
             cite = homebrew_source(own, campaign_name)
             text = " ".join(own.text.split())[:HOMEBREW_TEXT_MAX]
-            sections.append(f"- [Homebrew] {own.name} ({own.kind}) [{cite}]: {text}")
+            legacy = " [Legacy 2014]" if book_is_legacy(own, target) else ""
+            sections.append(f"- [Homebrew]{legacy} {own.name} ({own.kind}) [{cite}]: {text}")
             sources.append(cite)
     if hits:
         sections.append("RULES ENTRIES (the free rules, word for word):")

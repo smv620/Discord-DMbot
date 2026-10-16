@@ -345,7 +345,13 @@ def homebrew_parts(
 
 
 def homebrew_alert_text(
-    own: Homebrew, campaign_name: str, said: str, heard: str, rules: Sequence[HouseRule]
+    own: Homebrew,
+    campaign_name: str,
+    said: str,
+    heard: str,
+    rules: Sequence[HouseRule],
+    *,
+    legacy: bool = False,
 ) -> str:
     """The short card on the DM screen when the table names one of the campaign's own homebrew
     entries (#1524): a house rule that names it first, then the entry (tagged, with who may know
@@ -358,9 +364,8 @@ def homebrew_alert_text(
         plural = "s" if more != 1 else ""
         lines.append(f"🏠 {more} more house rule{plural}: `/dmbot houserules`")
     who = "👀 players may know it" if own.players_may_know else "🙈 hidden from players"
-    lines.append(
-        f"📚 **{_fit(_md(own.name), NAME_MAX)}** ({own.kind.capitalize()}) {HOMEBREW_TAG} {who}"
-    )
+    name = _fit(_md(own.name), NAME_MAX)
+    lines.append(f"📚 **{name}** ({own.kind.capitalize()}) {_tags(own, legacy)} {who}")
     lines.append(_fit(_md(own.shown()), ALERT_FACTS_MAX))
     lines.append(f"_Source: {_md(_fit(homebrew_citation(own, campaign_name), 200))}_")
     lines.append(f"_Heard: “{_fit(_md(heard), ALERT_HEARD_MAX)}”_")

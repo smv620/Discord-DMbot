@@ -201,6 +201,56 @@ describe("reading a session", () => {
   });
 });
 
+describe("how long the campaign keeps transcripts (#1575)", () => {
+  it("has the four wordings", () => {
+    expect(text.keepLine(30)).toBe("Transcripts are kept for 30 days after each session, then deleted.");
+    expect(text.keepLine(90)).toBe("Transcripts are kept for 90 days after each session, then deleted.");
+    expect(text.keepLine(365)).toBe("Transcripts are kept for 1 year after each session, then deleted.");
+    expect(text.keepLine(null)).toBe("Transcripts are kept until the game master deletes them.");
+    expect(text.keepLine(undefined)).toBeNull(); // an older API says nothing
+  });
+
+  it("says it under the campaign in the list, without the 'within a day' line", async () => {
+    page(mockApi("table"), "/account/transcripts");
+    expect(await screen.findByText(text.keepLine(90)!)).toBeTruthy();
+    expect(screen.queryByText(text.keepSoon)).toBeNull();
+  });
+
+  it("says it on the campaign's page, with the 'within a day' line only when there is a limit", async () => {
+    page(mockApi("table"), `/account/transcripts/${REF}`);
+    expect(await screen.findByText(`${text.keepLine(90)} ${text.keepSoon}`)).toBeTruthy();
+    cleanup();
+    const mock = mockApi("table");
+    const forever = {
+      ...mock,
+      transcriptSessions: async (ref: string) => ({ ...(await mock.transcriptSessions!(ref)), keepDays: null }),
+    } as AccountApi;
+    page(forever, `/account/transcripts/${REF}`);
+    expect(await screen.findByText(text.keepLine(null)!)).toBeTruthy();
+    expect(screen.queryByText(new RegExp(text.keepSoon))).toBeNull();
+  });
+
+  it("says nothing on an older API with no keepDays", async () => {
+    const mock = mockApi("table");
+    const older = {
+      ...mock,
+      transcriptCampaigns: async () =>
+        (await mock.transcriptCampaigns!()).map(({ keepDays: _gone, ...rest }) => rest),
+      transcriptSessions: async (ref: string) => {
+        const { keepDays: _gone, ...rest } = await mock.transcriptSessions!(ref);
+        return rest;
+      },
+    } as AccountApi;
+    page(older, "/account/transcripts");
+    await screen.findByText("The Brynwater Crossing");
+    expect(screen.queryByText(/Transcripts are kept/)).toBeNull();
+    cleanup();
+    page(older, `/account/transcripts/${REF}`);
+    await screen.findByRole("heading", { name: "The Brynwater Crossing" });
+    expect(screen.queryByText(/Transcripts are kept/)).toBeNull();
+  });
+});
+
 describe("a session whose transcript was deleted (#1548)", () => {
   it("says so on its own page, with no versions, download or lines", async () => {
     page(mockApi("table"), `/account/transcripts/${REF}/3`);

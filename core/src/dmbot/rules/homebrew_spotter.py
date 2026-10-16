@@ -62,6 +62,17 @@ class HomebrewSpotter:
             options.sort(key=lambda option: -len(option[0]))  # the longest name first
         return spotter
 
+    def entry(self, name: str) -> Homebrew | None:
+        """The entry with this name (case and punctuation ignored), if the spotter looks for it.
+        A campaign's entries have one name each whatever their kind (the table is unique on the
+        name), so the name alone picks one."""
+        key = normalize(name)
+        words = tuple(key.split())
+        for w, entry in self.by_first.get(words[0] if words else "", ()):
+            if w == words:
+                return entry
+        return None
+
     @property
     def names(self) -> frozenset[str]:
         """The normalized names it looks for (the book's cards leave these to the homebrew)."""

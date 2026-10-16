@@ -376,6 +376,48 @@ class DeletedTranscripts(Transcripts):
             )
 
 
+class KeepDays(Transcripts):
+    """How long the campaign keeps transcripts (#1575): both doors say, null for forever."""
+
+    async def set_keep(self, days: int | None) -> None:
+        async with self.db.guild(THURSDAY.id) as conn:
+            await conn.execute(
+                "UPDATE campaigns SET transcript_keep_days = %s WHERE guild_id = %s AND id = %s",
+                (days, THURSDAY.id, self.one.id),
+            )
+
+    async def test_both_doors_say_the_limit_and_null_means_forever(self) -> None:
+        page = await transcripts.list_sessions(
+            self.web, self.carol, self.cref, now=NOW, enforce_plans=False
+        )
+        self.assertIsNone(page["keepDays"])
+        await self.set_keep(90)
+        page = await transcripts.list_sessions(
+            self.web, self.carol, self.cref, now=NOW, enforce_plans=False
+        )
+        self.assertEqual(page["keepDays"], 90)
+        listed = await transcripts.list_campaigns(
+            self.web, self.carol, now=NOW, enforce_plans=False
+        )
+        self.assertEqual({c["name"]: c["keepDays"] for c in listed}, {"One": 90, "Two": None})
+        await self.set_keep(365)
+        listed = await transcripts.list_campaigns(
+            self.web, self.carol, now=NOW, enforce_plans=False
+        )
+        self.assertEqual({c["name"]: c["keepDays"] for c in listed}["One"], 365)
+
+    async def test_a_person_outside_the_server_still_learns_nothing(self) -> None:
+        await self.set_keep(30)
+        elsewhere = await self.session_of(CAROL, [QUILLON])
+        with self.assertRaises(RecapError):
+            await transcripts.list_sessions(
+                self.web, elsewhere, self.cref, now=NOW, enforce_plans=False
+            )
+        self.assertEqual(
+            await transcripts.list_campaigns(self.web, elsewhere, now=NOW, enforce_plans=False), []
+        )
+
+
 class Characters(Transcripts):
     """The `{character}` labels (#1512): the export's rule in a door, for any member."""
 

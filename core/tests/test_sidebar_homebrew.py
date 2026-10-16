@@ -7,6 +7,7 @@ answer, and still shadows the book (the answer points the DM to /dmbot rule, or 
 from __future__ import annotations
 
 import asyncio
+import dataclasses
 import unittest
 from collections.abc import Sequence
 from typing import Any
@@ -97,6 +98,47 @@ class TheContext(unittest.TestCase):
             )
             self.assertEqual(built.hits, ())
             self.assertNotIn("RULES ENTRIES", built.prompt)
+
+    def test_a_shared_books_entry_ranks_in_its_editions_place(self) -> None:
+        """(#1569) Against the free rules' Fireball (2024 is the target): a 2024 book answers
+        first; a 2014 book and an add-on step aside; the free rules answer then."""
+        for edition, answers in (("2024", True), ("2014", False), ("other", False), (None, False)):
+            with self.subTest(edition):
+                entry = dataclasses.replace(
+                    brew("Fireball", "The book's version.", known=True, kind="spell"),
+                    from_book=True,
+                    book_edition=edition,
+                )
+                built = build("how does fireball work", [entry])
+                self.assertEqual("HOMEBREW" in built.prompt, answers)
+                self.assertEqual("[Homebrew] Fireball" in built.prompt, answers)
+                if not answers:
+                    self.assertIn("RULES ENTRIES", built.prompt)
+
+    def test_a_2014_book_answers_where_only_the_older_rules_have_the_name(self) -> None:
+        entry = dataclasses.replace(
+            brew("Orc", "The book's orc.", known=True),
+            from_book=True,
+            book_edition="2014",
+        )
+        built = build("what is an orc", [entry])
+        self.assertIn("[Homebrew] [Legacy 2014] Orc", built.prompt)
+
+    def test_a_hidden_book_entry_that_ranks_behind_does_not_shadow_the_free_rules(self) -> None:
+        entry = dataclasses.replace(
+            brew("Fireball", "Secret.", known=False, kind="spell"),
+            from_book=True,
+            book_edition="2014",
+        )
+        built = build("how does fireball work", [entry])
+        self.assertEqual(built.hidden_homebrew, ())
+        self.assertIn("RULES ENTRIES", built.prompt)
+
+    def test_ordinary_homebrew_still_beats_the_free_rules_whatever(self) -> None:
+        built = build(
+            "how does fireball work", [brew("Fireball", "Mine.", known=True, kind="spell")]
+        )
+        self.assertIn("[Homebrew] Fireball", built.prompt)
 
     def test_no_entry_means_no_change(self) -> None:
         plain = build("range of fireball", [])

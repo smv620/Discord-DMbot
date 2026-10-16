@@ -20,6 +20,11 @@ export const whatsNewIntro =
 export const entries: Entry[] = [
   {
     date: "2026-10-16",
+    title: "See how long transcripts are kept",
+    what: "The website's Transcripts pages now say how long your table keeps its transcripts, so you can save a copy before they are deleted.",
+  },
+  {
+    date: "2026-10-16",
     title: "Deleted transcripts show in the list",
     what: "A session whose transcript was deleted now stays in the website's list, and says when it was deleted.",
   },
