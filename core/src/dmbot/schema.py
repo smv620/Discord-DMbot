@@ -2419,6 +2419,8 @@ WEB_ROLE_GRANTS: tuple[tuple[str, tuple[str, ...]], ...] = (
     # door is open; the words come back through dmbot_support_thread.
     ("INSERT", ("support_replies",)),
     ("SELECT (id, ticket_id, who, created_at)", ("support_replies",)),
+    # The weekly support email's once-only mark, through the admin door only (#1514).
+    ("SELECT, INSERT, UPDATE", ("support_week_mail",)),
     ("SELECT, INSERT, UPDATE, DELETE", ("web_users", "web_sessions")),
     # Emailed sign-in links (#1231): made and used by the website, never read by anyone else.
     # (Only `used_at` can be changed: a holder of a link can spend it, never revive or move it.)
@@ -4672,6 +4674,22 @@ TRANSCRIPT_SUGGESTIONS = """
         ON transcript_suggestions (session_id, user_id, started_ms) WHERE state = 'open';
     """ + _isolate("transcript_suggestions")
 
+SUPPORT_WEEK_MAIL = """
+    -- The week the team's weekly support email was last sent for (#1514): one row, so a restart
+    -- never sends it twice. `week` is the day number (Python's date ordinal) of the Monday the
+    -- send was for. Counts only; nothing in it is private. A new table, so no existing row changes
+    -- and no row-level security needs opening; only the support admin door may read or write it.
+    CREATE TABLE support_week_mail (
+        id   SMALLINT PRIMARY KEY CHECK (id = 1),
+        week BIGINT NOT NULL
+    );
+    ALTER TABLE support_week_mail ENABLE ROW LEVEL SECURITY;
+    ALTER TABLE support_week_mail FORCE ROW LEVEL SECURITY;
+    CREATE POLICY support_admin_only ON support_week_mail
+        USING (dmbot_support_admin() = 'admin')
+        WITH CHECK (dmbot_support_admin() = 'admin');
+    """
+
 WEB_TRANSCRIPTS = """
     -- A campaign's session transcripts on the website (#1501). Transcripts are shared: anyone in
     -- the Discord server may read and download them (CLAUDE.md, decided 2026-10-05), so these
@@ -5122,6 +5140,10 @@ MIGRATIONS: tuple[Migration, ...] = (
     ("0093_transcript_suggestions", TRANSCRIPT_SUGGESTIONS),  # a player's suggested fix (#1491)
     ("0094_web_transcripts", WEB_TRANSCRIPTS),  # the website reads a campaign's transcripts (#1501)
     ("0095_web_transcript_pages", WEB_TRANSCRIPT_PAGES),  # transcript pages and characters (#1512)
+    (
+        "0096_support_week_mail",
+        SUPPORT_WEEK_MAIL,
+    ),  # the weekly support email's once-only mark (#1514)
     ("0098_web_house_rules", WEB_HOUSE_RULES),  # the website reads a campaign's house rules (#1521)
 )
 
@@ -5183,6 +5205,8 @@ USER_ISOLATED_TABLES = (
     "support_tickets",
     # The replies of a ticket: only the admin door adds or reads them (#1431).
     "support_replies",
+    # The week the weekly support email last went; only the admin door reads or writes it (#1514).
+    "support_week_mail",
     # An owner's hours per plan month; only the meter adds to it (#437).
     "owner_hours",
     # Which campaigns an owner has, across servers; kept by a trigger on campaigns (#437).

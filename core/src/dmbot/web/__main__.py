@@ -37,7 +37,7 @@ MOVE_SYNC_SECONDS = 60
 STRAY_SWEEP_SECONDS = 600  # the database hands each one out at most once an hour
 
 
-async def _sweep(db: Database) -> None:
+async def _sweep(db: Database, helper: SupportHelper) -> None:
     """Hourly: expired sign-in sessions, "Say hello" messages over a year old, support tickets
     over 12 months old, and answered support tickets quiet for two weeks (closed)."""
     while True:
@@ -78,6 +78,12 @@ async def _sweep(db: Database) -> None:
                 )
         except Exception as exc:
             log.error("Closing old answered tickets failed (%s); trying again", type(exc).__name__)
+        try:
+            # The team's weekly count of support questions, once a week (#1514).
+            if await helper.weekly_report() == "sent":
+                log.info("Sent the weekly support email to the team")
+        except Exception as exc:
+            log.error("The weekly support email failed (%s); trying again", type(exc).__name__)
         await asyncio.sleep(CLEANUP_SECONDS)
 
 
@@ -188,7 +194,7 @@ async def serve(settings: WebSettings) -> None:
         move_codes=move_codes,
         helper=helper,
     )
-    sweeper = asyncio.create_task(_sweep(db))
+    sweeper = asyncio.create_task(_sweep(db, helper))
     helping = asyncio.create_task(_help_with_tickets(helper)) if ai_client is not None else None
     syncer = asyncio.create_task(_sync_moves(db, payments)) if payments is not None else None
     stray_sweeper = (
