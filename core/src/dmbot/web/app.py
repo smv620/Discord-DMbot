@@ -488,7 +488,12 @@ def create_app(
     @app.get("/me")
     async def me(signed: Signed) -> dict[str, Any]:
         session, _token = signed
-        return await build_me(db, session, now=clock())
+        return await build_me(
+            db,
+            session,
+            now=clock(),
+            recap_audio_for_sale=payments is not None and payments.recap_audio_for_sale,
+        )
 
     @app.get("/me/characters")
     async def me_characters(signed: Signed) -> dict[str, Any]:
@@ -704,6 +709,15 @@ def create_app(
             except PaymentError as exc:
                 log.warning("Couldn't stop a subscription for a deletion: %s", exc)
                 raise HTTPException(status_code=502, detail="payments_unavailable") from exc
+        add_on = await entitlements_writer.recap_audio_subscription(db, session.user_id)
+        if add_on is not None:  # the recap audio add-on is a second subscription (#1389)
+            if payments is None:
+                raise HTTPException(status_code=503, detail="payments_unavailable")
+            try:
+                await payments.cancel(subscription_id=add_on)
+            except PaymentError as exc:
+                log.warning("Couldn't stop the recap audio add-on for a deletion: %s", exc)
+                raise HTTPException(status_code=502, detail="payments_unavailable") from exc
         await delete_person(db, session.user_id, now=clock())
         log.info("Account deleted: user %s", session.user_id)
         response = Response(status_code=204)
@@ -822,6 +836,35 @@ def create_app(
             raise HTTPException(status_code=502, detail="payments_unavailable") from exc
         return {"url": url}
 
+    @app.post("/billing/recap-audio")
+    async def recap_audio(signed: Signed) -> dict[str, str]:
+        """The page to subscribe to the recap audio add-on (#1389). Hidden (404) until its price
+        is set, as if the route did not exist. Only for a working paid plan that does not
+        already have spoken recaps: Guild and Pro include them, free access has them, and a
+        second subscription would charge for nothing."""
+        provider = require_payments()
+        if not provider.recap_audio_for_sale:
+            raise HTTPException(status_code=404, detail="not_found")
+        session, _token = signed
+        current, access = await entitlements.plan_and_access(db, session.user_id, clock())
+        if access.recap_audio:
+            raise HTTPException(status_code=409, detail="already_included")
+        if current is None or current.plan == "try-it" or not current.usable(clock()):
+            raise HTTPException(status_code=409, detail="no_paid_plan")
+        email = await account_email(db, session.user_id)
+        try:
+            url = await provider.recap_audio_checkout_url(
+                user_id=session.user_id,
+                email=email,
+                return_url=account_page,
+                dmbot_id=await dmbot_id(db, session.user_id),
+                customer_id=await customer_id(db, session.user_id),
+            )
+        except PaymentError as exc:
+            log.warning("Recap audio checkout failed: %s", exc)
+            raise HTTPException(status_code=502, detail="payments_unavailable") from exc
+        return {"url": url}
+
     @app.post("/billing/portal")
     async def billing_portal(signed: Signed) -> dict[str, str]:
         provider = require_payments()
@@ -836,6 +879,20 @@ def create_app(
             log.warning("Billing page failed: %s", exc)
             raise HTTPException(status_code=502, detail="payments_unavailable") from exc
         return {"url": url}
+
+    async def stop_recap_audio_with_plan(user_id: int) -> None:
+        """The plan ended, so the recap audio add-on goes with it (#1389): its subscription is
+        cancelled at the company and cleared here, or it would keep charging for nothing. A
+        failure is logged and left for the next plan event or a person: the add-on gives
+        nothing without a working plan (the entitlement checks it), so nobody gets it free."""
+        sub = await entitlements_writer.recap_audio_subscription(db, user_id)
+        if sub is None or payments is None:
+            return
+        try:
+            await payments.cancel(subscription_id=sub)
+            await entitlements_writer.forget_recap_audio(db, user_id, now=clock())
+        except PaymentError as exc:
+            log.error("Couldn't cancel the recap audio add-on of an ended plan: %s", exc)
 
     @app.post("/webhooks/{provider_name}")
     async def webhook(provider_name: str, request: Request) -> Response:
@@ -865,6 +922,8 @@ def create_app(
             raise HTTPException(status_code=503, detail="retry_later")
         if outcome == "rejected":
             raise HTTPException(status_code=422, detail="bad_event")
+        if outcome == "applied" and event.kind == "subscription_ended":
+            await stop_recap_audio_with_plan(event.user_id)
         return Response(status_code=200)
 
     # The "Say hello" forms (#665): no sign-in needed.

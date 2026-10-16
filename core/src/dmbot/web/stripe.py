@@ -94,6 +94,9 @@ class StripeConfig:
     # A paid plan's id (plans.json) -> its recurring Price id in Stripe.
     prices: Mapping[str, str]
     extra_hours_price: str
+    # The recap audio add-on's recurring Price id (#1389). Empty until the owner sets it
+    # (#1385): the add-on is then not for sale and its checkout is hidden.
+    recap_audio_price: str = ""
     # Stripe's Managed Payments (Stripe as the merchant of record, owner decision on #1096):
     # asks each Checkout Session to opt in. Off by default until the sandbox run (#1096) has
     # shown the parameter is accepted; the owner also accepts Stripe's terms in the dashboard.
@@ -305,6 +308,39 @@ class StripeProvider:
             form, email, user_id=user_id, dmbot_id=dmbot_id, customer_id=customer_id
         )
 
+    @property
+    def recap_audio_for_sale(self) -> bool:
+        return bool(self._config.recap_audio_price)
+
+    async def recap_audio_checkout_url(
+        self,
+        *,
+        user_id: int,
+        email: str | None,
+        return_url: str,
+        dmbot_id: str | None = None,
+        customer_id: str | None = None,
+    ) -> str:
+        """The page to subscribe to the recap audio add-on (#1389): a second recurring
+        subscription whose metadata carries `item=recap_audio`, so every event it makes is
+        read as the add-on's and never as the plan's."""
+        if not self._config.recap_audio_price:
+            raise PaymentError("No Stripe price is set for the recap audio add-on")
+        form = {
+            "mode": "subscription",
+            "line_items[0][price]": self._config.recap_audio_price,
+            "line_items[0][quantity]": "1",
+            "success_url": return_url,
+            "cancel_url": return_url,
+            "metadata[user_id]": str(user_id),
+            "metadata[item]": RECAP_AUDIO_ITEM,
+            "subscription_data[metadata][user_id]": str(user_id),
+            "subscription_data[metadata][item]": RECAP_AUDIO_ITEM,
+        }
+        return await self._checkout(
+            form, email, user_id=user_id, dmbot_id=dmbot_id, customer_id=customer_id
+        )
+
     async def billing_url(self, *, customer_id: str, return_url: str) -> str:
         """The customer portal (change plan, fix a payment, stop). Stripe makes a short-lived
         session per visit, so it is asked for each time."""
@@ -459,6 +495,8 @@ class StripeProvider:
         if user_id is None:
             log.info("Stripe event %.60s is for a subscription DMbot didn't make", event_id)
             return None
+        if _is_add_on(details["metadata"]):
+            return self._add_on_invoice(name, invoice, subscription_id, user_id, event_id, when)
         common: dict[str, Any] = {
             "provider": self.name,
             "event_id": event_id,
@@ -498,6 +536,65 @@ class StripeProvider:
             **common,
         )
 
+    def _add_on_invoice(
+        self,
+        name: str,
+        invoice: dict[str, Any],
+        subscription_id: str,
+        user_id: int,
+        event_id: str,
+        when: int,
+    ) -> PaymentEvent | None:
+        """The recap audio add-on's payments (#1389). Only a paid invoice for the add-on's own
+        price counts; a failed payment starts no grace (the add-on simply runs out at the end
+        of the period already paid for), and a proration or manual invoice changes nothing."""
+        if name == "invoice.payment_failed" or invoice.get("status") != "paid":
+            return None
+        reason = invoice.get("billing_reason")
+        kind: EventKind
+        if reason == "subscription_create":
+            kind = "recap_audio_started"
+        elif reason == "subscription_cycle":
+            kind = "recap_audio_renewed"
+        else:
+            return None
+        line = _subscription_line(invoice.get("lines"), {self._config.recap_audio_price: "add-on"})
+        if not self._config.recap_audio_price or _price_id(line) != self._config.recap_audio_price:
+            log.error(
+                "Stripe event %.60s is an add-on invoice at a price DMbot doesn't sell", event_id
+            )
+            return None
+        period = line.get("period") or {}
+        return PaymentEvent(
+            provider=self.name,
+            event_id=event_id,
+            kind=kind,
+            user_id=user_id,
+            occurred_at=when,
+            period_start=_int(period.get("start")),
+            period_end=_int(period.get("end")),
+            customer_id=_text(invoice.get("customer")),
+            subscription_id=subscription_id,
+            email=_email(invoice.get("customer_email")),
+        )
+
+    def _add_on_subscription(
+        self, name: str, subscription: dict[str, Any], user_id: int, event_id: str, when: int
+    ) -> PaymentEvent | None:
+        """Only the add-on subscription's end matters (its payments come as invoices). A
+        cancel set for the period's end changes nothing: it works until the paid period ends."""
+        if name != "customer.subscription.deleted":
+            return None
+        return PaymentEvent(
+            provider=self.name,
+            event_id=event_id,
+            kind="recap_audio_ended",
+            user_id=user_id,
+            occurred_at=when,
+            customer_id=_text(subscription.get("customer")),
+            subscription_id=_text(subscription.get("id")),
+        )
+
     def _subscription(
         self,
         name: str,
@@ -513,6 +610,8 @@ class StripeProvider:
         if user_id is None:
             log.info("Stripe event %.60s is for a subscription DMbot didn't make", event_id)
             return None
+        if _is_add_on(metadata):
+            return self._add_on_subscription(name, subscription, user_id, event_id, when)
         item = _first(subscription.get("items"))
         price = _price_id(item)
         plan = self._plan_of_price.get(price or "")
@@ -575,6 +674,7 @@ class StripeProvider:
 
 
 EXTRA_HOURS_ITEM = "extra_hours"
+RECAP_AUDIO_ITEM = "recap_audio"
 
 IDEMPOTENCY_WINDOW_S = 300  # one checkout request, however many times it is sent in this long
 # Stripe's minimum for a Checkout Session's expiry is 30 minutes from when it gets the request, by
@@ -601,6 +701,11 @@ _USED = (
     # A payment method that settles later (a bank debit): paid only when this arrives.
     "checkout.session.async_payment_succeeded",
 )
+
+
+def _is_add_on(metadata: object) -> bool:
+    """The subscription is the recap audio add-on's (#1389), by the marker its checkout set."""
+    return isinstance(metadata, dict) and metadata.get("item") == RECAP_AUDIO_ITEM
 
 
 def _person(metadata: object) -> int | None:

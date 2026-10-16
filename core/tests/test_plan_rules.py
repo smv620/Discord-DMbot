@@ -73,6 +73,7 @@ class Rules(unittest.TestCase):
                 "transcript": "backup",
                 "restore": "backup",
                 "share": "backup",
+                "recap_audio": "recap_audio",
             },
         )
 

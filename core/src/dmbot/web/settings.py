@@ -279,7 +279,14 @@ def _stripe(get: Callable[[str], str]) -> StripeConfig:
     extra = get("STRIPE_PRICE_EXTRA_HOURS")
     if not extra.startswith("price_") or not extra.isascii():
         raise ConfigError("STRIPE_PRICE_EXTRA_HOURS must be the extra hours' Stripe price id.")
-    ids = [*prices.values(), extra]
+    # The recap audio add-on's price (#1389) is optional: the owner sets it later (#1385), and
+    # until then the add-on is not for sale and its checkout is hidden.
+    recap_audio = get("STRIPE_PRICE_RECAP_AUDIO")
+    if recap_audio and (not recap_audio.startswith("price_") or not recap_audio.isascii()):
+        raise ConfigError(
+            "STRIPE_PRICE_RECAP_AUDIO must be the add-on's Stripe price id (price_...)."
+        )
+    ids = [*prices.values(), extra, *([recap_audio] if recap_audio else [])]
     if len(set(ids)) != len(ids):
         raise ConfigError("Each STRIPE_PRICE_* must be a different price.")
     managed = (get("STRIPE_MANAGED_PAYMENTS") or "0").lower()
@@ -290,4 +297,5 @@ def _stripe(get: Callable[[str], str]) -> StripeConfig:
         managed_payments=managed in ("1", "true", "on"),
         prices=prices,
         extra_hours_price=extra,
+        recap_audio_price=recap_audio,
     )
