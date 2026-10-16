@@ -357,9 +357,9 @@ class SessionStart(unittest.IsolatedAsyncioTestCase):
             post_message=AsyncMock(return_value=None),
         )
         bot.post_message = AsyncMock(return_value=None)
-        with self.assertLogs("dmbot.dm_screen.set_update", level="WARNING") as logged:
+        with self.assertLogs("dmbot.dm_screen.shared_update", level="WARNING") as logged:
             await set_update.check_update(bot, campaign(), 99)
-        self.assertIn("couldn't post its note", logged.output[0])
+        self.assertIn("without a note", logged.output[0])
 
     async def test_a_failure_never_escapes_and_posts_nothing(self) -> None:
         bot = bot_with(pending_update=AsyncMock(side_effect=RuntimeError("down")))

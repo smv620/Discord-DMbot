@@ -688,8 +688,19 @@ never does.
     never names the other campaign, server or DM; Add to set makes the next version. *(Supervisor,
     2026-10-15, #1315: wording matched to the buttons as built.)*
 - **Updates reach followers at their next session start, never mid-game.** DMbot takes the update then
-  (Follow, the default) and posts a note on the DM screen: "The Frostmaiden house rules were updated to v4:
-  2 rules. [See changes] [Pick changes] [Undo]".
+  (Follow, the default) and posts a note on the DM screen: "📚 **Frostmaiden** house rules updated to v4:
+  2 rules. DMbot took the new version. [See changes] [Pick changes] [Undo]".
+  **When several shared rules changed at one start (#1538)** the notes are combined into one: "📚 Shared
+  rules updated at this start. DMbot took the new versions. Buttons are by number:" with a numbered line for
+  each update ("1. **Frostmaiden** house rules, now v4: 2 rules", "2. **Frost Pack** homebrew, now v3: 2
+  entries changed"), the lines about players now knowing something or the campaign's own entries still
+  winning under their update, and each update's own row of buttons, short and numbered to match ("See 2",
+  "Pick 2", "Compare 2", "Undo 2"; a phone cuts a label from the right, so the number comes straight after
+  the word). Four updates get rows. A fifth and later are still taken and still named, with "N without
+  buttons here: open ⚙️ Settings → 📚 Shared rules". A set or pack that stopped being shared joins as a plain
+  line and is never cut from the note; when the text is long, only the extra lines under an update give
+  way. A single update keeps the note above, unchanged. The buttons are the same restart-proof ones, each
+  tied to its own version, and one check failing never loses the other's note.
   - **Follow** (the default, also what happens if the DM does nothing): the changes are taken and the campaign
     keeps following. **Undo** goes back to the earlier version and keeps it: DMbot does not take that same
     version again at the next session, only a newer one.
@@ -743,6 +754,14 @@ never does.
   of Pick changes copies the pack into the campaign's own homebrew (its own entries win) and ends the follow,
   one Undo for all; a pack whose publisher stopped sharing is marked "no longer updated", said once. No
   Compare button: the note says when a changed entry shares a name with the campaign's own (which wins).
+  Suggestions built (#1537, migration 0102): a following campaign's DM presses 💡 Suggest to the pack on the
+  campaign's own entry (Settings → Homebrew → the entry; a pick when several packs are followed; an entry
+  that came from a book says it stays home). The publisher gets one DM-screen note, "A table using **<pack>
+  homebrew** suggests (sender not shown)", with See / Add to pack / No thanks, and the sender is never
+  named. Add to pack puts the entry in the publisher's own homebrew (a new name, or replacing their own
+  entry of that name) and makes the next pack version through the same checks as Publish my changes (paid
+  plan, a DM, nothing from a book). Limits as for sets (#1259): one open per entry per pack, an open cap,
+  stale ones expire; the sender hears the outcome once at its next session start.
 - **Relationship definitions travel with a set (#1456; Supervisor decision, 2026-10-16).** At Share the DM
   sees a tick list of the campaign's own relationships (each with its label and what it means; all ticked to
   start) and only the ticked ones go into the set's content: words only (the name, how it reads from the
@@ -1222,8 +1241,9 @@ building:
 - **Delete my past transcripts is built (#1532):** 🗑 in the ⚙️ Menu on the consent messages, and
   `/dmbot delete-my-lines`. One warning with the numbers ("N lines in M sessions"), one confirmation, one
   transaction per server. What goes and what stays is in "Retention" below.
-- Still to come: configurable retention (#1533), cleaned and both downloads (Phase 2b), and `{entity}`
-  labels for the DM's lines (narrating, which NPC; #53).
+- **Keep transcripts for is built (#1533, migration 0101):** see "Retention". Still to come: cleaned
+  and both downloads (Phase 2b), and `{entity}` labels for the DM's lines (narrating, which NPC;
+  #53; the `in_character` flag exists, nothing sets it).
 
 **Transcripts and downloads (decided 2026-10-05, #124, #125).** Sessions and their
 participants are stored. Each line is kept in two versions: **as heard** (exactly what
@@ -1394,7 +1414,7 @@ names panel nor the speech-to-text hints can be a fixed list.
     in-memory copy, never a database query per keystroke; copies loaded only for
     searching expire after a while.
   - **Name card**, under 2,000 characters, each section about 3 entries then "… and N
-    more [Show all]": what it is, last heard, **Also called**, **🤫 Secret**,
+    more", and one **Show all ▾** select under the card for the cut sections: what it is, last heard, **Also called**, **🤫 Secret**,
     **Connections**. Buttons: **✏️ Fix spelling** (one field, filled in), **Edit other
     names** (each: ⭐ make it the main name, 🤫 make it secret or not, ✖ not this
     name, which also undoes a wrong **Same as**), **Add another name** (with a secret-name field, as when adding
@@ -1537,8 +1557,14 @@ names panel nor the speech-to-text hints can be a fixed list.
   🧑 Add a player's character), **🔍 Find a name** (the form and `/dmbot names find:`
   with type-ahead), and the **name card** with ✏️ Fix spelling, Add another name (with
   a secret-name field for the campaign's DMs only), Change what it is, and Remove
-  (asks first; Undo). Still to come in step 2: Edit other names, Same as…, 🧭 Connect
-  to…, and "Show all" on long sections. The type-ahead answers from the copy the
+  (asks first; Undo). The rest of step 2 is built too: Edit other names, 🔗 Same as…,
+  🧭 Connect to… (#126, #1528), and **Show all ▾** on long sections (#1542): the card
+  cuts other names, secret names and connections to three, and one select under it
+  lists each cut section ("Other names (12)"); choosing one sends the whole section as
+  a private message of its own, in the card's words and order, 25 lines a page with
+  Earlier / Later, worked out again on every press. Secret names and connections are
+  listed only to the campaign's DMs (the card's own check). The card does not change,
+  and nothing is written. The type-ahead answers from the copy the
   session already keeps (no expiry for search-only copies yet). Decided while building:
   after DMbot's own change the copy is marked stale at once (not waiting for the change
   notification), so the redrawn card and the next search are right; Fix spelling and
@@ -1617,8 +1643,8 @@ names panel nor the speech-to-text hints can be a fixed list.
   name), **🔗 Same as…** (find the other name, then "Call it X" or "Call it Y"; the two
   become one, with **Undo** on the card), **🧭 Connect to…** (pick how, from this
   name's side or the other way round, then the other name; saved as confirmed, and a
-  **Remove a connection…** menu takes one back), and **Show all** when a section is
-  cut. Decided while building: a card groups connections by how they read from that
+  **Remove a connection…** menu takes one back), and a **Show all ▾** select when a
+  section is cut. Decided while building: a card groups connections by how they read from that
   name's side ("is a member of **Frostwolf tribe**"; on the tribe's card "has as
   members **Ulfgar**"; ally, enemy and family read the same both ways); connections the
   DM adds are not secret for now (a 🤫 secret connection comes later); a connection that
@@ -1902,8 +1928,10 @@ consent check just made still holds:
   56% at 500, 31% at 5,000, since in a big campaign more names sound alike and those are
   left alone. Safe, but to check on real campaign data (PyCharm session). About 5 ms per
   60-word line at 5,000 names.
-- **Next:** Undo notes for medium fixes (proposed names), re-checking earlier lines
-  after a correction, then off-topic hiding (#52).
+- Built since: Undo notes for medium fixes (`transcript/fix_notes.py`, #296), re-checking
+  earlier lines after a correction, and off-topic hiding with the DM's "🙈 Left out as
+  off-topic" list (`transcript/left_out.py`, #52, #677). Next: people in the Cleaner's lookup
+  (#1547).
 
 **Transcript Cleaner step 2: built (2026-10-07, #296).**
 - **"Did they mean…?":**
@@ -3524,6 +3552,23 @@ out of any alias's "who uses it" (the alias stays). **Stays:** other people's li
 confirmed and the claims they came from, recaps already built, and the session rows. A mention names its
 line by `transcript.models.line_ref(session, started_ms, user)`; anything that writes mentions uses that
 form (nothing writes them yet).
+
+*Keep transcripts for, built (2026-10-16, #1533; migration 0101).* ⚙️ Settings → 📜 Transcripts: Forever
+(the default) / 1 year / 90 days / 30 days, DMs only; a shorter choice shows one warning ("Sessions older
+than 90 days will be deleted every night, with their downloads on the website. Recaps and what you
+confirmed into story memory stay. Players can't get the deleted transcripts back.") and saves only on its
+button. The daily retention run (03:00 UTC, catch-up as for the rest) then deletes, per campaign with a
+limit and oldest first, every session that **ended** more than that long ago: its lines (both versions),
+its fix suggestions and the mentions of those lines, one transaction per session (a failing session rolls
+back alone and is tried again tomorrow; at most 200 a night per campaign). A session still running, or
+saved without an end, is never deleted. The session row stays with its number, start and end
+(`transcripts_deleted_at` marks it, `line_count` 0), so numbers never shift (the bot and the website door
+count it); recaps and confirmed facts stay. The DM screen says "🗑 Deleted 3 old transcripts (kept 90
+days)." once (the first night something goes; changing the choice lets it say so again); players are told
+nothing. The setting is in campaign backups (a restore into a new campaign brings it; a restore into an existing
+campaign leaves that campaign's own limit, so a restore never deletes anything). The plan job and this one
+run side by side: one failing never stops the other. Not done here: marking the session "transcript deleted" in
+the website's Recaps list (WebDev: `transcripts_deleted_at` is on the session row).
 
 **Bots are never transcribed** (music bots etc.) — enforced in ears by an allowlist.
 

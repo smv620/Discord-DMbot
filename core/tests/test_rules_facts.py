@@ -143,6 +143,8 @@ class NoReaderSkipsTheMetadata(unittest.TestCase):
         "rules/homebrew_packs.py",
         "rules/pack_content.py",
         "ui/homebrew.py",
+        "rules/pack_suggestions.py",  # a suggested homebrew entry, not a rules entry
+        "dm_screen/pack_suggestion.py",
     }
 
     def test_only_the_known_readers_use_entry_text(self) -> None:

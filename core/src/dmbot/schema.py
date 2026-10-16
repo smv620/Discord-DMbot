@@ -2340,6 +2340,8 @@ WEB_ROLE_FUNCTIONS: tuple[tuple[str, str], ...] = (
     # A campaign's house rules, read by any member of the server (#1521).
     ("dmbot_web_house_rules", "dmbot_web_house_rules(BIGINT, TEXT)"),
     ("dmbot_web_house_rules_campaigns", "dmbot_web_house_rules_campaigns(BIGINT)"),
+    ("dmbot_web_homebrew", "dmbot_web_homebrew(BIGINT, TEXT)"),
+    ("dmbot_web_homebrew_campaigns", "dmbot_web_homebrew_campaigns(BIGINT)"),
     # A campaign's session transcripts, read by any member of the server (#1501).
     ("dmbot_web_transcript_sessions", "dmbot_web_transcript_sessions(BIGINT, TEXT)"),
     (
@@ -5073,6 +5075,240 @@ WEB_HOUSE_RULES = """
     REVOKE ALL ON FUNCTION dmbot_web_house_rules_campaigns(BIGINT) FROM PUBLIC;
 """
 
+PACK_SUGGESTIONS = (
+    f"""
+    -- "Suggest to <pack>" (#1537): a following campaign's DM sends one of its own homebrew
+    -- entries to the pack's publisher, as #1259 does for house-rules sets. Only the entry's words
+    -- cross (kind, name, summary, text, whether players may know it), never who sent it, and
+    -- never an entry from a book (the sender's store refuses those). The same two-table shape:
+    --   pack_suggestions       in the PUBLISHER's campaign: the entry, the answer, nothing that
+    --                          says which campaign, server or DM sent it
+    --   pack_suggestions_sent  in the FOLLOWER's campaign: what its DM sent, to which pack, and
+    --                          when it was told the answer; linked only by the random id.
+    -- The doors across servers are the two functions below, like the house-rules ones; they open
+    -- the tables to themselves through a setting they set and put back. The existing
+    -- `suggest_door` policy on rule_sets already opens one shared set (house rules or pack) by id.
+    CREATE TABLE pack_suggestions (
+        {_memory_scope()}
+        id          TEXT NOT NULL CHECK (id ~ '^[0-9a-f]{{32}}$'),
+        set_id      TEXT NOT NULL,
+        kind        TEXT NOT NULL CHECK (kind IN
+            ('spell', 'monster', 'item', 'feat', 'condition', 'rule', 'other')),
+        name        TEXT NOT NULL CHECK (char_length(name) BETWEEN 1 AND 80),
+        summary     TEXT CHECK (summary IS NULL OR char_length(summary) BETWEEN 1 AND 160),
+        text        TEXT NOT NULL CHECK (char_length(text) BETWEEN 1 AND 2000),
+        known       BOOLEAN NOT NULL,
+        status      TEXT NOT NULL CHECK (status IN ('open', 'accepted', 'declined', 'present')),
+        created_at  BIGINT NOT NULL,
+        resolved_at BIGINT,
+        resolved_by BIGINT,
+        version     INTEGER,
+        noted_at    BIGINT,  -- when the note reached the publisher's DM screen (NULL: not yet)
+        PRIMARY KEY (guild_id, campaign_id, id),
+        UNIQUE (id),
+        FOREIGN KEY (guild_id, campaign_id, set_id)
+            REFERENCES rule_sets (guild_id, campaign_id, id) ON DELETE CASCADE
+    );
+    CREATE INDEX pack_suggestions_open ON pack_suggestions (set_id) WHERE status = 'open';
+    CREATE TABLE pack_suggestions_sent (
+        {_memory_scope()}
+        id          TEXT NOT NULL CHECK (id ~ '^[0-9a-f]{{32}}$'),
+        set_id      TEXT NOT NULL,
+        set_name    TEXT NOT NULL CHECK (char_length(set_name) BETWEEN 1 AND 60),
+        name        TEXT NOT NULL CHECK (char_length(name) BETWEEN 1 AND 80),
+        sent_by     BIGINT NOT NULL CHECK (sent_by > 0),
+        sent_at     BIGINT NOT NULL,
+        told_at     BIGINT,
+        PRIMARY KEY (guild_id, campaign_id, id)
+    );
+    """
+    + _isolate("pack_suggestions")
+    + _isolate("pack_suggestions_sent")
+    + """
+    DO $do$
+    BEGIN
+        EXECUTE format(
+            'CREATE POLICY suggest_door_read ON pack_suggestions FOR SELECT TO %I
+                USING (dmbot_owner_sync() = ''suggest''
+                       AND set_id = current_setting(''dmbot.set_id'', true))',
+            current_user);
+        EXECUTE format(
+            'CREATE POLICY suggest_door_add ON pack_suggestions FOR INSERT TO %I
+                WITH CHECK (dmbot_owner_sync() = ''suggest''
+                            AND set_id = current_setting(''dmbot.set_id'', true))',
+            current_user);
+        EXECUTE format(
+            'CREATE POLICY answer_door ON pack_suggestions FOR SELECT TO %I
+                USING (dmbot_owner_sync() = ''suggestanswer''
+                       AND id = ANY(string_to_array(
+                           COALESCE(current_setting(''dmbot.suggestion_ids'', true), $q$$q$),
+                           $q$,$q$)))',
+            current_user);
+    END
+    $do$;
+    -- Adds a suggestion to a pack the caller's campaign follows. 'ok' (with the publisher's
+    -- server and campaign, which DMbot uses to post the note and never shows anyone), 'full'
+    -- (the pack already has `pack_cap` open suggestions), 'dup' (the pack already has an open one
+    -- for that name), or 'gone' (the caller does not follow it, or it is not shared any more).
+    CREATE FUNCTION dmbot_suggest_entry(
+        sid TEXT, wanted_set TEXT, follower_campaign TEXT, new_kind TEXT, new_name TEXT,
+        new_summary TEXT, new_text TEXT, new_known BOOLEAN, now_at BIGINT, pack_cap INTEGER,
+        wait_s INTEGER)
+        RETURNS TABLE (outcome TEXT, pub_guild BIGINT, pub_campaign TEXT)
+        LANGUAGE plpgsql SECURITY DEFINER
+        AS $fn$
+    DECLARE
+        before TEXT := COALESCE(current_setting('dmbot.owner_sync', true), '');
+        before_set TEXT := COALESCE(current_setting('dmbot.set_id', true), '');
+        found_guild BIGINT;
+        found_campaign TEXT;
+        waiting INTEGER;
+    BEGIN
+        IF NOT EXISTS (SELECT 1 FROM rule_set_follows f
+                       WHERE f.guild_id = dmbot_current_guild()
+                         AND f.campaign_id = follower_campaign
+                         AND f.set_id = wanted_set AND f.kind = 'homebrew' AND f.updating) THEN
+            RETURN QUERY SELECT 'gone'::TEXT, NULL::BIGINT, NULL::TEXT;
+            RETURN;
+        END IF;
+        PERFORM set_config('dmbot.owner_sync', 'suggest', true);
+        PERFORM set_config('dmbot.set_id', wanted_set, true);
+        SELECT s.guild_id, s.campaign_id INTO found_guild, found_campaign
+            FROM rule_sets s WHERE s.id = wanted_set AND s.status = 'shared'
+                               AND s.kind = 'homebrew';
+        IF found_guild IS NULL THEN
+            PERFORM set_config('dmbot.owner_sync', before, true);
+            PERFORM set_config('dmbot.set_id', before_set, true);
+            RETURN QUERY SELECT 'gone'::TEXT, NULL::BIGINT, NULL::TEXT;
+            RETURN;
+        END IF;
+        -- Two tables suggesting at once take turns, so the cap and the name check hold.
+        PERFORM pg_advisory_xact_lock(hashtext(wanted_set));
+        SELECT count(*) INTO waiting FROM pack_suggestions q
+            WHERE q.set_id = wanted_set AND q.status = 'open'
+              AND q.created_at > now_at - wait_s;  -- an unanswered one stops counting
+        IF waiting >= pack_cap THEN
+            PERFORM set_config('dmbot.owner_sync', before, true);
+            PERFORM set_config('dmbot.set_id', before_set, true);
+            RETURN QUERY SELECT 'full'::TEXT, NULL::BIGINT, NULL::TEXT;
+            RETURN;
+        END IF;
+        IF EXISTS (SELECT 1 FROM pack_suggestions q
+                   WHERE q.set_id = wanted_set AND q.status = 'open'
+                     AND q.created_at > now_at - wait_s
+                     AND lower(q.name) = lower(new_name)) THEN
+            PERFORM set_config('dmbot.owner_sync', before, true);
+            PERFORM set_config('dmbot.set_id', before_set, true);
+            RETURN QUERY SELECT 'dup'::TEXT, NULL::BIGINT, NULL::TEXT;
+            RETURN;
+        END IF;
+        INSERT INTO pack_suggestions (guild_id, campaign_id, id, set_id, kind, name, summary,
+                                      text, known, status, created_at)
+            VALUES (found_guild, found_campaign, sid, wanted_set, new_kind, new_name,
+                    new_summary, new_text, new_known, 'open', now_at);
+        PERFORM set_config('dmbot.owner_sync', before, true);
+        PERFORM set_config('dmbot.set_id', before_set, true);
+        RETURN QUERY SELECT 'ok'::TEXT, found_guild, found_campaign;
+    END
+    $fn$;
+    -- The answers to the pack suggestions with these ids (a comma-separated list the caller made
+    -- itself): the id is the key, so nothing else of the publisher's can be reached.
+    CREATE FUNCTION dmbot_pack_suggestion_answers(ids TEXT)
+        RETURNS TABLE (id TEXT, status TEXT, version INTEGER)
+        LANGUAGE plpgsql SECURITY DEFINER
+        AS $fn$
+    DECLARE
+        before TEXT := COALESCE(current_setting('dmbot.owner_sync', true), '');
+        before_ids TEXT := COALESCE(current_setting('dmbot.suggestion_ids', true), '');
+    BEGIN
+        PERFORM set_config('dmbot.owner_sync', 'suggestanswer', true);
+        PERFORM set_config('dmbot.suggestion_ids', ids, true);
+        RETURN QUERY
+            SELECT q.id, q.status, q.version FROM pack_suggestions q
+            WHERE q.id = ANY(string_to_array(ids, ','));
+        PERFORM set_config('dmbot.owner_sync', before, true);
+        PERFORM set_config('dmbot.suggestion_ids', before_ids, true);
+    END
+    $fn$;
+    DO $do$
+    BEGIN
+        EXECUTE format(
+            'ALTER FUNCTION dmbot_suggest_entry('
+            'TEXT, TEXT, TEXT, TEXT, TEXT, TEXT, TEXT, BOOLEAN, BIGINT, INTEGER, INTEGER)'
+            ' SET search_path = pg_catalog, %I, pg_temp',
+            current_schema());
+        EXECUTE format(
+            'ALTER FUNCTION dmbot_pack_suggestion_answers(TEXT)'
+            ' SET search_path = pg_catalog, %I, pg_temp',
+            current_schema());
+    END
+    $do$;
+    REVOKE ALL ON FUNCTION dmbot_suggest_entry(
+        TEXT, TEXT, TEXT, TEXT, TEXT, TEXT, TEXT, BOOLEAN, BIGINT, INTEGER, INTEGER) FROM PUBLIC;
+    REVOKE ALL ON FUNCTION dmbot_pack_suggestion_answers(TEXT) FROM PUBLIC;
+    """
+)
+
+TRANSCRIPT_KEEP = """
+    -- Keep transcripts for (#1533; docs/PLAN.md, "Retention"): a DM chooses how long a campaign
+    -- keeps its transcripts. `transcript_keep_days` is NULL (forever, today's behaviour) or 30,
+    -- 90 or 365; the daily retention job deletes the lines of every session that ended longer
+    -- ago than that. The session's own row stays, so session numbers never shift:
+    -- `transcripts_deleted_at` marks it (the lines are gone, line_count 0).
+    -- `transcript_deleted_noted` is whether the DM screen has said so once; changing the choice
+    -- resets it. Nullable or defaulted columns: no existing row changes, so no row-level
+    -- security needs opening.
+    ALTER TABLE campaigns
+        ADD COLUMN transcript_keep_days INTEGER
+            CHECK (transcript_keep_days IS NULL OR transcript_keep_days IN (30, 90, 365)),
+        ADD COLUMN transcript_deleted_noted BOOLEAN NOT NULL DEFAULT FALSE;
+    ALTER TABLE transcript_sessions ADD COLUMN transcripts_deleted_at BIGINT;
+
+    -- The website lists the same sessions with the same numbers as the bot: a session whose
+    -- transcript was deleted still takes its number, so the ones after it do not shift.
+    CREATE OR REPLACE FUNCTION dmbot_web_transcript_sessions(g BIGINT, c TEXT) RETURNS JSONB
+    LANGUAGE plpgsql SECURITY DEFINER AS $fn$
+    DECLARE
+        camp campaigns%ROWTYPE;
+    BEGIN
+        IF dmbot_current_guild() IS DISTINCT FROM g
+           OR NOT (g = ANY ((SELECT dmbot_web_guilds())::BIGINT[])) THEN
+            RETURN NULL;
+        END IF;
+        SELECT * INTO camp FROM campaigns WHERE guild_id = g AND id = c;
+        IF NOT FOUND THEN
+            RETURN NULL;
+        END IF;
+        RETURN jsonb_build_object(
+            'name', camp.name,
+            'owner', camp.owner_user_id::TEXT,
+            'sessions', COALESCE((
+                SELECT jsonb_agg(jsonb_build_object(
+                           'id', s.id, 'number', s.number, 'startedAt', s.started_at,
+                           'endedAt', s.ended_at, 'lines', s.line_count,
+                           'engines', to_jsonb(s.engines)) ORDER BY s.started_at DESC, s.id DESC)
+                FROM (
+                    SELECT * FROM (
+                        SELECT t.*, row_number() OVER (ORDER BY t.started_at, t.id) AS number
+                        FROM transcript_sessions t
+                        WHERE t.guild_id = g AND t.campaign_id = c
+                          AND (t.line_count > 0 OR t.transcripts_deleted_at IS NOT NULL)
+                    ) numbered
+                    WHERE numbered.line_count > 0
+                ) s), '[]'::jsonb));
+    END
+    $fn$;
+    DO $do$
+    BEGIN
+        EXECUTE format(
+            'ALTER FUNCTION dmbot_web_transcript_sessions(BIGINT, TEXT)'
+            ' SET search_path = pg_catalog, %I, pg_temp',
+            current_schema());
+    END
+    $do$;
+    REVOKE ALL ON FUNCTION dmbot_web_transcript_sessions(BIGINT, TEXT) FROM PUBLIC;
+"""
+
 HOMEBREW_FROM_BOOK = """
     -- Homebrew loaded from a file after the DM said some of it is from a published book and
     -- confirmed the right to use it (#1524; CLAUDE.md, IP rule): that text stays in this one
@@ -5080,6 +5316,88 @@ HOMEBREW_FROM_BOOK = """
     -- A column with a default: no existing row changes, so no row-level security needs opening.
     ALTER TABLE homebrew_entries ADD COLUMN from_book BOOLEAN NOT NULL DEFAULT false;
     """
+
+WEB_HOMEBREW = """
+    -- A campaign's homebrew on the website (#1525). Only the entries the DM marked "players may
+    -- know" leave: a hidden entry (a monster the players have not met) never leaves these doors,
+    -- not even for the campaign's DM, who reads those on the DM screen in Discord. Like the house
+    -- rules, any signed-in person whose session lists the server may read, with that server set
+    -- for the transaction; the website's role has no grant on homebrew_entries.
+    --
+    -- What leaves the database: kind, name, summary, text, version, updated_at (the last two
+    -- only reach the API process, for the file; the page never sends them). NEVER who wrote it,
+    -- its id or whether it came from a book (the IP rule keeps book text per campaign; the page
+    -- shows the campaign's own words only).
+    --
+    -- dmbot_web_homebrew: NULL when the caller is not in the server or there is no campaign.
+    CREATE FUNCTION dmbot_web_homebrew(g BIGINT, c TEXT) RETURNS JSONB
+    LANGUAGE plpgsql SECURITY DEFINER AS $fn$
+    DECLARE
+        camp campaigns%ROWTYPE;
+    BEGIN
+        IF dmbot_current_guild() IS DISTINCT FROM g
+           OR NOT (g = ANY ((SELECT dmbot_web_guilds())::BIGINT[])) THEN
+            RETURN NULL;
+        END IF;
+        SELECT * INTO camp FROM campaigns WHERE guild_id = g AND id = c;
+        IF NOT FOUND THEN
+            RETURN NULL;
+        END IF;
+        RETURN jsonb_build_object(
+            'name', camp.name,
+            'entries', COALESCE((
+                SELECT jsonb_agg(jsonb_build_object(
+                           'kind', h.kind, 'name', h.name, 'summary', h.summary,
+                           'text', h.text, 'version', h.version, 'updatedAt', h.updated_at)
+                           ORDER BY h.name_key)
+                FROM homebrew_entries h
+                WHERE h.guild_id = g AND h.campaign_id = c AND h.players_may_know),
+                '[]'::jsonb));
+    END
+    $fn$;
+
+    -- dmbot_web_homebrew_campaigns: the server's campaigns with at least one shown entry, with
+    -- how many; at most 100. NULL when the caller is not in the server.
+    CREATE FUNCTION dmbot_web_homebrew_campaigns(g BIGINT) RETURNS JSONB
+    LANGUAGE plpgsql SECURITY DEFINER AS $fn$
+    BEGIN
+        IF dmbot_current_guild() IS DISTINCT FROM g
+           OR NOT (g = ANY ((SELECT dmbot_web_guilds())::BIGINT[])) THEN
+            RETURN NULL;
+        END IF;
+        RETURN COALESCE((
+            SELECT jsonb_agg(jsonb_build_object(
+                       'id', x.id, 'name', x.name, 'entries', x.entries)
+                       ORDER BY lower(x.name), x.id)
+            FROM (
+                SELECT c.id, c.name,
+                       (SELECT count(*) FROM homebrew_entries h
+                        WHERE h.guild_id = c.guild_id AND h.campaign_id = c.id
+                          AND h.players_may_know) AS entries
+                FROM campaigns c
+                WHERE c.guild_id = g
+                  AND EXISTS (SELECT 1 FROM homebrew_entries h
+                              WHERE h.guild_id = c.guild_id AND h.campaign_id = c.id
+                                AND h.players_may_know)
+                ORDER BY lower(c.name), c.id LIMIT 100
+            ) x), '[]'::jsonb);
+    END
+    $fn$;
+    DO $do$
+    BEGIN
+        EXECUTE format(
+            'ALTER FUNCTION dmbot_web_homebrew(BIGINT, TEXT)'
+            ' SET search_path = pg_catalog, %I, pg_temp',
+            current_schema());
+        EXECUTE format(
+            'ALTER FUNCTION dmbot_web_homebrew_campaigns(BIGINT)'
+            ' SET search_path = pg_catalog, %I, pg_temp',
+            current_schema());
+    END
+    $do$;
+    REVOKE ALL ON FUNCTION dmbot_web_homebrew(BIGINT, TEXT) FROM PUBLIC;
+    REVOKE ALL ON FUNCTION dmbot_web_homebrew_campaigns(BIGINT) FROM PUBLIC;
+"""
 
 MIGRATIONS: tuple[Migration, ...] = (
     ("0001_initial", INITIAL),
@@ -5187,6 +5505,9 @@ MIGRATIONS: tuple[Migration, ...] = (
     ("0097_homebrew_entries", HOMEBREW_ENTRIES),  # a campaign's own homebrew (#1520)
     ("0098_web_house_rules", WEB_HOUSE_RULES),  # the website reads a campaign's house rules (#1521)
     ("0099_homebrew_from_book", HOMEBREW_FROM_BOOK),  # homebrew from a confirmed book (#1524)
+    ("0100_web_homebrew", WEB_HOMEBREW),  # the website reads a campaign's shown homebrew (#1525)
+    ("0101_transcript_keep", TRANSCRIPT_KEEP),  # how long a campaign keeps transcripts (#1533)
+    ("0102_pack_suggestions", PACK_SUGGESTIONS),  # suggest an entry to a pack (#1537)
 )
 
 # Tables that must have row-level security. A test checks every table in the schema
@@ -5225,6 +5546,8 @@ ISOLATED_TABLES = (
     "memory_claims",
     "rule_set_suggestions",
     "rule_set_suggestions_sent",
+    "pack_suggestions",
+    "pack_suggestions_sent",
 )
 # A person's own rows (the website, #435): row-level security on `user_id`, set by
 # Database.user(). Sessions can also be found by their cookie hash (Database.session()),

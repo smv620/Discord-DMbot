@@ -187,7 +187,7 @@ class AnswerFirst(unittest.IsolatedAsyncioTestCase):
         self.assert_in_time(it, "defer", "followup", defer=NEW)
 
     async def test_card_steps_answer_before_the_names_load(self) -> None:
-        card = name_card.NameCard(CAMPAIGN.id, BELL, others=False, longer=False)
+        card = name_card.NameCard(CAMPAIGN.id, BELL, others=False)
         it = self.it()
         await card._connect(it)
         self.assert_in_time(it, "defer", "edit_original", defer=IN_PLACE)
@@ -251,9 +251,7 @@ class AnswerFirst(unittest.IsolatedAsyncioTestCase):
         steps: dict[str, tuple[Any, str]] = {
             "KindPicker": (lambda it: picked(kind, kind.pick, "npc")._picked(it), "add_entity"),
             "NameCard._edit_others": (
-                lambda it: name_card.NameCard(
-                    CAMPAIGN.id, BELL, others=True, longer=False
-                )._edit_others(it),
+                lambda it: name_card.NameCard(CAMPAIGN.id, BELL, others=True)._edit_others(it),
                 "aliases",
             ),
             "NameCard._one_of_a_kind": (
