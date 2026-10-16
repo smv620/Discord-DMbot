@@ -13,6 +13,7 @@ from dmbot.entitlements import parse_free_users
 from dmbot.logs import LOG_FORMATS, LOG_LEVELS
 from dmbot.mail import MailConfigError, MailSettings, load_mail_settings
 from dmbot.memory.continuity import Levels
+from dmbot.memory.recall import DEFAULT_BUDGET
 from dmbot.sharding import ShardConfigError, ShardSettings, parse_shards
 from dmbot.transcription.config import (
     TranscriptionConfigError,
@@ -70,6 +71,8 @@ class Settings:
     # Continuity warnings (#1320): where each level starts and how much confirmed story a
     # campaign needs first. Backend settings, tuned on the golden set; no switch shown to anyone.
     continuity: Levels = field(default_factory=Levels)
+    # The most characters of story the recall service hands one helper (#1350).
+    recall_budget: int = DEFAULT_BUDGET
     # Test recordings (#1019): servers where people who agreed to it have their voices saved
     # for DMbot's own tests, and where the files go. Empty: nothing is ever saved.
     test_recording_guilds: frozenset[int] = frozenset()
@@ -142,6 +145,7 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
         )
 
     continuity = _continuity_levels(get)
+    recall_budget = _recall_budget(get)
 
     extractor_raw = (get("DMBOT_STORY_EXTRACTOR") or "0").lower()
     if extractor_raw not in ("0", "1", "true", "on", "false", "off"):
@@ -223,6 +227,7 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
         story_extractor_max_calls=int(extractor_calls_raw),
         story_extractor_max_calls_day=int(extractor_day_raw),
         continuity=continuity,
+        recall_budget=recall_budget,
         admin_primary_id=admin_primary,
         admin_secondary_id=admin_secondary,
         test_recording_guilds=test_guilds,
@@ -297,6 +302,16 @@ def _admin_id(get: Callable[[str], str], name: str) -> int | None:
         return None
     if not (raw.isascii() and raw.isdigit() and 17 <= len(raw) <= 20):
         raise ConfigError(f"{name} must be empty or a Discord user ID (17 to 20 digits).")
+    return int(raw)
+
+
+def _recall_budget(get: Callable[[str], str]) -> int:
+    """How many characters of the story one recall may hold (#1350). Unset: the default."""
+    raw = get("DMBOT_RECALL_BUDGET")
+    if not raw:
+        return DEFAULT_BUDGET
+    if not (raw.isascii() and raw.isdigit() and 200 <= int(raw) <= 50_000):
+        raise ConfigError(f'DMBOT_RECALL_BUDGET must be a number from 200 to 50000, got "{raw}".')
     return int(raw)
 
 
