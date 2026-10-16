@@ -532,6 +532,7 @@ def create_app(
         "bad_text": (422, "bad_text"),
         "too_soon": (429, "too_soon"),
         "bad_choice": (422, "bad_choice"),
+        "too_big": (413, "too_big"),
         "not_in_plan": (409, "not_in_plan"),
     }
     recap_files = audio_links.audio_files(settings.recap_audio_dir)
@@ -709,9 +710,10 @@ def create_app(
 
     @app.get("/me/campaigns/{ref}/transcripts/{number}")
     async def me_transcript(
-        ref: str, number: int, signed: Signed, version: str = "cleaned"
+        ref: str, number: int, signed: Signed, version: str = "cleaned", offset: int = 0
     ) -> dict[str, Any]:
-        """One session to read: `?version=cleaned` (the default) or `heard`."""
+        """One session to read: `?version=cleaned` (the default) or `heard`, a page of lines from
+        `?offset=` (the answer's `next` is the offset of the following page)."""
         session, _token = signed
         try:
             return await transcript_pages.read_session(
@@ -722,6 +724,7 @@ def create_app(
                 version,
                 now=clock(),
                 enforce_plans=settings.enforce_plans,
+                offset=offset,
             )
         except RecapError as err:
             status, detail = recap_refusals.get(err.code, (404, "not_found"))
