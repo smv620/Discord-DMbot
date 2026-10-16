@@ -2523,3 +2523,5 @@ Overall ...................................... PASS (Deepgram baseline: 33/33, 1
   `up -d --no-deps core`, then web-api. No compose or .env change. The migration files did not change between the dry run and the deploy head (checked).
   Result: core logged "Database updated: 0092_support_handed_over, 0093_transcript_suggestions", "ears connected" and "Connected to 1 server(s)"; web-api healthy; schema_migrations 93 rows, last 0093_transcript_suggestions.
   Not checked: a recorded player types /dmbot fix after a session and sees the picker (needs a game session).
+  10-minute check, 10:32 UTC (11 minutes after the start): 0 ERROR, CRITICAL or traceback lines in core and web-api since 10:20; both up, web-api healthy; schema_migrations 93 rows, last 0093_transcript_suggestions.
+  Nothing turned on for users (recaps off, no ElevenLabs key, the extractor off).
