@@ -146,13 +146,19 @@ class NameThenAnswer:
     def set_dms(self, dms: Mapping[int, str]) -> None:
         """Who the campaign's DMs are and what each is called at the table (their person name,
         '' for none). Called again whenever it may have changed."""
-        self._dm_keys = {name_key(name): uid for uid, name in dms.items() if name.strip()}
+        # Two DMs with the same name: that name means neither (it could not be told apart).
+        keys: dict[str, int | None] = {}
+        for uid, name in dms.items():
+            if name.strip():
+                keys[name_key(name)] = None if name_key(name) in keys else uid
+        self._dm_keys = {k: u for k, u in keys.items() if u is not None}
         self._dm_ids = frozenset(dms)
 
     def session_dm(self, caller: int, at_ms: int) -> int | None:
         """The DM a line to "the DM" means: a DM who has spoken in this session (so is here and
-        agreed), not the caller. One such DM is the answer; with two or more, the one who spoke
-        last within the answer window; if none spoke that recently, no one."""
+        agreed), not the caller. One such DM is the answer, however long ago they spoke; with two
+        or more, the one who spoke last within the answer window (a tie goes to the lower id);
+        if none spoke that recently, no one."""
         here = {u: t for u, t in self._dm_spoke.items() if u != caller and u in self._dm_ids}
         if len(here) == 1:
             return next(iter(here))
@@ -162,7 +168,9 @@ class NameThenAnswer:
         return max(recent, key=lambda u: (recent[u], -u))
 
     def dm_addressed(self) -> dict[int, int]:
-        """How often each DM was called by a DM word or by their own name this session."""
+        """How often each DM was called by a DM word or by their own name this session. Only
+        this learner keeps it (in memory, for the session); nothing reads it yet, and nothing is
+        written to the story graph (#1547)."""
         return dict(self._dm_called)
 
     def feed(self, speaker: int, at_ms: int, text: str, *, consented: bool) -> None:
@@ -192,7 +200,9 @@ class NameThenAnswer:
                     if name_key(word) in self._dm_keys
                     else self.session_dm(speaker, at_ms)
                 )
-                if who is not None and who != speaker:
+                # Only a DM who has spoken here (so agreed to be recorded) is counted, whichever
+                # way they were called, and never for themselves.
+                if who is not None and who != speaker and who in self._dm_spoke:
                     self._dm_called[who] += 1
             elif name_key(word) not in _NOT_NAMES:
                 names.append(word)

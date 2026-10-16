@@ -412,6 +412,8 @@ def _known_names(lookup: CampaignLookup, heard: str, person_keys: set[str]) -> l
         if any(span[0] < end and start < span[1] for start, end in taken):
             continue
         taken.append(span)
+        if is_dm_word(_stem(heard[span[0] : span[1]])):
+            continue  # "GM" is the person running the game, never rewritten, even by a DM's rule
         said_words = [name_key(_stem(w)) for w in heard[span[0] : span[1]].split()]
         if name_key(_stem(heard[span[0] : span[1]])) in person_keys or any(
             w in person_keys for w in said_words

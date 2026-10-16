@@ -739,6 +739,19 @@ class DmWords(unittest.TestCase):
         for line in ("Then Dungeon Master spoke.", "Then Dungeon Masters spoke."):
             self.assertEqual(clean(old, line, scene=(CERRIC,)).fixes, ())
 
+    def test_a_dms_rule_never_turns_a_dm_word_into_a_name(self) -> None:
+        rule = CampaignLookup.build(
+            LookupData(
+                1,
+                (entity(CERRIC, "Cerric"),),
+                (alias(CERRIC, "Cerric"),),
+                (correction("GM", CERRIC, FIX),),
+                (),
+            )
+        )
+        for line in ("Then the GM spoke.", "Then GM spoke."):
+            self.assertEqual(clean(rule, line, scene=(CERRIC,)).fixes, ())
+
     def test_a_dm_word_is_left_as_heard_even_next_to_a_name_it_sounds_like(self) -> None:
         look = CampaignLookup.build(
             LookupData(
