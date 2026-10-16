@@ -294,7 +294,7 @@ class RecapStore:
             )
 
     async def address(self, guild_id: int, user_id: int) -> str | None:
-        """The DM's account address, through the one door that opens it (migration 0078)."""
+        """The DM's account address, through the one door that opens it (migration 0079)."""
         async with self._db.recap_mail(guild_id) as conn:
             cur = await conn.execute("SELECT dmbot_recap_address(%s) AS a", (user_id,))
             row = await cur.fetchone()

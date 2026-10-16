@@ -4081,7 +4081,7 @@ MIGRATIONS: tuple[Migration, ...] = (
         MEMORY_CLAIMS_BY_FACT,
     ),  # the recall service finds a fact's claim (#1350)
     ("0077_extractor_progress", EXTRACTOR_PROGRESS),  # a restart resumes the extractor (#1367)
-    ("0078_recap_jobs", RECAP_JOBS),  # the cinematic recap job of a session (#1382)
+    ("0079_recap_jobs", RECAP_JOBS),  # the cinematic recap job of a session (#1382)
 )
 
 # Tables that must have row-level security. A test checks every table in the schema
