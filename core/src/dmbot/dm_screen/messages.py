@@ -312,9 +312,10 @@ def session_summary(
     problems: list[str],
     *,
     downloads_sent: int,
+    names: str = "",
 ) -> str:
     """One plain summary for the DM screen when a session ends. Names and numbers only:
-    never anything that was said."""
+    never anything that was said. `names`: the one line of counts from `names_line`."""
     lines = [
         f"📋 **Session ended: {discord.utils.escape_markdown(campaign_name)}**",
         f"Started <t:{started_at}:t>, ran {duration(ended_at - started_at)}.",
@@ -339,6 +340,8 @@ def session_summary(
         lines.append("If this happens often, tell whoever runs DMbot for your server.")
     elif people and not any(p.flagged for p in people):  # no all-clear under a ⚠️
         lines.append("✅ Everything DMbot heard was written down.")
+    if names:
+        lines.append(names)
     if downloads_sent:
         lines.append(
             "📄 DMbot sent each recorded player a private message to download the "
@@ -347,6 +350,29 @@ def session_summary(
     elif people:
         lines.append("📄 Anyone in the server can get the transcript with `/transcript`.")
     return "\n".join(lines)
+
+
+def names_line(
+    fixed: int, asked: int, unanswered: int, edited: int, suggested: int, waiting: int
+) -> str:
+    """One sentence of counts on what happened with names (#1510), so a DM can tell whether it is
+    worth a look: "Names: DMbot fixed 3 by itself, asked you about 2 (1 not answered), you
+    corrected 1, players suggested 2 (1 still waiting)." Plain verbs say who did what; only the
+    parts above zero; empty when there is nothing to say."""
+    parts = []
+    if fixed:
+        parts.append(f"DMbot fixed {fixed} by itself")
+    if asked:
+        parts.append(
+            f"asked you about {asked}" + (f" ({unanswered} not answered)" if unanswered else "")
+        )
+    if edited:
+        parts.append(f"you corrected {edited}")
+    if suggested:
+        parts.append(
+            f"players suggested {suggested}" + (f" ({waiting} still waiting)" if waiting else "")
+        )
+    return f"✏️ Names: {', '.join(parts)}." if parts else ""
 
 
 def summary_problems(missed: int, failed: int, caught_up: bool) -> list[str]:

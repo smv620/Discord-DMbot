@@ -457,6 +457,10 @@ class Table:
     fix_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
     fix_queued: bool = False  # a redraw is waiting: more changes just ride along
     fix_ended: bool = False  # the session is over: the lists stay, their buttons go
+    # What the Cleaner did this session, for the one line of counts in the end-of-session message
+    # (#1510): name fixes made, "Did they mean…?" questions asked. Counts only; no words.
+    names_fixed: int = 0
+    names_asked: int = 0
     # Lines the off-topic filter left out, each run with Put it back (#677), likewise.
     left_out: left_out.LeftOut = field(default_factory=left_out.LeftOut)
     left_out_message: discord.Message | None = None
@@ -2052,6 +2056,19 @@ class DMBot(commands.AutoShardedBot):
         problems = screen_messages.summary_problems(
             self.pipeline.missed_in[session], self.pipeline.failed_in[session], caught_up
         )
+        session_id = table.transcript_session_id
+        suggested = waiting = 0
+        if session_id is not None and self.suggestions is not None:
+            try:
+                suggested, waiting = await self.suggestions.session_counts(gid, session_id)
+            except Exception:
+                log.exception("Couldn't count the session's suggested fixes")
+        edited = sum(1 for n in table.fix_notes.notes if n.fix.how == DM_EDIT and not n.undone)
+        unanswered = sum(
+            1
+            for why in table.questions.closed_why.values()
+            if why in (name_questions.EXPIRED_WHY, name_questions.ENDED)
+        )
         text = screen_messages.session_summary(
             table.campaign_name,
             table.started_at or ended_at,
@@ -2059,8 +2076,15 @@ class DMBot(commands.AutoShardedBot):
             spoke,
             problems,
             downloads_sent=downloads_sent,
+            names=screen_messages.names_line(
+                table.names_fixed,
+                table.names_asked,
+                unanswered,
+                edited,
+                suggested,
+                waiting,
+            ),
         )
-        session_id = table.transcript_session_id
         if session_id is not None and self.suggestions is not None:
             # With ✏️ Fix a line (#1499): the DM can correct any line, from the same picker.
             await self.post_message(
@@ -3504,6 +3528,7 @@ class DMBot(commands.AutoShardedBot):
             )
             result = self._clean(table, text, unsure=noted)
             cleaned = result.text
+            table.names_fixed += len(result.fixes)
             seam = self._look_back(table, utterance, text, result)
             self._offer_question(table, utterance.user_id, utterance.start_ms, text, result, seam)
             kept = table.last_piece.get(utterance.user_id)
@@ -4700,6 +4725,7 @@ class DMBot(commands.AutoShardedBot):
             prev_end=across.prev_end if across else 0,
         )
         if asked is not None:
+            table.names_asked += 1
             self._track(self._ask_dm(table, asked), "name-question")
 
     def _not_answered(self, table: Table, asked: name_questions.Asked) -> str:
