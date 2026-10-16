@@ -202,6 +202,7 @@ from dmbot.rules import index as rules_index
 from dmbot.rules.book_rank import book_is_legacy, book_wins
 from dmbot.rules.followed import followed_rules, own_first
 from dmbot.rules.homebrew import Homebrew, HomebrewSection, HomebrewStore
+from dmbot.rules.homebrew_import import HomebrewImporter
 from dmbot.rules.homebrew_packs import HomebrewPackStore, HomebrewReader
 from dmbot.rules.homebrew_sources import SiteApprovalsSection, SourceStore
 from dmbot.rules.homebrew_spotter import HomebrewMention, HomebrewSpotter
@@ -699,6 +700,7 @@ class DMBot(commands.AutoShardedBot):
         heard_questions: WaitingQuestionStore | None = None,
         improvement: OptOutStore | None = None,
         sources: SourceStore | None = None,
+        importer: HomebrewImporter | None = None,
     ) -> None:
         intents = discord.Intents.none()
         intents.guilds = True
@@ -747,6 +749,7 @@ class DMBot(commands.AutoShardedBot):
         self.suggestions = suggestions  # players' suggested line fixes (#1491)
         self.homebrew = homebrew  # a campaign's own homebrew entries (#1520)
         self.sources = sources  # which sites a campaign approved, imported pages (#1633)
+        self.importer = importer  # adds homebrew from a published page's link (#1634)
         # "Did they mean…?" questions left unanswered at a session's end (#1572).
         self.heard_questions = heard_questions
         # The last entries a DM removed, per campaign, so the list can put them back (memory only).
@@ -8058,6 +8061,7 @@ async def run(settings: Settings) -> None:
             if settings.enforce_plans
             else CampaignStore(db)
         )
+        homebrew_store, sources = HomebrewStore(db), SourceStore(db)
         campaigns.register_section(MemorySection())  # campaign memory goes in backups
         campaigns.register_section(HouseRulesSection())  # and so do house rules (#865)
         campaigns.register_section(HomebrewSection())  # and its own homebrew (#1520)
@@ -8088,10 +8092,11 @@ async def run(settings: Settings) -> None:
             PackSuggestionStore(db),  # shared sets and homebrew packs (#1190, #1527, #1537)
             RecapStore(db),
             SuggestionStore(db),
-            HomebrewStore(db),
+            homebrew_store,
             WaitingQuestionStore(db),
             OptOutStore(db),
-            SourceStore(db),
+            sources,
+            HomebrewImporter(homebrew_store, sources),
         )
         _close_on_sigterm(bot)
         async with bot:
