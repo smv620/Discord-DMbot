@@ -82,8 +82,8 @@ MINE_NOTE = "✏️ Saved. This is now your own, and it replaces the pack's vers
 ENTRY_GONE = "That entry is gone, maybe removed by another DM. Here is the list now."
 INTRO = (
     "Your own spells, monsters, items and other game content. Players can't see an entry until "
-    "you press 👀. Hidden entries are for you only; DMbot's sidebar and table answers don't use them. "
-    "DMbot only keeps what you write. For a published book, use **Share a rulebook**."
+    "you press 👀. Hidden entries are for you only; DMbot's sidebar and table answers don't use "
+    "them. DMbot only keeps what you write. For a published book, use **Share a rulebook**."
 )
 SHORT_INTRO = "Your own creations only. Hidden entries are for you only."
 NONE_YET = "No homebrew yet. Press **➕ Add** to write the first one, or **📥 Load file**."

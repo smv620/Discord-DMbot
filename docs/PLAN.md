@@ -631,8 +631,15 @@ that house rules must be readable offline, so DMbot keeps a plain-text file of r
 - The offers wait in memory (the 20 newest); after a restart an old button says it has ended.
 
 **Homebrew (part 1)** (decided 2026-10-16 by Supervisor, #1520, migration 0097). A campaign stores its
-own homebrew: **entries** the DM wrote, in the DM's own words (a spell, monster, item, feat, condition,
-rule or other). Never a published book's text: the form says "Your own creations only. For a published
+own homebrew: **entries** the DM wrote, in the DM's own words (a spell, monster, item, feat, condition
+or other). **A rule the DM makes up is a house rule, not homebrew** (owner, 2026-10-16, #1628): there is
+no "rule" kind. A file heading `## Name (rule)` is refused for that entry alone ("Rules go in House
+rules, not Homebrew: ⚙️ Settings → House rules."); a pack carries no rules (a pack made before is read
+without them); an old backup's rule loads as "other". Migration 0111 moved every existing rule entry of
+a campaign into its house rules (the name in front unless the text starts with it), numbered after the
+rules it already had; one from a shared book (its book confirmation cannot live in a house rule) or too
+long for a house rule (500 characters) stays as homebrew of the kind "other"; open pack suggestions of a
+rule were dropped. Never a published book's text: the form says "Your own creations only. For a published
 book, use Share a rulebook." An entry has a name (1 to 80 characters, unique in the campaign, any case),
 its words (1 to 2,000, plain text) and an optional one-line summary (160, shown in alerts). **An entry is
 DM-screen content until the DM presses 👀 ("players may know")**: a homebrew monster is a spoiler. At most

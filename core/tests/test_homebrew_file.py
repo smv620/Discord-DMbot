@@ -76,7 +76,7 @@ class Reading(unittest.TestCase):
             "## Bad kind (dragon)\nWords.\n"
             "## (item)\nWords.\n"
             "## Empty (item)\n\n"
-            "## Fine (rule)\n\nGood words.\n"
+            "## Fine (feat)\n\nGood words.\n"
             "## Fine (item)\n\nSame name again.\n"
             "## Odd (item)\nPlayers may know: maybe\n\nWords.\n"
         )
@@ -104,7 +104,7 @@ class Reading(unittest.TestCase):
         )
 
     def test_more_than_the_limit_leaves_the_rest_out(self) -> None:
-        text = "".join(f"## E{n} (rule)\n\nWords {n}.\n" for n in range(HOMEBREW_MAX + 3))
+        text = "".join(f"## E{n} (feat)\n\nWords {n}.\n" for n in range(HOMEBREW_MAX + 3))
         parsed = hf.parse(text)
         self.assertEqual(len(parsed.entries), HOMEBREW_MAX)
         self.assertEqual(parsed.problems[0].why, hf.TOO_MANY)
