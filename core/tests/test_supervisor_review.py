@@ -347,10 +347,10 @@ class OwnersLabel(unittest.TestCase):
 
     def setUp(self) -> None:
         self.saved = sr.now
-        sr.now = lambda: datetime(2026, 10, 16, 5, 0, tzinfo=UTC)  # this run, after the label
+        sr.now = lambda: datetime(2026, 10, 16, 5, 0, tzinfo=UTC)  # type: ignore[attr-defined]
 
     def tearDown(self) -> None:
-        sr.now = self.saved
+        sr.now = self.saved  # type: ignore[attr-defined]
 
     def pull(self, **kw: Any) -> FakeGitHub:
         fake = FakeGitHub([], ["docs/costs.md"], {})
@@ -363,7 +363,8 @@ class OwnersLabel(unittest.TestCase):
         return fake
 
     def state(self, fake: FakeGitHub) -> tuple[str, str]:
-        return sr.run(fake, 7, ["smv620"])
+        verdict: tuple[str, str] = sr.run(fake, 7, ["smv620"])
+        return verdict
 
     def test_the_label_on_a_supervisor_pr_is_a_success_with_its_own_words(self) -> None:
         self.assertEqual(
