@@ -2395,10 +2395,14 @@ WEB_ROLE_GRANTS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("INSERT, DELETE", ("support_tickets",)),
     (
         "SELECT (id, created_at, user_id, plan, subject, source, status, ai_next_at, ai_failed_at,"
-        " escalated_reason)",
+        " escalated_reason, handed_over_reason, handed_over_at)",
         ("support_tickets",),
     ),
-    ("UPDATE (status, ai_next_at, ai_failed_at, escalated_reason)", ("support_tickets",)),
+    (
+        "UPDATE (status, ai_next_at, ai_failed_at, escalated_reason, handed_over_reason,"
+        " handed_over_at)",
+        ("support_tickets",),
+    ),
     # The thread (#1431): replies are added and listed (not their words) only while the admin
     # door is open; the words come back through dmbot_support_thread.
     ("INSERT", ("support_replies",)),
@@ -4612,6 +4616,20 @@ SUPPORT_REASON = """
                ('unhappy', 'asked', 'limit', 'no-email', 'helper-down'));
     """
 
+SUPPORT_HANDED_OVER = """
+    -- Every hand-over, kept for good (#1487). `escalated_reason` says why a ticket is waiting for
+    -- a person now and is cleared when one answers; these two are set at the same moment the
+    -- helper hands the ticket over and never cleared, so the week's count of hand-overs stays
+    -- complete and the admin page can say how long one has waited. No backfill: tickets handed
+    -- over before this have neither, which null already says, so no row changes and no
+    -- row-level security needs opening.
+    ALTER TABLE support_tickets
+        ADD COLUMN handed_over_reason TEXT
+            CHECK (handed_over_reason IS NULL OR handed_over_reason IN
+                   ('unhappy', 'asked', 'limit', 'no-email', 'helper-down')),
+        ADD COLUMN handed_over_at BIGINT;
+    """
+
 TRANSCRIPT_SUGGESTIONS = """
     -- A player's suggested fix to their own line of the cleaned transcript (#1491). The DM
     -- decides; only the line's `text` ever changes, never what was heard. `started_ms` and
@@ -4737,7 +4755,7 @@ MIGRATIONS: tuple[Migration, ...] = (
     ("0089_memory_from_set", MEMORY_FROM_SET),  # sets carry relationship definitions (#1456)
     ("0090_support_reason", SUPPORT_REASON),  # why a ticket went to a person (#1459)
     ("0091_web_recap_choices", WEB_RECAP_CHOICES),  # the DM's recap choices on the site (#1468)
-    # (0092 is #1487's, claimed there; it merges first)
+    ("0092_support_handed_over", SUPPORT_HANDED_OVER),  # every hand-over, kept (#1487)
     ("0093_transcript_suggestions", TRANSCRIPT_SUGGESTIONS),  # a player's suggested fix (#1491)
 )
 

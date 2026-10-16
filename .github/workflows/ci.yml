@@ -98,6 +98,8 @@ jobs:
       - run: npm run check:transitions  # page-change budget, less motion, plain legal pages (#1311)
       - run: npm run check:a11y  # real browser: contrast, focus ring, 320 px, reduced motion (#1224)
         timeout-minutes: 5
+      - run: npm run check:smoke  # real browser: the signed-in pages load and their main buttons work (#1488)
+        timeout-minutes: 5
 
   core:
     name: core (Python)

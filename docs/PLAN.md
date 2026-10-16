@@ -1168,9 +1168,10 @@ plus the list of fixes between them.
   DMbot heard, word for word."). It's a shortcut: **anyone in the server** can get the
   same choice with `/transcript`.
   Before #296 it was one **[🎙 Download transcript]** button (old ones still work).
-  Later, once earlier lines are re-fixed after a correction, the message will add "If
-  the DM fixes names later, download again for the updated version." (not yet: a
-  correction applies from the next line only).
+  Later the message may add "If the DM fixes names later, download again for the updated
+  version." Today a DM's answer re-fixes the earlier lines of the session while it runs
+  (see "Transcript Cleaner step 3"); a correction made after the session ended applies to
+  later sessions only.
 - **The cleaned file starts with a note:** "DMbot fixed the spelling of some names. The
   'As heard' file has the exact words."
 - **Downloads use the transcript format** `[0:42:10] (Mia) {Cerric}: …` with time
@@ -1876,7 +1877,7 @@ consent check just made still holds:
   - **The line that was asked about (built 2026-10-08, #503):** the answer is written
     into that line too: saved, waiting, and in the transcript channel within ~30 s
     (the same paths as a fix's Undo). The answer says "in that line and from now on…
-    Earlier lines stay as heard." Never if it would put a secret name in the line (the
+    Earlier lines of the session are written the same way too: see step 3." Never if it would put a secret name in the line (the
     same check as every fix, on the line as written): the rule is saved, the line stays
     as heard. Undo of the answer puts that line back while the session still runs
     (after a restart only the rule is taken back). Keep changes nothing in the line.
@@ -1929,6 +1930,28 @@ told once in a private message. Nothing is posted publicly. One suggestion per l
 session is dropped with no message. Checks: the speaker must still be recorded when they send it and
 when it is accepted; the words must not write, or stand next to, a secret name (refused with
 "That can't be used", no reason, so it cannot hint at one); everything is escaped on the DM screen.
+
+**Transcript Cleaner step 3: built (2026-10-16, #127): earlier lines are re-checked after an
+answer.** When the DM answers "Did they mean…?" (by picking a name or by Type it…), the
+spelling they chose is also written into the **earlier lines of the running session** that
+said the same words, saved ones and ones still waiting to be saved (`transcript.refix`,
+`Bot._fix_earlier_lines`). It is narrow on purpose, because a wrong fix is worse than a missed
+one:
+- only the DM's spelling for **exactly those words** (no new guess by sound, whatever the scene
+  is now), found by the Cleaner itself from `heard`;
+- only a line that still says **exactly what was heard** (a line with any other fix, a typed
+  line and a DM sidebar line are left alone);
+- never where the name would be, or stand next to, a secret name (the same check as every fix,
+  on the line as written); never a table person's own name;
+- only people still recorded, checked again before every line (consent);
+- at most **100 lines**, the newest first; the channel message is edited if it is still recent
+  (the same ~30 s rule as every fix).
+The DM's answer says how many ("3 earlier lines were fixed too."); with none it still says
+"Earlier lines stay as heard." **One Undo** of the answer takes the answer and every earlier line
+it wrote back together. Each run is logged as a count, never as words. **Not done:** corrections
+made outside this question (the names list, `/dmbot names`) do not re-fix earlier lines; a
+session that has ended is not re-checked; sessions before the correction change only if the DM
+asks (as decided).
 
 **Off-topic filter (decided 2026-10-04; updated 2026-10-05).** A very light, fast AI pass
 right after the Cleaner. Scheduling, life updates, and other non-game talk are labeled

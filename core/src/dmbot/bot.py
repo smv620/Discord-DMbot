@@ -206,7 +206,7 @@ from dmbot.timebot import combat_phrases, durations
 from dmbot.timebot import phrases as clock_phrases
 from dmbot.timebot.effects import EffectsSection, EffectStore
 from dmbot.timebot.store import ClockSection, ClockStore
-from dmbot.transcript import fix_notes, left_out, speaker_ai
+from dmbot.transcript import fix_notes, left_out, refix, speaker_ai
 from dmbot.transcript import questions as name_questions
 from dmbot.transcript import speaker_question as speaker_q
 from dmbot.transcript import stream as transcript_lines
@@ -5165,9 +5165,15 @@ class DMBot(commands.AutoShardedBot):
         line = await self._fix_asked_line(table, asked, name, undo)
         if not self.consent.has_consent(guild_id, asked.speaker):
             return name_questions.GONE, True, undo
+        earlier = await self._fix_earlier_lines(table, asked, name, undo)
         md = discord.utils.escape_markdown
         answer = name_questions.fixed_text(
-            heard, md(name), line_fixed=line is True, line_kept=line is False, new=chosen[0] is None
+            heard,
+            md(name),
+            line_fixed=line is True,
+            line_kept=line is False,
+            new=chosen[0] is None,
+            earlier=earlier,
         )
         return answer, True, undo
 
@@ -5207,6 +5213,81 @@ class DMBot(commands.AutoShardedBot):
                 notes.answers.remove(answer)
         return changed
 
+    async def _fix_earlier_lines(
+        self, table: Table, asked: name_questions.Asked, name: str, undo: tuple[str, int] | None
+    ) -> int:
+        """Write the DM's answer into the earlier lines of this session that said the same
+        words (#127, "Learning is immediate"): the saved ones and those still waiting to be
+        saved, not the line the question was about (`_fix_asked_line` did that). Only lines
+        that still say exactly what was heard, only with the DM's spelling of exactly those
+        words, and never where it would put a secret name (`refix.plan`). Each change is
+        logged by count, never by its words. Consent is checked again before every line. Undo
+        of the answer puts them back with it (`answer_undone`). How many lines were changed;
+        a failure here never loses the answer, which is saved already."""
+        try:
+            lookup = await self._names_now(table)
+            if lookup is None or not self.consent.has_consent(table.guild_id, asked.speaker):
+                return 0
+            saved: list[Line] = []
+            session_id = table.transcript_session_id
+            if self.transcripts is not None and session_id is not None:
+                saved = await self.transcripts.lines(table.guild_id, session_id)
+            # Saved and waiting lines, once each (a failed save can leave a line in both). Lines
+            # spoken after the asked one, while the question was open, count too: the Cleaner
+            # hadn't fixed them either.
+            seen: set[tuple[int, int]] = set()
+            candidates = []
+            for line in [*saved, *table.unsaved.lines()]:
+                key = (line.user_id, line.started_ms)
+                if (
+                    key == (asked.speaker, asked.started_ms)
+                    or key in seen
+                    or table.fix_notes.on_line(*key)  # already has a fix or an answer
+                    or not self.consent.has_consent(table.guild_id, line.user_id)
+                ):
+                    continue
+                seen.add(key)
+                candidates.append(line)
+            # Cleaning is the slow part and runs off the event loop; the lookup is only read.
+            todo = await asyncio.to_thread(
+                refix.plan, lookup, candidates, asked.heard, people=list(table.people)
+            )
+            batch = undo[1] if undo is not None else None
+            changed = 0
+            for item in todo:
+                if not self.consent.has_consent(table.guild_id, item.speaker):
+                    continue
+                if table.fix_notes.on_line(item.speaker, item.started_ms):
+                    continue  # another answer got there first, during the awaits
+                answers = [
+                    fix_notes.Answer(
+                        batch, item.speaker, item.started_ms, item.heard, (), s, e, w, True
+                    )
+                    for s, e, w in item.edits
+                ]
+                for answer in answers:
+                    table.fix_notes.answered(answer)
+                # The words as the notes have them now (like `_fix_asked_line`), not a
+                # snapshot from before the awaits.
+                words = table.fix_notes.words_now(item.speaker, item.started_ms, item.heard, ())
+                try:
+                    done = await self._rewrite_line(table, item.speaker, item.started_ms, words)
+                except Exception:
+                    log.exception("Couldn't write an answer into an earlier line")
+                    done = False
+                if done:
+                    changed += 1
+                else:  # a later Undo of the answer must not bring this line's words back
+                    for answer in answers:
+                        with contextlib.suppress(ValueError):
+                            table.fix_notes.answers.remove(answer)
+            if changed:
+                log.info("An answer to a name question fixed %d earlier line(s)", changed)
+            return changed
+        except Exception:
+            log.exception("Couldn't re-check earlier lines after an answer")
+            return 0
+
     async def answer_undone(self, guild_id: int, campaign_id: str, batch: int) -> bool | None:
         """The DM undid an answer to "Did they mean…?" (the saved change is already taken
         back): put its line back, if this session still has it (#503). True if it was put
@@ -5217,19 +5298,28 @@ class DMBot(commands.AutoShardedBot):
         for table in [self.tables.get(guild_id), *self._ending.get(guild_id, [])]:
             if table is None or table.campaign_id != campaign_id:
                 continue
-            answer = table.fix_notes.take_back(batch)
-            if answer is None:
+            taken = []
+            while (more := table.fix_notes.take_back(batch)) is not None:
+                taken.append(more)
+            if not taken:
                 continue
-            text = table.fix_notes.words_now(
-                answer.speaker, answer.started_ms, answer.heard, answer.fixes
-            )
-            try:
-                changed = await self._rewrite_line(table, answer.speaker, answer.started_ms, text)
-            except Exception:
-                log.exception("Couldn't put a line back after undoing an answer")
-                changed = False
-            if not self.consent.has_consent(guild_id, answer.speaker):
-                return None  # nothing about their line
+            # One answer can have fixed earlier lines too (#127): they go back with it, best
+            # effort. What is reported is the line the question was about, if it was fixed.
+            asked_line = next((a for a in taken if not a.earlier), None)
+            changed: bool | None = None
+            for answer in sorted(taken, key=lambda a: a.earlier):
+                text = table.fix_notes.words_now(
+                    answer.speaker, answer.started_ms, answer.heard, answer.fixes
+                )
+                try:
+                    done = await self._rewrite_line(table, answer.speaker, answer.started_ms, text)
+                except Exception:
+                    log.exception("Couldn't put a line back after undoing an answer")
+                    done = False
+                if answer is asked_line:
+                    changed = done
+            if asked_line is None or not self.consent.has_consent(guild_id, asked_line.speaker):
+                return None  # nothing to say about the asked line
             return changed
         return None
 
