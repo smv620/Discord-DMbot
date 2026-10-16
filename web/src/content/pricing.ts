@@ -6,7 +6,7 @@
  * Keep this free of page markup: the bot and the web API's /me will reuse the wording.
  */
 import facts from "./plans.json";
-import { RECAP_AUDIO_LIVE } from "./recap-words";
+import { RECAP_AUDIO_LIVE, RECAPS_LIVE, allowanceSentence } from "./recap-words";
 
 export type PlanId = "try-it" | "table" | "two-tables" | "guild" | "pro";
 
@@ -177,9 +177,14 @@ export const questions: readonly Question[] = [
   },
   {
     question: "What's different between the plans?",
-    answer: RECAP_AUDIO_LIVE
-      ? plansAnswer(featureList, tryItName)
-      : `Only the hours and how many campaigns you can run. The free ${tryItName} has no backups or downloads; everything else is the same on every plan: it ${featureList}.`,
+    answer: [
+      RECAP_AUDIO_LIVE
+        ? plansAnswer(featureList, tryItName)
+        : `Only the hours and how many campaigns you can run. The free ${tryItName} has no backups or downloads; everything else is the same on every plan: it ${featureList}.`,
+      allowanceSentence(RECAPS_LIVE, RECAP_AUDIO_LIVE),
+    ]
+      .filter(Boolean)
+      .join(" "),
   },
   {
     question: "Can I change my plan?",
