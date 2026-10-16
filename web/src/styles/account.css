@@ -44,6 +44,23 @@
     margin: 0;
   }
 
+  /* "Your questions" (#1373): the subject, then the date and where it stands, one per row. */
+  .account .questions {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-3);
+  }
+
+  .account .questions li {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-1);
+    overflow-wrap: anywhere;
+  }
+
   .account .warn,
   .account .warn-box {
     padding: var(--space-4);
