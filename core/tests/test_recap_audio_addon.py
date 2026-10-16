@@ -107,6 +107,7 @@ def invoice(reason: str, price: str = "price_audio", status: str = "paid") -> di
         "id": "evt_1", "type": "invoice.paid", "created": NOW, "livemode": False,
         "data": {"object": {
             "id": "in_1", "customer": "cus_1", "subscription": "sub_audio", "status": status,
+            "amount_paid": 500,
             "billing_reason": reason, "customer_email": "alice@example.com",
             "subscription_details": {"metadata": {"user_id": "1001", "item": "recap_audio"}},
             "lines": {"data": [{"price": {"id": price},
@@ -145,6 +146,9 @@ class StripeSide(unittest.IsolatedAsyncioTestCase):
         failed["type"] = "invoice.payment_failed"
         self.assertIsNone(self.parse(failed))  # no grace: it runs out at the end of the period
         self.assertIsNone(self.parse(invoice("subscription_create", price="price_other")))
+        free = invoice("subscription_create")
+        free["data"]["object"]["amount_paid"] = 0  # a coupon made it free: no payment, no month
+        self.assertIsNone(self.parse(free))
         self.assertIsNone(self.parse(invoice("subscription_create"), provider(price="")))
 
     def test_the_subscription_ending_is_the_add_ons_end_and_an_update_is_nothing(self) -> None:
@@ -426,6 +430,86 @@ class Webhook(Payments):
         done = await self.post("/account/delete/confirm", {"confirm_token": token})
         self.assertEqual(done.status_code, 204)
         self.assertEqual(sorted(self.provider.cancelled), ["sub_1", "sub_audio"])
+
+
+class Billing(Payments):
+    """Money safety: nothing is ever charged twice, or left charging for nothing."""
+
+    async def audio(self, kind: str = "recap_audio_started", **changes: Any) -> Any:
+        event: dict[str, Any] = {
+            "kind": kind, "subscription_id": "sub_audio", "customer_id": "cus_1",
+            "period_start": self.now, "period_end": self.now + 30 * DAY,
+        }  # fmt: skip
+        event.update(changes)
+        return await self.send(**event)
+
+    async def test_a_second_add_on_subscription_is_cancelled_and_the_first_kept(self) -> None:
+        await self.start_table()
+        await self.audio()
+        await self.audio(subscription_id="sub_second", occurred_at=self.now + 5)
+        self.assertEqual(self.provider.cancelled, ["sub_second"])
+        got = await self.plan()
+        self.assertEqual(got.recap_audio_until, self.now + 30 * DAY)
+        self.assertEqual(
+            await entitlements_writer.recap_audio_subscription(self.db, ALICE.id), "sub_audio"
+        )
+
+    async def test_the_same_subscription_renewing_is_not_a_second_one(self) -> None:
+        await self.start_table()
+        await self.audio()
+        await self.audio(
+            "recap_audio_renewed", occurred_at=self.now + 5, period_end=self.now + 60 * DAY
+        )
+        self.assertEqual(self.provider.cancelled, [])
+
+    async def test_upgrading_to_guild_cancels_the_add_on_that_is_now_included(self) -> None:
+        await self.start_table()
+        await self.audio()
+        await self.start_table(plan="guild", subscription_id="sub_2", occurred_at=self.now + 9)
+        self.assertEqual(self.provider.cancelled, ["sub_audio"])
+        self.assertIsNone(await entitlements_writer.recap_audio_subscription(self.db, ALICE.id))
+        access = (await entitlements.plan_and_access(self.db, ALICE.id, self.now))[1]
+        self.assertTrue(access.recap_audio)  # Guild includes it
+
+    async def test_a_plan_change_between_plans_without_audio_keeps_the_add_on(self) -> None:
+        await self.start_table()
+        await self.audio()
+        await self.start_table(plan="two-tables", subscription_id="sub_2", occurred_at=self.now + 9)
+        self.assertEqual(self.provider.cancelled, [])
+
+    async def test_an_add_on_paid_with_no_working_plan_is_cancelled_not_just_logged(self) -> None:
+        self.assertEqual((await self.audio()).status_code, 200)  # no plan at all
+        self.assertEqual(self.provider.cancelled, ["sub_audio"])
+        await self.post("/plan/try-it")
+        await self.audio(subscription_id="sub_tryit", occurred_at=self.now + 1)
+        self.assertEqual(self.provider.cancelled, ["sub_audio", "sub_tryit"])
+
+    async def test_a_cancel_that_fails_never_fails_the_webhook(self) -> None:
+        async def broken(*, subscription_id: str) -> None:
+            raise PaymentError("down")
+
+        self.provider.cancel = broken  # type: ignore[method-assign]
+        self.assertEqual((await self.audio()).status_code, 200)
+
+    async def test_no_second_checkout_while_a_subscription_is_held(self) -> None:
+        await self.start_table()
+        await self.audio()
+        async with self.db.plan_writer(ALICE.id) as conn:  # it ran out unpaid; the id is still held
+            await conn.execute(
+                "UPDATE entitlements SET recap_audio_until = %s WHERE user_id = %s",
+                (self.now - 1, ALICE.id),
+            )
+        again = await self.post("/billing/recap-audio")
+        self.assertEqual((again.status_code, again.json()), (409, {"error": "already_subscribed"}))
+        me = (await self.client.get("/me")).json()["recapAudio"]
+        self.assertTrue(me["included"] is False)
+
+    async def test_a_plan_with_no_customer_at_the_company_is_not_sold_it(self) -> None:
+        await self.start_table(customer_id=None)
+        refused = await self.post("/billing/recap-audio")
+        self.assertEqual((refused.status_code, refused.json()), (409, {"error": "no_paid_plan"}))
+        me = (await self.client.get("/me")).json()["recapAudio"]
+        self.assertFalse(me["canBuy"])
 
 
 class Checkout(Payments):

@@ -38,7 +38,7 @@ def _recap_audio_view(
         and now < plan.recap_audio_until
         and access.recap_audio
     )
-    working = plan is not None and plan.usable(now) and plan.plan != "try-it"
+    working = plan is not None and plan.usable(now) and plan.plan != "try-it" and plan.has_customer
     return (
         {"included": included, "addOn": bool(add_on)}
         | ({"endsOn": _iso_date(plan.recap_audio_until)} if add_on and plan is not None else {})

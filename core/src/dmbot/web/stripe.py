@@ -550,6 +550,8 @@ class StripeProvider:
         of the period already paid for), and a proration or manual invoice changes nothing."""
         if name == "invoice.payment_failed" or invoice.get("status") != "paid":
             return None
+        if not (_int(invoice.get("amount_paid")) or 0) > 0:
+            return None  # a free invoice (a coupon) is no payment: it grants nothing
         reason = invoice.get("billing_reason")
         kind: EventKind
         if reason == "subscription_create":

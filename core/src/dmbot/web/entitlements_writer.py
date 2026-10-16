@@ -183,6 +183,21 @@ async def _recap_audio_event(
     if event.occurred_at < row["recap_audio_event_at"]:
         await _record(conn, event, now)
         return "stale"
+    known_sub = row["recap_audio_subscription_id"]
+    if (
+        event.kind != "recap_audio_ended"
+        and known_sub is not None
+        and event.subscription_id not in (None, known_sub)
+    ):
+        # A second add-on subscription while one works: both are being charged. The first
+        # keeps its place; the webhook cancels this one at the company (app.py).
+        await _record(conn, event, now)
+        log.error(
+            "Recap audio %s starts a second add-on subscription for user %s: cancelling it",
+            event.event_id,
+            event.user_id,
+        )
+        return "ignored"
     if event.kind == "recap_audio_ended":
         await _record(conn, event, now)
         known = row["recap_audio_subscription_id"]
