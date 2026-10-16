@@ -14,6 +14,7 @@ import type {
   Offer,
   Person,
   Recap,
+  RecapChoices,
   RecordingEntry,
   SupportQuestion,
 } from "./api";
@@ -349,6 +350,14 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
   };
 
   const recaps = mockRecaps();
+  // The DM's recap choices, as the API says them (#1468).
+  const choices: RecapChoices = {
+    text: true,
+    audio: true,
+    email: true,
+    canAudio: true,
+    audioHow: "part of your plan",
+  };
   const audioAsked = new Set<string>(); // a recap asked for again once: the next ask is "too soon"
   const find = async (ref: string): Promise<Recap> => {
     await reachable();
@@ -376,6 +385,20 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
       if (!r.canEdit) throw new ApiError("not-editable");
       Object.assign(r, { summary, text: summary, housekeeping });
       return { ...r };
+    },
+    async recapChoices(campaignRef) {
+      calls.push(`recapChoices:${campaignRef}`);
+      await reachable();
+      signedIn();
+      return { ...choices };
+    },
+    async setRecapChoice(campaignRef, which, on) {
+      calls.push(`setRecapChoice:${campaignRef}:${which}:${on}`);
+      await reachable();
+      signedIn();
+      if (which === "audio" && on && !choices.canAudio) throw new ApiError("not-in-plan");
+      choices[which] = on;
+      return { ...choices };
     },
     async recapAudioLinks(ref) {
       calls.push(`recapAudioLinks:${ref}`);
