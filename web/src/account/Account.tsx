@@ -18,6 +18,7 @@ import {
   type RecordingEntry,
 } from "./api";
 import { isSafeRedirect } from "./redirect";
+import { MyQuestions } from "./MyQuestions";
 import { PublicQuestions, Support } from "./Support";
 
 type State =
@@ -1107,10 +1108,17 @@ function IdSection({ me }: { me: Me }) {
  * An API older than #1340 has no canSupport, so it shows the Q&A (#1340). */
 function SupportOrQuestions({ me }: { me: Me }) {
   const { api, siteKey } = useShared();
-  return me.canSupport === true && api.sendSupport ? (
-    <Support api={api} siteKey={siteKey} />
-  ) : (
-    <PublicQuestions />
+  // Bumped when a question is sent, so the list below the form reads again (#1373).
+  const [sentCount, setSentCount] = useState(0);
+  return (
+    <>
+      {me.canSupport === true && api.sendSupport ? (
+        <Support api={api} siteKey={siteKey} onSent={() => setSentCount((n) => n + 1)} />
+      ) : (
+        <PublicQuestions />
+      )}
+      <MyQuestions api={api} version={sentCount} />
+    </>
   );
 }
 

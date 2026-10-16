@@ -316,6 +316,18 @@ export const text = {
   supportSentNoEmail:
     "Sent. Thanks, the team will read it. But we don't have an email for your account, so we can't reply. Add and confirm an email in your Discord settings, sign in here again, and write to us again.",
   supportAnother: "Write another",
+  // The person's own questions under the form (#1373): what they sent and where it stands. No
+  // words of the message come back; the team answers by email.
+  questionsHeading: "Your questions",
+  questionsLead: "What you have sent the team.",
+  questionSent: (date: string) => `Sent ${date}`,
+  questionStatus: {
+    new: "Waiting",
+    answered: "Answered — check your email",
+    // An account with no email gets no email: say only what the team did.
+    answeredNoEmail: "Answered",
+    closed: "Closed",
+  },
   supportErrors: {
     "ticket-empty": "Please fill in the subject and your message.",
     "subject-too-long": "The subject is too long. Please keep it to 120 letters or fewer.",

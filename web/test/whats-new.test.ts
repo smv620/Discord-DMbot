@@ -40,6 +40,7 @@ describe("What's new", () => {
 
   it("holds back what people can't use yet, with the reason, and shows none of it (#1322)", () => {
     expect(held.map((h) => h.title)).toEqual([
+      "Your questions to the team", // until the API with the list route is deployed (#1373)
       "Ask a question in public", // until QAbot is live (#1352)
       "Move to a new Discord account",
     ]);
