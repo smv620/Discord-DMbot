@@ -48,6 +48,7 @@ describe("What's new", () => {
       "A recap of last session",
       "New names from what was said",
       "A note before tonight's session",
+      "When a player says a secret name",
     ]);
     for (const h of held) {
       expect(h.reason.length, h.title).toBeGreaterThan(20);
@@ -58,6 +59,7 @@ describe("What's new", () => {
     expect(shown).not.toContain("Quick answers use your facts");
     expect(shown).not.toContain("New names from what was said");
     expect(shown).not.toContain("A note before tonight");
+    expect(shown).not.toContain("When a player says a secret name");
     expect(shown).not.toContain("A recap of last session");
     expect(shown).not.toContain("move code");
     expect(shown).not.toContain("Ask a question in public"); // not until QAbot is live
