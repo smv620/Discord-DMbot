@@ -52,6 +52,9 @@ EventKind = Literal[
     "subscription_cancelled",  # cancelled: works to the period's end (period_end), then ends
     "subscription_ended",  # stopped paying, or cancelled at the period's end
     "extra_hours_bought",  # +10 hours for this period
+    "recap_audio_started",  # the recap audio add-on was bought (its first payment went through)
+    "recap_audio_renewed",  # the add-on was paid for the next period
+    "recap_audio_ended",  # the add-on's subscription ended (cancelled and run out, or stopped)
     "email_updated",  # the payer changed their address at the company (no plan change)
 ]
 
@@ -109,6 +112,25 @@ class PaymentProvider(Protocol):
         month. Same rules as `checkout_url`: the email goes server-side only."""
         ...
 
+    @property
+    def recap_audio_for_sale(self) -> bool:
+        """Whether the recap audio add-on can be bought now: its price is set. Until the owner
+        sets it (#1385) the checkout is hidden."""
+        ...
+
+    async def recap_audio_checkout_url(
+        self,
+        *,
+        user_id: int,
+        email: str | None,
+        return_url: str,
+        dmbot_id: str | None = None,
+        customer_id: str | None = None,
+    ) -> str:
+        """The company's page to subscribe to the recap audio add-on (#1389): a second,
+        monthly subscription, marked so its events are never taken for the plan's."""
+        ...
+
     async def billing_url(self, *, customer_id: str, return_url: str) -> str: ...
 
     async def cancel(self, *, subscription_id: str) -> None:
@@ -148,6 +170,7 @@ class FakeProvider:
         # What each checkout was given, so tests can see the DMbot ID and customer travel.
         self.checkouts: list[dict[str, object]] = []
         self.retargeted: list[tuple[str | None, str | None, int]] = []
+        self.recap_audio_for_sale = True  # a test turns it off, as an unset price does
 
     def sign(self, body: bytes) -> str:
         return hmac.new(self._secret, body, hashlib.sha256).hexdigest()
@@ -182,6 +205,25 @@ class FakeProvider:
         )
         return f"{return_url}?{urlencode({'fake_extra_hours': '1'})}"
 
+    async def recap_audio_checkout_url(
+        self,
+        *,
+        user_id: int,
+        email: str | None,
+        return_url: str,
+        dmbot_id: str | None = None,
+        customer_id: str | None = None,
+    ) -> str:
+        self.checkouts.append(
+            {
+                "user_id": user_id,
+                "recap_audio": True,
+                "dmbot_id": dmbot_id,
+                "customer_id": customer_id,
+            }
+        )
+        return f"{return_url}?{urlencode({'fake_recap_audio': '1'})}"
+
     async def billing_url(self, *, customer_id: str, return_url: str) -> str:
         return f"{return_url}?{urlencode({'fake_billing': '1'})}"
 
@@ -212,6 +254,9 @@ class FakeProvider:
             "subscription_cancelled",
             "subscription_ended",
             "extra_hours_bought",
+            "recap_audio_started",
+            "recap_audio_renewed",
+            "recap_audio_ended",
         ):
             # Kinds are the company's own words, not personal data; cut short anyway.
             log.info("Payment event %.40r of a kind DMbot doesn't use: %.40r", raw.get("id"), kind)

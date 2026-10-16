@@ -35,6 +35,7 @@ from dmbot.schema import (
     WEB_ROLE_GRANTS,
     WEB_ROLE_OFFER_POLICY,
     WEB_ROLE_POLICIES,
+    WEB_ROLE_RECAP_POLICY,
     WEB_ROLE_SHEET_POLICY,
     Migration,
 )
@@ -154,6 +155,15 @@ class Database:
                     sql.SQL("SELECT set_config({}, %s, true)").format(sql.Literal(f"dmbot.{name}")),
                     (value,),
                 )
+            yield conn
+
+    @asynccontextmanager
+    async def recap_mail(self, guild_id: int) -> AsyncIterator[Conn]:
+        """One server's transaction with the door to a recap's DM address open
+        (`dmbot_recap_address`, #1382). Only the recap worker may call it
+        (tests/test_recap_jobs.py checks)."""
+        async with self.guild(guild_id) as conn:
+            await conn.execute("SELECT set_config('dmbot.recap_mail', 'mail', true)")
             yield conn
 
     @asynccontextmanager
@@ -431,6 +441,8 @@ async def _grant_web_role(conn: AsyncConnection[Any]) -> None:
             door = sql.SQL(signature)  # constants from schema.py, never input
             await conn.execute(sql.SQL("REVOKE ALL ON FUNCTION {} FROM {}").format(door, role))
             await conn.execute(sql.SQL("GRANT EXECUTE ON FUNCTION {} TO {}").format(door, role))
+    if "recap_jobs" in existing:
+        await conn.execute(WEB_ROLE_RECAP_POLICY)  # #1382
     for privileges, tables in WEB_ROLE_GRANTS:
         present = [t for t in tables if t in existing]
         if not sheets_held:

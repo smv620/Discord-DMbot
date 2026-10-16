@@ -25,6 +25,27 @@ from dmbot.web.sessions import Session
 MAX_GUILDS = 200
 
 
+def _recap_audio_view(
+    plan: entitlements.Entitlement | None, access: entitlements.Access, now: int, for_sale: bool
+) -> dict[str, Any]:
+    included = access.kind in ("free", "grant") or (
+        plan is not None and plan.usable(now) and plan.plan in entitlements.RECAP_AUDIO_PLANS
+    )
+    add_on = (
+        not included
+        and plan is not None
+        and plan.recap_audio_until is not None
+        and now < plan.recap_audio_until
+        and access.recap_audio
+    )
+    working = plan is not None and plan.usable(now) and plan.plan != "try-it" and plan.has_customer
+    return (
+        {"included": included, "addOn": bool(add_on)}
+        | ({"endsOn": _iso_date(plan.recap_audio_until)} if add_on and plan is not None else {})
+        | {"canBuy": bool(for_sale and working and not included and not add_on)}
+    )
+
+
 def _iso_time(seconds: int | None) -> str | None:
     if seconds is None:
         return None
@@ -37,7 +58,9 @@ def _iso_date(seconds: int | None) -> str | None:
     return datetime.fromtimestamp(seconds, UTC).date().isoformat()
 
 
-async def build_me(db: Database, session: Session, *, now: int) -> dict[str, Any]:
+async def build_me(
+    db: Database, session: Session, *, now: int, recap_audio_for_sale: bool = False
+) -> dict[str, Any]:
     plan, grant, access = await entitlements.plan_grant_access(db, session.user_id, now)
     # The month whose hours count now (None: no meter), and the minutes used in it, read through
     # the database door the website's role has to the owner's hours (0048).
@@ -269,6 +292,10 @@ async def build_me(db: Database, session: Session, *, now: int) -> dict[str, Any
             if access.kind == "grant" and access.hours_cap and month is not None
             else {}
         ),
+        # Spoken recaps (#1389): in the plan (Guild and up, or free access), bought as the
+        # add-on, or neither; canBuy only while the add-on is for sale (its price is set), so
+        # the page hides the button until then.
+        "recapAudio": _recap_audio_view(plan, access, now, recap_audio_for_sale),
         "recording": recording,
         "campaigns": campaigns,
         "servers": servers,

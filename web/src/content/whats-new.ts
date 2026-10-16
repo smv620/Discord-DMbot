@@ -100,11 +100,32 @@ export const held: Held[] = [
       "The move code goes to the payment email, and payments stay off until the Stripe account exists (#1096), so nobody can use it yet.",
   },
   {
+    date: "2026-10-16",
+    title: "A recap of last session",
+    what: "After a session, DMbot can write a short story of what happened to read at the start of the next one. It emails the DM when it's ready. They read it on the website, change it, ask for another, leave it out, or post it to the table. It only uses the words of people who agreed to be recorded.",
+    reason:
+      "Stays off until the first check on a real session (#1382).",
+  },
+  {
     date: "2026-10-15",
     title: "New names from what was said",
     what: "After a session, DMbot can spot a name it does not know yet and ask the game master who or what it is. Anything said about that name waits until the game master has checked it. A name they turn down is forgotten, along with what was said about it.",
     reason:
       "It needs the story extractor, which stays off until its prompt passes the measurement (#1282).",
+  },
+  {
+    date: "2026-10-16",
+    title: "A note before tonight's session",
+    what: "When a session starts, DMbot can post a short note on the DM screen, for the game master only. It lists last time's recap, what you confirmed about the names heard last time, anything lost or ended, and how many things said at the table wait for your check. It shows nothing until you have confirmed something. Players do not see it.",
+    reason:
+      "Held until it has been seen working on the test server (#1403).",
+  },
+  {
+    date: "2026-10-16",
+    title: "When a player says a secret name",
+    what: "If a player says a name you've marked secret, it ends up in the transcript, which anyone in your server can read. After the session DMbot asks you privately, one name at a time (up to five), whether it should stay secret from players or be opened up. Only you can answer, and DMbot never decides for you.",
+    reason:
+      "Held until it has been seen working on the test server (#1407).",
   },
 ];
 

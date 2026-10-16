@@ -85,6 +85,11 @@ STATE_REASON = "that entry can't be in that condition"
 NAME_REJECTED_REASON = "the DM said a name in it isn't a name"
 SECRET_NAME_REASON = "a name in it is one only the DM may use"
 NAME_FIRST = "Say what the new name is first (in Check new names)."
+# A claim whose name was past the session's limit is kept, waiting for its name to be proposed in
+# a later session (#1367). It is a proposed claim with this as its `reason`, which no claim that
+# is asked or dropped carries.
+WAITING_NAME_REASON = "waiting for its name to be proposed"
+WAITING_NAME_CLAIMS = 500  # how many such claims one campaign keeps; past that they are let go
 NEW_NAME_LIMIT = 20  # new names one session sends to the DM; the rest wait for next time
 SESSION_CLAIMS = 3000  # claims one session may hand to `propose` at once
 CONCEPT = "concept"  # a proposed entry whose kind is not known yet: the DM says what it is
@@ -481,6 +486,11 @@ class ClaimStore:
                 else:
                     asked.add(key)
 
+            leftovers = [
+                r for r in await w.select(CLAIMS, " AND status = 'proposed'")
+                if r["reason"] == WAITING_NAME_REASON
+            ]  # fmt: skip
+
             def judged(claim: Extracted) -> str:
                 cited = [speakers.get(ref) for ref in claim.lines]
                 return judge(claim, onto, names, cited, opted_in, tally, dms)
@@ -499,22 +509,75 @@ class ClaimStore:
                     elif any(name_key(n) in skip for n in unknown):
                         unknown = []  # a person at the table: not a story name
                 work.append((claim, reason, unknown))
-            # The linker: the most-said new names become proposed entries (or join one).
-            mentions = [name_key(n) for _, _, unknown in work for n in unknown]
-            chosen, left = link.most_mentioned(mentions, new_names)
+            # Claims kept from an earlier session for a name that was past its limit come first:
+            # their names are proposed before this session's own (#1367).
+            old: list[tuple[dict[str, Any], Extracted, list[str]]] = []
+            for r in leftovers:
+                kept = Extracted(
+                    r["subject"], r["relationship"], r["object"], r["details"],
+                    tuple(r["lines"]), r["how"],
+                )  # fmt: skip
+                if not r["speaker_ids"] or any(x not in opted_in for x in r["speaker_ids"]):
+                    continue  # its speaker stopped: `purge_stopped` wipes it when it is read
+                unknown = _unknown_names(kept, names)
+                if any(name_key(n) in refused_names for n in unknown):
+                    await w.update(
+                        CLAIMS, r["id"], {"status": CLAIM_DROPPED, "reason": NAME_REJECTED_REASON}
+                    )
+                elif any(name_key(n) in skip for n in unknown):
+                    await w.update(
+                        CLAIMS, r["id"], {"status": CLAIM_DROPPED, "reason": UNKNOWN_NAME_REASON}
+                    )
+                elif unknown:
+                    old.append((r, kept, unknown))
+            old_mentions = [name_key(n) for _, _, unknown in old for n in unknown]
+            chosen_old, left_old = link.most_mentioned(old_mentions, new_names)
+            fresh = [name_key(n) for _, _, unknown in work for n in unknown]
+            fresh = [m for m in fresh if m not in chosen_old]
+            chosen_new, left_new = link.most_mentioned(fresh, max(0, new_names - len(chosen_old)))
+            chosen = [*chosen_old, *chosen_new]
+            left = bool(left_old or left_new)
             deferred = 0
             if chosen:
-                new, joined = await self._link(w, onto, work, chosen, entities, aliases)
+                both = [*work, *((k, "", u) for _, k, u in old)]
+                new, joined = await self._link(w, onto, both, chosen, entities, aliases)
                 names = names_of(entities, aliases)
             else:
                 new, joined = [], 0
+            for r, kept, _ in old:  # the names that were made now resolve: ask them as usual
+                if _unknown_names(kept, names):
+                    continue
+                holders = [int(x) for x in r["speaker_ids"]]
+                reason = judge(kept, onto, names, holders, opted_in, tally, dms)
+                if reason:
+                    await w.update(CLAIMS, r["id"], {"status": CLAIM_DROPPED, "reason": reason})
+                else:
+                    await w.update(CLAIMS, r["id"], {"reason": ""})
+                    waiting += 1
+            kept_waiting = len(leftovers)
             rows: list[dict[str, Any]] = []
             for claim, reason, unknown in work:
                 if unknown:
                     if left and any(name_key(n) not in chosen for n in unknown):
-                        # Past the limit: its name is not made, so the claim is not kept. It is
-                        # counted; the DM is not told (the names that were made are the most said).
-                        deferred += 1
+                        # Past the limit: kept waiting for its name, which is proposed in a later
+                        # session (most-said first, before that session's own).
+                        key = _repeat_key(
+                            claim.subject, claim.relationship, claim.object, claim.how
+                        )
+                        if key in asked:
+                            repeated += 1
+                        elif kept_waiting >= WAITING_NAME_CLAIMS:
+                            why[WAITING_NAME_REASON] += 1  # too many kept: let this one go
+                        else:
+                            kept_waiting += 1
+                            deferred += 1
+                            asked.add(key)
+                            reason = WAITING_NAME_REASON
+                            cited = [speakers.get(ref) for ref in claim.lines]
+                            rows.append(self._row(
+                                claim, cited, prompt_version, model, session_started_at, w.now,
+                                status=CLAIM_PROPOSED, reason=reason,
+                            ))  # fmt: skip
                         continue
                     reason = judged(claim)
                 key = _repeat_key(claim.subject, claim.relationship, claim.object, claim.how)
@@ -534,30 +597,41 @@ class ClaimStore:
                     waiting += 1
                     asked.add(key)
                 rows.append(
-                    {
-                        "id": new_id(),
-                        "subject": claim.subject,
-                        "relationship": claim.relationship,
-                        "object": claim.object,
-                        "details": claim.details,
-                        "how": claim.how,
-                        "lines": list(claim.lines),
-                        "speaker_ids": sorted({s for s in cited if s is not None}),
-                        "source": EXTRACTOR,
-                        "prompt_version": prompt_version,
-                        "model": model,
-                        "status": CLAIM_DROPPED if reason else CLAIM_PROPOSED,
-                        "reason": reason,
-                        "session_started_at": session_started_at,
-                        "created_at": w.now,
-                        "decided_at": None,
-                        "fact_id": None,
-                    }
-                )
+                    self._row(
+                        claim, cited, prompt_version, model, session_started_at, w.now,
+                        status=CLAIM_DROPPED if reason else CLAIM_PROPOSED, reason=reason,
+                    )
+                )  # fmt: skip
             await w.insert_many(CLAIMS, rows)
         return Proposed(
             waiting, dropped, repeated, malformed, dict(why), len(new), tuple(new), joined, deferred
         )
+
+    @staticmethod
+    def _row(
+        claim: Extracted, cited: Sequence[int | None], prompt_version: str, model: str,
+        session_started_at: int | None, now: int, *, status: str, reason: str,
+    ) -> dict[str, Any]:  # fmt: skip
+        """A claim as stored."""
+        return {
+            "id": new_id(),
+            "subject": claim.subject,
+            "relationship": claim.relationship,
+            "object": claim.object,
+            "details": claim.details,
+            "how": claim.how,
+            "lines": list(claim.lines),
+            "speaker_ids": sorted({s for s in cited if s is not None}),
+            "source": EXTRACTOR,
+            "prompt_version": prompt_version,
+            "model": model,
+            "status": status,
+            "reason": reason,
+            "session_started_at": session_started_at,
+            "created_at": now,
+            "decided_at": None,
+            "fact_id": None,
+        }
 
     async def _link(
         self,
@@ -724,6 +798,8 @@ class ClaimStore:
             unnamed = [n for n, f in zip(said, found, strict=True) if not f]
             if any(name_key(n) in rejected for n in unnamed):
                 gone.append((claim, NAME_REJECTED_REASON))  # the DM said it isn't a name
+            elif unnamed and claim.reason == WAITING_NAME_REASON:
+                pending.append(claim)  # its name is not proposed yet: a later session does it
             elif unnamed:
                 ready.append(claim)  # a name that went away: asking says why it can't be written
             elif all(any(e in sure for e, _ in f) for f in found):
@@ -768,6 +844,25 @@ class ClaimStore:
         if pending:
             found["names"] = len(pending)
         return found
+
+    async def waiting_for_check(
+        self, guild_id: int, campaign_id: str, *, opted_in: Collection[int]
+    ) -> int:
+        """How many proposed claims the DM could answer now, counted WITHOUT changing anything:
+        `counts` first wipes the claims that cite someone not recorded now, which is right after
+        a session but not at its start, when a player may be about to agree again (#1403). Only
+        claims whose every speaker is recorded now are counted, and those waiting on a new name
+        are left out, as `counts` leaves them out of "proposed". A claim `counts` would drop
+        for a name turned down may still be counted here; the review drops it when it opens."""
+        async with self._store._read(guild_id, campaign_id) as scope:
+            cur = await scope.conn.execute(
+                "SELECT count(*) AS n FROM memory_claims WHERE guild_id = %s AND campaign_id = %s"
+                " AND status = 'proposed' AND reason <> %s AND cardinality(speaker_ids) > 0"
+                " AND speaker_ids <@ %s::bigint[]",
+                (*scope.ids, WAITING_NAME_REASON, list(opted_in)),
+            )
+            row = await cur.fetchone()
+        return int(row["n"]) if row else 0
 
     async def forget_speaker(self, guild_id: int, user_id: int) -> int:
         """Stop recording me: in every campaign of the server, delete the claims that cite

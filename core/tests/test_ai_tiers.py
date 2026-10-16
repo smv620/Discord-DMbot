@@ -150,6 +150,8 @@ class Tiers(unittest.TestCase):
                 Feature.SHEET: AIModelTier.CAREFUL,  # a player's sheet document (#1125)
                 Feature.FIGHTBOT: AIModelTier.FAST,  # a short reminder in combat (#1129)
                 Feature.EXTRACTOR: AIModelTier.FAST,  # the story extractor (#1363), off by default
+                Feature.RECAP: AIModelTier.FAST,  # the cinematic recap (#1382), off by default
+                Feature.RECAP_RETRY: AIModelTier.CAREFUL,  # its one more try
             },
         )
         self.assertEqual(set(FEATURE_TIERS), set(Feature))  # none left out
@@ -475,7 +477,8 @@ class UsageLine(unittest.IsolatedAsyncioTestCase):
         watch = Watch()
         client = AnthropicClient("k", MODELS, session=Service({}), watch=watch)  # type: ignore[arg-type]
         await client.complete("s", "t", tier=AIModelTier.FAST)
-        self.assertEqual(watch.used, [(120, 7)])
+        # 120 uncounted-by-the-cache tokens, plus a tenth of the 90 read from the cache (#1367)
+        self.assertEqual(watch.used, [(129, 7)])
 
 
 class NoModelNamedElsewhere(unittest.TestCase):
