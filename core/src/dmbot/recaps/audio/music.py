@@ -16,6 +16,7 @@ Nothing here reads a secret: it works from the narration the DM already reviewed
 from __future__ import annotations
 
 import re
+from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any
 
@@ -106,15 +107,23 @@ def _merge_shortest(spans: list[tuple[str, int, int]]) -> None:
     del spans[i]
 
 
-def sections(script: Script, *, seconds: int | None = None) -> list[Section]:
+def sections(
+    script: Script, *, seconds: int | None = None, starts: Mapping[int, float] | None = None
+) -> list[Section]:
     """One section for each run of the same mood, from the cue map (two cues with the same style,
     such as "tense" and "tension", are one run). Text before the first cue is a calm opening.
     More than `MAX_SECTIONS` moods are merged, shortest first. A run longer than the provider's
     longest section is split into equal parts of the same style. The durations add up to exactly
-    the total (3 to 10 minutes), none under the provider's 3 seconds."""
+    the total (3 to 10 minutes), none under the provider's 3 seconds. `starts` maps a cue's place
+    in the spoken text to the second the voice reaches it (from the voice's timestamps); with it
+    each section is as long as the voice spends in it, and without it as long as its share of
+    the words."""
     spoken_len = max(1, len(script.spoken))
     total_ms = (seconds if seconds is not None else total_seconds(spoken_len)) * 1000
-    total_ms = max(MIN_SECONDS * 1000, min(MAX_SECONDS * 1000, total_ms))
+    # An estimate is held to 3 to 10 minutes; once the voice's real timings are known (`starts`)
+    # the music is exactly as long as the voice, only held to what the provider can make.
+    floor = MIN_SECTION_MS if starts is not None else MIN_SECONDS * 1000
+    total_ms = max(floor, min(MAX_SECONDS * 1000, total_ms))
     marks: list[tuple[int, str]] = []
     for cue in script.emotions:
         mood = style_key(cue.name) or "calm"
@@ -126,18 +135,24 @@ def sections(script: Script, *, seconds: int | None = None) -> list[Section]:
             marks.insert(0, (0, "calm"))
         else:
             marks[0] = (0, "calm")
-    spans: list[tuple[str, int, int]] = []
+    spans: list[tuple[str, int, int]] = []  # (mood, where it starts, its weight)
     for i, (start, name) in enumerate(marks):
-        end = marks[i + 1][0] if i + 1 < len(marks) else spoken_len
-        spans.append((name, start, max(1, end - start)))
-    while len(spans) > MAX_SECTIONS:
-        _merge_shortest(spans)
+        if starts is not None:
+            begin = 0.0 if start == 0 else starts.get(start, 0.0)
+            nxt = marks[i + 1][0] if i + 1 < len(marks) else None
+            end = total_ms / 1000 if nxt is None else starts.get(nxt, begin)
+            spans.append((name, start, max(1, round((end - begin) * 1000))))
+        else:
+            end_char = marks[i + 1][0] if i + 1 < len(marks) else spoken_len
+            spans.append((name, start, max(1, end_char - start)))
+    while len(spans) > MAX_SECTIONS or (len(spans) > 1 and len(spans) * MIN_SECTION_MS > total_ms):
+        _merge_shortest(spans)  # and a short piece can't hold more sections than 3 s each
     # Shares of the total in proportion to the words each covers, none under 3 s; the rounding
     # and the lifting of short ones are settled on the longest, so the sum is exact.
     sum_w = sum(c for _, _, c in spans)
     base = [max(MIN_SECTION_MS, total_ms * c // sum_w) for _, _, c in spans]
     longest = max(range(len(base)), key=lambda i: base[i])
-    base[longest] += total_ms - sum(base)  # MAX_SECTIONS * 3 s is far under the 3-minute floor
+    base[longest] += total_ms - sum(base)  # the merging above leaves room for 3 s each
     out: list[Section] = []
     for (name, start, chars), ms in zip(spans, base, strict=True):
         parts = -(-ms // MAX_SECTION_MS)
@@ -147,10 +162,12 @@ def sections(script: Script, *, seconds: int | None = None) -> list[Section]:
     return out
 
 
-def composition_request(script: Script, *, seconds: int | None = None) -> dict[str, Any]:
+def composition_request(
+    script: Script, *, seconds: int | None = None, starts: Mapping[int, float] | None = None
+) -> dict[str, Any]:
     """The music request: a composition plan with one section for each mood, instrumental."""
     plan_sections = []
-    for s in sections(script, seconds=seconds):
+    for s in sections(script, seconds=seconds, starts=starts):
         pos, neg = STYLES.get(s.emotion, DEFAULT_STYLE)
         plan_sections.append(
             {

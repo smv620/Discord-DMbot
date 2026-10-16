@@ -14,6 +14,7 @@ prompts, not the decision (a restored campaign's recaps are drafts again, never 
 
 from __future__ import annotations
 
+import asyncio
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -28,6 +29,9 @@ DAMAGED = "That backup file's recaps are damaged, so nothing was restored."
 MAX_TRIES = 2  # "Try again" at most this many times for one session
 MAX_STORED = 50  # recaps kept for one campaign in a backup
 LEASE_S = 15 * 60  # a worker that stops leaves a job free again after this long
+AUDIO_MAX_TRIES = 2  # starts: the first, and one more an hour later
+STUCK = "The narration and music were never finished. The text is fine."
+AUDIO_LEASE_S = 20 * 60  # the audio takes longer: several provider calls and the mix
 TERMINAL = ("ready", "failed")
 STATES = ("queued", "beats", "checked", "prose", "housekeeping", "ready")
 
@@ -35,7 +39,8 @@ COLUMNS = (
     "session_at, dm_user_id, state, attempt, errors, restarts, next_at, calls, window_count,"
     " window_done, spent, last_error,"
     " problems, beats, title, summary, original, housekeeping, music, game_day, status, tries,"
-    " speakers, grade, emailed_at, created_at, updated_at"
+    " speakers, grade, emailed_at, created_at, updated_at, audio, audio_tries, audio_next_at,"
+    " audio_credits, audio_error, audio_text_hash"
 )
 
 
@@ -68,6 +73,12 @@ class Job:
     emailed_at: int | None
     created_at: int
     updated_at: int
+    audio: str = "off"  # off, queued, ready or failed (#1383): the text never waits for it
+    audio_tries: int = 0
+    audio_next_at: int = 0
+    audio_credits: int = 0
+    audio_error: str = ""
+    audio_text_hash: str = ""
 
     @property
     def finished(self) -> bool:
@@ -103,6 +114,12 @@ def _job(r: dict[str, Any]) -> Job:
         None if r["emailed_at"] is None else int(r["emailed_at"]),
         int(r["created_at"]),
         int(r["updated_at"]),
+        r["audio"],
+        int(r["audio_tries"]),
+        int(r["audio_next_at"]),
+        int(r["audio_credits"]),
+        r["audio_error"],
+        r["audio_text_hash"],
     )
 
 
@@ -235,6 +252,144 @@ class RecapStore:
                 (*values, int(self._now()), guild_id, campaign_id, session_at),
             )
 
+    # --- the audio tracks (#1383) -------------------------------------------------------
+
+    async def audio_due(self, guild_id: int, *, limit: int = 10) -> list[tuple[str, int]]:
+        """(campaign, session) of recaps whose text is ready and whose audio waits to be made
+        and may run now: not leased, past their wait, not dropped or posted. One for each
+        campaign at a time, so a campaign's audio never runs side by side."""
+        now = int(self._now())
+        async with self._db.guild(guild_id) as conn:
+            cur = await conn.execute(
+                "SELECT DISTINCT ON (campaign_id) campaign_id, session_at FROM recap_jobs"
+                " WHERE guild_id = %s AND state = 'ready' AND audio = 'queued'"
+                " AND audio_tries < %s AND status IN ('draft', 'posting')"
+                " AND audio_next_at <= %s AND leased_to <= %s"
+                " ORDER BY campaign_id, session_at LIMIT %s",
+                (guild_id, AUDIO_MAX_TRIES, now, now, limit),
+            )
+            return [(r["campaign_id"], int(r["session_at"])) for r in await cur.fetchall()]
+
+    async def audio_lease(self, guild_id: int, campaign_id: str, session_at: int) -> bool:
+        """Take the recap for its audio for a while (the lease the text worker uses)."""
+        now = int(self._now())
+        async with self._db.guild(guild_id) as conn:
+            # The try is counted here, before any paid call: a process that is killed mid-work
+            # (a deploy, a crash) still used one, so a crash loop can't bill without end.
+            cur = await conn.execute(
+                "UPDATE recap_jobs SET leased_to = %s, audio_tries = audio_tries + 1"
+                " WHERE guild_id = %s AND campaign_id = %s"
+                " AND session_at = %s AND leased_to <= %s AND audio_next_at <= %s"
+                " AND audio_tries < %s"
+                " AND state = 'ready' AND audio = 'queued' AND status IN ('draft', 'posting')"
+                " AND NOT EXISTS (SELECT 1 FROM recap_jobs r2 WHERE r2.guild_id = %s"
+                "   AND r2.campaign_id = %s AND r2.leased_to > %s)",
+                (
+                    now + AUDIO_LEASE_S,
+                    guild_id,
+                    campaign_id,
+                    session_at,
+                    now,
+                    now,
+                    AUDIO_MAX_TRIES,
+                    guild_id,
+                    campaign_id,
+                    now,
+                ),
+            )
+            return bool(cur.rowcount)
+
+    async def fail_stuck_audio(self, guild_id: int) -> int:
+        """Audio whose tries ran out without an answer (the process died each time): failed,
+        so it stops waiting. Returns how many."""
+        async with self._db.guild(guild_id) as conn:
+            cur = await conn.execute(
+                "UPDATE recap_jobs SET audio = 'failed', audio_error = %s WHERE guild_id = %s"
+                " AND state = 'ready' AND audio = 'queued' AND audio_tries >= %s"
+                " AND leased_to <= %s",
+                (STUCK, guild_id, AUDIO_MAX_TRIES, int(self._now())),
+            )
+            return int(cur.rowcount)
+
+    async def set_audio(
+        self,
+        guild_id: int,
+        campaign_id: str,
+        session_at: int,
+        *,
+        audio: str,
+        tries: int | None = None,
+        next_at: int | None = None,
+        credits: int | None = None,
+        error: str = "",
+        text_hash: str | None = None,
+        unchanged: tuple[str, str] | None = None,
+    ) -> bool:
+        """Record where the audio has got to. Only while the recap is still the DM's to post
+        (a posted or dropped one has no use for it), and, with `unchanged` (title, summary), only
+        if the text is still what the audio was made from. False if nothing was written."""
+        sets = ["audio = %s", "audio_error = %s"]
+        values: list[Any] = [audio, error[:200]]
+        for column, value in (
+            ("audio_tries", tries),
+            ("audio_next_at", next_at),
+            ("audio_credits", credits),
+        ):
+            if value is not None:
+                sets.append(f"{column} = %s")
+                values.append(value)
+        if text_hash is not None:
+            sets.append("audio_text_hash = %s")
+            values.append(text_hash)
+        where = (
+            " WHERE guild_id = %s AND campaign_id = %s AND session_at = %s AND state = 'ready'"
+            " AND status IN ('draft', 'posting')"
+        )
+        args: list[Any] = [guild_id, campaign_id, session_at]
+        if unchanged is not None:
+            where += " AND title = %s AND summary = %s"
+            args += [unchanged[0], unchanged[1]]
+        async with self._db.guild(guild_id) as conn:
+            cur = await conn.execute(
+                f"UPDATE recap_jobs SET {', '.join(sets)}, updated_at = %s" + where,
+                (*values, int(self._now()), *args),
+            )
+            return bool(cur.rowcount)
+
+    async def reset_audio(self, guild_id: int, campaign_id: str, session_at: int) -> None:
+        """A new recap is being written (Try again): the old audio is no longer its audio."""
+        async with self._db.guild(guild_id) as conn:
+            await conn.execute(
+                "UPDATE recap_jobs SET audio = 'off', audio_tries = 0, audio_next_at = 0,"
+                " audio_credits = 0, audio_error = '', audio_text_hash = ''"
+                " WHERE guild_id = %s AND campaign_id = %s AND session_at = %s",
+                (guild_id, campaign_id, session_at),
+            )
+
+    async def dictionary(self, guild_id: int, campaign_id: str) -> tuple[str, str, str] | None:
+        """The campaign's pronunciation dictionary: (id, version, hash of its rules)."""
+        async with self._db.guild(guild_id) as conn:
+            cur = await conn.execute(
+                "SELECT dictionary_id, version_id, rules_hash FROM recap_dictionaries"
+                " WHERE guild_id = %s AND campaign_id = %s",
+                (guild_id, campaign_id),
+            )
+            row = await cur.fetchone()
+        return None if row is None else (row["dictionary_id"], row["version_id"], row["rules_hash"])
+
+    async def save_dictionary(
+        self, guild_id: int, campaign_id: str, dictionary_id: str, version_id: str, rules_hash: str
+    ) -> None:
+        async with self._db.guild(guild_id) as conn:
+            await conn.execute(
+                "INSERT INTO recap_dictionaries (guild_id, campaign_id, dictionary_id, version_id,"
+                " rules_hash, updated_at) VALUES (%s, %s, %s, %s, %s, %s)"
+                " ON CONFLICT (guild_id, campaign_id) DO UPDATE SET"
+                " dictionary_id = EXCLUDED.dictionary_id, version_id = EXCLUDED.version_id,"
+                " rules_hash = EXCLUDED.rules_hash, updated_at = EXCLUDED.updated_at",
+                (guild_id, campaign_id, dictionary_id, version_id, rules_hash, int(self._now())),
+            )
+
     async def bridge(self, guild_id: int, campaign_id: str, before: int) -> Job | None:
         """The latest earlier recap of this campaign that was posted: the bridge into this one (a
         draft the DM never approved is not a bridge). Never another campaign's: the query names
@@ -305,6 +460,10 @@ class RecapSection:
     """Recaps in campaign backups (an `ExportSection`)."""
 
     name = "recaps"
+
+    def __init__(self, forget_audio: Callable[[int, str], None] | None = None) -> None:
+        self._forget_audio = forget_audio  # removes a campaign's audio files from the disk
+
     _KEYS = frozenset({"session_at", "title", "summary", "housekeeping", "music", "game_day"})
 
     async def dump(self, conn: Conn, guild_id: int, campaign_id: str) -> list[Any]:
@@ -389,3 +548,7 @@ class RecapSection:
             "DELETE FROM recap_jobs WHERE guild_id = %s AND campaign_id = %s",
             (guild_id, campaign_id),
         )
+        if self._forget_audio is not None:
+            await asyncio.to_thread(  # the narration and music go with it
+                self._forget_audio, guild_id, campaign_id
+            )
