@@ -274,7 +274,7 @@ class FastEnough(Speed):
         self.skipTest("the recall's own speed test runs in test_recall")
 
     async def test_the_note_on_a_big_campaign_is_fast(self) -> None:
-        await Speed.build(self)  # type: ignore[arg-type]
+        await Speed.build(self)
         async with self.db.guild(GUILD_A) as conn:  # a last session to start from
             await conn.execute(
                 "INSERT INTO memory_heard (guild_id, campaign_id, entity_id, session_started_at,"
