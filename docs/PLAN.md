@@ -688,8 +688,19 @@ never does.
     never names the other campaign, server or DM; Add to set makes the next version. *(Supervisor,
     2026-10-15, #1315: wording matched to the buttons as built.)*
 - **Updates reach followers at their next session start, never mid-game.** DMbot takes the update then
-  (Follow, the default) and posts a note on the DM screen: "The Frostmaiden house rules were updated to v4:
-  2 rules. [See changes] [Pick changes] [Undo]".
+  (Follow, the default) and posts a note on the DM screen: "📚 **Frostmaiden** house rules updated to v4:
+  2 rules. DMbot took the new version. [See changes] [Pick changes] [Undo]".
+  **When several shared rules changed at one start (#1538)** the notes are combined into one: "📚 Shared
+  rules updated at this start. DMbot took the new versions. Buttons are by number:" with a numbered line for
+  each update ("1. **Frostmaiden** house rules, now v4: 2 rules", "2. **Frost Pack** homebrew, now v3: 2
+  entries changed"), the lines about players now knowing something or the campaign's own entries still
+  winning under their update, and each update's own row of buttons, short and numbered to match ("See 2",
+  "Pick 2", "Compare 2", "Undo 2"; a phone cuts a label from the right, so the number comes straight after
+  the word). Four updates get rows. A fifth and later are still taken and still named, with "N without
+  buttons here: open ⚙️ Settings → 📚 Shared rules". A set or pack that stopped being shared joins as a plain
+  line and is never cut from the note; when the text is long, only the extra lines under an update give
+  way. A single update keeps the note above, unchanged. The buttons are the same restart-proof ones, each
+  tied to its own version, and one check failing never loses the other's note.
   - **Follow** (the default, also what happens if the DM does nothing): the changes are taken and the campaign
     keeps following. **Undo** goes back to the earlier version and keeps it: DMbot does not take that same
     version again at the next session, only a newer one.
