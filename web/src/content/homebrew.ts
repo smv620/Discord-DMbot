@@ -3,15 +3,15 @@
 export const text = {
   heading: "Homebrew",
   link: "Read your table's homebrew",
-  lead: "The spells, monsters, items and rules your DM made up and shared with the table. Anyone in the Discord server can read them.",
+  lead: "Spells, monsters, items and rules your DM made for your table. Everyone in your Discord server can read them.",
   leadOneCampaign:
-    "These are the things your DM shared with the table. Your DM may have more that stays behind the DM screen.",
+    "Your DM chose to share these. Your DM may have more that stays behind the DM screen.",
   dmChanges:
-    "Your DM adds and changes them in Discord: ⚙️ Settings → 📚 Homebrew.",
+    "You can't change these here. Your DM does that in Discord: ⚙️ Settings → 📚 Homebrew.",
   loading: "Loading…",
   empty:
-    "Nothing shared yet. Your DM chooses what the table may know, in Discord.",
-  signedOut: "Sign in to read homebrew.",
+    "Nothing shared yet. When your DM shares homebrew with the table, it will show here.",
+  signedOut: "Sign in with Discord to read your table's homebrew.",
   signIn: "Sign in with Discord",
   account: "Back to My Account",
   allCampaigns: "All campaigns",
@@ -29,13 +29,13 @@ export const text = {
     other: "Other",
   } as Record<string, string>,
   download: "Save as a text file",
-  downloadNote: "The file has only the entries shown here.",
+  downloadNote: "The file has only what's shown on this page.",
   downloading: "Saving…",
-  downloadFailed: "That didn't save. Try again.",
+  downloadFailed: "The file didn't save. Try again.",
   notFound:
-    "We can't find that homebrew. Go back to All campaigns and pick again.",
+    "We can't find that campaign's homebrew. It may have been removed. Go to All campaigns and pick again.",
   failed: "That didn't load. Try again in a moment.",
-  tooMany: "Too many tries at once. Wait a moment, then try again.",
+  tooMany: "Lots of people are asking at once. Wait a moment, then try again.",
 };
 
 /** The kinds in the order the bot lists them. */

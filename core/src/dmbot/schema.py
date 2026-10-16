@@ -5150,9 +5150,10 @@ WEB_HOMEBREW = """
     -- rules, any signed-in person whose session lists the server may read, with that server set
     -- for the transaction; the website's role has no grant on homebrew_entries.
     --
-    -- What leaves: kind, name, summary, text, version, updated_at. NEVER who wrote it, its id or
-    -- whether it came from a book (the IP rule keeps book text per campaign; the page shows the
-    -- campaign's own words only).
+    -- What leaves the database: kind, name, summary, text, version, updated_at (the last two
+    -- only reach the API process, for the file; the page never sends them). NEVER who wrote it,
+    -- its id or whether it came from a book (the IP rule keeps book text per campaign; the page
+    -- shows the campaign's own words only).
     --
     -- dmbot_web_homebrew: NULL when the caller is not in the server or there is no campaign.
     CREATE FUNCTION dmbot_web_homebrew(g BIGINT, c TEXT) RETURNS JSONB

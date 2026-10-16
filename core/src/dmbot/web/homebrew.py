@@ -11,6 +11,9 @@ lists them. The download is `homebrew_file.write` over those entries and `homebr
 so it is byte-equal to the file the bot would write for them: its own pick of the entries, as the
 bot's Download button sends every entry, hidden ones included, to the DM only.
 
+The campaign's own entries only: a followed pack's entries (#1527) are not on the page or in
+the file.
+
 Never shown: who wrote an entry, its id, or whether it came from a book. A campaign is named by
 `<server>.<campaign>`, as for the house-rules page.
 """
