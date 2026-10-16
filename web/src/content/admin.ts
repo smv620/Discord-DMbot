@@ -206,6 +206,19 @@ export const text = {
   ticketsTryAgain: "Try again",
 } as const;
 
+/** How long a ticket has waited, as one short phrase (#1485): "waiting 10 min", "waiting 3 h",
+ * "waiting 2 days". Everything is rounded down, so "1 day" always means at
+ * least a day and nothing shows "60 min" or "24 h"; under a minute counts as 1 min; a clock a
+ * little behind the ticket's time never shows a negative. */
+export function waitingFor(seconds: number): string {
+  const s = Math.max(0, seconds);
+  if (s < 3600) return `waiting ${Math.max(1, Math.floor(s / 60))} min`;
+  const hours = Math.max(1, Math.floor(s / 3600));
+  if (s < 86_400) return `waiting ${hours} h`;
+  const days = Math.floor(s / 86_400);
+  return `waiting ${days} ${days === 1 ? "day" : "days"}`;
+}
+
 /** What a save did, in words: "Same as Guild, until Dec 31, 2026" or "No limits, no end
  * date". `date` is the already-formatted last day. */
 /** "This week: 12 questions, 9 answered by DMbot's helper, 2 by the team, 1 waiting. Helper handed
