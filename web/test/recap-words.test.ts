@@ -107,6 +107,21 @@ describe("the switches and What's new agree", () => {
     expect(entries.some((e) => e.title === title)).toBe(RECAPS_LIVE);
   });
 
+  // Each of these moves up on the same day as its switch, and not before: a test per pair, so
+  // turning a switch on without its line, or the line up without its switch, fails (#1463).
+  it.each([
+    ["Choose what recaps do", RECAPS_LIVE],
+    ["Narrated recaps with music", RECAP_AUDIO_LIVE],
+  ] as const)("holds %s back exactly while its switch is off", (title, on) => {
+    expect(held.some((h) => h.title === title)).toBe(!on);
+    expect(entries.some((e) => e.title === title)).toBe(on);
+  });
+
+  it("has what #1457 and #1462 ship (the DM-screen buttons) in the held recaps entry", () => {
+    const text = [...entries, ...held].find((e) => e.title === "Recaps for your table")?.what ?? "";
+    expect(text).toContain("read, post or skip it right on the DM screen");
+  });
+
   it("never has audio live without recaps", () => {
     expect(!RECAP_AUDIO_LIVE || RECAPS_LIVE).toBe(true);
   });
