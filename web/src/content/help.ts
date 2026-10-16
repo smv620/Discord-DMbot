@@ -60,6 +60,13 @@ export const dmSteps: Step[] = [
     names: [{ name: "Show all ▾", file: "ui/name_card.py" }],
   },
   {
+    text: "To keep a connection from your players, open the name, press 🧭 Connect to…, press 🤫 Secret once, so it reads 🤫 Secret: yes, then pick the other name. Players' cards never show that connection. Only a game master of the campaign can turn Secret on. If a connection is already secret, it stays secret.",
+    names: [
+      { name: "Connect to…", file: "ui/name_card.py" },
+      { name: "🤫 Secret: yes", file: "ui/name_card.py" },
+    ],
+  },
+  {
     text: "To say who has something, open the name, press 🧭 Connect to…, and choose carries. It is saved either way. If it looks odd, for example \"Someone else already has that, and there is only one\", DMbot says so and will ask you about it after the session. DMbot only points it out. You decide.",
     names: [
       { name: "Connect to…", file: "ui/name_card.py" },
@@ -172,6 +179,10 @@ export const dmSteps: Step[] = [
       { name: "Pick changes", file: "dm_screen/pack_update.py" },
       { name: "Undo", file: "dm_screen/pack_update.py" },
     ],
+  },
+  {
+    text: "To change an entry that comes from a pack you follow, look it up (for example with /dmbot rule) and press ✏️ Make it my own on its card. DMbot copies it into your campaign's own homebrew and opens it so you can edit it. From then on this campaign uses your copy instead of the pack's. The pack itself does not change.",
+    names: [{ name: "✏️ Make it my own", file: "ui/rule_lookup.py" }],
   },
   {
     text: "To suggest one of your own homebrew entries to the pack you follow, open the entry in your homebrew and press 💡 Suggest to the pack. The game master who shares the pack sees the entry with Add to pack or No thanks. They never see who sent it. The pack stays as it is unless they press Add to pack.",
