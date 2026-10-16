@@ -514,7 +514,8 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
           ref: "200000000000000001.cmp1",
           name: "The Brynwater Crossing",
           serverName: "Thursday Table",
-          entries: 3,
+          entries: 5,
+          packs: 1,
         },
       ];
     },
@@ -830,10 +831,20 @@ function mockHomebrew() {
   return {
     name: "The Brynwater Crossing",
     fileName: "homebrew-the-brynwater-crossing.txt",
+    packs: [
+      {
+        name: "Frost Pack",
+        version: 2,
+        entries: [
+          { kind: "spell", name: "Ice Lance", summary: "A cold bolt", text: "Cold damage." },
+          { kind: "item", name: "Aurora Cloak", summary: null, text: "Shimmers." },
+        ],
+      },
+    ],
     entries: [
       { kind: "spell", name: "Frost Lance", summary: "A bolt of ice", text: "A spear of ice hits a target within 60 feet for 3d6 cold damage." },
-      { kind: "item", name: "Moon Lamp", summary: null, text: "Glows silver at night and never needs oil." },
-      { kind: "monster", name: "Mud Wight", summary: "Slow and sticky", text: "Slows anyone it touches." },
+      { kind: "item", name: "Moon Lamp", summary: null, text: "Glows silver at night and never needs oil.", fromBook: true, legacy: false },
+      { kind: "monster", name: "Mud Wight", summary: "Slow and sticky", text: "Slows anyone it touches.", fromBook: true, legacy: true },
     ],
   };
 }

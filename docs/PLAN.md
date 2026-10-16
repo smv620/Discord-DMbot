@@ -2064,9 +2064,20 @@ consent check just made still holds:
     Undo only touches their words while they're still recorded.
   - **When it closes:** at the session's end the list stays but the Undo buttons go.
     After a restart, a press says it can't be undone any more.
-- **Later:** unanswered "Did they mean…?" questions (they expire quietly at the
-  session's end, the line staying as heard) go to the after-session report once it
-  exists.
+- **Built, unanswered questions go to the after-session check (2026-10-16, #1572):** a "Did they
+  mean…?" that closes with no answer (it expired, or the session ended) is kept in memory, at
+  most 25 a session (the oldest go first), and saved when the session ends as a waiting question
+  of the campaign (its own table, `waiting_name_questions`: the line's reference, the heard
+  words and the 2 or 3 names, never the line's words). The DM screen says how many and shows
+  **❓ Check names**; DMs only, checked on every press. Each question reads as it did
+  live: **[Maren] [Marron] [Type it…] [Keep "Marin"] [Later]**. A name picked or typed is saved as
+  the campaign's correction (so later sessions write it that way) and written into that one
+  stored line's cleaned words, never what was heard, and only if the words are in the line exactly
+  once and no secret name would stand there; **Keep as heard** saves the "don't change this"
+  rule. Earlier lines with the same words are not rewritten. Nothing is kept for a speaker who
+  stopped being recorded (a person who stops, or whose lines are deleted, has theirs removed), a
+  question whose line was deleted drops out of the list, one split across two pieces of speech is
+  not kept, and a question unanswered for 7 days expires quietly.
 
 **A player may suggest a fix to their own line; the DM decides (decided 2026-10-16 by Supervisor,
 built #1491).** The bot advises; the DM decides; what was heard never changes. A player who sees
@@ -2287,8 +2298,18 @@ one) moves a clock the DM has set, with a one-line note and **Undo** (a rest fro
 pressed it alone; it only undoes while the clock is still where the rest left it); a player's line never does. **Speaks up only for** dawn,
 noon and dusk as a button or rest passes them (not when the DM sets the time), and **24 hours
 without a long rest**, once per stretch, with its source ("Check: 24 hours since the last long rest… Optional rule, Xanathar's… Your call."); on by default, and off if the DM turns the "Going without a long rest" optional rule
-off. The first time the clock is set the party counts as rested then. Not built yet: split-party
-clocks, reading time from narration, periodic notes.
+off. The first time the clock is set the party counts as rested then. **Reading time from the DM's
+narration is built for hours, the next morning and days (2026-10-16, #1117, #1594):** "an hour
+later", "the next morning", "at dawn", and now a skip of days ("Three days later, you reach the
+city", "A week later, the party…", "The next day, you…"; 1 to 30 days, a week as 7). It lands at the
+same time of day that many days on and counts as a long rest for the party (a journey of days
+includes nights' sleep) unless the DM said "without resting" or "no rest" in the same line; the
+one-line note says which ("⏩ 3 days later (counted as rested)"), with **Undo**, which brings back
+the clock and the rest record. Only a DM's line that opens the scene and is followed by the
+narration's subject or ends the sentence; never "in three days", "for three days", "three days
+ago", a question, a wish, a condition, quoted speech, more than 30 days, or a player's line; the
+same skip twice in five minutes is one. A rested skip leaves no "24 hours without a long rest" note;
+one without rest over 24 hours says it once. Not built yet: split-party clocks, periodic notes.
 
 *Built, part 2: timed effects the DM starts (2026-10-10, #998):* `game_effects` (migration 0042): per
 campaign, own server scope, deleted with the campaign, in backups (`EffectsSection`, validated),
@@ -2941,7 +2962,13 @@ in a running session is skipped. The owner gets a private message 14 days and 3 
 (`deletionWarningDaysBefore`), each once: the stage and the date it was sent for are kept on the
 campaign (`retention_warned_stage`, `retention_warned_for`, migration 0039), so a restart doesn't
 repeat one and playing a session (which moves the date) starts them over. Deletion is the
-existing `CampaignStore.delete`, then the owner is told once; the log has counts only. The job
+existing `CampaignStore.delete`, then the owner is told once; the log has counts only. **Its Discord channels
+(2026-10-16, #1598):** after a successful delete, its **DM screen and game-time channels are deleted**, while they
+are still named like DMbot's (a renamed, reused one is skipped; they hold only DMbot's own messages and the DM-only notes), and its **transcript and `dmb-chat` channels are kept**
+with one closing note, DMbot's own buttons taken off (they hold what people wrote or said, which is not
+DMbot's to delete; a server admin can). Only the channels recorded on that campaign, found in its own server;
+a missing one, one DMbot may not manage or a slow one is skipped, counted in the log line
+("channels: 2 deleted, 2 closed, 0 skipped") and never stops the job. The job
 runs per server (the bot's own servers), reading across servers only the owner's plan, through
 `usage.retention_standing`'s owner-scoped door; a plan that can't be read means that campaign is
 left alone. **A campaign is only deleted after its last warning:** one already past its date when
@@ -3578,6 +3605,38 @@ green. One exception was granted once: `e49cdb00` (2026-10-16 04:50 UTC), whose 
 was the test-only role-creation race (`pg_authid_rolname_index`, fixed by #1442, which merged
 next); the deployed code was unchanged by the failing test. Any further exception is a
 Supervisor decision recorded here with the commit and the reason, never dev1's own call.
+
+**Data, ownership and deletion (owner, 2026-10-16).** Replaces "store and process them only to run
+DMbot for you" in the terms. Decided after Supervisor advised against "DMbot owns all data as public
+art": privacy law lets people withdraw consent and erase their personal data whatever a contract
+says, and DMs would not pay for a service that claims their campaigns.
+- **Users keep ownership; DMbot gets a broad licence.** People grant DMbot a worldwide, royalty-free
+  licence to store, process and show what they and their table provide, to run DMbot and to improve it.
+  Content a DM shares from a book stays the rights holder's (the "I have the right" step is unchanged).
+- **Generated content belongs to the campaign** (#1381 decision 1): recaps, story memory, notes and
+  anything else DMbot writes from a session stay with the campaign when a player leaves, and are
+  deleted only when the campaign is deleted.
+- **Who may delete a campaign:** the game master whose plan it uses (`owner_user_id`; for a free
+  campaign, the DM who started it). Other game masters manage it but cannot delete it. Built (#1608, PR #1618):
+  ⚙️ Settings → 🗑 Delete this campaign, the plan holder only (checked again under the campaign
+  lock), not during a session, one warning and a typed name; its channels go as retention's do.
+- **Severable personal data is deleted on request, best effort:** a person's own lines and what DMbot
+  learned about them (Delete my transcripts, Stop recording me, account deletion). Generated content
+  and copies other people already downloaded stay, and the pages say so.
+- **Account data stays protected:** Discord ids, emails, payment and record-keeping data are never
+  published or shared beyond the processors the privacy page names.
+- **Improving DMbot:** DMbot uses transcripts and typed table chat to improve itself (the raw transcript
+  exists for this, #933). It is disclosed on the privacy page, and a person **opts out on the website**
+  (My Account), after which nothing they said or typed is used for improvement; running their table is
+  unaffected. Built in #1609 (store and honour the choice) and #1610 (the switch and the wording). The
+  choice applies from when it is made, at the source (the test recorder, session exports); test
+  recordings kept earlier name people only by made-up voice codes, so they are not re-filtered, and
+  **Stop saving my voice** remains the way to delete one's kept voice (decided 2026-10-16, PR #1621).
+- **Raw audio:** DMbot does not store voice in the base product. The test library's voice saving stays
+  a separate yes (⚙️ Menu → Stop saving my voice); keeping audio for troubleshooting is decided later.
+- The terms and privacy changes are one WebDev PR (#1610), held for the owner's `approved: owner` label and
+  recommended for a lawyer's read before it goes live; it merges only after the delete button and the
+  opt-out exist.
 
 **Retention.** Configurable auto-delete of transcripts per server (audio is never
 stored), and a "Delete my past transcripts" action for each player. Deleting a person's
