@@ -21,6 +21,10 @@ from dmbot.transcription.config import (
     load_transcription_settings,
 )
 
+# Characters of confirmed story the DM sidebar's prompt may hold (#1370): about one more
+# "campaign names" section (five lines of up to 200), so the prompt stays near today's size.
+SIDEBAR_RECALL_BUDGET = 1000
+
 
 class ConfigError(ValueError):
     pass
@@ -69,6 +73,9 @@ class Settings:
     continuity: Levels = field(default_factory=Levels)
     # The most characters of story the recall service hands one helper (#1350).
     recall_budget: int = DEFAULT_BUDGET
+    # The DM sidebar answers from recall (#1370): on by default; off is exactly the old prompt.
+    sidebar_recall: bool = True
+    sidebar_recall_budget: int = SIDEBAR_RECALL_BUDGET
     # Test recordings (#1019): servers where people who agreed to it have their voices saved
     # for DMbot's own tests, and where the files go. Empty: nothing is ever saved.
     test_recording_guilds: frozenset[int] = frozenset()
@@ -142,6 +149,22 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
 
     continuity = _continuity_levels(get)
     recall_budget = _recall_budget(get)
+    sidebar_recall_raw = (get("DMBOT_SIDEBAR_RECALL") or "1").lower()
+    if sidebar_recall_raw not in ("0", "1", "true", "false", "on", "off"):
+        raise ConfigError(
+            'DMBOT_SIDEBAR_RECALL must be 1 (on) or 0 (off), got "' + sidebar_recall_raw + '".'
+        )
+    sidebar_budget_raw = get("DMBOT_SIDEBAR_RECALL_BUDGET") or str(SIDEBAR_RECALL_BUDGET)
+    if not (
+        sidebar_budget_raw.isascii()
+        and sidebar_budget_raw.isdigit()
+        and 200 <= int(sidebar_budget_raw) <= 4000
+    ):
+        raise ConfigError(
+            'DMBOT_SIDEBAR_RECALL_BUDGET must be a number from 200 to 4000, got "'
+            + sidebar_budget_raw
+            + '".'
+        )
 
     extractor_raw = (get("DMBOT_STORY_EXTRACTOR") or "0").lower()
     if extractor_raw not in ("0", "1", "true", "on", "false", "off"):
@@ -195,6 +218,8 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
         story_extractor_on=extractor_raw in ("1", "true", "on"),
         continuity=continuity,
         recall_budget=recall_budget,
+        sidebar_recall=sidebar_recall_raw in ("1", "true", "on"),
+        sidebar_recall_budget=int(sidebar_budget_raw),
         admin_primary_id=admin_primary,
         admin_secondary_id=admin_secondary,
         test_recording_guilds=test_guilds,

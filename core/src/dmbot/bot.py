@@ -157,6 +157,7 @@ from dmbot.memory.continuity import ContinuityStore
 from dmbot.memory.lookup import CampaignLookup, LookupCache
 from dmbot.memory.models import DM, FIX, KEEP, Heard, MemoryRuleError, name_key
 from dmbot.memory.ontology import Tally
+from dmbot.memory.recall import PLAYERS, AsOf, Recall, RecallService
 from dmbot.memory.scan import MAX_SUGGESTIONS, find_new_names, group_alike
 from dmbot.memory.scene import HintParts, SceneTracker, mentions, scene_hints
 from dmbot.memory.scene import prepare as prepare_hints
@@ -2162,6 +2163,27 @@ class DMBot(commands.AutoShardedBot):
             async with asyncio.timeout(NAMES_WAIT_S):
                 return await self.sidebar_people(campaign)
 
+        async def recall(campaign: Campaign, seeds: Sequence[str]) -> Recall | None:
+            # The audience is "players", not the DM screen, on purpose (#1370): a sidebar reply can
+            # reach the raw transcript, which everyone who may read transcripts may read (#933).
+            # So no secret fact, no secret name and no entry note ever reach the prompt. Changing
+            # this later is a decision about the transcript, not a refactor. No transcript reader
+            # is given, so no line is quoted either (that needs its own decision).
+            if self.memory is None:
+                return None
+            table = self.tables.get(campaign.guild_id)
+            live = table is not None and table.campaign_id == campaign.id
+            async with asyncio.timeout(NAMES_WAIT_S):  # optional context: never eat the answer
+                return await RecallService(self.memory).recall(
+                    campaign.guild_id,
+                    campaign.id,
+                    seeds=seeds,
+                    audience=PLAYERS,
+                    as_of=AsOf(session_at=table.started_at or None) if live and table else AsOf(),
+                    budget=self.settings.sidebar_recall_budget,
+                    hops=1,
+                )
+
         ai = self.ai_client.tier(FEATURE_TIERS[Feature.SIDEBAR], Feature.SIDEBAR)
         careful = self.ai_client.tier(FEATURE_TIERS[Feature.SIDEBAR_RETRY], Feature.SIDEBAR_RETRY)
         return Sidebar(
@@ -2171,6 +2193,7 @@ class DMBot(commands.AutoShardedBot):
             houses=houses,
             names=names,
             people=people,
+            recall=recall if self.settings.sidebar_recall else None,
             second_try=careful,
         )
 

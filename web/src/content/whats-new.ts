@@ -65,6 +65,13 @@ export interface Held extends Entry {
 
 export const held: Held[] = [
   {
+    date: "2026-10-16",
+    title: "Quick answers use your story",
+    what: "DMbot's quick answers now use what you've confirmed about your story, so asking who someone works for gets an answer from your own notes.",
+    reason:
+      "Not live until this change is deployed; dev1 moves it up once it is (#1370).",
+  },
+  {
     date: "2026-10-15",
     title: "Move to a new Discord account",
     what: "To move to a new Discord account, press Get a move code on your account page. On the new account, type /dmbot migrate, press Import my account, and type the emailed code; you will be asked to say yes to being recorded again.",

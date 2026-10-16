@@ -23,6 +23,24 @@ class ConfigTests(unittest.TestCase):
             load_settings({**BASE, "DISCORD_DEV_GUILD_ID": "abc"})
 
 
+class SidebarRecall(unittest.TestCase):
+    def test_the_sidebar_uses_the_confirmed_story_unless_switched_off(self) -> None:
+        s = load_settings(BASE)
+        self.assertEqual((s.sidebar_recall, s.sidebar_recall_budget), (True, 1000))
+        off = load_settings(
+            {**BASE, "DMBOT_SIDEBAR_RECALL": "0", "DMBOT_SIDEBAR_RECALL_BUDGET": "400"}
+        )
+        self.assertEqual((off.sidebar_recall, off.sidebar_recall_budget), (False, 400))
+        for name, bad in (
+            ("DMBOT_SIDEBAR_RECALL", "maybe"),
+            ("DMBOT_SIDEBAR_RECALL_BUDGET", "199"),
+            ("DMBOT_SIDEBAR_RECALL_BUDGET", "4001"),
+            ("DMBOT_SIDEBAR_RECALL_BUDGET", "lots"),
+        ):
+            with self.assertRaisesRegex(ConfigError, name):
+                load_settings({**BASE, name: bad})
+
+
 class ShardAndLogSettings(unittest.TestCase):
     def test_defaults(self) -> None:
         from dmbot.sharding import ShardSettings
