@@ -19,9 +19,16 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 
 from dmbot.rules import dndbeyond, page_fetch
-from dmbot.rules.homebrew import Homebrew, HomebrewError, HomebrewStore
-from dmbot.rules.homebrew_sources import SourceStore
-from dmbot.rules.site_urls import normalise_domain
+from dmbot.rules.homebrew import (
+    Homebrew,
+    HomebrewError,
+    HomebrewStore,
+    clean_kind,
+    clean_name,
+    clean_text,
+)
+from dmbot.rules.homebrew_sources import Page, SourceStore
+from dmbot.rules.site_urls import normalise_domain, normalise_url
 
 log = logging.getLogger(__name__)
 
@@ -32,8 +39,35 @@ NOT_YET = "Add this site first: press **Add from a link** again and say you have
 TAKEN_BACK = "This site was taken off the list. Press **Add from a link** again to start over."
 
 
+NOT_A_LINK = (
+    "This entry was typed in or loaded, not added from a link, so there is nothing to update."
+)
+PAGE_LOST = "DMbot lost the saved copy of this page. Remove the entry and add the link again."
+GONE = "That page isn't public any more. DMbot keeps the words it has."
+SAME = "Nothing changed on the page."
+
+
 class ImportRefused(Exception):
     """Why the link was not added, in plain words for the DM."""
+
+
+class PageGone(ImportRefused):
+    """The page answered "not found" or "not public" (an update marks the page stale)."""
+
+
+@dataclass(frozen=True, slots=True)
+class Refresh:
+    """A page fetched again: the new words and a plain note on what changed."""
+
+    preview: Preview
+    note: str
+    # The kept copy was `stale` or `restored`: saving makes it fresh and trusted even when the
+    # words are the same, so the DM is offered Save.
+    renews: bool = False
+
+    @property
+    def changed(self) -> bool:
+        return self.note != SAME or self.renews
 
 
 @dataclass(frozen=True, slots=True)
@@ -97,6 +131,13 @@ class HomebrewImporter:
                 truncated=kept.text.endswith("…"),
                 reused=True,
             )
+        return await self._fetch_preview(guild_id, campaign_id, url, domain)
+
+    async def _fetch_preview(
+        self, guild_id: int, campaign_id: str, url: str, domain: str
+    ) -> Preview:
+        """ONE fetch of the page, read and shown, nothing saved. A page that is gone raises
+        `PageGone` (a kind of refusal) so the caller can mark it."""
         try:
             self._gate.enter(guild_id, campaign_id)
         except page_fetch.PageError as exc:
@@ -109,7 +150,7 @@ class HomebrewImporter:
         finally:
             self._gate.leave(guild_id, campaign_id)
         if dndbeyond.is_not_found(reply.status, reply.text):
-            raise ImportRefused(dndbeyond.NOT_PUBLIC)
+            raise PageGone(dndbeyond.NOT_PUBLIC)
         if reply.status != 200:
             log.warning("Homebrew page not read: campaign=%s status=%s", campaign_id, reply.status)
             raise ImportRefused(dndbeyond.NO_ANSWER)
@@ -118,6 +159,45 @@ class HomebrewImporter:
             raise ImportRefused(dndbeyond.NO_WORDS)
         return Preview(
             url, domain, dndbeyond.kind_for(url), page.name, page.text, page.truncated, False
+        )
+
+    async def refresh(self, guild_id: int, campaign_id: str, entry: Homebrew) -> Refresh:
+        """🔄 Update from the link (#1645): fetch the entry's ONE page again, at a DM's press, with
+        the same guards and gate as adding, and the site's approval checked again. Never re-uses
+        the kept copy (that is the point). Nothing is saved; `save_refresh` does that. A page that
+        is gone is marked `stale` and its words are kept."""
+        found = normalise_url(entry.page_url) if entry.page_url else None
+        if entry.source_kind != "link" or found is None:
+            raise ImportRefused(NOT_A_LINK)
+        url, domain = found
+        if dndbeyond.check_address(url) is None:  # (a crafted backup could carry any address)
+            raise ImportRefused(dndbeyond.NOT_SUPPORTED)
+        if not await self._sources.approved(guild_id, campaign_id, domain):
+            raise ImportRefused(TAKEN_BACK)
+        kept = await self._sources.page_for(url, include_restored=True)
+        if kept is None:
+            raise ImportRefused(PAGE_LOST)
+        try:
+            fresh = await self._fetch_preview(guild_id, campaign_id, url, domain)
+        except PageGone as exc:
+            await self._sources.mark_stale(url)
+            raise ImportRefused(GONE) from exc
+        note = _what_changed(kept, fresh)
+        renews = kept.fetch_status != "ok"
+        if renews and note == SAME:
+            note = "The page answers again. Its words are the same."
+        return Refresh(fresh, note, renews)
+
+    async def save_refresh(self, guild_id: int, campaign_id: str, preview: Preview) -> None:
+        """Replace the page's words. There is one copy per address, so every campaign pointing at
+        it gets them (the screen says so). The page becomes trusted and fresh: `ok`."""
+        if not await self._sources.approved(guild_id, campaign_id, preview.domain):
+            raise ImportRefused(TAKEN_BACK)
+        mine = await self._homebrew.list(guild_id, campaign_id, usable_only=False)
+        if not any(e.source_kind == "link" and e.page_url == preview.url for e in mine):
+            raise ImportRefused(NOT_A_LINK)  # (removed since the page was fetched)
+        await self._sources.save_page(
+            preview.url, kind=preview.kind, name=preview.name, text=preview.text
         )
 
     async def save(
@@ -145,3 +225,18 @@ class HomebrewImporter:
             )
         except HomebrewError as exc:
             raise ImportRefused(str(exc)) from None
+
+
+def _what_changed(kept: Page, fresh: Preview) -> str:
+    """Said in plain words, comparing as the store would keep them (so cleaning alone is no
+    change)."""
+    parts = []
+    if clean_name(fresh.name) != kept.name:
+        parts.append("the name")
+    if clean_kind(fresh.kind) != kept.kind:
+        parts.append("the type")
+    if clean_text(fresh.text) != kept.text:
+        parts.append("the words")
+    if not parts:
+        return SAME
+    return "The page changed: " + " and ".join(parts) + "."
