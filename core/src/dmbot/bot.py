@@ -1662,6 +1662,7 @@ class DMBot(commands.AutoShardedBot):
         )
         self._track(self._fight_left_over(table), "fight-left-over")  # #1173
         self._track(self._pre_session_note(table), "pre-session-note")  # #1403
+        self._track(self._waiting_recaps(table), "waiting-recaps")  # #1474
         table.watch_task = self._track_loop(sheet_reread.run(self, table), "sheet-watch")  # #1128
         table.fight_task = self._track_loop(fightbot.run(self, table), "fightbot")  # #1129
         return sent
@@ -1704,6 +1705,37 @@ class DMBot(commands.AutoShardedBot):
                 log.info("Pre-session note: %d line(s)", len(note.lines))  # counts only
             except Exception:
                 log.exception("The pre-session note failed")
+
+    async def _waiting_recaps(self, table: Table) -> None:
+        """A session starts and a finished recap from before is still waiting for the DM (#1474):
+        the DM screen says so once, with the same three buttons as when it was ready, for at most
+        the two newest. Not after a restart in the middle of a session, and nothing for a posted,
+        skipped or unfinished recap, or when the campaign's recaps are off. No email."""
+        if (
+            self.recaps is None
+            or not self.settings.recaps_on
+            or table.campaign_id is None
+            or table.resumed
+        ):
+            return
+        gid, cid = table.guild_id, table.campaign_id
+        with log_context(guild_id=gid, campaign_id=cid):
+            try:
+                campaign = await self.campaigns.get(gid, cid)
+                if campaign is None or not campaign.recaps_text:
+                    return
+                for session_at, title in await self.recaps.waiting_drafts(gid, cid):
+                    if self.tables.get(gid) is not table:
+                        return  # the session ended meanwhile
+                    shown = discord.utils.escape_markdown(title)
+                    await self.post(
+                        table.screen_channel_id,
+                        f"📜 Last session's recap is still waiting: **{shown}**. "
+                        "Nothing has gone to the players.",
+                        view=ready_view(cid, session_at),
+                    )
+            except Exception:
+                log.exception("The waiting-recap line failed")
 
     async def _fight_left_over(self, table: Table) -> None:
         """A session starts with a fight still running from last time: one line on the DM
