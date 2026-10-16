@@ -566,7 +566,17 @@ Each step is useful on its own and ships behind the existing phases.
    moment; asks about consent again after each answer (inside `propose`); and stops at
    `DMBOT_STORY_EXTRACTOR_MAX_CALLS` (480), an AI out of money, or three failed calls in a row. The tier
    is `DMBOT_STORY_EXTRACTOR_TIER` (default fast). The log gets counts only. Turning it on is one setting
-   once #1282 passes. What is left of 5a: turning the
+   once #1282 passes. **The linker is built too (#1364):** a name in a claim that DMbot does not know
+   no longer costs the claim. The most-said new names of a session (at most 20; the rest wait for the
+   next session) become *proposed* entries, of the kind the claim's relationship fixes or "unsure",
+   and the DM checks them in the same 📝 Check new names list the name scan uses (Yes, Same as a known
+   name, Not a name, Later). A claim waits on its names: it is asked only when each name is a
+   confirmed entry, and a name the DM turns down drops its claims for good. Nothing is ever joined to
+   a confirmed entry by itself, and a likely match is shown to the DM by that list. The one thing
+   matched automatically is a second spelling of a name already waiting (one letter apart for names of
+   5 to 8 letters, two for 9 or more, never for shorter ones; `dmbot.memory.link`). A secret name is
+   matched only in the DM's own lines, and the table's people are never story names. The session's
+   claims go to the store in one hand-over, so the memory is read once, not once a batch. What is left of 5a: turning the
    extractor on (after #1282 passes), the linker, live warnings during play and the AI judgment
    behind them, and the secret-said-aloud question and the pre-session note (slice 4). **The ontology steward is wired into the claims path (#1303):** a claim
    whose relationship DMbot does not know goes through `decide_term`: an existing term it recognises
