@@ -860,8 +860,8 @@ class SupportAdmin(SupportBase):
         await support.add_reply(self.web, by["answered by the team"], "ai", "B.", now=self.now)
         await support.add_reply(self.web, by["answered by the team"], "customer", "No.", now=1)
         await support.add_reply(self.web, by["answered by the team"], "person", "C.", now=2)
-        await support.escalate(self.web, by["asked for a person"], "asked")
-        await support.escalate(self.web, by["unhappy"], "unhappy")
+        await support.escalate(self.web, by["asked for a person"], "asked", self.now)
+        await support.escalate(self.web, by["unhappy"], "unhappy", self.now)
         await support.add_reply(self.web, by["too old to count"], "ai", "D.", now=self.now)
         await self.sign_in()
         week = (await self.client.get("/admin/support")).json()["week"]
@@ -875,6 +875,49 @@ class SupportAdmin(SupportBase):
                 "reasons": {"unhappy": 1, "asked": 1, "limit": 0, "no-email": 0, "helper-down": 0},
             },
         )
+
+    async def test_this_week_counts_every_hand_over_even_after_a_person_answered(self) -> None:
+        """#1487: the reason stays on the ticket for good, so the week's count is complete."""
+        for age, subject in ((300, "handed over, then answered"), (200, "never handed over")):
+            await self.add_row(ALICE.id, self.now - age, subject)
+        by = {t["subject"]: t["id"] for t in await self.tickets()}
+        await support.escalate(self.web, by["handed over, then answered"], "limit", self.now)
+        await support.add_reply(
+            self.web, by["handed over, then answered"], "person", "Hi.", now=self.now
+        )
+        await support.set_status(self.web, by["handed over, then answered"], "answered")
+        await support.add_reply(self.web, by["never handed over"], "ai", "Try this.", now=self.now)
+        await self.sign_in()
+        got = (await self.client.get("/admin/support")).json()
+        week = got["week"]
+        self.assertEqual(
+            week["reasons"], {"unhappy": 0, "asked": 0, "limit": 1, "no-email": 0, "helper-down": 0}
+        )
+        listed = {t["subject"]: t for t in got["tickets"]}
+        # The list still says why a ticket is waiting *now* (nothing: it was answered) ...
+        self.assertIsNone(listed["handed over, then answered"]["reason"])
+        # ... and when it was handed over; a ticket never handed over has no time.
+        self.assertEqual(listed["handed over, then answered"]["handedOverAt"], self.now)
+        self.assertIsNone(listed["never handed over"]["handedOverAt"])
+
+    async def test_a_second_hand_over_keeps_the_latest_reason_and_time_and_counts_once(
+        self,
+    ) -> None:
+        await self.add_row(ALICE.id, self.now - 500, "handed over twice")
+        (ticket,) = [t["id"] for t in await self.tickets()]
+        await support.escalate(self.web, ticket, "asked", self.now - 100)
+        await support.add_reply(self.web, ticket, "person", "Hi.", now=self.now - 90)
+        await support.set_status(self.web, ticket, "answered")
+        await support.add_reply(self.web, ticket, "customer", "Still stuck.", now=self.now - 80)
+        await support.set_status(self.web, ticket, "new")
+        self.assertTrue(await support.escalate(self.web, ticket, "unhappy", self.now))
+        await self.sign_in()
+        got = (await self.client.get("/admin/support")).json()
+        self.assertEqual(
+            got["week"]["reasons"],
+            {"unhappy": 1, "asked": 0, "limit": 0, "no-email": 0, "helper-down": 0},
+        )
+        self.assertEqual(got["tickets"][0]["handedOverAt"], self.now)
 
     async def test_this_week_is_all_zeros_with_no_tickets_and_holds_no_words(self) -> None:
         await self.sign_in()
