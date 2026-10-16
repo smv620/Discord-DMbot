@@ -59,6 +59,17 @@ class Own:
     user_id: int  # whose line it is (set by the reads below)
 
 
+@dataclass(frozen=True, slots=True)
+class Waiting:
+    """A suggestion still waiting for the DM, with its line as it reads now."""
+
+    id: int
+    user_id: int
+    suggested: str
+    heard: str
+    text: str
+
+
 _COLUMNS = "id, guild_id, campaign_id, session_id, started_ms, user_id, suggested, state, base_text"
 
 
@@ -198,6 +209,27 @@ class SuggestionStore:
             )
             row = await cur.fetchone()
         return None if row is None else _row(row)
+
+    async def waiting(self, guild_id: int, campaign_id: str, *, limit: int = 50) -> list[Waiting]:
+        """The campaign's open suggestions, oldest first, each with its line's words now (a
+        suggestion whose line is gone is left out). For the reminder at the next session start."""
+        async with self._db.guild(guild_id) as conn:
+            cur = await conn.execute(
+                "SELECT s.id, s.user_id, s.suggested, l.heard, coalesce(l.text, l.heard) AS text"
+                " FROM transcript_suggestions s CROSS JOIN LATERAL ("
+                "  SELECT heard, text FROM transcript_lines l"
+                "  WHERE l.session_id = s.session_id AND l.user_id = s.user_id"
+                "  AND l.started_ms = s.started_ms AND l.sidebar IS NULL AND NOT l.typed"
+                "  ORDER BY l.id LIMIT 1) l"
+                " WHERE s.campaign_id = %s AND s.state = 'open'"
+                " ORDER BY s.created_at, s.id LIMIT %s",
+                (campaign_id, limit),
+            )
+            rows = await cur.fetchall()
+        return [
+            Waiting(int(r["id"]), int(r["user_id"]), r["suggested"], r["heard"], r["text"])
+            for r in rows
+        ]
 
     async def decide(self, guild_id: int, suggestion_id: int, state: str, by: int) -> bool:
         """The DM's answer (accepted or declined). True only for the call that closed it: a
