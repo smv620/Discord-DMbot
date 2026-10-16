@@ -192,12 +192,25 @@ async def _waiting(interaction: discord.Interaction, current: Campaign) -> dict[
     return await reader.waiting(current.guild_id, current.id) if reader is not None else {}
 
 
+def site_label(site: str) -> str:
+    """The button for a site: "Use dndbeyond.com", cut to fit a phone (25 characters)."""
+    label = f"Use {site.removeprefix('www.')}"
+    return label if len(label) <= 25 else label[:24] + "…"
+
+
 def waiting_text(waiting: dict[str, int]) -> str:
-    """One plain line: how many entries wait, from which site, and why."""
-    parts = ", ".join(f"{_entries(n)} from {_escape(site)}" for site, n in sorted(waiting.items()))
+    """One plain line: how many entries wait, from which site, what to press, and why."""
+    shown = sorted(waiting.items())[:SITE_MAX]  # (the buttons are capped the same)
+    parts = ", ".join(f"{_entries(n)} from {_escape(site)}" for site, n in shown)
+    more = " and more" if len(waiting) > len(shown) else ""
+    press = (
+        f"**{site_label(shown[0][0])}**"
+        if len(waiting) == 1
+        else "the **Use** button for each site"
+    )
     return (
-        f"• **Waiting for you:** {parts}. DMbot doesn't use them until you say you have the "
-        "right to use that site's homebrew."
+        f"• **Waiting for you:** {parts}{more}. Press {press} to say you have the right to use "
+        "that site's homebrew. Until then DMbot skips them."
     )
 
 
@@ -357,10 +370,12 @@ async def _sites_note(
                 del counts[site]
     if not counts:
         return ""
-    parts = ", ".join(f"{_entries(n)} from {_escape(s)}" for s, n in sorted(counts.items()))
+    parts = ", ".join(
+        f"{_entries(n)} from {_escape(s)}" for s, n in sorted(counts.items())[:SITE_MAX]
+    )
     return (
-        f"{parts}: those wait until you say you have the right to use that site's homebrew "
-        "(on this card, after you follow).\n"
+        f"**{parts} will wait.** After you follow, press the **Use** button for each site to "
+        "turn them on.\n"
     )
 
 
@@ -418,13 +433,17 @@ class RightToUsePack(_Menu):
         ready = await _ready(interaction, self.campaign)  # still a DM, still here
         if ready is None or self.used:
             return
-        self.used = True
         current, _ = ready
         sources = getattr(_bot(interaction), "sources", None)
         if sources is None:
             await _tell(interaction, NOT_READY)
             return
-        await sources.approve(current.guild_id, current.id, interaction.user.id, self.site)
+        self.used = True  # a double press records the confirmation once
+        try:
+            await sources.approve(current.guild_id, current.id, interaction.user.id, self.site)
+        except Exception:
+            self.used = False  # nothing was recorded: the button works again
+            raise
         self.stop()
         _changed(interaction, current)
         log.info(
@@ -593,7 +612,7 @@ class SharedPacksMenu(_Menu):
         if len(follows) < pack_content.PACKS_MAX:
             self.add_item(_Button(self._follow, label=FOLLOW_LABEL))
         for site in sorted(waiting or {})[:SITE_MAX]:  # one button a site, to say it once
-            self.add_item(_Button(partial(self._site, site), label=f"Use {site}"[:80], row=2))
+            self.add_item(_Button(partial(self._site, site), label=site_label(site), row=2))
         self.pick: _Select | None = None
         if follows:
             self.pick = _Select(

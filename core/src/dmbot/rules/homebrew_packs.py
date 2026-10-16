@@ -434,18 +434,26 @@ def from_follow(
         domain = e.get("domain")
         if domain is not None and domain not in approved:
             continue  # waiting for the DM to say they have the right to use that site's entries
+        kind, name = e["kind"], e["name"]
         text, summary, page_url = e["text"], e["summary"], None
         if "page" in e:
             page = (pages or {}).get(e["page"])
             if page is None:
                 continue
-            text, summary, page_url = page.text, page.summary, e["page"]
+            # The page says what it is: a publisher can't call a page "Fireball" (#1635 review).
+            kind, name, text, summary, page_url = (
+                page.kind,
+                page.name,
+                page.text,
+                page.summary,
+                e["page"],
+            )
         out.append(
             Homebrew(
                 id=-(place * 1000 + i + 1),
                 campaign_id=campaign_id,
-                kind=e["kind"],
-                name=e["name"],
+                kind=kind,
+                name=name,
                 text=text,
                 summary=summary,
                 created_by=0,

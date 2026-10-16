@@ -55,7 +55,7 @@ UNDO_LABEL = "↩️ Undo"
 YOURS_WIN = "Your own homebrew has the same name as {names}. Yours still applies."
 WAITING = (
     "{entries} from {site} {verb} until you say you have the right to use that site's "
-    "homebrew: ⚙️ Settings → Shared rules → Homebrew packs."
+    "homebrew. Open ⚙️ Settings → Shared rules → Homebrew packs and press Use {site}."
 )
 
 

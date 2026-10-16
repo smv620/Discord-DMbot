@@ -343,6 +343,66 @@ class FollowedPacks(HomebrewBase):
         self.assertNotIn("Ice Lance", text)
 
 
+class PacksByReference(FollowedPacks):
+    """A followed pack's imported entries on the page (#1635): read from the kept page, and only
+    once this campaign approved the site (as the bot does)."""
+
+    async def follow_with(self, entries: list[dict[str, Any]]) -> None:
+        content = {"entries": entries}
+        async with self.db.guild(THURSDAY.id) as conn:
+            await conn.execute(
+                "INSERT INTO rule_set_follows (guild_id, campaign_id, set_id, kind, set_name,"
+                " publisher, version, content, updating, followed_by, followed_at)"
+                " VALUES (%s, %s, %s, 'homebrew', 'Ref Pack', %s, 1, %s::jsonb, TRUE, %s, 5)",
+                (THURSDAY.id, self.one.id, "r" * 32, PUBLISHER, json.dumps(content), ALICE.id),
+            )
+
+    async def test_a_pointer_shows_its_pages_words_only_after_the_site_is_approved(self) -> None:
+        from dmbot.rules.homebrew_sources import SourceStore
+
+        url = "https://www.dndbeyond.com/magic-items/1-charm"
+        await SourceStore(self.db).save_page(
+            url, kind="item", name="Page Charm", text="Words from the page.", summary="Short."
+        )
+        await self.follow_with(
+            [
+                {"kind": "item", "name": "Labelled Fireball", "summary": None, "text": None,
+                 "known": True, "page": url, "domain": "dndbeyond.com"},
+                {"kind": "item", "name": "Rope", "summary": None, "text": "A rope.",
+                 "known": True, "domain": "other.example"},
+                {"kind": "item", "name": "Lamp", "summary": None, "text": "A lamp.",
+                 "known": True},
+            ]
+        )  # fmt: skip
+        got = await pages.read_homebrew(self.web, self.carol, self.cref)
+        (pack,) = got["packs"]
+        self.assertEqual([e["name"] for e in pack["entries"]], ["Lamp"])  # nothing approved yet
+        self.assertNotIn("Words from the page.", json.dumps(got))
+        listed = {c["name"]: c["entries"] for c in await pages.list_campaigns(self.web, self.carol)}
+        self.assertEqual(listed["One"], 4 + 1)  # own 4 and the pack's Lamp
+        async with self.db.guild(THURSDAY.id) as conn:
+            await conn.execute(
+                "INSERT INTO site_approvals (guild_id, campaign_id, domain, approved_by,"
+                " approved_at) VALUES (%s, %s, 'dndbeyond.com', %s, 1)",
+                (THURSDAY.id, self.one.id, ALICE.id),
+            )
+        got = await pages.read_homebrew(self.web, self.carol, self.cref)
+        (pack,) = got["packs"]
+        by = {e["name"]: e for e in pack["entries"]}
+        self.assertEqual(set(by), {"Lamp", "Page Charm"})  # the page's own name, not the label
+        self.assertEqual(
+            (by["Page Charm"]["text"], by["Page Charm"]["summary"]),
+            ("Words from the page.", "Short."),
+        )
+        listed = {c["name"]: c["entries"] for c in await pages.list_campaigns(self.web, self.carol)}
+        self.assertEqual(listed["One"], 4 + 2)
+        # A page recreated from a backup is not trusted, even for an approved site.
+        async with self.db.unscoped() as conn:
+            await conn.execute("UPDATE homebrew_pages SET fetch_status = 'restored'")
+        (pack,) = (await pages.read_homebrew(self.web, self.carol, self.cref))["packs"]
+        self.assertEqual([e["name"] for e in pack["entries"]], ["Lamp"])
+
+
 class TheFile(HomebrewBase):
     async def test_the_download_is_the_bots_file_for_every_entry_byte_for_byte(self) -> None:
         name, text = await pages.render(self.web, self.carol, self.cref)

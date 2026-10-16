@@ -31,6 +31,7 @@ from dmbot.rules.homebrew import (
 )
 from dmbot.rules.site_urls import normalise_domain, normalise_url
 
+SITES_MAX = 5  # distinct sites one pack may name: a pack cannot make a follower a long list of asks
 PACKS_MAX = 5  # packs one campaign follows, so a prompt and a backup stay a sensible size
 
 
@@ -48,9 +49,17 @@ def content_of(entries: Sequence[Homebrew]) -> tuple[dict[str, Any], list[str]]:
     own = sorted(
         (e for e in entries if e.source is None and e.enabled), key=lambda e: (e.created_at, e.id)
     )
-    kept = [e for e in own if not e.from_book]
-    left_out = [e.name for e in own if e.from_book]
+    # Left out, and said so: an entry from a book, and an imported one whose pointer is unusable
+    # (it must never fall back to carrying the page's words).
+    stays = [e for e in own if e.from_book or (e.source_kind == "link" and not _pointable(e))]
+    kept = [e for e in own if e not in stays]
+    left_out = [e.name for e in stays]
     return {"entries": [_entry_of(e) for e in kept]}, left_out
+
+
+def _pointable(e: Homebrew) -> bool:
+    """An imported entry that can travel as a pointer: its address and site are in hand."""
+    return bool(e.page_url and e.credit_domain and _pointer_ok(e.page_url, e.credit_domain))
 
 
 def _entry_of(e: Homebrew) -> dict[str, Any]:
@@ -64,7 +73,7 @@ def _entry_of(e: Homebrew) -> dict[str, Any]:
         "text": e.text,
         "known": True,
     }
-    if e.source_kind == "link" and e.page_url and e.credit_domain:
+    if e.source_kind == "link":
         entry.update(summary=None, text=None, page=e.page_url, domain=e.credit_domain)
     elif e.credit_domain:
         entry["domain"] = e.credit_domain
@@ -117,6 +126,8 @@ def valid_content(content: Any) -> dict[str, Any]:
         if page is not None:
             clean["page"] = page
         out.append(clean)
+    if len({e["domain"] for e in out if "domain" in e}) > SITES_MAX:
+        raise BadPack("too many sites")
     return {"entries": out}
 
 

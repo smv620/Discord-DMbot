@@ -118,7 +118,7 @@ FROM_BOOK_WARNING = (
 WHO_MADE_ASK = "**Who made these?** Pick one. The name stays with the entries."
 SITE_WARNING = (
     "**Do you have the right to use homebrew from {site}?**\n"
-    "DMbot doesn't check. Press **I have the right** to say you may use it in this campaign. "
+    "DMbot doesn't check. Press **I have the right** if you may use it in this campaign. "
     "DMbot records that you said so, and when.\n"
     "It stays in this campaign only and is never shared. You can remove it any time. DMbot "
     "won't ask again for {site} here."

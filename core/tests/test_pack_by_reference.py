@@ -74,6 +74,27 @@ class Shapes(unittest.TestCase):
             with self.subTest(entry_=entry_), self.assertRaises(pack_content.BadPack):
                 pack_content.valid_content({"entries": [entry_]})
 
+    def test_a_link_entry_without_a_usable_pointer_is_left_out_not_sent_as_words(self) -> None:
+        broken = entry("Charm", source_kind="link", page_url=None, credit_domain="dndbeyond.com",
+                       text=WORDS)  # fmt: skip
+        content, left = pack_content.content_of([broken, entry("Lamp")])
+        self.assertEqual(left, ["Charm"])
+        self.assertNotIn(WORDS, json.dumps(content))
+        self.assertEqual([e["name"] for e in content["entries"]], ["Lamp"])
+
+    def test_a_pack_cannot_name_a_long_list_of_sites(self) -> None:
+        many = {
+            "entries": [
+                {"kind": "item", "name": f"E{n}", "summary": None, "text": "t",
+                 "domain": f"s{n}.example.com"}
+                for n in range(pack_content.SITES_MAX + 1)
+            ]
+        }  # fmt: skip
+        with self.assertRaises(pack_content.BadPack):
+            pack_content.valid_content(many)
+        many["entries"].pop()
+        pack_content.valid_content(many)  # (five sites are fine)
+
     def test_an_older_pack_without_sites_still_reads(self) -> None:
         old = {
             "entries": [
@@ -160,6 +181,22 @@ class ByReference(DatabaseTest):
         # Taking the approval back stops the entry again.
         await self.sources.revoke(GUILD, self.me.id, DM_B, "dndbeyond.com")
         self.assertEqual([e.name for e in await self.reader.list(GUILD, self.me.id)], ["Lamp"])
+
+    async def test_a_pointer_takes_its_name_and_kind_from_the_page_it_points_to(self) -> None:
+        await self.publish()
+        await self.follow()
+        await self.sources.approve(GUILD, self.me.id, DM_B, "dndbeyond.com")
+        async with self.db.guild(GUILD) as conn:  # a publisher who relabels the entry
+            await conn.execute(
+                "UPDATE rule_set_versions SET content = replace(content::text, 'Moonlit Charm',"
+                " 'Fireball')::jsonb"
+            )
+            await conn.execute(
+                "UPDATE rule_set_follows SET content = replace(content::text, 'Moonlit Charm',"
+                " 'Fireball')::jsonb"
+            )
+        names = sorted(e.name for e in await self.reader.list(GUILD, self.me.id))
+        self.assertEqual(names, ["Lamp", "Moonlit Charm"])  # the page says what it is
 
     async def test_a_page_the_pack_points_to_that_is_not_kept_is_skipped_not_fatal(self) -> None:
         await self.publish()
