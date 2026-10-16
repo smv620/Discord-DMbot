@@ -282,7 +282,7 @@ export function httpAdminApi(base: string, fetcher: typeof fetch = fetch): Admin
       const c = body.counts;
       if (c && [c.new, c.answered, c.closed].every((n) => typeof n === "number")) {
         // An API older than #1431 has no escalated count: none.
-        return { tickets: body.tickets, counts: { ...c, escalated: c.escalated ?? 0 }, week };
+        return { tickets: body.tickets, counts: { ...c, escalated: c.escalated ?? 0 }, ...(week ? { week } : {}) };
       }
       // An API older than #1375 sends every ticket and no counts: count and filter here, so the
       // buttons still work until it is deployed. (It sends only its newest tickets, so until then
@@ -292,7 +292,7 @@ export function httpAdminApi(base: string, fetcher: typeof fetch = fetch): Admin
       return {
         tickets: filter === "all" ? body.tickets : body.tickets.filter((t) => t.status === filter),
         counts,
-        week,
+        ...(week ? { week } : {}),
       };
     },
     async replyToTicket(csrf, id, text) {
