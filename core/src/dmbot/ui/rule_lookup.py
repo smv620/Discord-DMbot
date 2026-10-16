@@ -1,9 +1,12 @@
 """Looking up a rule (#908): the DM asks for a spell, a condition or a creature by name, and
 gets what the free rules (the SRD) say, privately, with where it comes from.
 
-Two ways in, both for a campaign's DMs only (for now): the 📖 **Look up a rule** button on the
-DM screen's ⚙️ Settings card, which opens a form with one box, and `/dmbot rule name:` with a
-list of names that opens as they type. The answer is a private message: never in a channel,
+Two ways in: the 📖 **Look up a rule** button on the DM screen's ⚙️ Settings card (the
+campaign's DMs only), which opens a form with one box, and `/dmbot rule name:` with a list of
+names that opens as they type, for **anyone in the server** (decided 2026-10-16, #1562). A
+player gets the same card without the DM's own things: only homebrew the DM let players know,
+no secret names, no AI, and one lookup every 3 seconds. The card ends with "Your DM decides
+what applies at your table." The answer is a private message: never in a channel,
 never in a transcript. A house rule that names the thing comes first; the book comes after;
 the DM decides what applies. Nothing is guessed: no match means "couldn't find that", with
 close names to press.
@@ -16,6 +19,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
+import time
 from functools import partial
 
 import discord
@@ -52,8 +56,10 @@ BOX_MAX = 100
 READ_REST_LABEL = "Read the rest"
 MAKE_MINE_LABEL = "✏️ Make it my own"
 NO_CAMPAIGNS = "There's no campaign in this server yet. A DM can set one up with `/dmbot start`."
-ONLY_DMS = "Only this campaign's DM can look up rules for now. Ask your DM."
-ONLY_DMS_ANY = "Only a campaign's DM can look up rules for now. Ask your DM."
+NOT_HERE = "Use /dmbot rule in the server where your campaign is."
+ONE_AT_A_TIME = "One at a time: try again in a moment."
+ONLY_DMS = "Only this campaign's DM can do that. Ask your DM."
+PLAYER_WAIT_S = 3.0  # one lookup per person this often, so a table can't flood DMbot (#1562)
 COULDNT_COPY = "Couldn't copy that. Nothing was changed. Try again in a moment."
 NO_HOMEBREW = "Homebrew isn't available right now. Ask whoever runs DMbot."
 ALREADY_MINE = "You already made this one your own. Find it in `/dmbot homebrew` to change it."
@@ -70,8 +76,26 @@ SUGGESTION_MAX = 80  # a button's label may hold 80 characters
 
 
 def may_look_up(campaign: Campaign, user_id: int) -> bool:
-    """Only a campaign's DMs, for now (decided 2026-10-09)."""
+    """The person is one of the campaign's DMs: they see everything the DM sees. (Anyone else in
+    the server may look a rule up too, but as a player: see `look_up`.)"""
     return user_id in campaign.dm_user_ids
+
+
+_last_lookup: dict[tuple[int, int], float] = {}  # (server, person) → when, for the players' pace
+
+
+def _too_soon(guild_id: int, user_id: int) -> bool:
+    """A player's lookup one after another, faster than PLAYER_WAIT_S: told to wait. The time
+    is taken only by a lookup that goes ahead."""
+    now = time.monotonic()
+    if len(_last_lookup) > 2000:  # (old entries only; the map can't grow without end)
+        for key in [k for k, t in _last_lookup.items() if now - t > PLAYER_WAIT_S]:
+            del _last_lookup[key]
+    last = _last_lookup.get((guild_id, user_id))
+    if last is not None and now - last < PLAYER_WAIT_S:
+        return True
+    _last_lookup[guild_id, user_id] = now
+    return False
 
 
 async def _house_rules(interaction: discord.Interaction, campaign: Campaign) -> list[HouseRule]:
@@ -124,9 +148,16 @@ async def look_up(
     if campaign is None:
         await _tell(interaction, CAMPAIGN_GONE)
         return
-    if not may_look_up(campaign, interaction.user.id):
-        await _tell(interaction, ONLY_DMS)
-        return
+    is_dm = may_look_up(campaign, interaction.user.id)
+    if not is_dm:
+        # A player: anyone in the campaign's own server, at a pace (#1562). The server is the
+        # one the press or command came from, so another server's person never gets in.
+        if interaction.guild_id != campaign.guild_id:
+            await _tell(interaction, NOT_HERE)
+            return
+        if _too_soon(campaign.guild_id, interaction.user.id):
+            await _tell(interaction, ONE_AT_A_TIME)
+            return
     rules = await _house_rules(interaction, campaign)
     srd = index.srd()
     hit = srd.lookup(typed, campaign.target_ruleset, campaign.fallback_ruleset, kind=kind)
@@ -135,10 +166,17 @@ async def look_up(
     # same name is not shown. This is the DM's private answer, so an entry players may not know
     # is shown too.
     own = await _homebrew(interaction, campaign, typed)
+    if own is not None and not is_dm and not own.players_may_know:
+        # A player never meets an entry the DM kept hidden, by its name or its words (a from-book
+        # entry follows the same flag). The book's card answers, as if it weren't there.
+        own = None
     if own is not None:
         mine = rule_card.homebrew_parts(own, campaign.name)
-        # A followed pack's entry can be copied into the campaign's own homebrew (#1541).
-        copy = own if own.source else None
+        if not is_dm:
+            mine = rule_card.for_player(mine)
+        # A followed pack's entry can be copied into the campaign's own homebrew (#1541): the
+        # DM's button, never a player's.
+        copy = own if own.source and is_dm else None
         await _send(interaction, mine[0], Card(mine, 1, copy) if len(mine) > 1 or copy else None)
         return
     if hit is None:
@@ -147,6 +185,8 @@ async def look_up(
         await _send(interaction, text, Suggestions(campaign, close) if close else None)
         return
     parts = rule_card.card_parts(hit, typed, rules)
+    if not is_dm:
+        parts = rule_card.for_player(parts)
     await _send(interaction, parts[0], Card(parts, 1) if len(parts) > 1 else None)
 
 
@@ -359,14 +399,14 @@ async def _rulesets(interaction: discord.Interaction) -> tuple[str, str]:
             "Couldn't read the campaign for the rule list; used the defaults", exc_info=True
         )
         return DEFAULT_TARGET, DEFAULT_FALLBACK
-    if campaign is not None and may_look_up(campaign, interaction.user.id):
+    if campaign is not None:  # (the order of the names, which is nothing secret)
         return campaign.target_ruleset, campaign.fallback_ruleset
     return DEFAULT_TARGET, DEFAULT_FALLBACK
 
 
 @dmbot_group.command(
     name="rule",
-    description="Look up a spell, condition or creature in the free rules (the DM only)",
+    description="Look up a spell, condition or creature in the free rules",
 )
 @app_commands.describe(name="A spell, a condition or a creature: start typing and pick one")
 @app_commands.autocomplete(name=_typeahead)
@@ -381,10 +421,9 @@ async def dmbot_rule(interaction: discord.Interaction, name: str) -> None:
     if not everyone:
         await _tell(interaction, NO_CAMPAIGNS)
         return
-    mine = [c for c in everyone if may_look_up(c, interaction.user.id)]
-    if not mine:
-        await _tell(interaction, ONLY_DMS_ANY)
-        return
+    # A DM looks in the campaigns they run, as before. Anyone else looks in the server's
+    # campaigns as a player (#1562).
+    mine = [c for c in everyone if may_look_up(c, interaction.user.id)] or everyone
     playing = bot.active_campaign_id(guild.id)
     current = next((c for c in mine if c.id == playing), None)
     if current is None and len(mine) == 1:

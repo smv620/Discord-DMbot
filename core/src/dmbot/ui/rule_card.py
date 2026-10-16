@@ -276,6 +276,18 @@ HOMEBREW_FOOTER = "_Your own homebrew, as you wrote it. You decide._"
 PACK_FOOTER = "_From a homebrew pack this campaign follows, as published. You decide._"
 
 
+PLAYER_LINE = "Your DM decides what applies at your table."
+DISCORD_MAX = 2000
+
+
+def for_player(parts: list[str]) -> list[str]:
+    """A card read by a player ends with one short line: a rules card is information, and the
+    DM decides what applies (CLAUDE.md, DM authority). It joins the last part if it fits."""
+    if parts and len(parts[-1]) + len(PLAYER_LINE) + 1 <= DISCORD_MAX:
+        return [*parts[:-1], f"{parts[-1]}\n{PLAYER_LINE}"]
+    return [*parts, PLAYER_LINE]
+
+
 def homebrew_citation(entry: Homebrew, campaign_name: str) -> str:
     """Where homebrew comes from, as every answer names its source: `Frostmaiden's homebrew:
     Hollow King`. A followed pack's entry names its pack: `Frost Pack homebrew, v2: Hollow King`."""

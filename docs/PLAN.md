@@ -368,10 +368,17 @@ size and type, AC, HP, speed and CR), the text as printed, and its source with
 `[Legacy 2014]` when it came from the fallback ("Goblin is now called Goblin Warrior" when
 the DM typed an older name). Text past Discord's limit is split at paragraphs or sentences,
 never cut, with a **Read the rest** button. No match: "couldn't find that in the free rules
-(SRD)", up to five close names as buttons, nothing picked for the DM. Two decisions
-(Supervisor, 2026-10-09): **only a campaign's DMs** look things up for now (the answer is
-private, never in a channel or a transcript; players looking up rules is a later question),
-and **precedence is shown, not decided**: a house rule of that campaign (and no other's) that
+(SRD)", up to five close names as buttons, nothing picked for the DM. Two decisions:
+**anyone in the server may look a rule up with `/dmbot rule`** (Supervisor, 2026-10-16, #1562; it
+was the campaign's DMs only from 2026-10-09). The answer is private, never in a channel or a
+transcript. A player gets the same card as the DM but with house rules and only the homebrew the
+DM let players know (a hidden entry, from the campaign or a followed pack, is never named, not
+even as a close name, and a from-book entry follows the same flag): no DM-screen content, no
+secret names, no rulings, no AI and no cost; the card ends with "Your DM decides what applies at
+your table."; one lookup per person every 3 seconds ("One at a time: try again in a moment.");
+the 📖 Look up a rule button stays on the DM's Settings card. A person who runs a campaign looks
+in the campaigns they run, as before; anyone else in the campaigns of the server. And
+**precedence is shown, not decided**: a house rule of that campaign (and no other's) that
 names the thing comes first as "🏠 House rule 12: …", then the book, and the DM decides what
 applies. Not built: the AI, shared rulebooks.
 
