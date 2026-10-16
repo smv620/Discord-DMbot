@@ -1881,7 +1881,8 @@ IMPROVEMENT_OPT_OUTS = """
 HOMEBREW_RULES_TO_HOUSE_RULES = """
     -- Rules are house rules, not homebrew (owner decision 2026-10-16, #1628; docs/PLAN.md,
     -- "Homebrew (part 1)"). Every homebrew entry of the kind 'rule' that is the DM's own
-    -- and fits a house rule (one line of at most 500 characters, the name in front unless the text already starts with it; at most 200 house rules a campaign)
+    -- and fits a house rule (one line of at most 500 characters, the name in front unless the
+    -- text already starts with it; at most 200 house rules a campaign)
     -- becomes the campaign's next numbered house rule, and the entry goes. A rule from a shared
     -- book keeps its book confirmation, which a house rule cannot hold; one that does not fit
     -- and one past the 200 would lose their words: all stay as homebrew, retagged 'other'. A
