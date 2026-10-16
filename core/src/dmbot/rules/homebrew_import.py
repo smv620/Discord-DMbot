@@ -39,7 +39,10 @@ NOT_YET = "Add this site first: press **Add from a link** again and say you have
 TAKEN_BACK = "This site was taken off the list. Press **Add from a link** again to start over."
 
 
-NOT_A_LINK = "This entry isn't from a link, so there is nothing to update."
+NOT_A_LINK = (
+    "This entry was typed in or loaded, not added from a link, so there is nothing to update."
+)
+PAGE_LOST = "DMbot lost the saved copy of this page. Remove the entry and add the link again."
 GONE = "That page isn't public any more. DMbot keeps the words it has."
 SAME = "Nothing changed on the page."
 
@@ -58,10 +61,13 @@ class Refresh:
 
     preview: Preview
     note: str
+    # The kept copy was `stale` or `restored`: saving makes it fresh and trusted even when the
+    # words are the same, so the DM is offered Save.
+    renews: bool = False
 
     @property
     def changed(self) -> bool:
-        return self.note != SAME
+        return self.note != SAME or self.renews
 
 
 @dataclass(frozen=True, slots=True)
@@ -164,23 +170,32 @@ class HomebrewImporter:
         if entry.source_kind != "link" or found is None:
             raise ImportRefused(NOT_A_LINK)
         url, domain = found
+        if dndbeyond.check_address(url) is None:  # (a crafted backup could carry any address)
+            raise ImportRefused(dndbeyond.NOT_SUPPORTED)
         if not await self._sources.approved(guild_id, campaign_id, domain):
             raise ImportRefused(TAKEN_BACK)
         kept = await self._sources.page_for(url, include_restored=True)
         if kept is None:
-            raise ImportRefused(NOT_A_LINK)
+            raise ImportRefused(PAGE_LOST)
         try:
             fresh = await self._fetch_preview(guild_id, campaign_id, url, domain)
         except PageGone as exc:
             await self._sources.mark_stale(url)
             raise ImportRefused(GONE) from exc
-        return Refresh(fresh, _what_changed(kept, fresh))
+        note = _what_changed(kept, fresh)
+        renews = kept.fetch_status != "ok"
+        if renews and note == SAME:
+            note = "The page answers again. Its words are the same."
+        return Refresh(fresh, note, renews)
 
     async def save_refresh(self, guild_id: int, campaign_id: str, preview: Preview) -> None:
         """Replace the page's words. There is one copy per address, so every campaign pointing at
         it gets them (the screen says so). The page becomes trusted and fresh: `ok`."""
         if not await self._sources.approved(guild_id, campaign_id, preview.domain):
             raise ImportRefused(TAKEN_BACK)
+        mine = await self._homebrew.list(guild_id, campaign_id, usable_only=False)
+        if not any(e.source_kind == "link" and e.page_url == preview.url for e in mine):
+            raise ImportRefused(NOT_A_LINK)  # (removed since the page was fetched)
         await self._sources.save_page(
             preview.url, kind=preview.kind, name=preview.name, text=preview.text
         )
@@ -219,7 +234,7 @@ def _what_changed(kept: Page, fresh: Preview) -> str:
     if clean_name(fresh.name) != kept.name:
         parts.append("the name")
     if clean_kind(fresh.kind) != kept.kind:
-        parts.append("the kind")
+        parts.append("the type")
     if clean_text(fresh.text) != kept.text:
         parts.append("the words")
     if not parts:

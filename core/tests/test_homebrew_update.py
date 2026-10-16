@@ -98,6 +98,25 @@ class Updating(ImportTest):
             "see in the dark", (await self.brew.list(GUILD, self.one.id, usable_only=False))[0].text
         )
 
+    async def test_a_stale_page_that_answers_the_same_is_offered_save_and_becomes_fresh(
+        self,
+    ) -> None:
+        entry = await self.linked()
+        async with self.db.unscoped() as conn:
+            await conn.execute("UPDATE homebrew_pages SET fetch_status = 'stale'")
+        fresh = await self.importer.refresh(GUILD, self.one.id, entry)  # type: ignore[arg-type]
+        self.assertTrue(fresh.changed)
+        await self.importer.save_refresh(GUILD, self.one.id, fresh.preview)
+        self.assertEqual(await self.status(), "ok")
+
+    async def test_save_for_a_campaign_with_no_entry_for_the_page_is_refused(self) -> None:
+        entry = await self.linked()
+        self.net.reply = page_fetch.Reply(200, CHANGED)
+        fresh = await self.importer.refresh(GUILD, self.one.id, entry)  # type: ignore[arg-type]
+        await self.approve(self.two)  # approved, but it never imported this page
+        with self.assertRaises(ImportRefused):
+            await self.importer.save_refresh(GUILD, self.two.id, fresh.preview)
+
     async def test_an_entry_that_is_not_a_link_has_nothing_to_update(self) -> None:
         typed = await self.brew.add(GUILD, self.one.id, DM, kind="item", name="Lamp", text="x")
         with self.assertRaises(ImportRefused):

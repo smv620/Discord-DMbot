@@ -584,15 +584,16 @@ UPDATE_WARNING = "Every table using this page gets the update."
 
 
 def update_preview_text(fresh: Refresh) -> str:
+    """The warning comes before the page's words, so trimming a long page never cuts it."""
     preview = fresh.preview
     lines = [f"🔄 **{_md(preview.name)}**, from {preview.domain}", fresh.note]
     if fresh.changed:
         words = preview.text
         shown = words if len(words) <= PREVIEW_SHOWN else words[: PREVIEW_SHOWN - 1].rstrip() + "…"
+        lines.append(f"Not saved yet. {UPDATE_WARNING}")
         lines.append(_md(shown))
         if preview.truncated:
             lines.append("_The page was longer than DMbot keeps, so the end was cut._")
-        lines.append(f"Not saved yet. {UPDATE_WARNING}")
     return _fit("\n".join(lines), 1900)
 
 
