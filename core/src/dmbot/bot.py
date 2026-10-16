@@ -5783,7 +5783,7 @@ class DMBot(commands.AutoShardedBot):
             for said in found:
                 await self.post(
                     table.screen_channel_id,
-                    question_text(said.text),
+                    question_text(said.text, said.entries),
                     view=secret_aloud_view(cid, said.alias_id),
                 )
             if len(every) > len(found):  # the DM should know the rest exist
