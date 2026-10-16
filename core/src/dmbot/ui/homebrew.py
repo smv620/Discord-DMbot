@@ -65,6 +65,7 @@ NO_CAMPAIGNS = "There's no campaign in this server yet. A DM can set one up with
 NOT_YOUR_CAMPAIGN = (
     "Only a campaign's DM can open its homebrew. You aren't a DM of one in this server."
 )
+MINE_NOTE = "✏️ Saved. Your own now; the pack's version no longer applies here."
 ENTRY_GONE = "That entry is gone, maybe removed by another DM. Here is the list now."
 INTRO = (
     "Your own spells, monsters, items and rules. Players can't see an entry until you press 👀. "
@@ -543,6 +544,10 @@ class _EntryForm(discord.ui.Modal):
             await _redraw(interaction, self.campaign, page=self.page)
             return
         _changed(interaction, self.campaign)
+        await self.finish(interaction, note)
+
+    async def finish(self, interaction: discord.Interaction, note: str) -> None:
+        """After a save: back to the list (a form opened from a card shows the card instead)."""
         await _redraw(interaction, self.campaign, note=note, page=self.page)
 
     async def save(self, store: HomebrewStore, user_id: int) -> str:
@@ -572,6 +577,8 @@ class AddForm(_EntryForm, title="Add homebrew"):
 
 
 class EditForm(_EntryForm, title="Edit homebrew"):
+    saved: Homebrew | None = None
+
     def __init__(self, campaign: Campaign, entry: Homebrew, page: int) -> None:
         super().__init__(campaign)
         self.entry, self.page = entry, page
@@ -593,7 +600,23 @@ class EditForm(_EntryForm, title="Edit homebrew"):
             players_may_know=e.players_may_know,
             unchanged_since=e.version,
         )
+        self.saved = saved
         return f"✏️ Saved **{_md(saved.name)}**."
+
+
+class MakeMineForm(EditForm):
+    """Opened by ✏️ Make it my own on a pack entry's card (#1541), on the copy just made. Saving
+    shows that entry's own card in place of the pack's, so the card says it is the campaign's."""
+
+    async def finish(self, interaction: discord.Interaction, note: str) -> None:
+        if self.saved is None:
+            await super().finish(interaction, note)
+            return
+        await _show(
+            interaction,
+            entry_text(self.saved, MINE_NOTE),
+            EntryMenu(self.campaign, self.saved, self.page),
+        )
 
 
 def _preview(have: list[Homebrew], entries: tuple[FileEntry, ...]) -> tuple[int, int, int]:
