@@ -4075,6 +4075,16 @@ MEMORY_SAID_AS = """
         CHECK (NOT secret OR said_as IS NULL);
     """
 
+RECAP_SWITCHES = """
+    -- The DM's recap choices on the campaign (#1421): write a recap after each session, make
+    -- the narration and music, email them when it is ready. All on by default; they can only
+    -- turn things off, never on past what the plan allows. They travel in a backup with the
+    -- campaign's other settings.
+    ALTER TABLE campaigns ADD COLUMN recaps_text BOOLEAN NOT NULL DEFAULT TRUE;
+    ALTER TABLE campaigns ADD COLUMN recaps_audio BOOLEAN NOT NULL DEFAULT TRUE;
+    ALTER TABLE campaigns ADD COLUMN recaps_email BOOLEAN NOT NULL DEFAULT TRUE;
+    """
+
 SUPPORT_TICKETS = (
     _setting("dmbot_support_admin", "dmbot.support_admin", "TEXT")
     + """
@@ -4311,6 +4321,7 @@ MIGRATIONS: tuple[Migration, ...] = (
     ("0081_recap_audio_follow_ups", RECAP_AUDIO_FOLLOW_UPS),  # move + stray sweep (#1399)
     ("0082_recap_audio_jobs", RECAP_AUDIO_JOBS),  # the recap's audio tracks (#1383)
     ("0083_memory_said_as", MEMORY_SAID_AS),  # a spelling for the narrator (#1419)
+    ("0084_recap_switches", RECAP_SWITCHES),  # the DM's recap choices (#1421)
 )
 
 # Tables that must have row-level security. A test checks every table in the schema

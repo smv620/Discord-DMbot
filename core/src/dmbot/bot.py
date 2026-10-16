@@ -114,6 +114,7 @@ from dmbot.dm_screen.name_questions import (
     question_view,
 )
 from dmbot.dm_screen.pause import PauseButton
+from dmbot.dm_screen.recap_panel import PlanFacts, RecapsButton, audio_how
 from dmbot.dm_screen.settings import (
     HouseFileButton,
     InviteButton,
@@ -147,6 +148,7 @@ from dmbot.ears.protocol import (
     leave_command,
 )
 from dmbot.ears.server import EarsServer
+from dmbot.entitlements import RECAP_AUDIO_PLANS
 from dmbot.fightbot import FightState
 from dmbot.logs import log_context, set_log_context
 from dmbot.mail import Mailer
@@ -809,6 +811,7 @@ class DMBot(commands.AutoShardedBot):
                 load=self.recap_audio_inputs,
                 consenting=self.consent.consenting,
                 allowed=self.recap_audio_allowed,
+                switched=self.recap_audio_switched,
                 max_credits=settings.recap_audio_max_credits,
             )
         # The off-topic filter (#52), the audio check and the DM sidebar.
@@ -932,6 +935,7 @@ class DMBot(commands.AutoShardedBot):
             SharedRulesButton,
             InviteButton,
             TableChatButton,
+            RecapsButton,
         )
         # Hand-over (#437): on ⚙️ Settings, in private messages, and after /dmbot start.
         self.add_dynamic_items(
@@ -5425,6 +5429,8 @@ class DMBot(commands.AutoShardedBot):
         gid, cid = table.guild_id, table.campaign_id
         with log_context(guild_id=gid, campaign_id=cid):
             campaign = await self.campaigns.get(gid, cid)
+            if campaign is not None and not campaign.recaps_text:
+                return  # the DM chose no recaps for this campaign (#1421): nothing is said
             if campaign is None or not await self.plan_allows(
                 "recap", gid, campaign, fail_open=False
             ):
@@ -5439,9 +5445,14 @@ class DMBot(commands.AutoShardedBot):
             if await self.recaps.enqueue(gid, cid, session.started_at, dm_user_id=dm):
                 link = page_link(self.settings.site_url, gid, cid, session.started_at)
                 where = f"\nYour recap page: {link}" if self.settings.site_url else ""
+                ready = (
+                    "You'll get an email when it's ready."
+                    if campaign.recaps_email
+                    else "Find it on your recap page when it's ready."
+                )
                 await self.post(
                     table.screen_channel_id,
-                    "📜 Writing a recap of this session. You'll get an email when it's ready. "
+                    f"📜 Writing a recap of this session. {ready} "
                     f"Nothing goes to the table until you say so.{where}",
                 )
 
@@ -5499,8 +5510,10 @@ class DMBot(commands.AutoShardedBot):
         if not self.settings.recaps_on:
             return False
         campaign = await self.campaigns.get(gid, cid)
-        return campaign is not None and await self.plan_allows(
-            "recap", gid, campaign, fail_open=False
+        return (
+            campaign is not None
+            and campaign.recaps_text  # the DM's choice can only turn it off (#1421)
+            and await self.plan_allows("recap", gid, campaign, fail_open=False)
         )
 
     async def recap_audio_wanted(self, gid: int, cid: str, job: Job) -> bool:
@@ -5509,7 +5522,36 @@ class DMBot(commands.AutoShardedBot):
         checked). Without them the recap is text-only and nothing fails."""
         if not self.settings.recap_audio_on:
             return False
+        if not await self.recap_audio_switched(gid, cid, job):
+            return False
         return await self.recap_audio_allowed(gid, cid, job)
+
+    async def recap_audio_switched(self, gid: int, cid: str, job: Job) -> bool:
+        """The DM's own choice to have the narration and music (#1421); it can only turn the
+        audio off, never on past the plan."""
+        campaign = await self.campaigns.get(gid, cid)
+        return campaign is not None and campaign.recaps_audio
+
+    async def recap_plan_facts(self, campaign: Campaign) -> PlanFacts:
+        """What the plan allows for recaps, for the DM's Recaps panel (#1421): recaps at all, the
+        narration and music (only when they are switched on in DMbot too), and whether those
+        come with the plan or as an add-on."""
+        gid = campaign.guild_id
+        text = await self.plan_allows("recap", gid, campaign, fail_open=False)
+        audio = (
+            text
+            and self.settings.recap_audio_on
+            and await self.plan_allows("recap_audio", gid, campaign, fail_open=False)
+        )
+        how = ""
+        owner = campaign.owner_user_id
+        if audio and self.settings.enforce_plans and self.meter is not None and owner is not None:
+            try:
+                access = await self.meter.access(gid, owner, int(time.time()))
+                how = audio_how(access.plan_name, access.kind, RECAP_AUDIO_PLANS)
+            except Exception:
+                log.exception("Couldn't tell whether spoken recaps are part of the plan")
+        return PlanFacts(text, audio, how)
 
     async def recap_audio_allowed(self, gid: int, cid: str, job: Job) -> bool:
         campaign = await self.campaigns.get(gid, cid)
@@ -5540,7 +5582,22 @@ class DMBot(commands.AutoShardedBot):
         )
 
     async def recap_told(self, gid: int, cid: str, job: Job) -> None:
-        """Email the DM that their recap is ready, or could not be written."""
+        """Email the DM that their recap is ready, or could not be written. If they chose not to be
+        emailed (#1421) the DM screen says it instead."""
+        campaign = await self.campaigns.get(gid, cid)
+        if campaign is not None and not campaign.recaps_email:
+            # No email by the DM's choice: the DM screen says it instead, so they still hear.
+            if campaign.dm_screen_channel_id is not None:
+                link = page_link(self.settings.site_url, gid, cid, job.session_at)
+                where = f" {link}" if self.settings.site_url else ""
+                if job.state == "ready":
+                    line = f"📜 Your recap is ready. Read it, change it or post it:{where}"
+                else:
+                    line = (
+                        f"📜 DMbot couldn't write this session's recap. You can try again:{where}"
+                    )
+                await self.post(campaign.dm_screen_channel_id, line)
+            return
         if self.mailer is not None and self.recaps is not None:
             await tell_the_dm(self.mailer, self.recaps, self.settings.site_url, gid, cid, job)
 
@@ -5687,7 +5744,7 @@ class DMBot(commands.AutoShardedBot):
         out. Attached only if the recap has them, they were made from this very text (an edit
         since makes them stale), the plan still includes them (fails closed) and they fit the
         server's file limit. The text is posted either way."""
-        if job.audio != "ready":
+        if job.audio != "ready" or not campaign.recaps_audio:
             return [], ""
         if job.audio_text_hash != text_hash(job.title, job.summary):
             return [], "The audio was left out: the text changed after it was made."

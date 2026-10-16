@@ -38,6 +38,7 @@ from dmbot.dm_screen import handover, messages, table_chat_panel
 from dmbot.dm_screen.buttons import may_change_screen, save_visibility
 from dmbot.dm_screen.clock import ClockButton
 from dmbot.dm_screen.pause import pause_buttons, pause_line
+from dmbot.dm_screen.recap_panel import RecapsButton
 from dmbot.dm_screen.table_chat_panel import TableChatButton
 from dmbot.logs import set_log_context
 
@@ -154,6 +155,7 @@ def settings_view(campaign: Campaign, offer: HandoverOffer | None, viewer: int) 
         view.add_item(HouseFileButton(campaign.id))  # the house-rules file (#969)
         view.add_item(InviteButton(campaign.id))  # the D&D Beyond invite (#1119)
         view.add_item(TableChatButton(campaign.id))  # which typed chat is read (#1118)
+        view.add_item(RecapsButton(campaign.id))  # the recap choices (#1421)
         view.add_item(SideInitiativeButton(campaign.id, campaign.side_initiative))  # #1127
         view.add_item(SharedRulesButton(campaign.id))  # shared house rules (#1190)
     return view
