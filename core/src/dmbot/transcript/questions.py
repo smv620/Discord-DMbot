@@ -100,6 +100,15 @@ class Asked:
     fixes: tuple[Fix, ...] = ()
     start: int = 0
     end: int = 0
+    # A name split across two pieces of speech (the look-back pass, #127): the earlier piece,
+    # when it started, its fixes, and where the tail words are in it (as heard). Empty `prev_line`
+    # for an ordinary question, whose `start`/`end` are in `line`; for a split one they are the head
+    # words at the start of `line`.
+    prev_started_ms: int = 0
+    prev_line: str = ""
+    prev_fixes: tuple[Fix, ...] = ()
+    prev_start: int = 0
+    prev_end: int = 0
 
 
 class Begin(Enum):
@@ -137,6 +146,11 @@ class QuestionBook:
         started_ms: int = 0,
         line: str = "",
         fixes: tuple[Fix, ...] = (),
+        prev_started_ms: int = 0,
+        prev_line: str = "",
+        prev_fixes: tuple[Fix, ...] = (),
+        prev_start: int = 0,
+        prev_end: int = 0,
     ) -> Asked | None:
         """The question to post now, if any. Every question counts towards "heard a
         second time" even when none is asked. Call `expire` first. `started_ms`, `line`
@@ -168,6 +182,11 @@ class QuestionBook:
                 fixes=fixes,
                 start=question.start,
                 end=question.end,
+                prev_started_ms=prev_started_ms,
+                prev_line=prev_line,
+                prev_fixes=prev_fixes,
+                prev_start=prev_start,
+                prev_end=prev_end,
             )
             return self.open
         return None
@@ -228,6 +247,26 @@ def question_text(speaker: str, heard: str, context: str = "") -> str:
     return (
         f'❓ **DMbot heard {speaker} say "{_short(heard)}"**{line}. Did they mean…\n'
         "Not sure? Ignore this and it stays as heard."
+    )
+
+
+def last_words(text: str, count: int) -> str:
+    """The last few words of `text`, kept whole (a long tail is never cut off at its end)."""
+    return " ".join(text.split()[-count:])
+
+
+def first_words(text: str, count: int) -> str:
+    return " ".join(text.split()[:count])
+
+
+def seam_text(speaker: str, before: str, after: str) -> str:
+    """The question for a name split across two pieces of speech (#127); `speaker`, `before` (the
+    end of the earlier piece) and `after` (the start of this one) must already be safe to show.
+    It shows both pieces, so the DM sees that the answer joins two lines."""
+    return (
+        f'❓ **DMbot heard {speaker} say "…{_short(before, CONTEXT_MAX)}" and then '
+        f'"{_short(after, CONTEXT_MAX)}…"**. Is that one name? Did they mean…\n'
+        "This joins two lines. Not sure? Ignore this and it stays as heard."
     )
 
 

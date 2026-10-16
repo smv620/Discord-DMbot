@@ -206,7 +206,7 @@ from dmbot.timebot import combat_phrases, durations
 from dmbot.timebot import phrases as clock_phrases
 from dmbot.timebot.effects import EffectsSection, EffectStore
 from dmbot.timebot.store import ClockSection, ClockStore
-from dmbot.transcript import fix_notes, left_out, refix, speaker_ai
+from dmbot.transcript import fix_notes, left_out, lookback, refix, speaker_ai
 from dmbot.transcript import questions as name_questions
 from dmbot.transcript import speaker_question as speaker_q
 from dmbot.transcript import stream as transcript_lines
@@ -431,6 +431,8 @@ class Table:
     # "Did they mean…?" for the DM (#296): one open at a time, each word once a session.
     questions: name_questions.QuestionBook = field(default_factory=name_questions.QuestionBook)
     question_message: discord.Message | None = None
+    # Each person's last piece of speech as the Cleaner read it, for the look-back pass (#127).
+    last_piece: dict[int, lookback.Piece] = field(default_factory=dict)
     # Fixes from names DMbot only suggested, each with Undo, in one DM-screen message.
     fix_notes: fix_notes.FixNotes = field(default_factory=fix_notes.FixNotes)
     fix_message: discord.Message | None = None
@@ -1218,6 +1220,7 @@ class DMBot(commands.AutoShardedBot):
             table.sheet_questions.drop_speaker(user_id)  # nor asked about it (#1128)
             table.scene.forget_speaker(user_id)  # and no longer shape the hints
             table.vocabulary.forget_speaker(user_id)  # or the name fixes
+            table.last_piece.pop(user_id, None)  # and the look-back pass
             if table.fix_notes.drop_speaker(user_id):  # their fixes leave the DM screen
                 self._redraw_fix_notes(table)
             if table.left_out.drop_speaker(user_id):  # and their lines left out (#677)
@@ -3414,7 +3417,13 @@ class DMBot(commands.AutoShardedBot):
             )
             result = self._clean(table, text, unsure=noted)
             cleaned = result.text
-            self._offer_question(table, utterance.user_id, utterance.start_ms, text, result)
+            seam = self._look_back(table, utterance, text, result)
+            self._offer_question(table, utterance.user_id, utterance.start_ms, text, result, seam)
+            kept = table.last_piece.get(utterance.user_id)
+            if kept is None or kept.started_ms <= utterance.start_ms:  # (a slow clip arrives late)
+                table.last_piece[utterance.user_id] = lookback.Piece(
+                    utterance.start_ms, utterance.end_ms, text, result
+                )
             if noted and table.fix_notes.add(
                 utterance.user_id, utterance.start_ms, text, result.fixes
             ):
@@ -4518,8 +4527,44 @@ class DMBot(commands.AutoShardedBot):
             log.debug("Fixed %d misheard name(s) in a line", len(result.fixes))
         return result
 
+    def _look_back(
+        self, table: Table, utterance: Utterance, text: str, result: Cleaned
+    ) -> lookback.Seam | None:
+        """A name split across this piece and the same person's one before (#127): a question
+        for the DM, never a change (`lookback`). Only while this session runs, the DM screen
+        allows questions, and nothing is being asked already."""
+        prev = table.last_piece.get(utterance.user_id)
+        if (
+            prev is None
+            or result.questions
+            or table.name_lookup is None
+            or table.questions.open is not None
+            or self.tables.get(table.guild_id) is not table
+            or not screen_levels.allows(table.screen_level, screen_levels.QUESTION)
+        ):
+            return None
+        this = lookback.Piece(utterance.start_ms, utterance.end_ms, text, result)
+        try:
+            return lookback.find(
+                table.name_lookup,
+                prev,
+                this,
+                people=table.people,
+                vocabulary=table.vocabulary,
+                scene=table.scene.scene(time.monotonic()).keys(),
+            )
+        except Exception:
+            log.exception("Couldn't look back across two pieces of speech")
+            return None
+
     def _offer_question(
-        self, table: Table, speaker: int, started_ms: int, heard: str, result: Cleaned
+        self,
+        table: Table,
+        speaker: int,
+        started_ms: int,
+        heard: str,
+        result: Cleaned,
+        seam: lookback.Seam | None = None,
     ) -> None:
         """Ask the DM "Did they mean…?" about this line, if there's something worth
         asking (#296): see `QuestionBook` for the limits. An unanswered one expires
@@ -4533,24 +4578,33 @@ class DMBot(commands.AutoShardedBot):
             self._track(self._close_question(table, self._not_answered(table, expired)), "q")
         if not screen_levels.allows(table.screen_level, screen_levels.QUESTION):
             return  # quiet: the words stay as heard (after expiring any still open)
-        if not result.questions:
+        # A name split across two pieces is asked about only when this piece has no question
+        # of its own (the look-back pass, #127).
+        questions = result.questions or ((seam.question,) if seam is not None else ())
+        if not questions:
             return
         lookup, scene = table.name_lookup, table.scene.scene(now)
         matters = {
             entity_id
-            for question in result.questions
+            for question in questions
             for entity_id, _ in question.options
             if entity_id in scene
             or getattr(lookup.entities.get(entity_id), "is_player_character", False)
         }
+        across = seam if seam is not None and not result.questions else None
         asked = table.questions.offer(
             speaker,
-            result.questions,
+            questions,
             now,
             matters,
             started_ms=started_ms,
             line=heard,
             fixes=result.fixes,
+            prev_started_ms=across.prev.started_ms if across else 0,
+            prev_line=across.prev.heard if across else "",
+            prev_fixes=across.prev.result.fixes if across else (),
+            prev_start=across.prev_start if across else 0,
+            prev_end=across.prev_end if across else 0,
         )
         if asked is not None:
             self._track(self._ask_dm(table, asked), "name-question")
@@ -4573,7 +4627,14 @@ class DMBot(commands.AutoShardedBot):
         name = self.name_of(table.guild_id, asked.speaker)
         speaker = "Someone" if name.startswith("<@") else discord.utils.escape_markdown(name)
         md = discord.utils.escape_markdown
-        text = name_questions.question_text(speaker, md(asked.heard), md(asked.context))
+        if asked.prev_line:  # a name split across two pieces: show both (#127)
+            text = name_questions.seam_text(
+                speaker,
+                md(name_questions.last_words(asked.prev_line[: asked.prev_end], 4)),
+                md(name_questions.first_words(asked.line, 4)),
+            )
+        else:
+            text = name_questions.question_text(speaker, md(asked.heard), md(asked.context))
         message = await self.post_message(
             table.screen_channel_id, text, question_view(table.guild_id, asked)
         )
@@ -5132,6 +5193,8 @@ class DMBot(commands.AutoShardedBot):
         answer: it's saved already, and its message still gets its Undo."""
         if not asked.line:
             return None
+        if asked.prev_line:
+            return await self._fix_seam(table, asked, name, undo)
         lookup = await self._names_now(table)
         notes, speaker, started = table.fix_notes, asked.speaker, asked.started_ms
         written = with_ending(asked.heard, name)
@@ -5157,6 +5220,73 @@ class DMBot(commands.AutoShardedBot):
             with contextlib.suppress(ValueError):
                 notes.answers.remove(answer)
         return changed
+
+    async def _fix_seam(
+        self, table: Table, asked: name_questions.Asked, name: str, undo: tuple[str, int] | None
+    ) -> bool | None:
+        """Write the answer to a name split across two pieces (#127, the look-back pass): the
+        name goes where the tail words were in the earlier piece, and the head words are taken
+        out of this one. Both or neither: if the second can't be written the first is put back,
+        so the transcript never says the name twice. Never if it would put a secret name in
+        either piece (checked with the names as they are now), if another answer or a hidden
+        line is in the way, or if either piece is no longer there to change; Undo of the answer
+        puts both back (`answer_undone`). True if both changed, False if they stay as heard."""
+        lookup = await self._names_now(table)
+        notes, speaker = table.fix_notes, asked.speaker
+        written = with_ending(asked.heard, name)
+        before = notes.still_fixed(speaker, asked.prev_started_ms, asked.prev_fixes)
+        now_fixes = notes.still_fixed(speaker, asked.started_ms, asked.fixes)
+        stop = lookback.head_edit(asked.line, asked.end)[1]
+        prev_key, this_key = (speaker, asked.prev_started_ms), (speaker, asked.started_ms)
+        if (
+            lookup is None
+            or prev_key in table.hidden
+            or this_key in table.hidden
+            or _answer_in_the_way(notes, prev_key, asked.prev_start, asked.prev_end)
+            or _answer_in_the_way(notes, this_key, 0, stop)
+            # the name beside the words before it (earlier piece) and the words after the head
+            or not safe_answer(
+                lookup, asked.prev_line, before, asked.prev_start, asked.prev_end, written
+            )
+            or not safe_answer(lookup, asked.line, now_fixes, 0, asked.end, written)
+        ):
+            return False  # the rule is saved; both pieces stay as heard
+        batch = undo[1] if undo is not None else None
+        tail = fix_notes.Answer(
+            batch, speaker, asked.prev_started_ms, asked.prev_line, before,
+            asked.prev_start, asked.prev_end, written, True,
+        )  # fmt: skip
+        head = fix_notes.Answer(
+            batch, speaker, asked.started_ms, asked.line, asked.fixes, 0, stop, ""
+        )
+        notes.answered(tail)
+        notes.answered(head)
+
+        def words(answer: fix_notes.Answer) -> str:
+            return notes.words_now(answer.speaker, answer.started_ms, answer.heard, answer.fixes)
+
+        touched, first, second = False, False, False
+        try:
+            touched = True  # (a failure part-way through may still have changed it)
+            first = await self._rewrite_line(table, speaker, tail.started_ms, words(tail))
+            touched = first
+            if first:
+                second = await self._rewrite_line(table, speaker, head.started_ms, words(head))
+        except Exception:
+            log.exception("Couldn't write an answer across two pieces of speech")
+            second = False
+        if first and second:
+            return True
+        for answer in (tail, head):
+            with contextlib.suppress(ValueError):
+                notes.answers.remove(answer)
+        if touched:  # the earlier piece may have changed: put it back as it was
+            try:
+                if not await self._rewrite_line(table, speaker, tail.started_ms, words(tail)):
+                    log.warning("Couldn't put the earlier piece back after a failed answer")
+            except Exception:
+                log.exception("Couldn't put the earlier piece back after a failed answer")
+        return False
 
     async def _fix_earlier_lines(
         self, table: Table, asked: name_questions.Asked, name: str, undo: tuple[str, int] | None
@@ -5252,7 +5382,14 @@ class DMBot(commands.AutoShardedBot):
             # effort. What is reported is the line the question was about, if it was fixed.
             asked_line = next((a for a in taken if not a.earlier), None)
             changed: bool | None = None
-            for answer in sorted(taken, key=lambda a: a.earlier):
+            # A name split across two pieces (the head's answer has no words) is put back tail
+            # first, and the head only if the tail went back: never leave the name twice.
+            seam = any(a.written == "" for a in taken)
+            ok = True
+            for answer in sorted(taken, key=lambda a: not a.earlier):
+                if seam and not answer.earlier and not ok:
+                    changed = False  # the earlier piece still has the name: leave this one
+                    continue
                 text = table.fix_notes.words_now(
                     answer.speaker, answer.started_ms, answer.heard, answer.fixes
                 )
@@ -5261,8 +5398,12 @@ class DMBot(commands.AutoShardedBot):
                 except Exception:
                     log.exception("Couldn't put a line back after undoing an answer")
                     done = False
+                if answer.earlier:
+                    ok = ok and done
                 if answer is asked_line:
                     changed = done
+            if seam and not ok:
+                changed = False
             if asked_line is None or not self.consent.has_consent(guild_id, asked_line.speaker):
                 return None  # nothing to say about the asked line
             return changed
@@ -6853,6 +6994,14 @@ class DMBot(commands.AutoShardedBot):
 
 
 # ---- slash commands ----------------------------------------------------------
+
+
+def _answer_in_the_way(
+    notes: fix_notes.FixNotes, line: tuple[int, int], start: int, end: int
+) -> bool:
+    """Whether an answer already written into this line (speaker, started_ms) touches the
+    words from `start` to `end` (as heard): writing over it would garble the line."""
+    return any(a.line == line and a.start < end and start < a.end for a in notes.answers)
 
 
 def _now_ms() -> int:

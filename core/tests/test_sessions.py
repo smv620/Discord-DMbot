@@ -2478,6 +2478,186 @@ class SaveAndResume(SessionTests):
         self.assertIn("Earlier lines stay as heard.", text)
         self.assertEqual(len(table.fix_notes.answers), 2)  # the asked line's and the old one
 
+    # ---- the look-back pass: a name split across two pieces of speech (#127) ----------------
+
+    async def seam_setup(self, *, level: str = "normal") -> Any:
+        """A running session whose names have Ka'zeth, with Ka'zeth in the scene; lines are
+        kept waiting to be saved (a stand-in store); the DM screen post is a stand-in."""
+        import time
+
+        from dmbot.transcript.models import TranscriptBuffer
+        from tests.test_transcript_cleaner import KAZETH, lookup
+
+        await self.consent.grant(GUILD, PLAYER)
+        table, _ = await self.joined_with_transcript()
+        table.name_lookup = lookup()
+        table.unsaved = TranscriptBuffer()
+        self.addCleanup(setattr, self.bot, "transcripts", self.bot.transcripts)
+        self.bot.transcripts = MagicMock(relabel_line=AsyncMock(return_value=1))
+        table.scene.note([KAZETH], DM, time.monotonic())
+        table.screen_level = level
+        message = MagicMock(edit=AsyncMock())
+        self.bot.post_message = AsyncMock(return_value=message)  # type: ignore[method-assign]
+        memory: Any = MagicMock(add_correction=AsyncMock(return_value=MagicMock(batch=51)))
+        self.addCleanup(setattr, self.bot, "memory", self.bot.memory)
+        self.bot.memory = memory
+        return table
+
+    async def said_twice(self, table: Any, first: str, second: str, *, gap_ms: int = 800,
+                         user: int = PLAYER, user2: int | None = None) -> None:  # fmt: skip
+        self.said(table, first, user=user, at_ms=0)  # (each ends where it starts: a short blip)
+        self.said(table, second, user=user2 or user, at_ms=gap_ms)
+        for _ in range(5):
+            await asyncio.sleep(0)  # a question is posted in the background
+
+    def waiting(self, table: Any) -> list[str]:
+        return [str(w.text) for w in table.unsaved._waiting]
+
+    async def test_a_split_name_asks_the_dm_and_changes_nothing_by_itself(self) -> None:
+        table = await self.seam_setup()
+        await self.said_twice(table, "we meet Ka", "Zeth at dawn")
+        posted = self.bot.post_message
+        posted.assert_awaited_once()
+        channel, text, _ = posted.await_args.args
+        self.assertEqual(channel, SCREEN)  # the DM screen only
+        self.assertIn('"…we meet Ka"', text)  # both pieces are shown
+        self.assertIn('"Zeth at dawn…"', text)
+        self.assertIn("This joins two lines", text)
+        self.assertEqual(self.waiting(table), ["we meet Ka", "Zeth at dawn"])  # as heard
+
+    async def test_it_asks_nothing_across_people_a_long_pause_or_in_quiet(self) -> None:
+        for kw, level in (
+            ({"user": PLAYER, "user2": DM}, "normal"),  # two people
+            ({"gap_ms": 5000}, "normal"),  # too long a pause
+            ({}, "quiet"),  # the DM asked for no questions
+        ):
+            table = await self.seam_setup(level=level)
+            if kw.get("user2") == DM:
+                await self.consent.grant(GUILD, DM)
+            await self.said_twice(table, "we meet Ka", "Zeth at dawn", **kw)
+            self.bot.post_message.assert_not_awaited()
+            self.assertEqual(self.waiting(table), ["we meet Ka", "Zeth at dawn"])
+            self.bot.tables.pop(GUILD, None)
+
+    async def test_the_answer_puts_the_name_across_both_pieces_and_one_undo_restores_both(
+        self,
+    ) -> None:
+        table = await self.seam_setup()
+        await self.said_twice(table, "we meet Ka", "Zeth at dawn")
+        asked = table.questions.open
+        assert asked is not None and asked.prev_line == "we meet Ka"
+        _, done, undo = await self.bot.answer_name_question(GUILD, asked.id, "0", DM)
+        self.assertTrue(done)
+        self.assertEqual(self.waiting(table), ["we meet Ka'zeth", "at dawn"])
+        add = self.bot.memory.add_correction
+        self.assertEqual(add.await_args.args[2], "Ka Zeth")  # the joined words, as the rule
+        assert undo is not None
+        self.assertIs(await self.bot.answer_undone(GUILD, table.campaign_id, undo[1]), True)
+        self.assertEqual(self.waiting(table), ["we meet Ka", "Zeth at dawn"])
+
+    async def test_if_the_second_piece_cannot_be_written_the_first_is_put_back(self) -> None:
+        table = await self.seam_setup()
+        await self.said_twice(table, "we meet Ka", "Zeth at dawn")
+        asked = table.questions.open
+        assert asked is not None
+        real = self.bot._rewrite_line
+        calls: list[int] = []
+
+        async def rewrite(t: Any, speaker: int, started: int, words: str) -> bool:
+            calls.append(started)
+            return False if started == asked.started_ms else await real(t, speaker, started, words)
+
+        self.bot._rewrite_line = rewrite  # type: ignore[method-assign]
+        await self.bot.answer_name_question(GUILD, asked.id, "0", DM)
+        self.assertEqual(self.waiting(table), ["we meet Ka", "Zeth at dawn"])  # both as heard
+        self.assertFalse(
+            [a for a in table.fix_notes.answers if a.written == "Ka'zeth"]
+        )  # and a later Undo has nothing to bring back
+
+    async def test_another_answer_in_the_way_leaves_both_pieces_as_heard(self) -> None:
+        from dmbot.transcript import fix_notes
+
+        table = await self.seam_setup()
+        await self.said_twice(table, "we meet Ka", "Zeth at dawn")
+        asked = table.questions.open
+        assert asked is not None
+        # While the question was open, another answer wrote over the same words (earlier piece).
+        table.fix_notes.answered(
+            fix_notes.Answer(5, PLAYER, 0, "we meet Ka", (), 8, 10, "Other", True)
+        )
+        await self.bot.answer_name_question(GUILD, asked.id, "0", DM)
+        self.assertEqual(self.waiting(table), ["we meet Ka", "Zeth at dawn"])
+
+    async def test_a_hidden_piece_is_left_as_heard(self) -> None:
+        table = await self.seam_setup()
+        await self.said_twice(table, "we meet Ka", "Zeth at dawn")
+        asked = table.questions.open
+        assert asked is not None
+        table.hidden.add((PLAYER, asked.started_ms))  # an off-topic marker stands there
+        await self.bot.answer_name_question(GUILD, asked.id, "0", DM)
+        self.assertEqual(self.waiting(table), ["we meet Ka", "Zeth at dawn"])
+
+    async def test_a_secret_made_since_the_question_was_asked_is_respected(self) -> None:
+        from tests.test_transcript_cleaner import KAZETH, alias, lookup
+
+        table = await self.seam_setup()
+        await self.said_twice(table, "we meet Ka", "Zeth at dawn")
+        asked = table.questions.open
+        assert asked is not None
+        secret = lookup(more_aliases=(alias(KAZETH, "Ka'zeth at dawn", secret=True),))
+        self.bot._names_now = AsyncMock(return_value=secret)  # type: ignore[method-assign]
+        await self.bot.answer_name_question(GUILD, asked.id, "0", DM)
+        self.assertEqual(self.waiting(table), ["we meet Ka", "Zeth at dawn"])
+
+    async def test_a_failure_while_writing_the_first_piece_puts_it_back(self) -> None:
+        table = await self.seam_setup()
+        await self.said_twice(table, "we meet Ka", "Zeth at dawn")
+        asked = table.questions.open
+        assert asked is not None
+        real = self.bot._rewrite_line
+        failed = [False]
+
+        async def rewrite(t: Any, speaker: int, started: int, words: str) -> bool:
+            done = await real(t, speaker, started, words)  # it changed ...
+            if not failed[0]:
+                failed[0] = True
+                raise RuntimeError("down")  # ... and then it blew up
+            return done
+
+        self.bot._rewrite_line = rewrite  # type: ignore[method-assign]
+        await self.bot.answer_name_question(GUILD, asked.id, "0", DM)
+        self.assertEqual(self.waiting(table), ["we meet Ka", "Zeth at dawn"])
+        self.assertFalse([a for a in table.fix_notes.answers if a.batch == 51])
+
+    async def test_undo_restores_the_earlier_piece_first_and_stops_if_that_fails(self) -> None:
+        table = await self.seam_setup()
+        await self.said_twice(table, "we meet Ka", "Zeth at dawn")
+        asked = table.questions.open
+        assert asked is not None
+        _, _, undo = await self.bot.answer_name_question(GUILD, asked.id, "0", DM)
+        assert undo is not None
+        self.assertEqual(self.waiting(table), ["we meet Ka'zeth", "at dawn"])
+        real = self.bot._rewrite_line
+
+        async def rewrite(t: Any, speaker: int, started: int, words: str) -> bool:
+            return False if started == 0 else await real(t, speaker, started, words)
+
+        self.bot._rewrite_line = rewrite  # type: ignore[method-assign]
+        back = await self.bot.answer_undone(GUILD, table.campaign_id, undo[1])
+        self.assertIs(back, False)
+        # The earlier piece still has the name, so the head is NOT brought back: no doubling.
+        self.assertEqual(self.waiting(table), ["we meet Ka'zeth", "at dawn"])
+
+    async def test_stopping_the_recording_forgets_the_last_piece_and_a_late_clip_does_not_win(
+        self,
+    ) -> None:
+        table = await self.seam_setup()
+        self.said(table, "later words here", at_ms=5000)
+        self.said(table, "an earlier clip that arrived late", at_ms=1000)
+        self.assertEqual(table.last_piece[PLAYER].started_ms, 5000)  # the later piece is kept
+        self.bot.stop_recording(GUILD, PLAYER)
+        self.assertNotIn(PLAYER, table.last_piece)
+
     async def test_an_answer_that_cannot_read_the_saved_lines_still_answers(self) -> None:
         table, _, _, _ = await self.asked_about_marin(saving=True)
         asked = table.questions.open

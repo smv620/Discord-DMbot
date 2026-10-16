@@ -1938,6 +1938,28 @@ made outside this question (the names list, `/dmbot names`) do not re-fix earlie
 session that has ended is not re-checked; sessions before the correction change only if the DM
 asks (as decided).
 
+**Transcript Cleaner step 4: built (2026-10-16, #127): the look-back pass asks about a name split
+across two pieces.** Speech is cut into pieces after a pause, so a name said with a breath in the
+middle ("Ka" | "Zeth") reaches the Cleaner as two lines. For the same person, when the earlier piece
+ended at most **2.5 s** before this one began (they may overlap by up to 1 s), the Cleaner reads the
+two pieces as one line and, if the last words of the earlier one and the first words of this one (2
+or 3 words, at least one on each side) are what it would have fixed or asked about in one line
+(`transcript.lookback`), the DM gets a "Did they mean…?" that **shows both pieces** ("DMbot heard Mia
+say "…we meet Ka" and then "Zeth at dawn…". Is that one name?"), so they can see the answer joins two
+lines. **It asks only; it never changes a line by itself.** (Only the 4 words either side of the seam are read, so it costs little per line.) Every check of the one-line path holds
+(confirmed non-secret names only, spelled alike enough, one name, never a table person's name, never
+next to a secret name, checked on the line as written), and nothing is asked when either piece alone
+already has a fix or a question on those words, when the tail ends in punctuation, when the head
+is followed straight away by punctuation or is the whole of its piece (taking it out would leave a
+stray mark or an empty line), or under Quiet; the usual limits apply (one question open at a time, a cooldown, once per
+words a session). A run of real words ("Bell" | "or us") is not found, because the Cleaner never reads
+those as a name. **The answer** saves the usual rule for the joined words (so a later "Ka Zeth" in one
+line is fixed, and step 3 re-checks the earlier lines of the session), writes the name where the tail
+words were in the earlier piece and takes the head words out of this one: both or neither (if the
+second can't be written the first is put back), only while the speaker is recorded, never where it
+would write a secret name; **one Undo** puts both pieces back. Not done: silent seam fixes; "line
+changed" events for helpers that already used a piece (the names scan may miss that one mention).
+
 **Off-topic filter (decided 2026-10-04; updated 2026-10-05).** A very light, fast AI pass
 right after the Cleaner. Scheduling, life updates, and other non-game talk are labeled
 `{non-game_content}` and not analyzed further, which saves cost. In the cleaned
