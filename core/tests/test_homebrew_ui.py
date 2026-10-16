@@ -310,7 +310,7 @@ class TheFile(HomebrewUiTest):
         ask = ui.FromBookAsk(self.campaign, (FileEntry("feat", "House", "Mine."),), "a" * 64, 0)
         asked = self.press()
         await ask._own(asked)
-        self.assertIn("Who made this?", self.said(asked))  # one more question, nothing stored yet
+        self.assertIn("Who made these?", self.said(asked))  # one more question, nothing stored yet
         self.assertEqual(await self.store.list(GUILD, self.campaign.id), [])
         it = self.press()
         await ui.WhoMade(self.campaign, ask.entries, ask.digest, 0)._me(it)
@@ -390,7 +390,7 @@ class TheFile(HomebrewUiTest):
         form.site._value = "https://www.DNDBeyond.com/magic-items/1-x"
         it = self.press()
         await form.on_submit(it)
-        self.assertIn("homebrew from **dndbeyond.com**", self.said(it))
+        self.assertIn("right to use dndbeyond.com's homebrew", self.said(it))
         self.assertEqual(await self.store.list(GUILD, self.campaign.id), [])  # nothing yet
         self.assertEqual(await self.sources.approvals(GUILD, self.campaign.id), [])
         right = self.view_of(it)
@@ -425,7 +425,7 @@ class TheFile(HomebrewUiTest):
             form.site._value = bad
             it = self.press()
             await form.on_submit(it)
-            self.assertIn("isn't a website address", self.said(it))
+            self.assertIn("can't read that as a website", self.said(it))
         form.site._value = "example.org"
         await form.on_submit(self.press())
         right = ui.RightToUseSite(who, "example.org")

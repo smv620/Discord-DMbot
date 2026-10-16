@@ -112,19 +112,15 @@ FROM_BOOK_WARNING = (
     "You can remove it any time. It is deleted with the campaign."
 )
 
-WHO_MADE_ASK = (
-    "**Who made this?** (It is kept with the entries, so anyone can see where they came from.)"
-)
+WHO_MADE_ASK = "**Who made these?** Pick one. The name stays with the entries."
 SITE_WARNING = (
-    "**Before using a website's homebrew**\n"
-    "DMbot doesn't check what you may use. By pressing **I have the right**, you say you may use "
-    "homebrew from **{site}** in this campaign.\n"
-    "It is recorded that you confirmed, and when. You only say this once for {site} in this "
-    "campaign.\n"
-    "It stays in this campaign only. It is never shared with other campaigns or servers.\n"
-    "You can remove it any time. It is deleted with the campaign."
+    "**Do you have the right to use {site}'s homebrew?**\n"
+    "DMbot doesn't check. If you press **I have the right**, you are saying you may use it in "
+    "this campaign. DMbot records that you said so, and when.\n"
+    "It stays in this campaign only and is never shared. You can remove it any time. You won't "
+    "be asked again for {site} in this campaign."
 )
-BAD_SITE = "That isn't a website address DMbot can read. Type it like dndbeyond.com."
+BAD_SITE = "DMbot can't read that as a website. Try something like dndbeyond.com."
 
 KIND_LABELS = {
     "spell": "✨ Spell",
@@ -981,7 +977,9 @@ class FromBookAsk(_Menu):
         self.stop()
         _changed(interaction, c)
         words = f"📥 Loaded: {done.added} new, {done.updated} changed, {done.same} the same."
-        if credit[0] == "website":
+        if credit[0] == "user":
+            words += " Credited to you."
+        elif credit[0] == "website":
             words += f" Credited to {credit[2]}."
         elif credit[0] == "name":
             words += f" Credited to {_md(' '.join((credit[1] or '').split()))}."
@@ -1024,7 +1022,7 @@ class WhoMade(FromBookAsk):
             await _tell(interaction, ONLY_DMS)
 
 
-class NameForm(discord.ui.Modal, title="Who made this?"):
+class NameForm(discord.ui.Modal, title="Who made them?"):
     name: discord.ui.TextInput[NameForm] = discord.ui.TextInput(
         label="Their name", max_length=NAME_MAX, placeholder="A name, like Sam"
     )
