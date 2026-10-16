@@ -218,7 +218,9 @@ class AtTheTableMore(AtTheTable):
         await super().asyncSetUp()
         plain = self.bot.post_message
 
-        async def post_message(channel_id: int, text: str, view: Any = None) -> Any:
+        async def post_message(
+            channel_id: int, text: str, view: Any = None, *, remember: Any = None
+        ) -> Any:
             await plain(channel_id, text, view)
             # A suggestion that was posted is a message; a failed post is None (and frees the
             # slot for the next ask). Everything else keeps the harness's plain None.
@@ -322,7 +324,9 @@ class AtTheTableMore(AtTheTable):
         views: list[Any] = []
         original = self.bot.post_message
 
-        async def record(channel_id: int, text: str, view: Any = None) -> Any:
+        async def record(
+            channel_id: int, text: str, view: Any = None, *, remember: Any = None
+        ) -> Any:
             views.append(view)
             return await original(channel_id, text, view)
 
@@ -347,7 +351,9 @@ class AtTheTableMore(AtTheTable):
     async def test_a_suggestion_that_could_not_be_posted_frees_the_slot(self) -> None:
         await self.press("set", set_to=NOON4)
 
-        async def failing(channel_id: int, text: str, view: Any = None) -> None:
+        async def failing(
+            channel_id: int, text: str, view: Any = None, *, remember: Any = None
+        ) -> None:
             return None
 
         self.bot.post_message = failing  # type: ignore[method-assign]

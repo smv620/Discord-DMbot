@@ -179,7 +179,9 @@ class TableTest(unittest.IsolatedAsyncioTestCase):
         self.bot.house_rules = self.store  # type: ignore[assignment]
         self.posts: list[tuple[int, str, Any]] = []
 
-        async def post_message(channel_id: int, text: str, view: Any = None) -> object:
+        async def post_message(
+            channel_id: int, text: str, view: Any = None, *, remember: Any = None
+        ) -> object:
             self.posts.append((channel_id, text, view))
             return object()
 
@@ -263,7 +265,9 @@ class Proposing(TableTest):
         self.assertEqual(self.table.house_voice.seen, set())  # given back
 
     async def test_a_failed_post_gives_back_the_words(self) -> None:
-        async def nowhere(channel_id: int, text: str, view: Any = None) -> None:
+        async def nowhere(
+            channel_id: int, text: str, view: Any = None, *, remember: Any = None
+        ) -> None:
             return None
 
         self.bot.post_message = nowhere  # type: ignore[method-assign]
@@ -603,7 +607,9 @@ class Trouble(TableTest):
         self.assertIn(screen.UNCHECKED, self.posts[0][1])
 
     async def test_a_post_that_raises_gives_back_the_words(self) -> None:
-        async def broken(channel_id: int, text: str, view: Any = None) -> None:
+        async def broken(
+            channel_id: int, text: str, view: Any = None, *, remember: Any = None
+        ) -> None:
             raise RuntimeError("boom")
 
         self.bot.post_message = broken  # type: ignore[method-assign]
