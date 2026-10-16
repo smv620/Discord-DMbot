@@ -237,8 +237,9 @@ async def build_me(
         **({"dmbotId": account_number} if account_number else {}),
         "experiencePoints": experience,
         "canMove": can_move(plan, now),
-        # The Support form is for paying accounts; others see the public Q&A link (#1340).
-        "canSupport": support.is_paying(plan, now),
+        # The Support form is for every account with a plan row, Try It too (#1435); someone with
+        # no account yet sees the public Q&A link (#1340).
+        "canSupport": support.may_write(plan),
         # A first payment that failed and no payment since: the page says "try again" (#922).
         # Left out otherwise, so the common reply is unchanged.
         **({"firstPaymentFailed": True} if first_failed else {}),

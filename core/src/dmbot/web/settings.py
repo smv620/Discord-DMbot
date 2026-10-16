@@ -65,6 +65,9 @@ class WebSettings:
     ai_key: str = field(default="", repr=False)
     support_ai_model: str = ""
     mail_inbound_secret: str = field(default="", repr=False)
+    # Where the bot keeps recap audio on disk, read here only (the volume is mounted read-only).
+    # Empty: the page shows no players and the file route answers not_found (#1418).
+    recap_audio_dir: str = ""
     # Cloudflare Turnstile's secret key, the check that a person sent the form. Needed
     # whenever the forms are on, except when testing on localhost.
     turnstile_secret: str = field(default="", repr=False)
@@ -265,6 +268,7 @@ def load_web_settings(env: Mapping[str, str] | None = None) -> WebSettings:
         ai_key=get("ANTHROPIC_API_KEY"),
         support_ai_model=support_ai_model,
         mail_inbound_secret=get("MAIL_INBOUND_SECRET"),
+        recap_audio_dir=get("WEB_RECAP_AUDIO_DIR"),
         turnstile_secret=turnstile_secret,
         client_ip_header=client_ip_header,
         admin_emails=admin_emails,

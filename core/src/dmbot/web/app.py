@@ -23,7 +23,7 @@ from typing import Annotated, Any
 
 from fastapi import Depends, FastAPI, HTTPException, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse, RedirectResponse
+from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
 
 from dmbot import consent_notify, entitlements, install, mail, plans
 from dmbot.account_id import from_dmbot_id, to_dmbot_id
@@ -41,6 +41,7 @@ from dmbot.web import (
     support,
     tokens,
 )
+from dmbot.web import recap_audio as audio_links
 from dmbot.web.accounts import (
     account_email,
     active_subscription,
@@ -56,11 +57,18 @@ from dmbot.web.characters import build_characters
 from dmbot.web.discord import DiscordError, DiscordOAuth
 from dmbot.web.export import build_export
 from dmbot.web.feedback import Discussions, FeedbackError, HumanCheck
-from dmbot.web.limits import LIMITS, RateLimit
+from dmbot.web.limits import LIMITS, RateLimit, free_ticket_refusal
 from dmbot.web.me import build_me
 from dmbot.web.moving import MoveCodes, can_move
 from dmbot.web.payments import PaymentError, PaymentProvider, paid_plan_ids
-from dmbot.web.recaps import RecapError, decide, edit_recap, list_recaps, read_recap
+from dmbot.web.recaps import (
+    RecapError,
+    audio_again,
+    decide,
+    edit_recap,
+    list_recaps,
+    read_recap,
+)
 from dmbot.web.sessions import Session
 from dmbot.web.settings import WebSettings
 from dmbot.web.support_ai import SupportHelper
@@ -518,7 +526,9 @@ def create_app(
         "not_allowed": (409, "not_allowed"),
         "not_editable": (409, "not_editable"),
         "bad_text": (422, "bad_text"),
+        "too_soon": (429, "too_soon"),
     }
+    recap_files = audio_links.audio_files(settings.recap_audio_dir)
 
     @app.get("/me/recaps")
     async def me_recaps(signed: Signed) -> dict[str, Any]:
@@ -554,6 +564,41 @@ def create_app(
         except RecapError as err:
             status, detail = recap_refusals.get(err.code, (404, "not_found"))
             raise HTTPException(status_code=status, detail=detail) from None
+
+    @app.get("/me/recaps/{ref}/audio")
+    async def me_recap_audio(ref: str, signed: Signed) -> dict[str, Any]:
+        """Short-lived links to this recap's narration and music (#1418). Only for a DM of the
+        campaign (the same rule as reading the recap), and only while the audio was made from the
+        recap's text as it is now."""
+        session, _token = signed
+        try:
+            recap = await read_recap(db, session, ref)
+        except RecapError as err:
+            status, detail = recap_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+        if not recap["audio"]["current"]:
+            return {"links": {}}
+        return {"links": audio_links.links(recap_files, settings.secret_key, settings.api_url, ref)}
+
+    @app.post("/me/recaps/{ref}/audio/again")
+    async def me_recap_audio_again(ref: str, signed: Signed) -> dict[str, Any]:
+        """ "Make the audio again": at most once in 10 minutes for a recap, the database's rule."""
+        session, _token = signed
+        try:
+            return await audio_again(db, session, ref)
+        except RecapError as err:
+            status, detail = recap_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+
+    @app.get("/recap-audio/{ref}/{kind}")
+    async def recap_audio_file(ref: str, kind: str, e: str = "", s: str = "") -> FileResponse:
+        """One audio file, for a link made by the route above. The signature is the whole check."""
+        path = audio_links.file_for(recap_files, settings.secret_key, ref, kind, e, s)
+        if path is None:
+            raise HTTPException(status_code=404, detail="not_found")
+        return FileResponse(
+            path, media_type="audio/mpeg", headers={"Cache-Control": "private, no-store"}
+        )
 
     @app.post("/me/recaps/{ref}/{action}")
     async def me_recap_decide(ref: str, action: str, signed: Signed) -> dict[str, Any]:
@@ -1110,7 +1155,8 @@ def create_app(
 
     @app.post("/support", status_code=201)
     async def send_support(request: Request, signed: Signed) -> dict[str, bool]:
-        """A private support ticket from a paying person (#1340). Never public: it goes to
+        """A private support ticket from a signed-in person with an account (#1340, #1435: Try It
+        too). Never public: it goes to
         the support_tickets table (support.py), and its words are never logged or emailed."""
         session, _token = signed
         with contextlib.suppress(ValueError):
@@ -1130,9 +1176,13 @@ def create_app(
             raise HTTPException(status_code=400, detail=ticket)
         now = clock()
         plan, _grant, _access = await entitlements.plan_grant_access(db, session.user_id, now)
-        if plan is None or not support.is_paying(plan, now):
-            # Everyone else is pointed to the public Q&A, on the page itself.
+        if plan is None or not support.may_write(plan):
+            # No account yet: pointed to the public Q&A, on the page itself.
             raise HTTPException(status_code=403, detail="not_paying")
+        if support.is_free(plan, now):
+            waiting, today = await support.recent(db, session.user_id, now=now)
+            if (why := free_ticket_refusal(waiting, today)) is not None:
+                raise HTTPException(status_code=429, detail=why)
         turn = str(session.user_id)
         taken = support_limit.take(turn)
         if taken != "ok":
@@ -1163,7 +1213,7 @@ def create_app(
             await mailer.notify_team(
                 settings.support_team_email,
                 "A DMbot support ticket is waiting",
-                "A paying account sent a support ticket.\n\n"
+                "An account sent a support ticket.\n\n"
                 f"DMbot ID: {to_dmbot_id(session.user_id)}\nPlan: {plan.plan}\n\n"
                 f"Read it on the admin page: {settings.site_url}/admin\n",
                 sender=mailer.settings.alerts_sender,  # (#1431: alerts come from their own address)

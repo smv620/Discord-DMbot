@@ -18,11 +18,13 @@ interface Props {
   api: AccountApi;
   /** Cloudflare Turnstile's site key, or "" to skip the check (local testing). */
   siteKey: string;
+  /** Try It: adds one line, "Questions about buying a plan are welcome too." (#1435). */
+  tryIt?: boolean;
   /** Called once a ticket is kept, so the list of the person's questions can be read again. */
   onSent?: () => void;
 }
 
-export function Support({ api, siteKey, onSent }: Props) {
+export function Support({ api, siteKey, tryIt, onSent }: Props) {
   const [subject, setSubject] = useState("");
   const [message, setMessage] = useState("");
   const [token, setToken] = useState("");
@@ -136,6 +138,7 @@ export function Support({ api, siteKey, onSent }: Props) {
     <section class="panel" aria-labelledby="support-heading">
       <h2 id="support-heading">{text.supportHeading}</h2>
       <p>{text.supportIntro}</p>
+      {tryIt && <p>{text.supportIntroTryIt}</p>}
       <form onSubmit={submit} onFocusIn={() => setStarted(true)} noValidate>
         {/* Disabled while sending, so nothing changes under the person's feet. */}
         <fieldset disabled={busy}>
@@ -213,7 +216,7 @@ export function Support({ api, siteKey, onSent }: Props) {
   );
 }
 
-/** For everyone who can't write privately: no paid plan, or an API that doesn't have it yet. */
+/** For everyone who can't write privately: no account yet, or an API that doesn't have it yet. */
 export function PublicQuestions() {
   return (
     <section class="panel" aria-labelledby="qa-heading">

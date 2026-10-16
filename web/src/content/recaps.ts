@@ -3,7 +3,47 @@
  * at /account/recaps/<id>. Plain words; every message says what to do next. Nothing here
  * promises more than the API does: Post only asks DMbot, which checks once more and sends it.
  */
-import type { ApiErrorKind, Recap } from "../account/api";
+import type { ApiErrorKind, Recap, RecapMonth } from "../account/api";
+
+const MONTHS = [
+  "January", "February", "March", "April", "May", "June",
+  "July", "August", "September", "October", "November", "December",
+];
+
+/** "1 November": the day the allowance starts again, counted in UTC like the bot's own words
+ * (recaps/allowance.py), so the page and the bot never name different days. */
+export function nextMonthStart(now: Date): string {
+  return `1 ${MONTHS[(now.getUTCMonth() + 1) % 12]}`;
+}
+
+/** The quiet lines under the list (#1444): how much of this month's allowance each campaign has
+ * used. Nothing for a campaign with no recaps this month; narration only while its switch is on. */
+export function allowanceLines(
+  months: RecapMonth[] | undefined,
+  narration: boolean,
+  now: Date,
+): string[] {
+  const lines: string[] = [];
+  const next = nextMonthStart(now);
+  for (const m of months ?? []) {
+    const name = m.campaign || "Your campaign";
+    const quiet: string[] = [];
+    const used: string[] = [];
+    if (m.allowed > 0 && m.used >= m.allowed)
+      used.push(`${name} has used all ${m.allowed} recaps for this month. More come on ${next}.`);
+    else if (m.used > 0) quiet.push(`${m.used} of ${m.allowed} recaps used this month`);
+    if (narration) {
+      if (m.audioAllowed > 0 && m.audioUsed >= m.audioAllowed)
+        used.push(
+          `${name} has used all ${m.audioAllowed} narrated recaps for this month. More come on ${next}.`,
+        );
+      else if (m.audioUsed > 0) quiet.push(`${m.audioUsed} of ${m.audioAllowed} narrated`);
+    }
+    if (quiet.length > 0) lines.push(`${name}: ${quiet.join(", ")}`);
+    lines.push(...used);
+  }
+  return lines;
+}
 
 export const text = {
   heading: "Your recaps",

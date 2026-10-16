@@ -21,7 +21,7 @@ from dmbot.web.app import create_app
 from dmbot.web.discord import DiscordGuild, DiscordUser
 from dmbot.web.me import build_me
 from dmbot.web.payments import FakeProvider
-from tests.pg import REQUIRE_DB, SUPERUSER_URL, TEST_URL, DatabaseTest
+from tests.pg import REQUIRE_DB, SUPERUSER_URL, TEST_URL, DatabaseTest, create_role_sql
 from tests.test_web_api import ALICE, API, GORRAK, QUILLON, SITE, THURSDAY, FakeDiscord, settings
 from tests.test_web_feedback import FakeDiscussions
 
@@ -37,8 +37,7 @@ async def ensure_web_role() -> None:
         cur = await conn.execute("SELECT 1 FROM pg_roles WHERE rolname = %s", (schema.WEB_ROLE,))
         if await cur.fetchone() is None:
             # Another test worker may make it between the check and here (pytest -n 4).
-            with contextlib.suppress(errors.DuplicateObject):
-                await conn.execute(f"CREATE ROLE {schema.WEB_ROLE} LOGIN PASSWORD '{WEB_PASSWORD}'")
+            await conn.execute(create_role_sql(schema.WEB_ROLE, WEB_PASSWORD))
     finally:
         await conn.close()
 

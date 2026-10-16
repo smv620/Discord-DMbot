@@ -1144,7 +1144,8 @@ function IdSection({ me }: { me: Me }) {
   );
 }
 
-/** Paying accounts write to the team in private; everyone else is pointed to the public Q&A.
+/** Every account with a plan (Try It too, #1435) writes to the team in private; someone with no
+ * account yet is pointed to the public Q&A.
  * An API older than #1340 has no canSupport, so it shows the Q&A (#1340). */
 function SupportOrQuestions({ me }: { me: Me }) {
   const { api, siteKey } = useShared();
@@ -1153,7 +1154,11 @@ function SupportOrQuestions({ me }: { me: Me }) {
   return (
     <>
       {me.canSupport === true && api.sendSupport ? (
-        <Support api={api} siteKey={siteKey} onSent={() => setSentCount((n) => n + 1)} />
+        <Support
+          api={api}
+          siteKey={siteKey}
+          tryIt={me.plan?.id === "try-it"}
+          onSent={() => setSentCount((n) => n + 1)} />
       ) : (
         <PublicQuestions />
       )}

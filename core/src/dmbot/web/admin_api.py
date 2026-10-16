@@ -406,7 +406,7 @@ def router(
 
     @api.get("/support")
     async def list_support(session: Admin, status: str = "all") -> dict[str, Any]:
-        """Private tickets from paying people, newest first; `?status=new|answered|closed` keeps
+        """Private tickets from signed-in people, newest first; `?status=new|answered|closed` keeps
         one status and `all` (the default) every one (#1375). `counts` always covers all of them,
         for the filter buttons. The words go to the signed-in admin only, and are never logged."""
         wanted = next((s for s in support.STATUSES if s == status), None)

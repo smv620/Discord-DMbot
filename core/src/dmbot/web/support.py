@@ -1,4 +1,4 @@
-"""Private support tickets from paying people on the website (#1340; docs/PLAN.md, "QAbot and
+"""Private support tickets from signed-in people on the website (#1340; docs/PLAN.md, "QAbot and
 support tickets").
 
 Privacy: a ticket holds personal details, so it never becomes a public GitHub issue and its
@@ -10,8 +10,10 @@ is waiting, and from which account and plan, so the words stay in the database. 
 than 12 months are deleted by the website's hourly sweep, and deleting an account deletes the
 person's own.
 
-Abuse: paying accounts only, one ticket per account per 10 minutes, 4,000 characters, and a
-Cloudflare Turnstile check when its key is set (the route does the last two).
+Abuse: every signed-in account with a plan row may write (Try It too, #1435), one ticket per
+account per 10 minutes, 4,000 characters, and a Cloudflare Turnstile check when its key is set
+(the route does the last two). An account without a working paid plan (Try It, lapsed) also
+gets the free-account guard in `limits.py`: three new tickets a day and one waiting at a time.
 """
 
 from __future__ import annotations
@@ -40,11 +42,19 @@ Status = Literal["new", "answered", "closed", "escalated"]
 STATUSES: tuple[Status, ...] = ("new", "answered", "closed", "escalated")
 
 
-def is_paying(plan: Entitlement | None, now: int) -> bool:
-    """A paid plan that still works. Not Try It (its own plan row), a grant or the free list.
-    Unlike moving an account (`can_move`), the payment grace counts: someone whose payment
-    just failed is exactly who may need to write to us."""
-    return plan is not None and plan.plan in paid_plan_ids() and plan.usable(now)
+def may_write(plan: Entitlement | None) -> bool:
+    """Any account with a plan row: Try It, paid (even lapsed), a grant or the free list. A
+    person whose paid plan has lapsed is exactly who most needs to write to us (#1435). Only
+    an account with no plan row yet may not."""
+    return plan is not None
+
+
+def is_free(plan: Entitlement, now: int) -> bool:
+    """No working paid plan: Try It, a lapsed plan, a grant or the free list. These accounts
+    cost nothing to make, so they get the free-account guard (`limits.free_ticket_refusal`).
+    The payment grace counts as working: someone whose payment just failed is not a fresh,
+    free account."""
+    return not (plan.plan in paid_plan_ids() and plan.usable(now))
 
 
 @dataclass(frozen=True)
@@ -73,6 +83,21 @@ def read_ticket(raw: object) -> Ticket | str:
     if len(message) > MAX_MESSAGE:
         return "too_long"
     return Ticket(subject=subject, message=message)
+
+
+async def recent(db: Database, user_id: int, *, now: int) -> tuple[int, int]:
+    """(tickets still waiting, tickets sent in the last 24 hours) for this person, for the
+    free-account guard. Counts only their own rows: the table's `read_own` policy holds the
+    session to them, and the WHERE says it again."""
+    async with db.user(user_id) as conn:
+        cur = await conn.execute(
+            "SELECT count(*) FILTER (WHERE status = 'new') AS waiting,"
+            " count(*) FILTER (WHERE created_at > %s) AS today"
+            " FROM support_tickets WHERE user_id = %s",
+            (now - 86400, user_id),
+        )
+        row = await cur.fetchone()
+    return (int(row["waiting"]), int(row["today"])) if row else (0, 0)
 
 
 async def add(db: Database, user_id: int, plan: str, ticket: Ticket, *, now: int) -> int:

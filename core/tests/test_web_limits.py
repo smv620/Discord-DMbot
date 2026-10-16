@@ -9,11 +9,24 @@ from typing import Any
 import httpx
 
 from dmbot.web.app import create_app
-from dmbot.web.limits import LIMITS, RateLimit
+from dmbot.web.limits import FREE_TICKETS_PER_DAY, LIMITS, RateLimit, free_ticket_refusal
 from tests.pg import DatabaseTest
 from tests.test_web_api import API, SITE, FakeDiscord, settings
 
 HEADERS = {"X-DMbot-Request": "1", "Origin": SITE}
+
+
+class FreeTickets(unittest.TestCase):
+    """The free-account guard for the Support form (#1435): a pure rule, no database."""
+
+    def test_one_waiting_at_a_time_and_three_a_day(self) -> None:
+        self.assertIsNone(free_ticket_refusal(0, 0))
+        self.assertIsNone(free_ticket_refusal(0, FREE_TICKETS_PER_DAY - 1))
+        self.assertEqual(free_ticket_refusal(0, FREE_TICKETS_PER_DAY), "daily")
+        self.assertEqual(free_ticket_refusal(1, 1), "one_waiting")
+        # One waiting is said first: the person can fix that by waiting for the answer.
+        self.assertEqual(free_ticket_refusal(1, 9), "one_waiting")
+        self.assertEqual(FREE_TICKETS_PER_DAY, 3)
 
 
 class Sliding(unittest.TestCase):

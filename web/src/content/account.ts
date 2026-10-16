@@ -1,6 +1,7 @@
 /**
  * Every word on the account page (#434). Plain words; every message says what to do next.
  */
+import { SUPPORT_AI_LIVE, supportNote } from "./support-words";
 import { byId, data, formatPeriod, formatPrice, type PlanId } from "./pricing";
 
 const extraHours = data.extraHours.hours;
@@ -299,11 +300,12 @@ export const text = {
     "You can move once every 30 days, and this account moved less than 30 days ago. Try again after 30 days, or tell us on the Say hello page.",
   moveEmailFailed: "The code couldn't be emailed just now. Try again in a few minutes.",
 
-  // Write to the team, for people on a paid plan (#1340)
+  // Write to the team, for everyone with an account, Try It too (#1340, #1435)
   supportHeading: "Write to the DMbot team",
   supportIntro: "Something wrong with your plan, an invoice or DMbot itself? Write to us here.",
-  supportPrivacy:
-    "Your message goes privately to the DMbot team, and is not posted anywhere public. We keep it for 12 months, then delete it. Deleting your account deletes it too.",
+  // Only for Try It (#1435).
+  supportIntroTryIt: "Questions about buying a plan are welcome too.",
+  supportPrivacy: supportNote(SUPPORT_AI_LIVE),
   supportPublicLead: "A question anyone could answer? Ask it in the public",
   supportSubjectLabel: "Subject",
   supportMessageLabel: "What can we help with?",
@@ -330,7 +332,7 @@ export const text = {
     // An account with no email gets no email: say only what the team did.
     answeredNoEmail: "Answered",
     closed: "Closed",
-    // For someone who can write again (a paid plan); others just see "Closed".
+    // For someone who can write again; others just see "Closed".
     closedWriteAgain: "Closed — you can write again",
   },
   supportErrors: {
@@ -341,8 +343,13 @@ export const text = {
       "Too many messages right now. You can send one every 10 minutes. Try again in a few minutes. Your words are still here.",
     "not-human":
       "Tick the box that says you're a person, then press Send again. Your words are still here.",
+    // No account yet (#1435): everyone with a plan, Try It too, may write.
     "not-paying":
-      "Writing to the team is for paid plans, and your plan doesn't look active right now. Use the public Q&A for DMbot instead. If you think this is wrong, tell us on the Say hello page.",
+      "We can't find a DMbot account for you, so we can't send this. Sign in again, or ask in the public Q&A for DMbot. Your words are still here.",
+    "one-waiting":
+      "You already have a question waiting for the team. You can send another once it's answered. Your words are still here.",
+    "daily-limit":
+      "Free accounts can send 3 questions a day, and you've sent 3. Try again in a day, or ask in the public Q&A for DMbot. Your words are still here.",
     "signed-out": "You were signed out. Sign in again, then send it. Your words are still here.",
     network: "No connection. Check your internet, then press Send again. Your words are still here.",
     server:
@@ -351,7 +358,7 @@ export const text = {
   supportCheckAgain: "Try the check again",
   supportCheckFailed:
     "The “are you a person?” check didn't load. Reload the page or try another browser. Reloading clears what you typed, so copy it first.",
-  // For everyone who can't write privately (no paid plan, or an API older than #1340)
+  // For everyone who can't write privately (no account yet, or an API older than #1340)
   qaHeading: "Questions about DMbot?",
   qaText:
     "Ask in the public Q&A, where anyone can read the answers. Don't post private details there. Or tell us what you think on the Say hello page.",

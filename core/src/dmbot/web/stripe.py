@@ -64,6 +64,20 @@ TOLERANCE_SECONDS = 300
 # must be created on this same version: an endpoint has its own, and it decides the shape of
 # the events. Checkout Sessions with Managed Payments are supported from this release.
 API_VERSION = "2026-04-22.dahlia"
+# The owner's Checkout Studio parameters (#1446), sent with every Checkout Session. `ui_mode`
+# is `hosted_page` on this API version (older versions called it `hosted`); the owner's
+# values are fixed, so a change is a decision, not a tweak. `payment_method_collection` is added
+# only to subscriptions (see `_checkout`). Listed in STRIPE_INTEGRATION_TODO.md.
+CHECKOUT_STUDIO: dict[str, str] = {
+    "ui_mode": "hosted_page",
+    "billing_address_collection": "auto",
+    "phone_number_collection[enabled]": "false",
+    "automatic_tax[enabled]": "true",
+    "allow_promotion_codes": "true",
+    "submit_type": "auto",
+    "integration_identifier": "hosted_web_0001",
+    "origin_context": "web",
+}
 
 
 # (method, path, form fields or None) -> (HTTP status, parsed JSON or None). Faked in tests.
@@ -231,6 +245,11 @@ class StripeProvider:
         dmbot_id: str | None = None,
         customer_id: str | None = None,
     ) -> str:
+        form.update(CHECKOUT_STUDIO)
+        # A one-time payment (extra hours) has no card to keep for later: Stripe refuses this
+        # on `payment` mode, so only the two subscriptions send it.
+        if form["mode"] == "subscription":
+            form["payment_method_collection"] = "always"
         if self._config.managed_payments:
             form["managed_payments[enabled]"] = "true"
         if customer_id:
@@ -239,6 +258,10 @@ class StripeProvider:
             form["customer"] = await self._customer(user_id, dmbot_id, email)
         elif email:
             form["customer_email"] = email  # server-side only: never in the address returned
+        if "customer" in form:
+            # Automatic tax needs the customer's address; this lets Checkout save the one the
+            # person types onto the existing customer (Stripe refuses it without a customer).
+            form["customer_update[address]"] = "auto"
         # A double-click, or a retry after a timeout, must not make a second live checkout
         # (two completed ones would be two subscriptions). Within one five-minute window the
         # same request carries the same idempotency key, so Stripe answers with the session it
