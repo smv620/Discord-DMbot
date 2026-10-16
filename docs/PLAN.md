@@ -3380,6 +3380,10 @@ months.
   `SUPPORT_TEAM_EMAIL` (support@getdmbot.com) with the reason; the admin page shows the thread,
   "Needs the team", the reason (#1459) and a reply box; the team's reply is emailed from info@
   and the ticket becomes answered.
+- **Closing:** the website's hourly sweep closes an *answered* ticket the person has not written to
+  for 14 days (`SUPPORT_AUTO_CLOSE_DAYS`, #1505); new and escalated ones are never closed that way.
+  An emailed reply to a closed ticket reopens it (back to waiting, or to the team if a person had
+  a hand in it).
 - **What the person sees** on their account page: subject, date, status ("Answered by DMbot's AI
   helper", "Answered by the team", "With the team") and the first line of the last answer, never
   anyone else's and never their own words back (#1458). The privacy page says all of this; the
