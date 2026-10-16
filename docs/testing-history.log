@@ -2516,3 +2516,10 @@ Overall ...................................... PASS (Deepgram baseline: 33/33, 1
   Supervisor's check: GET /me/campaigns/<ref>/recap-choices signed out answers 401 (inside web-api).
   10-minute check, 08:54 UTC (11 minutes after the start): 0 ERROR, CRITICAL or traceback lines in core and web-api since 08:43; both up, web-api healthy; schema_migrations 91 rows, last 0091_web_recap_choices.
   Nothing turned on for users (recaps off, no ElevenLabs key, the extractor off).
+2026-10-16  dev1  DEPLOY: migrations 0092 support_handed_over and 0093 transcript_suggestions, and the code behind #1481, #1482, #1484, #1490, #1492, #1493, #1496, #1497 and #1498 are live as bbaab1bd (Supervisor's "go" after #1498 merged, ~10:15 UTC). Core CI on the head: success.
+  Dry run (10:0x UTC, on development b2de390e, which held both migrations) on a copy of the live database (pg_dumpall into a throwaway postgres:16 on its own network, at 0091): "Database updated: 0092_support_handed_over, 0093_transcript_suggestions"
+  in 0.16 s; a second run applied nothing; 93 migrations; rows unchanged (147 transcript lines, 3 campaigns, 0 tickets); transcript_suggestions has row-level security on and forced; support_tickets has handed_over_at and handed_over_reason.
+  Copy deleted. No game running. Backup: ~/db-backups/dmbot-before-bbaab1bd-1016-1015.sql (chmod 600). `docker compose build core web-api` with GIT_COMMIT set; `docker compose stop core web-api` at 10:20:47 UTC,
+  `up -d --no-deps core`, then web-api. No compose or .env change. The migration files did not change between the dry run and the deploy head (checked).
+  Result: core logged "Database updated: 0092_support_handed_over, 0093_transcript_suggestions", "ears connected" and "Connected to 1 server(s)"; web-api healthy; schema_migrations 93 rows, last 0093_transcript_suggestions.
+  Not checked: a recorded player types /dmbot fix after a session and sees the picker (needs a game session).
