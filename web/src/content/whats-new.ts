@@ -66,6 +66,13 @@ export interface Held extends Entry {
 export const held: Held[] = [
   {
     date: "2026-10-16",
+    title: "Quick answers use your facts",
+    what: "When you ask DMbot a quick question about someone in your campaign, it now uses the facts you confirmed, like who they work for. If it has nothing confirmed, it says so.",
+    reason:
+      "Not live until this change is deployed; dev1 moves it up once it is (#1370).",
+  },
+  {
+    date: "2026-10-16",
     title: "Your questions to the team",
     what: "After you write to the DMbot team, your account page lists your questions, with the date you sent each one and whether it is waiting, answered or closed.",
     reason:
