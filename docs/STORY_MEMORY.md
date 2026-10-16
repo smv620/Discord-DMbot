@@ -587,14 +587,14 @@ Each step is useful on its own and ships behind the existing phases.
    names confirmed entries adds the facts around them to the sidebar's prompt, from recall for the
    audience **players** (not the DM screen): a sidebar reply can reach the raw transcript, which
    everyone who may read it may read, so recall adds no secret fact, no secret name and no entry note.
-   (The older "campaign names" section is separate and unchanged: it still carries an entry's
-   description, minus the description of anyone with a secret name.) Each fact has a short label (F1, F2…) in the prompt; the reply names the labels it used
+   (The older "campaign names" section sends only a name, its kind and its other names that are
+   not secret, never an entry's description or links: a description is the DM's note, #1378.) Each fact has a short label (F1, F2…) in the prompt; the reply names the labels it used
    on a CITED line, `check_citations` checks them against what was given, a reply citing anything
    else is asked again once and then dropped for "I don't have that. Your call.", and no label or
    id is ever shown. No transcript lines are quoted. Table questions never get it. It adds up to
    `DMBOT_SIDEBAR_RECALL_BUDGET` (1000) characters beside today's "campaign names" section, which
-   stays (it carries the entries' descriptions). `DMBOT_SIDEBAR_RECALL=0` makes the prompt exactly
-   the old one.
+   stays (names, kinds and other names only). `DMBOT_SIDEBAR_RECALL=0` makes the prompt exactly
+   the names-only one.
 3. **Phase 5c: PlotBot:** threads, promises, clues, `led_to`, stalled-thread nudges,
    summaries, the pre-session note, the AI recap.
 4. **Phase 5d: Shared story:** the story plan, `same_as` links, divergence ("Watch

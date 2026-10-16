@@ -6,10 +6,11 @@ index and passes them in, so a test can prove another campaign's data never reac
 - **Rules entries:** the question's words are looked up in the index first; only the matching
   entries are sent (never the whole index), each cut short.
 - **House rules:** those that name a matched entry or share a word with the question.
-- **Names:** the confirmed names the question mentions, with a line of what DMbot knows. Secret
-  names are left out, and someone with a secret name is given by name only. Why: a reply can
-  reach the raw transcript, which everyone who may read transcripts may read (#933), so a secret
-  name or a description that holds one in a reply would leak it to the players.
+- **Names:** the confirmed names the question mentions, with their kind and other names. Secret
+  names are left out, and someone with a secret name is given by name only. Never an entry's
+  description or links: a reply can reach the raw transcript, which everyone who may read
+  transcripts may read (#933), and a description is the DM's own note (#1378). The story facts come
+  from recall, for the players' audience (#1370).
 - **The scene:** the caller's last few minutes of cleaned transcript, trimmed again here.
 - **DMbot's own help:** a short reviewed digest (`about_dmbot.md`), only for questions about
   DMbot or Discord. Never the whole PLAN and never fetched at run time.
@@ -41,7 +42,6 @@ ENTRIES_MAX = 3
 HOUSE_RULES_MAX = 5
 HOUSE_RULE_MAX = 300
 NAMES_MAX = 5
-NAME_NOTE_MAX = 200
 SCENE_MAX = 1500  # the last characters of the scene
 QUESTION_MAX = 500
 WINDOW = 4  # longest name looked for, in words
@@ -245,32 +245,31 @@ def mentioned_ids(question: str, lookup: CampaignLookup | None) -> list[str]:
 
 
 def mentioned_names(question: str, lookup: CampaignLookup | None) -> list[str]:
-    """Lines about the confirmed names the question mentions: `Belleros (npc): what DMbot
-    knows`. Secret names and unconfirmed ones are left out."""
+    """Lines about the confirmed names the question mentions: `Belleros (NPC). Also called: Bel.`
+    Only the name, its kind and its other names that are not secret. **Never the entry's
+    description** (the DM's own note, which may hold a secret or a plot twist) **nor its links**:
+    a sidebar reply goes into the raw transcript, which everyone who may read transcripts may
+    read (#933, #1378). What the story says about the entry comes from recall, for the players'
+    audience (#1370). Secret names and unconfirmed ones are left out, and someone with a secret
+    name is given by name only."""
     if lookup is None:
         return []
     secret_entities = {n.entity_id for n in lookup.names if n.secret}
     lines: list[str] = []
     for entity_id, entity in _mentioned(question, lookup):
-        # Someone with a secret name (an identity the DM is hiding): only the name is
-        # given, since the description may hold the secret and replies can reach the
-        # raw transcript (#933).
-        hiding = entity_id in secret_entities
-        note = "" if hiding else " ".join(entity.description.split())[:NAME_NOTE_MAX]
-        links = (
-            []
-            if hiding
-            else sorted(
-                lookup.entities[i].name
-                for i in lookup.confirmed_neighbours.get(entity_id, ())
-                if i in lookup.entities
-            )[:3]
-        )
         line = f"{entity.name} ({kind_phrase(entity)})"
-        if note:
-            line += f": {note}"
-        if links:
-            line += f" Linked to: {', '.join(links)}."
+        if entity_id not in secret_entities:  # an identity the DM is hiding: the name, no more
+            others = [
+                n.text
+                for n in lookup.names
+                if n.entity_id == entity_id
+                and not n.secret
+                and n.confirmed
+                and not n.person
+                and n.text != entity.name
+            ]
+            if others:
+                line += f". Also called: {', '.join(dict.fromkeys(others[:3]))}."
         lines.append(line)
     return lines[:NAMES_MAX]
 

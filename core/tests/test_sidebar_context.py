@@ -115,14 +115,15 @@ class MentionedNames(unittest.TestCase):
         self.assertEqual(context.mentioned_names("who is the hooded stranger", lookup), [])
         self.assertEqual(context.mentioned_names("tell me about Kael", lookup), [])
 
-    def test_confirmed_links_are_named(self) -> None:
+    def test_links_are_not_named_here_recall_gives_the_safe_ones(self) -> None:
         link = Relation(
             "r1", BELLEROS, "serves", CERRIC, "", 1.0, "confirmed", "dm", (), None, None,
             None, None, False, 0,
         )  # fmt: skip
         lookup = CampaignLookup.build(data(relations=(link,)))
         (line,) = context.mentioned_names("what about Cerric", lookup)
-        self.assertIn("Linked to: Belleros", line)
+        self.assertNotIn("Linked to", line)
+        self.assertNotIn("Belleros", line)
 
     def test_no_lookup_no_names(self) -> None:
         self.assertEqual(context.mentioned_names("what about Belleros", None), [])
@@ -158,13 +159,32 @@ class SecretIdentities(unittest.TestCase):
         self.assertEqual(line, "Belleros (NPC)")
         self.assertNotIn("lich", line)
 
-    def test_someone_without_a_secret_name_keeps_the_description(self) -> None:
-        described = replace(data().entities[1], description="A cheerful baker.")
+    def test_nobody_gets_their_description_sent_it_is_the_dms_note(self) -> None:
+        secret_sentence = "Secretly the duke's spy and the lich's brother."
+        described = replace(data().entities[1], description=secret_sentence)
         lookup = CampaignLookup.build(
             data(entities=(data().entities[0], described, data().entities[2]))
         )
         (line,) = context.mentioned_names("what about Cerric", lookup)
-        self.assertIn("A cheerful baker.", line)
+        self.assertEqual(line, "Cerric (NPC)")
+        built = context.build(
+            "what about Cerric", target="2024", fallback="2014", index=INDEX, house_rules=[],
+            lookup=lookup, scene="",
+        )  # fmt: skip
+        self.assertNotIn("duke", built.prompt)
+        self.assertNotIn("lich", built.prompt)
+
+    def test_other_names_that_are_not_secret_are_given(self) -> None:
+        from tests.test_memory_lookup import alias
+
+        lookup = CampaignLookup.build(
+            data(aliases=(*data().aliases, alias(CERRIC, "Cer the Baker")))
+        )  # fmt: skip
+        (line,) = context.mentioned_names("what about Cerric", lookup)
+        self.assertEqual(line, "Cerric (NPC). Also called: Cer the Baker.")
+        # Someone with a secret name is given by name only, other names included.
+        (hidden,) = context.mentioned_names("what about Belleros", lookup)
+        self.assertEqual(hidden, "Belleros (NPC)")
 
 
 class AboutDMbot(unittest.TestCase):
