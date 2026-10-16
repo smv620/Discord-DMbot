@@ -727,8 +727,12 @@ never does.
   it), cited "<pack> homebrew, vN" and tagged `[Homebrew]`; an entry the publisher keeps hidden stays hidden
   at the follower's table. Part B built (⚙️ Settings → 📚 Shared rules → 📦 Homebrew packs): Share (paid plans; names the
   entries a book keeps at home), Follow (pick from this server or a code), order with Earlier/Later, Stop
-  following with Undo; a running session reads the new names at once. Still to build: taking updates at a
-  session start with Follow / See changes / Pick changes / Undo.
+  following with Undo; a running session reads the new names at once. Part C built: at a session's start DMbot takes a
+  followed pack's newer version (Follow, credited to DMbot) and posts one DM-screen note with See changes /
+  Pick changes / Undo, exactly as for sets; Undo keeps DMbot from retaking that version; leaving anything out
+  of Pick changes copies the pack into the campaign's own homebrew (its own entries win) and ends the follow,
+  one Undo for all; a pack whose publisher stopped sharing is marked "no longer updated", said once. No
+  Compare button: the note says when a changed entry shares a name with the campaign's own (which wins).
 - **Relationship definitions travel with a set (#1456; Supervisor decision, 2026-10-16).** At Share the DM
   sees a tick list of the campaign's own relationships (each with its label and what it means; all ticked to
   start) and only the ticked ones go into the set's content: words only (the name, how it reads from the
