@@ -315,11 +315,15 @@ class SaveAndResume(SessionTests):
         await super().asyncSetUp()
         self.posts: list[tuple[int, str]] = []
 
-        async def fake_post(channel_id: int, text: str, view: object = None) -> bool:
+        async def fake_post(
+            channel_id: int, text: str, view: object = None, *, remember: object = None
+        ) -> bool:
             self.posts.append((channel_id, text))
             return True
 
-        async def fake_post_message(channel_id: int, text: str, view: object = None) -> Any:
+        async def fake_post_message(
+            channel_id: int, text: str, view: object = None, *, remember: object = None
+        ) -> Any:
             self.posts.append((channel_id, text))
             return MagicMock(edit=AsyncMock())
 
