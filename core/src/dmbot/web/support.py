@@ -179,9 +179,10 @@ class Week:
     """How support went in the last seven days (#1480): numbers only, never a word of a ticket.
     `helper` and `team` count the tickets that are answered or closed whose latest answer was
     DMbot's helper's or the team's; `waiting` the ones still new or escalated; `reasons` how many
-    tickets came to a person for each code. A reason is cleared when a person answers (the ticket
-    is no longer waiting for them), so it counts the hand-overs still open plus those closed
-    without an answer, not every one that ever happened."""
+    tickets came to a person for each code, from `handed_over_reason`, which stays after a person
+    answers (#1487), so every hand-over of the week is counted, whatever happened since. (Tickets
+    handed over before that column existed have none.) The admin list's `reason` is a different
+    thing: why a ticket is waiting now."""
 
     questions: int
     helper: int
@@ -212,8 +213,9 @@ async def week(db: Database, now: int) -> Week:
         row = await cur.fetchone()
         assert row is not None
         cur = await conn.execute(
-            "SELECT escalated_reason AS reason, count(*) AS n FROM support_tickets"
-            " WHERE created_at >= %s AND escalated_reason IS NOT NULL GROUP BY escalated_reason",
+            "SELECT handed_over_reason AS reason, count(*) AS n FROM support_tickets"
+            " WHERE created_at >= %s AND handed_over_reason IS NOT NULL"
+            " GROUP BY handed_over_reason",
             (since,),
         )
         found = {r["reason"]: int(r["n"]) for r in await cur.fetchall()}
