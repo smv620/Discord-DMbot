@@ -30,7 +30,7 @@ from psycopg.types.json import Jsonb
 from dmbot.campaigns.models import CampaignError
 from dmbot.db import Conn, Database
 from dmbot.memory.definition_content import valid_definitions
-from dmbot.rules import set_diff
+from dmbot.rules import pack_content, set_diff
 from dmbot.rules.house import (
     HOUSE_RULES_MAX,
     RULE_MAX,
@@ -80,6 +80,7 @@ NOT_PAID = "Changing a shared set needs the campaign to be on a paid plan."
 NOTHING_NEW = "There is nothing new to take."
 NOTHING_TO_UNDO = "There is nothing to undo."
 CHANGED_AGAIN = "The set changed again while you were looking. Look at the new changes first."
+WRONG_KIND = "That is a homebrew pack, not house rules. Use the 📦 Homebrew packs button."
 NO_ROOM = "Your own house rules and this set together are more than {n} rules. Remove some first."
 
 
@@ -211,10 +212,16 @@ def content_of(
     }
 
 
-def valid_content(content: Any) -> dict[str, Any]:
+def valid_content(content: Any, kind: str = HOUSE_RULES) -> dict[str, Any]:
     """A set's content as a copy that is only what a set may hold: a list of rules (number,
     text, "instead of") and a link, each within the limits. Anything else is dropped; a shape
-    that isn't a set's raises."""
+    that isn't a set's raises. A homebrew pack (`kind` "homebrew", #1527) holds entries instead,
+    checked by `pack_content`; a pack can't pass as house rules or the other way round."""
+    if kind == "homebrew":
+        try:
+            return pack_content.valid_content(content)
+        except pack_content.BadPack:
+            raise RuleSetError(NO_SUCH_SET) from None
     if not isinstance(content, dict) or not isinstance(content.get("rules"), list):
         raise RuleSetError(NO_SUCH_SET)
     rules = []
@@ -257,7 +264,7 @@ def _json(content: Any) -> dict[str, Any]:
 def _offer(row: dict[str, Any], code: str | None = None) -> Offer:
     return Offer(
         str(row["set_id"]), str(row["kind"]), str(row["set_name"]), str(row["publisher"]),
-        int(row["version"]), valid_content(_json(row["content"])), code,
+        int(row["version"]), valid_content(_json(row["content"]), str(row["kind"])), code,
     )  # fmt: skip
 
 
@@ -430,9 +437,11 @@ class RuleSetStore:
                 (guild_id, campaign_id, HOUSE_RULES),
             )
             changed = cur.rowcount > 0
-            await conn.execute(
-                "UPDATE rule_set_codes SET active = false WHERE guild_id = %s AND campaign_id = %s",
-                (guild_id, campaign_id),
+            await conn.execute(  # this kind's codes only: a pack's codes are its own (#1527)
+                "UPDATE rule_set_codes SET active = false WHERE guild_id = %s AND campaign_id = %s"
+                " AND set_id IN (SELECT id FROM rule_sets WHERE guild_id = %s AND campaign_id = %s"
+                " AND kind = %s)",
+                (guild_id, campaign_id, guild_id, campaign_id, HOUSE_RULES),
             )
         return bool(changed)
 
@@ -456,13 +465,17 @@ class RuleSetStore:
             )
         return code
 
-    async def codes(self, guild_id: int, campaign_id: str) -> list[tuple[str, bool]]:
-        """The campaign's share codes and whether each works, newest first."""
+    async def codes(
+        self, guild_id: int, campaign_id: str, kind: str = HOUSE_RULES
+    ) -> list[tuple[str, bool]]:
+        """The campaign's share codes for one kind of set and whether each works, newest first."""
         async with self._db.guild(guild_id) as conn:
             cur = await conn.execute(
-                "SELECT code, active FROM rule_set_codes WHERE guild_id = %s AND campaign_id = %s"
-                " ORDER BY created_at DESC, code",
-                (guild_id, campaign_id),
+                "SELECT c.code, c.active FROM rule_set_codes c JOIN rule_sets s"
+                " ON s.guild_id = c.guild_id AND s.campaign_id = c.campaign_id AND s.id = c.set_id"
+                " WHERE c.guild_id = %s AND c.campaign_id = %s AND s.kind = %s"
+                " ORDER BY c.created_at DESC, c.code",
+                (guild_id, campaign_id, kind),
             )
             return [(str(r["code"]), bool(r["active"])) for r in await cur.fetchall()]
 
@@ -548,6 +561,8 @@ class RuleSetStore:
         async with self._db.guild(guild_id) as conn:
             await require_dm(conn, guild_id, campaign_id, user_id, lock=True)
             fresh = await self._reread(conn, offer)
+            if fresh.kind != HOUSE_RULES:  # a pack is followed with `follow_pack` (#1527)
+                raise RuleSetError(WRONG_KIND)
             cur = await conn.execute(
                 "SELECT 1 AS ok FROM rule_sets"
                 " WHERE guild_id = %s AND campaign_id = %s AND id = %s",
@@ -602,6 +617,8 @@ class RuleSetStore:
     async def restore(self, guild_id: int, campaign_id: str, user_id: int, follow: Follow) -> None:
         """Undo an unfollow: the copy comes back as it was (unless the campaign follows
         another set by now)."""
+        if follow.kind != HOUSE_RULES:
+            raise RuleSetError(WRONG_KIND)
         offer = Offer(
             follow.set_id,
             follow.kind,
@@ -1376,10 +1393,12 @@ class FollowedSetsSection:
             seen.add(set_id)
             houses += kind == HOUSE_RULES
             try:
-                content = valid_content(row["content"])
+                content = valid_content(row["content"], kind)
             except RuleSetError:
                 raise CampaignError(FOLLOWS_DAMAGED) from None
             out.append(row | {"content": content})
+        if len(out) - houses > pack_content.PACKS_MAX:  # and at most a few homebrew packs
+            raise CampaignError(FOLLOWS_DAMAGED)
         if houses > 1:  # a campaign follows one house-rules set
             raise CampaignError(FOLLOWS_DAMAGED)
         return out

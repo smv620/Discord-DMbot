@@ -85,7 +85,7 @@ async def _homebrew(
 ) -> Homebrew | None:
     """This campaign's own homebrew entry with exactly this name (any case), none if there isn't
     one or it can't be read, so the free rules' card still shows."""
-    store = _bot(interaction).homebrew
+    store = _bot(interaction).homebrew_reader
     if store is None:
         return None
     try:

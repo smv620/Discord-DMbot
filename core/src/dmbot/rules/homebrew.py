@@ -73,6 +73,11 @@ class Homebrew:
     # Loaded from a file after the DM said some of it is from a published book and confirmed the
     # right to use it (#1524): it stays in this campaign and can never go into a shared ruleset.
     from_book: bool = False
+    # Where a followed pack's entry comes from, as an answer cites it: "Frost Pack homebrew, v2"
+    # (#1527). None for the campaign's own entry. A pack's entry is read-only here: it has no id
+    # of its own in this campaign (`id` is negative) and is never edited, only replaced by the
+    # campaign's own entry of the same name.
+    source: str | None = None
 
     def shown(self) -> str:
         """The one line alerts and lists show: the summary, else the start of the text."""
