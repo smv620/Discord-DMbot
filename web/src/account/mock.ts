@@ -417,6 +417,7 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
           name: "The Brynwater Crossing",
           serverName: "Thursday Table",
           sessions: 2,
+          keepDays: 90,
         },
       ];
     },
@@ -427,6 +428,7 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
       if (campaignRef !== "200000000000000001.cmp1") throw new ApiError("not-found");
       return {
         name: "The Brynwater Crossing",
+        keepDays: 90,
         sessions: [
           {
             number: 3,
