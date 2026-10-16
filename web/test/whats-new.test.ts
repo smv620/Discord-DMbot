@@ -39,13 +39,17 @@ describe("What's new", () => {
   });
 
   it("holds back what people can't use yet, with the reason, and shows none of it (#1322)", () => {
-    expect(held.map((h) => h.title)).toEqual(["Move to a new Discord account"]);
+    expect(held.map((h) => h.title)).toEqual([
+      "Move to a new Discord account",
+      "New names from what was said",
+    ]);
     for (const h of held) {
       expect(h.reason.length, h.title).toBeGreaterThan(20);
       expect(entries.map((e) => e.title)).not.toContain(h.title);
     }
     const shown = page.querySelector("main")?.textContent ?? "";
     expect(shown).not.toContain("Move to a new Discord account");
+    expect(shown).not.toContain("New names from what was said");
     expect(shown).not.toContain("move code");
     expect(page.querySelectorAll(".entry")).toHaveLength(entries.length);
     expect(entries).toHaveLength(7);
