@@ -41,8 +41,12 @@ def content_of(entries: Sequence[Homebrew]) -> tuple[dict[str, Any], list[str]]:
     own = sorted(
         (e for e in entries if e.source is None and e.enabled), key=lambda e: (e.created_at, e.id)
     )
-    kept = [e for e in own if not e.from_book]
-    left_out = [e.name for e in own if e.from_book]
+    # An entry from a link is a published page's, kept by reference (#1633): it is never copied
+    # into a pack as words. Packs carry such entries by reference later (#1635).
+    # An upload credited to a website is that site's text too, so it stays home like a link's.
+    stays = [e for e in own if e.from_book or e.source_kind == "link" or e.credit_domain]
+    kept = [e for e in own if e not in stays]
+    left_out = [e.name for e in stays]
     return (
         {
             "entries": [

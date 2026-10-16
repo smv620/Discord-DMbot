@@ -80,8 +80,8 @@ def stays_home(left_out: list[str] | tuple[str, ...]) -> str:
     if not left_out:
         return ""
     return (
-        f"Not shared: {_names(list(left_out))}. They come from a book, and book text stays in "
-        "this campaign."
+        f"Not shared: {_names(list(left_out))}. They come from a book or a website, and that "
+        "text stays in this campaign."
     )
 
 

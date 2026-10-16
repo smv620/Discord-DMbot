@@ -28,6 +28,7 @@ from typing import Any
 
 from dmbot.campaigns.models import CampaignError
 from dmbot.db import Conn, Database
+from dmbot.rules.site_urls import normalise_domain, normalise_url
 
 KINDS = ("spell", "monster", "item", "feat", "condition", "other")
 RULE_KIND = "rule"  # no longer a kind (#1628): kept to recognise and refuse it, or move it
@@ -43,6 +44,7 @@ NOT_DM = (
     "`/dmbot rule`."
 )
 GONE = "That homebrew entry isn't here any more."
+FROM_A_LINK = "That entry comes from a link, so its words can't be changed here."
 CHANGED = "Another DM changed that entry while you were looking."
 SAME_NAME = (
     "This campaign already has homebrew with that name. Pick another name, or edit that one."
@@ -85,6 +87,17 @@ class Homebrew:
     source: str | None = None
     # Turned off by the DM (#1629): kept, but DMbot uses it nowhere at the table.
     enabled: bool = True
+    # Where the entry came from (#1633): "typed" (added_by is the DM who typed it), "upload" (a
+    # file: added_by is the uploader, credited as `credit_kind` says: "user" the uploader, "website"
+    # a site named by `credit_domain`, "name" the words in `credit_text`) or "link" (a published
+    # page: the words are read from it, `page_url` is its address and `credit_domain` its site).
+    source_kind: str = "typed"
+    added_by: int = 0
+    page_id: int | None = None
+    credit_kind: str | None = None
+    credit_text: str | None = None
+    credit_domain: str | None = None
+    page_url: str | None = None
 
     def shown(self) -> str:
         """The one line alerts and lists show: the summary, else the start of the text."""
@@ -159,10 +172,28 @@ def _plain(raw: str, *, keep_breaks: bool = False) -> str:
 BOOK_EDITIONS = ("2024", "2014", "other")  # which rules a shared book is for (#1563)
 
 
+# An imported entry's words and summary are read from its page (#1633), so every read joins it.
 _COLUMNS = (
-    "id, campaign_id, kind, name, text, summary, created_by, created_at,"
-    " updated_at, version, from_book, book_edition, enabled"
+    "h.id, h.campaign_id, h.kind, h.name, COALESCE(h.text, p.text) AS text,"
+    " COALESCE(h.summary, p.summary) AS summary, h.created_by, h.created_at, h.updated_at,"
+    " h.version, h.from_book, h.book_edition, h.enabled, h.source_kind, h.added_by, h.page_id,"
+    " h.credit_kind, h.credit_text, h.credit_domain, p.url AS page_url"
 )
+_FROM = "homebrew_entries h LEFT JOIN homebrew_pages p ON p.id = h.page_id"
+# What DMbot may use at the table (#1629, #1633), in one place: the DM has not turned it off, and
+# if it comes from a site (a link, or an upload credited to a website) the campaign has approved
+# that site.
+_USABLE = (
+    " AND h.enabled AND (h.credit_domain IS NULL OR EXISTS (SELECT 1 FROM site_approvals a"
+    " WHERE a.guild_id = h.guild_id AND a.campaign_id = h.campaign_id"
+    " AND a.domain = h.credit_domain))"
+)
+
+
+def _joined(changed: str) -> str:
+    """The columns of the rows a `WITH changed AS (INSERT/UPDATE/DELETE … RETURNING *)` touched,
+    with their pages (a statement's RETURNING can't join)."""
+    return f"SELECT {_COLUMNS} FROM {changed} h LEFT JOIN homebrew_pages p ON p.id = h.page_id"
 
 
 def _entry(row: dict[str, Any]) -> Homebrew:
@@ -180,6 +211,13 @@ def _entry(row: dict[str, Any]) -> Homebrew:
         bool(row["from_book"]),
         row["book_edition"],
         enabled=bool(row["enabled"]),
+        source_kind=row["source_kind"],
+        added_by=int(row["added_by"]),
+        page_id=None if row["page_id"] is None else int(row["page_id"]),
+        credit_kind=row["credit_kind"],
+        credit_text=row["credit_text"],
+        credit_domain=row["credit_domain"],
+        page_url=row["page_url"],
     )
 
 
@@ -216,9 +254,9 @@ class HomebrewStore:
         asks for this; the DM's own list, the file and the backup see every entry."""
         async with self._db.guild(guild_id) as conn:
             cur = await conn.execute(
-                f"SELECT {_COLUMNS} FROM homebrew_entries WHERE guild_id = %s AND campaign_id = %s"
-                + (" AND enabled" if usable_only else "")
-                + " ORDER BY name_key",
+                f"SELECT {_COLUMNS} FROM {_FROM} WHERE h.guild_id = %s AND h.campaign_id = %s"
+                + (_USABLE if usable_only else "")
+                + " ORDER BY h.name_key",
                 (guild_id, campaign_id),
             )
             return [_entry(r) for r in await cur.fetchall()]
@@ -230,8 +268,8 @@ class HomebrewStore:
         `usable_only`: None for an entry the DM turned off (#1629)."""
         async with self._db.guild(guild_id) as conn:
             cur = await conn.execute(
-                f"SELECT {_COLUMNS} FROM homebrew_entries WHERE guild_id = %s"
-                " AND campaign_id = %s AND name_key = %s" + (" AND enabled" if usable_only else ""),
+                f"SELECT {_COLUMNS} FROM {_FROM} WHERE h.guild_id = %s"
+                " AND h.campaign_id = %s AND h.name_key = %s" + (_USABLE if usable_only else ""),
                 (guild_id, campaign_id, name_key(name)),
             )
             row = await cur.fetchone()
@@ -240,8 +278,8 @@ class HomebrewStore:
     async def get(self, guild_id: int, campaign_id: str, entry_id: int) -> Homebrew | None:
         async with self._db.guild(guild_id) as conn:
             cur = await conn.execute(
-                f"SELECT {_COLUMNS} FROM homebrew_entries WHERE guild_id = %s"
-                " AND campaign_id = %s AND id = %s",
+                f"SELECT {_COLUMNS} FROM {_FROM} WHERE h.guild_id = %s"
+                " AND h.campaign_id = %s AND h.id = %s",
                 (guild_id, campaign_id, entry_id),
             )
             row = await cur.fetchone()
@@ -298,11 +336,17 @@ class HomebrewStore:
             if await cur.fetchone() is not None:
                 raise HomebrewError(SAME_NAME)
             cur = await conn.execute(
-                "UPDATE homebrew_entries SET kind = %s, name = %s, name_key = %s, text = %s,"
-                " summary = %s, updated_at = %s, version = version + 1"
+                "SELECT 1 AS ok FROM homebrew_entries WHERE guild_id = %s AND campaign_id = %s"
+                " AND id = %s AND source_kind = 'link'",
+                (guild_id, campaign_id, entry_id),
+            )
+            if await cur.fetchone() is not None:  # its words are the page's, not the campaign's
+                raise HomebrewError(FROM_A_LINK)
+            cur = await conn.execute(
+                "WITH changed AS (UPDATE homebrew_entries SET kind = %s, name = %s,"
+                " name_key = %s, text = %s, summary = %s, updated_at = %s, version = version + 1"
                 " WHERE guild_id = %s AND campaign_id = %s AND id = %s"
-                " AND (%s::int IS NULL OR version = %s)"
-                f" RETURNING {_COLUMNS}",
+                " AND (%s::int IS NULL OR version = %s) RETURNING *) " + _joined("changed"),
                 (
                     kind_,
                     name_,
@@ -338,10 +382,9 @@ class HomebrewStore:
         async with self._db.guild(guild_id) as conn:
             await require_dm(conn, guild_id, campaign_id, user_id, lock=True)
             cur = await conn.execute(
-                "UPDATE homebrew_entries SET enabled = %s, version = version + 1"
+                "WITH changed AS (UPDATE homebrew_entries SET enabled = %s, version = version + 1"
                 " WHERE guild_id = %s AND campaign_id = %s AND id = %s"
-                " AND (%s::int IS NULL OR version = %s)"
-                f" RETURNING {_COLUMNS}",
+                " AND (%s::int IS NULL OR version = %s) RETURNING *) " + _joined("changed"),
                 (enabled, guild_id, campaign_id, entry_id, unchanged_since, unchanged_since),
             )
             row = await cur.fetchone()
@@ -362,9 +405,9 @@ class HomebrewStore:
         async with self._db.guild(guild_id) as conn:
             await require_dm(conn, guild_id, campaign_id, user_id)
             cur = await conn.execute(
-                "DELETE FROM homebrew_entries WHERE guild_id = %s AND campaign_id = %s"
-                " AND id = %s AND (%s::int IS NULL OR version = %s)"
-                f" RETURNING {_COLUMNS}",
+                "WITH changed AS (DELETE FROM homebrew_entries WHERE guild_id = %s"
+                " AND campaign_id = %s AND id = %s AND (%s::int IS NULL OR version = %s)"
+                " RETURNING *) " + _joined("changed"),
                 (guild_id, campaign_id, entry_id, unchanged_since, unchanged_since),
             )
             row = await cur.fetchone()
@@ -409,7 +452,7 @@ class HomebrewStore:
         async with self._db.guild(guild_id) as conn:
             await require_dm(conn, guild_id, campaign_id, user_id, lock=True)
             cur = await conn.execute(
-                f"SELECT {_COLUMNS} FROM homebrew_entries WHERE guild_id = %s AND campaign_id = %s",
+                f"SELECT {_COLUMNS} FROM {_FROM} WHERE h.guild_id = %s AND h.campaign_id = %s",
                 (guild_id, campaign_id),
             )
             have = {name_key(r["name"]): _entry(r) for r in await cur.fetchall()}
@@ -438,8 +481,14 @@ class HomebrewStore:
                         from_book,
                         book_edition,
                         True if switch is None else switch,
+                        source_kind="upload",  # a loaded file, credited to who loaded it
+                        added_by=user_id,
+                        credit_kind="user",
                     )
                     added += 1
+                    continue
+                if old.source_kind == "link":  # its words are the page's, not a file's
+                    same += 1
                     continue
                 on = old.enabled if switch is None else switch  # (not said: as it was)
                 if (
@@ -488,14 +537,44 @@ class HomebrewStore:
                 entry.created_by,
                 entry.kind,
                 entry.name,
-                entry.text,
-                entry.summary,
+                None if entry.source_kind == "link" else entry.text,  # (a link's are the page's)
+                None if entry.source_kind == "link" else entry.summary,
                 entry.created_at,
                 entry.updated_at,
                 entry.from_book,
                 entry.book_edition,
                 entry.enabled,
+                source_kind=entry.source_kind,
+                added_by=entry.added_by or entry.created_by,
+                page_id=entry.page_id,
+                credit_kind=entry.credit_kind,
+                credit_text=entry.credit_text,
+                credit_domain=entry.credit_domain,
             )
+
+    async def add_link(
+        self,
+        guild_id: int,
+        campaign_id: str,
+        user_id: int,
+        *,
+        page_id: int,
+        kind: str,
+        name: str,
+        domain: str,
+    ) -> Homebrew:
+        """Save an entry whose words are a published page's (#1633): the campaign's row keeps its
+        name, kind, on/off and source; the words and summary are read from the page. Only the
+        campaign's DMs; at most `HOMEBREW_MAX`; the name is unique in the campaign. It can be used
+        only once the campaign has approved the page's site (`_USABLE`)."""
+        clean = (clean_kind(kind), clean_name(name))
+        now = int(self._clock())
+        async with self._db.guild(guild_id) as conn:
+            await require_dm(conn, guild_id, campaign_id, user_id, lock=True)
+            return await insert_entry(
+                conn, guild_id, campaign_id, user_id, *clean, None, None, now, now,
+                source_kind="link", page_id=page_id, credit_domain=domain,
+            )  # fmt: skip
 
 
 async def _missing(conn: Conn, guild_id: int, campaign_id: str, entry_id: int) -> HomebrewError:
@@ -514,15 +593,24 @@ async def insert_entry(
     user_id: int,
     kind: str,
     name: str,
-    text: str,
+    text: str | None,
     summary: str | None,
     created_at: int,
     updated_at: int,
     from_book: bool = False,
     book_edition: str | None = None,
     enabled: bool = True,
+    *,
+    source_kind: str = "typed",
+    added_by: int | None = None,
+    page_id: int | None = None,
+    credit_kind: str | None = None,
+    credit_text: str | None = None,
+    credit_domain: str | None = None,
 ) -> Homebrew:
-    """Insert an already-cleaned entry; the caller holds the campaign's lock."""
+    """Insert an already-cleaned entry; the caller holds the campaign's lock. `user_id` is who
+    created it; `added_by` (default the same) is who it is recorded as added by (#1633). The
+    database refuses a source with the wrong fields (`homebrew_entries_source_check`)."""
     cur = await conn.execute(
         "SELECT count(*) AS n FROM homebrew_entries WHERE guild_id = %s AND campaign_id = %s",
         (guild_id, campaign_id),
@@ -531,11 +619,12 @@ async def insert_entry(
     if row is not None and int(row["n"]) >= HOMEBREW_MAX:
         raise HomebrewError(FULL)
     cur = await conn.execute(
-        "INSERT INTO homebrew_entries (guild_id, campaign_id, kind, name, name_key, text, summary,"
-        " created_by, created_at, updated_at, from_book, book_edition, enabled)"
-        " VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)"
-        " ON CONFLICT (guild_id, campaign_id, name_key) DO NOTHING"
-        f" RETURNING {_COLUMNS}",
+        "WITH changed AS (INSERT INTO homebrew_entries (guild_id, campaign_id, kind, name,"
+        " name_key, text, summary, created_by, created_at, updated_at, from_book, book_edition,"
+        " enabled, source_kind, added_by, page_id, credit_kind, credit_text, credit_domain)"
+        " VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)"
+        " ON CONFLICT (guild_id, campaign_id, name_key) DO NOTHING RETURNING *) "
+        + _joined("changed"),
         (
             guild_id,
             campaign_id,
@@ -550,6 +639,12 @@ async def insert_entry(
             from_book,
             book_edition,
             enabled,
+            source_kind,
+            user_id if added_by is None else added_by,
+            page_id,
+            credit_kind,
+            credit_text,
+            credit_domain,
         ),
     )
     saved = await cur.fetchone()
@@ -583,7 +678,12 @@ async def require_dm(
 # ("players_may_know" is no longer kept (part 2): an old backup that has it is read and the key
 # ignored; "enabled" came with #1629: a backup from before has none, meaning on.)
 _KEYS = frozenset({"kind", "name", "text", "summary", "by", "created_at", "updated_at"})
-_OPTIONAL = frozenset({"enabled", "players_may_know"})
+# Where an entry came from (#1633): "source" (typed when absent), "added_by" (the "by" when absent),
+# "credit" for an upload and "page" (the page's content, so the backup stays complete) for a link.
+_OPTIONAL = frozenset({"enabled", "players_may_know", "source", "added_by", "credit", "page"})
+SOURCES = ("typed", "upload", "link")
+_CREDIT_KEYS = frozenset({"kind", "text", "domain"})
+_PAGE_KEYS = frozenset({"url", "domain", "kind", "name", "text", "summary", "fetched_at", "status"})
 _KEYS_BOOK = _KEYS | {"from_book"}  # (a backup from before #1524 has no such key: false)
 _KEYS_EDITION = _KEYS_BOOK | {"book_edition"}  # (and before #1563, none: read as "other")
 
@@ -615,6 +715,101 @@ class _Checked:
     from_book: bool = False
     book_edition: str | None = None
     enabled: bool = True
+    source_kind: str = "typed"
+    added_by: int = 0
+    credit_kind: str | None = None
+    credit_text: str | None = None
+    credit_domain: str | None = None
+    page: dict[str, Any] | None = None  # a link's page, as `_checked_page` returned it
+
+
+def _checked_page(page: object, row: dict[str, Any]) -> dict[str, Any]:
+    """A backup row's page: every field validated, the address in its normal form, and the entry
+    agreeing with it (a link entry's name, kind, words and summary are the page's)."""
+    if not isinstance(page, dict) or set(page) != _PAGE_KEYS:
+        raise CampaignError(DAMAGED)
+    url, domain = page["url"], page["domain"]
+    if not isinstance(url, str) or not isinstance(domain, str):
+        raise CampaignError(DAMAGED)
+    found = normalise_url(url)
+    if found is None or found != (url, domain):
+        raise CampaignError(DAMAGED)
+    if page["status"] not in ("ok", "stale", "restored"):
+        raise CampaignError(DAMAGED)
+    try:
+        kind, name = clean_kind(page["kind"]), clean_name(page["name"])
+        text, summary = clean_text(page["text"]), clean_summary(page["summary"])
+    except (HomebrewError, TypeError, AttributeError):
+        raise CampaignError(DAMAGED) from None
+    if (kind, name, text, summary) != (page["kind"], page["name"], page["text"], page["summary"]):
+        raise CampaignError(DAMAGED)
+    # The entry keeps its own name and kind (the DM may have renamed it, and the page may have been
+    # fetched again with a new title); only its words are the page's.
+    if (text, summary) != (row["text"], row["summary"]):
+        raise CampaignError(DAMAGED)
+    return {**page, "fetched_at": _timestamp(page["fetched_at"])}
+
+
+def _checked_credit(source: str, credit: object) -> tuple[str | None, str | None, str | None]:
+    """(kind, text, domain) of an upload's credit; all None for the other sources."""
+    if source != "upload":
+        if credit is not None:
+            raise CampaignError(DAMAGED)
+        return None, None, None
+    if not isinstance(credit, dict) or set(credit) != _CREDIT_KEYS:
+        raise CampaignError(DAMAGED)
+    kind, text, domain = credit["kind"], credit["text"], credit["domain"]
+    if kind == "user" and text is None and domain is None:
+        return kind, None, None
+    if kind == "website" and text is None and isinstance(domain, str):
+        if normalise_domain(domain) != domain:
+            raise CampaignError(DAMAGED)
+        return kind, None, domain
+    if kind == "name" and domain is None and isinstance(text, str):
+        try:
+            if clean_name(text) != text:
+                raise CampaignError(DAMAGED)
+        except HomebrewError:
+            raise CampaignError(DAMAGED) from None
+        return kind, text, None
+    raise CampaignError(DAMAGED)
+
+
+def _dumped(r: dict[str, Any]) -> dict[str, Any]:
+    """One entry as a backup row (a joined `_COLUMNS` row plus the page's own columns)."""
+    source = r["source_kind"]
+    row: dict[str, Any] = {
+        "kind": r["kind"],
+        "name": r["name"],
+        "text": r["text"],
+        "summary": r["summary"],
+        "by": str(r["created_by"]),
+        "created_at": int(r["created_at"]),
+        "updated_at": int(r["updated_at"]),
+        "source": source,
+        "added_by": str(r["added_by"]),
+        **({"from_book": True} if r["from_book"] else {}),
+        **({"book_edition": r["book_edition"]} if r["book_edition"] else {}),
+        **({"enabled": False} if not r["enabled"] else {}),  # (on is the default)
+    }
+    if source == "upload":
+        row["credit"] = {
+            "kind": r["credit_kind"],
+            "text": r["credit_text"],
+            "domain": r["credit_domain"],
+        }
+    if source == "link":  # the page travels with the entry, so the backup is complete
+        row["page"] = {
+            "url": r["page_url"],
+            "domain": r["page_domain"],
+            "kind": r["page_kind"],
+            "name": r["page_name"],
+            "text": r["page_text"],
+            "summary": r["page_summary"],
+            "fetched_at": int(r["page_fetched_at"]),
+            "status": r["page_status"],
+        }
+    return row
 
 
 class HomebrewSection:
@@ -625,26 +820,13 @@ class HomebrewSection:
 
     async def dump(self, conn: Conn, guild_id: int, campaign_id: str) -> list[Any]:
         cur = await conn.execute(
-            "SELECT kind, name, text, summary, created_by, created_at,"
-            " updated_at, from_book, book_edition, enabled FROM homebrew_entries"
-            " WHERE guild_id = %s AND campaign_id = %s ORDER BY name_key",
+            f"SELECT {_COLUMNS}, p.domain AS page_domain, p.kind AS page_kind,"
+            " p.name AS page_name, p.text AS page_text, p.summary AS page_summary,"
+            f" p.fetched_at AS page_fetched_at, p.fetch_status AS page_status FROM {_FROM}"
+            " WHERE h.guild_id = %s AND h.campaign_id = %s ORDER BY h.name_key",
             (guild_id, campaign_id),
         )
-        return [
-            {
-                "kind": r["kind"],
-                "name": r["name"],
-                "text": r["text"],
-                "summary": r["summary"],
-                "by": str(r["created_by"]),
-                "created_at": int(r["created_at"]),
-                "updated_at": int(r["updated_at"]),
-                **({"from_book": True} if r["from_book"] else {}),
-                **({"book_edition": r["book_edition"]} if r["book_edition"] else {}),
-                **({"enabled": False} if not r["enabled"] else {}),  # (on is the default)
-            }
-            for r in await cur.fetchall()
-        ]
+        return [_dumped(r) for r in await cur.fetchall()]
 
     def check(self, rows: list[Any]) -> list[_Checked]:
         """Every row, validated; nothing is written until all of them are right."""
@@ -695,6 +877,19 @@ class HomebrewSection:
             created, updated = _timestamp(row["created_at"]), _timestamp(row["updated_at"])
             if updated < created:
                 raise CampaignError(DAMAGED)
+            source = row.get("source", "typed")  # (a backup from before #1633 has none: typed)
+            if source not in SOURCES:
+                raise CampaignError(DAMAGED)
+            added_by = _person(row.get("added_by", row["by"]))
+            credit_kind, credit_text, credit_domain = _checked_credit(source, row.get("credit"))
+            page = None
+            if source == "link":
+                if row.get("from_book") or old_rule or "page" not in row:
+                    raise CampaignError(DAMAGED)
+                page = _checked_page(row["page"], row)
+                credit_domain = page["domain"]
+            elif "page" in row:
+                raise CampaignError(DAMAGED)
             checked.append(
                 _Checked(
                     kind,
@@ -707,6 +902,12 @@ class HomebrewSection:
                     row.get("from_book", False),
                     edition,
                     row.get("enabled", True),
+                    source,
+                    added_by,
+                    credit_kind,
+                    credit_text,
+                    credit_domain,
+                    page,
                 )
             )
         return checked
@@ -716,12 +917,15 @@ class HomebrewSection:
         here, so nothing unchecked is ever written."""
         loaded = rows if self._is_checked(rows) else self.check(rows)
         if loaded:
+            pages = {r.page["url"]: await self._page_id(conn, r.page) for r in loaded if r.page}
             async with conn.cursor() as cur:
                 await cur.executemany(
                     "INSERT INTO homebrew_entries (guild_id, campaign_id, kind, name, name_key,"
                     " text, summary, created_by, created_at, updated_at,"
-                    " from_book, book_edition, enabled)"
-                    " VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
+                    " from_book, book_edition, enabled, source_kind, added_by, page_id,"
+                    " credit_kind, credit_text, credit_domain)"
+                    " VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,"
+                    " %s, %s, %s)",
                     [
                         (
                             guild_id,
@@ -729,18 +933,49 @@ class HomebrewSection:
                             r.kind,
                             r.name,
                             name_key(r.name),
-                            r.text,
-                            r.summary,
+                            None if r.page else r.text,  # (a link's words are its page's)
+                            None if r.page else r.summary,
                             r.created_by,
                             r.created_at,
                             r.updated_at,
                             r.from_book,
                             r.book_edition,
                             r.enabled,
+                            r.source_kind,
+                            r.added_by,
+                            pages[r.page["url"]] if r.page else None,
+                            r.credit_kind,
+                            r.credit_text,
+                            r.credit_domain,
                         )
                         for r in loaded
                     ],
                 )
+
+    @staticmethod
+    async def _page_id(conn: Conn, page: dict[str, Any]) -> int:
+        """The id of the page with this address: the one already here (it may be newer than the
+        backup's copy, so it is left as it is), else the backup's copy, recreated as `restored`
+        with no fetch time. A backup file is untrusted and every campaign reads a page, so words
+        from a file never become a page another campaign relies on: `SourceStore.page_for`
+        skips a restored page, and the next fetch of that address replaces it."""
+        await conn.execute(
+            "INSERT INTO homebrew_pages (url, domain, kind, name, text, summary, fetched_at,"
+            " fetch_status) VALUES (%s, %s, %s, %s, %s, %s, 0, 'restored')"
+            " ON CONFLICT (url) DO NOTHING",
+            (
+                page["url"],
+                page["domain"],
+                page["kind"],
+                page["name"],
+                page["text"],
+                page["summary"],
+            ),
+        )
+        cur = await conn.execute("SELECT id FROM homebrew_pages WHERE url = %s", (page["url"],))
+        row = await cur.fetchone()
+        assert row is not None
+        return int(row["id"])
 
     @staticmethod
     def _is_checked(rows: Any) -> bool:

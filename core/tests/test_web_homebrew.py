@@ -98,6 +98,26 @@ class ThePage(HomebrewBase):
                 states, {"Arc": True, "Zap": True, "The Lich": False, "Moon Lamp": True}
             )
 
+    async def test_an_imported_entry_shows_the_words_of_its_page(self) -> None:
+        from dmbot.rules.homebrew_sources import SourceStore
+
+        page = await SourceStore(self.db).save_page(
+            "https://www.dndbeyond.com/magic-items/1-lamp", kind="item", name="Page Lamp",
+            text="Words from the page.", summary="A page summary.",
+        )  # fmt: skip
+        await self.store_b.add_link(
+            THURSDAY.id, self.one.id, ALICE.id, page_id=page.id, kind="item", name=page.name,
+            domain=page.domain,
+        )  # fmt: skip
+        got = await pages.read_homebrew(self.web, self.carol, self.cref)
+        by = {e["name"]: e for e in got["entries"]}
+        self.assertEqual(
+            (by["Page Lamp"]["text"], by["Page Lamp"]["summary"]),
+            ("Words from the page.", "A page summary."),
+        )
+        _name, text = await pages.render(self.web, self.carol, self.cref)
+        self.assertIn("Words from the page.", text)
+
     async def test_it_is_this_campaigns_entries_only(self) -> None:
         got = await pages.read_homebrew(self.web, self.carol, self.oref)
         self.assertEqual([e["name"] for e in got["entries"]], ["Other"])
