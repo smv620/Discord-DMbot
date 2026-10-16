@@ -6004,6 +6004,14 @@ HOMEBREW_ENABLED = """
     REVOKE ALL ON FUNCTION dmbot_web_homebrew_campaigns(BIGINT) FROM PUBLIC;
 """
 
+CLUE_AUDIENCE = """
+    -- A clue only some people know (#1649; docs/STORY_MEMORY.md, section 2): the DM's switch
+    -- on a `clue` entry. Who knows it is its confirmed `knows` facts, so nothing else is
+    -- stored. The `clue` kind itself is core (in code), not a row. Off for every existing
+    -- entry, so this migration changes no row's meaning.
+    ALTER TABLE memory_entities ADD COLUMN audience_limited BOOLEAN NOT NULL DEFAULT false;
+"""
+
 MIGRATIONS: tuple[Migration, ...] = (
     ("0001_initial", INITIAL),
     ("0002_active_sessions", ACTIVE_SESSIONS),
@@ -6126,6 +6134,7 @@ MIGRATIONS: tuple[Migration, ...] = (
     ("0110_improvement_opt_outs", IMPROVEMENT_OPT_OUTS),  # the improvement opt-out (#1609)
     ("0111_homebrew_rules_to_house_rules", HOMEBREW_RULES_TO_HOUSE_RULES),  # #1628
     ("0112_homebrew_enabled", HOMEBREW_ENABLED),  # each entry on or off for the table (#1629)
+    ("0115_clue_audience", CLUE_AUDIENCE),  # a clue only some people know (#1649)
 )
 
 # Tables that must have row-level security. A test checks every table in the schema

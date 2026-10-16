@@ -84,6 +84,7 @@ ONLY_ONE = "☝️ Only one of these exists (you said so)."
 ONLY_ONE_GUESS = "☝️ Taken as the only one (it has a proper name)."
 ONLY_ONE_BUTTON = "☝️ Only one exists"
 MORE_THAN_ONE_BUTTON = "Allow more than one"
+CLUE_BUTTON = "🔒 Only some know this"  # a clue's list of who knows it (#1649)
 ALSO_CALLED = "🏷️ Also called…"  # adds another name; its own icon, not Add a name's (#393)
 NOTHING_CHANGED = (
     "Something went wrong and nothing was changed. Press 🔍 Find a name to open it and try again."
@@ -276,6 +277,8 @@ def card_text(
     entity = lookup.entities.get(entity_id)
     if entity is None or entity.status != CONFIRMED:
         return None
+    if entity.audience_limited and not secrets:
+        return None  # a clue only some people know is the DM's alone (#1649)
     own = name_key(entity.name)
     mine = [e for e in lookup.names if e.entity_id == entity_id and e.confirmed]
     others = [_md(e.text) for e in mine if not e.secret and e.key != own]
@@ -291,6 +294,21 @@ def card_text(
     lines = [f"🪪 **{_md(entity.name)}** · {what} · {when}"]
     if (entity.type == ITEM if item is None else item) and entity.is_unique:
         lines.append(ONLY_ONE if entity.unique_item else ONLY_ONE_GUESS)
+    if entity.audience_limited:
+        knowers = sorted(
+            (
+                lookup.entities[r.subject_id].name
+                for r in connections
+                if r.predicate == "knows"
+                and r.object_id == entity_id
+                and r.status == CONFIRMED
+                and r.to_session_at is None
+                and r.subject_id in lookup.entities
+            ),
+            key=name_key,
+        )
+        who = _more([_md(n) for n in knowers]) if knowers else "—"
+        lines.append(f"🔒 **Only some people know this:** {who}")
     if sheet:
         lines.append(sheet)
     if others:
@@ -401,6 +419,7 @@ async def show_card(
         sheet=has_sheet,
         item=is_item,
         unique=entity.is_unique,
+        clue=entity.type == "clue",
         undo_connection=undo_connection,
     )
     if replace:
@@ -530,6 +549,7 @@ class NameCard(_Menu):
         sheet: bool = False,
         item: bool = False,
         unique: bool = False,
+        clue: bool = False,
         undo_connection: int | None = None,
     ) -> None:
         super().__init__()
@@ -559,6 +579,8 @@ class NameCard(_Menu):
             # until they say otherwise (#1267). Says what it will do: it flips.
             label = MORE_THAN_ONE_BUTTON if unique else ONLY_ONE_BUTTON
             self.add_item(_Button(self._one_of_a_kind, label=label, style=grey, row=3))
+        if clue:  # a clue or secret: who knows it (#1649); an item has the row-3 button instead
+            self.add_item(_Button(self._who_knows, label=CLUE_BUTTON, style=grey, row=3))
         if cut:
             # One select for every cut section, not a button each: Discord allows five rows.
             self.show_all = _Select(
@@ -568,6 +590,13 @@ class NameCard(_Menu):
                 row=4,
             )
             self.add_item(self.show_all)
+
+    async def _who_knows(self, interaction: discord.Interaction) -> None:
+        from dmbot.ui.clue_audience import show_audience
+
+        await _answer_first(interaction, in_place=True)
+        self.stop()
+        await show_audience(interaction, self.campaign_id, self.entity_id)
 
     async def _one_of_a_kind(self, interaction: discord.Interaction) -> None:
         await _answer_first(interaction, in_place=True)

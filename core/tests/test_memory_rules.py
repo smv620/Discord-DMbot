@@ -114,7 +114,7 @@ class CoreOntology(unittest.TestCase):
         self.assertFalse(onto.is_a("character", "horse"))
         self.assertFalse(onto.is_a("place", "character"))
 
-    def test_the_story_kinds_are_these_six_and_the_table_has_its_own(self) -> None:
+    def test_the_story_kinds_are_these_and_the_table_has_its_own(self) -> None:
         active = {t.key: t.label for t in CORE_TYPES if t.status == "active"}
         self.assertEqual(
             active,
@@ -125,6 +125,7 @@ class CoreOntology(unittest.TestCase):
                 "item": "item",
                 "event": "event",
                 "concept": "idea",
+                "clue": "clue or secret",  # a kind of idea (#1649)
                 "person": "player or DM",  # not part of the story (#1188)
             },
         )

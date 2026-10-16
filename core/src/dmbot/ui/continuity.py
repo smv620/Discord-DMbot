@@ -23,6 +23,7 @@ from dmbot.memory.continuity import (
     BACK_FROM_THE_END,
     CHANGED,
     IGNORE,
+    KNOWS_A_SECRET,
     NOT_TRUE,
     Conflict,
     ContinuityStore,
@@ -74,6 +75,15 @@ def line_text(conflict: Conflict, numbers: Mapping[int, int]) -> str:
         else ""
     )
     now = f"At the table: {statement(conflict.claim)}."
+    if conflict.kind == KNOWS_A_SECRET:
+        # The clue is the entry; the list is the people the DM said know it. Nobody is told
+        # they are wrong: a missing name may only mean DMbot was never told.
+        who = _md(conflict.learner_name or "Someone")
+        listed = _md(conflict.earlier_words) or "no one yet"
+        return (
+            f"⚠️ **{level}: {who}** may not know **{_md(conflict.entity_name)}**. "
+            f"You said only these people do: {listed}. {now}"
+        )
     if conflict.kind in (ACTS_AFTER_END, BACK_FROM_THE_END):
         ended = "was destroyed" if conflict.ended_condition == DESTROYED else "died"
         return f"⚠️ **{level}:** {name} {ended}{when}{quote}. {now}"
@@ -84,6 +94,8 @@ def line_text(conflict: Conflict, numbers: Mapping[int, int]) -> str:
 def changed_label(conflict: Conflict) -> str:
     """Short, because a number goes in front and Discord cuts a button at 25 characters on a
     phone: what the DM is saying is true now."""
+    if conflict.kind == KNOWS_A_SECRET:
+        return "They learned it"
     if conflict.ended_condition == DESTROYED:
         return "Still here"
     if conflict.ended_condition is not None:
@@ -96,8 +108,9 @@ def page_text(
 ) -> str:
     lines = [
         "**Heads-ups from this session.** Pick what is true in your story.\n"
-        "**Story changed:** the new thing is true now. **Wasn't real:** a joke or a mistake; "
-        "DMbot forgets it. **Ignore:** leave it for now."
+        "**Story changed:** the new thing is true now. **They learned it:** add them to the list "
+        "of people who know. **Wasn't real:** a joke or a mistake; DMbot forgets it. "
+        "**Ignore:** leave it for now."
     ]
     for number, conflict in enumerate(page, 1):
         done = answered.get(conflict.claim.id)
