@@ -3226,8 +3226,9 @@ months.
 - **Support tickets from people are private.** Paying users write from the website (signed in,
   a Support form) and anyone can write to the support email (address TBD, owner). These hold
   personal details, so **they never become public GitHub issues.** They go to a private
-  `support_tickets` table in the database (add-only for the website's role, like `feedback`),
-  shown on the admin page, with an email to the team. Kept for 12 months, then deleted by the
+  `support_tickets` table in the database (add-only for the website's role, like `feedback`,
+  except that a signed-in person reads back their own list: when, subject and status, never the
+  words or anyone else's; #1373), shown on the admin page, with an email to the team. Kept for 12 months, then deleted by the
   website's hourly sweep. The privacy page says so. Reading the support mailbox into tickets is
   a later step. Until then the team reads the mailbox directly.
 

@@ -1,7 +1,7 @@
-"""Private support tickets (#1340), run as the website's own database role: only a paying,
-signed-in account can send one, one per 10 minutes; it is kept where the person can't read it
-and only the admin page's door can; the team is emailed without its words; old and deleted
-accounts' tickets go; and its words reach no log."""
+"""Private support tickets (#1340, #1373), run as the website's own database role: only a paying,
+signed-in account can send one, one per 10 minutes; a person reads back only their own list (when,
+subject, status), never the words, which only the admin page's door can read; the team is emailed
+without its words; old and deleted accounts' tickets go; and its words reach no log."""
 
 from __future__ import annotations
 
@@ -328,6 +328,74 @@ class SupportRoute(SupportBase):
         self.assertNotIn(SUBJECT, logged)
         self.assertNotIn("invoice", logged)
 
+    async def test_a_person_sees_their_own_questions_newest_first_with_no_words(self) -> None:
+        await sessions.sign_in(self.web, _bob(), [THURSDAY], now=self.now, days=30)
+        await self.add_row(ALICE.id, self.now - 100, "older")
+        await self.add_row(ALICE.id, self.now, "newer")
+        await self.add_row(BOB, self.now - 50, "bob's, not for Alice")
+        client = await self.client()
+        answer = await client.get("/support/mine")
+        self.assertEqual(answer.status_code, 200)
+        self.assertEqual(
+            answer.json(),
+            {
+                "tickets": [
+                    {"at": self.now, "subject": "newer", "status": "new"},
+                    {"at": self.now - 100, "subject": "older", "status": "new"},
+                ],
+                "reply": True,
+            },
+        )
+        # Neither the words nor anyone else's, and no ticket number to count the others by.
+        self.assertNotIn("Words", answer.text)
+        self.assertNotIn("bob", answer.text.lower())
+        self.assertNotIn('"id"', answer.text)
+        bobs = await (await self.client(BOB)).get("/support/mine")
+        self.assertEqual([t["subject"] for t in bobs.json()["tickets"]], ["bob's, not for Alice"])
+
+    async def test_the_status_the_team_sets_shows_in_the_list(self) -> None:
+        await self.add_row(ALICE.id, self.now - 2, "one")
+        await self.add_row(ALICE.id, self.now - 1, "two")
+        await self.add_row(ALICE.id, self.now, "three")
+        by_subject = {r.subject: r.id for r in await support.newest(self.web)}
+        await support.set_status(self.web, by_subject["one"], "answered")
+        await support.set_status(self.web, by_subject["two"], "closed")
+        answer = await (await self.client()).get("/support/mine")
+        self.assertEqual(
+            [(t["subject"], t["status"]) for t in answer.json()["tickets"]],
+            [("three", "new"), ("two", "closed"), ("one", "answered")],
+        )
+
+    async def test_the_list_is_at_most_twenty_and_empty_for_a_person_who_never_wrote(self) -> None:
+        client = await self.client()
+        self.assertEqual(
+            (await client.get("/support/mine")).json(), {"tickets": [], "reply": False}
+        )
+        for n in range(23):
+            await self.add_row(ALICE.id, self.now - 1000 + n, f"q{n}")
+        tickets = (await client.get("/support/mine")).json()["tickets"]
+        self.assertEqual(len(tickets), 20)
+        self.assertEqual(tickets[0]["subject"], "q22")
+
+    async def test_the_list_says_when_the_team_cannot_reply_by_email(self) -> None:
+        await self.add_row(ALICE.id, self.now)
+        client = await self.client()
+        async with self.web.user(ALICE.id) as conn:
+            await conn.execute("UPDATE web_users SET email = NULL, payment_email = NULL")
+        self.assertIs((await client.get("/support/mine")).json()["reply"], False)
+
+    async def test_the_list_needs_a_sign_in_but_not_a_paid_plan(self) -> None:
+        await self.add_row(ALICE.id, self.now)
+        anonymous = httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=self.app), base_url=API, follow_redirects=False
+        )
+        self.addAsyncCleanup(anonymous.aclose)
+        self.assertEqual((await anonymous.get("/support/mine")).status_code, 401)
+        # Someone whose plan has since lapsed still sees what they asked.
+        await self.give_plan(ALICE.id, "table", "lapsed")
+        client = await self.client()
+        self.assertEqual(len((await client.get("/support/mine")).json()["tickets"]), 1)
+
     async def test_me_says_whether_the_form_is_for_this_account(self) -> None:
         client = await self.client()
         self.assertIs((await client.get("/me")).json()["canSupport"], True)
@@ -344,13 +412,15 @@ def _bob() -> Any:
 class SupportKeptPrivately(SupportBase):
     """The database's side, as the website's role: add as yourself, read nothing."""
 
-    async def test_a_person_adds_but_cannot_read_change_or_delete_a_ticket(self) -> None:
+    async def test_a_person_adds_and_reads_back_their_own_list_but_cannot_change_or_delete(
+        self,
+    ) -> None:
         await self.add_row(ALICE.id, self.now)
         async with self.web.user(ALICE.id) as conn:
             cur = await conn.execute("SELECT count(*) AS n FROM support_tickets")
             row = await cur.fetchone()
             assert row is not None
-            self.assertEqual(row["n"], 0)  # their own ticket included
+            self.assertEqual(row["n"], 1)  # their own ticket, since #1373
         async with self.web.user(ALICE.id) as conn:
             cur = await conn.execute("UPDATE support_tickets SET status = 'closed'")
             self.assertEqual(cur.rowcount, 0)
@@ -358,6 +428,62 @@ class SupportKeptPrivately(SupportBase):
             cur = await conn.execute("DELETE FROM support_tickets")
             self.assertEqual(cur.rowcount, 0)
         self.assertEqual(len(await self.tickets()), 1)
+
+    async def test_a_person_sees_only_their_own_tickets_never_the_words(self) -> None:
+        await sessions.sign_in(self.web, _bob(), [THURSDAY], now=self.now, days=30)
+        await self.add_row(ALICE.id, self.now - 10, "alice's first")
+        await self.add_row(ALICE.id, self.now, "alice's second")
+        await self.add_row(BOB, self.now - 5, "bob's")
+        for user, expected in ((ALICE.id, ["alice's first", "alice's second"]), (BOB, ["bob's"])):
+            async with self.web.user(user) as conn:
+                cur = await conn.execute(
+                    "SELECT subject, status FROM support_tickets ORDER BY created_at"
+                )
+                rows = await cur.fetchall()
+            self.assertEqual([r["subject"] for r in rows], expected)
+            self.assertEqual({r["status"] for r in rows}, {"new"})
+        # The words are out of reach of the website's role altogether: its own row, a
+        # star, the other person's, and with the admin door open too.
+        for query in (
+            "SELECT message FROM support_tickets",
+            "SELECT * FROM support_tickets",
+            "SELECT id FROM support_tickets WHERE message = 'Words'",
+        ):
+            with self.assertRaises(psycopg.errors.InsufficientPrivilege):
+                async with self.web.user(ALICE.id) as conn:
+                    await conn.execute(query)
+            with self.assertRaises(psycopg.errors.InsufficientPrivilege):
+                async with self.web.support_admin() as conn:
+                    await conn.execute(query)
+        # No one is shown through a person's session by a guess at someone else's number.
+        async with self.web.user(ALICE.id) as conn:
+            cur = await conn.execute(
+                "SELECT count(*) AS n FROM support_tickets WHERE user_id = %s", (BOB,)
+            )
+            row = await cur.fetchone()
+            assert row is not None
+            self.assertEqual(row["n"], 0)
+
+    async def test_the_words_come_only_through_the_admin_door(self) -> None:
+        await self.add_row(ALICE.id, self.now)
+        ticket_id = (await self.tickets())[0]["id"]
+        for scope in (self.web.user(ALICE.id), self.web.unscoped()):
+            async with scope as conn:
+                cur = await conn.execute("SELECT dmbot_support_message(%s) AS m", (ticket_id,))
+                row = await cur.fetchone()
+                assert row is not None
+                self.assertIsNone(row["m"])
+        async with self.web.support_admin() as conn:
+            cur = await conn.execute("SELECT dmbot_support_message(%s) AS m", (ticket_id,))
+            row = await cur.fetchone()
+            assert row is not None
+            self.assertEqual(row["m"], "Words")
+            cur = await conn.execute("SELECT dmbot_support_message(999999) AS m")
+            row = await cur.fetchone()
+            assert row is not None
+            self.assertIsNone(row["m"])
+        (listed,) = await support.newest(self.web)
+        self.assertEqual(listed.message, "Words")
 
     async def test_a_person_cannot_add_for_someone_else_or_as_answered(self) -> None:
         for user, status, source in (
@@ -388,6 +514,11 @@ class SupportKeptPrivately(SupportBase):
         self.assertEqual((ticket.status, ticket.user_id), ("new", ALICE.id))
         self.assertTrue(await support.set_status(self.web, ticket.id, "answered"))
         self.assertEqual((await support.newest(self.web))[0].status, "answered")
+        # The words are not a column the website may read, door or no door (#1373): they come
+        # through dmbot_support_message, which `newest` used above.
+        with self.assertRaises(psycopg.errors.InsufficientPrivilege):
+            async with self.web.support_admin() as conn:
+                await conn.execute("SELECT message FROM support_tickets")
         # Even through the door, nothing but the status may change (the column grant).
         with self.assertRaises(psycopg.errors.InsufficientPrivilege):
             async with self.web.support_admin() as conn:
