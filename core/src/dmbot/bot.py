@@ -85,6 +85,7 @@ from dmbot.dm_screen import (
     VisibilityButton,
     ensure_dm_screen,
     house_sync,
+    pack_update,
     peek_view,
     rules_cards,
     set_suggestion,
@@ -193,6 +194,7 @@ from dmbot.rules.homebrew_packs import HomebrewPackStore, HomebrewReader
 from dmbot.rules.homebrew_spotter import HomebrewMention, HomebrewSpotter
 from dmbot.rules.house import HouseRule, HouseRulesSection, HouseRuleStore
 from dmbot.rules.house_file_link import HouseFileLinkStore
+from dmbot.rules.pack_updates import PackUpdateStore
 from dmbot.rules.rule_sets import FollowedSetsSection, RuleSetStore
 from dmbot.rules.spotter import Mention
 from dmbot.sessions import SavedSession, SessionStore
@@ -1015,6 +1017,7 @@ class DMBot(commands.AutoShardedBot):
         )
         self.add_dynamic_items(PutBackButton)  # lines left out as off-topic (#677)
         self.add_dynamic_items(set_update.SetUpdateButton)  # shared rules changed (#1191)
+        self.add_dynamic_items(pack_update.PackUpdateButton)  # a followed pack changed (#1527)
         self.add_dynamic_items(set_suggestion.SuggestionButton)  # a table's suggestion (#1259)
         self.add_dynamic_items(house_sync.HouseSyncButton)  # the house-rules file (#969)
         self.add_dynamic_items(rules_cards.RulesCardButton)  # rules cards from the table (#931)
@@ -2741,6 +2744,7 @@ class DMBot(commands.AutoShardedBot):
             await self.post(screen_id, dmbchat_problem)
         self._check_house_file(campaign, screen_id)
         self._track(set_update.check_update(self, campaign, screen_id), "shared-rules-update")
+        self._track(pack_update.check_updates(self, campaign, screen_id), "homebrew-pack-update")
         trial_line = ""
         # Told once, privately, at their next start (#1229). It is marked told as it is read,
         # before the reply is sent: a reply that fails to send loses this one line, which is
@@ -7556,7 +7560,7 @@ async def run(settings: Settings) -> None:
             HouseFileLinkStore(db),
             EffectStore(db),
             TestVoiceStore(db),
-            HomebrewPackStore(db),  # shared sets and homebrew packs (#1190, #1527)
+            PackUpdateStore(db),  # shared sets and homebrew packs (#1190, #1527)
             RecapStore(db),
             SuggestionStore(db),
             HomebrewStore(db),
