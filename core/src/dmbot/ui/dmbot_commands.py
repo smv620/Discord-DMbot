@@ -865,6 +865,21 @@ async def dmbot_help(interaction: discord.Interaction) -> None:
     await _send(interaction, logic.HELP_TEXT, HelpButtons())
 
 
+@dmbot_group.command(
+    name="delete-my-lines",
+    description="Delete what DMbot wrote down from you in this server",
+)
+async def delete_my_lines_command(interaction: discord.Interaction) -> None:
+    """The same as 🗑 Delete my past transcripts in the ⚙️ Menu (#1532): one warning with the
+    numbers, one confirmation. Only the person's own lines in this one server."""
+    from dmbot.consent_dm import ask_delete
+
+    if interaction.guild is None:
+        await interaction.response.send_message("Use this in a server.", ephemeral=True)
+        return
+    await ask_delete(interaction, interaction.guild.id)
+
+
 @dmbot_group.command(name="backup", description="Download a copy of a campaign")
 async def dmbot_backup(interaction: discord.Interaction) -> None:
     guild = interaction.guild
