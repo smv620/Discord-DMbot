@@ -88,6 +88,7 @@ class Rules(unittest.TestCase):
                 "share": "backup",
                 "story": "memory",
                 "recap": "recap",
+                "recap_audio": "recap_audio",
             },
         )
 

@@ -164,6 +164,93 @@ async def _moved_to(conn: Conn, event: PaymentEvent) -> int | None:
 MOVE_HOPS = 5  # accounts that moved again and again: more than this is not real
 
 
+async def _recap_audio_event(
+    conn: Conn, event: PaymentEvent, row: dict[str, Any] | None, now: int
+) -> Outcome:
+    """The recap audio add-on (#1389). It never touches the plan: it sets or clears the
+    add-on's own columns, and only for a person who has a working paid plan to add it to (the
+    way extra hours do). A paid period moves `recap_audio_until` forward, never back; a late
+    event (older than the newest applied) is recorded and changes nothing."""
+    if row is None or row["status"] == "lapsed" or row["plan"] == "try-it":
+        if event.kind != "recap_audio_ended":
+            log.error(
+                "Recap audio %s for user %s with no working paid plan: needs a refund or credit",
+                event.event_id,
+                event.user_id,
+            )
+        await _record(conn, event, now)
+        return "ignored"
+    if event.occurred_at < row["recap_audio_event_at"]:
+        await _record(conn, event, now)
+        return "stale"
+    known_sub = row["recap_audio_subscription_id"]
+    if (
+        event.kind != "recap_audio_ended"
+        and known_sub is not None
+        and event.subscription_id not in (None, known_sub)
+    ):
+        # A second add-on subscription while one works: both are being charged. The first
+        # keeps its place; the webhook cancels this one at the company (app.py).
+        await _record(conn, event, now)
+        log.error(
+            "Recap audio %s starts a second add-on subscription for user %s: cancelling it",
+            event.event_id,
+            event.user_id,
+        )
+        return "ignored"
+    if event.kind == "recap_audio_ended":
+        await _record(conn, event, now)
+        known = row["recap_audio_subscription_id"]
+        if known is not None and event.subscription_id not in (None, known):
+            return "ignored"  # an older add-on subscription ending after a newer one began
+        await conn.execute(
+            "UPDATE entitlements SET recap_audio_until = NULL, recap_audio_subscription_id = NULL,"
+            " recap_audio_event_at = %s, updated_at = %s WHERE user_id = %s",
+            (event.occurred_at, now, event.user_id),
+        )
+        return "applied"
+    if (
+        event.period_start is None
+        or event.period_end is None
+        or event.period_end <= event.period_start
+    ):
+        log.error(
+            "Recap audio event %s has no usable period: needs a person to look at it",
+            event.event_id,
+        )
+        return "rejected"
+    await _record(conn, event, now)
+    await conn.execute(
+        "UPDATE entitlements SET recap_audio_until = GREATEST(COALESCE(recap_audio_until, 0), %s),"
+        " recap_audio_subscription_id = COALESCE(%s, recap_audio_subscription_id),"
+        " recap_audio_event_at = %s, updated_at = %s WHERE user_id = %s",
+        (event.period_end, event.subscription_id, event.occurred_at, now, event.user_id),
+    )
+    return "applied"
+
+
+async def recap_audio_subscription(db: Database, user_id: int) -> str | None:
+    """The company's id of this person's add-on subscription, if they have one that would charge
+    again (cancelled with the plan or the account)."""
+    async with db.user(user_id) as conn:
+        cur = await conn.execute(
+            "SELECT recap_audio_subscription_id AS s FROM entitlements WHERE user_id = %s",
+            (user_id,),
+        )
+        row = await cur.fetchone()
+    return None if row is None or row["s"] is None else str(row["s"])
+
+
+async def forget_recap_audio(db: Database, user_id: int, *, now: int) -> None:
+    """The add-on subscription was cancelled at the company: clear it here too."""
+    async with db.plan_writer(user_id) as conn:
+        await conn.execute(
+            "UPDATE entitlements SET recap_audio_until = NULL, recap_audio_subscription_id = NULL,"
+            " updated_at = %s WHERE user_id = %s",
+            (now, user_id),
+        )
+
+
 async def apply_event(db: Database, event: PaymentEvent, *, now: int) -> Outcome:
     """Apply one payment event, following the plan to its new account if it moved."""
     if event.kind == "email_updated":  # found by the customer id: no account to follow
@@ -239,6 +326,9 @@ async def _apply_once(db: Database, event: PaymentEvent, *, now: int) -> Outcome
                 (loaded.extra_hours, now, event.user_id),
             )
             return "applied"
+
+        if event.kind in ("recap_audio_started", "recap_audio_renewed", "recap_audio_ended"):
+            return await _recap_audio_event(conn, event, row, now)
 
         if event.kind in ("subscription_started", "subscription_renewed"):
             plan = loaded.get(event.plan or "")

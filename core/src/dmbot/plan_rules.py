@@ -17,7 +17,7 @@ from typing import Literal
 from dmbot.entitlements import Access
 from dmbot.hours import account_link
 
-Rule = Literal["ai", "backup", "memory", "recap"]
+Rule = Literal["ai", "backup", "memory", "recap", "recap_audio"]
 
 
 def can_use_ai(access: Access | None) -> bool:
@@ -32,6 +32,13 @@ def can_backup(access: Access | None) -> bool:
     includes backups: any paid plan except Try It, a grant or the free list (CLAUDE.md:
     Try It campaigns have no backups or downloads). `None` is a campaign with no owner."""
     return access is not None and access.works and access.backups
+
+
+def can_recap_audio(access: Access | None) -> bool:
+    """Spoken and musical recaps (#1389): included in Guild and above, in a Guild-level grant or
+    free access, or bought as the add-on on a working paid plan. Fails closed: `None` (no owner)
+    and Try It get none."""
+    return access is not None and access.works and access.recap_audio
 
 
 def can_use_story_memory(access: Access | None) -> bool:
@@ -54,11 +61,12 @@ def allowed(rule: Rule, access: Access | None) -> bool:
         "backup": can_backup,
         "memory": can_use_story_memory,
         "recap": can_recap,
+        "recap_audio": can_recap_audio,
     }
     return rules[rule](access)
 
 
-Action = Literal["ai", "copy", "transcript", "restore", "share", "story", "recap"]
+Action = Literal["ai", "copy", "transcript", "restore", "share", "story", "recap", "recap_audio"]
 # Each thing a person can press belongs to exactly one rule, so the pair can't drift apart.
 RULE_OF: dict[Action, Rule] = {
     "ai": "ai",
@@ -68,6 +76,7 @@ RULE_OF: dict[Action, Rule] = {
     "share": "backup",  # sharing house rules needs a paid plan (#1190)
     "story": "memory",  # the story extractor after a session (#1367)
     "recap": "recap",  # the cinematic recap after a session (#1382)
+    "recap_audio": "recap_audio",
 }
 
 # What a person pressed, in the words the refusal uses, so it names what they tried and not a
@@ -81,6 +90,7 @@ _UNAVAILABLE: dict[Action, str] = {
     "share": "Sharing house rules isn't available for this campaign",
     "story": "Remembering the story from a session isn't available for this campaign",
     "recap": "Recaps aren't available for this campaign",
+    "recap_audio": "Spoken recaps aren't available for this campaign",
 }
 _CANT: dict[Action, str] = {
     "ai": "find names with its AI",
@@ -90,6 +100,7 @@ _CANT: dict[Action, str] = {
     "share": "share house rules",
     "story": "remember the story",
     "recap": "write recaps",
+    "recap_audio": "make spoken recaps",
 }
 _ASK_OWNER: dict[Action, str] = {
     action: f"{text}. Ask the campaign's owner to take a look."
@@ -131,6 +142,8 @@ def refusal(
     where = f"here: {account_link(site_url)}" if site_url else "on DMbot's website"
     if access is None or not access.works:
         return f"Your plan has ended, so DMbot can't {_CANT[action]}. Pick one {where}"
+    if action == "recap_audio":
+        return f"Spoken recaps come with the Guild plan, or as an add-on. See plans {where}"
     # A plan that works but has no copies: Try It, the only one (plans.json).
     if action == "share":
         return f"Sharing house rules needs a paid plan. Pick one {where}"
