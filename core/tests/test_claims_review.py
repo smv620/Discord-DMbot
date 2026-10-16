@@ -12,7 +12,7 @@ from unittest.mock import AsyncMock, MagicMock
 from dmbot.bot import DMBot
 from dmbot.memory.claims import ClaimStore, Extracted
 from dmbot.ui import claims_review
-from tests.test_memory_store import DM, GUILD_A, MemoryTest
+from tests.test_memory_store import DM, GUILD_A, ConfirmedMemoryTest
 
 STRANGER = 99
 
@@ -21,7 +21,7 @@ def said(subject: str, relationship: str, obj: str, how: str = "dm_said") -> Ext
     return Extracted(subject, relationship, obj, "", ("1",), how)
 
 
-class Review(MemoryTest):
+class Review(ConfirmedMemoryTest):
     async def asyncSetUp(self) -> None:
         await super().asyncSetUp()
         self.claims = ClaimStore(self.memory)
@@ -177,7 +177,7 @@ class Review(MemoryTest):
         self.assertIn(claims_review.NOTHING_WAITING, it.sent[-1])
 
 
-class DmScreen(MemoryTest):
+class DmScreen(ConfirmedMemoryTest):
     def table(self) -> Any:
         return SimpleNamespace(guild_id=GUILD_A, campaign_id=self.c, screen_channel_id=9)
 

@@ -21,7 +21,7 @@ from dmbot.transcript.models import (
     Line,
 )
 from dmbot.transcript.topics import OFF_TOPIC
-from tests.test_memory_store import GUILD_A, MemoryTest
+from tests.test_memory_store import GUILD_A, ConfirmedMemoryTest
 
 DM, ALICE, BOB = 1, 7, 8
 
@@ -197,7 +197,7 @@ class Running(unittest.IsolatedAsyncioTestCase):
         stopped = await go(Canned([AIError("x")] * 3), Recorder(), session(100))
         self.assertEqual(stopped.unsent, 100)  # the three that failed and everything after
 
-    async def test_a_store_error_neither_stops_the_run_nor_reaches_the_log(self) -> None:
+    async def test_a_store_error_still_gives_a_report_and_never_reaches_the_log(self) -> None:
         class Broken(Recorder):
             async def propose(self, *a: Any, **kw: Any) -> Proposed:
                 raise RuntimeError("Failing row contains (Zorbax-the-secret)")
@@ -205,7 +205,7 @@ class Running(unittest.IsolatedAsyncioTestCase):
         ai = Canned()
         with self.assertLogs("dmbot.memory.extractor", "WARNING") as logged:
             report = await go(ai, Broken(), session(20))
-        self.assertEqual((len(ai.sent), report.failed), (2, 2))  # the second batch still ran
+        self.assertEqual((len(ai.sent), report.failed), (2, 1))  # both batches were read first
         self.assertNotIn("Zorbax", "\n".join(logged.output))
         self.assertNotIn("Zorbax", report.line())
 
@@ -213,6 +213,14 @@ class Running(unittest.IsolatedAsyncioTestCase):
         ai = Canned(claim=False)
         report = await go(ai, Recorder(), session(100), max_seconds=-1)
         self.assertEqual((report.calls, report.stopped, report.unsent), (0, "time limit", 100))
+
+    async def test_the_whole_session_is_handed_over_at_once_even_when_it_stops_early(self) -> None:
+        store = Recorder()
+        ai = Canned([None, None, AIOutOfFunds("x")])
+        report = await go(ai, store, session(40))
+        self.assertEqual((report.calls, report.stopped), (3, "out of funds"))
+        self.assertEqual(len(store.calls), 1)  # one hand-over, with what the two answers found
+        self.assertEqual(len(store.calls[0][0]), 2)
 
     async def test_running_out_of_funds_stops_at_once(self) -> None:
         ai = Canned([AIOutOfFunds("x")])
@@ -233,7 +241,7 @@ class Running(unittest.IsolatedAsyncioTestCase):
         self.assertEqual((ai.sent, report.calls), ([], 0))
 
 
-class Landing(MemoryTest):
+class Landing(ConfirmedMemoryTest):
     """With a real claim store: only what the rules allow is kept."""
 
     async def test_a_claim_citing_someone_who_stopped_mid_run_leaves_nothing(self) -> None:

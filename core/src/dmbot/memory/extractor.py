@@ -26,14 +26,19 @@ from typing import Protocol
 from dmbot.ai import AIOutOfFunds, Reply
 from dmbot.memory.claims import (
     INJECTION_REASON,
+    NAME_REJECTED_REASON,
+    NEW_NAME_LIMIT,
     NO_SPEAKER_REASON,
     PLAN_REASON,
     SAME_ENTRY_REASON,
+    SECRET_NAME_REASON,
+    SESSION_CLAIMS,
     STATE_REASON,
     STOPPED_REASON,
     TWO_ENTRIES_REASON,
     UNKNOWN_NAME_REASON,
     ClaimStore,
+    Extracted,
     parse_answer,
 )
 from dmbot.memory.ontology import Tally
@@ -162,6 +167,8 @@ _LOGGED_REASONS = {
     TWO_ENTRIES_REASON: "two entries",
     SAME_ENTRY_REASON: "same entry",
     STATE_REASON: "bad condition",
+    NAME_REJECTED_REASON: "not a name",
+    SECRET_NAME_REASON: "secret name",
 }
 
 
@@ -175,6 +182,10 @@ class Report:
     dropped: Counter[str] = field(default_factory=Counter)  # by reason (fixed wording)
     repeated: int = 0
     malformed: int = 0
+    named: int = 0  # new names made for the DM to check
+    new_names: list[str] = field(default_factory=list)  # as said, for the DM screen; not logged
+    joined: int = 0  # spellings joined to a name already waiting
+    deferred: int = 0  # claims left for next time (their name was past the limit)
     unsent: int = 0  # lines never sent: the call cap, or the run stopped
     stopped: str = ""  # why it ended early, if it did
 
@@ -183,7 +194,8 @@ class Report:
         return (
             f"Story extractor: {self.calls} call(s), {self.failed} failed, "
             f"{self.proposed} proposed, dropped: {why}, {self.repeated} repeated, "
-            f"{self.malformed} malformed, {self.unsent} line(s) not sent"
+            f"{self.malformed} malformed, {self.named} new name(s), {self.joined} joined, "
+            f"{self.deferred} deferred, {self.unsent} line(s) not sent"
             + (f", stopped: {self.stopped}" if self.stopped else "")
         )
 
@@ -205,17 +217,23 @@ async def run(
     tally: Tally | None = None,
     max_calls: int = DEFAULT_MAX_CALLS,
     max_seconds: float = MAX_RUN_S,
+    skip: Collection[str] = (),
+    new_names: int = NEW_NAME_LIMIT,
 ) -> Report:
-    """Read the session's lines and store what the AI found as proposals. `consenting` is asked
-    before each batch (a speaker who stopped is left out of what is sent) and again after the
-    answer (what `propose` checks the claims against). `model` names the model that answers
-    (it can change on a fallback), recorded with the claims. Stops at `max_calls`, after
-    `max_seconds` in all, at an AI that
-    is out of money, and after `FAILURES_BEFORE_STOP` failures in a row. A claim's lines are
+    """Read the session's lines and store what the AI found as proposals, all at once at the end
+    (the linker picks the most-said new names across the whole session). `consenting` is asked
+    before each batch (a speaker who stopped is left out of what is sent) and again before the
+    claims are stored (what `propose` checks them against). `model` names the model when no
+    answer did, recorded with the claims. `skip` are name keys that are never story names (the
+    people at the table). Stops at `max_calls`, after `max_seconds` in all, at an AI that is out
+    of money, and after `FAILURES_BEFORE_STOP` failures in a row. A claim's lines are
     numbered by their place in the stored session; they are not looked up anywhere yet, so if a
     stop-recording clean-up removes lines, whatever resolves them later must key on more than
     the position."""
     report = Report()
+    collected: list[Extracted] = []
+    everyone: dict[str, int | None] = {}  # every line sent, to who said it
+    answered_by = ""  # the model that answered last (it can change on a fallback)
     work = batches(readable(lines))
     streak = 0
     started = time.monotonic()
@@ -256,30 +274,45 @@ async def run(
             continue
         streak = 0
         found, bad = parse_answer(reply.text, speakers.keys())
-        agreed = await consenting()  # again: someone may have stopped while the AI worked
+        collected.extend(found)
+        answered_by = reply.model or answered_by
+        everyone.update(speakers)
+        report.malformed += bad
+    # One hand-over for the whole session: the linker picks the most-said new names across all of
+    # it, and the campaign's memory is read once, not once a batch. Consent is asked again here,
+    # after the last answer (CLAUDE.md: after every async step), and `propose` checks it per claim.
+    if collected:
+        agreed = await consenting()
         try:
             done = await claims.propose(
                 guild_id,
                 campaign_id,
-                found,
-                speakers,
+                collected,
+                everyone,
                 opted_in=agreed,
                 prompt_version=PROMPT_VERSION,
-                model=reply.model or model(),
+                model=answered_by or model(),
                 session_started_at=session_started_at,
-                malformed=bad,
+                malformed=0,
                 tally=tally,
+                dms=dm_ids,
+                skip=skip,
+                new_names=new_names,
+                limit=SESSION_CLAIMS,
             )
         except Exception as exc:
             # Only the type: a database error can quote the row, and the row holds the claim's
-            # words, which the log never gets. The next batch still runs.
-            log.warning("Story extractor: storing a batch failed (%s)", type(exc).__name__)
+            # words, which the log never gets.
+            log.warning("Story extractor: storing the claims failed (%s)", type(exc).__name__)
             report.failed += 1
-            report.unsent += len(batch)
-            continue
-        report.proposed += done.waiting
-        report.repeated += done.repeated
-        report.malformed += done.malformed
-        for reason, n in done.reasons.items():
-            report.dropped[_LOGGED_REASONS.get(reason, "other")] += n
+        else:
+            report.proposed += done.waiting
+            report.repeated += done.repeated
+            report.malformed += done.malformed
+            report.named += done.named
+            report.new_names.extend(done.new)
+            report.joined += done.joined
+            report.deferred += done.deferred
+            for reason, n in done.reasons.items():
+                report.dropped[_LOGGED_REASONS.get(reason, "other")] += n
     return report

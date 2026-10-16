@@ -1080,6 +1080,18 @@ def review_view(campaign_id: str) -> discord.ui.View:
     return view
 
 
+def held_back_text(names: list[str]) -> str:
+    """For the DM screen, when names came from what was said (#1364): the same check as the name
+    scan's, but it says why some of what was said is not asked yet. Names only, no claims."""
+    shown = ", ".join(f"**{_md(n)}**" for n in names[:5])
+    more = f" and {len(names) - 5} more" if len(names) > 5 else ""
+    return (
+        f"📝 **{_plural(len(names), 'new name')} to check** from this session: {shown}{more}.\n"
+        "What was said about them is held back until you check them. Say which are in your "
+        "game: the check opens privately for the DM."
+    )
+
+
 def after_session_text(names: list[str]) -> str:
     """For the DM screen (players may see it under peek; the names come from the
     transcript anyone can read, so nothing is spoiled)."""
