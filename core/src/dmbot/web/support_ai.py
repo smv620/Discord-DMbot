@@ -44,7 +44,12 @@ TICKETS_PER_PASS = 5
 MAX_ANSWER = 3000
 MAX_PROMPT = 24_000  # characters of thread sent: the newest messages win
 MAX_TOKENS = 900
-ENDING = "Didn't help? Reply to this email and a person will take over."
+# The word is real: asks_for_a_person() below hands the ticket over on it (or "human") without an
+# AI call, so the person is told exactly what works (#1518).
+ENDING = (
+    "Want to talk to a person instead? Reply with just the word PERSON and someone on the "
+    "DMbot team will write back to you."
+)
 ASKS_FOR_A_PERSON = re.compile(r"\b(person|human|support team)\b", re.IGNORECASE)
 
 SYSTEM = """\
