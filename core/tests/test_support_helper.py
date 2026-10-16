@@ -599,6 +599,62 @@ class TheReason(HelperBase):
         self.assertEqual(support.REASONS, ("unhappy", "asked", "limit", "no-email", "helper-down"))
 
 
+class TheHandOverIsKept(HelperBase):
+    """Every hand-over stays on the ticket for good (#1487): `handed_over_reason` and
+    `handed_over_at`, which a person's answer does not clear (the admin list's `reason` is)."""
+
+    listed = TheReason.listed  # the admin list's `reason`, which a person's answer clears
+
+    async def kept(self, number: int) -> tuple[str | None, int | None]:
+        async with self.web.support_admin() as conn:
+            cur = await conn.execute(
+                "SELECT handed_over_reason, handed_over_at FROM support_tickets WHERE id = %s",
+                (number,),
+            )
+            row = await cur.fetchone()
+        assert row is not None
+        return row["handed_over_reason"], row["handed_over_at"]
+
+    async def handed_over_at(self, number: int) -> int | None:
+        client = httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=self.app), base_url=API, follow_redirects=False
+        )
+        self.addAsyncCleanup(client.aclose)
+        await client.post(
+            "/admin/auth/password", json={"email": ADMIN, "password": PASSWORD}, headers=HEADERS
+        )
+        got = (await client.get("/admin/support")).json()["tickets"]
+        return next(t["handedOverAt"] for t in got if t["id"] == number)
+
+    async def test_a_ticket_never_handed_over_has_neither(self) -> None:
+        number = await self.ticket()
+        self.fake.answers.append(answer())
+        await self.helper.run_once()
+        self.assertEqual(await self.kept(number), (None, None))
+        self.assertIsNone(await self.handed_over_at(number))
+
+    async def test_a_hand_over_is_kept_after_a_person_answers(self) -> None:
+        number = await self.ticket("I need a human")
+        await self.helper.run_once()
+        handed = int(self.now)
+        self.assertEqual(await self.kept(number), ("asked", handed))
+        self.assertEqual(await self.handed_over_at(number), handed)
+        self.now += 3600
+        await self.helper.team_reply(number, "Hello, I can help.")
+        self.assertIsNone((await self.listed())[number])  # no longer waiting: the reason is gone
+        self.assertEqual(await self.kept(number), ("asked", handed))  # but the hand-over stays
+        self.assertEqual(await self.handed_over_at(number), handed)
+
+    async def test_the_database_refuses_a_code_it_does_not_know_here_too(self) -> None:
+        number = await self.ticket()
+        with self.assertRaises(psycopg.errors.CheckViolation):
+            async with self.web.support_admin() as conn:
+                await conn.execute(
+                    "UPDATE support_tickets SET handed_over_reason = 'because' WHERE id = %s",
+                    (number,),
+                )
+
+
 class TheTeamsReply(HelperBase):
     async def admin(self) -> tuple[httpx.AsyncClient, str]:
         client = httpx.AsyncClient(

@@ -133,6 +133,9 @@ class Row:
     # Why it went to a person (#1459): one of REASONS, null when it hasn't (or has since been
     # answered).
     reason: str | None
+    # When the helper last handed it to a person (Unix seconds); null if it never was. Set with
+    # the hand-over and never cleared (#1487), unlike `reason`.
+    handed_over_at: int | None
     # The account's address (the one the team replies to), read through the admin door and never
     # stored in the ticket; None when the account has none. Never logged.
     email: str | None
@@ -150,7 +153,7 @@ async def newest(
             # One call per row (at most LIST_LIMIT): fine for an admin page read now and then.
             "SELECT id, created_at, user_id, plan, subject,"
             " COALESCE(dmbot_support_message(id), '') AS message, source, status,"
-            " escalated_reason AS reason, dmbot_support_email(user_id) AS email"
+            " escalated_reason AS reason, handed_over_at, dmbot_support_email(user_id) AS email"
             f" FROM support_tickets{where} ORDER BY created_at DESC, id DESC LIMIT %s",
             args,
         )
@@ -418,13 +421,16 @@ async def defer(db: Database, ticket_id: int, *, now: int, wait: int) -> int:
     return now if row is None else int(row["ai_failed_at"])
 
 
-async def escalate(db: Database, ticket_id: int, reason: Reason) -> bool:
+async def escalate(db: Database, ticket_id: int, reason: Reason, now: int) -> bool:
     """Hand a ticket to a person, saying why. True only the first time (so the team is told
-    once)."""
+    once). The reason and the time are also kept in `handed_over_*`, which a person's answer
+    does not clear (#1487): a ticket handed over again after an answer keeps the latest of
+    each."""
     async with db.support_admin() as conn:
         cur = await conn.execute(
-            "UPDATE support_tickets SET status = 'escalated', escalated_reason = %s"
+            "UPDATE support_tickets SET status = 'escalated', escalated_reason = %s,"
+            " handed_over_reason = %s, handed_over_at = %s"
             " WHERE id = %s AND status <> 'escalated'",
-            (reason, ticket_id),
+            (reason, reason, now, ticket_id),
         )
         return cur.rowcount == 1

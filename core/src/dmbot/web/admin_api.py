@@ -435,6 +435,9 @@ def router(
                     "status": r.status,
                     # Why it came to a person: one of support.REASONS, or null.
                     "reason": r.reason,
+                    # When it was handed to a person (Unix seconds), null if never; kept after an
+                    # answer, unlike the reason.
+                    "handedOverAt": r.handed_over_at,
                     # Where the team replies; null when the account has no email.
                     "email": r.email,
                     # The helper's answers, the person's emailed replies and the team's replies.
