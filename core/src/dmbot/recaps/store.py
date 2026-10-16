@@ -500,6 +500,24 @@ class RecapStore:
             )
             return bool(cur.rowcount)
 
+    async def decide(self, guild_id: int, campaign_id: str, session_at: int, action: str) -> bool:
+        """The DM's choice made on the DM screen (#1455), the same two moves the website's page
+        makes: `post` (a ready draft becomes 'posting', which the bot then sends after its
+        checks) or `drop` (a draft is not posted). False: it was already decided, or isn't ready."""
+        if action == "post":
+            sql = "status = 'posting' WHERE state = 'ready' AND status = 'draft'"
+        elif action == "drop":
+            sql = "status = 'dropped' WHERE status = 'draft'"
+        else:
+            raise ValueError(action)
+        async with self._db.guild(guild_id) as conn:
+            cur = await conn.execute(
+                f"UPDATE recap_jobs SET {sql} AND guild_id = %s AND campaign_id = %s"
+                " AND session_at = %s",
+                (guild_id, campaign_id, session_at),
+            )
+            return bool(cur.rowcount)
+
     async def back_to_draft(
         self, guild_id: int, campaign_id: str, session_at: int, *, note: str
     ) -> None:
