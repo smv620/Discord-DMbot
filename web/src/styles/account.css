@@ -270,3 +270,12 @@
   .account .danger h2 {
     color: var(--danger);
   }
+
+  /* The narrated-recaps add-on under the plan buttons (#1390). */
+  .account .addon {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-3);
+    padding-top: var(--space-3);
+    border-top: 1px solid var(--border);
+  }
