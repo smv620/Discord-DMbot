@@ -3,10 +3,26 @@
 // core (#435); this file only shows it and sends the user's choices back.
 import type { ComponentChildren, JSX } from "preact";
 import { createContext } from "preact";
-import { useCallback, useContext, useEffect, useRef, useState } from "preact/hooks";
+import {
+  useCallback,
+  useContext,
+  useEffect,
+  useRef,
+  useState,
+} from "preact/hooks";
 
-import { hoursLeftLine, hoursUsedLine, planName, text } from "../content/account";
-import { formatPrice, plans as paidPlans, type PlanId } from "../content/pricing";
+import {
+  hoursLeftLine,
+  hoursUsedLine,
+  planName,
+  text,
+} from "../content/account";
+import { text as recapText } from "../content/recaps";
+import {
+  formatPrice,
+  plans as paidPlans,
+  type PlanId,
+} from "../content/pricing";
 import {
   ApiError,
   type AccountApi,
@@ -49,7 +65,11 @@ function emailLinkToken(hash: string): string | null {
 /** Take the code out of the address bar, so a reload or a shared screen can't use it again. */
 function forgetEmailLink(): void {
   if (typeof window !== "undefined") {
-    window.history.replaceState(null, "", window.location.pathname + window.location.search);
+    window.history.replaceState(
+      null,
+      "",
+      window.location.pathname + window.location.search,
+    );
   }
 }
 
@@ -75,7 +95,8 @@ const SharedContext = createContext<Shared | null>(null);
 
 function useShared(): Shared {
   const shared = useContext(SharedContext);
-  if (!shared) throw new Error("Account sections need the Account component around them");
+  if (!shared)
+    throw new Error("Account sections need the Account component around them");
   return shared;
 }
 
@@ -90,7 +111,10 @@ function useAction() {
   const [notice, setNotice] = useState<string | null>(null);
 
   const run = useCallback(
-    async (action: () => Promise<void>, explain?: (error: ApiError) => string | null) => {
+    async (
+      action: () => Promise<void>,
+      explain?: (error: ApiError) => string | null,
+    ) => {
       if (running.current) return;
       running.current = true;
       setBusy(true);
@@ -98,7 +122,8 @@ function useAction() {
       try {
         await action();
       } catch (error) {
-        const apiError = error instanceof ApiError ? error : new ApiError("server");
+        const apiError =
+          error instanceof ApiError ? error : new ApiError("server");
         if (apiError.kind === "signed-out") {
           signedOut();
           return;
@@ -107,7 +132,11 @@ function useAction() {
           signedOut(text.signInAgain);
           return;
         }
-        setNotice(explain?.(apiError) ?? text.errors[apiError.kind] ?? text.actionFailed);
+        setNotice(
+          explain?.(apiError) ??
+            text.errors[apiError.kind] ??
+            text.actionFailed,
+        );
       } finally {
         running.current = false;
         setBusy(false);
@@ -151,7 +180,13 @@ function ActionButton({
 }) {
   const classes = kind === "primary" ? "button" : `button ${kind}`;
   return (
-    <button type="button" class={classes} disabled={busy} aria-busy={busy} onClick={onClick}>
+    <button
+      type="button"
+      class={classes}
+      disabled={busy}
+      aria-busy={busy}
+      onClick={onClick}
+    >
       {busy ? text.busy : children}
     </button>
   );
@@ -182,7 +217,8 @@ export default function Account({
           // through to the page's own "down" answer from api.me() below.
           // A refusal for too many tries did not spend the link, so it says to wait, not that the
           // link was used.
-          if (error instanceof ApiError && error.kind === "bad-link") linkNotice = text.emailLinkBad;
+          if (error instanceof ApiError && error.kind === "bad-link")
+            linkNotice = text.emailLinkBad;
           else if (error instanceof ApiError && error.kind === "slow-down") {
             linkNotice = text.emailLinkWait;
           } else throw error;
@@ -224,7 +260,9 @@ export default function Account({
   const refresh = useCallback(async () => {
     try {
       const me = await api.me();
-      setState(me ? { kind: "signed-in", me } : { kind: "signed-out", notice: null });
+      setState(
+        me ? { kind: "signed-in", me } : { kind: "signed-out", notice: null },
+      );
     } catch {
       // The change worked; only the refresh failed. Keep showing what we have.
     }
@@ -244,7 +282,14 @@ export default function Account({
 
   const access = state.kind === "signed-in" ? state.me.access : undefined;
   const noLimits = access?.kind === "free" && access.unlimited === true;
-  const shared: Shared = { api, go: safeGo, refresh, signedOut, noLimits, siteKey };
+  const shared: Shared = {
+    api,
+    go: safeGo,
+    refresh,
+    signedOut,
+    noLimits,
+    siteKey,
+  };
 
   let body: JSX.Element;
   switch (state.kind) {
@@ -281,7 +326,9 @@ export default function Account({
           installResult={installResult(search)}
           me={state.me}
           onDeleted={() => setState({ kind: "deleted" })}
-          onSignedOutByChoice={() => setState({ kind: "signed-out", notice: null })}
+          onSignedOutByChoice={() =>
+            setState({ kind: "signed-out", notice: null })
+          }
         />
       );
       break;
@@ -331,7 +378,9 @@ function EmailSignIn() {
   const { api } = useShared();
   const [email, setEmail] = useState("");
   const [busy, setBusy] = useState(false);
-  const [answer, setAnswer] = useState<{ text: string; ok: boolean } | null>(null);
+  const [answer, setAnswer] = useState<{ text: string; ok: boolean } | null>(
+    null,
+  );
   const request = api.emailSignInRequest;
   if (!request) return null; // an API older than #1231
   const send = async (event: Event): Promise<void> => {
@@ -355,7 +404,11 @@ function EmailSignIn() {
     }
   };
   return (
-    <form class="panel" aria-labelledby="email-heading" onSubmit={(e) => void send(e)}>
+    <form
+      class="panel"
+      aria-labelledby="email-heading"
+      onSubmit={(e) => void send(e)}
+    >
       <h2 id="email-heading">{text.emailHeading}</h2>
       <label for="email-address">{text.emailLabel}</label>
       <input
@@ -366,11 +419,19 @@ function EmailSignIn() {
         value={email}
         onInput={(e) => setEmail((e.target as HTMLInputElement).value)}
       />
-      <button type="submit" class="button secondary" disabled={busy} aria-busy={busy}>
+      <button
+        type="submit"
+        class="button secondary"
+        disabled={busy}
+        aria-busy={busy}
+      >
         {busy ? text.emailSending : text.emailButton}
       </button>
       {answer && (
-        <p class={answer.ok ? "ok" : "warn"} role={answer.ok ? "status" : "alert"}>
+        <p
+          class={answer.ok ? "ok" : "warn"}
+          role={answer.ok ? "status" : "alert"}
+        >
           {answer.text}
         </p>
       )}
@@ -394,7 +455,11 @@ function installResult(search: string): string | null {
 
 /** Show the ?install= result once: take it out of the address so a reload doesn't repeat it. */
 function forgetInstallResult(): void {
-  if (typeof window === "undefined" || !window.location.search.includes("install=")) return;
+  if (
+    typeof window === "undefined" ||
+    !window.location.search.includes("install=")
+  )
+    return;
   const url = new URL(window.location.href);
   url.searchParams.delete("install");
   window.history.replaceState(null, "", url.pathname + url.search + url.hash);
@@ -414,7 +479,10 @@ function SignedIn({
   const { api } = useShared();
   const { busy, notice, run } = useAction();
   // Kept here, not in the offers section: answering the last offer removes that section.
-  const [offerNews, setOfferNews] = useState<{ text: string; ok: boolean } | null>(null);
+  const [offerNews, setOfferNews] = useState<{
+    text: string;
+    ok: boolean;
+  } | null>(null);
   return (
     <div class="stack">
       <div class="hello">
@@ -442,7 +510,8 @@ function SignedIn({
                 await api.signOutEverywhere();
                 onSignedOutByChoice();
               },
-              (error) => (error.kind === "slow-down" ? text.signOutEverywhereWait : null),
+              (error) =>
+                error.kind === "slow-down" ? text.signOutEverywhereWait : null,
             )
           }
         >
@@ -453,7 +522,10 @@ function SignedIn({
       <Notice message={notice} />
       {installMessage && <ForgetInstallResult />}
       {installMessage && (
-        <p class={installMessage === text.install["done"] ? "ok" : "warn"} role="status">
+        <p
+          class={installMessage === text.install["done"] ? "ok" : "warn"}
+          role="status"
+        >
           {installMessage}
         </p>
       )}
@@ -479,7 +551,11 @@ function SignedIn({
       <RecordingSection entries={me.recording ?? []} />
       <ExportSection />
       <DeleteSection
-        paidPlan={me.plan !== null && me.plan.id !== "try-it" && me.plan.status !== "lapsed"}
+        paidPlan={
+          me.plan !== null &&
+          me.plan.id !== "try-it" &&
+          me.plan.status !== "lapsed"
+        }
         free={me.access?.kind === "free"}
         stillPaying={me.access?.stillPaying === true}
         onDeleted={onDeleted}
@@ -495,8 +571,8 @@ function PlanList({ choose }: { choose: (id: PlanId) => JSX.Element }) {
         {paidPlans.map((p) => (
           <li key={p.id}>
             <span>
-              <strong>{p.name}</strong> · {formatPrice(p.priceCents ?? 0)} a month ·{" "}
-              {p.hoursLine}
+              <strong>{p.name}</strong> · {formatPrice(p.priceCents ?? 0)} a
+              month · {p.hoursLine}
             </span>
             {choose(p.id)}
           </li>
@@ -517,7 +593,8 @@ function PlanSection({ me }: { me: Me }) {
       (error) => {
         // The plan changed since the page opened (it stopped, or free access began):
         // show what's true now.
-        if (error.kind === "no-paid-plan" || error.kind === "free-access") void refresh();
+        if (error.kind === "no-paid-plan" || error.kind === "free-access")
+          void refresh();
         return null;
       },
     );
@@ -545,7 +622,9 @@ function PlanSection({ me }: { me: Me }) {
           <ActionButton
             busy={busy}
             kind="secondary"
-            onClick={() => void run(async () => go(await api.checkoutUrl(id)), outOfDate)}
+            onClick={() =>
+              void run(async () => go(await api.checkoutUrl(id)), outOfDate)
+            }
           >
             {text.choose(id)}
           </ActionButton>
@@ -565,22 +644,32 @@ function PlanSection({ me }: { me: Me }) {
         <h2 id="plan-heading">{text.planHeading}</h2>
         <Notice message={notice} />
         <p class="plan-name">
-          {access.endsOn ? text.freeAccessUntil(access.endsOn) : text.freeAccess}
+          {access.endsOn
+            ? text.freeAccessUntil(access.endsOn)
+            : text.freeAccess}
         </p>
         <p class="muted small">
           {text.freeNext}
-          {access.endsOn && !access.stillPaying && ` ${text.freeEnds(access.endsOn)}`}
+          {access.endsOn &&
+            !access.stillPaying &&
+            ` ${text.freeEnds(access.endsOn)}`}
         </p>
         {access.hours && (
           <>
-            <p class="hours-line">{hoursUsedLine(access.hours.used, access.hours.cap)}</p>
+            <p class="hours-line">
+              {hoursUsedLine(access.hours.used, access.hours.cap)}
+            </p>
             <progress
               max={access.hours.cap}
               value={Math.min(Math.max(access.hours.used, 0), access.hours.cap)}
               aria-label={text.hoursBarLabel}
             />
             <p class="muted small">
-              {text.freeHoursLeft(access.hours.used, access.hours.cap, access.hours.renewsOn)}
+              {text.freeHoursLeft(
+                access.hours.used,
+                access.hours.cap,
+                access.hours.renewsOn,
+              )}
             </p>
           </>
         )}
@@ -643,7 +732,9 @@ function PlanSection({ me }: { me: Me }) {
             </>
           ) : (
             <>
-              <p class="hours-line">{hoursUsedLine(plan.hoursUsed, plan.hoursCap)}</p>
+              <p class="hours-line">
+                {hoursUsedLine(plan.hoursUsed, plan.hoursCap)}
+              </p>
               {plan.hoursCap > 0 && (
                 <progress
                   max={plan.hoursCap}
@@ -652,9 +743,16 @@ function PlanSection({ me }: { me: Me }) {
                 />
               )}
               <p class="muted small">
-                {hoursLeftLine(plan.hoursUsed, plan.hoursCap, plan.renewsOn, plan.id)}
+                {hoursLeftLine(
+                  plan.hoursUsed,
+                  plan.hoursCap,
+                  plan.renewsOn,
+                  plan.id,
+                )}
               </p>
-              {plan.endsOn && <p>{text.planEnds(planName(plan.id), plan.endsOn)}</p>}
+              {plan.endsOn && (
+                <p>{text.planEnds(planName(plan.id), plan.endsOn)}</p>
+              )}
               {plan.id === "try-it" ? (
                 choices(text.pickPlan)
               ) : (
@@ -728,7 +826,10 @@ function OfferRow({
         }
         if (error.kind === "offer-gone") {
           // The row goes with the refresh, so the news is shown above the sections.
-          onNews({ text: text.errors["offer-gone"] ?? text.actionFailed, ok: false });
+          onNews({
+            text: text.errors["offer-gone"] ?? text.actionFailed,
+            ok: false,
+          });
           void refresh();
         }
         return null;
@@ -753,17 +854,24 @@ function OfferRow({
       <div class="row">
         <ActionButton
           busy={busy}
-          onClick={() => answer(
+          onClick={() =>
+            answer(
               () => api.acceptOffer(offer.id),
               text.accepted(offer.campaignName, offer.personName),
-            )}
+            )
+          }
         >
           {text.accept}
         </ActionButton>
         <ActionButton
           busy={busy}
           kind="secondary"
-          onClick={() => answer(() => api.declineOffer(offer.id), text.declined(offer.personName))}
+          onClick={() =>
+            answer(
+              () => api.declineOffer(offer.id),
+              text.declined(offer.personName),
+            )
+          }
         >
           {text.decline}
         </ActionButton>
@@ -791,7 +899,9 @@ function CampaignsSection({ me }: { me: Me }) {
             <CampaignRow
               key={c.id}
               campaign={c}
-              offer={me.offers.outgoing.find((o) => o.campaignId === c.id) ?? null}
+              offer={
+                me.offers.outgoing.find((o) => o.campaignId === c.id) ?? null
+              }
               onWithdrawn={async (person) => {
                 setDone(text.withdrawn(person));
                 await refresh();
@@ -803,6 +913,9 @@ function CampaignsSection({ me }: { me: Me }) {
             />
           ))}
         </ul>
+      )}
+      {me.campaigns.length > 0 && (
+        <a href="/account/recaps">{recapText.linkToList}</a>
       )}
     </section>
   );
@@ -832,7 +945,9 @@ function CampaignRow({
       <p class="campaign-name">{campaign.name}</p>
       <p class="muted small">
         {campaign.serverName} ·{" "}
-        {campaign.lastPlayedAt ? text.lastPlayed(campaign.lastPlayedAt) : text.notPlayed}
+        {campaign.lastPlayedAt
+          ? text.lastPlayed(campaign.lastPlayedAt)
+          : text.notPlayed}
       </p>
       <p class="tags">
         <span class={`tag ${campaign.status}`}>
@@ -849,7 +964,9 @@ function CampaignRow({
       <Notice message={notice} />
       {offer && (
         <>
-          <p class="small">{text.offerOutgoing(offer.personName, offer.expiresAt)}</p>
+          <p class="small">
+            {text.offerOutgoing(offer.personName, offer.expiresAt)}
+          </p>
           <div class="row">
             <ActionButton
               busy={busy}
@@ -861,7 +978,8 @@ function CampaignRow({
                     await onWithdrawn(offer.personName);
                   },
                   (error) => {
-                    if (error.kind !== "offer-gone") return campaignRefusal(error);
+                    if (error.kind !== "offer-gone")
+                      return campaignRefusal(error);
                     void refresh(); // it was answered or ended: show what's true now
                     return null;
                   },
@@ -873,19 +991,22 @@ function CampaignRow({
           </div>
         </>
       )}
-      {api.handoverCandidates && campaign.role === "owner" && !offer && people === null && (
-        <ActionButton
-          busy={busy}
-          kind="secondary"
-          onClick={() =>
-            void run(async () => {
-              setPeople((await api.handoverCandidates?.(campaign.id)) ?? []);
-            }, campaignRefusal)
-          }
-        >
-          {text.handOver}
-        </ActionButton>
-      )}
+      {api.handoverCandidates &&
+        campaign.role === "owner" &&
+        !offer &&
+        people === null && (
+          <ActionButton
+            busy={busy}
+            kind="secondary"
+            onClick={() =>
+              void run(async () => {
+                setPeople((await api.handoverCandidates?.(campaign.id)) ?? []);
+              }, campaignRefusal)
+            }
+          >
+            {text.handOver}
+          </ActionButton>
+        )}
       {people !== null && (
         <form
           id={formId}
@@ -984,7 +1105,13 @@ function ServersSection({ me }: { me: Me }) {
 }
 
 /** One server: its own busy state and message, so tapping one never ties up the rest. */
-function ServerRow({ server: s, api }: { server: Me["servers"][number]; api: AccountApi }) {
+function ServerRow({
+  server: s,
+  api,
+}: {
+  server: Me["servers"][number];
+  api: AccountApi;
+}) {
   const { refresh } = useShared();
   const { busy, notice, run } = useAction();
   return (
@@ -1009,9 +1136,13 @@ function ServerRow({ server: s, api }: { server: Me["servers"][number]; api: Acc
           {text.linkServer}
         </ActionButton>
       ) : (
-        <span class="muted">{s.installedByYou ? text.youAddedIt : text.alreadyThere}</span>
+        <span class="muted">
+          {s.installedByYou ? text.youAddedIt : text.alreadyThere}
+        </span>
       )}
-      {s.hasDmbot && s.canLink && <p class="muted small row-note">{text.linkNote}</p>}
+      {s.hasDmbot && s.canLink && (
+        <p class="muted small row-note">{text.linkNote}</p>
+      )}
       <Notice message={notice} />
     </li>
   );
@@ -1049,11 +1180,18 @@ function CharactersSection() {
                 c.ac !== null ? text.characterAc(c.ac) : null,
               ].filter((part) => part !== null);
               return (
-                <li key={`${c.serverName}-${c.campaign}-${c.name}-${i}`} data-character>
+                <li
+                  key={`${c.serverName}-${c.campaign}-${c.name}-${i}`}
+                  data-character
+                >
                   <p class="plan-name">{c.name ?? text.characterUnread}</p>
-                  {c.name === null && <p class="muted small">{text.characterUnreadNote}</p>}
+                  {c.name === null && (
+                    <p class="muted small">{text.characterUnreadNote}</p>
+                  )}
                   {c.classLine && <p>{c.classLine}</p>}
-                  <p class="muted small">{text.characterWhere(c.serverName, c.campaign)}</p>
+                  <p class="muted small">
+                    {text.characterWhere(c.serverName, c.campaign)}
+                  </p>
                   {facts.length > 0 && (
                     <p class="small facts">
                       {facts.map((fact, n) => (
@@ -1066,13 +1204,20 @@ function CharactersSection() {
                   )}
                   {(c.typedIn || c.readAt) && (
                     <p class="muted small">
-                      {[c.typedIn ? text.characterTyped : null, c.readAt ? text.characterRead(c.readAt) : null]
+                      {[
+                        c.typedIn ? text.characterTyped : null,
+                        c.readAt ? text.characterRead(c.readAt) : null,
+                      ]
                         .filter((part) => part !== null)
                         .join(" ")}
                     </p>
                   )}
                   {c.sheetLink && (
-                    <a href={c.sheetLink} target="_blank" rel="noopener noreferrer">
+                    <a
+                      href={c.sheetLink}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                    >
                       {text.characterOpen}
                     </a>
                   )}
@@ -1175,7 +1320,9 @@ function RecordingSection({ entries }: { entries: RecordingEntry[] }) {
           <RecordingRow
             key={e.serverId}
             entry={e}
-            onStopped={() => setDone((now) => [...now, text.stoppedRecording(e.serverName)])}
+            onStopped={() =>
+              setDone((now) => [...now, text.stoppedRecording(e.serverName)])
+            }
           />
         ))}
       </ul>
@@ -1183,7 +1330,13 @@ function RecordingSection({ entries }: { entries: RecordingEntry[] }) {
   );
 }
 
-function RecordingRow({ entry, onStopped }: { entry: RecordingEntry; onStopped: () => void }) {
+function RecordingRow({
+  entry,
+  onStopped,
+}: {
+  entry: RecordingEntry;
+  onStopped: () => void;
+}) {
   const { api, refresh } = useShared();
   const { busy, notice, run, clear } = useAction();
   const [asking, setAsking] = useState(false);
@@ -1228,7 +1381,11 @@ function RecordingRow({ entry, onStopped }: { entry: RecordingEntry; onStopped: 
           </div>
         </>
       ) : (
-        <button type="button" class="button secondary" onClick={() => setAsking(true)}>
+        <button
+          type="button"
+          class="button secondary"
+          onClick={() => setAsking(true)}
+        >
           {text.stopRecording}
         </button>
       )}
@@ -1261,7 +1418,8 @@ function ExportSection() {
         kind="secondary"
         onClick={() =>
           void run(
-            async () => saveFile(await api.downloadExport(), "dmbot-my-data.json"),
+            async () =>
+              saveFile(await api.downloadExport(), "dmbot-my-data.json"),
             (error) => (error.kind === "slow-down" ? text.exportTooSoon : null),
           )
         }
@@ -1315,7 +1473,9 @@ function DeleteSection({
         <>
           {(free
             ? [
-                stillPaying ? text.deleteWarningFreePaying : text.deleteWarningFree,
+                stillPaying
+                  ? text.deleteWarningFreePaying
+                  : text.deleteWarningFree,
                 ...text.deleteWarning.slice(1),
               ]
             : text.deleteWarning
@@ -1342,7 +1502,12 @@ function DeleteSection({
             >
               {text.deleteNext}
             </ActionButton>
-            <button type="button" class="button secondary" disabled={busy} onClick={reset}>
+            <button
+              type="button"
+              class="button secondary"
+              disabled={busy}
+              onClick={reset}
+            >
               {text.keep}
             </button>
           </div>
@@ -1356,7 +1521,12 @@ function DeleteSection({
           {/* "Keep" comes first, where step 1's red button was, so a quick double tap
               can't delete the account. */}
           <div class="row">
-            <button type="button" class="button secondary" disabled={busy} onClick={reset}>
+            <button
+              type="button"
+              class="button secondary"
+              disabled={busy}
+              onClick={reset}
+            >
               {text.keep}
             </button>
             <ActionButton
