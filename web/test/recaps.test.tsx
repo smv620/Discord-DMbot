@@ -41,7 +41,7 @@ describe("the list", () => {
   it("says so when there are none", async () => {
     const api = { ...mockApi("table"), recaps: async () => [] };
     renderPage("/account/recaps", api);
-    expect(await screen.findByText(text.empty)).toBeTruthy();
+    expect(await screen.findByText(text.emptyOff)).toBeTruthy(); // recaps are off today (RECAPS_LIVE)
   });
 
   it("asks a signed-out person to sign in", async () => {

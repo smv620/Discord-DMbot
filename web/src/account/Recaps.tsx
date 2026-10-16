@@ -12,7 +12,7 @@ import {
   text,
 } from "../content/recaps";
 import { panelWords } from "../content/recap-panel";
-import { RECAP_AUDIO_LIVE } from "../content/recap-words";
+import { RECAP_AUDIO_LIVE, RECAPS_LIVE } from "../content/recap-words";
 import {
   ApiError,
   type AccountApi,
@@ -106,10 +106,12 @@ function List({ api }: { api: AccountApi }) {
     );
   return (
     <>
-      <p class="lead">{text.lead}</p>
+      {(RECAPS_LIVE || load.recaps.length > 0) && (
+        <p class="lead">{text.lead}</p>
+      )}
       {load.recaps.length === 0 ? (
         <p class="panel" role="status">
-          {text.empty}
+          {RECAPS_LIVE ? text.empty : text.emptyOff}
         </p>
       ) : (
         <ul class="campaigns">
