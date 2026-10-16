@@ -45,7 +45,7 @@ describe("Getting help", () => {
     expect(leads).toEqual([
       "Look here first.",
       "Ask in public.",
-      "On a paid plan?",
+      "Have an account?",
       "Anyone, on any plan.",
     ]);
   });

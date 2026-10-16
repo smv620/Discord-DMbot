@@ -54,7 +54,7 @@ describe("while the helper is off (today)", () => {
 
   it("the privacy page does not mention a helper, an acknowledgement or info@", async () => {
     const page = await privacy();
-    expect(page).toContain("The team replies by email to the address on your account.");
+    expect(page).toContain("From your account page, you can write to the DMbot team. That message goes only to the team, privately");
     expect(page).not.toMatch(/helper|info@getdmbot\.com|writes the first answer/i);
   });
 });

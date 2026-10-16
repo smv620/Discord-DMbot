@@ -228,7 +228,9 @@ export type ApiErrorKind =
   | "no-email" // no payment email is stored yet, so a move code has nowhere to go (#1246)
   | "too-soon" // the account moved less than 30 days ago (#1246)
   | "email-failed" // the move code could not be emailed just now (#1246)
-  | "not-paying" // a support ticket needs a paid plan that works (#1340)
+  | "not-paying" // a support ticket needs an account with a plan, Try It too (#1340, #1435)
+  | "one-waiting" // a free account already has a question waiting (#1435)
+  | "daily-limit" // a free account sent 3 questions in the last day (#1435)
   | "not-human" // the person check wasn't passed or wasn't there (#1340)
   | "ticket-empty" // the subject or the message was empty (#1340)
   | "ticket-too-long" // the message is over 4,000 letters (#1340)
@@ -336,6 +338,8 @@ const errorKinds: Record<string, ApiErrorKind> = {
   too_soon: "too-soon",
   email_failed: "email-failed",
   not_paying: "not-paying",
+  one_waiting: "one-waiting",
+  daily: "daily-limit",
   not_human: "not-human",
   empty: "ticket-empty",
   too_long: "ticket-too-long",

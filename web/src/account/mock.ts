@@ -183,6 +183,7 @@ export function scenarioMe(scenario: Scenario): Me | null {
     case "try-it":
       return {
         ...base,
+        canSupport: true,
         campaigns: campaigns.slice(0, 1),
         plan: {
           id: "try-it",
