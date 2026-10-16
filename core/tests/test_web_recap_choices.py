@@ -178,19 +178,52 @@ class Choices(Base):
             )
         self.assertFalse((await self.read())["canAudio"])
 
-    async def test_a_co_dm_who_is_not_the_owner_is_not_offered_the_narration(self) -> None:
+    async def test_a_co_dm_sees_the_narration_from_the_owners_plan_as_the_panel_does(self) -> None:
         await self.campaigns.add_dm(THURSDAY.id, self.one.id, BOB.id)
         bob = await self.session_of(BOB)
-        await self.give_plan(BOB.id, "guild")  # Bob's own plan is not the campaign's: Alice owns it
+        # Alice owns the campaign. With no plan of hers, Bob's own plan changes nothing (#1470).
+        await self.give_plan(BOB.id, "guild")
+        self.assertEqual(((await self.read(bob))["canAudio"]), False)
+        # Her plan has the narration: the co-DM is offered it, and may turn it on.
+        await self.give_plan(ALICE.id, "guild")
         got = await self.read(bob)
-        self.assertEqual((got["text"], got["canAudio"]), (True, False))
-        with self.assertRaises(RecapError):
+        self.assertEqual(
+            (got["text"], got["canAudio"], got["audioHow"]), (True, True, "part of your plan")
+        )
+        await set_choice(self.web, bob, self.cref, "audio", False, now=NOW, enforce_plans=True)
+        got = await set_choice(self.web, bob, self.cref, "audio", True, now=NOW, enforce_plans=True)
+        self.assertTrue(got["audio"])
+        # Her plan has it as an add-on: said as the panel says it. And if her plan has no
+        # narration, the co-DM is refused as the owner would be, even with a plan of their own.
+        await self.give_plan(ALICE.id, "table", audio_until=NOW + 86400)
+        self.assertEqual((await self.read(bob))["audioHow"], "an add-on")
+        await self.give_plan(ALICE.id, "table")
+        self.assertFalse((await self.read(bob))["canAudio"])
+        with self.assertRaises(RecapError) as caught:
             await set_choice(self.web, bob, self.cref, "audio", True, now=NOW, enforce_plans=True)
-        # But a co-DM may turn the others off, as on the DM screen.
+        self.assertEqual(caught.exception.code, "not_in_plan")
+        # A co-DM may always turn the others off, as on the DM screen.
         got = await set_choice(
             self.web, bob, self.cref, "email", False, now=NOW, enforce_plans=True
         )
         self.assertFalse(got["email"])
+
+    async def test_nothing_about_the_owner_or_the_plan_is_in_what_a_co_dm_is_told(self) -> None:
+        await self.campaigns.add_dm(THURSDAY.id, self.one.id, BOB.id)
+        bob = await self.session_of(BOB)
+        await self.give_plan(ALICE.id, "guild")
+        got = await self.read(bob)
+        self.assertEqual(set(got), {"text", "audio", "email", "canAudio", "audioHow"})
+        shown = repr(got).casefold()
+        for secret in (str(ALICE.id), "guild", "sub_1", "active", "fake"):
+            self.assertNotIn(secret, shown.replace("part of your plan", ""))
+
+    async def test_a_player_and_a_server_manager_who_is_no_dm_still_get_not_found(self) -> None:
+        carol = await self.session_of(BOB)  # Bob DMs the other campaign only
+        await self.give_plan(ALICE.id, "guild")
+        with self.assertRaises(RecapError) as caught:
+            await self.read(carol)
+        self.assertEqual(caught.exception.code, "not_found")
 
     # ---- the doors and the role -------------------------------------------------------
 

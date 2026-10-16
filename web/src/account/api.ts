@@ -232,8 +232,8 @@ export interface RecapAudioState {
 }
 
 /** The DM's three recap choices for a campaign (#1468), the same as the DM screen's 📜 Recaps panel.
- * `canAudio`: the narration switch may be offered (the campaign's owner's plan has it, and it is
- * the signed-in DM who owns it); `audioHow`: "part of your plan" or "an add-on". */
+ * `canAudio`: the narration switch may be offered (the campaign owner's plan has it, for every DM
+ * of the campaign, owner or co-DM, #1470); `audioHow`: "part of your plan" or "an add-on". */
 export interface RecapChoices {
   text: boolean;
   audio: boolean;
