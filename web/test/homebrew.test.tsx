@@ -85,7 +85,7 @@ describe("shared-book tags (#1579)", () => {
     expect(screen.getAllByText(text.fromBook)).toHaveLength(2); // Moon Lamp and Mud Wight
     expect(screen.getAllByText(text.legacy)).toHaveLength(1); // Mud Wight only
     expect(screen.getByText(text.bookNote)).toBeTruthy();
-    expect(text.bookNote).toContain("[Legacy 2014] means the 2014 rules");
+    expect(text.bookNote).toContain("that book is for the 2014 rules");
   });
 
   it("shows no tag and no note when nothing is from a book, or on an older API", async () => {
