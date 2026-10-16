@@ -65,11 +65,26 @@ def system() -> str:
     return SYSTEM.replace("{limit}", str(MAX_BEATS))
 
 
+def window(rows: Sequence[tuple[str, str, str]]) -> list[tuple[str, str, str]]:
+    """The rows that are sent: all of them, or the end of a long session (where the cliffhanger
+    is). The checks use only these, so a player who spoke early in a very long session is not
+    blamed for a beat the AI could not see."""
+    kept: list[tuple[str, str, str]] = []
+    size = 0
+    for row in reversed(rows):
+        size += len(row[2]) + len(row[1]) + len(row[0]) + 4
+        if size > TRANSCRIPT_MAX and kept:
+            break
+        kept.append(row)
+    return kept[::-1]
+
+
 def message(rows: Sequence[tuple[str, str, str]], names: Collection[str]) -> str:
     """The transcript as quoted data, the end of it if it is long, and the confirmed names."""
-    body = transcript_of(rows)
-    if len(body) > TRANSCRIPT_MAX:
-        body = "<transcript>\n…\n" + body[-TRANSCRIPT_MAX:].split("\n", 1)[-1]
+    sent = window(rows)
+    body = transcript_of(sent)
+    if len(sent) < len(rows):
+        body = body.replace("<transcript>\n", "<transcript>\n…\n", 1)
     parts = [body]
     if names:
         parts.append("<names>\n" + "; ".join(sorted(names)[:200]) + "\n</names>")

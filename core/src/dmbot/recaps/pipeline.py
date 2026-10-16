@@ -38,15 +38,23 @@ BACKOFF_S = (60, 240, 960)
 MAX_RESTARTS = 2  # a stopped player restarts the work; not for ever
 DAY_S = 86400
 
-NOTHING = "There was no recorded talk to recap. Only people who agreed are recorded."
-TOO_LITTLE = "There wasn't enough in the session to tell it as a story."
-FAILED_CHECKS = "DMbot couldn't tell it without making something up, so it wrote nothing."
-SERVICE = "The writing service wasn't available. You can try again from the page."
-FUNDS = "DMbot's writing service has run out of credit. The people who run DMbot have been told."
-CAP = "This recap used up its share of writing. You can try again tomorrow."
-DAILY = "This campaign has used today's share of recap writing. Try again tomorrow."
-NO_NAMES = "DMbot couldn't read the campaign's names, so it wrote nothing."
-STOPPED = "Players stopped being recorded while it was written, and there was nothing left to tell."
+NOTHING = "No one who agreed to be recorded spoke this session, so there was nothing to recap."
+TOO_LITTLE = "There wasn't enough said to tell as a story."
+FAILED_CHECKS = (
+    "DMbot couldn't write this one so that every detail came from what was said, so it wrote "
+    "nothing. You can try again."
+)
+SERVICE = "The writing service wasn't available. You can try again."
+FUNDS = "DMbot's writing service is unavailable right now. We've been told. Try again later."
+CAP = "This recap has hit its limit for now. You can try again tomorrow."
+DAILY = "This campaign has used up today's recap writing. Try again tomorrow."
+NO_NAMES = (
+    "DMbot couldn't check your campaign's secret names, so it wrote nothing to be safe. "
+    "Try again in a minute."
+)
+STOPPED = "Players stopped being recorded while this was written, so nothing was left to tell."
+# Reasons where trying again would fail the same way: the email offers no retry for these.
+NO_RETRY = (NOTHING, TOO_LITTLE, STOPPED)
 
 
 @dataclass(frozen=True, slots=True)
@@ -104,15 +112,11 @@ class RecapWorker:
                     break
                 before = self._mark(job)
                 job = await self._step(guild_id, campaign_id, job)
-                if (
-                    job is None
-                    or job.finished
-                    or (before == (job.state, job.attempt, job.errors, job.next_at))
-                ):
+                if job is None or job.finished or before == self._mark(job):
                     break  # finished, or no progress: never spin
         finally:
             await self._store.release(guild_id, campaign_id, session_at)
-        if job is not None and job.finished and job.emailed_at is None:
+        if job is not None and job.finished and job.emailed_at is None and job.status == "draft":
             await self._tell(guild_id, campaign_id, job)
         return job
 
@@ -142,6 +146,15 @@ class RecapWorker:
     # --- one step -----------------------------------------------------------------------
 
     async def _step(self, gid: int, cid: str, job: Job) -> Job | None:
+        if job.state == "queued" and job.emailed_at is not None:
+            # The DM pressed Try again (the page set the job back to queued): a fresh recap, with
+            # a fresh share of calls and a fresh email. The day's tally (`spent`) is kept, and
+            # this comes before the ceiling, which is what a failed-at-the-ceiling job needs.
+            await self._store.update(
+                gid, cid, job.session_at, calls=0, emailed_at=None, summary="", original="",
+                title="", housekeeping=[], music=[], beats=[], speakers=[], grade={},
+            )  # fmt: skip
+            return await self._store.get(gid, cid, job.session_at)
         if not await self._allowed(gid, cid, job):
             return await self._fail(gid, cid, job, "recaps aren't on for this campaign")
         if job.calls >= MAX_CALLS:
@@ -155,25 +168,6 @@ class RecapWorker:
         if job.speakers and not set(job.speakers) <= set(await consenting()):
             return await self._restart(gid, cid, job)
         stage = job.state
-        if stage == "queued" and job.emailed_at is not None:
-            # The DM pressed Try again (the page set the job back to queued): a fresh recap, with
-            # a fresh share of calls and a fresh email.
-            await self._store.update(
-                gid,
-                cid,
-                job.session_at,
-                calls=0,
-                emailed_at=None,
-                summary="",
-                original="",
-                title="",
-                housekeeping=[],
-                music=[],
-                beats=[],
-                speakers=[],
-                grade={},
-            )
-            return await self._store.get(gid, cid, job.session_at)
         if stage == "queued":
             return await self._beats(gid, cid, job, inputs, consenting)
         if stage == "beats":
@@ -196,7 +190,7 @@ class RecapWorker:
     ) -> str | None:
         """One AI call, counted before it is made. None if it failed (the job is then waiting or
         failed already: the caller returns)."""
-        await self._store.update(gid, cid, job.session_at, calls=job.calls + 1)
+        await self._store.update(gid, cid, job.session_at, calls=job.calls + 1, spent=job.spent + 1)
         try:
             reply = await client.complete(system, text, max_tokens=max_tokens)
         except AIOutOfFunds:
@@ -204,7 +198,15 @@ class RecapWorker:
             return None
         except Exception as exc:  # the AI service, the network: a wait, never fatal to the bot
             log.warning("Recap: a call failed (%s)", type(exc).__name__)  # the type, not the text
-            await self._wait(gid, cid, job, SERVICE, calls=job.calls + 1, error=type(exc).__name__)
+            await self._wait(
+                gid,
+                cid,
+                job,
+                SERVICE,
+                calls=job.calls + 1,
+                spent=job.spent + 1,
+                error=type(exc).__name__,
+            )
             return None
         return reply.text
 
@@ -254,6 +256,8 @@ class RecapWorker:
         self, gid: int, cid: str, job: Job, inputs: Inputs, consenting: Consenting
     ) -> Job | None:
         said = self._said(inputs, set(job.speakers))
+        sent = {int(n) for n, _, _ in bt.window([(str(s.number), "", s.text) for s in said])}
+        said = [s for s in said if s.number in sent]  # only what the AI was shown
         kept, problems = bt.check(
             [b for b in (job.beats or []) if isinstance(b, dict)],
             lines={s.number: s.text for s in said},
@@ -344,7 +348,10 @@ class RecapWorker:
         if problems:
             log.info("Recap: a draft failed %d check(s)", len(problems))  # counts only
             return await self._retry_or_fail(gid, cid, job, problems)
-        grade = await self._grade(gid, cid, job, sheet, prose.summary)
+        try:
+            grade = await self._grade(gid, cid, job, sheet, prose.summary)
+        except AIOutOfFunds:
+            return await self._fail(gid, cid, job, FUNDS)
         weak = rd.weak(grade) if grade else []
         if weak and job.attempt == 0:  # below the bar: one more try, told what fell short
             await self._store.update(
@@ -374,13 +381,18 @@ class RecapWorker:
     ) -> dict[str, int]:
         """The grader's numbers, or none: a grader that fails never stops a recap that passed
         every check."""
-        fresh = await self._store.get(gid, cid, job.session_at)
-        calls = fresh.calls if fresh is not None else job.calls
-        await self._store.update(gid, cid, job.session_at, calls=calls + 1)
+        fresh = await self._store.get(gid, cid, job.session_at) or job
+        if fresh.calls >= MAX_CALLS:
+            return {}  # the job's ceiling holds for the grader too
+        await self._store.update(
+            gid, cid, job.session_at, calls=fresh.calls + 1, spent=fresh.spent + 1
+        )
         try:
             reply = await self._fast.complete(
                 rd.GRADE_SYSTEM, rd.grade_message(sheet, summary), max_tokens=200
             )
+        except AIOutOfFunds:
+            raise  # the next stage would only hit it too
         except Exception as exc:
             log.warning("Recap: the grader failed (%s)", type(exc).__name__)
             return {}
@@ -455,20 +467,21 @@ class RecapWorker:
         why: str,
         *,
         calls: int | None = None,
+        spent: int | None = None,
         error: str = "",
     ) -> Job | None:
         """Something outside failed: wait, longer each time, and fail on the third."""
         errors = job.errors + 1
         if errors >= len(BACKOFF_S):
             return await self._fail(gid, cid, job, why, error=error)
-        extra = {} if calls is None else {"calls": calls}
+        extra = {} if calls is None else {"calls": calls, "spent": spent}
         await self._store.update(
             gid,
             cid,
             job.session_at,
             errors=errors,
             next_at=int(self._now()) + BACKOFF_S[errors - 1],
-            last_error=error or why,
+            last_error=why,
             **extra,
         )
         return await self._store.get(gid, cid, job.session_at)

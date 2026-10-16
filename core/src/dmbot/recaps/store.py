@@ -32,7 +32,7 @@ TERMINAL = ("ready", "failed")
 STATES = ("queued", "beats", "checked", "prose", "housekeeping", "ready")
 
 COLUMNS = (
-    "session_at, dm_user_id, state, attempt, errors, restarts, next_at, calls, last_error,"
+    "session_at, dm_user_id, state, attempt, errors, restarts, next_at, calls, spent, last_error,"
     " problems, beats, title, summary, original, housekeeping, music, game_day, status, tries,"
     " speakers, grade, emailed_at, created_at, updated_at"
 )
@@ -48,6 +48,7 @@ class Job:
     restarts: int
     next_at: int
     calls: int
+    spent: int  # calls ever made for this session, never reset: the day's tally
     last_error: str
     problems: tuple[str, ...]
     beats: Any  # the stored beat sheet (dmbot.recaps.beats.from_json reads it)
@@ -80,6 +81,7 @@ def _job(r: dict[str, Any]) -> Job:
         int(r["restarts"]),
         int(r["next_at"]),
         int(r["calls"]),
+        int(r["spent"]),
         r["last_error"],
         tuple(r["problems"]),
         r["beats"],
@@ -108,6 +110,7 @@ _WRITABLE = frozenset(
         "restarts",
         "next_at",
         "calls",
+        "spent",
         "last_error",
         "problems",
         "beats",
@@ -221,7 +224,7 @@ class RecapStore:
         async with self._db.guild(guild_id) as conn:
             await conn.execute(
                 f"UPDATE recap_jobs SET {sets}, updated_at = %s WHERE guild_id = %s"
-                " AND campaign_id = %s AND session_at = %s",
+                " AND campaign_id = %s AND session_at = %s AND status = 'draft'",
                 (*values, int(self._now()), guild_id, campaign_id, session_at),
             )
 
@@ -243,7 +246,7 @@ class RecapStore:
         """AI calls the campaign's recaps made since then, for the daily cap."""
         async with self._db.guild(guild_id) as conn:
             cur = await conn.execute(
-                "SELECT COALESCE(sum(calls), 0) AS n FROM recap_jobs WHERE guild_id = %s"
+                "SELECT COALESCE(sum(spent), 0) AS n FROM recap_jobs WHERE guild_id = %s"
                 " AND campaign_id = %s AND updated_at >= %s",
                 (guild_id, campaign_id, since),
             )
@@ -280,16 +283,6 @@ class RecapStore:
                 "UPDATE recap_jobs SET status = 'draft', decided_at = NULL, last_error = %s"
                 " WHERE guild_id = %s AND campaign_id = %s AND session_at = %s"
                 " AND status = 'posting'",
-                (note[:200], guild_id, campaign_id, session_at),
-            )
-
-    async def reopen(self, guild_id: int, campaign_id: str, session_at: int, *, note: str) -> None:
-        """The bot marked it posted but could not send it: back to a draft, with a note."""
-        async with self._db.guild(guild_id) as conn:
-            await conn.execute(
-                "UPDATE recap_jobs SET status = 'draft', decided_at = NULL, last_error = %s"
-                " WHERE guild_id = %s AND campaign_id = %s AND session_at = %s"
-                " AND status = 'posted'",
                 (note[:200], guild_id, campaign_id, session_at),
             )
 

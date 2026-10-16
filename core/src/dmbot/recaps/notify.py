@@ -13,6 +13,7 @@ import hashlib
 import logging
 
 from dmbot.mail import Mailer
+from dmbot.recaps.pipeline import NO_RETRY
 from dmbot.recaps.store import Job, RecapStore
 
 log = logging.getLogger(__name__)
@@ -36,8 +37,11 @@ def page_link(site: str, guild_id: int, campaign_id: str, session_at: int) -> st
     return f"{site.rstrip('/')}/account/recaps/{job_ref(guild_id, campaign_id, session_at)}"
 
 
-def _kind(what: str, guild_id: int, campaign_id: str, session_at: int) -> str:
-    digest = hashlib.sha256(f"{guild_id}.{campaign_id}.{session_at}".encode()).hexdigest()[:16]
+def _kind(what: str, guild_id: int, campaign_id: str, session_at: int, tries: int = 0) -> str:
+    """Once for each session and each Try again (so a new recap gets its own email)."""
+    digest = hashlib.sha256(f"{guild_id}.{campaign_id}.{session_at}.{tries}".encode()).hexdigest()[
+        :16
+    ]
     return f"recap-{what}:{digest}"
 
 
@@ -51,20 +55,19 @@ async def tell_the_dm(
     address = await store.address(guild_id, job.dm_user_id)
     link = page_link(site, guild_id, campaign_id, job.session_at)
     if job.state == "ready":
-        subject = "Your session recap is ready"
+        subject = f"Your recap is ready: {job.title}"
         body = (
             f"Your recap is ready: {job.title}\n\n"
-            f"Read it, change it and decide what to do with it here:\n{link}\n\n"
-            "Nothing is posted to your table until you say so."
+            f"Read it and change it here: {link}\n\n"
+            "When it's right, press Post to send it to your table. "
+            "Nothing is posted until you do."
         )
-        kind = _kind("ready", guild_id, campaign_id, job.session_at)
+        kind = _kind("ready", guild_id, campaign_id, job.session_at, job.tries)
     else:
-        subject = "DMbot couldn't write a recap for your session"
-        body = (
-            f"{job.last_error or 'Something went wrong.'}\n\n"
-            f"You can look at it, and try again, here:\n{link}"
-        )
-        kind = _kind("failed", guild_id, campaign_id, job.session_at)
+        subject = f"No recap this time: {job.last_error or 'something went wrong'}"[:150]
+        again = "" if job.last_error in NO_RETRY else f"\n\nTry again here: {link}"
+        body = f"{job.last_error or 'Something went wrong.'}{again}"
+        kind = _kind("failed", guild_id, campaign_id, job.session_at, job.tries)
     result = await mailer.send(
         user_id=job.dm_user_id, kind=kind, to=address, subject=subject, body=body
     )

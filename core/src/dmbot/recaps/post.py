@@ -19,10 +19,10 @@ def to_the_table(job: Job) -> str:
     if job.housekeeping:
         parts += [
             "",
-            "**Mechanical Housekeeping** (hit points, items, conditions)",
+            "**Numbers and items** (hit points, items, conditions)",
             *(f"- {b}" for b in job.housekeeping),
         ]
-    return "\n".join([*parts, "", "📜 _Recap, approved by your DM._"])
+    return "\n".join([*parts, "", "📜 _Recap of last session, posted by your DM._"])
 
 
 def parts_of(text: str) -> list[str]:

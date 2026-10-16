@@ -113,15 +113,16 @@ class Keeping(Base):
 
     async def test_a_post_that_cannot_be_sent_goes_back_with_a_note(self) -> None:
         await self.store.enqueue(1, self.one.id, 100, dm_user_id=fx.DM)
-        await self.mark_posted(self.one.id, 100)
-        await self.store.reopen(1, self.one.id, 100, note="No channel.")
+        async with self.db.guild(1) as conn:
+            await conn.execute("UPDATE recap_jobs SET status = 'posting'")
+        await self.store.back_to_draft(1, self.one.id, 100, note="No channel.")
         job = await self.store.get(1, self.one.id, 100)
         assert job is not None
         self.assertEqual((job.status, job.last_error), ("draft", "No channel."))
 
     async def test_calls_are_counted_for_the_day(self) -> None:
         await self.store.enqueue(1, self.one.id, 100, dm_user_id=fx.DM)
-        await self.store.update(1, self.one.id, 100, calls=5)
+        await self.store.update(1, self.one.id, 100, calls=5, spent=5)
         self.assertEqual(await self.store.calls_since(1, self.one.id, NOW - 10), 5)
         self.assertEqual(await self.store.calls_since(1, self.two.id, NOW - 10), 0)
         self.clock.now += 100
@@ -435,7 +436,7 @@ class Working(Base):
     async def test_a_campaign_has_a_ceiling_for_the_day(self) -> None:
         await self.setUpWorker(fx.Canned())
         await self.store.enqueue(1, self.one.id, 50, dm_user_id=fx.DM)
-        await self.store.update(1, self.one.id, 50, state="ready", calls=pl.DAILY_CALLS)
+        await self.store.update(1, self.one.id, 50, state="ready", spent=pl.DAILY_CALLS)
         job = await self.go()
         self.assertEqual((job.state, job.last_error), ("failed", pl.DAILY))
 
@@ -466,3 +467,65 @@ class Working(Base):
         async with self.db.guild(1) as conn:
             await conn.execute("UPDATE recap_jobs SET status = 'dropped'")
         self.assertIsNone(await self.store.bridge(1, self.one.id, 10_000))
+
+    async def test_try_again_keeps_the_days_tally(self) -> None:
+        await self.setUpWorker(self.happy())
+        await self.go()
+        async with self.db.guild(1) as conn:
+            await conn.execute(
+                "UPDATE recap_jobs SET tries = 1, state = 'queued', beats = '[]', attempt = 0,"
+                " errors = 0, next_at = 0"
+            )
+        self.fast.answers += [fx.BEATS_ANSWER, fx.PROSE_ANSWER, fx.GRADE_ANSWER, fx.FINISH_ANSWER]
+        job = await self.go()
+        self.assertEqual((job.calls, job.spent), (4, 8))
+        self.assertEqual(await self.store.calls_since(1, self.one.id, NOW - 10), 8)
+
+    async def test_the_grader_stops_at_the_jobs_ceiling(self) -> None:
+        await self.setUpWorker(fx.Canned(fx.BEATS_ANSWER, fx.PROSE_ANSWER))
+        await self.store.update(1, self.one.id, 100, calls=pl.MAX_CALLS - 2)
+        await self.go()
+        self.assertEqual(len(self.fast.sent), 2)  # beats and prose; no grader, no finish call
+
+    async def test_a_grader_that_runs_out_of_funds_fails_the_job_at_once(self) -> None:
+        await self.setUpWorker(
+            fx.Canned(fx.BEATS_ANSWER, fx.PROSE_ANSWER, AIOutOfFunds("none left"))
+        )
+        job = await self.go()
+        self.assertEqual((job.state, job.last_error), ("failed", pl.FUNDS))
+
+    async def test_a_very_long_session_does_not_blame_an_early_player_the_ai_never_saw(
+        self,
+    ) -> None:
+        from dmbot.recaps import beats as bt
+
+        early = [("1", "Player", "early " + "x" * 200) for _ in range(30)]
+        late = [(str(n), "Player", "late " + "y" * 2000) for n in range(31, 80)]
+        sent = bt.window(early + late)
+        self.assertLess(len(sent), len(early + late))
+        self.assertEqual(sent[-1], late[-1])
+        self.assertNotIn(early[0], sent)
+        self.assertEqual(bt.window(early), early)  # a short session is sent whole
+
+    async def test_try_again_works_even_after_a_failure_at_the_ceiling(self) -> None:
+        await self.setUpWorker(fx.Canned())
+        await self.store.update(1, self.one.id, 100, calls=pl.MAX_CALLS)
+        await self.go()  # fails with the ceiling, and is told
+        async with self.db.guild(1) as conn:
+            await conn.execute(
+                "UPDATE recap_jobs SET tries = 1, state = 'queued', beats = '[]', attempt = 0,"
+                " errors = 0, next_at = 0"
+            )
+        self.fast.answers += [fx.BEATS_ANSWER, fx.PROSE_ANSWER, fx.GRADE_ANSWER, fx.FINISH_ANSWER]
+        job = await self.go()
+        self.assertEqual(job.state, "ready")
+
+    async def test_a_recap_the_dm_dropped_mid_write_is_not_written_further_or_emailed(self) -> None:
+        await self.setUpWorker(self.happy())
+        async with self.db.guild(1) as conn:
+            await conn.execute("UPDATE recap_jobs SET status = 'dropped'")
+        await self.store.update(1, self.one.id, 100, state="ready", title="x")  # a stage in flight
+        job = await self.store.get(1, self.one.id, 100)
+        assert job is not None
+        self.assertEqual((job.state, job.title), ("queued", ""))  # the write did nothing
+        self.assertEqual(self.told.jobs, [])

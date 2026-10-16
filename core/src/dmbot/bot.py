@@ -5325,11 +5325,11 @@ class DMBot(commands.AutoShardedBot):
                 return
             if await self.recaps.enqueue(gid, cid, session.started_at, dm_user_id=dm):
                 link = page_link(self.settings.site_url, gid, cid, session.started_at)
-                where = f" Read it here when it's ready: {link}" if self.settings.site_url else ""
+                where = f"\nYour recap page: {link}" if self.settings.site_url else ""
                 await self.post(
                     table.screen_channel_id,
-                    "📜 DMbot is writing a recap of this session. It will email you when it's "
-                    f"ready. Nothing goes to the table until you say so.{where}",
+                    "📜 Writing a recap of this session. You'll get an email when it's ready. "
+                    f"Nothing goes to the table until you say so.{where}",
                 )
 
     async def recap_secret_names(self, campaign: Campaign) -> list[str] | None:
@@ -5400,15 +5400,27 @@ class DMBot(commands.AutoShardedBot):
         time, and the recaps the DM has pressed Post on. Each campaign has one job at a time."""
         if not self.settings.recaps_on or self.recaps is None or self.recap_worker is None:
             return
+        for guild in list(self.guilds):  # first: a DM's Post never waits on a slow job
+            try:
+                await self.post_recaps(guild.id)
+            except Exception:
+                log.exception("Recap: posting failed for a server")
         done = 0
         for guild in list(self.guilds):
-            for cid, at in await self.recaps.due(guild.id):
+            try:
+                due = await self.recaps.due(guild.id)
+            except Exception:
+                log.exception("Recap: couldn't list the due jobs for a server")
+                continue
+            for cid, at in due:
                 if done >= RECAPS_PER_ROUND:
                     return
+                done += 1  # counted before it runs, so a job that raises can't stall the round
                 with log_context(guild_id=guild.id, campaign_id=cid):
-                    await self.recap_worker.run(guild.id, cid, at)
-                done += 1
-            await self.post_recaps(guild.id)
+                    try:
+                        await self.recap_worker.run(guild.id, cid, at)
+                    except Exception:
+                        log.exception("Recap: a job failed unexpectedly")
 
     async def post_recaps(self, guild_id: int) -> None:
         """Send the recaps the DM pressed Post on, after checking again what may have changed
@@ -5438,7 +5450,10 @@ class DMBot(commands.AutoShardedBot):
         if job is None or campaign is None or job.status != "posting":
             return
         if not await self.plan_allows("recap", gid, campaign, fail_open=False):
-            return await back("Your plan doesn't include recaps right now.")
+            return await back(
+                "Your plan doesn't include recaps right now, so nothing was posted. "
+                "Your draft is saved."
+            )
         channel = (
             self.get_channel(campaign.dmbchat_channel_id) if campaign.dmbchat_channel_id else None
         )
@@ -5448,7 +5463,8 @@ class DMBot(commands.AutoShardedBot):
             or (getattr(getattr(channel, "guild", None), "id", gid) != gid)
         ):
             return await back(
-                "This campaign has no chat channel yet. DMbot makes it when a session starts."
+                "There's no chat channel for this campaign yet. It's made when a session starts. "
+                "Start one, then press Post."
             )
         secrets = await self.recap_secret_names(campaign)
         if secrets is None:
@@ -5460,16 +5476,22 @@ class DMBot(commands.AutoShardedBot):
         if not set(job.speakers) <= set(agreed):
             return await back(
                 "A player stopped being recorded since this was written, so it can't be posted. "
-                "Try again, or leave it out."
+                "Write a new recap, or leave this one out."
             )
-        if not await self.recaps.posted(gid, cid, at):
-            return  # someone else posted it
+        # Sent first and marked posted after, so a failed send is never recorded as a post. The
+        # consent read just above is the last await before the send.
         try:
             for part in recap_post.parts_of(text):
                 await channel.send(part, allowed_mentions=discord.AllowedMentions.none())
-        except discord.HTTPException:
-            await self.recaps.reopen(gid, cid, at, note="DMbot couldn't write in the chat channel.")
-            return
+        except Exception:
+            log.warning("Recap: the send failed")
+            return await back(
+                "DMbot couldn't write in the chat channel. Check it can post there, "
+                "then press Post again."
+            )
+        await self.recaps.posted(gid, cid, at)
+        if campaign.dm_screen_channel_id:
+            await self.post(campaign.dm_screen_channel_id, "📜 Recap posted to the table.")
         changed = job.summary != job.original
         log.info("Recap: posted%s", " after an edit" if changed else "")  # counts only
 

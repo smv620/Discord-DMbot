@@ -2353,8 +2353,8 @@ WEB_ROLE_GRANTS: tuple[tuple[str, tuple[str, ...]], ...] = (
     # speakers, the call count, the original draft or the grade, which only the bot writes.
     ("SELECT", ("recap_jobs",)),
     (
-        "UPDATE (summary, housekeeping, status, decided_at, tries, state, attempt, errors,"
-        " restarts, next_at, problems, beats, last_error, leased_to, updated_at)",
+        "UPDATE (summary, housekeeping, status, tries, state, attempt, errors, restarts,"
+        " next_at, problems, beats, last_error)",
         ("recap_jobs",),
     ),
     ("SELECT, DELETE", ("consent",)),
@@ -3791,7 +3791,9 @@ RECAP_JOBS = (
     --   errors     calls that failed (the AI service, the network) in the stage now running
     --   next_at    not before this time (backoff after an error)
     --   leased_to  a worker has it until this time, so two never work on one job
-    --   calls      AI calls spent in all, against the per-recap cap
+    --   calls      AI calls for the recap now being written, against the per-recap cap
+    --   spent      AI calls ever made for this session (a Try again does not reset it), for
+    --              the campaign's cap for the day
     --   last_error a short fixed reason (a type or a plain phrase), never the recap
     --   beats      the cited beat sheet: what happened, who, and the lines each rests on
     --   summary    the narration with its 《emotion》 and ((performance)) cues
@@ -3815,6 +3817,7 @@ RECAP_JOBS = (
         next_at      BIGINT NOT NULL DEFAULT 0,
         leased_to    BIGINT NOT NULL DEFAULT 0,
         calls        INTEGER NOT NULL DEFAULT 0 CHECK (calls >= 0),
+        spent        INTEGER NOT NULL DEFAULT 0 CHECK (spent >= 0),
         last_error   TEXT NOT NULL DEFAULT '' CHECK (char_length(last_error) <= 200),
         problems     TEXT[] NOT NULL DEFAULT '{{}}',
         beats        JSONB NOT NULL DEFAULT '[]',

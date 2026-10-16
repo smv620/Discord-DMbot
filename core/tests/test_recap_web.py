@@ -133,6 +133,14 @@ class TheDmsPage(Base):
                 )
             self.assertEqual(caught.exception.code, "bad_text")
 
+    async def test_the_website_cannot_touch_the_workers_lease(self) -> None:
+        async with self.web.user(ALICE.id, session=self.session.id_hash) as conn:
+            await conn.execute("SELECT set_config('dmbot.guild_id', %s, true)", (str(THURSDAY.id),))
+            for column in ("leased_to", "decided_at", "updated_at"):
+                with self.assertRaises(psycopg.errors.InsufficientPrivilege):
+                    async with conn.transaction():
+                        await conn.execute(f"UPDATE recap_jobs SET {column} = 0")
+
     async def test_the_website_cannot_write_the_bots_columns(self) -> None:
         async with self.web.user(ALICE.id, session=self.session.id_hash) as conn:
             await conn.execute("SELECT set_config('dmbot.guild_id', %s, true)", (str(THURSDAY.id),))
@@ -312,7 +320,7 @@ class TheEmail(Base):
         await sessions.sign_in(self.web, ALICE, [THURSDAY], now=NOW, days=30)
         job = replace(await self.state(self.one.id), state="failed", last_error="Try tomorrow.")
         await notify.tell_the_dm(mailer, self.store, SITE, THURSDAY.id, self.one.id, job)
-        self.assertIn("couldn't write", outbox.mail[0]["Subject"])
+        self.assertIn("No recap this time", outbox.mail[0]["Subject"])
         self.assertIn("Try tomorrow.", outbox.mail[0].get_content())
 
     async def test_no_site_address_or_no_account_address_sends_nothing(self) -> None:
@@ -343,14 +351,14 @@ def fake_bot(job: Job | None, *, allowed: bool = True, secrets: list[str] | None
         get=AsyncMock(return_value=job),
         posted=AsyncMock(return_value=True),
         back_to_draft=AsyncMock(),
-        reopen=AsyncMock(),
         to_post=AsyncMock(return_value=[("c" * 32, 100)]),
     )
-    campaign = SimpleNamespace(id="c" * 32, dmbchat_channel_id=55)
+    campaign = SimpleNamespace(id="c" * 32, dmbchat_channel_id=55, dm_screen_channel_id=66)
     bot = SimpleNamespace(
         recaps=store,
         campaigns=SimpleNamespace(get=AsyncMock(return_value=campaign)),
         plan_allows=AsyncMock(return_value=allowed),
+        post=AsyncMock(),
         get_channel=lambda cid: sent if channel == "default" else channel,
         recap_secret_names=AsyncMock(return_value=[] if secrets is None else secrets),
         consent=SimpleNamespace(
@@ -367,7 +375,7 @@ class ThePostStep(unittest.IsolatedAsyncioTestCase):
         from dataclasses import replace
 
         base = Job(
-            100, fx.DM, "ready", 0, 0, 0, 0, 3, "", (), [], "The Empty Hall",
+            100, fx.DM, "ready", 0, 0, 0, 0, 3, 3, "", (), [], "The Empty Hall",
             "《Tense》 ((slow)) Dusk fell on Mira.", "《Tense》 Dusk fell.",
             ("Mira drew her blade.",),
             ("m",), 4, "posting", 0, (fx.ALICE,), {}, None, 1, 1,
@@ -380,8 +388,8 @@ class ThePostStep(unittest.IsolatedAsyncioTestCase):
         text = "".join(call.args[0] for call in bot.sent.send.await_args_list)
         self.assertIn("Dusk fell on Mira.", text)
         self.assertNotIn("《", text)
-        self.assertIn("approved by your DM", text)
-        bot.recaps.posted.assert_awaited_once()
+        self.assertIn("posted by your DM", text)
+        bot.recaps.posted.assert_awaited_once()  # marked after the send, not before
         kwargs = bot.sent.send.await_args.kwargs
         self.assertEqual(kwargs["allowed_mentions"].users, False)
 
@@ -411,7 +419,8 @@ class ThePostStep(unittest.IsolatedAsyncioTestCase):
         bot = fake_bot(self.job())
         bot.sent.send.side_effect = discord.HTTPException(MagicMock(status=500), "boom")
         await bot._post_one_recap(THURSDAY.id, "c" * 32, 100)
-        bot.recaps.reopen.assert_awaited_once()
+        bot.recaps.back_to_draft.assert_awaited_once()
+        bot.recaps.posted.assert_not_awaited()
 
     async def test_a_job_that_is_not_waiting_to_post_is_left_alone(self) -> None:
         bot = fake_bot(self.job(status="draft"))

@@ -298,7 +298,7 @@ class TheWords(unittest.TestCase):
 class WhatTheTableReads(unittest.TestCase):
     def job(self, **kw: Any) -> Job:
         base = Job(
-            100, fx.DM, "ready", 0, 0, 0, 0, 3, "", (), [], "The Empty Hall",
+            100, fx.DM, "ready", 0, 0, 0, 0, 3, 3, "", (), [], "The Empty Hall",
             "《Tense》 ((slow)) Dusk fell.", "", ("Mira drew her blade.",), ("m",), 4, "draft",
             0, (fx.ALICE,), {}, None, 1, 1,
         )  # fmt: skip
@@ -311,7 +311,7 @@ class WhatTheTableReads(unittest.TestCase):
         self.assertNotIn("《", text)
         self.assertNotIn("((", text)
         self.assertIn("- Mira drew her blade.", text)
-        self.assertIn("approved by your DM", text)
+        self.assertIn("posted by your DM", text)
 
     def test_no_day_when_timebot_does_not_know_it_and_no_housekeeping_block_when_empty(
         self,
@@ -342,6 +342,8 @@ class TheLinkAndTheEmail(unittest.TestCase):
         self.assertLessEqual(len(kind), 60)
         self.assertNotIn("c" * 32, kind)
         self.assertNotEqual(kind, _kind("failed", 111, "c" * 32, 1700))
+        # A Try again is a new recap and gets its own email.
+        self.assertNotEqual(kind, _kind("ready", 111, "c" * 32, 1700, 1))
 
 
 if __name__ == "__main__":
