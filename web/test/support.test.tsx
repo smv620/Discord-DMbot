@@ -409,6 +409,7 @@ const countsOf = (rows: SupportTicketRow[]): TicketCounts => ({
   new: rows.filter((r) => r.status === "new").length,
   answered: rows.filter((r) => r.status === "answered").length,
   closed: rows.filter((r) => r.status === "closed").length,
+  escalated: rows.filter((r) => r.status === "escalated").length,
 });
 
 /** The rows as the API answers: every row whatever the filter (the tests of a row's buttons need
@@ -579,7 +580,7 @@ describe("the admin API calls", () => {
     vi.fn(async () => new Response(JSON.stringify(body), { status }));
 
   it("reads the list and changes a status with the CSRF token", async () => {
-    const counts = { new: 1, answered: 0, closed: 0 };
+    const counts = { new: 1, answered: 0, closed: 0, escalated: 0 };
     const list = reply(200, { tickets: [ROW], counts });
     expect(await httpAdminApi("https://api.example", list).tickets()).toEqual({
       tickets: [ROW],

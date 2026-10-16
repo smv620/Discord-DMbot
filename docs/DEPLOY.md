@@ -251,6 +251,15 @@ Discord sign-in isn't set, because the API won't start without it):**
    it empty: if Cloudflare rejects it, stop and tell dev1. Cloudflare adds the DNS record
    itself: don't add one by hand.
 
+   **Support mail by email (#1431).** For people's emailed replies to reach their support
+   question, the mail service's inbound webhook must POST to `https://api.getdmbot.com/mail/inbound`,
+   so the tunnel needs one more route like the one above with the Path `^/mail/inbound$` (same
+   service and URL). That route is signed (the service's signing secret is `MAIL_INBOUND_SECRET`
+   in `.env`, set with `scripts/set-key`) and answers 404 while the secret is empty. The
+   senders are `MAIL_SUPPORT_FROM` (info@) and `MAIL_ALERTS_FROM` (jarvis@); the helper needs
+   `ANTHROPIC_API_KEY` too. Until all of it is set, tickets are still kept and the team still
+   replies from the admin page.
+
 **You (the owner), on the server, once dev1 says the update is in:**
 
 4. Copy the token again from the tunnel's page in Cloudflare (open

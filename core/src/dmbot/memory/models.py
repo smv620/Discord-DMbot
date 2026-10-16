@@ -145,6 +145,16 @@ def name_key(text: str) -> str:
     return " ".join(re.sub(r"[^\w\s]", " ", letters).split())
 
 
+_POSSESSIVE = re.compile(r"['’]s\b")
+
+
+def spelling_key(text: str) -> str:
+    """A name or a stretch of speech as the secret-said-aloud question compares it (#1407):
+    "Auril's frost" is Auril too, so a possessive goes before the usual `name_key` (on both sides,
+    or "Dragon's Rest" never meets itself). Entries with one key are one name to the question."""
+    return name_key(_POSSESSIVE.sub("", text))
+
+
 def lookup_key(text: str) -> str:
     """`name_key`, falling back to plain lower case for names that are all punctuation,
     so every name has a key. Raises MemoryRuleError when the key is too long."""

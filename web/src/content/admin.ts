@@ -121,6 +121,7 @@ export const text = {
   // The filter above the list (#1375): what needs a reply first, and how many of each.
   ticketsFilterLabel: "Show tickets",
   ticketFilters: {
+    escalated: "Needs the team",
     new: "Needs a reply",
     answered: "Answered",
     closed: "Closed",
@@ -131,11 +132,13 @@ export const text = {
   // The same words on a ticket as on the button that finds it ("New" and "Needs a reply" were one
   // state under two names).
   ticketRowStatuses: {
+    escalated: "Needs the team",
     new: "Needs a reply",
     answered: "Answered",
     closed: "Closed",
   } as Record<string, string>,
   ticketsNoneFor: {
+    escalated: "No ticket is waiting for the team.",
     new: "Nothing needs a reply. All caught up.",
     answered: "No answered tickets.",
     closed: "No closed tickets.",
@@ -146,10 +149,42 @@ export const text = {
   copyAddressFor: (subject: string): string => `Copy address for ${subject}`,
   addressCopied: "Address copied.",
   copyFailed: "Couldn't copy. Tap the address to open your email instead.",
-  ticketStatuses: { new: "New", answered: "Answered", closed: "Closed" } as Record<string, string>,
+  ticketStatuses: {
+    new: "New",
+    answered: "Answered",
+    closed: "Closed",
+    escalated: "Needs the team",
+  } as Record<string, string>,
   ticketFrom: (who: string, dmbotId: string, plan: string, when: string): string =>
     `${who} (DMbot ID ${dmbotId}), ${plan} plan, ${when}`,
   replyTo: "Reply to",
+  // The thread (#1432): who wrote each message after the first.
+  threadHeading: "Messages after the first",
+  threadWho: {
+    customer: "The customer",
+    ai: "DMbot's AI helper",
+    person: "The team",
+  } as Record<string, string>,
+  // Why it came to the team (a fixed code from the API); nothing is shown for a code we don't know.
+  escalationReasons: {
+    unhappy: "The customer said they are unhappy.",
+    asked: "The customer asked for a person.",
+    limit: "The helper has answered 5 times.",
+    "no-email": "No email on the account, so the helper could not answer.",
+    "helper-down": "The helper was down for a day, so it sent no answer.",
+  } as Record<string, string>,
+  escalationReasonLabel: "Why it came to the team",
+  // The reply box.
+  replyLabel: (subject: string): string => `Your reply to “${subject}”`,
+  replyHint: "It is emailed to the person from the support address, and kept on the ticket.",
+  replySend: "Send reply",
+  replySending: "Sending…",
+  replySent: "Reply sent. The ticket is now answered.",
+  replyNoEmail: "No email on this account, so a reply can't be sent. Use Mark answered once you have dealt with it another way.",
+  replyEmpty: "Write something first.",
+  replyTooLong: "That's too long. Keep it to 4,000 letters or fewer.",
+  replyOff: "Replies by email aren't set up yet, so nothing was sent.",
+  replyFailed: "That didn't send. Your words are still here. Try again in a minute.",
   noEmail: "No email on this account",
   markAnswered: "Mark answered",
   closeTicket: "Close",

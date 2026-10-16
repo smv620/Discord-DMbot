@@ -26,6 +26,8 @@ export type AdminProblem =
   | "bad-note"
   | "already-free"
   | "no-grant"
+  | "bad-reply" // the reply is empty or too long (#1432)
+  | "reply-off" // the mail side is not set up, so a reply cannot be sent (#1432)
   | "no-ticket" // support ticket list: it is gone (the 12-month sweep, or the person deleted their account)
   | "stale"; // refused for a reason a reload fixes (an old CSRF token, a bad body)
 
@@ -72,7 +74,8 @@ export interface GrantRequest {
   note: string;
 }
 
-export type TicketStatus = "new" | "answered" | "closed";
+/** "escalated": waiting for a person on the team (the helper gave it up, or the person asked). */
+export type TicketStatus = "new" | "answered" | "closed" | "escalated";
 /** What the Tickets list shows: one status, or all (#1375). */
 export type TicketFilter = TicketStatus | "all";
 /** How many tickets have each status, over all of them, for the filter buttons (#1375). */
@@ -82,7 +85,16 @@ export interface TicketList {
   counts: TicketCounts;
 }
 
-/** A private support ticket from a paying person (#1340). Only the admin sees the words. */
+/** One message after the first, in the order they came (#1432): the person's emailed reply, DMbot's
+ * helper's answer, or the team's. `at` is Unix seconds. */
+export interface TicketReply {
+  id: number;
+  who: "customer" | "ai" | "person";
+  text: string;
+  at: number;
+}
+
+/** A private support ticket from a signed-in person (#1340). Only the admin sees the words. */
 export interface SupportTicketRow {
   id: number;
   /** Unix seconds. */
@@ -99,6 +111,11 @@ export interface SupportTicketRow {
   status: TicketStatus;
   /** Where the team replies: the account's email, read for this page only. Null: it has none. */
   email: string | null;
+  /** The thread after the first message (#1432). Missing from an API older than that. */
+  replies?: TicketReply[];
+  /** Why a person has it, when the API says (a fixed code, #1432): "unhappy", "asked",
+   * "limit", "no-email" or "helper-down". Missing: nothing is shown. */
+  reason?: string | null;
 }
 
 export class AdminApiError extends Error {
@@ -132,6 +149,9 @@ export interface AdminApi {
   /** Support tickets, newest first, with the count for each status (#1340, #1375). */
   tickets(filter?: TicketFilter): Promise<TicketList>;
   setTicketStatus(csrf: string, id: number, status: TicketStatus): Promise<void>;
+  /** The team's reply: emailed to the person and kept on the ticket, which becomes answered
+   * (#1432). */
+  replyToTicket(csrf: string, id: number, text: string): Promise<void>;
 }
 
 const grantProblems: Record<string, AdminProblem> = {
@@ -144,6 +164,8 @@ const grantProblems: Record<string, AdminProblem> = {
   already_free: "already-free",
   no_grant: "no-grant",
   no_ticket: "no-ticket",
+  bad_text: "bad-reply",
+  reply_off: "reply-off",
   bad_status: "stale",
   // The grant writer's own refusals, worded by the site.
   sign_in_again: "signed-out",
@@ -245,17 +267,26 @@ export function httpAdminApi(base: string, fetcher: typeof fetch = fetch): Admin
       const body = (await response.json()) as { tickets: SupportTicketRow[]; counts?: TicketCounts };
       const c = body.counts;
       if (c && [c.new, c.answered, c.closed].every((n) => typeof n === "number")) {
-        return { tickets: body.tickets, counts: c };
+        // An API older than #1431 has no escalated count: none.
+        return { tickets: body.tickets, counts: { ...c, escalated: c.escalated ?? 0 } };
       }
       // An API older than #1375 sends every ticket and no counts: count and filter here, so the
       // buttons still work until it is deployed. (It sends only its newest tickets, so until then
       // the counts and an old "Needs a reply" ticket past that limit can be missing.)
-      const counts: TicketCounts = { new: 0, answered: 0, closed: 0 };
+      const counts: TicketCounts = { new: 0, answered: 0, closed: 0, escalated: 0 };
       for (const t of body.tickets) counts[t.status] += 1;
       return {
         tickets: filter === "all" ? body.tickets : body.tickets.filter((t) => t.status === filter),
         counts,
       };
+    },
+    async replyToTicket(csrf, id, text) {
+      const response = await call(`/admin/support/${encodeURIComponent(String(id))}/reply`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "X-Admin-CSRF": csrf },
+        body: JSON.stringify({ text }),
+      });
+      if (!response.ok) throw new AdminApiError(await grantProblem(response));
     },
     async setTicketStatus(csrf, id, status) {
       const response = await call(`/admin/support/${encodeURIComponent(String(id))}/status`, {
@@ -288,8 +319,13 @@ export function pretendAdminApi(): AdminApi {
       subject: "My invoice shows the wrong plan",
       message: "Hello,\nthe last invoice says Guild but I'm on Table.",
       source: "website",
-      status: "new",
+      status: "escalated",
       email: "player@example.com",
+      reason: "unhappy",
+      replies: [
+        { id: 1, who: "ai", text: "Try the Billing page, then tell us if it still looks wrong.", at: now() - 3000 },
+        { id: 2, who: "customer", text: "That did not help, I want a person.", at: now() - 1800 },
+      ],
     },
     {
       id: 1,
@@ -307,10 +343,16 @@ export function pretendAdminApi(): AdminApi {
   ];
   return {
     tickets: async (filter = "all") => {
-      const counts: TicketCounts = { new: 0, answered: 0, closed: 0 };
+      const counts: TicketCounts = { new: 0, answered: 0, closed: 0, escalated: 0 };
       for (const t of tickets) counts[t.status] += 1;
       const shown = tickets.filter((t) => filter === "all" || t.status === filter);
       return { tickets: structuredClone(shown), counts };
+    },
+    replyToTicket: async (_csrf, id, text) => {
+      const ticket = tickets.find((t) => t.id === id);
+      if (!ticket) throw new AdminApiError("no-ticket");
+      ticket.replies = [...(ticket.replies ?? []), { id: Date.now(), who: "person", text, at: now() }];
+      ticket.status = "answered";
     },
     setTicketStatus: async (_csrf, id, status) => {
       const ticket = tickets.find((t) => t.id === id);
