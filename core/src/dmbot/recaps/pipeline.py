@@ -68,6 +68,7 @@ class Inputs:
     previous: str  # the earlier posted recap without its cues: the bridge
     day: int | None
     setting: str | None = None  # a campaign has no setting name yet; none is ever written in
+    window_chars: int = bt.WINDOW_CHARS  # a test shrinks it to get several windows
 
 
 Load = Callable[[int, str, Job], Awaitable["Inputs | None"]]
@@ -121,6 +122,11 @@ class RecapWorker:
         return job
 
     @staticmethod
+    def _ceiling(job: Job) -> int:
+        """AI calls one recap may make: the usual, and one more for each extra window."""
+        return MAX_CALLS + max(0, job.window_count - 1)
+
+    @staticmethod
     def _mark(job: Job) -> tuple[object, ...]:
         """Everything a step can change, to tell whether it got anywhere."""
         return (
@@ -132,6 +138,7 @@ class RecapWorker:
             job.emailed_at,
             job.restarts,
             job.problems,
+            job.window_done,
         )
 
     async def _tell(self, gid: int, cid: str, job: Job) -> None:
@@ -153,11 +160,13 @@ class RecapWorker:
             await self._store.update(
                 gid, cid, job.session_at, calls=0, emailed_at=None, summary="", original="",
                 title="", housekeeping=[], music=[], beats=[], speakers=[], grade={},
+                attempt=0, errors=0, restarts=0, next_at=0, problems=[], last_error="",
+                window_done=0, window_count=0,
             )  # fmt: skip
             return await self._store.get(gid, cid, job.session_at)
         if not await self._allowed(gid, cid, job):
             return await self._fail(gid, cid, job, "recaps aren't on for this campaign")
-        if job.calls >= MAX_CALLS:
+        if job.calls >= self._ceiling(job):
             return await self._fail(gid, cid, job, CAP)
         if await self._store.calls_since(gid, cid, int(self._now()) - DAY_S) >= DAILY_CALLS:
             return await self._fail(gid, cid, job, DAILY)
@@ -218,6 +227,9 @@ class RecapWorker:
     async def _beats(
         self, gid: int, cid: str, job: Job, inputs: Inputs, consenting: Consenting
     ) -> Job | None:
+        """One window of the transcript for each call, the whole session in order (a short one
+        is a single window). Each window's beats are saved before the next is read, so a restart
+        carries on at the next window."""
         agreed = set(await consenting())
         said = [s for s in readable(inputs.lines) if s.user_id in agreed]
         if not said:
@@ -225,12 +237,18 @@ class RecapWorker:
         rows = [
             (str(s.number), "DM" if s.user_id in inputs.dm_ids else "Player", s.text) for s in said
         ]
-        text = bt.message(rows, inputs.allowed_names)
+        parts = bt.windows(rows, inputs.window_chars)
+        k = job.window_done
+        if k >= len(parts):  # the transcript is shorter than when this began: begin again
+            return await self._restart(gid, cid, job)
+        text = bt.message(parts[k], inputs.allowed_names)
         if job.problems:
             text += (
                 "\nYour last sheet was rejected: " + "; ".join(job.problems) + ". Write it again."
             )
-        raw = await self._call(gid, cid, job, self._client(job), bt.system(), text, bt.MAX_TOKENS)
+        raw = await self._call(
+            gid, cid, job, self._client(job), bt.system(k + 1, len(parts)), text, bt.MAX_TOKENS
+        )
         if raw is None:
             return await self._store.get(gid, cid, job.session_at)
         sent = {s.user_id for s in said}
@@ -239,14 +257,17 @@ class RecapWorker:
         parsed = bt.parse(raw)
         if parsed is None:
             return await self._retry_or_fail(gid, cid, job, ["answer in the JSON form asked for"])
+        beats = [*(job.beats or []), *parsed]
+        last = k + 1 == len(parts)
         await self._store.update(
             gid,
             cid,
             job.session_at,
-            state="beats",
-            beats=parsed,
+            state="beats" if last else "queued",
+            beats=bt.merge([beats]) if last else beats,
             speakers=sorted(sent),
-            attempt=job.attempt,
+            window_count=len(parts),
+            window_done=k + 1,
             errors=0,
             last_error="",
         )
@@ -256,8 +277,6 @@ class RecapWorker:
         self, gid: int, cid: str, job: Job, inputs: Inputs, consenting: Consenting
     ) -> Job | None:
         said = self._said(inputs, set(job.speakers))
-        sent = {int(n) for n, _, _ in bt.window([(str(s.number), "", s.text) for s in said])}
-        said = [s for s in said if s.number in sent]  # only what the AI was shown
         kept, problems = bt.check(
             [b for b in (job.beats or []) if isinstance(b, dict)],
             lines={s.number: s.text for s in said},
@@ -299,6 +318,8 @@ class RecapWorker:
             job.session_at,
             state="queued",
             beats=[],
+            window_done=0,
+            window_count=0,
             attempt=job.attempt + 1,
             problems=list(problems),
         )
@@ -382,7 +403,7 @@ class RecapWorker:
         """The grader's numbers, or none: a grader that fails never stops a recap that passed
         every check."""
         fresh = await self._store.get(gid, cid, job.session_at) or job
-        if fresh.calls >= MAX_CALLS:
+        if fresh.calls >= self._ceiling(fresh):
             return {}  # the job's ceiling holds for the grader too
         await self._store.update(
             gid, cid, job.session_at, calls=fresh.calls + 1, spent=fresh.spent + 1
@@ -503,6 +524,8 @@ class RecapWorker:
             job.session_at,
             state="queued",
             beats=[],
+            window_done=0,
+            window_count=0,
             speakers=[],
             summary="",
             original="",

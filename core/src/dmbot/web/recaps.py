@@ -163,9 +163,9 @@ async def decide(db: Database, session: Session, ref: str, action: str) -> dict[
             )
         elif action == "again":
             cur = await conn.execute(
-                "UPDATE recap_jobs SET tries = tries + 1, state = 'queued', attempt = 0,"
-                " errors = 0, restarts = 0, next_at = 0, problems = '{}', last_error = '',"
-                " beats = '[]' "
+                # Only these two: the worker sees "queued" with an email already sent and resets
+                # everything else itself (the page's role may write no more than it needs).
+                "UPDATE recap_jobs SET tries = tries + 1, state = 'queued' "
                 + where
                 + " AND status = 'draft' AND state IN ('ready', 'failed') AND tries < %s",
                 (*args, MAX_TRIES),

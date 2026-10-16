@@ -33,6 +33,7 @@ class Session:
     names: tuple[str, ...]
     secret: tuple[str, ...]
     reference: tuple[tuple[str, ...], ...]  # key words of each beat a good sheet holds
+    window_chars: int = 40_000  # a small number makes a short session several windows
 
 
 def parse(name: str, raw: object) -> Session:
@@ -60,7 +61,10 @@ def parse(name: str, raw: object) -> Session:
         raise GoldenError(f"{name}: needs at least three beats with key words")
     if not secret:
         raise GoldenError(f"{name}: needs a secret name to test leaks against")
-    return Session(name, title, tuple(lines), names, secret, beats)
+    size = raw.get("window_chars", 40_000)
+    if type(size) is not int or not 200 <= size <= 40_000:
+        raise GoldenError(f"{name}: window_chars must be a whole number from 200 to 40000")
+    return Session(name, title, tuple(lines), names, secret, beats, size)
 
 
 def load_golden(folder: Path = GOLDEN) -> list[Session]:

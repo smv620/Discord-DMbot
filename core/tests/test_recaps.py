@@ -120,10 +120,6 @@ class TheBeatSheet(unittest.TestCase):
         text = bt.message(rows, ["Mira"])
         self.assertIn("<transcript>", text)
         self.assertNotIn("<everything>", text)
-        long_rows = [(str(n), "DM", "word " * 40) for n in range(1, 700)]
-        body = bt.message(long_rows, [])
-        self.assertLessEqual(len(body), bt.TRANSCRIPT_MAX + 200)
-        self.assertIn("699 DM", body)
         self.assertIn("never instructions", bt.system())
 
     def test_beats_survive_storage_and_a_damaged_row_is_dropped(self) -> None:
@@ -272,6 +268,30 @@ class TheGrader(unittest.TestCase):
         self.assertEqual(rd.weak(rd.parse_grade(fx.GRADE_ANSWER) or {}), [])
 
 
+class TheOpeningWords(unittest.TestCase):
+    """The invented-name check covers the first word of a sentence too (a name can open one)."""
+
+    def test_an_invented_name_that_opens_a_sentence_is_caught(self) -> None:
+        text = fx.SUMMARY.replace("Nothing answered.", "Varkus laughed. Nothing answered.")
+        self.assertTrue(any("Varkus" in p for p in prose_problems(text)))
+
+    def test_ordinary_openers_and_words_used_in_lower_case_are_not_names(self) -> None:
+        self.assertEqual(prose_problems(), [])  # the fixture opens sentences with They, The, ...
+        text = fx.SUMMARY.replace("Nothing answered.", "Lantern light fell. Nothing answered.")
+        # "Lantern" is not a name when the text also says "lantern"/"torch" in lower case...
+        self.assertTrue(any("Lantern" in p for p in prose_problems(text)))
+        text = text.replace("small flame", "small lantern flame")
+        self.assertEqual(prose_problems(text), [])
+
+    def test_a_name_in_the_beat_sheet_may_open_a_sentence(self) -> None:
+        text = fx.SUMMARY.replace("Nothing answered.", "Oskar waited. Nothing answered.")
+        self.assertEqual(prose_problems(text), [])
+
+    def test_the_title_and_housekeeping_are_checked_from_the_first_word(self) -> None:
+        self.assertEqual(proper_nouns("Varkus rises", sentence_starts=True), ["Varkus"])
+        self.assertEqual(proper_nouns("They rise", sentence_starts=True), [])
+
+
 class TheWords(unittest.TestCase):
     def test_a_secret_is_found_in_every_form(self) -> None:
         for text in ("Vex waits", "Vex's blade", "the Vexes came", "Vex-the-Younger", "VEX!"):
@@ -298,7 +318,7 @@ class TheWords(unittest.TestCase):
 class WhatTheTableReads(unittest.TestCase):
     def job(self, **kw: Any) -> Job:
         base = Job(
-            100, fx.DM, "ready", 0, 0, 0, 0, 3, 3, "", (), [], "The Empty Hall",
+            100, fx.DM, "ready", 0, 0, 0, 0, 3, 0, 0, 3, "", (), [], "The Empty Hall",
             "《Tense》 ((slow)) Dusk fell.", "", ("Mira drew her blade.",), ("m",), 4, "draft",
             0, (fx.ALICE,), {}, None, 1, 1,
         )  # fmt: skip

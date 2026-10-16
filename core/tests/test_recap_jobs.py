@@ -5,6 +5,7 @@ campaign, in backups, and gone with the campaign."""
 from __future__ import annotations
 
 from collections.abc import Collection
+from itertools import pairwise
 from typing import Any
 
 from dmbot.ai import AIError, AIOutOfFunds
@@ -198,6 +199,7 @@ class Working(Base):
         allowed: bool = True,
         inputs: bool = True,
         names: Collection[str] = fx.NAMES,
+        window_chars: int = 40_000,
     ) -> None:
         self.fast = fast
         self.careful = careful or fx.Canned()
@@ -216,6 +218,7 @@ class Working(Base):
                 secret_names=self.secret,
                 previous="",
                 day=4,
+                window_chars=window_chars,
             )
 
         async def ok(gid: int, cid: str, job: Job) -> bool:
@@ -494,38 +497,75 @@ class Working(Base):
         job = await self.go()
         self.assertEqual((job.state, job.last_error), ("failed", pl.FUNDS))
 
-    async def test_a_very_long_session_does_not_blame_an_early_player_the_ai_never_saw(
-        self,
-    ) -> None:
+    async def test_a_long_session_is_read_in_overlapping_windows_from_start_to_end(self) -> None:
         from dmbot.recaps import beats as bt
 
-        early = [("1", "Player", "early " + "x" * 200) for _ in range(30)]
-        late = [(str(n), "Player", "late " + "y" * 2000) for n in range(31, 80)]
-        sent = bt.window(early + late)
-        self.assertLess(len(sent), len(early + late))
-        self.assertEqual(sent[-1], late[-1])
-        self.assertNotIn(early[0], sent)
-        self.assertEqual(bt.window(early), early)  # a short session is sent whole
+        rows = [(str(n), "Player", "line " + "x" * 300) for n in range(1, 201)]
+        parts = bt.windows(rows)
+        self.assertGreater(len(parts), 1)
+        self.assertEqual(parts[0][0], rows[0])  # the start is read...
+        self.assertEqual(parts[-1][-1], rows[-1])  # ...and so is the end
+        seen = {r[0] for p in parts for r in p}
+        self.assertEqual(seen, {r[0] for r in rows})  # every line is in some window
+        for a, b in pairwise(parts):
+            self.assertTrue({r[0] for r in a} & {r[0] for r in b})  # neighbours overlap
+        self.assertEqual(bt.windows(rows[:3]), [rows[:3]])  # a short session is one window
+        huge = [(str(n), "Player", "y" * 2000) for n in range(1, 2000)]
+        self.assertLessEqual(
+            len(bt.windows(huge)), bt.MAX_WINDOWS
+        )  # bigger windows, not more calls
+        self.assertEqual(bt.windows([]), [[]])
 
-    async def test_try_again_works_even_after_a_failure_at_the_ceiling(self) -> None:
-        await self.setUpWorker(fx.Canned())
-        await self.store.update(1, self.one.id, 100, calls=pl.MAX_CALLS)
-        await self.go()  # fails with the ceiling, and is told
-        async with self.db.guild(1) as conn:
-            await conn.execute(
-                "UPDATE recap_jobs SET tries = 1, state = 'queued', beats = '[]', attempt = 0,"
-                " errors = 0, next_at = 0"
-            )
-        self.fast.answers += [fx.BEATS_ANSWER, fx.PROSE_ANSWER, fx.GRADE_ANSWER, fx.FINISH_ANSWER]
+    async def test_each_window_is_one_call_and_the_beats_are_merged(self) -> None:
+        from dmbot.memory.extractor import readable
+        from dmbot.recaps import beats as bt
+
+        size = 150
+        rows = [(str(s.number), "x", s.text) for s in readable(fx.lines())]
+        windows = len(bt.windows(rows, size))
+        self.assertGreaterEqual(windows, 3)
+        answers = [fx.BEATS_ANSWER] * windows
+        await self.setUpWorker(
+            fx.Canned(*answers, fx.PROSE_ANSWER, fx.GRADE_ANSWER, fx.FINISH_ANSWER),
+            window_chars=size,
+        )
         job = await self.go()
         self.assertEqual(job.state, "ready")
+        self.assertEqual((job.window_count, job.window_done), (windows, windows))
+        self.assertEqual(len(job.beats), 5)  # the same beats found twice are one beat
+        self.assertEqual(job.calls, windows + 3)
+        first, last = self.fast.sent[0], self.fast.sent[windows - 1]
+        self.assertIn("part 1 of", self.fast.systems[0])
+        self.assertIn(f"part {windows} of {windows}", self.fast.systems[windows - 1])
+        self.assertNotIn("silver lock and it clicks", first)  # a window holds only its part
+        self.assertIn("something breathes below", last)  # and the last one reaches the end
 
-    async def test_a_recap_the_dm_dropped_mid_write_is_not_written_further_or_emailed(self) -> None:
+    async def test_a_restart_in_the_middle_of_a_long_session_carries_on_at_the_next_window(
+        self,
+    ) -> None:
+        await self.setUpWorker(fx.Canned(fx.BEATS_ANSWER, AIError("down")), window_chars=150)
+        job = await self.go()
+        self.assertEqual((job.state, job.window_done), ("queued", 1))
+        self.clock.now += 120
+        count = job.window_count
+        told = self.told
+        await self.setUpWorker(
+            fx.Canned(
+                *[fx.BEATS_ANSWER] * (count - 1), fx.PROSE_ANSWER, fx.GRADE_ANSWER, fx.FINISH_ANSWER
+            ),
+            window_chars=150,
+        )
+        self.told = told
+        job = await self.go()
+        self.assertEqual(job.state, "ready")
+        self.assertIn("part 2 of", self.fast.systems[0])  # not the first window again
+
+    async def test_try_again_clears_what_the_page_may_not_write(self) -> None:
         await self.setUpWorker(self.happy())
-        async with self.db.guild(1) as conn:
-            await conn.execute("UPDATE recap_jobs SET status = 'dropped'")
-        await self.store.update(1, self.one.id, 100, state="ready", title="x")  # a stage in flight
-        job = await self.store.get(1, self.one.id, 100)
-        assert job is not None
-        self.assertEqual((job.state, job.title), ("queued", ""))  # the write did nothing
-        self.assertEqual(self.told.jobs, [])
+        await self.go()
+        async with self.db.guild(1) as conn:  # the page sets only these two
+            await conn.execute("UPDATE recap_jobs SET tries = 1, state = 'queued'")
+        await self.store.update(1, self.one.id, 100, attempt=1, errors=2, next_at=NOW - 5)
+        self.fast.answers += [fx.BEATS_ANSWER, fx.PROSE_ANSWER, fx.GRADE_ANSWER, fx.FINISH_ANSWER]
+        job = await self.go()
+        self.assertEqual((job.state, job.attempt, job.errors), ("ready", 0, 0))

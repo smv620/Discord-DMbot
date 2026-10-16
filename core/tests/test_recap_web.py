@@ -136,10 +136,13 @@ class TheDmsPage(Base):
     async def test_the_website_cannot_touch_the_workers_lease(self) -> None:
         async with self.web.user(ALICE.id, session=self.session.id_hash) as conn:
             await conn.execute("SELECT set_config('dmbot.guild_id', %s, true)", (str(THURSDAY.id),))
-            for column in ("leased_to", "decided_at", "updated_at"):
+            for column in (
+                "leased_to", "decided_at", "updated_at", "attempt", "errors", "next_at",
+                "beats", "problems", "last_error", "restarts",
+            ):  # fmt: skip
                 with self.assertRaises(psycopg.errors.InsufficientPrivilege):
                     async with conn.transaction():
-                        await conn.execute(f"UPDATE recap_jobs SET {column} = 0")
+                        await conn.execute(f"UPDATE recap_jobs SET {column} = {column}")
 
     async def test_the_website_cannot_write_the_bots_columns(self) -> None:
         async with self.web.user(ALICE.id, session=self.session.id_hash) as conn:
@@ -375,7 +378,7 @@ class ThePostStep(unittest.IsolatedAsyncioTestCase):
         from dataclasses import replace
 
         base = Job(
-            100, fx.DM, "ready", 0, 0, 0, 0, 3, 3, "", (), [], "The Empty Hall",
+            100, fx.DM, "ready", 0, 0, 0, 0, 3, 0, 0, 3, "", (), [], "The Empty Hall",
             "《Tense》 ((slow)) Dusk fell on Mira.", "《Tense》 Dusk fell.",
             ("Mira drew her blade.",),
             ("m",), 4, "posting", 0, (fx.ALICE,), {}, None, 1, 1,

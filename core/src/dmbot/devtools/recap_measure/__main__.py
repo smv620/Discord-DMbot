@@ -103,10 +103,14 @@ async def run_one(fast: Client, session: Session) -> Score:
     measure of the writer, as it would be in the live run)."""
     said = readable(session.lines)
     rows = [(str(s.number), "DM" if s.user_id == 1 else "Player", s.text) for s in said]
-    reply = await fast.complete(
-        bt.system(), bt.message(rows, session.names), max_tokens=bt.MAX_TOKENS
-    )
-    raw = bt.parse(reply.text) or []
+    parts = bt.windows(rows, session.window_chars)
+    found: list[dict[str, object]] = []
+    for k, part in enumerate(parts, start=1):
+        reply = await fast.complete(
+            bt.system(k, len(parts)), bt.message(part, session.names), max_tokens=bt.MAX_TOKENS
+        )
+        found += bt.parse(reply.text) or []
+    raw = bt.merge([found])
     kept, _ = bt.check(
         raw,
         lines={s.number: s.text for s in said},

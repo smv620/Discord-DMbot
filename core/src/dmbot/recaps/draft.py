@@ -274,7 +274,7 @@ def check_prose(
     unknown = sorted(
         {
             n
-            for n in proper_nouns(narration)
+            for n in proper_nouns(narration, sentence_starts=True)
             if _POSSESSIVE.sub("", n).lower().strip("'’-") not in known | NOT_NAMES
         }
     )

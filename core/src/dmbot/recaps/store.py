@@ -32,7 +32,8 @@ TERMINAL = ("ready", "failed")
 STATES = ("queued", "beats", "checked", "prose", "housekeeping", "ready")
 
 COLUMNS = (
-    "session_at, dm_user_id, state, attempt, errors, restarts, next_at, calls, spent, last_error,"
+    "session_at, dm_user_id, state, attempt, errors, restarts, next_at, calls, window_count,"
+    " window_done, spent, last_error,"
     " problems, beats, title, summary, original, housekeeping, music, game_day, status, tries,"
     " speakers, grade, emailed_at, created_at, updated_at"
 )
@@ -48,6 +49,8 @@ class Job:
     restarts: int
     next_at: int
     calls: int
+    window_count: int  # parts the transcript is read in, and how many are done
+    window_done: int
     spent: int  # calls ever made for this session, never reset: the day's tally
     last_error: str
     problems: tuple[str, ...]
@@ -81,6 +84,8 @@ def _job(r: dict[str, Any]) -> Job:
         int(r["restarts"]),
         int(r["next_at"]),
         int(r["calls"]),
+        int(r["window_count"]),
+        int(r["window_done"]),
         int(r["spent"]),
         r["last_error"],
         tuple(r["problems"]),
@@ -111,6 +116,8 @@ _WRITABLE = frozenset(
         "next_at",
         "calls",
         "spent",
+        "window_count",
+        "window_done",
         "last_error",
         "problems",
         "beats",

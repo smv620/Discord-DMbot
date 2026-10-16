@@ -2353,8 +2353,7 @@ WEB_ROLE_GRANTS: tuple[tuple[str, tuple[str, ...]], ...] = (
     # speakers, the call count, the original draft or the grade, which only the bot writes.
     ("SELECT", ("recap_jobs",)),
     (
-        "UPDATE (summary, housekeeping, status, tries, state, attempt, errors, restarts,"
-        " next_at, problems, beats, last_error)",
+        "UPDATE (summary, housekeeping, status, tries, state)",
         ("recap_jobs",),
     ),
     ("SELECT, DELETE", ("consent",)),
@@ -3792,6 +3791,8 @@ RECAP_JOBS = (
     --   next_at    not before this time (backoff after an error)
     --   leased_to  a worker has it until this time, so two never work on one job
     --   calls      AI calls for the recap now being written, against the per-recap cap
+    --   window_count  how many parts the transcript is read in (a long session is read in
+    --              overlapping windows), and window_done how many of them are done
     --   spent      AI calls ever made for this session (a Try again does not reset it), for
     --              the campaign's cap for the day
     --   last_error a short fixed reason (a type or a plain phrase), never the recap
@@ -3818,6 +3819,8 @@ RECAP_JOBS = (
         leased_to    BIGINT NOT NULL DEFAULT 0,
         calls        INTEGER NOT NULL DEFAULT 0 CHECK (calls >= 0),
         spent        INTEGER NOT NULL DEFAULT 0 CHECK (spent >= 0),
+        window_count INTEGER NOT NULL DEFAULT 0 CHECK (window_count BETWEEN 0 AND 12),
+        window_done  INTEGER NOT NULL DEFAULT 0 CHECK (window_done BETWEEN 0 AND 12),
         last_error   TEXT NOT NULL DEFAULT '' CHECK (char_length(last_error) <= 200),
         problems     TEXT[] NOT NULL DEFAULT '{{}}',
         beats        JSONB NOT NULL DEFAULT '[]',

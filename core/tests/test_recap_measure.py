@@ -36,6 +36,15 @@ class TheSet(unittest.TestCase):
             self.assertGreaterEqual(len(s.reference), 5, s.name)
             self.assertTrue(s.secret, s.name)
 
+    def test_one_session_is_long_enough_to_need_three_windows(self) -> None:
+        from dmbot.recaps import beats as bt
+
+        long = [s for s in SESSIONS if s.window_chars < 40_000]
+        self.assertTrue(long)
+        for s in long:
+            rows = [(str(n), "x", line.text) for n, line in enumerate(s.lines, start=1)]
+            self.assertGreaterEqual(len(bt.windows(rows, s.window_chars)), 3, s.name)
+
     def test_a_malformed_file_is_refused_with_its_name(self) -> None:
         good = json.loads(json.dumps({
             "title": "t", "names": [], "secret": ["X"],
@@ -49,6 +58,8 @@ class TheSet(unittest.TestCase):
             {"lines": [["dm"]] * 10},
             {"beats": [{"keys": ["a"]}]},
             {"secret": []},
+            {"window_chars": 5},
+            {"window_chars": "big"},
             {"title": None, "beats": None},
         ):
             with self.assertRaises(GoldenError, msg=str(change)):
