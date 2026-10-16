@@ -44,7 +44,12 @@ TICKETS_PER_PASS = 5
 MAX_ANSWER = 3000
 MAX_PROMPT = 24_000  # characters of thread sent: the newest messages win
 MAX_TOKENS = 900
-ENDING = "Didn't help? Reply to this email and a person will take over."
+# The word is real: asks_for_a_person() below hands the ticket over on it (or "human") without an
+# AI call, so the person is told exactly what works (#1518).
+ENDING = (
+    "Want to talk to a person instead? Reply with just the word PERSON and someone on the "
+    "DMbot team will write back to you."
+)
 ASKS_FOR_A_PERSON = re.compile(r"\b(person|human|support team)\b", re.IGNORECASE)
 
 SYSTEM = """\
@@ -86,6 +91,18 @@ WHY: dict[support.Reason, str] = {
 }
 
 ACK_SUBJECT = "We got your question"
+# What the thank-you says happens next: the helper answers first only if it is switched on
+# here (a model and key are configured); otherwise saying so would promise what won't come.
+ACK_WITH_HELPER = (
+    "Thanks, we got your message.\n\n"
+    "DMbot's helper, a program and not a person, will answer first by email, usually within a "
+    "few minutes. Reply to this email to reach it. If it can't help, or you ask, a person on "
+    "the team takes over."
+)
+ACK_PERSON = (
+    "Thanks, we got your message.\n\n"
+    "A person on the DMbot team will reply by email. You can reply to this email to add more."
+)
 ESCALATED_BODY = (
     "A person on the DMbot team will read this and write back to you. You don't need to do "
     "anything. You can reply to this email to add more."
@@ -240,9 +257,7 @@ class SupportHelper:
             ticket,
             f"support-ack:{ticket.id}",
             f"{ACK_SUBJECT}: {ticket.subject}",
-            "Thanks, we got your question.\n\n"
-            "DMbot's help program will reply here soon. If it can't help, a person on the team "
-            "will take over.\n\nMore to add? Just reply to this email.",
+            ACK_WITH_HELPER if self._ai is not None else ACK_PERSON,
         )
 
     async def _alert_team(self, subject: str, body: str) -> None:

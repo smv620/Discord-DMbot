@@ -42,6 +42,8 @@ function fileFor(url) {
     return undefined;
   }
   if (/^\/account\/recaps\/[^/]+$/.test(path)) path = "/account/recaps";
+  if (/^\/account\/house-rules\/[^/]+$/.test(path)) path = "/account/house-rules";
+  if (/^\/account\/transcripts\/[^/]+(\/\d+)?$/.test(path)) path = "/account/transcripts";
   const base = path === "/" ? "/index.html" : path;
   return [resolve(dist, "." + base), resolve(dist, "." + `${base}.html`)].find(
     (f) => f.startsWith(dist) && existsSync(f) && statSync(f).isFile(),
@@ -136,6 +138,35 @@ await visit("A recap: read it, names, choices", "/account/recaps/200000000000000
   await seen(page, "Saved. No email.");
 });
 
+await visit("House rules: campaigns, a campaign's rules and its followed set", "/account/house-rules", async (page) => {
+  await page.getByRole("heading", { level: 1, name: "House rules" }).waitFor();
+  await step("the campaign list", () => seen(page, "The Brynwater Crossing"));
+  await step("a campaign's rules", async () => {
+    await page.getByRole("link", { name: "Read: The Brynwater Crossing" }).click();
+    await seen(page, "2. Potions are a bonus action");
+  });
+  await step("the followed set", () => seen(page, "Red Table house rules, v4"));
+  await step("the download button", () => page.getByRole("button", { name: "Save as a text file" }).waitFor());
+});
+
+await visit("Transcripts: campaigns, sessions, a session, the two versions", "/account/transcripts", async (page) => {
+  await page.getByRole("heading", { level: 1, name: "Session transcripts" }).waitFor();
+  await step("the campaign list", () => seen(page, "The Brynwater Crossing"));
+  await step("a campaign's sessions", async () => {
+    await page.getByRole("link", { name: "Read: The Brynwater Crossing" }).click();
+    await page.getByRole("heading", { name: "The Brynwater Crossing" }).waitFor();
+  });
+  await step("a session", async () => {
+    await page.getByRole("link", { name: "Read: Session 2" }).click();
+    await seen(page, "Ka'zeth draws his sword");
+  });
+  await step("as heard", async () => {
+    await page.getByRole("button", { name: "As heard" }).click();
+    await seen(page, "Kazeth draws his sword");
+  });
+  await step("the download button", () => page.getByRole("button", { name: "Save as a text file" }).waitFor());
+});
+
 await visit("The admin: tickets", "/admin", async (page) => {
   await page.getByRole("heading", { level: 1 }).first().waitFor();
   // The pretend API takes any email and password.
@@ -160,4 +191,4 @@ if (failures.length > 0) {
   console.error(`\nSmoke run failed:\n${failures.map((f) => `  ${f}`).join("\n")}`);
   process.exit(1);
 }
-console.log("\nSmoke run passed on 4 pages.");
+console.log("\nSmoke run passed on 6 pages.");

@@ -18,6 +18,7 @@ import type {
   RecapChoices,
   RecordingEntry,
   SupportQuestion,
+  TranscriptVersion,
 } from "./api";
 import { ApiError } from "./api";
 
@@ -406,6 +407,85 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
       choices[which] = on;
       return { ...choices };
     },
+    async transcriptCampaigns() {
+      calls.push("transcriptCampaigns");
+      await reachable();
+      signedIn();
+      return [
+        {
+          ref: "200000000000000001.cmp1",
+          name: "The Brynwater Crossing",
+          serverName: "Thursday Table",
+          sessions: 2,
+        },
+      ];
+    },
+    async transcriptSessions(campaignRef) {
+      calls.push(`transcriptSessions:${campaignRef}`);
+      await reachable();
+      signedIn();
+      if (campaignRef !== "200000000000000001.cmp1") throw new ApiError("not-found");
+      return {
+        name: "The Brynwater Crossing",
+        sessions: [
+          { number: 2, startedAt: 1_791_000_000, endedAt: 1_791_007_200, lines: 3 },
+          { number: 1, startedAt: 1_790_000_000, endedAt: 1_790_003_600, lines: 2 },
+        ],
+      };
+    },
+    async transcript(campaignRef, number, version) {
+      calls.push(`transcript:${campaignRef}:${number}:${version}`);
+      await reachable();
+      signedIn();
+      if (campaignRef !== "200000000000000001.cmp1" || ![1, 2].includes(number))
+        throw new ApiError("not-found");
+      return mockTranscript(number, version);
+    },
+    async transcriptFile(campaignRef, number, version) {
+      calls.push(`transcriptFile:${campaignRef}:${number}:${version}`);
+      await reachable();
+      signedIn();
+      const view = mockTranscript(number, version);
+      return new Blob([[...view.notes, "", ...view.lines].join("\n") + "\n"], {
+        type: "text/plain",
+      });
+    },
+    async houseRuleCampaigns() {
+      calls.push("houseRuleCampaigns");
+      await reachable();
+      signedIn();
+      return [
+        {
+          ref: "200000000000000001.cmp1",
+          name: "The Brynwater Crossing",
+          serverName: "Thursday Table",
+          rules: 2,
+          sets: 1,
+        },
+      ];
+    },
+    async houseRules(campaignRef) {
+      calls.push(`houseRules:${campaignRef}`);
+      await reachable();
+      signedIn();
+      if (campaignRef !== "200000000000000001.cmp1") throw new ApiError("not-found");
+      return mockHouseRules();
+    },
+    async houseRulesFile(campaignRef) {
+      calls.push(`houseRulesFile:${campaignRef}`);
+      await reachable();
+      signedIn();
+      const rules = mockHouseRules();
+      return new Blob(
+        [
+          [
+            `House rules: ${rules.name}`,
+            ...[...rules.rules].reverse().map((r) => `${r.number}. ${r.rule}`),
+          ].join("\n") + "\n",
+        ],
+        { type: "text/plain" },
+      );
+    },
     async campaignNames(campaignRef) {
       calls.push(`campaignNames:${campaignRef}`);
       await reachable();
@@ -639,5 +719,55 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
       calls.push(`confirmDelete:${token}`);
       me = null;
     },
+  };
+}
+
+/** A pretend transcript in the shape the API gives: the file's header lines and its lines. */
+function mockTranscript(number: number, version: TranscriptVersion) {
+  const heard = version === "heard";
+  return {
+    number,
+    version,
+    fileName: `the-brynwater-crossing-session-${number}-${heard ? "as-heard" : "cleaned"}.txt`,
+    notes: [
+      `DMbot transcript: The Brynwater Crossing, session ${number}`,
+      "Started 2026-10-02 19:30 UTC, ran 1 h",
+      heard
+        ? "As heard: every word exactly as DMbot heard it."
+        : "Cleaned: DMbot fixed the spelling of names it was sure about.",
+    ],
+    lines: [
+      "[0:00:12] (Speaker 1) {Cerric}: We cross the river at dusk.",
+      heard
+        ? "[0:00:40] (Speaker 2): Kazeth draws his sword."
+        : "[0:00:40] (Speaker 2): Ka'zeth draws his sword.",
+      ...(heard ? ["[0:01:02] (Speaker 1) {non-game_content}: did you see the match"] : []),
+    ],
+  };
+}
+
+/** Pretend house rules in the shape the API gives: the campaign's own, newest number first, then a
+ * followed set's. */
+function mockHouseRules() {
+  return {
+    name: "The Brynwater Crossing",
+    fileName: "house-rules-the-brynwater-crossing.txt",
+    rules: [
+      {
+        number: 2,
+        rule: "Potions are a bonus action",
+        supersedes: "Drinking a potion takes an action",
+        fromSet: null,
+      },
+      { number: 1, rule: "Crits double the dice", supersedes: null, fromSet: null },
+    ],
+    sets: [
+      {
+        name: "Red Table",
+        version: 4,
+        cite: "Red Table house rules, v4",
+        rules: [{ number: 1, rule: "Inspiration stacks", supersedes: null }],
+      },
+    ],
   };
 }

@@ -1,0 +1,350 @@
+/** @jsxImportSource preact */
+// The session transcripts (#1501): every campaign with a saved transcript in the person's servers,
+// a campaign's sessions, and one session to read in two versions with a download. Anyone in the
+// Discord server may read them (CLAUDE.md), so this is for players as much as DMs; the API decides
+// who sees what, and the text is the bot's own export, so nothing is formatted here.
+import { useEffect, useRef, useState } from "preact/hooks";
+
+import { sessionDay } from "../content/recaps";
+import { problem, text, versionNote } from "../content/transcripts";
+import {
+  ApiError,
+  type AccountApi,
+  type TranscriptCampaign,
+  type TranscriptSessionItem,
+  type TranscriptVersion,
+  type TranscriptView,
+} from "./api";
+
+/** Where in the pages the address points: `/account/transcripts`, `/<campaign>`, `/<campaign>/<n>`. */
+export function placeFromPath(path: string): { ref: string; number: number | null } | null {
+  const match = /^\/account\/transcripts\/([^/]+)(?:\/(\d{1,6}))?\/?$/.exec(path);
+  if (!match) return null;
+  return {
+    ref: decodeURIComponent(match[1] ?? ""),
+    number: match[2] === undefined ? null : Number(match[2]),
+  };
+}
+
+type Load<T> =
+  | { kind: "loading" }
+  | { kind: "signed-out" }
+  | { kind: "error"; message: string }
+  | { kind: "ready"; value: T };
+
+/** One read from the API, with the states every page here shows. */
+function useRead<T>(read: (() => Promise<T>) | null, deps: unknown[]): Load<T> {
+  const [load, setLoad] = useState<Load<T>>({ kind: "loading" });
+  useEffect(() => {
+    let live = true;
+    setLoad({ kind: "loading" });
+    if (!read) {
+      setLoad({ kind: "error", message: text.failed });
+      return;
+    }
+    read().then(
+      (value) => live && setLoad({ kind: "ready", value }),
+      (error: unknown) => {
+        if (!live) return;
+        const kind = error instanceof ApiError ? error.kind : "server";
+        setLoad(
+          kind === "signed-out"
+            ? { kind: "signed-out" }
+            : { kind: "error", message: problem(kind) },
+        );
+      },
+    );
+    return () => {
+      live = false;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, deps);
+  return load;
+}
+
+function Shell<T>({
+  api,
+  load,
+  children,
+}: {
+  api: AccountApi;
+  load: Load<T>;
+  children: (value: T) => preact.ComponentChildren;
+}) {
+  if (load.kind === "loading")
+    return (
+      <p class="muted" role="status">
+        {text.loading}
+      </p>
+    );
+  if (load.kind === "signed-out")
+    return (
+      <div class="panel" role="status">
+        <p>{text.signedOut}</p>
+        <a class="button" href={api.signInUrl()}>
+          {text.signIn}
+        </a>
+      </div>
+    );
+  if (load.kind === "error")
+    return (
+      <p class="warn" role="alert">
+        {load.message}
+      </p>
+    );
+  return <>{children(load.value)}</>;
+}
+
+export default function Transcripts({ api, path }: { api: AccountApi; path: string }) {
+  const place = placeFromPath(path);
+  return (
+    <div class="stack">
+      <p>
+        <a href="/account">{text.account}</a>
+      </p>
+      {place === null ? (
+        <Campaigns api={api} />
+      ) : place.number === null ? (
+        <Sessions api={api} campaignRef={place.ref} />
+      ) : (
+        <Reader api={api} campaignRef={place.ref} number={place.number} />
+      )}
+    </div>
+  );
+}
+
+function Campaigns({ api }: { api: AccountApi }) {
+  const load = useRead(api.transcriptCampaigns ? () => api.transcriptCampaigns!() : null, [api]);
+  return (
+    <Shell api={api} load={load}>
+      {(campaigns: TranscriptCampaign[]) =>
+        campaigns.length === 0 ? (
+          <p class="panel" role="status">
+            {text.empty}
+          </p>
+        ) : (
+          <>
+            <p class="lead">{text.lead}</p>
+            <ul class="campaigns">
+              {campaigns.map((c) => (
+                <li key={c.ref}>
+                  <span class="campaign-name">{c.name}</span>
+                  <span class="small">{text.campaignLine(c.serverName, c.sessions)}</span>
+                  <a
+                    href={`/account/transcripts/${encodeURIComponent(c.ref)}`}
+                    aria-label={text.openCampaign(c.name)}
+                  >
+                    {text.open}
+                  </a>
+                </li>
+              ))}
+            </ul>
+          </>
+        )
+      }
+    </Shell>
+  );
+}
+
+function Sessions({ api, campaignRef }: { api: AccountApi; campaignRef: string }) {
+  const load = useRead(
+    api.transcriptSessions ? () => api.transcriptSessions!(campaignRef) : null,
+    [api, campaignRef],
+  );
+  return (
+    <Shell api={api} load={load}>
+      {(found: { name: string; sessions: TranscriptSessionItem[] }) => (
+        <>
+          <p>
+            <a href="/account/transcripts">{text.allCampaigns}</a>
+          </p>
+          <h2>{found.name}</h2>
+          <p class="small">{text.shareLine}</p>
+          {found.sessions.length === 0 ? (
+            <p class="panel" role="status">
+              {text.empty}
+            </p>
+          ) : (
+            <ul class="campaigns">
+              {found.sessions.map((s) => (
+                <li key={s.number}>
+                  <span class="campaign-name">{text.sessionTitle(s.number)}</span>
+                  <span class="small">{text.sessionLine(sessionDay(s.startedAt), s.lines)}</span>
+                  <a
+                    href={`/account/transcripts/${encodeURIComponent(campaignRef)}/${s.number}`}
+                    aria-label={`${text.open}: ${text.sessionTitle(s.number)}`}
+                  >
+                    {text.open}
+                  </a>
+                </li>
+              ))}
+            </ul>
+          )}
+        </>
+      )}
+    </Shell>
+  );
+}
+
+function Reader({
+  api,
+  campaignRef,
+  number,
+}: {
+  api: AccountApi;
+  campaignRef: string;
+  number: number;
+}) {
+  const [version, setVersion] = useState<TranscriptVersion>("cleaned");
+  const load = useRead(
+    api.transcript ? () => api.transcript!(campaignRef, number, version) : null,
+    [api, campaignRef, number, version],
+  );
+  return (
+    <>
+      <p>
+        <a href={`/account/transcripts/${encodeURIComponent(campaignRef)}`}>
+          {text.allSessions}
+        </a>
+      </p>
+      <h2>{text.sessionTitle(number)}</h2>
+      <div class="row" role="group" aria-label={text.versionLabel}>
+        {(["cleaned", "heard"] as const).map((v) => (
+          <button
+            key={v}
+            type="button"
+            class={v === version ? "button" : "button secondary"}
+            aria-pressed={v === version}
+            onClick={() => setVersion(v)}
+          >
+            {text.versions[v]}
+          </button>
+        ))}
+      </div>
+      <p class="small">{text.difference[version]}</p>
+      <p class="small">{text.shareLine}</p>
+      <p class="small">{text.names}</p>
+      <Shell api={api} load={load}>
+        {(view: TranscriptView) => (
+          <>
+            <Download api={api} campaignRef={campaignRef} view={view} />
+            <Lines key={`${version}-${number}`} api={api} campaignRef={campaignRef} view={view} />
+            <details class="small muted">
+              <summary>{text.about}</summary>
+              <p>{versionNote[version]}</p>
+              <p>{text.webNote}</p>
+              {view.notes
+                .filter((n) => n !== versionNote[version])
+                .map((n, i) => (
+                  <p key={i}>{n}</p>
+                ))}
+            </details>
+          </>
+        )}
+      </Shell>
+    </>
+  );
+}
+
+function Download({
+  api,
+  campaignRef,
+  view,
+}: {
+  api: AccountApi;
+  campaignRef: string;
+  view: TranscriptView;
+}) {
+  const [state, setState] = useState<"idle" | "busy" | "failed">("idle");
+  const busy = useRef(false);
+  if (!api.transcriptFile) return null;
+  async function save() {
+    if (busy.current) return;
+    busy.current = true;
+    setState("busy");
+    try {
+      const blob = await api.transcriptFile!(campaignRef, view.number, view.version);
+      const href = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = href;
+      link.download = view.fileName;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(href);
+      setState("idle");
+    } catch {
+      setState("failed");
+    } finally {
+      busy.current = false;
+    }
+  }
+  return (
+    <p>
+      <button type="button" class="button secondary" onClick={() => void save()}>
+        {state === "busy" ? text.downloading : text.download}
+      </button>{" "}
+      <span role="status" class="warn">
+        {state === "failed" ? text.downloadFailed : ""}
+      </span>
+    </p>
+  );
+}
+
+/** The transcript's lines, the first page the API gave and "Show more" for the next ones. Nothing
+ * is said unless there is more. */
+function Lines({
+  api,
+  campaignRef,
+  view,
+}: {
+  api: AccountApi;
+  campaignRef: string;
+  view: TranscriptView;
+}) {
+  const [extra, setExtra] = useState<string[]>([]);
+  const [next, setNext] = useState<number | null>(view.next ?? null);
+  const [state, setState] = useState<"idle" | "busy" | "failed">("idle");
+  const busy = useRef(false);
+  const lines = [...view.lines, ...extra];
+  async function more() {
+    if (busy.current || next === null || !api.transcript) return;
+    busy.current = true;
+    setState("busy");
+    try {
+      const page = await api.transcript(campaignRef, view.number, view.version, next);
+      setExtra((before) => [...before, ...page.lines]);
+      setNext(page.next ?? null);
+      setState("idle");
+    } catch {
+      setState("failed");
+    } finally {
+      busy.current = false;
+    }
+  }
+  if (lines.length === 0)
+    return (
+      <p class="panel" role="status">
+        {text.noLines}
+      </p>
+    );
+  return (
+    <>
+      <ul class="transcript-lines" aria-label={text.sessionTitle(view.number)}>
+        {lines.map((line, i) => (
+          <li key={i}>{line}</li>
+        ))}
+      </ul>
+      {next !== null && (
+        <p>
+          <button type="button" class="button secondary" onClick={() => void more()}>
+            {state === "busy" ? text.loadingMore : text.showMore}
+          </button>{" "}
+          <span role="status" class="warn">
+            {state === "failed" ? text.moreFailed : ""}
+          </span>
+        </p>
+      )}
+    </>
+  );
+}
