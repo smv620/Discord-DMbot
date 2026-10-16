@@ -4166,6 +4166,8 @@ class DMBot(commands.AutoShardedBot):
             return said
         if said.ends and said.action == kind:
             return None
+        # (A spoken rest followed by a skip of days is taken as said, in full: the skip is a new cut
+        # of the scene, not the rest's own length, #1594.)
         if said.action == "advance" and said.minutes is not None and now - at < CLOCK_PHRASE_GAP_S:
             extra = said.minutes - took
             if extra <= 0:
