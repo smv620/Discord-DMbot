@@ -56,6 +56,10 @@ export const dmSteps: Step[] = [
     ],
   },
   {
+    text: "A name with a long list of other names or connections shows the first few on its card. Open the Show all ▾ list under the card to read the rest, one page at a time.",
+    names: [{ name: "Show all ▾", file: "ui/name_card.py" }],
+  },
+  {
     text: "To say who has something, open the name, press 🧭 Connect to…, and choose carries. It is saved either way. If it looks odd, for example \"Someone else already has that, and there is only one\", DMbot says so and will ask you about it after the session. DMbot only points it out. You decide.",
     names: [
       { name: "Connect to…", file: "ui/name_card.py" },
@@ -144,6 +148,37 @@ export const dmSteps: Step[] = [
     names: [
       { name: "Stop sharing", file: "ui/shared_rules.py" },
       { name: "Yes, stop sharing", file: "ui/shared_rules.py" },
+    ],
+  },
+  {
+    text: "To share your homebrew with another table, press ⚙️ Settings, then 📚 Shared rules, then 📦 Homebrew packs, then 📤 Share my homebrew (paid campaigns only). DMbot gives you a share code. Any game master in your server can read everything you share, and so can anyone you give the code to. That includes entries you hide from players. Only share what you are happy for them to see. Followers get a new version only when you press 🔄 Publish my changes. Only homebrew is shared, never your story, names or notes.",
+    names: [
+      { name: "📦 Homebrew packs", file: "ui/shared_rules.py" },
+      { name: "📤 Share my homebrew", file: "ui/shared_packs.py" },
+      { name: "🔄 Publish my changes", file: "ui/shared_packs.py" },
+    ],
+  },
+  {
+    text: "To use another table's homebrew, press ⚙️ Settings, then 📚 Shared rules, then 📦 Homebrew packs, then 📥 Follow a pack, and type the share code they gave you. DMbot shows you what is in the pack first. Press Yes, follow this pack only if you want it. If you have homebrew with the same name, yours is used. Press Stop following any time to stop.",
+    names: [
+      { name: "📥 Follow a pack", file: "ui/shared_packs.py" },
+      { name: "Yes, follow this pack", file: "ui/shared_packs.py" },
+      { name: "Stop following", file: "ui/shared_packs.py" },
+    ],
+  },
+  {
+    text: "When a pack you follow changes, DMbot tells you in one note at the start of your next session. The changes are added unless you step in. Press Pick changes to choose which ones to keep, or Undo to put things back how they were.",
+    names: [
+      { name: "Pick changes", file: "dm_screen/pack_update.py" },
+      { name: "Undo", file: "dm_screen/pack_update.py" },
+    ],
+  },
+  {
+    text: "To suggest one of your own homebrew entries to the pack you follow, open the entry in your homebrew and press 💡 Suggest to the pack. The game master who shares the pack sees the entry with Add to pack or No thanks. They never see who sent it. The pack stays as it is unless they press Add to pack.",
+    names: [
+      { name: "💡 Suggest to the pack", file: "ui/homebrew.py" },
+      { name: "Add to pack", file: "dm_screen/pack_suggestion.py" },
+      { name: "No thanks", file: "dm_screen/pack_suggestion.py" },
     ],
   },
   {
