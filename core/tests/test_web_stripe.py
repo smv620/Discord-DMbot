@@ -537,6 +537,56 @@ class Provider(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(form["success_url"], "https://dmbot.example/account")
         self.assertNotIn("discounts[0][coupon]", form)
 
+    async def test_every_checkout_carries_the_owners_checkout_studio_parameters(self) -> None:
+        """#1446: the same fixed parameters on all three calls; `payment_method_collection`
+        only on the two subscriptions; the address is saved to the customer when there is one."""
+        self.http.answers[("POST", "/v1/checkout/sessions")] = (200, {"url": CHECKOUT_URL})
+        self.http.answers[("POST", "/v1/customers")] = (200, {"id": "cus_new1"})
+        audio = StripeProvider(
+            StripeConfig(
+                secret_key="sk_test_not_real",
+                prices=CONFIG.prices,
+                extra_hours_price="price_extra",
+                recap_audio_price="price_audio",
+            ),
+            SECRET,
+            transport=self.http,
+        )
+        where = "https://dmbot.example/account"
+        plan = plans.load().by_id["table"]
+        await self.provider.checkout_url(user_id=USER, email=None, plan=plan, return_url=where)
+        await self.provider.extra_hours_checkout_url(user_id=USER, email=None, return_url=where)
+        await audio.recap_audio_checkout_url(
+            user_id=USER, email=None, return_url=where, customer_id="cus_old9"
+        )
+        studio = {
+            "ui_mode": "hosted_page",
+            "billing_address_collection": "auto",
+            "phone_number_collection[enabled]": "false",
+            "automatic_tax[enabled]": "true",
+            "allow_promotion_codes": "true",
+            "submit_type": "auto",
+            "integration_identifier": "hosted_web_0001",
+            "origin_context": "web",
+        }
+        forms = [form for _, path, form in self.http.calls if path == "/v1/checkout/sessions"]
+        self.assertEqual([f["mode"] for f in forms], ["subscription", "payment", "subscription"])
+        for form in forms:
+            for key, value in studio.items():
+                self.assertEqual(form[key], value, key)
+            # What the code kept: the real mode, addresses, line items and the person.
+            self.assertEqual(form["success_url"], where)
+            self.assertEqual(form["cancel_url"], where)
+            self.assertEqual(form["line_items[0][quantity]"], "1")
+            self.assertEqual(form["metadata[user_id]"], str(USER))
+        self.assertEqual(forms[0]["payment_method_collection"], "always")
+        self.assertNotIn("payment_method_collection", forms[1])  # not on a one-time payment
+        self.assertEqual(forms[2]["payment_method_collection"], "always")
+        # Only a call with a customer asks to save the address onto it.
+        self.assertNotIn("customer_update[address]", forms[0])
+        self.assertEqual(forms[2]["customer"], "cus_old9")
+        self.assertEqual(forms[2]["customer_update[address]"], "auto")
+
     async def test_a_double_click_sends_the_same_idempotency_key_and_expiry(self) -> None:
         self.http.answers[("POST", "/v1/checkout/sessions")] = (200, {"url": CHECKOUT_URL})
 
