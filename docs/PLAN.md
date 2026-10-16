@@ -1309,9 +1309,9 @@ building:
 - **Delete my past transcripts is built (#1532):** 🗑 in the ⚙️ Menu on the consent messages, and
   `/dmbot delete-my-lines`. One warning with the numbers ("N lines in M sessions"), one confirmation, one
   transaction per server. What goes and what stays is in "Retention" below.
-- **Keep transcripts for is built (#1533, migration 0101):** see "Retention". Still to come: cleaned
-  and both downloads (Phase 2b), and `{entity}` labels for the DM's lines (narrating, which NPC;
-  #53; the `in_character` flag exists, nothing sets it).
+- **Keep transcripts for is built (#1533, migration 0101):** see "Retention". The cleaned version,
+  both downloads and the `{entity}` labels for the DM's lines (narrating, or which NPC; #53) are
+  built too; see "Transcripts and downloads" below.
 
 **Transcripts and downloads (decided 2026-10-05, #124, #125).** Sessions and their
 participants are stored. Each line is kept in two versions: **as heard** (exactly what
@@ -2568,9 +2568,14 @@ table isn't left waiting while the DM looks something up.
     `ANTHROPIC_API_KEY`); off, a DM gets "Quick answers aren't switched on yet." and the table
     trigger stays quiet. Turn it on after the sidebar's test answers have been read (#954). One
     question at a time per campaign.
-  - **Not built yet:** a line the Cleaner tags as in character is not told apart from the DM
-    speaking (the `in_character` flag exists, nothing sets it); only the "hold on" lead-in
-    guards against it.
+  - **A line said as an NPC never asks DMbot (2026-10-16, #1624):** the spoken triggers ("hold on, I
+    need to find…" and "Hey DMbot") fire only when the line's `entity` is empty or narrating; a line
+    said as a named NPC never does. The label comes from the speaker-label AI call over a window of
+    the DM's lines, so it is not known when a line is first handled: for a line that clearly asks
+    DMbot something, the window is closed at once and the question waits for that one call (bounded
+    by its timeout), then is asked unless the line was said as an NPC. With no label (no AI, no names
+    to choose from, a "maybe", a failed or slow call) it is asked as before. Typed questions and voice
+    memos are always out of character and unaffected.
   - **Limits:** DMs reach only the first shard's process, so a table on another shard's process
     is not found (single process today).
 

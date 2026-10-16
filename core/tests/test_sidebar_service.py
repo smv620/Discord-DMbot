@@ -644,10 +644,11 @@ class SaidAtTheTable(unittest.IsolatedAsyncioTestCase):
         self.assertEqual((self.sidebar._tasks, self.host.dms, self.answerer.asked), (set(), [], []))
 
     async def test_ordinary_talk_and_in_character_lines_start_nothing(self) -> None:
-        for said, kw in [
+        cases: list[tuple[str, dict[str, Any]]] = [
             ("I need to find the map", {}),
             ("Hold on, I need to find the dragon's lair on this map", {"in_character": True}),
-        ]:
+        ]
+        for said, kw in cases:
             self.assertFalse(self.sidebar.ask_at_table(self.table, DM, said, **kw))
 
     async def test_six_questions_a_minute_for_the_table(self) -> None:
@@ -1228,3 +1229,41 @@ class TableQuestions(unittest.IsolatedAsyncioTestCase):
         self.sidebar.ask_in_chat(self.table, PLAYER, "does fireball need line of sight")
         await self.settle()
         self.assertTrue(self.host.chat[1].startswith("Q (Mira): Does fireball need line of sight?"))
+
+
+class SaidAsAnNpc(SaidAtTheTable):
+    """#1624: a spoken trigger said as a named NPC never asks DMbot anything."""
+
+    HOLD_ON = "Hold on, I need to find the key to the cellar."
+    HEY = "Hey DMbot, what's the range of fireball?"
+
+    async def test_narrating_still_asks(self) -> None:
+        from dmbot.transcript.models import NARRATING
+
+        self.assertTrue(self.sidebar.ask_at_table(self.table, DM, self.HOLD_ON, entity=NARRATING))
+        await self.settle()
+        self.assertEqual(len(self.host.dms), 1)
+
+    async def test_an_unknown_entity_still_asks(self) -> None:
+        self.assertTrue(self.sidebar.ask_at_table(self.table, DM, self.HEY, entity=""))
+        await self.settle()
+        self.assertEqual(len(self.answerer.asked), 1)
+
+    async def test_a_line_said_as_a_named_npc_asks_nothing(self) -> None:
+        for said in (self.HOLD_ON, self.HEY):
+            self.assertFalse(
+                self.sidebar.ask_at_table(self.table, DM, said, entity="Innkeeper Orla")
+            )
+        self.assertEqual((self.sidebar._tasks, self.host.dms, self.answerer.asked), (set(), [], []))
+
+    async def test_a_player_saying_hey_dmbot_as_a_character_asks_nothing(self) -> None:
+        self.assertFalse(self.sidebar.ask_at_table(self.table, PLAYER, self.HEY, entity="Mira"))
+        self.assertEqual(self.answerer.asked, [])
+
+    def test_the_pure_test(self) -> None:
+        from dmbot.sidebar.ask import voiced_by_npc
+        from dmbot.transcript.models import NARRATING
+
+        self.assertFalse(voiced_by_npc(""))
+        self.assertFalse(voiced_by_npc(NARRATING))
+        self.assertTrue(voiced_by_npc("Innkeeper Orla"))
