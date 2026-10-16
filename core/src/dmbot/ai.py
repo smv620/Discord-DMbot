@@ -69,6 +69,7 @@ class Feature(enum.StrEnum):
     RECAP = "recap"  # the cinematic recap after a session (#1382); off by default
     RECAP_RETRY = "recap_retry"  # its one more try, when the first draft fails the checks
     EXTRACTOR = "extractor"  # the story extractor after a session (#1363); off by default
+    SUPPORT = "support"  # DMbot's helper answering a support ticket (#1431); the website's job
 
 
 # The tier of each job. Nothing else chooses: a job names its tier here, never a model.
@@ -87,6 +88,7 @@ FEATURE_TIERS = {
     # The default; DMBOT_STORY_EXTRACTOR_TIER picks it, because the measurement (#1282) decides.
     Feature.EXTRACTOR: AIModelTier.FAST,
     Feature.RECAP: AIModelTier.FAST,
+    Feature.SUPPORT: AIModelTier.DEEP,  # a person is reading the answer, and it must not mislead
     Feature.RECAP_RETRY: AIModelTier.CAREFUL,
 }
 
