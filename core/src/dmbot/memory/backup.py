@@ -125,7 +125,7 @@ _CHOICES: dict[str, Sequence[str]] = {
     "source": SOURCES,
 }
 _IDS = {"id", "entity_id", "fact_id", "merged_into", "used_by", "subject_id", "object_id",
-        "relation_id", "other_id"}  # fmt: skip
+        "relation_id", "other_id", "from_set"}  # fmt: skip
 _INTS = {"played_by", "speaker_id", "session_started_at", "decided_at", "created_at",
          "from_session_at", "to_session_at", "from_game_time", "to_game_time",
          "max_per_subject", "closed_at"}  # fmt: skip
@@ -136,7 +136,7 @@ _NULLABLE = {
     "role", "edition", "played_by", "merged_into", "used_by", "other_id", "entity_id",
     "replaced_by", "parent", "from_session_at", "to_session_at", "from_game_time",
     "to_game_time", "max_per_subject", "closed_at", "unique_item", "fact_id",
-    "session_started_at", "decided_at", "said_as",
+    "session_started_at", "decided_at", "said_as", "from_set",
 }  # fmt: skip
 
 
@@ -307,6 +307,7 @@ def _checked_rows(rows: list[Any]) -> dict[str, list[dict[str, Any]]]:
 _OLD_PARENTS = {k: v[0] for k, v in MIGRATED_KINDS.items()}
 _NEW_PREDICATE_FIELDS: dict[str, Any] = {
     "covers": [], "not_this": [], "inverse_label": "", "synonyms": [], "version": 1,
+    "from_set": None,  # from before a set could lend relationships (#1456)
 }  # fmt: skip
 
 

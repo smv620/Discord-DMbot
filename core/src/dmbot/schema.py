@@ -4286,6 +4286,16 @@ SUPPORT_OWN = """
     REVOKE ALL ON FUNCTION dmbot_support_message(BIGINT) FROM PUBLIC;
     """
 
+MEMORY_FROM_SET = """
+    -- A relationship definition borrowed from a followed shared rule set (#1456; docs/PLAN.md,
+    -- "Shared rulesets"): the set's id, null for the campaign's own and for the official ones.
+    -- Read-only while it is the set's. A column with no default and no backfill: every existing
+    -- row is the campaign's own, which null already says, so no row changes and no row-level
+    -- security needs opening.
+    ALTER TABLE memory_predicates ADD COLUMN from_set TEXT
+        CHECK (from_set IS NULL OR from_set ~ '^[0-9a-f]{32}$');
+    """
+
 MIGRATIONS: tuple[Migration, ...] = (
     ("0001_initial", INITIAL),
     ("0002_active_sessions", ACTIVE_SESSIONS),
@@ -4375,6 +4385,7 @@ MIGRATIONS: tuple[Migration, ...] = (
     ("0083_memory_said_as", MEMORY_SAID_AS),  # a spelling for the narrator (#1419)
     ("0084_recap_switches", RECAP_SWITCHES),  # the DM's recap choices (#1421)
     ("0085_recap_audio_again", RECAP_AUDIO_AGAIN),  # the website's door to new audio (#1418)
+    ("0089_memory_from_set", MEMORY_FROM_SET),  # sets carry relationship definitions (#1456)
 )
 
 # Tables that must have row-level security. A test checks every table in the schema

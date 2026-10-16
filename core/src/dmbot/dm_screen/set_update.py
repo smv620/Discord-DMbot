@@ -34,7 +34,7 @@ import discord
 
 from dmbot.campaigns import Campaign
 from dmbot.dm_screen import set_suggestion
-from dmbot.rules import rule_sets, set_diff
+from dmbot.rules import rule_sets, set_diff, set_sync
 from dmbot.rules.house import HouseRule, HouseRuleError
 from dmbot.ui.dmbot_commands import _answer_first, _bot, _Button, _Menu, _Select, _tell
 
@@ -61,6 +61,14 @@ OVERRIDDEN = (
     "The set changed a rule your table has its own version of. Yours still applies. "
     "Press Compare to see both."
 )
+
+
+async def settle(bot: Any, campaign: Campaign) -> None:
+    """The relationship definitions borrowed from the followed set match it again (#1456). A
+    failure never undoes what the DM or DMbot just did; the next session start tries again."""
+    memory, sets = getattr(bot, "memory", None), getattr(bot, "rule_sets", None)
+    if memory is not None and sets is not None:
+        await set_sync.safely(set_sync.reconcile(memory, sets, campaign.guild_id, campaign.id))
 
 
 def overrides(
@@ -102,10 +110,18 @@ def note_text(
     changes: int,
     link_changed: bool = False,
     overridden: bool = False,
+    relationships: int = 0,
 ) -> str:
     rules = f"{changes} rule" + ("" if changes == 1 else "s")
+    if relationships:
+        more = f"{relationships} relationship" + ("" if relationships == 1 else "s")
+        rules = more if changes == 0 else f"{rules} and {more}"
     if link_changed:
-        rules = LINK_ONLY if changes == 0 else f"{rules} and the rules document link"
+        rules = (
+            LINK_ONLY
+            if changes == 0 and not relationships
+            else f"{rules} and the rules document link"
+        )
     text = (
         f"📚 **{discord.utils.escape_markdown(follow_name)}** house rules updated to "
         f"v{version}: {rules}. DMbot took the new version."
@@ -211,7 +227,13 @@ async def press(
         elif action == "see":
             await _tell(
                 interaction,
-                changes_text(follow.name, version, list(update.changes), update.link_changed),
+                changes_text(
+                    follow.name,
+                    version,
+                    list(update.changes),
+                    update.link_changed,
+                    update.def_changes,
+                ),
             )
         elif action == "compare":
             await _compare(interaction, campaign, follow.name, list(update.changes))
@@ -237,6 +259,7 @@ async def press(
                 version,
                 set_diff.diff(before, follow.content),
                 before.get("link") != follow.content.get("link"),
+                set_diff.diff_definitions(before, follow.content),
             ),
         )
         return
@@ -245,6 +268,7 @@ async def press(
     except HouseRuleError as exc:
         await _tell(interaction, str(exc))
         return
+    await settle(_bot(interaction), campaign)
     if action == "undo":
         back = follow.previous_version
         await _tell(interaction, f"↩️ Undone. Back on v{back}. {UNDONE_AND_WAITING}")
@@ -265,9 +289,14 @@ async def _open_picker(
 
 
 def changes_text(
-    name: str, version: int, changes: list[set_diff.Change], link_changed: bool = False
+    name: str,
+    version: int,
+    changes: list[set_diff.Change],
+    link_changed: bool = False,
+    def_changes: Sequence[set_diff.DefChange] = (),
 ) -> str:
     lines = [set_diff.describe(c) for c in changes]
+    lines += [set_diff.describe_definition(c) for c in def_changes]
     if link_changed:
         lines.append("The rules document link changed.")
     text = "\n".join(lines) or "Only the version number changed. No rule is different."
@@ -311,8 +340,10 @@ async def take(
     campaign: Campaign,
     update: rule_sets.Update,
     accepted: set[int] | None,
+    accepted_defs: set[str] | None = None,
 ) -> None:
-    sets = _bot(interaction).rule_sets
+    bot = _bot(interaction)
+    sets = bot.rule_sets
     if sets is None:
         await _tell(interaction, COULDNT)
         return
@@ -323,6 +354,7 @@ async def take(
             interaction.user.id,
             accepted,
             expected_version=update.offer.version,  # the version the DM was shown
+            accepted_defs=accepted_defs,
         )
     except HouseRuleError as exc:
         await _tell(interaction, str(exc))
@@ -330,20 +362,39 @@ async def take(
     name = discord.utils.escape_markdown(update.offer.name)
     changed = {c.number for c in update.changes}
     left_out = len(changed - (accepted or changed))
+    def_batch: int | None = None
     if taken.merged:
+        # The follow ended: the relationships the DM kept become the campaign's own, the rest
+        # of the set's go, in one memory change that Undo takes back.
+        memory = getattr(bot, "memory", None)
+        if memory is not None:
+            done = await set_sync.safely(
+                set_sync.keep_as_own(memory, campaign.guild_id, campaign.id, taken)
+            )
+            def_batch = done.batch if done is not None else None
+        kept_rules = len(taken.added)
+        mine = f"{kept_rules} rule" + ("" if kept_rules == 1 else "s")
+        if taken.kept_definitions:
+            n = len(taken.kept_definitions)
+            mine += f" and {n} relationship" + ("" if n == 1 else "s")
+        out = f"left out {left_out} change" + ("" if left_out == 1 else "s")
         words = (
-            f"✅ Done. **{name}** is now your own copy ({len(taken.added)} rules, {left_out} "
-            "changes left out). You no longer get its updates. Your own rules still win."
+            f"✅ Done. **{name}** is now your own copy: you kept {mine} and {out}. "
+            "You no longer get its updates. Your own rules still win."
         )
     else:
+        await settle(bot, campaign)
         words = f"✅ Now using **{name}** v{taken.after_version}."
-    await _tell(interaction, words, view=UndoView(campaign, taken))
+    await _tell(interaction, words, view=UndoView(campaign, taken, def_batch))
 
 
 class UndoView(_Menu):
-    def __init__(self, campaign: Campaign, taken: rule_sets.Taken) -> None:
+    def __init__(
+        self, campaign: Campaign, taken: rule_sets.Taken, def_batch: int | None = None
+    ) -> None:
         super().__init__()
         self.campaign, self.taken = campaign, taken
+        self.def_batch = def_batch  # the memory change Cherry pick made for the relationships
         self.add_item(_Button(self._undo, label=UNDO_LABEL))
 
     async def _undo(self, interaction: discord.Interaction) -> None:
@@ -368,6 +419,12 @@ class UndoView(_Menu):
             await _tell(interaction, COULDNT)
             return
         self.stop()
+        memory = getattr(bot, "memory", None)
+        if self.taken.merged and self.def_batch is not None and memory is not None:
+            # The relationships go back as the set's (or are made again) before the follow is
+            # reconciled, so Undo leaves nothing half done.
+            await set_sync.safely(memory.undo(current.guild_id, current.id, self.def_batch))
+        await settle(bot, current)
         v = self.taken.before.version
         if self.taken.merged:
             edited = (
@@ -381,43 +438,57 @@ class UndoView(_Menu):
             await _tell(interaction, f"↩️ Undone. Back on v{v}. {UNDONE_AND_WAITING}")
 
 
+_KIND_WORD = {"added": "New", "changed": "Changed", "removed": "Removed"}
+
+
 class PickView(_Menu):
     """Cherry pick: every change starts ticked (kept). Untick what the DM doesn't want, then
-    Save my picks. Pages of 25, because a Discord menu holds no more."""
+    Save my picks. Pages of 25, because a Discord menu holds no more. The set's relationship
+    changes (#1456) are picked one at a time in the same list, after the rules."""
 
     def __init__(self, campaign: Campaign, update: rule_sets.Update) -> None:
         super().__init__()
         self.campaign, self.update = campaign, update
-        self.accepted = {c.number for c in update.changes}
+        # (value, short label, one line): "r:<rule number>" or "d:<relationship key>".
+        self.items: list[tuple[str, str, str]] = [
+            (f"r:{c.number}", f"{c.number} {c.kind.capitalize()}", set_diff.describe(c, 90))
+            for c in update.changes
+        ] + [
+            (f"d:{c.key}", f"{_KIND_WORD[c.kind]}: {c.label}", set_diff.describe_definition(c))
+            for c in update.def_changes
+        ]
+        self.accepted = {value for value, _label, _line in self.items}
         self.page = 0
         self._draw()
 
-    def _page_changes(self) -> list[set_diff.Change]:
-        return list(self.update.changes[self.page * PAGE : (self.page + 1) * PAGE])
+    def _page_items(self) -> list[tuple[str, str, str]]:
+        return self.items[self.page * PAGE : (self.page + 1) * PAGE]
 
     def text(self) -> str:
-        pages = max(1, -(-len(self.update.changes) // PAGE))
+        pages = max(1, -(-len(self.items) // PAGE))
         where = f" (page {self.page + 1} of {pages})" if pages > 1 else ""
-        lines = "\n".join(set_diff.describe(c, 60) for c in self._page_changes())
+        lines = "\n".join(line[:70] for _value, _label, line in self._page_items())
         link = "\nThe rules document link changed too." if self.update.link_changed else ""
         return (
             f"Pick changes: **{discord.utils.escape_markdown(self.update.offer.name)}**{where}. "
             "Ticked = keep. Everything starts ticked. If you untick any, you stop following "
-            "the set and get your own copy. You can undo it.\n" + lines + link
+            "the set and get your own copy; relationships you keep become yours. You can undo it.\n"
+            + lines
+            + link
         )
 
     def _draw(self) -> None:
         self.clear_items()
-        shown = self._page_changes()
+        shown = self._page_items()
         if shown:
             options = [
                 discord.SelectOption(
-                    label=f"{c.number} {c.kind.capitalize()}"[:25],
-                    description=set_diff.describe(c, 90)[:100],
-                    value=str(c.number),
-                    default=c.number in self.accepted,
+                    label=label[:25],
+                    description=line[:100],
+                    value=value,
+                    default=value in self.accepted,
                 )
-                for c in shown
+                for value, label, line in shown
             ]
             self.add_item(
                 _Select(
@@ -429,9 +500,9 @@ class PickView(_Menu):
                     row=0,
                 )
             )
-        if len(self.update.changes) > PAGE:
+        if len(self.items) > PAGE:
             self.add_item(_Button(self._prev, label="◀ Back", row=1, disabled=self.page == 0))
-            last = (self.page + 1) * PAGE >= len(self.update.changes)
+            last = (self.page + 1) * PAGE >= len(self.items)
             self.add_item(_Button(self._next, label="More ▶", row=1, disabled=last))
         self.add_item(
             _Button(self._apply, label="Save my picks", style=discord.ButtonStyle.primary, row=1)
@@ -439,8 +510,8 @@ class PickView(_Menu):
 
     async def _picked(self, interaction: discord.Interaction) -> None:
         select = next(c for c in self.children if isinstance(c, discord.ui.Select))
-        chosen = {int(v) for v in select.values}
-        shown = {c.number for c in self._page_changes()}
+        chosen = set(select.values)
+        shown = {value for value, _l, _line in self._page_items()}
         self.accepted = (self.accepted - shown) | chosen
         self._draw()
         await interaction.response.edit_message(content=self.text(), view=self)
@@ -461,9 +532,11 @@ class PickView(_Menu):
         if found is None:
             return
         self.stop()
+        numbers = {int(v[2:]) for v in self.accepted if v.startswith("r:")}
+        keys = {v[2:] for v in self.accepted if v.startswith("d:")}
         # The version the DM was shown, not whatever is newest now: if a newer one has come,
         # nothing is applied and the DM is told (the store compares the two).
-        await take(interaction, self.campaign, self.update, set(self.accepted))
+        await take(interaction, self.campaign, self.update, numbers, keys)
 
 
 async def check_update(bot: Any, campaign: Campaign, screen_id: int) -> None:
@@ -477,6 +550,9 @@ async def check_update(bot: Any, campaign: Campaign, screen_id: int) -> None:
     # never reached the screen. Each never raises.
     await set_suggestion.tell_answers(bot, campaign, screen_id)
     await set_suggestion.post_waiting(bot, campaign)
+    # The borrowed relationships match the followed set (#1456), whatever happened since: a
+    # restored backup, a step that failed halfway.
+    await settle(bot, campaign)
     try:
         update = await sets.pending_update(campaign.guild_id, campaign.id, for_dmbot=True)
         if update is None:
@@ -510,6 +586,7 @@ async def check_update(bot: Any, campaign: Campaign, screen_id: int) -> None:
             None,
             expected_version=update.offer.version,
         )
+        await settle(bot, campaign)
         overridden = bool(overrides(await _own_rules(bot, campaign), update.changes))
         posted = await bot.post_message(
             screen_id,
@@ -519,6 +596,7 @@ async def check_update(bot: Any, campaign: Campaign, screen_id: int) -> None:
                 len(update.changes),
                 update.link_changed,
                 overridden,
+                len(update.def_changes),
             ),
             note_view(campaign.id, update.offer.version, overridden),
         )

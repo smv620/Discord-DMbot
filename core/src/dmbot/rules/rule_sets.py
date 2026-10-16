@@ -29,6 +29,7 @@ from psycopg.types.json import Jsonb
 
 from dmbot.campaigns.models import CampaignError
 from dmbot.db import Conn, Database
+from dmbot.memory.definition_content import valid_definitions
 from dmbot.rules import set_diff
 from dmbot.rules.house import (
     HOUSE_RULES_MAX,
@@ -133,6 +134,7 @@ class Update:
     follow: Follow
     offer: Offer
     changes: tuple[set_diff.Change, ...]
+    def_changes: tuple[set_diff.DefChange, ...] = ()  # the relationship definitions (#1456)
 
     @property
     def link_changed(self) -> bool:
@@ -152,6 +154,9 @@ class Taken:
     marker: str = ""
     offered: int = 0  # the version of the set that was on offer (an Undo declines it)
     link_written: str | None = None  # the set's document link, made the campaign's own on a merge
+    # On a merge, the relationship definitions the campaign keeps as its own (#1456), for the
+    # caller to settle in memory; none otherwise.
+    kept_definitions: tuple[dict[str, Any], ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -186,10 +191,15 @@ class VersionLog:
     source: str
 
 
-def content_of(rules: Sequence[HouseRule], link: str | None) -> dict[str, Any]:
+def content_of(
+    rules: Sequence[HouseRule],
+    link: str | None,
+    definitions: Sequence[dict[str, Any]] = (),
+) -> dict[str, Any]:
     """What a house-rules set carries: each rule's number, text and "instead of", oldest
     first, and the DM's document link. Built field by field, so nothing else of a rule (its
-    scenario, who made it, its session) can travel."""
+    scenario, who made it, its session) can travel. `definitions`: the relationship definitions
+    the DM ticked to travel with it (#1456), cleaned the same way a set's content always is."""
     return {
         "rules": [
             {"number": r.number, "rule": r.rule, "instead": r.supersedes}
@@ -197,6 +207,7 @@ def content_of(rules: Sequence[HouseRule], link: str | None) -> dict[str, Any]:
             if not r.from_set  # rules merged in from another set are not this campaign's to share
         ],
         "link": link,
+        "definitions": valid_definitions(list(definitions)),
     }
 
 
@@ -223,7 +234,11 @@ def valid_content(content: Any) -> dict[str, Any]:
     link = content.get("link")
     if link is not None and (not isinstance(link, str) or len(link) > LINK_MAX):
         raise RuleSetError(NO_SUCH_SET)
-    return {"rules": rules, "link": link}
+    return {
+        "rules": rules,
+        "link": link,
+        "definitions": valid_definitions(content.get("definitions")),
+    }
 
 
 def new_code() -> str:
@@ -281,7 +296,11 @@ def suggested_content(content: dict[str, Any], rule: str, instead: str | None) -
             raise RuleSetError(SET_FULL.format(n=HOUSE_RULES_MAX))
         rules.append({"number": max((r["number"] for r in rules), default=0) + 1,
                       "rule": rule, "instead": instead})  # fmt: skip
-    return {"rules": rules, "link": content.get("link")}
+    return {
+        "rules": rules,
+        "link": content.get("link"),
+        "definitions": content.get("definitions", []),
+    }
 
 
 class RuleSetStore:
@@ -350,10 +369,12 @@ class RuleSetStore:
         name: str,
         rules: Sequence[HouseRule],
         link: str | None,
+        definitions: Sequence[dict[str, Any]] = (),
     ) -> SharedSet:
         """Share the campaign's house rules as a set, version 1. Only a DM of the campaign
         (the paid-plan check is the caller's, with the owner's plan). `rules` and `link` are
-        what the DM sees now; only their rule text and "instead of" text are copied."""
+        what the DM sees now; only their rule text and "instead of" text are copied. `definitions`:
+        the relationship definitions the DM ticked to travel with them (#1456)."""
         name = " ".join(name.split())
         if not 0 < len(name) <= NAME_MAX:
             raise RuleSetError(NEED_NAME)
@@ -370,7 +391,7 @@ class RuleSetStore:
             old = await cur.fetchone()
             if old is not None and old["status"] == "shared":
                 raise RuleSetError(ALREADY_SHARED)
-            content = Jsonb(content_of(rules, link))
+            content = Jsonb(content_of(rules, link, definitions))
             if old is not None:  # shared before and stopped: shared again, a new version
                 set_id = str(old["id"])
                 cur = await conn.execute(
@@ -719,15 +740,17 @@ class RuleSetStore:
         *,
         plan_ok: bool,
         expected_version: int | None = None,
+        definitions: Sequence[dict[str, Any]] = (),
     ) -> SharedSet:
-        """The publisher's current house rules as the set's next version. `plan_ok`: see
+        """The publisher's current house rules (and the relationship definitions it carries) as
+        the set's next version. `plan_ok`: see
         `save_version`. `expected_version`: the version the DM was looking at; if another has
         been published since, nothing is made."""
         return await self.save_version(
             guild_id,
             campaign_id,
             user_id,
-            content_of(rules, link),
+            content_of(rules, link, definitions),
             "publisher",
             plan_ok=plan_ok,
             expected_version=expected_version,
@@ -1019,7 +1042,12 @@ class RuleSetStore:
             return None
         if for_dmbot and fresh.version <= (mine[0].declined_version or 0):
             return None
-        return Update(mine[0], fresh, tuple(set_diff.diff(mine[0].content, fresh.content)))
+        return Update(
+            mine[0],
+            fresh,
+            tuple(set_diff.diff(mine[0].content, fresh.content)),
+            tuple(set_diff.diff_definitions(mine[0].content, fresh.content)),
+        )
 
     async def is_gone(self, guild_id: int, campaign_id: str) -> bool:
         """The publisher stopped sharing the followed set. False when that is not known."""
@@ -1052,8 +1080,10 @@ class RuleSetStore:
         user_id: int | None,
         accepted: Collection[int] | None = None,
         expected_version: int | None = None,
+        accepted_defs: Collection[str] | None = None,
     ) -> Taken:
-        """Take the set's newer version. `accepted` None, or every changed rule: Follow, the
+        """Take the set's newer version. `accepted` None, or every changed rule (and, the same
+        way, `accepted_defs` for the relationship definitions): Follow, the
         campaign's copy becomes the new version and it keeps following. Otherwise Cherry
         pick with something rejected: the set as the campaign had it plus the accepted
         changes becomes the campaign's own house rules (each marked "from <set> house rules,
@@ -1091,7 +1121,12 @@ class RuleSetStore:
                 raise RuleSetError(CHANGED_AGAIN)  # the choices were made on older changes
             changes = set_diff.diff(follow.content, fresh.content)
             numbers = {c.number for c in changes}
-            if accepted is None or numbers <= set(accepted):
+            def_changes = set_diff.diff_definitions(follow.content, fresh.content)
+            keys = {c.key for c in def_changes}
+            everything = (accepted is None or numbers <= set(accepted)) and (
+                accepted_defs is None or keys <= set(accepted_defs)
+            )
+            if everything:
                 await conn.execute(
                     "UPDATE rule_set_follows SET version = %s, content = %s, set_name = %s,"
                     " publisher = %s, previous_version = %s, previous_content = %s,"
@@ -1115,8 +1150,16 @@ class RuleSetStore:
             if user_id is None:  # only a DM's press merges rules into the campaign's own
                 raise RuleSetError(NOT_FOLLOWING)
             author: int = user_id
-            kept = numbers & set(accepted)
-            result = set_diff.apply(follow.content, changes, kept, fresh.content if kept else None)
+            kept = numbers if accepted is None else numbers & set(accepted)
+            kept_defs = keys if accepted_defs is None else keys & set(accepted_defs)
+            result = set_diff.apply(
+                follow.content,
+                changes,
+                kept,
+                fresh.content if (kept or kept_defs) else None,
+                def_changes,
+                kept_defs,
+            )
             merged = set_diff.rules_of(result)
             cur = await conn.execute(
                 "SELECT count(*) AS n FROM house_rules WHERE guild_id = %s AND campaign_id = %s",
@@ -1124,7 +1167,7 @@ class RuleSetStore:
             )
             if int((await cur.fetchone() or {"n": 0})["n"]) + len(merged) > HOUSE_RULES_MAX:
                 raise RuleSetError(NO_ROOM.format(n=HOUSE_RULES_MAX))
-            version = fresh.version if kept else follow.version
+            version = fresh.version if (kept or kept_defs) else follow.version
             marker = f"{fresh.name} house rules, v{version}"[:200]
             added: list[int] = []
             for number in sorted(merged):
@@ -1140,7 +1183,10 @@ class RuleSetStore:
                 (guild_id, campaign_id, follow.set_id),
             )
             link = await self._adopt_link(conn, guild_id, campaign_id, user_id, result, follow, now)
-            return Taken(True, follow, version, tuple(added), marker, fresh.version, link)
+            return Taken(
+                True, follow, version, tuple(added), marker, fresh.version, link,
+                tuple(result.get("definitions", ())),
+            )  # fmt: skip
 
     async def _adopt_link(
         self,

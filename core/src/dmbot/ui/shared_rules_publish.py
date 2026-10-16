@@ -11,6 +11,7 @@ from typing import Any
 import discord
 
 from dmbot.campaigns import Campaign
+from dmbot.memory import set_definitions as sd
 from dmbot.rules import rule_sets, set_diff
 from dmbot.ui.dmbot_commands import _bot, _Button, _Menu, _send, _tell
 from dmbot.ui.shared_rules import (
@@ -62,6 +63,24 @@ async def _current_rules(
     return rules, getattr(link, "link", None)
 
 
+async def carried(
+    interaction: discord.Interaction, current: Campaign, before: dict[str, Any]
+) -> list[dict[str, Any]]:
+    """The relationship definitions the next version carries (#1456): the ones the set carries
+    now, each as the campaign has it today (a changed meaning travels; one the campaign no
+    longer has, or can no longer share, drops out). When the memory can't be read the set's
+    definitions stay as they are, so a hiccup never takes them away."""
+    held = list(set_diff.definitions_of(before).values())
+    memory = getattr(_bot(interaction), "memory", None)
+    if memory is None or not held:
+        return held
+    try:
+        now = {d["key"]: d for d in await sd.own_definitions(memory, current.guild_id, current.id)}
+    except Exception:
+        return held
+    return [now[d["key"]] for d in held if d["key"] in now]
+
+
 @_guarded
 async def show_changes(interaction: discord.Interaction, campaign: Campaign) -> None:
     """What would change if the campaign's house rules became the set's next version."""
@@ -85,15 +104,23 @@ async def show_changes(interaction: discord.Interaction, campaign: Campaign) -> 
     if got is None:
         return
     rules, link = got
-    after = rule_sets.content_of(rules, link)
+    after = rule_sets.content_of(rules, link, await carried(interaction, current, before))
     changes = set_diff.diff(before, after)
-    if not changes and before.get("link") == after.get("link"):
+    def_changes = set_diff.diff_definitions(before, after)
+    if not changes and not def_changes and before.get("link") == after.get("link"):
         await _tell(interaction, NOTHING_NEW)
         return
     body = changes_text(changes)
+    if def_changes:
+        extra = "\n".join(_escape(set_diff.describe_definition(c)) for c in def_changes[:6])
+        body = f"{body}\n{extra}" if body else extra
     if before.get("link") != after.get("link"):
         body = f"{body}\nThe rules document link changed." if body else LINK_ONLY
-    count = f"{set_diff.count_words(changes)} changed" if changes else "no rule changed"
+    count = (
+        f"{set_diff.count_words(changes, def_changes)} changed"
+        if changes or def_changes
+        else "no rule changed"
+    )
     await _send(
         interaction,
         f"**{_escape(mine.name[:60])}**: publish as version {mine.version + 1}? "
@@ -132,7 +159,9 @@ class ConfirmPublish(_Menu):
         if shared[0].version != self.version:
             await _tell(interaction, rule_sets.CHANGED_AGAIN)  # someone else published meanwhile
             return
-        if rule_sets.content_of(rules, link) != self.shown:
+        if rule_sets.content_of(rules, link, await carried(interaction, current, shared[1])) != (
+            self.shown
+        ):
             # What would be published is not what the DM saw: they look again first.
             await _tell(interaction, YOUR_RULES_CHANGED)
             return
@@ -144,6 +173,7 @@ class ConfirmPublish(_Menu):
             link,
             plan_ok=True,  # checked just above with plan_gate
             expected_version=self.version,  # and again under the lock, in the store
+            definitions=self.shown.get("definitions", []),  # exactly what the DM was shown
         )
         self.stop()  # only after it worked: a refused press can be tried again
         await _send(
