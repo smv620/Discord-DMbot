@@ -26,6 +26,7 @@ export type AdminProblem =
   | "bad-note"
   | "already-free"
   | "no-grant"
+  | "no-ticket" // support ticket list: it is gone (the 12-month sweep, or the person deleted their account)
   | "stale"; // refused for a reason a reload fixes (an old CSRF token, a bad body)
 
 export type GrantLevel = "guild" | "unlimited";
@@ -71,6 +72,27 @@ export interface GrantRequest {
   note: string;
 }
 
+export type TicketStatus = "new" | "answered" | "closed";
+
+/** A private support ticket from a paying person (#1340). Only the admin sees the words. */
+export interface SupportTicketRow {
+  id: number;
+  /** Unix seconds. */
+  at: number;
+  discordId: string;
+  dmbotId: string;
+  /** The name they signed in to the site with, if that was lately; else null. */
+  name: string | null;
+  /** The plan's id when it was sent. */
+  plan: string;
+  subject: string;
+  message: string;
+  source: string;
+  status: TicketStatus;
+  /** Where the team replies: the account's email, read for this page only. Null: it has none. */
+  email: string | null;
+}
+
 export class AdminApiError extends Error {
   constructor(readonly kind: AdminProblem) {
     super(kind);
@@ -99,6 +121,9 @@ export interface AdminApi {
     request: GrantRequest,
   ): Promise<{ action: "grant" | "change"; name: string | null }>;
   revoke(csrf: string, discordId: string): Promise<void>;
+  /** Support tickets, newest first (#1340). */
+  tickets(): Promise<SupportTicketRow[]>;
+  setTicketStatus(csrf: string, id: number, status: TicketStatus): Promise<void>;
 }
 
 const grantProblems: Record<string, AdminProblem> = {
@@ -110,6 +135,8 @@ const grantProblems: Record<string, AdminProblem> = {
   bad_note: "bad-note",
   already_free: "already-free",
   no_grant: "no-grant",
+  no_ticket: "no-ticket",
+  bad_status: "stale",
   // The grant writer's own refusals, worded by the site.
   sign_in_again: "signed-out",
   // The page can't send these unless it's out of date (another tab, an old token).
@@ -204,6 +231,19 @@ export function httpAdminApi(base: string, fetcher: typeof fetch = fetch): Admin
       });
       if (!response.ok) throw new AdminApiError(await grantProblem(response));
     },
+    async tickets() {
+      const response = await call("/admin/support");
+      if (!response.ok) throw new AdminApiError(await grantProblem(response));
+      return ((await response.json()) as { tickets: SupportTicketRow[] }).tickets;
+    },
+    async setTicketStatus(csrf, id, status) {
+      const response = await call(`/admin/support/${encodeURIComponent(String(id))}/status`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "X-Admin-CSRF": csrf },
+        body: JSON.stringify({ status }),
+      });
+      if (!response.ok) throw new AdminApiError(await grantProblem(response));
+    },
   };
 }
 
@@ -216,7 +256,41 @@ export function pretendAdminApi(): AdminApi {
     log: [],
   };
   const now = (): number => Math.floor(Date.now() / 1000);
+  const tickets: SupportTicketRow[] = [
+    {
+      id: 2,
+      at: now() - 3600,
+      discordId: "100000000000000002",
+      dmbotId: "1P0Z4F6N2K9",
+      name: "Demo player",
+      plan: "table",
+      subject: "My invoice shows the wrong plan",
+      message: "Hello,\nthe last invoice says Guild but I'm on Table.",
+      source: "website",
+      status: "new",
+      email: "player@example.com",
+    },
+    {
+      id: 1,
+      at: now() - 86_400 * 3,
+      discordId: "100000000000000003",
+      dmbotId: "1P0Z4F6N2KA",
+      name: null,
+      plan: "guild",
+      subject: "Thank you",
+      message: "Just saying the last session went well.",
+      source: "website",
+      status: "answered",
+      email: null,
+    },
+  ];
   return {
+    tickets: async () => structuredClone(tickets),
+    setTicketStatus: async (_csrf, id, status) => {
+      const ticket = tickets.find((t) => t.id === id);
+      if (!ticket) throw new AdminApiError("no-ticket");
+      ticket.status = status;
+    },
     grants: async () => structuredClone(view),
     give: async (_csrf, request) => {
       if (!/^[0-9]{17,20}$/.test(request.discordId)) throw new AdminApiError("bad-id");

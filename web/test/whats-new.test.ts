@@ -40,6 +40,7 @@ describe("What's new", () => {
 
   it("holds back what people can't use yet, with the reason, and shows none of it (#1322)", () => {
     expect(held.map((h) => h.title)).toEqual([
+      "Ask a question in public", // until QAbot is live (#1352)
       "Quick answers use your facts",
       "Move to a new Discord account",
     ]);
@@ -51,6 +52,8 @@ describe("What's new", () => {
     expect(shown).not.toContain("Move to a new Discord account");
     expect(shown).not.toContain("Quick answers use your facts");
     expect(shown).not.toContain("move code");
+    expect(shown).not.toContain("Ask a question in public"); // not until QAbot is live
+    expect(shown).not.toContain("QAbot");
     expect(page.querySelectorAll(".entry")).toHaveLength(entries.length);
     expect(entries).toHaveLength(7);
   });
