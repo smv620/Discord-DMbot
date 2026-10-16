@@ -286,7 +286,7 @@ def homebrew_parts(own: Homebrew, campaign_name: str) -> list[str]:
     `[Homebrew]`, its source named, who may know it, then its words. It goes above the free
     rules' card and below any house rule (the order is house rules, homebrew, the target
     ruleset, the fallback)."""
-    who = "👀 players may know it" if own.players_may_know else "🙈 only you"
+    who = "👀 players may know it" if own.players_may_know else "🙈 hidden from players"
     head = "\n".join(
         [
             f"📚 **{_fit(_md(own.name), NAME_MAX)}** ({own.kind.capitalize()}) "
@@ -322,7 +322,7 @@ def homebrew_alert_text(
         more = len(matches) - 1
         plural = "s" if more != 1 else ""
         lines.append(f"🏠 {more} more house rule{plural}: `/dmbot houserules`")
-    who = "👀 players may know it" if own.players_may_know else "🙈 only you"
+    who = "👀 players may know it" if own.players_may_know else "🙈 hidden from players"
     lines.append(
         f"📚 **{_fit(_md(own.name), NAME_MAX)}** ({own.kind.capitalize()}) {HOMEBREW_TAG} {who}"
     )

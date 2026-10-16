@@ -72,7 +72,7 @@ INTRO = (
     "DMbot only keeps what you write. For a published book, use **Share a rulebook**."
 )
 SHORT_INTRO = "Your own creations only. Hidden entries are for you only."
-NONE_YET = "No homebrew yet. Press **➕ Add** to write the first one."
+NONE_YET = "No homebrew yet. Press **➕ Add** to write the first one, or **📥 Load file**."
 KIND_ASK = (
     "What are you adding? Pick one and a form opens.\n"
     "Hidden entries are for you only; DMbot's sidebar and table answers don't use them."
@@ -83,15 +83,22 @@ FILE_MAX_BYTES = 4 * homebrew_file.MAX_FILE_CHARS  # UTF-8 is up to 4 bytes a ch
 DOWNLOAD_LABEL = "📤 Download file"
 LOAD_LABEL = "📥 Load file"
 DOWNLOAD_NOTE = (
-    "Your campaign's homebrew as a text file. Only you can see this message. Edit it anywhere, "
-    "then press **Load file** to bring it back."
+    "**Your homebrew file.** Only you can see this message. Open it in any text editor, change "
+    "it, then press **Load file** to bring it back. Nothing changes until you check it and say "
+    "yes. It is plain text and holds your hidden entries too, so anyone you send it to can read "
+    "them."
 )
 COULDNT_FILE = "Couldn't make the file just now. Try again in a moment."
-FROM_BOOK_ASK = "**Is any of this from a published book?**"
+FROM_BOOK_ASK = "**Is any of this from a published book?** (Your answer decides how it is kept.)"
 FROM_BOOK_WARNING = (
-    "**Pressing “I have the right” confirms you have the right to use this material.** DMbot "
-    "doesn't check this. It is kept only in this campaign, never shared with other campaigns "
-    "or servers, and you can remove it. It goes when the campaign is deleted."
+    "**Before loading book material**\n"
+    "DMbot doesn't check what you may use. By pressing **I have the right**, you say you may "
+    "use this text.\n"
+    "DMbot will copy it into this campaign's storage and use it when it answers questions. It "
+    "is recorded that you confirmed, and when.\n"
+    "It stays in this campaign only. It is never shared with other campaigns or servers, and "
+    "never goes into a shared ruleset.\n"
+    "You can remove it any time. It is deleted with the campaign."
 )
 
 KIND_LABELS = {
@@ -616,11 +623,11 @@ def preview_text(
     new, changed, same = counts
     noun = "entry" if len(parsed.entries) == 1 else "entries"
     lines = [
-        f"📄 **The file has {len(parsed.entries)} {noun}** for {_fit(_md(campaign_name), 60)}: "
-        f"{new} new, {changed} changed, {same} the same."
+        f"📄 **Ready to load: {len(parsed.entries)} {noun}** for {_fit(_md(campaign_name), 60)}: "
+        f"{new} new, {changed} changed, {same} unchanged. Nothing is saved yet."
     ]
     if parsed.problems:
-        lines.append(f"**{len(parsed.problems)} part(s) could not be used and are left out:**")
+        lines.append(f"**Left out ({len(parsed.problems)}), because DMbot couldn't read them:**")
         for problem in parsed.problems[:5]:
             where = f"line {problem.line}: " if problem.line else ""
             lines.append(f"• {where}{_fit(_md(problem.text), 50)} ({problem.why})")
@@ -632,12 +639,12 @@ def preview_text(
 
 class LoadForm(discord.ui.Modal, title="Load homebrew"):
     file: discord.ui.Label[LoadForm] = discord.ui.Label(
-        text="Your homebrew file (a .txt file)",
+        text="Pick your homebrew file (.txt, from Download file)",
         component=discord.ui.FileUpload(max_values=1),
     )
 
     def __init__(self, campaign: Campaign, page: int = 0) -> None:
-        super().__init__(timeout=30 * 60)
+        super().__init__(timeout=VIEW_TIMEOUT_S)
         self.campaign, self.page = campaign, page
 
     async def on_error(  # type: ignore[override]  # a form's has no item (discord.py)
@@ -652,11 +659,15 @@ class LoadForm(discord.ui.Modal, title="Load homebrew"):
             return
         upload = cast(discord.ui.FileUpload[LoadForm], self.file.component)
         if not upload.values:
-            await _tell(interaction, f"No file was added. Press {LOAD_LABEL} and pick one.")
+            await _tell(interaction, f"No file was picked. Press {LOAD_LABEL} and pick one.")
             return
         attachment = upload.values[0]
         if attachment.size > FILE_MAX_BYTES:
-            await _tell(interaction, "That file is too big to read.")
+            await _tell(
+                interaction,
+                "That file is too big to read. Split it into smaller files, or take some "
+                "entries out.",
+            )
             return
         try:
             data = await attachment.read()
@@ -670,9 +681,14 @@ class LoadForm(discord.ui.Modal, title="Load homebrew"):
             await _tell(interaction, NOT_READY)
             return
         if not parsed.entries:
-            reason = "; ".join(f"line {p.line}: {p.why}" for p in parsed.problems[:3]) or "empty"
+            if not parsed.problems:
+                await _tell(interaction, "The file is empty, so nothing was loaded.")
+                return
+            reason = "; ".join(f"line {p.line}: {p.why}" for p in parsed.problems[:3])
             await _tell(
-                interaction, f"Nothing in that file could be used ({reason}). Nothing was loaded."
+                interaction,
+                f"Nothing in that file could be read, so nothing was loaded. {reason}. "
+                f"Press **{DOWNLOAD_LABEL}** to see a correct example.",
             )
             return
         have = await store.list(self.campaign.guild_id, self.campaign.id)
@@ -693,7 +709,7 @@ class FromBookAsk(_Menu):
         super().__init__()
         self.campaign, self.entries, self.digest, self.page = campaign, entries, digest, page
         self.add_item(_Button(self._own, label="No, all my own", style=discord.ButtonStyle.primary))
-        self.add_item(_Button(self._book, label="Yes, some is from a book"))
+        self.add_item(_Button(self._book, label="Yes, from a book"))
         self.add_item(_Button(self._cancel, label="Cancel"))
 
     async def _own(self, interaction: discord.Interaction) -> None:
@@ -705,7 +721,7 @@ class FromBookAsk(_Menu):
             return
         await _show(
             interaction,
-            f"{FROM_BOOK_WARNING}",
+            FROM_BOOK_WARNING,
             RightToUse(self.campaign, self.entries, self.digest, self.page),
         )
 
@@ -743,6 +759,8 @@ class FromBookAsk(_Menu):
         self.stop()
         _changed(interaction, c)
         words = f"📥 Loaded: {done.added} new, {done.updated} changed, {done.same} the same."
+        if from_book:
+            words += " Entries from a book are marked, and your confirmation is recorded."
         await _redraw(interaction, c, note=words, page=self.page)
 
 
@@ -754,12 +772,10 @@ class RightToUse(FromBookAsk):
     ) -> None:
         _Menu.__init__(self)
         self.campaign, self.entries, self.digest, self.page = campaign, entries, digest, page
+        self.add_item(_Button(self._cancel, label="Cancel"))  # first: the safe one
         self.add_item(
-            _Button(
-                self._confirmed, label="I have the right: load it", style=discord.ButtonStyle.danger
-            )
+            _Button(self._confirmed, label="I have the right", style=discord.ButtonStyle.danger)
         )
-        self.add_item(_Button(self._cancel, label="Cancel"))
 
     async def _confirmed(self, interaction: discord.Interaction) -> None:
         await self._load(interaction, from_book=True)

@@ -525,7 +525,9 @@ class HomebrewLookup(LookupTest):
         self.assertIn("[Homebrew]", text)
         self.assertIn("Frostmaiden's homebrew: Goblin", text)
         self.assertIn("A very different goblin.", text)
-        self.assertIn("🙈 only you", text)  # a hidden entry is still the DM's own private answer
+        self.assertIn(
+            "🙈 hidden from players", text
+        )  # a hidden entry is still the DM's own private answer
         self.assertNotIn("SRD", text)
 
     async def test_a_name_only_the_campaign_has_is_answered_without_couldnt_find(self) -> None:

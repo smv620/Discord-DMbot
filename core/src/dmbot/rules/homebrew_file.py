@@ -46,26 +46,38 @@ MAX_FILE_CHARS = 700_000  # 200 entries of 2,000 characters and their headings, 
 MAX_LINE = 4_000
 MAX_PROBLEMS = 20
 HELP = (
-    "# One entry per block: ## Name (kind), then the words.\n"
-    f"# Kinds: {', '.join(KINDS)}.\n"
-    "# Optional lines right under the heading: Summary: ... and Players may know: yes.\n"
-    "# Leave a blank line before the words."
+    "# How this file works\n"
+    "# Each entry starts with: ## Name (kind)\n"
+    f"# Kinds: {', '.join(KINDS)}\n"
+    "# Under the heading you can add:  Summary: one short line\n"
+    "#                                 Players may know: yes   (or no)\n"
+    "# Then a blank line, then the words.\n"
+    "# Lines starting with a single # before the first entry are notes and are ignored."
+)
+EXAMPLE = (
+    "## Hollow King (monster)\n"
+    "Summary: A crowned skeleton.\n"
+    "Players may know: no\n"
+    "\n"
+    "Write what it does here, in your own words."
 )
 NAME_FILE_MAX = 40
 
-TOO_BIG = f"the file is over {MAX_FILE_CHARS:,} characters, so none of it was read"
-NOT_AN_ENTRY = "not part of an entry (an entry starts with ## Name (kind))"
-NO_KIND = f"the heading needs a kind in brackets: one of {', '.join(KINDS)}"
-BAD_KIND = f"the kind must be one of {', '.join(KINDS)}"
-NO_NAME = "the heading has no name"
+TOO_BIG = (
+    f"the file is too big (over {MAX_FILE_CHARS:,} characters). Nothing was read. Try splitting it"
+)
+NOT_AN_ENTRY = "this isn't under an entry. Start one with ## Name (kind)"
+NO_KIND = f"add a kind in brackets after the name, like (monster). Kinds: {', '.join(KINDS)}"
+BAD_KIND = f"that kind isn't one DMbot knows. Use: {', '.join(KINDS)}"
+NO_NAME = "the heading has no name. Write ## Name (kind)"
 NAME_TOO_LONG = f"the name is over {NAME_MAX} characters"
-NO_TEXT = "the entry has no words"
+NO_TEXT = "add the words after a blank line under the heading"
 TEXT_TOO_LONG = f"the words are over {TEXT_MAX} characters"
 SUMMARY_TOO_LONG = f"the summary is over {SUMMARY_MAX} characters"
-BAD_PLAYERS = "Players may know: must say yes or no"
-TWICE = "this name is used twice; the first one is kept"
+BAD_PLAYERS = "write Players may know: yes  or  Players may know: no"
+TWICE = "another entry already has this name, so this one was skipped"
 TOO_MANY = f"more than {HOMEBREW_MAX} entries; the rest are left out"
-LINE_TOO_LONG = f"a line is over {MAX_LINE} characters"
+LINE_TOO_LONG = f"a line is over {MAX_LINE} characters. Split it into shorter lines"
 
 _HEADING = re.compile(r"^##\s+(?P<name>.*?)\s*(?:\((?P<kind>[^()]*)\))?\s*$")
 _ESCAPED = re.compile(r"^(\\+)(##.*)$")
@@ -98,6 +110,8 @@ def write(campaign_name: str, entries: Sequence[Homebrew]) -> str:
     """The file for these entries (this campaign's), by name."""
     title = " ".join(campaign_name.split()) or "Campaign"
     out = [f"Homebrew: {title}", HELP]
+    if not entries:  # a template to start from
+        out += ["", *(f"# {line}" if line else "#" for line in EXAMPLE.split("\n"))]
     for entry in sorted(entries, key=lambda e: name_key(e.name)):
         out += ["", f"## {entry.name} ({entry.kind})"]
         if entry.summary:
@@ -219,7 +233,7 @@ def _why(message: str) -> str:
         return SUMMARY_TOO_LONG
     if "too long" in message:
         return TEXT_TOO_LONG
-    return NO_TEXT
+    return "DMbot couldn't read this entry"
 
 
 def _shown(line: str) -> str:

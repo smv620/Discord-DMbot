@@ -289,7 +289,7 @@ class TheFile(HomebrewUiTest):
         await form.on_submit(it)
         said = it.followup.send.await_args.args[0]
         self.assertIn("2 entries", said)
-        self.assertIn("1 new, 1 changed, 0 the same", said)
+        self.assertIn("1 new, 1 changed, 0 unchanged. Nothing is saved yet", said)
         self.assertIn("could not be used", said)
         self.assertIn(ui.FROM_BOOK_ASK, said)
         self.assertEqual(
@@ -312,7 +312,7 @@ class TheFile(HomebrewUiTest):
         ask = ui.FromBookAsk(self.campaign, (FileEntry("rule", "Booked", "Words."),), "b" * 64, 0)
         it = self.press()
         await ask._book(it)
-        self.assertIn("confirms you have the right", self.said(it))
+        self.assertIn("you say you may use this text", self.said(it))
         self.assertEqual(await self.store.list(GUILD, self.campaign.id), [])  # nothing yet
         right = ui.RightToUse(self.campaign, ask.entries, ask.digest, 0)
         await right._confirmed(self.press())

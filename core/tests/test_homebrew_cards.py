@@ -98,7 +98,7 @@ class Cards(TableTest):
         (post,) = self.posts
         self.assertEqual(post[0], SCREEN)
         text = post[1]
-        self.assertIn("📚 **Hollow King** (Monster) [Homebrew] 🙈 only you", text)
+        self.assertIn("📚 **Hollow King** (Monster) [Homebrew] 🙈 hidden from players", text)
         self.assertIn("Crowned.", text)
         self.assertIn("Source: Frostmaiden's homebrew: Hollow King", text)
         self.assertIn("Heard: “the Hollow King rises”", text)

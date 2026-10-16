@@ -134,3 +134,11 @@ class Reading(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TheTemplate(unittest.TestCase):
+    def test_an_empty_campaign_downloads_a_file_with_an_example_that_is_not_an_entry(self) -> None:
+        text = hf.write("Empty", [])
+        self.assertIn("# ## Hollow King (monster)", text)  # commented out: nothing to load
+        parsed = hf.parse(text)
+        self.assertEqual((parsed.entries, parsed.problems), ((), ()))
