@@ -114,8 +114,10 @@ class ThePage(HomebrewBase):
 
     async def test_only_the_wanted_fields_leave(self) -> None:
         got = await pages.read_homebrew(self.web, self.carol, self.cref)
-        self.assertEqual(set(got), {"name", "fileName", "entries"})
-        self.assertEqual(set(got["entries"][0]), {"kind", "name", "summary", "text"})
+        self.assertEqual(set(got), {"name", "fileName", "entries", "packs"})
+        self.assertEqual(
+            set(got["entries"][0]), {"kind", "name", "summary", "text", "fromBook", "legacy"}
+        )
         self.assertEqual(got["fileName"], homebrew_file.filename("One"))
         self.assertNotIn(str(ALICE.id), json.dumps(got))
 
@@ -143,6 +145,172 @@ class ThePage(HomebrewBase):
         )
         names = [c["name"] for c in await pages.list_campaigns(self.web, self.carol)]
         self.assertEqual(names, ["One", "Two", "Zed"])
+
+
+class BookTags(HomebrewBase):
+    """A shared book's entries are tagged like the Discord players' card (#1579)."""
+
+    async def mark(self, name: str, edition: str | None, *, target: str | None = None) -> None:
+        async with self.db.guild(THURSDAY.id) as conn:
+            await conn.execute(
+                "UPDATE homebrew_entries SET from_book = TRUE, book_edition = %s"
+                " WHERE guild_id = %s AND campaign_id = %s AND name = %s",
+                (edition, THURSDAY.id, self.one.id, name),
+            )
+            if target is not None:
+                await conn.execute(
+                    "UPDATE campaigns SET target_ruleset = %s WHERE guild_id = %s AND id = %s",
+                    (target, THURSDAY.id, self.one.id),
+                )
+
+    async def tags(self) -> dict[str, tuple[bool, bool]]:
+        got = await pages.read_homebrew(self.web, self.carol, self.cref)
+        return {e["name"]: (e["fromBook"], e["legacy"]) for e in got["entries"]}
+
+    async def test_a_2014_book_in_a_newer_campaign_is_legacy_a_2024_book_is_not(self) -> None:
+        await self.mark("Zap", "2014", target="2024")
+        await self.mark("Arc", "2024")
+        self.assertEqual(
+            await self.tags(),
+            {"Arc": (True, False), "Zap": (True, True), "Moon Lamp": (False, False)},
+        )
+
+    async def test_the_same_test_as_the_bots(self) -> None:
+        from dmbot.rules.book_rank import book_is_legacy
+
+        for edition, target in (
+            ("2014", "2024"),
+            ("2014", "2014"),
+            ("2024", "2024"),
+            (None, "2024"),
+        ):
+            with self.subTest(edition=edition, target=target):
+                await self.mark("Zap", edition, target=target)
+                entries = await self.store_b.list(THURSDAY.id, self.one.id)
+                zap = next(e for e in entries if e.name == "Zap")
+                self.assertEqual((await self.tags())["Zap"][1], book_is_legacy(zap, target))
+
+    async def test_a_hidden_book_entry_still_never_leaves_and_no_book_name_or_author(self) -> None:
+        await self.mark("The Lich", "2014", target="2024")
+        shown = json.dumps(await pages.read_homebrew(self.web, self.carol, self.cref))
+        self.assertNotIn("The Lich", shown)
+        self.assertNotIn(str(ALICE.id), shown)
+
+    async def test_a_non_member_gets_nothing_and_the_file_ignores_the_tags(self) -> None:
+        await self.mark("Zap", "2014", target="2024")
+        elsewhere = await self.session_of(CAROL, [QUILLON])
+        with self.assertRaises(RecapError):
+            await pages.read_homebrew(self.web, elsewhere, self.cref)
+        _name, text = await pages.render(self.web, self.carol, self.cref)
+        shown = [e for e in await self.store_b.list(THURSDAY.id, self.one.id) if e.players_may_know]
+        self.assertEqual(text.encode(), homebrew_file.write("One", shown).encode())
+
+
+PUBLISHER = "Publisher Campaign Name"
+
+
+class FollowedPacks(HomebrewBase):
+    """The page shows the packs the table follows, only the entries each marks known (#1586)."""
+
+    async def follow(self, campaign_id: str, name: str = "Frost Pack", version: int = 2) -> None:
+        content = {
+            "entries": [
+                {"kind": "spell", "name": "Ice Lance", "summary": "A cold bolt",
+                 "text": "Cold damage.", "known": True},
+                {"kind": "monster", "name": "Rime Wight", "summary": None,
+                 "text": "Hidden in the pack.", "known": False},
+                {"kind": "item", "name": "Aurora Cloak", "summary": None,
+                 "text": "Shimmers.", "known": True},
+            ]
+        }  # fmt: skip
+        async with self.db.guild(THURSDAY.id) as conn:
+            await conn.execute(
+                "INSERT INTO rule_set_follows (guild_id, campaign_id, set_id, kind, set_name,"
+                " publisher, version, content, updating, followed_by, followed_at)"
+                " VALUES (%s, %s, %s, 'homebrew', %s, %s, %s, %s::jsonb, TRUE, %s, 5)",
+                (THURSDAY.id, campaign_id, "p" * 32, name, PUBLISHER, version,
+                 json.dumps(content), ALICE.id),
+            )  # fmt: skip
+
+    async def test_only_the_entries_known_to_players_show_with_the_packs_name_and_version(
+        self,
+    ) -> None:
+        await self.follow(self.one.id)
+        got = await pages.read_homebrew(self.web, self.carol, self.cref)
+        (pack,) = got["packs"]
+        self.assertEqual((pack["name"], pack["version"]), ("Frost Pack", 2))
+        self.assertEqual(
+            [(e["kind"], e["name"]) for e in pack["entries"]],
+            [("spell", "Ice Lance"), ("item", "Aurora Cloak")],  # by kind, in the bot's order
+        )
+        shown = json.dumps(got)
+        for private in ("Rime Wight", "Hidden in the pack", PUBLISHER, "p" * 32, str(ALICE.id)):
+            self.assertNotIn(private, shown)
+        self.assertEqual(set(pack), {"name", "version", "entries"})
+
+    async def test_no_packs_is_an_empty_list_and_a_homebrew_follow_only(self) -> None:
+        self.assertEqual((await pages.read_homebrew(self.web, self.carol, self.cref))["packs"], [])
+        async with self.db.guild(THURSDAY.id) as conn:  # a house-rules follow is not a pack
+            await conn.execute(
+                "INSERT INTO rule_set_follows (guild_id, campaign_id, set_id, kind, set_name,"
+                " publisher, version, content, updating, followed_by, followed_at)"
+                " VALUES (%s, %s, %s, 'house_rules', 'S', 'p', 1, '{\"rules\": []}'::jsonb,"
+                " TRUE, %s, 5)",
+                (THURSDAY.id, self.one.id, "h" * 32, ALICE.id),
+            )
+        self.assertEqual((await pages.read_homebrew(self.web, self.carol, self.cref))["packs"], [])
+
+    async def test_a_pack_that_does_not_fit_is_skipped_not_fatal(self) -> None:
+        async with self.db.guild(THURSDAY.id) as conn:
+            await conn.execute(
+                "INSERT INTO rule_set_follows (guild_id, campaign_id, set_id, kind, set_name,"
+                " publisher, version, content, updating, followed_by, followed_at)"
+                " VALUES (%s, %s, %s, 'homebrew', 'Odd', 'p', 1,"
+                ' \'{"entries": ["junk", {"kind": "rule", "name": "Ok",'
+                ' "summary": null, "text": "t", "known": true}]}\'::jsonb, TRUE, %s, 5)',
+                (THURSDAY.id, self.one.id, "o" * 32, ALICE.id),
+            )
+        (pack,) = (await pages.read_homebrew(self.web, self.carol, self.cref))["packs"]
+        self.assertEqual([e["name"] for e in pack["entries"]], ["Ok"])
+
+    async def test_a_campaign_with_only_a_followed_pack_is_listed_and_counts_packs(self) -> None:
+        three = await self.campaigns.create(THURSDAY.id, "Three", ALICE.id)
+        await self.follow(three.id)
+        got = await pages.list_campaigns(self.web, self.carol)
+        self.assertEqual(
+            [(c["name"], c["entries"], c["packs"]) for c in got],
+            [("One", 3, 0), ("Three", 2, 1), ("Two", 1, 0)],  # 2: the pack's known entries only
+        )
+        await self.follow(self.one.id, "Other Pack")  # own 3 + pack's 2 known
+        again = {
+            c["name"]: (c["entries"], c["packs"])
+            for c in await pages.list_campaigns(self.web, self.carol)
+        }
+        self.assertEqual(again["One"], (5, 1))
+
+    async def test_a_pack_with_nothing_known_does_not_list_a_campaign(self) -> None:
+        four = await self.campaigns.create(THURSDAY.id, "Four", ALICE.id)
+        async with self.db.guild(THURSDAY.id) as conn:
+            await conn.execute(
+                "INSERT INTO rule_set_follows (guild_id, campaign_id, set_id, kind, set_name,"
+                " publisher, version, content, updating, followed_by, followed_at)"
+                " VALUES (%s, %s, %s, 'homebrew', 'Secret', 'p', 1,"
+                ' \'{"entries": [{"kind": "rule", "name": "X", "summary": null,'
+                ' "text": "t", "known": false}]}\'::jsonb, TRUE, %s, 5)',
+                (THURSDAY.id, four.id, "s" * 32, ALICE.id),
+            )
+        names = [c["name"] for c in await pages.list_campaigns(self.web, self.carol)]
+        self.assertNotIn("Four", names)
+
+    async def test_a_non_member_gets_nothing_and_the_file_is_the_campaigns_own(self) -> None:
+        await self.follow(self.one.id)
+        elsewhere = await self.session_of(CAROL, [QUILLON])
+        with self.assertRaises(RecapError):
+            await pages.read_homebrew(self.web, elsewhere, self.cref)
+        _name, text = await pages.render(self.web, self.carol, self.cref)
+        shown = [e for e in await self.store_b.list(THURSDAY.id, self.one.id) if e.players_may_know]
+        self.assertEqual(text.encode(), homebrew_file.write("One", shown).encode())
+        self.assertNotIn("Ice Lance", text)
 
 
 class TheFile(HomebrewBase):

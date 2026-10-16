@@ -157,7 +157,7 @@ await visit("Homebrew: campaigns, a campaign's shared entries by kind", "/accoun
     await page.getByRole("link", { name: "Read: The Brynwater Crossing" }).click();
     await seen(page, "Frost Lance");
   });
-  await step("grouped by kind", () => page.getByRole("heading", { name: "Spells" }).waitFor());
+  await step("grouped by kind", () => page.getByRole("heading", { name: "Spells" }).first().waitFor());
   await step("the download button", () => page.getByRole("button", { name: "Save as a text file" }).waitFor());
 });
 
