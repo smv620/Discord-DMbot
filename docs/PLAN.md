@@ -3601,7 +3601,10 @@ says, and DMs would not pay for a service that claims their campaigns.
 - **Improving DMbot:** DMbot uses transcripts and typed table chat to improve itself (the raw transcript
   exists for this, #933). It is disclosed on the privacy page, and a person **opts out on the website**
   (My Account), after which nothing they said or typed is used for improvement; running their table is
-  unaffected. Built in #1609 (store and honour the choice) and #1610 (the switch and the wording).
+  unaffected. Built in #1609 (store and honour the choice) and #1610 (the switch and the wording). The
+  choice applies from when it is made, at the source (the test recorder, session exports); test
+  recordings kept earlier name people only by made-up voice codes, so they are not re-filtered, and
+  **Stop saving my voice** remains the way to delete one's kept voice (decided 2026-10-16, PR #1621).
 - **Raw audio:** DMbot does not store voice in the base product. The test library's voice saving stays
   a separate yes (⚙️ Menu → Stop saving my voice); keeping audio for troubleshooting is decided later.
 - The terms and privacy changes are one WebDev PR (#1610), held for the owner's `approved: owner` label and
