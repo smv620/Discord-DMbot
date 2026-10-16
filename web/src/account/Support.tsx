@@ -18,9 +18,11 @@ interface Props {
   api: AccountApi;
   /** Cloudflare Turnstile's site key, or "" to skip the check (local testing). */
   siteKey: string;
+  /** Called once a ticket is kept, so the list of the person's questions can be read again. */
+  onSent?: () => void;
 }
 
-export function Support({ api, siteKey }: Props) {
+export function Support({ api, siteKey, onSent }: Props) {
   const [subject, setSubject] = useState("");
   const [message, setMessage] = useState("");
   const [token, setToken] = useState("");
@@ -90,6 +92,7 @@ export function Support({ api, siteKey }: Props) {
       setMessage("");
       setProblem(null);
       setSent(receipt);
+      onSent?.();
     } catch (error) {
       const kind = error instanceof ApiError ? error.kind : "server";
       // "Tick the box" means nothing when the site has no person check to tick.

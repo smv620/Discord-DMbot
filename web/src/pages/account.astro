@@ -63,6 +63,23 @@ import Base from "../layouts/Base.astro";
     margin: 0;
   }
 
+  /* "Your questions" (#1373): the subject, then the date and where it stands, one per row. */
+  .account :global(.questions) {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-3);
+  }
+
+  .account :global(.questions li) {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-1);
+    overflow-wrap: anywhere;
+  }
+
   .account :global(.warn),
   .account :global(.warn-box) {
     padding: var(--space-4);

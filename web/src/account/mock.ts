@@ -6,7 +6,16 @@
  * The names are our own invented cast (docs/test-scripts/), never real people.
  */
 import type { PlanId } from "../content/pricing";
-import type { AccountApi, Campaign, Character, Me, Offer, Person, RecordingEntry } from "./api";
+import type {
+  AccountApi,
+  Campaign,
+  Character,
+  Me,
+  Offer,
+  Person,
+  RecordingEntry,
+  SupportQuestion,
+} from "./api";
 import { ApiError } from "./api";
 
 /** Found in the built files only if the pretend API was included; check-csp fails a real
@@ -258,6 +267,8 @@ export function scenarioMe(scenario: Scenario): Me | null {
 export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
   console.info(MOCK_MARKER, "pretend API in use:", scenario);
   let me = scenarioMe(scenario);
+  // The questions sent in this visit (#1373): the pretend API starts with none, as a new account has.
+  let questions: SupportQuestion[] = [];
   const calls: string[] = [];
   const reachable = async (): Promise<void> => {
     if (scenario === "down") throw new ApiError("network");
@@ -295,10 +306,19 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
       calls.push("move-code");
       signedIn();
     },
-    async sendSupport() {
+    async sendSupport(ticket) {
       calls.push("support");
       signedIn();
+      questions = [
+        { at: Math.floor(Date.now() / 1000), subject: ticket.subject, status: "new" },
+        ...questions,
+      ];
       return { reply: true };
+    },
+    async mySupport() {
+      calls.push("my-support");
+      signedIn();
+      return { tickets: questions, reply: true };
     },
     async startTryIt() {
       calls.push("startTryIt");

@@ -42,6 +42,7 @@ describe("What's new", () => {
     expect(held.map((h) => h.title)).toEqual([
       "Recaps for your table", // until dev1 has checked a real recap (#1382, #1384)
       "Quick answers use your facts",
+      "Your questions to the team", // until the API with the list route is deployed (#1373)
       "Ask a question in public", // until QAbot is live (#1352)
       "Move to a new Discord account",
       "New names from what was said",
