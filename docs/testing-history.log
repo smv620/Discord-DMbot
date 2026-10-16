@@ -2401,3 +2401,5 @@ Overall ...................................... PASS (Deepgram baseline: 33/33, 1
   Not yet checked (needs a signed-in test account on a paid plan, which dev1 does not have): the Support form shows on a paid plan and not
   on a plan without it; one test ticket appears on the admin Tickets list and its status can be changed; with SUPPORT_TEAM_EMAIL unset
   the log says once that no email is sent (it is present in .env, value not read, so this may not apply).
+  Follow-up, 00:22 UTC (13 minutes after the deploy): 0 ERROR, CRITICAL or traceback lines in core and web-api since 00:09; core and web-api still
+  up, web-api healthy; no ticket has been sent yet (nothing about tickets in the logs).
