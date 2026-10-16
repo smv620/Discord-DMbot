@@ -139,6 +139,10 @@ class Campaign:
     # Rules cards on the DM screen when a spell or creature is named (#931); off by default.
     rules_cards: bool = False
     side_initiative: bool = False  # combat tracks rounds only either way (#1127)
+    # How long the campaign keeps its transcripts (#1533): None is forever; else 30, 90 or 365
+    # days after a session ended. `transcript_deleted_noted`: the DM screen has said so once.
+    transcript_keep_days: int | None = None
+    transcript_deleted_noted: bool = False
     # The DM's recap choices (#1421): write a recap after each session, make the narration and
     # music, email when it is ready. They only ever turn things off: the plan decides the rest.
     recaps_text: bool = True
