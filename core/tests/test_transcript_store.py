@@ -881,6 +881,107 @@ class BotTests(DatabaseTest):
         self.assertEqual(ids, [f"dmbot:fixline:{GUILD}:{sid}"])
         self.assertEqual(view.children[0].item.label, "✏️ Fix a line")
 
+    async def waiting_setup(self, count: int = 1) -> tuple[Table, list[int]]:
+        """`count` open suggestions on lines of two recorded people, oldest first."""
+        other = PLAYER + 1
+        await self.consent.grant(GUILD, PLAYER)
+        await self.consent.grant(GUILD, other)
+        self.bot.suggestions = SuggestionStore(self.db)
+        table = self.table()
+        for i in range(count):
+            self.said(table, PLAYER if i % 2 == 0 else other, f"I saw Beleros {i}", i + 1)
+        await self.bot.save_transcript(table)
+        sid = table.transcript_session_id
+        assert sid is not None
+        store = self.bot.suggestions
+        ids = []
+        for i in range(count):
+            made = await store.suggest(
+                GUILD,
+                table.campaign_id or "",
+                sid,
+                PLAYER if i % 2 == 0 else other,
+                START * 1000 + (i + 1) * 1000,
+                f"I saw Belleros {i}",
+            )
+            assert isinstance(made, Suggestion)
+            ids.append(made.id)
+        self.bot.post_message = AsyncMock(return_value=MagicMock())  # type: ignore[method-assign]
+        return table, ids
+
+    def posted(self) -> list[tuple[str, Any]]:
+        return [
+            (c.args[1], c.args[2] if len(c.args) > 2 else None)
+            for c in self.bot.post_message.await_args_list
+        ]
+
+    async def test_a_waiting_suggestion_is_put_on_the_dm_screen_again_at_session_start(
+        self,
+    ) -> None:
+        table, (sid,) = await self.waiting_setup(1)
+        await self.bot._waiting_suggestions(table)
+        ((text, view),) = self.posted()
+        self.assertIn("suggests a fix to their line", text)
+        self.assertIn("I saw Belleros 0", text)
+        self.assertEqual(
+            [c.item.custom_id for c in view.children],
+            [f"dmbot:linefix:yes:{sid}", f"dmbot:linefix:no:{sid}"],
+        )
+        self.assertEqual(self.bot.post_message.await_args_list[0].args[0], SCREEN)
+
+    async def test_nothing_for_an_answered_or_dropped_suggestion(self) -> None:
+        table, (first, second) = await self.waiting_setup(2)
+        store = self.bot.suggestions
+        assert store is not None
+        await store.decide(GUILD, first, "declined", DM)
+        await store.decide(GUILD, second, "dropped", DM)
+        await self.bot._waiting_suggestions(table)
+        self.bot.post_message.assert_not_awaited()
+
+    async def test_at_most_three_are_shown_oldest_first_and_the_rest_counted(self) -> None:
+        table, ids = await self.waiting_setup(5)
+        await self.bot._waiting_suggestions(table)
+        shown = self.posted()
+        self.assertEqual(len(shown), 4)
+        for i, (text, view) in enumerate(shown[:3]):
+            self.assertIn(f"I saw Belleros {i}", text)
+            self.assertEqual(view.children[0].item.custom_id, f"dmbot:linefix:yes:{ids[i]}")
+        self.assertEqual(shown[3], ("…and 2 more that go when this session ends.", None))
+
+    async def test_nothing_after_a_restart_in_the_middle_of_a_session(self) -> None:
+        table, _ = await self.waiting_setup(1)
+        table.resumed = True
+        await self.bot._waiting_suggestions(table)
+        self.bot.post_message.assert_not_awaited()
+
+    async def test_nothing_if_the_session_ended_meanwhile(self) -> None:
+        table, _ = await self.waiting_setup(1)
+        del self.bot.tables[GUILD]
+        await self.bot._waiting_suggestions(table)
+        self.bot.post_message.assert_not_awaited()
+
+    async def test_nothing_for_a_speaker_who_is_no_longer_recorded(self) -> None:
+        table, _ = await self.waiting_setup(1)
+        await self.consent.revoke(GUILD, PLAYER)
+        await self.bot._waiting_suggestions(table)
+        self.bot.post_message.assert_not_awaited()
+
+    async def test_a_person_who_stops_while_the_lines_go_up_is_left_out(self) -> None:
+        table, _ = await self.waiting_setup(2)  # one line each from two people
+
+        async def stop_the_other(*_: Any, **__: Any) -> Any:
+            await self.consent.revoke(GUILD, PLAYER + 1)
+            return MagicMock()
+
+        self.bot.post_message = AsyncMock(side_effect=stop_the_other)  # type: ignore[method-assign]
+        await self.bot._waiting_suggestions(table)
+        self.assertEqual(self.bot.post_message.await_count, 1)  # only the first went up
+
+    async def test_a_failure_costs_the_lines_not_the_session(self) -> None:
+        table, _ = await self.waiting_setup(1)
+        self.bot.post_message = AsyncMock(side_effect=RuntimeError("down"))  # type: ignore[method-assign]
+        await self.bot._waiting_suggestions(table)  # does not raise
+
     async def test_when_a_session_ends_only_its_own_suggestions_stay(self) -> None:
         table, sid = await self.fix_setup()
         store = self.bot.suggestions

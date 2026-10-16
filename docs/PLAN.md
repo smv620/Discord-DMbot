@@ -1927,8 +1927,11 @@ and **No** (buttons that work after a restart, DM-only on every press). **Accept
 line's cleaned words (the running session's notes and the channel message follow, as for every fix;
 a finished session's saved line is changed in the database); **Keep as is** changes nothing. The player is
 told once in a private message. Nothing is posted publicly. One suggestion per line at a time
-(table `transcript_suggestions`, migration 0093). A suggestion that waits past the end of the next
-session is dropped with no message. Checks: the speaker must still be recorded when they send it and
+(table `transcript_suggestions`, migration 0093). At the next session start (not after a restart in
+the middle of one) the DM screen shows the oldest three still waiting again, as the same line with the
+same two buttons, and "…and N more that go when this session ends." for the rest (#1504); the
+player is told nothing. A suggestion that waits past the end of the next session is dropped with no
+message. Checks: the speaker must still be recorded when they send it and
 when it is accepted; the words must not write, or stand next to, a secret name (refused with
 "That can't be used", no reason, so it cannot hint at one); everything is escaped on the DM screen.
 

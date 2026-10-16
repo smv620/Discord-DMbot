@@ -244,7 +244,15 @@ from dmbot.ui.continuity import ContinuityButton, continuity_view
 from dmbot.ui.continuity import waiting_text as continuity_waiting_text
 from dmbot.ui.dmbot_commands import _failed, dmbot_group
 from dmbot.ui.house_rules import dmbot_house_rules  # noqa: F401 (registers it)
-from dmbot.ui.line_fix import FixLineButton, LineFixButton, fix_line_view
+from dmbot.ui.line_fix import (
+    MORE_WAITING,
+    WAITING_SHOWN,
+    FixLineButton,
+    LineFixButton,
+    dm_text,
+    fix_line_view,
+    suggestion_view,
+)
 from dmbot.ui.migrate import dmbot_migrate  # noqa: F401 (registers it)
 from dmbot.ui.name_card import UndoButton
 from dmbot.ui.name_lists import UndoListButton
@@ -1679,6 +1687,7 @@ class DMBot(commands.AutoShardedBot):
         self._track(self._fight_left_over(table), "fight-left-over")  # #1173
         self._track(self._pre_session_note(table), "pre-session-note")  # #1403
         self._track(self._waiting_recaps(table), "waiting-recaps")  # #1474
+        self._track(self._waiting_suggestions(table), "waiting-suggestions")  # #1504
         table.watch_task = self._track_loop(sheet_reread.run(self, table), "sheet-watch")  # #1128
         table.fight_task = self._track_loop(fightbot.run(self, table), "fightbot")  # #1129
         return sent
@@ -1752,6 +1761,42 @@ class DMBot(commands.AutoShardedBot):
                     )
             except Exception:
                 log.exception("The waiting-recap line failed")
+
+    async def _waiting_suggestions(self, table: Table) -> None:
+        """A session starts and players' suggested line fixes from before still wait for the DM
+        (#1504): the DM screen shows the oldest three again, as the same line with the same two
+        buttons, and says how many more there are. Otherwise they would scroll away and be
+        dropped unseen. Not after a restart in the middle of a session, nothing for an answered
+        or dropped one or for a speaker who is no longer recorded, and nothing to the players.
+        A failure costs the lines, never the session."""
+        if self.suggestions is None or table.campaign_id is None or table.resumed:
+            return
+        gid, cid = table.guild_id, table.campaign_id
+        with log_context(guild_id=gid, campaign_id=cid):
+            try:
+                waiting = [
+                    w
+                    for w in await self.suggestions.waiting(gid, cid)
+                    if self.consent.has_consent(gid, w.user_id)
+                ]
+                guild = self.get_guild(gid)
+                for w in waiting[:WAITING_SHOWN]:
+                    if self.tables.get(gid) is not table:
+                        return  # the session ended meanwhile
+                    if not self.consent.has_consent(gid, w.user_id):
+                        continue  # stopped while the lines were going up
+                    member = guild.get_member(w.user_id) if guild is not None else None
+                    who = member.display_name if member is not None else "A player"
+                    await self.post_message(
+                        table.screen_channel_id,
+                        dm_text(who, w.heard, w.text, w.suggested),
+                        suggestion_view(w.id),
+                    )
+                more = len(waiting) - WAITING_SHOWN
+                if more > 0 and self.tables.get(gid) is table:
+                    await self.post_message(table.screen_channel_id, MORE_WAITING.format(n=more))
+            except Exception:
+                log.exception("The waiting-suggestions lines failed")
 
     async def _fight_left_over(self, table: Table) -> None:
         """A session starts with a fight still running from last time: one line on the DM
