@@ -82,6 +82,18 @@ export interface Access {
   hours?: { used: number; cap: number; renewsOn: string | null };
 }
 
+/** The narrated-recaps add-on, as the API says it (#1389, web/me.py `recapAudio`). */
+export interface RecapAudio {
+  /** Guild, Pro, or free access: it comes with the plan. */
+  included: boolean;
+  /** Bought as an add-on and still running. */
+  addOn: boolean;
+  /** ISO date the add-on runs to, when it is one. */
+  endsOn?: string;
+  /** Can be bought now: for sale, a paid plan that works, and not already had. */
+  canBuy: boolean;
+}
+
 export interface Me {
   user: Person;
   plan: MyPlan | null;
@@ -104,6 +116,8 @@ export interface Me {
   /** A paid plan that still works: the Support form is for this account (#1340). Missing from
    * an API older than that, which shows no form. */
   canSupport?: boolean;
+  /** The narrated-recaps add-on (#1390). Missing from an API older than #1389. */
+  recapAudio?: RecapAudio;
   /** Hand-overs offered to you, and the ones you offered (#614). */
   offers: { incoming: Offer[]; outgoing: Offer[] };
 }
@@ -214,7 +228,9 @@ export type ApiErrorKind =
   | "no-email" // no payment email is stored yet, so a move code has nowhere to go (#1246)
   | "too-soon" // the account moved less than 30 days ago (#1246)
   | "email-failed" // the move code could not be emailed just now (#1246)
-  | "not-paying" // a support ticket needs a paid plan that works (#1340)
+  | "not-paying" // a support ticket needs an account with a plan, Try It too (#1340, #1435)
+  | "one-waiting" // a free account already has a question waiting (#1435)
+  | "daily-limit" // a free account sent 3 questions in the last day (#1435)
   | "not-human" // the person check wasn't passed or wasn't there (#1340)
   | "ticket-empty" // the subject or the message was empty (#1340)
   | "ticket-too-long" // the message is over 4,000 letters (#1340)
@@ -222,6 +238,8 @@ export type ApiErrorKind =
   | "not-found" // a recap that isn't there, or isn't yours to see (#1386)
   | "not-editable" // the recap was posted, dropped or is being made, so it can't change (#1386)
   | "bad-text" // the recap text is empty or too long (#1386)
+  | "already-included" // the plan already has narrated recaps (#1390)
+  | "already-subscribed" // the add-on is already bought (#1390)
   | "server"; // anything else
 
 export class ApiError extends Error {
@@ -245,6 +263,8 @@ export interface AccountApi {
   checkoutUrl(plan: PlanId): Promise<string>;
   /** The payment company's page to change plan, fix a payment or stop. */
   billingPortalUrl(): Promise<string>;
+  /** The payment company's page to add narrated recaps (#1390). Missing from an API older than #1389. */
+  recapAudioUrl?(): Promise<string>;
   /** The payment company's page to buy more hours for this month (a paid, working plan). */
   extraHoursUrl(): Promise<string>;
   /** The file for "Download my data": the person's own data as JSON (#1150). Fetched from the
@@ -318,10 +338,14 @@ const errorKinds: Record<string, ApiErrorKind> = {
   too_soon: "too-soon",
   email_failed: "email-failed",
   not_paying: "not-paying",
+  one_waiting: "one-waiting",
+  daily: "daily-limit",
   not_human: "not-human",
   empty: "ticket-empty",
   too_long: "ticket-too-long",
   subject_too_long: "subject-too-long",
+  already_included: "already-included",
+  already_subscribed: "already-subscribed",
   not_found: "not-found",
   not_editable: "not-editable",
   bad_text: "bad-text",
@@ -426,6 +450,7 @@ export function httpApi(base: string, fetcher: typeof fetch = fetch): AccountApi
     checkoutUrl: (plan) => url("/billing/checkout", { plan }),
     billingPortalUrl: () => url("/billing/portal"),
     extraHoursUrl: () => url("/billing/extra-hours"),
+    recapAudioUrl: () => url("/billing/recap-audio"),
     downloadExport: async () => (await call("GET", "/me/export", undefined, true)) as Blob,
     recaps: async () => ((await call("GET", "/me/recaps")) as { recaps: Recap[] }).recaps,
     recap: async (ref) => (await call("GET", `/me/recaps/${encodeURIComponent(ref)}`)) as Recap,

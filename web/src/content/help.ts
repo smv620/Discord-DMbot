@@ -304,7 +304,7 @@ export const gettingHelp: { id: string; heading: string; items: { lead: string; 
         ],
       },
       {
-        lead: "On a paid plan?",
+        lead: "Have an account?",
         parts: [
           "Write to the team in private from ",
           { text: "your account page", href: "/account" },

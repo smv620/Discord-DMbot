@@ -1,5 +1,6 @@
-"""Private support tickets (#1340, #1373), run as the website's own database role: only a paying,
-signed-in account can send one, one per 10 minutes; a person reads back only their own list (when,
+"""Private support tickets (#1340, #1373), run as the website's own database role: any signed-in
+account with a plan row (Try It too, #1435) can send one, one per 10 minutes (free accounts: three
+a day and one waiting); a person reads back only their own list (when,
 subject, status), never the words, which only the admin page's door can read; the team is emailed
 without its words; old and deleted accounts' tickets go; and its words reach no log."""
 
@@ -202,21 +203,68 @@ class SupportRoute(SupportBase):
         self.assertEqual((await self.send(await self.client())).status_code, 201)
         self.assertEqual((len(await self.tickets()), self.outbox.sent), (1, []))
 
-    async def test_only_a_working_paid_plan_may_send(self) -> None:
-        for plan, status in (("try-it", "active"), ("table", "lapsed")):
+    async def test_any_account_with_a_plan_row_may_send(self) -> None:
+        # Try It, a lapsed paid plan, the payment grace and a working plan all may write (#1435).
+        for plan, status in (("try-it", "active"), ("table", "lapsed"), ("table", "grace")):
             await self.give_plan(ALICE.id, plan, status)
+            self.tick += 3600  # past the 10 minutes between tickets
+            await self.close_all()
             answer = await self.send(await self.client())
-            self.assertEqual((answer.status_code, answer.json()), (403, {"error": "not_paying"}))
+            self.assertEqual((plan, status, answer.status_code), (plan, status, 201))
+        tickets = await self.tickets()
+        self.assertEqual([t["plan"] for t in tickets], ["try-it", "table", "table"])
+
+    async def test_no_account_yet_may_not_send(self) -> None:
         async with self.db.plan_writer(ALICE.id) as conn:  # no plan at all
             await conn.execute("DELETE FROM entitlements WHERE user_id = %s", (ALICE.id,))
-        self.assertEqual((await self.send(await self.client())).status_code, 403)
-        # The payment grace counts: someone whose payment just failed may well need us.
-        await self.give_plan(ALICE.id, "table", "grace")
-        self.assertEqual((await self.send(await self.client())).status_code, 201)
+        answer = await self.send(await self.client())
+        self.assertEqual((answer.status_code, answer.json()), (403, {"error": "not_paying"}))
+        self.assertEqual(await self.tickets(), [])
+
+    async def close_all(self) -> None:
+        async with self.db.support_admin() as conn:
+            await conn.execute("UPDATE support_tickets SET status = 'closed'")
+
+    async def test_a_free_account_has_one_question_waiting_at_a_time(self) -> None:
+        await self.give_plan(ALICE.id, "try-it", "active")
+        client = await self.client()
+        self.assertEqual((await self.send(client)).status_code, 201)
+        self.tick += 3600
+        answer = await self.send(client)
+        self.assertEqual((answer.status_code, answer.json()), (429, {"error": "one_waiting"}))
         self.assertEqual(len(await self.tickets()), 1)
+        await self.close_all()  # the team answered it
+        self.assertEqual((await self.send(client)).status_code, 201)
+
+    async def test_a_free_account_sends_three_a_day(self) -> None:
+        await self.give_plan(ALICE.id, "table", "lapsed")
+        client = await self.client()
+        for _ in range(3):
+            self.tick += 3600
+            self.assertEqual((await self.send(client)).status_code, 201)
+            await self.close_all()
+        self.tick += 3600
+        answer = await self.send(client)
+        self.assertEqual((answer.status_code, answer.json()), (429, {"error": "daily"}))
+        # A day after the first one, it may write again.
+        async with self.db.support_admin() as conn:
+            await conn.execute("UPDATE support_tickets SET created_at = created_at - 90000")
+        self.assertEqual((await self.send(client)).status_code, 201)
+
+    async def test_another_accounts_tickets_do_not_count_against_a_free_account(self) -> None:
+        await self.add_row(BOB, self.now)
+        await self.give_plan(ALICE.id, "try-it", "active")
+        self.assertEqual((await self.send(await self.client())).status_code, 201)
+
+    async def test_a_paid_account_is_not_held_to_the_free_guard(self) -> None:
+        client = await self.client()
+        for _ in range(4):
+            self.tick += 3600
+            self.assertEqual((await self.send(client)).status_code, 201)
 
     async def test_a_refused_ticket_does_not_use_the_turn(self) -> None:
-        await self.give_plan(ALICE.id, "try-it", "active")
+        async with self.db.plan_writer(ALICE.id) as conn:
+            await conn.execute("DELETE FROM entitlements WHERE user_id = %s", (ALICE.id,))
         client = await self.client()
         self.assertEqual((await self.send(client)).status_code, 403)
         self.assertEqual((await self.send(client, message="")).status_code, 400)
@@ -400,6 +448,11 @@ class SupportRoute(SupportBase):
         client = await self.client()
         self.assertIs((await client.get("/me")).json()["canSupport"], True)
         await self.give_plan(ALICE.id, "try-it", "active")
+        self.assertIs((await client.get("/me")).json()["canSupport"], True)
+        await self.give_plan(ALICE.id, "table", "lapsed")
+        self.assertIs((await client.get("/me")).json()["canSupport"], True)
+        async with self.db.plan_writer(ALICE.id) as conn:  # no account yet
+            await conn.execute("DELETE FROM entitlements WHERE user_id = %s", (ALICE.id,))
         self.assertIs((await client.get("/me")).json()["canSupport"], False)
 
 

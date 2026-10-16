@@ -183,6 +183,7 @@ export function scenarioMe(scenario: Scenario): Me | null {
     case "try-it":
       return {
         ...base,
+        canSupport: true,
         campaigns: campaigns.slice(0, 1),
         plan: {
           id: "try-it",
@@ -433,6 +434,10 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
     async billingPortalUrl() {
       calls.push("portal");
       return "#demo-billing";
+    },
+    async recapAudioUrl() {
+      calls.push("recap-audio");
+      return "#demo-recap-audio";
     },
     async extraHoursUrl() {
       calls.push("extra-hours");
