@@ -686,12 +686,13 @@ never does.
   like rules: a ticked one becomes the campaign's own (the follow ends, as for rules), the rest follow the
   Unfollow rule. A follower's memory backup holds its own definitions and not the set's: the set's copy rides
   in the followed-sets part and Follow makes them again.
-  **Adding relationships later (#1475).** 📤 Publish my changes offers the campaign's own shareable
-  relationships the set doesn't carry yet, as the same tick list as at Share but with none ticked and
-  "Add ticked" / "Not now" buttons. The ticked ones go into the new version beside the ones already
-  carried; followers get them at their next session start through the usual update, listed as new. A
-  relationship left unticked is simply not added, and one already in the set stays (removing one is a
-  later change). No list is shown when there is nothing new.
+  **Changing which relationships travel, later (#1475, #1479).** 📤 Publish my changes shows the same
+  tick list as Share, with the relationships the set carries ticked and the campaign's other shareable
+  ones not. The new version holds exactly what is ticked: ticking a new one adds it, unticking one takes
+  it out of the set (the publisher's own relationship is never touched). Followers get the change at their
+  next session start through the usual update, listed as new or removed; a removed one follows the Unfollow
+  rule (deleted when no fact uses it, retired when one does). "Keep as it is" changes nothing. No list is
+  shown when the campaign and the set have no relationships.
 
 **AI models by task (decided 2026-10-10, built #1006).** Every AI call names a *tier*, never
 a model.
