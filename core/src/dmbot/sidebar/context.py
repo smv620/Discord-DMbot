@@ -255,6 +255,7 @@ def mentioned_names(question: str, lookup: CampaignLookup | None) -> list[str]:
     if lookup is None:
         return []
     secret_entities = {n.entity_id for n in lookup.names if n.secret}
+    secret_keys = {n.key for n in lookup.names if n.secret}  # in any entry: never given as a name
     lines: list[str] = []
     for entity_id, entity in _mentioned(question, lookup):
         line = f"{entity.name} ({kind_phrase(entity)})"
@@ -267,9 +268,10 @@ def mentioned_names(question: str, lookup: CampaignLookup | None) -> list[str]:
                 and n.confirmed
                 and not n.person
                 and n.text != entity.name
+                and n.key not in secret_keys
             ]
             if others:
-                line += f". Also called: {', '.join(dict.fromkeys(others[:3]))}."
+                line += f". Also called: {', '.join(list(dict.fromkeys(others))[:3])}."
         lines.append(line)
     return lines[:NAMES_MAX]
 

@@ -345,10 +345,6 @@ class WithTheRealRecall(MemoryTest):
         self.assertEqual(recall.check_citations([self.secret], built.recall), (self.secret,))
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
 class NoNotesInAnyReply(unittest.IsolatedAsyncioTestCase):
     """#1378: an entry's description is the DM's note. Neither the prompt nor a reply built from
     it may hold it, with recall on or off."""
@@ -358,9 +354,11 @@ class NoNotesInAnyReply(unittest.IsolatedAsyncioTestCase):
     def lookup(self) -> CampaignLookup:
         from dataclasses import replace
 
-        described = replace(data().entities[0], description=self.SECRET)
-        plain = replace(data().entities[1], description=self.SECRET)
-        return CampaignLookup.build(data(entities=(described, plain, data().entities[2])))
+        belleros, cerric, kael = data().entities
+        return CampaignLookup.build(
+            data(entities=(replace(belleros, description=self.SECRET),
+                           replace(cerric, description=self.SECRET), kael))
+        )  # fmt: skip
 
     async def ask(self, recall_on: bool) -> tuple[FakeAI, Any]:
         class Echo(FakeAI):
@@ -394,7 +392,13 @@ class NoNotesInAnyReply(unittest.IsolatedAsyncioTestCase):
     async def test_neither_the_prompt_nor_the_reply_holds_the_note(self) -> None:
         for recall_on in (True, False):
             ai, got = await self.ask(recall_on)
+            self.assertNotIn(self.SECRET, ai.prompts[0], recall_on)
             self.assertNotIn("duke", ai.prompts[0], recall_on)
             self.assertNotIn("lich", ai.prompts[0], recall_on)
+            self.assertNotIn(self.SECRET, got.text, recall_on)
             self.assertNotIn("duke", got.text, recall_on)
             self.assertIn("Cerric", got.text)  # the model did repeat the name's line
+
+
+if __name__ == "__main__":
+    unittest.main()

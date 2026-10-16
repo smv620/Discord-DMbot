@@ -182,6 +182,18 @@ class SecretIdentities(unittest.TestCase):
         )  # fmt: skip
         (line,) = context.mentioned_names("what about Cerric", lookup)
         self.assertEqual(line, "Cerric (NPC). Also called: Cer the Baker.")
+        # Only confirmed names, at most three, and never a spelling that is a secret name's.
+        lookup = CampaignLookup.build(
+            data(aliases=(*data().aliases,
+                          alias(CERRIC, "Cer", status="proposed"),
+                          alias(CERRIC, "Baker One"), alias(CERRIC, "Baker Two"),
+                          alias(CERRIC, "Baker Three"), alias(CERRIC, "Baker Four"),
+                          alias(CERRIC, "The Hooded Stranger")))
+        )  # fmt: skip
+        (many,) = context.mentioned_names("what about Cerric", lookup)
+        self.assertEqual(many, "Cerric (NPC). Also called: Baker One, Baker Two, Baker Three.")
+        self.assertNotIn("Cer,", many)  # not confirmed
+        self.assertNotIn("Hooded", many)  # the same words as Belleros's secret name
         # Someone with a secret name is given by name only, other names included.
         (hidden,) = context.mentioned_names("what about Belleros", lookup)
         self.assertEqual(hidden, "Belleros (NPC)")

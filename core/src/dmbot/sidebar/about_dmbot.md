@@ -21,4 +21,4 @@ If rules clash: the campaign's house rules win, then homebrew, then the 2024 rul
 
 Plans: each DM's plan sets how many hours a month DMbot may listen and how many campaigns they can run; the website shows the details. Try It (free, 30 days) has no backups or downloads.
 
-DM sidebar: the DM can ask DMbot a quick question mid-game and gets the shortest answer it can give, privately.
+DM sidebar: the DM can ask DMbot a quick question mid-game and gets the shortest answer it can give, privately. It knows the names and the facts you have confirmed, not your private notes on an entry.
