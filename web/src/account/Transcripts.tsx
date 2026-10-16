@@ -130,6 +130,9 @@ function Campaigns({ api }: { api: AccountApi }) {
                 <li key={c.ref}>
                   <span class="campaign-name">{c.name}</span>
                   <span class="small">{text.campaignLine(c.serverName, c.sessions)}</span>
+                  {text.keepLine(c.keepDays) && (
+                    <span class="small">{text.keepLine(c.keepDays)}</span>
+                  )}
                   <a
                     href={`/account/transcripts/${encodeURIComponent(c.ref)}`}
                     aria-label={text.openCampaign(c.name)}
@@ -153,13 +156,19 @@ function Sessions({ api, campaignRef }: { api: AccountApi; campaignRef: string }
   );
   return (
     <Shell api={api} load={load}>
-      {(found: { name: string; sessions: TranscriptSessionItem[] }) => (
+      {(found: { name: string; keepDays?: number | null; sessions: TranscriptSessionItem[] }) => (
         <>
           <p>
             <a href="/account/transcripts">{text.allCampaigns}</a>
           </p>
           <h2>{found.name}</h2>
           <p class="small">{text.shareLine}</p>
+          {text.keepLine(found.keepDays) && (
+            <p class="small">
+              {text.keepLine(found.keepDays)}
+              {found.keepDays ? ` ${text.keepSoon}` : ""}
+            </p>
+          )}
           {found.sessions.length === 0 ? (
             <p class="panel" role="status">
               {text.empty}

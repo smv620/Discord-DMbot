@@ -26,6 +26,14 @@ export const text = {
   allCampaigns: "All campaigns",
   campaignLine: (server: string, sessions: number): string =>
     `${server} · ${sessions} ${sessions === 1 ? "session" : "sessions"}`,
+  // How long the campaign keeps transcripts (#1575). `undefined` is an older API: say nothing.
+  keepLine: (days: number | null | undefined): string | null =>
+    days === undefined
+      ? null
+      : days === null
+        ? "Transcripts are kept until the game master deletes them."
+        : `Transcripts are kept for ${days === 365 ? "1 year" : `${days} ${days === 1 ? "day" : "days"}`} after each session, then deleted.`,
+  keepSoon: "A transcript is deleted within a day of getting that old. To keep a copy, save it before then.",
   allSessions: "All sessions of this campaign",
   open: "Read",
   openCampaign: (name: string): string => `Read: ${name}`,
