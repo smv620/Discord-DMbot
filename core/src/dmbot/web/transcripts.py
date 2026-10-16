@@ -31,6 +31,7 @@ from dmbot.entitlements import plan_grant_access
 from dmbot.recaps.notify import parse_ref
 from dmbot.transcript import export
 from dmbot.transcript.models import Line, Lineage, TranscriptSession
+from dmbot.web.me import MAX_GUILDS
 from dmbot.web.recaps import RecapError, _guild_of, _scoped
 from dmbot.web.sessions import Session
 
@@ -63,6 +64,46 @@ async def _plan_allows(db: Database, owner: str | None, now: int, *, enforce_pla
         raise RecapError("not_in_plan")
 
 
+async def list_campaigns(
+    db: Database, session: Session, *, now: int, enforce_plans: bool
+) -> list[dict[str, Any]]:
+    """The campaigns with a saved transcript in every server of this session's list, for anyone
+    in them: someone who only plays has no other list of campaigns on the site. Under the plan rule
+    (the owner's plan, once per owner), so a campaign whose transcripts would be refused is left
+    out. Each has its address (`<server>.<campaign>`), its name, its server's name and a count."""
+    out: list[dict[str, Any]] = []
+    allowed: dict[str | None, bool] = {}
+    async with db.user(session.user_id, session=session.id_hash) as conn:
+        found: list[tuple[Any, list[dict[str, Any]]]] = []
+        for guild in session.guilds[:MAX_GUILDS]:
+            await _scoped(conn, int(guild.id))
+            cur = await conn.execute(
+                "SELECT dmbot_web_transcript_campaigns(%s) AS found", (int(guild.id),)
+            )
+            row = await cur.fetchone()
+            if row and row["found"]:
+                found.append((guild, list(row["found"])))
+    for guild, campaigns in found:
+        for item in campaigns:
+            owner = item.get("owner")
+            if owner not in allowed:
+                try:
+                    await _plan_allows(db, owner, now, enforce_plans=enforce_plans)
+                    allowed[owner] = True
+                except RecapError:
+                    allowed[owner] = False
+            if allowed[owner]:
+                out.append(
+                    {
+                        "ref": f"{guild.id}.{item['id']}",
+                        "name": item["name"],
+                        "serverName": guild.name,
+                        "sessions": int(item["sessions"]),
+                    }
+                )
+    return out
+
+
 async def _sessions(
     db: Database, session: Session, ref: str, *, now: int, enforce_plans: bool
 ) -> tuple[int, str, dict[str, Any]]:
@@ -84,19 +125,23 @@ async def _sessions(
 
 async def list_sessions(
     db: Database, session: Session, ref: str, *, now: int, enforce_plans: bool
-) -> list[dict[str, Any]]:
-    """The campaign's sessions that have lines, newest first: number, when it started and ended
-    (Unix seconds; `endedAt` null while running or if it stopped early) and how many lines."""
+) -> dict[str, Any]:
+    """The campaign's name and its sessions that have lines, newest first: number, when it started
+    and ended (Unix seconds; `endedAt` null while running or if it stopped early) and how many
+    lines."""
     _g, _c, found = await _sessions(db, session, ref, now=now, enforce_plans=enforce_plans)
-    return [
-        {
-            "number": int(s["number"]),
-            "startedAt": int(s["startedAt"]),
-            "endedAt": None if s["endedAt"] is None else int(s["endedAt"]),
-            "lines": int(s["lines"]),
-        }
-        for s in found["sessions"]
-    ]
+    return {
+        "name": found["name"],
+        "sessions": [
+            {
+                "number": int(s["number"]),
+                "startedAt": int(s["startedAt"]),
+                "endedAt": None if s["endedAt"] is None else int(s["endedAt"]),
+                "lines": int(s["lines"]),
+            }
+            for s in found["sessions"]
+        ],
+    }
 
 
 def _line(row: dict[str, Any]) -> Line:

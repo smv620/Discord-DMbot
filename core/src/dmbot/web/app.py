@@ -684,18 +684,28 @@ def create_app(
 
     # A campaign's session transcripts, for anyone in the server (#1501): shared by the project's
     # rule, so not DM-only. The words are the same text Discord's download carries.
+    @app.get("/me/transcripts")
+    async def me_transcript_campaigns(signed: Signed) -> dict[str, Any]:
+        """The campaigns with a saved transcript in the person's servers (those the plan rule lets
+        them read)."""
+        session, _token = signed
+        return {
+            "campaigns": await transcript_pages.list_campaigns(
+                db, session, now=clock(), enforce_plans=settings.enforce_plans
+            )
+        }
+
     @app.get("/me/campaigns/{ref}/transcripts")
     async def me_transcripts(ref: str, signed: Signed) -> dict[str, Any]:
         """The campaign's sessions that have lines, newest first."""
         session, _token = signed
         try:
-            sessions_found = await transcript_pages.list_sessions(
+            return await transcript_pages.list_sessions(
                 db, session, ref, now=clock(), enforce_plans=settings.enforce_plans
             )
         except RecapError as err:
             status, detail = recap_refusals.get(err.code, (404, "not_found"))
             raise HTTPException(status_code=status, detail=detail) from None
-        return {"sessions": sessions_found}
 
     @app.get("/me/campaigns/{ref}/transcripts/{number}")
     async def me_transcript(

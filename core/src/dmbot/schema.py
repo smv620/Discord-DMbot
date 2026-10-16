@@ -2340,6 +2340,7 @@ WEB_ROLE_FUNCTIONS: tuple[tuple[str, str], ...] = (
     # A campaign's session transcripts, read by any member of the server (#1501).
     ("dmbot_web_transcript_sessions", "dmbot_web_transcript_sessions(BIGINT, TEXT)"),
     ("dmbot_web_transcript_lines", "dmbot_web_transcript_lines(BIGINT, TEXT, TEXT)"),
+    ("dmbot_web_transcript_campaigns", "dmbot_web_transcript_campaigns(BIGINT)"),
     # The campaign's names with the narrator's spelling (#1451): read and write, DM only.
     ("dmbot_web_names", "dmbot_web_names(BIGINT, TEXT)"),
     ("dmbot_web_set_said_as", "dmbot_web_set_said_as(BIGINT, TEXT, TEXT, TEXT)"),
@@ -4665,7 +4666,7 @@ TRANSCRIPT_SUGGESTIONS = """
 
 WEB_TRANSCRIPTS = """
     -- A campaign's session transcripts on the website (#1501). Transcripts are shared: anyone in
-    -- the Discord server may read and download them (CLAUDE.md, decided 2026-10-05), so these two
+    -- the Discord server may read and download them (CLAUDE.md, decided 2026-10-05), so these
     -- doors answer any signed-in person whose session lists the server (`dmbot_web_guilds()`), not
     -- only a DM, and only with that server set for the transaction (the caller does that for
     -- every server table). They only read. The website's role has no grant on the transcript
@@ -4732,6 +4733,32 @@ WEB_TRANSCRIPTS = """
             WHERE l.guild_id = g AND l.session_id = sid), '[]'::jsonb);
     END
     $fn$;
+    -- dmbot_web_transcript_campaigns: the server's campaigns that have a saved transcript, with
+    -- each one's owner (for the plan rule) and how many sessions; at most 100. NULL when the caller
+    -- is not in the server. A person who only plays has no other list of campaigns on the site.
+    CREATE FUNCTION dmbot_web_transcript_campaigns(g BIGINT) RETURNS JSONB
+    LANGUAGE plpgsql SECURITY DEFINER AS $fn$
+    BEGIN
+        IF dmbot_current_guild() IS DISTINCT FROM g
+           OR NOT (g = ANY ((SELECT dmbot_web_guilds())::BIGINT[])) THEN
+            RETURN NULL;
+        END IF;
+        RETURN COALESCE((
+            SELECT jsonb_agg(jsonb_build_object(
+                       'id', x.id, 'name', x.name, 'owner', x.owner, 'sessions', x.sessions)
+                       ORDER BY lower(x.name), x.id)
+            FROM (
+                SELECT c.id, c.name, c.owner_user_id::TEXT AS owner, count(*) AS sessions
+                FROM campaigns c
+                JOIN transcript_sessions t
+                  ON t.guild_id = c.guild_id AND t.campaign_id = c.id AND t.line_count > 0
+                WHERE c.guild_id = g
+                GROUP BY c.id, c.name, c.owner_user_id
+                ORDER BY lower(c.name), c.id
+                LIMIT 100
+            ) x), '[]'::jsonb);
+    END
+    $fn$;
     DO $do$
     BEGIN
         EXECUTE format(
@@ -4742,10 +4769,15 @@ WEB_TRANSCRIPTS = """
             'ALTER FUNCTION dmbot_web_transcript_lines(BIGINT, TEXT, TEXT)'
             ' SET search_path = pg_catalog, %I, pg_temp',
             current_schema());
+        EXECUTE format(
+            'ALTER FUNCTION dmbot_web_transcript_campaigns(BIGINT)'
+            ' SET search_path = pg_catalog, %I, pg_temp',
+            current_schema());
     END
     $do$;
     REVOKE ALL ON FUNCTION dmbot_web_transcript_sessions(BIGINT, TEXT) FROM PUBLIC;
     REVOKE ALL ON FUNCTION dmbot_web_transcript_lines(BIGINT, TEXT, TEXT) FROM PUBLIC;
+    REVOKE ALL ON FUNCTION dmbot_web_transcript_campaigns(BIGINT) FROM PUBLIC;
 """
 
 MIGRATIONS: tuple[Migration, ...] = (

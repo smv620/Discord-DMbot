@@ -101,9 +101,10 @@ class Transcripts(Base):
         return found
 
     async def listed(self, who: Any, ref: str | None = None, **kw: Any) -> Any:
-        return await transcripts.list_sessions(
+        found = await transcripts.list_sessions(
             self.web, who, ref or self.cref, now=NOW, enforce_plans=kw.get("enforce_plans", False)
         )
+        return found["sessions"]
 
     # ---- who ---------------------------------------------------------------------------
 
@@ -146,6 +147,33 @@ class Transcripts(Base):
         for number, version in ((9, "heard"), (0, "heard"), (2, "raw"), (2, "as-heard")):
             with self.subTest(number=number, version=version), self.assertRaises(RecapError):
                 await read(self.web, self.carol, self.cref, number, version)
+
+    async def test_the_campaign_list_has_every_campaign_with_a_transcript_in_the_persons_servers(
+        self,
+    ) -> None:
+        got = await transcripts.list_campaigns(self.web, self.carol, now=NOW, enforce_plans=False)
+        self.assertEqual(
+            [(c["ref"], c["name"], c["sessions"]) for c in got],
+            [(self.cref, "One", 2), (self.oref, "Two", 1)],
+        )
+        self.assertEqual({c["serverName"] for c in got}, {THURSDAY.name})
+        elsewhere = await self.session_of(CAROL, [QUILLON])  # a server with no campaigns here
+        self.assertEqual(
+            await transcripts.list_campaigns(self.web, elsewhere, now=NOW, enforce_plans=False), []
+        )
+        # A campaign with no saved lines is not listed.
+        await self.campaigns.create(THURSDAY.id, "Empty", ALICE.id)
+        again = await transcripts.list_campaigns(self.web, self.carol, now=NOW, enforce_plans=False)
+        self.assertEqual([c["name"] for c in again], ["One", "Two"])
+
+    async def test_the_campaign_list_follows_the_owners_plan_too(self) -> None:
+        # Alice owns "One", Bob "Two". Only Bob's plan has transcripts.
+        await self.give_plan(BOB.id, "table")
+        got = await transcripts.list_campaigns(self.web, self.carol, now=NOW, enforce_plans=True)
+        self.assertEqual([c["name"] for c in got], ["Two"])
+        await self.give_plan(ALICE.id, "guild")
+        got = await transcripts.list_campaigns(self.web, self.carol, now=NOW, enforce_plans=True)
+        self.assertEqual([c["name"] for c in got], ["One", "Two"])
 
     # ---- what is shown -----------------------------------------------------------------
 
@@ -238,15 +266,20 @@ class Transcripts(Base):
         async with self.web.user(CAROL.id, session=self.carol.id_hash) as conn:
             cur = await conn.execute(
                 "SELECT dmbot_web_transcript_sessions(%s, %s) AS s,"
-                " dmbot_web_transcript_lines(%s, %s, %s) AS l",
-                (THURSDAY.id, self.one.id, THURSDAY.id, self.one.id, self.sid),
+                " dmbot_web_transcript_lines(%s, %s, %s) AS l,"
+                " dmbot_web_transcript_campaigns(%s) AS c",
+                (THURSDAY.id, self.one.id, THURSDAY.id, self.one.id, self.sid, THURSDAY.id),
             )
             row = await cur.fetchone()
         assert row is not None
-        self.assertEqual((row["s"], row["l"]), (None, None))
+        self.assertEqual((row["s"], row["l"], row["c"]), (None, None, None))
 
     async def test_each_door_has_one_caller(self) -> None:
-        for door in ("dmbot_web_transcript_sessions", "dmbot_web_transcript_lines"):
+        for door in (
+            "dmbot_web_transcript_sessions",
+            "dmbot_web_transcript_lines",
+            "dmbot_web_transcript_campaigns",
+        ):
             self.assertEqual(callers(door), {"schema.py", "web/transcripts.py"}, door)
 
 
@@ -293,6 +326,11 @@ class TheRoutes(Base):
         listed = await self.client.get(f"/me/campaigns/{self.cref}/transcripts", headers=HEADERS)
         self.assertEqual(listed.status_code, 200, listed.text)
         self.assertEqual([s["number"] for s in listed.json()["sessions"]], [1])
+        self.assertEqual(listed.json()["name"], "One")
+        mine = await self.client.get("/me/transcripts", headers=HEADERS)
+        self.assertEqual(
+            [(c["ref"], c["sessions"]) for c in mine.json()["campaigns"]], [(self.cref, 1)]
+        )
         read_view = await self.client.get(
             f"/me/campaigns/{self.cref}/transcripts/1", params={"version": "heard"}, headers=HEADERS
         )
@@ -327,6 +365,8 @@ class TheRoutes(Base):
         ):
             with self.subTest(path):
                 self.assertEqual((await self.client.get(path, headers=HEADERS)).status_code, 404)
+        # The list of campaigns is simply empty for someone in no server that has one.
+        self.assertEqual((await self.client.get("/me/transcripts")).json(), {"campaigns": []})
         await self.sign_in(CAROL, [THURSDAY])
         for path in (
             f"/me/campaigns/{self.cref}/transcripts/7",
