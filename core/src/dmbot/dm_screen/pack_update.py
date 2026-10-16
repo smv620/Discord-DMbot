@@ -45,10 +45,13 @@ NEWER = (
     "Nothing changed."
 )
 NOT_FOLLOWING_NOW = "This campaign doesn't follow that pack any more. Nothing changed."
-UNDONE_AND_WAITING = "DMbot will take the next new version; use Pick changes to choose."
+UNDONE_AND_WAITING = (
+    "DMbot will take the next newer version at a session start. "
+    "Press Pick changes on the note if you'd rather choose."
+)
 COULDNT = "That didn't work, and nothing changed. Press the button again in a moment."
 UNDO_LABEL = "↩️ Undo"
-YOURS_WIN = "Some of these have the same name as your own homebrew. Yours still wins."
+YOURS_WIN = "Your own homebrew has the same name as {names}. Yours still applies."
 
 
 def _md(text: str) -> str:
@@ -60,19 +63,26 @@ def _store(bot: Any) -> PackUpdateStore | None:
     return sets if isinstance(sets, PackUpdateStore) else None
 
 
-def note_text(pack_name: str, version: int, changes: int, overridden: bool = False) -> str:
+def _shown(names: Sequence[str]) -> str:
+    shown = ", ".join(_md(n) for n in names[:3])
+    return shown + (f" and {len(names) - 3} more" if len(names) > 3 else "")
+
+
+def note_text(pack_name: str, version: int, changes: int, overridden: Sequence[str] = ()) -> str:
     entries = f"{changes} entr" + ("y" if changes == 1 else "ies")
     text = (
-        f"📦 **{_md(pack_name)}** homebrew updated to v{version}: {entries}. "
+        f"📦 **{_md(pack_name)}** homebrew updated to v{version}: {entries} changed. "
         "DMbot took the new version."
     )
-    return f"{text}\n{YOURS_WIN}" if overridden else text
+    if overridden:
+        text += "\n" + YOURS_WIN.format(names=_shown(overridden))
+    return text
 
 
 def gone_text(pack_name: str, version: int) -> str:
     return (
-        f"📦 **{_md(pack_name)}** isn't being shared any more. Your table keeps version {version}, "
-        "and it won't get updates."
+        f"📦 **{_md(pack_name)}** isn't being shared any more. You keep your copy (v{version}), "
+        "but it won't get updates. Nothing to do."
     )
 
 
@@ -199,7 +209,11 @@ async def press(
     if action == "see":
         before = follow.previous_content
         if before is None:
-            await _tell(interaction, "There's nothing to compare: that update was undone.")
+            await _tell(
+                interaction,
+                "There's nothing to compare: that update was undone. "
+                "Look for the newest note on the DM screen.",
+            )
             return
         await _tell(
             interaction,
@@ -261,11 +275,12 @@ async def take(
     name = _md(update.offer.name)
     if taken.merged:
         left_out = len({c.key for c in update.changes} - (accepted or set()))
-        out = f"left out {left_out} change" + ("" if left_out == 1 else "s")
+        kept = len(taken.added)
         words = (
-            f"✅ Done. **{name}** is now your own copy: you kept {len(taken.added)} "
-            f"entr{'y' if len(taken.added) == 1 else 'ies'} and {out}. You no longer get its "
-            "updates. Your own homebrew still wins."
+            f"✅ Done. **{name}** is now your own homebrew. Kept {kept} "
+            f"entr{'y' if kept == 1 else 'ies'}, left out {left_out} "
+            f"change{'' if left_out == 1 else 's'}. It won't update any more. "
+            "Press Undo if you change your mind."
         )
     else:
         words = f"✅ Now using **{name}** v{taken.after_version}."
@@ -305,7 +320,7 @@ class UndoView(_Menu):
         v = self.taken.before.version
         if self.taken.merged:
             edited = (
-                f" {kept} merged entr{'ies' if kept != 1 else 'y'} you edited stayed."
+                f" {kept} entr{'ies' if kept != 1 else 'y'} you edited kept your edits."
                 if kept
                 else ""
             )
@@ -325,8 +340,7 @@ class PickView(_Menu):
         super().__init__()
         self.campaign, self.update = campaign, update
         self.items: list[tuple[str, str, str]] = [
-            (c.key, f"{c.kind.capitalize()}: {c.name}", pack_diff.describe(c, 90))
-            for c in update.changes
+            (c.key, c.name, pack_diff.describe(c, 90)) for c in update.changes
         ]
         self.accepted = {value for value, _label, _line in self.items}
         self.page = 0
@@ -340,9 +354,10 @@ class PickView(_Menu):
         where = f" (page {self.page + 1} of {pages})" if pages > 1 else ""
         lines = "\n".join(line[:70] for _value, _label, line in self._page_items())
         return (
-            f"Pick changes: **{_md(self.update.offer.name)}**{where}. Ticked = keep. Everything "
-            "starts ticked. If you untick any, you stop following the pack and get your own "
-            "copy of its entries. You can undo it.\n" + lines
+            f"Pick changes: **{_md(self.update.offer.name)}**{where}. Ticked = take this change. "
+            "All start ticked, so leaving them keeps you on the pack. Untick any and this becomes "
+            "your own homebrew: no more updates from the pack. Undo is on the next screen.\n"
+            + lines
         )
 
     def _draw(self) -> None:
@@ -351,7 +366,7 @@ class PickView(_Menu):
         if shown:
             options = [
                 discord.SelectOption(
-                    label=label[:25],
+                    label=label[:100],
                     description=line[:100],
                     value=value,
                     default=value in self.accepted,
@@ -360,7 +375,7 @@ class PickView(_Menu):
             ]
             self.pick = _Select(
                 self._picked,
-                placeholder="Changes to keep",
+                placeholder="Changes to take",
                 min_values=0,
                 max_values=len(options),
                 options=options,
@@ -401,18 +416,18 @@ class PickView(_Menu):
         await take(interaction, self.campaign, self.update, set(self.accepted))
 
 
-async def _overridden(bot: Any, campaign: Campaign, update: PackUpdate) -> bool:
-    """Does a changed entry share its name with one of the campaign's own? (a note is worth
-    posting without this line if the homebrew can't be read)"""
+async def _overridden(bot: Any, campaign: Campaign, update: PackUpdate) -> list[str]:
+    """The names of changed entries that the campaign's own homebrew also has (a note is worth
+    posting without this line if the homebrew can't be read)."""
     try:
         store = bot.homebrew
         if store is None:
-            return False
+            return []
         mine = {name_key(e.name) for e in await store.list(campaign.guild_id, campaign.id)}
     except Exception:
         log.warning("Couldn't read homebrew for a pack update note", exc_info=True)
-        return False
-    return any(c.key in mine for c in update.changes)
+        return []
+    return [c.name for c in update.changes if c.key in mine]
 
 
 async def check_updates(bot: Any, campaign: Campaign, screen_id: int) -> None:

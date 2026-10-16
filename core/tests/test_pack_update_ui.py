@@ -63,10 +63,10 @@ class Note(unittest.TestCase):
     def test_the_note_says_what_happened_in_plain_words(self) -> None:
         text = pack_update.note_text("Frost", 5, 2)
         self.assertIn(
-            "**Frost** homebrew updated to v5: 2 entries. DMbot took the new version.", text
+            "**Frost** homebrew updated to v5: 2 entries changed. DMbot took the new version.", text
         )
         self.assertIn("1 entry", pack_update.note_text("Frost", 5, 1))
-        self.assertIn(pack_update.YOURS_WIN, pack_update.note_text("Frost", 5, 1, True))
+        self.assertIn("same name as Rope", pack_update.note_text("Frost", 5, 1, ["Rope"]))
 
     def test_the_buttons_fit_discords_custom_id_limit_and_round_trip(self) -> None:
         view = pack_update.note_view("c" * 32, SET, 999_999_999)
@@ -124,7 +124,7 @@ class Presses(unittest.IsolatedAsyncioTestCase):
         it = interaction_in_guild(7, bot_with(st))
         await pack_update.press(it, "c1", SET, "pick", 2)
         text, view = it.sent[0]
-        self.assertIn("Ticked = keep", text)
+        self.assertIn("Ticked = take this change", text)
         self.assertEqual(view.accepted, {"rope", "torch"})
 
     async def test_saving_with_something_unticked_asks_the_store_to_merge(self) -> None:
@@ -141,7 +141,7 @@ class Presses(unittest.IsolatedAsyncioTestCase):
         args = st.take_pack_update.await_args
         self.assertEqual(args.args[-1], {"torch"})
         self.assertEqual(args.kwargs["expected_version"], 2)  # the version the DM was shown
-        self.assertIn("your own copy", it.sent[0][0])
+        self.assertIn("your own homebrew", it.sent[0][0])
         bot.homebrew_changed.assert_called_once()
 
     async def test_a_player_cannot_save_picks_or_undo_a_merge(self) -> None:
@@ -167,13 +167,13 @@ class SessionStart(unittest.IsolatedAsyncioTestCase):
         st.pending_pack_updates = AsyncMock(return_value=[update()])
         st.take_pack_update = AsyncMock(return_value=PackTaken(False, follow(1), 0, 2, offered=2))
         st.gone_packs = AsyncMock(return_value=[])
-        own = SimpleNamespace(name="rope")
+        own = SimpleNamespace(name="Rope")
         bot = bot_with(st, mine=[own])
         await pack_update.check_updates(bot, campaign32(), 55)
         self.assertIsNone(st.take_pack_update.await_args.args[2])  # DMbot, not a person
         text = bot.post_message.await_args.args[1]
-        self.assertIn("updated to v2: 2 entries", text)
-        self.assertIn(pack_update.YOURS_WIN, text)  # it has a Rope of its own
+        self.assertIn("updated to v2: 2 entries changed", text)
+        self.assertIn("same name as Rope", text)  # it has a Rope of its own
         bot.homebrew_changed.assert_called_once()
 
     async def test_nothing_new_posts_nothing(self) -> None:
