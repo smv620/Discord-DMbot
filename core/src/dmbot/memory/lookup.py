@@ -37,6 +37,7 @@ from dmbot.memory.models import (
     RuleLink,
     name_key,
 )
+from dmbot.memory.ontology import is_dm_word
 from dmbot.memory.sounds import sound_codes
 
 log = logging.getLogger(__name__)
@@ -124,8 +125,8 @@ class CampaignLookup:
                 a.said_as,
             )
             for a in data.aliases
-            if a.entity_id in entities
-        )
+            if a.entity_id in entities and not is_dm_word(a.text)
+        )  # (the four DM words are refused as names, but an old row must never be a target, #1547)
         people_by_key: dict[str, list[NameEntry]] = defaultdict(list)
         people_by_sound: dict[str, list[NameEntry]] = defaultdict(list)
         for a in data.people:

@@ -2586,6 +2586,12 @@ class DMBot(commands.AutoShardedBot):
         table = self.tables.get(campaign.guild_id)
         if table is not None and table.campaign_id == campaign.id:
             starter: int | None = table.dm_user_id  # who started this session
+            # "The DM" is the DM who is here: the one who has spoken, or the last to speak when
+            # two have (the same answer the learner gives, #1547); the starter when no DM has.
+            # Nobody is left out as the caller: a DM asking "what did the DM say" means themself.
+            here = table.name_answers.session_dm(0, int(time.time() * 1000))
+            if here is not None and here in agreed:
+                starter = here
         else:
             starter = next(iter(campaign.dm_user_ids)) if len(campaign.dm_user_ids) == 1 else None
         return people_lines(
@@ -3679,8 +3685,8 @@ class DMBot(commands.AutoShardedBot):
             if len(table.piece_words) > PIECE_WORDS_MAX:  # (oldest first: dicts keep order)
                 del table.piece_words[next(iter(table.piece_words))]
             if self.tables.get(table.guild_id) is table:
-                table.name_answers.feed(
-                    utterance.user_id, utterance.start_ms, str(cleaned or text), consented=True
+                self._feed_name_answers(
+                    table, utterance.user_id, utterance.start_ms, str(cleaned or text)
                 )
                 # Only the DM's own lines can start it; consent was just re-checked. Lines
                 # the Cleaner tags as in character are not told apart yet (in_character).
@@ -3822,7 +3828,7 @@ class DMBot(commands.AutoShardedBot):
         table.recent.add(user_id, text, time.monotonic(), typed=True)
         if self.tables.get(table.guild_id) is table:
             # Same clock as the spoken path (Unix milliseconds); consent was just checked.
-            table.name_answers.feed(user_id, start_ms, text, consented=True)
+            self._feed_name_answers(table, user_id, start_ms, text)
             self.sidebar.ask_at_table(table, user_id, text, typed=True)
         if len(table.heard) < HEARD_MAX:
             table.heard.append((user_id, text))
@@ -6019,6 +6025,19 @@ class DMBot(commands.AutoShardedBot):
             if self.lookup is not None:
                 self.lookup.drop([cid])
             log.info("Kept how often %d name(s) were said", kept)
+
+    def _feed_name_answers(self, table: Table, user_id: int, at_ms: int, text: str) -> None:
+        """One consented line to the who-answers-to-what learner, which also needs to know who
+        the campaign's DMs are and what each is called at the table (#1547). Consent was just
+        checked by the caller."""
+        dms = {
+            uid: self.name_of(table.guild_id, uid)
+            for uid in {table.dm_user_id, *table.dm_user_ids}
+            if uid
+        }
+        # (an unknown member comes back as a mention, which is not a name: the DM still counts)
+        table.name_answers.set_dms({u: "" if n.startswith("<@") else n for u, n in dms.items()})
+        table.name_answers.feed(user_id, at_ms, text, consented=True)
 
     async def learn_people(self, table: Table) -> None:
         """After a session: turn the names people answered to at least twice into waiting
