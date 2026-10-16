@@ -423,6 +423,8 @@ def router(
                     "message": r.message,
                     "source": r.source,
                     "status": r.status,
+                    # Where the team replies; null when the account has no email.
+                    "email": r.email,
                 }
                 for r in rows
             ]
