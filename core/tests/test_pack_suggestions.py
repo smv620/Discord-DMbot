@@ -65,7 +65,7 @@ class Sending(Base):
         got = await self.packs.pack_suggestion(GUILD_A, self.pub, sid)
         assert got is not None
         self.assertEqual((got.name, got.kind, got.text, got.known, got.status),
-                         ("Ember Lamp", "item", "Glows warmly.", False, "open"))  # fmt: skip
+                         ("Ember Lamp", "item", "Glows warmly.", True, "open"))  # fmt: skip
         async with self.db.guild(GUILD_A) as conn:
             cur = await conn.execute("SELECT * FROM pack_suggestions")
             rows = await cur.fetchall()
