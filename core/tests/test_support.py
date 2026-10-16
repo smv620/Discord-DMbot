@@ -844,6 +844,49 @@ class SupportAdmin(SupportBase):
         self.assertEqual(body["counts"], {"new": 1, "answered": 2, "closed": 1, "escalated": 0})
         self.assertEqual([t["subject"] for t in body["tickets"]], ["new one b", "answered one"])
 
+    async def test_this_week_counts_the_last_seven_days_and_nothing_older(self) -> None:
+        """#1480: the numbers behind "This week: ..."; made-up tickets, and never a word of one."""
+        for age, subject in (
+            (600, "answered by the helper"),
+            (500, "answered by the team"),
+            (400, "still waiting"),
+            (300, "asked for a person"),
+            (200, "unhappy"),
+            (8 * DAY, "too old to count"),
+        ):
+            await self.add_row(ALICE.id, self.now - age, subject)
+        by = {t["subject"]: t["id"] for t in await self.tickets()}
+        await support.add_reply(self.web, by["answered by the helper"], "ai", "A.", now=self.now)
+        await support.add_reply(self.web, by["answered by the team"], "ai", "B.", now=self.now)
+        await support.add_reply(self.web, by["answered by the team"], "customer", "No.", now=1)
+        await support.add_reply(self.web, by["answered by the team"], "person", "C.", now=2)
+        await support.escalate(self.web, by["asked for a person"], "asked")
+        await support.escalate(self.web, by["unhappy"], "unhappy")
+        await support.add_reply(self.web, by["too old to count"], "ai", "D.", now=self.now)
+        await self.sign_in()
+        week = (await self.client.get("/admin/support")).json()["week"]
+        self.assertEqual(
+            week,
+            {
+                "questions": 5,
+                "helper": 1,
+                "team": 1,
+                "waiting": 3,
+                "reasons": {"unhappy": 1, "asked": 1, "limit": 0, "no-email": 0, "helper-down": 0},
+            },
+        )
+
+    async def test_this_week_is_all_zeros_with_no_tickets_and_holds_no_words(self) -> None:
+        await self.sign_in()
+        week = (await self.client.get("/admin/support")).json()["week"]
+        self.assertEqual(
+            (week["questions"], week["helper"], week["team"], week["waiting"]), (0, 0, 0, 0)
+        )
+        await self.add_row(ALICE.id, self.now, "A subject nobody should see in the numbers")
+        shown = (await self.client.get("/admin/support")).json()["week"]
+        self.assertNotIn("subject", repr(shown))
+        self.assertEqual(shown["questions"], 1)
+
     async def test_the_counts_cover_every_ticket_even_past_the_list_limit(self) -> None:
         for n in range(5):
             await self.add_row(ALICE.id, self.now - n, f"t{n}")
