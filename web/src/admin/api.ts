@@ -73,6 +73,14 @@ export interface GrantRequest {
 }
 
 export type TicketStatus = "new" | "answered" | "closed";
+/** What the Tickets list shows: one status, or all (#1375). */
+export type TicketFilter = TicketStatus | "all";
+/** How many tickets have each status, over all of them, for the filter buttons (#1375). */
+export type TicketCounts = Record<TicketStatus, number>;
+export interface TicketList {
+  tickets: SupportTicketRow[];
+  counts: TicketCounts;
+}
 
 /** A private support ticket from a paying person (#1340). Only the admin sees the words. */
 export interface SupportTicketRow {
@@ -121,8 +129,8 @@ export interface AdminApi {
     request: GrantRequest,
   ): Promise<{ action: "grant" | "change"; name: string | null }>;
   revoke(csrf: string, discordId: string): Promise<void>;
-  /** Support tickets, newest first (#1340). */
-  tickets(): Promise<SupportTicketRow[]>;
+  /** Support tickets, newest first, with the count for each status (#1340, #1375). */
+  tickets(filter?: TicketFilter): Promise<TicketList>;
   setTicketStatus(csrf: string, id: number, status: TicketStatus): Promise<void>;
 }
 
@@ -231,10 +239,19 @@ export function httpAdminApi(base: string, fetcher: typeof fetch = fetch): Admin
       });
       if (!response.ok) throw new AdminApiError(await grantProblem(response));
     },
-    async tickets() {
-      const response = await call("/admin/support");
+    async tickets(filter = "all") {
+      const response = await call(`/admin/support?status=${encodeURIComponent(filter)}`);
       if (!response.ok) throw new AdminApiError(await grantProblem(response));
-      return ((await response.json()) as { tickets: SupportTicketRow[] }).tickets;
+      const body = (await response.json()) as { tickets: SupportTicketRow[]; counts?: TicketCounts };
+      if (body.counts) return { tickets: body.tickets, counts: body.counts };
+      // An API older than #1375 sends every ticket and no counts: count and filter here, so the
+      // buttons still work until it is deployed.
+      const counts: TicketCounts = { new: 0, answered: 0, closed: 0 };
+      for (const t of body.tickets) counts[t.status] += 1;
+      return {
+        tickets: filter === "all" ? body.tickets : body.tickets.filter((t) => t.status === filter),
+        counts,
+      };
     },
     async setTicketStatus(csrf, id, status) {
       const response = await call(`/admin/support/${encodeURIComponent(String(id))}/status`, {
@@ -285,7 +302,12 @@ export function pretendAdminApi(): AdminApi {
     },
   ];
   return {
-    tickets: async () => structuredClone(tickets),
+    tickets: async (filter = "all") => {
+      const counts: TicketCounts = { new: 0, answered: 0, closed: 0 };
+      for (const t of tickets) counts[t.status] += 1;
+      const shown = tickets.filter((t) => filter === "all" || t.status === filter);
+      return { tickets: structuredClone(shown), counts };
+    },
     setTicketStatus: async (_csrf, id, status) => {
       const ticket = tickets.find((t) => t.id === id);
       if (!ticket) throw new AdminApiError("no-ticket");

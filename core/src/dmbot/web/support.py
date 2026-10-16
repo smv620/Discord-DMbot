@@ -98,8 +98,12 @@ class Row:
     email: str | None
 
 
-async def newest(db: Database, *, limit: int = LIST_LIMIT) -> list[Row]:
-    """The tickets, newest first, for the admin page."""
+async def newest(
+    db: Database, *, status: Status | None = None, limit: int = LIST_LIMIT
+) -> list[Row]:
+    """The tickets, newest first, for the admin page; only those with this status when one is
+    given (#1375). `status` is one of STATUSES (the route checks it); it goes in as a parameter."""
+    where, args = ("", (limit,)) if status is None else (" WHERE status = %s", (status, limit))
     async with db.support_admin() as conn:
         cur = await conn.execute(
             # The words come through a door function: the website's role has no right to the column.
@@ -107,10 +111,21 @@ async def newest(db: Database, *, limit: int = LIST_LIMIT) -> list[Row]:
             "SELECT id, created_at, user_id, plan, subject,"
             " COALESCE(dmbot_support_message(id), '') AS message, source, status,"
             " dmbot_support_email(user_id) AS email"
-            " FROM support_tickets ORDER BY created_at DESC, id DESC LIMIT %s",
-            (limit,),
+            f" FROM support_tickets{where} ORDER BY created_at DESC, id DESC LIMIT %s",
+            args,
         )
         return [Row(**r) for r in await cur.fetchall()]
+
+
+async def counts(db: Database) -> dict[Status, int]:
+    """How many tickets have each status, for the filter buttons (#1375). Every status is there,
+    with 0 for none, and the counts cover all tickets, not just the newest LIST_LIMIT."""
+    async with db.support_admin() as conn:
+        cur = await conn.execute(
+            "SELECT status, count(*) AS n FROM support_tickets GROUP BY status"
+        )
+        found = {r["status"]: int(r["n"]) for r in await cur.fetchall()}
+    return {status: found.get(status, 0) for status in STATUSES}
 
 
 # How many of their own questions a person sees at once (#1373).

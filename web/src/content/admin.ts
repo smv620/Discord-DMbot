@@ -118,6 +118,24 @@ export const text = {
   ticketsLead:
     "Private messages from people on a paid plan, newest first. They are deleted after 12 months, or with the account.",
   ticketsNone: "No tickets yet.",
+  // The filter above the list (#1375): what needs a reply first, and how many of each.
+  ticketsFilterLabel: "Show tickets",
+  ticketFilters: {
+    new: "Needs a reply",
+    answered: "Answered",
+    closed: "Closed",
+    all: "All",
+  } as Record<string, string>,
+  ticketFilterCount: (label: string, count: number): string => `${label} (${count})`,
+  ticketsNoneFor: {
+    new: "Nothing needs a reply.",
+    answered: "No answered tickets.",
+    closed: "No closed tickets.",
+    all: "No tickets yet.",
+  } as Record<string, string>,
+  copyAddress: "Copy address",
+  addressCopied: "Address copied.",
+  copyFailed: "Couldn't copy. Select the address and copy it by hand.",
   ticketStatuses: { new: "New", answered: "Answered", closed: "Closed" } as Record<string, string>,
   ticketFrom: (who: string, dmbotId: string, plan: string, when: string): string =>
     `${who} (DMbot ID ${dmbotId}), ${plan} plan, ${when}`,

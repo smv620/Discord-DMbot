@@ -679,6 +679,65 @@ class SupportAdmin(SupportBase):
         after = (await self.client.get("/admin/support")).json()["tickets"]
         self.assertEqual([t["status"] for t in after], ["closed", "new"])
 
+    async def make_three(self, csrf: str) -> None:
+        """Two new, one answered and one closed, so each filter has its own tickets (#1375)."""
+        for age, subject in (
+            (300, "closed one"),
+            (200, "answered one"),
+            (100, "new one a"),
+            (0, "new one b"),
+        ):
+            await self.add_row(ALICE.id, self.now - age, subject)
+        by_subject = {t["subject"]: t["id"] for t in await self.tickets()}
+        for subject, status in (("closed one", "closed"), ("answered one", "answered")):
+            self.assertEqual(
+                (await self.set_status(csrf, by_subject[subject], status)).status_code, 204
+            )
+
+    async def test_each_filter_shows_only_its_tickets_and_the_counts_cover_all(self) -> None:
+        csrf = await self.sign_in()
+        await self.make_three(csrf)
+        expected = {
+            "new": ["new one b", "new one a"],
+            "answered": ["answered one"],
+            "closed": ["closed one"],
+            "all": ["new one b", "new one a", "answered one", "closed one"],
+        }
+        for status, subjects in expected.items():
+            body = (await self.client.get("/admin/support", params={"status": status})).json()
+            self.assertEqual([t["subject"] for t in body["tickets"]], subjects, status)
+            # The counts are the same whichever filter is on: they label the buttons.
+            self.assertEqual(body["counts"], {"new": 2, "answered": 1, "closed": 1}, status)
+        # No filter is every ticket, as the page behaved before the filters.
+        body = (await self.client.get("/admin/support")).json()
+        self.assertEqual(len(body["tickets"]), 4)
+
+    async def test_the_counts_follow_a_change_and_show_zero_for_none(self) -> None:
+        csrf = await self.sign_in()
+        empty = (await self.client.get("/admin/support", params={"status": "new"})).json()
+        self.assertEqual(
+            (empty["tickets"], empty["counts"]), ([], {"new": 0, "answered": 0, "closed": 0})
+        )
+        await self.make_three(csrf)
+        (new_b,) = [t for t in await self.tickets() if t["subject"] == "new one b"]
+        await self.set_status(csrf, new_b["id"], "answered")
+        body = (await self.client.get("/admin/support", params={"status": "answered"})).json()
+        self.assertEqual(body["counts"], {"new": 1, "answered": 2, "closed": 1})
+        self.assertEqual([t["subject"] for t in body["tickets"]], ["new one b", "answered one"])
+
+    async def test_a_bad_filter_is_refused_and_a_non_admin_gets_nothing(self) -> None:
+        await self.add_row(ALICE.id, self.now)
+        # Signed out: nothing, for every filter, and no counts to learn how many people write.
+        for status in ("new", "all", "weird"):
+            answer = await self.client.get("/admin/support", params={"status": status})
+            self.assertEqual(answer.status_code, 401, status)
+            self.assertNotIn("counts", answer.text)
+        await self.sign_in()
+        for status in ("weird", "NEW", "", "new; DROP TABLE support_tickets"):
+            answer = await self.client.get("/admin/support", params={"status": status})
+            self.assertEqual(answer.status_code, 400, status)
+        self.assertEqual(len(await self.tickets()), 1)
+
     async def test_a_ticket_number_too_big_for_the_database_is_not_found_not_a_crash(self) -> None:
         csrf = await self.sign_in()
         for number in ("99999999999999999999", "0", "-3"):

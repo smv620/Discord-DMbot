@@ -22,6 +22,7 @@ import {
   AdminApiError,
   httpAdminApi,
   type SupportTicketRow,
+  type TicketCounts,
   type TicketStatus,
 } from "../src/admin/api";
 import Tickets from "../src/admin/Tickets";
@@ -387,9 +388,17 @@ const ROW: SupportTicketRow = {
   email: "alice@example.com",
 };
 
+const countsOf = (rows: SupportTicketRow[]): TicketCounts => ({
+  new: rows.filter((r) => r.status === "new").length,
+  answered: rows.filter((r) => r.status === "answered").length,
+  closed: rows.filter((r) => r.status === "closed").length,
+});
+
+/** The rows as the API answers: every row whatever the filter (the tests of a row's buttons need
+ * all statuses on screen); `filteringApi` below honours the filter like the real one. */
 function adminApi(rows: SupportTicketRow[], over: Partial<AdminApi> = {}): AdminApi {
   return {
-    tickets: vi.fn(async () => structuredClone(rows)),
+    tickets: vi.fn(async () => ({ tickets: structuredClone(rows), counts: countsOf(rows) })),
     setTicketStatus: vi.fn(async () => undefined),
     ...over,
   } as unknown as AdminApi;
@@ -440,7 +449,8 @@ describe("the admin page's tickets", () => {
 
   it("says when there are none", async () => {
     panel(adminApi([]));
-    expect(await screen.findByText(adminText.ticketsNone)).toBeTruthy();
+    // The default view is what needs a reply, so that is what it says nothing is waiting for.
+    expect(await screen.findByText(adminText.ticketsNoneFor["new"] ?? "")).toBeTruthy();
   });
 
   it.each<[TicketStatus, string, TicketStatus]>([
@@ -510,7 +520,7 @@ describe("the admin page's tickets", () => {
       tickets: vi.fn(async () => {
         calls += 1;
         if (calls > 1) throw new AdminApiError("down");
-        return [ROW];
+        return { tickets: [ROW], counts: countsOf([ROW]) };
       }),
     });
     panel(api);
@@ -536,7 +546,7 @@ describe("the admin page's tickets", () => {
     const api = adminApi([ROW], {
       tickets: vi.fn(async () => {
         if (fail) throw new AdminApiError("down");
-        return [ROW];
+        return { tickets: [ROW], counts: countsOf([ROW]) };
       }),
     });
     panel(api);
@@ -552,9 +562,15 @@ describe("the admin API calls", () => {
     vi.fn(async () => new Response(JSON.stringify(body), { status }));
 
   it("reads the list and changes a status with the CSRF token", async () => {
-    const list = reply(200, { tickets: [ROW] });
-    expect(await httpAdminApi("https://api.example", list).tickets()).toEqual([ROW]);
-    expect((list.mock.calls[0] as unknown as [string])[0]).toBe("https://api.example/admin/support");
+    const counts = { new: 1, answered: 0, closed: 0 };
+    const list = reply(200, { tickets: [ROW], counts });
+    expect(await httpAdminApi("https://api.example", list).tickets()).toEqual({
+      tickets: [ROW],
+      counts,
+    });
+    expect((list.mock.calls[0] as unknown as [string])[0]).toBe(
+      "https://api.example/admin/support?status=all",
+    );
     const change = reply(204);
     await httpAdminApi("https://api.example", change).setTicketStatus("csrf-9", 7, "closed");
     const [url, init] = change.mock.calls[0] as unknown as [string, RequestInit];
