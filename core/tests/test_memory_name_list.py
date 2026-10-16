@@ -15,6 +15,7 @@ from dmbot.memory.name_list import (
     TOO_MANY_OTHERS,
     TOO_MANY_SECRETS,
     OutName,
+    OutPerson,
     header,
     parse,
     render,
@@ -460,3 +461,86 @@ class LineSeparators(unittest.TestCase):
         )
         self.assertEqual(len(text.splitlines()), text.count("\n"))  # no hidden line breaks
         self.assertIn("Bel leros | NPC | the knight | a b", text)
+
+
+WHO = 111111111111111234
+
+
+class People(unittest.TestCase):
+    """Player or DM rows (#1559): for the campaign's DMs only, with the Discord id."""
+
+    def test_a_row_is_read_for_a_dm_with_names_and_characters(self) -> None:
+        parsed = parse(
+            f"Mike | player or DM | Mikey; Mike S | | {WHO} | Cerric; Maren", secrets=True
+        )
+        self.assertEqual(parsed.refused, [])
+        (row,) = parsed.people
+        self.assertEqual(
+            (row.who, row.names, row.plays), (WHO, ("Mike", "Mikey", "Mike S"), ("Cerric", "Maren"))
+        )
+
+    def test_a_number_too_big_for_an_id_is_refused(self) -> None:
+        for who in ("1" * 20, "9" * 19):
+            self.assertEqual(parse(f"Mike | player or DM | | | {who}", secrets=True).people, [])
+
+    def test_a_download_holds_fifty_people_a_file_so_each_uploads_again(self) -> None:
+        people = [OutPerson(WHO + i, (f"P{i}",), (), "x") for i in range(120)]
+        files = render_files([], campaign="Frost", secrets=True, people=people)
+        self.assertGreater(len(files), 1)
+        for text in files:
+            parsed = parse(text, secrets=True)
+            self.assertEqual(parsed.refused, [])
+            self.assertLessEqual(len(parsed.people), 50)
+        self.assertEqual({r.who for t in files for r in parse(t, secrets=True).people},
+                         {WHO + i for i in range(120)})  # fmt: skip
+
+    def test_the_same_person_on_two_lines_is_one(self) -> None:
+        text = f"Mike | player or DM | | | {WHO}\nMikey | player or DM | Mike | | {WHO} | Cerric"
+        (row,) = parse(text, secrets=True).people
+        self.assertEqual((row.names, row.plays), (("Mike", "Mikey"), ("Cerric",)))
+
+    def test_a_non_dm_or_a_row_without_a_good_id_is_refused(self) -> None:
+        for text, secrets in (
+            (f"Mike | player or DM | | | {WHO}", False),  # not a DM: as before
+            ("Mike | player or DM", True),
+            ("Mike | player or DM | | | 12345", True),
+            ("Mike | player or DM | | | abc", True),
+            (f"Mike | player or DM | | hidden | {WHO}", True),  # no secret names for a person
+        ):
+            parsed = parse(text, secrets=secrets)
+            self.assertEqual((parsed.people, len(parsed.refused)), ([], 1), text)
+
+    def test_the_fifth_and_sixth_parts_are_only_for_people(self) -> None:
+        parsed = parse(f"Bell | npc | | | {WHO}", secrets=True)
+        self.assertEqual(len(parsed.refused), 1)
+        self.assertEqual(parsed.lines, [])
+        self.assertEqual(len(parse("a | b | c | d | e | f | g", secrets=True).refused), 1)
+
+    def test_the_dm_words_are_never_a_table_name(self) -> None:
+        (row,) = parse(f"Mike | player or DM | DM; GM | | {WHO}", secrets=True).people
+        self.assertEqual(row.names, ("Mike",))
+
+    def test_a_download_lists_people_for_a_dm_only_and_reads_back(self) -> None:
+        people = [OutPerson(WHO, ("Mike", "Mikey"), ("Cerric",), "Player 1234")]
+        names = [OutName("Ulfgar", "npc", (), ())]
+        dm = render(names, campaign="Frost", secrets=True, people=people)
+        self.assertIn(f"Mike | player or DM | Mikey |  | {WHO} | Cerric", dm)
+        again = parse(dm, secrets=True)
+        self.assertEqual(again.refused, [])
+        self.assertEqual([(r.who, r.names, r.plays) for r in again.people],
+                         [(WHO, ("Mike", "Mikey"), ("Cerric",))])  # fmt: skip
+        other = render(names, campaign="Frost", secrets=False, people=people)
+        self.assertNotIn(str(WHO), other)
+        self.assertNotIn("player or DM", other)
+
+    def test_a_person_with_no_table_name_is_written_with_the_placeholder(self) -> None:
+        out = render(
+            [], campaign="Frost", secrets=True, people=[OutPerson(WHO, (), (), "Player 1234")]
+        )
+        self.assertIn(f"Player 1234 | player or DM |  |  | {WHO}", out)
+
+    def test_people_count_in_the_files_a_big_download_is_split_into(self) -> None:
+        people = [OutPerson(WHO + i, (f"P{i}",), (), "x") for i in range(40)]
+        files = render_files([], campaign="Frost", secrets=True, people=people)
+        found = {r.who for text in files for r in parse(text, secrets=True).people}
+        self.assertEqual(found, {WHO + i for i in range(40)})

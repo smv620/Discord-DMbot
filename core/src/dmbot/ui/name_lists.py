@@ -52,12 +52,14 @@ from dmbot.memory.name_list import (
     MAX_LINES,
     MAX_NAMES,
     OutName,
+    OutPerson,
     Parsed,
     header,
     parse,
     render_files,
     template,
 )
+from dmbot.memory.store import placeholder_name
 from dmbot.ui import logic
 from dmbot.ui.dmbot_commands import (
     NO_PINGS,
@@ -563,7 +565,7 @@ async def take_list(interaction: discord.Interaction, campaign_id: str, upload: 
         # Pure CPU, up to a fraction of a second on a full file: off the event loop.
         secrets_ok = sees_secrets(campaign, interaction.user.id)
         parsed = await asyncio.to_thread(parse, upload.text, secrets=secrets_ok)
-        if not parsed.lines and not parsed.refused:
+        if not parsed.lines and not parsed.refused and not parsed.people:
             await _tell(
                 interaction,
                 f"There are no names in {_md(upload.label)}. Lines starting with # are "
@@ -571,8 +573,9 @@ async def take_list(interaction: discord.Interaction, campaign_id: str, upload: 
             )
             return
         # Every line fits, or the only problem is secret names from someone who may not
-        # add them (the AI must never turn those into names everyone sees).
-        if all(why.startswith(ONLY_DM_SECRETS) for _, why in parsed.refused):
+        # add them (the AI must never turn those into names everyone sees). A list with
+        # players or DMs in it never goes to the AI: it holds Discord ids (#1559).
+        if parsed.people or all(why.startswith(ONLY_DM_SECRETS) for _, why in parsed.refused):
             await import_list(interaction, campaign.id, upload.text)
             return
     if _bot(interaction).ai is None:
@@ -759,7 +762,7 @@ async def show_ai_list(
 ) -> None:
     """The AI's list, in full as a file and the start in the message, with Add and Cancel.
     Nothing is saved until the DM presses Add."""
-    parsed = parse(listed, secrets=secrets)
+    parsed = parse(listed, secrets=secrets, people=False)  # (no player rows from an AI, #1559)
     if not parsed.lines:
         await interaction.edit_original_response(
             content=f"🤖 DMbot's AI found no names in {_md(upload.label)}. Nothing was added."
@@ -812,7 +815,7 @@ class AIPreview(_Menu):
     async def _add(self, interaction: discord.Interaction) -> None:
         self.stop()
         await interaction.response.edit_message(view=None)
-        await import_list(interaction, self.campaign_id, self.listed)
+        await import_list(interaction, self.campaign_id, self.listed, people=False)
 
     async def _cancel(self, interaction: discord.Interaction) -> None:
         self.stop()
@@ -821,7 +824,9 @@ class AIPreview(_Menu):
         )
 
 
-async def import_list(interaction: discord.Interaction, campaign_id: str, text: str) -> None:
+async def import_list(
+    interaction: discord.Interaction, campaign_id: str, text: str, *, people: bool = True
+) -> None:
     """Save a list of names in one go, then say what happened, with one Undo for all."""
     campaign = await _campaign_for(interaction, campaign_id)
     memory = _memory(interaction)
@@ -833,7 +838,7 @@ async def import_list(interaction: discord.Interaction, campaign_id: str, text: 
     if names is None:
         return
     secrets_ok = sees_secrets(campaign, interaction.user.id)
-    parsed = await asyncio.to_thread(parse, text, secrets=secrets_ok)
+    parsed = await asyncio.to_thread(parse, text, secrets=secrets_ok, people=people)
     # Same names fold in, near names are asked about (#369). For anyone but the campaign's
     # DMs, a clash with a secret name looks exactly like no clash: they never learn one
     # exists.
@@ -899,13 +904,98 @@ async def import_list(interaction: discord.Interaction, campaign_id: str, text: 
         if (ids := [i for pos in positions if (i := saved[pos]) is not None])
     }
     counts = Counts(added, look, known, p.dropped, enriched, p.swapped, p.repeated)
+    people_lines = await _add_people(interaction, campaign, parsed) if parsed.people else []
     await _send_summary(
-        interaction, campaign, parsed, counts, batch, kinds, near, p.kinds, memory.keep_days
-    )
+        interaction, campaign, parsed, counts, batch, kinds, near, p.kinds, memory.keep_days,
+        extra=people_lines,
+    )  # fmt: skip
     if near:
         await NearQuestions.send(interaction, campaign.id, near, saved)
     if p.kinds:
         await KindDiffQuestions.send(interaction, campaign.id, p.kinds)
+
+
+PEOPLE_SHOWN = 5  # refused player or DM rows named in the summary, then "and N more"
+
+
+def _and_more(items: Sequence[str], shown: int) -> str:
+    return f" and {len(items) - shown} more" if len(items) > shown else ""
+
+
+async def _add_people(
+    interaction: discord.Interaction, campaign: Campaign, parsed: Parsed
+) -> list[str]:
+    """The player or DM rows of a list from a campaign DM (#1559): each id must be a person
+    in this server (not a bot); their names are added as table names, never replacing, and the
+    characters they play are linked where that is clear. A row that can't be used is named, and
+    the rest still load. Returns the lines for the summary."""
+    memory = _memory(interaction)
+    guild = interaction.guild
+    if memory is None or guild is None or not sees_secrets(campaign, interaction.user.id):
+        return []
+    done = names_added = 0
+    linked: list[str] = []
+    flagged: list[str] = []
+    refused: list[str] = []
+    for row in parsed.people:
+        # Checked again before every row: this loop waits on Discord between them.
+        now = await _bot(interaction).campaigns.get(campaign.guild_id, campaign.id)
+        if now is None or not sees_secrets(now, interaction.user.id):
+            refused.append(f"line {row.number}: only the campaign's DM can add players and DMs")
+            break
+        try:
+            member = guild.get_member(row.who) or await guild.fetch_member(row.who)
+        except discord.NotFound:
+            refused.append(f"line {row.number}: that Discord id isn't in this server")
+            continue
+        except discord.HTTPException:
+            refused.append(f"line {row.number}: DMbot couldn't check that Discord id just now")
+            continue
+        if member.bot:
+            refused.append(f"line {row.number}: that is a bot, not a person")
+            continue
+        try:
+            written = await memory.add_person_names(
+                campaign.guild_id, campaign.id, row.who, row.names, row.plays
+            )
+        except MemoryRuleError as exc:
+            refused.append(f"line {row.number}: {exc}")
+            continue
+        except Exception as exc:
+            # (the type only: the text of a database error can hold the Discord id)
+            log.error("Adding a player's names from a list failed (%s)", type(exc).__name__)
+            refused.append(
+                f"line {row.number}: something went wrong, so nothing was added for this row. "
+                "Try uploading again"
+            )
+            continue
+        done += 1
+        names_added += written.value.names_added
+        linked += written.value.linked
+        flagged += written.value.flagged
+    if done:
+        changed(interaction, campaign)
+    lines = []
+    if done:
+        lines.append(
+            f"🧑 **Players and DMs:** {done} updated, {names_added} table "
+            f"name{'' if names_added == 1 else 's'} added. (Undo doesn't take these back.)"
+            + (f" Linked to {_md(', '.join(linked[:5]))}{_and_more(linked, 5)}." if linked else "")
+        )
+    if flagged:
+        lines.append(
+            f"❓ Not linked: {_md(', '.join(flagged[:5]))}{_and_more(flagged, 5)}. Someone else "
+            "already plays them, or DMbot doesn't know them yet. Open 🧑 Check who is who to "
+            "fix this."
+        )
+    for why in refused[:PEOPLE_SHOWN]:
+        lines.append(f"⚠️ {_md(why)}")
+    if len(refused) > PEOPLE_SHOWN:
+        lines.append(
+            f"…and {len(refused) - PEOPLE_SHOWN} more player or DM rows had problems and were "
+            "left out."
+        )
+    return lines
 
 
 @dataclass(frozen=True, slots=True)
@@ -929,6 +1019,7 @@ async def _send_summary(
     near: list[Near],
     differ: list[KindDiffers],
     undo_days: int,
+    extra: Sequence[str] = (),
 ) -> None:
     lines = [
         summary_text(
@@ -937,6 +1028,7 @@ async def _send_summary(
             undo_days=undo_days,
         )
     ]  # fmt: skip
+    lines.extend(extra)
     asked = sorted(kinds.items(), key=lambda kv: (-len(kv[1]), kv[0]))[:KIND_QUESTIONS]
     if asked:
         words = ", ".join(
@@ -1601,12 +1693,17 @@ class UndoListButton(
 
 
 def download_files(
-    names: CampaignLookup, campaign: Campaign, *, secrets: bool
+    names: CampaignLookup,
+    campaign: Campaign,
+    *,
+    secrets: bool,
+    people: Sequence[tuple[int, list[str], list[str]]] = (),
 ) -> tuple[list[str], int]:
     """The campaign's confirmed names as list files (the same format Add many reads), and
     how many names they hold. Misheard spellings DMbot learned aren't other names, so
     they're left out. A big campaign comes as several files, each small enough to add again
-    (#685)."""
+    (#685). `people`: who is who at the table (Discord id, characters, table names), listed for
+    the campaign's DMs only, as secret names are (#1559)."""
     by_entity: dict[str, list[NameEntry]] = {}
     for a in names.names:
         if a.confirmed and a.kind != "misheard":
@@ -1620,11 +1717,37 @@ def download_files(
         others = tuple(a.text for a in mine if not a.secret and a.key != own)
         hidden = tuple(a.text for a in mine if a.secret) if secrets else ()
         out.append(OutName(e.name, e.kind_key, others, hidden))
-    return render_files(out, campaign=campaign.name, secrets=secrets), len(out)
+    listed = (
+        [
+            # (a stable order: the names were saved in the same second)
+            OutPerson(u, tuple(sorted(also, key=name_key)), tuple(chars), placeholder_name(u))
+            for u, chars, also in people
+        ]
+        if secrets
+        else []
+    )
+    return (
+        render_files(out, campaign=campaign.name, secrets=secrets, people=listed),
+        len(out) + len(listed),
+    )
 
 
 # Discord takes this many files in one message.
 FILES_PER_MESSAGE = 10
+
+
+async def _people(
+    interaction: discord.Interaction, campaign: Campaign
+) -> list[tuple[int, list[str], list[str]]]:
+    """Who is who, for a DM's download. If it can't be read the names still download."""
+    memory = _memory(interaction)
+    if memory is None:
+        return []
+    try:
+        return await memory.table_people(campaign.guild_id, campaign.id)
+    except Exception:
+        log.exception("Couldn't read the players for a names download")
+        return []
 
 
 async def send_download(interaction: discord.Interaction, campaign_id: str) -> None:
@@ -1636,7 +1759,10 @@ async def send_download(interaction: discord.Interaction, campaign_id: str) -> N
     if names is None:
         return
     secrets = sees_secrets(campaign, interaction.user.id)
-    texts, count = await asyncio.to_thread(download_files, names, campaign, secrets=secrets)
+    people = await _people(interaction, campaign) if secrets else []
+    texts, count = await asyncio.to_thread(
+        download_files, names, campaign, secrets=secrets, people=people
+    )
     if not count:
         await _tell(
             interaction,
