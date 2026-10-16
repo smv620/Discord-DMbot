@@ -99,7 +99,7 @@ export const held: Held[] = [
   {
     date: "2026-10-16",
     title: "Your own homebrew",
-    what: "Your campaign can keep its own spells, monsters, items and rules. Open Settings, then Homebrew, to add them in your own words. Only you see an entry until you let players know. When you look up a rule, your homebrew comes before the free rules. DMbot can also show a short card when your table says one of your homebrew names, and you can download your homebrew as a file or load one back. On a paid plan you can share your homebrew as a pack with another table, and follow packs other DMs share. Your own homebrew always wins, new versions of a pack you follow arrive at your next session start, and you can undo them or pick only the changes you want.",
+    what: "Your campaign can keep its own spells, monsters, items and rules. Open Settings, then Homebrew, to add them in your own words. Only you see an entry until you let players know. When you look up a rule, your homebrew comes before the free rules. DMbot can also show a short card when your table says one of your homebrew names, and you can download your homebrew as a file or load one back. On a paid plan you can share your homebrew as a pack with another table, and follow packs other DMs share. Your own homebrew always wins, new versions of a pack you follow arrive at your next session start, and you can undo them or pick only the changes you want. If your table made an entry the pack lacks, you can suggest it to the pack's DM without your name.",
     reason: "Held until it has been seen working on the test server (#1520, #1527).",
   },
   {

@@ -733,6 +733,14 @@ never does.
   of Pick changes copies the pack into the campaign's own homebrew (its own entries win) and ends the follow,
   one Undo for all; a pack whose publisher stopped sharing is marked "no longer updated", said once. No
   Compare button: the note says when a changed entry shares a name with the campaign's own (which wins).
+  Suggestions built (#1537, migration 0102): a following campaign's DM presses 💡 Suggest to the pack on the
+  campaign's own entry (Settings → Homebrew → the entry; a pick when several packs are followed; an entry
+  that came from a book says it stays home). The publisher gets one DM-screen note, "A table using **<pack>
+  homebrew** suggests (sender not shown)", with See / Add to pack / No thanks, and the sender is never
+  named. Add to pack puts the entry in the publisher's own homebrew (a new name, or replacing their own
+  entry of that name) and makes the next pack version through the same checks as Publish my changes (paid
+  plan, a DM, nothing from a book). Limits as for sets (#1259): one open per entry per pack, an open cap,
+  stale ones expire; the sender hears the outcome once at its next session start.
 - **Relationship definitions travel with a set (#1456; Supervisor decision, 2026-10-16).** At Share the DM
   sees a tick list of the campaign's own relationships (each with its label and what it means; all ticked to
   start) and only the ticked ones go into the set's content: words only (the name, how it reads from the
