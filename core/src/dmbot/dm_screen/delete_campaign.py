@@ -21,6 +21,7 @@ import discord
 
 from dmbot.campaigns import Campaign
 from dmbot.campaigns.models import CampaignError
+from dmbot.logs import log_context
 
 log = logging.getLogger(__name__)
 
@@ -30,17 +31,27 @@ _ID = r"(?P<campaign>[0-9a-f]{32})"
 GONE = "That campaign isn't here any more."
 FAILED = "That didn't work. Nothing was deleted. Try again in a moment."
 ONLY_GMS = "Only this campaign's game masters can use its settings."
-NOT_YOURS = "Only {who}, whose plan this campaign uses, can delete it."
-UNKNOWN_HOLDER = "Only the game master whose plan this campaign uses can delete it."
+NOT_YOURS = "Only {who}, whose plan this campaign uses, can delete it. Ask them to do it."
+UNKNOWN_HOLDER = (
+    "Only the game master whose plan this campaign uses can delete it. Ask them to do it."
+)
 PLAYING = "**{name}** is being played right now. Stop the session first, then try again."
 WARNING = (
     "🗑 This deletes **{name}** for everyone: its story memory, notes, recaps, house rules, "
-    "homebrew and transcripts. It can't be undone. Copies people already downloaded stay."
+    "homebrew and transcripts. It can't be undone. Copies people already downloaded stay, "
+    "and transcripts already posted in your channels stay there."
 )
 WARNING_BACKUP = " To keep a copy, press 💾 Back up first."
-TYPE_NAME = "Type the campaign's name to delete it"
-WRONG_NAME = "That isn't the campaign's name, so nothing was deleted."
-DELETED = "🗑 Deleted **{name}**."
+WARNING_END = "\n\nSure? Press **Delete it**. You'll type the name to confirm."
+KEPT = "OK, **{name}** is kept. Nothing was deleted."
+TYPE_NAME = "Type the name to confirm"
+WRONG_NAME = (
+    "That doesn't match **{name}**, so nothing was deleted. "
+    "Press **Delete this campaign** to try again."
+)
+DELETED = (
+    "🗑 Deleted **{name}**. Its transcript and chat channels stay until a server admin removes them."
+)
 TOLD = "🗑 {who} deleted **{name}**."
 NAME_LIMIT = 100  # a campaign name's longest length; the typed box holds as much
 
@@ -125,8 +136,8 @@ class DeleteButton(
             return
         text = WARNING.format(name=discord.utils.escape_markdown(campaign.name))
         await interaction.response.send_message(
-            text + (WARNING_BACKUP if can_copy else ""),
-            view=DeleteWarning(campaign.id, can_copy=can_copy),
+            text + (WARNING_BACKUP if can_copy else "") + WARNING_END,
+            view=DeleteWarning(campaign.id, campaign.name, can_copy=can_copy),
             ephemeral=True,
             allowed_mentions=NO_PINGS,
         )
@@ -135,17 +146,17 @@ class DeleteButton(
 class DeleteWarning(discord.ui.View):
     """The warning's buttons. Short-lived and private: an answer to one press."""
 
-    def __init__(self, campaign_id: str, *, can_copy: bool) -> None:
+    def __init__(self, campaign_id: str, name: str, *, can_copy: bool) -> None:
         super().__init__(timeout=300)
-        self.campaign_id = campaign_id
+        self.campaign_id, self.name = campaign_id, name
         if not can_copy:  # only where copies exist (paid campaigns)
             self.remove_item(self.backup)
 
-    @discord.ui.button(label="Delete it…", emoji="🗑", style=discord.ButtonStyle.danger)
+    @discord.ui.button(label="Delete it", emoji="🗑", style=discord.ButtonStyle.danger)
     async def delete(
         self, interaction: discord.Interaction, button: discord.ui.Button[Any]
     ) -> None:
-        await interaction.response.send_modal(ConfirmForm(self.campaign_id))
+        await interaction.response.send_modal(ConfirmForm(self.campaign_id, self.name))
 
     @discord.ui.button(label="Back up first", emoji="💾", style=discord.ButtonStyle.secondary)
     async def backup(
@@ -158,7 +169,9 @@ class DeleteWarning(discord.ui.View):
     @discord.ui.button(label="Keep it", style=discord.ButtonStyle.secondary)
     async def keep(self, interaction: discord.Interaction, button: discord.ui.Button[Any]) -> None:
         self.stop()
-        await interaction.response.edit_message(content="Nothing was deleted.", view=None)
+        await interaction.response.edit_message(
+            content=KEPT.format(name=discord.utils.escape_markdown(self.name)), view=None
+        )
 
 
 class ConfirmForm(discord.ui.Modal):
@@ -168,9 +181,10 @@ class ConfirmForm(discord.ui.Modal):
         label=TYPE_NAME[:45], max_length=NAME_LIMIT
     )
 
-    def __init__(self, campaign_id: str) -> None:
+    def __init__(self, campaign_id: str, name: str = "") -> None:
         super().__init__(title="Delete this campaign?")
         self.campaign_id = campaign_id
+        self.name_box.placeholder = name[:100] or None  # shown so it can be copied
 
     async def on_submit(self, interaction: discord.Interaction) -> None:
         await interaction.response.defer(ephemeral=True)
@@ -194,27 +208,33 @@ async def delete_now(interaction: discord.Interaction, campaign_id: str, typed: 
                 await _tell(interaction, refused or GONE)
                 return False
             if not same_name(typed, campaign):
-                await _tell(interaction, WRONG_NAME)
+                await _tell(
+                    interaction,
+                    WRONG_NAME.format(name=discord.utils.escape_markdown(campaign.name)),
+                )
                 return False
-            await client.campaigns.delete(guild.id, campaign.id)
+            await client.campaigns.delete(guild.id, campaign.id, only_if_owner=user_id)
         except CampaignError as exc:
             await _tell(interaction, str(exc))
             return False
         except Exception:
-            log.exception("Couldn't delete a campaign")
+            with log_context(guild_id=guild.id, campaign_id=campaign_id):
+                log.exception("Couldn't delete a campaign")
             await _tell(interaction, FAILED)
             return False
-    log.info("A campaign was deleted by its plan holder")
+    with log_context(guild_id=guild.id, campaign_id=campaign.id):
+        log.info("A campaign was deleted by its plan holder")
     # After the delete went through, from the row as it was before it (the channel ids went
     # with the row). The campaign is gone either way: a failure here only leaves a channel.
     try:
         await client.retire_campaign_channels(campaign, int(time.time()), by_hand=True)
     except Exception:
-        log.exception("Couldn't tidy a deleted campaign's channels")
+        with log_context(guild_id=guild.id, campaign_id=campaign.id):
+            log.exception("Couldn't tidy a deleted campaign's channels")
     name = discord.utils.escape_markdown(campaign.name)
     who = discord.utils.escape_markdown(client.name_of(guild.id, user_id))
+    await _tell(interaction, DELETED.format(name=name))  # first: the messages below can be slow
     for other in sorted(campaign.dm_user_ids - {user_id}):
         with contextlib.suppress(Exception):  # (messages off, left Discord: nothing to do)
             await client.dm_user(other, TOLD.format(who=who, name=name))
-    await _tell(interaction, DELETED.format(name=name))
     return True

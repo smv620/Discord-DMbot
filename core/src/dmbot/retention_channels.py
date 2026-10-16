@@ -45,7 +45,7 @@ CLOSING_NOTE = (
 # When the campaign's plan holder deleted it by hand (#1608).
 DELETED_NOTE = (
     "This campaign was deleted on {date}. "
-    "DMbot no longer uses this channel. A server admin can delete it."
+    "DMbot no longer uses this channel. A server admin can delete it if it isn't needed."
 )
 
 

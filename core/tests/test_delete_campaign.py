@@ -11,7 +11,7 @@ from typing import Any
 from unittest.mock import AsyncMock
 
 from dmbot import retention_channels as rc
-from dmbot.campaigns import Campaign, CampaignStore
+from dmbot.campaigns import Campaign, CampaignError, CampaignStore
 from dmbot.dm_screen import delete_campaign as dc
 from dmbot.dm_screen.settings import settings_view
 from tests import test_retention_channels as rcs
@@ -145,10 +145,11 @@ class Deleting(DatabaseTest):
         text = it.response.send_message.await_args.args[0]
         self.assertTrue(kwargs["ephemeral"])
         self.assertIn("deletes **Curse of Strahd** for everyone", text)
-        self.assertIn("It can't be undone. Copies people already downloaded stay.", text)
+        self.assertIn("It can't be undone. Copies people already downloaded stay", text)
+        self.assertIn("Sure? Press **Delete it**.", text)
         self.assertIn("press 💾 Back up first", text)
         labels = [str(b.label) for b in kwargs["view"].children]
-        self.assertEqual(labels, ["Delete it…", "Back up first", "Keep it"])
+        self.assertEqual(labels, ["Delete it", "Back up first", "Keep it"])
 
     async def test_no_backup_button_where_there_are_no_copies(self) -> None:
         self.client.can_copy = False
@@ -156,11 +157,14 @@ class Deleting(DatabaseTest):
         text = it.response.send_message.await_args.args[0]
         self.assertNotIn("Back up", text)
         labels = [str(b.label) for b in it.response.send_message.await_args.kwargs["view"].children]
-        self.assertEqual(labels, ["Delete it…", "Keep it"])
+        self.assertEqual(labels, ["Delete it", "Keep it"])
 
     async def test_another_game_master_is_told_whose_it_is(self) -> None:
         it = await self.press(OTHER_DM)
-        self.assertEqual(self.said(it), "Only Mira, whose plan this campaign uses, can delete it.")
+        self.assertEqual(
+            self.said(it),
+            "Only Mira, whose plan this campaign uses, can delete it. Ask them to do it.",
+        )
         self.assertIsNotNone(await self.exists())
 
     async def test_a_player_is_refused(self) -> None:
@@ -179,7 +183,7 @@ class Deleting(DatabaseTest):
     async def test_a_wrong_name_deletes_nothing(self) -> None:
         it = self.interaction()
         self.assertFalse(await dc.delete_now(it, self.campaign.id, "Curse"))
-        self.assertEqual(self.said(it), dc.WRONG_NAME)
+        self.assertEqual(self.said(it), dc.WRONG_NAME.format(name="Curse of Strahd"))
         self.assertIsNotNone(await self.exists())
         self.assertEqual((self.client.retired, self.client.told), ([], []))
 
@@ -189,7 +193,7 @@ class Deleting(DatabaseTest):
         self.assertIsNone(await self.exists())
         [(retired, by_hand)] = self.client.retired
         self.assertEqual((retired.id, by_hand), (self.campaign.id, True))
-        self.assertEqual(self.said(it), "🗑 Deleted **Curse of Strahd**.")
+        self.assertIn("🗑 Deleted **Curse of Strahd**.", self.said(it))
 
     async def test_the_other_game_masters_are_told_once_and_not_the_deleter(self) -> None:
         await dc.delete_now(self.interaction(), self.campaign.id, "Curse of Strahd")
@@ -233,6 +237,37 @@ class Deleting(DatabaseTest):
         form = pressed.response.send_modal.await_args.args[0]
         self.assertIsInstance(form, dc.ConfirmForm)
         self.assertLessEqual(len(str(form.name_box.label)), 45)
+
+    async def test_a_hand_over_between_the_look_and_the_delete_stops_it(self) -> None:
+        async with self.db.guild(GUILD) as conn:  # the plan moved after the checks passed
+            await conn.execute(
+                "UPDATE campaigns SET owner_user_id = %s WHERE id = %s",
+                (OTHER_DM, self.campaign.id),
+            )
+        with self.assertRaisesRegex(CampaignError, "changed just now"):
+            await self.store.delete(GUILD, self.campaign.id, only_if_owner=OWNER)
+        self.assertIsNotNone(await self.exists())
+        await self.store.delete(GUILD, self.campaign.id, only_if_owner=OTHER_DM)
+        self.assertIsNone(await self.exists())
+
+    async def test_the_delete_waits_for_a_session_start_holding_the_lock(self) -> None:
+        async with self.client.session_lock(GUILD):
+            task = asyncio.ensure_future(
+                dc.delete_now(self.interaction(), self.campaign.id, "Curse of Strahd")
+            )
+            await asyncio.sleep(0.2)
+            self.assertFalse(task.done())
+            self.assertIsNotNone(await self.exists())
+        self.assertTrue(await task)
+
+    async def test_the_deleter_hears_before_the_others_are_messaged(self) -> None:
+        order: list[str] = []
+        it = self.interaction()
+        it.response.is_done = lambda: True
+        it.followup.send = AsyncMock(side_effect=lambda *a, **k: order.append("deleter"))
+        self.client.dm_user = AsyncMock(side_effect=lambda *a: order.append("other"))  # type: ignore[method-assign]
+        await dc.delete_now(it, self.campaign.id, "Curse of Strahd")
+        self.assertEqual(order, ["deleter", "other"])
 
     async def test_two_presses_delete_it_once(self) -> None:
         results = await asyncio.gather(
