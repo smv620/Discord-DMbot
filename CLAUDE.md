@@ -244,9 +244,10 @@ terminal output or Discord screenshots copied to it.
   before planning test-related work.
 - Same privacy rule as issues: no tokens, `.env` contents, or players' personal data.
 - **Log-only PRs may be merged by any Claude session** once CI passes (owner decision,
-  2026-10-04). A PR counts as log-only when it changes nothing but
-  `docs/testing-status.log` and/or `docs/testing-history.log`. Every other PR is merged
-  by RepoManager (see "Workflow").
+  2026-10-04). A PR counts as log-only when it changes nothing but the three testing logs:
+  `docs/testing-status.log`, `docs/testing-history.log` and/or `docs/next-test-step.md`
+  (Supervisor, 2026-10-16, after #1554: the next-step page is one of the logs dev1 keeps).
+  Every other PR is merged by RepoManager (see "Workflow").
 
 ## Hard rules
 - **Simple enough for a child:** user-facing text uses plain words, never technical terms
