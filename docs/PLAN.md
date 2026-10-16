@@ -674,6 +674,50 @@ or servers; only the campaign's DMs change anything (the store checks in the sam
     (version + 1); a file that would take the campaign over 200 entries loads nothing and says the count.
 - Sharing as a pack (part 2) is built: see "Shared rulesets" (#1527).
 
+**Homebrew (part 2): links, sources and on/off (owner, 2026-10-16).** This changes part 1. Where the two
+differ, this wins.
+- **Rules are house rules, not homebrew.** Homebrew is game content: spells, monsters, items, feats,
+  conditions and other things. There is no "rule" kind; migration 0111 moves rule entries into house rules
+  (#1628).
+- **Homebrew is added from a link, for now.** The DM pastes the address of a **published** homebrew page,
+  for example `https://www.dndbeyond.com/magic-items/2302039-amulet-of-trueshot`, and DMbot reads that one
+  page and saves the entry. Typing an entry in (➕ Add) and 📥 Load file are switched off for now, with
+  their code kept; they come back later with their own source (below). Entries already saved stay.
+  - **Only approved sites are fetched**, starting with dndbeyond.com. One address, fetched once, at the
+    direction of the one DM who pasted it: never a crawl, never a list of pages, never following links
+    from the page. https only, the site's own address after any redirect, a size and time limit, and no
+    D&D Beyond sign-in (no password or cookies, ever).
+  - **Not published:** D&D Beyond answers an unpublished homebrew page with "page not found". DMbot then
+    says: "That page isn't public. Publish your homebrew on D&D Beyond first, then paste the link again."
+  - **The risk is accepted (owner, 2026-10-16):** D&D Beyond's terms limit automated access. The owner
+    reads them as aimed at automated scraping, which this is not: a single page, pulled when a single
+    user asks for it. Revisit if D&D Beyond objects or blocks it.
+- **Permission once per site, per campaign.** The first time a campaign imports from a site, the DM sees
+  the right-to-use warning ("DMbot doesn't check this…") and confirms once. That approval sticks: every
+  later link from the same site in that campaign needs no new confirmation. Who confirmed and when is kept
+  (table of approved sites per campaign). A campaign that has not approved a site cannot use content from
+  it, whether imported there or reached through a pack.
+- **Every entry records its source.** The database keeps, for every entry:
+  - **Link:** the address it came from and its site (the domain), plus who added it.
+  - **Typed** (later): the Discord user who typed it.
+  - **Uploaded** (later): the Discord user by default, or a credit the uploader gives instead: a website
+    (its domain then needs the same once-per-site approval) or a typed name.
+  Entries saved before this record "typed" by the DM who made them.
+- **One copy of a published page.** A page imported by link is public content, not a campaign's own data,
+  so DMbot keeps **one copy per address** and each campaign's entry points to it. This is the second
+  exception to campaign isolation, next to shared rulesets: only the published page's content is shared.
+  Who imported it, from which campaign, and that campaign's on/off choice stay with the campaign.
+- **On/off replaces hidden.** Homebrew and house rules are not hidden from players any more; the 🙈/👀
+  "players may know" switch goes. Instead each entry is **on** (used everywhere: rule lookups, rules cards,
+  the DM sidebar, table questions) or **off** (kept, but DMbot doesn't use it at the table). **Remove**
+  deletes it. Existing entries are all on.
+- **Packs carry imported entries.** A pack holds pointers to entries, so imported pages travel by
+  reference, never as copies. A campaign that follows a pack must have approved each site the pack's
+  entries come from, once per site, before those entries are used. Entries from a shared rulebook
+  (`from_book`) still never go into a pack.
+- **Build order:** #1628 (rules out, PR #1630) → #1629 (on/off replaces hidden) → sources and site approvals
+  (schema) → import by link → packs with imported entries → the website.
+
 **Shared rulesets: homebrew packs and house-rules sets (owner, 2026-10-14).** Rules can be shared between
 campaigns, in the same server or another one, when both sides choose to. Only rules cross; a campaign's story
 never does.

@@ -293,7 +293,8 @@ terminal output or Discord screenshots copied to it.
   campaign's DMs may publish their own homebrew or house rules as a set, and another
   campaign's DM may choose to follow it (in the same server, or another one with a share
   code). Only rules cross, never story memory, names, transcripts, notes or sheets, and never
-  content from a shared rulebook or adventure. Only the publisher changes a set; a follower's
+  content from a shared rulebook or adventure. Published homebrew imported by link is stored once and
+  pointed to by each campaign that imported or follows it (owner, 2026-10-16). Only the publisher changes a set; a follower's
   changes stay its own. See docs/PLAN.md, "Shared rulesets".
 - **API keys:** customers' keys are entered through private forms, stored encrypted, never
   logged, and never shown back in full.
@@ -361,11 +362,19 @@ terminal output or Discord screenshots copied to it.
     data, with short quotes as evidence and citations. Record who confirmed and when. It stays in that one campaign (never shared
     between campaigns or servers), and the DM can delete it; it goes when the campaign is
     deleted. It can never go into a shared ruleset.
+  - **Published homebrew by link** (owner, 2026-10-16): a DM may import a homebrew page that its
+    author has published on an approved site (dndbeyond.com first) by pasting its address. DMbot
+    fetches that one page, once, when that one DM asks for it: never a crawl. The DM confirms the
+    right to use content once per site per campaign, and who confirmed and when is recorded.
+    DMbot keeps one copy per address, and campaigns point to it. A pack may carry these pointers; a
+    following campaign must approve each site first. Every entry records its source. See
+    docs/PLAN.md, "Homebrew (part 2)".
   - **Everything else:** without that confirmation, nothing is bulk-copied into the
     database or prompts; send only short, relevant excerpts per query (rules lookups
     without a shared rulebook, D&D Beyond).
 - **D&D Beyond:** no server-side storage of the user's D&D Beyond password or session
-  cookies. Use public character links; campaign access comes later via a browser
+  cookies. Use public character links and published homebrew links (see IP above); campaign
+  access comes later via a browser
   extension running in the DM's own session.
 - **Least privilege:** request the narrowest Discord intents and OAuth scopes
   (Google: `drive.file`). Every access must be visible and revocable via slash command.
