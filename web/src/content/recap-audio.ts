@@ -29,10 +29,6 @@ export const pricingRow = {
   line: "After a session, DMbot reads your recap aloud in a narrator's voice, with music behind it. You decide what your table hears.",
 };
 
-/** The plans question's answer while the audio is live: "everything" stays true. */
-export const plansAnswer = (featureList: string, tryItName: string): string =>
-  `Every plan has the same DMbot. Plans differ only in hours and campaigns (the free ${tryItName} has no backups or downloads): it ${featureList}. Narrated recaps with music are an extra: Guild and Pro include them, and you can add them to the other paid plans.`;
-
 /** My Account's part and the recap page's line. */
 export const accountWords = {
   heading: "Narrated recaps with music",
