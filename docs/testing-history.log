@@ -2423,3 +2423,7 @@ Overall ...................................... PASS (Deepgram baseline: 33/33, 1
   form; (3) a quick question naming a confirmed entry on the test server gets a reply, and nothing from that entry's description
   appears in the raw transcript line. Follow-ups: the sidebar checker on #1370 (needs the key, run by the owner) and the recall speed
   numbers on #1350 (dev1, on a throwaway Postgres on this server).
+  Follow-up, 02:25 UTC (8 minutes after the deploy): 0 ERROR, CRITICAL or traceback lines in core and web-api since 02:17; core and web-api still up, web-api healthy; no
+  quick-answer session or ticket in the logs yet. Recall speed (#1350) measured the same morning on a throwaway Postgres 16 on this server: best 42 to 54 ms,
+  median 52 to 66 ms, worst 59 to 83 ms over 3 runs of 7 (numbers and caveats on #1350). Also found: the CI check post-supervisor-status fails on every PR
+  (datetime.UTC needs Python 3.11, the job runs 3.10): #1409.
