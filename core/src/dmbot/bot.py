@@ -2595,8 +2595,8 @@ class DMBot(commands.AutoShardedBot):
             return await self.all_house_rules(campaign.guild_id, campaign.id)
 
         async def brews(campaign: Campaign) -> Sequence[Homebrew]:
-            # All of the campaign's own entries: the sidebar engine keeps the hidden ones out of
-            # every prompt and answer (#1520), but needs them to know a name is overridden.
+            # The campaign's own entries that are on (the reader leaves out those the DM turned
+            # off, #1629), and the followed packs' (#1520).
             if self.homebrew_reader is None:
                 return []
             return await self.homebrew_reader.list(campaign.guild_id, campaign.id)
@@ -3979,7 +3979,7 @@ class DMBot(commands.AutoShardedBot):
         own = table.homebrew_spotter.find(line) if table.homebrew_spotter is not None else []
         if own and table.homebrew_spotter is not None:
             # The campaign's own homebrew comes before the book, and a homebrew name shadows the
-            # book's (hidden or not: the card is for the DM screen only). A shared book's entry
+            # book's (the card is for the DM screen only). A shared book's entry
             # ranks in its edition's place, so one that comes after the free rules' entry of the
             # same name steps aside and the free rules' card stands (#1569).
             target, fallback = table.rules_rulesets

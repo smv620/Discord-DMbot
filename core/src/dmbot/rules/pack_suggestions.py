@@ -161,6 +161,8 @@ class PackSuggestionStore(PackUpdateStore):
                 raise RuleSetError(ALREADY_SENT)
             if counts["n"] >= SUGGEST_FOLLOWER_MAX:
                 raise RuleSetError(TOO_MANY_SENT)
+            # (`known` is always true: nothing is hidden from players any more, part 2. The column
+            # stays so suggestions already stored and the door keep their shape.)
             cur = await conn.execute(
                 "SELECT outcome, pub_guild, pub_campaign FROM dmbot_suggest_entry("
                 "%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
