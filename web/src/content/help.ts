@@ -147,6 +147,36 @@ export const dmSteps: Step[] = [
   },
 ];
 
+/**
+ * What a quick question to DMbot can use (#1379), under the game master's steps. Each sentence is
+ * what the code does after #1377 and #1380: sidebar/context.py (the material a question is given:
+ * rules, house rules, names, the scene; recall for the players' audience, never secrets or entry
+ * notes), sidebar/answer.py (NO_INFO_ANSWER, and the rule "use only the material given") and
+ * sidebar/service.py (the question and the in-game answer are saved in the raw transcript).
+ */
+export const quickAnswersHeading = "What DMbot knows when you ask it";
+export const quickAnswers: Step[] = [
+  {
+    text: "Quick answers work while your game is running and you have said yes to being recorded.",
+  },
+  {
+    text: 'Message DMbot privately, by voice or by typing, and the answer comes to you alone. Say "Hey DMbot" when the table has a dmb-chat channel, and the answer is posted there for everyone. It then uses only the free rules, your house rules and what was just said. If it needs your story, you get that answer privately.',
+  },
+  {
+    text: "DMbot answers from the free rules, your house rules, what was said in the last few minutes, and the story facts you have confirmed about the names in your question. It leaves out names you marked secret, and your own notes on names and places.",
+  },
+  {
+    text: 'If an answer is not from DMbot\'s rules, it says "check your book". When it has nothing to go on, it says so, for example "I don\'t have that. Your call." You decide.',
+    names: [
+      { name: "check your book", file: "sidebar/answer.py" },
+      { name: "I don't have that. Your call.", file: "sidebar/answer.py" },
+    ],
+  },
+  {
+    text: "Your question, and DMbot's answer when it is about the game, are saved in the game's full written record. Everyone in your Discord server can read that record.",
+  },
+];
+
 export const playerSteps: Step[] = [
   {
     text: `DMbot sends you a private message. Press ${consent} to say yes.`,
