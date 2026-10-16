@@ -9,7 +9,7 @@ import time
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock
 
 import discord
@@ -368,7 +368,7 @@ def fake_bot(job: Job | None, *, allowed: bool = True, secrets: list[str] | None
             consenting=AsyncMock(return_value=agreed if agreed is not None else {fx.ALICE})
         ),
     )
-    bot._post_one_recap = lambda g, c, a: DMBot._post_one_recap(bot, g, c, a)
+    bot._post_one_recap = lambda g, c, a: DMBot._post_one_recap(cast(Any, bot), g, c, a)
     bot.sent = sent
     return bot
 
