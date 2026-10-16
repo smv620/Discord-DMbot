@@ -86,6 +86,12 @@ export interface Held extends Entry {
 export const held: Held[] = [
   {
     date: "2026-10-16",
+    title: "Delete my past transcripts",
+    what: "You can now remove what DMbot wrote down from you. In DMbot's private message to you, press Menu, then Delete my past transcripts (or type /dmbot delete-my-lines in the server). DMbot tells you how many lines it will delete, and you confirm once. Your words are removed from every transcript in that server. Other people's lines, the facts your DM confirmed and recaps stay. Transcripts someone already downloaded are not changed.",
+    reason: "Held until it has been seen working on the test server (#1532).",
+  },
+  {
+    date: "2026-10-16",
     title: "Fix a line",
     what: "If DMbot wrote one of your lines down wrong, type /dmbot fix, or press Fix one of my lines after a session, then pick the line and type what it should say. Your DM says yes or no on the DM screen, and nothing changes unless they say yes. DMs can fix any line themselves: type /dmbot fix or press Fix a line on the DM screen. It changes right away, and you can Undo it while the session runs.",
     reason: "Held until it has been seen working on the test server (#1491, #1499).",

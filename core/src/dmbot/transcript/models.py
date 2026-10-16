@@ -23,6 +23,14 @@ class TranscriptSession:
     engines: tuple[str, ...] = ()  # "engine model host" of each speech-to-text used
 
 
+def line_ref(session_id: str, started_ms: int, user_id: int) -> str:
+    """How story memory points at one stored line (`memory_mentions.line_ref`, #1532): the
+    session, when the speech began and who said it, which is what names a line (and what
+    "Delete my past transcripts" matches to remove the mentions of a deleted line). Anything
+    that writes a mention of a transcript line uses this form."""
+    return f"{session_id}:{int(started_ms)}:{int(user_id)}"
+
+
 NARRATING = "narrating"  # a line's `entity` when the DM was narrating (#53)
 SIDEBAR_QUESTION, SIDEBAR_ANSWER = "question", "answer"
 # A player's question to DMbot (#1187), apart from the DM's: it has its own tag in the raw

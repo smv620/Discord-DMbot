@@ -161,11 +161,12 @@ def test_the_menu_shows_only_what_applies() -> None:
         )
 
     sheet, stop, close = "dmbot:sheet:1:-", "dmbot:consent:stop:1:-", "dmbot:consent:close:1:-"
-    assert ids(recording=True, sheets=True) == [sheet, stop, close]
-    assert ids(recording=True, sheets=False) == [stop, close]
+    delete = "dmbot:consent:del:1"  # 🗑 Delete my past transcripts: for anyone, recorded or not
+    assert ids(recording=True, sheets=True) == [sheet, stop, delete, close]
+    assert ids(recording=True, sheets=False) == [stop, delete, close]
     start = "dmbot:consent:start:1"  # shows the request: never saves a yes by itself
-    assert ids(recording=False, sheets=True) == [sheet, start, close]
-    assert ids(recording=False, sheets=False) == [start, close]
+    assert ids(recording=False, sheets=True) == [sheet, start, delete, close]
+    assert ids(recording=False, sheets=False) == [start, delete, close]
 
 
 def button(item: Any) -> Any:
@@ -199,7 +200,7 @@ def test_every_label_fits() -> None:
             label = str(button(item).label or "")
             # Short labels sit well on a phone; the consent button says its whole promise
             # ("I'm 16 or older, record me", #1018), so it gets a little more.
-            limit = CONSENT_LABEL_MAX if label == CONSENT_LABEL else 25
+            limit = CONSENT_LABEL_MAX if label in (CONSENT_LABEL, c.DELETE_LABEL) else 25
             assert 0 < len(label) <= limit, label
 
 
@@ -660,7 +661,11 @@ class ConsentDMTests(DatabaseTest):
         edit = press.edit_original_response.await_args.kwargs
         assert "Stopped" in edit["content"]
         assert c.ALREADY_RECORDED in edit["content"]  # past lines stay readable
-        assert custom_ids(edit["view"]) == [f"dmbot:consent:yes:1:v{TERMS_VERSION}"]
+        assert c.HOW_TO_DELETE in edit["content"]  # and how to remove them
+        assert custom_ids(edit["view"]) == [
+            f"dmbot:consent:yes:1:v{TERMS_VERSION}",
+            "dmbot:consent:menu:1:-",
+        ]
 
     async def test_stop_works_before_anything_slow(self) -> None:
         await self.consent.grant(GUILD, PLAYER)
@@ -708,6 +713,7 @@ class ConsentDMTests(DatabaseTest):
         assert set(edit) == {"view"}  # the reminder's text stays
         assert custom_ids(edit["view"]) == [
             f"dmbot:consent:stop:1:{campaign}",
+            "dmbot:consent:del:1",
             f"dmbot:consent:close:1:{campaign}",
         ]
 
@@ -728,7 +734,10 @@ class ConsentDMTests(DatabaseTest):
         assert not self.consent.has_consent(GUILD, PLAYER)
         edit = yes.edit_original_response.await_args.kwargs  # the reminder's own message
         assert edit["content"] == c.stopped_text(self.guild.name)
-        assert custom_ids(edit["view"]) == [f"dmbot:consent:yes:1:v{TERMS_VERSION}"]
+        assert custom_ids(edit["view"]) == [
+            f"dmbot:consent:yes:1:v{TERMS_VERSION}",
+            "dmbot:consent:menu:1:-",  # the ⚙️ Menu the message points at, for 🗑 Delete
+        ]
 
     async def test_on_the_reminder_keep_and_close_give_it_back_unchanged(self) -> None:
         await self.consent.grant(GUILD, PLAYER)
@@ -990,6 +999,7 @@ class ConsentDMTests(DatabaseTest):
         assert args.args[0] == c.menu_text(self.guild.name) and args.kwargs["ephemeral"]
         assert custom_ids(args.kwargs["view"]) == [
             "dmbot:consent:stop:1:-",
+            "dmbot:consent:del:1",
             "dmbot:consent:close:1:-",
         ]
         self.bot.sheets = MagicMock()  # sheets on: 📜 too, for the menu's campaign
@@ -1000,6 +1010,7 @@ class ConsentDMTests(DatabaseTest):
         assert custom_ids(press.response.send_message.await_args.kwargs["view"]) == [
             f"dmbot:sheet:1:{campaign}",
             "dmbot:consent:start:1",
+            "dmbot:consent:del:1",
             f"dmbot:consent:close:1:{campaign}",
         ]
 
@@ -1045,7 +1056,11 @@ class ConsentDMTests(DatabaseTest):
         edit = press.edit_original_response.await_args.kwargs
         assert "Stopped" in edit["content"]  # their yes was removed: say so
         assert c.ALREADY_RECORDED in edit["content"]
-        assert custom_ids(edit["view"]) == [f"dmbot:consent:yes:1:v{TERMS_VERSION}"]
+        assert c.HOW_TO_DELETE in edit["content"]
+        assert custom_ids(edit["view"]) == [
+            f"dmbot:consent:yes:1:v{TERMS_VERSION}",
+            "dmbot:consent:menu:1:-",
+        ]
 
     async def test_a_plain_no_thanks_says_nothing_about_past_recordings(self) -> None:
         press = self.button_press(PLAYER)

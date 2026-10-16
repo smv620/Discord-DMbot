@@ -13,12 +13,21 @@ from __future__ import annotations
 import json
 import uuid
 from collections.abc import Callable, Collection, Sequence
+from dataclasses import dataclass
 from typing import Any
 
 from dmbot.db import Database, row_int
-from dmbot.transcript.models import Line, Lineage, TranscriptSession
+from dmbot.transcript.models import Line, Lineage, TranscriptSession, line_ref
 
 RECENT_SESSIONS = 25  # Discord's limit for a menu
+
+
+@dataclass(frozen=True, slots=True)
+class Deleted:
+    """What "Delete my past transcripts" removed in one server (#1532)."""
+
+    lines: int
+    sessions: int  # sessions that had at least one of the person's lines
 
 
 class TranscriptStore:
@@ -293,6 +302,67 @@ class TranscriptStore:
                 for r in await cur.fetchall()
             ]
 
+    # ---- Delete my past transcripts (#1532) ---------------------------------------------
+
+    async def person_counts(self, guild_id: int, user_id: int) -> Deleted:
+        """How many lines this person has in this server's transcripts, and in how many
+        sessions: the numbers the warning shows. Both versions are one line; their DM-sidebar
+        and table-question lines count (they are theirs too)."""
+        async with self._db.guild(guild_id) as conn:
+            cur = await conn.execute(
+                "SELECT count(*) AS lines, count(DISTINCT session_id) AS sessions"
+                " FROM transcript_lines WHERE guild_id = %s AND user_id = %s",
+                (guild_id, user_id),
+            )
+            row = await cur.fetchone()
+        return Deleted(int(row["lines"]), int(row["sessions"])) if row else Deleted(0, 0)
+
+    async def delete_person(self, guild_id: int, user_id: int) -> Deleted:
+        """Remove one person's words from every transcript in one server, in ONE transaction:
+        if anything fails nothing is deleted.
+
+        Goes: their lines (both versions, the sidebar questions and DMbot's replies to them,
+        which carry their id), their fix suggestions in any state, the story-memory mentions
+        that point at those lines (and the undo-log rows of those mentions), the name counts
+        kept per speaker, and the story claims that cite them and were never confirmed. Each
+        affected session's line count and speaker list are worked out again.
+
+        Stays: other people's lines, the DM's confirmed facts and the claims they came from,
+        recaps, and the session rows. Only this server and this person: every statement filters
+        on both, and `Database.guild` hides every other server's rows as well."""
+        async with self._db.guild(guild_id) as conn:
+            cur = await conn.execute(
+                "DELETE FROM transcript_lines WHERE guild_id = %s AND user_id = %s"
+                " RETURNING session_id, started_ms",
+                (guild_id, user_id),
+            )
+            gone = await cur.fetchall()
+            if not gone:
+                # Nothing written down, but leftovers that belong with their lines still go.
+                await _forget_memory_traces(conn, guild_id, user_id, [])
+                return Deleted(0, 0)
+            sessions = sorted({str(r["session_id"]) for r in gone})
+            await conn.execute(
+                "DELETE FROM transcript_suggestions WHERE guild_id = %s AND user_id = %s",
+                (guild_id, user_id),
+            )
+            await _forget_memory_traces(
+                conn,
+                guild_id,
+                user_id,
+                [line_ref(str(r["session_id"]), int(r["started_ms"]), user_id) for r in gone],
+            )
+            await conn.execute(
+                "UPDATE transcript_sessions s SET"
+                " line_count = (SELECT count(*) FROM transcript_lines l"
+                "   WHERE l.session_id = s.id AND l.sidebar IS NULL),"
+                " speakers = ARRAY(SELECT DISTINCT l.user_id FROM transcript_lines l"
+                "   WHERE l.session_id = s.id AND l.sidebar IS NULL ORDER BY l.user_id)"
+                " WHERE s.guild_id = %s AND s.id = ANY(%s)",
+                (guild_id, sessions),
+            )
+            return Deleted(len(gone), len(sessions))
+
 
 def _lineage_columns(lines: Sequence[Line]) -> list[list[str | None]]:
     """The sidebar lineage of each line as one list per column; NULL for table speech."""
@@ -338,4 +408,31 @@ def _session(row: dict[str, Any]) -> TranscriptSession:
         speakers=tuple(sorted(int(u) for u in row["speakers"])),
         number=int(row["number"]),
         engines=tuple(row["engines"]),
+    )
+
+
+async def _forget_memory_traces(
+    conn: Any, guild_id: int, user_id: int, refs: Sequence[str]
+) -> None:
+    """The story-memory rows that exist only because of this person's lines (see
+    `delete_person`), in the caller's transaction."""
+    for batch in (refs[i : i + 1000] for i in range(0, len(refs), 1000)):
+        cur = await conn.execute(
+            "DELETE FROM memory_mentions WHERE guild_id = %s AND line_ref = ANY(%s)"
+            " RETURNING campaign_id, id",
+            (guild_id, list(batch)),
+        )
+        for mention in await cur.fetchall():  # an Undo must not bring the pointer back
+            await conn.execute(
+                "DELETE FROM memory_changes WHERE guild_id = %s AND campaign_id = %s"
+                " AND table_name = 'memory_mentions' AND row_id = %s",
+                (guild_id, mention["campaign_id"], mention["id"]),
+            )
+    await conn.execute(
+        "DELETE FROM memory_heard WHERE guild_id = %s AND speaker_id = %s", (guild_id, user_id)
+    )
+    await conn.execute(
+        "DELETE FROM memory_claims WHERE guild_id = %s AND %s = ANY(speaker_ids)"
+        " AND status <> 'confirmed'",
+        (guild_id, user_id),
     )

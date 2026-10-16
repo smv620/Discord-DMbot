@@ -1454,6 +1454,32 @@ class DMBot(commands.AutoShardedBot):
             with contextlib.suppress(Exception):
                 await self.push_allowlist(guild_id)
 
+    async def count_my_lines(self, guild_id: int, user_id: int) -> tuple[int, int]:
+        """(lines, sessions) this person has in this server's transcripts, for the warning
+        before "Delete my past transcripts" (#1532)."""
+        if self.transcripts is None:
+            return 0, 0
+        counted = await self.transcripts.person_counts(guild_id, user_id)
+        return counted.lines, counted.sessions
+
+    async def delete_my_lines(self, guild_id: int, user_id: int) -> tuple[int, int]:
+        """Delete my past transcripts (#1532): this person's words from every transcript in this
+        server, and what exists only because of them, in one transaction (see
+        `TranscriptStore.delete_person`). Raises if it failed, and then nothing is deleted.
+        Returns (lines, sessions) removed. Their name is first taken out of any alias's "who
+        uses it" (idempotent), so a failure there deletes no lines."""
+        if self.transcripts is None:
+            return 0, 0
+        if self.memory is not None:
+            await self.memory.forget_alias_user(guild_id, user_id)
+        gone = await self.transcripts.delete_person(guild_id, user_id)
+        log.info(
+            "Deleted a person's past transcripts: %s lines in %s sessions",
+            gone.lines,
+            gone.sessions,
+        )
+        return gone.lines, gone.sessions
+
     @staticmethod
     def _watched(work: Coroutine[Any, Any, None], name: str) -> asyncio.Task[None]:
         """A background task that must run as long as DMbot does: if it ever ends
