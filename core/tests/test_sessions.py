@@ -2658,6 +2658,123 @@ class SaveAndResume(SessionTests):
         self.bot.stop_recording(GUILD, PLAYER)
         self.assertNotIn(PLAYER, table.last_piece)
 
+    # ---- helpers' copies follow a changed piece (#127, "line changed") -----------------------
+
+    async def changed_setup(self) -> tuple[Any, Any]:
+        """A session where Ka'zeth is known; one piece ("we meet Ka" | "Zeth at dawn") is
+        delivered and asked about, so there is something to answer."""
+        table = await self.seam_setup()
+        await self.said_twice(table, "we meet Ka", "Zeth at dawn")
+        asked = table.questions.open
+        assert asked is not None
+        return table, asked
+
+    async def test_an_answer_brings_the_helpers_copies_up_to_date(self) -> None:
+        from tests.test_transcript_cleaner import KAZETH
+
+        table, asked = await self.changed_setup()
+        self.assertIn((PLAYER, "we meet Ka"), table.heard)
+        self.assertEqual(table.heard_counts.get((KAZETH, PLAYER), 0), 0)
+        _, _, undo = await self.bot.answer_name_question(GUILD, asked.id, "0", DM)
+        # The names scan reads the fixed words; the sidebar's scene too; the name counts as heard.
+        self.assertIn((PLAYER, "we meet Ka'zeth"), table.heard)
+        self.assertNotIn((PLAYER, "we meet Ka"), table.heard)
+        self.assertIn((PLAYER, "at dawn"), table.heard)
+        self.assertIn("we meet Ka'zeth", [t for _, _, t in table.recent.spoken])
+        self.assertGreaterEqual(table.heard_counts[KAZETH, PLAYER], 1)
+        # Undo puts the copies and the count back.
+        assert undo is not None
+        await self.bot.answer_undone(GUILD, table.campaign_id, undo[1])
+        self.assertIn((PLAYER, "we meet Ka"), table.heard)
+        self.assertNotIn((PLAYER, "we meet Ka'zeth"), table.heard)
+        self.assertIn("we meet Ka", [t for _, _, t in table.recent.spoken])
+        self.assertEqual(table.heard_counts.get((KAZETH, PLAYER), 0), 0)
+
+    async def test_a_waiting_off_topic_copy_is_revised_and_the_acting_helpers_stay_quiet(
+        self,
+    ) -> None:
+        from dmbot.transcript.topics import Waiting
+
+        table, asked = await self.changed_setup()
+        key = (PLAYER, 0)
+        table.held[key] = "we meet Ka"
+        table.topics.add(Waiting(PLAYER, 0, "we meet Ka", 1.0), 0.0)
+        acted = MagicMock()
+        self.bot._act_on_line = acted  # type: ignore[method-assign]
+        await self.bot.answer_name_question(GUILD, asked.id, "0", DM)
+        self.assertEqual(table.held[key], "we meet Ka'zeth")
+        self.assertEqual([w.text for w in table.topics.lines], ["we meet Ka'zeth"])
+        acted.assert_not_called()  # a rules card, a clock phrase... fire once, on the first words
+
+    async def test_nothing_is_told_when_the_words_did_not_change_or_the_piece_is_unknown(
+        self,
+    ) -> None:
+        table, _ = await self.changed_setup()
+        before, counts = list(table.heard), dict(table.heard_counts)
+        self.bot._line_changed(table, PLAYER, 0, "we meet Ka")  # the same words
+        self.bot._line_changed(table, PLAYER, 99999, "anything")  # a piece it doesn't hold
+        self.assertEqual((table.heard, dict(table.heard_counts)), (before, counts))
+
+    async def test_a_failed_write_changes_no_copy(self) -> None:
+        table, _ = await self.changed_setup()
+        before = list(table.heard)
+
+        async def broken(*_: Any, **__: Any) -> Any:
+            raise RuntimeError("down")
+
+        cast(Any, self.bot.transcripts).relabel_line = broken
+        table.unsaved.take(lambda _: True)  # nothing waiting: the saved row is the one to change
+        table.transcript_session_id = "s" * 32
+        self.assertFalse(await self.bot._rewrite_line(table, PLAYER, 0, "we meet Ka'zeth"))
+        self.assertEqual(table.heard, before)
+
+    async def test_a_stopped_speakers_words_are_forgotten_and_not_counted_again(self) -> None:
+        from tests.test_transcript_cleaner import KAZETH
+
+        table, _ = await self.changed_setup()
+        self.bot.stop_recording(GUILD, PLAYER)
+        self.assertFalse([k for k in table.piece_words if k[0] == PLAYER])
+        await self.consent.grant(GUILD, PLAYER)  # they agree again
+        self.bot._line_changed(table, PLAYER, 0, "we meet Ka'zeth")
+        self.assertEqual(table.heard_counts.get((KAZETH, PLAYER), 0), 0)  # nothing from before
+
+    async def test_two_identical_lines_are_left_alone_and_a_held_piece_never_touches_heard(
+        self,
+    ) -> None:
+        table = await self.seam_setup()
+        self.said(table, "we meet Ka", at_ms=0)
+        self.said(table, "we meet Ka", at_ms=60_000)  # the same words again, much later
+        self.assertEqual(table.heard.count((PLAYER, "we meet Ka")), 2)
+        self.bot._line_changed(table, PLAYER, 60_000, "we meet Ka'zeth")
+        self.assertEqual(table.heard.count((PLAYER, "we meet Ka")), 2)  # which one? so neither
+        # A piece held back for the off-topic filter is not in the names scan's lines.
+        table.held[PLAYER, 0] = "we meet Ka"
+        table.piece_words[PLAYER, 0] = ("we meet Ka", 0.0)
+        self.bot._line_changed(table, PLAYER, 0, "we meet Ka'zeth")
+        self.assertEqual(table.heard.count((PLAYER, "we meet Ka'zeth")), 0)
+        self.assertEqual(table.held[PLAYER, 0], "we meet Ka'zeth")  # its own copy follows
+
+    async def test_counts_go_down_by_one_and_an_old_piece_does_not_refresh_the_scene(self) -> None:
+        import time
+
+        from tests.test_transcript_cleaner import KAZETH
+
+        table = await self.seam_setup()
+        table.heard_counts[KAZETH, PLAYER] = 3
+        table.piece_words[PLAYER, 7] = ("we meet Ka'zeth", time.monotonic())
+        table.heard.append((PLAYER, "we meet Ka'zeth"))
+        self.bot._line_changed(table, PLAYER, 7, "we meet Ka")  # an Undo: the name is gone
+        self.assertEqual(table.heard_counts[KAZETH, PLAYER], 2)
+        # An old piece (said long ago) that now names someone doesn't put them in the scene.
+        with patch.object(type(table.scene), "note") as noted:
+            table.piece_words[PLAYER, 8] = ("we meet Ka", time.monotonic() - 3600)
+            self.bot._line_changed(table, PLAYER, 8, "we meet Ka'zeth")
+            noted.assert_not_called()
+            self.assertEqual(table.heard_counts[KAZETH, PLAYER], 3)  # but it is counted as heard
+            table.piece_words[PLAYER, 9] = ("we meet Ka", time.monotonic() - 5)  # said just now
+            self.bot._line_changed(table, PLAYER, 9, "we meet Ka'zeth")
+            noted.assert_called_once()
+
     async def test_an_answer_that_cannot_read_the_saved_lines_still_answers(self) -> None:
         table, _, _, _ = await self.asked_about_marin(saving=True)
         asked = table.questions.open
