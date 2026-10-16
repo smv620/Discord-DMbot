@@ -13,7 +13,6 @@ import contextlib
 import inspect
 import logging
 import os
-import re
 import shutil
 import signal
 import time
@@ -248,8 +247,10 @@ from dmbot.transcript.waiting_questions import (
     ANSWERED,
     KEPT,
     MAX_PER_SESSION,
+    SAVE_FAILED,
     Unanswered,
     WaitingQuestionStore,
+    find_once,
     fix_words,
 )
 from dmbot.transcript.waiting_questions import (
@@ -6087,7 +6088,7 @@ class DMBot(commands.AutoShardedBot):
         """After a session: keep the questions that went unanswered for the after-session check,
         and say how many wait (#1572). Only for speakers who still agree, checked again after the
         write; a person who stopped meanwhile has theirs removed. DM screen only."""
-        items, table.unanswered = table.unanswered, []
+        items, table.unanswered = table.unanswered, []  # (lost if the save fails: only a reminder)
         session_id = table.transcript_session_id
         if (
             self.heard_questions is None
@@ -6157,7 +6158,7 @@ class DMBot(commands.AutoShardedBot):
                 chosen = found
         elif not keep:
             if not (pick.isdigit() and int(pick) < len(waiting.option_ids)):
-                return name_questions.EXPIRED, True
+                return name_questions.EXPIRED, False  # a stale button: the question stays
             lookup = await self.lookup.get(guild_id, campaign.id)
             entity_id = waiting.option_ids[int(pick)]
             written = own_name(lookup, entity_id)
@@ -6181,7 +6182,9 @@ class DMBot(commands.AutoShardedBot):
                 )
         except MemoryRuleError:
             await store.reopen(guild_id, question_id)
-            if chosen is not None and chosen[0] is None:
+            if chosen is None:  # Keep as heard: nothing about a name
+                return SAVE_FAILED, False
+            if chosen[0] is None:
                 return name_questions.TYPED_REFUSED, False
             return name_questions.NAME_GONE, True
         except Exception:
@@ -6210,17 +6213,28 @@ class DMBot(commands.AutoShardedBot):
         if self.lookup is None:
             return False
         text = fix_words(waiting.text, waiting.heard, name)
-        if text is None or not self.consent.has_consent(guild_id, waiting.speaker_id):
+        span = find_once(waiting.text, waiting.heard)
+        if (
+            text is None
+            or span is None
+            or not self.consent.has_consent(guild_id, waiting.speaker_id)
+        ):
             return False
-        lookup = await self.lookup.get(guild_id, campaign_id)
-        span = next(
-            re.finditer(rf"(?<!\w){re.escape(waiting.heard)}(?!\w)", waiting.text, re.IGNORECASE)
-        )
-        if not safe_answer(lookup, waiting.text, (), span.start(), span.end(), name):
+        try:  # the answer is saved already: a failure here only leaves the line as heard
+            lookup = await self.lookup.get(guild_id, campaign_id)
+            if not safe_answer(lookup, waiting.text, (), span[0], span[1], name):
+                return False
+            return await self.apply_line_fix(
+                guild_id,
+                campaign_id,
+                waiting.session_id,
+                waiting.speaker_id,
+                waiting.started_ms,
+                text,
+            )
+        except Exception:
+            log.exception("Couldn't write an answer into its stored line")
             return False
-        return await self.apply_line_fix(
-            guild_id, campaign_id, waiting.session_id, waiting.speaker_id, waiting.started_ms, text
-        )
 
     async def learn_people(self, table: Table) -> None:
         """After a session: turn the names people answered to at least twice into waiting

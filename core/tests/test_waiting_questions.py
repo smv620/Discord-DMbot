@@ -302,6 +302,36 @@ class Flow(DatabaseTest):
         self.assertEqual((answer, done), (questions.NAME_GONE, True))
         self.assertEqual(await self.line(), ("I met Marin there", "I met Marin there"))
 
+    async def test_a_secret_name_typed_by_the_dm_is_never_written_in_the_transcript(self) -> None:
+        await ui.save_name(self.memory, self.campaign, "Vane", "npc", [], ["Silas Vane"])
+        qid = await self.kept()
+        answer, done = await self.bot.answer_waiting_question(
+            GUILD, qid, questions.TYPE, DM, "Silas Vane"
+        )
+        self.assertEqual((answer, done), (questions.TYPED_SECRET, False))
+        self.assertEqual(await self.line(), ("I met Marin there", "I met Marin there"))
+        self.assertEqual(await self.memory.corrections(GUILD, self.campaign.id), [])
+        self.assertEqual(len(await self.store.waiting(GUILD, self.campaign.id)), 1)  # still open
+
+    async def test_a_stale_button_leaves_the_question_open(self) -> None:
+        qid = await self.kept()
+        answer, done = await self.bot.answer_waiting_question(GUILD, qid, "7", DM)
+        self.assertEqual((answer, done), (questions.EXPIRED, False))
+        self.assertEqual(len(await self.store.waiting(GUILD, self.campaign.id)), 1)
+
+    async def test_later_leaves_the_question_waiting_for_next_time(self) -> None:
+        await self.kept()
+        it = self.it()
+        review = heard_review.HeardReview(self.campaign.id)
+        await review.current_text(it)
+        await review._later(it)
+        self.assertEqual(len(await self.store.waiting(GUILD, self.campaign.id)), 1)
+
+    async def test_a_dm_who_is_no_longer_one_sees_no_more_questions(self) -> None:
+        await self.kept()
+        review = heard_review.HeardReview(self.campaign.id)
+        self.assertIsNone(await review.current_text(self.it(MANAGER)))
+
     # ---- the screen ----
 
     def it(self, user_id: int = DM) -> Any:

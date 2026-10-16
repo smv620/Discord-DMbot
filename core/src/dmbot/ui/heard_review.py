@@ -116,6 +116,9 @@ class HeardReview(_Menu):
         store = bot.heard_questions
         if store is None or guild is None or bot.lookup is None:
             return None
+        campaign = await bot.campaigns.get(guild.id, self.campaign_id)
+        if campaign is None or interaction.user.id not in campaign.dm_user_ids:
+            return None  # checked at every redraw: a DM role taken away mid-review ends it
         waiting = [
             w
             for w in await store.waiting(guild.id, self.campaign_id)

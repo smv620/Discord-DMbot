@@ -30,6 +30,7 @@ from dmbot.transcript.cleaner import with_ending
 MAX_PER_SESSION = 25
 EXPIRE_S = 7 * 24 * 60 * 60  # an unanswered one expires quietly after a week
 OPEN, ANSWERED, KEPT, EXPIRED = "open", "answered", "kept", "expired"
+SAVE_FAILED = "Couldn't save that. Nothing was changed. Press it again."
 
 
 @dataclass(frozen=True, slots=True)
@@ -57,16 +58,26 @@ class Waiting:
     text: str  # the line's cleaned words now
 
 
+def _find(text: str, heard: str) -> list[re.Match[str]]:
+    return list(re.finditer(rf"(?<!\w){re.escape(heard)}(?!\w)", text, re.IGNORECASE))
+
+
+def find_once(text: str, heard: str) -> tuple[int, int] | None:
+    """Where the misheard words are in the line, if they are there exactly once (whole words, any
+    case); None when the line was changed since, or the words come twice and DMbot can't tell
+    which was meant."""
+    found = _find(text, heard)
+    return (found[0].start(), found[0].end()) if len(found) == 1 else None
+
+
 def fix_words(text: str, heard: str, name: str) -> str | None:
-    """`text` with the misheard words written as `name`, or None when that can't be done safely:
-    the words are not in the line exactly once (the line was changed since, or the word comes
-    twice and DMbot can't tell which was meant). Whole words only, any case; a "'s" on the
-    words stays on the name."""
-    found = list(re.finditer(rf"(?<!\w){re.escape(heard)}(?!\w)", text, re.IGNORECASE))
-    if len(found) != 1:
+    """`text` with the misheard words written as `name`, or None when `find_once` finds no single
+    place. A "'s" on the words stays on the name."""
+    span = find_once(text, heard)
+    if span is None:
         return None
-    (hit,) = found
-    return text[: hit.start()] + with_ending(hit.group(), name) + text[hit.end() :]
+    start, end = span
+    return text[:start] + with_ending(text[start:end], name) + text[end:]
 
 
 _COLUMNS = "id, campaign_id, session_id, speaker_id, started_ms, heard, option_ids"
