@@ -69,6 +69,8 @@ class Entitlement:
     # Minutes of the hours already used before this period began: a Try It that was extended
     # keeps "8 hours in all", so its new period has the hours cap less these (#1229).
     minutes_taken: int = 0
+    # The recap audio add-on (#1389): paid for until this moment, or never bought.
+    recap_audio_until: int | None = None
 
     @property
     def hours_this_period(self) -> int:
@@ -153,6 +155,9 @@ class Access:
     ending_plan: str | None = None
     ending_at: int | None = None
     minutes_taken: int = 0  # taken off the hours cap, in minutes (see Entitlement)
+    # Spoken and musical recaps (#1389): in Guild and Pro, in a grant or free access, or paid
+    # for as an add-on on a working paid plan.
+    recap_audio: bool = False
 
     @property
     def works(self) -> bool:
@@ -160,6 +165,19 @@ class Access:
 
 
 NO_ACCESS = Access("none", None, 0, 0, False)
+
+# The plans whose price includes recap audio; any other paid plan can add it (#1389).
+RECAP_AUDIO_PLANS = frozenset({"guild", "pro"})
+
+
+def _recap_audio(plan: Entitlement | None, now: int) -> bool:
+    """Recap audio from the paid plan: included in it, or bought as the add-on and not yet
+    run out. Not Try It, and not a plan that has ended."""
+    if plan is None or plan.plan == "try-it" or not plan.usable(now):
+        return False
+    if plan.plan in RECAP_AUDIO_PLANS:
+        return True
+    return plan.recap_audio_until is not None and now < plan.recap_audio_until
 
 
 def _priced(plan: Entitlement | None, now: int) -> str | None:
@@ -207,7 +225,9 @@ def access_for(user_id: int, plan: Entitlement | None, grant: Grant | None, now:
     """The rule, pure: free list, then an active grant, then the paid plan; a grant and a
     paid plan together give the larger of each cap."""
     if user_id in _free_users:
-        return Access("free", FREE_ACCESS, None, None, True, **_covered(plan, now))
+        return Access(
+            "free", FREE_ACCESS, None, None, True, recap_audio=True, **_covered(plan, now)
+        )
     paid = None
     if plan is not None and plan.usable(now):
         known = plans.load().get(plan.plan)
@@ -218,6 +238,7 @@ def access_for(user_id: int, plan: Entitlement | None, grant: Grant | None, now:
             plan.campaign_cap,
             bool(known and known.backups),
             minutes_taken=plan.minutes_taken,
+            recap_audio=_recap_audio(plan, now),
         )
     if grant is not None and grant.active(now):
         if grant.level == "unlimited":
@@ -234,6 +255,7 @@ def access_for(user_id: int, plan: Entitlement | None, grant: Grant | None, now:
             campaigns,
             True,
             until=grant.ends_at,
+            recap_audio=True,  # a Guild-level grant has Guild's features; "unlimited" has all
             **_covered(plan, now),
         )
     return paid or NO_ACCESS
@@ -355,6 +377,7 @@ async def _read_plan(conn: Conn, user_id: int) -> Entitlement | None:
         minutes_taken=row.get("minutes_taken") or 0,
         ends_at=row.get("ends_at"),  # older schemas (tests of a backfill) have none
         has_customer=row.get("provider_customer_id") is not None,
+        recap_audio_until=row.get("recap_audio_until"),  # older schemas have none
     )
 
 

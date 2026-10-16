@@ -45,6 +45,11 @@ jobs:
           ref: ${{ github.event.pull_request.base.sha }}
           path: trusted
           persist-credentials: false
+      # The same Python as ci.yml, so a newer standard-library name works here too (#1409: the
+      # runner's own 3.10 has no datetime.UTC).
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
       - name: post the check
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

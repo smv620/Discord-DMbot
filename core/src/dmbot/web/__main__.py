@@ -18,7 +18,7 @@ from dmbot.db import Database, DatabaseError
 from dmbot.logs import LOG_FORMATS, LOG_LEVELS, configure_logging
 from dmbot.schema import WEB_ROLE
 from dmbot.sharding import ShardSettings
-from dmbot.web import feedback, move_sync, sessions, support
+from dmbot.web import feedback, move_sync, sessions, strays, support
 from dmbot.web.admin import HttpGoogle
 from dmbot.web.app import create_app
 from dmbot.web.discord import HttpDiscord
@@ -31,6 +31,7 @@ from dmbot.web.stripe import StripeProvider
 log = logging.getLogger("dmbot.web")
 CLEANUP_SECONDS = 3600
 MOVE_SYNC_SECONDS = 60
+STRAY_SWEEP_SECONDS = 600  # the database hands each one out at most once an hour
 
 
 async def _sweep(db: Database) -> None:
@@ -77,6 +78,17 @@ async def _sync_moves(db: Database, payments: PaymentProvider) -> None:
         except Exception:
             log.exception("Updating moved accounts' payment records failed; trying again")
         await asyncio.sleep(MOVE_SYNC_SECONDS)
+
+
+async def _sweep_strays(db: Database, payments: PaymentProvider) -> None:
+    """Cancel recap audio add-ons that must not charge and could not be cancelled at once
+    (#1399). Cheap when nothing waits (a tiny table)."""
+    while True:
+        try:
+            await strays.sweep(db, payments)
+        except Exception:
+            log.exception("Cancelling stray recap audio subscriptions failed; trying again")
+        await asyncio.sleep(STRAY_SWEEP_SECONDS)
 
 
 async def serve(settings: WebSettings) -> None:
@@ -139,6 +151,9 @@ async def serve(settings: WebSettings) -> None:
     )
     sweeper = asyncio.create_task(_sweep(db))
     syncer = asyncio.create_task(_sync_moves(db, payments)) if payments is not None else None
+    stray_sweeper = (
+        asyncio.create_task(_sweep_strays(db, payments)) if payments is not None else None
+    )
     config = uvicorn.Config(
         app,
         host=settings.host,
@@ -157,6 +172,10 @@ async def serve(settings: WebSettings) -> None:
             syncer.cancel()
             with contextlib.suppress(asyncio.CancelledError):
                 await syncer
+        if stray_sweeper is not None:
+            stray_sweeper.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await stray_sweeper
         await discord.close()
         if discussions is not None:
             await discussions.close()

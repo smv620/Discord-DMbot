@@ -2403,3 +2403,35 @@ Overall ...................................... PASS (Deepgram baseline: 33/33, 1
   the log says once that no email is sent (it is present in .env, value not read, so this may not apply).
   Follow-up, 00:22 UTC (13 minutes after the deploy): 0 ERROR, CRITICAL or traceback lines in core and web-api since 00:09; core and web-api still
   up, web-api healthy; no ticket has been sent yet (nothing about tickets in the logs).
+
+==============================================================================
+2026-10-16  dev1  DEPLOY: quick answers on confirmed facts, the privacy fix and migrations 0076 and 0078 are live as 4d7aea9b
+  Supervisor's handover (02:0x UTC): #1377 (quick answers use confirmed facts), #1380 (privacy: quick answers no longer send a DM's notes on a
+  name into a reply that reaches the raw transcript), #1374 (migration 0078, a person's own support questions), #1351 (0076), with #1365 and
+  #1368 from earlier; all with the extractor off. #1369 (0077) was still open (merge conflict), so it is not in this deploy. Deployed exactly
+  4d7aea9b once its core CI job was green (completed 02:07); later merges on development (#1376, #1395, #1396) are website, docs and
+  script files and were left for the next deploy.
+  Dry run first: a fresh pg_dumpall of the live database (at 0075), restored into a throwaway postgres:16, migrated as the dmbot role,
+  deleted after: "Database updated: 0076_claims_by_fact, 0078_support_own" in 0.13 s, a second run applied nothing, rows unchanged (3
+  campaigns, 152 entries, 147 transcript lines, 0 claims, 0 tickets); 0077 missing, as expected. No game running (active_sessions 0).
+  Backup: ~/db-backups/dmbot-before-4d7aea9b-20261016T021526Z.sql (chmod 600). Then `docker compose build core web-api` with GIT_COMMIT
+  set, `docker compose stop core web-api` (02:17:08 UTC; neither running afterwards), `up -d --no-deps core`, `up -d --no-deps web-api`.
+  Result: core logged "Database updated: 0076_claims_by_fact, 0078_support_own", "Connected to 1 server(s)" and "ears connected". web-api
+  healthy. 0 ERROR or traceback lines in core and web-api since the stop. schema_migrations: 77 rows, last 0078_support_own. Only
+  start-up warning: the old AI_MODEL line next to AI_MODEL_FAST in .env (harmless; dev1 did not touch .env).
+  Not yet checked (needs the owner or WebDev): (2) a paying test account sees its own test ticket listed with a status under the Support
+  form; (3) a quick question naming a confirmed entry on the test server gets a reply, and nothing from that entry's description
+  appears in the raw transcript line. Follow-ups: the sidebar checker on #1370 (needs the key, run by the owner) and the recall speed
+  numbers on #1350 (dev1, on a throwaway Postgres on this server).
+
+==============================================================================
+2026-10-16  dev1  Follow-ups to the quick-answers deploy (4d7aea9b, 02:17 UTC): error check, recall speed, a CI bug
+  10-minute error check (Supervisor's): at 02:25 UTC, 8 minutes after the deploy, and again at 02:41: 0 ERROR, CRITICAL or traceback lines in core and
+  web-api since 02:17; both up, web-api healthy. No quick-answer session and no ticket in the logs yet, so checks 2 and 3 of the handover (a paying test
+  account sees its own ticket with a status; a quick question naming a confirmed entry gets a reply and nothing of the entry's description is in the raw
+  transcript line) wait for the owner or WebDev.
+  Recall speed (#1350), tests/test_recall.py::Speed on development 4d7aea9b: a throwaway Postgres 16 on this server (4 CPUs, 7.7 GB, default settings), not the live
+  database; 3 runs of 7 recalls on 3,000 entries and 10,000 facts. DM screen best 54.0 / 43.5 / 49.4 ms, median 65.8 / 52.3 / 61.8, worst 76.2 / 58.7 / 80.6; players
+  best 42.2 / 45.6 / 46.7, median 57.5 / 63.4 / 59.4, worst 68.7 / 75.1 / 82.6. The best case meets the 50 ms goal (5 of 6 under it); a typical recall (median 52 to
+  66 ms) does not quite. Numbers and caveats on #1350.
+  Found: the CI check post-supervisor-status fails on every pull request (scripts/supervisor_review.py imports datetime.UTC, Python 3.11+, and the job runs Python 3.10): #1409.

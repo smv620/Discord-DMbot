@@ -1,0 +1,103 @@
+{
+ "title": "The long watch",
+ "names": [
+  "Pip",
+  "Sorrel",
+  "Hadrian",
+  "the Ash Road"
+ ],
+ "secret": [
+  "the Pale Duke"
+ ],
+ "lines": [
+  [
+   "dm",
+   "Night falls on the Ash Road and the party makes camp in a ruined barn."
+  ],
+  [
+   "a",
+   "Pip volunteers for the first watch and climbs into the loft."
+  ],
+  [
+   "b",
+   "Sorrel tends the fire and sharpens her knife."
+  ],
+  [
+   "c",
+   "Hadrian says he will sleep with his boots on."
+  ],
+  [
+   "dm",
+   "Pip hears hoofbeats on the road, far off and slow."
+  ],
+  [
+   "a",
+   "Pip whistles softly to wake Sorrel and Hadrian."
+  ],
+  [
+   "dm",
+   "A rider stops outside the barn and does not dismount."
+  ],
+  [
+   "b",
+   "Sorrel steps to the door and asks what the rider wants."
+  ],
+  [
+   "dm",
+   "The rider holds out a sealed letter without a word."
+  ],
+  [
+   "c",
+   "Hadrian takes the letter and breaks the seal."
+  ],
+  [
+   "dm",
+   "The letter holds a single line: the bridge is already burning."
+  ],
+  [
+   "a",
+   "Pip looks back along the road and sees an orange glow on the horizon."
+  ]
+ ],
+ "beats": [
+  {
+   "keys": [
+    "pip",
+    "watch",
+    "loft"
+   ]
+  },
+  {
+   "keys": [
+    "hoofbeats",
+    "road"
+   ]
+  },
+  {
+   "keys": [
+    "pip",
+    "wakes",
+    "sorrel"
+   ]
+  },
+  {
+   "keys": [
+    "rider",
+    "letter"
+   ]
+  },
+  {
+   "keys": [
+    "hadrian",
+    "seal",
+    "letter"
+   ]
+  },
+  {
+   "keys": [
+    "bridge",
+    "burning"
+   ]
+  }
+ ]
+}
