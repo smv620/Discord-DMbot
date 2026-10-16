@@ -13,6 +13,7 @@ import hashlib
 import logging
 
 from dmbot.mail import Mailer
+from dmbot.recaps.allowance import is_refusal
 from dmbot.recaps.pipeline import NO_RETRY
 from dmbot.recaps.store import Job, RecapStore
 
@@ -65,7 +66,11 @@ async def tell_the_dm(
         kind = _kind("ready", guild_id, campaign_id, job.session_at, job.tries)
     else:
         subject = f"No recap this time: {job.last_error or 'something went wrong'}"[:150]
-        again = "" if job.last_error in NO_RETRY else f"\n\nTry again here: {link}"
+        again = (
+            ""
+            if job.last_error in NO_RETRY or is_refusal(job.last_error)
+            else f"\n\nTry again here: {link}"
+        )
         body = f"{job.last_error or 'Something went wrong.'}{again}"
         kind = _kind("failed", guild_id, campaign_id, job.session_at, job.tries)
     result = await mailer.send(

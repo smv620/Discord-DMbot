@@ -60,7 +60,7 @@ from dmbot.web.limits import LIMITS, RateLimit
 from dmbot.web.me import build_me
 from dmbot.web.moving import MoveCodes, can_move
 from dmbot.web.payments import PaymentError, PaymentProvider, paid_plan_ids
-from dmbot.web.recaps import RecapError, decide, edit_recap, list_recaps, read_recap
+from dmbot.web.recaps import RecapError, decide, edit_recap, list_recaps, month_usage, read_recap
 from dmbot.web.sessions import Session
 from dmbot.web.settings import WebSettings
 
@@ -514,7 +514,18 @@ def create_app(
     async def me_recaps(signed: Signed) -> dict[str, Any]:
         """The signed-in DM's latest session recaps (#1382). A player sees none."""
         session, _token = signed
-        return {"recaps": await list_recaps(db, session)}
+        return {
+            "recaps": await list_recaps(db, session),
+            # Per campaign: the month's count against the allowance (#1428); free access and
+            # grants are not limited by the bot, whatever is shown here.
+            "recapsThisMonth": await month_usage(
+                db,
+                session,
+                now=clock(),
+                recaps_allowed=settings.recaps_per_month,
+                audio_allowed=settings.recap_audio_per_month,
+            ),
+        }
 
     @app.get("/me/recaps/{ref}")
     async def me_recap(ref: str, signed: Signed) -> dict[str, Any]:

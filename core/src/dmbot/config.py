@@ -75,6 +75,9 @@ class Settings:
     elevenlabs_voice_id: str = ""
     elevenlabs_speech_model: str = "eleven_v3"  # the voice model; dev1 compares models by ear
     recap_audio_max_credits: int = 15000  # provider credits one recap may use (about $3)
+    # The most recaps, and narrated recaps, one campaign may make in a calendar month (#1428).
+    recaps_per_month: int = 10
+    recap_audio_per_month: int = 8
 
     @property
     def recap_audio_on(self) -> bool:
@@ -231,6 +234,12 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
             + audio_credits_raw
             + '".'
         )
+    monthly = {}
+    for name, default in (("DMBOT_RECAPS_PER_MONTH", "10"), ("DMBOT_RECAP_AUDIO_PER_MONTH", "8")):
+        raw = get(name) or default
+        if not (raw.isascii() and raw.isdigit()) or not 1 <= int(raw) <= 1000:
+            raise ConfigError(f'{name} must be a whole number from 1 to 1000, got "{raw}".')
+        monthly[name] = int(raw)
     voice_id = get("ELEVENLABS_VOICE_ID")
     if voice_id and not (voice_id.isascii() and voice_id.isalnum() and len(voice_id) <= 64):
         raise ConfigError("ELEVENLABS_VOICE_ID must be the voice's id: letters and digits only.")
@@ -287,6 +296,8 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
         elevenlabs_voice_id=voice_id,
         elevenlabs_speech_model=speech_model,
         recap_audio_max_credits=int(audio_credits_raw),
+        recaps_per_month=monthly["DMBOT_RECAPS_PER_MONTH"],
+        recap_audio_per_month=monthly["DMBOT_RECAP_AUDIO_PER_MONTH"],
         story_extractor_tier=extractor_tier,
         story_extractor_max_calls=int(extractor_calls_raw),
         story_extractor_max_calls_day=int(extractor_day_raw),

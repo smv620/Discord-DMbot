@@ -73,6 +73,7 @@ class AudioInputs:
 Load = Callable[[int, str, Job], Awaitable["AudioInputs | None"]]
 Consenting = Callable[[int], Awaitable[Collection[int]]]
 Allowed = Callable[[int, str, Job], Awaitable[bool]]
+Allowance = Callable[[int, str, Job], Awaitable["str | None"]]  # why not, or None (#1428)
 Switched = Callable[[int, str, Job], Awaitable[bool]]  # the DM's own choice (#1421)
 
 
@@ -101,6 +102,7 @@ class AudioWorker:
         consenting: Consenting,
         allowed: Allowed,
         switched: Switched | None = None,
+        allowance: Allowance | None = None,
         renderer: Renderer | None = None,
         max_credits: int = DEFAULT_MAX_CREDITS,
         have_ffmpeg: Callable[[], bool] = _has_ffmpeg,
@@ -113,6 +115,7 @@ class AudioWorker:
         self._consenting = consenting
         self._allowed = allowed
         self._switched = switched
+        self._allowance = allowance
         self._renderer = renderer or (Renderer(provider, files) if provider else None)
         self._max = max_credits
         self._have_ffmpeg = have_ffmpeg
@@ -203,7 +206,11 @@ class AudioWorker:
             return  # no key: text only, nothing fails
         if not self._have_ffmpeg():
             raise Stop(NO_MIXER)  # before a single paid call, not after them
-        inputs = await self._check(gid, cid, job)
+        inputs = await self._check(gid, cid, job)  # the DM's choice and the plan come first
+        if self._allowance is not None:
+            over = await self._allowance(gid, cid, job)  # can't be read: the generic retry
+            if over:
+                raise Stop(over)  # the narration is skipped; the text goes out as usual
         try:
             script = sc.build(
                 job.title, job.game_day, job.summary, secret_names=inputs.secret_names
