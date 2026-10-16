@@ -844,6 +844,92 @@ class SupportAdmin(SupportBase):
         self.assertEqual(body["counts"], {"new": 1, "answered": 2, "closed": 1, "escalated": 0})
         self.assertEqual([t["subject"] for t in body["tickets"]], ["new one b", "answered one"])
 
+    async def test_this_week_counts_the_last_seven_days_and_nothing_older(self) -> None:
+        """#1480: the numbers behind "This week: ..."; made-up tickets, and never a word of one."""
+        for age, subject in (
+            (600, "answered by the helper"),
+            (500, "answered by the team"),
+            (400, "still waiting"),
+            (300, "asked for a person"),
+            (200, "unhappy"),
+            (8 * DAY, "too old to count"),
+        ):
+            await self.add_row(ALICE.id, self.now - age, subject)
+        by = {t["subject"]: t["id"] for t in await self.tickets()}
+        await support.add_reply(self.web, by["answered by the helper"], "ai", "A.", now=self.now)
+        await support.add_reply(self.web, by["answered by the team"], "ai", "B.", now=self.now)
+        await support.add_reply(self.web, by["answered by the team"], "customer", "No.", now=1)
+        await support.add_reply(self.web, by["answered by the team"], "person", "C.", now=2)
+        await support.escalate(self.web, by["asked for a person"], "asked", self.now)
+        await support.escalate(self.web, by["unhappy"], "unhappy", self.now)
+        await support.add_reply(self.web, by["too old to count"], "ai", "D.", now=self.now)
+        await self.sign_in()
+        week = (await self.client.get("/admin/support")).json()["week"]
+        self.assertEqual(
+            week,
+            {
+                "questions": 5,
+                "helper": 1,
+                "team": 1,
+                "waiting": 3,
+                "reasons": {"unhappy": 1, "asked": 1, "limit": 0, "no-email": 0, "helper-down": 0},
+            },
+        )
+
+    async def test_this_week_counts_every_hand_over_even_after_a_person_answered(self) -> None:
+        """#1487: the reason stays on the ticket for good, so the week's count is complete."""
+        for age, subject in ((300, "handed over, then answered"), (200, "never handed over")):
+            await self.add_row(ALICE.id, self.now - age, subject)
+        by = {t["subject"]: t["id"] for t in await self.tickets()}
+        await support.escalate(self.web, by["handed over, then answered"], "limit", self.now)
+        await support.add_reply(
+            self.web, by["handed over, then answered"], "person", "Hi.", now=self.now
+        )
+        await support.set_status(self.web, by["handed over, then answered"], "answered")
+        await support.add_reply(self.web, by["never handed over"], "ai", "Try this.", now=self.now)
+        await self.sign_in()
+        got = (await self.client.get("/admin/support")).json()
+        week = got["week"]
+        self.assertEqual(
+            week["reasons"], {"unhappy": 0, "asked": 0, "limit": 1, "no-email": 0, "helper-down": 0}
+        )
+        listed = {t["subject"]: t for t in got["tickets"]}
+        # The list still says why a ticket is waiting *now* (nothing: it was answered) ...
+        self.assertIsNone(listed["handed over, then answered"]["reason"])
+        # ... and when it was handed over; a ticket never handed over has no time.
+        self.assertEqual(listed["handed over, then answered"]["handedOverAt"], self.now)
+        self.assertIsNone(listed["never handed over"]["handedOverAt"])
+
+    async def test_a_second_hand_over_keeps_the_latest_reason_and_time_and_counts_once(
+        self,
+    ) -> None:
+        await self.add_row(ALICE.id, self.now - 500, "handed over twice")
+        (ticket,) = [t["id"] for t in await self.tickets()]
+        await support.escalate(self.web, ticket, "asked", self.now - 100)
+        await support.add_reply(self.web, ticket, "person", "Hi.", now=self.now - 90)
+        await support.set_status(self.web, ticket, "answered")
+        await support.add_reply(self.web, ticket, "customer", "Still stuck.", now=self.now - 80)
+        await support.set_status(self.web, ticket, "new")
+        self.assertTrue(await support.escalate(self.web, ticket, "unhappy", self.now))
+        await self.sign_in()
+        got = (await self.client.get("/admin/support")).json()
+        self.assertEqual(
+            got["week"]["reasons"],
+            {"unhappy": 1, "asked": 0, "limit": 0, "no-email": 0, "helper-down": 0},
+        )
+        self.assertEqual(got["tickets"][0]["handedOverAt"], self.now)
+
+    async def test_this_week_is_all_zeros_with_no_tickets_and_holds_no_words(self) -> None:
+        await self.sign_in()
+        week = (await self.client.get("/admin/support")).json()["week"]
+        self.assertEqual(
+            (week["questions"], week["helper"], week["team"], week["waiting"]), (0, 0, 0, 0)
+        )
+        await self.add_row(ALICE.id, self.now, "A subject nobody should see in the numbers")
+        shown = (await self.client.get("/admin/support")).json()["week"]
+        self.assertNotIn("subject", repr(shown))
+        self.assertEqual(shown["questions"], 1)
+
     async def test_the_counts_cover_every_ticket_even_past_the_list_limit(self) -> None:
         for n in range(5):
             await self.add_row(ALICE.id, self.now - n, f"t{n}")

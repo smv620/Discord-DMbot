@@ -76,6 +76,12 @@ export interface Held extends Entry {
 export const held: Held[] = [
   {
     date: "2026-10-16",
+    title: "Fix your own line",
+    what: "If DMbot wrote one of your lines down wrong, type /dmbot fix, or press Fix one of my lines after a session, then pick the line and type what it should say. Your DM says yes or no on the DM screen, and nothing changes unless they say yes.",
+    reason: "Held until it has been seen working on the test server (#1491).",
+  },
+  {
+    date: "2026-10-16",
     title: "Recaps for your table",
     what: "After a session, DMbot can write a short story-style recap. You read it first, change it if you like, and press Post to the table. Nothing goes to your players until you do. You can also read, post or skip it right on the DM screen, and the next session start reminds you once if you forgot. If your plan reads recaps aloud, you can tell the narrator how to say a name. On the recap page you choose what recaps do. Paid plans only.",
     reason:

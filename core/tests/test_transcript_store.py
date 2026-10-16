@@ -19,6 +19,7 @@ from dmbot.sessions import SessionStore
 from dmbot.transcript import export
 from dmbot.transcript.models import SIDEBAR_ANSWER, SIDEBAR_QUESTION, VIA_VOICE, Line, Lineage
 from dmbot.transcript.store import TranscriptStore
+from dmbot.transcript.suggestions import Suggestion, SuggestionStore
 from dmbot.ui import transcripts as ui
 from tests.pg import DatabaseTest
 
@@ -491,7 +492,8 @@ class BotTests(DatabaseTest):
         sid = table.transcript_session_id
         self.assertEqual(
             [b.custom_id for b in call.kwargs["view"].children],
-            [f"dmbot:transcript:{GUILD}:{sid}:{c}" for c in ("cleaned", "heard", "both")],
+            [f"dmbot:transcript:{GUILD}:{sid}:{c}" for c in ("cleaned", "heard", "both")]
+            + [f"dmbot:fixline:{GUILD}:{sid}"],  # and a player's suggested fix (#1491)
         )
         session = await self.store.session(GUILD, sid or "")
         assert session is not None and session.ended_at is not None
@@ -566,7 +568,9 @@ class BotTests(DatabaseTest):
         users = await self.end_with_gate(AsyncMock(return_value=None), AsyncMock(return_value=True))
         for user in users.values():
             call = user.send.await_args
-            self.assertEqual(len(call.kwargs["view"].children), 3)
+            self.assertEqual(
+                len(call.kwargs["view"].children), 4
+            )  # three downloads and ✏️ Fix (#1491)
             self.assertIn("Download the transcript", call.args[0])
 
     async def test_the_plan_is_asked_at_most_twice_for_the_whole_table(self) -> None:
@@ -752,3 +756,83 @@ class BotTests(DatabaseTest):
     async def test_names_dmbot_cant_find_show_as_someone(self) -> None:
         names = await ui.display_names(self.guild, (PLAYER, STRANGER))
         self.assertEqual(names, {PLAYER: "Mia"})
+
+    # ---- a player's suggested fix, once the DM accepts it (#1491) ------------------------
+
+    async def fix_setup(self) -> tuple[Table, str]:
+        await self.consent.grant(GUILD, PLAYER)
+        self.bot.suggestions = SuggestionStore(self.db)
+        table = self.table()
+        self.said(table, PLAYER, "I saw Beleros")
+        await self.bot.save_transcript(table)
+        sid = table.transcript_session_id
+        assert sid is not None
+        return table, sid
+
+    async def test_an_accepted_fix_changes_the_saved_words_of_a_finished_session(self) -> None:
+        table, sid = await self.fix_setup()
+        del self.bot.tables[GUILD]  # the session is over
+        started = START * 1000 + 1000
+        done = await self.bot.apply_line_fix(
+            GUILD, table.campaign_id or "", sid, PLAYER, started, "I saw Belleros"
+        )
+        self.assertTrue(done)
+        (line,) = await self.store.lines(GUILD, sid)
+        self.assertEqual((line.heard, line.text), ("I saw Beleros", "I saw Belleros"))
+
+    async def test_an_accepted_fix_in_a_running_session_goes_through_the_notes_too(self) -> None:
+        table, sid = await self.fix_setup()
+        started = START * 1000 + 1000
+        self.assertTrue(
+            await self.bot.apply_line_fix(
+                GUILD, table.campaign_id or "", sid, PLAYER, started, "I saw Belleros"
+            )
+        )
+        (note,) = table.fix_notes.answers  # a later Undo of a name fix keeps these words
+        self.assertEqual((note.heard, note.written), ("I saw Beleros", "I saw Belleros"))
+        (line,) = await self.store.lines(GUILD, sid)
+        self.assertEqual((line.heard, line.text), ("I saw Beleros", "I saw Belleros"))
+
+    async def test_a_line_still_waiting_to_be_saved_changes_where_it_waits(self) -> None:
+        await self.consent.grant(GUILD, PLAYER)
+        self.bot.suggestions = SuggestionStore(self.db)
+        table = self.table()
+        self.said(table, PLAYER, "I saw Beleros")
+        sid = "s" * 32
+        table.transcript_session_id = sid
+        started = START * 1000 + 1000
+        self.assertTrue(
+            await self.bot.apply_line_fix(
+                GUILD, table.campaign_id or "", sid, PLAYER, started, "I saw Belleros"
+            )
+        )
+        (waiting,) = table.unsaved._waiting
+        self.assertEqual((waiting.heard, waiting.text), ("I saw Beleros", "I saw Belleros"))
+
+    async def test_someone_who_stopped_being_recorded_has_nothing_written(self) -> None:
+        table, sid = await self.fix_setup()
+        self.bot.consent.has_consent = lambda guild_id, user_id: False  # type: ignore[method-assign]
+        done = await self.bot.apply_line_fix(
+            GUILD, table.campaign_id or "", sid, PLAYER, START * 1000 + 1000, "I saw Belleros"
+        )
+        self.assertFalse(done)
+        (line,) = await self.store.lines(GUILD, sid)
+        self.assertEqual(line.text, "I saw Beleros")
+
+    async def test_when_a_session_ends_only_its_own_suggestions_stay(self) -> None:
+        table, sid = await self.fix_setup()
+        store = self.bot.suggestions
+        assert store is not None
+        made = await store.suggest(
+            GUILD, table.campaign_id or "", sid, PLAYER, START * 1000 + 1000, "I saw Belleros"
+        )
+        assert isinstance(made, Suggestion)
+        await self.bot._drop_old_suggestions(table, sid)  # its own session ended: it stays
+        kept = await store.get(GUILD, made.id)
+        assert kept is not None
+        self.assertEqual(kept.state, "open")
+        later = await self.store.open_session(GUILD, table.campaign_id or "", START + 86400)
+        await self.bot._drop_old_suggestions(table, later)  # the next one ended: it goes
+        dropped = await store.get(GUILD, made.id)
+        assert dropped is not None
+        self.assertEqual(dropped.state, "dropped")
