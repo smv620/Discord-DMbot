@@ -38,6 +38,7 @@ const countsOf = (rows: SupportTicketRow[]): TicketCounts => ({
   new: rows.filter((r) => r.status === "new").length,
   answered: rows.filter((r) => r.status === "answered").length,
   closed: rows.filter((r) => r.status === "closed").length,
+  escalated: rows.filter((r) => r.status === "escalated").length,
 });
 
 /** The API as the real one answers: only the filter's tickets, and the counts over all of them. */
@@ -74,6 +75,7 @@ describe("the filter", () => {
     expect(shown()).toEqual(["New A", "New B"]);
     const group = screen.getByRole("group", { name: text.ticketsFilterLabel });
     expect([...group.querySelectorAll("button")].map((b) => b.textContent)).toEqual([
+      "Needs the team\u00a0(0)",
       "Needs a reply\u00a0(2)",
       "Answered\u00a0(1)",
       "Closed\u00a0(1)",
@@ -214,7 +216,7 @@ describe("the API call", () => {
     vi.fn(async () => new Response(JSON.stringify(body), { status: 200, headers: { "Content-Type": "application/json" } }));
 
   it("sends the filter as ?status= and returns the counts", async () => {
-    const counts = { new: 2, answered: 1, closed: 1 };
+    const counts = { new: 2, answered: 1, closed: 1, escalated: 0 };
     const fetcher = reply({ tickets: [row(1, "A", "new")], counts });
     const found = await httpAdminApi("https://api.example", fetcher).tickets("new");
     expect(found.counts).toEqual(counts);
@@ -224,7 +226,7 @@ describe("the API call", () => {
   it("does not trust counts that are not numbers", async () => {
     const fetcher = reply({ tickets: ROWS(), counts: {} });
     const found = await httpAdminApi("https://api.example", fetcher).tickets("all");
-    expect(found.counts).toEqual({ new: 2, answered: 1, closed: 1 });
+    expect(found.counts).toEqual({ new: 2, answered: 1, closed: 1, escalated: 0 });
   });
 
   it("filters and counts here when the API is older and sends everything", async () => {
@@ -233,7 +235,7 @@ describe("the API call", () => {
     const api = httpAdminApi("https://api.example", fetcher);
     const answered = await api.tickets("answered");
     expect(answered.tickets.map((t) => t.subject)).toEqual(["Answered A"]);
-    expect(answered.counts).toEqual({ new: 2, answered: 1, closed: 1 });
+    expect(answered.counts).toEqual({ new: 2, answered: 1, closed: 1, escalated: 0 });
     expect((await api.tickets("all")).tickets).toHaveLength(4);
   });
 });

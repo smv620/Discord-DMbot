@@ -1307,7 +1307,15 @@ def create_app(
         reply = bool(rows) and await account_email(db, session.user_id) is not None
         return {
             "tickets": [
-                {"at": r.created_at, "subject": r.subject, "status": r.status} for r in rows
+                {
+                    "at": r.created_at,
+                    "subject": r.subject,
+                    "status": r.status,
+                    # Who wrote the latest answer and its first line (#1432); null before one.
+                    "answeredBy": {"ai": "helper", "person": "team"}.get(r.answered_by or ""),
+                    "latest": r.latest,
+                }
+                for r in rows
             ],
             "reply": reply,
         }

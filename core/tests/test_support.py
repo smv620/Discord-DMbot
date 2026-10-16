@@ -6,6 +6,7 @@ without its words; old and deleted accounts' tickets go; and its words reach no 
 
 from __future__ import annotations
 
+import json
 import logging
 import time
 import unittest
@@ -41,6 +42,9 @@ MESSAGE = "Hello, the plan on my last invoice is not the one I picked."
 BOB = 8008  # another account: its tickets are not Alice's
 NOW = 1_800_000_000
 DAY = 86400
+
+
+NO_ANSWER = {"answeredBy": None, "latest": None}
 
 
 class Outbox:
@@ -388,8 +392,8 @@ class SupportRoute(SupportBase):
             answer.json(),
             {
                 "tickets": [
-                    {"at": self.now, "subject": "newer", "status": "new"},
-                    {"at": self.now - 100, "subject": "older", "status": "new"},
+                    {"at": self.now, "subject": "newer", "status": "new", **NO_ANSWER},
+                    {"at": self.now - 100, "subject": "older", "status": "new", **NO_ANSWER},
                 ],
                 "reply": True,
             },
@@ -413,6 +417,65 @@ class SupportRoute(SupportBase):
             [(t["subject"], t["status"]) for t in answer.json()["tickets"]],
             [("three", "new"), ("two", "closed"), ("one", "answered")],
         )
+
+    async def ticket_id(self, subject: str) -> int:
+        return {r.subject: r.id for r in await support.newest(self.web)}[subject]
+
+    async def test_the_list_shows_who_answered_last_and_the_answers_first_line(self) -> None:
+        await self.add_row(ALICE.id, self.now - 3, "helped")
+        await self.add_row(ALICE.id, self.now - 2, "team")
+        await self.add_row(ALICE.id, self.now - 1, "waiting")
+        helped, team = await self.ticket_id("helped"), await self.ticket_id("team")
+        await support.add_reply(
+            self.web, helped, "ai", "Hi Alice,\nTry the Billing page.\nMore below.", now=1
+        )
+        await support.add_reply(self.web, team, "ai", "A first answer.", now=1)
+        await support.add_reply(self.web, team, "customer", "That did not help.", now=2)
+        await support.add_reply(self.web, team, "person", "  \n  I fixed it for you.  ", now=3)
+        # What the person wrote by email is never sent back as an "answer".
+        await support.add_reply(self.web, team, "customer", "Thanks, one more thing.", now=4)
+        shown = {
+            t["subject"]: t
+            for t in (await (await self.client()).get("/support/mine")).json()["tickets"]
+        }
+        self.assertEqual(
+            (shown["helped"]["answeredBy"], shown["helped"]["latest"]),
+            ("helper", "Try the Billing page."),
+        )
+        self.assertEqual(
+            (shown["team"]["answeredBy"], shown["team"]["latest"]),
+            ("team", "I fixed it for you."),
+        )
+        self.assertEqual((shown["waiting"]["answeredBy"], shown["waiting"]["latest"]), (None, None))
+
+    async def test_an_answer_is_cut_to_a_first_line_and_never_anyone_elses(self) -> None:
+        await sessions.sign_in(self.web, _bob(), [THURSDAY], now=self.now, days=30)
+        await self.add_row(ALICE.id, self.now - 2, "long")
+        await self.add_row(BOB, self.now - 1, "bobs")
+        long, bobs = await self.ticket_id("long"), await self.ticket_id("bobs")
+        await support.add_reply(self.web, long, "ai", ("word " * 60).strip(), now=1)
+        await support.add_reply(self.web, bobs, "ai", "Bob's private answer.", now=1)
+        alice = (await (await self.client()).get("/support/mine")).text
+        self.assertNotIn("Bob", alice)
+        latest = json.loads(alice)["tickets"][0]["latest"]
+        self.assertLessEqual(len(latest), support.ANSWER_LINE_MAX + 1)
+        self.assertTrue(latest.endswith("…"))
+        # The door answers nothing for a ticket that is not the signed-in person's.
+        async with self.web.user(ALICE.id) as conn:
+            cur = await conn.execute("SELECT * FROM dmbot_support_latest_answer(%s)", (bobs,))
+            self.assertEqual(await cur.fetchall(), [])
+        async with self.web.anonymous() as conn:
+            cur = await conn.execute("SELECT * FROM dmbot_support_latest_answer(%s)", (long,))
+            self.assertEqual(await cur.fetchall(), [])
+
+    async def test_the_websites_role_cannot_read_a_replys_words_itself(self) -> None:
+        await self.add_row(ALICE.id, self.now, "q")
+        await support.add_reply(
+            self.web, await self.ticket_id("q"), "ai", "Secret-ish answer.", now=1
+        )
+        async with self.web.user(ALICE.id) as conn:
+            with self.assertRaises(psycopg.errors.InsufficientPrivilege):
+                await conn.execute("SELECT text FROM support_replies")
 
     async def test_the_list_is_at_most_twenty_and_empty_for_a_person_who_never_wrote(self) -> None:
         client = await self.client()

@@ -164,3 +164,49 @@ describe("the API call", () => {
     expect(await api.mySupport!()).toEqual({ tickets: [], reply: true });
   });
 });
+
+describe("who answered, and the latest answer (#1432)", () => {
+  const list = (tickets: MySupport["tickets"], reply = true): MySupport => ({ reply, tickets });
+
+  it("names the helper or the team, and says when a person has it", async () => {
+    render(
+      <MyQuestions
+        api={apiWith(
+          list([
+            { at: DAY, subject: "A", status: "answered", answeredBy: "helper", latest: "Open the Billing page." },
+            { at: DAY - 1, subject: "B", status: "answered", answeredBy: "team", latest: "I fixed it." },
+            { at: DAY - 2, subject: "C", status: "escalated", answeredBy: "helper", latest: "Not sure." },
+            { at: DAY - 3, subject: "D", status: "new", answeredBy: null, latest: null },
+          ]),
+        )}
+      />,
+    );
+    await screen.findByRole("heading", { name: text.questionsHeading });
+    const rows = screen.getAllByRole("listitem").map((r) => r.textContent);
+    expect(rows[0]).toContain("Answered by DMbot's AI helper — check your email");
+    expect(rows[0]).toContain(text.questionLatest("Open the Billing page."));
+    expect(rows[1]).toContain("Answered by the team — check your email");
+    expect(rows[2]).toContain("· With the team");
+    expect(rows[2]).toContain(text.questionLatest("Not sure."));
+    expect(rows[3]).toContain("· Waiting");
+    expect(rows[3]).not.toContain("Last reply");
+  });
+
+  it("does not say to check email when the account has none", async () => {
+    render(
+      <MyQuestions
+        api={apiWith(
+          list([{ at: DAY, subject: "A", status: "answered", answeredBy: "team", latest: "Done." }], false),
+        )}
+      />,
+    );
+    expect(await screen.findByText(/· Answered by the team$/)).toBeTruthy();
+    expect(screen.queryByText(/check your email/)).toBeNull();
+  });
+
+  it("is unchanged from an API without the new fields", async () => {
+    render(<MyQuestions api={apiWith(list([{ at: DAY, subject: "Old", status: "answered" }]))} />);
+    expect(await screen.findByText(/· Answered — check your email$/)).toBeTruthy();
+    expect(screen.queryByText(/Last reply/)).toBeNull();
+  });
+});
