@@ -292,7 +292,7 @@ class TheFile(HomebrewUiTest):
         self.assertEqual((await self.store.list(GUILD, self.campaign.id))[0].text, "Old.")
 
     async def test_no_loads_it_as_the_dms_own_and_records_no_confirmation(self) -> None:
-        ask = ui.FromBookAsk(self.campaign, (FileEntry("rule", "House", "Mine."),), "a" * 64, 0)
+        ask = ui.FromBookAsk(self.campaign, (FileEntry("feat", "House", "Mine."),), "a" * 64, 0)
         it = self.press()
         await ask._own(it)
         (saved,) = await self.store.list(GUILD, self.campaign.id)
@@ -303,7 +303,7 @@ class TheFile(HomebrewUiTest):
     async def test_yes_asks_first_and_only_the_confirmation_stores_and_records_who_and_when(
         self,
     ) -> None:
-        ask = ui.FromBookAsk(self.campaign, (FileEntry("rule", "Booked", "Words."),), "b" * 64, 0)
+        ask = ui.FromBookAsk(self.campaign, (FileEntry("feat", "Booked", "Words."),), "b" * 64, 0)
         it = self.press()
         await ask._book(it)
         self.assertIn("you say you may use this text", self.said(it))
@@ -328,21 +328,21 @@ class TheFile(HomebrewUiTest):
         self.assertEqual(record["fingerprint"], "b" * 64)
 
     async def test_cancel_loads_nothing_and_a_non_dm_cannot_confirm(self) -> None:
-        right = ui.RightToUse(self.campaign, (FileEntry("rule", "X", "y"),), "c" * 64, 0)
+        right = ui.RightToUse(self.campaign, (FileEntry("feat", "X", "y"),), "c" * 64, 0)
         await right._cancel(self.press())
         await right._confirmed(self.press(PLAYER))
         self.assertEqual(await self.store.list(GUILD, self.campaign.id), [])
         self.assertEqual(await self.campaigns.confirmations(GUILD, self.campaign.id), [])
 
     async def test_the_question_is_only_for_a_book_and_each_answer_is_kept(self) -> None:
-        entries = (FileEntry("rule", "Mine", "Words."),)
+        entries = (FileEntry("feat", "Mine", "Words."),)
         own = ui.FromBookAsk(self.campaign, entries, "f" * 64, 0)
         await own._own(self.press())  # "No, all my own": no question, no edition
         (saved,) = await self.store.list(GUILD, self.campaign.id)
         self.assertEqual((saved.from_book, saved.book_edition), (False, None))
         for edition in ("2024", "other"):
             book = ui.BookEdition(
-                self.campaign, (FileEntry("rule", f"Book {edition}", "x"),), "a" * 64, 0
+                self.campaign, (FileEntry("feat", f"Book {edition}", "x"),), "a" * 64, 0
             )
             await book._pick(edition, self.press())
         got = {e.name: e.book_edition for e in await self.store.list(GUILD, self.campaign.id)}
@@ -350,8 +350,8 @@ class TheFile(HomebrewUiTest):
 
     async def test_a_file_over_the_limit_is_refused_with_the_count(self) -> None:
         for n in range(200):
-            await self.store.add(GUILD, self.campaign.id, DM, kind="rule", name=f"R{n}", text="x")
-        ask = ui.FromBookAsk(self.campaign, (FileEntry("rule", "One more", "x"),), "d" * 64, 0)
+            await self.store.add(GUILD, self.campaign.id, DM, kind="feat", name=f"R{n}", text="x")
+        ask = ui.FromBookAsk(self.campaign, (FileEntry("feat", "One more", "x"),), "d" * 64, 0)
         it = self.press()
         await ask._own(it)
         self.assertIn("would make 201 entries", self.said(it))
@@ -360,7 +360,7 @@ class TheFile(HomebrewUiTest):
 
 class OnlyOnce(HomebrewUiTest):
     async def test_a_double_press_records_the_confirmation_and_loads_once(self) -> None:
-        right = ui.BookEdition(self.campaign, (FileEntry("rule", "Booked", "Words."),), "e" * 64, 0)
+        right = ui.BookEdition(self.campaign, (FileEntry("feat", "Booked", "Words."),), "e" * 64, 0)
         await right._pick("2024", self.press())
         again = self.press()
         await right._pick("2024", again)

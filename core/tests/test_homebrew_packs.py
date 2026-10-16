@@ -86,7 +86,7 @@ class Packs(DatabaseTest):
                             text="Step through fire.")  # fmt: skip
         await self.brew.load_file(
             GUILD_A, self.pub.id, DM_A,
-            [FileEntry("rule", "Booked Rule", "Words from a book.")], from_book=True,
+            [FileEntry("feat", "Booked Rule", "Words from a book.")], from_book=True,
         )  # fmt: skip
 
     async def mine(self, campaign: Campaign) -> list[Homebrew]:
@@ -260,7 +260,7 @@ class Packs(DatabaseTest):
         # A book entry no pack names is still read from the campaign's own.
         await self.brew.load_file(
             GUILD_A, self.same.id, DM_A,
-            [FileEntry("rule", "Only In The Book", "x")], from_book=True, book_edition="other",
+            [FileEntry("feat", "Only In The Book", "x")], from_book=True, book_edition="other",
         )  # fmt: skip
         only = await reader.find(GUILD_A, self.same.id, "Only In The Book")
         assert only is not None
@@ -268,7 +268,7 @@ class Packs(DatabaseTest):
 
     async def test_a_book_entry_with_an_edition_still_never_goes_into_a_pack(self) -> None:
         await self.brew.load_file(
-            GUILD_A, self.pub.id, DM_A, [FileEntry("rule", "Edition Book", "x")],
+            GUILD_A, self.pub.id, DM_A, [FileEntry("feat", "Edition Book", "x")],
             from_book=True, book_edition="2024",
         )  # fmt: skip
         done = await self.packs.publish_pack(

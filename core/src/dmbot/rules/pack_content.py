@@ -17,6 +17,7 @@ from dmbot.rules.homebrew import (
     HOMEBREW_MAX,
     KINDS,
     NAME_MAX,
+    RULE_KIND,
     SUMMARY_MAX,
     TEXT_MAX,
     Homebrew,
@@ -67,6 +68,8 @@ def valid_content(content: Any) -> dict[str, Any]:
     for entry in content["entries"]:
         if not isinstance(entry, dict):
             raise BadPack("entry")
+        if entry.get("kind") == RULE_KIND:
+            continue  # a pack made before rules left homebrew (#1628): the rule is left out
         kind, name, text = entry.get("kind"), entry.get("name"), entry.get("text")
         summary, known = entry.get("summary"), entry.get("known")
         if (

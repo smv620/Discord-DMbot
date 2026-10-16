@@ -125,6 +125,9 @@ function Campaigns({ api }: { api: AccountApi }) {
         ) : (
           <>
             <p class="lead">{text.lead}</p>
+            <p class="small">
+              {text.rulesNote} <a href="/account/house-rules">{text.rulesLink}</a>
+            </p>
             <ul class="campaigns">
               {campaigns.map((c) => (
                 <li key={c.ref}>
@@ -225,6 +228,9 @@ function Entries({
               <a href="/account/homebrew">{text.allCampaigns}</a>
             </p>
             <h2>{found.name}</h2>
+            <p class="small">
+              {text.rulesNote} <a href="/account/house-rules">{text.rulesLink}</a>
+            </p>
             <p class="small">{text.leadOneCampaign}</p>
             <p class="small">{text.dmChanges}</p>
             {(found.entries.some((e) => e.fromBook) ||

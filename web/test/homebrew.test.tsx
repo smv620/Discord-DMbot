@@ -14,7 +14,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { ApiError, type AccountApi } from "../src/account/api";
 import HomebrewPage, { refFromPath } from "../src/account/Homebrew";
 import { mockApi } from "../src/account/mock";
-import { problem, text } from "../src/content/homebrew";
+import { kindOrder, problem, text } from "../src/content/homebrew";
 
 afterEach(cleanup);
 
@@ -220,7 +220,7 @@ describe("a campaign's entries", () => {
         entries: [
           { kind: "vehicle", name: "Sky Cart", summary: null, text: "Flies." },
           {
-            kind: "rule",
+            kind: "other",
             name: "Fast Rest",
             summary: null,
             text: "Ten minutes.",
@@ -232,7 +232,22 @@ describe("a campaign's entries", () => {
     await screen.findByText("Sky Cart");
     expect(
       screen.getAllByRole("heading", { level: 3 }).map((h) => h.textContent),
-    ).toEqual(["Rules", "vehicle"]);
+    ).toEqual(["Other", "vehicle"]);
+  });
+
+  it("has no Rules kind: made-up rules are House rules, with a link", async () => {
+    expect(kindOrder).not.toContain("rule");
+    expect(Object.keys(text.kinds)).not.toContain("rule");
+    page(mockApi("table"), `/account/homebrew/${REF}`);
+    await screen.findByText(text.leadOneCampaign);
+    const link = screen.getByRole("link", { name: text.rulesLink });
+    expect(link.getAttribute("href")).toBe("/account/house-rules");
+  });
+
+  it("points to House rules from the campaign list too", async () => {
+    page(mockApi("table"), "/account/homebrew");
+    const link = await screen.findByRole("link", { name: text.rulesLink });
+    expect(link.getAttribute("href")).toBe("/account/house-rules");
   });
 
   it("says what the file holds, next to the button", async () => {

@@ -1590,6 +1590,91 @@ class SaveAndResume(SessionTests):
         self.assertEqual(said_as["My lines are not asked about."], "")
         self.assertEqual((table.speaker_calls, table.speaker_tokens), (1, [70, 5]))
 
+    async def asking(self, table: Any) -> Any:
+        """The sidebar with an engine and a spy where a question would start (#1624)."""
+        from unittest.mock import MagicMock
+
+        starts = MagicMock(return_value=True)
+        self.addCleanup(setattr, self.bot.sidebar, "answerer", self.bot.sidebar.answerer)
+        self.bot.sidebar.answerer = object()  # type: ignore[assignment]  # only checked for None
+        self.addCleanup(setattr, self.bot.sidebar, "_start", self.bot.sidebar._start)
+        self.bot.sidebar._start = starts  # type: ignore[method-assign]
+        return starts
+
+    async def test_a_hold_on_line_said_as_an_npc_starts_no_sidebar_question(self) -> None:
+        table = await self.speaking("1 npc 2")
+        starts = await self.asking(table)
+        self.said(table, "Hold on, I need to find the key to the cellar.", user=DM)
+        await self.settle()
+        self.assertEqual(len(self.speaker_asks), 1)  # the window was closed for the label
+        self.assertEqual([line.entity for line in table.unsaved._waiting], ["Brother Hiro"])
+        starts.assert_not_called()
+
+    async def test_a_line_saved_to_the_database_before_its_label_is_still_judged(self) -> None:
+        # The 2-second flush takes a line out of `unsaved` while its label is still being asked
+        # for; the label is then written to the database. The look-up must still not start.
+        hold = asyncio.Event()
+        table = await self.speaking("1 npc 2", hold=hold)
+        starts = await self.asking(table)
+        self.said(table, "Hold on, I need to find the key to the cellar.", user=DM)
+        await self.settle()
+        self.assertEqual(len(self.speaker_asks), 1)  # asked, and waiting for the answer
+        table.unsaved._waiting.clear()  # the flush
+        hold.set()
+        await self.settle()
+        starts.assert_not_called()
+
+    async def test_a_second_look_up_soon_after_is_asked_at_once_without_another_call(self) -> None:
+        table = await self.speaking("1 narrating")
+        starts = await self.asking(table)
+        self.said(table, "Hold on, I need to find the key to the cellar.", user=DM)
+        await self.settle()
+        starts.assert_called_once()
+        self.said(table, "Hang on, I have to check the grapple rules.", user=DM, at_ms=2_000)
+        await self.settle()
+        self.assertEqual(starts.call_count, 2)  # (no waiting: the early close is limited)
+        self.assertEqual(len(self.speaker_asks), 1)
+
+    async def test_the_same_line_while_narrating_asks(self) -> None:
+        table = await self.speaking("1 narrating")
+        starts = await self.asking(table)
+        self.said(table, "Hold on, I need to find the key to the cellar.", user=DM)
+        await self.settle()
+        starts.assert_called_once()
+
+    async def test_a_label_that_is_not_sure_still_asks(self) -> None:
+        table = await self.speaking("1 npc 2 maybe")
+        starts = await self.asking(table)
+        self.said(table, "Hold on, I need to find the key to the cellar.", user=DM)
+        await self.settle()
+        starts.assert_called_once()
+
+    async def test_when_the_label_cannot_be_had_the_question_is_asked_as_before(self) -> None:
+        table = await self.speaking(RuntimeError("down"))
+        starts = await self.asking(table)
+        self.said(table, "Hold on, I need to find the key to the cellar.", user=DM)
+        await self.settle()
+        starts.assert_called_once()
+
+    async def test_ordinary_dm_talk_is_not_held_for_a_label(self) -> None:
+        table = await self.speaking("1 npc 2")
+        starts = await self.asking(table)
+        self.said(table, "Welcome, weary travellers, sit by the fire.", user=DM)
+        await self.settle()
+        self.assertEqual(self.speaker_asks, [])  # nothing closed the window early
+        starts.assert_not_called()
+
+    async def test_a_dm_who_stops_while_waiting_for_the_label_asks_nothing(self) -> None:
+        hold = asyncio.Event()
+        table = await self.speaking("1 narrating", hold=hold)
+        starts = await self.asking(table)
+        self.said(table, "Hold on, I need to find the key to the cellar.", user=DM)
+        await self.settle()
+        self.bot.stop_recording(GUILD, DM)
+        hold.set()
+        await self.settle()
+        starts.assert_not_called()
+
     async def test_a_maybe_or_an_unsure_line_gets_no_label(self) -> None:
         table = await self.speaking("1 npc 2 maybe\n2 unsure")
         self.said(table, "Welcome, weary travellers, sit by the fire.", user=DM)

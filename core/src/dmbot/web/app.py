@@ -60,6 +60,8 @@ from dmbot.web.characters import build_characters
 from dmbot.web.discord import DiscordError, DiscordOAuth
 from dmbot.web.export import build_export
 from dmbot.web.feedback import Discussions, FeedbackError, HumanCheck
+from dmbot.web.improvement import read_choice as read_improvement
+from dmbot.web.improvement import save_choice as save_improvement
 from dmbot.web.limits import LIMITS, RateLimit, free_ticket_refusal
 from dmbot.web.me import build_me
 from dmbot.web.moving import MoveCodes, can_move
@@ -520,6 +522,27 @@ def create_app(
             now=clock(),
             recap_audio_for_sale=payments is not None and payments.recap_audio_for_sale,
         )
+
+    @app.get("/me/improvement")
+    async def me_improvement(signed: Signed) -> dict[str, Any]:
+        """Whether DMbot may use the signed-in person's words to improve itself (#1609)."""
+        session, _token = signed
+        return await read_improvement(db, session)
+
+    @app.put("/me/improvement")
+    async def set_me_improvement(signed: Signed, request: Request) -> dict[str, Any]:
+        """Change it: `{"improve": true | false}`. Nothing is deleted by turning it off."""
+        session, _token = signed
+        try:
+            body = await request.json()
+        except ValueError:
+            body = None
+        improve = body.get("improve") if isinstance(body, dict) else None
+        if not isinstance(improve, bool):
+            raise HTTPException(status_code=422, detail="bad_choice")
+        saved = await save_improvement(db, session, improve)
+        log.info("A website improvement choice was saved")
+        return saved
 
     @app.get("/me/characters")
     async def me_characters(signed: Signed) -> dict[str, Any]:

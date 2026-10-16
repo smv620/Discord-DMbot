@@ -1900,6 +1900,82 @@ GAME_CLOCK_GROUPS = f"""
             CHECK (group_position IS NULL OR group_position BETWEEN 1 AND 3);
 """
 
+IMPROVEMENT_OPT_OUTS = """
+    -- A person's choice not to have their words used to improve DMbot (#1609; docs/PLAN.md,
+    -- "Data, ownership and deletion"). Per Discord account, across all servers: it is the
+    -- person's choice, not a campaign's. A row means "opted out"; no row is the default (DMbot
+    -- may use their words). Nothing is deleted by it, and running their table is unaffected.
+    -- Kept when an account is deleted (no link to web_users): forgetting the choice would put
+    -- their words back in. A person reads and writes only their own row (user_isolation); the
+    -- exports read it one person at a time through Database.user(), so nothing here lets one
+    -- person see another's choice. A new table: no rows change, so no backfill policy.
+    CREATE TABLE improvement_opt_outs (
+        user_id      BIGINT PRIMARY KEY CHECK (user_id > 0),
+        opted_out_at BIGINT NOT NULL
+    );
+    """ + _isolate_user("improvement_opt_outs")
+
+HOMEBREW_RULES_TO_HOUSE_RULES = """
+    -- Rules are house rules, not homebrew (owner decision 2026-10-16, #1628; docs/PLAN.md,
+    -- "Homebrew (part 1)"). Every homebrew entry of the kind 'rule' that is the DM's own
+    -- and fits a house rule (one line of at most 500 characters, the name in front unless the
+    -- text already starts with it; at most 200 house rules a campaign)
+    -- becomes the campaign's next numbered house rule, and the entry goes. A rule from a shared
+    -- book keeps its book confirmation, which a house rule cannot hold; one that does not fit
+    -- and one past the 200 would lose their words: all stay as homebrew, retagged 'other'. A
+    -- hidden rule moves too (owner, 2026-10-16, "Homebrew (part 2)": nothing is hidden from
+    -- players any more). A linked house-rules file is not rewritten. Open suggestions
+    -- of a 'rule' to a pack are dropped (a pack cannot hold one). The kind 'rule' leaves
+    -- homebrew_entries' list.
+    -- Row-level security (CLAUDE.md, migrations that change rows): migrations run with no server
+    -- set, so each table read or written gets a transient policy that is dropped again below:
+    -- homebrew_entries (read, delete, retag), house_rules (insert), campaigns (the counter) and
+    -- pack_suggestions (delete).
+    CREATE POLICY migrate_backfill ON homebrew_entries USING (true) WITH CHECK (true);
+    CREATE POLICY migrate_backfill ON house_rules USING (true) WITH CHECK (true);
+    CREATE POLICY migrate_backfill ON campaigns USING (true) WITH CHECK (true);
+    CREATE POLICY migrate_backfill ON pack_suggestions USING (true) WITH CHECK (true);
+
+    CREATE TEMP TABLE moved_rules ON COMMIT DROP AS
+        SELECT id, guild_id, campaign_id, created_by, created_at, updated_at, rule_text,
+               row_number() OVER (PARTITION BY guild_id, campaign_id ORDER BY id) AS n
+        FROM (
+            SELECT id, guild_id, campaign_id, created_by, created_at, updated_at,
+                   btrim(regexp_replace(
+                       CASE WHEN lower(left(text, char_length(name))) = lower(name)
+                            THEN text ELSE name || ': ' || text END,
+                       '[[:space:]]+', ' ', 'g')) AS rule_text
+            FROM homebrew_entries
+            WHERE kind = 'rule' AND NOT from_book
+        ) AS composed
+        WHERE char_length(rule_text) <= 500;
+    DELETE FROM moved_rules m
+        WHERE m.n + (SELECT count(*) FROM house_rules h
+                     WHERE h.guild_id = m.guild_id AND h.campaign_id = m.campaign_id) > 200;
+
+    INSERT INTO house_rules (guild_id, campaign_id, number, rule, created_by, created_at,
+                             updated_at)
+        SELECT m.guild_id, m.campaign_id, c.house_rules_made + m.n, m.rule_text, m.created_by,
+               m.created_at, m.updated_at
+        FROM moved_rules m JOIN campaigns c ON c.guild_id = m.guild_id AND c.id = m.campaign_id;
+    UPDATE campaigns c SET house_rules_made = c.house_rules_made + k.moved
+        FROM (SELECT guild_id, campaign_id, count(*) AS moved FROM moved_rules
+              GROUP BY guild_id, campaign_id) k
+        WHERE c.guild_id = k.guild_id AND c.id = k.campaign_id;
+    DELETE FROM homebrew_entries h USING moved_rules m WHERE h.id = m.id;
+    UPDATE homebrew_entries SET kind = 'other' WHERE kind = 'rule';
+    DELETE FROM pack_suggestions WHERE kind = 'rule' AND status = 'open';
+
+    ALTER TABLE homebrew_entries DROP CONSTRAINT homebrew_entries_kind_check;
+    ALTER TABLE homebrew_entries ADD CONSTRAINT homebrew_entries_kind_check
+        CHECK (kind IN ('spell', 'monster', 'item', 'feat', 'condition', 'other'));
+
+    DROP POLICY migrate_backfill ON homebrew_entries;
+    DROP POLICY migrate_backfill ON house_rules;
+    DROP POLICY migrate_backfill ON campaigns;
+    DROP POLICY migrate_backfill ON pack_suggestions;
+"""
+
 GAMETIME_CHANNEL = """
     -- The players' game-time channel (docs/PLAN.md, "TimeBot"; #1116): `dmb-gametime-<slug>`,
     -- everyone reads, only DMbot posts, with the players' pinned clock ("Day 5, morning")
@@ -2461,6 +2537,8 @@ WEB_ROLE_GRANTS: tuple[tuple[str, tuple[str, ...]], ...] = (
     # The weekly support email's once-only mark, through the admin door only (#1514).
     ("SELECT, INSERT, UPDATE", ("support_week_mail",)),
     ("SELECT, INSERT, UPDATE, DELETE", ("web_users", "web_sessions")),
+    # The improvement opt-out (#1609): the person's own row, through the website's switch.
+    ("SELECT, INSERT, DELETE", ("improvement_opt_outs",)),
     # Emailed sign-in links (#1231): made and used by the website, never read by anyone else.
     # (Only `used_at` can be changed: a holder of a link can spend it, never revive or move it.)
     ("SELECT, INSERT, DELETE", ("email_sign_in_links",)),
@@ -5930,6 +6008,8 @@ MIGRATIONS: tuple[Migration, ...] = (
     ("0107_web_homebrew_book", WEB_HOMEBREW_BOOK),  # the page tags shared-book entries (#1579)
     ("0108_web_homebrew_packs", WEB_HOMEBREW_PACKS),  # the page shows followed packs (#1586)
     ("0109_game_clock_groups", GAME_CLOCK_GROUPS),  # split-party clocks (#1607)
+    ("0110_improvement_opt_outs", IMPROVEMENT_OPT_OUTS),  # the improvement opt-out (#1609)
+    ("0111_homebrew_rules_to_house_rules", HOMEBREW_RULES_TO_HOUSE_RULES),  # #1628
 )
 
 # Tables that must have row-level security. A test checks every table in the schema
@@ -6001,6 +6081,8 @@ USER_ISOLATED_TABLES = (
     "owner_hours",
     # Which campaigns an owner has, across servers; kept by a trigger on campaigns (#437).
     "owner_campaigns",
+    # A person's choice not to have their words used to improve DMbot (#1609).
+    "improvement_opt_outs",
 )
 # Add-only: no policy allows reading a row; the team reads them as the database's
 # administrator (#665).

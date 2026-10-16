@@ -48,6 +48,8 @@ def entries_of(content: Any) -> dict[str, Entry]:
             name, text = item["name"], item["text"]
             if not isinstance(name, str) or not isinstance(text, str):
                 continue
+            if item.get("kind") == "rule":
+                continue  # a pack made before rules left homebrew (#1628)
             out[name_key(name)] = {
                 "kind": str(item["kind"]),
                 "name": name,
