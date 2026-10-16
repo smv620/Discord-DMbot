@@ -2771,9 +2771,7 @@ class DMBot(commands.AutoShardedBot):
         gametime_problem = await self._gametime_channel(guild, campaign, screen)
         dmbchat_id, dmbchat_problem = await self._dmbchat_channel(guild, campaign, screen)
 
-        await self.campaigns.set_dm_screen(guild.id, campaign.id, screen_id)
-        await self.campaigns.set_last_voice_channel(guild.id, campaign.id, voice.id)
-        campaign = await self.campaigns.mark_played(guild.id, campaign.id)
+        campaign = await self.campaigns.record_start(guild.id, campaign.id, screen_id, voice.id)
         started_at = int(time.time())
         table = Table(
             guild_id=guild.id,
@@ -7651,7 +7649,7 @@ def _attachable(
 
 async def run(settings: Settings) -> None:
     entitlements.configure_free_users(settings.free_users)  # #771
-    db = await Database.open(settings.database_url)
+    db = await Database.open(settings.database_url, max_size=settings.database_pool_max)
     try:
         await definitions.seed(db)  # the official relationships, by version (#1189)
         transcriber = build_transcriber(settings.transcription)

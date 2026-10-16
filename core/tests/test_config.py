@@ -23,6 +23,23 @@ class ConfigTests(unittest.TestCase):
             load_settings({**BASE, "DISCORD_DEV_GUILD_ID": "abc"})
 
 
+class PoolSize(unittest.TestCase):
+    def test_ten_unless_set_so_nothing_changes_for_a_deployment_that_sets_nothing(self) -> None:
+        self.assertEqual(load_settings(BASE).database_pool_max, 10)
+        self.assertEqual(load_settings({**BASE, "DATABASE_POOL_MAX": ""}).database_pool_max, 10)
+
+    def test_a_pod_can_take_a_smaller_or_larger_pool(self) -> None:
+        for raw, want in (("4", 4), ("1", 1), ("100", 100)):
+            self.assertEqual(
+                load_settings({**BASE, "DATABASE_POOL_MAX": raw}).database_pool_max, want
+            )
+
+    def test_nonsense_is_refused_with_a_plain_message(self) -> None:
+        for raw in ("0", "101", "-2", "ten", "4.5", "1000"):
+            with self.assertRaisesRegex(ConfigError, "DATABASE_POOL_MAX must be a number"):
+                load_settings({**BASE, "DATABASE_POOL_MAX": raw})
+
+
 class SidebarRecall(unittest.TestCase):
     def test_the_sidebar_uses_the_confirmed_story_unless_switched_off(self) -> None:
         s = load_settings(BASE)
