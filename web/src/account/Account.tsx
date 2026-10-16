@@ -18,6 +18,7 @@ import {
   type RecordingEntry,
 } from "./api";
 import { isSafeRedirect } from "./redirect";
+import { PublicQuestions, Support } from "./Support";
 
 type State =
   | { kind: "loading" }
@@ -35,6 +36,8 @@ interface Props {
   /** The page's `#...`: an emailed sign-in link puts its one-use code there (#1231), so no
    * server or log ever sees it. */
   hash?: string;
+  /** Cloudflare Turnstile's site key for the Support form, or "" to skip the check (#1340). */
+  siteKey?: string;
 }
 
 /** The code in `#email-link=...`, or null. */
@@ -64,6 +67,8 @@ interface Shared {
   signedOut: (notice?: string) => void;
   /** Free access with no hours or campaign limit: no "your hours" or "slots" wording (#824). */
   noLimits: boolean;
+  /** Cloudflare Turnstile's site key for the Support form, or "" (#1340). */
+  siteKey: string;
 }
 
 const SharedContext = createContext<Shared | null>(null);
@@ -152,7 +157,13 @@ function ActionButton({
   );
 }
 
-export default function Account({ api, go = defaultGo, search = "", hash = "" }: Props) {
+export default function Account({
+  api,
+  go = defaultGo,
+  search = "",
+  hash = "",
+  siteKey = "",
+}: Props) {
   const [state, setState] = useState<State>({ kind: "loading" });
   // An emailed link is tried once, even if the page loads again ("Try again").
   const linkTried = useRef(false);
@@ -233,7 +244,7 @@ export default function Account({ api, go = defaultGo, search = "", hash = "" }:
 
   const access = state.kind === "signed-in" ? state.me.access : undefined;
   const noLimits = access?.kind === "free" && access.unlimited === true;
-  const shared: Shared = { api, go: safeGo, refresh, signedOut, noLimits };
+  const shared: Shared = { api, go: safeGo, refresh, signedOut, noLimits, siteKey };
 
   let body: JSX.Element;
   switch (state.kind) {
@@ -461,6 +472,7 @@ function SignedIn({
       <PlanSection me={me} />
       {me.dmbotId !== undefined && <IdSection me={me} />}
       {me.canMove === true && api.getMoveCode && <MoveSection />}
+      <SupportOrQuestions me={me} />
       <CampaignsSection me={me} />
       <ServersSection me={me} />
       <CharactersSection />
@@ -1088,6 +1100,17 @@ function IdSection({ me }: { me: Me }) {
         </>
       )}
     </section>
+  );
+}
+
+/** Paying accounts write to the team in private; everyone else is pointed to the public Q&A.
+ * An API older than #1340 has no canSupport, so it shows the Q&A (#1340). */
+function SupportOrQuestions({ me }: { me: Me }) {
+  const { api, siteKey } = useShared();
+  return me.canSupport === true && api.sendSupport ? (
+    <Support api={api} siteKey={siteKey} />
+  ) : (
+    <PublicQuestions />
   );
 }
 

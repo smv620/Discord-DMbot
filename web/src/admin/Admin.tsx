@@ -6,6 +6,7 @@ import { useEffect, useRef, useState } from "preact/hooks";
 import { text } from "../content/admin";
 import { type AdminApi, AdminApiError, type AdminMe, type AdminWays } from "./api";
 import Grants from "./Grants";
+import Tickets from "./Tickets";
 
 interface Props {
   api: AdminApi;
@@ -147,6 +148,15 @@ export default function Admin({ api, search }: Props) {
           {text.signOut}
         </button>
         <Grants
+          api={api}
+          csrf={view.me.csrf}
+          onSignedOut={() => {
+            setNotice(text.timedOut);
+            void load();
+          }}
+          onOff={() => void load()}
+        />
+        <Tickets
           api={api}
           csrf={view.me.csrf}
           onSignedOut={() => {

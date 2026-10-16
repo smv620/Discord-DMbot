@@ -101,6 +101,9 @@ export interface Me {
   experiencePoints?: number;
   /** A paid, active plan: a move code can be asked for. */
   canMove?: boolean;
+  /** A paid plan that still works: the Support form is for this account (#1340). Missing from
+   * an API older than that, which shows no form. */
+  canSupport?: boolean;
   /** Hand-overs offered to you, and the ones you offered (#614). */
   offers: { incoming: Offer[]; outgoing: Offer[] };
 }
@@ -131,6 +134,19 @@ export interface RecordingEntry {
   on: boolean;
 }
 
+/** What the API says after a ticket is kept (#1340): whether the team can reply by email, that is,
+ * whether the account has an address. */
+export interface SupportReceipt {
+  reply: boolean;
+}
+
+/** What the Support form sends (#1340). */
+export interface SupportTicket {
+  subject: string;
+  message: string;
+  turnstile: string;
+}
+
 /** Why a call failed, in a form the page can turn into plain words. */
 export type ApiErrorKind =
   | "network" // couldn't reach the API
@@ -153,6 +169,11 @@ export type ApiErrorKind =
   | "no-email" // no payment email is stored yet, so a move code has nowhere to go (#1246)
   | "too-soon" // the account moved less than 30 days ago (#1246)
   | "email-failed" // the move code could not be emailed just now (#1246)
+  | "not-paying" // a support ticket needs a paid plan that works (#1340)
+  | "not-human" // the person check wasn't passed or wasn't there (#1340)
+  | "ticket-empty" // the subject or the message was empty (#1340)
+  | "ticket-too-long" // the message is over 4,000 letters (#1340)
+  | "subject-too-long" // the subject is over 120 letters (#1340)
   | "server"; // anything else
 
 export class ApiError extends Error {
@@ -188,6 +209,9 @@ export interface AccountApi {
   emailSignInUse?(token: string): Promise<void>;
   /** Email a move code to the payment email (paid plans, #1231). */
   getMoveCode?(): Promise<void>;
+  /** Send a private ticket to the DMbot team (paid plans, #1340). Missing from an API older
+   * than that. `turnstile` is Cloudflare's token, or "" when the site has no key. */
+  sendSupport?(ticket: SupportTicket): Promise<SupportReceipt>;
   /** The person's own characters. Missing from an API older than #1164. */
   characters?(): Promise<Character[]>;
   /** Stop recording me in one server (#1151). Starting again stays in Discord. */
@@ -236,6 +260,11 @@ const errorKinds: Record<string, ApiErrorKind> = {
   no_email: "no-email",
   too_soon: "too-soon",
   email_failed: "email-failed",
+  not_paying: "not-paying",
+  not_human: "not-human",
+  empty: "ticket-empty",
+  too_long: "ticket-too-long",
+  subject_too_long: "subject-too-long",
 };
 
 /** The real API over HTTP. `base` is the API's address, e.g. "https://api.example". */
@@ -301,6 +330,12 @@ export function httpApi(base: string, fetcher: typeof fetch = fetch): AccountApi
     },
     getMoveCode: async () => {
       await call("POST", "/me/move-code");
+    },
+    sendSupport: async (ticket) => {
+      const answer = (await call("POST", "/support", ticket)) as { reply?: unknown } | null;
+      // Only an explicit "no address" changes the words: an answer without the field is a
+      // ticket that was kept, and the team still replies by email.
+      return { reply: answer?.reply !== false };
     },
     signOutEverywhere: async () => {
       await call("POST", "/me/sign-out-everywhere");
