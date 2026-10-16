@@ -2584,3 +2584,5 @@ Overall ...................................... PASS (Deepgram baseline: 33/33, 1
   Result: core logged "Database updated: 0106 ... 0108", "ears connected" and "Connected to 1 server(s)"; web-api healthy; schema_migrations 108 rows, last 0108_web_homebrew_packs; /health 200 inside web-api.
   Not checked (need the owner in Discord, or an entry that exists): a DM's Check names button after a session that left a question unanswered; "Three days later, you..." moving the clock with Undo; the website Homebrew page showing "From a shared book".
   docs/next-test-step.md is Test I (consent v6, #1617 merged), not yet run.
+  10-minute check, 21:23 UTC (10 minutes after the start): 0 ERROR, CRITICAL or traceback lines in core and web-api since 21:13; both up, web-api healthy; schema_migrations 108 rows, last 0108_web_homebrew_packs.
+  Nothing turned on for users (recaps off, no ElevenLabs key, the extractor off).
