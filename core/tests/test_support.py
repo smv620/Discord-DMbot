@@ -707,7 +707,9 @@ class SupportAdmin(SupportBase):
             body = (await self.client.get("/admin/support", params={"status": status})).json()
             self.assertEqual([t["subject"] for t in body["tickets"]], subjects, status)
             # The counts are the same whichever filter is on: they label the buttons.
-            self.assertEqual(body["counts"], {"new": 2, "answered": 1, "closed": 1}, status)
+            self.assertEqual(
+                body["counts"], {"new": 2, "answered": 1, "closed": 1, "escalated": 0}, status
+            )
         # No filter is every ticket, as the page behaved before the filters.
         body = (await self.client.get("/admin/support")).json()
         self.assertEqual(len(body["tickets"]), 4)
@@ -716,13 +718,14 @@ class SupportAdmin(SupportBase):
         csrf = await self.sign_in()
         empty = (await self.client.get("/admin/support", params={"status": "new"})).json()
         self.assertEqual(
-            (empty["tickets"], empty["counts"]), ([], {"new": 0, "answered": 0, "closed": 0})
+            (empty["tickets"], empty["counts"]),
+            ([], {"new": 0, "answered": 0, "closed": 0, "escalated": 0}),
         )
         await self.make_three(csrf)
         (new_b,) = [t for t in await self.tickets() if t["subject"] == "new one b"]
         await self.set_status(csrf, new_b["id"], "answered")
         body = (await self.client.get("/admin/support", params={"status": "answered"})).json()
-        self.assertEqual(body["counts"], {"new": 1, "answered": 2, "closed": 1})
+        self.assertEqual(body["counts"], {"new": 1, "answered": 2, "closed": 1, "escalated": 0})
         self.assertEqual([t["subject"] for t in body["tickets"]], ["new one b", "answered one"])
 
     async def test_the_counts_cover_every_ticket_even_past_the_list_limit(self) -> None:
@@ -730,7 +733,9 @@ class SupportAdmin(SupportBase):
             await self.add_row(ALICE.id, self.now - n, f"t{n}")
         listed = await support.newest(self.web, limit=2)
         self.assertEqual(len(listed), 2)  # the list is cut short...
-        self.assertEqual(await support.counts(self.web), {"new": 5, "answered": 0, "closed": 0})
+        self.assertEqual(
+            await support.counts(self.web), {"new": 5, "answered": 0, "closed": 0, "escalated": 0}
+        )
 
     async def test_a_bad_filter_is_refused_and_a_non_admin_gets_nothing(self) -> None:
         await self.add_row(ALICE.id, self.now)
@@ -794,6 +799,7 @@ class DoorBoundary(unittest.TestCase):
         self.assertEqual(self.callers("db.support_admin("), {"web/support.py"})
         self.assertEqual(self.callers("support.newest("), {"web/admin_api.py"})
         self.assertEqual(self.callers("support.set_status("), {"web/admin_api.py"})
+        self.assertEqual(self.callers("support.thread("), {"web/admin_api.py", "web/support_ai.py"})
         # The reply address is read by this one query, and the SQL function only by it.
         self.assertEqual(self.callers("dmbot_support_email("), {"web/support.py", "schema.py"})
         # The setting's own name is set nowhere else (a hand-made set_config would skip the door).

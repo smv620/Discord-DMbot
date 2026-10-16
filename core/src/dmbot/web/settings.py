@@ -8,7 +8,7 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from urllib.parse import urlsplit
 
-from dmbot.config import ConfigError
+from dmbot.config import MODEL_NAME, ConfigError
 from dmbot.entitlements import parse_free_users
 from dmbot.mail import MailConfigError, MailSettings, load_mail_settings, one_address
 from dmbot.web.admin_hash import decode_hash
@@ -59,6 +59,12 @@ class WebSettings:
     # Where "a support ticket is waiting" goes (#1340). Empty: tickets are still kept and shown on
     # the admin page, and nobody is emailed. The email never holds the ticket's words.
     support_team_email: str = ""
+    # The support helper (#1431): the AI account it answers with (the same key the bot uses), the
+    # strong tier's model for it (empty: the tier's default), and the secret that proves an
+    # inbound email really came from the mail service (empty: replies by email are off).
+    ai_key: str = field(default="", repr=False)
+    support_ai_model: str = ""
+    mail_inbound_secret: str = field(default="", repr=False)
     # Cloudflare Turnstile's secret key, the check that a person sent the form. Needed
     # whenever the forms are on, except when testing on localhost.
     turnstile_secret: str = field(default="", repr=False)
@@ -171,6 +177,12 @@ def load_web_settings(env: Mapping[str, str] | None = None) -> WebSettings:
     support_team_email = get("SUPPORT_TEAM_EMAIL")
     if support_team_email and not one_address(support_team_email):
         raise ConfigError("SUPPORT_TEAM_EMAIL must be one email address, like team@example.com.")
+    support_ai_model = get("SUPPORT_AI_MODEL").strip("\"' ")
+    if support_ai_model and not MODEL_NAME.match(support_ai_model):
+        raise ConfigError(
+            "SUPPORT_AI_MODEL isn't a Claude model name. Use the name as Anthropic lists it "
+            "(no quotes or spaces), or leave it empty to use the strong tier's default."
+        )
     turnstile_secret = get("TURNSTILE_SECRET_KEY")
     if (
         feedback_token
@@ -250,6 +262,9 @@ def load_web_settings(env: Mapping[str, str] | None = None) -> WebSettings:
         mail=mail,
         feedback_repo=feedback_repo,
         support_team_email=support_team_email,
+        ai_key=get("ANTHROPIC_API_KEY"),
+        support_ai_model=support_ai_model,
+        mail_inbound_secret=get("MAIL_INBOUND_SECRET"),
         turnstile_secret=turnstile_secret,
         client_ip_header=client_ip_header,
         admin_emails=admin_emails,

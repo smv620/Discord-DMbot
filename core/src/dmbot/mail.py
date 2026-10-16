@@ -56,6 +56,10 @@ class MailSettings:
     user: str = ""
     app_password: str = field(default="", repr=False)
     sender: str = ""  # the From address
+    # The support flow's two other senders (#1431): what a person gets from DMbot's helper and the
+    # team (`info@`), and the alerts to the team (`jarvis@`). Empty: `sender` stands in.
+    support_from: str = ""
+    alerts_from: str = ""
     postal_address: str = ""  # required in offer emails; the owner's call (needs: owner)
     daily_cap: int = DAILY_CAP_DEFAULT
 
@@ -63,6 +67,14 @@ class MailSettings:
     def offer_cap(self) -> int:
         """Offer emails stop here; account emails go on up to `daily_cap`."""
         return min(self.daily_cap * 3 // 4, 300)  # the database door's own ceiling is 300
+
+    @property
+    def support_sender(self) -> str:
+        return self.support_from or self.sender
+
+    @property
+    def alerts_sender(self) -> str:
+        return self.alerts_from or self.sender
 
     @property
     def configured(self) -> bool:
@@ -86,12 +98,21 @@ def load_mail_settings(env: Mapping[str, str]) -> MailSettings:
     address = ", ".join(
         " ".join(part.split()) for part in get("MAIL_POSTAL_ADDRESS").split("|") if part.strip()
     )
+    senders: dict[str, str] = {}
+    for name in ("MAIL_FROM", "MAIL_SUPPORT_FROM", "MAIL_ALERTS_FROM"):
+        raw = get(name)
+        # "Name <a@b.example>" or a bare address; anything else would send from nowhere.
+        if raw and not one_address(parseaddr(raw)[1]):
+            raise MailConfigError(f"{name} must be an email address, such as info@example.org.")
+        senders[name] = raw
     return MailSettings(
         host=get("SMTP_HOST"),
         port=int(port_raw),
         user=get("SMTP_USER"),
         app_password=get("SMTP_APP_PASSWORD"),
-        sender=get("MAIL_FROM"),
+        sender=senders["MAIL_FROM"],
+        support_from=senders["MAIL_SUPPORT_FROM"],
+        alerts_from=senders["MAIL_ALERTS_FROM"],
         postal_address=address,
         daily_cap=int(cap_raw),
     )
@@ -155,6 +176,10 @@ class Mailer:
         self._clock = clock
 
     @property
+    def settings(self) -> MailSettings:
+        return self._s
+
+    @property
     def ready_for_offers(self) -> bool:
         """Offer emails need a way out of the mailbox, a postal address, and a place for the
         unsubscribe link to point."""
@@ -184,6 +209,8 @@ class Mailer:
         subject: str,
         body: str,
         offer: bool = False,
+        sender: str | None = None,
+        reply_to: str | None = None,
     ) -> Result:
         """Send one email to a person, once per `kind` (put a round number in `kind` for
         something that may repeat). Never raises: the result says what happened. An offer
@@ -207,7 +234,9 @@ class Mailer:
         # Built before anything is recorded: a message that can't be built must not leave the
         # once-only row behind. The unsubscribe link is made for this person, from their id.
         try:
-            message = self._build(to or "", to_dmbot_id(user_id), subject, body, offer)
+            message = self._build(
+                to or "", to_dmbot_id(user_id), subject, body, offer, sender, reply_to
+            )
         except ValueError:
             log.error("Couldn't build a %s email", kind)
             return "failed"
@@ -241,7 +270,9 @@ class Mailer:
         log.info("Sent a %s email", kind)
         return "sent"
 
-    async def notify_team(self, to: str, subject: str, body: str) -> bool:
+    async def notify_team(
+        self, to: str, subject: str, body: str, *, sender: str | None = None
+    ) -> bool:
         """One plain email to the team's own address (a new support ticket, #1340). It is not
         to a person, so it has no once-only record, no unsubscribe link and no share of the
         daily cap (its pace is the ticket form's one per account per 10 minutes). Never
@@ -249,7 +280,7 @@ class Mailer:
         if not self._s.configured or not one_address(to):
             return False
         try:
-            message = self._build(to, "", subject, body, False)
+            message = self._build(to, "", subject, body, False, sender)
             await self._send(message)
         except Exception:  # an SMTP error can carry the address: say only that it failed
             log.error("Couldn't send a team email", exc_info=False)
@@ -264,13 +295,27 @@ class Mailer:
         except Exception:
             log.error("Couldn't give back a %s email's claim", kind)
 
-    def _build(self, to: str, dmbot_id: str, subject: str, body: str, offer: bool) -> EmailMessage:
+    def _build(
+        self,
+        to: str,
+        dmbot_id: str,
+        subject: str,
+        body: str,
+        offer: bool,
+        sender: str | None = None,
+        reply_to: str | None = None,
+    ) -> EmailMessage:
+        from_address = sender or self._s.sender
         message = EmailMessage()
-        message["From"] = self._s.sender
+        message["From"] = from_address
+        if reply_to:
+            if not one_address(reply_to):
+                raise ValueError("bad reply-to")
+            message["Reply-To"] = reply_to
         message["To"] = to
         message["Subject"] = " ".join(subject.split())
         message["Date"] = formatdate(self._clock(), localtime=False)
-        domain = parseaddr(self._s.sender)[1].rpartition("@")[
+        domain = parseaddr(from_address)[1].rpartition("@")[
             2
         ]  # from "Name <a@b>", not the raw text
         message["Message-ID"] = make_msgid(domain=domain or None)
