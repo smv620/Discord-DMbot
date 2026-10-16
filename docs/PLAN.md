@@ -3034,6 +3034,21 @@ private message can't be sent, the start refusal still says the campaign is paus
 open like the other plan checks. **Enforcement (`DMBOT_ENFORCE_PLANS`) may go on only after
 this is live** (migration 0037, core and web-api).
 
+*Built, game masters (2026-10-16, #1600, item 2 of #618; decided by Supervisor):* a campaign's DMs add and
+remove each other from ⚙️ Settings → **👑 Game masters** (DMs only, checked on every press; a server manager
+who is not a DM does not get the button). It lists the game masters and marks the one whose plan the campaign
+uses ("plan"). **➕ Add a game master** picks a member of the server: never a bot, never someone who already
+is one, at most 5 (the store enforces it under the campaign's lock). The new game master gets one private
+message ("<name> made you a game master of <campaign> in <server>. You can now see its DM screen and change
+its settings."); if it cannot be sent the adder is told. Adding never touches anyone's consent to be recorded.
+**➖ Remove** picks one, then asks once ("<name> will no longer see the DM screen or change this campaign.
+Remove?"): never the plan holder (it says to hand the campaign over first: ⚙️ Settings → Hand over), never the
+last game master; a game master may remove themselves. **Access follows at once:** after either change the DM
+screen's permissions (and an existing game-time channel's) are applied again and a running session's DM set is
+updated, so a removed game master loses the screen mid-session and a new one gets it; if the screen cannot be
+updated just then the change stays and the DM is told. Every change is logged with who made it (ids in the log
+only, never in a channel).
+
 *Built, part 5: retention (2026-10-10, #964):* `dmbot.retention`, a daily job at 03:00 UTC (the
 bot's own loop; safe to run twice). A campaign's **delete date** is its last session plus its
 owner's plan's `keepAfterLastSession` (Try It 60 days, Table 6 months, the others a year), or

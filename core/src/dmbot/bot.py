@@ -100,6 +100,7 @@ from dmbot.dm_screen import house_voice as house_voice_screen
 from dmbot.dm_screen import levels as screen_levels
 from dmbot.dm_screen import messages as screen_messages
 from dmbot.dm_screen.dmbchat_channel import DmbchatChannelError, setup_dmbchat_channel
+from dmbot.dm_screen.game_masters import GameMastersButton
 from dmbot.dm_screen.gametime_channel import GametimeChannelError, setup_gametime_channel
 from dmbot.dm_screen.handover import (
     AcceptOfferButton,
@@ -1038,6 +1039,7 @@ class DMBot(commands.AutoShardedBot):
             InviteButton,
             TableChatButton,
             RecapsButton,
+            GameMastersButton,  # who the DMs are (#1600)
         )
         # Hand-over (#437): on ⚙️ Settings, in private messages, and after /dmbot start.
         self.add_dynamic_items(
@@ -3331,6 +3333,13 @@ class DMBot(commands.AutoShardedBot):
                 await refresh_card(guild, campaign)
             except Exception:
                 log.exception("Couldn't refresh the transcript channel's card")
+
+    def after_game_masters_change(self, campaign: Campaign) -> None:
+        """A campaign's game masters changed (#1600): a running session of it takes the new set at
+        once, whether or not the DM screen's permissions could be updated."""
+        table = self.tables.get(campaign.guild_id)
+        if table is not None and table.campaign_id == campaign.id:
+            table.dm_user_ids = campaign.dm_user_ids
 
     async def after_screen_change(self, campaign: Campaign, channel: discord.TextChannel) -> None:
         """Keep a live session in step after the DM changes who can see the DM screen."""
