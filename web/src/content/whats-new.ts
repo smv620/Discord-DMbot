@@ -19,6 +19,16 @@ export const whatsNewIntro =
 
 export const entries: Entry[] = [
   {
+    date: "2026-10-16",
+    title: "Your questions to the team",
+    what: "After you write to the DMbot team, your account page lists your questions, with the date you sent each one and whether it is waiting, answered or closed.",
+  },
+  {
+    date: "2026-10-16",
+    title: "Quick answers use your facts",
+    what: "When you ask DMbot a quick question about someone in your campaign, it now uses the facts you confirmed, like who they work for. If it has nothing confirmed, it says so.",
+  },
+  {
     date: "2026-10-15",
     title: "Sign in with an emailed link",
     what: "On your account page, type your email and we send you a link that signs you in. It works once and stops working after 15 minutes.",
@@ -72,20 +82,6 @@ export const held: Held[] = [
       "Recaps are off until dev1 has checked a real one (#1382). When they are on, move this up and turn on the recap words (RECAPS_LIVE in recap-words.ts).",
   },
   {
-    date: "2026-10-16",
-    title: "Quick answers use your facts",
-    what: "When you ask DMbot a quick question about someone in your campaign, it now uses the facts you confirmed, like who they work for. If it has nothing confirmed, it says so.",
-    reason:
-      "Not live until this change is deployed; dev1 moves it up once it is (#1370).",
-  },
-  {
-    date: "2026-10-16",
-    title: "Your questions to the team",
-    what: "After you write to the DMbot team, your account page lists your questions, with the date you sent each one and whether it is waiting, answered or closed.",
-    reason:
-      "The list needs the API deployed with its new list route (#1373); until dev1 deploys it the page shows nothing there.",
-  },
-  {
     date: "2026-10-15",
     title: "Ask a question in public",
     what: "Post a question in the Q&A for DMbot. A helper called QAbot, a bot and not a person, answers what it can from the Help page and the site, and passes the rest to the team.",
@@ -98,13 +94,6 @@ export const held: Held[] = [
     what: "To move to a new Discord account, press Get a move code on your account page. On the new account, type /dmbot migrate, press Import my account, and type the emailed code; you will be asked to say yes to being recorded again.",
     reason:
       "The move code goes to the payment email, and payments stay off until the Stripe account exists (#1096), so nobody can use it yet.",
-  },
-  {
-    date: "2026-10-16",
-    title: "A recap of last session",
-    what: "After a session, DMbot can write a short story of what happened to read at the start of the next one. It emails the DM when it's ready. They read it on the website, change it, ask for another, leave it out, or post it to the table. It only uses the words of people who agreed to be recorded.",
-    reason:
-      "Stays off until the first check on a real session (#1382).",
   },
   {
     date: "2026-10-16",
