@@ -6,6 +6,7 @@ found"; and the download is the bot's own file for those entries, byte for byte.
 from __future__ import annotations
 
 import json
+from dataclasses import replace
 from typing import Any
 
 import httpx
@@ -203,7 +204,8 @@ class BookTags(HomebrewBase):
             await pages.read_homebrew(self.web, elsewhere, self.cref)
         _name, text = await pages.render(self.web, self.carol, self.cref)
         shown = [e for e in await self.store_b.list(THURSDAY.id, self.one.id) if e.players_may_know]
-        self.assertEqual(text.encode(), homebrew_file.write("One", shown).encode())
+        untagged = [replace(e, from_book=False, book_edition=None) for e in shown]  # (tags ignored)
+        self.assertEqual(text.encode(), homebrew_file.write("One", untagged, "2024").encode())
 
 
 PUBLISHER = "Publisher Campaign Name"
@@ -309,7 +311,7 @@ class FollowedPacks(HomebrewBase):
             await pages.read_homebrew(self.web, elsewhere, self.cref)
         _name, text = await pages.render(self.web, self.carol, self.cref)
         shown = [e for e in await self.store_b.list(THURSDAY.id, self.one.id) if e.players_may_know]
-        self.assertEqual(text.encode(), homebrew_file.write("One", shown).encode())
+        self.assertEqual(text.encode(), homebrew_file.write("One", shown, "2024").encode())
         self.assertNotIn("Ice Lance", text)
 
 
