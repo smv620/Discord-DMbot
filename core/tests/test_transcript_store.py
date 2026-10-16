@@ -4,7 +4,7 @@
 import asyncio
 from dataclasses import replace
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock
 
 import discord
@@ -876,7 +876,7 @@ class BotTests(DatabaseTest):
         table, sid = await self.fix_setup()
         self.bot.post_message = AsyncMock(return_value=MagicMock())  # type: ignore[method-assign]
         await self.bot.post_session_summary(table, START + 60, True, 0)
-        _, _, view = self.bot.post_message.await_args.args
+        _, _, view = cast(Any, self.bot.post_message).await_args.args
         ids = [c.item.custom_id for c in view.children]
         self.assertEqual(ids, [f"dmbot:fixline:{GUILD}:{sid}"])
         self.assertEqual(view.children[0].item.label, "✏️ Fix a line")
