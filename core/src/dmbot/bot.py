@@ -247,6 +247,7 @@ from dmbot.ui.name_lists import UndoListButton
 from dmbot.ui.names import ReviewButton, after_session_text, held_back_text, review_view
 from dmbot.ui.optional_rules import dmbot_optional_rules  # noqa: F401 (registers it)
 from dmbot.ui.people_review import PeopleReviewButton, people_review_view, waiting_text
+from dmbot.ui.recap_dm import RecapButton, ready_text, ready_view
 from dmbot.ui.rule_lookup import dmbot_rule  # noqa: F401 (registers it)
 from dmbot.ui.secret_aloud import (
     SecretAloudButton,
@@ -957,6 +958,7 @@ class DMBot(commands.AutoShardedBot):
             ReviewButton, PeopleReviewButton, ClaimsReviewButton, ContinuityButton
         )
         self.add_dynamic_items(SecretAloudButton)  # the secret-said-aloud question (#1407)
+        self.add_dynamic_items(RecapButton)  # the recap on the DM screen (#1455)
         self.add_dynamic_items(  # #965, #1117
             clock_screen.ClockButton, clock_screen.ClockUndoButton, clock_screen.SuggestionButton
         )
@@ -5599,22 +5601,31 @@ class DMBot(commands.AutoShardedBot):
         )
 
     async def recap_told(self, gid: int, cid: str, job: Job) -> None:
-        """Email the DM that their recap is ready, or could not be written. If they chose not to be
-        emailed (#1421) the DM screen says it instead."""
+        """Tell the DM that their recap is ready, or could not be written. A ready recap goes on
+        the DM screen with three buttons (read it, post it, skip it; #1455), and is emailed unless
+        the DM chose not to be (#1421). A failed one is emailed, or said on the DM screen."""
         campaign = await self.campaigns.get(gid, cid)
+        link = (
+            page_link(self.settings.site_url, gid, cid, job.session_at)
+            if self.settings.site_url
+            else ""
+        )
+        if campaign is not None and campaign.dm_screen_channel_id is not None:
+            if job.state == "ready":
+                await self.post(
+                    campaign.dm_screen_channel_id,
+                    ready_text(job.title, link),
+                    view=ready_view(cid, job.session_at),
+                )
+            elif not campaign.recaps_email:
+                where = f": {link}" if link else " on the website"
+                await self.post(
+                    campaign.dm_screen_channel_id,
+                    "📜 I couldn't write this session's recap. "
+                    f"Try again from your recap page{where}",
+                )
         if campaign is not None and not campaign.recaps_email:
-            # No email by the DM's choice: the DM screen says it instead, so they still hear.
-            if campaign.dm_screen_channel_id is not None:
-                link = page_link(self.settings.site_url, gid, cid, job.session_at)
-                where = f" {link}" if self.settings.site_url else ""
-                if job.state == "ready":
-                    line = f"📜 Your recap is ready. Read it, change it or post it:{where}"
-                else:
-                    line = (
-                        f"📜 DMbot couldn't write this session's recap. You can try again:{where}"
-                    )
-                await self.post(campaign.dm_screen_channel_id, line)
-            return
+            return  # no email by the DM's choice
         if self.mailer is not None and self.recaps is not None:
             await tell_the_dm(self.mailer, self.recaps, self.settings.site_url, gid, cid, job)
 
