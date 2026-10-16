@@ -4602,8 +4602,8 @@ MIGRATIONS: tuple[Migration, ...] = (
     ("0084_recap_switches", RECAP_SWITCHES),  # the DM's recap choices (#1421)
     ("0085_recap_audio_again", RECAP_AUDIO_AGAIN),  # the website's door to new audio (#1418)
     ("0086_support_thread", SUPPORT_THREAD),  # the support flow's replies (#1431)
+    ("0087_web_names", WEB_NAMES),  # the website's doors to the names and their spelling (#1451)
     ("0088_support_mine_answer", SUPPORT_MINE_ANSWER),  # a person's own latest answer (#1432)
-    ("0089_web_names", WEB_NAMES),  # the website's doors to the names and their spelling (#1451)
 )
 
 # Tables that must have row-level security. A test checks every table in the schema
