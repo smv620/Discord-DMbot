@@ -16,6 +16,7 @@ from email.message import EmailMessage
 from typing import cast
 
 import httpx
+import psycopg
 
 from dmbot.ai import AIError, AIOutOfFunds, Reply
 from dmbot.mail import Mailer, MailSettings, load_mail_settings
@@ -514,6 +515,88 @@ class TheCarefulWrites(HelperBase):
 
     def test_a_secret_with_no_key_is_not_a_secret(self) -> None:
         self.assertFalse(sm.verify_signature("whsec_", sign(b"{}", at=1), b"{}", now=1))
+
+
+class TheReason(HelperBase):
+    """Why a ticket came to a person (#1459): one code, in the admin list as `reason`."""
+
+    async def listed(self) -> dict[int, str | None]:
+        client = httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=self.app), base_url=API, follow_redirects=False
+        )
+        self.addAsyncCleanup(client.aclose)
+        signed = await client.post(
+            "/admin/auth/password", json={"email": ADMIN, "password": PASSWORD}, headers=HEADERS
+        )
+        self.assertEqual(signed.status_code, 204)
+        got = (await client.get("/admin/support")).json()["tickets"]
+        return {t["id"]: t["reason"] for t in got}
+
+    async def test_a_ticket_never_escalated_has_no_reason(self) -> None:
+        number = await self.ticket()
+        self.assertIsNone((await self.listed())[number])
+        self.fake.answers.append(answer())
+        await self.helper.run_once()
+        self.assertIsNone((await self.listed())[number])  # answered by the helper
+
+    async def test_the_person_asking_for_one_is_asked(self) -> None:
+        number = await self.ticket("Please let me talk to a human")
+        await self.helper.run_once()
+        self.assertEqual((await self.listed())[number], "asked")
+
+    async def test_an_unhappy_reply_is_unhappy(self) -> None:
+        number = await self.ticket()
+        self.fake.answers.append(answer("Try this."))
+        await self.helper.run_once()
+        to = str(self.mails(to_alice=True)[-1]["Reply-To"])
+        await self.inbound(to, "That did nothing.")
+        self.fake.answers.append(answer("Try again.", verdict="unhappy"))
+        await self.helper.run_once()
+        self.assertEqual((await self.listed())[number], "unhappy")
+
+    async def test_five_answers_used_is_the_limit(self) -> None:
+        number = await self.ticket()
+        for n in range(ai.MAX_AI_ANSWERS):
+            self.fake.answers.append(answer(f"Answer {n}."))
+            await self.helper.run_once()
+            to = str(self.mails(to_alice=True)[-1]["Reply-To"])
+            await self.inbound(to, f"Still stuck {n}.")
+        await self.helper.run_once()
+        self.assertEqual((await self.listed())[number], "limit")
+
+    async def test_no_address_is_no_email(self) -> None:
+        number = await self.ticket()
+        async with self.web.user(ALICE.id) as conn:
+            await conn.execute("UPDATE web_users SET email = NULL, payment_email = NULL")
+        await self.helper.run_once()
+        self.assertEqual((await self.listed())[number], "no-email")
+
+    async def test_a_day_of_failed_calls_is_helper_down(self) -> None:
+        number = await self.ticket()
+        self.fake.answers.extend([AIError("down"), AIError("down")])
+        await self.helper.run_once()
+        self.now += DAY + 10
+        await self.helper.run_once()
+        self.assertEqual((await self.listed())[number], "helper-down")
+
+    async def test_the_reason_goes_when_a_person_answers(self) -> None:
+        number = await self.ticket("I need a human")
+        await self.helper.run_once()
+        self.assertEqual((await self.listed())[number], "asked")
+        await self.helper.team_reply(number, "Hello, I can help.")
+        self.assertIsNone((await self.listed())[number])  # answered: not waiting for a person
+        await support.set_status(self.web, number, "escalated")
+        self.assertIsNone((await self.listed())[number])  # (a hand-set status has no reason)
+
+    async def test_the_database_refuses_a_code_it_does_not_know(self) -> None:
+        number = await self.ticket()
+        with self.assertRaises(psycopg.errors.CheckViolation):
+            async with self.web.support_admin() as conn:
+                await conn.execute(
+                    "UPDATE support_tickets SET escalated_reason = 'because' WHERE id = %s",
+                    (number,),
+                )
+        self.assertEqual(support.REASONS, ("unhappy", "asked", "limit", "no-email", "helper-down"))
 
 
 class TheTeamsReply(HelperBase):

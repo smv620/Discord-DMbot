@@ -24,8 +24,11 @@ import {
   type RecapAudioLinks,
 } from "./api";
 import RecapChoicesPart from "./RecapChoices";
+import { keepFocus } from "./focus";
+import RecapNames from "./RecapNames";
 
 const POLL_MS = 5000;
+
 
 type Load =
   | { kind: "loading" }
@@ -290,6 +293,7 @@ function AudioPanel({
     } finally {
       asking.current = false;
       setBusy(false);
+      keepFocus(() => document.getElementById("recap-audio-again"));
     }
   };
 
@@ -337,6 +341,7 @@ function AudioPanel({
         <button
           type="button"
           class="button secondary"
+          id="recap-audio-again"
           disabled={busy}
           onClick={() => void ask()}
         >
@@ -359,6 +364,8 @@ function Review({ api, recapRef }: { api: AccountApi; recapRef: string }) {
   const [summary, setSummary] = useState("");
   const [bullets, setBullets] = useState("");
   const [busy, setBusy] = useState<string | null>(null);
+  // Where focus goes when the button that was pressed is disabled or gone (#1466).
+  const headingRef = useRef<HTMLHeadingElement>(null);
   const [note, setNote] = useState<{ ok: boolean; message: string } | null>(
     null,
   );
@@ -468,6 +475,7 @@ function Review({ api, recapRef }: { api: AccountApi; recapRef: string }) {
     } finally {
       inFlight.current = false;
       setBusy(null);
+      keepFocus(() => headingRef.current);
     }
   };
 
@@ -488,6 +496,7 @@ function Review({ api, recapRef }: { api: AccountApi; recapRef: string }) {
     } finally {
       inFlight.current = false;
       setBusy(null);
+      keepFocus(() => headingRef.current);
     }
   };
 
@@ -496,7 +505,9 @@ function Review({ api, recapRef }: { api: AccountApi; recapRef: string }) {
   return (
     <>
       <div class="hello">
-        <h2>{heading}</h2>
+        <h2 tabIndex={-1} ref={headingRef}>
+          {heading}
+        </h2>
         <span class="tag">{statusLine(recap)}</span>
       </div>
       <p class="small">
@@ -594,6 +605,7 @@ function Review({ api, recapRef }: { api: AccountApi; recapRef: string }) {
       {!editing && <AudioPanel api={api} recap={recap} onRecap={setRecap} />}
       {!editing && <AudioOffer api={api} />}
       {!editing && <RecapChoicesPart api={api} recapRef={recap.ref} />}
+      {!editing && <RecapNames api={api} recapRef={recap.ref} />}
       {!editing &&
         (recap.canEdit ||
           recap.canPost ||

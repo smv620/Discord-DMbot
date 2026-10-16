@@ -60,6 +60,7 @@ from dmbot.web.feedback import Discussions, FeedbackError, HumanCheck
 from dmbot.web.limits import LIMITS, RateLimit, free_ticket_refusal
 from dmbot.web.me import build_me
 from dmbot.web.moving import MoveCodes, can_move
+from dmbot.web.names import list_names, set_said_as
 from dmbot.web.payments import PaymentError, PaymentProvider, paid_plan_ids
 from dmbot.web.recap_choices import read_choices, set_choice
 from dmbot.web.recaps import (
@@ -614,6 +615,38 @@ def create_app(
         return FileResponse(
             path, media_type="audio/mpeg", headers={"Cache-Control": "private, no-store"}
         )
+
+    @app.get("/me/campaigns/{ref}/names")
+    async def me_campaign_names(ref: str, signed: Signed) -> dict[str, Any]:
+        """The campaign's confirmed public names with the narrator's spelling (#1451). DM only; a
+        player or another campaign's DM gets "not found". Never a secret name or a person."""
+        session, _token = signed
+        try:
+            return {"names": await list_names(db, session, ref)}
+        except RecapError as err:
+            status, detail = recap_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+
+    @app.put("/me/campaigns/{ref}/names/{alias_id}/said-as")
+    async def me_campaign_name_said_as(
+        ref: str, alias_id: str, signed: Signed, request: Request
+    ) -> dict[str, bool]:
+        """Set or clear how the narrator says one name: `{"saidAs": "Kah-zeth"}` or `null`."""
+        session, _token = signed
+        try:
+            body = await request.json()
+        except ValueError:
+            body = None
+        # The key must be there: a body without it is a mistake, not a request to clear.
+        said = body.get("saidAs") if isinstance(body, dict) and "saidAs" in body else 0
+        if said is not None and not isinstance(said, str):
+            raise HTTPException(status_code=422, detail="bad_text")
+        try:
+            await set_said_as(db, session, ref, alias_id, said)
+        except RecapError as err:
+            status, detail = recap_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+        return {"ok": True}
 
     @app.get("/me/campaigns/{ref}/recap-choices")
     async def me_recap_choices(ref: str, signed: Signed) -> dict[str, Any]:

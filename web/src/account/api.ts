@@ -244,6 +244,15 @@ export interface RecapChoices {
 
 export type RecapChoice = "text" | "audio" | "email";
 
+/** One name of the campaign, as the recap page lists it (#1451). `saidAs` is the DM's spelling
+ * for the narrator, or null (the narrator says the name as written). Never a secret name. */
+export interface CampaignName {
+  id: string;
+  text: string;
+  kind: string;
+  saidAs: string | null;
+}
+
 /** The three audio files, as short-lived addresses to play. */
 export type RecapAudioLinks = Partial<Record<"voice" | "music" | "mix", string>>;
 
@@ -340,6 +349,11 @@ export interface AccountApi {
   recapChoices?(campaignRef: string): Promise<RecapChoices>;
   /** Change one of them; answers all three as they are now. */
   setRecapChoice?(campaignRef: string, which: RecapChoice, on: boolean): Promise<RecapChoices>;
+  /** The campaign's public names with the narrator's spelling (#1451). `campaignRef` is the
+   * recap's address without its last part: `<server>.<campaign>`. */
+  campaignNames?(campaignRef: string): Promise<CampaignName[]>;
+  /** Set (a string) or clear (null) how the narrator says one name. */
+  saveSaidAs?(campaignRef: string, nameId: string, saidAs: string | null): Promise<void>;
   /** "Make the audio again": the API allows it once in 10 minutes for a recap. */
   askRecapAudioAgain?(ref: string): Promise<Recap>;
   /** Post to the table (the bot sends it), Try again, or Don't post. */
@@ -518,6 +532,20 @@ export function httpApi(base: string, fetcher: typeof fetch = fetch): AccountApi
         recapsThisMonth?: RecapMonth[];
       };
       return { recaps: got.recaps, thisMonth: got.recapsThisMonth ?? [] };
+    },
+    campaignNames: async (campaignRef) =>
+      (
+        (await call(
+          "GET",
+          `/me/campaigns/${encodeURIComponent(campaignRef)}/names`,
+        )) as { names: CampaignName[] }
+      ).names,
+    saveSaidAs: async (campaignRef, nameId, saidAs) => {
+      await call(
+        "PUT",
+        `/me/campaigns/${encodeURIComponent(campaignRef)}/names/${encodeURIComponent(nameId)}/said-as`,
+        { saidAs },
+      );
     },
     recap: async (ref) => (await call("GET", `/me/recaps/${encodeURIComponent(ref)}`)) as Recap,
     saveRecap: async (ref, summary, housekeeping) =>

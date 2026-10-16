@@ -13,6 +13,7 @@ import type {
   Me,
   Offer,
   Person,
+  CampaignName,
   Recap,
   RecapChoices,
   RecordingEntry,
@@ -358,6 +359,11 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
     canAudio: true,
     audioHow: "part of your plan",
   };
+  // The campaign's public names, as the API lists them (#1451).
+  const names: CampaignName[] = [
+    { id: "a".repeat(32), text: "Ka'zeth", kind: "full", saidAs: null },
+    { id: "b".repeat(32), text: "Brynwater", kind: "full", saidAs: "Brin-water" },
+  ];
   const audioAsked = new Set<string>(); // a recap asked for again once: the next ask is "too soon"
   const find = async (ref: string): Promise<Recap> => {
     await reachable();
@@ -399,6 +405,20 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
       if (which === "audio" && on && !choices.canAudio) throw new ApiError("not-in-plan");
       choices[which] = on;
       return { ...choices };
+    },
+    async campaignNames(campaignRef) {
+      calls.push(`campaignNames:${campaignRef}`);
+      await reachable();
+      signedIn();
+      return names.map((n) => ({ ...n }));
+    },
+    async saveSaidAs(campaignRef, nameId, saidAs) {
+      calls.push(`saveSaidAs:${campaignRef}:${nameId}:${saidAs ?? ""}`);
+      await reachable();
+      signedIn();
+      const found = names.find((n) => n.id === nameId);
+      if (!found) throw new ApiError("not-found");
+      found.saidAs = saidAs === null || saidAs.trim() === "" ? null : saidAs.trim();
     },
     async recapAudioLinks(ref) {
       calls.push(`recapAudioLinks:${ref}`);

@@ -2495,3 +2495,16 @@ Overall ...................................... PASS (Deepgram baseline: 33/33, 1
   and the ticket ones need a paid account: Stripe test mode #1096); the owner's test session (the "Before tonight" note #1406, the secret-name question #1410).
   Dry run of 0086_support_thread (#1452) on development eafa5dcd (06:4x): live copy at 0085: "Database updated: 0086_support_thread" in 0.20 s; second run nothing; rows unchanged; support_replies and
   support_tickets have row-level security on and forced. Ready to deploy (line in docs/testing-status.log); not deployed.
+2026-10-16  dev1  DEPLOY: migrations 0086 support_thread, 0087 web_names and 0088 support_mine_answer, the rebuild and the support flow are live as 1ba2c3d3 (Supervisor's "go", cross-session message ~07:30 UTC). Core CI on the head: success.
+  Dry run (07:3x UTC) on a copy of the live database (pg_dumpall into a throwaway postgres:16 on its own network, at 0085): "Database updated: 0086_support_thread, 0087_web_names, 0088_support_mine_answer"
+  in 0.21 s; a second run applied nothing; 88 migrations; rows unchanged (147 transcript lines, 3 campaigns); support_replies and support_tickets have row-level security on and forced;
+  support_replies policies: support_admin_read, support_admin_add, read_own_answers. Copy deleted. No game running. Backup: ~/db-backups/dmbot-before-1ba2c3d3-1016-0735.sql (chmod 600).
+  `docker compose build core web-api` with GIT_COMMIT set; `docker compose stop core web-api` then `up -d --no-deps core` (07:42 UTC), then web-api.
+  Result: core logged "Database updated: 0086_support_thread, 0087_web_names, 0088_support_mine_answer"; web-api healthy; 0 ERROR, CRITICAL or traceback lines in core and web-api in the first 5 minutes.
+  Supervisor's checks: web-api has the four new settings but all are empty (MAIL_SUPPORT_FROM, MAIL_ALERTS_FROM, MAIL_INBOUND_SECRET, SUPPORT_AI_MODEL: the owner has not set them in .env), and ANTHROPIC_API_KEY is present
+  in web-api. /mail/inbound inside web-api: POST without the secret answers 404 as designed, but GET answers 405 (the route exists and takes POST only), not 404 as the handover expected.
+  Start-up warning (harmless): .env is missing 10 settings that are in .env.example (the four mail and support ones, the four ElevenLabs and recap-audio ones, DMBOT_RECAPS_PER_MONTH, DMBOT_RECAP_AUDIO_PER_MONTH); defaults apply.
+  Not done, not mine: setting MAIL_SUPPORT_FROM and MAIL_ALERTS_FROM in .env (the owner) and the Cloudflare route ^/mail/inbound$ (the owner, in the dashboard).
+  10-minute check, 07:52 UTC (10 minutes after the start): 0 ERROR, CRITICAL or traceback lines in core and web-api since 07:42; core "ears connected" and "Connected to 1 server(s)";
+  web-api healthy; schema_migrations 88 rows, last 0088_support_mine_answer. The DM-screen recap buttons (#1457) register in setup_hook with no log line; a bad registration would have stopped the start, and it did not.
+  Nothing turned on for users (recaps off, no ElevenLabs key, no mail sender set, the extractor off).

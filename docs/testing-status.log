@@ -1,6 +1,6 @@
 DMbot - TESTING STATUS (current testing only)
 =============================================
-Last updated: 2026-10-16 06:50 UTC by dev1 (recap-audio deploy live; 0086 ready)
+Last updated: 2026-10-16 07:5x UTC by dev1 (support-flow deploy 1ba2c3d3 live)
 
 **For the people at the table: docs/next-test-step.md has the one next small test (#569).**
 Short by design: see CLAUDE.md "Testing logs". Full record: docs/testing-history.log.
@@ -9,21 +9,14 @@ Never put tokens, .env contents or players' personal data here (public repo).
 ------------------------------------------------------------------------------
 READY TO DEPLOY (merged into development, not on the server yet; dev1 deploys)
 ------------------------------------------------------------------------------
-(nothing: the recap-audio deploy (#1430, migration 0085) and everything before it are live in e8555e2c)
-- #1452 (CloudDev, merged 06:3x UTC, development eafa5dcd): the support flow's replies. Migration 0086_support_thread (support_replies: a new table, row-level security forced; support_tickets
-  also forced); dry run PASSED 06:4x on a copy of the live database (at 0085): 0.20 s, second run applied nothing, rows unchanged. Also in development and not live: #1454 (aliases, no migration),
-  #1437/#1445/#1450 (recap allowances: the page shows "N of M this month"), #1447 (Stripe Checkout Studio parameters), #1436 (Try It support), the website changes. docker-compose.yml gains
-  settings for web-api (all optional, empty = off): MAIL_SUPPORT_FROM (e.g. DMbot Support <support@getdmbot.com>), MAIL_ALERTS_FROM (the owner chose info@getdmbot.com), MAIL_INBOUND_SECRET (a new
-  secret: the owner sets it with scripts/set-key), SUPPORT_AI_MODEL, and web-api now also receives ANTHROPIC_API_KEY (the support flow's AI answers; the compose file said before that web-api has no
-  AI keys: Supervisor to confirm this is intended and the spend is capped); DMBOT_RECAPS_PER_MONTH and DMBOT_RECAP_AUDIO_PER_MONTH. No Dockerfile change since e8555e2c. Deploy: backup, GIT_COMMIT set,
-  stop old containers first, core then web-api, a GREEN core job on the head, 10-minute check. Nothing turns on by itself.
+(nothing: the support-flow deploy (1ba2c3d3, migrations 0086-0088) and everything before it are live; #1467 and #1469 (migration 0091) are still merging and go in the next deploy)
 - Waiting on the owner, not a deploy: once the Stripe account exists (#1096), replace the LEMONSQUEEZY_* values in .env
   with the STRIPE_* ones (.env.example) through scripts/set-key (#1110). Payments stay off until then.
 
 ------------------------------------------------------------------------------
 LIVE NOW
 ------------------------------------------------------------------------------
-core + web-api e8555e2c (2026-10-16 06:28 UTC, migration 0085 recap_audio_again (recap_jobs.audio_asked_at and the function dmbot_recap_audio_again for the website's "new audio" door, #1430); a rebuild;
+core + web-api 1ba2c3d3 (2026-10-16 07:42 UTC, migrations 0086 support_thread (support_replies), 0087 web_names, 0088 support_mine_answer (a policy and a door on support_replies); a rebuild; #1454 aliases, #1452 support flow, #1453 web names, #1457 DM-screen recap buttons, #1458, #1462, #1464, #1465; web-api now receives the support settings and ANTHROPIC_API_KEY; MAIL_SUPPORT_FROM, MAIL_ALERTS_FROM, MAIL_INBOUND_SECRET and SUPPORT_AI_MODEL are empty (nothing mails); old containers stopped first); before that e8555e2c (2026-10-16 06:28 UTC, migration 0085 recap_audio_again (recap_jobs.audio_asked_at and the function dmbot_recap_audio_again for the website's "new audio" door, #1430); a rebuild;
 the new named volume discord-dmbot_recap-audio: core writes it at /data/recap-audio, web-api reads it read-only at /recap-audio (WEB_RECAP_AUDIO_DIR); ffmpeg 7.1.5; recaps and recap audio built and OFF;
 old containers stopped first); before that e49cdb00 (2026-10-16 04:52 UTC, migrations 0077 extractor_progress, 0079 recap_jobs, 0080 recap_audio_addon, 0081 recap_audio_follow_ups, 0082 recap_audio_jobs,
 0083 memory_said_as, 0084 recap_switches; ffmpeg 7.1.5 in the core image; the extractor-gates plan gate and ceiling (#1369), the pre-session note (#1406), the secret-name question (#1410),

@@ -93,6 +93,7 @@ function ReplyBox({
   const [busy, setBusy] = useState(false);
   const [news, setNews] = useState<{ text: string; ok: boolean } | null>(null);
   const sending = useRef(false);
+  const box = useRef<HTMLTextAreaElement>(null);
   if (!ticket.email) return <p class="small muted">{text.replyNoEmail}</p>;
   const id = `reply-${ticket.id}`;
 
@@ -129,6 +130,12 @@ function ReplyBox({
     } finally {
       sending.current = false;
       setBusy(false);
+      // The box and button were disabled while sending, which drops focus to the page: on a
+      // failure put it back in the box (the words are still there). After a success the page's
+      // "Reply sent." line takes focus (the ticket usually leaves this view).
+      setTimeout(() => {
+        if (document.activeElement === document.body && box.current?.value) box.current.focus();
+      }, 0);
     }
   }
 
@@ -138,6 +145,7 @@ function ReplyBox({
         <label for={id}>{text.replyLabel(ticket.subject)}</label>
         <textarea
           id={id}
+          ref={box}
           rows={4}
           maxLength={REPLY_MAX}
           value={words}
