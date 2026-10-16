@@ -559,7 +559,14 @@ Each step is useful on its own and ships behind the existing phases.
    list quotes the earlier line, only while everyone who said it is recorded, and offers [Alive
    after all / It changed] (a new dated fact; the old one ends, history kept, in one transaction),
    [Not true] (the claim is not world truth and is not asked again) and [Ignore] (writes nothing;
-   quiet for the rest of that list). The log holds counts only. What is left of 5a: turning the
+   quiet for the rest of that list). The log holds counts only. **The after-session extractor path is built (#1363) and left off:**
+   `dmbot.memory.extractor` (the prompt, moved from the measuring tool unchanged, so both use one text)
+   reads a session's stored lines in batches of 10 (a short tail joins the last batch), never sidebar or
+   table-question lines, nothing the off-topic filter left out, and only from people recorded at that
+   moment; asks about consent again after each answer (inside `propose`); and stops at
+   `DMBOT_STORY_EXTRACTOR_MAX_CALLS` (480), an AI out of money, or three failed calls in a row. The tier
+   is `DMBOT_STORY_EXTRACTOR_TIER` (default fast). The log gets counts only. Turning it on is one setting
+   once #1282 passes. What is left of 5a: turning the
    extractor on (after #1282 passes), the linker, live warnings during play and the AI judgment
    behind them, and the secret-said-aloud question and the pre-session note (slice 4). **The ontology steward is wired into the claims path (#1303):** a claim
    whose relationship DMbot does not know goes through `decide_term`: an existing term it recognises

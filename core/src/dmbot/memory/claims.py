@@ -15,8 +15,9 @@ from __future__ import annotations
 
 import json
 import re
+from collections import Counter
 from collections.abc import Awaitable, Callable, Collection, Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 from dmbot.memory._changes import ALIASES, CLAIMS, ENTITIES, Changes
@@ -142,6 +143,8 @@ class Proposed:
     dropped: int  # stored as dropped, with the reason
     repeated: int  # asked before (or turned down): not stored again
     malformed: int = 0  # not even a claim (set by the caller from `parse_answer`)
+    # Why claims were dropped (stored or not), by the reason's wording; counts only.
+    reasons: Mapping[str, int] = field(default_factory=dict)
 
 
 @dataclass(frozen=True, slots=True)
@@ -376,6 +379,7 @@ class ClaimStore:
         not stored at all, not even as dropped: its words are theirs, and they said no. Nothing
         here is a fact."""
         waiting = dropped = repeated = 0
+        why: Counter[str] = Counter()
         async with self._store._write(guild_id, campaign_id, EXTRACTOR) as w:
             onto = await _load_ontology(w)
             entities = await w.select(
@@ -398,12 +402,14 @@ class ClaimStore:
                 reason = judge(claim, onto, names, cited, opted_in, tally)
                 if reason in (STOPPED_REASON, NO_SPEAKER_REASON):
                     dropped += 1  # counted, never kept
+                    why[reason] += 1
                     continue
                 if key in asked or (*key, reason) in refused:
                     repeated += 1
                     continue
                 if reason:
                     dropped += 1
+                    why[reason] += 1
                     refused.add((*key, reason))
                 else:
                     waiting += 1
@@ -430,7 +436,7 @@ class ClaimStore:
                     }
                 )
             await w.insert_many(CLAIMS, rows)
-        return Proposed(waiting, dropped, repeated, malformed)
+        return Proposed(waiting, dropped, repeated, malformed, dict(why))
 
     async def purge_stopped(
         self, guild_id: int, campaign_id: str, opted_in: Collection[int]

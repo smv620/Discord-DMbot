@@ -66,6 +66,7 @@ class Feature(enum.StrEnum):
     RULES_CONFIRM = "rules_confirm"  # a rules alert's candidate, confirmed before the DM sees it
     SHEET = "sheet"  # a player's own sheet document read into the allow-listed fields (#1125)
     FIGHTBOT = "fightbot"  # a short reminder of a player's own options in combat (#1129)
+    EXTRACTOR = "extractor"  # the story extractor after a session (#1363); off by default
 
 
 # The tier of each job. Nothing else chooses: a job names its tier here, never a model.
@@ -81,6 +82,8 @@ FEATURE_TIERS = {
     Feature.RULES_CONFIRM: AIModelTier.CAREFUL,  # (rules alerts: FAST spots, CAREFUL confirms)
     Feature.SHEET: AIModelTier.CAREFUL,  # its numbers and names are checked, but only once
     Feature.FIGHTBOT: AIModelTier.FAST,  # a short reminder every couple of minutes at most
+    # The default; DMBOT_STORY_EXTRACTOR_TIER picks it, because the measurement (#1282) decides.
+    Feature.EXTRACTOR: AIModelTier.FAST,
 }
 
 # The setting that picks each tier's model (named in the log when one isn't available).

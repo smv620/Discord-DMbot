@@ -103,6 +103,27 @@ class PlanChecksSetting(unittest.TestCase):
         with self.assertRaisesRegex(ConfigError, "DMBOT_STORY_EXTRACTOR must be 1"):
             load_settings({**BASE, "DMBOT_STORY_EXTRACTOR": "maybe"})
 
+    def test_the_extractors_tier_and_call_limit(self) -> None:
+        s = load_settings(BASE)
+        self.assertEqual((s.story_extractor_tier, s.story_extractor_max_calls), ("fast", 480))
+        s = load_settings(
+            {
+                **BASE,
+                "DMBOT_STORY_EXTRACTOR_TIER": "Careful",
+                "DMBOT_STORY_EXTRACTOR_MAX_CALLS": "9",
+            }
+        )
+        self.assertEqual((s.story_extractor_tier, s.story_extractor_max_calls), ("careful", 9))
+        for name, bad in (
+            ("DMBOT_STORY_EXTRACTOR_TIER", "best"),
+            ("DMBOT_STORY_EXTRACTOR_MAX_CALLS", "0"),
+            ("DMBOT_STORY_EXTRACTOR_MAX_CALLS", "5001"),
+            ("DMBOT_STORY_EXTRACTOR_MAX_CALLS", "many"),
+            ("DMBOT_STORY_EXTRACTOR_MAX_CALLS", "²"),
+        ):
+            with self.assertRaisesRegex(ConfigError, name):
+                load_settings({**BASE, name: bad})
+
     def test_continuity_levels_have_defaults_and_are_checked(self) -> None:
         levels = load_settings(BASE).continuity
         self.assertEqual((levels.possible, levels.probable, levels.likely), (0.25, 0.5, 0.8))
