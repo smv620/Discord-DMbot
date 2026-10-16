@@ -281,6 +281,9 @@ export interface TranscriptView {
   fileName: string;
   notes: string[];
   lines: string[];
+  /** The offset to ask for the next page of lines (#1512), or null on the last (or missing from an
+   * older API: there is no more). */
+  next?: number | null;
 }
 
 /** The three audio files, as short-lived addresses to play. */
@@ -324,6 +327,7 @@ export type ApiErrorKind =
   | "already-subscribed" // the add-on is already bought (#1390)
   | "not-in-plan" // the narration can't be turned on: the plan doesn't have it (#1468)
   | "bad-choice" // not one of the three recap choices (#1468)
+  | "too-big" // a transcript too long to show or save as one file (#1512)
   | "server"; // anything else
 
 export class ApiError extends Error {
@@ -391,6 +395,7 @@ export interface AccountApi {
     campaignRef: string,
     number: number,
     version: TranscriptVersion,
+    offset?: number,
   ): Promise<TranscriptView>;
   /** The same text as a file to save, as Discord's download button gives it. */
   transcriptFile?(campaignRef: string, number: number, version: TranscriptVersion): Promise<Blob>;
@@ -465,6 +470,7 @@ const errorKinds: Record<string, ApiErrorKind> = {
   not_found: "not-found",
   not_in_plan: "not-in-plan",
   bad_choice: "bad-choice",
+  too_big: "too-big",
   not_editable: "not-editable",
   bad_text: "bad-text",
 };
@@ -585,10 +591,10 @@ export function httpApi(base: string, fetcher: typeof fetch = fetch): AccountApi
         name: string;
         sessions: TranscriptSessionItem[];
       },
-    transcript: async (campaignRef, number, version) =>
+    transcript: async (campaignRef, number, version, offset = 0) =>
       (await call(
         "GET",
-        `/me/campaigns/${encodeURIComponent(campaignRef)}/transcripts/${number}?version=${version}`,
+        `/me/campaigns/${encodeURIComponent(campaignRef)}/transcripts/${number}?version=${version}&offset=${offset}`,
       )) as TranscriptView,
     transcriptFile: async (campaignRef, number, version) =>
       (await call(

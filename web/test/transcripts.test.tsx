@@ -176,3 +176,97 @@ describe("reading a session", () => {
     expect(await screen.findByRole("alert")).toHaveProperty("textContent", text.notFound);
   });
 });
+
+describe("character labels and Show more (#1512)", () => {
+  const view = (lines: string[], next: number | null) => ({
+    number: 2,
+    version: "cleaned" as const,
+    fileName: "x.txt",
+    notes: ["DMbot transcript: x"],
+    lines,
+    next,
+  });
+
+  it("shows the character label the bot's export wrote, as part of the line", async () => {
+    const api = {
+      ...mockApi("table"),
+      transcript: async () => view(["[0:00:12] (Speaker 1) {Cerric}: We cross the river."], null),
+    } as AccountApi;
+    page(api, `/account/transcripts/${REF}/2`);
+    expect(await screen.findByText("[0:00:12] (Speaker 1) {Cerric}: We cross the river.")).toBeTruthy();
+  });
+
+  it("says nothing about more when there is no more", async () => {
+    const api = { ...mockApi("table"), transcript: async () => view(["line one"], null) } as AccountApi;
+    page(api, `/account/transcripts/${REF}/2`);
+    await screen.findByText("line one");
+    expect(screen.queryByRole("button", { name: text.showMore })).toBeNull();
+  });
+
+  it("loads the next page when asked and joins it on, until there is no more", async () => {
+    const asked: (number | undefined)[] = [];
+    const api = {
+      ...mockApi("table"),
+      transcript: vi.fn(async (_ref: string, _n: number, _v: string, offset?: number) => {
+        asked.push(offset);
+        return offset === 2000 ? view(["second page"], null) : view(["first page"], 2000);
+      }),
+    } as unknown as AccountApi;
+    page(api, `/account/transcripts/${REF}/2`);
+    expect(await screen.findByText("first page")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: text.showMore }));
+    expect(await screen.findByText("second page")).toBeTruthy();
+    expect(screen.getByText("first page")).toBeTruthy(); // joined, not replaced
+    expect(screen.queryByRole("button", { name: text.showMore })).toBeNull();
+    expect(asked).toEqual([0, 2000].map((n) => (n === 0 ? undefined : n)));
+  });
+
+  it("says so, in plain words, when the next page fails, and lets them try again", async () => {
+    let calls = 0;
+    const api = {
+      ...mockApi("table"),
+      transcript: vi.fn(async (_ref: string, _n: number, _v: string, offset?: number) => {
+        if (offset === undefined) return view(["first page"], 2000);
+        calls += 1;
+        if (calls === 1) throw new ApiError("network");
+        return view(["second page"], null);
+      }),
+    } as unknown as AccountApi;
+    page(api, `/account/transcripts/${REF}/2`);
+    await screen.findByText("first page");
+    fireEvent.click(screen.getByRole("button", { name: text.showMore }));
+    expect(await screen.findByText(text.moreFailed)).toBeTruthy();
+    expect(screen.getByText("first page")).toBeTruthy(); // what was read stays
+    fireEvent.click(screen.getByRole("button", { name: text.showMore }));
+    expect(await screen.findByText("second page")).toBeTruthy();
+  });
+
+  it("starts the lines again from the top when the version changes", async () => {
+    const api = {
+      ...mockApi("table"),
+      transcript: vi.fn(async (_ref: string, _n: number, version: string, offset?: number) =>
+        offset === 2000
+          ? view(["more of " + version], null)
+          : { ...view(["first of " + version], 2000), version },
+      ),
+    } as unknown as AccountApi;
+    page(api, `/account/transcripts/${REF}/2`);
+    await screen.findByText("first of cleaned");
+    fireEvent.click(screen.getByRole("button", { name: text.showMore }));
+    await screen.findByText("more of cleaned");
+    fireEvent.click(screen.getByRole("button", { name: text.versions.heard }));
+    expect(await screen.findByText("first of heard")).toBeTruthy();
+    expect(screen.queryByText("more of cleaned")).toBeNull();
+  });
+
+  it("tells a transcript too big to show, in plain words", async () => {
+    const api = {
+      ...mockApi("table"),
+      transcript: async () => {
+        throw new ApiError("too-big");
+      },
+    } as AccountApi;
+    page(api, `/account/transcripts/${REF}/2`);
+    expect(await screen.findByRole("alert")).toHaveProperty("textContent", text.tooBig);
+  });
+});
