@@ -10,8 +10,9 @@ from typing import Any
 from dmbot.campaigns import Campaign, CampaignError, CampaignStore
 from dmbot.rules import pack_content
 from dmbot.rules.homebrew import FileEntry, Homebrew, HomebrewStore
-from dmbot.rules.homebrew_packs import PACKS_MAX, HomebrewPackStore, HomebrewReader
+from dmbot.rules.homebrew_packs import HomebrewPackStore, HomebrewReader
 from dmbot.rules.house import HouseRuleError
+from dmbot.rules.pack_content import PACKS_MAX
 from dmbot.rules.rule_sets import Follow, FollowedSetsSection, RuleSetError
 from dmbot.sidebar.context import homebrew_source, relevant_homebrew
 from dmbot.ui.rule_card import homebrew_citation
