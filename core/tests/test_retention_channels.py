@@ -39,11 +39,21 @@ def message(author: int, buttons: bool, mid: int) -> Any:
     )  # fmt: skip
 
 
+NAMES = {
+    SCREEN: "dmb-dm-screen-frostmaiden",
+    GAMETIME: "dmb-gametime-frostmaiden",
+    TRANSCRIPT: "transcript-frostmaiden",
+    CHAT: "dmb-chat-frostmaiden",
+}
+
+
 def channel(
-    cid: int, *, guild: int = GUILD, pins: list[Any] | None = None, recent: list[Any] | None = None
-) -> Any:
+    cid: int, *, guild: int = GUILD, pins: list[Any] | None = None, recent: list[Any] | None = None,
+    name: str | None = None,
+) -> Any:  # fmt: skip
     ch = MagicMock(spec=discord.TextChannel)
     ch.id = cid
+    ch.name = name or NAMES.get(cid, "x")
     ch.guild = SimpleNamespace(id=guild)
     ch.delete = AsyncMock()
     ch.send = AsyncMock()
@@ -171,6 +181,28 @@ class Retire(unittest.IsolatedAsyncioTestCase):
         chans[CHAT] = channel(CHAT, recent=many)
         await rc.retire_channels(guild_with(chans), campaign(), ME, NOW)
         self.assertEqual(sum(m.edit.await_count for m in many), rc.MAX_EDITS)
+
+    async def test_a_renamed_dm_screen_is_never_deleted(self) -> None:
+        chans = self.all_four()
+        chans[SCREEN] = channel(SCREEN, name="general")  # an admin reused it
+        got = await rc.retire_channels(guild_with(chans), campaign(), ME, NOW)
+        self.assertEqual((got.deleted, got.closed, got.skipped), (1, 2, 1))
+        chans[SCREEN].delete.assert_not_awaited()
+        chans[SCREEN].send.assert_not_awaited()
+
+    async def test_a_renamed_game_time_channel_is_never_deleted(self) -> None:
+        chans = self.all_four()
+        chans[GAMETIME] = channel(GAMETIME, name="announcements")
+        got = await rc.retire_channels(guild_with(chans), campaign(), ME, NOW)
+        self.assertEqual((got.deleted, got.closed, got.skipped), (1, 2, 1))
+        chans[GAMETIME].delete.assert_not_awaited()
+
+    async def test_a_renamed_closed_channel_still_gets_its_note(self) -> None:
+        chans = self.all_four()
+        chans[CHAT] = channel(CHAT, name="general")  # only a note is ever sent to these
+        got = await rc.retire_channels(guild_with(chans), campaign(), ME, NOW)
+        self.assertEqual(got.closed, 2)
+        chans[CHAT].delete.assert_not_awaited()
 
     async def test_something_that_is_not_a_text_channel_is_left_alone(self) -> None:
         chans = self.all_four()

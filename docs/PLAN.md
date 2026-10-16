@@ -2942,8 +2942,8 @@ in a running session is skipped. The owner gets a private message 14 days and 3 
 campaign (`retention_warned_stage`, `retention_warned_for`, migration 0039), so a restart doesn't
 repeat one and playing a session (which moves the date) starts them over. Deletion is the
 existing `CampaignStore.delete`, then the owner is told once; the log has counts only. **Its Discord channels
-(2026-10-16, #1598):** after a successful delete, its **DM screen and game-time channels are deleted** (they
-hold only DMbot's own messages and the DM-only notes), and its **transcript and `dmb-chat` channels are kept**
+(2026-10-16, #1598):** after a successful delete, its **DM screen and game-time channels are deleted**, while they
+are still named like DMbot's (a renamed, reused one is skipped; they hold only DMbot's own messages and the DM-only notes), and its **transcript and `dmb-chat` channels are kept**
 with one closing note, DMbot's own buttons taken off (they hold what people wrote or said, which is not
 DMbot's to delete; a server admin can). Only the channels recorded on that campaign, found in its own server;
 a missing one, one DMbot may not manage or a slow one is skipped, counted in the log line

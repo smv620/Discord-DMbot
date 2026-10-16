@@ -3,8 +3,10 @@ item 1 of #618; docs/PLAN.md, "Retention").
 
 What happens to each channel follows whose words are in it:
 
-- **The DM screen and the game-time channel are deleted.** They hold only DMbot's own messages,
-  the DM screen holds DM-only notes, and the data behind both is gone.
+- **The DM screen and the game-time channel are deleted**, but only while they are still named
+  like DMbot's (`is_screen_name`, `is_gametime_name`): a channel an admin renamed and reused is
+  skipped, never deleted. They hold only DMbot's own messages, the DM screen holds DM-only notes,
+  and the data behind both is gone.
 - **The transcript channel and `dmb-chat` are kept**, with one closing note (sent first), and
   DMbot's own messages there lose their buttons (best effort, at most 25), so nothing answers
   "I can't find that campaign". They hold what people wrote or said, which is not DMbot's to
@@ -20,12 +22,15 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
 import discord
 
 from dmbot.campaigns import Campaign
+from dmbot.dm_screen.gametime_channel import is_gametime_name
+from dmbot.dm_screen.names import is_screen_name
 
 log = logging.getLogger(__name__)
 
@@ -60,13 +65,15 @@ async def retire_channels(
     bot has it (None: the bot is no longer there, so every recorded channel is skipped)."""
     counts = ChannelCounts()
     note = CLOSING_NOTE.format(date=f"<t:{now}:D>")
-    plan = (
-        (campaign.dm_screen_channel_id, True),
-        (campaign.gametime_channel_id, True),
-        (campaign.transcript_channel_id, False),
-        (campaign.dmbchat_channel_id, False),
+    # (id, delete it?, the name it must still have to be deleted): the same trust rule the bot uses
+    # everywhere else, so a channel an admin renamed and reused is never deleted.
+    plan: tuple[tuple[int | None, bool, Callable[[str], bool]], ...] = (
+        (campaign.dm_screen_channel_id, True, is_screen_name),
+        (campaign.gametime_channel_id, True, is_gametime_name),
+        (campaign.transcript_channel_id, False, _any_name),
+        (campaign.dmbchat_channel_id, False, _any_name),
     )
-    for channel_id, delete in plan:
+    for channel_id, delete, named_right in plan:
         if channel_id is None:
             continue
         ok = False
@@ -79,6 +86,8 @@ async def retire_channels(
                     ):
                         raise _NotOurs
 
+                    if delete and not named_right(channel.name):
+                        raise _NotOurs  # renamed and reused: left alone, counted as skipped
                     if delete:
                         await channel.delete(reason="DMbot: the campaign was deleted")
                     else:
@@ -127,6 +136,10 @@ async def _drop_buttons(channel: discord.TextChannel, me_id: int) -> None:
                     continue  # deleted meanwhile
     except (discord.DiscordException, TimeoutError):
         log.info("Retention: some buttons were left on a closed channel")
+
+
+def _any_name(name: str) -> bool:
+    return True  # a closed channel only gets a note, whatever it is called now
 
 
 class _NotOurs(Exception):
