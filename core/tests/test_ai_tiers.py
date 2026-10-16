@@ -475,7 +475,8 @@ class UsageLine(unittest.IsolatedAsyncioTestCase):
         watch = Watch()
         client = AnthropicClient("k", MODELS, session=Service({}), watch=watch)  # type: ignore[arg-type]
         await client.complete("s", "t", tier=AIModelTier.FAST)
-        self.assertEqual(watch.used, [(120, 7)])
+        # 120 uncounted-by-the-cache tokens, plus a tenth of the 90 read from the cache (#1367)
+        self.assertEqual(watch.used, [(129, 7)])
 
 
 class NoModelNamedElsewhere(unittest.TestCase):

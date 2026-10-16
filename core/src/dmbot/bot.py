@@ -5221,12 +5221,15 @@ class DMBot(commands.AutoShardedBot):
                 max_calls=allowed,
                 skip=skip,
                 after_ms=after_ms,
+                count_call=lambda: self.transcripts.record_extraction(
+                    gid, sid, through_ms=0, calls=1, now=int(time.time())
+                ),
             )
             log.info(report.line())
             try:  # what a restart resumes from, and what the day's limit counts
                 await self.transcripts.record_extraction(
-                    gid, sid, through_ms=report.through_ms, calls=report.calls, now=now
-                )
+                    gid, sid, through_ms=report.through_ms, calls=0, now=now
+                )  # (the calls were counted as they were made)
             except Exception:
                 log.exception("Story extractor: couldn't note how far it got")
             if report.named:  # the DM checks them where the name scan's are checked

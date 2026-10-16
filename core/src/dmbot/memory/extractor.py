@@ -238,6 +238,7 @@ async def run(
     skip: Collection[str] = (),
     new_names: int = NEW_NAME_LIMIT,
     after_ms: int = 0,
+    count_call: Callable[[], Awaitable[None]] | None = None,
 ) -> Report:
     """Read the session's lines and store what the AI found as proposals, all at once at the end
     (the linker picks the most-said new names across the whole session). `consenting` is asked
@@ -245,11 +246,11 @@ async def run(
     claims are stored (what `propose` checks them against). `model` names the model when no
     answer did, recorded with the claims. `skip` are name keys that are never story names (the
     people at the table). Stops at `max_calls`, after `max_seconds` in all, at an AI that is out
-    of money, and after `FAILURES_BEFORE_STOP` failures in a row. `after_ms`: read only lines that
-    began after it (where an earlier run got to, `Report.through_ms`), so a restart never sends
-    the same lines twice (#1367). A claim's lines are
-    numbered by their place in the stored session; they are not looked up anywhere yet, so if a
-    stop-recording clean-up removes lines, whatever resolves them later must key on more than
+    of money, and after `FAILURES_BEFORE_STOP` failures in a row. `count_call` is awaited before
+    each AI call. `after_ms`: read only lines that began after it (where an earlier run got to,
+    `Report.through_ms`), so a restart never sends the same lines twice (#1367). A claim's lines
+    are numbered by their place in the stored session; they are not looked up anywhere yet, so if
+    a stop-recording clean-up removes lines, whatever resolves them later must key on more than
     the position."""
     report = Report()
     collected: list[Extracted] = []
@@ -279,6 +280,13 @@ async def run(
         rows = [(str(s.number), "DM" if s.user_id in dm_ids else "Player", s.text) for s in batch]
         speakers: dict[str, int | None] = {str(s.number): s.user_id for s in batch}
         report.calls += 1
+        if count_call is not None:
+            # Counted before the call, so a crash or restart mid-run cannot hide it from the
+            # ceilings (the lines read are only noted when the claims are stored, at the end).
+            try:
+                await count_call()
+            except Exception as exc:
+                log.warning("Story extractor: couldn't count a call (%s)", type(exc).__name__)
         try:
             reply = await asyncio.wait_for(
                 client.complete(SYSTEM, transcript_of(rows), max_tokens=MAX_TOKENS), CALL_TIMEOUT_S

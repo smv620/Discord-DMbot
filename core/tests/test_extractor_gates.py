@@ -67,6 +67,18 @@ class Resuming(unittest.IsolatedAsyncioTestCase):
         report = await go(Canned(), Broken(), session(20), after_ms=5)
         self.assertEqual(report.through_ms, 5)
 
+    async def test_every_call_is_counted_as_it_is_made_so_a_crash_cannot_hide_it(self) -> None:
+        counted: list[int] = []
+
+        async def count() -> None:
+            counted.append(1)
+
+        ai = Canned([None, RuntimeError("the process died")], claim=False)
+        report = await go(ai, Recorder(), session(30), count_call=count)
+        self.assertEqual(
+            (len(counted), report.calls), (3, 3)
+        )  # counted before each call, failed or not
+
     async def test_nothing_new_to_read_makes_no_call(self) -> None:
         lines = session(20)
         ai = Canned()
@@ -97,6 +109,15 @@ class Progress(DatabaseTest):
         await self.store.record_extraction(1, sid, through_ms=2000, calls=2, now=200)
         self.assertEqual(await self.store.extraction(1, sid), (5000, 5))
         self.assertEqual(await self.store.extraction(1, "f" * 32), (0, 0))  # not a session here
+
+    async def test_a_run_that_made_no_calls_does_not_move_when_the_session_last_ran(self) -> None:
+        sid = await self.store.open_session(1, self.campaign.id, 1_700_000_000)
+        await self.store.record_extraction(1, sid, through_ms=10, calls=50, now=1_000)
+        await self.store.record_extraction(1, sid, through_ms=20, calls=0, now=1_000 + 2 * DAY)
+        self.assertEqual(await self.store.extraction(1, sid), (20, 50))
+        # Its 50 calls are still counted at the time they were made, not at the later run.
+        self.assertEqual(await self.store.extractor_calls_since(1, self.campaign.id, DAY), 0)
+        self.assertEqual(await self.store.extractor_calls_since(1, self.campaign.id, 1_000), 50)
 
     async def test_the_days_calls_count_this_campaign_and_the_last_24_hours_only(self) -> None:
         a = await self.store.open_session(1, self.campaign.id, 1_700_000_000)
@@ -188,7 +209,8 @@ class Gates(unittest.IsolatedAsyncioTestCase):
         self.assertEqual((kw["after_ms"], kw["max_calls"]), (4000, 450))  # resumes; 480 - 30
         record = me.transcripts.record_extraction.await_args
         self.assertEqual(record.kwargs["through_ms"], 7000)
-        self.assertEqual(record.kwargs["calls"], 2)
+        self.assertEqual(record.kwargs["calls"], 0)  # the calls were counted as they were made
+        self.assertIsNotNone(kw["count_call"])
 
     async def test_the_days_ceiling_stops_a_run_before_it_starts(self) -> None:
         me = self.fake(day=960)

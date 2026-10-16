@@ -69,8 +69,9 @@ class TranscriptStore:
             await conn.execute(
                 "UPDATE transcript_sessions SET"
                 " extracted_through_ms = greatest(extracted_through_ms, %s),"
-                " extractor_calls = extractor_calls + %s, extracted_at = %s WHERE id = %s",
-                (through_ms, calls, now, session_id),
+                " extractor_calls = extractor_calls + %s,"
+                " extracted_at = CASE WHEN %s > 0 THEN %s ELSE extracted_at END WHERE id = %s",
+                (through_ms, calls, calls, now, session_id),
             )
 
     async def extractor_calls_since(self, guild_id: int, campaign_id: str, since: int) -> int:

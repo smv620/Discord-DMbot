@@ -293,11 +293,41 @@ class Linking(ConfirmedMemoryTest):
         self.assertEqual(names, set(STRANGERS[5:]))
         self.assertEqual(got.waiting, 40)  # every claim of the twenty is kept
 
-    async def test_the_names_left_over_are_not_remembered_as_dropped(self) -> None:
-        found = [said("Bram", "knows", name) for name in STRANGERS[:3]]
-        await self.propose(*found, new_names=1)
-        later = await self.propose(*found, new_names=5)
-        self.assertEqual(later.named, 2)  # next session they are proposed
+    async def test_names_past_the_limit_are_kept_and_proposed_first_next_session(self) -> None:
+        first = [said("Bram", "knows", name) for name in STRANGERS[:25]]
+        first += [said("Bram", "owes", name) for name in STRANGERS[5:25]]  # the last 20 said twice
+        got = await self.propose(*first, new_names=20)
+        self.assertEqual((got.named, got.deferred), (20, 5))  # the five said once are kept waiting
+        self.assertEqual(set(await self.entries()), set(STRANGERS[5:25]))
+        self.assertEqual(await self.counts(), {"names": 45})  # all waiting on a name
+        # Not asked, and not lost: waiting claims stay hidden until their name is proposed.
+        self.assertEqual(await self.claims.waiting(GUILD_A, self.c, opted_in=EVERYONE), [])
+        # Next session says three other new names; the five left over are proposed first.
+        later = await self.propose(
+            *[said("Bram", "knows", n) for n in ("Wilhelmina", "Zephyrine", "Bartholomew")],
+            new_names=5,
+        )
+        self.assertEqual((later.named, later.deferred), (5, 3))
+        self.assertEqual(set(later.new), set(STRANGERS[:5]))
+        self.assertEqual(set(await self.entries()), set(STRANGERS[:25]))
+        # The five claims were waiting already; they are still waiting, now on a proposed name.
+        self.assertEqual((await self.counts())["names"], 45 + 3)
+
+    async def test_a_kept_claim_is_asked_once_its_name_is_confirmed(self) -> None:
+        names = STRANGERS[:2]
+        await self.propose(*[said("Bram", "knows", n) for n in names], new_names=1)
+        await self.propose(said("Bram", "owes", "Wilhelmina"), new_names=1)  # proposes the other
+        both = await self.entries()
+        self.assertEqual(len(both), 2)
+        for entity in both.values():
+            await self.memory.set_entity_type(
+                GUILD_A, self.c, entity.id, "character", source=DM_SOURCE
+            )
+            await self.memory.set_entity_status(
+                GUILD_A, self.c, entity.id, CONFIRMED, source=DM_SOURCE
+            )
+        asked = await self.claims.waiting(GUILD_A, self.c, opted_in=EVERYONE)
+        self.assertEqual(sorted(c.object for c in asked), sorted(names))
 
     # ---- secret names, isolation -----------------------------------------------------------
 

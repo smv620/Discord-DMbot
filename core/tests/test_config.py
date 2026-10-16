@@ -106,6 +106,7 @@ class PlanChecksSetting(unittest.TestCase):
     def test_the_extractors_tier_and_call_limit(self) -> None:
         s = load_settings(BASE)
         self.assertEqual((s.story_extractor_tier, s.story_extractor_max_calls), ("fast", 480))
+        self.assertEqual(s.story_extractor_max_calls_day, 960)
         s = load_settings(
             {
                 **BASE,
@@ -120,6 +121,9 @@ class PlanChecksSetting(unittest.TestCase):
             ("DMBOT_STORY_EXTRACTOR_MAX_CALLS", "5001"),
             ("DMBOT_STORY_EXTRACTOR_MAX_CALLS", "many"),
             ("DMBOT_STORY_EXTRACTOR_MAX_CALLS", "²"),
+            ("DMBOT_STORY_EXTRACTOR_MAX_CALLS_DAY", "0"),
+            ("DMBOT_STORY_EXTRACTOR_MAX_CALLS_DAY", "50001"),
+            ("DMBOT_STORY_EXTRACTOR_MAX_CALLS_DAY", "lots"),
         ):
             with self.assertRaisesRegex(ConfigError, name):
                 load_settings({**BASE, name: bad})

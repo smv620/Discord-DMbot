@@ -72,6 +72,36 @@ class Client(unittest.IsolatedAsyncioTestCase):
         await ai.tier(AIModelTier.FAST).complete("rules", "doc")
         self.assertEqual(session.sent["json"]["system"], "rules")
 
+    async def test_cache_writes_and_reads_are_counted_for_the_spend_watch(self) -> None:
+        body = {
+            "content": [{"type": "text", "text": "x"}],
+            "usage": {
+                "input_tokens": 200,
+                "output_tokens": 10,
+                "cache_creation_input_tokens": 1000,
+                "cache_read_input_tokens": 500,
+            },
+        }
+        seen: list[tuple[int, int]] = []
+
+        class Watch:
+            def record(self, tokens_in: int, tokens_out: int, feature: object = None) -> None:
+                seen.append((tokens_in, tokens_out))
+
+            def out_of_funds(self) -> None:
+                return None
+
+        session = FakeSession(FakeResponse(200, body))
+        ai = AnthropicClient(
+            "sk-secret",
+            AIModels.same("m"),
+            session=session,
+            watch=Watch(),  # type: ignore[arg-type]
+        )
+        reply = await ai.complete("rules", "doc", tier=AIModelTier.FAST, cache_system=True)
+        self.assertEqual((reply.cache_write_tokens, reply.cache_read_tokens), (1000, 500))
+        self.assertEqual(seen, [(200 + 1000 + 50, 10)])  # a write in full, a read at a tenth
+
     async def test_odd_usage_counts_as_none(self) -> None:
         ai, _ = self.client(200, {"content": [], "usage": {"input_tokens": "lots"}})
         reply = await ai.complete("rules", "doc", tier=AIModelTier.FAST)

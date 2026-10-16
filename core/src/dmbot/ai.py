@@ -189,6 +189,7 @@ class Reply:
     output_tokens: int = 0
     model: str = ""  # the model that answered (after any fallback)
     cache_read_tokens: int = 0  # input tokens read from the cache
+    cache_write_tokens: int = 0  # input tokens written to the cache (charged a little extra)
 
 
 def _model_unavailable(status: int, body_text: str) -> bool:
@@ -453,12 +454,13 @@ class AnthropicClient:
 
         # One line for each call, for watching the cost: counts only, never the text.
         log.info(
-            "AI call: tier=%s model=%s in=%s out=%s cache_read=%s stop=%s%s%s",
+            "AI call: tier=%s model=%s in=%s out=%s cache_read=%s cache_write=%s stop=%s%s%s",
             tier.value,
             model,
             count("input_tokens"),
             count("output_tokens"),
             count("cache_read_input_tokens"),
+            count("cache_creation_input_tokens"),
             data.get("stop_reason"),
             f" asked={asked.value}" if asked is not tier else "",
             f" feature={feature}" if feature else "",
@@ -472,7 +474,11 @@ class AnthropicClient:
             output_tokens=count("output_tokens"),
             model=model,
             cache_read_tokens=count("cache_read_input_tokens"),
+            cache_write_tokens=count("cache_creation_input_tokens"),
         )
         if self._watch is not None:
-            self._watch.record(reply.input_tokens, reply.output_tokens, feature)
+            # `input_tokens` leaves out what the cache wrote or read. Count a write in full and
+            # a read at a tenth (what it is charged about), so the spend watch does not undercount.
+            billed = reply.input_tokens + reply.cache_write_tokens + reply.cache_read_tokens // 10
+            self._watch.record(billed, reply.output_tokens, feature)
         return reply
