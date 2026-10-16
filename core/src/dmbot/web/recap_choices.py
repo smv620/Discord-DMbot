@@ -9,9 +9,11 @@ campaign, never a server manager, exactly as the panel does.
 
 The choices can only turn things off in effect (the bot's plan gate decides at each recap and
 fails closed), so the one plan question the page needs is whether to offer the narration switch at
-all, and whether turning it on is allowed. The bot reads the campaign **owner's** plan; the website
-can read only the signed-in person's own plan, so it answers "yes" only when the DM is the owner,
-and otherwise offers no narration switch (the panel does the same when it cannot tell).
+all, and whether turning it on is allowed. The bot reads the campaign **owner's** plan, and so does
+this (#1470): every DM sees the same switch the DM screen shows, owner or co-DM. The owner's id
+comes only from the DM-checked door, never from the browser, and only two facts about the plan
+leave this module (whether the narration is in it, and how); never the plan's name, its payment
+state or the owner's id.
 A campaign is named by `<server>.<campaign>`, the recap's address without its last part.
 """
 
@@ -36,21 +38,17 @@ def _parse(ref: str) -> tuple[int, str]:
 
 
 async def _audio_facts(
-    db: Database, session: Session, owner: str | None, now: int, *, enforce_plans: bool
+    db: Database, owner: str | None, now: int, *, enforce_plans: bool
 ) -> dict[str, Any]:
     """Whether the narration switch is offered and may be turned on, and how the plan has it
-    (`recap_panel.audio_how`'s two answers). Only for the campaign's owner: see the module. With
+    (`recap_panel.audio_how`'s two answers), from the campaign owner's plan. With
     plans not enforced (the test server) the bot allows it, so the page does too."""
     if not enforce_plans:
         return {"canAudio": True, "audioHow": ""}
-    if (
-        owner is None
-        or not owner.isascii()
-        or not owner.isdecimal()
-        or int(owner) != session.user_id
-    ):
+    if owner is None or not owner.isascii() or not owner.isdecimal():
         return {"canAudio": False, "audioHow": ""}
-    _plan, _grant, access = await plan_grant_access(db, session.user_id, now)
+    # The owner's plan, as the bot reads it (`recap_plan_facts`), not the signed-in person's.
+    _plan, _grant, access = await plan_grant_access(db, int(owner), now)
     if not (access.works and access.recap_audio):  # the bot's `can_recap_audio`
         return {"canAudio": False, "audioHow": ""}
     # As the panel says it: "part of your plan" unless it is a paid plan outside Guild and Pro.
@@ -78,7 +76,7 @@ async def read_choices(
     found = row["found"] if row else None
     if found is None:
         raise RecapError("not_found")
-    facts = await _audio_facts(db, session, found.get("owner"), now, enforce_plans=enforce_plans)
+    facts = await _audio_facts(db, found.get("owner"), now, enforce_plans=enforce_plans)
     return {
         "text": bool(found["text"]),
         "email": bool(found["email"]),
