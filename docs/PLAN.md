@@ -637,9 +637,10 @@ no "rule" kind. A file heading `## Name (rule)` is refused for that entry alone 
 rules, not Homebrew: ⚙️ Settings → House rules."); a pack carries no rules (a pack made before is read
 without them); an old backup's rule loads as "other". Migration 0111 moved every existing rule entry of
 a campaign into its house rules (the name in front unless the text starts with it), numbered after the
-rules it already had; one from a shared book (its book confirmation cannot live in a house rule) or too
-long for a house rule (500 characters) stays as homebrew of the kind "other"; open pack suggestions of a
-rule were dropped. Never a published book's text: the form says "Your own creations only. For a published
+rules it already had; one the players may not know (house rules are read by everyone in the server), one from a shared
+book (its book confirmation cannot live in a house rule), one too long for a house rule (a line of 500
+characters) and any past a campaign's 200 house rules stay as homebrew of the kind "other"; open pack
+suggestions of a rule were dropped, and a linked house-rules file is not rewritten. Never a published book's text: the form says "Your own creations only. For a published
 book, use Share a rulebook." An entry has a name (1 to 80 characters, unique in the campaign, any case),
 its words (1 to 2,000, plain text) and an optional one-line summary (160, shown in alerts). **An entry is
 DM-screen content until the DM presses 👀 ("players may know")**: a homebrew monster is a spoiler. At most

@@ -104,20 +104,29 @@ class Migration(DatabaseTest):
                     (GUILD, one.id, n, f"Old rule {n}", DM),
                 )
             await conn.execute("UPDATE campaigns SET house_rules_made = 2 WHERE id = %s", (one.id,))
-            rows = [
-                (one.id, "rule", "Fast Travel", "Everyone moves at double speed.", False),
-                (one.id, "rule", "Flanking", "flanking gives advantage when two allies...", False),
-                (one.id, "rule", "Booked", "From a shared book.", True),
-                (one.id, "rule", "Long One", long_text, False),
-                (one.id, "monster", "Hollow King", "A crowned skeleton.", False),
-                (two.id, "rule", "Quiet Rest", "A rest is quiet.", False),
+            rows = [  # (campaign, kind, name, text, from a book, players may know)
+                (one.id, "rule", "Fast Travel", "Everyone moves at double speed.", False, True),
+                (
+                    one.id,
+                    "rule",
+                    "Flanking",
+                    "flanking gives advantage when two allies...",
+                    False,
+                    True,
+                ),
+                (one.id, "rule", "Booked", "From a shared book.", True, True),
+                (one.id, "rule", "Long One", long_text, False, True),
+                (one.id, "rule", "Secret Law", "Nobody may know this.", False, False),
+                (one.id, "rule", "Two Lines", "First line.\n\n   Second   line.", False, True),
+                (one.id, "monster", "Hollow King", "A crowned skeleton.", False, False),
+                (two.id, "rule", "Quiet Rest", "A rest is quiet.", False, True),
             ]
-            for campaign_id, kind, name, text, book in rows:
+            for campaign_id, kind, name, text, book, known in rows:
                 await conn.execute(
                     "INSERT INTO homebrew_entries (guild_id, campaign_id, kind, name, name_key,"
-                    " text, created_by, created_at, updated_at, from_book)"
-                    " VALUES (%s, %s, %s, %s, %s, %s, %s, 1, 1, %s)",
-                    (GUILD, campaign_id, kind, name, name.casefold(), text, DM, book),
+                    " text, created_by, created_at, updated_at, from_book, players_may_know)"
+                    " VALUES (%s, %s, %s, %s, %s, %s, %s, 1, 1, %s, %s)",
+                    (GUILD, campaign_id, kind, name, name.casefold(), text, DM, book, known),
                 )
         await self.db.migrate()
         houses = HouseRuleStore(self.db)
@@ -129,6 +138,7 @@ class Migration(DatabaseTest):
                 (2, "Old rule 2"),
                 (3, "Fast Travel: Everyone moves at double speed."),
                 (4, "flanking gives advantage when two allies..."),  # (it starts with the name)
+                (5, "Two Lines: First line. Second line."),  # (one line, like every house rule)
             },
         )
         theirs = [(r.number, r.rule) for r in await houses.list(GUILD, two.id)]
@@ -136,20 +146,56 @@ class Migration(DatabaseTest):
         store = HomebrewStore(self.db)
         kept = {(e.name, e.kind) for e in await store.list(GUILD, one.id)}
         self.assertEqual(
-            kept, {("Booked", "other"), ("Long One", "other"), ("Hollow King", "monster")}
+            kept,
+            {
+                ("Booked", "other"),  # from a book
+                ("Long One", "other"),  # too long for a house rule
+                ("Secret Law", "other"),  # hidden: a house rule is read by the whole server
+                ("Hollow King", "monster"),
+            },
         )
+        secret = next(e for e in await store.list(GUILD, one.id) if e.name == "Secret Law")
+        self.assertFalse(secret.players_may_know)  # still hidden
         self.assertEqual(await store.list(GUILD, two.id), [])
         async with self.db.guild(GUILD) as conn:
             cur = await conn.execute(
                 "SELECT id, house_rules_made FROM campaigns ORDER BY house_rules_made"
             )
             made = {r["id"]: r["house_rules_made"] for r in await cur.fetchall()}
-        self.assertEqual((made[one.id], made[two.id]), (4, 1))
+        self.assertEqual((made[one.id], made[two.id]), (5, 1))
         async with self.db.unscoped() as conn:  # the openings are gone again
             cur = await conn.execute(
                 "SELECT count(*) AS n FROM pg_policies WHERE policyname = 'migrate_backfill'"
             )
             self.assertEqual((await cur.fetchone() or {})["n"], 0)
+
+    async def test_a_campaign_near_its_house_rule_cap_moves_only_what_fits(self) -> None:
+        before = [m for m in MIGRATIONS if m[0] < "0111"]
+        await self.db.close()
+        await drop_schema(TEST_URL, self.schema)
+        self.db = await Database.open(TEST_URL, schema=self.schema, migrations=before)
+        one = await CampaignStore(self.db).create(GUILD, "One", DM)
+        async with self.db.guild(GUILD) as conn:
+            await conn.execute(
+                "INSERT INTO house_rules (guild_id, campaign_id, number, rule, created_by,"
+                " created_at, updated_at) SELECT %s, %s, n, 'Rule ' || n, %s, 1, 1"
+                " FROM generate_series(1, 199) AS n",
+                (GUILD, one.id, DM),
+            )
+            await conn.execute(
+                "UPDATE campaigns SET house_rules_made = 199 WHERE id = %s", (one.id,)
+            )
+            for n in (1, 2, 3):
+                await conn.execute(
+                    "INSERT INTO homebrew_entries (guild_id, campaign_id, kind, name, name_key,"
+                    " text, created_by, created_at, updated_at, players_may_know)"
+                    " VALUES (%s, %s, 'rule', %s, %s, 'x', %s, 1, 1, true)",
+                    (GUILD, one.id, f"R{n}", f"r{n}", DM),
+                )
+        await self.db.migrate()
+        self.assertEqual(len(await HouseRuleStore(self.db).list(GUILD, one.id)), 200)
+        left = await HomebrewStore(self.db).list(GUILD, one.id)
+        self.assertEqual(sorted((e.name, e.kind) for e in left), [("R2", "other"), ("R3", "other")])
 
     async def test_the_database_no_longer_takes_the_kind(self) -> None:
         campaigns = CampaignStore(self.db)

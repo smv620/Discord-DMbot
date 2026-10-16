@@ -84,7 +84,9 @@ def _kind_order(entry: dict[str, Any]) -> int:
 def _pack(raw: dict[str, Any]) -> dict[str, Any]:
     """A followed pack as the page shows it: name, version and its known entries by kind. Never
     the publisher or the share code (the door does not return them)."""
-    entries = sorted(raw["entries"], key=_kind_order)  # stable: names stay in the door's order
+    # (a pack made before rules left homebrew, #1628, may still hold a rule: left out)
+    kept = [e for e in raw["entries"] if e["kind"] in KINDS]
+    entries = sorted(kept, key=_kind_order)  # stable: names stay in the door's order
     return {
         "name": raw["name"],
         "version": int(raw["version"]),
