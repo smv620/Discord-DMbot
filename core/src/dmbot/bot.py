@@ -236,6 +236,7 @@ from dmbot.transcript.cleaner import (
     with_ending,
 )
 from dmbot.transcript.export import clock
+from dmbot.transcript.improvement import OptOutStore
 from dmbot.transcript.keep import KeepJob
 from dmbot.transcript.models import NARRATING, Line, TranscriptBuffer
 from dmbot.transcript.store import TranscriptStore
@@ -662,6 +663,7 @@ class DMBot(commands.AutoShardedBot):
         recaps: RecapStore | None = None,
         suggestions: SuggestionStore | None = None,
         homebrew: HomebrewStore | None = None,
+        improvement: OptOutStore | None = None,
     ) -> None:
         intents = discord.Intents.none()
         intents.guilds = True
@@ -907,6 +909,8 @@ class DMBot(commands.AutoShardedBot):
         # the answer runs out (monotonic seconds) (#1118).
         self._chat_blocked: dict[int, tuple[float, frozenset[int]]] = {}
         self.test_voice = test_voice  # the second yes, for test servers (#1019)
+        # Who chose not to have their words used to improve DMbot (#1609): the recorder asks.
+        self.improvement = improvement
         self._test_key: bytes | None = None
         self._test_delete_locks: dict[tuple[int, int], asyncio.Lock] = {}
         self._test_pending = 0  # utterances waiting to be saved
@@ -1410,6 +1414,20 @@ class DMBot(commands.AutoShardedBot):
             session.gap()
             log.warning("Dropped a test recording: %d already waiting", self._test_pending)
             return
+        # The improvement opt-out (#1609): a person who chose it is not saved, and what was
+        # saved of them earlier in this session goes. Read now (a few seconds old at most). If the
+        # choice can't be read nothing is saved: better a gap than their words against their
+        # wish.
+        if self.improvement is not None:
+            try:
+                out = await self.improvement.is_opted_out_recently(user_id)
+            except Exception:
+                log.exception("Couldn't read the improvement opt-out; not saving a test recording")
+                return
+            if out:
+                if session.has(user_id):
+                    session.forget(user_id)
+                return
         self._test_pending += 1
 
         def allowed() -> bool:  # both yeses, checked again before and after the file is made
@@ -7686,6 +7704,7 @@ async def run(settings: Settings) -> None:
             RecapStore(db),
             SuggestionStore(db),
             HomebrewStore(db),
+            OptOutStore(db),
         )
         _close_on_sigterm(bot)
         async with bot:
