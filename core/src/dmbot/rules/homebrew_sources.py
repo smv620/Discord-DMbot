@@ -150,6 +150,19 @@ class SourceStore:
         assert row is not None
         return _page(row)
 
+    async def mark_stale(self, url: str) -> None:
+        """The page was fetched again and is gone or private (#1645): keep its words, say they may
+        be old. Only a page fetched before (`ok`) moves; a restored one stays untrusted."""
+        found = normalise_url(url)
+        if found is None:
+            return
+        async with self._db.unscoped() as conn:
+            await conn.execute(
+                "UPDATE homebrew_pages SET fetch_status = 'stale'"
+                " WHERE url = %s AND fetch_status = 'ok'",
+                (found[0],),
+            )
+
     # ---- approvals: once per site, per campaign ----
 
     async def approved(self, guild_id: int, campaign_id: str, domain: str) -> bool:

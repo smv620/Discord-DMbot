@@ -708,6 +708,12 @@ differ, this wins.
   later link from the same site in that campaign needs no new confirmation. Who confirmed and when is kept
   (table of approved sites per campaign). A campaign that has not approved a site cannot use content from
   it, whether imported there or reached through a pack.
+- **🔄 Update from the link (#1645).** On a link entry, a DM can fetch its one page again: same guards,
+  same one-at-a-time and hourly limits, and the site's approval checked again. DMbot shows the new words
+  and what changed ("Nothing changed on the page." when so); only **Save** replaces the kept copy, and
+  because there is one copy per address, every campaign pointing at it gets the new words (the button says
+  so). A page that has gone private or been removed is marked stale and its words are kept. A restored
+  page becomes trusted once a fetch replaces it. Nothing refreshes by itself: only a DM's press fetches.
 - **Every entry records its source.** The database keeps, for every entry:
   - **Link:** the address it came from and its site (the domain), plus who added it.
   - **Typed:** the Discord user who typed it.

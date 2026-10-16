@@ -36,7 +36,7 @@ from dmbot.rules.homebrew import (
     HomebrewStore,
     name_key,
 )
-from dmbot.rules.homebrew_import import ImportRefused, Preview
+from dmbot.rules.homebrew_import import ImportRefused, Preview, Refresh
 from dmbot.rules.site_urls import normalise_domain, normalise_url
 from dmbot.ui import logic
 from dmbot.ui.dmbot_commands import (
@@ -432,6 +432,8 @@ class EntryMenu(_Menu):
         self.add_item(_Button(self._edit, label="✏️ Edit"))
         self.add_item(_Button(self._enabled, label="Turn on" if not entry.enabled else "Turn off"))
         self.add_item(_Button(self._remove, label="🗑 Remove", style=discord.ButtonStyle.danger))
+        if entry.source_kind == "link" and entry.page_url:
+            self.add_item(_Button(self._update, label=UPDATE_LABEL))
         if self.packs:
             self.add_item(_Button(self._suggest, label=SUGGEST_LABEL))
         self.add_item(_Button(self._back, label="↩ To the list"))
@@ -524,6 +526,28 @@ class EntryMenu(_Menu):
         )
         await _show(interaction, entry_text(saved, note), EntryMenu(c, saved, self.page, packs))
 
+    async def _update(self, interaction: discord.Interaction) -> None:
+        """🔄 Update from the link (#1645): fetch the page again at this DM's press, show what
+        changed, save only on Save."""
+        if not await self._guard(interaction):
+            return
+        await _answer_first(interaction, in_place=True)
+        importer = _bot(interaction).importer
+        if importer is None:
+            await _tell(interaction, NOT_READY)
+            return
+        c, e = self.campaign, self.entry
+        try:
+            fresh = await importer.refresh(c.guild_id, c.id, e)
+        except ImportRefused as exc:
+            await _show(
+                interaction,
+                entry_text(e, f"⚠️ {exc}"),
+                EntryMenu(c, e, self.page, self.packs),
+            )
+            return
+        await _show(interaction, update_preview_text(fresh), UpdatePreview(c, e, self.page, fresh))
+
     async def _remove(self, interaction: discord.Interaction) -> None:
         if await self._guard(interaction):
             await _show(
@@ -553,6 +577,23 @@ class EntryMenu(_Menu):
 
     async def _back(self, interaction: discord.Interaction) -> None:
         await _redraw(interaction, self.campaign, page=self.page)
+
+
+UPDATE_LABEL = "🔄 Update from the link"
+UPDATE_WARNING = "Every table using this page gets the update."
+
+
+def update_preview_text(fresh: Refresh) -> str:
+    preview = fresh.preview
+    lines = [f"🔄 **{_md(preview.name)}**, from {preview.domain}", fresh.note]
+    if fresh.changed:
+        words = preview.text
+        shown = words if len(words) <= PREVIEW_SHOWN else words[: PREVIEW_SHOWN - 1].rstrip() + "…"
+        lines.append(_md(shown))
+        if preview.truncated:
+            lines.append("_The page was longer than DMbot keeps, so the end was cut._")
+        lines.append(f"Not saved yet. {UPDATE_WARNING}")
+    return _fit("\n".join(lines), 1900)
 
 
 def suggest_text(entry: Homebrew, pack_name: str) -> str:
@@ -1151,6 +1192,57 @@ class LinkPreview(_Menu):
         _changed(interaction, c)
         note = f"🔗 Added **{_md(saved.name)}**. DMbot uses it now."
         await _redraw(interaction, c, note=note, page=self.page)
+
+
+class UpdatePreview(_Menu):
+    """The page fetched again, with Save and Cancel (#1645). When nothing changed there is
+    nothing to save."""
+
+    def __init__(self, campaign: Campaign, entry: Homebrew, page: int, fresh: Refresh) -> None:
+        super().__init__()
+        self.campaign, self.entry, self.page, self.fresh = campaign, entry, page, fresh
+        if fresh.changed:
+            self.add_item(_Button(self._save, label="Save", style=discord.ButtonStyle.primary))
+        self.add_item(_Button(self._cancel, label="Cancel" if fresh.changed else "OK"))
+
+    used = False
+
+    async def _again(self, interaction: discord.Interaction, note: str) -> None:
+        packs = await _packs_followed(interaction, self.campaign)
+        entry = self.entry
+        store = _store(interaction)
+        if store is not None:  # (the words shown are the page's: read the entry as it is now)
+            entry = await store.get(self.campaign.guild_id, self.campaign.id, entry.id) or entry
+        await _show(
+            interaction, entry_text(entry, note), EntryMenu(self.campaign, entry, self.page, packs)
+        )
+
+    async def _cancel(self, interaction: discord.Interaction) -> None:
+        await _answer_first(interaction, in_place=True)
+        await self._again(interaction, "Nothing was changed.")
+
+    async def _save(self, interaction: discord.Interaction) -> None:
+        await _answer_first(interaction, in_place=True)
+        if not await _is_dm(interaction, self.campaign):
+            await _tell(interaction, ONLY_DMS)
+            return
+        if self.used:
+            await _tell(interaction, "Already saving this. Give it a second.")
+            return
+        self.used = True
+        c = self.campaign
+        importer = _bot(interaction).importer
+        if importer is None:
+            await _tell(interaction, NOT_READY)
+            return
+        try:
+            await importer.save_refresh(c.guild_id, c.id, self.fresh.preview)
+        except ImportRefused as exc:
+            await self._again(interaction, f"⚠️ {exc}")
+            return
+        self.stop()
+        _changed(interaction, c)
+        await self._again(interaction, f"✅ Updated. {UPDATE_WARNING}")
 
 
 class WhoMade(FromBookAsk):
