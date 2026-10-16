@@ -346,6 +346,10 @@ class TranscriptStore:
                 "DELETE FROM transcript_suggestions WHERE guild_id = %s AND user_id = %s",
                 (guild_id, user_id),
             )
+            await conn.execute(  # and the questions kept about their words (#1572)
+                "DELETE FROM waiting_name_questions WHERE guild_id = %s AND speaker_id = %s",
+                (guild_id, user_id),
+            )
             cur = await conn.execute(
                 "DELETE FROM transcript_lines WHERE guild_id = %s AND user_id = %s"
                 " RETURNING session_id, started_ms",
@@ -417,6 +421,10 @@ class TranscriptStore:
             gone = await cur.fetchall()
             await conn.execute(
                 "DELETE FROM transcript_suggestions WHERE guild_id = %s AND session_id = %s",
+                (guild_id, session_id),
+            )
+            await conn.execute(
+                "DELETE FROM waiting_name_questions WHERE guild_id = %s AND session_id = %s",
                 (guild_id, session_id),
             )
             await _forget_mentions(

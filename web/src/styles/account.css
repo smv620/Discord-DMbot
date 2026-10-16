@@ -280,6 +280,10 @@
     border-top: 1px solid var(--border);
   }
 
+.homebrew-tag {
+  margin-inline-start: 0.5rem;
+  font-size: 0.875em;
+}
 .homebrew-text {
   display: block;
   white-space: pre-line;

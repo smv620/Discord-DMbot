@@ -2070,9 +2070,20 @@ consent check just made still holds:
     Undo only touches their words while they're still recorded.
   - **When it closes:** at the session's end the list stays but the Undo buttons go.
     After a restart, a press says it can't be undone any more.
-- **Later:** unanswered "Did they mean…?" questions (they expire quietly at the
-  session's end, the line staying as heard) go to the after-session report once it
-  exists.
+- **Built, unanswered questions go to the after-session check (2026-10-16, #1572):** a "Did they
+  mean…?" that closes with no answer (it expired, or the session ended) is kept in memory, at
+  most 25 a session (the oldest go first), and saved when the session ends as a waiting question
+  of the campaign (its own table, `waiting_name_questions`: the line's reference, the heard
+  words and the 2 or 3 names, never the line's words). The DM screen says how many and shows
+  **❓ Check names**; DMs only, checked on every press. Each question reads as it did
+  live: **[Maren] [Marron] [Type it…] [Keep "Marin"] [Later]**. A name picked or typed is saved as
+  the campaign's correction (so later sessions write it that way) and written into that one
+  stored line's cleaned words, never what was heard, and only if the words are in the line exactly
+  once and no secret name would stand there; **Keep as heard** saves the "don't change this"
+  rule. Earlier lines with the same words are not rewritten. Nothing is kept for a speaker who
+  stopped being recorded (a person who stops, or whose lines are deleted, has theirs removed), a
+  question whose line was deleted drops out of the list, one split across two pieces of speech is
+  not kept, and a question unanswered for 7 days expires quietly.
 
 **A player may suggest a fix to their own line; the DM decides (decided 2026-10-16 by Supervisor,
 built #1491).** The bot advises; the DM decides; what was heard never changes. A player who sees
