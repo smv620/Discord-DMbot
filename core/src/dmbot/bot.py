@@ -157,6 +157,7 @@ from dmbot.memory.continuity import ContinuityStore
 from dmbot.memory.lookup import CampaignLookup, LookupCache
 from dmbot.memory.models import DM, FIX, KEEP, Heard, MemoryRuleError, name_key
 from dmbot.memory.ontology import Tally
+from dmbot.memory.recall import PLAYERS, AsOf, Recall, RecallService
 from dmbot.memory.scan import MAX_SUGGESTIONS, find_new_names, group_alike
 from dmbot.memory.scene import HintParts, SceneTracker, mentions, scene_hints
 from dmbot.memory.scene import prepare as prepare_hints
@@ -281,6 +282,7 @@ NAMES_NOTED_MAX = 5000  # people remembered as just noted; the oldest half go pa
 METER_INTERVAL_S = 60  # how often listening minutes are written to the hours meter (#437)
 METER_FINAL_TRIES = 3  # at a stop: the last minutes are written nowhere else
 METER_FINAL_RETRY_S = 2
+RECALL_WAIT_S = 0.5  # and this long for the confirmed facts around them (#1370): optional context
 NAMES_WAIT_S = 1.0  # the sidebar waits this long for a campaign's names, then answers without
 GATE_TIMEOUT_S = 2  # a button press must be answered within Discord's 3 s: fail open sooner
 CHAT_BLOCKED_TTL_S = 60  # how long the list of channels never read as chat is kept (#1118)
@@ -2173,6 +2175,30 @@ class DMBot(commands.AutoShardedBot):
             async with asyncio.timeout(NAMES_WAIT_S):
                 return await self.sidebar_people(campaign)
 
+        recall_service = RecallService(self.memory) if self.memory is not None else None
+
+        async def recall(campaign: Campaign, seeds: Sequence[str]) -> Recall | None:
+            # The audience is "players", not the DM screen, on purpose (#1370): a sidebar reply can
+            # reach the raw transcript, which everyone who may read transcripts may read (#933).
+            # So recall adds no secret fact, no secret name and no entry note. (The older "campaign
+            # names" section is separate and unchanged.) Changing this later is a decision about
+            # the transcript, not a refactor. No transcript reader is given, so no line is quoted
+            # either (that needs its own decision).
+            if recall_service is None:
+                return None
+            table = self.tables.get(campaign.guild_id)
+            live = table is not None and table.campaign_id == campaign.id
+            async with asyncio.timeout(RECALL_WAIT_S):  # optional context: never eat the answer
+                return await recall_service.recall(
+                    campaign.guild_id,
+                    campaign.id,
+                    seeds=seeds,
+                    audience=PLAYERS,
+                    as_of=AsOf(session_at=table.started_at or None) if live and table else AsOf(),
+                    budget=self.settings.sidebar_recall_budget,
+                    hops=1,
+                )
+
         ai = self.ai_client.tier(FEATURE_TIERS[Feature.SIDEBAR], Feature.SIDEBAR)
         careful = self.ai_client.tier(FEATURE_TIERS[Feature.SIDEBAR_RETRY], Feature.SIDEBAR_RETRY)
         return Sidebar(
@@ -2182,6 +2208,7 @@ class DMBot(commands.AutoShardedBot):
             houses=houses,
             names=names,
             people=people,
+            recall=recall if self.settings.sidebar_recall else None,
             second_try=careful,
         )
 

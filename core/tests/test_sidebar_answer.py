@@ -993,6 +993,37 @@ class TheBotsSidebar(unittest.IsolatedAsyncioTestCase):
     async def test_no_ai_key_no_sidebar(self) -> None:
         self.assertIsNone(self.make_bot("").sidebar_answers)
 
+    async def test_the_switch_decides_whether_the_sidebar_reads_the_confirmed_story(self) -> None:
+        from dmbot.bot import DMBot
+        from dmbot.config import Settings
+
+        def bot(**kw: Any) -> Any:
+            settings = Settings(discord_token="t", ears_secret="s", ai_key="k", **kw)
+            return DMBot(settings, AsyncMock(), AsyncMock(), AsyncMock())
+
+        self.assertIsNotNone(bot().sidebar_answers._recall)  # on unless switched off
+        self.assertIsNone(bot(sidebar_recall=False).sidebar_answers._recall)
+
+    async def test_the_recall_is_for_players_never_the_dm_screen(self) -> None:
+        from dmbot.bot import DMBot
+        from dmbot.config import Settings
+
+        memory = AsyncMock()
+        me = DMBot(Settings(discord_token="t", ears_secret="s", ai_key="k"), AsyncMock(),
+                   AsyncMock(), AsyncMock(), memory=memory)  # fmt: skip
+        seen: dict[str, Any] = {}
+
+        async def fake(self: Any, guild: int, cid: str, **kw: Any) -> Any:
+            seen.update(kw)
+            return None
+
+        with patch("dmbot.bot.RecallService.recall", fake):
+            assert me.sidebar_answers is not None and me.sidebar_answers._recall is not None
+            await me.sidebar_answers._recall(campaign(), ["e" * 32])
+        self.assertEqual(seen["audience"], "players")
+        self.assertEqual(seen["seeds"], ["e" * 32])
+        self.assertEqual(seen["budget"], 1000)
+
     async def test_the_plan_check_is_the_ai_rule_for_the_asking_campaign_and_person(self) -> None:
         bot = self.make_bot("k")
         bot.plan_gate = AsyncMock(return_value="no")
