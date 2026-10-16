@@ -425,6 +425,12 @@ describe("generated content belongs to the campaign (#1388)", () => {
     expect(terms()).toContain("Only deleting the campaign removes it, and only the campaign's game master can delete a campaign.");
   });
 
+  it("says who owns the campaign and who runs it, so the table and the game master do not disagree", () => {
+    expect(terms()).toContain(
+      "Your campaign, notes and what your table says belong to you and your table, not to us. You let us store and process them only to run DMbot for you. Within the table, the campaign is the game master's: they run it, and only they can delete it.",
+    );
+  });
+
   it("keeps the retention and 120-day wording as it was", () => {
     expect(privacy()).toContain("They are deleted 120 days later, unless another DM of the campaign takes them over.");
     expect(terms()).toContain("They are deleted 120 days later, unless another DM of the campaign takes them over.");
