@@ -92,7 +92,7 @@ NOTHING_CHANGED = (
 CARD_MAX = 1900  # under Discord's 2,000 characters
 SHOWN = 3  # per section, then "… and N more"
 SHOW_ALL = "Show all ▾"
-NOTHING_MORE = "That list has changed, so there is nothing more to show. Open the name again."
+NOTHING_MORE = "That list has changed. Open the name card again to see it."
 NOTE_MAX = 600  # what just changed, above the card
 NAME_LIMIT = 100  # what a form field may hold
 
@@ -367,6 +367,14 @@ async def show_card(
             await _tell(interaction, GONE)
         return
     cuts = cut_sections(names, entity_id, connections, secrets=secrets)
+    if not cuts and text != card_text(
+        names, entity_id, connections, secrets=secrets, player=player, sheet=sheet,
+        limit=10**6, item=is_item,
+    ):  # fmt: skip
+        # Every section is short, but the whole card still didn't fit one message (a long note,
+        # a sheet line, many groups): offer every section that has anything in it.
+        everything = sections(names, entity_id, connections, secrets=secrets)
+        cuts = [(k, f"{SECTION_WORDS[k]} ({len(v)})") for k, v in everything.items()]
     own = name_key(entity.name)
     others = any(
         e.entity_id == entity_id and e.confirmed and e.key != own and (secrets or not e.secret)
@@ -438,7 +446,7 @@ async def show_section(
     if not lines:  # changed since the card was drawn, or a secret section for someone who can't
         await _tell(interaction, NOTHING_MORE)
         return
-    head = f"**{SECTION_WORDS[key]} ({len(lines)}) · {_md(entity.name)}**"
+    head = f"**{_md(entity.name)} · {SECTION_WORDS[key].lower()} ({len(lines)})**"
     pages = section_pages(lines, head)
     page = min(max(page, 0), len(pages) - 1)
     view = AllPages(campaign_id, entity_id, key, page, len(pages)) if len(pages) > 1 else None
@@ -450,7 +458,7 @@ async def show_section(
 
 
 class AllPages(_Menu):
-    """Older / Newer under a long Show all list. Each press works the list out again."""
+    """Earlier / Later under a long Show all list. Each press works the list out again."""
 
     def __init__(self, campaign_id: str, entity_id: str, key: str, page: int, pages: int) -> None:
         super().__init__()
@@ -467,7 +475,7 @@ class AllPages(_Menu):
         await self._go(interaction, self.page + 1)
 
     async def _go(self, interaction: discord.Interaction, page: int) -> None:
-        self.stop()
+        # Not stopped first: if the list changed meanwhile the message keeps working buttons.
         await show_section(
             interaction, self.campaign_id, self.entity_id, self.key, page=page, replace=True
         )

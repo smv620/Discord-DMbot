@@ -1384,7 +1384,7 @@ names panel nor the speech-to-text hints can be a fixed list.
     in-memory copy, never a database query per keystroke; copies loaded only for
     searching expire after a while.
   - **Name card**, under 2,000 characters, each section about 3 entries then "… and N
-    more [Show all]": what it is, last heard, **Also called**, **🤫 Secret**,
+    more", and one **Show all ▾** select under the card for the cut sections: what it is, last heard, **Also called**, **🤫 Secret**,
     **Connections**. Buttons: **✏️ Fix spelling** (one field, filled in), **Edit other
     names** (each: ⭐ make it the main name, 🤫 make it secret or not, ✖ not this
     name, which also undoes a wrong **Same as**), **Add another name** (with a secret-name field, as when adding
@@ -1613,8 +1613,8 @@ names panel nor the speech-to-text hints can be a fixed list.
   name), **🔗 Same as…** (find the other name, then "Call it X" or "Call it Y"; the two
   become one, with **Undo** on the card), **🧭 Connect to…** (pick how, from this
   name's side or the other way round, then the other name; saved as confirmed, and a
-  **Remove a connection…** menu takes one back), and **Show all** when a section is
-  cut. Decided while building: a card groups connections by how they read from that
+  **Remove a connection…** menu takes one back), and a **Show all ▾** select when a
+  section is cut. Decided while building: a card groups connections by how they read from that
   name's side ("is a member of **Frostwolf tribe**"; on the tribe's card "has as
   members **Ulfgar**"; ally, enemy and family read the same both ways); connections the
   DM adds are not secret for now (a 🤫 secret connection comes later); a connection that
