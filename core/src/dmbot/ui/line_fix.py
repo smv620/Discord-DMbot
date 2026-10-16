@@ -360,7 +360,7 @@ async def submit(
     posted = await bot.post_message(
         channel,
         dm_text(interaction.user.display_name, line.heard, line.text, text),
-        _view(made.id),
+        suggestion_view(made.id),
     )
     if posted is None:  # the DM can't see it: don't leave it waiting unseen
         await store.decide(guild_id, made.id, suggestions.DROPPED, user_id)
@@ -431,11 +431,16 @@ async def submit_dm(
     )
 
 
-def _view(suggestion_id: int) -> discord.ui.View:
+def suggestion_view(suggestion_id: int) -> discord.ui.View:
     view = discord.ui.View(timeout=None)
     for act in ("yes", "no"):
         view.add_item(LineFixButton(act, suggestion_id))
     return view
+
+
+WAITING_SHOWN = 3  # fixes still waiting that the next session start shows
+# True to what happens: a suggestion not answered by the end of this session is dropped (#1491).
+MORE_WAITING = "…and {n} more that go when this session ends."
 
 
 async def start(

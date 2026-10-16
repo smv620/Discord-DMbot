@@ -172,6 +172,10 @@ async def _nothing_list() -> list[str]:
     return []
 
 
+async def _nothing_brews() -> list[Homebrew]:
+    return []
+
+
 async def _nothing() -> None:
     return None
 
@@ -515,7 +519,7 @@ class Sidebar:
             else _nothing_list(),
             self._safely(self._brews(campaign), [], "homebrew")
             if self._brews is not None
-            else _nothing_list(),
+            else _nothing_brews(),
         )
         index = self._index() if callable(self._index) else self._index
         recalled = None

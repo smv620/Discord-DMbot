@@ -5,7 +5,7 @@ exactly, and that they go out with the campaign."""
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, cast
 
 from dmbot.campaigns import Campaign, CampaignError, CampaignStore
 from dmbot.rules import homebrew
@@ -95,7 +95,7 @@ class Writing(HomebrewTest):
             ({"kind": "dragon"}, "isn't one of the kinds"),
         ):
             with self.assertRaisesRegex(HomebrewError, words):
-                await self.add(**kwargs)
+                await self.add(**cast(Any, kwargs))
         self.assertEqual(await self.names(), [])
 
     async def test_invisible_direction_characters_are_removed(self) -> None:

@@ -172,6 +172,6 @@ class TheEngine(unittest.TestCase):
             raise RuntimeError("down")
 
         ai = FakeAI([reply("Yes.", "none")])
-        built = Sidebar(ai, srd(), gate=gate, houses=none, names=no_names, brews=broken)  # type: ignore[arg-type]
+        built = Sidebar(ai, srd(), gate=gate, houses=none, names=no_names, brews=broken)
         got = run(built.answer(campaign(), "does grappling need a free hand", asker_id=7))
         self.assertIn("Yes", got.text)
