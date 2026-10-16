@@ -2403,3 +2403,23 @@ Overall ...................................... PASS (Deepgram baseline: 33/33, 1
   the log says once that no email is sent (it is present in .env, value not read, so this may not apply).
   Follow-up, 00:22 UTC (13 minutes after the deploy): 0 ERROR, CRITICAL or traceback lines in core and web-api since 00:09; core and web-api still
   up, web-api healthy; no ticket has been sent yet (nothing about tickets in the logs).
+
+==============================================================================
+2026-10-16  dev1  DEPLOY: quick answers on confirmed facts, the privacy fix and migrations 0076 and 0078 are live as 4d7aea9b
+  Supervisor's handover (02:0x UTC): #1377 (quick answers use confirmed facts), #1380 (privacy: quick answers no longer send a DM's notes on a
+  name into a reply that reaches the raw transcript), #1374 (migration 0078, a person's own support questions), #1351 (0076), with #1365 and
+  #1368 from earlier; all with the extractor off. #1369 (0077) was still open (merge conflict), so it is not in this deploy. Deployed exactly
+  4d7aea9b once its core CI job was green (completed 02:07); later merges on development (#1376, #1395, #1396) are website, docs and
+  script files and were left for the next deploy.
+  Dry run first: a fresh pg_dumpall of the live database (at 0075), restored into a throwaway postgres:16, migrated as the dmbot role,
+  deleted after: "Database updated: 0076_claims_by_fact, 0078_support_own" in 0.13 s, a second run applied nothing, rows unchanged (3
+  campaigns, 152 entries, 147 transcript lines, 0 claims, 0 tickets); 0077 missing, as expected. No game running (active_sessions 0).
+  Backup: ~/db-backups/dmbot-before-4d7aea9b-20261016T021526Z.sql (chmod 600). Then `docker compose build core web-api` with GIT_COMMIT
+  set, `docker compose stop core web-api` (02:17:08 UTC; neither running afterwards), `up -d --no-deps core`, `up -d --no-deps web-api`.
+  Result: core logged "Database updated: 0076_claims_by_fact, 0078_support_own", "Connected to 1 server(s)" and "ears connected". web-api
+  healthy. 0 ERROR or traceback lines in core and web-api since the stop. schema_migrations: 77 rows, last 0078_support_own. Only
+  start-up warning: the old AI_MODEL line next to AI_MODEL_FAST in .env (harmless; dev1 did not touch .env).
+  Not yet checked (needs the owner or WebDev): (2) a paying test account sees its own test ticket listed with a status under the Support
+  form; (3) a quick question naming a confirmed entry on the test server gets a reply, and nothing from that entry's description
+  appears in the raw transcript line. Follow-ups: the sidebar checker on #1370 (needs the key, run by the owner) and the recall speed
+  numbers on #1350 (dev1, on a throwaway Postgres on this server).

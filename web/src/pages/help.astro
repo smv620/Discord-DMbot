@@ -1,6 +1,6 @@
 ---
 import Base from "../layouts/Base.astro";
-import { accountSteps, dmSteps, emailNote, emailSteps, gettingHelp, helpHeading, helpIntro, playerNote, playerSteps } from "../content/help";
+import { accountSteps, dmSteps, quickAnswers, quickAnswersHeading, emailNote, emailSteps, gettingHelp, helpHeading, helpIntro, playerNote, playerSteps } from "../content/help";
 ---
 
 <Base
@@ -31,6 +31,10 @@ import { accountSteps, dmSteps, emailNote, emailSteps, gettingHelp, helpHeading,
         ))
       }
     </ol>
+    <h3 id="quick-heading">{quickAnswersHeading}</h3>
+    <ul aria-labelledby="quick-heading">
+      {quickAnswers.map((s) => <li>{s.text}</li>)}
+    </ul>
   </section>
 
   <section aria-labelledby="player-heading">

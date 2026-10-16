@@ -168,6 +168,11 @@ from dmbot.memory.sheet_store import CharacterSheet, SheetStore
 from dmbot.memory.sheet_watch import SheetWatch
 from dmbot.memory.store import MemoryStore
 from dmbot.memory.table_names import NameThenAnswer
+from dmbot.recaps import post as recap_post
+from dmbot.recaps.notify import page_link, tell_the_dm
+from dmbot.recaps.pipeline import Inputs, RecapWorker
+from dmbot.recaps.store import Job, RecapSection, RecapStore
+from dmbot.recaps.text import names_a_secret, strip_cues
 from dmbot.retention import RetentionJob
 from dmbot.rules import house_voice
 from dmbot.rules import index as rules_index
@@ -189,6 +194,7 @@ from dmbot.test_recording.session import TestSession
 from dmbot.test_recording.store import TestVoiceStore
 from dmbot.timebot import combat_phrases, durations
 from dmbot.timebot import phrases as clock_phrases
+from dmbot.timebot.clock import day_of as clock_day_of
 from dmbot.timebot.effects import EffectsSection, EffectStore
 from dmbot.timebot.store import ClockSection, ClockStore
 from dmbot.transcript import fix_notes, left_out, speaker_ai
@@ -279,6 +285,8 @@ FORGET_TIMEOUT_S = 10  # removing learned names must not hold up stopping a reco
 DISPLAY_NAME_REFRESH_S = 86400  # a person's Discord name is kept on their account once a day
 DISPLAY_NAME_TIMEOUT_S = 3  # for the background update
 NAMES_NOTED_MAX = 5000  # people remembered as just noted; the oldest half go past this
+RECAPS_PER_ROUND = 2  # recap jobs worked in one minute, across all servers (a small global limit)
+RECAP_ROUND_S = 60
 METER_INTERVAL_S = 60  # how often listening minutes are written to the hours meter (#437)
 METER_FINAL_TRIES = 3  # at a stop: the last minutes are written nowhere else
 METER_FINAL_RETRY_S = 2
@@ -588,6 +596,7 @@ class DMBot(commands.AutoShardedBot):
         effects: EffectStore | None = None,
         test_voice: TestVoiceStore | None = None,
         rule_sets: RuleSetStore | None = None,
+        recaps: RecapStore | None = None,
     ) -> None:
         intents = discord.Intents.none()
         intents.guilds = True
@@ -632,6 +641,7 @@ class DMBot(commands.AutoShardedBot):
         # The linked house-rules file (#969), and what is waiting for a DM's press.
         self.house_file_links = house_file_links
         self.rule_sets = rule_sets  # shared house rules (#1190)
+        self.recaps = recaps  # the cinematic recap of each session (#1382)
         self.house_syncs = house_sync.Pendings()
         # Timed effects on that clock (#998); None without a database.
         self.effects = effects
@@ -736,10 +746,35 @@ class DMBot(commands.AutoShardedBot):
         # The story extractor's reader after a session (#1363). Built only when the switch is on,
         # so with it off there is no client to call; the tier is a backend setting.
         self.extractor_ai = (
-            self.ai_client.tier(AIModelTier(settings.story_extractor_tier), Feature.EXTRACTOR)
+            self.ai_client.tier(
+                AIModelTier(settings.story_extractor_tier), Feature.EXTRACTOR, cache_system=True
+            )
             if self.ai_client and settings.story_extractor_on
             else None
         )
+        # The cinematic recap (#1382): the first draft on the fast tier, one more try on the
+        # careful one. Built only with the switch on, so off means no client to call.
+        self.recap_ai = (
+            self.ai_client.tier(FEATURE_TIERS[Feature.RECAP], Feature.RECAP)
+            if self.ai_client and settings.recaps_on
+            else None
+        )
+        self.recap_retry_ai = (
+            self.ai_client.tier(FEATURE_TIERS[Feature.RECAP_RETRY], Feature.RECAP_RETRY)
+            if self.ai_client and settings.recaps_on
+            else None
+        )
+        self.recap_worker: RecapWorker | None = None
+        if self.recap_ai is not None and self.recap_retry_ai is not None and recaps is not None:
+            self.recap_worker = RecapWorker(
+                recaps,
+                self.recap_ai,
+                self.recap_retry_ai,
+                load=self.recap_inputs,
+                consenting=lambda gid: lambda: self.consent.consenting(gid),
+                allowed=self.recap_allowed,
+                notify=self.recap_told,
+            )
         # The off-topic filter (#52), the audio check and the DM sidebar.
         self.topic_ai = (
             self.ai_client.tier(FEATURE_TIERS[Feature.TOPIC], Feature.TOPIC)
@@ -914,6 +949,11 @@ class DMBot(commands.AutoShardedBot):
             self._watched(self._summary_poster(), "summaries"),
             self._watched(self._meter_loop(), "hours-meter"),
             *([self._watched(self._trial_loop(), "trial-jobs")] if self.trial_jobs else []),
+            *(
+                [self._watched(self._recap_loop(), "recaps")]
+                if self.recap_worker is not None
+                else []
+            ),
             *([self._watched(self._retention_loop(), "retention")] if self.retention else []),
             *(
                 [self._watched(self._test_recordings_loop(), "test-recordings")]
@@ -1786,6 +1826,8 @@ class DMBot(commands.AutoShardedBot):
             ("definitions", lambda: self.recheck_definitions(table)),
             ("stale flags", lambda: self.close_stale_flags(table)),
             ("old undo history", lambda: self.prune_old_changes(table)),
+            # Slow when on (an AI call or two), so last; nothing above waits for it.
+            ("session recap", lambda: self.recap_session(table)),
             # Slow when on (minutes of AI calls): after the quick steps; the next two need it.
             ("story extractor", lambda: self.extract_claims(table, ended_at)),
             ("what was said", lambda: self.ask_about_claims(table)),
@@ -2260,11 +2302,18 @@ class DMBot(commands.AutoShardedBot):
         )
 
     async def plan_allows(
-        self, action: plan_rules.Action, guild_id: int, campaign: Campaign
+        self,
+        action: plan_rules.Action,
+        guild_id: int,
+        campaign: Campaign,
+        *,
+        fail_open: bool = True,
     ) -> bool:
         """Does the campaign's owner's plan allow `action`, as a plain yes or no (no words, so
         no question of who is asking)? Fails open (True) like `plan_gate`, and is True when
-        plans aren't enforced. A campaign with no owner has no plan to allow anything."""
+        plans aren't enforced. A campaign with no owner has no plan to allow anything.
+        `fail_open=False` (the story extractor, #1367: a background job, the biggest spend) makes
+        a plan that can't be checked a no."""
         if not self.settings.enforce_plans or self.meter is None:
             return True
         owner = campaign.owner_user_id
@@ -2274,8 +2323,10 @@ class DMBot(commands.AutoShardedBot):
                 async with asyncio.timeout(GATE_TIMEOUT_S):
                     access = await self.meter.access(guild_id, owner, int(time.time()))
             except Exception:
-                log.exception("Couldn't check the plan; allowing it")
-                return True
+                log.exception(
+                    "Couldn't check the plan; %s it", "allowing" if fail_open else "not running"
+                )
+                return fail_open
         return plan_rules.allowed(plan_rules.RULE_OF[action], access)
 
     async def restore_gate(
@@ -5187,9 +5238,11 @@ class DMBot(commands.AutoShardedBot):
     async def extract_claims(self, table: Table, ended_at: int) -> None:
         """After a session, only with DMBOT_STORY_EXTRACTOR on (it is off until #1282 passes): read
         the stored transcript in short batches and store what the AI heard as proposals for the DM
-        (#1363). Off means off: no AI client, no stored lines read, no prompt built. Only lines from
-        people who still agree are sent, and the claims are checked against consent again after
-        each answer. The log gets counts only. Nothing here is a fact."""
+        (#1363). Off means off: no AI client, no stored lines read, no prompt built. Only a campaign
+        whose plan includes it runs (#1367), within its session and daily call limits, and a
+        restart carries on after the lines already read. Only lines from people who still agree
+        are sent, and the claims are checked against consent again before they are stored. The
+        log gets counts only. Nothing here is a fact."""
         if (
             not self.settings.story_extractor_on
             or self.extractor_ai is None
@@ -5204,7 +5257,30 @@ class DMBot(commands.AutoShardedBot):
             session = await self.transcripts.session(gid, table.transcript_session_id)
             if session is None or session.lines == 0:
                 return
-            lines = await self.transcripts.lines(gid, table.transcript_session_id)
+            campaign = await self.campaigns.get(gid, cid)
+            # Closed, not open: a plan that can't be checked is not run, and nothing is recorded.
+            if campaign is None or not await self.plan_allows(
+                "story", gid, campaign, fail_open=False
+            ):
+                log.info(
+                    "Story extractor: not run, the plan does not include it or can't be checked"
+                )
+                return
+            sid = table.transcript_session_id
+            after_ms, used = await self.transcripts.extraction(gid, sid)
+            now = int(time.time())
+            day_used = await self.transcripts.extractor_calls_since(gid, cid, now - 86400)
+            allowed = extractor.calls_left(
+                self.settings.story_extractor_max_calls,
+                used,
+                self.settings.story_extractor_max_calls_day,
+                day_used,
+            )
+            if allowed == 0:
+                log.info("Story extractor: not run, its call limit is used (%d today)", day_used)
+                return
+            transcripts = self.transcripts
+            lines = await transcripts.lines(gid, sid)
             # The people at the table are not story names (as in the name scan).
             people = {table.dm_user_id, *table.dm_user_ids, *(await self.consent.consenting(gid))}
             skip: set[str] = set()
@@ -5224,16 +5300,227 @@ class DMBot(commands.AutoShardedBot):
                 model=lambda: self.extractor_ai.model if self.extractor_ai else "",
                 session_started_at=session.started_at,
                 tally=table.steward_tally,
-                max_calls=self.settings.story_extractor_max_calls,
+                max_calls=allowed,
                 skip=skip,
+                after_ms=after_ms,
+                count_call=lambda: transcripts.record_extraction(
+                    gid, sid, through_ms=0, calls=1, now=int(time.time())
+                ),
             )
             log.info(report.line())
+            try:  # what a restart resumes from, and what the day's limit counts
+                await transcripts.record_extraction(
+                    gid, sid, through_ms=report.through_ms, calls=0, now=now
+                )  # (the calls were counted as they were made)
+            except Exception:
+                log.exception("Story extractor: couldn't note how far it got")
             if report.named:  # the DM checks them where the name scan's are checked
                 await self.post(
                     table.screen_channel_id,
                     held_back_text(report.new_names),
                     view=review_view(cid),
                 )
+
+    async def recap_session(self, table: Table) -> None:
+        """After a session, only with DMBOT_RECAPS on and a plan that includes it (#1382): queue
+        the recap job and tell the DM, on the DM screen, that an email is coming. The writing is
+        done away from the table by `run_recaps`, and the DM reads, edits and posts it on the
+        website. Off means off: no client, no stored line read. A plan that can't be checked is
+        not run. The log gets counts only."""
+        if (
+            not self.settings.recaps_on
+            or self.recap_worker is None
+            or self.recaps is None
+            or self.transcripts is None
+            or table.campaign_id is None
+            or table.transcript_session_id is None
+        ):
+            return
+        gid, cid = table.guild_id, table.campaign_id
+        with log_context(guild_id=gid, campaign_id=cid):
+            campaign = await self.campaigns.get(gid, cid)
+            if campaign is None or not await self.plan_allows(
+                "recap", gid, campaign, fail_open=False
+            ):
+                log.info("Recap: not run (the plan lacks it, or can't be checked)")
+                return
+            session = await self.transcripts.session(gid, table.transcript_session_id)
+            if session is None or session.lines == 0:
+                return
+            dm = campaign.owner_user_id or min(campaign.dm_user_ids, default=0)
+            if dm <= 0:
+                return
+            if await self.recaps.enqueue(gid, cid, session.started_at, dm_user_id=dm):
+                link = page_link(self.settings.site_url, gid, cid, session.started_at)
+                where = f"\nYour recap page: {link}" if self.settings.site_url else ""
+                await self.post(
+                    table.screen_channel_id,
+                    "📜 Writing a recap of this session. You'll get an email when it's ready. "
+                    f"Nothing goes to the table until you say so.{where}",
+                )
+
+    async def recap_secret_names(self, campaign: Campaign) -> list[str] | None:
+        """Every secret name of the campaign, read fresh (a name may have been made secret since
+        the recap was written), or None when they can't be read: then nothing is posted or
+        saved, since a secret name couldn't be kept out."""
+        if self.lookup is None:
+            return None
+        try:
+            lookup = await self.lookup.get(campaign.guild_id, campaign.id)
+        except Exception:
+            log.exception("Recap: couldn't read the campaign's secret names")
+            return None
+        return sorted({n.text for n in lookup.names if n.secret})
+
+    async def recap_inputs(self, gid: int, cid: str, job: Job) -> Inputs | None:
+        """What the recap stages read for one job: this campaign's transcript of that session,
+        its names (secret ones read fresh), its earlier posted recap and its game clock. None
+        when the names can't be read: then nothing is written, since a secret name couldn't be
+        kept out."""
+        if self.transcripts is None or self.lookup is None or self.recaps is None:
+            return None
+        campaign = await self.campaigns.get(gid, cid)
+        if campaign is None:
+            return None
+        try:
+            lookup = await self.lookup.get(gid, cid)
+        except Exception:
+            log.exception("Recap: couldn't load the campaign's names")
+            return None
+        found = [
+            s
+            for s in await self.transcripts.sessions(gid, cid, limit=1000)
+            if s.started_at == job.session_at
+        ]
+        if not found:
+            return None
+        lines = await self.transcripts.lines(gid, found[0].id)
+        bridge = await self.recaps.bridge(gid, cid, job.session_at)
+        stored = await self.clocks.get(gid, cid) if self.clocks is not None else None
+        return Inputs(
+            lines=lines,
+            dm_ids=set(campaign.dm_user_ids),
+            allowed_names=sorted(
+                {n.text for n in lookup.names if n.confirmed and not n.secret and not n.person}
+            ),
+            secret_names=sorted({n.text for n in lookup.names if n.secret}),
+            previous=strip_cues(bridge.summary) if bridge is not None else "",
+            day=clock_day_of(stored.clock.minute) if stored is not None else None,
+        )
+
+    async def recap_allowed(self, gid: int, cid: str, job: Job) -> bool:
+        """The switch and the plan, checked at every stage and closed when they can't be."""
+        if not self.settings.recaps_on:
+            return False
+        campaign = await self.campaigns.get(gid, cid)
+        return campaign is not None and await self.plan_allows(
+            "recap", gid, campaign, fail_open=False
+        )
+
+    async def recap_told(self, gid: int, cid: str, job: Job) -> None:
+        """Email the DM that their recap is ready, or could not be written."""
+        if self.mailer is not None and self.recaps is not None:
+            await tell_the_dm(self.mailer, self.recaps, self.settings.site_url, gid, cid, job)
+
+    async def run_recaps(self) -> None:
+        """One round of the recap worker: the due jobs of each server this bot serves, a few at a
+        time, and the recaps the DM has pressed Post on. Each campaign has one job at a time."""
+        if not self.settings.recaps_on or self.recaps is None or self.recap_worker is None:
+            return
+        for guild in list(self.guilds):  # first: a DM's Post never waits on a slow job
+            try:
+                await self.post_recaps(guild.id)
+            except Exception:
+                log.exception("Recap: posting failed for a server")
+        done = 0
+        for guild in list(self.guilds):
+            try:
+                due = await self.recaps.due(guild.id)
+            except Exception:
+                log.exception("Recap: couldn't list the due jobs for a server")
+                continue
+            for cid, at in due:
+                if done >= RECAPS_PER_ROUND:
+                    return
+                done += 1  # counted before it runs, so a job that raises can't stall the round
+                with log_context(guild_id=guild.id, campaign_id=cid):
+                    try:
+                        await self.recap_worker.run(guild.id, cid, at)
+                    except Exception:
+                        log.exception("Recap: a job failed unexpectedly")
+
+    async def post_recaps(self, guild_id: int) -> None:
+        """Send the recaps the DM pressed Post on, after checking again what may have changed
+        since: the plan, who is still recorded, secret names read fresh. A check that fails
+        puts the recap back as a draft with a plain note on the page. Posted once."""
+        if self.recaps is None:
+            return
+        for cid, at in await self.recaps.to_post(guild_id):
+            with log_context(guild_id=guild_id, campaign_id=cid):
+                try:
+                    await self._post_one_recap(guild_id, cid, at)
+                except Exception:
+                    log.exception("Recap: posting failed")
+                    await self.recaps.back_to_draft(
+                        guild_id, cid, at, note="Couldn't post it. Try Post again."
+                    )
+
+    async def _post_one_recap(self, gid: int, cid: str, at: int) -> None:
+        assert self.recaps is not None
+        job = await self.recaps.get(gid, cid, at)
+        campaign = await self.campaigns.get(gid, cid)
+
+        async def back(note: str) -> None:
+            assert self.recaps is not None
+            await self.recaps.back_to_draft(gid, cid, at, note=note)
+
+        if job is None or campaign is None or job.status != "posting":
+            return
+        if not await self.plan_allows("recap", gid, campaign, fail_open=False):
+            return await back(
+                "Your plan doesn't include recaps right now, so nothing was posted. "
+                "Your draft is saved."
+            )
+        channel = (
+            self.get_channel(campaign.dmbchat_channel_id) if campaign.dmbchat_channel_id else None
+        )
+        if (
+            channel is None
+            or not hasattr(channel, "send")
+            or (getattr(getattr(channel, "guild", None), "id", gid) != gid)
+        ):
+            return await back(
+                "There's no chat channel for this campaign yet. It's made when a session starts. "
+                "Start one, then press Post."
+            )
+        secrets = await self.recap_secret_names(campaign)
+        if secrets is None:
+            return await back("DMbot couldn't check your secret names just now. Try Post again.")
+        text = recap_post.to_the_table(job)
+        if names_a_secret(text, secrets, []):
+            return await back("It names something you keep secret. Change the text, then post.")
+        agreed = await self.consent.consenting(gid)
+        if not set(job.speakers) <= set(agreed):
+            return await back(
+                "A player stopped being recorded since this was written, so it can't be posted. "
+                "Write a new recap, or leave this one out."
+            )
+        # Sent first and marked posted after, so a failed send is never recorded as a post. The
+        # consent read just above is the last await before the send.
+        try:
+            for part in recap_post.parts_of(text):
+                await channel.send(part, allowed_mentions=discord.AllowedMentions.none())
+        except Exception:
+            log.warning("Recap: the send failed")
+            return await back(
+                "DMbot couldn't write in the chat channel. Check it can post there, "
+                "then press Post again."
+            )
+        await self.recaps.posted(gid, cid, at)
+        if campaign.dm_screen_channel_id:
+            await self.post(campaign.dm_screen_channel_id, "📜 Recap posted to the table.")
+        changed = job.summary != job.original
+        log.info("Recap: posted%s", " after an edit" if changed else "")  # counts only
 
     async def log_steward_tally(self, table: Table) -> None:
         """After the session's other work: one line in the server log of what the ontology
@@ -5436,6 +5723,17 @@ class DMBot(commands.AutoShardedBot):
         except discord.HTTPException:
             return "there"
         return user.display_name
+
+    async def _recap_loop(self) -> None:
+        """Every minute: the recap jobs that are due and the recaps the DM has pressed Post on
+        (#1382). A job resumes where it stopped, so a restart loses nothing."""
+        await asyncio.sleep(90)
+        while True:
+            try:
+                await self.run_recaps()
+            except Exception:
+                log.exception("The recap jobs failed")
+            await asyncio.sleep(RECAP_ROUND_S)
 
     async def _trial_loop(self) -> None:
         """Every hour: the last-day messages and the automatic extensions (#1229). Waits a
@@ -6235,6 +6533,7 @@ async def run(settings: Settings) -> None:
         campaigns.register_section(FollowedSetsSection())  # and the sets it follows (#1260)
         campaigns.register_section(ClockSection())  # and the game clock (#965)
         campaigns.register_section(EffectsSection())  # and its timed effects (#998)
+        campaigns.register_section(RecapSection())  # and its session recaps (#1382)
         # DMBot sets this too; passing it here means the store never starts out wrong.
         consent = ConsentStore(db, outside=settings.transcription.outside_engine)
         bot = DMBot(
@@ -6253,6 +6552,7 @@ async def run(settings: Settings) -> None:
             EffectStore(db),
             TestVoiceStore(db),
             RuleSetStore(db),
+            RecapStore(db),
         )
         _close_on_sigterm(bot)
         async with bot:
