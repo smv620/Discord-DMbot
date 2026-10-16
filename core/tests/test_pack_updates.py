@@ -6,10 +6,13 @@ from __future__ import annotations
 
 import unittest
 
+from psycopg.types.json import Jsonb
+
 from dmbot.campaigns import CampaignStore
 from dmbot.rules import pack_diff
-from dmbot.rules.homebrew import HomebrewStore
+from dmbot.rules.homebrew import HOMEBREW_MAX, HomebrewStore
 from dmbot.rules.house import HouseRuleError
+from dmbot.rules.pack_content import PACKS_MAX
 from dmbot.rules.pack_updates import PackUpdateStore
 from dmbot.rules.rule_sets import FollowedSetsSection, RuleSetError
 from tests.pg import DatabaseTest
@@ -181,3 +184,68 @@ class Updates(DatabaseTest):
         self.assertFalse(await self.store.stop_updating_pack(GUILD, self.me.id, gone.set_id))
         (kept,) = await self.store.followed_packs(GUILD, self.me.id)
         self.assertFalse(kept.updating)  # it keeps its copy
+
+    async def test_a_merge_keeps_hidden_hidden_and_known_known(self) -> None:
+        await self.publish_new()  # Torch is added, hidden
+        entries = await self.brew.list(GUILD, self.pub.id)
+        torch = next(e for e in entries if e.name == "Torch")
+        await self.brew.edit(
+            GUILD, self.pub.id, DM_A, torch.id, kind="item", name="Torch", text="Burns.",
+            players_may_know=True,
+        )  # fmt: skip
+        await self.store.publish_pack_changes(
+            GUILD, self.pub.id, DM_A, await self.brew.list(GUILD, self.pub.id)
+        )
+        await self.store.take_pack_update(
+            GUILD, self.me.id, DM_B, self.follow.set_id, accepted=set(), expected_version=3
+        )
+        known = {e.name: e.players_may_know for e in await self.brew.list(GUILD, self.me.id)}
+        self.assertEqual(known, {"Lamp": False, "Rope": False})  # the old copy, as published
+
+    async def test_dmbot_never_merges(self) -> None:
+        await self.publish_new()
+        with self.assertRaises(RuleSetError):
+            await self.store.take_pack_update(
+                GUILD, self.me.id, None, self.follow.set_id, accepted=set()
+            )
+        self.assertEqual(await self.brew.list(GUILD, self.me.id), [])
+        (still,) = await self.store.followed_packs(GUILD, self.me.id)
+        self.assertEqual(still.version, 1)
+
+    async def test_a_merge_over_the_cap_changes_nothing(self) -> None:
+        await self.publish_new()
+        for n in range(HOMEBREW_MAX - 1):  # room for one entry, but the merge needs two
+            await self.brew.add(GUILD, self.me.id, DM_B, kind="item", name=f"Own {n}", text="x")
+        with self.assertRaises(RuleSetError):
+            await self.store.take_pack_update(
+                GUILD, self.me.id, DM_B, self.follow.set_id, accepted=set(), expected_version=2
+            )
+        self.assertEqual(len(await self.brew.list(GUILD, self.me.id)), HOMEBREW_MAX - 1)
+        (still,) = await self.store.followed_packs(GUILD, self.me.id)  # the follow stays
+        self.assertEqual(still.version, 1)
+
+    async def test_undoing_a_merge_needs_a_free_pack_slot(self) -> None:
+        await self.publish_new()
+        taken = await self.store.take_pack_update(
+            GUILD, self.me.id, DM_B, self.follow.set_id, accepted=set(), expected_version=2
+        )
+        for n in range(PACKS_MAX):  # the DM follows other packs meanwhile
+            other = await self.campaigns.create(GUILD, f"Pub {n}", DM_A)
+            await self.brew.add(GUILD, other.id, DM_A, kind="item", name=f"I{n}", text="x")
+            await self.store.publish_pack(
+                GUILD, other.id, DM_A, f"P{n}", await self.brew.list(GUILD, other.id)
+            )
+        for offer in await self.store.packs_here(GUILD, self.me.id):
+            if offer.name.startswith("P"):
+                await self.store.follow_pack(GUILD, self.me.id, DM_B, offer)
+        with self.assertRaises(RuleSetError):
+            await self.store.undo_pack_take(GUILD, self.me.id, DM_B, taken)
+
+    async def test_a_damaged_copy_is_not_offered_an_update(self) -> None:
+        await self.publish_new()
+        async with self.db.guild(GUILD) as conn:
+            await conn.execute(
+                "UPDATE rule_set_follows SET content = %s WHERE guild_id = %s AND campaign_id = %s",
+                (Jsonb({"entries": "broken"}), GUILD, self.me.id),
+            )
+        self.assertEqual(await self.store.pending_pack_updates(GUILD, self.me.id), [])

@@ -20,8 +20,15 @@ from psycopg.types.json import Jsonb
 
 from dmbot.rules import pack_diff
 from dmbot.rules.homebrew import HomebrewError, insert_entry
-from dmbot.rules.homebrew_packs import HOMEBREW, HomebrewPackStore, RuleSetError, _renumber
+from dmbot.rules.homebrew_packs import (
+    HOMEBREW,
+    TOO_MANY_PACKS,
+    HomebrewPackStore,
+    RuleSetError,
+    _renumber,
+)
 from dmbot.rules.house import require_dm
+from dmbot.rules.pack_content import PACKS_MAX, BadPack, valid_content
 from dmbot.rules.rule_sets import (
     _INSERT_FOLLOW,
     ALREADY_FOLLOWING,
@@ -34,10 +41,6 @@ from dmbot.rules.rule_sets import (
     Offer,
     _follow_values,
     _followed,
-)
-
-NO_ROOM = (
-    "Your own homebrew and what you keep together would be too many entries. Remove some first."
 )
 
 
@@ -61,6 +64,7 @@ class PackTaken:
     after_version: int
     added: tuple[int, ...] = ()
     offered: int = 0  # the version that was on offer (an Undo declines it)
+    skipped: int = 0  # entries not copied because the campaign already has that name
 
 
 class PackUpdateStore(HomebrewPackStore):
@@ -74,6 +78,10 @@ class PackUpdateStore(HomebrewPackStore):
             for follow in await _followed(conn, guild_id, campaign_id):
                 if follow.kind != HOMEBREW or not follow.updating:
                     continue
+                try:
+                    valid_content(follow.content)
+                except BadPack:
+                    continue  # a damaged copy is not offered an update
                 fresh, _gone = await self._latest_of(conn, follow)
                 if fresh is None or fresh.version <= follow.version:
                     continue
@@ -149,6 +157,10 @@ class PackUpdateStore(HomebrewPackStore):
             if at is None:
                 raise RuleSetError(NOT_FOLLOWING)
             follow = mine[at]
+            try:
+                valid_content(follow.content)
+            except BadPack:
+                raise RuleSetError(NO_SUCH_SET) from None
             fresh, _gone = await self._latest_of(conn, follow)
             if fresh is None:
                 raise RuleSetError(NO_SUCH_SET)
@@ -183,9 +195,11 @@ class PackUpdateStore(HomebrewPackStore):
             )
             have = {str(r["name_key"]) for r in await cur.fetchall()}
             added: list[int] = []
+            skipped = 0
             try:
                 for key, entry in pack_diff.entries_of(result).items():
                     if key in have:  # the campaign's own entry of that name wins
+                        skipped += 1
                         continue
                     saved = await insert_entry(
                         conn, guild_id, campaign_id, user_id, entry["kind"], entry["name"],
@@ -193,7 +207,7 @@ class PackUpdateStore(HomebrewPackStore):
                     )  # fmt: skip
                     added.append(saved.id)
             except HomebrewError as exc:
-                raise RuleSetError(str(exc) or NO_ROOM) from None
+                raise RuleSetError(str(exc)) from None
             await conn.execute(
                 "DELETE FROM rule_set_follows WHERE guild_id = %s AND campaign_id = %s"
                 " AND set_id = %s",
@@ -202,7 +216,7 @@ class PackUpdateStore(HomebrewPackStore):
             rest = [f.set_id for f in mine if f.set_id != set_id]
             await _renumber(conn, guild_id, campaign_id, rest)
             version = fresh.version if kept else follow.version
-            return PackTaken(True, follow, at, version, tuple(added), fresh.version)
+            return PackTaken(True, follow, at, version, tuple(added), fresh.version, skipped)
 
     async def undo_last_pack_take(
         self, guild_id: int, campaign_id: str, user_id: int, set_id: str, expected_version: int
@@ -259,6 +273,8 @@ class PackUpdateStore(HomebrewPackStore):
             mine = [f for f in await _followed(conn, guild_id, campaign_id) if f.kind == HOMEBREW]
             if any(f.set_id == before.set_id for f in mine):
                 raise RuleSetError(ALREADY_FOLLOWING)
+            if len(mine) >= PACKS_MAX:  # the merge freed a slot that another pack has taken
+                raise RuleSetError(TOO_MANY_PACKS)
             cur = await conn.execute(
                 "DELETE FROM homebrew_entries WHERE guild_id = %s AND campaign_id = %s"
                 " AND id = ANY(%s) AND version = 1",  # never edited

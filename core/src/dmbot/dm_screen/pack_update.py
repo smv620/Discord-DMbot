@@ -68,12 +68,36 @@ def _shown(names: Sequence[str]) -> str:
     return shown + (f" and {len(names) - 3} more" if len(names) > 3 else "")
 
 
-def note_text(pack_name: str, version: int, changes: int, overridden: Sequence[str] = ()) -> str:
-    entries = f"{changes} entr" + ("y" if changes == 1 else "ies")
+def now_visible(changes: Sequence[pack_diff.Change]) -> list[str]:
+    """Entries a change makes known to players (new, or flipped from hidden to known): the DM
+    should see that, since a followed update is taken at once."""
+    return [
+        c.name
+        for c in changes
+        if c.after is not None
+        and c.after.get("known")
+        and not (c.before is not None and c.before.get("known"))
+    ]
+
+
+def note_text(
+    pack_name: str,
+    version: int,
+    changes: int,
+    overridden: Sequence[str] = (),
+    visible: Sequence[str] = (),
+) -> str:
+    entries = (
+        "no entry is different"
+        if changes == 0
+        else f"{changes} entr" + ("y" if changes == 1 else "ies") + " changed"
+    )
     text = (
-        f"📦 **{_md(pack_name)}** homebrew updated to v{version}: {entries} changed. "
+        f"📦 **{_md(pack_name)}** homebrew updated to v{version}: {entries}. "
         "DMbot took the new version."
     )
+    if visible:
+        text += f"\nPlayers may now know: {_shown(visible)}."
     if overridden:
         text += "\n" + YOURS_WIN.format(names=_shown(overridden))
     return text
@@ -275,10 +299,11 @@ async def take(
     name = _md(update.offer.name)
     if taken.merged:
         left_out = len({c.key for c in update.changes} - (accepted or set()))
-        kept = len(taken.added)
+        copied = len(taken.added)
+        already = f" ({taken.skipped} already yours)" if taken.skipped else ""
         words = (
-            f"✅ Done. **{name}** is now your own homebrew. Kept {kept} "
-            f"entr{'y' if kept == 1 else 'ies'}, left out {left_out} "
+            f"✅ Done. **{name}** is now your own homebrew. Copied {copied} "
+            f"entr{'y' if copied == 1 else 'ies'}{already}, left out {left_out} "
             f"change{'' if left_out == 1 else 's'}. It won't update any more. "
             "Press Undo if you change your mind."
         )
@@ -413,7 +438,11 @@ class PickView(_Menu):
         if found is None:
             return
         self.stop()
-        await take(interaction, self.campaign, self.update, set(self.accepted))
+        try:
+            await take(interaction, self.campaign, self.update, set(self.accepted))
+        except Exception:
+            log.exception("Couldn't save the picks for a homebrew pack update")
+            await _tell(interaction, COULDNT)
 
 
 async def _overridden(bot: Any, campaign: Campaign, update: PackUpdate) -> list[str]:
@@ -460,6 +489,7 @@ async def check_updates(bot: Any, campaign: Campaign, screen_id: int) -> None:
                     update.offer.version,
                     len(update.changes),
                     await _overridden(bot, campaign, update),
+                    now_visible(update.changes),
                 ),
                 note_view(campaign.id, update.follow.set_id, update.offer.version),
             )
