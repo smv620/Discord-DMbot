@@ -242,6 +242,43 @@ class Packs(DatabaseTest):
         self.assertEqual(found.text, "Glows.")
         self.assertIsNone(await reader.find(GUILD_A, self.same.id, "Booked Rule"))
 
+    async def test_a_shared_books_entry_ranks_below_a_followed_packs(self) -> None:
+        await self.publish()
+        # The follower has a book entry named like one in the pack, and its own homebrew too.
+        await self.brew.load_file(
+            GUILD_A, self.same.id, DM_A,
+            [FileEntry("monster", "Hollow King", "The book's version.")],
+            from_book=True, book_edition="2014",
+        )  # fmt: skip
+        await self.follow_all(self.same)
+        reader = HomebrewReader(self.brew, self.packs)
+        found = await reader.find(GUILD_A, self.same.id, "Hollow King")
+        assert found is not None
+        self.assertEqual(found.source, "Frost Pack homebrew, v1")  # the pack answers
+        listed = {e.name: e for e in await reader.list(GUILD_A, self.same.id)}
+        self.assertEqual(listed["Hollow King"].source, "Frost Pack homebrew, v1")
+        # A book entry no pack names is still read from the campaign's own.
+        await self.brew.load_file(
+            GUILD_A, self.same.id, DM_A,
+            [FileEntry("rule", "Only In The Book", "x")], from_book=True, book_edition="other",
+        )  # fmt: skip
+        only = await reader.find(GUILD_A, self.same.id, "Only In The Book")
+        assert only is not None
+        self.assertEqual((only.from_book, only.book_edition), (True, "other"))
+
+    async def test_a_book_entry_with_an_edition_still_never_goes_into_a_pack(self) -> None:
+        await self.brew.load_file(
+            GUILD_A, self.pub.id, DM_A, [FileEntry("rule", "Edition Book", "x")],
+            from_book=True, book_edition="2024",
+        )  # fmt: skip
+        done = await self.packs.publish_pack(
+            GUILD_A, self.pub.id, DM_A, "Frost Pack", await self.mine(self.pub)
+        )
+        self.assertIn("Edition Book", done.left_out)
+        got = await self.packs.pack_content(GUILD_A, self.pub.id)
+        assert got is not None
+        self.assertNotIn("Edition Book", str(got))
+
     async def test_hidden_stays_hidden_and_the_source_names_the_pack(self) -> None:
         await self.publish()
         await self.follow_all(self.same)

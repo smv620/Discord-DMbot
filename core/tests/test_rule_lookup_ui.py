@@ -727,6 +727,72 @@ class MakeItMine(LookupTest):
         self.assertIsInstance(view, EntryMenu)
 
 
+def book(cid: str, name: str, edition: str | None, text: str = "The book's words.") -> Homebrew:
+    return replace(
+        brew(cid, name, text, kind="spell", known=True), from_book=True, book_edition=edition
+    )
+
+
+class SharedBooks(LookupTest):
+    """A DM's shared book ranks in its edition's place (#1563). Target 2024, fallback 2014."""
+
+    async def shown(self, name: str, edition: str | None, who: int = DM) -> str:
+        self.brew.entries[C1] = [book(C1, name, edition)]
+        ui._last_lookup.clear()
+        return self.sent(await self.command(name, who), 0)[0]
+
+    async def test_a_2024_book_answers_with_the_target_rules(self) -> None:
+        text = await self.shown("Fireball", "2024")
+        self.assertIn("The book's words.", text)
+        self.assertIn("[Shared book]", text)
+        self.assertNotIn("[Legacy 2014]", text)
+        self.assertIn("Frostmaiden's shared book (2024): Fireball", text)
+
+    async def test_a_2014_or_other_book_sits_behind_a_target_hit(self) -> None:
+        for edition in ("2014", "other", None):
+            text = await self.shown("Fireball", edition)
+            self.assertNotIn("The book's words.", text, edition)
+            self.assertIn("📖 **Fireball** (spell)", text)  # the free rules answer
+
+    async def test_a_2014_book_answers_and_is_tagged_when_only_the_fallback_has_it(self) -> None:
+        text = await self.shown("Orc", "2014")
+        self.assertIn("The book's words.", text)
+        self.assertIn("[Shared book] [Legacy 2014]", text)
+        self.assertIn("Frostmaiden's shared book (2014): Orc", text)
+        self.assertNotIn("SRD", text)
+
+    async def test_other_and_unasked_books_beat_the_fallback_but_not_the_target(self) -> None:
+        for edition in ("other", None, "2024"):
+            text = await self.shown("Orc", edition)
+            self.assertIn("The book's words.", text, edition)
+            self.assertNotIn("[Legacy 2014]", text)
+        self.assertIn("shared book:", await self.shown("Orc", "other"))  # no edition to name
+
+    async def test_with_no_free_rules_entry_any_book_answers(self) -> None:
+        for edition in ("2024", "2014", "other", None):
+            self.assertIn("The book's words.", await self.shown("Hollow King", edition))
+
+    async def test_a_book_is_never_the_books_title_and_a_hidden_one_is_hidden_from_players(
+        self,
+    ) -> None:
+        self.brew.entries[C1] = [replace(book(C1, "Hollow King", "2024"), players_may_know=False)]
+        ui._last_lookup.clear()
+        text = self.sent(await self.command("Hollow King", PLAYER), 0)[0]
+        self.assertNotIn("The book's words.", text)
+        self.assertIn("couldn't find", text)
+
+    async def test_the_campaigns_rulesets_decide_where_a_2014_book_sits(self) -> None:
+        self.campaigns[C1] = campaign(target="2014", fallback="2024")
+        text = await self.shown("Fireball", "2014")  # now the target: it answers, no tag
+        self.assertIn("The book's words.", text)
+        self.assertNotIn("[Legacy 2014]", text)
+
+    async def test_the_homebrew_that_is_not_from_a_book_still_comes_first(self) -> None:
+        self.brew.entries[C1] = [brew(C1, "Fireball", "Our fireball.", kind="spell")]
+        ui._last_lookup.clear()
+        self.assertIn("Our fireball.", self.sent(await self.command("Fireball"), 0)[0])
+
+
 class HomebrewLookup(LookupTest):
     async def test_the_campaigns_homebrew_is_tagged_with_its_source_and_shadows_the_book(
         self,

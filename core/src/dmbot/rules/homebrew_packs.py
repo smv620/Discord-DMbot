@@ -450,21 +450,27 @@ class HomebrewReader:
 
     async def list(self, guild_id: int, campaign_id: str) -> list[Homebrew]:
         own = await self._store.list(guild_id, campaign_id)
-        taken = {name_key(e.name) for e in own}
-        out = list(own)
-        for entry in await self._from_packs(guild_id, campaign_id):
+        packs = await self._from_packs(guild_id, campaign_id)
+        # A shared book's entry ranks below a followed pack's (#1563): a pack's entry of the same
+        # name takes its place, the book's is kept behind it in the free rules' order.
+        packed = {name_key(e.name) for e in packs}
+        out = [e for e in own if not (e.from_book and name_key(e.name) in packed)]
+        taken = {name_key(e.name) for e in out}
+        for entry in packs:
             if name_key(entry.name) not in taken:
                 taken.add(name_key(entry.name))
                 out.append(entry)
         return out
 
     async def find(self, guild_id: int, campaign_id: str, name: str) -> Homebrew | None:
-        """The campaign's own entry with this name, else the first followed pack's."""
+        """The campaign's own entry with this name, else the first followed pack's. An entry the
+        DM loaded from a book ranks below a followed pack's (#1563): the pack's answers."""
         own = await self._store.find(guild_id, campaign_id, name)
-        if own is not None or self._packs is None:
+        if (own is not None and not own.from_book) or self._packs is None:
             return own
         key = name_key(name)
-        return next(
+        pack = next(
             (e for e in await self._from_packs(guild_id, campaign_id) if name_key(e.name) == key),
             None,
         )
+        return pack if pack is not None else own

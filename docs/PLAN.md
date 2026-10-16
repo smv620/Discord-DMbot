@@ -326,6 +326,20 @@ prompts, so rules alerts can cite it. It stays in that one campaign, never in th
 repository, and the DM can remove it. It follows the rules edition and precedence below:
 a shared book is matched to its edition (2024, 2014 or other) and is a sourcebook in the
 target or fallback ruleset, not a house rule.
+**Built, the edition of a shared book (2026-10-16, #1563):** when a DM loads a file and says it is
+from a published book, one more question follows "I have the right": **Which rules is this book
+for?** (2024 book, 2014 book, Not sure / add-on). The answer is kept with each entry
+(`homebrew_entries.book_edition`, migration 0104; an entry loaded before the question reads as
+"other"). In `/dmbot rule` the order is: house rules, the campaign's own homebrew (not from a
+book), followed packs, then the free rules and the book's entries together, each in its edition's
+place: an entry for the campaign's target edition answers ahead of the free rules' entry of the
+same name (a tie goes to the DM's copy), one for the fallback edition answers only when the
+fallback is where the free rules have the name, and "other" sits between (after the target, before
+the fallback). A 2014 book entry is tagged `[Legacy 2014]` while the campaign plays the newer rules.
+Its source line names the campaign's copy ("Frostmaiden's shared book (2014): Fireball"), never the
+book's title, which DMbot does not keep. A followed pack's entry beats a book entry of the same name.
+A book entry still never goes into a pack. Not yet: rules *alerts* and the sidebar still treat a
+book entry as homebrew (it shadows the free rules' entry of the same name whatever its edition).
 
 *Built, the rules index (2026-10-09, #866):* `dmbot.rules.index` looks a spell or a
 condition up by name. The data is the **SRD 5.2.1** (CC-BY-4.0), taken from Wizards of
@@ -380,7 +394,7 @@ the 📖 Look up a rule button stays on the DM's Settings card. A person who run
 in the campaigns they run, as before; anyone else in the campaigns of the server. And
 **precedence is shown, not decided**: a house rule of that campaign (and no other's) that
 names the thing comes first as "🏠 House rule 12: …", then the book, and the DM decides what
-applies. Not built: the AI, shared rulebooks.
+applies. Not built: the AI. Shared rulebooks: see "Rules sources" (the edition rule, #1563).
 
 **Built: rules cards from the table (#931), the first rules alert.** A campaign setting,
 **🃏 Rules cards**, in ⚙️ Settings (**off by default**; only the campaign's DMs change it; it

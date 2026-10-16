@@ -73,6 +73,9 @@ class Homebrew:
     # Loaded from a file after the DM said some of it is from a published book and confirmed the
     # right to use it (#1524): it stays in this campaign and can never go into a shared ruleset.
     from_book: bool = False
+    # Which rules that book is for (#1563): "2024", "2014" or "other"; None for an entry that is
+    # not from a book, and for one loaded before the question was asked (read as "other").
+    book_edition: str | None = None
     # Where a followed pack's entry comes from, as an answer cites it: "Frost Pack homebrew, v2"
     # (#1527). None for the campaign's own entry. A pack's entry is read-only here: it has no id
     # of its own in this campaign (`id` is negative) and is never edited, only replaced by the
@@ -147,9 +150,12 @@ def _plain(raw: str, *, keep_breaks: bool = False) -> str:
     return "".join(c for c in text if unicodedata.category(c) not in ("Cf", "Cc") or c in keep)
 
 
+BOOK_EDITIONS = ("2024", "2014", "other")  # which rules a shared book is for (#1563)
+
+
 _COLUMNS = (
     "id, campaign_id, kind, name, text, summary, players_may_know, created_by, created_at,"
-    " updated_at, version, from_book"
+    " updated_at, version, from_book, book_edition"
 )
 
 
@@ -167,6 +173,7 @@ def _entry(row: dict[str, Any]) -> Homebrew:
         int(row["updated_at"]),
         int(row["version"]),
         bool(row["from_book"]),
+        row["book_edition"],
     )
 
 
@@ -338,6 +345,7 @@ class HomebrewStore:
         entries: Sequence[FileEntry],
         *,
         from_book: bool = False,
+        book_edition: str | None = None,
     ) -> Loaded:
         """Load a file's entries in one step, or none (#1524). An entry whose name the campaign
         already has (any case) is updated (version + 1) if anything differs, else left alone; a
@@ -345,7 +353,13 @@ class HomebrewStore:
         and makes a new one hidden. If the campaign would end up over `HOMEBREW_MAX`, nothing is
         loaded and the DM is told the count. `from_book`: the DM confirmed the right to use this
         material (the caller recorded who and when); it marks what is added or changed here so
-        it can never go into a shared ruleset. Only the campaign's DMs."""
+        it can never go into a shared ruleset. `book_edition`: which rules the book is for
+        (2024, 2014 or other), asked of the DM; it sets where the entry ranks. Only the
+        campaign's DMs."""
+        if book_edition is not None and (not from_book or book_edition not in BOOK_EDITIONS):
+            raise HomebrewError(
+                "DMbot doesn't know which rules that book is for. Nothing was loaded."
+            )
         cleaned = [
             (
                 clean_kind(e.kind),
@@ -388,23 +402,30 @@ class HomebrewStore:
                         now,
                         now,
                         from_book,
+                        book_edition,
                     )
                     added += 1
                     continue
                 known = old.players_may_know if players is None else players
-                if (old.kind, old.name, old.text, old.summary, old.players_may_know) == (
-                    kind,
-                    name,
-                    text,
-                    summary,
-                    known,
-                ) and (old.from_book or not from_book):
+                if (
+                    (old.kind, old.name, old.text, old.summary, old.players_may_know)
+                    == (
+                        kind,
+                        name,
+                        text,
+                        summary,
+                        known,
+                    )
+                    and (old.from_book or not from_book)
+                    and (not from_book or old.book_edition == book_edition)
+                ):
                     same += 1
                     continue
                 await conn.execute(
                     "UPDATE homebrew_entries SET kind = %s, name = %s, text = %s, summary = %s,"
                     " players_may_know = %s, updated_at = %s, version = version + 1,"
-                    " from_book = from_book OR %s"
+                    " from_book = from_book OR %s,"
+                    " book_edition = CASE WHEN %s THEN %s ELSE book_edition END"
                     " WHERE guild_id = %s AND campaign_id = %s AND id = %s",
                     (
                         kind,
@@ -414,6 +435,8 @@ class HomebrewStore:
                         known,
                         now,
                         from_book,
+                        from_book,
+                        book_edition,
                         guild_id,
                         campaign_id,
                         old.id,
@@ -442,6 +465,7 @@ class HomebrewStore:
                 entry.created_at,
                 entry.updated_at,
                 entry.from_book,
+                entry.book_edition,
             )
 
 
@@ -467,6 +491,7 @@ async def insert_entry(
     created_at: int,
     updated_at: int,
     from_book: bool = False,
+    book_edition: str | None = None,
 ) -> Homebrew:
     """Insert an already-cleaned entry; the caller holds the campaign's lock."""
     cur = await conn.execute(
@@ -478,8 +503,8 @@ async def insert_entry(
         raise HomebrewError(FULL)
     cur = await conn.execute(
         "INSERT INTO homebrew_entries (guild_id, campaign_id, kind, name, name_key, text, summary,"
-        " players_may_know, created_by, created_at, updated_at, from_book)"
-        " VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)"
+        " players_may_know, created_by, created_at, updated_at, from_book, book_edition)"
+        " VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)"
         " ON CONFLICT (guild_id, campaign_id, name_key) DO NOTHING"
         f" RETURNING {_COLUMNS}",
         (
@@ -495,6 +520,7 @@ async def insert_entry(
             created_at,
             updated_at,
             from_book,
+            book_edition,
         ),
     )
     saved = await cur.fetchone()
@@ -529,6 +555,7 @@ _KEYS = frozenset(
     {"kind", "name", "text", "summary", "players_may_know", "by", "created_at", "updated_at"}
 )
 _KEYS_BOOK = _KEYS | {"from_book"}  # (a backup from before #1524 has no such key: false)
+_KEYS_EDITION = _KEYS_BOOK | {"book_edition"}  # (and before #1563, none: read as "other")
 
 
 def _timestamp(value: object) -> int:
@@ -557,6 +584,7 @@ class _Checked:
     created_at: int
     updated_at: int
     from_book: bool = False
+    book_edition: str | None = None
 
 
 class HomebrewSection:
@@ -568,8 +596,8 @@ class HomebrewSection:
     async def dump(self, conn: Conn, guild_id: int, campaign_id: str) -> list[Any]:
         cur = await conn.execute(
             "SELECT kind, name, text, summary, players_may_know, created_by, created_at,"
-            " updated_at, from_book FROM homebrew_entries WHERE guild_id = %s AND campaign_id = %s"
-            " ORDER BY name_key",
+            " updated_at, from_book, book_edition FROM homebrew_entries"
+            " WHERE guild_id = %s AND campaign_id = %s ORDER BY name_key",
             (guild_id, campaign_id),
         )
         return [
@@ -583,6 +611,7 @@ class HomebrewSection:
                 "created_at": int(r["created_at"]),
                 "updated_at": int(r["updated_at"]),
                 **({"from_book": True} if r["from_book"] else {}),
+                **({"book_edition": r["book_edition"]} if r["book_edition"] else {}),
             }
             for r in await cur.fetchall()
         ]
@@ -594,7 +623,7 @@ class HomebrewSection:
         checked: list[_Checked] = []
         keys: set[str] = set()
         for row in rows:
-            if not isinstance(row, dict) or set(row) not in (_KEYS, _KEYS_BOOK):
+            if not isinstance(row, dict) or set(row) not in (_KEYS, _KEYS_BOOK, _KEYS_EDITION):
                 raise CampaignError(DAMAGED)
             if not all(isinstance(row[k], str) for k in ("kind", "name", "text")):
                 raise CampaignError(DAMAGED)
@@ -603,6 +632,9 @@ class HomebrewSection:
             if not isinstance(row["players_may_know"], bool):
                 raise CampaignError(DAMAGED)
             if not isinstance(row.get("from_book", False), bool):
+                raise CampaignError(DAMAGED)
+            edition = row.get("book_edition")
+            if edition is not None and (edition not in BOOK_EDITIONS or not row.get("from_book")):
                 raise CampaignError(DAMAGED)
             try:
                 kind, name = clean_kind(row["kind"]), clean_name(row["name"])
@@ -634,6 +666,7 @@ class HomebrewSection:
                     created,
                     updated,
                     row.get("from_book", False),
+                    edition,
                 )
             )
         return checked
@@ -647,7 +680,8 @@ class HomebrewSection:
                 await cur.executemany(
                     "INSERT INTO homebrew_entries (guild_id, campaign_id, kind, name, name_key,"
                     " text, summary, players_may_know, created_by, created_at, updated_at,"
-                    " from_book) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
+                    " from_book, book_edition)"
+                    " VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
                     [
                         (
                             guild_id,
@@ -662,6 +696,7 @@ class HomebrewSection:
                             r.created_at,
                             r.updated_at,
                             r.from_book,
+                            r.book_edition,
                         )
                         for r in loaded
                     ],

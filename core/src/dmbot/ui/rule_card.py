@@ -276,6 +276,7 @@ def card_parts(
 
 
 HOMEBREW_TAG = "[Homebrew]"
+BOOK_TAG = "[Shared book]"
 HOMEBREW_FOOTER = "_Your own homebrew, as you wrote it. You decide._"
 PACK_FOOTER = "_From a homebrew pack this campaign follows, as published. You decide._"
 
@@ -297,10 +298,23 @@ def homebrew_citation(entry: Homebrew, campaign_name: str) -> str:
     Hollow King`. A followed pack's entry names its pack: `Frost Pack homebrew, v2: Hollow King`."""
     if entry.source:
         return f"{entry.source}: {entry.name}"
+    if entry.from_book:  # the book's title is never kept (CLAUDE.md, IP rule): the campaign's copy
+        edition = f" ({entry.book_edition})" if entry.book_edition in ("2024", "2014") else ""
+        return f"{campaign_name}'s shared book{edition}: {entry.name}"
     return f"{campaign_name}'s homebrew: {entry.name}"
 
 
-def homebrew_parts(own: Homebrew, campaign_name: str, *, player: bool = False) -> list[str]:
+def _tags(own: Homebrew, legacy: bool) -> str:
+    """`[Homebrew]`; for a shared book's entry `[Shared book]`, with `[Legacy 2014]` when it is
+    for the older rules and the campaign plays the newer (#1563)."""
+    if own.from_book:
+        return f"{BOOK_TAG} [Legacy 2014]" if legacy else BOOK_TAG
+    return HOMEBREW_TAG
+
+
+def homebrew_parts(
+    own: Homebrew, campaign_name: str, *, player: bool = False, legacy: bool = False
+) -> list[str]:
     """The card for one of the campaign's own homebrew entries, for the DM (private): tagged
     `[Homebrew]`, its source named, who may know it, then its words. It goes above the free
     rules' card and below any house rule (the order is house rules, homebrew, the target
@@ -311,7 +325,7 @@ def homebrew_parts(own: Homebrew, campaign_name: str, *, player: bool = False) -
     head = "\n".join(
         [
             f"📚 **{_fit(_md(own.name), NAME_MAX)}** ({own.kind.capitalize()}) "
-            f"{HOMEBREW_TAG}{' ' + who if who else ''}",
+            f"{_tags(own, legacy)}{' ' + who if who else ''}",
             f"_Source: {_md(_fit(homebrew_citation(own, campaign_name), 200))}_",
         ]
     )

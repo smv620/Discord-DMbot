@@ -309,9 +309,20 @@ class TheFile(HomebrewUiTest):
         self.assertIn("you say you may use this text", self.said(it))
         self.assertEqual(await self.store.list(GUILD, self.campaign.id), [])  # nothing yet
         right = ui.RightToUse(self.campaign, ask.entries, ask.digest, 0)
-        await right._confirmed(self.press())
+        asked = self.press()
+        await right._confirmed(asked)
+        self.assertIn("Which rules is this book written for?", self.said(asked))
+        self.assertEqual(await self.store.list(GUILD, self.campaign.id), [])  # still nothing
+        self.assertEqual(await self.campaigns.confirmations(GUILD, self.campaign.id), [])
+        edition = ui.BookEdition(self.campaign, ask.entries, ask.digest, 0)
+        self.assertEqual(
+            [getattr(c, "label", "") for c in edition.children],
+            ["Cancel", "2024 book", "2014 book", "Not sure / add-on"],
+        )
+        await edition._pick("2014", self.press())
         (saved,) = await self.store.list(GUILD, self.campaign.id)
         self.assertTrue(saved.from_book)
+        self.assertEqual(saved.book_edition, "2014")  # stored with the entry
         (record,) = await self.campaigns.confirmations(GUILD, self.campaign.id)
         self.assertEqual(record["purpose"], "rulebook")
         self.assertEqual(record["fingerprint"], "b" * 64)
@@ -322,6 +333,20 @@ class TheFile(HomebrewUiTest):
         await right._confirmed(self.press(PLAYER))
         self.assertEqual(await self.store.list(GUILD, self.campaign.id), [])
         self.assertEqual(await self.campaigns.confirmations(GUILD, self.campaign.id), [])
+
+    async def test_the_question_is_only_for_a_book_and_each_answer_is_kept(self) -> None:
+        entries = (FileEntry("rule", "Mine", "Words."),)
+        own = ui.FromBookAsk(self.campaign, entries, "f" * 64, 0)
+        await own._own(self.press())  # "No, all my own": no question, no edition
+        (saved,) = await self.store.list(GUILD, self.campaign.id)
+        self.assertEqual((saved.from_book, saved.book_edition), (False, None))
+        for edition in ("2024", "other"):
+            book = ui.BookEdition(
+                self.campaign, (FileEntry("rule", f"Book {edition}", "x"),), "a" * 64, 0
+            )
+            await book._pick(edition, self.press())
+        got = {e.name: e.book_edition for e in await self.store.list(GUILD, self.campaign.id)}
+        self.assertEqual(got, {"Mine": None, "Book 2024": "2024", "Book other": "other"})
 
     async def test_a_file_over_the_limit_is_refused_with_the_count(self) -> None:
         for n in range(200):
@@ -335,9 +360,9 @@ class TheFile(HomebrewUiTest):
 
 class OnlyOnce(HomebrewUiTest):
     async def test_a_double_press_records_the_confirmation_and_loads_once(self) -> None:
-        right = ui.RightToUse(self.campaign, (FileEntry("rule", "Booked", "Words."),), "e" * 64, 0)
-        await right._confirmed(self.press())
+        right = ui.BookEdition(self.campaign, (FileEntry("rule", "Booked", "Words."),), "e" * 64, 0)
+        await right._pick("2024", self.press())
         again = self.press()
-        await right._confirmed(again)
+        await right._pick("2024", again)
         self.assertEqual(len(await self.campaigns.confirmations(GUILD, self.campaign.id)), 1)
         self.assertIn("already being loaded", self.said(again))

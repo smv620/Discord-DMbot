@@ -5317,6 +5317,20 @@ HOMEBREW_FROM_BOOK = """
     ALTER TABLE homebrew_entries ADD COLUMN from_book BOOLEAN NOT NULL DEFAULT false;
     """
 
+HOMEBREW_BOOK_EDITION = """
+    -- Which rules a shared book is for (#1563): 2024, 2014 or other (a supplement), asked when a DM
+    -- loads a file and says it is from a published book. It decides where the entry ranks next to
+    -- the free rules (a 2014 book entry sits with the fallback, not above the 2024 book). NULL for
+    -- an entry that is not from a book, and for one loaded before this (read as "other"). A
+    -- nullable column with no default: no existing row changes, so no row-level security needs
+    -- opening.
+    ALTER TABLE homebrew_entries ADD COLUMN book_edition TEXT
+        CHECK (book_edition IS NULL OR book_edition IN ('2024', '2014', 'other'));
+    -- Only a shared book's entry carries an edition (the store and backups already refuse more).
+    ALTER TABLE homebrew_entries ADD CONSTRAINT homebrew_edition_needs_book
+        CHECK (book_edition IS NULL OR from_book);
+    """
+
 WEB_HOMEBREW = """
     -- A campaign's homebrew on the website (#1525). Only the entries the DM marked "players may
     -- know" leave: a hidden entry (a monster the players have not met) never leaves these doors,
@@ -5591,6 +5605,7 @@ MIGRATIONS: tuple[Migration, ...] = (
     ("0101_transcript_keep", TRANSCRIPT_KEEP),  # how long a campaign keeps transcripts (#1533)
     ("0102_pack_suggestions", PACK_SUGGESTIONS),  # suggest an entry to a pack (#1537)
     ("0103_web_transcript_deleted", WEB_TRANSCRIPT_DELETED),  # the site shows deleted ones (#1548)
+    ("0104_homebrew_book_edition", HOMEBREW_BOOK_EDITION),  # which rules a book is for (#1563)
 )
 
 # Tables that must have row-level security. A test checks every table in the schema

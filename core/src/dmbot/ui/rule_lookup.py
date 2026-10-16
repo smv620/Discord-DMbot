@@ -29,6 +29,7 @@ from dmbot.campaigns import Campaign
 from dmbot.campaigns.models import DEFAULT_FALLBACK, DEFAULT_TARGET
 from dmbot.logs import set_log_context
 from dmbot.rules import index
+from dmbot.rules.book_rank import book_is_legacy, book_wins
 from dmbot.rules.homebrew import Homebrew
 from dmbot.rules.house import HouseRule
 from dmbot.ui import logic, rule_card
@@ -167,12 +168,21 @@ async def look_up(
     # same name is not shown. This is the DM's private answer, so an entry players may not know
     # is shown too.
     own = await _homebrew(interaction, campaign, typed)
+    if own is not None and not book_wins(
+        own, hit, campaign.target_ruleset, campaign.fallback_ruleset
+    ):
+        own = None  # a shared book's entry ranks in its edition's place: the free rules answer
     if own is not None and not is_dm and not own.players_may_know:
         # A player never meets an entry the DM kept hidden, by its name or its words (a from-book
         # entry follows the same flag). The book's card answers, as if it weren't there.
         own = None
     if own is not None:
-        mine = rule_card.homebrew_parts(own, campaign.name, player=not is_dm)
+        mine = rule_card.homebrew_parts(
+            own,
+            campaign.name,
+            player=not is_dm,
+            legacy=book_is_legacy(own, campaign.target_ruleset),
+        )
         if not is_dm:
             mine = rule_card.for_player(mine)
         # A followed pack's entry can be copied into the campaign's own homebrew (#1541): the
