@@ -392,6 +392,18 @@ describe("writing to the team (#1340)", () => {
   });
 });
 
+describe("questions to DMbot are in the written record (#1379)", () => {
+  // CLAUDE.md "Transcripts are shared": the DM's quick questions and DMbot's in-game answers are
+  // saved as sidebar lines in the raw transcript (sidebar/service.py _save_lines); the Help page
+  // says so, so the privacy page must too.
+  it("says so in the What was typed item", () => {
+    const page = text(doc("privacy").querySelector("main"));
+    expect(page).toContain(
+      "Questions put to DMbot, and its answers about the game, go in the written record too, marked as such.",
+    );
+  });
+});
+
 describe("generated content belongs to the campaign (#1388)", () => {
   const privacy = (): string => text(doc("privacy").querySelector("main"));
   const terms = (): string => text(doc("terms").querySelector("main"));
