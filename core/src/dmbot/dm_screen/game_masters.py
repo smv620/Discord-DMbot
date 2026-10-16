@@ -29,7 +29,7 @@ from typing import Any
 import discord
 
 from dmbot.campaigns import Campaign, CampaignError, CampaignStore
-from dmbot.campaigns.store import MAX_DMS, OWNER_STAYS, TOO_MANY_DMS
+from dmbot.campaigns.store import LAST_DM, MAX_DMS, OWNER_STAYS, TOO_MANY_DMS
 from dmbot.dm_screen import messages
 from dmbot.dm_screen.channel import DMScreenError, setup_dm_screen
 from dmbot.dm_screen.gametime_channel import setup_gametime_channel
@@ -40,15 +40,26 @@ log = logging.getLogger(__name__)
 NO_PINGS = discord.AllowedMentions.none()
 _ID = r"(?P<campaign>[0-9a-f]{32})"
 LABEL = "Game masters"
-ONLY_DMS = "Only this campaign's game masters can change who they are."
+ONLY_DMS = "Only this campaign's game masters can change this list."
 GONE = messages.DM_CAMPAIGN_GONE
-FAILED = "Sorry, that didn't work. Nothing was changed. Please try again."
+FAILED = "Sorry, that didn't work. Check the list in ⚙️ Settings → Game masters, then try again."
 NOT_HERE = "DMbot can't reach the server right now. Try again in a minute."
-NOT_A_PERSON = "That's a bot. Pick a person."
+NOT_A_PERSON = "Bots can't be game masters. Pick a person."
 ALREADY = "**{name}** is already a game master."
 TOO_MANY = TOO_MANY_DMS
-PLAN_HOLDER = "That's whose plan this campaign uses. Hand it over first (⚙️ Settings → Hand over)."
-LAST_ONE = "A campaign needs at least one game master. Add another first."
+# Two voices, because only the plan holder has the 🤝 Hand over button.
+PLAN_HOLDER_SELF = (
+    "Your plan runs this campaign, so you can't leave yet. Hand the campaign over first: "
+    "⚙️ Settings → 🤝 Hand over."
+)
+PLAN_HOLDER_OTHER = (
+    "**{name}** holds this campaign's plan, so they can't be removed. They can hand the "
+    "campaign over first (⚙️ Settings → 🤝 Hand over)."
+)
+LAST_ONE = LAST_DM
+GONE_FROM_LIST = (
+    "They aren't a game master any more. Open ⚙️ Settings → Game masters to see the list."
+)
 ADD_PROMPT = "➕ Who should be a game master of **{campaign}**? Pick a member of this server."
 ADD_PLACEHOLDER = "Pick who to add"
 REMOVE_PLACEHOLDER = "Pick who to remove"
@@ -60,14 +71,14 @@ ADDED = (
 )
 REMOVED = "✅ **{name}** is no longer a game master of **{campaign}**."
 REMOVED_SELF = "✅ You are no longer a game master of **{campaign}**."
-NOT_TOLD = " DMbot couldn't send them a private message, so tell them yourself."
+NOT_TOLD = "\nDMbot couldn't message them, so please tell them yourself."
 ACCESS_LATE = (
-    "\nDMbot couldn't update the DM screen's access just now. It does on the next session, or "
-    "when you change who can see the DM screen in ⚙️ Settings."
+    "\nSaved, but DMbot couldn't update who can see the DM screen yet. It will on the next "
+    "session, or when you change who can see the DM screen in ⚙️ Settings."
 )
 TOLD = (
     "👑 **{by}** made you a game master of **{campaign}** in **{server}**. You can now see its "
-    "DM screen and change its settings."
+    "DM screen and change its settings. This doesn't start any recording of you."
 )
 MENU_TIMED_OUT = "This menu timed out. Press ⚙️ Settings, then 👑 Game masters, to try again."
 
@@ -93,10 +104,19 @@ def card_text(campaign: Campaign, guild: discord.Guild | None) -> str:
         plan = " (plan)" if user_id == campaign.owner_user_id else ""
         lines.append(f"• **{md(name_of(guild, user_id))}**{plan}")
     return (
-        f"👑 **Game masters of {md(campaign.name)}**\n"
-        "They can see the DM screen and change this campaign's settings. The one marked "
-        f"(plan) is whose plan the campaign uses. Up to {MAX_DMS}.\n" + "\n".join(lines)
+        f"👑 **Game masters (DMs) of {md(campaign.name)}**\n"
+        + "\n".join(lines)
+        + "\nThey see the DM screen and change settings. (plan) = whose plan this campaign "
+        f"uses. Up to {MAX_DMS}."
     )
+
+
+def plan_holder_words(target: int, presser: int, guild: discord.Guild | None) -> str:
+    """Why the plan holder cannot be removed, in the voice that fits who pressed: only the
+    plan holder has the 🤝 Hand over button."""
+    if target == presser:
+        return PLAN_HOLDER_SELF
+    return PLAN_HOLDER_OTHER.format(name=md(name_of(guild, target)))
 
 
 async def _say(interaction: discord.Interaction, text: str) -> None:
@@ -187,7 +207,7 @@ class ListView(discord.ui.View):
         )
         add.callback = self._add  # type: ignore[method-assign]
         remove = discord.ui.Button[ListView](
-            label="Remove", emoji="➖", style=discord.ButtonStyle.secondary
+            label="Remove a game master", emoji="➖", style=discord.ButtonStyle.secondary
         )
         remove.callback = self._remove  # type: ignore[method-assign]
         self.add_item(add)
@@ -221,6 +241,7 @@ class ListView(discord.ui.View):
             "➖ Who should stop being a game master?",
             view=RemovePicker(campaign, guild),
             ephemeral=True,
+            allowed_mentions=NO_PINGS,
         )
 
 
@@ -305,7 +326,7 @@ class RemovePicker(discord.ui.View):
             for uid in sorted(campaign.dm_user_ids)
         ]
         self.pick: discord.ui.Select[RemovePicker] = discord.ui.Select(
-            placeholder=REMOVE_PLACEHOLDER, options=options[:25]
+            placeholder=REMOVE_PLACEHOLDER, options=options
         )
         self.pick.callback = self._picked  # type: ignore[method-assign]
         self.add_item(self.pick)
@@ -324,10 +345,10 @@ class RemovePicker(discord.ui.View):
         campaign, guild = found
         user_id = int(self.pick.values[0])
         if user_id not in campaign.dm_user_ids:
-            await _say(interaction, "They aren't a game master any more.")
+            await _say(interaction, GONE_FROM_LIST)
             return
         if user_id == campaign.owner_user_id:
-            await _say(interaction, PLAN_HOLDER)
+            await _say(interaction, plan_holder_words(user_id, interaction.user.id, guild))
             return
         if len(campaign.dm_user_ids) <= 1:
             await _say(interaction, LAST_ONE)
@@ -371,9 +392,11 @@ class ConfirmRemove(discord.ui.View):
         try:
             changed = await _store(interaction).remove_dm(guild.id, campaign.id, self.user_id)
         except CampaignError as exc:
-            text = PLAN_HOLDER if str(exc) == OWNER_STAYS else str(exc)
-            if "at least one DM" in text:
-                text = LAST_ONE
+            text = (
+                plan_holder_words(self.user_id, interaction.user.id, guild)
+                if str(exc) == OWNER_STAYS
+                else str(exc)  # (the last game master, or a campaign that is gone)
+            )
             await _say(interaction, text)
             return
         with log_context(guild_id=guild.id, campaign_id=campaign.id):
@@ -394,11 +417,20 @@ class ConfirmRemove(discord.ui.View):
 async def follow_access(
     interaction: discord.Interaction, guild: discord.Guild, campaign: Campaign
 ) -> str:
-    """After the game masters changed: apply the DM screen's permissions (and an existing
-    game-time channel's) again and let a running session catch up, so the change counts at once.
+    """After the game masters changed: a running session takes the new set at once, then the DM
+    screen's permissions (and an existing game-time channel's) are applied again (this creates the
+    screen if the campaign has none yet, as a session start would).
     "" when it worked, else the words to add to the reply; the change itself is saved either
     way."""
     store = _store(interaction)
+    # A running session takes the new set first and on its own: its authority must not wait for
+    # (or fail with) the Discord permissions below.
+    running = getattr(interaction.client, "after_game_masters_change", None)
+    if running is not None:
+        try:
+            running(campaign)
+        except Exception:
+            log.exception("A running session could not take the new game masters")
     try:
         result = await setup_dm_screen(guild, campaign.id, store)
     except DMScreenError as exc:

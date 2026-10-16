@@ -3252,6 +3252,13 @@ class DMBot(commands.AutoShardedBot):
             except Exception:
                 log.exception("Couldn't refresh the transcript channel's card")
 
+    def after_game_masters_change(self, campaign: Campaign) -> None:
+        """A campaign's game masters changed (#1600): a running session of it takes the new set at
+        once, whether or not the DM screen's permissions could be updated."""
+        table = self.tables.get(campaign.guild_id)
+        if table is not None and table.campaign_id == campaign.id:
+            table.dm_user_ids = campaign.dm_user_ids
+
     async def after_screen_change(self, campaign: Campaign, channel: discord.TextChannel) -> None:
         """Keep a live session in step after the DM changes who can see the DM screen."""
         table = self.tables.get(campaign.guild_id)

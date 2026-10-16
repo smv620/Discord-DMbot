@@ -321,6 +321,7 @@ MAX_DMS = 5  # a campaign's game masters at most (#1600)
 TOO_MANY_DMS = (
     f"A campaign can have at most {MAX_DMS} game masters. Remove one before adding another."
 )
+LAST_DM = "A campaign needs at least one game master. Add another first."
 OWNER_STAYS = (
     "The campaign's owner can't be removed. Hand the campaign over first (only the owner can)."
 )
@@ -588,7 +589,7 @@ class CampaignStore:
             if user_id == campaign.owner_user_id:  # whose plan it uses (#437)
                 raise CampaignError(OWNER_STAYS)
             if user_id in campaign.dm_user_ids and len(campaign.dm_user_ids) == 1:
-                raise CampaignError("A campaign needs at least one DM. Add the new DM first.")
+                raise CampaignError(LAST_DM)
             await conn.execute(
                 "DELETE FROM campaign_dms"
                 " WHERE guild_id = %s AND campaign_id = %s AND user_id = %s",

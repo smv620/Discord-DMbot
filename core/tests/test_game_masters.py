@@ -5,6 +5,7 @@ the DM screen's access re-applied, and a running table's DM set following at onc
 
 from __future__ import annotations
 
+import asyncio
 from types import SimpleNamespace
 from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -14,7 +15,7 @@ import discord
 from dmbot.audio.segmenter import Segmenter
 from dmbot.bot import DMBot, Table
 from dmbot.campaigns import CampaignStore
-from dmbot.campaigns.store import MAX_DMS, OWNER_STAYS, TOO_MANY_DMS
+from dmbot.campaigns.store import LAST_DM, MAX_DMS, OWNER_STAYS, TOO_MANY_DMS
 from dmbot.config import Settings
 from dmbot.consent import ConsentStore
 from dmbot.dm_screen import game_masters as gm
@@ -223,7 +224,7 @@ class GameMasters(DatabaseTest):
         it = await self.add()
         self.assertIn(NEWBIE, await self.dms())
         self.assertIn(
-            "couldn't update the DM screen's access",
+            "couldn't update who can see the DM screen yet",
             (it.edit_original_response.await_args.kwargs["content"]),
         )
 
@@ -273,14 +274,20 @@ class GameMasters(DatabaseTest):
         self.assertEqual(await self.dms(), frozenset({OWNER, CO}))
         self.access.assert_not_awaited()
 
-    async def test_the_plan_holder_cannot_be_removed_and_is_told_what_to_do(self) -> None:
-        it = await self.pick_remove(OWNER, by=CO)
-        self.assertEqual(self.said(it), gm.PLAN_HOLDER)
-        self.assertIn("Hand it over first", gm.PLAN_HOLDER)
+    async def test_the_plan_holder_cannot_be_removed_and_the_words_fit_who_pressed(self) -> None:
+        other = await self.pick_remove(
+            OWNER, by=CO
+        )  # a co-DM: told who holds it and what they can do
+        self.assertIn(
+            "**Sam** holds this campaign's plan, so they can't be removed.", self.said(other)
+        )
+        self.assertIn("🤝 Hand over", self.said(other))
+        mine = await self.pick_remove(OWNER, by=OWNER)  # the plan holder: they have the button
+        self.assertEqual(self.said(mine), gm.PLAN_HOLDER_SELF)
         # and the store still refuses it if a stale menu gets that far
         done = await self.confirm(OWNER, by=CO)
-        self.assertEqual(self.said(done), gm.PLAN_HOLDER)
-        self.assertEqual(OWNER_STAYS.split(".")[0] != gm.PLAN_HOLDER, True)
+        self.assertIn("holds this campaign's plan", self.said(done))
+        self.assertNotEqual(OWNER_STAYS, self.said(done))  # DMbot's own words, not the store's
         self.assertIn(OWNER, await self.dms())
 
     async def test_the_last_game_master_cannot_be_removed(self) -> None:
@@ -290,9 +297,9 @@ class GameMasters(DatabaseTest):
                 "UPDATE campaigns SET owner_user_id = NULL WHERE id = %s", (self.campaign.id,)
             )
         it = await self.pick_remove(OWNER)
-        self.assertEqual(self.said(it), gm.LAST_ONE)
+        self.assertEqual(self.said(it), LAST_DM)
         done = await self.confirm(OWNER)
-        self.assertEqual(self.said(done), gm.LAST_ONE)
+        self.assertEqual(self.said(done), LAST_DM)
         self.assertEqual(await self.dms(), frozenset({OWNER}))
 
     async def test_a_game_master_may_remove_themselves(self) -> None:
@@ -332,6 +339,37 @@ class GameMasters(DatabaseTest):
         await self.confirm(CO)
         self.assertEqual(table.dm_user_ids, frozenset({OWNER, NEWBIE}))
         self.assertFalse(table.is_dm(CO))
+
+    async def test_a_running_table_takes_the_set_even_if_the_screen_cannot_be_updated(self) -> None:
+        self.access.side_effect = DMScreenError("no permission")
+        table = Table(
+            guild_id=GUILD,
+            voice_channel_id=2,
+            screen_channel_id=3,
+            dm_user_id=OWNER,
+            segmenter=Segmenter(GUILD),
+            campaign_id=self.campaign.id,
+            campaign_name="Frostmaiden",
+            started_at=1,
+            dm_user_ids=frozenset({OWNER, CO}),
+        )
+        self.bot.tables[GUILD] = table
+        await self.add()
+        self.assertEqual(table.dm_user_ids, frozenset({OWNER, CO, NEWBIE}))  # authority is not late
+        await self.confirm(CO)
+        self.assertEqual(table.dm_user_ids, frozenset({OWNER, NEWBIE}))
+        self.assertFalse(table.is_dm(CO))
+
+    async def test_two_adds_at_once_cannot_pass_the_cap(self) -> None:
+        for extra in (100, 101):
+            await self.campaigns.add_dm(GUILD, self.campaign.id, extra)  # four now
+        results = await asyncio.gather(
+            self.campaigns.add_dm(GUILD, self.campaign.id, 200),
+            self.campaigns.add_dm(GUILD, self.campaign.id, 201),
+            return_exceptions=True,
+        )
+        self.assertEqual(sum(isinstance(r, Exception) for r in results), 1)
+        self.assertEqual(len(await self.dms()), MAX_DMS)
 
     async def test_an_existing_game_time_channel_is_updated_too(self) -> None:
         await self.campaigns.set_gametime_channel(GUILD, self.campaign.id, 600)
