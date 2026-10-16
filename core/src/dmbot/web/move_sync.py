@@ -23,7 +23,7 @@ async def sync_moves(db: Database, payments: PaymentProvider) -> int:
     stuck ones can't starve a new one."""
     async with db.unscoped() as conn:
         cur = await conn.execute(
-            "SELECT old_user_id, new_user_id, customer_id, subscription_id"
+            "SELECT old_user_id, new_user_id, customer_id, subscription_id, addon_subscription_id"
             " FROM dmbot_moves_to_sync()"
         )
         waiting = await cur.fetchall()
@@ -36,6 +36,14 @@ async def sync_moves(db: Database, payments: PaymentProvider) -> int:
                 subscription_id=row["subscription_id"],
                 user_id=int(row["new_user_id"]),
             )
+            if row["addon_subscription_id"]:
+                # The recap audio add-on (#1399) is a second subscription of the same customer:
+                # its events must name the new account too, or they would find no plan to use.
+                await payments.retarget(
+                    customer_id=None,
+                    subscription_id=row["addon_subscription_id"],
+                    user_id=int(row["new_user_id"]),
+                )
         except PaymentError as exc:
             await _failed(db, old)
             log.warning("Couldn't update the payment records of moved account %s (%s)", old, exc)

@@ -37,6 +37,7 @@ from dmbot.web import (
     feedback,
     offers,
     sessions,
+    strays,
     support,
     tokens,
 )
@@ -949,12 +950,14 @@ def create_app(
             sub = await entitlements_writer.recap_audio_subscription(db, user_id)
             if sub is None or payments is None:
                 return
-            await payments.cancel(subscription_id=sub)
+            try:
+                await payments.cancel(subscription_id=sub)
+            except Exception:
+                await strays.note(db, sub)  # the hourly sweep tries again (#1399)
+                raise
             await entitlements_writer.forget_recap_audio(db, user_id, now=clock())
         except Exception as exc:  # the company, the database: nothing here may fail the webhook
-            log.error(
-                "Couldn't cancel a recap audio add-on: %s: needs a person", type(exc).__name__
-            )
+            log.error("Couldn't cancel a recap audio add-on: %s", type(exc).__name__)
 
     async def cancel_stray_add_on(subscription_id: str | None) -> None:
         """An add-on subscription that must not exist (a second one, or one bought with no
@@ -964,8 +967,9 @@ def create_app(
         try:
             await payments.cancel(subscription_id=subscription_id)
         except Exception as exc:
+            await strays.note(db, subscription_id)  # the hourly sweep tries again (#1399)
             log.error(
-                "Couldn't cancel a stray recap audio subscription: %s: needs a person",
+                "Couldn't cancel a stray recap audio subscription: %s: kept for a retry",
                 type(exc).__name__,
             )
 
