@@ -725,8 +725,10 @@ never does.
   copy, never the code. Readers (`/dmbot rule`, rules cards and alerts, the sidebar, table questions) read the
   campaign's own homebrew first, then its followed packs in order (a name is taken once, by the first that has
   it), cited "<pack> homebrew, vN" and tagged `[Homebrew]`; an entry the publisher keeps hidden stays hidden
-  at the follower's table. Still to build: the Settings screens (Share, Follow, order) and taking updates at
-  a session start with Undo.
+  at the follower's table. Part B built (⚙️ Settings → 📚 Shared rules → 📦 Homebrew packs): Share (paid plans; names the
+  entries a book keeps at home), Follow (pick from this server or a code), order with Earlier/Later, Stop
+  following with Undo; a running session reads the new names at once. Still to build: taking updates at a
+  session start with Follow / See changes / Pick changes / Undo.
 - **Relationship definitions travel with a set (#1456; Supervisor decision, 2026-10-16).** At Share the DM
   sees a tick list of the campaign's own relationships (each with its label and what it means; all ticked to
   start) and only the ticked ones go into the set's content: words only (the name, how it reads from the
