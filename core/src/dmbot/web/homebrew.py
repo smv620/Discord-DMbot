@@ -1,18 +1,18 @@
 """A campaign's homebrew on the website (#1525): read-only, for anyone in the server, with the
-download of the same file Discord gives, for the entries the DM let the players know.
+download of the same file Discord gives.
 
-Two database doors (`dmbot_web_homebrew`, `dmbot_web_homebrew_campaigns`, schema.py) hand over ONLY
-the entries marked "players may know"; a hidden entry never leaves the database, not even for the
-campaign's DM, who reads those on the DM screen (CLAUDE.md, DM authority). The bot does not gate
-homebrew by plan, so neither does the site. The DM adds and changes entries in Discord.
+Two database doors (`dmbot_web_homebrew`, `dmbot_web_homebrew_campaigns`, schema.py) hand over
+every entry with its on or off state: nothing is hidden from players any more (owner, 2026-10-16,
+"Homebrew (part 2)"). The bot does not gate homebrew by plan, so neither does the site. The DM
+adds and changes entries in Discord.
 
 The page groups entries by kind, in the bot's order of kinds (`KINDS`), each by name as the bot
 lists them. The download is `homebrew_file.write` over those entries and `homebrew_file.filename`,
 so it is byte-equal to the file the bot would write for them: its own pick of the entries, as the
-bot's Download button sends every entry, hidden ones included, to the DM only.
+bot's Download button sends every entry, the ones that are off included, to the DM only.
 
-The page also shows the homebrew packs the campaign follows (#1527, #1586), only the entries each
-pack marks known to players, as a player's `/dmbot rule` answers from them. The download stays the
+The page also shows the homebrew packs the campaign follows (#1527, #1586), every entry of each
+pack, as a player's `/dmbot rule` answers from them. The download stays the
 campaign's own shown entries (what the bot's file holds): a followed pack's are not in it.
 
 Never shown: who wrote an entry, its id, or the book's name (it is never kept). A campaign is
@@ -82,7 +82,7 @@ def _kind_order(entry: dict[str, Any]) -> int:
 
 
 def _pack(raw: dict[str, Any]) -> dict[str, Any]:
-    """A followed pack as the page shows it: name, version and its known entries by kind. Never
+    """A followed pack as the page shows it: name, version and its entries by kind. Never
     the publisher or the share code (the door does not return them)."""
     # (a pack made before rules left homebrew, #1628, may still hold a rule: left out)
     kept = [e for e in raw["entries"] if e["kind"] in KINDS]
@@ -137,7 +137,6 @@ async def render(db: Database, session: Session, ref: str) -> tuple[str, str]:
             name=e["name"],
             text=e["text"],
             summary=e["summary"],
-            players_may_know=True,
             created_by=0,
             created_at=0,
             updated_at=int(e["updatedAt"]),

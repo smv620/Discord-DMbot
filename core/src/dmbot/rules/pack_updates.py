@@ -203,7 +203,7 @@ class PackUpdateStore(HomebrewPackStore):
                         continue
                     saved = await insert_entry(
                         conn, guild_id, campaign_id, user_id, entry["kind"], entry["name"],
-                        entry["text"], entry["summary"], entry["known"], now, now,
+                        entry["text"], entry["summary"], now, now,
                     )  # fmt: skip
                     added.append(saved.id)
             except HomebrewError as exc:

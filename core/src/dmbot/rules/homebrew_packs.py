@@ -415,7 +415,6 @@ def from_follow(follow: Follow, campaign_id: str, place: int) -> list[Homebrew]:
             name=e["name"],
             text=e["text"],
             summary=e["summary"],
-            players_may_know=e["known"],
             created_by=0,
             created_at=follow.followed_at,
             updated_at=follow.followed_at,

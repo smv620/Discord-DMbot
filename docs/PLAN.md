@@ -387,11 +387,10 @@ never cut, with a **Read the rest** button. No match: "couldn't find that in the
 (SRD)", up to five close names as buttons, nothing picked for the DM. Two decisions:
 **anyone in the server may look a rule up with `/dmbot rule`** (Supervisor, 2026-10-16, #1562; it
 was the campaign's DMs only from 2026-10-09). The answer is private, never in a channel or a
-transcript. A player gets the same card as the DM but with house rules and only the homebrew the
-DM let players know (a hidden entry, from the campaign or a followed pack, is never named, not
-even as a close name, and a from-book entry follows the same flag): no DM-screen content, no
+transcript. A player gets the same card as the DM but with house rules and the campaign's homebrew
+that is on (an entry turned off is not found, "Homebrew (part 2)"): no DM-screen content, no
 secret names, no rulings, no AI and no cost; the card ends with "Your DM decides what applies at
-your table."; one lookup per person every 3 seconds ("Try again in a few seconds."); a player's card has no "you decide" line of the DM's and a player searching a hidden name gets the same "couldn't find" as for a name that does not exist;
+your table."; one lookup per person every 3 seconds ("Try again in a few seconds."); a player's card has no "you decide" line of the DM's;
 the 📖 Look up a rule button stays on the DM's Settings card. A person who runs a campaign looks
 in the campaigns they run, as before; anyone else in the campaigns of the server. And
 **precedence is shown, not decided**: a house rule of that campaign (and no other's) that
@@ -643,37 +642,37 @@ characters) and any past a campaign's 200 house rules stay as homebrew of the ki
 suggestions of a rule were dropped, and a linked house-rules file is not rewritten. Never a published book's text: the form says "Your own creations only. For a published
 book, use Share a rulebook." An entry has a name (1 to 80 characters, unique in the campaign, any case),
 its words (1 to 2,000, plain text) and an optional one-line summary (160, shown in alerts). **An entry is
-DM-screen content until the DM presses 👀 ("players may know")**: a homebrew monster is a spoiler. At most
+on or off** (part 2: the 🙈/👀 "players may know" switch is gone, nothing is hidden from players; see the
+on/off line below). At most
 200 per campaign; table `homebrew_entries` with the campaign scope and forced row-level security; in backups
 (a `homebrew` section, validated field by field) and deleted with the campaign; never read across campaigns
 or servers; only the campaign's DMs change anything (the store checks in the same transaction).
-- **Turn an entry on or off** (owner, 2026-10-16, #1629, migration 0112): each entry has **Turn off / Turn on** (no confirmation) and shows "(off)" in the list. Off means kept but used nowhere at the table: no lookups or alerts, no sidebar answers, no players' card or table questions, no homebrew spotter (one `usable` read filter). The file writes `## Name (kind, off)` and reads it back; a published pack leaves off entries out; a follower's copy can be turned off on its own and a pack update never turns it back on. The web door shows `enabled`.
+- **Turn an entry on or off, instead of hiding it** (owner, 2026-10-16, #1629, migration 0112, which also drops
+  `players_may_know`: every entry is on, a hidden one included): each entry has **Turn off / Turn on** (no confirmation) and shows "(off)" in the list. Off means kept but used nowhere at the table: no lookups or alerts, no sidebar answers, no players' card or table questions, no homebrew spotter (one `usable` read filter). The file writes an `Off: yes` line and reads it back, and the backup carries it (an old backup loads with every entry on); a published pack leaves off entries out; a follower's copy can be turned off on its own and a pack update never turns it back on. The web doors show every entry with `enabled`.
 - **Where the DM manages it:** ⚙️ Settings → 📚 **Homebrew** (or `/dmbot homebrew`), DM only, checked on every
-  press: the list (🙈 only the DM, 👀 players may know), ➕ Add (pick the kind, then a form), and on an entry
-  Edit, 👀/🙈, its kind, 🗑 Remove. **Undo** a removal is kept in memory (the last five per campaign, gone at a
+  press: the list ("(off)" marks an entry that is off), ➕ Add (pick the kind, then a form), and on an entry
+  Edit, Turn off / Turn on, its kind, 🗑 Remove. **Undo** a removal is kept in memory (the last five per campaign, gone at a
   restart), nothing stored.
 - **Where it is read:** the precedence is house rules → homebrew → target → fallback, and **a homebrew name
-  shadows the book's, hidden or not** (the book is never used for a name the campaign has overridden).
-  - `/dmbot rule` (the DM's private answer) shows the campaign's entry with the same name, tagged
-    `[Homebrew]` with the source "<campaign>'s homebrew: <name>", even when players may not know it.
-  - The DM sidebar and table questions use **only entries marked 👀 players may know**: a sidebar reply
-    reaches the raw transcript, which the whole server may read (#933, #1378). Up to 3 entries, each cut to 600
+  shadows the book's** (the book is never used for a name the campaign has overridden).
+  - `/dmbot rule` shows the campaign's entry with the same name, tagged `[Homebrew]` with the source
+    "<campaign>'s homebrew: <name>", to a player and to the DM alike.
+  - The DM sidebar and table questions use every entry that is on. Up to 3 entries, each cut to 600
     characters, go to the AI after the house rules and before the free rules, with the tag and the source.
-    A question about a hidden entry is not answered by the AI at all: the table gets "That's one for your DM."
-    (and the DM's own table question is answered to them privately), the DM's sidebar gets "That's in your
-    homebrew. Use /dmbot rule <name>."
-  - The entry form says so: "Hidden entries are for you only; DMbot's sidebar and table answers don't use them."
+  - An entry that is off is read by none of these (one `usable_only` filter in the store's read, used by the
+    reader). An own entry that is off stops shadowing a followed pack's entry of the same name: the pack's
+    answers then (owner, 2026-10-16).
 - **Part 1b (#1524):**
   - **Live rules cards** (`rules/homebrew_spotter.py`): when the table names one of the campaign's homebrew
     entries (whole name, longest first, a plural counts; an everyday word like Light only with its lead-in,
-    and a homebrew creature with an everyday name never), a short card goes on the DM screen only, **hidden
-    or not**, tagged `[Homebrew]` with the source "<campaign>'s homebrew: <name>", after any house rule that
+    and a homebrew creature with an everyday name never), a short card goes on the DM screen only, tagged `[Homebrew]` with the source "<campaign>'s homebrew: <name>", after any house rule that
     names it and before the book; a homebrew name shadows the book's card; once per entry per session and
     within the cards' one-a-minute limit; the buttons are the book cards' (**Read it all** shows the entry).
     The names are read when a session starts and again after any change.
   - **A file** (`rules/homebrew_file.py`): ⚙️ Settings → 📚 Homebrew has 📤 **Download file** and 📥 **Load
-    file** (DM only). One entry per block, `## Name (kind)`, optional `Summary:` and `Players may know: yes`
-    lines, a blank line, then the words; read and written both ways without loss; a block that is not an
+    file** (DM only). One entry per block, `## Name (kind)`, optional `Summary:` and `Off: yes` (an
+    entry that is off; an older file's `Players may know:` line is accepted and ignored) lines, a blank line,
+    then the words; read and written both ways without loss; a block that is not an
     entry is reported, never guessed. Loading shows what it would do (new, changed, the same, and what
     could not be used), then asks **"Is any of this from a published book?"**: **No** loads it as the DM's
     own; **Yes** shows the right-to-use warning ("DMbot doesn't check this. It is kept only in this
@@ -778,8 +777,7 @@ never does.
   campaign publishes one pack and follows up to five, in the DM's order; its backup carries each followed
   copy, never the code. Readers (`/dmbot rule`, rules cards and alerts, the sidebar, table questions) read the
   campaign's own homebrew first, then its followed packs in order (a name is taken once, by the first that has
-  it), cited "<pack> homebrew, vN" and tagged `[Homebrew]`; an entry the publisher keeps hidden stays hidden
-  at the follower's table. Part B built (⚙️ Settings → 📚 Shared rules → 📦 Homebrew packs): Share (paid plans; names the
+  it), cited "<pack> homebrew, vN" and tagged `[Homebrew]`; a pack's entries are all on. Part B built (⚙️ Settings → 📚 Shared rules → 📦 Homebrew packs): Share (paid plans; names the
   entries a book keeps at home), Follow (pick from this server or a code), order with Earlier/Later, Stop
   following with Undo; a running session reads the new names at once. Part C built: at a session's start DMbot takes a
   followed pack's newer version (Follow, credited to DMbot) and posts one DM-screen note with See changes /
@@ -2562,7 +2560,7 @@ voice). `bot.sidebar_answers.answer(campaign, question, asker_id=..., scene=...)
   reach the raw transcript, #933), the caller's last few minutes of scene (cut to 1,500
   characters, fenced as the players' words, which are information and never instructions) and,
   only for questions about DMbot or Discord, the reviewed digest `sidebar/about_dmbot.md`.
-  Only matching entries are sent, each cut to 1,200 characters. A campaign's homebrew entries that players may know are sent (#1520); content a DM shared counts only with its right-to-use confirmation and none is
+  Only matching entries are sent, each cut to 1,200 characters. A campaign's homebrew entries that are on are sent (#1520); content a DM shared counts only with its right-to-use confirmation and none is
   stored as text yet, so none is sent.
 - **Sources are DMbot's, not the model's.** The shown source is taken from what the model was
   given: an SRD answer cites the entry's own page and carries `[Legacy 2014]` when it is a 2014

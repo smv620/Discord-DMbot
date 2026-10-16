@@ -249,9 +249,8 @@ class Combined(unittest.IsolatedAsyncioTestCase):
 
     def test_the_single_notes_are_unchanged(self) -> None:
         self.assertEqual(
-            pack_update.note_text("Frost", 5, 1, visible=["Torch"]),
-            "📦 **Frost** homebrew updated to v5: 1 entry changed. DMbot took the new version.\n"
-            "Players may now know: Torch.",
+            pack_update.note_text("Frost", 5, 1),
+            "📦 **Frost** homebrew updated to v5: 1 entry changed. DMbot took the new version.",
         )
         self.assertIn("house rules updated to v4: 1 rule.", set_update.note_text("Red", 4, 1))
 

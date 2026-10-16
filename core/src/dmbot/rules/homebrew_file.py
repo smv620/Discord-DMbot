@@ -2,15 +2,15 @@
 Pure: no Discord, no database.
 
 One entry per block. A block starts with `## Name (kind)` on its own line; then, optionally and
-in this order, `Summary: …` and `Players may know: yes` (or `no`); then a blank line; then the
-words, which may run over many lines:
+in this order, `Summary: …` and `Off: yes` (an entry the DM turned off; #1629); then a blank
+line; then the words, which may run over many lines:
 
     Homebrew: Frostmaiden
     # Lines starting with one # before the first entry are notes and are ignored.
 
     ## Hollow King (monster)
     Summary: A crowned skeleton.
-    Players may know: yes
+    Off: yes
 
     A skeleton in a rusted crown. It cannot be touched while it wears the crown.
 
@@ -50,17 +50,16 @@ MAX_PROBLEMS = 20
 HELP = (
     "# How this file works\n"
     "# Each entry starts with: ## Name (kind)\n"
-    "# (an entry that is turned off starts with: ## Name (kind, off))\n"
     f"# Kinds: {', '.join(KINDS)}\n"
     "# Under the heading you can add:  Summary: one short line\n"
-    "#                                 Players may know: yes   (or no)\n"
+    "#                                 Off: yes   (DMbot ignores the entry until you turn it on)\n"
     "# Then a blank line, then the words.\n"
     "# Lines starting with a single # before the first entry are notes and are ignored."
 )
 EXAMPLE = (
     "## Hollow King (monster)\n"
     "Summary: A crowned skeleton.\n"
-    "Players may know: no\n"
+    "Off: no\n"
     "\n"
     "Write what it does here, in your own words."
 )
@@ -72,13 +71,13 @@ TOO_BIG = (
 NOT_AN_ENTRY = "this isn't under an entry. Start one with ## Name (kind)"
 NO_KIND = f"add a kind in brackets after the name, like (monster). Kinds: {', '.join(KINDS)}"
 BAD_KIND = f"that kind isn't one DMbot knows. Use: {', '.join(KINDS)}"
-BAD_STATE = "after the kind you can add off or on, like (monster, off). Or leave it out"
 NO_NAME = "the heading has no name. Write ## Name (kind)"
 NAME_TOO_LONG = f"the name is over {NAME_MAX} characters"
 NO_TEXT = "add the words after a blank line under the heading"
 TEXT_TOO_LONG = f"the words are over {TEXT_MAX} characters"
 SUMMARY_TOO_LONG = f"the summary is over {SUMMARY_MAX} characters"
-BAD_PLAYERS = "write Players may know: yes  or  Players may know: no"
+BAD_OFF = "write Off: yes  or  Off: no"
+OLD_PLAYERS = "write Players may know: yes  or  Players may know: no (or leave the line out)"
 TWICE = "another entry already has this name, so this one was skipped"
 TOO_MANY = f"more than {HOMEBREW_MAX} entries; the rest are left out"
 LINE_TOO_LONG = f"a line is over {MAX_LINE} characters. Split it into shorter lines"
@@ -117,11 +116,11 @@ def write(campaign_name: str, entries: Sequence[Homebrew]) -> str:
     if not entries:  # a template to start from
         out += ["", *(f"# {line}" if line else "#" for line in EXAMPLE.split("\n"))]
     for entry in sorted(entries, key=lambda e: name_key(e.name)):
-        state = "" if entry.enabled else ", off"  # (on is the default and is not written)
-        out += ["", f"## {entry.name} ({entry.kind}{state})"]
+        out += ["", f"## {entry.name} ({entry.kind})"]
         if entry.summary:
             out.append(f"Summary: {entry.summary}")
-        out.append(f"Players may know: {'yes' if entry.players_may_know else 'no'}")
+        if not entry.enabled:  # (on is the default and is not written)
+            out.append("Off: yes")
         out.append("")
         out += [_escape(line) for line in entry.text.split("\n")]
     return "\n".join(out) + "\n"
@@ -190,9 +189,7 @@ def _entry(
         report(n, heading, why)
 
     name, bracket = _heading(heading)
-    # `## Name (kind)` or, for an entry the DM turned off, `## Name (kind, off)` (#1629).
-    kind_, _, state = (bracket or "").partition(",")
-    kind, state = kind_.strip().lower(), state.strip().lower()
+    kind = (bracket or "").strip().lower()
     if not name:
         bad(NO_NAME)
         return None
@@ -205,24 +202,27 @@ def _entry(
     if kind not in KINDS:
         bad(BAD_KIND)
         return None
-    if state not in ("", "on", "off"):
-        bad(BAD_STATE)
-        return None
     # The lines up to the first blank one are the optional Summary and Players lines.
     summary: str | None = None
-    players: bool | None = None
+    switch: bool | None = None  # (None: the file doesn't say)
     i = 0
     while i < len(lines) and lines[i].strip():
         label, colon, value = lines[i].partition(":")
         key = label.strip().lower()
         if colon and key == "summary":
             summary = value.strip()
-        elif colon and key == "players may know":
+        elif colon and key == "off":
             answer = value.strip().lower()
             if answer not in ("yes", "no"):
-                bad(BAD_PLAYERS)
+                bad(BAD_OFF)
                 return None
-            players = answer == "yes"
+            switch = answer == "no"  # (the entry is on)
+        elif colon and key == "players may know":
+            # An older file's line: nothing is hidden from players any more (part 2). Accepted
+            # and ignored, so those files still load.
+            if value.strip().lower() not in ("yes", "no"):
+                bad(OLD_PLAYERS)
+                return None
         else:
             break  # words with no blank line before them: they are the words
         i += 1
@@ -234,9 +234,7 @@ def _entry(
     except HomebrewError as exc:
         bad(_why(str(exc)))
         return None
-    return FileEntry(
-        kind, clean_name_, text, shortened, players, None if not state else state == "on"
-    )
+    return FileEntry(kind, clean_name_, text, shortened, switch)
 
 
 def _heading(line: str) -> tuple[str, str | None]:

@@ -33,8 +33,9 @@ class BadPack(ValueError):
 
 def content_of(entries: Sequence[Homebrew]) -> tuple[dict[str, Any], list[str]]:
     """The pack's content for these entries, oldest first, and the names of the entries left out
-    because they came from a confirmed book. `known` is the entry's players-may-know flag as the
-    DM set it: it applies at a follower's table as published (hidden stays hidden)."""
+    because they came from a confirmed book. `known` is always true now: nothing is hidden from
+    players any more ("Homebrew (part 2)"). The key stays so older readers (the website's pack
+    door) and packs published before still fit."""
     # Only the campaign's own entries: one read from a followed pack (`source`) is not its to share.
     # An entry the DM turned off (#1629) is not offered either: DMbot uses it nowhere.
     own = sorted(
@@ -50,7 +51,7 @@ def content_of(entries: Sequence[Homebrew]) -> tuple[dict[str, Any], list[str]]:
                     "name": e.name,
                     "summary": e.summary,
                     "text": e.text,
-                    "known": e.players_may_know,
+                    "known": True,
                 }
                 for e in kept
             ]
@@ -74,7 +75,7 @@ def valid_content(content: Any) -> dict[str, Any]:
         if entry.get("kind") == RULE_KIND:
             continue  # a pack made before rules left homebrew (#1628): the rule is left out
         kind, name, text = entry.get("kind"), entry.get("name"), entry.get("text")
-        summary, known = entry.get("summary"), entry.get("known")
+        summary = entry.get("summary")
         if (
             kind not in KINDS
             or not isinstance(name, str)
@@ -82,12 +83,11 @@ def valid_content(content: Any) -> dict[str, Any]:
             or not isinstance(text, str)
             or not 0 < len(text) <= TEXT_MAX
             or not (summary is None or (isinstance(summary, str) and len(summary) <= SUMMARY_MAX))
-            or not isinstance(known, bool)
             or name_key(name) in seen
         ):
             raise BadPack("entry")
         seen.add(name_key(name))
-        out.append({"kind": kind, "name": name, "summary": summary, "text": text, "known": known})
+        out.append({"kind": kind, "name": name, "summary": summary, "text": text, "known": True})
     return {"entries": out}
 
 

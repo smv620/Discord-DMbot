@@ -81,16 +81,13 @@ NOT_YOUR_CAMPAIGN = (
 MINE_NOTE = "✏️ Saved. This is now your own, and it replaces the pack's version in this campaign."
 ENTRY_GONE = "That entry is gone, maybe removed by another DM. Here is the list now."
 INTRO = (
-    "Your own spells, monsters, items and other game content. Players can't see an entry until "
-    "you press 👀. Hidden entries are for you only; DMbot's sidebar and table answers don't use "
-    "them. DMbot only keeps what you write. For a published book, use **Share a rulebook**."
+    "Your own spells, monsters, items and other game content. DMbot uses every entry that is on "
+    "and ignores the ones you turn off. DMbot only keeps what you write. For a published book, "
+    "use **Share a rulebook**."
 )
-SHORT_INTRO = "Your own creations only. Hidden entries are for you only."
+SHORT_INTRO = "Your own creations only. Turn an entry off and DMbot ignores it."
 NONE_YET = "No homebrew yet. Press **➕ Add** to write the first one, or **📥 Load file**."
-KIND_ASK = (
-    "What are you adding? Pick one and a form opens.\n"
-    "Hidden entries are for you only; DMbot's sidebar and table answers don't use them."
-)
+KIND_ASK = "What are you adding? Pick one and a form opens."
 CHANGED_MIND = "Press ↩️ **Undo** to bring it back."
 
 FILE_MAX_BYTES = 4 * homebrew_file.MAX_FILE_CHARS  # UTF-8 is up to 4 bytes a character
@@ -99,8 +96,8 @@ LOAD_LABEL = "📥 Load file"
 DOWNLOAD_NOTE = (
     "**Your homebrew file.** Only you can see this message. Open it in any text editor, change "
     "it, then press **Load file** to bring it back. Nothing changes until you check it and say "
-    "yes. It is plain text and holds your hidden entries too, so anyone you send it to can read "
-    "them."
+    "yes. It is plain text and holds every entry, the ones that are off too, so anyone you send "
+    "it to can read them."
 )
 COULDNT_FILE = "Couldn't make the file just now. Try again in a moment."
 FROM_BOOK_ASK = "**Is any of this from a published book?** (Your answer decides how it is kept.)"
@@ -142,11 +139,6 @@ def _store(interaction: discord.Interaction) -> HomebrewStore | None:
     return _bot(interaction).homebrew
 
 
-def mark(entry: Homebrew) -> str:
-    """👀 players may know it, 🙈 only the DM."""
-    return "👀" if entry.players_may_know else "🙈"
-
-
 def list_text(campaign: Campaign, entries: list[Homebrew], page: int, note: str = "") -> str:
     lines = [_fit(note, 200)] if note else []
     lines.append(f"📚 **Homebrew: {_fit(_md(campaign.name), 100)}**")
@@ -157,23 +149,20 @@ def list_text(campaign: Campaign, entries: list[Homebrew], page: int, note: str 
     for entry in shown:
         off = "" if entry.enabled else " (off)"
         lines.append(
-            _fit(f"{mark(entry)} {KIND_LABELS[entry.kind]} **{_md(entry.name)}**{off}: ", 400)
+            _fit(f"{KIND_LABELS[entry.kind]} **{_md(entry.name)}**{off}: ", 400)
             + _fit(_md(entry.shown()), 120)
         )
     pages = max(1, -(-len(entries) // PAGE_ENTRIES))
     if pages > 1:
-        lines.append(f"_Page {page + 1} of {pages}. 🙈 only you, 👀 players may know._")
-    elif entries:
-        lines.append("_🙈 only you, 👀 players may know._")
+        lines.append(f"_Page {page + 1} of {pages}._")
     if any(not e.enabled for e in entries):
         lines.append("_(off) means DMbot ignores it until you turn it on._")
     return _fit("\n".join(lines), 1900)
 
 
 def entry_text(entry: Homebrew, note: str = "") -> str:
-    who = "players may know it 👀" if entry.players_may_know else "only you can see it 🙈"
     off = "" if entry.enabled else " It is turned off, so DMbot ignores it."
-    head = f"📚 **{_md(entry.name)}** ({entry.kind.capitalize()}, {who}).{off}"
+    head = f"📚 **{_md(entry.name)}** ({entry.kind.capitalize()}).{off}"
     body = _fit(_md(entry.text), 1500)
     summary = f"\n_Shown in alerts as:_ {_md(entry.shown())}" if entry.summary else ""
     return _fit((f"{note}\n" if note else "") + f"{head}\n{body}{summary}", 1900)
@@ -279,7 +268,8 @@ class ListMenu(_Menu):
                         label=logic.shorten(e.name, logic.PHONE_LABEL_MAX),
                         value=str(e.id),
                         description=logic.shorten(
-                            f"{mark(e)} {e.kind}: {e.name}. {e.shown()}", logic.DESCRIPTION_MAX
+                            f"{e.kind}: {e.name}{'' if e.enabled else ' (off)'}. {e.shown()}",
+                            logic.DESCRIPTION_MAX,
                         ),
                     )
                     for e in shown
@@ -406,7 +396,7 @@ async def _packs_followed(
 
 
 class EntryMenu(_Menu):
-    """One entry: Edit, who may know it, its kind, Remove, back, and (when the campaign follows a
+    """One entry: Edit, Turn off or on, its kind, Remove, back, and (when the campaign follows a
     homebrew pack) 💡 Suggest to the pack's publisher."""
 
     def __init__(
@@ -420,16 +410,8 @@ class EntryMenu(_Menu):
         self.campaign, self.entry, self.page = campaign, entry, page
         self.packs = packs or []
         self.add_item(_Button(self._edit, label="✏️ Edit"))
-        self.add_item(
-            _Button(
-                self._toggle,
-                label="🙈 Only me" if entry.players_may_know else "👀 Players can know",
-            )
-        )
+        self.add_item(_Button(self._enabled, label="Turn on" if not entry.enabled else "Turn off"))
         self.add_item(_Button(self._remove, label="🗑 Remove", style=discord.ButtonStyle.danger))
-        self.add_item(  # row 2: row 1 holds the kind picker, which takes a whole row
-            _Button(self._enabled, label="Turn on" if not entry.enabled else "Turn off", row=2)
-        )
         if self.packs:
             self.add_item(_Button(self._suggest, label=SUGGEST_LABEL))
         self.add_item(_Button(self._back, label="↩ To the list"))
@@ -466,7 +448,6 @@ class EntryMenu(_Menu):
             "name": e.name,
             "text": e.text,
             "summary": e.summary,
-            "players_may_know": e.players_may_know,
             **changes,
         }
         try:
@@ -488,10 +469,6 @@ class EntryMenu(_Menu):
             entry_text(saved, "✅ Saved."),
             EntryMenu(self.campaign, saved, self.page, packs),
         )
-
-    async def _toggle(self, interaction: discord.Interaction) -> None:
-        if await self._guard(interaction):
-            await self._change(interaction, players_may_know=not self.entry.players_may_know)
 
     async def _kind(self, interaction: discord.Interaction) -> None:
         if await self._guard(interaction):
@@ -754,8 +731,8 @@ class AddForm(_EntryForm, title="Add homebrew"):
             summary=self.summary.value,
         )
         return (
-            f"➕ Added **{_md(saved.name)}**. Only you see it. Open it and press 👀 when "
-            "players may know."
+            f"➕ Added **{_md(saved.name)}**. DMbot uses it now. Open it to turn it off if you "
+            "don't want that."
         )
 
 
@@ -779,7 +756,6 @@ class EditForm(_EntryForm, title="Edit homebrew"):
             name=self.name.value,
             text=self.text.value,
             summary=self.summary.value,
-            players_may_know=e.players_may_know,
             unchanged_since=e.version,
         )
         self.saved = saved
@@ -810,13 +786,13 @@ def _preview(have: list[Homebrew], entries: tuple[FileEntry, ...]) -> tuple[int,
         if found is None:
             new += 1
             continue
-        known = found.players_may_know if e.players_may_know is None else e.players_may_know
-        alike = (found.kind, found.name, found.text, found.summary, found.players_may_know) == (
+        on = found.enabled if e.enabled is None else e.enabled  # (not said: as it is)
+        alike = (found.kind, found.name, found.text, found.summary, found.enabled) == (
             e.kind,
             e.name,
             e.text,
             e.summary,
-            known,
+            on,
         )
         same, changed = (same + 1, changed) if alike else (same, changed + 1)
     return new, changed, same

@@ -20,7 +20,7 @@ from tests.test_shared_rules_ui import campaign, interaction
 def entry(name: str, *, book: bool = False) -> Homebrew:
     return Homebrew(
         id=1, campaign_id="c1", kind="monster", name=name, text="t", summary=None,
-        players_may_know=False, created_by=7, created_at=1, updated_at=1, from_book=book,
+        created_by=7, created_at=1, updated_at=1, from_book=book,
     )  # fmt: skip
 
 
@@ -127,7 +127,7 @@ class Following(unittest.IsolatedAsyncioTestCase):
         await shared_packs.look_up(it, campaign(), "code")
         text, view = it.sent[0]
         self.assertIn("2 entries (update 2)", text)
-        self.assertIn("1 of them is hidden from players", text)
+        self.assertNotIn("hidden", text)  # (nothing is hidden from players any more)
         self.assertIn("Your own homebrew wins", text)
         st.follow_pack.assert_not_called()
         self.assertIsInstance(view, shared_packs.ConfirmFollow)

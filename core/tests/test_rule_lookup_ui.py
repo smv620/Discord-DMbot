@@ -66,17 +66,23 @@ class FakeBrew:
         self.entries: dict[str, list[Homebrew]] = {}
         self.asked: list[str] = []
 
-    async def find(self, guild_id: int, cid: str, name: str) -> Homebrew | None:
+    async def find(
+        self, guild_id: int, cid: str, name: str, *, usable_only: bool = False
+    ) -> Homebrew | None:
         self.asked.append(cid)
         key = " ".join(name.casefold().split())
         return next(
-            (e for e in self.entries.get(cid, []) if " ".join(e.name.casefold().split()) == key),
+            (
+                e
+                for e in self.entries.get(cid, [])
+                if " ".join(e.name.casefold().split()) == key and (e.enabled or not usable_only)
+            ),
             None,
         )
 
 
-def brew(cid: str, name: str, text: str, *, kind: str = "monster", known: bool = False) -> Homebrew:
-    return Homebrew(1, cid, kind, name, text, None, known, DM, NOW, NOW)
+def brew(cid: str, name: str, text: str, *, kind: str = "monster") -> Homebrew:
+    return Homebrew(1, cid, kind, name, text, None, DM, NOW, NOW)
 
 
 class LookupTest(unittest.IsolatedAsyncioTestCase):
@@ -187,12 +193,13 @@ class Command(LookupTest):
         self.assertNotIn("you decide", player)
         self.assertIn("you decide", dm)
 
-    async def test_a_players_homebrew_card_leaves_out_the_dms_tags(self) -> None:
-        self.brew.entries[C1] = [brew(C1, "Hollow King", "A crowned skeleton.", known=True)]
+    async def test_a_players_homebrew_card_has_the_same_words_as_the_dms(self) -> None:
+        self.brew.entries[C1] = [brew(C1, "Hollow King", "A crowned skeleton.")]
         player = self.sent(await self.command("Hollow King", PLAYER))[0]
         dm = self.sent(await self.command("Hollow King", DM))[0]
-        self.assertNotIn("players may know", player)
-        self.assertIn("players may know", dm)
+        self.assertIn("A crowned skeleton.", player)
+        self.assertIn("A crowned skeleton.", dm)
+        self.assertNotIn("hidden", player + dm)  # (nothing is hidden from players any more)
 
     async def test_a_dm_of_one_campaign_who_asks_gets_their_own_view(self) -> None:
         # Runs C2 while C1 (someone else's) is the one being played: C2 is the one they mean.
@@ -616,7 +623,7 @@ if __name__ == "__main__":
 def from_pack(cid: str, name: str, text: str) -> Homebrew:
     """As the reader makes a followed pack's entry: no id of its own, a source."""
     return Homebrew(
-        -1001, cid, "item", name, text, "A short version", True, 0, NOW, NOW, 2,
+        -1001, cid, "item", name, text, "A short version", 0, NOW, NOW, 2,
         source="Frost Pack homebrew, v2",
     )  # fmt: skip
 
@@ -644,7 +651,7 @@ class MakeItMine(LookupTest):
     async def test_the_copy_is_the_pack_entry_as_it_is_then_edit_opens(self) -> None:
         self.brew.entries[C1] = [from_pack(C1, "Ember Lamp", "Glows warmly.")]
         view = await self.card()
-        saved = brew(C1, "Ember Lamp", "Glows warmly.", kind="item", known=True)
+        saved = brew(C1, "Ember Lamp", "Glows warmly.", kind="item")
         self.brew.add = AsyncMock(return_value=saved)  # type: ignore[attr-defined]
         self.bot.homebrew_changed = MagicMock()
         it = self.it()
@@ -655,7 +662,7 @@ class MakeItMine(LookupTest):
         self.assertEqual(
             add.await_args.kwargs,
             {"kind": "item", "name": "Ember Lamp", "text": "Glows warmly.",
-             "summary": "A short version", "players_may_know": True},
+             "summary": "A short version"},
         )  # fmt: skip
         self.assertNotIn("from_book", add.await_args.kwargs)  # never a book's
         self.bot.homebrew_changed.assert_called_once_with(GUILD, C1)
@@ -728,9 +735,7 @@ class MakeItMine(LookupTest):
 
 
 def book(cid: str, name: str, edition: str | None, text: str = "The book's words.") -> Homebrew:
-    return replace(
-        brew(cid, name, text, kind="spell", known=True), from_book=True, book_edition=edition
-    )
+    return replace(brew(cid, name, text, kind="spell"), from_book=True, book_edition=edition)
 
 
 class SharedBooks(LookupTest):
@@ -772,14 +777,11 @@ class SharedBooks(LookupTest):
         for edition in ("2024", "2014", "other", None):
             self.assertIn("The book's words.", await self.shown("Hollow King", edition))
 
-    async def test_a_book_is_never_the_books_title_and_a_hidden_one_is_hidden_from_players(
-        self,
-    ) -> None:
-        self.brew.entries[C1] = [replace(book(C1, "Hollow King", "2024"), players_may_know=False)]
+    async def test_a_book_entry_answers_a_player_like_the_dm(self) -> None:
+        self.brew.entries[C1] = [book(C1, "Hollow King", "2024")]
         ui._last_lookup.clear()
         text = self.sent(await self.command("Hollow King", PLAYER), 0)[0]
-        self.assertNotIn("The book's words.", text)
-        self.assertIn("couldn't find", text)
+        self.assertIn("The book's words.", text)
 
     async def test_the_campaigns_rulesets_decide_where_a_2014_book_sits(self) -> None:
         self.campaigns[C1] = campaign(target="2014", fallback="2024")
@@ -804,18 +806,14 @@ class HomebrewLookup(LookupTest):
         self.assertIn("[Homebrew]", text)
         self.assertIn("Frostmaiden's homebrew: Goblin", text)
         self.assertIn("A very different goblin.", text)
-        self.assertIn(
-            "🙈 hidden from players", text
-        )  # a hidden entry is still the DM's own private answer
         self.assertNotIn("SRD", text)
 
     async def test_a_name_only_the_campaign_has_is_answered_without_couldnt_find(self) -> None:
-        self.brew.entries[C1] = [brew(C1, "Hollow King", "A crowned skeleton.", known=True)]
+        self.brew.entries[C1] = [brew(C1, "Hollow King", "A crowned skeleton.")]
         it = await self.command("HOLLOW  king")
         self.assertEqual(len(it.followup.send.await_args_list), 1)
         text = self.sent(it, 0)[0]
         self.assertIn("Hollow King", text)
-        self.assertIn("players may know it", text)
         self.assertNotIn("couldn't find", text)
 
     async def test_another_campaigns_homebrew_never_shows(self) -> None:
@@ -826,36 +824,28 @@ class HomebrewLookup(LookupTest):
         self.assertNotIn("Strahd's secret", self.sent(it, 0)[0])
         self.assertIn("couldn't find", self.sent(it, 0)[0])
 
-    async def test_a_player_never_meets_homebrew_the_dm_kept_hidden(self) -> None:
-        self.brew.entries[C1] = [brew(C1, "Hollow King", "Secret.", known=False)]
-        it = await self.command("Hollow King", PLAYER)
-        shown = " ".join(str(c) for c in it.followup.send.await_args_list)
-        self.assertNotIn("Secret.", shown)
-        self.assertNotIn("Hollow King", shown.replace("couldn't find **Hollow King**", ""))
-        self.assertIn("couldn't find", shown)  # as if it weren't there
-        ui._last_lookup.clear()
-        mine = await self.command("Hollow King", DM)
-        self.assertIn("Secret.", " ".join(str(c) for c in mine.followup.send.await_args_list))
-
-    async def test_a_player_reads_homebrew_the_dm_let_players_know(self) -> None:
-        self.brew.entries[C1] = [brew(C1, "Hollow King", "A crowned skeleton.", known=True)]
+    async def test_a_player_reads_homebrew(self) -> None:
+        self.brew.entries[C1] = [brew(C1, "Hollow King", "A crowned skeleton.")]
         it = await self.command("Hollow King", PLAYER)
         text = self.sent(it, 0)[0]
         self.assertIn("A crowned skeleton.", text)
         self.assertTrue(text.endswith(rule_card.PLAYER_LINE))
 
-    async def test_a_hidden_homebrew_entry_does_not_shadow_the_book_for_a_player(self) -> None:
+    async def test_a_homebrew_entry_shadows_the_book_for_a_player_too(self) -> None:
         self.brew.entries[C1] = [brew(C1, "Goblin", "Our goblin is secretly a dragon.")]
         it = await self.command("Goblin", PLAYER)
         text = self.sent(it, 0)[0]
-        self.assertIn("📖 **Goblin Warrior**", text)  # the book answers (the 2024 name)
-        self.assertNotIn("dragon", text)
+        self.assertIn("dragon", text)
+        self.assertNotIn("📖 **Goblin Warrior**", text)  # not the book's card too
 
-    async def test_a_hidden_pack_entry_follows_the_same_flag(self) -> None:
-        hidden = from_pack(C1, "Ember Lamp", "Glows warmly.")
-        self.brew.entries[C1] = [replace(hidden, players_may_know=False)]
-        it = await self.command("Ember Lamp", PLAYER)
-        self.assertNotIn("Glows warmly.", str(it.followup.send.await_args_list))
+    async def test_an_entry_that_is_off_is_not_found_by_anyone(self) -> None:
+        off = replace(brew(C1, "Hollow King", "A crowned skeleton."), enabled=False)
+        self.brew.entries[C1] = [off]
+        for who in (PLAYER, DM):
+            ui._last_lookup.clear()
+            text = self.sent(await self.command("Hollow King", who), 0)[0]
+            self.assertNotIn("A crowned skeleton.", text)
+            self.assertIn("couldn't find", text)
 
     async def test_a_homebrew_store_that_cannot_be_read_still_shows_the_free_rules(self) -> None:
         self.brew.find = AsyncMock(side_effect=RuntimeError("down"))  # type: ignore[method-assign]

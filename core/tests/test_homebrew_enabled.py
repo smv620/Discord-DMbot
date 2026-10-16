@@ -27,41 +27,12 @@ from tests.pg import DatabaseTest
 GUILD, DM, PLAYER = 111, 7, 8
 
 
-class TheFile(unittest.TestCase):
-    def entry(self, enabled: bool) -> Homebrew:
-        return Homebrew(
-            id=1, campaign_id="c", kind="monster", name="Hollow King", text="A crowned skeleton.",
-            summary=None, players_may_know=False, created_by=7, created_at=1, updated_at=1,
-            enabled=enabled,
-        )  # fmt: skip
-
-    def test_an_off_entry_is_written_with_off_and_an_on_one_plain(self) -> None:
-        text = hf.write("T", [self.entry(False)])
-        self.assertIn("## Hollow King (monster, off)", text)
-        self.assertIn("## Hollow King (monster)", hf.write("T", [self.entry(True)]))
-
-    def test_off_and_on_are_read_back_and_nothing_means_not_said(self) -> None:
-        text = (
-            "T\n## A (monster, off)\n\nWords.\n## B (item, on)\n\nWords.\n## C (feat)\n\nWords.\n"
-        )
-        got = {e.name: e.enabled for e in hf.parse(text).entries}
-        self.assertEqual(got, {"A": False, "B": True, "C": None})
-
-    def test_anything_else_after_the_kind_is_reported(self) -> None:
-        parsed = hf.parse("T\n## A (monster, maybe)\n\nWords.\n## B (item)\n\nWords.\n")
-        self.assertEqual([e.name for e in parsed.entries], ["B"])
-        self.assertEqual([p.why for p in parsed.problems], [hf.BAD_STATE])
-
-    def test_the_help_text_mentions_it(self) -> None:
-        self.assertIn("(kind, off)", hf.HELP)
-
-
 class APack(unittest.TestCase):
     def test_an_off_entry_is_not_offered_in_a_pack(self) -> None:
         def entry(name: str, enabled: bool) -> Homebrew:
             return Homebrew(
                 id=hash(name) % 1000, campaign_id="c", kind="item", name=name, text="x",
-                summary=None, players_may_know=True, created_by=7, created_at=1, updated_at=1,
+                summary=None, created_by=7, created_at=1, updated_at=1,
                 enabled=enabled,
             )  # fmt: skip
 
@@ -272,3 +243,38 @@ class TheMenu(DatabaseTest):
         assert stored is not None
         self.assertFalse(stored.enabled)
         self.assertTrue(any("Turned off" in s for s in shown))
+
+
+class Migration(DatabaseTest):
+    async def test_every_entry_becomes_on_the_hidden_flag_goes_and_a_hidden_one_is_kept(
+        self,
+    ) -> None:
+        from dmbot.db import Database, drop_schema
+        from dmbot.schema import MIGRATIONS
+        from tests.pg import TEST_URL
+
+        before = [m for m in MIGRATIONS if m[0] < "0112"]
+        await self.db.close()  # start again from a schema as it was before 0112
+        await drop_schema(TEST_URL, self.schema)
+        self.db = await Database.open(TEST_URL, schema=self.schema, migrations=before)
+        one = await CampaignStore(self.db).create(GUILD, "One", DM)
+        async with self.db.guild(GUILD) as conn:
+            for name, known in (("Hollow King", False), ("Moonblade", True)):
+                await conn.execute(
+                    "INSERT INTO homebrew_entries (guild_id, campaign_id, kind, name, name_key,"
+                    " text, created_by, created_at, updated_at, players_may_know)"
+                    " VALUES (%s, %s, 'monster', %s, %s, 'words', %s, 1, 1, %s)",
+                    (GUILD, one.id, name, name.casefold(), DM, known),
+                )
+        await self.db.migrate()
+        entries = await HomebrewStore(self.db).list(GUILD, one.id)
+        self.assertEqual(
+            [(e.name, e.enabled) for e in entries], [("Hollow King", True), ("Moonblade", True)]
+        )
+        async with self.db.guild(GUILD) as conn:
+            cur = await conn.execute(
+                "SELECT count(*) AS n FROM information_schema.columns"
+                " WHERE table_name = 'homebrew_entries' AND column_name = 'players_may_know'"
+                " AND table_schema = current_schema()"
+            )
+            self.assertEqual((await cur.fetchone() or {})["n"], 0)
