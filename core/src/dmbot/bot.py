@@ -202,7 +202,7 @@ from dmbot.rules.book_rank import book_is_legacy, book_wins
 from dmbot.rules.followed import followed_rules, own_first
 from dmbot.rules.homebrew import Homebrew, HomebrewSection, HomebrewStore
 from dmbot.rules.homebrew_packs import HomebrewPackStore, HomebrewReader
-from dmbot.rules.homebrew_sources import SiteApprovalsSection
+from dmbot.rules.homebrew_sources import SiteApprovalsSection, SourceStore
 from dmbot.rules.homebrew_spotter import HomebrewMention, HomebrewSpotter
 from dmbot.rules.house import HouseRule, HouseRulesSection, HouseRuleStore
 from dmbot.rules.house_file_link import HouseFileLinkStore
@@ -694,6 +694,7 @@ class DMBot(commands.AutoShardedBot):
         homebrew: HomebrewStore | None = None,
         heard_questions: WaitingQuestionStore | None = None,
         improvement: OptOutStore | None = None,
+        sources: SourceStore | None = None,
     ) -> None:
         intents = discord.Intents.none()
         intents.guilds = True
@@ -741,6 +742,7 @@ class DMBot(commands.AutoShardedBot):
         self.recaps = recaps  # the cinematic recap of each session (#1382)
         self.suggestions = suggestions  # players' suggested line fixes (#1491)
         self.homebrew = homebrew  # a campaign's own homebrew entries (#1520)
+        self.sources = sources  # which sites a campaign approved, imported pages (#1633)
         # "Did they mean…?" questions left unanswered at a session's end (#1572).
         self.heard_questions = heard_questions
         # The last entries a DM removed, per campaign, so the list can put them back (memory only).
@@ -8037,6 +8039,7 @@ async def run(settings: Settings) -> None:
             HomebrewStore(db),
             WaitingQuestionStore(db),
             OptOutStore(db),
+            SourceStore(db),
         )
         _close_on_sigterm(bot)
         async with bot:
