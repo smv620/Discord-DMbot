@@ -191,6 +191,20 @@ class Recent:
             if not typed:
                 self.spoken.append((now, user_id, text))
 
+    def revise(self, user_id: int, old: str, new: str) -> bool:
+        """A line's words changed after the fact (a name fixed, #127): the copy of `old` by this
+        person says `new` now, in each list that holds exactly one such copy (two identical
+        lines from one person can't be told apart, and a missed update is safer than a wrong
+        one). True if anything was changed."""
+        changed = False
+        for lines in (self.lines, self.spoken):
+            hits = [i for i, (_, who, text) in enumerate(lines) if who == user_id and text == old]
+            if len(hits) == 1:
+                at, who, _ = lines[hits[0]]
+                lines[hits[0]] = (at, who, new)
+                changed = True
+        return changed
+
     def drop_speaker(self, user_id: int) -> None:
         """Someone stopped being recorded: nothing they said is used again."""
         for lines in (self.lines, self.spoken):

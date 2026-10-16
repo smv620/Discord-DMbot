@@ -140,6 +140,39 @@ class Words(unittest.TestCase):
         self.assertIn("This joins two lines", text)
 
 
+class Copies(unittest.TestCase):
+    """The helpers' copies of a piece follow a change (#127): the sidebar's recent scene and the
+    off-topic filter's window."""
+
+    def test_the_recent_scene_says_the_new_words_only_for_a_single_certain_copy(self) -> None:
+        from dmbot.sidebar.service import Recent
+
+        recent = Recent.new()
+        recent.add(MIA, "we meet Ka", 1.0)
+        recent.add(DEE, "we meet Ka", 2.0)
+        self.assertTrue(recent.revise(MIA, "we meet Ka", "we meet Ka'zeth"))
+        self.assertEqual(
+            [(u, t) for _, u, t in recent.lines], [(MIA, "we meet Ka'zeth"), (DEE, "we meet Ka")]
+        )
+        self.assertEqual(len(recent.spoken), 2)
+        # The same person said the same words twice: it can't tell which, so it changes neither.
+        twice = Recent.new()
+        twice.add(MIA, "we meet Ka", 1.0)
+        twice.add(MIA, "we meet Ka", 2.0)
+        self.assertFalse(twice.revise(MIA, "we meet Ka", "we meet Ka'zeth"))
+        self.assertEqual([t for _, _, t in twice.lines], ["we meet Ka", "we meet Ka"])
+        self.assertFalse(twice.revise(MIA, "never said", "x"))
+
+    def test_the_waiting_window_asks_the_ai_about_the_new_words(self) -> None:
+        from dmbot.transcript.topics import TopicWindow, Waiting
+
+        window = TopicWindow()
+        window.add(Waiting(MIA, 5, "we meet Ka", 1.0), 0.0)
+        self.assertTrue(window.revise(MIA, 5, "we meet Ka'zeth"))
+        self.assertEqual([w.text for w in window.lines], ["we meet Ka'zeth"])
+        self.assertFalse(window.revise(MIA, 6, "x"))  # not waiting (already taken)
+
+
 class Saying(unittest.TestCase):
     def test_the_answer_says_how_many_earlier_lines_were_fixed(self) -> None:
         self.assertIn("Earlier lines stay as heard.", fixed_text("Sara", "Cerric", line_fixed=True))

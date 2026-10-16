@@ -273,6 +273,8 @@ SUMMARY_INTERVAL_S = 15
 # Discord's 5 messages per 5 seconds per channel, and still feels live.
 TRANSCRIPT_FLUSH_S = 2.0
 TRANSCRIPT_SAVE_S = 5.0  # stored transcript lines are saved in batches this often
+SCENE_FRESH_S = 600.0  # a changed piece older than this doesn't put its names in the scene
+PIECE_WORDS_MAX = 3000  # pieces whose words the helpers' copies can be brought up to date for
 HEARD_MAX = 20_000  # lines kept for the after-session name scan
 HINTS_FAIL_LOG_S = 60.0
 HINTS_WAIT_S = 1.5  # the longest a clip waits for the campaign's names to load
@@ -431,6 +433,9 @@ class Table:
     # "Did they mean…?" for the DM (#296): one open at a time, each word once a session.
     questions: name_questions.QuestionBook = field(default_factory=name_questions.QuestionBook)
     question_message: discord.Message | None = None
+    # The words each piece has in the helpers' copies (heard, recent, held, counts), by
+    # (speaker, started_ms), so a later change can bring those copies up to date (#127). Bounded.
+    piece_words: dict[tuple[int, int], tuple[str, float]] = field(default_factory=dict)
     # Each person's last piece of speech as the Cleaner read it, for the look-back pass (#127).
     last_piece: dict[int, lookback.Piece] = field(default_factory=dict)
     # Fixes from names DMbot only suggested, each with Undo, in one DM-screen message.
@@ -1221,6 +1226,7 @@ class DMBot(commands.AutoShardedBot):
             table.scene.forget_speaker(user_id)  # and no longer shape the hints
             table.vocabulary.forget_speaker(user_id)  # or the name fixes
             table.last_piece.pop(user_id, None)  # and the look-back pass
+            table.piece_words = {k: v for k, v in table.piece_words.items() if k[0] != user_id}
             if table.fix_notes.drop_speaker(user_id):  # their fixes leave the DM screen
                 self._redraw_fix_notes(table)
             if table.left_out.drop_speaker(user_id):  # and their lines left out (#677)
@@ -3460,6 +3466,12 @@ class DMBot(commands.AutoShardedBot):
             )
         if text:
             table.recent.add(utterance.user_id, str(cleaned or text), time.monotonic())
+            table.piece_words[utterance.user_id, utterance.start_ms] = (
+                str(cleaned or text),
+                time.monotonic(),
+            )
+            if len(table.piece_words) > PIECE_WORDS_MAX:  # (oldest first: dicts keep order)
+                del table.piece_words[next(iter(table.piece_words))]
             if self.tables.get(table.guild_id) is table:
                 table.name_answers.feed(
                     utterance.user_id, utterance.start_ms, str(cleaned or text), consented=True
@@ -4798,7 +4810,56 @@ class DMBot(commands.AutoShardedBot):
                         pass
                     except Exception:
                         log.exception("Couldn't edit a transcript message with a name change")
-        return found or edited
+        changed = found or edited
+        if changed and self.consent.has_consent(guild_id, speaker):
+            self._line_changed(table, speaker, started_ms, text)
+        return changed
+
+    def _line_changed(self, table: Table, speaker: int, started_ms: int, new: str) -> None:
+        """A piece's words changed after the helpers read it (#127): bring the helpers' COPIES
+        of it up to date (the names scan's lines, the sidebar's recent scene, the off-topic
+        filter's waiting copy, and which names count as heard and in the scene). Helpers that
+        act on a piece (rules cards, house rules, the clock, sheet re-reads, the sidebar trigger)
+        are never run again: acting twice is worse than missing a name. A piece the helpers no
+        longer hold (too old, trimmed) is skipped quietly."""
+        key = (speaker, started_ms)
+        kept = table.piece_words.get(key)
+        if kept is None or kept[0] == new:
+            return
+        old, said_at = kept
+        table.piece_words[key] = (new, said_at)
+        # A copy is changed only when it is certainly this piece's: the names scan's line only
+        # if the piece isn't held back or hidden (then it isn't in that list) and the words
+        # match exactly one entry (two identical lines from one person can't be told apart, and
+        # a missed update is safer than a wrong one).
+        if key not in table.held and key not in table.hidden:
+            matches = [i for i, h in enumerate(table.heard) if h == (speaker, old)]
+            if len(matches) == 1:
+                table.heard[matches[0]] = (speaker, new)
+        table.recent.revise(speaker, old, new)
+        if key in table.held:
+            table.held[key] = new
+        table.topics.revise(speaker, started_ms, new)
+        lookup = table.name_lookup
+        if lookup is None:
+            return
+        try:
+            before, after = set(mentions(lookup, old)), set(mentions(lookup, new))
+        except Exception:
+            log.exception("Couldn't update which names a changed line mentions")
+            return
+        now = time.monotonic()
+        if after - before and now - said_at <= SCENE_FRESH_S:
+            # Only a piece said lately says its name "now": an old one must not push a name
+            # up the hints. Taking a name off after an Undo leaves the scene alone (it fades).
+            table.scene.note(after - before, speaker, now)
+        for entity_id in after - before:
+            table.heard_counts[entity_id, speaker] += 1
+        for entity_id in before - after:
+            if table.heard_counts.get((entity_id, speaker), 0) > 1:
+                table.heard_counts[entity_id, speaker] -= 1
+            else:
+                table.heard_counts.pop((entity_id, speaker), None)
 
     async def allow_fix_again(
         self, guild_id: int, campaign_id: str, batch: int, user_id: int

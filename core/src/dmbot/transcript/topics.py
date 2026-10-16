@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import re
 from collections.abc import Iterable, Iterator
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 
 from dmbot.memory.scan import GAME_TERMS
 from dmbot.memory.scene import WORD
@@ -151,6 +151,15 @@ class TopicWindow:
     def take(self) -> list[Waiting]:
         lines, self.lines, self.opened_at = self.lines, [], None
         return lines
+
+    def revise(self, speaker: int, started_ms: int, text: str) -> bool:
+        """A waiting line's words changed (a name fixed after the fact, #127): the AI is asked
+        about the new words. True if it was still waiting."""
+        for i, waiting in enumerate(self.lines):
+            if (waiting.speaker, waiting.started_ms) == (speaker, started_ms):
+                self.lines[i] = replace(waiting, text=text)
+                return True
+        return False
 
     def drop_speaker(self, speaker: int) -> None:
         """They stopped being recorded: their lines are never sent to the AI."""
