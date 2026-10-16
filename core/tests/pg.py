@@ -201,6 +201,20 @@ def stamp(schema: str) -> str:
 _ROLE_MADE = False
 
 
+def create_role_sql(name: str, password: str) -> str:
+    """CREATE ROLE that is safe when another worker makes the same role at the same instant
+    (#1438, #1439). Two sessions can both pass a "does it exist" check; Postgres then stops one
+    with duplicate_object, or, when both reach the catalog's unique index together, with
+    unique_violation (pg_authid_rolname_index). Both mean "someone else made it", which is the
+    result wanted, so the block swallows both. Names are fixed by the tests, never user input."""
+    if not name.isidentifier() or "'" in password:
+        raise ValueError("not a plain role name or password")
+    return (
+        f"DO $do$ BEGIN CREATE ROLE {name} LOGIN PASSWORD '{password}'; "
+        "EXCEPTION WHEN duplicate_object OR unique_violation THEN NULL; END $do$"
+    )
+
+
 def make_web_role() -> None:
     """Make the website's role if it is missing, once per process, before any schema is migrated.
     A migration grants to the role only if it exists at that moment, so with workers making it
@@ -211,8 +225,7 @@ def make_web_role() -> None:
     if _ROLE_MADE or not SUPERUSER_URL:
         return
     if not web_role_exists():
-        with contextlib.suppress(psycopg.errors.DuplicateObject):  # another worker was first
-            _admin().execute("CREATE ROLE dmbot_web LOGIN PASSWORD 'dmbot_web'")
+        _admin().execute(create_role_sql("dmbot_web", "dmbot_web"))  # (another worker may be first)
     _ROLE_MADE = True
 
 
