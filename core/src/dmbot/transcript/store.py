@@ -47,6 +47,45 @@ class TranscriptStore:
             assert row is not None
             return str(row["id"])
 
+    async def extraction(self, guild_id: int, session_id: str) -> tuple[int, int]:
+        """How far the story extractor got in this session (#1367): (when the last line it read
+        began, in Unix milliseconds; AI calls used). (0, 0) for a session never read, or one that
+        isn't here."""
+        async with self._db.guild(guild_id) as conn:
+            cur = await conn.execute(
+                "SELECT extracted_through_ms, extractor_calls FROM transcript_sessions"
+                " WHERE id = %s",
+                (session_id,),
+            )
+            row = await cur.fetchone()
+        return (int(row["extracted_through_ms"]), int(row["extractor_calls"])) if row else (0, 0)
+
+    async def record_extraction(
+        self, guild_id: int, session_id: str, *, through_ms: int, calls: int, now: int
+    ) -> None:
+        """The extractor ran: it has read every line that began up to `through_ms` (never
+        backwards) and made `calls` more AI calls, at `now`."""
+        async with self._db.guild(guild_id) as conn:
+            await conn.execute(
+                "UPDATE transcript_sessions SET"
+                " extracted_through_ms = greatest(extracted_through_ms, %s),"
+                " extractor_calls = extractor_calls + %s, extracted_at = %s WHERE id = %s",
+                (through_ms, calls, now, session_id),
+            )
+
+    async def extractor_calls_since(self, guild_id: int, campaign_id: str, since: int) -> int:
+        """AI calls the extractor made for this campaign in sessions it last ran in since
+        `since` (a Unix time): the daily ceiling's count (#1367). A session counts in full at
+        the time it last ran, which is close enough for a ceiling and needs no extra table."""
+        async with self._db.guild(guild_id) as conn:
+            cur = await conn.execute(
+                "SELECT coalesce(sum(extractor_calls), 0) AS n FROM transcript_sessions"
+                " WHERE campaign_id = %s AND extracted_at >= %s",
+                (campaign_id, since),
+            )
+            row = await cur.fetchone()
+        return int(row["n"]) if row else 0
+
     async def end_session(self, guild_id: int, session_id: str, ended_at: int) -> None:
         async with self._db.guild(guild_id) as conn:
             await conn.execute(

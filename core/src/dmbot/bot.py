@@ -734,7 +734,9 @@ class DMBot(commands.AutoShardedBot):
         # The story extractor's reader after a session (#1363). Built only when the switch is on,
         # so with it off there is no client to call; the tier is a backend setting.
         self.extractor_ai = (
-            self.ai_client.tier(AIModelTier(settings.story_extractor_tier), Feature.EXTRACTOR)
+            self.ai_client.tier(
+                AIModelTier(settings.story_extractor_tier), Feature.EXTRACTOR, cache_system=True
+            )
             if self.ai_client and settings.story_extractor_on
             else None
         )
@@ -5160,9 +5162,11 @@ class DMBot(commands.AutoShardedBot):
     async def extract_claims(self, table: Table, ended_at: int) -> None:
         """After a session, only with DMBOT_STORY_EXTRACTOR on (it is off until #1282 passes): read
         the stored transcript in short batches and store what the AI heard as proposals for the DM
-        (#1363). Off means off: no AI client, no stored lines read, no prompt built. Only lines from
-        people who still agree are sent, and the claims are checked against consent again after
-        each answer. The log gets counts only. Nothing here is a fact."""
+        (#1363). Off means off: no AI client, no stored lines read, no prompt built. Only a campaign
+        whose plan includes it runs (#1367), within its session and daily call limits, and a
+        restart carries on after the lines already read. Only lines from people who still agree
+        are sent, and the claims are checked against consent again before they are stored. The
+        log gets counts only. Nothing here is a fact."""
         if (
             not self.settings.story_extractor_on
             or self.extractor_ai is None
@@ -5177,7 +5181,24 @@ class DMBot(commands.AutoShardedBot):
             session = await self.transcripts.session(gid, table.transcript_session_id)
             if session is None or session.lines == 0:
                 return
-            lines = await self.transcripts.lines(gid, table.transcript_session_id)
+            campaign = await self.campaigns.get(gid, cid)
+            if campaign is None or not await self.plan_allows("story", gid, campaign):
+                log.info("Story extractor: not run, the campaign's plan does not include it")
+                return
+            sid = table.transcript_session_id
+            after_ms, used = await self.transcripts.extraction(gid, sid)
+            now = int(time.time())
+            day_used = await self.transcripts.extractor_calls_since(gid, cid, now - 86400)
+            allowed = extractor.calls_left(
+                self.settings.story_extractor_max_calls,
+                used,
+                self.settings.story_extractor_max_calls_day,
+                day_used,
+            )
+            if allowed == 0:
+                log.info("Story extractor: not run, its call limit is used (%d today)", day_used)
+                return
+            lines = await self.transcripts.lines(gid, sid)
             # The people at the table are not story names (as in the name scan).
             people = {table.dm_user_id, *table.dm_user_ids, *(await self.consent.consenting(gid))}
             skip: set[str] = set()
@@ -5197,10 +5218,17 @@ class DMBot(commands.AutoShardedBot):
                 model=lambda: self.extractor_ai.model if self.extractor_ai else "",
                 session_started_at=session.started_at,
                 tally=table.steward_tally,
-                max_calls=self.settings.story_extractor_max_calls,
+                max_calls=allowed,
                 skip=skip,
+                after_ms=after_ms,
             )
             log.info(report.line())
+            try:  # what a restart resumes from, and what the day's limit counts
+                await self.transcripts.record_extraction(
+                    gid, sid, through_ms=report.through_ms, calls=report.calls, now=now
+                )
+            except Exception:
+                log.exception("Story extractor: couldn't note how far it got")
             if report.named:  # the DM checks them where the name scan's are checked
                 await self.post(
                     table.screen_channel_id,

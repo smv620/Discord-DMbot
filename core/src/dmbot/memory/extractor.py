@@ -133,6 +133,7 @@ class Said:
     number: int
     user_id: int
     text: str
+    started_ms: int = 0  # when the line began: what a restart resumes after (#1367)
 
 
 def readable(lines: Sequence[Line]) -> list[Said]:
@@ -141,7 +142,7 @@ def readable(lines: Sequence[Line]) -> list[Said]:
     a person who agreed, so it has no other lines), and never a line the off-topic filter left
     out. Consent is a separate check, made when each batch is sent."""
     return [
-        Said(n, line.user_id, line.text)
+        Said(n, line.user_id, line.text, line.started_ms)
         for n, line in enumerate(lines, start=1)
         if not line.sidebar and line.topic != OFF_TOPIC and line.text.strip()
     ]
@@ -150,7 +151,16 @@ def readable(lines: Sequence[Line]) -> list[Said]:
 def batches(said: Sequence[Said]) -> list[list[Said]]:
     """Groups of `BATCH_LINES` in order; a tail shorter than `MIN_BATCH_LINES` joins the last
     group instead of being a call of its own."""
-    groups = [list(said[i : i + BATCH_LINES]) for i in range(0, len(said), BATCH_LINES)]
+    groups: list[list[Said]] = []
+    start = 0
+    while start < len(said):
+        end = min(start + BATCH_LINES, len(said))
+        # Lines that began in the same millisecond stay together: a restart resumes strictly
+        # after the last line read, so none may be left on the far side of a batch's edge.
+        while end < len(said) and said[end].started_ms == said[end - 1].started_ms:
+            end += 1
+        groups.append(list(said[start:end]))
+        start = end
     if len(groups) > 1 and len(groups[-1]) < MIN_BATCH_LINES:
         groups[-2].extend(groups.pop())
     return groups
@@ -188,6 +198,7 @@ class Report:
     deferred: int = 0  # claims left for next time (their name was past the limit)
     unsent: int = 0  # lines never sent: the call cap, or the run stopped
     stopped: str = ""  # why it ended early, if it did
+    through_ms: int = 0  # every line that began up to this was read and its claims stored
 
     def line(self) -> str:
         why = ", ".join(f"{n} {r}" for r, n in sorted(self.dropped.items())) or "none"
@@ -198,6 +209,13 @@ class Report:
             f"{self.deferred} deferred, {self.unsent} line(s) not sent"
             + (f", stopped: {self.stopped}" if self.stopped else "")
         )
+
+
+def calls_left(session_max: int, session_used: int, day_max: int, day_used: int) -> int:
+    """How many AI calls the extractor may still make now (#1367): what is left of this session's
+    own limit and of the campaign's day, whichever is less, never below zero. Calls made before a
+    restart count, so a restart cannot be used to get a second set."""
+    return max(0, min(session_max - session_used, day_max - day_used))
 
 
 Consenting = Callable[[], Awaitable[Collection[int]]]
@@ -219,6 +237,7 @@ async def run(
     max_seconds: float = MAX_RUN_S,
     skip: Collection[str] = (),
     new_names: int = NEW_NAME_LIMIT,
+    after_ms: int = 0,
 ) -> Report:
     """Read the session's lines and store what the AI found as proposals, all at once at the end
     (the linker picks the most-said new names across the whole session). `consenting` is asked
@@ -226,7 +245,9 @@ async def run(
     claims are stored (what `propose` checks them against). `model` names the model when no
     answer did, recorded with the claims. `skip` are name keys that are never story names (the
     people at the table). Stops at `max_calls`, after `max_seconds` in all, at an AI that is out
-    of money, and after `FAILURES_BEFORE_STOP` failures in a row. A claim's lines are
+    of money, and after `FAILURES_BEFORE_STOP` failures in a row. `after_ms`: read only lines that
+    began after it (where an earlier run got to, `Report.through_ms`), so a restart never sends
+    the same lines twice (#1367). A claim's lines are
     numbered by their place in the stored session; they are not looked up anywhere yet, so if a
     stop-recording clean-up removes lines, whatever resolves them later must key on more than
     the position."""
@@ -234,7 +255,10 @@ async def run(
     collected: list[Extracted] = []
     everyone: dict[str, int | None] = {}  # every line sent, to who said it
     answered_by = ""  # the model that answered last (it can change on a fallback)
-    work = batches(readable(lines))
+    work = batches([s for s in readable(lines) if s.started_ms > after_ms])
+    report.through_ms = after_ms
+    reached = after_ms  # how far the batches in a row, all answered, go
+    broken = False  # a batch failed: later ones are read, but a restart must come back to it
     streak = 0
     started = time.monotonic()
     for index, batch in enumerate(work):
@@ -246,9 +270,11 @@ async def run(
             report.stopped = "call limit"
             report.unsent += sum(len(b) for b in work[index:])
             break
+        end_ms = batch[-1].started_ms  # the batch as cut, before anyone who stopped is left out
         agreed = await consenting()
         batch = [s for s in batch if s.user_id in agreed]  # a stop removes the lines for good
         if not batch:
+            reached = end_ms if not broken else reached  # nothing to send is nothing to retry
             continue
         rows = [(str(s.number), "DM" if s.user_id in dm_ids else "Player", s.text) for s in batch]
         speakers: dict[str, int | None] = {str(s.number): s.user_id for s in batch}
@@ -266,6 +292,7 @@ async def run(
             log.warning("Story extractor: a call failed (%s)", type(exc).__name__)
             report.failed += 1
             report.unsent += len(batch)
+            broken = True  # a restart must come back to this batch
             streak += 1
             if streak >= FAILURES_BEFORE_STOP:
                 report.stopped = "failures in a row"
@@ -278,6 +305,8 @@ async def run(
         answered_by = reply.model or answered_by
         everyone.update(speakers)
         report.malformed += bad
+        if not broken:
+            reached = end_ms
     # One hand-over for the whole session: the linker picks the most-said new names across all of
     # it, and the campaign's memory is read once, not once a batch. Consent is asked again here,
     # after the last answer (CLAUDE.md: after every async step), and `propose` checks it per claim.
@@ -305,6 +334,7 @@ async def run(
             # words, which the log never gets.
             log.warning("Story extractor: storing the claims failed (%s)", type(exc).__name__)
             report.failed += 1
+            return report  # nothing was stored, so nothing counts as read
         else:
             report.proposed += done.waiting
             report.repeated += done.repeated
@@ -315,4 +345,5 @@ async def run(
             report.deferred += done.deferred
             for reason, n in done.reasons.items():
                 report.dropped[_LOGGED_REASONS.get(reason, "other")] += n
+    report.through_ms = reached
     return report

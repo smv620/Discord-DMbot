@@ -66,6 +66,7 @@ class Settings:
     # Which model tier reads the transcript, and how many calls one session may make (#1363).
     story_extractor_tier: str = "fast"
     story_extractor_max_calls: int = 480
+    story_extractor_max_calls_day: int = 960  # per campaign, a day (two sessions' worth)
     # Continuity warnings (#1320): where each level starts and how much confirmed story a
     # campaign needs first. Backend settings, tuned on the golden set; no switch shown to anyone.
     continuity: Levels = field(default_factory=Levels)
@@ -164,6 +165,15 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
             + extractor_calls_raw
             + '".'
         )
+    extractor_day_raw = get("DMBOT_STORY_EXTRACTOR_MAX_CALLS_DAY") or "960"
+    if not (extractor_day_raw.isascii() and extractor_day_raw.isdigit()) or not (
+        1 <= int(extractor_day_raw) <= 50000
+    ):
+        raise ConfigError(
+            'DMBOT_STORY_EXTRACTOR_MAX_CALLS_DAY must be a whole number from 1 to 50000, got "'
+            + extractor_day_raw
+            + '".'
+        )
     sidebar_raw = (get("DMBOT_SIDEBAR") or "0").lower()
     if sidebar_raw not in ("0", "1", "true", "false", "on", "off"):
         raise ConfigError('DMBOT_SIDEBAR must be 1 (on) or 0 (off), got "' + sidebar_raw + '".')
@@ -211,6 +221,7 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
         story_extractor_on=extractor_raw in ("1", "true", "on"),
         story_extractor_tier=extractor_tier,
         story_extractor_max_calls=int(extractor_calls_raw),
+        story_extractor_max_calls_day=int(extractor_day_raw),
         continuity=continuity,
         admin_primary_id=admin_primary,
         admin_secondary_id=admin_secondary,

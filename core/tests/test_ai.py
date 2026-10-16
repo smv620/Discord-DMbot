@@ -57,6 +57,21 @@ class Client(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(session.sent["json"]["system"], "rules")
         self.assertNotIn("sk-secret", repr(ai))
 
+    async def test_the_system_text_is_marked_for_caching_only_when_asked(self) -> None:
+        body = {"content": [{"type": "text", "text": "x"}], "usage": {"input_tokens": 1}}
+        ai, session = self.client(200, body)
+        await ai.complete("rules", "doc", tier=AIModelTier.FAST)
+        self.assertEqual(session.sent["json"]["system"], "rules")  # as before for everyone else
+        await ai.complete("rules", "doc", tier=AIModelTier.FAST, cache_system=True)
+        self.assertEqual(
+            session.sent["json"]["system"],
+            [{"type": "text", "text": "rules", "cache_control": {"type": "ephemeral"}}],
+        )
+        await ai.tier(AIModelTier.FAST, cache_system=True).complete("rules", "doc")
+        self.assertIsInstance(session.sent["json"]["system"], list)  # a tier client remembers it
+        await ai.tier(AIModelTier.FAST).complete("rules", "doc")
+        self.assertEqual(session.sent["json"]["system"], "rules")
+
     async def test_odd_usage_counts_as_none(self) -> None:
         ai, _ = self.client(200, {"content": [], "usage": {"input_tokens": "lots"}})
         reply = await ai.complete("rules", "doc", tier=AIModelTier.FAST)

@@ -228,11 +228,17 @@ class TierClient:
     calls name a tier by being made on it, and no feature names a model."""
 
     def __init__(
-        self, client: AnthropicClient, tier: AIModelTier, feature: str | None = None
+        self,
+        client: AnthropicClient,
+        tier: AIModelTier,
+        feature: str | None = None,
+        *,
+        cache_system: bool = False,
     ) -> None:
         self._client = client
         self.tier = tier
         self.feature = feature  # named in the log line and usage totals (#1176)
+        self.cache_system = cache_system  # the system text is the same on every call (#1367)
 
     @property
     def model(self) -> str:
@@ -244,7 +250,12 @@ class TierClient:
 
     async def complete(self, system: str, text: str, *, max_tokens: int = 8000) -> Reply:
         return await self._client.complete(
-            system, text, tier=self.tier, max_tokens=max_tokens, feature=self.feature
+            system,
+            text,
+            tier=self.tier,
+            max_tokens=max_tokens,
+            feature=self.feature,
+            cache_system=self.cache_system,
         )
 
 
@@ -270,10 +281,14 @@ class AnthropicClient:
     def __repr__(self) -> str:  # never the key
         return f"AnthropicClient(models={self.models!r})"
 
-    def tier(self, tier: AIModelTier, feature: Feature | None = None) -> TierClient:
+    def tier(
+        self, tier: AIModelTier, feature: Feature | None = None, *, cache_system: bool = False
+    ) -> TierClient:
         """The client for one job. `feature` is only a label for the log line and the usage
         totals, so jobs that share a tier can be counted apart."""
-        return TierClient(self, tier, feature.value if feature is not None else None)
+        return TierClient(
+            self, tier, feature.value if feature is not None else None, cache_system=cache_system
+        )
 
     def _chain(self, tier: AIModelTier) -> list[tuple[AIModelTier, str]]:
         """The tier, then each one below it, without repeats and without a model already
@@ -315,6 +330,7 @@ class AnthropicClient:
         tier: AIModelTier,
         max_tokens: int = 8000,
         feature: str | None = None,
+        cache_system: bool = False,
     ) -> Reply:
         """One request on `tier`: `system` instructions, `text` as the user's message.
         Returns the answer's text, and whether it was cut off at `max_tokens`. If the
@@ -334,6 +350,7 @@ class AnthropicClient:
                     asked=tier,
                     can_refuse=lower is not None,
                     feature=feature,
+                    cache_system=cache_system,
                 )
             except _ModelRefused as refused:
                 if lower is None:
@@ -372,11 +389,19 @@ class AnthropicClient:
         asked: AIModelTier,
         can_refuse: bool,
         feature: str | None = None,
+        cache_system: bool = False,
     ) -> Reply:
+        # `cache_system`: ask the service to remember the system text between calls, which it
+        # charges much less to read again. It only does so above a minimum length that depends on
+        # the model, and otherwise just answers as usual; the log line's cache_read says if it did.
         body: dict[str, Any] = {
             "model": model,
             "max_tokens": max_tokens,
-            "system": system,
+            "system": (
+                [{"type": "text", "text": system, "cache_control": {"type": "ephemeral"}}]
+                if cache_system
+                else system
+            ),
             "messages": [{"role": "user", "content": text}],
         }
         headers = {
