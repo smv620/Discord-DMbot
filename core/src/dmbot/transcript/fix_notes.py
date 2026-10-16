@@ -104,6 +104,17 @@ def _short(text: str) -> str:
     return text if len(text) <= NAME_MAX else text[: NAME_MAX - 1].rstrip() + "…"
 
 
+def edit_done_text(*, line_kept: bool = False) -> str:
+    """After an Undo of a line the DM rewrote by hand (#1499): no name was learned or forbidden,
+    so it only says the line is back. `line_kept`: it couldn't be put back."""
+    if line_kept:
+        return (
+            "↩️ I couldn't put that line back, so it still says your words. "
+            "Press ✏️ Fix a line to change it."
+        )
+    return "↩️ Undone. That line is back as it was before your change."
+
+
 def done_text(heard: str, written: str, *, line_kept: bool = False) -> str:
     """After an Undo (both already escaped): what it put back and what it learned.
     `line_kept`: the line itself couldn't be put back (the save failed, or no copy of it

@@ -78,6 +78,9 @@ _POSSESSIVE = ("'s", "’s")
 _SENTENCE_END = re.compile(r"[.!?…]")
 
 SPELLING, DM_FIX, SOUND = "spelling", "dm", "sound"
+# A whole line the DM rewrote by hand (#1499): shown with Undo like a fix, but it is not a name, so
+# Undo saves no "keep as heard" rule for it.
+DM_EDIT = "edit"
 
 
 @dataclass(frozen=True, slots=True)
@@ -87,7 +90,7 @@ class Fix:
     heard: str
     written: str
     entity_id: str
-    how: str  # SPELLING, DM_FIX or SOUND
+    how: str  # SPELLING, DM_FIX, SOUND or DM_EDIT
     # False: from a name DMbot only suggested, or a close look-alike of a confirmed name
     # (#573): the fix is made and the DM screen shows it with Undo (#296)
     sure: bool = True
