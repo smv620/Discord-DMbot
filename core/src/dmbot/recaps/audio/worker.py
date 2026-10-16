@@ -1,0 +1,280 @@
+"""The recap's audio step (#1383): after the text is ready, make the narration and the music.
+
+It is a second, separate job on the same recap row (`audio`: queued → ready | failed | off), so
+the text and its email never wait for it, and a failure here leaves the recap `ready` with its
+text. A provider error is retried once later; a refusal that would fail the same way (a bad key,
+no credits) is not. With no key set the audio is simply `off` and the recap goes out text-only.
+
+Checks, at the start, before every paid call, and again before anything is kept: the plan
+includes spoken recaps (fails closed), everyone whose lines were used is still recorded (consent,
+after every async step), no secret name is in any request (the script refuses one, and the names
+are read fresh), and the spend is under the cap. The audio belongs to the text it was made from
+(`audio_text_hash`): if the DM changes the text meanwhile, nothing is kept. Counts only in the log,
+never a name or the text.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import hashlib
+import json
+import logging
+import shutil
+import time
+from collections.abc import Awaitable, Callable, Collection, Sequence
+from dataclasses import dataclass
+from pathlib import Path
+
+from dmbot.recaps.audio import names as nm
+from dmbot.recaps.audio import script as sc
+from dmbot.recaps.audio.eleven import ElevenLabs, Locator, ProviderError
+from dmbot.recaps.audio.files import FILE_NAMES, MUSIC, VOICE, AudioFiles
+from dmbot.recaps.audio.render import Renderer, RenderError, estimate_credits
+from dmbot.recaps.store import AUDIO_LEASE_S, AUDIO_MAX_TRIES, Job, RecapStore
+
+log = logging.getLogger(__name__)
+
+RETRY_AFTER_S = 3600  # the one retry waits an hour
+DEADLINE_S = AUDIO_LEASE_S - 120  # all the work must end before the lease can lapse
+DEFAULT_MAX_CREDITS = 15_000  # about $3 at the Creator plan's price: a recap is about 7,000
+
+NOT_INCLUDED = "Spoken recaps aren't part of this campaign's plan, so the audio wasn't made."
+STOPPED = "A player stopped being recorded, so the audio wasn't made. The text is not changed."
+SECRET = "The recap names something you keep secret, so the audio wasn't made."
+OVER_CAP = "This recap would cost more audio than DMbot allows for one, so it wasn't made."
+BUSY = "The narration and music couldn't be made this time. The text is fine."
+REFUSED = "The narration and music service refused the request. The text is fine."
+NO_NAMES = "DMbot couldn't check your secret names just now, so the audio waits."
+NO_MIXER = "DMbot can't mix audio on this server yet, so the audio wasn't made. The text is fine."
+EDITED = "The text changed while the audio was made, so the audio was not kept."
+
+
+class Stop(Exception):
+    """Work must stop for a plain reason (one of the sentences above)."""
+
+    def __init__(self, why: str, *, permanent: bool = True) -> None:
+        super().__init__(why)
+        self.why = why
+        self.permanent = permanent
+
+
+@dataclass(frozen=True, slots=True)
+class AudioInputs:
+    """What the audio reads, loaded fresh for a recap: this campaign's own data only."""
+
+    secret_names: Collection[str]
+    names: Sequence[nm.SpokenName]  # confirmed names with their "said as" spellings
+
+
+Load = Callable[[int, str, Job], Awaitable["AudioInputs | None"]]
+Consenting = Callable[[int], Awaitable[Collection[int]]]
+Allowed = Callable[[int, str, Job], Awaitable[bool]]
+
+
+def text_hash(title: str, summary: str) -> str:
+    """A fingerprint of what the narration is made from."""
+    return hashlib.sha256(f"{title}\n{summary}".encode()).hexdigest()
+
+
+def _hash(rules: Sequence[nm.Rule]) -> str:
+    body = json.dumps([[r.string_to_replace, r.alias] for r in rules], ensure_ascii=False)
+    return hashlib.sha256(body.encode()).hexdigest()
+
+
+def _has_ffmpeg() -> bool:
+    return shutil.which("ffmpeg") is not None
+
+
+class AudioWorker:
+    def __init__(
+        self,
+        store: RecapStore,
+        provider: ElevenLabs | None,
+        files: AudioFiles,
+        *,
+        load: Load,
+        consenting: Consenting,
+        allowed: Allowed,
+        renderer: Renderer | None = None,
+        max_credits: int = DEFAULT_MAX_CREDITS,
+        have_ffmpeg: Callable[[], bool] = _has_ffmpeg,
+        clock: Callable[[], float] = time.time,
+    ) -> None:
+        self._store = store
+        self._provider = provider
+        self._files = files
+        self._load = load
+        self._consenting = consenting
+        self._allowed = allowed
+        self._renderer = renderer or (Renderer(provider, files) if provider else None)
+        self._max = max_credits
+        self._have_ffmpeg = have_ffmpeg
+        self._now = clock
+        self._one = asyncio.Lock()  # one recap's audio at a time: memory, credits, the counter
+        self._start = 0  # the provider's credit count when this job began
+
+    async def run(self, gid: int, cid: str, session_at: int) -> Job | None:
+        """Make the audio of one recap, if it is waiting and nobody else has it. None if it
+        was not this worker's to make."""
+        async with self._one:
+            if not await self._store.audio_lease(gid, cid, session_at):
+                return None
+            try:
+                job = await self._store.get(gid, cid, session_at)
+                if job is not None and job.audio == "queued" and job.state == "ready":
+                    await self._guarded(gid, cid, job)
+            finally:
+                await self._store.release(gid, cid, session_at)
+            return await self._store.get(gid, cid, session_at)
+
+    async def _guarded(self, gid: int, cid: str, job: Job) -> None:
+        """`_make` with every way out handled: nothing it raises leaves the job queued to run
+        again at once, and a hung provider can't hold it past its lease (a second worker would
+        then start the same paid work)."""
+        try:
+            async with asyncio.timeout(DEADLINE_S):
+                await self._make(gid, cid, job)
+        except Stop as stop:
+            await self._finish(gid, cid, job, stop.why, permanent=stop.permanent)
+        except ProviderError as exc:
+            await self._finish(
+                gid, cid, job, REFUSED if exc.permanent else BUSY, permanent=exc.permanent
+            )
+        except TimeoutError:
+            log.warning("Recap audio: ran out of time")
+            await self._finish(gid, cid, job, BUSY, permanent=False)
+        except Exception as exc:  # the disk, the network, our own bug: the text is fine
+            log.warning("Recap audio: failed (%s)", type(exc).__name__)
+            await self._finish(gid, cid, job, BUSY, permanent=False)
+
+    def _spent(self, job: Job) -> int:
+        """Credits this recap's audio has cost so far, across tries (the cap is for the recap)."""
+        return job.audio_credits + (self._provider.credits - self._start if self._provider else 0)
+
+    async def _finish(self, gid: int, cid: str, job: Job, why: str, *, permanent: bool) -> None:
+        """Stopped for a reason: failed for good, or one more try an hour on. `job` was read
+        after the lease counted this start, so `audio_tries` already includes it."""
+        credits = self._spent(job)
+        log.info("Recap audio: stopped (%s)", why[:40])
+        if permanent or job.audio_tries >= AUDIO_MAX_TRIES:
+            await self._store.set_audio(
+                gid, cid, job.session_at, audio="failed", credits=credits, error=why
+            )
+            return
+        await self._store.set_audio(
+            gid,
+            cid,
+            job.session_at,
+            audio="queued",
+            next_at=int(self._now()) + RETRY_AFTER_S,
+            credits=credits,
+            error=why,
+        )
+
+    async def _check(self, gid: int, cid: str, job: Job) -> AudioInputs:
+        """Everything that must hold before a paid call, read now: the plan, consent, the
+        secret names, the cap. Raises `Stop` otherwise."""
+        if not await self._allowed(gid, cid, job):
+            raise Stop(NOT_INCLUDED)
+        inputs = await self._load(gid, cid, job)
+        if inputs is None:
+            raise Stop(NO_NAMES, permanent=False)
+        if not set(job.speakers) <= set(await self._consenting(gid)):
+            raise Stop(STOPPED)
+        if self._spent(job) > self._max:
+            raise Stop(OVER_CAP)
+        return inputs
+
+    async def _make(self, gid: int, cid: str, job: Job) -> None:
+        self._start = self._provider.credits if self._provider else 0
+        if self._provider is None or self._renderer is None:
+            await self._store.set_audio(gid, cid, job.session_at, audio="off")
+            return  # no key: text only, nothing fails
+        if not self._have_ffmpeg():
+            raise Stop(NO_MIXER)  # before a single paid call, not after them
+        inputs = await self._check(gid, cid, job)
+        try:
+            script = sc.build(
+                job.title, job.game_day, job.summary, secret_names=inputs.secret_names
+            )
+        except sc.SecretInScript:
+            raise Stop(SECRET) from None
+        # The estimate assumes a new ambience bed: the cap is a ceiling, not a forecast.
+        if job.audio_credits + estimate_credits(script, ambience_needed=True) > self._max:
+            raise Stop(OVER_CAP)
+
+        async def guard() -> None:
+            fresh = await self._check(gid, cid, job)  # again before each paid call
+            try:
+                sc.build(job.title, job.game_day, job.summary, secret_names=fresh.secret_names)
+            except sc.SecretInScript:
+                raise Stop(SECRET) from None
+
+        folder = self._files.recap_dir(gid, cid, job.session_at)
+        temp = folder.with_name(f"{folder.name}.new")
+        try:
+            dictionary = await self._dictionary(gid, cid, inputs)
+            made = await self._renderer.render(
+                gid, cid, script, into=temp, seed=job.session_at, dictionary=dictionary, guard=guard
+            )
+            await guard()  # and once more after the last call, before anything is kept
+            now_job = await self._store.get(gid, cid, job.session_at)
+            if (
+                now_job is None
+                or now_job.state != "ready"
+                or now_job.status not in ("draft", "posting")
+                or (now_job.title, now_job.summary) != (job.title, job.summary)
+            ):
+                raise Stop(EDITED, permanent=False)  # the recap went, or the DM changed the text
+            await asyncio.to_thread(_put_in_place, temp, folder)
+        finally:
+            await asyncio.to_thread(shutil.rmtree, temp, True)
+        kept = await self._store.set_audio(
+            gid,
+            cid,
+            job.session_at,
+            audio="ready",
+            credits=self._spent(job),
+            error="",
+            text_hash=text_hash(job.title, job.summary),
+            unchanged=(job.title, job.summary),  # in the same statement: no edit slips between
+        )
+        if not kept:
+            await asyncio.to_thread(shutil.rmtree, folder, True)
+            raise Stop(EDITED, permanent=False)
+        log.info("Recap audio: ready, %d credits, %.0f s", made.credits, made.seconds)
+
+    async def _dictionary(self, gid: int, cid: str, inputs: AudioInputs) -> Locator | None:
+        """The campaign's pronunciation dictionary: made once, made again only when the rules
+        change (the older one is deleted at the company). Only non-secret names are in it
+        (`names.rules` leaves the rest out). Its name is opaque: no campaign id leaves DMbot."""
+        assert self._provider is not None
+        rules = nm.rules(inputs.names)
+        if not rules:
+            return None
+        digest = _hash(rules)
+        stored = await self._store.dictionary(gid, cid)
+        if stored is not None and stored[2] == digest:
+            return Locator(stored[0], stored[1])
+        opaque = hashlib.sha256(f"{gid}/{cid}".encode()).hexdigest()[:16]
+        locator = await self._provider.dictionary(f"dmbot-{opaque}", rules)
+        await self._store.save_dictionary(
+            gid, cid, locator.dictionary_id, locator.version_id, digest
+        )
+        if stored is not None:
+            await self._provider.forget_dictionary(stored[0])
+        return locator
+
+
+def _put_in_place(temp: Path, folder: Path) -> None:
+    """The finished files replace the old ones: the old folder is moved aside first, so a reader
+    never finds the recap with no files."""
+    for kind in (VOICE, MUSIC):
+        if not (temp / FILE_NAMES[kind]).is_file():
+            raise RenderError("files")
+    aside = folder.with_name(f"{folder.name}.old")
+    shutil.rmtree(aside, ignore_errors=True)
+    if folder.exists():
+        folder.rename(aside)
+    temp.rename(folder)
+    shutil.rmtree(aside, ignore_errors=True)

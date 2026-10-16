@@ -38,14 +38,16 @@ describe("What's new", () => {
     );
   });
 
+  it("shows the two things dev1 deployed as 4d7aea9b (#1373, #1370)", () => {
+    const titles = entries.map((e) => e.title);
+    expect(titles.slice(0, 2)).toEqual(["Your questions to the team", "Quick answers use your facts"]);
+  });
+
   it("holds back what people can't use yet, with the reason, and shows none of it (#1322)", () => {
     expect(held.map((h) => h.title)).toEqual([
       "Recaps for your table", // until dev1 has checked a real recap (#1382, #1384)
-      "Quick answers use your facts",
-      "Your questions to the team", // until the API with the list route is deployed (#1373)
       "Ask a question in public", // until QAbot is live (#1352)
       "Move to a new Discord account",
-      "A recap of last session",
       "New names from what was said",
       "A note before tonight's session",
       "When a player says a secret name",
@@ -56,7 +58,6 @@ describe("What's new", () => {
     }
     const shown = page.querySelector("main")?.textContent ?? "";
     expect(shown).not.toContain("Move to a new Discord account");
-    expect(shown).not.toContain("Quick answers use your facts");
     expect(shown).not.toContain("New names from what was said");
     expect(shown).not.toContain("A note before tonight");
     expect(shown).not.toContain("When a player says a secret name");
@@ -65,7 +66,7 @@ describe("What's new", () => {
     expect(shown).not.toContain("Ask a question in public"); // not until QAbot is live
     expect(shown).not.toContain("QAbot");
     expect(page.querySelectorAll(".entry")).toHaveLength(entries.length);
-    expect(entries).toHaveLength(7);
+    expect(entries).toHaveLength(9);
   });
 
   it("has dates in order, newest first, and real days", () => {

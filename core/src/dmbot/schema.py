@@ -4024,6 +4024,57 @@ RECAP_AUDIO_FOLLOW_UPS = """
     REVOKE ALL ON FUNCTION dmbot_stray_addon_done(TEXT) FROM PUBLIC;
     """
 
+RECAP_AUDIO_JOBS = (
+    """
+    -- The recap's two audio tracks (#1383), made after the text is ready; the text never waits
+    -- for them. Per recap, kept on its row; the files themselves are on disk, not here.
+    --   audio         off (not wanted, or no key), queued, ready or failed
+    --   audio_tries   attempts so far (one retry later, then failed)
+    --   audio_next_at not before this time (the wait before the retry)
+    --   audio_credits the provider credits this recap's audio has cost, across tries (a count)
+    --   audio_error   a short fixed reason, never a name or any text
+    ALTER TABLE recap_jobs ADD COLUMN audio TEXT NOT NULL DEFAULT 'off'
+        CHECK (audio IN ('off', 'queued', 'ready', 'failed'));
+    ALTER TABLE recap_jobs ADD COLUMN audio_tries INTEGER NOT NULL DEFAULT 0
+        CHECK (audio_tries BETWEEN 0 AND 3);
+    ALTER TABLE recap_jobs ADD COLUMN audio_next_at BIGINT NOT NULL DEFAULT 0;
+    ALTER TABLE recap_jobs ADD COLUMN audio_text_hash TEXT NOT NULL DEFAULT ''
+        CHECK (char_length(audio_text_hash) <= 64);
+    ALTER TABLE recap_jobs ADD COLUMN audio_credits INTEGER NOT NULL DEFAULT 0
+        CHECK (audio_credits >= 0);
+    ALTER TABLE recap_jobs ADD COLUMN audio_error TEXT NOT NULL DEFAULT ''
+        CHECK (char_length(audio_error) <= 200);
+    --   audio_text_hash  a fingerprint of the title and text the audio was made from: after the
+    --                 DM edits the text the audio no longer matches and is not attached
+    -- A campaign's pronunciation dictionary at the voice company, made once and kept here with
+    -- a hash of its rules, so it is made again only when a name's spelling changes. Only
+    -- non-secret names are ever in it. It belongs to this campaign alone and goes with it.
+    CREATE TABLE recap_dictionaries (
+        """
+    + "{scope}"
+    + """
+        dictionary_id TEXT NOT NULL CHECK (char_length(dictionary_id) BETWEEN 1 AND 100),
+        version_id    TEXT NOT NULL CHECK (char_length(version_id) BETWEEN 1 AND 100),
+        rules_hash    TEXT NOT NULL CHECK (char_length(rules_hash) = 64),
+        updated_at    BIGINT NOT NULL,
+        PRIMARY KEY (guild_id, campaign_id)
+    );
+    """
+    + _isolate("recap_dictionaries")
+)
+RECAP_AUDIO_JOBS = RECAP_AUDIO_JOBS.replace("{scope}", _memory_scope())
+
+MEMORY_SAID_AS = """
+    -- A spelling for the recap's narrator (#1419): "Kah-zeth" for Ka'zeth. Set by the DM on a name,
+    -- through the same change path as every other edit (so it can be undone), and only on a name
+    -- that is not secret: the voice company is sent these, and a secret name never leaves DMbot.
+    -- The check makes the database refuse the pair even if code forgot.
+    ALTER TABLE memory_aliases ADD COLUMN said_as TEXT
+        CHECK (said_as IS NULL OR char_length(said_as) BETWEEN 1 AND 80);
+    ALTER TABLE memory_aliases ADD CONSTRAINT memory_aliases_secret_not_said
+        CHECK (NOT secret OR said_as IS NULL);
+    """
+
 SUPPORT_TICKETS = (
     _setting("dmbot_support_admin", "dmbot.support_admin", "TEXT")
     + """
@@ -4258,6 +4309,8 @@ MIGRATIONS: tuple[Migration, ...] = (
     ("0079_recap_jobs", RECAP_JOBS),  # the cinematic recap job of a session (#1382)
     ("0080_recap_audio_addon", RECAP_AUDIO_ADDON),  # the recap audio add-on (#1389)
     ("0081_recap_audio_follow_ups", RECAP_AUDIO_FOLLOW_UPS),  # move + stray sweep (#1399)
+    ("0082_recap_audio_jobs", RECAP_AUDIO_JOBS),  # the recap's audio tracks (#1383)
+    ("0083_memory_said_as", MEMORY_SAID_AS),  # a spelling for the narrator (#1419)
 )
 
 # Tables that must have row-level security. A test checks every table in the schema
@@ -4282,6 +4335,7 @@ ISOLATED_TABLES = (
     "game_clocks",
     "game_effects",
     "recap_jobs",
+    "recap_dictionaries",
     "memory_rule_links",
     "fightbot_players",
     "rule_sets",

@@ -162,10 +162,13 @@ def _rule_link(r: dict[str, Any]) -> RuleLink:
     )  # fmt: skip
 
 
+SAID_AS_MAX = 80  # characters of a spelling for the narrator
+
+
 def _alias(r: dict[str, Any]) -> Alias:
     return Alias(
         r["id"], r["entity_id"], r["text"], r["key"], r["kind"], r["used_by"], r["secret"],
-        r["status"], tuple(r["sound_codes"]), r["source"], r["created_at"],
+        r["status"], tuple(r["sound_codes"]), r["source"], r["created_at"], r["said_as"],
     )  # fmt: skip
 
 
@@ -1300,7 +1303,56 @@ class MemoryStore:
                 if current["secret"] and not secret and source != DM:
                     raise MemoryRuleError("Only the DM can stop keeping that secret.")
                 changes["secret"] = secret
+                if secret:
+                    changes["said_as"] = None  # a secret name is never sent to the narrator
             row = await w.update(ALIASES, alias_id, changes)
+            return Written(_alias(row), w.batch)
+
+    async def said_as(self, guild_id: int, campaign_id: str, entity_id: str) -> str | None:
+        """How the narrator says an entry's main name, if the DM gave a spelling (#1419)."""
+        async with self._read(guild_id, campaign_id) as scope:
+            entity = (await scope.select(ENTITIES, " AND id = %s", [entity_id]))[:1]
+            if not entity:
+                return None
+            rows = await scope.select(
+                ALIASES,
+                " AND entity_id = %s AND key = %s",
+                [entity_id, lookup_key(entity[0]["name"])],
+            )
+        return None if not rows or rows[0]["secret"] else rows[0]["said_as"]
+
+    async def set_said_as(
+        self,
+        guild_id: int,
+        campaign_id: str,
+        entity_id: str,
+        spelling: str | None,
+        *,
+        source: str,
+    ) -> Written[Alias]:
+        """The DM's spelling of an entry's main name for the recap's narrator ("Kah-zeth" for
+        Ka'zeth), or none to clear it. Changed through the usual path, so it can be undone.
+        Refused on a secret name: the narrator's dictionary goes to the voice company."""
+        if source != DM:
+            raise MemoryRuleError("Only the DM can change how recaps say a name.")
+        clean = " ".join((spelling or "").split()) or None
+        if clean is not None and (len(clean) > SAID_AS_MAX or not clean.isprintable()):
+            raise MemoryRuleError(f"Use up to {SAID_AS_MAX} letters, with no odd characters.")
+        async with self._write(guild_id, campaign_id, source) as w:
+            owner = await w.get(ENTITIES, entity_id)
+            if owner is None:
+                raise MemoryRuleError(NOT_FOUND)
+            rows = await w.select(
+                ALIASES, " AND entity_id = %s AND key = %s", [entity_id, lookup_key(owner["name"])]
+            )
+            if not rows:
+                raise MemoryRuleError(NOT_FOUND)
+            if rows[0]["secret"] and clean is not None:
+                raise MemoryRuleError(
+                    "That name is secret, so recaps never say it. "
+                    "Make it public first, or leave this empty."
+                )
+            row = await w.update(ALIASES, rows[0]["id"], {"said_as": clean})
             return Written(_alias(row), w.batch)
 
     async def merge(
@@ -2628,6 +2680,8 @@ def _upgrade(old: dict[str, Any], status: str, secret: bool, source: str) -> dic
     changes: dict[str, Any] = {}
     if secret and not old["secret"]:
         changes["secret"] = True
+        if "said_as" in old:  # a name (relations are upgraded here too)
+            changes["said_as"] = None  # a secret name is never sent to the narrator (#1419)
     if old["status"] == REJECTED:
         if source == DM and status != REJECTED:
             changes["status"] = status
