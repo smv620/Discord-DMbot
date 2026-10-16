@@ -22,14 +22,17 @@ from dmbot.ui.dmbot_commands import _bot, _tell
 NO_PINGS = discord.AllowedMentions.none()
 NOT_THE_DM = "Only the campaign's DM can do that."
 NO_RECAP = "Couldn't write a recap this time. Nothing was posted."
-GONE = "That recap is gone, or already decided."
-POSTED = "✅ Posted to the table."
-DROPPED = "👍 Not posted."
+GONE = "That recap was already posted or left out."
+NO_MORE_TRIES = "No more tries for this one. Post it, edit it or leave it out."
+LAST_TRY = "That was the last new try. You can post it, edit it or leave it out."
+POSTED = "✅ Posted in the chat channel."
+DROPPED = "👍 Left out. Nothing was posted."
 NO_CHANNEL = (
-    "There is no chat channel for this campaign to post it in yet. Nothing was posted. "
-    "Start a session once, then press Post again."
+    "Can't post yet: this campaign has no chat channel (dmb-chat) yet. DMbot makes it when a "
+    "session starts. Nothing was posted and your recap is kept. Press Post again then."
 )
-EDIT_TOO_LONG = "That's too long to show in one message. Nothing was changed. Make it shorter."
+CANT_SEND = "Couldn't post in the chat channel. Check DMbot can write there, then press Post again."
+EDIT_TOO_LONG = "Too long for one message (about 1,500 characters). Nothing was changed."
 MESSAGE_MAX = 1900  # Discord's limit is 2,000
 
 
@@ -37,15 +40,24 @@ def as_posted(recap: Recap) -> str:
     """What the table reads: the heading, the story without its cues, and the housekeeping."""
     parts = [rd.heading(recap.title, recap.game_day), "", rd.strip_cues(recap.summary)]
     if recap.housekeeping:
-        parts += ["", "**Mechanical Housekeeping**", *(f"- {b}" for b in recap.housekeeping)]
+        parts += [
+            "",
+            "**Mechanical Housekeeping** (hit points, items, conditions)",
+            *(f"- {b}" for b in recap.housekeeping),
+        ]
     return "\n".join(parts)
+
+
+def to_the_table(recap: Recap) -> str:
+    """As_posted, with a line saying the DM approved it: it is a story, not a ruling."""
+    return as_posted(recap) + "\n\n📜 _Recap, approved by your DM._"
 
 
 def for_the_dm(recap: Recap) -> str:
     """The DM's copy: the same, and a line saying nobody else has seen it."""
     return (
-        "📜 **A recap of this session is ready.** Only you can see it. "
-        "Nothing is posted unless you press Post.\n\n" + as_posted(recap)
+        "📜 **Recap ready. Only you can see it.** Nothing goes to the table until you press "
+        "Post.\n\n" + as_posted(recap) + (f"\n\n_{LAST_TRY}_" if recap.tries >= MAX_TRIES else "")
     )
 
 
@@ -118,9 +130,10 @@ class EditRecap(discord.ui.Modal, title="Edit the recap"):
         super().__init__()
         self.campaign_id, self.session_at = campaign_id, session_at
         self.text: discord.ui.TextInput[Any] = discord.ui.TextInput(
-            label="The story (keep the 《 》 cues)",
+            label="The story (leave the 《 》 words in)",
             style=discord.TextStyle.paragraph,
             default=text,
+            placeholder="Words in 《 》 or (( )) set the music's mood. Leave them as they are.",
             max_length=4000,
         )
         self.add_item(self.text)
@@ -207,15 +220,20 @@ async def post_to_table(interaction: discord.Interaction, campaign: Any, recap: 
     if not await bot.recaps.decide(campaign.guild_id, campaign.id, recap.session_at, "posted"):
         await _tell(interaction, GONE)
         return
-    for part in parts_of(as_posted(recap)):
-        await channel.send(part, allowed_mentions=NO_PINGS)
+    try:
+        for part in parts_of(to_the_table(recap)):
+            await channel.send(part, allowed_mentions=NO_PINGS)
+    except discord.HTTPException:
+        await bot.recaps.reopen(campaign.guild_id, campaign.id, recap.session_at)
+        await _tell(interaction, CANT_SEND)
+        return
     await interaction.edit_original_response(content=POSTED, view=None)
 
 
 async def try_again(interaction: discord.Interaction, campaign: Any, recap: Recap) -> None:
     bot = _bot(interaction)
     if recap.tries >= MAX_TRIES:
-        await _tell(interaction, GONE)
+        await _tell(interaction, NO_MORE_TRIES)
         return
     result = await bot.write_recap_again(campaign, recap)
     if result is None:

@@ -138,6 +138,17 @@ class RecapStore:
             )
             return bool(cur.rowcount)
 
+    async def reopen(self, guild_id: int, campaign_id: str, session_at: int) -> None:
+        """Back to a draft: the DM pressed Post but nothing could be sent, so it is still theirs
+        to post."""
+        async with self._db.guild(guild_id) as conn:
+            await conn.execute(
+                "UPDATE session_recaps SET status = 'draft', decided_at = NULL"
+                " WHERE guild_id = %s AND campaign_id = %s AND session_at = %s"
+                " AND status = 'posted'",
+                (guild_id, campaign_id, session_at),
+            )
+
 
 class RecapSection:
     """Recaps in campaign backups (an `ExportSection`)."""

@@ -20,8 +20,8 @@ from dmbot.transcript.models import Line
 
 log = logging.getLogger(__name__)
 
-NOTHING = "There was nothing to recap."
-STOPPED = "Someone in the recap stopped being recorded, so it was thrown away."
+NOTHING = "No recorded talk to recap. Only people who agreed are recorded."
+STOPPED = "A player stopped being recorded, so the recap was thrown away. Nothing was posted."
 FAILED = "Couldn't write a recap this time."
 
 

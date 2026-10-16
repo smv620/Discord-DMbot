@@ -7,7 +7,7 @@ import unittest
 from collections.abc import Collection
 from types import SimpleNamespace
 from typing import Any
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock
 
 from dmbot.ai import AIError, Reply
 from dmbot.campaigns.models import CampaignError
@@ -427,6 +427,7 @@ class TheButtons(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("《", message)
         self.assertNotIn("((", message)
         self.assertIn("Mira drew her blade.", message)
+        self.assertIn("approved by your DM", message)
         store.decide.assert_awaited_once()
         # A second press finds it decided and posts nothing more.
         store.decide.return_value = False
@@ -447,6 +448,16 @@ class TheButtons(unittest.IsolatedAsyncioTestCase):
         await recap_ui.press(dm, "post", "c" * 32, 100)
         store.decide.assert_not_called()
 
+    async def test_a_post_that_cannot_be_sent_stays_a_draft(self) -> None:
+        import discord
+
+        store = self.store()
+        store.reopen = AsyncMock()
+        dm = fake_interaction(DM, store)
+        dm.channel_sent.send.side_effect = discord.HTTPException(MagicMock(status=403), "no")
+        await recap_ui.press(dm, "post", "c" * 32, 100)
+        store.reopen.assert_awaited_once()  # still the DM's to post
+
     async def test_a_decided_recap_is_gone_to_every_button(self) -> None:
         store = self.store(a_draft("posted"))
         for act in ("post", "again", "edit", "drop"):
@@ -466,7 +477,7 @@ class TheButtons(unittest.IsolatedAsyncioTestCase):
     async def test_the_dms_copy_says_nobody_else_has_seen_it(self) -> None:
         text = recap_ui.for_the_dm(a_draft())
         self.assertIn("Only you can see it", text)
-        self.assertIn("Nothing is posted unless you press Post", text)
+        self.assertIn("Nothing goes to the table until you press Post", text)
         self.assertLessEqual(len(text), recap_ui.MESSAGE_MAX)
 
     async def test_long_text_is_cut_into_messages_discord_accepts(self) -> None:
