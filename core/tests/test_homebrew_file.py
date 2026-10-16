@@ -11,19 +11,10 @@ from dmbot.rules.homebrew import HOMEBREW_MAX, Homebrew
 NOW = 1_700_000_000
 
 
-def entry(name: str, text: str, *, kind: str = "monster", **kw: object) -> Homebrew:
-    return Homebrew(
-        1,
-        "c",
-        kind,
-        name,
-        text,
-        kw.get("summary"),
-        bool(kw.get("known")),
-        7,
-        NOW,
-        NOW,  # type: ignore[arg-type]
-    )
+def entry(
+    name: str, text: str, *, kind: str = "monster", summary: str | None = None, known: bool = False
+) -> Homebrew:
+    return Homebrew(1, "c", kind, name, text, summary, known, 7, NOW, NOW)
 
 
 class RoundTrip(unittest.TestCase):
