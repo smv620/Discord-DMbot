@@ -403,8 +403,9 @@ or place (a PC called Sprite) is skipped; the list is in
 one card for each name each session, one card a minute (the rest are dropped, not queued), and
 nothing after `/dmbot stop`. The DM screen's level (Quiet, Normal, Chatty) does not govern
 it: turning the setting on is the DM's own choice and wins, even on Quiet. Names only: no AI, no cost, so no `can_use_ai` check. It never
-decides: the card says what the free rules say. Not built: AI checks of what was ruled, house
-rules proposed by voice, players' lookups.
+decides: the card says what the free rules say. Not built: AI checks of what was ruled. House
+rules proposed by voice are built (#953: a DM-screen offer with Edit before saving when the DM says
+one at the table) and players' lookups since 2026-10-16 (#1562, #1564: see "Built: rules lookup").
 
 **Rules edition (decided 2026-10-03).** The newest official ruleset is always the
 default — currently the 2024 Player's Handbook / 2025 Monster Manual — including when
@@ -1765,7 +1766,10 @@ that Mike is the person who just spoke, and that this person plays the character
   knowing who "Mike" is, and FightBot and the sheet re-reads knowing whose character an action belongs to.
 - **Privacy:** these are the real names of people at the table. They stay in this one campaign (never
   shared with another campaign or server), they go into the campaign's backups with the person kept as a
-  Discord user ID (as the DM list already is), and the DM can remove them from the person's card. **Stop
+  Discord user ID (as the DM list already is), and the DM can remove them from the person's card. A DM may
+  list a server member who never spoke or consented (Add many, Download all, 🧑 Add a player's character;
+  decided 2026-10-16, #1559): it is the DM's own act, records nothing from anyone's voice, stays in the one
+  campaign and is removable from the card; recording consent is a separate thing and is never implied. **Stop
   recording me** removes the names DMbot *learned* for that person and any suggestions still waiting;
   names and links the DM set by hand stay. Never in GitHub, tests or logs: tests use made-up names.
 - **Build:** #1188 (CloudDev). **Built (2026-10-14, PRs #1204, #1207 and the consumers PR):** the
