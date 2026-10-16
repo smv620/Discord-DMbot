@@ -158,6 +158,7 @@ def settings_view(campaign: Campaign, offer: HandoverOffer | None, viewer: int) 
         view.add_item(RecapsButton(campaign.id))  # the recap choices (#1421)
         view.add_item(SideInitiativeButton(campaign.id, campaign.side_initiative))  # #1127
         view.add_item(SharedRulesButton(campaign.id))  # shared house rules (#1190)
+        view.add_item(HomebrewButton(campaign.id))  # the campaign's own homebrew (#1520)
     return view
 
 
@@ -401,6 +402,54 @@ class SharedRulesButton(
                 return
         if campaign is None:
             await interaction.response.send_message(GONE, ephemeral=True)
+            return
+        if interaction.user.id not in campaign.dm_user_ids:
+            await interaction.response.send_message(ONLY_DMS, ephemeral=True)
+            return
+        await open_menu(interaction, campaign)
+
+
+class HomebrewButton(
+    discord.ui.DynamicItem[discord.ui.Button[discord.ui.View]],
+    template=rf"dmbot:homebrew:{_ID}",
+):
+    """📚 Homebrew, on ⚙️ Settings (#1520): the campaign's own spells, monsters, items and rules.
+    Only the campaign's DMs."""
+
+    def __init__(self, campaign_id: str) -> None:
+        super().__init__(
+            discord.ui.Button(
+                label="Homebrew",
+                emoji="📚",
+                style=discord.ButtonStyle.secondary,
+                row=4,
+                custom_id=f"dmbot:homebrew:{campaign_id}",
+            )
+        )
+        self.campaign_id = campaign_id
+
+    @classmethod
+    async def from_custom_id(
+        cls, interaction: discord.Interaction, item: discord.ui.Item[Any], match: re.Match[str]
+    ) -> HomebrewButton:
+        return cls(match["campaign"])
+
+    async def callback(self, interaction: discord.Interaction) -> Any:
+        from dmbot.ui.homebrew import CAMPAIGN_GONE, ONLY_DMS, open_menu
+
+        set_log_context(guild_id=interaction.guild_id)
+        store = getattr(interaction.client, "campaigns", None)
+        guild = interaction.guild
+        campaign: Campaign | None = None
+        if store is not None and guild is not None:
+            try:
+                campaign = await store.get(guild.id, self.campaign_id)
+            except Exception:
+                log.exception("Couldn't load a campaign for the homebrew")
+                await interaction.response.send_message(LOAD_FAILED, ephemeral=True)
+                return
+        if campaign is None:
+            await interaction.response.send_message(CAMPAIGN_GONE, ephemeral=True)
             return
         if interaction.user.id not in campaign.dm_user_ids:
             await interaction.response.send_message(ONLY_DMS, ephemeral=True)

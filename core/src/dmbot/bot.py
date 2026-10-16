@@ -116,6 +116,7 @@ from dmbot.dm_screen.name_questions import (
 from dmbot.dm_screen.pause import PauseButton
 from dmbot.dm_screen.recap_panel import PlanFacts, RecapsButton, audio_how
 from dmbot.dm_screen.settings import (
+    HomebrewButton,
     HouseFileButton,
     InviteButton,
     LevelButton,
@@ -242,6 +243,7 @@ from dmbot.ui.claims_review import waiting_text as claims_waiting_text
 from dmbot.ui.continuity import ContinuityButton, continuity_view
 from dmbot.ui.continuity import waiting_text as continuity_waiting_text
 from dmbot.ui.dmbot_commands import _failed, dmbot_group
+from dmbot.ui.homebrew import dmbot_homebrew  # noqa: F401 (registers it)
 from dmbot.ui.house_rules import dmbot_house_rules  # noqa: F401 (registers it)
 from dmbot.ui.line_fix import FixLineButton, LineFixButton
 from dmbot.ui.migrate import dmbot_migrate  # noqa: F401 (registers it)
@@ -675,6 +677,8 @@ class DMBot(commands.AutoShardedBot):
         self.recaps = recaps  # the cinematic recap of each session (#1382)
         self.suggestions = suggestions  # players' suggested line fixes (#1491)
         self.homebrew = homebrew  # a campaign's own homebrew entries (#1520)
+        # The last entries a DM removed, per campaign, so the list can put them back (memory only).
+        self.homebrew_removed: dict[tuple[int, str], list[Any]] = {}
         self.house_syncs = house_sync.Pendings()
         # Timed effects on that clock (#998); None without a database.
         self.effects = effects
@@ -951,6 +955,7 @@ class DMBot(commands.AutoShardedBot):
             SideInitiativeButton,
             HouseFileButton,
             SharedRulesButton,
+            HomebrewButton,
             InviteButton,
             TableChatButton,
             RecapsButton,
