@@ -5212,7 +5212,8 @@ class DMBot(commands.AutoShardedBot):
             if allowed == 0:
                 log.info("Story extractor: not run, its call limit is used (%d today)", day_used)
                 return
-            lines = await self.transcripts.lines(gid, sid)
+            transcripts = self.transcripts
+            lines = await transcripts.lines(gid, sid)
             # The people at the table are not story names (as in the name scan).
             people = {table.dm_user_id, *table.dm_user_ids, *(await self.consent.consenting(gid))}
             skip: set[str] = set()
@@ -5235,13 +5236,13 @@ class DMBot(commands.AutoShardedBot):
                 max_calls=allowed,
                 skip=skip,
                 after_ms=after_ms,
-                count_call=lambda: self.transcripts.record_extraction(
+                count_call=lambda: transcripts.record_extraction(
                     gid, sid, through_ms=0, calls=1, now=int(time.time())
                 ),
             )
             log.info(report.line())
             try:  # what a restart resumes from, and what the day's limit counts
-                await self.transcripts.record_extraction(
+                await transcripts.record_extraction(
                     gid, sid, through_ms=report.through_ms, calls=0, now=now
                 )  # (the calls were counted as they were made)
             except Exception:

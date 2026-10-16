@@ -19,8 +19,8 @@ from dmbot.memory.store import MemoryStore
 from dmbot.transcript.models import Line
 from dmbot.transcript.store import TranscriptStore
 from tests.pg import DatabaseTest
-from tests.test_extractor import DM, GUILD_A, Canned, Recorder, go, session
-from tests.test_memory_store import ConfirmedMemoryTest
+from tests.test_extractor import DM, Canned, Recorder, go, session
+from tests.test_memory_store import GUILD_A, ConfirmedMemoryTest
 
 DAY = 86_400
 
@@ -194,7 +194,7 @@ class Gates(unittest.IsolatedAsyncioTestCase):
     async def test_a_campaign_whose_plan_has_no_story_memory_runs_nothing(self) -> None:
         me = self.fake(allowed=False)
         with patch.object(extractor, "run", AsyncMock()) as run:
-            await DMBot.extract_claims(me, self.table(), 0)  # type: ignore[arg-type]
+            await DMBot.extract_claims(me, self.table(), 0)
         run.assert_not_called()
         me.plan_allows.assert_awaited_once()
         self.assertEqual(me.plan_allows.await_args.args[0], "story")
@@ -210,7 +210,7 @@ class Gates(unittest.IsolatedAsyncioTestCase):
         owned = SimpleNamespace(id="c", owner_user_id=7)
         me.campaigns.get = AsyncMock(return_value=owned)
         with patch.object(extractor, "run", AsyncMock()) as run:
-            await DMBot.extract_claims(me, self.table(), 0)  # type: ignore[arg-type]
+            await DMBot.extract_claims(me, self.table(), 0)
         run.assert_not_called()
         me.transcripts.lines.assert_not_called()
         me.transcripts.record_extraction.assert_not_called()
@@ -221,10 +221,12 @@ class Gates(unittest.IsolatedAsyncioTestCase):
         me = self.fake(used=(4000, 30), day=100)
         done = extractor.Report(calls=2, through_ms=7000)
         with patch.object(extractor, "run", AsyncMock(return_value=done)) as run:
-            await DMBot.extract_claims(me, self.table(), 0)  # type: ignore[arg-type]
+            await DMBot.extract_claims(me, self.table(), 0)
+        assert run.await_args is not None
         kw = run.await_args.kwargs
         self.assertEqual((kw["after_ms"], kw["max_calls"]), (4000, 450))  # resumes; 480 - 30
         record = me.transcripts.record_extraction.await_args
+        assert record is not None
         self.assertEqual(record.kwargs["through_ms"], 7000)
         self.assertEqual(record.kwargs["calls"], 0)  # the calls were counted as they were made
         self.assertIsNotNone(kw["count_call"])

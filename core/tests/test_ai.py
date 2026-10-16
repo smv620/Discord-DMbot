@@ -95,8 +95,8 @@ class Client(unittest.IsolatedAsyncioTestCase):
         ai = AnthropicClient(
             "sk-secret",
             AIModels.same("m"),
-            session=session,
-            watch=Watch(),  # type: ignore[arg-type]
+            session=session,  # type: ignore[arg-type]
+            watch=Watch(),
         )
         reply = await ai.complete("rules", "doc", tier=AIModelTier.FAST, cache_system=True)
         self.assertEqual((reply.cache_write_tokens, reply.cache_read_tokens), (1000, 500))

@@ -547,8 +547,8 @@ class ClaimStore:
             for r, kept, _ in old:  # the names that were made now resolve: ask them as usual
                 if _unknown_names(kept, names):
                     continue
-                cited = [int(x) for x in r["speaker_ids"]]
-                reason = judge(kept, onto, names, cited, opted_in, tally, dms)
+                holders = [int(x) for x in r["speaker_ids"]]
+                reason = judge(kept, onto, names, holders, opted_in, tally, dms)
                 if reason:
                     await w.update(CLAIMS, r["id"], {"status": CLAIM_DROPPED, "reason": reason})
                 else:
