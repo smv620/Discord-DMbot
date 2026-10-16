@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import unittest
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock
 
 from dmbot.dm_screen import pack_update
@@ -79,7 +79,7 @@ class Note(unittest.TestCase):
         view = pack_update.note_view("c" * 32, SET, 999_999_999)
         self.assertEqual(len(view.children), 3)
         for item in view.children:
-            self.assertLessEqual(len(item.custom_id or ""), 100)
+            self.assertLessEqual(len(cast(Any, item).custom_id or ""), 100)
 
     def test_changes_are_listed_by_name(self) -> None:
         text = pack_update.changes_text("Frost", 2, update().changes)

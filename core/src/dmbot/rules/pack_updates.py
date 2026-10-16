@@ -24,7 +24,6 @@ from dmbot.rules.homebrew_packs import (
     HOMEBREW,
     TOO_MANY_PACKS,
     HomebrewPackStore,
-    RuleSetError,
     _renumber,
 )
 from dmbot.rules.house import require_dm
@@ -39,6 +38,7 @@ from dmbot.rules.rule_sets import (
     NOTHING_TO_UNDO,
     Follow,
     Offer,
+    RuleSetError,
     _follow_values,
     _followed,
 )
