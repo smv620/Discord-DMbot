@@ -22,6 +22,7 @@ from dmbot.logs import set_log_context
 from dmbot.rules.homebrew import (
     KINDS,
     NAME_MAX,
+    NO_CAMPAIGN,
     SUMMARY_MAX,
     TEXT_MAX,
     Homebrew,
@@ -48,22 +49,28 @@ log = logging.getLogger(__name__)
 
 PAGE_ENTRIES = 25  # a menu holds 25 choices
 UNDO_KEPT = 5  # removed entries that can be put back, per campaign
-UNDO_SHOWN = 2  # ...and shown as buttons on the list
+UNDO_SHOWN = 1  # ...and the newest is the one button on the list
 
 NOT_READY = "Homebrew isn't available right now. Please try again in a moment."
-ONLY_DMS = "Only this campaign's DM can open its homebrew. Players can ask with `/dmbot rule`."
+ONLY_DMS = "Only this campaign's DM can open its homebrew. Ask your DM."
 CAMPAIGN_GONE = "That campaign isn't here any more."
 NO_CAMPAIGNS = "There's no campaign in this server yet. A DM can set one up with `/dmbot start`."
-NOT_YOUR_CAMPAIGN = "You aren't a DM of a campaign in this server, so there's no homebrew to open."
-ENTRY_GONE = "That entry was already removed. Here is the list now."
-INTRO = (
-    "Your own creations only. For a published book, use **Share a rulebook**. Homebrew beats "
-    "the book. Only you see an entry until you press 👀; DMbot never makes one up."
+NOT_YOUR_CAMPAIGN = (
+    "Only a campaign's DM can open its homebrew. You aren't a DM of one in this server."
 )
+ENTRY_GONE = "That entry is gone, maybe removed by another DM. Here is the list now."
+INTRO = (
+    "Your own spells, monsters, items and rules. Players can't see an entry until you press 👀. "
+    "Hidden entries are for you only; DMbot's sidebar and table answers don't use them. "
+    "DMbot only keeps what you write. For a published book, use **Share a rulebook**."
+)
+SHORT_INTRO = "Your own creations only. Hidden entries are for you only."
 NONE_YET = "No homebrew yet. Press **➕ Add** to write the first one."
-KIND_ASK = "What kind of thing is it?"
-FORM_NOTE = "Your own creations only. For a published book, use Share a rulebook."
-CHANGED_MIND = "Changed your mind? Press ↩️ **Undo** on the list."
+KIND_ASK = (
+    "What are you adding? Pick one and a form opens.\n"
+    "Hidden entries are for you only; DMbot's sidebar and table answers don't use them."
+)
+CHANGED_MIND = "Press ↩️ **Undo** to bring it back."
 
 KIND_LABELS = {
     "spell": "✨ Spell",
@@ -101,7 +108,7 @@ def mark(entry: Homebrew) -> str:
 def list_text(campaign: Campaign, entries: list[Homebrew], page: int, note: str = "") -> str:
     lines = [_fit(note, 200)] if note else []
     lines.append(f"📚 **Homebrew: {_fit(_md(campaign.name), 100)}**")
-    lines.append(INTRO)
+    lines.append(INTRO if not entries else SHORT_INTRO)
     if not entries:
         lines.append(NONE_YET)
     shown = entries[page * PAGE_ENTRIES : (page + 1) * PAGE_ENTRIES]
@@ -178,6 +185,9 @@ async def _redraw(
     if current is None:
         await _tell(interaction, CAMPAIGN_GONE)
         return
+    if interaction.user.id not in current.dm_user_ids:  # on every press, reads included
+        await _tell(interaction, ONLY_DMS)
+        return
     await show_list(interaction, current, page=page, note=note)
 
 
@@ -198,16 +208,11 @@ class ListMenu(_Menu):
         self.campaign, self.entries, self.page = campaign, entries, page
         self.add_item(_Button(self._add, label="➕ Add", style=discord.ButtonStyle.primary))
         if page > 0:
-            self.add_item(_Button(self._newer, label="◀ Back"))
+            self.add_item(_Button(self._newer, label="◀ Newer"))
         if (page + 1) * PAGE_ENTRIES < len(entries):
-            self.add_item(_Button(self._older, label="More ▶"))
-        for gone in removed[-UNDO_SHOWN:]:
-            self.add_item(
-                _Button(
-                    partial(self._undo, gone),
-                    label=logic.shorten(f"↩️ Undo: {gone.name}", logic.PHONE_LABEL_MAX + 15),
-                )
-            )
+            self.add_item(_Button(self._older, label="Older ▶"))
+        for gone in removed[-UNDO_SHOWN:]:  # the newest removal (the note says which)
+            self.add_item(_Button(partial(self._undo, gone), label="↩️ Undo last remove"))
         shown = entries[page * PAGE_ENTRIES : (page + 1) * PAGE_ENTRIES]
         if shown:
             self.pick = _Select(
@@ -215,10 +220,10 @@ class ListMenu(_Menu):
                 placeholder="Pick one to open…",
                 options=[
                     discord.SelectOption(
-                        label=logic.shorten(e.name, logic.PHONE_LABEL_MAX + 15),
+                        label=logic.shorten(e.name, logic.PHONE_LABEL_MAX),
                         value=str(e.id),
                         description=logic.shorten(
-                            f"{mark(e)} {e.kind}: {e.shown()}", logic.DESCRIPTION_MAX
+                            f"{mark(e)} {e.kind}: {e.name}. {e.shown()}", logic.DESCRIPTION_MAX
                         ),
                     )
                     for e in shown
@@ -263,6 +268,8 @@ class ListMenu(_Menu):
         try:
             await store.put_back(c.guild_id, c.id, interaction.user.id, gone)
         except HomebrewError as exc:
+            if str(exc) == NO_CAMPAIGN:  # the campaign is gone: its removed entries go too
+                _bot(interaction).homebrew_removed.pop((c.guild_id, c.id), None)
             await _redraw(interaction, c, note=str(exc), page=self.page)
             return
         kept.remove(gone)
@@ -281,7 +288,7 @@ class KindPick(_Menu):
             options=[discord.SelectOption(label=KIND_LABELS[k], value=k) for k in KINDS],
         )
         self.add_item(self.pick)
-        self.add_item(_Button(self._back, label="Back to the list"))
+        self.add_item(_Button(self._back, label="↩ To the list"))
 
     async def _picked(self, interaction: discord.Interaction) -> None:
         if not await _is_dm(interaction, self.campaign):
@@ -303,14 +310,14 @@ class EntryMenu(_Menu):
         self.add_item(
             _Button(
                 self._toggle,
-                label="🙈 Keep it to me" if entry.players_may_know else "👀 Let players know",
+                label="🙈 Only me" if entry.players_may_know else "👀 Players can know",
             )
         )
         self.add_item(_Button(self._remove, label="🗑 Remove", style=discord.ButtonStyle.danger))
-        self.add_item(_Button(self._back, label="Back to the list"))
+        self.add_item(_Button(self._back, label="↩ To the list"))
         self.kind = _Select(
             self._kind,
-            placeholder=f"Kind: {entry.kind}. Change…",
+            placeholder=f"Change kind (now: {entry.kind})",
             options=[
                 discord.SelectOption(label=KIND_LABELS[k], value=k, default=k == entry.kind)
                 for k in KINDS
@@ -372,8 +379,7 @@ class EntryMenu(_Menu):
         if await self._guard(interaction):
             await _show(
                 interaction,
-                f"Remove **{_md(self.entry.name)}**? You can press ↩️ **Undo** on the list "
-                "afterwards.",
+                f"Remove **{_md(self.entry.name)}**? You can undo for a little while.",
                 ConfirmRemove(self.campaign, self.entry, self.page),
             )
 
@@ -420,16 +426,18 @@ class _EntryForm(discord.ui.Modal):
     """The boxes shared by Add and Edit."""
 
     name: discord.ui.TextInput[_EntryForm] = discord.ui.TextInput(
-        label="Name", max_length=NAME_MAX, placeholder="For example: The Hollow King"
+        label="Name (your own creation only)",
+        max_length=NAME_MAX,
+        placeholder="For a published book, use Share a rulebook",
     )
     text: discord.ui.TextInput[_EntryForm] = discord.ui.TextInput(
         label="What it does",
         style=discord.TextStyle.paragraph,
         max_length=TEXT_MAX,
-        placeholder=FORM_NOTE,
+        placeholder="Write it as you would say it at the table",
     )
     summary: discord.ui.TextInput[_EntryForm] = discord.ui.TextInput(
-        label="One line for alerts (optional)",
+        label="Short version (optional)",
         required=False,
         max_length=SUMMARY_MAX,
         placeholder="Shown when DMbot mentions it",
@@ -462,7 +470,7 @@ class _EntryForm(discord.ui.Modal):
             typed = (
                 f"\nYour words, to copy:\n```\n{self.text.value.replace('```', '` ``')[:1200]}\n```"
             )
-            await _tell(interaction, f"{exc}{typed}")
+            await _tell(interaction, f"Not saved. {exc}{typed}")
             await _redraw(interaction, self.campaign, page=self.page)
             return
         await _redraw(interaction, self.campaign, note=note, page=self.page)
@@ -488,8 +496,8 @@ class AddForm(_EntryForm, title="Add homebrew"):
             summary=self.summary.value,
         )
         return (
-            f"➕ Added **{_md(saved.name)}**. Only you see it: open it and press 👀 to let "
-            "players know."
+            f"➕ Added **{_md(saved.name)}**. Only you see it. Open it and press 👀 when "
+            "players may know."
         )
 
 

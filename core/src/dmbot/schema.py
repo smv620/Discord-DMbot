@@ -4678,7 +4678,8 @@ HOMEBREW_ENTRIES = f"""
                              CHECK (kind IN ('spell', 'monster', 'item', 'feat', 'condition',
                                              'rule', 'other')),
         name             TEXT NOT NULL CHECK (char_length(name) BETWEEN 1 AND 80),
-        name_key         TEXT NOT NULL CHECK (char_length(name_key) BETWEEN 1 AND 160),
+        -- (case-folding can make a letter up to three, so an 80-letter name fits in 240)
+        name_key         TEXT NOT NULL CHECK (char_length(name_key) BETWEEN 1 AND 240),
         text             TEXT NOT NULL CHECK (char_length(text) BETWEEN 1 AND 2000),
         summary          TEXT CHECK (summary IS NULL OR char_length(summary) BETWEEN 1 AND 160),
         players_may_know BOOLEAN NOT NULL DEFAULT false,

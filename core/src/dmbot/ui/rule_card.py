@@ -284,11 +284,12 @@ def homebrew_parts(entry: Homebrew, campaign_name: str) -> list[str]:
     """The card for the campaign's own homebrew entry, for the DM (private): tagged `[Homebrew]`,
     its source named, who may know it, then its words. It goes above the free rules' card and
     below any house rule (the order is house rules, homebrew, the target ruleset, the fallback)."""
-    who = "players may know it 👀" if entry.players_may_know else "only you can see it 🙈"
+    who = "👀 players may know it" if entry.players_may_know else "🙈 only you"
     head = "\n".join(
         [
-            f"📚 **{_fit(_md(entry.name), NAME_MAX)}** ({entry.kind}) {HOMEBREW_TAG}",
-            f"_Source: {_md(_fit(homebrew_citation(entry, campaign_name), 200))}_ ({who})",
+            f"📚 **{_fit(_md(entry.name), NAME_MAX)}** ({entry.kind.capitalize()}) "
+            f"{HOMEBREW_TAG} {who}",
+            f"_Source: {_md(_fit(homebrew_citation(entry, campaign_name), 200))}_",
         ]
     )
     text = _md(entry.text)

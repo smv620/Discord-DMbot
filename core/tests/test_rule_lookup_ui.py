@@ -65,9 +65,13 @@ class FakeBrew:
         self.entries: dict[str, list[Homebrew]] = {}
         self.asked: list[str] = []
 
-    async def list(self, guild_id: int, cid: str) -> list[Homebrew]:
+    async def find(self, guild_id: int, cid: str, name: str) -> Homebrew | None:
         self.asked.append(cid)
-        return list(self.entries.get(cid, []))
+        key = " ".join(name.casefold().split())
+        return next(
+            (e for e in self.entries.get(cid, []) if " ".join(e.name.casefold().split()) == key),
+            None,
+        )
 
 
 def brew(cid: str, name: str, text: str, *, kind: str = "monster", known: bool = False) -> Homebrew:
@@ -511,16 +515,18 @@ if __name__ == "__main__":
 
 
 class HomebrewLookup(LookupTest):
-    async def test_the_campaigns_homebrew_comes_first_tagged_with_its_source(self) -> None:
+    async def test_the_campaigns_homebrew_is_tagged_with_its_source_and_shadows_the_book(
+        self,
+    ) -> None:
         self.brew.entries[C1] = [brew(C1, "Goblin", "A very different goblin.")]
         it = await self.command("goblin")
-        first, second = self.sent(it, 0)[0], self.sent(it, 1)[0]
-        self.assertIn("[Homebrew]", first)
-        self.assertIn("Frostmaiden's homebrew: Goblin", first)
-        self.assertIn("A very different goblin.", first)
-        self.assertIn("only you can see it", first)  # a hidden entry is still the DM's own answer
-        self.assertIn("📖", second)  # then the free rules' card
-        self.assertIn("SRD", second)
+        self.assertEqual(len(it.followup.send.await_args_list), 1)  # not the book's card too
+        text = self.sent(it, 0)[0]
+        self.assertIn("[Homebrew]", text)
+        self.assertIn("Frostmaiden's homebrew: Goblin", text)
+        self.assertIn("A very different goblin.", text)
+        self.assertIn("🙈 only you", text)  # a hidden entry is still the DM's own private answer
+        self.assertNotIn("SRD", text)
 
     async def test_a_name_only_the_campaign_has_is_answered_without_couldnt_find(self) -> None:
         self.brew.entries[C1] = [brew(C1, "Hollow King", "A crowned skeleton.", known=True)]
@@ -546,6 +552,6 @@ class HomebrewLookup(LookupTest):
         self.assertEqual(self.brew.asked, [])
 
     async def test_a_homebrew_store_that_cannot_be_read_still_shows_the_free_rules(self) -> None:
-        self.brew.list = AsyncMock(side_effect=RuntimeError("down"))  # type: ignore[method-assign]
+        self.brew.find = AsyncMock(side_effect=RuntimeError("down"))  # type: ignore[method-assign]
         it = await self.command("goblin")
         self.assertIn("📖", self.sent(it, 0)[0])

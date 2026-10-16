@@ -75,7 +75,7 @@ class TheList(HomebrewUiTest):
         it = self.press()
         await ui.show_list(it, self.campaign, first=True)
         self.assertIn("No homebrew yet", self.said(it))
-        self.assertIn("Your own creations only", self.said(it))
+        self.assertIn("Share a rulebook", self.said(it))
 
     async def test_each_entry_shows_who_may_know_it(self) -> None:
         await self.add("Hollow King")
@@ -211,3 +211,28 @@ class AnEntry(HomebrewUiTest):
             await ui.ConfirmRemove(self.campaign, e, 0)._yes(self.press())
         kept = self.bot.homebrew_removed[(GUILD, self.campaign.id)]
         self.assertEqual([e.name for e in kept], ["E2", "E3", "E4", "E5", "E6"])
+
+
+class EveryPress(HomebrewUiTest):
+    async def test_a_person_who_is_no_longer_a_dm_cannot_page_or_go_back_to_the_list(self) -> None:
+        await self.add("Hollow King")
+        for press_it in (
+            lambda m: m._older,
+            lambda m: m._newer,
+        ):
+            menu = ui.ListMenu(self.campaign, [], 1, [])
+            it = self.press(PLAYER)
+            await press_it(menu)(it)
+            self.assertEqual(self.said(it), ui.ONLY_DMS)
+        for handler in (
+            ui.KindPick(self.campaign, 0)._back,
+            ui.ConfirmRemove(self.campaign, await self.add("X"), 0)._keep,
+        ):
+            it = self.press(PLAYER)
+            await handler(it)
+            self.assertEqual(self.said(it), ui.ONLY_DMS)
+            self.assertNotIn("Hollow King", self.said(it))
+
+    async def test_a_name_that_case_folds_long_is_refused_in_plain_words_not_crashed(self) -> None:
+        saved = await self.add("ΐ" * 80)  # each letter folds to three: 240, within the limit
+        self.assertEqual(len(saved.name), 80)

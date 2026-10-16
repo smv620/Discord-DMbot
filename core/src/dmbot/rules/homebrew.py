@@ -177,6 +177,17 @@ class HomebrewStore:
             )
             return [_entry(r) for r in await cur.fetchall()]
 
+    async def find(self, guild_id: int, campaign_id: str, name: str) -> Homebrew | None:
+        """The campaign's entry with exactly this name (any case), by the unique index."""
+        async with self._db.guild(guild_id) as conn:
+            cur = await conn.execute(
+                f"SELECT {_COLUMNS} FROM homebrew_entries WHERE guild_id = %s"
+                " AND campaign_id = %s AND name_key = %s",
+                (guild_id, campaign_id, name_key(name)),
+            )
+            row = await cur.fetchone()
+        return None if row is None else _entry(row)
+
     async def get(self, guild_id: int, campaign_id: str, entry_id: int) -> Homebrew | None:
         async with self._db.guild(guild_id) as conn:
             cur = await conn.execute(
