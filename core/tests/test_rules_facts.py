@@ -134,7 +134,13 @@ class NoReaderSkipsTheMetadata(unittest.TestCase):
         "sidebar/answer.py": (1, "the fallback's first sentences; a field question uses facts"),
     }
     # Where the entry is made and its words are indexed or matched.
-    OWN: ClassVar[set[str]] = {"rules/index.py", "rules/facts.py"}
+    # (and the campaign's own homebrew, whose entries have a `.text` but are not rules entries)
+    OWN: ClassVar[set[str]] = {
+        "rules/index.py",
+        "rules/facts.py",
+        "rules/homebrew.py",
+        "ui/homebrew.py",
+    }
 
     def test_only_the_known_readers_use_entry_text(self) -> None:
         root = Path(__file__).resolve().parents[1] / "src" / "dmbot"

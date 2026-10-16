@@ -280,19 +280,19 @@ def homebrew_citation(entry: Homebrew, campaign_name: str) -> str:
     return f"{campaign_name}'s homebrew: {entry.name}"
 
 
-def homebrew_parts(entry: Homebrew, campaign_name: str) -> list[str]:
-    """The card for the campaign's own homebrew entry, for the DM (private): tagged `[Homebrew]`,
+def homebrew_parts(own: Homebrew, campaign_name: str) -> list[str]:
+    """The card for one of the campaign's own homebrew entries, for the DM (private): tagged `[Homebrew]`,
     its source named, who may know it, then its words. It goes above the free rules' card and
     below any house rule (the order is house rules, homebrew, the target ruleset, the fallback)."""
-    who = "👀 players may know it" if entry.players_may_know else "🙈 only you"
+    who = "👀 players may know it" if own.players_may_know else "🙈 only you"
     head = "\n".join(
         [
-            f"📚 **{_fit(_md(entry.name), NAME_MAX)}** ({entry.kind.capitalize()}) "
+            f"📚 **{_fit(_md(own.name), NAME_MAX)}** ({own.kind.capitalize()}) "
             f"{HOMEBREW_TAG} {who}",
-            f"_Source: {_md(_fit(homebrew_citation(entry, campaign_name), 200))}_",
+            f"_Source: {_md(_fit(homebrew_citation(own, campaign_name), 200))}_",
         ]
     )
-    text = _md(entry.text)
+    text = _md(own.text)
     room = PART_MAX - len(head) - 1
     rest = PART_MAX - CONTINUED_MAX
     chunks = (
@@ -301,7 +301,7 @@ def homebrew_parts(entry: Homebrew, campaign_name: str) -> list[str]:
         else ["", *split_text(text, rest, rest)]
     )
     parts = [f"{head}\n{chunks[0]}" if chunks[0] else head]
-    title = _fit(_md(entry.name), NAME_MAX)
+    title = _fit(_md(own.name), NAME_MAX)
     for number, chunk in enumerate(chunks[1:], start=2):
         parts.append(f"📚 **{title}** (part {number} of {len(chunks)})\n{chunk}")
     return parts

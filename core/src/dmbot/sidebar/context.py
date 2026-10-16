@@ -383,10 +383,10 @@ def build(
             sections.append(f"- {label}: {rule.rule}{instead}"[:HOUSE_RULE_MAX])
     if known:
         sections.append("HOMEBREW (the campaign's own; after house rules, before the free rules):")
-        for entry in known:
-            cite = homebrew_source(entry, campaign_name)
-            text = " ".join(entry.text.split())[:HOMEBREW_TEXT_MAX]
-            sections.append(f"- [Homebrew] {entry.name} ({entry.kind}) [{cite}]: {text}")
+        for own in known:
+            cite = homebrew_source(own, campaign_name)
+            text = " ".join(own.text.split())[:HOMEBREW_TEXT_MAX]
+            sections.append(f"- [Homebrew] {own.name} ({own.kind}) [{cite}]: {text}")
             sources.append(cite)
     if hits:
         sections.append("RULES ENTRIES (the free rules, word for word):")
