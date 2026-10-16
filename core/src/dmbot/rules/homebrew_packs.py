@@ -28,6 +28,7 @@ from psycopg.types.json import Jsonb
 from dmbot.rules import pack_content
 from dmbot.rules.homebrew import Homebrew, HomebrewStore, name_key
 from dmbot.rules.house import require_dm
+from dmbot.rules.pack_content import PACKS_MAX
 from dmbot.rules.rule_sets import (
     _INSERT_FOLLOW,
     _LATEST,
@@ -37,6 +38,7 @@ from dmbot.rules.rule_sets import (
     RuleSetError,
     RuleSetStore,
     SharedSet,
+    _follow,
     _follow_values,
     _followed,
     _json,
@@ -48,7 +50,6 @@ from dmbot.rules.rule_sets import (
 log = logging.getLogger(__name__)
 
 HOMEBREW = "homebrew"
-PACKS_MAX = 5  # packs one campaign follows, so a prompt and a backup stay a sensible size
 
 NO_ENTRIES = (
     "This campaign has no homebrew to share yet. Add some first (entries from a book stay here)."
@@ -252,6 +253,18 @@ class HomebrewPackStore(RuleSetStore):
         """The packs the campaign follows, in the DM's order."""
         return [f for f in await self.following(guild_id, campaign_id) if f.kind == HOMEBREW]
 
+    async def pack_copies(self, guild_id: int, campaign_id: str) -> list[Follow]:
+        """The followed packs in order, for the readers: only what they use (no previous copy,
+        no house-rules follow), so a read on a hot path stays light."""
+        async with self._db.guild(guild_id) as conn:
+            cur = await conn.execute(
+                "SELECT set_id, kind, set_name, publisher, version, content, updating,"
+                " followed_at FROM rule_set_follows WHERE guild_id = %s AND campaign_id = %s"
+                " AND kind = %s ORDER BY position, followed_at, set_id",
+                (guild_id, campaign_id, HOMEBREW),
+            )
+            return [_follow(r) for r in await cur.fetchall()]
+
     async def follow_pack(
         self, guild_id: int, campaign_id: str, user_id: int, offer: Offer
     ) -> Follow:
@@ -421,36 +434,37 @@ class HomebrewReader:
     `HomebrewStore`, so the readers (`/dmbot rule`, rules cards, the sidebar) take either. A pack
     that can't be read costs only its entries, never the campaign's own."""
 
-    def __init__(self, store: HomebrewStore, sets: RuleSetStore | None) -> None:
+    def __init__(self, store: HomebrewStore, packs: HomebrewPackStore | None) -> None:
         self._store = store
-        self._sets = sets
+        self._packs = packs
+
+    async def _from_packs(self, guild_id: int, campaign_id: str) -> list[Homebrew]:
+        if self._packs is None:
+            return []
+        try:
+            follows = await self._packs.pack_copies(guild_id, campaign_id)
+        except Exception:
+            log.exception("Couldn't read the followed homebrew packs")
+            return []
+        return [e for place, f in enumerate(follows) for e in from_follow(f, campaign_id, place)]
 
     async def list(self, guild_id: int, campaign_id: str) -> list[Homebrew]:
         own = await self._store.list(guild_id, campaign_id)
-        if self._sets is None:
-            return own
-        try:
-            follows = [
-                f for f in await self._sets.following(guild_id, campaign_id) if f.kind == HOMEBREW
-            ]
-        except Exception:
-            log.exception("Couldn't read the followed homebrew packs")
-            return own
         taken = {name_key(e.name) for e in own}
         out = list(own)
-        for place, follow in enumerate(follows):
-            for entry in from_follow(follow, campaign_id, place):
-                if name_key(entry.name) not in taken:
-                    taken.add(name_key(entry.name))
-                    out.append(entry)
+        for entry in await self._from_packs(guild_id, campaign_id):
+            if name_key(entry.name) not in taken:
+                taken.add(name_key(entry.name))
+                out.append(entry)
         return out
 
     async def find(self, guild_id: int, campaign_id: str, name: str) -> Homebrew | None:
         """The campaign's own entry with this name, else the first followed pack's."""
         own = await self._store.find(guild_id, campaign_id, name)
-        if own is not None or self._sets is None:
+        if own is not None or self._packs is None:
             return own
         key = name_key(name)
         return next(
-            (e for e in await self.list(guild_id, campaign_id) if name_key(e.name) == key), None
+            (e for e in await self._from_packs(guild_id, campaign_id) if name_key(e.name) == key),
+            None,
         )

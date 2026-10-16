@@ -7,12 +7,12 @@ from __future__ import annotations
 import unittest
 from typing import Any
 
-from dmbot.campaigns import Campaign, CampaignStore
+from dmbot.campaigns import Campaign, CampaignError, CampaignStore
 from dmbot.rules import pack_content
 from dmbot.rules.homebrew import FileEntry, Homebrew, HomebrewStore
 from dmbot.rules.homebrew_packs import PACKS_MAX, HomebrewPackStore, HomebrewReader
 from dmbot.rules.house import HouseRuleError
-from dmbot.rules.rule_sets import FollowedSetsSection, RuleSetError
+from dmbot.rules.rule_sets import Follow, FollowedSetsSection, RuleSetError
 from dmbot.sidebar.context import homebrew_source, relevant_homebrew
 from dmbot.ui.rule_card import homebrew_citation
 from tests.pg import DatabaseTest
@@ -263,3 +263,64 @@ class Packs(DatabaseTest):
         self.assertEqual(await reader.list(GUILD_A, self.same.id), [])
         self.assertEqual(await reader.list(GUILD_B, self.far.id), [])
         self.assertIsNone(await reader.find(GUILD_B, self.far.id, "Hollow King"))
+
+    async def test_the_house_rules_follow_refuses_a_pack(self) -> None:
+        await self.publish()
+        code = await self.packs.make_pack_code(GUILD_A, self.pub.id, DM_A)
+        offer = await self.packs.by_code(GUILD_A, DM_A, code)
+        with self.assertRaises(RuleSetError):
+            await self.packs.follow(GUILD_A, self.same.id, DM_A, offer)
+        self.assertEqual(await self.packs.following(GUILD_A, self.same.id), [])
+        await self.packs.follow_pack(GUILD_A, self.same.id, DM_A, offer)
+        (follow,) = await self.packs.following(GUILD_A, self.same.id)
+        with self.assertRaises(RuleSetError):
+            await self.packs.restore(GUILD_A, self.far.id, DM_A, follow)
+
+    async def test_a_backup_with_too_many_packs_is_refused(self) -> None:
+        section = FollowedSetsSection()
+        content, _ = pack_content.content_of([entry("A")])
+        rows = [
+            {"set_id": f"{n:032x}", "kind": "homebrew", "name": f"P{n}", "publisher": "x",
+             "version": 1, "content": content, "position": n, "by": "7", "at": 1}
+            for n in range(PACKS_MAX + 1)
+        ]  # fmt: skip
+        section.check(rows[:PACKS_MAX])
+        with self.assertRaises(CampaignError):
+            section.check(rows)
+
+    async def test_a_restore_at_the_limit_and_a_freed_slot(self) -> None:
+        for n in range(PACKS_MAX):
+            other = await self.campaigns.create(GUILD_A, f"Pub {n}", DM_B)
+            await self.brew.add(GUILD_A, other.id, DM_B, kind="item", name=f"I{n}", text="x")
+            await self.packs.publish_pack(GUILD_A, other.id, DM_B, f"P{n}", await self.mine(other))
+        await self.follow_all(self.same)
+        first = (await self.packs.followed_packs(GUILD_A, self.same.id))[0]
+        gone, at = await self.packs.unfollow_pack(GUILD_A, self.same.id, DM_A, first.set_id)
+        await self.packs.restore_pack(GUILD_A, self.same.id, DM_A, gone, at)
+        with self.assertRaises(RuleSetError):  # full again: nothing more fits
+            await self.packs.restore_pack(GUILD_A, self.same.id, DM_A, gone, at)
+
+    async def test_a_pack_read_by_the_reader_is_not_republished(self) -> None:
+        await self.publish()
+        await self.follow_all(self.same)
+        await self.brew.add(GUILD_A, self.same.id, DM_A, kind="item", name="Mine", text="x")
+        read = await HomebrewReader(self.brew, self.packs).list(GUILD_A, self.same.id)
+        self.assertEqual(len(read), 3)  # its own and the pack's two
+        content, _ = pack_content.content_of(read)
+        self.assertEqual([e["name"] for e in content["entries"]], ["Mine"])
+
+    async def test_the_reader_without_packs_or_with_a_broken_one(self) -> None:
+        await self.brew.add(GUILD_A, self.same.id, DM_A, kind="item", name="Mine", text="x")
+        plain = HomebrewReader(self.brew, None)
+        self.assertEqual([e.name for e in await plain.list(GUILD_A, self.same.id)], ["Mine"])
+        self.assertIsNone(await plain.find(GUILD_A, self.same.id, "Hollow King"))
+
+        class Broken(HomebrewPackStore):
+            async def pack_copies(self, guild_id: int, campaign_id: str) -> list[Follow]:
+                raise RuntimeError("down")
+
+        reader = HomebrewReader(self.brew, Broken(self.db))
+        self.assertEqual([e.name for e in await reader.list(GUILD_A, self.same.id)], ["Mine"])
+        self.assertIsNone(await reader.find(GUILD_A, self.same.id, "Hollow King"))
+        found = await reader.find(GUILD_A, self.same.id, "mine")
+        assert found is not None

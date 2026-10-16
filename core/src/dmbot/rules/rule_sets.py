@@ -80,6 +80,7 @@ NOT_PAID = "Changing a shared set needs the campaign to be on a paid plan."
 NOTHING_NEW = "There is nothing new to take."
 NOTHING_TO_UNDO = "There is nothing to undo."
 CHANGED_AGAIN = "The set changed again while you were looking. Look at the new changes first."
+WRONG_KIND = "That is a homebrew pack, not house rules. Use the 📦 Homebrew packs button."
 NO_ROOM = "Your own house rules and this set together are more than {n} rules. Remove some first."
 
 
@@ -560,6 +561,8 @@ class RuleSetStore:
         async with self._db.guild(guild_id) as conn:
             await require_dm(conn, guild_id, campaign_id, user_id, lock=True)
             fresh = await self._reread(conn, offer)
+            if fresh.kind != HOUSE_RULES:  # a pack is followed with `follow_pack` (#1527)
+                raise RuleSetError(WRONG_KIND)
             cur = await conn.execute(
                 "SELECT 1 AS ok FROM rule_sets"
                 " WHERE guild_id = %s AND campaign_id = %s AND id = %s",
@@ -614,6 +617,8 @@ class RuleSetStore:
     async def restore(self, guild_id: int, campaign_id: str, user_id: int, follow: Follow) -> None:
         """Undo an unfollow: the copy comes back as it was (unless the campaign follows
         another set by now)."""
+        if follow.kind != HOUSE_RULES:
+            raise RuleSetError(WRONG_KIND)
         offer = Offer(
             follow.set_id,
             follow.kind,
@@ -1392,6 +1397,8 @@ class FollowedSetsSection:
             except RuleSetError:
                 raise CampaignError(FOLLOWS_DAMAGED) from None
             out.append(row | {"content": content})
+        if len(out) - houses > pack_content.PACKS_MAX:  # and at most a few homebrew packs
+            raise CampaignError(FOLLOWS_DAMAGED)
         if houses > 1:  # a campaign follows one house-rules set
             raise CampaignError(FOLLOWS_DAMAGED)
         return out

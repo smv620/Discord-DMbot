@@ -311,6 +311,9 @@ async def look_up(interaction: discord.Interaction, campaign: Campaign, code: st
         return
     current, store = ready
     offer = await store.by_code(current.guild_id, interaction.user.id, code)
+    if offer.kind != rule_sets.HOUSE_RULES:  # a homebrew pack's code (#1527)
+        await _tell(interaction, rule_sets.WRONG_KIND)
+        return
     preview = _preview(offer.content)
     await _send(
         interaction,

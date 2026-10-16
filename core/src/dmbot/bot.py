@@ -4216,7 +4216,10 @@ class DMBot(commands.AutoShardedBot):
     def homebrew_reader(self) -> HomebrewReader | None:
         """What a campaign reads: its own homebrew, then its followed packs' in the DM's order
         (#1527). Built on use from the two stores, so it always matches them."""
-        return HomebrewReader(self.homebrew, self.rule_sets) if self.homebrew else None
+        if self.homebrew is None:
+            return None
+        packs = self.rule_sets if isinstance(self.rule_sets, HomebrewPackStore) else None
+        return HomebrewReader(self.homebrew, packs)
 
     def homebrew_changed(self, guild_id: int, campaign_id: str) -> None:
         """A DM added, changed, removed or loaded homebrew (#1524): a session running for that

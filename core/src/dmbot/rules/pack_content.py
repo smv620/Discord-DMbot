@@ -23,6 +23,8 @@ from dmbot.rules.homebrew import (
     name_key,
 )
 
+PACKS_MAX = 5  # packs one campaign follows, so a prompt and a backup stay a sensible size
+
 
 class BadPack(ValueError):
     """The content isn't a homebrew pack's. Callers turn it into their own error."""
@@ -32,8 +34,10 @@ def content_of(entries: Sequence[Homebrew]) -> tuple[dict[str, Any], list[str]]:
     """The pack's content for these entries, oldest first, and the names of the entries left out
     because they came from a confirmed book. `known` is the entry's players-may-know flag as the
     DM set it: it applies at a follower's table as published (hidden stays hidden)."""
-    kept = [e for e in sorted(entries, key=lambda e: (e.created_at, e.id)) if not e.from_book]
-    left_out = [e.name for e in sorted(entries, key=lambda e: (e.created_at, e.id)) if e.from_book]
+    # Only the campaign's own entries: one read from a followed pack (`source`) is not its to share.
+    own = sorted((e for e in entries if e.source is None), key=lambda e: (e.created_at, e.id))
+    kept = [e for e in own if not e.from_book]
+    left_out = [e.name for e in own if e.from_book]
     return (
         {
             "entries": [
