@@ -53,7 +53,7 @@ class Limits(unittest.TestCase):
         self.assertIsNone(cards.pick(mentions("another Fireball"), 1000.0 + GAP_S + 1))
         other = cards.pick(mentions("and Hold Person"), 1000.0 + GAP_S + 1)
         assert other is not None
-        self.assertEqual(other.entry.name, "Hold Person")
+        self.assertEqual(other.name, "Hold Person")
 
     def test_one_card_a_minute_and_the_rest_are_dropped(self) -> None:
         cards = RulesCards()
@@ -64,7 +64,7 @@ class Limits(unittest.TestCase):
         # the dropped name was not kept for later and was not counted as shown
         again = cards.pick(mentions("Hold Person"), 1000.0 + GAP_S)
         assert again is not None
-        self.assertEqual(again.entry.name, "Hold Person")
+        self.assertEqual(again.name, "Hold Person")
 
     def test_the_first_card_needs_no_wait(self) -> None:
         self.assertIsNotNone(RulesCards().pick(mentions("Fireball"), 0.0))
@@ -87,7 +87,7 @@ class Limits(unittest.TestCase):
         cards.remember(first, 1000.0)
         second = cards.pick(mentions("Fireball then Hold Person"), 2000.0)
         assert second is not None
-        self.assertEqual(second.entry.name, "Hold Person")
+        self.assertEqual(second.name, "Hold Person")
 
 
 class FakeStore:
@@ -320,7 +320,9 @@ class WhenThingsGoWrong(TableTest):
         self.table.rules_on = False
         with patch.object(self.bot, "_warm_rules") as warm:
             await self.bot.set_rules_cards(GUILD, C1, True)
-            warm.assert_called_once_with(self.table.rules_rulesets)
+            warm.assert_called_once_with(
+                self.table.rules_rulesets, self.table
+            )  # (and the homebrew names)
             warm.reset_mock()
             await self.bot.set_rules_cards(GUILD, C1, False)
             warm.assert_not_called()

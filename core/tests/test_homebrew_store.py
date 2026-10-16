@@ -11,6 +11,7 @@ from dmbot.campaigns import Campaign, CampaignError, CampaignStore
 from dmbot.rules import homebrew
 from dmbot.rules.homebrew import (
     HOMEBREW_MAX,
+    FileEntry,
     Homebrew,
     HomebrewError,
     HomebrewSection,
@@ -323,3 +324,98 @@ class Backups(HomebrewTest):
         with self.assertRaises(CampaignError):
             await self.campaigns.import_backup(GUILD_B, too_many, PLAYER)
         self.assertEqual(await self.campaigns.list_campaigns(GUILD_B), [])
+
+
+class LoadingAFile(HomebrewTest):
+    def file(self, *rows: tuple[str, str, str]) -> list[FileEntry]:
+        return [FileEntry(kind, name, text) for kind, name, text in rows]
+
+    async def test_new_entries_are_added_hidden_and_the_same_again_changes_nothing(self) -> None:
+        rows = self.file(
+            ("monster", "Hollow King", "A skeleton."), ("item", "Moonblade", "A sword.")
+        )
+        done = await self.store.load_file(GUILD_A, self.campaign.id, DM, rows)
+        self.assertEqual((done.added, done.updated, done.same), (2, 0, 0))
+        listed = await self.store.list(GUILD_A, self.campaign.id)
+        self.assertEqual(sorted(e.name for e in listed), ["Hollow King", "Moonblade"])
+        self.assertFalse(any(e.players_may_know or e.from_book for e in listed))
+        again = await self.store.load_file(GUILD_A, self.campaign.id, DM, rows)
+        self.assertEqual((again.added, again.updated, again.same), (0, 0, 2))
+        self.assertEqual({e.version for e in await self.store.list(GUILD_A, self.campaign.id)}, {1})
+
+    async def test_a_name_the_campaign_has_is_updated_by_name_in_any_case(self) -> None:
+        old = await self.add("Hollow King", "Old words.", players_may_know=True)
+        self.clock.now += 60
+        done = await self.store.load_file(
+            GUILD_A,
+            self.campaign.id,
+            DM,
+            [FileEntry("monster", "HOLLOW KING", "New words.", "Short.")],
+        )
+        self.assertEqual((done.added, done.updated), (0, 1))
+        (now,) = await self.store.list(GUILD_A, self.campaign.id)
+        self.assertEqual(
+            (now.id, now.text, now.summary, now.version), (old.id, "New words.", "Short.", 2)
+        )
+        self.assertEqual(now.name, "HOLLOW KING")
+        self.assertTrue(now.players_may_know)  # the file said nothing: the old setting stays
+        self.assertGreater(now.updated_at, old.updated_at)
+
+    async def test_the_file_can_say_who_may_know(self) -> None:
+        await self.add("Hollow King", "Words.")
+        await self.store.load_file(
+            GUILD_A,
+            self.campaign.id,
+            DM,
+            [FileEntry("monster", "Hollow King", "Words.", None, True)],
+        )
+        (now,) = await self.store.list(GUILD_A, self.campaign.id)
+        self.assertTrue(now.players_may_know)
+
+    async def test_over_the_limit_nothing_is_loaded_and_the_count_is_said(self) -> None:
+        for n in range(HOMEBREW_MAX - 1):
+            await self.store.add(GUILD_A, self.campaign.id, DM, kind="rule", name=f"R{n}", text="x")
+        rows = self.file(("rule", "New A", "x"), ("rule", "New B", "x"))
+        with self.assertRaisesRegex(HomebrewError, "would make 201 entries.*Nothing was loaded"):
+            await self.store.load_file(GUILD_A, self.campaign.id, DM, rows)
+        self.assertEqual(len(await self.store.list(GUILD_A, self.campaign.id)), HOMEBREW_MAX - 1)
+
+    async def test_from_a_book_marks_what_is_added_or_changed_and_stays(self) -> None:
+        await self.add("Mine", "Old.")
+        done = await self.store.load_file(
+            GUILD_A,
+            self.campaign.id,
+            DM,
+            self.file(("rule", "Mine", "From the book."), ("rule", "Booked", "Book words.")),
+            from_book=True,
+        )
+        self.assertEqual((done.added, done.updated), (1, 1))
+        flags = {e.name: e.from_book for e in await self.store.list(GUILD_A, self.campaign.id)}
+        self.assertEqual(flags, {"Mine": True, "Booked": True})
+        # A later load of the DM's own words does not clear the mark.
+        await self.store.load_file(
+            GUILD_A, self.campaign.id, DM, self.file(("rule", "Mine", "Own again."))
+        )
+        flags = {e.name: e.from_book for e in await self.store.list(GUILD_A, self.campaign.id)}
+        self.assertTrue(flags["Mine"])
+
+    async def test_only_a_dm_loads_and_another_server_cannot(self) -> None:
+        rows = self.file(("rule", "Sneaky", "x"))
+        with self.assertRaisesRegex(HomebrewError, "Only this campaign's DMs"):
+            await self.store.load_file(GUILD_A, self.campaign.id, PLAYER, rows)
+        with self.assertRaisesRegex(HomebrewError, "campaign isn't here"):
+            await self.store.load_file(GUILD_B, self.campaign.id, DM, rows)
+        self.assertEqual(await self.names(), [])
+
+    async def test_the_from_book_mark_goes_into_a_backup_and_comes_back(self) -> None:
+        await self.store.load_file(
+            GUILD_A, self.campaign.id, DM, self.file(("rule", "Booked", "x")), from_book=True
+        )
+        await self.add("Own", "y")
+        backup = await self.campaigns.export(GUILD_A, self.campaign.id)
+        rows = {r["name"]: r for r in backup["sections"]["homebrew"]}
+        self.assertTrue(rows["Booked"]["from_book"])
+        self.assertNotIn("from_book", rows["Own"])  # absent when false (older files have none)
+        restored = await self.campaigns.import_backup(GUILD_B, backup, PLAYER)
+        back = {e.name: e.from_book for e in await self.store.list(GUILD_B, restored.id)}
+        self.assertEqual(back, {"Booked": True, "Own": False})

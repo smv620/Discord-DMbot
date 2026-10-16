@@ -5073,6 +5073,14 @@ WEB_HOUSE_RULES = """
     REVOKE ALL ON FUNCTION dmbot_web_house_rules_campaigns(BIGINT) FROM PUBLIC;
 """
 
+HOMEBREW_FROM_BOOK = """
+    -- Homebrew loaded from a file after the DM said some of it is from a published book and
+    -- confirmed the right to use it (#1524; CLAUDE.md, IP rule): that text stays in this one
+    -- campaign and can never go into a shared ruleset, so a later pack must be able to tell it.
+    -- A column with a default: no existing row changes, so no row-level security needs opening.
+    ALTER TABLE homebrew_entries ADD COLUMN from_book BOOLEAN NOT NULL DEFAULT false;
+    """
+
 MIGRATIONS: tuple[Migration, ...] = (
     ("0001_initial", INITIAL),
     ("0002_active_sessions", ACTIVE_SESSIONS),
@@ -5178,6 +5186,7 @@ MIGRATIONS: tuple[Migration, ...] = (
     ),  # the weekly support email's once-only mark (#1514)
     ("0097_homebrew_entries", HOMEBREW_ENTRIES),  # a campaign's own homebrew (#1520)
     ("0098_web_house_rules", WEB_HOUSE_RULES),  # the website reads a campaign's house rules (#1521)
+    ("0099_homebrew_from_book", HOMEBREW_FROM_BOOK),  # homebrew from a confirmed book (#1524)
 )
 
 # Tables that must have row-level security. A test checks every table in the schema
