@@ -219,6 +219,19 @@ class Books(TableTest):
     async def test_an_entry_loaded_before_the_question_gives_way_too(self) -> None:
         await self.gives_way(None)
 
+    async def test_a_hidden_book_entry_that_gives_way_leaves_only_the_free_rules_card(self) -> None:
+        self.own(self.book("Fireball", "2014", kind="spell", known=False))
+        await self.say("I cast Fireball")
+        (post,) = self.posts
+        self.assertNotIn("hidden from players", post[1])
+        self.assertNotIn("From the book", post[1])
+
+    async def test_a_hidden_book_entry_that_answers_still_gets_the_dm_screen_card(self) -> None:
+        self.own(self.book("Fireball", "2024", kind="spell", known=False))
+        await self.say("I cast Fireball")
+        (post,) = self.posts
+        self.assertIn("🙈 hidden from players", post[1])
+
     async def test_a_2014_book_entry_is_tagged_legacy_when_it_answers(self) -> None:
         self.own(self.book("Orc", "2014"))
         await self.say("an Orc attacks")
