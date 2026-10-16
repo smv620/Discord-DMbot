@@ -10,7 +10,7 @@ git init -q -b development .
 git config user.email t@example.com
 git config user.name t
 for f in core/a.py ears/a.ts web/a.tsx web/src/content/plans.json protocol/fixtures.json \
-  docs/PLAN.md docs/DEPLOY.md docs/LIVE_TEST.md docs/next-test-step.md LICENSE \
+  docs/PLAN.md docs/DEPLOY.md docs/LIVE_TEST.md docs/next-test-step.md docs/testing-status.log docs/testing-history.log LICENSE \
   docs/ci/supervisor-review.yml CLAUDE.md docs/test-scripts/s.md scripts/x.sh README.md; do
   mkdir -p "$(dirname "$f")"
   echo base >"$f"
@@ -46,6 +46,7 @@ check() {
 
 check "website only" "web/a.tsx" "false false true"
 check "words nobody reads" "docs/DEPLOY.md docs/LIVE_TEST.md docs/next-test-step.md LICENSE" "false false false"
+check "the testing logs are not read by tests" "docs/testing-status.log docs/testing-history.log" "false false false"
 check "the plan is read by core" "docs/PLAN.md" "true false false"
 check "CLAUDE.md is read by core" "CLAUDE.md" "true false false"
 check "the workflow template is checked by core" "docs/ci/supervisor-review.yml" "true false false"

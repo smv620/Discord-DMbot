@@ -2380,3 +2380,26 @@ Overall ...................................... PASS (Deepgram baseline: 33/33, 1
   Still to check: 0 ERROR over 10 minutes (next check), and the test sign-in email after the Resend settings.
   Follow-up, 21:05 UTC (12 minutes after the deploy): 0 ERROR, CRITICAL or traceback lines in core and web-api since 20:53 (Supervisor's
   "0 ERROR for 10 minutes" check passed); core and web-api still up, web-api healthy.
+
+==============================================================================
+2026-10-16  dev1  DEPLOY: the Support form for paying people (#1345) is live as 3a001d41 (migration 0075 support_email)
+  Supervisor's handover (00:0x UTC): core with migration 0075, the web API's /support routes and the admin Tickets list. Dry run first,
+  on development 3a001d41: a fresh pg_dumpall of the live database (at 0074), restored into a throwaway postgres:16, migrated as the
+  dmbot role, deleted after: "Database updated: 0075_support_email" in 0.19 s, a second run applied nothing, rows unchanged (3 campaigns,
+  152 entries, 147 transcript lines, 0 tickets). No game running (active_sessions 0). ears, consent wording, docker-compose.yml and
+  cloudflared unchanged, so only core and web-api were rebuilt. #1351, #1365 and #1368 were still open: deployed #1345 alone.
+  Backup: ~/db-backups/dmbot-before-3a001d41-20261016T000656Z.sql (chmod 600). Then `docker compose build core web-api` with GIT_COMMIT set,
+  `docker compose stop core web-api` (00:08:45 UTC; neither running afterwards), `up -d --no-deps core`, `up -d --no-deps web-api`.
+  Result: core logged "Database updated: 0075_support_email", "ears connected" and "Connected to 1 server(s)". web-api healthy.
+  0 ERROR or traceback lines in core and web-api since the stop. schema_migrations: 75 rows. The new function is dmbot_support_email(who
+  bigint), security definer. The start-up warning about settings missing from .env is gone (SUPPORT_TEAM_EMAIL and DMBOT_STORY_EXTRACTOR
+  are present by name; dev1 did not read their values); the old AI_MODEL line next to AI_MODEL_FAST still warns.
+  Route check without sending anything: inside the web-api container GET /support answers 405 (the route exists, POST only).
+  Seen, not yet explained: the public address api.getdmbot.com answers 404 to /support, /me and the others, because its tunnel route
+  publishes only ^/admin(/|$) (docs/DEPLOY.md); the Support form's POST /support must reach the API some other way, to be confirmed by
+  Supervisor/WebDev. dev1 did not change the tunnel.
+  Not yet checked (needs a signed-in test account on a paid plan, which dev1 does not have): the Support form shows on a paid plan and not
+  on a plan without it; one test ticket appears on the admin Tickets list and its status can be changed; with SUPPORT_TEAM_EMAIL unset
+  the log says once that no email is sent (it is present in .env, value not read, so this may not apply).
+  Follow-up, 00:22 UTC (13 minutes after the deploy): 0 ERROR, CRITICAL or traceback lines in core and web-api since 00:09; core and web-api still
+  up, web-api healthy; no ticket has been sent yet (nothing about tickets in the logs).
