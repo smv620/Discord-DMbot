@@ -20,6 +20,11 @@ export const whatsNewIntro =
 export const entries: Entry[] = [
   {
     date: "2026-10-16",
+    title: "Read house rules on the website",
+    what: "Anyone in your Discord server can read the table's house rules on the website (open My Account, then House rules) and save them as a text file. Only your DM can change them, on the DM screen in Discord.",
+  },
+  {
+    date: "2026-10-16",
     title: "Your questions to the team",
     what: "After you write to the DMbot team, your account page lists your questions, with the date you sent each one and whether it is waiting, answered or closed.",
   },

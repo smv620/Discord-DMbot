@@ -2,3 +2,6 @@
 # for every id (a rewrite, status 200, so the address stays) and the page reads the id from
 # the address (#1386).
 /account/recaps/*  /account/recaps  200
+
+# The house-rules pages (#1521): one page for the list and a campaign; it reads which from the address.
+/account/house-rules/*  /account/house-rules  200

@@ -279,3 +279,17 @@
     padding-top: var(--space-3);
     border-top: 1px solid var(--border);
   }
+
+/* A campaign's house rules (#1521): one rule per item, its "instead of" and set under it. */
+.house-rules {
+  list-style: none;
+  margin: 1rem 0;
+  padding: 0;
+}
+.house-rules li {
+  margin: 0.5rem 0;
+  overflow-wrap: anywhere;
+}
+.house-rules li .small {
+  display: block;
+}

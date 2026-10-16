@@ -154,7 +154,8 @@ class TheRules(HouseRulesBase):
         for private in (SECRET_SCENARIO, "burned the abbey", PUBLISHER, str(ALICE.id), "s" * 32):
             self.assertNotIn(private, shown)
         self.assertEqual(set(got["rules"][0]), {"number", "rule", "supersedes", "fromSet"})
-        self.assertEqual(set(got), {"name", "rules", "sets"})
+        self.assertEqual(set(got), {"name", "fileName", "rules", "sets"})
+        self.assertEqual(got["fileName"], house_file.filename("One"))
 
     async def test_the_campaign_list_has_campaigns_with_a_rule_or_a_followed_set(self) -> None:
         got = await house_rules.list_campaigns(self.web, self.carol)
@@ -223,6 +224,29 @@ class TheDoorsAndRole(HouseRulesBase):
             row = await cur.fetchone()
         assert row is not None
         self.assertEqual((row["r"], row["c"]), (None, None))
+
+    async def test_the_doors_check_the_sessions_server_list_themselves(self) -> None:
+        """The second layer: a session that does not list the server gets NULL from the doors even
+        with the server set, so a change to the Python check alone could not open them."""
+        elsewhere = await self.session_of(CAROL, [QUILLON])
+        async with self.web.user(CAROL.id, session=elsewhere.id_hash) as conn:
+            await conn.execute("SELECT set_config('dmbot.guild_id', %s, true)", (str(THURSDAY.id),))
+            cur = await conn.execute(
+                "SELECT dmbot_web_house_rules(%s, %s) AS r,"
+                " dmbot_web_house_rules_campaigns(%s) AS c",
+                (THURSDAY.id, self.one.id, THURSDAY.id),
+            )
+            row = await cur.fetchone()
+        assert row is not None
+        self.assertEqual((row["r"], row["c"]), (None, None))
+
+    async def test_the_list_filters_before_it_limits(self) -> None:
+        for n in range(101):  # 101 campaigns with nothing, named before "Zed"
+            await self.campaigns.create(THURSDAY.id, f"Aaa {n:03d}", ALICE.id)
+        zed = await self.campaigns.create(THURSDAY.id, "Zed", ALICE.id)
+        await self.store_h.add(THURSDAY.id, zed.id, ALICE.id, "The last campaign's rule")
+        names = [c["name"] for c in await house_rules.list_campaigns(self.web, self.carol)]
+        self.assertEqual(names, ["One", "Two", "Zed"])
 
     async def test_each_door_has_one_caller(self) -> None:
         for door in ("dmbot_web_house_rules(", "dmbot_web_house_rules_campaigns"):

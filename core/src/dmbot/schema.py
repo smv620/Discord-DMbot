@@ -4731,10 +4731,15 @@ WEB_HOUSE_RULES = """
                        (SELECT count(*) FROM rule_set_follows f
                         WHERE f.guild_id = c.guild_id AND f.campaign_id = c.id
                           AND f.kind = 'house_rules') AS sets
-                FROM campaigns c WHERE c.guild_id = g
+                FROM campaigns c
+                WHERE c.guild_id = g
+                  AND (EXISTS (SELECT 1 FROM house_rules r
+                               WHERE r.guild_id = c.guild_id AND r.campaign_id = c.id)
+                       OR EXISTS (SELECT 1 FROM rule_set_follows f
+                                  WHERE f.guild_id = c.guild_id AND f.campaign_id = c.id
+                                    AND f.kind = 'house_rules'))
                 ORDER BY lower(c.name), c.id LIMIT 100
-            ) x
-            WHERE x.rules > 0 OR x.sets > 0), '[]'::jsonb);
+            ) x), '[]'::jsonb);
     END
     $fn$;
     DO $do$

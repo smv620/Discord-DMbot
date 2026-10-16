@@ -104,6 +104,8 @@ async def read_rules(db: Database, session: Session, ref: str) -> dict[str, Any]
     _g, _c, found = await _read(db, session, ref)
     return {
         "name": found["name"],
+        # What the Download button saves it as (the bot's own name for the file).
+        "fileName": house_file.filename(found["name"]),
         "rules": [
             {
                 "number": int(r["number"]),

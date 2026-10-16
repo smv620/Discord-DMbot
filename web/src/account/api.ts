@@ -253,6 +253,42 @@ export interface CampaignName {
   saidAs: string | null;
 }
 
+/** A campaign with house rules or a followed set in one of the person's servers (#1521). `ref` is
+ * `<server>.<campaign>`. */
+export interface HouseRuleCampaign {
+  ref: string;
+  name: string;
+  serverName: string;
+  rules: number;
+  sets: number;
+}
+
+/** One of the campaign's own house rules, with its own number. `supersedes`: the book rule it
+ * replaces; `fromSet`: the set it was merged in from, cited as the bot cites it. */
+export interface HouseRuleItem {
+  number: number;
+  rule: string;
+  supersedes: string | null;
+  fromSet: string | null;
+}
+
+/** A house-rules set the campaign follows: its rules, cited as "<set> house rules, v4". */
+export interface HouseRuleSet {
+  name: string;
+  version: number;
+  cite: string;
+  rules: { number: number; rule: string; supersedes: string | null }[];
+}
+
+export interface HouseRules {
+  name: string;
+  /** What the Download button saves the file as. */
+  fileName: string;
+  /** The campaign's own rules, newest number first (the order of the bot's list). */
+  rules: HouseRuleItem[];
+  sets: HouseRuleSet[];
+}
+
 /** The three audio files, as short-lived addresses to play. */
 export type RecapAudioLinks = Partial<Record<"voice" | "music" | "mix", string>>;
 
@@ -349,6 +385,13 @@ export interface AccountApi {
   recapChoices?(campaignRef: string): Promise<RecapChoices>;
   /** Change one of them; answers all three as they are now. */
   setRecapChoice?(campaignRef: string, which: RecapChoice, on: boolean): Promise<RecapChoices>;
+  /** The campaigns with house rules in the person's servers, for anyone in them (#1521). Missing
+   * from an API older than that. */
+  houseRuleCampaigns?(): Promise<HouseRuleCampaign[]>;
+  /** A campaign's house rules and the sets it follows. `campaignRef` is `<server>.<campaign>`. */
+  houseRules?(campaignRef: string): Promise<HouseRules>;
+  /** The same rules as the file the bot's Download button sends. */
+  houseRulesFile?(campaignRef: string): Promise<Blob>;
   /** The campaign's public names with the narrator's spelling (#1451). `campaignRef` is the
    * recap's address without its last part: `<server>.<campaign>`. */
   campaignNames?(campaignRef: string): Promise<CampaignName[]>;
@@ -533,6 +576,20 @@ export function httpApi(base: string, fetcher: typeof fetch = fetch): AccountApi
       };
       return { recaps: got.recaps, thisMonth: got.recapsThisMonth ?? [] };
     },
+    houseRuleCampaigns: async () =>
+      ((await call("GET", "/me/house-rules")) as { campaigns: HouseRuleCampaign[] }).campaigns,
+    houseRules: async (campaignRef) =>
+      (await call(
+        "GET",
+        `/me/campaigns/${encodeURIComponent(campaignRef)}/house-rules`,
+      )) as HouseRules,
+    houseRulesFile: async (campaignRef) =>
+      (await call(
+        "GET",
+        `/me/campaigns/${encodeURIComponent(campaignRef)}/house-rules/download`,
+        undefined,
+        true,
+      )) as Blob,
     campaignNames: async (campaignRef) =>
       (
         (await call(

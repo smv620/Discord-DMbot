@@ -1,0 +1,20 @@
+---
+import HouseRulesIsland from "../../account/HouseRulesIsland";
+import { text } from "../../content/house-rules";
+import Base from "../../layouts/Base.astro";
+import "../../styles/account.css";
+---
+
+<Base
+  title="House rules"
+  description="Read and download the rules your table plays by."
+  noindex
+>
+  <div class="account">
+    <h1>{text.heading}</h1>
+    <HouseRulesIsland client:load />
+    <noscript>
+      <p>This page needs JavaScript to show your house rules. Turn it on, then reload the page.</p>
+    </noscript>
+  </div>
+</Base>

@@ -406,6 +406,42 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
       choices[which] = on;
       return { ...choices };
     },
+    async houseRuleCampaigns() {
+      calls.push("houseRuleCampaigns");
+      await reachable();
+      signedIn();
+      return [
+        {
+          ref: "200000000000000001.cmp1",
+          name: "The Brynwater Crossing",
+          serverName: "Thursday Table",
+          rules: 2,
+          sets: 1,
+        },
+      ];
+    },
+    async houseRules(campaignRef) {
+      calls.push(`houseRules:${campaignRef}`);
+      await reachable();
+      signedIn();
+      if (campaignRef !== "200000000000000001.cmp1") throw new ApiError("not-found");
+      return mockHouseRules();
+    },
+    async houseRulesFile(campaignRef) {
+      calls.push(`houseRulesFile:${campaignRef}`);
+      await reachable();
+      signedIn();
+      const rules = mockHouseRules();
+      return new Blob(
+        [
+          [
+            `House rules: ${rules.name}`,
+            ...[...rules.rules].reverse().map((r) => `${r.number}. ${r.rule}`),
+          ].join("\n") + "\n",
+        ],
+        { type: "text/plain" },
+      );
+    },
     async campaignNames(campaignRef) {
       calls.push(`campaignNames:${campaignRef}`);
       await reachable();
@@ -639,5 +675,31 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
       calls.push(`confirmDelete:${token}`);
       me = null;
     },
+  };
+}
+
+/** Pretend house rules in the shape the API gives: the campaign's own, newest number first, then a
+ * followed set's. */
+function mockHouseRules() {
+  return {
+    name: "The Brynwater Crossing",
+    fileName: "house-rules-the-brynwater-crossing.txt",
+    rules: [
+      {
+        number: 2,
+        rule: "Potions are a bonus action",
+        supersedes: "Drinking a potion takes an action",
+        fromSet: null,
+      },
+      { number: 1, rule: "Crits double the dice", supersedes: null, fromSet: null },
+    ],
+    sets: [
+      {
+        name: "Red Table",
+        version: 4,
+        cite: "Red Table house rules, v4",
+        rules: [{ number: 1, rule: "Inspiration stacks", supersedes: null }],
+      },
+    ],
   };
 }
