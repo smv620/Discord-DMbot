@@ -116,7 +116,7 @@ export const text = {
   // Support tickets (#1340): private messages from signed-in people (Try It too, #1435).
   ticketsHeading: "Support tickets",
   ticketsLead:
-    "Private messages from people on a paid plan, newest first. They are deleted after 12 months, or with the account.",
+    "Private messages from people with an account, Try It too, newest first. They are deleted after 12 months, or with the account.",
   ticketsNone: "No tickets yet.",
   // The filter above the list (#1375): what needs a reply first, and how many of each.
   ticketsFilterLabel: "Show tickets",
