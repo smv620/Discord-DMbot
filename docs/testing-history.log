@@ -2514,3 +2514,5 @@ Overall ...................................... PASS (Deepgram baseline: 33/33, 1
   `docker compose build core web-api` with GIT_COMMIT set; `docker compose stop core web-api` at 08:43:11 UTC, `up -d --no-deps core`, then web-api. No compose or .env change.
   Result: core logged "Database updated: 0089_memory_from_set, 0090_support_reason, 0091_web_recap_choices", "ears connected" and "Connected to 1 server(s)"; web-api healthy; schema_migrations 91 rows, last 0091_web_recap_choices.
   Supervisor's check: GET /me/campaigns/<ref>/recap-choices signed out answers 401 (inside web-api).
+  10-minute check, 08:54 UTC (11 minutes after the start): 0 ERROR, CRITICAL or traceback lines in core and web-api since 08:43; both up, web-api healthy; schema_migrations 91 rows, last 0091_web_recap_choices.
+  Nothing turned on for users (recaps off, no ElevenLabs key, the extractor off).
