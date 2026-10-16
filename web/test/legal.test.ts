@@ -141,7 +141,7 @@ describe("the facts #433 asks for", () => {
     }
     expect(terms()).toContain("DMbot is run by DMbot LLC");
     expect(privacy()).toContain("DMbot is run by DMbot LLC");
-    expect(terms()).toContain("dmbot.admin@gmail.com");
+    expect(terms()).toContain("admin@getdmbot.com");
     // The owner chose email-only contact (2026-10-10): the address field must not come back.
     expect(Object.keys(operator)).toEqual(["name", "email"]);
     for (const page of ["terms", "privacy", "refunds"]) {
@@ -161,7 +161,7 @@ describe("the facts #433 asks for", () => {
     expect(terms()).toContain("Prices may change at any time. The price shown when you buy is the price you pay for that period.");
     expect(terms()).toContain("at least 30 days' notice");
     expect(terms()).toContain("Try It never turns into a paid plan by itself, and it needs no payment details");
-    expect(terms()).toContain("Write to dmbot.admin@gmail.com with a link to the material");
+    expect(terms()).toContain("Write to admin@getdmbot.com with a link to the material");
     expect(terms()).toContain("DMbot is provided as is, with no promise it will always be available.");
   });
 
@@ -214,7 +214,7 @@ describe("the facts #433 asks for", () => {
 
   it("tells people how to ask about their information, with a 30-day answer", () => {
     expect(privacy()).toContain(
-      "You can ask us to show you, correct, send you a copy of, or delete the information we hold about you, by emailing dmbot.admin@gmail.com. We answer within 30 days.",
+      "You can ask us to show you, correct, send you a copy of, or delete the information we hold about you, by emailing admin@getdmbot.com. We answer within 30 days.",
     );
   });
 
@@ -413,10 +413,10 @@ describe("the mail goes through Resend (#1402)", () => {
     expect(t).toContain("GitHub, Resend and");
   });
 
-  it("no longer says Gmail or Google carries the emails, on any page", () => {
+  it("no longer names Gmail or says Google carries the emails, on any page (the contact is admin@getdmbot.com)", () => {
     for (const name of ["privacy", "terms", "refunds"]) {
       const t = text(doc(name).querySelector("main"));
-      expect(t, name).not.toMatch(/Gmail|so Google carries|through Google/);
+      expect(t, name).not.toMatch(/gmail|so Google carries|through Google/i);
     }
   });
 });

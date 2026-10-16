@@ -84,6 +84,8 @@ describe("Getting help", () => {
     ]);
   });
 
+  // Two addresses, each for one job: support@ is where people get help (the Help page);
+  // admin@ is the legal contact (content/legal.ts `operator.email`, #1402). Nothing else.
   it("no other getdmbot.com address is named on the Help page or anywhere in web/src", () => {
     const addresses = new Set<string>();
     const scan = (text: string): void => {
@@ -99,7 +101,7 @@ describe("Getting help", () => {
       }
     };
     walk(fileURLToPath(new URL("../src/", import.meta.url)));
-    expect([...addresses]).toEqual(["support@getdmbot.com"]);
+    expect([...addresses].sort()).toEqual(["admin@getdmbot.com", "support@getdmbot.com"]);
   });
 
   it("uses none of the banned technical terms, no trademark, and makes no privacy promise of its own", () => {
