@@ -1773,9 +1773,17 @@ that Mike is the person who just spoke, and that this person plays the character
   and the who-answers-to-what learner reads "DM", "GM", "Dungeon Master", "Game Master" or a DM's own
   name as a call to the DM who is here (one DM who has spoken; with two, the one who spoke last in
   the answer window; otherwise no one), never as a nickname to learn, and writes nothing to the story
-  graph. **Not yet:** the person's id column in Add many and Download all (players are refused in
-  lists and left out of downloads for now). The sidebar's "DM, GM… all mean <name>" line names
-  the DM resolved this way when that DM agreed to be recorded (#1558), else the session's starter.
+  graph. The sidebar's "DM, GM… all mean <name>" line names the DM resolved this way when that DM
+  agreed to be recorded (#1558), else the session's starter. **Players and DMs in names lists
+  (#1559):** for the campaign's DMs only, Download all lists each person as `table names | player or
+  DM | more table names | | who | plays`, where `who` is their Discord user id (never a name read
+  from Discord) and `plays` the characters they play, and the file's notes say so; a player's
+  download leaves people out. Add many reads such a row from a DM: the id must belong to a person in
+  the server (a bot, an outsider, or a row with no id is refused by row, the rest still loads), the
+  names are added as table names the DM confirmed (never replacing, never twice, not the `Player
+  1234` placeholder), and a character that exists and has no player (or is already theirs) is linked
+  as theirs; any other character named is left alone and the person is marked "needs a look". No
+  format version: the extra parts only exist on those rows, so older files read as before.
 
 *Proposed additions (2026-10-06, docs/STORY_MEMORY.md, not yet decided):* a core v2
 with story threads, promises, clues and state facts (`condition`: alive, dead, missing…,
