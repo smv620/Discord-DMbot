@@ -32,6 +32,7 @@ from typing import Protocol, TypeVar
 from dmbot.ai import AIError, AIOutOfFunds, Reply
 from dmbot.campaigns.models import Campaign
 from dmbot.memory.lookup import CampaignLookup
+from dmbot.memory.recall import Recall, check_citations
 from dmbot.rules import facts as rule_facts
 from dmbot.rules.house import HouseRule
 from dmbot.rules.index import Hit, Index, normalize
@@ -121,6 +122,19 @@ ON_TOPIC: <yes or no>
 QUESTION: <only if the message starts with AUDIENCE: THE TABLE: the question restated in at most \
 12 plain words, no names, no links; otherwise none>"""
 
+# Added to SYSTEM only when the prompt holds a "WHAT THE DM HAS CONFIRMED" section (#1370). With
+# recall off or empty the system text is exactly SYSTEM, so today's behaviour is unchanged.
+RECALL_RULES = """
+
+12. Under "WHAT THE DM HAS CONFIRMED ABOUT THEM" are facts the Dungeon Master confirmed, each \
+with a label like F1. Use them for questions about the campaign's people, places and things, \
+and set SOURCE to "facts you confirmed". Say nothing about the story that is not in them or in the \
+other material given. List the labels you used on one more line: CITED: F1, F3 (or CITED: none). \
+Cite only labels that are given; never write a label or an ID in ANSWER."""
+CONFIRMED_SOURCE = "facts you confirmed"  # the source shown for an answer from the DM's own facts
+# A label (F1) or an id as the reply's wording would show it: never shown to anyone (#1370).
+_LEAK = re.compile(r"\s*\[?\bF\d+\b\]?|\s*\b[0-9a-f]{32}\b", re.IGNORECASE)
+NO_INFO_ANSWER = "I don't have that. Your call."  # when a reply cites what it was not given
 ONE_FOR_DM = "That's one for your DM."  # a table question that needs the DM's secrets or call
 _ONE_FOR_DM = re.compile(r"that['’]s one for your dm", re.IGNORECASE)
 NOT_IN_RULES = "(not in DMbot's rules, check your book)"
@@ -140,7 +154,8 @@ _NOTE_ANYWHERE = re.compile(
 )
 _OLD_WORDS = {"sure": "confident", "not sure": "uncertain"}
 _FIELD = re.compile(
-    r"^\s*(ANSWER|SOURCE|CONFIDENCE|SURE|IN_GAME|ON_TOPIC|QUESTION)\s*:\s*(.*)$", re.IGNORECASE
+    r"^\s*(ANSWER|SOURCE|CONFIDENCE|SURE|IN_GAME|ON_TOPIC|QUESTION|CITED)\s*:\s*(.*)$",
+    re.IGNORECASE,
 )
 
 
@@ -167,6 +182,8 @@ Houses = Callable[[Campaign], Awaitable[Sequence[HouseRule]]]
 Names = Callable[[Campaign], Awaitable[CampaignLookup | None]]
 # Who is who at the table, as short lines of names only (no ids): "Mia plays Cerric".
 People = Callable[[Campaign], Awaitable[Sequence[str]]]
+# What the DM has confirmed around these entries (their ids), for the audience "players" (#1370).
+Recaller = Callable[[Campaign, Sequence[str]], Awaitable[Recall | None]]
 
 
 @dataclass(frozen=True, slots=True)
@@ -195,6 +212,7 @@ class Fields:
     in_game: bool
     on_topic: bool
     question: str = ""  # a table question restated in a few words (#1187); "" when none
+    cited: tuple[str, ...] = ()  # the labels of the confirmed facts it used (#1370)
 
 
 RESTATED_WORDS = 12
@@ -207,6 +225,13 @@ def restated(text: str) -> str:
     if text.lower() in ("", "none", "n/a", "-"):
         return ""
     return " ".join(table_links.strip_links(text).split()[:RESTATED_WORDS])
+
+
+def cited_labels(text: str) -> tuple[str, ...]:
+    """The labels in a CITED line ("F1, F3"), each once, in the order written; none for
+    "none" or nothing. Anything else written there is kept, so it can be caught as not given."""
+    words = [w.strip(" .;[]()").upper() for w in re.split(r"[,\s]+", text)]
+    return tuple(dict.fromkeys(w for w in words if w and w.lower() not in ("none", "n/a", "-")))
 
 
 def parse(raw: str) -> Fields:
@@ -236,6 +261,7 @@ def parse(raw: str) -> Fields:
         in_game=found.get("IN_GAME", "yes").strip().lower() != "no",
         on_topic=found.get("ON_TOPIC", "yes").strip().lower() != "no",
         question=restated(found.get("QUESTION", "")),
+        cited=cited_labels(found.get("CITED", "")),
     )
 
 
@@ -355,6 +381,7 @@ def canonical_source(said: str | None, ctx: context.Context) -> str | None:
             return given
     for key, given in (
         ("campaign", "campaign names"),
+        ("confirmed", CONFIRMED_SOURCE),
         ("scene", "the scene"),
         ("dmbot", "DMbot help"),
     ):
@@ -417,6 +444,7 @@ class Sidebar:
         houses: Houses,
         names: Names,
         people: People | None = None,
+        recall: Recaller | None = None,
         second_try: AIClient | None = None,
         clock: Callable[[], float] = time.monotonic,
     ) -> None:
@@ -427,6 +455,7 @@ class Sidebar:
         self._houses = houses
         self._names = names
         self._people = people
+        self._recall = recall
         self._clock = clock
 
     async def answer(
@@ -472,6 +501,13 @@ class Sidebar:
             else _nothing_list(),
         )
         index = self._index() if callable(self._index) else self._index
+        recalled = None
+        if self._recall is not None and not table:
+            seeds = context.mentioned_ids(question, lookup)
+            if seeds:
+                recalled = await self._safely(
+                    self._recall(campaign, seeds), None, "confirmed story"
+                )
         ctx = context.build(
             question,
             target=campaign.target_ruleset,
@@ -482,7 +518,9 @@ class Sidebar:
             scene=scene,
             people=people,
             table=table,
+            recalled=recalled,
         )
+        system = SYSTEM + RECALL_RULES if ctx.labels else SYSTEM
         # Asked for the whole text, and the rule is one DMbot has: no AI call at all. If it
         # isn't, the question is answered like any other, short (a paragraph is never sent).
         full = brevity.asks_for_full_text(question) and bool(ctx.hits)
@@ -499,7 +537,7 @@ class Sidebar:
                 used_ai=False,
             )
         first_started = self._clock()
-        reply = await self._call(ctx.prompt)
+        reply = await self._call(ctx.prompt, system=system)
         fields = parse(reply.text)
         if not fields.on_topic:
             return self._done(
@@ -530,6 +568,7 @@ class Sidebar:
             )
         # A source the entry or the house rule doesn't support is a failed check too, and the
         # careful tier is asked before the source is cut (#1017).
+        problems += self._uncited(fields, ctx, text)  # a label it was not given (#1370)
         quick_problems = list(problems)  # (what the same-model retry has always fixed)
         if self._careful() is not None:  # (without the careful tier, today's checks stand)
             problems += self._unsupported_source(fields, text, ctx)
@@ -538,7 +577,13 @@ class Sidebar:
         # before, on the same model unless the table has waited long enough.
         if problems:
             retry = await self._second_try(
-                ctx.prompt, text, problems, started, first_started, same_model=bool(quick_problems)
+                ctx.prompt,
+                text,
+                problems,
+                started,
+                first_started,
+                same_model=bool(quick_problems),
+                system=system,
             )
             if retry is not None:
                 again = parse(retry.text)
@@ -554,6 +599,12 @@ class Sidebar:
                         brevity.strip_padding(_NOTE_ANYWHERE.sub("", again.answer).strip()),
                         retry,
                     )
+        if ctx.recall is not None:
+            if [p for p in self._uncited(fields, ctx) if p.startswith("CITED")]:
+                # Still citing what it was not given: the answer is not known to come from what
+                # the DM confirmed, so it is dropped for the plain "no", never shown (#1370).
+                text, fields = NO_INFO_ANSWER, replace(fields, source=None, confidence=None)
+            text = _LEAK.sub("", text).strip()  # a label or id is never shown, whatever happens
         if named is not None and says_no_info(text):
             # Still no: answer with the entry's own words and its source, never contradict
             # the same question asked another way (#992). Only for an entry the question
@@ -565,6 +616,9 @@ class Sidebar:
         if not text:
             raise AIError(NO_ANSWER)
         source, confidence = canonical_source(fields.source, ctx), fields.confidence
+        if source == CONFIRMED_SOURCE:
+            # It is the DM's own confirmed facts: no "confident" beside it. And it must cite some.
+            source, confidence = (CONFIRMED_SOURCE, None) if fields.cited else (None, None)
         if source and source_unsupported(source, text, ctx):
             source, confidence = None, None  # the house rule or the page does not say this (#1015)
         text = _NOTE_ANYWHERE.sub("", text).strip()  # the model may write it; the code does
@@ -592,6 +646,7 @@ class Sidebar:
                 in_game=fields.in_game,
                 question=fields.question if table else "",
                 model=reply.model or self._ai.model,  # the one that answered, if it says
+                prompt_version=f"{PROMPT_VERSION}+recall" if ctx.labels else PROMPT_VERSION,
                 sources=ctx.sources,
                 parts=(text,),
             ),
@@ -616,6 +671,26 @@ class Sidebar:
         return self._second
 
     @staticmethod
+    def _uncited(fields: Fields, ctx: context.Context, text: str = "") -> list[str]:
+        """Problems with a reply that was given confirmed facts (empty when none were): a label
+        in CITED that was not given (only the labels listed count; `check_citations` also checks
+        what they stand for), and a label or an id written into the answer itself, which is never
+        shown. A made-up label, a real id in its place and a stray "[F1]" all fail."""
+        if ctx.recall is None:
+            return []
+        given = dict(ctx.labels)
+        bad = [c for c in fields.cited if c not in given]
+        bad += check_citations([given[c] for c in fields.cited if c in given], ctx.recall)
+        problems: list[str] = []
+        if bad:
+            problems.append(
+                "CITED names something that was not given: cite only the labels F1, F2… listed"
+            )
+        if _LEAK.search(text):
+            problems.append("ANSWER has a label or an ID in it: write the answer in plain words")
+        return problems
+
+    @staticmethod
     def _unsupported_source(fields: Fields, text: str, ctx: context.Context) -> list[str]:
         """Problems with the source the answer cites, for the second try to fix. (The checks
         after the second try drop a source nothing supports, by the same rule.)"""
@@ -638,6 +713,7 @@ class Sidebar:
         first: float,
         *,
         same_model: bool,
+        system: str = SYSTEM,
     ) -> Reply | None:
         """The answer to a second try, or None to keep the first. Never raises: a slow or
         failed try leaves the quick answer as it is."""
@@ -647,7 +723,7 @@ class Sidebar:
         if careful is not None and remaining >= SECOND_TRY_NEEDS_S:
             limit = min(CALL_TIMEOUT_S, remaining - SECOND_TRY_MARGIN_S)
             try:
-                return await self._call(message, careful, limit)
+                return await self._call(message, careful, limit, system=system)
             except AIOutOfFunds:
                 log.warning("The sidebar's careful second try couldn't run: the AI is out of funds")
                 return None  # no other tier is asked; the quick answer stands
@@ -661,18 +737,23 @@ class Sidebar:
         if not same_model or self._clock() - first >= RETRY_SKIP_S or limit < MIN_TRY_S:
             return None
         try:
-            return await self._call(message, None, limit)
+            return await self._call(message, None, limit, system=system)
         except AIError:
             log.warning("The sidebar's second try failed; cutting the first answer instead")
             return None
 
     async def _call(
-        self, prompt: str, ai: AIClient | None = None, limit: float = CALL_TIMEOUT_S
+        self,
+        prompt: str,
+        ai: AIClient | None = None,
+        limit: float = CALL_TIMEOUT_S,
+        *,
+        system: str = SYSTEM,
     ) -> Reply:
         client = ai or self._ai
         try:
             async with asyncio.timeout(limit):
-                reply = await client.complete(SYSTEM, prompt, max_tokens=MAX_TOKENS)
+                reply = await client.complete(system, prompt, max_tokens=MAX_TOKENS)
                 return reply if reply.model else replace(reply, model=client.model)
         except TimeoutError as exc:
             log.warning("The sidebar's AI call took over %d seconds", limit)
