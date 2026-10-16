@@ -83,6 +83,7 @@ from dmbot.dm_screen import (
     PeekButton,
     StopListeningButton,
     VisibilityButton,
+    delete_campaign,
     ensure_dm_screen,
     house_sync,
     pack_suggestion,
@@ -195,6 +196,7 @@ from dmbot.recaps.pipeline import Inputs, RecapWorker
 from dmbot.recaps.store import Job, RecapSection, RecapStore
 from dmbot.recaps.text import names_a_secret
 from dmbot.retention import RetentionJob
+from dmbot.retention_channels import ChannelCounts, retire_channels
 from dmbot.rules import house_voice
 from dmbot.rules import index as rules_index
 from dmbot.rules.book_rank import book_is_legacy, book_wins
@@ -211,7 +213,7 @@ from dmbot.sessions import SavedSession, SessionStore
 from dmbot.sidebar import knowledge
 from dmbot.sidebar.answer import PROMPT_VERSION as SIDEBAR_PROMPT_VERSION
 from dmbot.sidebar.answer import Sidebar
-from dmbot.sidebar.ask import AskLimiter
+from dmbot.sidebar.ask import AskLimiter, request_in
 from dmbot.sidebar.people import lines as people_lines
 from dmbot.sidebar.service import Recent, SidebarService
 from dmbot.test_recording import files as test_files
@@ -237,6 +239,7 @@ from dmbot.transcript.cleaner import (
     with_ending,
 )
 from dmbot.transcript.export import clock
+from dmbot.transcript.improvement import OptOutStore
 from dmbot.transcript.keep import KeepJob
 from dmbot.transcript.models import NARRATING, Line, TranscriptBuffer
 from dmbot.transcript.store import TranscriptStore
@@ -245,6 +248,19 @@ from dmbot.transcript.suggestions import SuggestionStore
 from dmbot.transcript.topic_ai import classify
 from dmbot.transcript.topics import GAME, OFF_TOPIC, TopicWindow, Waiting, obviously_game
 from dmbot.transcript.topics import marker as topic_marker
+from dmbot.transcript.waiting_questions import (
+    ANSWER_NOT_SAVED,
+    ANSWERED,
+    KEPT,
+    MAX_PER_SESSION,
+    Unanswered,
+    WaitingQuestionStore,
+    find_once,
+    fix_words,
+)
+from dmbot.transcript.waiting_questions import (
+    Waiting as WaitingQuestion,
+)
 from dmbot.transcription.base import (
     PlaceholderTranscriber,
     Transcriber,
@@ -261,6 +277,8 @@ from dmbot.ui.continuity import ContinuityButton, continuity_view
 from dmbot.ui.continuity import waiting_text as continuity_waiting_text
 from dmbot.ui.decision_lines import DecisionLines
 from dmbot.ui.dmbot_commands import _failed, dmbot_group
+from dmbot.ui.heard_review import HeardReviewButton, heard_review_view
+from dmbot.ui.heard_review import waiting_text as heard_waiting_text
 from dmbot.ui.homebrew import dmbot_homebrew  # noqa: F401 (registers it)
 from dmbot.ui.house_rules import dmbot_house_rules  # noqa: F401 (registers it)
 from dmbot.ui.line_fix import (
@@ -312,6 +330,9 @@ HINTS_WAIT_S = 1.5  # the longest a clip waits for the campaign's names to load
 # The off-topic filter (#52): one call may take this long, or the window is kept as game
 # talk; after this many failures in a row it rests this long.
 TOPIC_CALL_TIMEOUT_S = 8.0
+EARLY_CLOSE_GAP_S = (
+    10.0  # a spoken look-up closes the speaker-label window early at most this often (#1624)
+)
 TOPIC_FAILURES_BEFORE_REST = 3
 TOPIC_REST_S = 300.0
 SPEAKER_WAIT_S = 1.0  # the longest the names are waited for, before a label is saved
@@ -464,6 +485,9 @@ class Table:
     # "Did they mean…?" for the DM (#296): one open at a time, each word once a session.
     questions: name_questions.QuestionBook = field(default_factory=name_questions.QuestionBook)
     question_message: discord.Message | None = None
+    # Questions that closed with no answer (expired, or the session ended), for the after-session
+    # check (#1572): kept in memory, at most MAX_PER_SESSION, oldest dropped first.
+    unanswered: list[name_questions.Asked] = field(default_factory=list)
     # The words each piece has in the helpers' copies (heard, recent, held, counts), by
     # (speaker, started_ms), so a later change can bring those copies up to date (#127). Bounded.
     piece_words: dict[tuple[int, int], tuple[str, float]] = field(default_factory=dict)
@@ -597,6 +621,11 @@ class Table:
     speaker_timers: set[asyncio.Task[None]] = field(default_factory=set)  # cancelled then
     speaker_failures: int = 0
     speaker_paused_until: float = 0.0  # monotonic seconds
+    # A DM's spoken look-up waits here for its line's speaker label (#1624): (speaker, started_ms)
+    # -> the label (the NPC's name, or "" for none). Set when the label is saved or the labelling
+    # call ends, so a line already flushed to the database still answers.
+    label_waits: dict[tuple[int, int], asyncio.Future[str]] = field(default_factory=dict)
+    early_close_at: float = -1e9  # monotonic seconds of the last early close of the window
     # The DM sidebar (#935): what was said lately (the scene for an answer), and the
     # safety limit on questions (6 a minute, 120 a session; #1040), spoken and typed.
     recent: Recent = field(default_factory=Recent.new)
@@ -663,6 +692,8 @@ class DMBot(commands.AutoShardedBot):
         recaps: RecapStore | None = None,
         suggestions: SuggestionStore | None = None,
         homebrew: HomebrewStore | None = None,
+        heard_questions: WaitingQuestionStore | None = None,
+        improvement: OptOutStore | None = None,
     ) -> None:
         intents = discord.Intents.none()
         intents.guilds = True
@@ -710,6 +741,8 @@ class DMBot(commands.AutoShardedBot):
         self.recaps = recaps  # the cinematic recap of each session (#1382)
         self.suggestions = suggestions  # players' suggested line fixes (#1491)
         self.homebrew = homebrew  # a campaign's own homebrew entries (#1520)
+        # "Did they mean…?" questions left unanswered at a session's end (#1572).
+        self.heard_questions = heard_questions
         # The last entries a DM removed, per campaign, so the list can put them back (memory only).
         self.homebrew_removed: dict[tuple[int, str], list[Any]] = {}
         self.decision_lines = DecisionLines()  # DM-screen lines to clear once decided (#1509)
@@ -773,6 +806,7 @@ class DMBot(commands.AutoShardedBot):
                 forget_guild=campaigns.forget_guild_if_empty,
                 running=lambda: {t.campaign_id for t in self.tables.values() if t.campaign_id},
                 send=self._dm_user,
+                retire_channels=self._retire_campaign_channels,
                 enforce=settings.enforce_plans,
                 server_name=lambda gid: g.name if (g := self.get_guild(gid)) else "your server",
                 site_url=settings.site_url,
@@ -908,6 +942,8 @@ class DMBot(commands.AutoShardedBot):
         # the answer runs out (monotonic seconds) (#1118).
         self._chat_blocked: dict[int, tuple[float, frozenset[int]]] = {}
         self.test_voice = test_voice  # the second yes, for test servers (#1019)
+        # Who chose not to have their words used to improve DMbot (#1609): the recorder asks.
+        self.improvement = improvement
         self._test_key: bytes | None = None
         self._test_delete_locks: dict[tuple[int, int], asyncio.Lock] = {}
         self._test_pending = 0  # utterances waiting to be saved
@@ -1021,6 +1057,7 @@ class DMBot(commands.AutoShardedBot):
         self.add_dynamic_items(
             ReviewButton, PeopleReviewButton, ClaimsReviewButton, ContinuityButton
         )
+        self.add_dynamic_items(HeardReviewButton)  # unanswered "Did they mean…?" (#1572)
         self.add_dynamic_items(SecretAloudButton)  # the secret-said-aloud question (#1407)
         self.add_dynamic_items(RecapButton)  # the recap on the DM screen (#1455)
         self.add_dynamic_items(LineFixButton, FixLineButton)  # a player's line fix (#1491)
@@ -1028,6 +1065,7 @@ class DMBot(commands.AutoShardedBot):
             clock_screen.ClockButton, clock_screen.ClockUndoButton, clock_screen.SuggestionButton
         )
         self.add_dynamic_items(clock_screen.CombatUndoButton)  # #1127
+        self.add_dynamic_items(delete_campaign.DeleteButton)  # #1608
         self.add_dynamic_items(fightbot.FightButton)  # #1129
         self.add_dynamic_items(timer_screen.EffectButton)  # timed effects (#998)
         # Undo after forgetting a name (its card), after a restart too.
@@ -1297,6 +1335,7 @@ class DMBot(commands.AutoShardedBot):
                 self._redraw_fix_notes(table)
             if table.left_out.drop_speaker(user_id):  # and their lines left out (#677)
                 self._redraw_left_out(table)
+            table.unanswered = [a for a in table.unanswered if a.speaker != user_id]  # #1572
             if table.questions.drop_speaker(user_id, time.monotonic()) is not None:
                 self._track(self._close_question(table), "name-question")
             if table.speaker_questions.drop_speaker(user_id, time.monotonic()) is not None:
@@ -1370,6 +1409,10 @@ class DMBot(commands.AutoShardedBot):
         if not self.test_voice_listed(table.guild_id) or table.test_session is not None:
             return
         assert self.test_voice is not None
+        if self.improvement is None:
+            # A path that can't honour the improvement opt-out must not run (#1609).
+            log.error("Test recordings need the improvement opt-out store; not saving")
+            return
         root = self.settings.test_recordings_dir
         try:
             await self.test_voice.load(table.guild_id)
@@ -1412,6 +1455,21 @@ class DMBot(commands.AutoShardedBot):
             session.gap()
             log.warning("Dropped a test recording: %d already waiting", self._test_pending)
             return
+        # The improvement opt-out (#1609): a person who chose it is not saved, and what was
+        # saved of them earlier in this session goes. Read now (a few seconds old at most). If the
+        # choice can't be read nothing is saved: better a gap than their words against their
+        # wish.
+        if self.improvement is None:  # (no session starts without it; belt and braces)
+            return
+        try:
+            out = await self.improvement.is_opted_out_recently(user_id)
+        except Exception:
+            log.exception("Couldn't read the improvement opt-out; not saving a test recording")
+            return
+        if out:
+            if session.has(user_id):
+                session.forget(user_id)
+            return
         self._test_pending += 1
 
         def allowed() -> bool:  # both yeses, checked again before and after the file is made
@@ -1436,10 +1494,25 @@ class DMBot(commands.AutoShardedBot):
         finally:
             self._test_pending -= 1
 
-    def _finish_test_session(self, table: Table, caught_up: bool) -> None:
+    async def _purge_opted_out(self, session: TestSession) -> None:
+        """When a test session ends (#1609): read the improvement choice again, fresh, for
+        everyone saved in it, and drop anyone who opted out meanwhile, even if they never spoke
+        again. A choice that can't be read drops that person: better a gap than their words
+        against their wish."""
+        for user_id in session.people():
+            try:
+                out = self.improvement is None or await self.improvement.is_opted_out(user_id)
+            except Exception:
+                log.exception("Couldn't read the improvement opt-out; dropping a saved speaker")
+                out = True
+            if out:
+                session.forget(user_id)
+
+    async def _finish_test_session(self, table: Table, caught_up: bool) -> None:
         if table.test_session is None:
             return
         try:
+            await self._purge_opted_out(table.test_session)
             table.test_session.finish({"complete": caught_up})
         except Exception:
             log.exception("Couldn't finish a test session")
@@ -1475,6 +1548,12 @@ class DMBot(commands.AutoShardedBot):
             except Exception:
                 # Never blocks stopping; the learned names are only waiting questions.
                 log.exception("Could not remove the names learned for a stopped speaker")
+            if self.heard_questions is not None:  # and the questions kept about their words (#1572)
+                try:
+                    async with asyncio.timeout(FORGET_TIMEOUT_S):
+                        await self.heard_questions.forget_speaker(guild_id, user_id)
+                except Exception:
+                    log.exception("Could not remove the waiting questions of a stopped speaker")
             try:  # and what the story extractor proposed from their words (#1297)
                 async with asyncio.timeout(FORGET_TIMEOUT_S):
                     await ClaimStore(self.memory).forget_speaker(guild_id, user_id)
@@ -1994,6 +2073,7 @@ class DMBot(commands.AutoShardedBot):
         if not table.questions.answering:
             ended = table.questions.close(name_questions.ENDED, time.monotonic())
             if ended is not None:
+                self._keep_unanswered(table, ended)
                 self._track(self._close_question(table, self._not_answered(table, ended)), "q")
         speaker_book = table.speaker_questions  # likewise "Who was speaking just now?"
         if not speaker_book.answering and speaker_book.close(speaker_q.ENDED, time.monotonic()):
@@ -2054,7 +2134,7 @@ class DMBot(commands.AutoShardedBot):
                         *table.topic_tokens,
                     )
                 await self._after_session(table, ended_at, caught_up)
-                self._finish_test_session(table, caught_up)
+                await self._finish_test_session(table, caught_up)
                 # After it: the end-of-session capture check runs the last audio checks.
                 if checks := table.audio_checker.log_line():  # cost of #699's checks
                     log.info(checks)
@@ -2094,6 +2174,7 @@ class DMBot(commands.AutoShardedBot):
             ("names heard", lambda: self.keep_heard_names(table)),
             ("name scan", lambda: self.suggest_names(table)),
             ("who is who", lambda: self.learn_people(table)),
+            ("unanswered questions", lambda: self.save_unanswered(table)),
             ("people check", lambda: self.check_people(table)),
             ("definitions", lambda: self.recheck_definitions(table)),
             ("stale flags", lambda: self.close_stale_flags(table)),
@@ -3668,12 +3749,13 @@ class DMBot(commands.AutoShardedBot):
             table.vocabulary.note(utterance.user_id, text)
         if text:
             self._act_on_line(table, utterance.user_id, str(cleaned or text))
+        labelling = False  # is this line waiting for its speaker label? (#1624)
         if text and self.transcripts is not None:
             duration_ms = int(utterance.duration_s * 1000)
             table.unsaved.add(
                 Line(utterance.start_ms, utterance.user_id, text, cleaned or text, duration_ms)
             )
-            self._speaker_pending(table, utterance, str(cleaned or text))
+            labelling = self._speaker_pending(table, utterance, str(cleaned or text))
         saving = (
             table.test_session is not None
             and self.test_voice is not None
@@ -3698,9 +3780,16 @@ class DMBot(commands.AutoShardedBot):
                 self._feed_name_answers(
                     table, utterance.user_id, utterance.start_ms, str(cleaned or text)
                 )
-                # Only the DM's own lines can start it; consent was just re-checked. Lines
-                # the Cleaner tags as in character are not told apart yet (in_character).
-                self.sidebar.ask_at_table(table, utterance.user_id, str(cleaned or text))
+                # Only the DM's own lines can start it; consent was just re-checked. A line said
+                # as a named NPC never does (#1624): when it clearly asks DMbot something and
+                # its speaker label is on the way, the question waits for the label.
+                asked_line = str(cleaned or text)
+                if labelling and request_in(asked_line) is not None:
+                    self._ask_when_labelled(
+                        table, utterance.user_id, utterance.start_ms, asked_line
+                    )
+                else:
+                    self.sidebar.ask_at_table(table, utterance.user_id, asked_line)
         if text and self._topic_pending(table, utterance, cleaned or text, names_said):
             pass  # held for the off-topic filter: the names scan gets it once labelled
         elif text and len(table.heard) < HEARD_MAX:
@@ -4144,6 +4233,8 @@ class DMBot(commands.AutoShardedBot):
             return said
         if said.ends and said.action == kind:
             return None
+        # (A spoken rest followed by a skip of days is taken as said, in full: the skip is a new cut
+        # of the scene, not the rest's own length, #1594.)
         if said.action == "advance" and said.minutes is not None and now - at < CLOCK_PHRASE_GAP_S:
             extra = said.minutes - took
             if extra <= 0:
@@ -4558,10 +4649,11 @@ class DMBot(commands.AutoShardedBot):
         if hide:
             await self._hide_lines(table, hide, lines)
 
-    def _speaker_pending(self, table: Table, utterance: Utterance, text: str) -> None:
+    def _speaker_pending(self, table: Table, utterance: Utterance, text: str) -> bool:
         """Who the DM was speaking as (#53): the DM's own lines, not other people's, wait
         for the AI a window at a time. No AI key, no names to choose from, a session
-        already finishing, or a resting helper: no label (never a guess in the file)."""
+        already finishing, or a resting helper: no label (never a guess in the file). True if the
+        line is now waiting to be labelled."""
         if (
             self.topic_ai is None
             or utterance.user_id not in table.dm_user_ids
@@ -4570,7 +4662,7 @@ class DMBot(commands.AutoShardedBot):
             or time.monotonic() < table.speaker_paused_until
             or not table.speaker_book.allowed(table.name_lookup)
         ):
-            return
+            return False
         first = not table.speakers.lines
         waiting = Waiting(utterance.user_id, utterance.start_ms, text, utterance.duration_s)
         if table.speakers.add(waiting, time.monotonic()):
@@ -4578,6 +4670,63 @@ class DMBot(commands.AutoShardedBot):
         elif first:
             later = self._label_speakers_later(table, table.speakers.opened_at)
             self._speaker_task(table, later, timer=True)
+        return True
+
+    def _ask_when_labelled(self, table: Table, user_id: int, started_ms: int, line: str) -> None:
+        """The DM's spoken look-up (#1624). The line's speaker label comes from an AI call over a
+        window of the DM's lines, so it is not known when the line is first handled. For a line
+        that clearly asks DMbot something (and not more than once in EARLY_CLOSE_GAP_S), the window
+        is closed at once and the question waits, bounded, for that call; the label is taken from
+        the call itself, so a line already saved to the database is still judged. No label in time
+        or not sure enough: asked as before. Called with the line already in its window and before
+        anything awaits, so no labelling that includes it can end unseen."""
+        now = time.monotonic()
+        if now - table.early_close_at < EARLY_CLOSE_GAP_S:  # not another AI call this soon
+            self.sidebar.ask_at_table(table, user_id, line)
+            return
+        table.early_close_at = now
+        key = (user_id, started_ms)
+        waiter: asyncio.Future[str] = asyncio.get_running_loop().create_future()
+        table.label_waits[key] = waiter
+        task = self._track(
+            self._ask_after_label(table, user_id, key, line, waiter), "sidebar-after-label"
+        )
+        if task is not None:  # the end of the session waits for it like any labelling window
+            table.speaker_tasks.add(task)
+            task.add_done_callback(table.speaker_tasks.discard)
+
+    async def _ask_after_label(
+        self,
+        table: Table,
+        user_id: int,
+        key: tuple[int, int],
+        line: str,
+        waiter: asyncio.Future[str],
+    ) -> None:
+        entity = ""
+        try:
+            async with asyncio.timeout(TOPIC_CALL_TIMEOUT_S * 2 + 2):
+                lines = table.speakers.take()  # (maybe this line, maybe it is already on its way)
+                if lines and not self._closing:
+                    await self._label_speakers(table, lines)
+                entity = await waiter
+        except Exception:
+            log.info("Sidebar: couldn't wait for the speaker label; asking without it")
+        finally:
+            table.label_waits.pop(key, None)
+        # The session may have moved on, or the DM stopped being recorded, while it waited.
+        if self.tables.get(table.guild_id) is not table or not self.consent.has_consent(
+            table.guild_id, user_id
+        ):
+            return
+        self.sidebar.ask_at_table(table, user_id, line, entity=entity)
+
+    @staticmethod
+    def _label_known(table: Table, speaker: int, started_ms: int, entity: str) -> None:
+        """A line's label is known (or known to be none): a look-up waiting for it goes on."""
+        waiter = table.label_waits.get((speaker, started_ms))
+        if waiter is not None and not waiter.done():
+            waiter.set_result(entity)
 
     def _speaker_task(self, table: Table, work: Awaitable[None], *, timer: bool = False) -> None:
         task = self._track(work, "speakers")
@@ -4623,6 +4772,15 @@ class DMBot(commands.AutoShardedBot):
             return None
 
     async def _label_speakers(self, table: Table, lines: list[Waiting]) -> None:
+        """`_label_speakers_now`, and whatever happens, every line in the window is known to have
+        its answer by the end (a look-up waiting for a label goes on with "none", #1624)."""
+        try:
+            await self._label_speakers_now(table, lines)
+        finally:
+            for waiting in lines:
+                self._label_known(table, waiting.speaker, waiting.started_ms, "")
+
+    async def _label_speakers_now(self, table: Table, lines: list[Waiting]) -> None:
         """Ask the AI about a window of the DM's lines (one call, bounded) and save the
         labels it is sure of. A "maybe", a slow or failed call, or a name that is no longer
         allowed when the answer comes back: no label. Consent is checked again after every
@@ -4795,6 +4953,7 @@ class DMBot(commands.AutoShardedBot):
     async def _save_entity(self, table: Table, waiting: Waiting, entity: str) -> None:
         """Save who a line was said as, waiting or saved. Only while its speaker is recorded."""
         guild_id, speaker, started = table.guild_id, waiting.speaker, waiting.started_ms
+        self._label_known(table, speaker, started, entity)  # (a look-up waiting for it, #1624)
         async with table.save_lock:
             if self.consent.has_consent(guild_id, speaker):
                 found = table.unsaved.set_entity(speaker, started, entity)
@@ -4935,6 +5094,7 @@ class DMBot(commands.AutoShardedBot):
         now = time.monotonic()
         expired = table.questions.expire(now)
         if expired is not None:
+            self._keep_unanswered(table, expired)
             self._track(self._close_question(table, self._not_answered(table, expired)), "q")
         if not screen_levels.allows(table.screen_level, screen_levels.QUESTION):
             return  # quiet: the words stay as heard (after expiring any still open)
@@ -6075,6 +6235,171 @@ class DMBot(commands.AutoShardedBot):
         # (an unknown member comes back as a mention, which is not a name: the DM still counts)
         table.name_answers.set_dms({u: "" if n.startswith("<@") else n for u, n in dms.items()})
         table.name_answers.feed(user_id, at_ms, text, consented=True)
+
+    def _keep_unanswered(self, table: Table, asked: name_questions.Asked) -> None:
+        """A "Did they mean…?" nobody answered goes to the after-session check (#1572), in memory
+        until the session ends. Not one about a name split across two pieces of speech (no one
+        line to fix), nor one whose speaker has stopped being recorded."""
+        if (
+            not asked.line
+            or asked.prev_line
+            or not self.consent.has_consent(table.guild_id, asked.speaker)
+        ):
+            return
+        table.unanswered.append(asked)
+        del table.unanswered[:-MAX_PER_SESSION]  # the oldest go first
+
+    async def save_unanswered(self, table: Table) -> None:
+        """After a session: keep the questions that went unanswered for the after-session check,
+        and say how many wait (#1572). Only for speakers who still agree, checked again after the
+        write; a person who stopped meanwhile has theirs removed. DM screen only."""
+        items, table.unanswered = table.unanswered, []  # (lost if the save fails: only a reminder)
+        session_id = table.transcript_session_id
+        if (
+            self.heard_questions is None
+            or table.campaign_id is None
+            or session_id is None
+            or not items
+        ):
+            return
+        gid, cid = table.guild_id, table.campaign_id
+        with log_context(guild_id=gid, campaign_id=cid):
+            agreed = await self.consent.consenting(gid)
+            keep = [
+                Unanswered(a.speaker, a.started_ms, a.heard, tuple(e for e, _ in a.options))
+                for a in items
+                if a.speaker in agreed
+            ]
+            if not keep:
+                return
+            await self.heard_questions.save(gid, cid, session_id, keep)
+            agreed = await self.consent.consenting(gid)  # someone may have stopped meanwhile
+            for gone in {k.speaker_id for k in keep if k.speaker_id not in agreed}:
+                await self.heard_questions.forget_speaker(gid, gone)
+            waiting = await self.heard_questions.count(gid, cid)
+            log.info("Did they mean: %d question(s) wait for the DM", waiting)
+            if waiting:
+                await self.post(
+                    table.screen_channel_id,
+                    heard_waiting_text(waiting),
+                    view=heard_review_view(cid),
+                )
+
+    async def answer_waiting_question(
+        self, guild_id: int, question_id: int, pick: str, user_id: int, typed: str | None = None
+    ) -> tuple[str, bool]:
+        """The DM answered a "Did they mean…?" that waited for the after-session check (#1572):
+        what to tell them, and whether the question is now closed. A name picked (or typed) is
+        saved as the campaign's correction, so later sessions write it that way, and is written
+        into that one line of the cleaned transcript (never what was heard); **Keep as heard**
+        saves the "don't change this" rule. DMs only, checked here on every press; the speaker
+        must still be recorded, checked again after every wait."""
+        store, memory = self.heard_questions, self.memory
+        if store is None or memory is None or self.lookup is None:
+            return name_questions.TYPED_CANT_CHECK, False
+        waiting = await store.get(guild_id, question_id)
+        if waiting is None:
+            return name_questions.EXPIRED, True
+        campaign = await self.campaigns.get(guild_id, waiting.campaign_id)
+        if campaign is None or user_id not in campaign.dm_user_ids:
+            return name_questions.ONLY_DM, False
+        if not self.consent.has_consent(guild_id, waiting.speaker_id):
+            await store.forget_speaker(guild_id, waiting.speaker_id)
+            return name_questions.GONE, True
+        heard = waiting.heard
+        keep = pick == name_questions.KEEP
+        chosen: tuple[str | None, str] | None = None
+        if pick == name_questions.TYPE:
+            typed = " ".join((typed or "").split())
+            if name_key(typed) == name_key(heard):
+                keep = True  # typed just as heard
+            else:
+                why = name_questions.typed_problem(typed)
+                if why is not None:
+                    return why, False
+                found = self._known_typed(await self.lookup.get(guild_id, campaign.id), typed)
+                if isinstance(found, str):
+                    return found, False
+                chosen = found
+        elif not keep:
+            if not (pick.isdigit() and int(pick) < len(waiting.option_ids)):
+                return name_questions.EXPIRED, False  # a stale button: the question stays
+            lookup = await self.lookup.get(guild_id, campaign.id)
+            entity_id = waiting.option_ids[int(pick)]
+            written = own_name(lookup, entity_id)
+            if written is None:  # removed, or made secret, since
+                await store.decide(guild_id, question_id, KEPT, user_id)
+                return name_questions.NAME_GONE, True
+            chosen = (entity_id, written)
+        if not await store.decide(guild_id, question_id, KEPT if keep else ANSWERED, user_id):
+            return name_questions.EXPIRED, True  # answered on another screen meanwhile
+        name = ""
+        try:
+            if chosen is None:
+                await memory.add_correction(guild_id, campaign.id, heard, action=KEEP, source=DM)
+            elif chosen[0] is None:  # a new name, to check in 📝 Check new names
+                name = chosen[1]
+                await memory.add_typed_name(guild_id, campaign.id, heard, name)
+            else:
+                name = chosen[1]
+                await memory.add_correction(
+                    guild_id, campaign.id, heard, action=FIX, source=DM, entity_id=chosen[0]
+                )
+        except MemoryRuleError:
+            await store.reopen(guild_id, question_id)
+            if chosen is None:  # Keep as heard: nothing about a name
+                return ANSWER_NOT_SAVED, False
+            if chosen[0] is None:
+                return name_questions.TYPED_REFUSED, False
+            return name_questions.NAME_GONE, True
+        except Exception:
+            await store.reopen(guild_id, question_id)
+            raise
+        self.lookup.mark_stale(guild_id, campaign.id)  # the next line uses the answer
+        shown = discord.utils.escape_markdown(heard)
+        if chosen is None:
+            return name_questions.kept_text(shown), True
+        fixed = await self._fix_waiting_line(guild_id, campaign.id, waiting, name)
+        md = discord.utils.escape_markdown
+        return (
+            name_questions.fixed_text(
+                shown, md(name), line_fixed=fixed, line_kept=not fixed, new=chosen[0] is None
+            ),
+            True,
+        )
+
+    async def _fix_waiting_line(
+        self, guild_id: int, campaign_id: str, waiting: WaitingQuestion, name: str
+    ) -> bool:
+        """Write the answer into the one stored line the question was about (cleaned words only).
+        Not if the words are not in the line exactly once now, if the line is gone, or if the name
+        would put a secret one in the line (checked with the names as they are now): the line
+        then stays as heard. True if the line changed."""
+        if self.lookup is None:
+            return False
+        text = fix_words(waiting.text, waiting.heard, name)
+        span = find_once(waiting.text, waiting.heard)
+        if (
+            text is None
+            or span is None
+            or not self.consent.has_consent(guild_id, waiting.speaker_id)
+        ):
+            return False
+        try:  # the answer is saved already: a failure here only leaves the line as heard
+            lookup = await self.lookup.get(guild_id, campaign_id)
+            if not safe_answer(lookup, waiting.text, (), span[0], span[1], name):
+                return False
+            return await self.apply_line_fix(
+                guild_id,
+                campaign_id,
+                waiting.session_id,
+                waiting.speaker_id,
+                waiting.started_ms,
+                text,
+            )
+        except Exception:
+            log.exception("Couldn't write an answer into its stored line")
+            return False
 
     async def learn_people(self, table: Table) -> None:
         """After a session: turn the names people answered to at least twice into waiting
@@ -7355,6 +7680,28 @@ class DMBot(commands.AutoShardedBot):
             await asyncio.sleep(TRANSCRIPT_SAVE_S)
             await asyncio.gather(*(one(t) for t in self._all_tables()))
 
+    async def _retire_campaign_channels(
+        self, campaign: Campaign, now: int, *, by_hand: bool = False
+    ) -> ChannelCounts:
+        """Retention (or the plan holder, `by_hand`, #1608) deleted this campaign: delete its DM
+        screen and game-time channels and close its transcript and dmb-chat channels (#1598).
+        Only the channels recorded on it."""
+        me = self.user
+        guild = self.get_guild(campaign.guild_id)
+        if me is None:
+            return await retire_channels(None, campaign, 0, now, by_hand=by_hand)
+        return await retire_channels(guild, campaign, me.id, now, by_hand=by_hand)
+
+    async def retire_campaign_channels(
+        self, campaign: Campaign, now: int, *, by_hand: bool = False
+    ) -> ChannelCounts:
+        """The same, for the screens that delete a campaign (the settings card, #1608)."""
+        return await self._retire_campaign_channels(campaign, now, by_hand=by_hand)
+
+    async def dm_user(self, user_id: int, text: str) -> bool:
+        """A private message that may fail; False if it did (for the screens, #1608)."""
+        return await self._dm_user(user_id, text)
+
     async def _drop_old_suggestions(self, table: Table, session_id: str) -> None:
         """A suggested line fix that waited past the end of the next session is dropped, with no
         message (#1491): when a session ends, only suggestions for this session stay."""
@@ -7695,6 +8042,8 @@ async def run(settings: Settings) -> None:
             RecapStore(db),
             SuggestionStore(db),
             HomebrewStore(db),
+            WaitingQuestionStore(db),
+            OptOutStore(db),
         )
         _close_on_sigterm(bot)
         async with bot:

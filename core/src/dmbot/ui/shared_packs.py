@@ -38,8 +38,10 @@ from dmbot.ui.shared_rules import (
 log = logging.getLogger(__name__)
 
 INTRO = (
-    "📦 **Homebrew packs**\nA pack is a named bundle of homebrew. Share yours with another "
-    "table, or follow another DM's. Only homebrew is shared. Never your story, names or notes."
+    "📦 **Homebrew packs**\nA Homebrew pack is a named bundle of your own homebrew: the spells, "
+    "monsters, items and other game content you made in ⚙️ Settings → 📚 Homebrew. Share your "
+    "pack with another table, or follow someone else's. Only homebrew is shared in a pack, "
+    "never your story, names or notes."
 )
 SHARE_LABEL = "📤 Share my homebrew"
 PUBLISH_LABEL = "🔄 Publish my changes"
@@ -154,23 +156,25 @@ async def _menu(
     lines = [INTRO]
     sharing = mine is not None and mine.shared
     if sharing and mine is not None:
-        lines.append(f"• Sharing: **{_escape(mine.name)}** (version {mine.version}).")
+        lines.append(
+            f"• **Sharing Status:** Sharing **{_escape(mine.name)}** (version {mine.version})."
+        )
     elif mine is not None:
-        lines.append(f"• Not sharing now. Last pack: **{_escape(mine.name)}**.")
+        lines.append(f"• **Sharing Status:** Not sharing now. Last pack: **{_escape(mine.name)}**.")
     else:
-        lines.append("• Not sharing your homebrew.")
+        lines.append("• **Sharing Status:** Not sharing your homebrew.")
     if mine is None or not mine.shared:  # say now what a Share would leave at home, and why
         _, left_out = pack_content.content_of(await _own_entries(interaction, current))
         if left_out:
             lines.append(f"• {stays_home(left_out)}")
     if follows:
-        lines.append("• Following (the top one wins if two packs use the same name):")
+        lines.append("• **Following:** the top one wins if two packs use the same name.")
         for i, f in enumerate(follows, start=1):
             note = "" if f.updating else " (no longer updated)"
             lines.append(f"  {i}. **{_escape(f.name)}** from {_escape(f.publisher)}{note}")
         lines.append("Your own homebrew always wins.")
     else:
-        lines.append("• Not following any pack.")
+        lines.append("• **Following:** Not following any pack.")
     return "\n".join(lines), SharedPacksMenu(
         current, sharing=sharing, follows=follows, last_name=mine.name if mine else ""
     )

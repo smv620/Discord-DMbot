@@ -33,7 +33,7 @@ import sys
 import tempfile
 import time
 from collections.abc import Awaitable, Callable, Collection, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 
 from dmbot.ai import AIModels, AIModelTier, AnthropicClient, Reply
@@ -48,6 +48,7 @@ from dmbot.recaps import draft as rd
 from dmbot.recaps import pipeline as pl
 from dmbot.recaps.store import Job, RecapStore
 from dmbot.recaps.text import names_a_secret, narration_of, strip_cues
+from dmbot.transcript.improvement import filter_lines
 from dmbot.transcription.config import load_transcription_settings
 
 Runner = Callable[[list[str]], Awaitable[int]]
@@ -464,6 +465,11 @@ async def _session(
                 "recap_run: no such session, or the campaign's names can't be read", file=sys.stderr
             )
             return 2
+        # The improvement opt-out (#1609): this is a test run on real words, not a table, so
+        # the lines of anyone who opted out are left out, read now.
+        # The earlier recap (`previous`) is derived from everyone's words, so it is left out
+        # of a test run rather than carry an opted-out person's words along.
+        inputs = replace(inputs, lines=await filter_lines(db, inputs.lines), previous="")
         # The same rule as the live bot: with an outside engine only yeses for it count.
         engine = load_transcription_settings(os.environ).outside_engine
         consent = ConsentStore(db, outside=engine)

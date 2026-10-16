@@ -1,5 +1,6 @@
-"""Homebrew: a campaign's own spells, monsters, items and rules (docs/PLAN.md, "Homebrew (part 1)";
-#1520).
+"""Homebrew: a campaign's own spells, monsters, items and other game content (docs/PLAN.md,
+"Homebrew (part 1)"; #1520). A rule the DM makes up is a house rule, not homebrew (owner,
+2026-10-16, #1628): `KINDS` has no "rule".
 
 An entry is the DM's own creation in the DM's own words, never a published book's text (the form
 says so; a rulebook goes through "Share a rulebook"). It is **DM-screen content by default**
@@ -28,7 +29,8 @@ from typing import Any
 from dmbot.campaigns.models import CampaignError
 from dmbot.db import Conn, Database
 
-KINDS = ("spell", "monster", "item", "feat", "condition", "rule", "other")
+KINDS = ("spell", "monster", "item", "feat", "condition", "other")
+RULE_KIND = "rule"  # no longer a kind (#1628): kept to recognise and refuse it, or move it
 NAME_MAX = 80
 TEXT_MAX = 2000
 SUMMARY_MAX = 160
@@ -50,6 +52,7 @@ FULL = (
     "Remove one first, then add it again."
 )
 BAD_KIND = "That isn't one of the kinds. Pick one from the list."
+NOT_HOMEBREW = "Rules go in House rules, not Homebrew: ⚙️ Settings → House rules."
 DAMAGED = "This backup file is damaged (bad homebrew entry)."
 
 
@@ -138,6 +141,8 @@ def clean_summary(raw: str | None) -> str | None:
 
 def clean_kind(raw: str) -> str:
     kind = raw.strip().lower()
+    if kind == RULE_KIND:
+        raise HomebrewError(NOT_HOMEBREW)
     if kind not in KINDS:
         raise HomebrewError(BAD_KIND)
     return kind
@@ -636,14 +641,18 @@ class HomebrewSection:
             edition = row.get("book_edition")
             if edition is not None and (edition not in BOOK_EDITIONS or not row.get("from_book")):
                 raise CampaignError(DAMAGED)
+            # A backup made before rules left homebrew (#1628) may hold the kind "rule": it loads as
+            # "other", so nothing in the file is lost (the DM can make it a house rule).
+            old_rule = row["kind"] == RULE_KIND
             try:
-                kind, name = clean_kind(row["kind"]), clean_name(row["name"])
+                kind = "other" if old_rule else clean_kind(row["kind"])
+                name = clean_name(row["name"])
                 text, summary = clean_text(row["text"]), clean_summary(row["summary"])
             except HomebrewError:
                 raise CampaignError(DAMAGED) from None
             # A file made by DMbot is already in its cleaned form.
             if (kind, name, text, summary) != (
-                row["kind"],
+                "other" if old_rule else row["kind"],
                 row["name"],
                 row["text"],
                 row["summary"],

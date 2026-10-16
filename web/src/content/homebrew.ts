@@ -3,9 +3,11 @@
 export const text = {
   heading: "Homebrew",
   link: "Read your table's homebrew",
-  lead: "Spells, monsters, items and rules your DM made for your table. Everyone in your Discord server can read them.",
+  lead: "Spells, monsters, items and other game content your DM made for your table. Everyone in your Discord server can read them.",
   leadOneCampaign:
     "Your DM chose to share these. Your DM may have more that stays behind the DM screen.",
+  rulesNote: "Looking for rules your table made up?",
+  rulesLink: "See House rules",
   dmChanges:
     "You can't change these here. Your DM does that in Discord: ⚙️ Settings → 📚 Homebrew.",
   loading: "Loading…",
@@ -17,17 +19,32 @@ export const text = {
   allCampaigns: "All campaigns",
   open: "Read",
   openCampaign: (name: string): string => `Read: ${name}`,
-  campaignLine: (server: string, entries: number): string =>
-    `${server} · ${entries} ${entries === 1 ? "entry" : "entries"}`,
+  campaignLine: (server: string, entries: number, packs?: number): string =>
+    [
+      server,
+      `${entries} ${entries === 1 ? "entry" : "entries"}`,
+      ...(packs && packs > 0 ? ["follows another table's pack"] : []),
+    ].join(" · "),
+  packsHeading: "Also following: homebrew from another table",
+  packsNote:
+    "These come from another table's pack. It shows only what that table lets players know. If one has the same name as one of your table's own above, your table's wins.",
+  packLine: (name: string, version: number): string => `${name} (version ${version})`,
+  emptyButPack:
+    "Your table has no homebrew of its own yet. It follows another table's, shown below.",
+  downloadNotePacks: "The file has only your table's own homebrew, not the homebrew from another table.",
+  packNone: "That table hasn't shared any of it with players yet.",
   kinds: {
     spell: "Spells",
     monster: "Monsters",
     item: "Items",
     feat: "Feats",
     condition: "Conditions",
-    rule: "Rules",
     other: "Other",
   } as Record<string, string>,
+  fromBook: "From a shared book",
+  legacy: "[Legacy 2014]",
+  bookNote:
+    "From a shared book: this came from a rulebook your game master shared with the table. [Legacy 2014]: that book is for the 2014 rules, but your table plays the newer ones.",
   download: "Save as a text file",
   downloadNote: "The file has only what's shown on this page.",
   downloading: "Saving…",
@@ -45,7 +62,6 @@ export const kindOrder = [
   "item",
   "feat",
   "condition",
-  "rule",
   "other",
 ];
 
