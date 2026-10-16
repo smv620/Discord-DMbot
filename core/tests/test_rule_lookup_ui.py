@@ -91,6 +91,7 @@ class LookupTest(unittest.IsolatedAsyncioTestCase):
             ),
             house_rules=self.store,
             homebrew=self.brew,
+            homebrew_reader=self.brew,
             active_campaign_id=lambda guild_id: self.playing,
             rule_sets=None,
         )

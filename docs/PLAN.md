@@ -716,7 +716,17 @@ never does.
 - **Build status (#1190):** built: the tables and store (#1221), the Settings menu (#1223), house rules
   reaching the sidebar, rules lookup, rules cards and alerts (a followed set's rules come after the campaign's
   own, each cited as "<set> house rules, v4"), follower backups (never the share code) and the note at a
-  follower's next start when a set is gone (#1262). Homebrew packs wait until homebrew is stored.
+  follower's next start when a set is gone (#1262).
+- **Build status (#1527, homebrew packs), part A, built:** a pack is a shared ruleset of kind `homebrew` on
+  the same tables, codes and door as sets (no new migration: `rule_sets.kind` and `rule_set_follows.position`
+  were there). Its content is the campaign's own entries only (`rules/pack_content.py`); an entry with
+  `from_book` set is left out and named, so book text never leaves its campaign (CLAUDE.md, IP rule). A
+  campaign publishes one pack and follows up to five, in the DM's order; its backup carries each followed
+  copy, never the code. Readers (`/dmbot rule`, rules cards and alerts, the sidebar, table questions) read the
+  campaign's own homebrew first, then its followed packs in order (a name is taken once, by the first that has
+  it), cited "<pack> homebrew, vN" and tagged `[Homebrew]`; an entry the publisher keeps hidden stays hidden
+  at the follower's table. Still to build: the Settings screens (Share, Follow, order) and taking updates at
+  a session start with Undo.
 - **Relationship definitions travel with a set (#1456; Supervisor decision, 2026-10-16).** At Share the DM
   sees a tick list of the campaign's own relationships (each with its label and what it means; all ticked to
   start) and only the ticked ones go into the set's content: words only (the name, how it reads from the

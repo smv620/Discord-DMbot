@@ -305,6 +305,8 @@ def mentioned_names(question: str, lookup: CampaignLookup | None) -> list[str]:
 
 def homebrew_source(entry: Homebrew, campaign_name: str) -> str:
     """Where a homebrew answer comes from: `Frostmaiden's homebrew: Hollow King [Homebrew]`."""
+    if entry.source:  # an entry of a followed pack (#1527)
+        return f"{entry.source}: {entry.name} [Homebrew]"
     return f"{campaign_name}'s homebrew: {entry.name} [Homebrew]"
 
 
