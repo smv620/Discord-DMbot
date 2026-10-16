@@ -38,8 +38,8 @@ STRAY_SWEEP_SECONDS = 600  # the database hands each one out at most once an hou
 
 
 async def _sweep(db: Database) -> None:
-    """Hourly: expired sign-in sessions, "Say hello" messages over a year old, and support
-    tickets over 12 months old."""
+    """Hourly: expired sign-in sessions, "Say hello" messages over a year old, support tickets
+    over 12 months old, and answered support tickets quiet for two weeks (closed)."""
     while True:
         try:
             removed = await sessions.delete_expired(db, now=int(time.time()))
@@ -67,6 +67,17 @@ async def _sweep(db: Database) -> None:
                 log.info("Removed %d support tickets older than 12 months", expired)
         except Exception as exc:
             log.error("Removing old support tickets failed (%s); trying again", type(exc).__name__)
+        try:
+            # Answered tickets nobody has written to for two weeks are finished (#1505).
+            closed = await support.close_stale(db, int(time.time()))
+            if closed:
+                log.info(
+                    "Closed %d answered support tickets after %d quiet days",
+                    closed,
+                    support.SUPPORT_AUTO_CLOSE_DAYS,
+                )
+        except Exception as exc:
+            log.error("Closing old answered tickets failed (%s); trying again", type(exc).__name__)
         await asyncio.sleep(CLEANUP_SECONDS)
 
 
