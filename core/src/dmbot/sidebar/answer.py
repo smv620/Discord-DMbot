@@ -34,6 +34,7 @@ from dmbot.campaigns.models import Campaign
 from dmbot.memory.lookup import CampaignLookup
 from dmbot.memory.recall import Recall, check_citations
 from dmbot.rules import facts as rule_facts
+from dmbot.rules.homebrew import Homebrew
 from dmbot.rules.house import HouseRule
 from dmbot.rules.index import Hit, Index, normalize
 from dmbot.sidebar import brevity, context, table_links
@@ -131,6 +132,14 @@ with a label like F1. Use them for questions about the campaign's people, places
 and set SOURCE to "facts you confirmed". Say nothing about the story that is not in them or in the \
 other material given. List the labels you used on one more line: CITED: F1, F3 (or CITED: none). \
 Cite only labels that are given; never write a label or an ID in ANSWER."""
+# Added to SYSTEM only when the prompt holds a HOMEBREW section (#1520).
+HOMEBREW_RULES = """
+
+13. Under HOMEBREW are the campaign's own creations that its players may know. They come after \
+house rules and before the free rules, and they beat the free rules for the same name. When one \
+names what the question is about, answer from it, set SOURCE to its source line exactly as given, \
+and keep its [Homebrew] tag."""
+HOMEBREW_POINTER = "That's in your homebrew. Use /dmbot rule {name}."
 CONFIRMED_SOURCE = "facts you confirmed"  # the source shown for an answer from the DM's own facts
 # A label (F1) or an id as the reply's wording would show it: never shown to anyone (#1370).
 _LEAK = re.compile(r"\s*\[?\bF\d+\b\]?|\s*\b[0-9a-f]{32}\b", re.IGNORECASE)
@@ -179,6 +188,7 @@ class AIClient(Protocol):
 # Why can't they use the AI? None if they can. (campaign, asking user id)
 Gate = Callable[[Campaign, int], Awaitable[str | None]]
 Houses = Callable[[Campaign], Awaitable[Sequence[HouseRule]]]
+Brews = Callable[[Campaign], Awaitable[Sequence[Homebrew]]]
 Names = Callable[[Campaign], Awaitable[CampaignLookup | None]]
 # Who is who at the table, as short lines of names only (no ids): "Mia plays Cerric".
 People = Callable[[Campaign], Awaitable[Sequence[str]]]
@@ -387,6 +397,8 @@ def canonical_source(said: str | None, ctx: context.Context) -> str | None:
     ):
         if key in lowered and given in ctx.sources:
             return given
+    if "homebrew" in lowered:
+        return next((g for g in ctx.sources if "homebrew:" in g.lower()), None)
     if lowered.startswith("house rule"):
         number = re.search(r"\d+", said)
         if number:
@@ -445,6 +457,7 @@ class Sidebar:
         names: Names,
         people: People | None = None,
         recall: Recaller | None = None,
+        brews: Brews | None = None,
         second_try: AIClient | None = None,
         clock: Callable[[], float] = time.monotonic,
     ) -> None:
@@ -456,6 +469,7 @@ class Sidebar:
         self._names = names
         self._people = people
         self._recall = recall
+        self._brews = brews
         self._clock = clock
 
     async def answer(
@@ -493,11 +507,14 @@ class Sidebar:
         # rather than asking the model to hide them (#1187).
         # Who is who is names only, which everyone at the table already hears, so a table
         # question reads it too (#1188).
-        houses, lookup, people = await asyncio.gather(
+        houses, lookup, people, brews = await asyncio.gather(
             self._safely(self._houses(campaign), [], "house rules"),
             self._safely(self._names(campaign), None, "names") if not table else _nothing(),
             self._safely(self._people(campaign), [], "who is who")
             if self._people is not None
+            else _nothing_list(),
+            self._safely(self._brews(campaign), [], "homebrew")
+            if self._brews is not None
             else _nothing_list(),
         )
         index = self._index() if callable(self._index) else self._index
@@ -519,8 +536,17 @@ class Sidebar:
             people=people,
             table=table,
             recalled=recalled,
+            homebrew=brews,
+            campaign_name=campaign.name,
         )
+        if ctx.hidden_homebrew:
+            # The question is about an entry only the DM may know. Its words never reach a table
+            # answer or the raw transcript, and the book is not used for a name the campaign has
+            # overridden: no AI call, the table is sent to the DM, the DM to /dmbot rule (#1520).
+            return self._done(self._hidden_homebrew(ctx, question, table), started, used_ai=False)
         system = SYSTEM + RECALL_RULES if ctx.labels else SYSTEM
+        if ctx.homebrew:
+            system += HOMEBREW_RULES
         # Asked for the whole text, and the rule is one DMbot has: no AI call at all. If it
         # isn't, the question is answered like any other, short (a paragraph is never sent).
         full = brevity.asks_for_full_text(question) and bool(ctx.hits)
@@ -646,12 +672,27 @@ class Sidebar:
                 in_game=fields.in_game,
                 question=fields.question if table else "",
                 model=reply.model or self._ai.model,  # the one that answered, if it says
-                prompt_version=f"{PROMPT_VERSION}+recall" if ctx.labels else PROMPT_VERSION,
+                prompt_version=PROMPT_VERSION
+                + ("+recall" if ctx.labels else "")
+                + ("+homebrew" if ctx.homebrew else ""),
                 sources=ctx.sources,
                 parts=(text,),
             ),
             started,
         )
+
+    @staticmethod
+    def _hidden_homebrew(ctx: context.Context, question: str, table: bool) -> Answer:
+        if table:
+            return Answer(
+                ONE_FOR_DM,
+                in_game=False,
+                one_for_dm=True,
+                question=" ".join(question.split()[:RESTATED_WORDS]),
+                parts=(ONE_FOR_DM,),
+            )
+        text = HOMEBREW_POINTER.format(name=ctx.hidden_homebrew[0])
+        return Answer(text, in_game=True, parts=(text,))
 
     @staticmethod
     async def _safely(read: Awaitable[T], fallback: T, what: str) -> T:

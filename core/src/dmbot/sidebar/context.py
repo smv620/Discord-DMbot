@@ -32,6 +32,7 @@ from dmbot.memory.lookup import CampaignLookup
 from dmbot.memory.models import CONFIRMED, Entity
 from dmbot.memory.recall import Recall
 from dmbot.rules.followed import FollowedRule
+from dmbot.rules.homebrew import Homebrew
 from dmbot.rules.house import HouseRule
 from dmbot.rules.index import Hit, Index, edition_tag, normalize
 from dmbot.sidebar import knowledge
@@ -41,6 +42,8 @@ ENTRY_TEXT_MAX = 1200  # characters of one rules entry sent to the AI
 ENTRIES_MAX = 3
 HOUSE_RULES_MAX = 5
 HOUSE_RULE_MAX = 300
+HOMEBREW_MAX = 3  # the campaign's own entries sent for one question
+HOMEBREW_TEXT_MAX = 600
 NAMES_MAX = 5
 SCENE_MAX = 1500  # the last characters of the scene
 QUESTION_MAX = 500
@@ -213,6 +216,30 @@ def relevant_house_rules(
     return ranked[:HOUSE_RULES_MAX]
 
 
+def relevant_homebrew(
+    entries: Sequence[Homebrew], question: str
+) -> tuple[list[Homebrew], list[Homebrew]]:
+    """The campaign's own homebrew the question is about: (entries players may know, entries only
+    the DM may know). An entry is about the question when its whole name is in it, else when the
+    two share a real word of its name. Only the first kind is ever sent to the AI; the second only
+    makes the caller answer for the DM's side (a hidden entry's words, or even its existence, must
+    not reach a table answer or the raw transcript, #933), and it still shadows the book."""
+    asked = f" {normalize(question)} "
+    words = {w for w in (normalize(w) for w in words_of(question)) if len(w) >= 4} - _STOP
+    named, shared = [], []
+    for entry in entries:
+        key = normalize(entry.name)
+        if key and f" {key} " in asked:
+            named.append(entry)
+        elif any(w in words for w in key.split()):
+            shared.append(entry)
+    both = [*named, *shared]
+    return (
+        [e for e in both if e.players_may_know][:HOMEBREW_MAX],
+        [e for e in both if not e.players_may_know],
+    )
+
+
 def _mentioned(question: str, lookup: CampaignLookup) -> list[tuple[str, Entity]]:
     """The confirmed entries the question mentions by a name that is not secret, longest names
     first, each once: (entry id, entry). The one place the question is matched to names, for
@@ -276,6 +303,11 @@ def mentioned_names(question: str, lookup: CampaignLookup | None) -> list[str]:
     return lines[:NAMES_MAX]
 
 
+def homebrew_source(entry: Homebrew, campaign_name: str) -> str:
+    """Where a homebrew answer comes from: `Frostmaiden's homebrew: Hollow King [Homebrew]`."""
+    return f"{campaign_name}'s homebrew: {entry.name} [Homebrew]"
+
+
 def source_of(hit: Hit) -> str:
     """Where an entry comes from, short: `SRD 5.2.1 p. 241` (`[Legacy 2014]` when it is)."""
     base = f"{hit.entry.source} p. {hit.entry.page}"
@@ -291,6 +323,10 @@ class Context:
     sources: tuple[str, ...]
     hits: tuple[Hit, ...]
     house_rules: tuple[HouseRule, ...]
+    # The campaign's own homebrew sent (players may know it), and the names of matching entries
+    # that only the DM may know, which are never sent (#1520).
+    homebrew: tuple[Homebrew, ...] = ()
+    hidden_homebrew: tuple[str, ...] = ()
     about_link: str | None = None  # the DMbot section the answer may point to, at this build
     # What recall gave the prompt (#1370), and the short label each item goes by in it (F1, F2…)
     # → its id. The reply cites the labels; the ids themselves are never shown to anyone.
@@ -310,11 +346,21 @@ def build(
     people: Sequence[str] = (),
     table: bool = False,
     recalled: Recall | None = None,
+    homebrew: Sequence[Homebrew] = (),
+    campaign_name: str = "",
 ) -> Context:
     """The AI's message for one question about one campaign. `house_rules` and `lookup`
     must already be this campaign's; nothing else is read here."""
     question = " ".join(question.split())[:QUESTION_MAX]
     hits = mentioned_rules(question, index, target, fallback, both=wants_both_editions(question))
+    known, hidden = relevant_homebrew(homebrew, question)
+    # A homebrew name shadows the book's, hidden or not (#1520): the book is not used for it.
+    shadowed = {normalize(e.name) for e in (*known, *hidden)}
+    hits = [
+        h
+        for h in hits
+        if normalize(h.entry.name) not in shadowed and normalize(h.found_as) not in shadowed
+    ]
     rules = relevant_house_rules(house_rules, question, hits)
     names = mentioned_names(question, lookup)
     sources: list[str] = []
@@ -335,6 +381,13 @@ def build(
                 label = f"House rule {rule.number}"
                 sources.append(f"house rule {rule.number}")
             sections.append(f"- {label}: {rule.rule}{instead}"[:HOUSE_RULE_MAX])
+    if known:
+        sections.append("HOMEBREW (the campaign's own; after house rules, before the free rules):")
+        for entry in known:
+            cite = homebrew_source(entry, campaign_name)
+            text = " ".join(entry.text.split())[:HOMEBREW_TEXT_MAX]
+            sections.append(f"- [Homebrew] {entry.name} ({entry.kind}) [{cite}]: {text}")
+            sources.append(cite)
     if hits:
         sections.append("RULES ENTRIES (the free rules, word for word):")
         for hit in hits:
@@ -388,6 +441,8 @@ def build(
         tuple(sources),
         tuple(hits),
         tuple(rules),
+        homebrew=tuple(known),
+        hidden_homebrew=tuple(e.name for e in hidden),
         about_link=about_link,
         recall=recalled if labels else None,
         labels=tuple(labels),

@@ -188,7 +188,7 @@ from dmbot.retention import RetentionJob
 from dmbot.rules import house_voice
 from dmbot.rules import index as rules_index
 from dmbot.rules.followed import followed_rules, own_first
-from dmbot.rules.homebrew import HomebrewSection, HomebrewStore
+from dmbot.rules.homebrew import Homebrew, HomebrewSection, HomebrewStore
 from dmbot.rules.house import HouseRule, HouseRulesSection, HouseRuleStore
 from dmbot.rules.house_file_link import HouseFileLinkStore
 from dmbot.rules.rule_sets import FollowedSetsSection, RuleSetStore
@@ -2363,6 +2363,13 @@ class DMBot(commands.AutoShardedBot):
         async def houses(campaign: Campaign) -> Sequence[HouseRule]:
             return await self.all_house_rules(campaign.guild_id, campaign.id)
 
+        async def brews(campaign: Campaign) -> Sequence[Homebrew]:
+            # All of the campaign's own entries: the sidebar engine keeps the hidden ones out of
+            # every prompt and answer (#1520), but needs them to know a name is overridden.
+            if self.homebrew is None:
+                return []
+            return await self.homebrew.list(campaign.guild_id, campaign.id)
+
         async def names(campaign: Campaign) -> CampaignLookup | None:
             if self.lookup is None:
                 return None
@@ -2407,6 +2414,7 @@ class DMBot(commands.AutoShardedBot):
             names=names,
             people=people,
             recall=recall if self.settings.sidebar_recall else None,
+            brews=brews,
             second_try=careful,
         )
 

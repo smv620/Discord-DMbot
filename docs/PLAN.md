@@ -619,13 +619,19 @@ or servers; only the campaign's DMs change anything (the store checks in the sam
   press: the list (🙈 only the DM, 👀 players may know), ➕ Add (pick the kind, then a form), and on an entry
   Edit, 👀/🙈, its kind, 🗑 Remove. **Undo** a removal is kept in memory (the last five per campaign, gone at a
   restart), nothing stored.
-- **Where it is read:** `/dmbot rule` (the DM's private answer) shows the campaign's own entry with the same
-  name between its house rules and the free rules' card, tagged `[Homebrew]` with the source "<campaign>'s
-  homebrew: <name>", even when players may not know it. The precedence is house rules → homebrew → target →
-  fallback.
-- **Not in part 1:** reading it in the DM sidebar and table questions (waits on the question below), the live
-  rules cards, the file import (`## Name (kind)` blocks, through the right-to-use confirmation only if the DM
-  says it is from a book), and sharing as a pack (part 2).
+- **Where it is read:** the precedence is house rules → homebrew → target → fallback, and **a homebrew name
+  shadows the book's, hidden or not** (the book is never used for a name the campaign has overridden).
+  - `/dmbot rule` (the DM's private answer) shows the campaign's entry with the same name, tagged
+    `[Homebrew]` with the source "<campaign>'s homebrew: <name>", even when players may not know it.
+  - The DM sidebar and table questions use **only entries marked 👀 players may know**: a sidebar reply
+    reaches the raw transcript, which the whole server may read (#933, #1378). Up to 3 entries, each cut to 600
+    characters, go to the AI after the house rules and before the free rules, with the tag and the source.
+    A question about a hidden entry is not answered by the AI at all: the table gets "That's one for your DM."
+    (and the DM's own table question is answered to them privately), the DM's sidebar gets "That's in your
+    homebrew. Use /dmbot rule <name>."
+  - The entry form says so: "Hidden entries are for you only; DMbot's sidebar and table answers don't use them."
+- **Not in part 1 (1b):** the live rules cards from the transcript, the file import (`## Name (kind)` blocks,
+  through the right-to-use confirmation only if the DM says it is from a book), and sharing as a pack (part 2).
 
 **Shared rulesets: homebrew packs and house-rules sets (owner, 2026-10-14).** Rules can be shared between
 campaigns, in the same server or another one, when both sides choose to. Only rules cross; a campaign's story
@@ -2399,8 +2405,7 @@ voice). `bot.sidebar_answers.answer(campaign, question, asker_id=..., scene=...)
   reach the raw transcript, #933), the caller's last few minutes of scene (cut to 1,500
   characters, fenced as the players' words, which are information and never instructions) and,
   only for questions about DMbot or Discord, the reviewed digest `sidebar/about_dmbot.md`.
-  Only matching entries are sent, each cut to 1,200 characters. A campaign's homebrew is stored (#1520) but not
-  sent yet; content a DM shared counts only with its right-to-use confirmation and none is
+  Only matching entries are sent, each cut to 1,200 characters. A campaign's homebrew entries that players may know are sent (#1520); content a DM shared counts only with its right-to-use confirmation and none is
   stored as text yet, so none is sent.
 - **Sources are DMbot's, not the model's.** The shown source is taken from what the model was
   given: an SRD answer cites the entry's own page and carries `[Legacy 2014]` when it is a 2014
