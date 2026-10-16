@@ -13,7 +13,7 @@ const switchRecapsOn = {
   name: "smoke-recap-switches",
   enforce: "pre",
   transform(code, id) {
-    if (!/\/content\/recap-words\.ts$/.test(id.split("?")[0])) return null;
+    if (!/\/content\/recap-words\.ts$/.test((id.split("?")[0] ?? ""))) return null;
     let out = code;
     for (const name of SWITCHES) {
       const off = `export const ${name} = false;`;
