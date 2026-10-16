@@ -2329,6 +2329,8 @@ WEB_ROLE_FUNCTIONS: tuple[tuple[str, str], ...] = (
     ("dmbot_support_email", "dmbot_support_email(BIGINT)"),
     # ... and its words, the same way (#1373): the website's role has no right to the column.
     ("dmbot_support_message", "dmbot_support_message(BIGINT)"),
+    # "Make the audio again" on a DM's recap (#1418): the only write to its audio columns.
+    ("dmbot_recap_audio_again", "dmbot_recap_audio_again(BIGINT, TEXT, BIGINT)"),
     # A move code asked for on the website (#1246).
     ("dmbot_web_move_code", "dmbot_web_move_code(BIGINT, TEXT, BIGINT, TEXT, BIGINT)"),
     ("dmbot_web_cancel_move_code", "dmbot_web_cancel_move_code(BIGINT, TEXT, BIGINT)"),
@@ -4064,6 +4066,56 @@ RECAP_AUDIO_JOBS = (
 )
 RECAP_AUDIO_JOBS = RECAP_AUDIO_JOBS.replace("{scope}", _memory_scope())
 
+RECAP_AUDIO_AGAIN = """
+    -- "Make the audio again" on the website (#1418). The website's role may only READ the audio
+    -- columns of a recap (its grant names the columns it may change), so asking for new audio
+    -- goes through this door: only a DM of the campaign, only a recap that is ready and still
+    -- the DM's to post, and at most once every 10 minutes for a recap (audio_asked_at, the
+    -- database's own clock, so a caller cannot lie about the time). It does what the bot does
+    -- to queue audio and nothing else: audio queued, tries and wait back to none.
+    ALTER TABLE recap_jobs ADD COLUMN audio_asked_at BIGINT NOT NULL DEFAULT 0;
+    CREATE FUNCTION dmbot_recap_audio_again(g BIGINT, c TEXT, at_ BIGINT) RETURNS TEXT
+    LANGUAGE plpgsql SECURITY DEFINER AS $fn$
+    DECLARE
+        job recap_jobs%ROWTYPE;
+        now_s BIGINT := floor(extract(epoch FROM clock_timestamp()))::BIGINT;
+    BEGIN
+        IF NOT (g = ANY ((SELECT dmbot_web_guilds())::BIGINT[])) THEN
+            RETURN 'not_allowed';
+        END IF;
+        IF NOT EXISTS (SELECT 1 FROM campaign_dms d
+                       WHERE d.guild_id = g AND d.campaign_id = c
+                         AND d.user_id = dmbot_current_user()) THEN
+            RETURN 'not_allowed';
+        END IF;
+        SELECT * INTO job FROM recap_jobs
+            WHERE guild_id = g AND campaign_id = c AND session_at = at_ FOR UPDATE;
+        -- Only from where the page offers the button: made, or failed. Never while the bot is
+        -- making it (its tries and wait would be reset under it) or when it was never wanted.
+        IF NOT FOUND OR job.state <> 'ready' OR job.status NOT IN ('draft', 'posting')
+           OR job.audio NOT IN ('ready', 'failed') THEN
+            RETURN 'not_allowed';
+        END IF;
+        IF job.audio_asked_at > now_s - 600 THEN
+            RETURN 'too_soon';
+        END IF;
+        UPDATE recap_jobs SET audio = 'queued', audio_tries = 0, audio_next_at = 0,
+                              audio_error = '', audio_asked_at = now_s
+            WHERE guild_id = g AND campaign_id = c AND session_at = at_;
+        RETURN 'queued';
+    END
+    $fn$;
+    DO $do$
+    BEGIN
+        EXECUTE format(
+            'ALTER FUNCTION dmbot_recap_audio_again(BIGINT, TEXT, BIGINT)'
+            ' SET search_path = pg_catalog, %I, pg_temp',
+            current_schema());
+    END
+    $do$;
+    REVOKE ALL ON FUNCTION dmbot_recap_audio_again(BIGINT, TEXT, BIGINT) FROM PUBLIC;
+"""
+
 MEMORY_SAID_AS = """
     -- A spelling for the recap's narrator (#1419): "Kah-zeth" for Ka'zeth. Set by the DM on a name,
     -- through the same change path as every other edit (so it can be undone), and only on a name
@@ -4322,6 +4374,7 @@ MIGRATIONS: tuple[Migration, ...] = (
     ("0082_recap_audio_jobs", RECAP_AUDIO_JOBS),  # the recap's audio tracks (#1383)
     ("0083_memory_said_as", MEMORY_SAID_AS),  # a spelling for the narrator (#1419)
     ("0084_recap_switches", RECAP_SWITCHES),  # the DM's recap choices (#1421)
+    ("0085_recap_audio_again", RECAP_AUDIO_AGAIN),  # the website's door to new audio (#1418)
 )
 
 # Tables that must have row-level security. A test checks every table in the schema

@@ -18,6 +18,7 @@ from __future__ import annotations
 from typing import Any
 
 from dmbot.db import Conn, Database
+from dmbot.recaps.audio.worker import text_hash
 from dmbot.recaps.draft import BULLET_MAX, HOUSEKEEPING_BULLETS, SUMMARY_MAX
 from dmbot.recaps.notify import job_ref, parse_ref
 from dmbot.recaps.store import MAX_TRIES
@@ -29,7 +30,8 @@ LIST_LIMIT = 20
 
 _COLUMNS = (
     "r.guild_id, r.campaign_id, r.session_at, r.state, r.status, r.title, r.summary,"
-    " r.housekeeping, r.music, r.tries, r.last_error, r.game_day, c.name AS campaign"
+    " r.housekeeping, r.music, r.tries, r.last_error, r.game_day, c.name AS campaign,"
+    " r.audio, r.audio_error, r.audio_text_hash"
 )
 _FROM = (
     "FROM recap_jobs r LEFT JOIN campaigns c ON c.id = r.campaign_id AND c.guild_id = r.guild_id"
@@ -42,6 +44,21 @@ class RecapError(Exception):
     def __init__(self, code: str) -> None:
         super().__init__(code)
         self.code = code
+
+
+def _audio_view(row: dict[str, Any], *, ready: bool) -> dict[str, Any]:
+    """Where the narration and music have got to (#1383), as the page words it. `current`: the
+    audio was made from the text as it is now, so the players may be shown; after an edit it is
+    not. `canAskAgain` is the page's cue only; the database's door is the rule."""
+    state = row["audio"]
+    made_from = text_hash(row["title"], row["summary"])
+    current = state == "ready" and row["audio_text_hash"] == made_from
+    return {
+        "state": state,
+        "error": row["audio_error"] if state == "failed" else "",
+        "current": current,
+        "canAskAgain": ready and state in ("ready", "failed"),
+    }
 
 
 def _view(row: dict[str, Any]) -> dict[str, Any]:
@@ -67,6 +84,7 @@ def _view(row: dict[str, Any]) -> dict[str, Any]:
         and row["tries"] < MAX_TRIES,
         "triesLeft": max(0, MAX_TRIES - row["tries"]),
         "canDrop": status == "draft",
+        "audio": _audio_view(row, ready=status in ("draft", "posting") and state == "ready"),
     }
 
 
@@ -173,6 +191,22 @@ async def decide(db: Database, session: Session, ref: str, action: str) -> dict[
         else:
             raise RecapError("not_found")
         if not cur.rowcount:
+            raise RecapError("not_allowed")
+        *_, row = await _one(conn, ref, session)
+    return _view(row)
+
+
+async def audio_again(db: Database, session: Session, ref: str) -> dict[str, Any]:
+    """ "Make the audio again" (#1418): only through the database's door, which holds it to a DM of
+    the campaign, a recap that is ready and not yet decided, and once every 10 minutes."""
+    async with db.user(session.user_id, session=session.id_hash) as conn:
+        gid, cid, at, _row = await _one(conn, ref, session)
+        cur = await conn.execute("SELECT dmbot_recap_audio_again(%s, %s, %s) AS r", (gid, cid, at))
+        found = await cur.fetchone()
+        outcome = found["r"] if found else "not_allowed"
+        if outcome == "too_soon":
+            raise RecapError("too_soon")
+        if outcome != "queued":
             raise RecapError("not_allowed")
         *_, row = await _one(conn, ref, session)
     return _view(row)

@@ -5,6 +5,7 @@ Post step re-checks the plan, the chat channel, secret names and who is still re
 
 from __future__ import annotations
 
+import tempfile
 import time
 import unittest
 from pathlib import Path
@@ -19,11 +20,20 @@ import psycopg
 from dmbot.campaigns.store import CampaignStore
 from dmbot.db import Database
 from dmbot.recaps import notify
+from dmbot.recaps.audio.files import KINDS, AudioFiles
+from dmbot.recaps.audio.worker import text_hash
 from dmbot.recaps.store import Job, RecapStore
-from dmbot.web import sessions
+from dmbot.web import recap_audio, sessions
 from dmbot.web.app import create_app
 from dmbot.web.payments import FakeProvider
-from dmbot.web.recaps import RecapError, decide, edit_recap, list_recaps, read_recap
+from dmbot.web.recaps import (
+    RecapError,
+    audio_again,
+    decide,
+    edit_recap,
+    list_recaps,
+    read_recap,
+)
 from tests import recap_fixtures as fx
 from tests.pg import REQUIRE_DB, SUPERUSER_URL, DatabaseTest
 from tests.test_web_api import ALICE, API, SITE, THURSDAY, FakeDiscord, settings
@@ -255,6 +265,241 @@ class TheRoutes(Base):
         )
         self.assertEqual((await anonymous.get("/me/recaps")).status_code, 401)
         await anonymous.aclose()
+
+
+class TheAudio(Base):
+    """The recap audio on the website (#1418): who is handed a link, what a link opens, and the
+    one door that asks for the audio again."""
+
+    async def asyncSetUp(self) -> None:
+        await super().asyncSetUp()
+        self.dir = tempfile.TemporaryDirectory()
+        self.addCleanup(self.dir.cleanup)
+        self.config = settings(recap_audio_dir=self.dir.name)
+        app = create_app(
+            self.config, self.web, FakeDiscord(), payments=FakeProvider(b"h" * 32, SITE),
+            clock=lambda: NOW,
+        )  # fmt: skip
+        token = await sessions.sign_in(self.web, ALICE, [THURSDAY], now=NOW, days=30)
+        self.client = httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url=API, headers=HEADERS
+        )
+        self.client.cookies.set("__Host-dmbot_session", token, domain="api.dmbot.example")
+        self.files = AudioFiles(Path(self.dir.name))
+
+    async def asyncTearDown(self) -> None:
+        await self.client.aclose()
+        await super().asyncTearDown()
+
+    async def make(self, campaign: str, state: str = "ready", current: bool = True) -> None:
+        job = await self.state(campaign)
+        digest = text_hash(job.title, job.summary) if current else "0" * 64
+        await self.store.set_audio(
+            THURSDAY.id, campaign, 100, audio=state, text_hash=digest, error=""
+        )
+        for kind in KINDS:
+            path = self.files.path(THURSDAY.id, campaign, 100, kind)
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(f"audio-{kind}".encode())
+
+    async def test_the_recap_says_where_its_audio_is(self) -> None:
+        off = (await self.client.get(f"/me/recaps/{self.ref}")).json()["audio"]
+        self.assertEqual(off, {"state": "off", "error": "", "current": False, "canAskAgain": False})
+        await self.make(self.one.id)
+        ready = (await self.client.get(f"/me/recaps/{self.ref}")).json()["audio"]
+        self.assertEqual(
+            (ready["state"], ready["current"], ready["canAskAgain"]), ("ready", True, True)
+        )
+        # After an edit the audio no longer matches the text: no players.
+        await self.client.put(
+            f"/me/recaps/{self.ref}", json={"summary": "《Calm》 Changed.", "housekeeping": []}
+        )
+        stale = (await self.client.get(f"/me/recaps/{self.ref}")).json()["audio"]
+        self.assertEqual((stale["state"], stale["current"]), ("ready", False))
+
+    async def test_a_failed_audio_carries_its_sentence_and_may_be_asked_for_again(self) -> None:
+        await self.store.set_audio(
+            THURSDAY.id, self.one.id, 100, audio="failed", error="The voice company is busy."
+        )
+        audio = (await self.client.get(f"/me/recaps/{self.ref}")).json()["audio"]
+        self.assertEqual((audio["state"], audio["error"]), ("failed", "The voice company is busy."))
+        self.assertTrue(audio["canAskAgain"])
+
+    async def test_the_dm_gets_three_links_and_each_opens_its_own_file(self) -> None:
+        await self.make(self.one.id)
+        got = await self.client.get(f"/me/recaps/{self.ref}/audio")
+        self.assertEqual(got.status_code, 200, got.text)
+        links = got.json()["links"]
+        self.assertEqual(set(links), set(KINDS))
+        for kind, url in links.items():
+            fetched = await self.client.get(url.removeprefix(API))
+            self.assertEqual(fetched.status_code, 200, fetched.text)
+            self.assertEqual(fetched.content, f"audio-{kind}".encode())
+            self.assertEqual(fetched.headers["content-type"], "audio/mpeg")
+            self.assertIn("no-store", fetched.headers["cache-control"])
+
+    async def test_no_links_when_the_audio_is_not_current_or_not_ready(self) -> None:
+        await self.make(self.one.id, current=False)
+        self.assertEqual(
+            (await self.client.get(f"/me/recaps/{self.ref}/audio")).json(), {"links": {}}
+        )
+        await self.make(self.one.id, state="queued")
+        self.assertEqual(
+            (await self.client.get(f"/me/recaps/{self.ref}/audio")).json(), {"links": {}}
+        )
+
+    async def test_someone_who_is_not_this_campaigns_dm_gets_nothing(self) -> None:
+        await self.make(self.two.id)
+        got = await self.client.get(f"/me/recaps/{self.other}/audio")  # Bob's campaign
+        self.assertEqual((got.status_code, got.json()["error"]), (404, "not_found"))
+        anonymous = httpx.AsyncClient(
+            transport=self.client._transport, base_url=API, headers=HEADERS
+        )
+        self.assertEqual((await anonymous.get(f"/me/recaps/{self.ref}/audio")).status_code, 401)
+        await anonymous.aclose()
+
+    async def test_a_link_opens_only_what_it_was_made_for(self) -> None:
+        await self.make(self.one.id)
+        await self.make(self.two.id)
+        links = (await self.client.get(f"/me/recaps/{self.ref}/audio")).json()["links"]
+        url = links["voice"].removeprefix(API)
+        path, query = url.split("?")
+        # Another recap, another kind, a changed signature or expiry, none or too long: nothing.
+        for bad in (
+            path.replace(self.ref, self.other) + "?" + query,
+            path.replace("/voice", "/music") + "?" + query,
+            path + "?" + query.replace("s=", "s=0"),
+            path + "?e=1&s=" + query.split("s=")[1],
+            path + "?e=" + "9" * 20 + "&s=x",
+            path + "?" + query.split("&")[0],
+            path,
+            path.replace("/voice", "/..%2F..%2Fetc") + "?" + query,
+            path.replace("/voice", "/passwd") + "?" + query,
+        ):
+            with self.subTest(bad):
+                self.assertEqual((await self.client.get(bad)).status_code, 404)
+        self.assertEqual((await self.client.get(url)).status_code, 200)
+
+    async def test_odd_characters_in_a_link_are_a_not_found_not_a_crash(self) -> None:
+        await self.make(self.one.id)
+        url = (await self.client.get(f"/me/recaps/{self.ref}/audio")).json()["links"]["voice"]
+        path, query = url.removeprefix(API).split("?")
+        good_s = query.split("s=")[1]
+        for bad in (
+            f"{path}?e=1&s=%C3%A9",  # a non-ASCII signature
+            f"{path}?e=%C2%B2&s={good_s}",  # "²": isdigit, but not a number
+            f"{path.replace(self.ref, '%C2%B2.' + self.one.id + '.100')}?{query}",
+            f"{path}?e=1&s={good_s.upper()}",
+            f"{path}?e=1&s=" + "a" * 5000,
+        ):
+            with self.subTest(bad):
+                self.assertEqual((await self.client.get(bad)).status_code, 404)
+        self.assertEqual(
+            (await self.client.get(f"/me/recaps/%C2%B2.{self.one.id}.1")).status_code, 404
+        )
+        self.assertEqual(
+            (await self.client.get(f"/me/recaps/%C2%B2.{self.one.id}.1/audio")).status_code, 404
+        )
+
+    async def test_a_player_can_ask_for_part_of_the_file(self) -> None:
+        await self.make(self.one.id)
+        url = (await self.client.get(f"/me/recaps/{self.ref}/audio")).json()["links"]["voice"]
+        part = await self.client.get(
+            url.removeprefix(API), headers={**HEADERS, "Range": "bytes=0-4"}
+        )
+        self.assertEqual((part.status_code, part.content), (206, b"audio"))
+
+    async def test_an_old_link_and_a_missing_file_open_nothing(self) -> None:
+        await self.make(self.one.id)
+        old = AudioFiles(Path(self.dir.name), clock=lambda: 1.0)
+        expires, signature = old.sign(
+            recap_audio.link_key(self.config.secret_key), THURSDAY.id, self.one.id, 100, "voice"
+        )
+        gone = await self.client.get(f"/recap-audio/{self.ref}/voice?e={expires}&s={signature}")
+        self.assertEqual(gone.status_code, 404)
+        links = (await self.client.get(f"/me/recaps/{self.ref}/audio")).json()["links"]
+        self.files.path(THURSDAY.id, self.one.id, 100, "voice").unlink()
+        self.assertEqual((await self.client.get(links["voice"].removeprefix(API))).status_code, 404)
+
+    async def test_without_a_folder_there_are_no_links_and_no_files(self) -> None:
+        app = create_app(
+            settings(), self.web, FakeDiscord(), payments=FakeProvider(b"h" * 32, SITE),
+            clock=lambda: NOW,
+        )  # fmt: skip
+        await self.make(self.one.id)
+        token = await sessions.sign_in(self.web, ALICE, [THURSDAY], now=NOW, days=30)
+        client = httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url=API, headers=HEADERS
+        )
+        client.cookies.set("__Host-dmbot_session", token, domain="api.dmbot.example")
+        self.assertEqual((await client.get(f"/me/recaps/{self.ref}/audio")).json(), {"links": {}})
+        await client.aclose()
+
+    async def test_asking_again_queues_it_and_waits_ten_minutes(self) -> None:
+        await self.store.set_audio(
+            THURSDAY.id, self.one.id, 100, audio="failed", tries=2, error="x"
+        )
+        done = await self.client.post(f"/me/recaps/{self.ref}/audio/again")
+        self.assertEqual(done.status_code, 200, done.text)
+        self.assertEqual(done.json()["audio"]["state"], "queued")
+        job = await self.state(self.one.id)
+        self.assertEqual(
+            (job.audio, job.audio_tries, job.audio_next_at, job.audio_error), ("queued", 0, 0, "")
+        )
+        # While the bot is making it the answer is no; once it has failed again, "too soon".
+        busy = await self.client.post(f"/me/recaps/{self.ref}/audio/again")
+        self.assertEqual((busy.status_code, busy.json()["error"]), (409, "not_allowed"))
+        await self.store.set_audio(THURSDAY.id, self.one.id, 100, audio="failed", error="x")
+        soon = await self.client.post(f"/me/recaps/{self.ref}/audio/again")
+        self.assertEqual((soon.status_code, soon.json()["error"]), (429, "too_soon"))
+        # Ten minutes later it may be asked for again (the database's own clock, so move the mark).
+        async with self.db.guild(THURSDAY.id) as conn:
+            await conn.execute("UPDATE recap_jobs SET audio_asked_at = audio_asked_at - 601")
+        later = await self.client.post(f"/me/recaps/{self.ref}/audio/again")
+        self.assertEqual(later.status_code, 200, later.text)
+
+    async def test_the_door_asks_only_where_the_page_does(self) -> None:
+        for state in ("queued", "off"):
+            with self.subTest(state):
+                await self.store.set_audio(THURSDAY.id, self.one.id, 100, audio=state)
+                refused = await self.client.post(f"/me/recaps/{self.ref}/audio/again")
+                self.assertEqual(
+                    (refused.status_code, refused.json()["error"]), (409, "not_allowed")
+                )
+                self.assertEqual((await self.state(self.one.id)).audio, state)
+
+    async def test_the_door_refuses_a_stranger_a_decided_recap_and_a_recap_in_progress(
+        self,
+    ) -> None:
+        self.assertEqual(
+            (await self.client.post(f"/me/recaps/{self.other}/audio/again")).status_code, 404
+        )
+        await decide(self.web, self.session, self.ref, "drop")
+        dropped = await self.client.post(f"/me/recaps/{self.ref}/audio/again")
+        self.assertEqual((dropped.status_code, dropped.json()["error"]), (409, "not_allowed"))
+        await self.store.update(THURSDAY.id, self.two.id, 100, state="beats")
+        with self.assertRaises(RecapError):  # Alice is not Two's DM
+            await audio_again(self.web, self.session, self.other)
+
+    async def test_the_website_cannot_write_the_audio_columns_itself(self) -> None:
+        async with self.web.user(ALICE.id, session=self.session.id_hash) as conn:
+            await conn.execute("SELECT set_config('dmbot.guild_id', %s, true)", (str(THURSDAY.id),))
+            for column in (
+                "audio",
+                "audio_tries",
+                "audio_next_at",
+                "audio_asked_at",
+                "audio_text_hash",
+            ):
+                with (
+                    self.subTest(column),
+                    self.assertRaises(psycopg.errors.InsufficientPrivilege),
+                ):
+                    async with conn.transaction():
+                        await conn.execute(f"UPDATE recap_jobs SET {column} = {column}")
+
+    async def test_the_door_has_one_caller(self) -> None:
+        self.assertEqual(callers("dmbot_recap_audio_again"), {"schema.py", "web/recaps.py"})
 
 
 class TheAddressDoor(Base):

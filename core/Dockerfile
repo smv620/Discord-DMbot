@@ -22,8 +22,11 @@ COPY pyproject.toml ./
 COPY src ./src
 RUN pip install ".[${EXTRAS}]"
 
-RUN useradd --create-home --uid 1000 dmbot && mkdir -p /data /models /var/lib/dmbot/test-recordings \
-    && chown dmbot:dmbot /data /models /var/lib/dmbot/test-recordings \
+# /data/recap-audio is its own volume in compose (#1418): made here and owned by dmbot, so a new
+# volume mounted over it starts out writable by the bot.
+RUN useradd --create-home --uid 1000 dmbot \
+    && mkdir -p /data/recap-audio /models /var/lib/dmbot/test-recordings \
+    && chown dmbot:dmbot /data /data/recap-audio /models /var/lib/dmbot/test-recordings \
     && chmod 700 /var/lib/dmbot/test-recordings
 USER dmbot
 VOLUME ["/data", "/models", "/var/lib/dmbot/test-recordings"]
