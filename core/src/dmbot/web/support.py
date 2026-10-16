@@ -312,6 +312,27 @@ async def set_status(db: Database, ticket_id: int, status: Status) -> bool:
         return cur.rowcount == 1
 
 
+# An answered ticket the person has not written to for this long is finished (#1505): otherwise
+# the admin list keeps every answered ticket until someone presses Close, for ever. Not a setting.
+SUPPORT_AUTO_CLOSE_DAYS = 14
+
+
+async def close_stale(db: Database, now: int) -> int:
+    """Close answered tickets with no activity for `SUPPORT_AUTO_CLOSE_DAYS` (the newest reply,
+    or the ticket's own date when it has none). New and escalated tickets are never touched: they
+    are waiting for an answer. A later emailed reply from the person reopens it (`add_reply`
+    takes any status, so a closed ticket goes back to waiting). How many were closed."""
+    async with db.support_admin() as conn:
+        cur = await conn.execute(
+            "UPDATE support_tickets t SET status = 'closed', escalated_reason = NULL"
+            " WHERE t.status = 'answered' AND greatest(t.created_at, coalesce("
+            "   (SELECT max(r.created_at) FROM support_replies r WHERE r.ticket_id = t.id), 0))"
+            "   < %s",
+            (now - SUPPORT_AUTO_CLOSE_DAYS * 86400,),
+        )
+        return cur.rowcount
+
+
 async def forget_old(db: Database) -> int:
     """Delete tickets kept for over 12 months (privacy page, #1340). The database decides
     which are old: this role may delete them, never read them."""
