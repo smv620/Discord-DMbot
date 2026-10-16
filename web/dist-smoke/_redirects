@@ -1,4 +1,0 @@
-# The recap email links to /account/recaps/<id>. The site has one recaps page; this serves it
-# for every id (a rewrite, status 200, so the address stays) and the page reads the id from
-# the address (#1386).
-/account/recaps/*  /account/recaps  200
