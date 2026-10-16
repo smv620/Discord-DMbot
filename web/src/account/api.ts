@@ -326,6 +326,31 @@ export interface HouseRules {
   sets: HouseRuleSet[];
 }
 
+/** A campaign with homebrew the DM let the players know, in one of the person's servers (#1525).
+ * `ref` is `<server>.<campaign>`. */
+export interface HomebrewCampaign {
+  ref: string;
+  name: string;
+  serverName: string;
+  entries: number;
+}
+
+/** One shown homebrew entry: the API sends only what the DM let the players know. */
+export interface HomebrewEntry {
+  kind: string;
+  name: string;
+  summary: string | null;
+  text: string;
+}
+
+export interface HomebrewPage {
+  name: string;
+  /** What the Download button saves the file as. */
+  fileName: string;
+  /** Each kind's entries by name, kinds in no fixed order (the page orders them). */
+  entries: HomebrewEntry[];
+}
+
 /** The three audio files, as short-lived addresses to play. */
 export type RecapAudioLinks = Partial<Record<"voice" | "music" | "mix", string>>;
 
@@ -446,6 +471,13 @@ export interface AccountApi {
   houseRules?(campaignRef: string): Promise<HouseRules>;
   /** The same rules as the file the bot's Download button sends. */
   houseRulesFile?(campaignRef: string): Promise<Blob>;
+  /** The campaigns with homebrew the DM shared, for anyone in the server (#1525). Missing from an
+   * API older than that. */
+  homebrewCampaigns?(): Promise<HomebrewCampaign[]>;
+  /** A campaign's shared homebrew. `campaignRef` is `<server>.<campaign>`. */
+  homebrew?(campaignRef: string): Promise<HomebrewPage>;
+  /** The same entries as the file the bot writes for them. */
+  homebrewFile?(campaignRef: string): Promise<Blob>;
   /** The campaign's public names with the narrator's spelling (#1451). `campaignRef` is the
    * recap's address without its last part: `<server>.<campaign>`. */
   campaignNames?(campaignRef: string): Promise<CampaignName[]>;
@@ -661,6 +693,20 @@ export function httpApi(base: string, fetcher: typeof fetch = fetch): AccountApi
       (await call(
         "GET",
         `/me/campaigns/${encodeURIComponent(campaignRef)}/house-rules/download`,
+        undefined,
+        true,
+      )) as Blob,
+    homebrewCampaigns: async () =>
+      ((await call("GET", "/me/homebrew")) as { campaigns: HomebrewCampaign[] }).campaigns,
+    homebrew: async (campaignRef) =>
+      (await call(
+        "GET",
+        `/me/campaigns/${encodeURIComponent(campaignRef)}/homebrew`,
+      )) as HomebrewPage,
+    homebrewFile: async (campaignRef) =>
+      (await call(
+        "GET",
+        `/me/campaigns/${encodeURIComponent(campaignRef)}/homebrew/download`,
         undefined,
         true,
       )) as Blob,

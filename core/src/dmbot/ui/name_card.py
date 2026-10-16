@@ -91,6 +91,15 @@ NOTHING_CHANGED = (
 
 CARD_MAX = 1900  # under Discord's 2,000 characters
 SHOWN = 3  # per section, then "… and N more"
+# A state, not an action: it is a setting that stays until pressed again.
+SECRET_OFF = "🤫 Secret: no"
+SECRET_ON = "🤫 Secret: yes"
+SECRET_FORCED = "You found it by a secret name, so this one is secret too."
+SECRET_DENIED_PRESS = "Only the campaign's DM can keep a connection secret."
+SECRET_DENIED_SAVE = (
+    "Players can see this one, because only the campaign's DM can keep a connection secret."
+)
+SECRET_ALREADY = "It was already secret, so it stays secret. Remove it and add it again to show it."
 SHOW_ALL = "Show all ▾"
 NOTHING_MORE = "That list has changed. Open the name card again to see it."
 NOTE_MAX = 600  # what just changed, above the card
@@ -209,7 +218,7 @@ def _groups(
 # What Show all can open, in the card's order: key -> how the select names it.
 NAMES, SECRETS, LINKS = "names", "secret", "links"
 SECTION_WORDS = {NAMES: "Other names", SECRETS: "Secret names", LINKS: "Connections"}
-PAGE_LINES = 25  # most lines in one Show all message, then Older / Newer
+PAGE_LINES = 25  # most lines in one Show all message, then Earlier / Later
 
 
 def sections(
@@ -662,8 +671,9 @@ class NameCard(_Menu):
         back = " Or take one back with Remove a connection." if removable else ""
         await _replace(
             interaction,
-            f"**How is {_md(name)} connected?** Pick how, then the other name.{back}",
-            Connect(self.campaign_id, self.entity_id, name, removable),
+            f"**How is {_md(name)} connected?** Pick how, then the other name.{back}"
+            + (" 🤫 hides it from players." if secrets else ""),
+            Connect(self.campaign_id, self.entity_id, name, removable, secrets=secrets),
         )
 
     async def _fix(self, interaction: discord.Interaction) -> None:
@@ -1272,11 +1282,14 @@ class PickForm(discord.ui.Modal, title="Find the other name"):
         max_length=NAME_LIMIT,
     )
 
-    def __init__(self, campaign_id: str, entity_id: str, how: str, title: str) -> None:
+    def __init__(
+        self, campaign_id: str, entity_id: str, how: str, title: str, *, secret: bool = False
+    ) -> None:
         super().__init__(title=logic.shorten(title, 45), timeout=VIEW_TIMEOUT_S)
         self.campaign_id = campaign_id
         self.entity_id = entity_id
         self.how = how
+        self.secret = secret  # 🤫 Keep it secret was on (the DM's toggle on Connect to…)
 
     async def on_error(  # type: ignore[override]  # a form's has no item (discord.py)
         self, interaction: discord.Interaction, error: Exception
@@ -1284,7 +1297,10 @@ class PickForm(discord.ui.Modal, title="Find the other name"):
         await _failed(interaction, error)
 
     async def on_submit(self, interaction: discord.Interaction) -> None:
-        await show_picks(interaction, self.campaign_id, self.entity_id, self.how, self.typed.value)
+        await show_picks(
+            interaction, self.campaign_id, self.entity_id, self.how, self.typed.value,
+            secret=self.secret,
+        )  # fmt: skip
 
 
 def _asked(name: str, how: str) -> str:
@@ -1297,7 +1313,13 @@ def _asked(name: str, how: str) -> str:
 
 
 async def show_picks(
-    interaction: discord.Interaction, campaign_id: str, entity_id: str, how: str, typed: str
+    interaction: discord.Interaction,
+    campaign_id: str,
+    entity_id: str,
+    how: str,
+    typed: str,
+    *,
+    secret: bool = False,
 ) -> None:
     await _answer_first(interaction, in_place=True)
     found = await _current(interaction, campaign_id, entity_id)
@@ -1313,7 +1335,7 @@ async def show_picks(
         if m.entity_id != entity_id
     ]
     options = [discord.SelectOption(label=_label(names, m), value=m.entity_id) for m in matches]
-    asked = f"**{_md(_asked(name, how))}**"
+    asked = f"**{_md(_asked(name, how))}**" + (" 🤫 Secret." if secret else "")
     if not matches:
         text = (
             f"{asked}\nNo other name like **{_md(typed)}** yet. Search again, or add it "
@@ -1321,7 +1343,14 @@ async def show_picks(
         )
     else:
         text = f"{asked} Pick one."
-    await _replace(interaction, text, PickOther(campaign_id, entity_id, how, name, options))
+    # A name found through a secret name makes the connection secret by itself: saying it out
+    # loud on the other name's card would give the secret name away.
+    hidden = frozenset(m.entity_id for m in matches if m.secret)
+    await _replace(
+        interaction,
+        text,
+        PickOther(campaign_id, entity_id, how, name, options, secret=secret, hidden=hidden),
+    )
 
 
 class PickOther(_Menu):
@@ -1332,12 +1361,17 @@ class PickOther(_Menu):
         how: str,
         name: str,
         options: list[discord.SelectOption],
+        *,
+        secret: bool = False,
+        hidden: frozenset[str] = frozenset(),
     ) -> None:
         super().__init__()
         self.campaign_id = campaign_id
         self.entity_id = entity_id
         self.how = how
         self.name = name
+        self.secret = secret
+        self.hidden = hidden  # entries that were found through a secret name
         if options:
             self.pick = _Select(self._picked, placeholder="Pick the other name…", options=options)
             self.add_item(self.pick)
@@ -1375,13 +1409,22 @@ class PickOther(_Menu):
             )
             return
         self.stop()
-        await connect(interaction, self.campaign_id, self.entity_id, self.how, other_id)
+        await connect(
+            interaction, self.campaign_id, self.entity_id, self.how, other_id,
+            secret=self.secret or other_id in self.hidden, forced=other_id in self.hidden,
+        )  # fmt: skip
 
     async def _again(self, interaction: discord.Interaction) -> None:
         if await _current(interaction, self.campaign_id, self.entity_id):
             self.origin = None  # the form's answer replaces this message; cancel keeps it
             await interaction.response.send_modal(
-                PickForm(self.campaign_id, self.entity_id, self.how, _asked(self.name, self.how))
+                PickForm(
+                    self.campaign_id,
+                    self.entity_id,
+                    self.how,
+                    _asked(self.name, self.how),
+                    secret=self.secret,
+                )
             )
 
     async def _back(self, interaction: discord.Interaction) -> None:
@@ -1456,12 +1499,19 @@ class SameConfirm(_Menu):
 
 class Connect(_Menu):
     def __init__(
-        self, campaign_id: str, entity_id: str, name: str, removable: list[tuple[str, str]]
+        self,
+        campaign_id: str,
+        entity_id: str,
+        name: str,
+        removable: list[tuple[str, str]],
+        *,
+        secrets: bool = False,
     ) -> None:
         super().__init__()
         self.campaign_id = campaign_id
         self.entity_id = entity_id
         self.name = name
+        self.secret = False
         self.how = _Select(
             self._how_picked,
             placeholder=logic.shorten(f"How is {name} connected?", 150),
@@ -1483,13 +1533,39 @@ class Connect(_Menu):
             )
             self.add_item(self.remove)
         self.add_item(_Button(self._back, label="Back", style=discord.ButtonStyle.secondary, row=2))
+        if secrets:  # only the campaign's DMs deal in secrets, as with secret names
+            # After Back, so a thumb on the left edge doesn't flip a privacy setting.
+            self.toggle = _Button(
+                self._toggle_secret, label=SECRET_OFF, style=discord.ButtonStyle.secondary, row=2
+            )
+            self.add_item(self.toggle)
+
+    async def _toggle_secret(self, interaction: discord.Interaction) -> None:
+        campaign = await _campaign_for(interaction, self.campaign_id)
+        if campaign is None:
+            return
+        if not sees_secrets(campaign, interaction.user.id):  # checked on every press
+            await _tell(interaction, SECRET_DENIED_PRESS)
+            return
+        self.secret = not self.secret
+        self.toggle.label = SECRET_ON if self.secret else SECRET_OFF
+        self.toggle.style = (
+            discord.ButtonStyle.success if self.secret else discord.ButtonStyle.secondary
+        )
+        await interaction.response.edit_message(view=self)
 
     async def _how_picked(self, interaction: discord.Interaction) -> None:
         how = self.how.values[0]
         if await _current(interaction, self.campaign_id, self.entity_id):
             self.origin = None  # the form's answer replaces this message; cancel keeps it
             await interaction.response.send_modal(
-                PickForm(self.campaign_id, self.entity_id, how, _asked(self.name, how))
+                PickForm(
+                    self.campaign_id,
+                    self.entity_id,
+                    how,
+                    _asked(self.name, how),
+                    secret=self.secret,
+                )
             )
 
     async def _remove_picked(self, interaction: discord.Interaction) -> None:
@@ -1533,9 +1609,18 @@ class Connect(_Menu):
 
 
 async def connect(
-    interaction: discord.Interaction, campaign_id: str, entity_id: str, how: str, other_id: str
+    interaction: discord.Interaction,
+    campaign_id: str,
+    entity_id: str,
+    how: str,
+    other_id: str,
+    *,
+    secret: bool = False,
+    forced: bool = False,
 ) -> None:
-    """Save the connection the DM picked (confirmed: the DM said it), then the card."""
+    """Save the connection the DM picked (confirmed: the DM said it), then the card. `secret`:
+    hidden from players (🤫); `forced`: it is secret because one end was found through a secret
+    name. Only a campaign's DM can keep one secret, checked again here."""
     await _answer_first(interaction, in_place=True)
     found = await _current(interaction, campaign_id, entity_id)
     other = await _current(interaction, campaign_id, other_id) if found else None
@@ -1547,6 +1632,14 @@ async def connect(
     if predicate not in CONNECTION_WORDS:
         await _tell(interaction, "Pick how they're connected again.")
         return
+    denied = secret and not sees_secrets(campaign, interaction.user.id)
+    if denied and forced:
+        # Found through a secret name, and no longer a DM: saving it in the open would point at
+        # the secret name, so nothing is saved.
+        await _tell(interaction, SECRET_DENIED_PRESS)
+        return
+    if denied:
+        secret = False
     subject, obj = (other, found) if how.endswith(BACK) else (found, other)
     subject_id, object_id = (other_id, entity_id) if how.endswith(BACK) else (entity_id, other_id)
     try:
@@ -1559,13 +1652,24 @@ async def connect(
             source=DM,
             confidence=1.0,
             status=CONFIRMED,
+            secret=secret,
         )
     except MemoryRuleError as exc:
         await _tell(interaction, f"Couldn't connect them. {exc}")
         return
     changed(interaction, campaign)
-    _, flags = written.value
-    note = f"🧭 Saved: **{_md(subject[1])}** {connection_words(predicate)} **{_md(obj[1])}**."
+    relation, flags = written.value
+    said = f"**{_md(subject[1])}** {connection_words(predicate)} **{_md(obj[1])}**"
+    if relation.secret:  # what is stored: a connection already secret is never made public
+        note = f"🧭 Saved: {said} 🤫 Secret: players can't see it."
+        if forced:
+            note += f" {SECRET_FORCED}"
+        elif not secret:
+            note += f" {SECRET_ALREADY}"
+    else:
+        note = f"🧭 Saved: {said}."
+        if denied:
+            note += f" {SECRET_DENIED_SAVE}"
     if flags:
         why = FLAG_WHY.get(flags[0].kind) or (
             f'It\'s an odd pair for "{connection_words(predicate)}"'

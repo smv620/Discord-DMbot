@@ -52,6 +52,18 @@ CI runs all of the above on every pull request. Never merge red CI.
   (same patch-id), RepoManager pushes it and merges on green CI with no new approval or
   author round-trip. A conflict whose resolution touches the PR's own logic goes back to
   the author and needs a fresh "approved".
+  **The migration-list union** (Supervisor, 2026-10-16, after #1539 went dirty on #1536): two
+  PRs that each add a migration conflict only in `schema.py`'s `MIGRATIONS` list (and the
+  constants next to it). RepoManager resolves it as the union, both entries in number order,
+  where its permissions allow a push to the PR's branch; where they refuse, the author merges
+  `development` and keeps both entries. Either way the approval carries over as a merge-only
+  refresh (`git log --no-merges OLD..NEW ^origin/development` empty and the merge commit writes
+  no new line). A conflict in any other file goes to the author and needs a fresh "approved".
+  **A tests-only push keeps the approval** (Supervisor, 2026-10-16, #1526 onward): a push after
+  "approved" that changes only files under `tests/` (a CI fix, a typing fix in a stand-in) needs
+  no new design review; Supervisor records the approval again as a review on the new head so the
+  rule above ("its commit is the PR's head") still holds. Any application-code line, PLAN wording
+  included, needs a fresh review.
   **A stacked PR whose base has merged** (2026-10-13, Supervisor, after #1139 merged under
   #1152/#1166/#1168): its patch-id against `development` changes only because the merged
   PR's commits drop out of its diff. The approval still carries over when `git range-diff`

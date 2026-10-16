@@ -688,8 +688,19 @@ never does.
     never names the other campaign, server or DM; Add to set makes the next version. *(Supervisor,
     2026-10-15, #1315: wording matched to the buttons as built.)*
 - **Updates reach followers at their next session start, never mid-game.** DMbot takes the update then
-  (Follow, the default) and posts a note on the DM screen: "The Frostmaiden house rules were updated to v4:
-  2 rules. [See changes] [Pick changes] [Undo]".
+  (Follow, the default) and posts a note on the DM screen: "📚 **Frostmaiden** house rules updated to v4:
+  2 rules. DMbot took the new version. [See changes] [Pick changes] [Undo]".
+  **When several shared rules changed at one start (#1538)** the notes are combined into one: "📚 Shared
+  rules updated at this start. DMbot took the new versions. Buttons are by number:" with a numbered line for
+  each update ("1. **Frostmaiden** house rules, now v4: 2 rules", "2. **Frost Pack** homebrew, now v3: 2
+  entries changed"), the lines about players now knowing something or the campaign's own entries still
+  winning under their update, and each update's own row of buttons, short and numbered to match ("See 2",
+  "Pick 2", "Compare 2", "Undo 2"; a phone cuts a label from the right, so the number comes straight after
+  the word). Four updates get rows. A fifth and later are still taken and still named, with "N without
+  buttons here: open ⚙️ Settings → 📚 Shared rules". A set or pack that stopped being shared joins as a plain
+  line and is never cut from the note; when the text is long, only the extra lines under an update give
+  way. A single update keeps the note above, unchanged. The buttons are the same restart-proof ones, each
+  tied to its own version, and one check failing never loses the other's note.
   - **Follow** (the default, also what happens if the DM does nothing): the changes are taken and the campaign
     keeps following. **Undo** goes back to the earlier version and keeps it: DMbot does not take that same
     version again at the next session, only a newer one.
@@ -717,6 +728,16 @@ never does.
   reaching the sidebar, rules lookup, rules cards and alerts (a followed set's rules come after the campaign's
   own, each cited as "<set> house rules, v4"), follower backups (never the share code) and the note at a
   follower's next start when a set is gone (#1262).
+- **Build status (#1541, Make it my own), built:** the card of a followed pack's entry (`/dmbot rule`, and
+  the rules card's Read it all) has a **✏️ Make it my own** button for the campaign's DMs, re-checked on the
+  press. It copies the entry as it is (kind, name, summary, text, players-may-know) into the campaign's own
+  homebrew, tells a running session, and opens Edit on the copy; saving shows the entry's own card with
+  "This is now your own, and it replaces the pack's version in this campaign." Cancel on the form keeps
+  the copy as it is, and the button comes off the card (a second press says the entry is already the
+  campaign's own). The campaign's own entry then wins over the
+  pack's, and a later pack change to that name is reported as "yours wins". A full homebrew or a name that
+  became the campaign's own meanwhile copies nothing and says so. A pack holds no book text, so the copy is
+  never marked from a book.
 - **Build status (#1527, homebrew packs), part A, built:** a pack is a shared ruleset of kind `homebrew` on
   the same tables, codes and door as sets (no new migration: `rule_sets.kind` and `rule_set_follows.position`
   were there). Its content is the campaign's own entries only (`rules/pack_content.py`); an entry with
@@ -1220,8 +1241,9 @@ building:
 - **Delete my past transcripts is built (#1532):** 🗑 in the ⚙️ Menu on the consent messages, and
   `/dmbot delete-my-lines`. One warning with the numbers ("N lines in M sessions"), one confirmation, one
   transaction per server. What goes and what stays is in "Retention" below.
-- Still to come: configurable retention (#1533), cleaned and both downloads (Phase 2b), and `{entity}`
-  labels for the DM's lines (narrating, which NPC; #53).
+- **Keep transcripts for is built (#1533, migration 0101):** see "Retention". Still to come: cleaned
+  and both downloads (Phase 2b), and `{entity}` labels for the DM's lines (narrating, which NPC;
+  #53; the `in_character` flag exists, nothing sets it).
 
 **Transcripts and downloads (decided 2026-10-05, #124, #125).** Sessions and their
 participants are stored. Each line is kept in two versions: **as heard** (exactly what
@@ -1620,12 +1642,18 @@ names panel nor the speech-to-text hints can be a fixed list.
   never can be; 🤫 keep it secret or 👁️ stop, for the campaign's DMs only; ✖ not this
   name), **🔗 Same as…** (find the other name, then "Call it X" or "Call it Y"; the two
   become one, with **Undo** on the card), **🧭 Connect to…** (pick how, from this
-  name's side or the other way round, then the other name; saved as confirmed, and a
-  **Remove a connection…** menu takes one back), and a **Show all ▾** select when a
+  name's side or the other way round, then the other name; saved as confirmed; for the
+  campaign's DMs only, a **🤫 Secret: no / yes** toggle sits beside Back (it starts off each time the
+  menu opens and applies to the next connection saved); a secret connection never shows on players'
+  cards or Show all, and the DM's cards mark it 🤫; a name found through a secret name makes the
+  connection secret by itself; and a
+  **Remove a connection…** menu takes one back, secret ones listed, marked 🤫, only to DMs), and a **Show all ▾** select when a
   section is cut. Decided while building: a card groups connections by how they read from that
   name's side ("is a member of **Frostwolf tribe**"; on the tribe's card "has as
-  members **Ulfgar**"; ally, enemy and family read the same both ways); connections the
-  DM adds are not secret for now (a 🤫 secret connection comes later); a connection that
+  members **Ulfgar**"; ally, enemy and family read the same both ways); a connection is
+  secret only when the DM keeps it secret (#1546: the save checks again that the person is a DM,
+  and saves it as not secret, with a line saying players can see it, if not; a connection already
+  secret is never made public by saving it again); a connection that
   breaks the usual rules (a member of a place) is still saved, flagged for the
   after-session check.
 
@@ -1906,8 +1934,10 @@ consent check just made still holds:
   56% at 500, 31% at 5,000, since in a big campaign more names sound alike and those are
   left alone. Safe, but to check on real campaign data (PyCharm session). About 5 ms per
   60-word line at 5,000 names.
-- **Next:** Undo notes for medium fixes (proposed names), re-checking earlier lines
-  after a correction, then off-topic hiding (#52).
+- Built since: Undo notes for medium fixes (`transcript/fix_notes.py`, #296), re-checking
+  earlier lines after a correction, and off-topic hiding with the DM's "🙈 Left out as
+  off-topic" list (`transcript/left_out.py`, #52, #677). Next: people in the Cleaner's lookup
+  (#1547).
 
 **Transcript Cleaner step 2: built (2026-10-07, #296).**
 - **"Did they mean…?":**
