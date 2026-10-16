@@ -15,6 +15,7 @@ from dmbot.transcript.models import SIDEBAR_ANSWER, Line, Lineage
 from dmbot.transcript.store import TranscriptStore
 from dmbot.transcript.suggestions import SuggestionStore
 from dmbot.ui import line_fix
+from dmbot.ui.decision_lines import DecisionLines
 from tests.pg import DatabaseTest
 from tests.test_transcript_cleaner import BELLEROS, alias
 from tests.test_transcript_cleaner import lookup as names_with
@@ -237,6 +238,19 @@ def lookup() -> CampaignLookup:
     return CampaignLookup.build(LookupData(1, (), (), (), ()))
 
 
+BOT_ID = 99
+
+
+def copy_of_line(message_id: int) -> Any:
+    """A DM-screen line the bot posted for suggestion 5 (the original, or a re-post)."""
+    return SimpleNamespace(
+        id=message_id,
+        content="✏️ **Mia** suggests a fix to their line:",
+        author=SimpleNamespace(id=BOT_ID),
+        edit=AsyncMock(),
+    )
+
+
 def found(**kw: Any) -> Any:
     base = dict(id=5, guild_id=GUILD, campaign_id=CID, session_id="s" * 32, started_ms=MS + 1000,
                 user_id=PLAYER, suggested="I saw Belleros there", state="open",
@@ -259,8 +273,10 @@ def press(act: str, user: int = DM, *, suggestion: Any = "default", consent: boo
         lookup=SimpleNamespace(get=AsyncMock(return_value=lookup())),
         apply_line_fix=AsyncMock(return_value=True),
         tell_user=AsyncMock(return_value=True),
+        user=SimpleNamespace(id=BOT_ID),
+        decision_lines=DecisionLines(),
     )
-    message = SimpleNamespace(edit=AsyncMock())
+    message = copy_of_line(900)
     response = SimpleNamespace(is_done=lambda: False, send_message=AsyncMock(), defer=AsyncMock())
     interaction = SimpleNamespace(
         client=bot,
@@ -308,6 +324,35 @@ class TheButtons(unittest.IsolatedAsyncioTestCase):
         edited = interaction.message.edit.await_args.kwargs
         self.assertIsNone(edited["view"])  # the buttons are gone
         self.assertIn("Changed to", edited["content"])
+
+    async def test_the_other_copy_of_the_line_is_cleared_when_known_and_left_when_not(self) -> None:
+        for act, word in (("yes", "Accepted."), ("no", "Kept as is.")):
+            button, bot, interaction = press(act)
+            other = copy_of_line(901)  # the re-post at a session start, or the original
+            bot.decision_lines.remember(("fix", 5), other)
+            await button.callback(interaction)
+            other.edit.assert_awaited_once()
+            self.assertIsNone(other.edit.await_args.kwargs["view"])
+            self.assertTrue(other.edit.await_args.kwargs["content"].endswith(f"\n{word}"))
+            interaction.message.edit.assert_awaited_once()  # the pressed one, edited once
+        button, bot, interaction = press("yes")  # no other copy known: nothing else to edit
+        await button.callback(interaction)
+        interaction.message.edit.assert_awaited_once()
+
+    async def test_a_suggestion_that_could_not_be_used_says_closed_on_the_other_copy(self) -> None:
+        button, bot, interaction = press("yes", consent=False)  # the player stopped being recorded
+        other = copy_of_line(903)
+        bot.decision_lines.remember(("fix", 5), other)
+        await button.callback(interaction)
+        self.assertTrue(other.edit.await_args.kwargs["content"].endswith("\nClosed."))
+
+    async def test_a_failed_edit_of_either_line_never_fails_the_decision(self) -> None:
+        button, bot, interaction = press("yes")
+        other = copy_of_line(902)
+        other.edit = AsyncMock(side_effect=RuntimeError("deleted"))
+        bot.decision_lines.remember(("fix", 5), other)
+        await button.callback(interaction)
+        bot.tell_user.assert_awaited_once_with(PLAYER, line_fix.ANSWER_YES)
 
     async def test_no_changes_nothing_and_the_player_hears_it(self) -> None:
         button, bot, interaction = press("no")

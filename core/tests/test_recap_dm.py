@@ -11,6 +11,8 @@ from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock
 
 from dmbot.recaps.store import RecapStore
+from dmbot.ui.decision_lines import DecisionLines
+from dmbot.ui.dmbot_commands import NO_PINGS
 from dmbot.ui.recap_dm import (
     ASK,
     DECIDED,
@@ -30,6 +32,8 @@ from tests import recap_fixtures as fx
 from tests.test_recap_jobs import Base
 
 GUILD, DM_ID, PLAYER = 5, 7, 11
+BOT_ID = 99
+LINE = "📜 Recap ready: **The Silver Lock**"
 CID = "c" * 32
 AT = 100
 
@@ -41,6 +45,13 @@ def job(**kw: Any) -> Any:
         last_error="", guild_id=GUILD,
     )  # fmt: skip
     return SimpleNamespace(**{**base, **kw})
+
+
+def line_message(message_id: int, content: str = LINE) -> Any:
+    """A DM-screen line the bot posted: what the buttons were pressed on, or another copy of it."""
+    return SimpleNamespace(
+        id=message_id, content=content, author=SimpleNamespace(id=BOT_ID), edit=AsyncMock()
+    )
 
 
 def press(act: str, user: int = DM_ID, *, found: Any = "default", decided: bool = True) -> Any:
@@ -55,6 +66,8 @@ def press(act: str, user: int = DM_ID, *, found: Any = "default", decided: bool 
         settings=SimpleNamespace(site_url="https://site.example.com"),
         post_recaps=AsyncMock(),
         _recap_audio_files=AsyncMock(return_value=([], "")),
+        user=SimpleNamespace(id=BOT_ID),
+        decision_lines=DecisionLines(),
     )
     response = SimpleNamespace(
         is_done=lambda: False, send_message=AsyncMock(), defer=AsyncMock(), edit_message=AsyncMock()
@@ -66,6 +79,7 @@ def press(act: str, user: int = DM_ID, *, found: Any = "default", decided: bool 
         user=SimpleNamespace(id=user),
         response=response,
         followup=SimpleNamespace(send=AsyncMock()),
+        message=line_message(900),
     )
     return RecapButton(act, CID, AT), bot, interaction
 
@@ -193,9 +207,60 @@ class TheButtons(unittest.IsolatedAsyncioTestCase):
         button, bot, interaction = press("drop")
         await button.callback(interaction)
         bot.recaps.decide.assert_awaited_once_with(GUILD, CID, AT, "drop")
-        interaction.response.edit_message.assert_awaited_once_with(view=None)
+        interaction.response.edit_message.assert_awaited_once_with(
+            content=f"{LINE}\nSkipped.", view=None, allowed_mentions=NO_PINGS
+        )
         self.assertEqual(interaction.followup.send.await_args.args[0], SKIPPED)
         bot.post_recaps.assert_not_awaited()
+
+    async def test_the_other_copy_of_the_line_loses_its_buttons_when_it_is_known(self) -> None:
+        button, bot, interaction = press("drop")
+        other = line_message(901, "📜 Last session's recap is still waiting: **The Silver Lock**.")
+        bot.decision_lines.remember(("recap", CID, AT), other)  # the re-post at a session start
+        await button.callback(interaction)
+        other.edit.assert_awaited_once()
+        self.assertIsNone(other.edit.await_args.kwargs["view"])
+        self.assertTrue(other.edit.await_args.kwargs["content"].endswith("\nSkipped."))
+
+    async def test_a_copy_that_is_not_known_is_left_alone_and_a_failed_edit_changes_nothing(
+        self,
+    ) -> None:
+        button, bot, interaction = press("drop")  # nothing else is known: no other edit
+        await button.callback(interaction)
+        self.assertEqual(interaction.followup.send.await_args.args[0], SKIPPED)
+        button, bot, interaction = press("drop")
+        broken = line_message(902)
+        broken.edit = AsyncMock(side_effect=RuntimeError("deleted"))
+        bot.decision_lines.remember(("recap", CID, AT), broken)
+        await button.callback(interaction)  # does not raise; the decision stands
+        bot.recaps.decide.assert_awaited_once()
+        self.assertEqual(interaction.followup.send.await_args.args[0], SKIPPED)
+
+    async def test_yes_takes_the_buttons_off_the_line_that_asked_and_says_posted(self) -> None:
+        post, bot, interaction = press("post")
+        await post.callback(interaction)  # the line the DM pressed Post on is now known
+        yes, _, confirm = press("yes")
+        bot.recaps.get = AsyncMock(side_effect=[job(), job(status="posted")])
+        confirm.client = bot
+        await yes.callback(confirm)
+        line = interaction.message
+        line.edit.assert_awaited_once()
+        self.assertIsNone(line.edit.await_args.kwargs["view"])
+        self.assertTrue(line.edit.await_args.kwargs["content"].endswith("\nPosted."))
+
+    async def test_a_recap_the_checks_refused_keeps_its_buttons(self) -> None:
+        button, bot, interaction = press("yes")
+        other = line_message(903)
+        bot.decision_lines.remember(("recap", CID, AT), other)
+        bot.recaps.get = AsyncMock(side_effect=[job(), job(status="draft", last_error="Not now.")])
+        await button.callback(interaction)
+        other.edit.assert_not_awaited()  # back to a draft: the DM can press Post again
+
+    async def test_read_it_leaves_the_buttons_on(self) -> None:
+        button, _bot, interaction = press("read")
+        await button.callback(interaction)
+        interaction.message.edit.assert_not_awaited()
+        interaction.response.edit_message.assert_not_awaited()
 
     async def test_not_this_one_on_a_decided_recap_changes_nothing(self) -> None:
         button, _bot, interaction = press("drop", decided=False)
