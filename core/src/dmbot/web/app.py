@@ -1103,6 +1103,21 @@ def create_app(
         # Whether the team can reply by email: the thank-you says so, or says what to do (#1340).
         return {"ok": True, "reply": await account_email(db, session.user_id) is not None}
 
+    @app.get("/support/mine")
+    async def my_support(signed: Signed) -> dict[str, Any]:
+        """The signed-in person's own questions to the team, newest first (#1373): when they were
+        sent, the subject and where each stands. Never the words and never anyone else's. `reply`
+        says whether the team can answer by email, so "answered" can tell them where to look."""
+        session, _token = signed
+        rows = await support.mine(db, session.user_id)
+        reply = bool(rows) and await account_email(db, session.user_id) is not None
+        return {
+            "tickets": [
+                {"at": r.created_at, "subject": r.subject, "status": r.status} for r in rows
+            ],
+            "reply": reply,
+        }
+
     # The admin page's sign-in (#772); off while ADMIN_EMAILS is empty. Its sessions and
     # locks count seconds on their own steady clock (not `clock`, the wall time used for
     # signed tokens), so a changed system time can't end or extend them. Only the spent
