@@ -65,7 +65,7 @@ NO_CAMPAIGNS = "There's no campaign in this server yet. A DM can set one up with
 NOT_YOUR_CAMPAIGN = (
     "Only a campaign's DM can open its homebrew. You aren't a DM of one in this server."
 )
-MINE_NOTE = "✏️ Saved. Your own now; the pack's version no longer applies here."
+MINE_NOTE = "✏️ Saved. This is now your own, and it replaces the pack's version in this campaign."
 ENTRY_GONE = "That entry is gone, maybe removed by another DM. Here is the list now."
 INTRO = (
     "Your own spells, monsters, items and rules. Players can't see an entry until you press 👀. "
@@ -577,11 +577,10 @@ class AddForm(_EntryForm, title="Add homebrew"):
 
 
 class EditForm(_EntryForm, title="Edit homebrew"):
-    saved: Homebrew | None = None
-
     def __init__(self, campaign: Campaign, entry: Homebrew, page: int) -> None:
         super().__init__(campaign)
         self.entry, self.page = entry, page
+        self.saved: Homebrew | None = None
         self.name.default = entry.name
         self.text.default = entry.text
         self.summary.default = entry.summary

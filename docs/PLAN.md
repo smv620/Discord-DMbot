@@ -721,7 +721,9 @@ never does.
   the rules card's Read it all) has a **✏️ Make it my own** button for the campaign's DMs, re-checked on the
   press. It copies the entry as it is (kind, name, summary, text, players-may-know) into the campaign's own
   homebrew, tells a running session, and opens Edit on the copy; saving shows the entry's own card with
-  "Your own now; the pack's version no longer applies here." The campaign's own entry then wins over the
+  "This is now your own, and it replaces the pack's version in this campaign." Cancel on the form keeps
+  the copy as it is, and the button comes off the card (a second press says the entry is already the
+  campaign's own). The campaign's own entry then wins over the
   pack's, and a later pack change to that name is reported as "yours wins". A full homebrew or a name that
   became the campaign's own meanwhile copies nothing and says so. A pack holds no book text, so the copy is
   never marked from a book.

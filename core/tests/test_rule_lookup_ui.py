@@ -18,7 +18,7 @@ from dmbot.bot import DMBot
 from dmbot.campaigns import Campaign
 from dmbot.dm_screen.settings import RuleLookupButton, settings_view
 from dmbot.rules import index
-from dmbot.rules.homebrew import Homebrew
+from dmbot.rules.homebrew import FULL, SAME_NAME, Homebrew, HomebrewError
 from dmbot.rules.house import HouseRule
 from dmbot.ui import rule_card
 from dmbot.ui import rule_lookup as ui
@@ -574,15 +574,44 @@ class MakeItMine(LookupTest):
         self.assertEqual(it.response.sent[0][0], ui.ONLY_DMS)
 
     async def test_a_full_homebrew_or_a_name_clash_copies_nothing_and_says_so(self) -> None:
-        from dmbot.rules.homebrew import HomebrewError
-
         self.brew.entries[C1] = [from_pack(C1, "Ember Lamp", "Glows warmly.")]
         view = await self.card()
         self.brew.add = AsyncMock(side_effect=HomebrewError("Full."))  # type: ignore[attr-defined]
         it = self.it()
         await self.press(view, ui.MAKE_MINE_LABEL).callback(it)
         self.assertIsNone(it.response.modal)
-        self.assertEqual(it.response.sent[0][0], "Full. Nothing was copied.")
+        self.assertEqual(it.response.sent[0][0], "Full.")  # an unknown refusal passes through
+        for refusal, words in ((SAME_NAME, ui.ALREADY_MINE), (FULL, ui.FULL_COPY)):
+            self.brew.add = AsyncMock(side_effect=HomebrewError(refusal))  # type: ignore[attr-defined]
+            again = self.it()
+            await self.press(view, ui.MAKE_MINE_LABEL).callback(again)
+            self.assertEqual(again.response.sent[0][0], words)
+
+    async def test_a_long_pack_entry_keeps_the_button_when_the_rest_is_read(self) -> None:
+        self.brew.entries[C1] = [from_pack(C1, "Ember Lamp", "Glows warmly. " * 400)]
+        view = await self.card()
+        self.assertEqual(len(self.labels(view)), 2)  # Read the rest + Make it my own
+        it = self.it()
+        await self.press(view, f"{ui.READ_REST_LABEL} (2 of {len(view.parts)})").callback(it)
+        kept = it.response.edited[0][1]
+        self.assertEqual(self.labels(kept), [ui.MAKE_MINE_LABEL])
+
+    async def test_an_unexpected_failure_is_said_and_logged(self) -> None:
+        self.brew.entries[C1] = [from_pack(C1, "Ember Lamp", "Glows warmly.")]
+        view = await self.card()
+        self.brew.add = AsyncMock(side_effect=RuntimeError("down"))  # type: ignore[attr-defined]
+        it = self.it()
+        with self.assertLogs("dmbot.ui.rule_lookup", level="ERROR"):
+            await self.press(view, ui.MAKE_MINE_LABEL).callback(it)
+        self.assertEqual(it.response.sent[0][0], ui.COULDNT_COPY)
+
+    async def test_the_button_comes_off_the_card_once_the_copy_exists(self) -> None:
+        self.brew.entries[C1] = [from_pack(C1, "Ember Lamp", "Glows warmly.")]
+        view = await self.card()
+        self.brew.add = AsyncMock(return_value=brew(C1, "Ember Lamp", "x"))  # type: ignore[attr-defined]
+        it = self.it()
+        await self.press(view, ui.MAKE_MINE_LABEL).callback(it)
+        it.edit_original_response.assert_awaited_once_with(view=None)
 
     async def test_saving_the_form_shows_the_entry_as_the_campaigns_own(self) -> None:
         from dmbot.ui.homebrew import MINE_NOTE, EntryMenu, MakeMineForm
@@ -596,7 +625,7 @@ class MakeItMine(LookupTest):
         assert show.await_args is not None
         text, view = show.await_args.args[1:]
         self.assertIn(MINE_NOTE, text)
-        self.assertIn("Your own now", text)
+        self.assertIn("now your own", text)
         self.assertIsInstance(view, EntryMenu)
 
 
