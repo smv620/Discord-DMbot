@@ -679,10 +679,10 @@ differ, this wins.
 - **Rules are house rules, not homebrew.** Homebrew is game content: spells, monsters, items, feats,
   conditions and other things. There is no "rule" kind; migration 0111 moves rule entries into house rules
   (#1628).
-- **Homebrew is added from a link, for now.** The DM pastes the address of a **published** homebrew page,
+- **Homebrew can be added from a link.** The DM pastes the address of a **published** homebrew page,
   for example `https://www.dndbeyond.com/magic-items/2302039-amulet-of-trueshot`, and DMbot reads that one
-  page and saves the entry. Typing an entry in (➕ Add) and 📥 Load file are switched off for now, with
-  their code kept; they come back later with their own source (below). Entries already saved stay.
+  page and saves the entry. **Typing an entry in (➕ Add) and 📥 Load file stay**, because they already
+  work (owner, 2026-10-16), each recording its own source (below).
   - **Only approved sites are fetched**, starting with dndbeyond.com. One address, fetched once, at the
     direction of the one DM who pasted it: never a crawl, never a list of pages, never following links
     from the page. https only, the site's own address after any redirect, a size and time limit, and no
@@ -699,8 +699,8 @@ differ, this wins.
   it, whether imported there or reached through a pack.
 - **Every entry records its source.** The database keeps, for every entry:
   - **Link:** the address it came from and its site (the domain), plus who added it.
-  - **Typed** (later): the Discord user who typed it.
-  - **Uploaded** (later): the Discord user by default, or a credit the uploader gives instead: a website
+  - **Typed:** the Discord user who typed it.
+  - **Uploaded** (📥 Load file): the Discord user by default, or a credit the uploader gives instead: a website
     (its domain then needs the same once-per-site approval) or a typed name.
   Entries saved before this record "typed" by the DM who made them.
 - **One copy of a published page.** A page imported by link is public content, not a campaign's own data,
