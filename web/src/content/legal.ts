@@ -18,7 +18,7 @@ export const notAffiliated =
  */
 export const operator = {
   name: "DMbot LLC",
-  email: "dmbot.admin@gmail.com",
+  email: "admin@getdmbot.com",
 };
 
 /** The payment company, chosen by the owner (2026-10-13, #1096). It is the seller (merchant of record). */
