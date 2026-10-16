@@ -1915,6 +1915,21 @@ consent check just made still holds:
   session's end, the line staying as heard) go to the after-session report once it
   exists.
 
+**A player may suggest a fix to their own line; the DM decides (decided 2026-10-16 by Supervisor,
+built #1491).** The bot advises; the DM decides; what was heard never changes. A player who sees
+their own line misheard types `/dmbot fix`, or presses **✏️ Fix one of my lines** in the private
+message that comes when a session ends, picks the line from their newest ten (their own spoken lines
+only, never a DM sidebar line or typed chat) and types what it should say (1 to 200 characters,
+one line). The DM-screen gets one short line: who, what was heard, what they suggest, with **Accept**
+and **No** (buttons that work after a restart, DM-only on every press). **Accept** changes only the
+line's cleaned words (the running session's notes and the channel message follow, as for every fix;
+a finished session's saved line is changed in the database); **No** changes nothing. The player is
+told once in a private message. Nothing is posted publicly. One suggestion per line at a time
+(table `transcript_suggestions`, migration 0093). A suggestion that waits past the end of the next
+session is dropped with no message. Checks: the speaker must still be recorded when they send it and
+when it is accepted; the words must not write, or stand next to, a secret name (refused with
+"That can't be used", no reason, so it cannot hint at one); everything is escaped on the DM screen.
+
 **Off-topic filter (decided 2026-10-04; updated 2026-10-05).** A very light, fast AI pass
 right after the Cleaner. Scheduling, life updates, and other non-game talk are labeled
 `{non-game_content}` and not analyzed further, which saves cost. In the cleaned

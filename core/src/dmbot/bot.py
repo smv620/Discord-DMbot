@@ -222,6 +222,7 @@ from dmbot.transcript.export import clock
 from dmbot.transcript.models import NARRATING, Line, TranscriptBuffer
 from dmbot.transcript.store import TranscriptStore
 from dmbot.transcript.stream import TranscriptStream
+from dmbot.transcript.suggestions import SuggestionStore
 from dmbot.transcript.topic_ai import classify
 from dmbot.transcript.topics import GAME, OFF_TOPIC, TopicWindow, Waiting, obviously_game
 from dmbot.transcript.topics import marker as topic_marker
@@ -241,6 +242,7 @@ from dmbot.ui.continuity import ContinuityButton, continuity_view
 from dmbot.ui.continuity import waiting_text as continuity_waiting_text
 from dmbot.ui.dmbot_commands import _failed, dmbot_group
 from dmbot.ui.house_rules import dmbot_house_rules  # noqa: F401 (registers it)
+from dmbot.ui.line_fix import FixLineButton, LineFixButton
 from dmbot.ui.migrate import dmbot_migrate  # noqa: F401 (registers it)
 from dmbot.ui.name_card import UndoButton
 from dmbot.ui.name_lists import UndoListButton
@@ -616,6 +618,7 @@ class DMBot(commands.AutoShardedBot):
         test_voice: TestVoiceStore | None = None,
         rule_sets: RuleSetStore | None = None,
         recaps: RecapStore | None = None,
+        suggestions: SuggestionStore | None = None,
     ) -> None:
         intents = discord.Intents.none()
         intents.guilds = True
@@ -661,6 +664,7 @@ class DMBot(commands.AutoShardedBot):
         self.house_file_links = house_file_links
         self.rule_sets = rule_sets  # shared house rules (#1190)
         self.recaps = recaps  # the cinematic recap of each session (#1382)
+        self.suggestions = suggestions  # players' suggested line fixes (#1491)
         self.house_syncs = house_sync.Pendings()
         # Timed effects on that clock (#998); None without a database.
         self.effects = effects
@@ -959,6 +963,7 @@ class DMBot(commands.AutoShardedBot):
         )
         self.add_dynamic_items(SecretAloudButton)  # the secret-said-aloud question (#1407)
         self.add_dynamic_items(RecapButton)  # the recap on the DM screen (#1455)
+        self.add_dynamic_items(LineFixButton, FixLineButton)  # a player's line fix (#1491)
         self.add_dynamic_items(  # #965, #1117
             clock_screen.ClockButton, clock_screen.ClockUndoButton, clock_screen.SuggestionButton
         )
@@ -4691,6 +4696,56 @@ class DMBot(commands.AutoShardedBot):
         text = fix_notes.done_text(md(note.fix.heard), md(note.fix.written), line_kept=not changed)
         return text, allow
 
+    async def tell_user(self, user_id: int, text: str) -> bool:
+        """One private message to a person; False if Discord won't deliver it (private messages
+        off). Never raises."""
+        try:
+            user = self.get_user(user_id) or await self.fetch_user(user_id)
+            if user.bot:
+                return False
+            await user.send(text, allowed_mentions=NO_PINGS)
+        except discord.HTTPException:
+            return False
+        return True
+
+    async def apply_line_fix(
+        self,
+        guild_id: int,
+        campaign_id: str,
+        session_id: str,
+        user_id: int,
+        started_ms: int,
+        text: str,
+    ) -> bool:
+        """Write a fix the DM accepted into one line's cleaned words (#1491); what was heard
+        never changes. A running session's line goes through the same writer as every fix (the
+        saved line, the one waiting to be saved, and the channel message while it is recent);
+        a finished session's saved line is changed in the database. Only while the speaker is
+        still recorded. True if a line changed."""
+        if not self.consent.has_consent(guild_id, user_id) or self.suggestions is None:
+            return False
+        for table in [self.tables.get(guild_id), *self._ending.get(guild_id, [])]:
+            if (
+                table is not None
+                and table.campaign_id == campaign_id
+                and table.transcript_session_id == session_id
+            ):
+                own = await self.suggestions.line(guild_id, session_id, user_id, started_ms)
+                if own is not None:
+                    # Like an answer to "Did they mean…?": the notes know the line's words
+                    # now, so a later Undo of a name fix keeps this.
+                    table.fix_notes.answered(
+                        fix_notes.Answer(
+                            None, user_id, started_ms, own.heard, (), 0, len(own.heard), text
+                        )
+                    )
+                return await self._rewrite_line(table, user_id, started_ms, text)
+        if self.transcripts is None:
+            return False
+        return bool(
+            await self.transcripts.relabel_line(guild_id, session_id, user_id, started_ms, text)
+        )
+
     async def _rewrite_line(self, table: Table, speaker: int, started_ms: int, text: str) -> bool:
         """Change a line's words (#296, #503): saved, waiting to be saved, and in the
         transcript channel if it was posted in the last ~30 s. Only while the speaker is
@@ -6614,6 +6669,16 @@ class DMBot(commands.AutoShardedBot):
             await asyncio.sleep(TRANSCRIPT_SAVE_S)
             await asyncio.gather(*(one(t) for t in self._all_tables()))
 
+    async def _drop_old_suggestions(self, table: Table, session_id: str) -> None:
+        """A suggested line fix that waited past the end of the next session is dropped, with no
+        message (#1491): when a session ends, only suggestions for this session stay."""
+        if self.suggestions is None or table.campaign_id is None:
+            return
+        try:
+            await self.suggestions.drop_old(table.guild_id, table.campaign_id, [session_id])
+        except Exception:
+            log.exception("Couldn't drop old line-fix suggestions")
+
     async def finish_transcript(self, table: Table, ended_at: int | None = None) -> int:
         """After a session: save the last lines, mark it ended, and send the DM(s) and
         everyone recorded a private message with a download button. Returns how many
@@ -6635,6 +6700,7 @@ class DMBot(commands.AutoShardedBot):
             except Exception:
                 log.exception("Couldn't finish the stored transcript")
                 return 0
+            await self._drop_old_suggestions(table, session_id)
             if session is None or session.lines == 0:
                 return 0
             people = {table.dm_user_id, *table.dm_user_ids, *session.speakers}
@@ -6932,6 +6998,7 @@ async def run(settings: Settings) -> None:
             TestVoiceStore(db),
             RuleSetStore(db),
             RecapStore(db),
+            SuggestionStore(db),
         )
         _close_on_sigterm(bot)
         async with bot:
