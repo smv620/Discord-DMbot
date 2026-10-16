@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 import unittest
+from functools import partial
 from typing import Any
 from urllib.parse import parse_qs, urlsplit
 
@@ -72,7 +73,7 @@ class WhoHasSpokenRecaps(unittest.TestCase):
 
     def test_a_grant_at_guild_level_or_above_and_free_access_have_it(self) -> None:
         for level in ("guild", "unlimited"):
-            self.assertTrue(self.has(None, Grant(5, level, None, None)), level)  # type: ignore[arg-type]
+            self.assertTrue(self.has(None, Grant(5, level, None, None)), level)
         self.assertFalse(self.has(None, Grant(5, "guild", NOW - 1, None)))  # ended
         self.assertFalse(self.has(None, Grant(5, "guild", None, NOW - 5)))  # revoked
         configure_free_users([5])
@@ -172,7 +173,7 @@ class StripeSide(unittest.IsolatedAsyncioTestCase):
         sent: list[dict[str, str] | None] = []
 
         async def transport(
-            method: str, path: str, form: dict[str, str] | None, key: str | None = None
+            method: str, path: str, form: dict[str, str] | None, idempotency_key: str | None = None
         ) -> tuple[int, Any]:
             sent.append(form)
             return 200, {"url": "https://checkout.stripe.com/c/pay/x", "id": "cus_1"}
@@ -198,6 +199,10 @@ class StripeSide(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(PaymentError):
             await p.recap_audio_checkout_url(user_id=1, email=None, return_url="https://x.example")
 
+    @staticmethod
+    def read(env: dict[str, str], name: str) -> str:
+        return env.get(name, "")
+
     def test_the_price_setting_is_optional_but_must_look_like_a_price(self) -> None:
         env = {
             "STRIPE_SECRET_KEY": "sk_test_x",
@@ -218,7 +223,7 @@ class StripeSide(unittest.IsolatedAsyncioTestCase):
 
         for bad in ("nope", "price_1"):
             with self.assertRaises(ConfigError):
-                _stripe(lambda k, bad=bad: {**env, "STRIPE_PRICE_RECAP_AUDIO": bad}.get(k, ""))
+                _stripe(partial(self.read, {**env, "STRIPE_PRICE_RECAP_AUDIO": bad}))
 
 
 class Payments(DatabaseTest):
