@@ -5326,6 +5326,9 @@ HOMEBREW_BOOK_EDITION = """
     -- opening.
     ALTER TABLE homebrew_entries ADD COLUMN book_edition TEXT
         CHECK (book_edition IS NULL OR book_edition IN ('2024', '2014', 'other'));
+    -- Only a shared book's entry carries an edition (the store and backups already refuse more).
+    ALTER TABLE homebrew_entries ADD CONSTRAINT homebrew_edition_needs_book
+        CHECK (book_edition IS NULL OR from_book);
     """
 
 WEB_HOMEBREW = """

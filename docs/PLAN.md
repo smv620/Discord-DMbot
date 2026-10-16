@@ -328,7 +328,7 @@ a shared book is matched to its edition (2024, 2014 or other) and is a sourceboo
 target or fallback ruleset, not a house rule.
 **Built, the edition of a shared book (2026-10-16, #1563):** when a DM loads a file and says it is
 from a published book, one more question follows "I have the right": **Which rules is this book
-for?** (2024 rules, 2014 rules, Other / a supplement). The answer is kept with each entry
+for?** (2024 book, 2014 book, Not sure / add-on). The answer is kept with each entry
 (`homebrew_entries.book_edition`, migration 0104; an entry loaded before the question reads as
 "other"). In `/dmbot rule` the order is: house rules, the campaign's own homebrew (not from a
 book), followed packs, then the free rules and the book's entries together, each in its edition's

@@ -311,13 +311,13 @@ class TheFile(HomebrewUiTest):
         right = ui.RightToUse(self.campaign, ask.entries, ask.digest, 0)
         asked = self.press()
         await right._confirmed(asked)
-        self.assertIn("Which rules is this book for?", self.said(asked))  # one more question
+        self.assertIn("Which rules is this book written for?", self.said(asked))  # one more question
         self.assertEqual(await self.store.list(GUILD, self.campaign.id), [])  # still nothing
         self.assertEqual(await self.campaigns.confirmations(GUILD, self.campaign.id), [])
         edition = ui.BookEdition(self.campaign, ask.entries, ask.digest, 0)
         self.assertEqual(
             [getattr(c, "label", "") for c in edition.children],
-            ["Cancel", "2024 rules", "2014 rules", "Other / a supplement"],
+            ["Cancel", "2024 book", "2014 book", "Not sure / add-on"],
         )
         await edition._pick("2014", self.press())
         (saved,) = await self.store.list(GUILD, self.campaign.id)

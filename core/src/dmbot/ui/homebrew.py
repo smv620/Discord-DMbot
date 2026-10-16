@@ -60,8 +60,12 @@ UNDO_KEPT = 5  # removed entries that can be put back, per campaign
 UNDO_SHOWN = 1  # ...and the newest is the one button on the list
 
 WHICH_RULES = (
-    "**Which rules is this book for?** DMbot shows it in that edition's place: a 2014 book "
-    "after the 2024 rules, a supplement between the two."
+    "**Which rules is this book written for?**\n"
+    "This only changes which answer DMbot shows first when the book and the free rules have "
+    "the same name (in `/dmbot rule` answers for now).\n"
+    "2024 book: its answer comes first.\n"
+    "2014 book: the newer 2024 rule comes first.\n"
+    "Not sure, or an add-on book: it goes in the middle."
 )
 NOT_READY = "Homebrew isn't available right now. Please try again in a moment."
 SUGGEST_LABEL = "💡 Suggest to the pack"
@@ -938,7 +942,11 @@ class FromBookAsk(_Menu):
         _changed(interaction, c)
         words = f"📥 Loaded: {done.added} new, {done.updated} changed, {done.same} the same."
         if from_book:
-            words += " Entries from a book are marked, and your confirmation is recorded."
+            for_rules = {"2024": "2024 book", "2014": "2014 book"}.get(edition or "", "add-on book")
+            words += (
+                f" Entries from a book are tagged **[Shared book]** (a {for_rules})."
+                " Your confirmation is recorded."
+            )
         await _redraw(interaction, c, note=words, page=self.page)
 
 
@@ -961,6 +969,9 @@ class RightToUse(FromBookAsk):
         if not await _is_dm(interaction, self.campaign):
             await _tell(interaction, ONLY_DMS)
             return
+        if self.used:  # a double press asks the question once
+            return
+        self.used = True
         self.stop()
         await _show(
             interaction,
@@ -978,10 +989,9 @@ class BookEdition(FromBookAsk):
         _Menu.__init__(self)
         self.campaign, self.entries, self.digest, self.page = campaign, entries, digest, page
         self.add_item(_Button(self._cancel, label="Cancel"))
-        primary = discord.ButtonStyle.primary
-        self.add_item(_Button(partial(self._pick, "2024"), label="2024 rules", style=primary))
-        self.add_item(_Button(partial(self._pick, "2014"), label="2014 rules", style=primary))
-        self.add_item(_Button(partial(self._pick, "other"), label="Other / a supplement"))
+        self.add_item(_Button(partial(self._pick, "2024"), label="2024 book"))
+        self.add_item(_Button(partial(self._pick, "2014"), label="2014 book"))
+        self.add_item(_Button(partial(self._pick, "other"), label="Not sure / add-on"))
 
     async def _pick(self, edition: str, interaction: discord.Interaction) -> None:
         await self._load(interaction, from_book=True, edition=edition)

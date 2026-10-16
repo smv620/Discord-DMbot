@@ -473,4 +473,4 @@ class HomebrewReader:
             (e for e in await self._from_packs(guild_id, campaign_id) if name_key(e.name) == key),
             None,
         )
-        return pack or own
+        return pack if pack is not None else own
