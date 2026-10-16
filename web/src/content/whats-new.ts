@@ -116,7 +116,7 @@ export const held: Held[] = [
   {
     date: "2026-10-16",
     title: "When a player says a secret name",
-    what: "If you keep a name secret and a player says it at the table, it is in the transcript everyone can read. After the session DMbot asks you, in private, whether to keep it secret or not any more. It asks about at most five names, and only you can answer.",
+    what: "If a player says a name you've marked secret, it ends up in the transcript, which anyone in your server can read. After the session DMbot asks you privately, one name at a time (up to five), whether it should stay secret from players or be opened up. Only you can answer, and DMbot never decides for you.",
     reason:
       "Held until it has been seen working on the test server (#1407).",
   },

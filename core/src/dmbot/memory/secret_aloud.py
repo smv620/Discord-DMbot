@@ -38,38 +38,55 @@ class Said:
 
 
 def players_lines(lines: Iterable[Line], *, players: Collection[int]) -> list[str]:
-    """The words players said at the table: cleaned text of lines by someone in `players` (the
-    people recorded now who are not the campaign's DMs), leaving out the sidebar (the DM's
-    questions to DMbot and its answers) and anything the off-topic filter hid."""
-    return [
-        line.text
-        for line in lines
-        if line.user_id in players and not line.sidebar and line.topic != "off_topic" and line.text
-    ]
+    """The words players said at the table: lines by someone in `players` (the people recorded now
+    who are not the campaign's DMs), leaving out the sidebar (the DM's questions to DMbot and its
+    answers). Off-topic lines are kept: the raw transcript shows them too, so a secret muttered
+    there is just as out. Both the cleaned and the as-heard words are read, since the cleaner may
+    have respelled a name; a line where they differ counts as two, which only affects the order."""
+    out: list[str] = []
+    for line in lines:
+        if line.user_id not in players or line.sidebar:
+            continue
+        if line.text:
+            out.append(line.text)
+        if line.heard and line.heard.strip() != line.text.strip():
+            out.append(line.heard)
+    return out
+
+
+_POSSESSIVE = re.compile(r"['’]s\b")
+
+
+def _key(text: str) -> str:
+    """A name or a stretch of speech as compared here: "Auril's frost" is Auril too, so a
+    possessive goes before the usual `name_key` (on both sides, or "Dragon's Rest" never meets
+    itself)."""
+    return name_key(_POSSESSIVE.sub("", text))
 
 
 def spoken(secrets: Sequence[SecretName], texts: Iterable[str]) -> list[Said]:
-    """The secret names found in the players' words, most said first (ties by name), at most
-    `MAX_ASKED`. A name counts once for each time it appears as whole words."""
-    wanted: list[tuple[SecretName, str]] = []
+    """The secret names found in the players' words, most said first (ties by name). A name counts
+    once for each time it appears as whole words."""
+    wanted: list[tuple[SecretName, str, re.Pattern[str]]] = []
     seen: set[str] = set()
     for secret in secrets:  # one question for a name, however many entries or spellings share it
-        key = name_key(secret.text)
+        key = _key(secret.text)
         if len(key) >= MIN_KEY and key not in seen:
             seen.add(key)
-            wanted.append((secret, key))
+            wanted.append((secret, key, re.compile(rf"(?<=\s){re.escape(key)}(?=\s)")))
     counts: dict[str, int] = {}
     for text in texts:
-        # "Auril's frost" is Auril too: a possessive is dropped before names are compared.
-        padded = f" {name_key(re.sub(r'[\'’]s\b', '', text))} "
-        for secret, key in wanted:
-            found = len(re.findall(rf"(?<=\s){re.escape(key)}(?=\s)", padded))
+        padded = f" {_key(text)} "
+        for secret, key, pattern in wanted:
+            if key not in padded:  # cheap test first: most lines name no secret
+                continue
+            found = len(pattern.findall(padded))
             if found:
                 counts[secret.alias_id] = counts.get(secret.alias_id, 0) + found
-    by_id = {s.alias_id: s for s, _ in wanted}
+    by_id = {s.alias_id: s for s, _, _ in wanted}
     out = [Said(a, by_id[a].text, n) for a, n in counts.items()]
     out.sort(key=lambda s: (-s.times, name_key(s.text), s.alias_id))
-    return out[:MAX_ASKED]
+    return out  # all of them; the caller asks about the first `MAX_ASKED` and says there are more
 
 
 async def secret_names(memory: MemoryStore, guild_id: int, campaign_id: str) -> list[SecretName]:

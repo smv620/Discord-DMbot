@@ -162,7 +162,7 @@ from dmbot.memory.recall import PLAYERS, AsOf, Recall, RecallService
 from dmbot.memory.scan import MAX_SUGGESTIONS, find_new_names, group_alike
 from dmbot.memory.scene import HintParts, SceneTracker, mentions, scene_hints
 from dmbot.memory.scene import prepare as prepare_hints
-from dmbot.memory.secret_aloud import players_lines, secret_names, spoken
+from dmbot.memory.secret_aloud import MAX_ASKED, players_lines, secret_names, spoken
 from dmbot.memory.sheet_questions import Questions as SheetQuestions
 from dmbot.memory.sheet_refresh import hint_names as sheet_hint_names
 from dmbot.memory.sheet_refresh import refresh as refresh_sheets
@@ -241,7 +241,12 @@ from dmbot.ui.names import ReviewButton, after_session_text, held_back_text, rev
 from dmbot.ui.optional_rules import dmbot_optional_rules  # noqa: F401 (registers it)
 from dmbot.ui.people_review import PeopleReviewButton, people_review_view, waiting_text
 from dmbot.ui.rule_lookup import dmbot_rule  # noqa: F401 (registers it)
-from dmbot.ui.secret_aloud import SecretAloudButton, question_text, secret_aloud_view
+from dmbot.ui.secret_aloud import (
+    SecretAloudButton,
+    more_text,
+    question_text,
+    secret_aloud_view,
+)
 from dmbot.ui.sheets import MySheetButton, OpenCardButton
 from dmbot.ui.transcripts import (
     DownloadButton,
@@ -5602,13 +5607,16 @@ class DMBot(commands.AutoShardedBot):
             lines = await self.transcripts.lines(gid, table.transcript_session_id)
             agreed = await self.consent.consenting(gid)  # asked after the lines were read
             players = {line.user_id for line in lines} & set(agreed) - set(campaign.dm_user_ids)
-            found = spoken(secrets, players_lines(lines, players=players))
+            every = spoken(secrets, players_lines(lines, players=players))
+            found = every[:MAX_ASKED]
             for said in found:
                 await self.post(
                     table.screen_channel_id,
                     question_text(said.text),
                     view=secret_aloud_view(cid, said.alias_id),
                 )
+            if len(every) > len(found):  # the DM should know the rest exist
+                await self.post(table.screen_channel_id, more_text(len(every) - len(found)))
             if found:
                 log.info("Secret name(s) said by players: %d asked", len(found))  # a count only
 

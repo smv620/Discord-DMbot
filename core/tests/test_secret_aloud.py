@@ -19,11 +19,13 @@ from dmbot.memory.secret_aloud import (
 )
 from dmbot.transcript.models import Line
 from dmbot.ui.secret_aloud import (
-    GONE,
-    KEPT,
+    NO_CAMPAIGN,
+    NO_MEMORY,
     NOT_YOURS,
-    OPENED,
     SecretAloudButton,
+    kept_text,
+    more_text,
+    opened_text,
     question_text,
     secret_aloud_view,
 )
@@ -66,8 +68,7 @@ class Finding(unittest.TestCase):
         names = [SecretName(f"{n:032x}", f"Name{chr(97 + n)}x") for n in range(8)]
         texts = [f"Name{chr(97 + n)}x " * (n + 1) for n in range(8)]
         got = spoken(names, texts)
-        self.assertEqual(len(got), MAX_ASKED)
-        self.assertEqual([s.times for s in got], [8, 7, 6, 5, 4])
+        self.assertEqual([s.times for s in got], [8, 7, 6, 5, 4, 3, 2, 1])  # all, best first
 
     def test_a_name_too_short_to_search_for_is_ignored(self) -> None:
         self.assertEqual(spoken([SecretName("f" * 32, "Al")], ["Al went home"]), [])
@@ -82,7 +83,7 @@ class Finding(unittest.TestCase):
 
 
 class WhoseWords(unittest.TestCase):
-    def test_only_players_recorded_now_count_and_not_the_sidebar_or_off_topic(self) -> None:
+    def test_only_players_recorded_now_count_and_not_the_sidebar(self) -> None:
         lines = [
             line(PLAYER, "Auril"),
             line(DM_ID, "the DM says Auril"),
@@ -91,7 +92,7 @@ class WhoseWords(unittest.TestCase):
             line(PLAYER, "off topic Auril", topic="off_topic"),
             line(PLAYER, ""),
         ]
-        self.assertEqual(players_lines(lines, players={PLAYER}), ["Auril"])
+        self.assertEqual(players_lines(lines, players={PLAYER}), ["Auril", "off topic Auril"])
 
 
 class Reading(MemoryTest):
@@ -221,7 +222,8 @@ class AfterTheSession(unittest.IsolatedAsyncioTestCase):
         lines = [line(PLAYER, " ".join(n.text for n in names))]
         bot = fake_bot(lines, names, {PLAYER})
         await self.run_step(bot, names)
-        self.assertEqual(bot.post.await_count, MAX_ASKED)
+        self.assertEqual(bot.post.await_count, MAX_ASKED + 1)  # five questions and a line
+        self.assertEqual(bot.post.await_args.args[1], more_text(3))  # saying there are 3 more
 
 
 def press(
@@ -254,14 +256,18 @@ class TheButtons(unittest.IsolatedAsyncioTestCase):
             GUILD_A, "c" * 32, "a" * 32, source=DM, secret=False
         )
         bot.lookup.drop.assert_called_once()
-        self.assertEqual(interaction.response.edit_message.await_args.kwargs["content"], OPENED)
+        self.assertEqual(
+            interaction.response.edit_message.await_args.kwargs["content"], opened_text("That name")
+        )
         self.assertIsNone(interaction.response.edit_message.await_args.kwargs["view"])
 
     async def test_keep_it_secret_changes_nothing_and_closes_the_question(self) -> None:
         button, (bot, interaction) = press("keep", DM_ID)
         await button.callback(interaction)
         bot.memory.update_alias.assert_not_awaited()
-        self.assertEqual(interaction.response.edit_message.await_args.kwargs["content"], KEPT)
+        self.assertEqual(
+            interaction.response.edit_message.await_args.kwargs["content"], kept_text("That name")
+        )
 
     async def test_only_a_dm_of_the_campaign_can_press_not_a_server_manager(self) -> None:
         for act in ("keep", "open"):
@@ -281,7 +287,24 @@ class TheButtons(unittest.IsolatedAsyncioTestCase):
     async def test_without_memory_nothing_is_changed(self) -> None:
         button, (_bot, interaction) = press("open", DM_ID, memory=None)
         await button.callback(interaction)
-        self.assertEqual(interaction.response.send_message.await_args.args[0], GONE)
+        self.assertEqual(interaction.response.send_message.await_args.args[0], NO_MEMORY)
+
+    async def test_the_reply_names_the_name_the_question_was_about(self) -> None:
+        button, (_bot, interaction) = press("open", DM_ID)
+        interaction.message = SimpleNamespace(content=question_text("Auril"))
+        await button.callback(interaction)
+        self.assertIn("**Auril**", interaction.response.edit_message.await_args.kwargs["content"])
+
+    async def test_a_campaign_that_is_gone_is_said_so(self) -> None:
+        button, (bot, interaction) = press("keep", DM_ID)
+        bot.campaigns.get = AsyncMock(return_value=None)
+        await button.callback(interaction)
+        self.assertEqual(interaction.response.send_message.await_args.args[0], NO_CAMPAIGN)
+
+    def test_the_question_says_what_each_button_does_and_who_can_read_the_transcript(self) -> None:
+        text = question_text("Auril")
+        for needed in ("anyone in this server can read", "Keep it secret", "Not secret any more"):
+            self.assertIn(needed, text)
 
     def test_the_view_has_the_two_buttons_with_ids_that_survive_a_restart(self) -> None:
         view = secret_aloud_view("c" * 32, "a" * 32)
@@ -301,3 +324,15 @@ class TheButtons(unittest.IsolatedAsyncioTestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class PossessiveAndHiddenLines(unittest.TestCase):
+    def test_a_secret_with_its_own_apostrophe_s_is_found(self) -> None:
+        names = [SecretName("a", "Mordenkainen's Tower"), SecretName("b", "Dragon's Rest")]
+        got = spoken(names, ["We go to Mordenkainen's Tower", "Dragon's Rest is near", "no"])
+        self.assertEqual({s.alias_id for s in got}, {"a", "b"})
+
+    def test_an_off_topic_line_and_the_as_heard_words_are_read(self) -> None:
+        line = Line(1, 5, "we saw auril", "we saw Oriel", topic="off_topic")
+        got = players_lines([line], players={5})
+        self.assertEqual(got, ["we saw Oriel", "we saw auril"])

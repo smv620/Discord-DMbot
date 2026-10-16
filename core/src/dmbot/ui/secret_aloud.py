@@ -18,17 +18,46 @@ import discord
 from dmbot.memory.models import DM, MemoryRuleError
 from dmbot.ui.dmbot_commands import NO_PINGS, _bot, _tell
 
-KEPT = "👍 Kept secret. DMbot will ask again if a player says it in a later session."
-OPENED = "✅ Not secret any more."
-NOT_YOURS = "Only a DM of this campaign can answer that."
-GONE = "That name isn't there any more, so nothing was changed."
+NOT_YOURS = "Only this campaign's DM can answer this. Ask your DM."
+NO_CAMPAIGN = "I can't find this campaign any more, so nothing was changed."
+NO_MEMORY = "DMbot's memory isn't available right now. Try again in a minute."
+_NAME = re.compile(r"\*\*(.+?)\*\*")
 
 
 def question_text(name: str) -> str:
+    shown = discord.utils.escape_markdown(name)
     return (
-        f"🤫 A player said **{discord.utils.escape_markdown(name)}** this session, and it's in "
-        "the transcript. Keep it secret, or not any more?"
+        f"🤫 A player said **{shown}** at the table. You'd marked it secret, and the transcript "
+        "(which anyone in this server can read) now has it.\n"
+        "**Keep it secret:** DMbot still won't use it when it answers players.\n"
+        "**Not secret any more:** DMbot may use it in answers to players."
     )
+
+
+def more_text(count: int) -> str:
+    what = "name was" if count == 1 else "names were"
+    return f"🤫 {count} more secret {what} said. DMbot will ask about them next session."
+
+
+def kept_text(name: str) -> str:
+    return (
+        f"👍 **{name}** stays secret. DMbot will ask again if a player says it in a later session."
+    )
+
+
+def opened_text(name: str) -> str:
+    return (
+        f"✅ **{name}** is no longer secret. DMbot may now use it in answers to players. "
+        "You can make it secret again from the name's card."
+    )
+
+
+def name_in(interaction: discord.Interaction) -> str:
+    """The name the question was about, read back from the message being answered (already
+    escaped there), or a plain word if it can't be read."""
+    content = getattr(getattr(interaction, "message", None), "content", "") or ""
+    found = _NAME.search(content)
+    return found.group(1) if found else "That name"
 
 
 class SecretAloudButton(
@@ -60,17 +89,21 @@ class SecretAloudButton(
         )
         # Only a DM of the campaign: a server manager who is not one cannot answer (the question
         # names a secret).
-        if campaign is None or interaction.user.id not in campaign.dm_user_ids:
+        if campaign is None:
+            await _tell(interaction, NO_CAMPAIGN)
+            return
+        if interaction.user.id not in campaign.dm_user_ids:
             await _tell(interaction, NOT_YOURS)
             return
+        name = name_in(interaction)
         if self.act == "keep":
             await interaction.response.edit_message(
-                content=KEPT, view=None, allowed_mentions=NO_PINGS
+                content=kept_text(name), view=None, allowed_mentions=NO_PINGS
             )
             return
         memory = bot.memory
         if memory is None:
-            await _tell(interaction, GONE)
+            await _tell(interaction, NO_MEMORY)
             return
         try:
             await memory.update_alias(
@@ -82,7 +115,7 @@ class SecretAloudButton(
         if bot.lookup is not None:
             bot.lookup.drop([campaign.id])
         await interaction.response.edit_message(
-            content=OPENED, view=None, allowed_mentions=NO_PINGS
+            content=opened_text(name), view=None, allowed_mentions=NO_PINGS
         )
 
 
