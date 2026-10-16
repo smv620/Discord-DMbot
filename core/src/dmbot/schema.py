@@ -4630,6 +4630,36 @@ SUPPORT_HANDED_OVER = """
         ADD COLUMN handed_over_at BIGINT;
     """
 
+TRANSCRIPT_SUGGESTIONS = """
+    -- A player's suggested fix to their own line of the cleaned transcript (#1491). The DM
+    -- decides; only the line's `text` ever changes, never what was heard. `started_ms` and
+    -- `user_id` name the line (like transcript_lines). One open suggestion for a line at a
+    -- time; one that waits past the end of the next session is `dropped` (no message). A new
+    -- table, so no existing row changes and no row-level security needs opening.
+    CREATE TABLE transcript_suggestions (
+        id         BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+        guild_id   BIGINT NOT NULL,
+        campaign_id TEXT NOT NULL,
+        session_id TEXT NOT NULL,
+        started_ms BIGINT NOT NULL,
+        user_id    BIGINT NOT NULL CHECK (user_id > 0),
+        suggested  TEXT NOT NULL CHECK (char_length(suggested) BETWEEN 1 AND 200),
+        -- The line's cleaned words when it was suggested: Accept refuses a line that changed since.
+        base_text  TEXT NOT NULL CHECK (char_length(base_text) <= 4000),
+        state      TEXT NOT NULL DEFAULT 'open'
+                       CHECK (state IN ('open', 'accepted', 'declined', 'dropped')),
+        created_at BIGINT NOT NULL,
+        decided_at BIGINT,
+        decided_by BIGINT,
+        FOREIGN KEY (campaign_id, guild_id)
+            REFERENCES campaigns (id, guild_id) ON DELETE CASCADE,
+        FOREIGN KEY (session_id, guild_id)
+            REFERENCES transcript_sessions (id, guild_id) ON DELETE CASCADE
+    );
+    CREATE UNIQUE INDEX transcript_suggestions_one_open
+        ON transcript_suggestions (session_id, user_id, started_ms) WHERE state = 'open';
+    """ + _isolate("transcript_suggestions")
+
 MIGRATIONS: tuple[Migration, ...] = (
     ("0001_initial", INITIAL),
     ("0002_active_sessions", ACTIVE_SESSIONS),
@@ -4726,6 +4756,7 @@ MIGRATIONS: tuple[Migration, ...] = (
     ("0090_support_reason", SUPPORT_REASON),  # why a ticket went to a person (#1459)
     ("0091_web_recap_choices", WEB_RECAP_CHOICES),  # the DM's recap choices on the site (#1468)
     ("0092_support_handed_over", SUPPORT_HANDED_OVER),  # every hand-over, kept (#1487)
+    ("0093_transcript_suggestions", TRANSCRIPT_SUGGESTIONS),  # a player's suggested fix (#1491)
 )
 
 # Tables that must have row-level security. A test checks every table in the schema
@@ -4740,6 +4771,7 @@ ISOLATED_TABLES = (
     *_MEMORY_TABLES,
     "transcript_sessions",
     "transcript_lines",
+    "transcript_suggestions",
     "memory_heard",
     "shared_confirmations",
     "campaign_handover_offers",

@@ -35,6 +35,7 @@ from dmbot.ui.dmbot_commands import (
     _send,
     _tell,
 )
+from dmbot.ui.line_fix import FixLineButton
 
 if TYPE_CHECKING:
     from dmbot.bot import DMBot
@@ -83,7 +84,8 @@ def ended_text(campaign_name: str) -> str:
         f"The session for **{discord.utils.escape_markdown(campaign_name)}** has ended. "
         "Download the transcript:\n"
         f"{VERSION_HELP}\n"
-        "Anyone in the server can also get it with `/transcript`."
+        "Anyone in the server can also get it with `/transcript`.\n"
+        "Did DMbot mishear you? Press ✏️ **Fix one of my lines**. Your DM decides."
     )
 
 
@@ -486,4 +488,5 @@ def download_view(guild_id: int, session_id: str) -> discord.ui.View:
     view = discord.ui.View(timeout=None)
     for choice in CHOICES:
         view.add_item(DownloadButton(guild_id, session_id, choice))
+    view.add_item(FixLineButton(guild_id, session_id))  # a player's suggested fix (#1491)
     return view
