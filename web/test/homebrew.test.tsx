@@ -36,7 +36,7 @@ describe("the campaigns", () => {
     page(mockApi("table"), "/account/homebrew");
     expect(await screen.findByText("The Brynwater Crossing")).toBeTruthy();
     expect(
-      screen.getByText(text.campaignLine("Thursday Table", 3)),
+      screen.getByText(text.campaignLine("Thursday Table", 5, 1)),
     ).toBeTruthy();
     expect(
       screen
@@ -75,6 +75,72 @@ describe("the campaigns", () => {
       "textContent",
       text.failed,
     );
+  });
+});
+
+describe("followed packs (#1586)", () => {
+  it("shows each followed pack under the table's own entries, by kind, with its name and version", async () => {
+    page(mockApi("table"), `/account/homebrew/${REF}`);
+    expect(await screen.findByText(text.packsHeading)).toBeTruthy();
+    expect(screen.getByText(text.packLine("Frost Pack", 2))).toBeTruthy();
+    expect(screen.getByText("Ice Lance")).toBeTruthy();
+    expect(screen.getByText("Aurora Cloak")).toBeTruthy();
+    const body = document.body.textContent ?? "";
+    expect(body.indexOf("Mud Wight")).toBeLessThan(body.indexOf("Ice Lance")); // own first
+    expect(screen.getByText(text.packsNote)).toBeTruthy();
+  });
+
+  it("says so under a pack that has shared nothing with players", async () => {
+    const mock = mockApi("table");
+    const api = {
+      ...mock,
+      homebrew: async (ref: string) => {
+        const found = await mock.homebrew!(ref);
+        return { ...found, packs: [{ name: "Quiet Pack", version: 1, entries: [] }] };
+      },
+    } as AccountApi;
+    page(api, `/account/homebrew/${REF}`);
+    expect(await screen.findByText(text.packLine("Quiet Pack", 1))).toBeTruthy();
+    expect(screen.getByText(text.packNone)).toBeTruthy();
+  });
+
+  it("says the campaign list follows a pack", async () => {
+    page(mockApi("table"), "/account/homebrew");
+    expect(
+      await screen.findByText("Thursday Table · 5 entries · follows another table's pack"),
+    ).toBeTruthy();
+  });
+
+  it("says there is none of its own but a pack, with no download", async () => {
+    const mock = mockApi("table");
+    const api = {
+      ...mock,
+      homebrew: async (ref: string) => ({ ...(await mock.homebrew!(ref)), entries: [] }),
+    } as AccountApi;
+    page(api, `/account/homebrew/${REF}`);
+    expect(await screen.findByText(text.emptyButPack)).toBeTruthy();
+    expect(screen.getByText("Ice Lance")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: text.download })).toBeNull();
+  });
+
+  it("shows no pack section and the short download note on an older API", async () => {
+    const mock = mockApi("table");
+    const older = {
+      ...mock,
+      homebrew: async (ref: string) => {
+        const { packs: _gone, ...rest } = await mock.homebrew!(ref);
+        return rest;
+      },
+      homebrewCampaigns: async () =>
+        (await mock.homebrewCampaigns!()).map(({ packs: _p, ...rest }) => rest),
+    } as AccountApi;
+    page(older, `/account/homebrew/${REF}`);
+    await screen.findByText("Mud Wight");
+    expect(screen.queryByText(text.packsHeading)).toBeNull();
+    expect(screen.getByText(text.downloadNote)).toBeTruthy();
+    cleanup();
+    page(older, "/account/homebrew");
+    expect(await screen.findByText("Thursday Table · 5 entries")).toBeTruthy();
   });
 });
 
@@ -117,7 +183,7 @@ describe("a campaign's entries", () => {
     const kinds = screen
       .getAllByRole("heading", { level: 3 })
       .map((h) => h.textContent);
-    expect(kinds).toEqual(["Spells", "Monsters", "Items"]); // not the order the API sent
+    expect(kinds.slice(0, 3)).toEqual(["Spells", "Monsters", "Items"]); // not the API's order
     expect(screen.getByText("A bolt of ice")).toBeTruthy();
     expect(screen.getByText(/3d6 cold damage/)).toBeTruthy();
   });
@@ -171,7 +237,9 @@ describe("a campaign's entries", () => {
 
   it("says what the file holds, next to the button", async () => {
     page(mockApi("table"), `/account/homebrew/${REF}`);
-    expect(await screen.findByText(text.downloadNote)).toBeTruthy();
+    expect(
+      await screen.findByText(text.downloadNotePacks),
+    ).toBeTruthy();
   });
 
   it("saves the file under the bot's name for it", async () => {
