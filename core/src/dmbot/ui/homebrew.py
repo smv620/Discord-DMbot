@@ -12,25 +12,32 @@ Remove can be undone while the bot keeps running: the last few removed entries a
 
 from __future__ import annotations
 
+import io
 import logging
 from functools import partial
+from typing import cast
 
 import discord
 
 from dmbot.campaigns import Campaign
+from dmbot.campaigns.models import RULEBOOK, fingerprint
 from dmbot.logs import set_log_context
+from dmbot.rules import homebrew_file
 from dmbot.rules.homebrew import (
     KINDS,
     NAME_MAX,
     NO_CAMPAIGN,
     SUMMARY_MAX,
     TEXT_MAX,
+    FileEntry,
     Homebrew,
     HomebrewError,
     HomebrewStore,
+    name_key,
 )
 from dmbot.ui import logic
 from dmbot.ui.dmbot_commands import (
+    NO_PINGS,
     NOT_IN_SERVER,
     VIEW_TIMEOUT_S,
     _answer_first,
@@ -71,6 +78,21 @@ KIND_ASK = (
     "Hidden entries are for you only; DMbot's sidebar and table answers don't use them."
 )
 CHANGED_MIND = "Press ↩️ **Undo** to bring it back."
+
+FILE_MAX_BYTES = 4 * homebrew_file.MAX_FILE_CHARS  # UTF-8 is up to 4 bytes a character
+DOWNLOAD_LABEL = "📤 Download file"
+LOAD_LABEL = "📥 Load file"
+DOWNLOAD_NOTE = (
+    "Your campaign's homebrew as a text file. Only you can see this message. Edit it anywhere, "
+    "then press **Load file** to bring it back."
+)
+COULDNT_FILE = "Couldn't make the file just now. Try again in a moment."
+FROM_BOOK_ASK = "**Is any of this from a published book?**"
+FROM_BOOK_WARNING = (
+    "**Pressing “I have the right” confirms you have the right to use this material.** DMbot "
+    "doesn't check this. It is kept only in this campaign, never shared with other campaigns "
+    "or servers, and you can remove it. It goes when the campaign is deleted."
+)
 
 KIND_LABELS = {
     "spell": "✨ Spell",
@@ -213,10 +235,13 @@ class ListMenu(_Menu):
             self.add_item(_Button(self._older, label="Older ▶"))
         for gone in removed[-UNDO_SHOWN:]:  # the newest removal (the note says which)
             self.add_item(_Button(partial(self._undo, gone), label="↩️ Undo last remove"))
+        self.add_item(_Button(self._download, label=DOWNLOAD_LABEL, row=2))
+        self.add_item(_Button(self._load, label=LOAD_LABEL, row=2))
         shown = entries[page * PAGE_ENTRIES : (page + 1) * PAGE_ENTRIES]
         if shown:
             self.pick = _Select(
                 self._picked,
+                row=1,
                 placeholder="Pick one to open…",
                 options=[
                     discord.SelectOption(
@@ -236,6 +261,33 @@ class ListMenu(_Menu):
             await _tell(interaction, ONLY_DMS)
             return
         await _show(interaction, KIND_ASK, KindPick(self.campaign, self.page))
+
+    async def _download(self, interaction: discord.Interaction) -> None:
+        if not await _is_dm(interaction, self.campaign):
+            await _tell(interaction, ONLY_DMS)
+            return
+        await _answer_first(interaction)  # a new private message; the list stays as it is
+        store = _store(interaction)
+        try:
+            entries = await store.list(self.campaign.guild_id, self.campaign.id) if store else None
+            if entries is None:
+                raise RuntimeError("no store")
+            data = homebrew_file.write(self.campaign.name, entries).encode()
+            file = discord.File(
+                io.BytesIO(data), filename=homebrew_file.filename(self.campaign.name)
+            )
+            await interaction.followup.send(
+                DOWNLOAD_NOTE, file=file, ephemeral=True, allowed_mentions=NO_PINGS
+            )
+        except Exception:
+            log.warning("Couldn't send the homebrew file", exc_info=True)
+            await _tell(interaction, COULDNT_FILE)
+
+    async def _load(self, interaction: discord.Interaction) -> None:
+        if not await _is_dm(interaction, self.campaign):
+            await _tell(interaction, ONLY_DMS)
+            return
+        await interaction.response.send_modal(LoadForm(self.campaign, self.page))
 
     async def _newer(self, interaction: discord.Interaction) -> None:
         await _redraw(interaction, self.campaign, page=self.page - 1)
@@ -524,6 +576,181 @@ class EditForm(_EntryForm, title="Edit homebrew"):
             unchanged_since=e.version,
         )
         return f"✏️ Saved **{_md(saved.name)}**."
+
+
+def _preview(have: list[Homebrew], entries: tuple[FileEntry, ...]) -> tuple[int, int, int]:
+    """(new, changed, same) if these entries were loaded now, by name; the store decides again."""
+    old = {name_key(e.name): e for e in have}
+    new = changed = same = 0
+    for e in entries:
+        found = old.get(name_key(e.name))
+        if found is None:
+            new += 1
+            continue
+        known = found.players_may_know if e.players_may_know is None else e.players_may_know
+        alike = (found.kind, found.name, found.text, found.summary, found.players_may_know) == (
+            e.kind,
+            e.name,
+            e.text,
+            e.summary,
+            known,
+        )
+        same, changed = (same + 1, changed) if alike else (same, changed + 1)
+    return new, changed, same
+
+
+def preview_text(
+    parsed: homebrew_file.Parsed, counts: tuple[int, int, int], campaign_name: str
+) -> str:
+    new, changed, same = counts
+    noun = "entry" if len(parsed.entries) == 1 else "entries"
+    lines = [
+        f"📄 **The file has {len(parsed.entries)} {noun}** for {_fit(_md(campaign_name), 60)}: "
+        f"{new} new, {changed} changed, {same} the same."
+    ]
+    if parsed.problems:
+        lines.append(f"**{len(parsed.problems)} part(s) could not be used and are left out:**")
+        for problem in parsed.problems[:5]:
+            where = f"line {problem.line}: " if problem.line else ""
+            lines.append(f"• {where}{_fit(_md(problem.text), 50)} ({problem.why})")
+        if len(parsed.problems) > 5:
+            lines.append("• …and more.")
+    lines.append(FROM_BOOK_ASK)
+    return _fit("\n".join(lines), 1900)
+
+
+class LoadForm(discord.ui.Modal, title="Load homebrew"):
+    file: discord.ui.Label[LoadForm] = discord.ui.Label(
+        text="Your homebrew file (a .txt file)",
+        component=discord.ui.FileUpload(max_values=1),
+    )
+
+    def __init__(self, campaign: Campaign, page: int = 0) -> None:
+        super().__init__(timeout=30 * 60)
+        self.campaign, self.page = campaign, page
+
+    async def on_error(  # type: ignore[override]  # a form's has no item (discord.py)
+        self, interaction: discord.Interaction, error: Exception
+    ) -> None:
+        await _failed(interaction, error)
+
+    async def on_submit(self, interaction: discord.Interaction) -> None:
+        await _answer_first(interaction)
+        if not await _is_dm(interaction, self.campaign):  # before reading anything
+            await _tell(interaction, ONLY_DMS)
+            return
+        upload = cast(discord.ui.FileUpload[LoadForm], self.file.component)
+        if not upload.values:
+            await _tell(interaction, f"No file was added. Press {LOAD_LABEL} and pick one.")
+            return
+        attachment = upload.values[0]
+        if attachment.size > FILE_MAX_BYTES:
+            await _tell(interaction, "That file is too big to read.")
+            return
+        try:
+            data = await attachment.read()
+        except discord.HTTPException:
+            await _tell(interaction, "DMbot couldn't download that file. Try again.")
+            return
+        text = data.decode("utf-8", errors="replace")
+        parsed = homebrew_file.parse(text)
+        store = _store(interaction)
+        if store is None:
+            await _tell(interaction, NOT_READY)
+            return
+        if not parsed.entries:
+            reason = "; ".join(f"line {p.line}: {p.why}" for p in parsed.problems[:3]) or "empty"
+            await _tell(
+                interaction, f"Nothing in that file could be used ({reason}). Nothing was loaded."
+            )
+            return
+        have = await store.list(self.campaign.guild_id, self.campaign.id)
+        await _send(
+            interaction,
+            preview_text(parsed, _preview(have, parsed.entries), self.campaign.name),
+            FromBookAsk(self.campaign, parsed.entries, fingerprint(text), self.page),
+        )
+
+
+class FromBookAsk(_Menu):
+    """Before anything is stored: is any of it from a published book? No: the DM's own. Yes: the
+    right-to-use confirmation first (who and when are recorded), and the entries are marked."""
+
+    def __init__(
+        self, campaign: Campaign, entries: tuple[FileEntry, ...], digest: str, page: int
+    ) -> None:
+        super().__init__()
+        self.campaign, self.entries, self.digest, self.page = campaign, entries, digest, page
+        self.add_item(_Button(self._own, label="No, all my own", style=discord.ButtonStyle.primary))
+        self.add_item(_Button(self._book, label="Yes, some is from a book"))
+        self.add_item(_Button(self._cancel, label="Cancel"))
+
+    async def _own(self, interaction: discord.Interaction) -> None:
+        await self._load(interaction, from_book=False)
+
+    async def _book(self, interaction: discord.Interaction) -> None:
+        if not await _is_dm(interaction, self.campaign):
+            await _tell(interaction, ONLY_DMS)
+            return
+        await _show(
+            interaction,
+            f"{FROM_BOOK_WARNING}",
+            RightToUse(self.campaign, self.entries, self.digest, self.page),
+        )
+
+    async def _cancel(self, interaction: discord.Interaction) -> None:
+        await _redraw(interaction, self.campaign, note="Nothing was loaded.", page=self.page)
+
+    async def _load(self, interaction: discord.Interaction, *, from_book: bool) -> None:
+        await _answer_first(interaction, in_place=True)
+        if not await _is_dm(interaction, self.campaign):
+            await _tell(interaction, ONLY_DMS)
+            return
+        store, c = _store(interaction), self.campaign
+        if store is None:
+            await _tell(interaction, NOT_READY)
+            return
+        try:
+            if from_book:
+                # The IP rule (CLAUDE.md): who confirmed the right to use it, and when. Recorded
+                # before anything is stored; a fingerprint tells files apart, never the words.
+                await _bot(interaction).campaigns.record_confirmation(
+                    c.guild_id, c.id, interaction.user.id, RULEBOOK, self.digest
+                )
+                log.info(
+                    "Homebrew from a book confirmed: user=%s campaign=%s doc=%s",
+                    interaction.user.id,
+                    c.id,
+                    self.digest[:12],
+                )
+            done = await store.load_file(
+                c.guild_id, c.id, interaction.user.id, self.entries, from_book=from_book
+            )
+        except HomebrewError as exc:
+            await _redraw(interaction, c, note=str(exc), page=self.page)
+            return
+        self.stop()
+        words = f"📥 Loaded: {done.added} new, {done.updated} changed, {done.same} the same."
+        await _redraw(interaction, c, note=words, page=self.page)
+
+
+class RightToUse(FromBookAsk):
+    """The warning, and the one button that confirms it."""
+
+    def __init__(
+        self, campaign: Campaign, entries: tuple[FileEntry, ...], digest: str, page: int
+    ) -> None:
+        _Menu.__init__(self)
+        self.campaign, self.entries, self.digest, self.page = campaign, entries, digest, page
+        self.add_item(
+            _Button(
+                self._confirmed, label="I have the right: load it", style=discord.ButtonStyle.danger
+            )
+        )
+        self.add_item(_Button(self._cancel, label="Cancel"))
+
+    async def _confirmed(self, interaction: discord.Interaction) -> None:
+        await self._load(interaction, from_book=True)
 
 
 @dmbot_group.command(

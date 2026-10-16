@@ -10,7 +10,7 @@ from unittest.mock import AsyncMock
 
 from dmbot.campaigns import CampaignStore
 from dmbot.dm_screen.settings import HomebrewButton
-from dmbot.rules.homebrew import HomebrewSection, HomebrewStore
+from dmbot.rules.homebrew import FileEntry, HomebrewSection, HomebrewStore
 from dmbot.ui import homebrew as ui
 from tests.pg import DatabaseTest
 from tests.test_memory_names import FakeResponse
@@ -236,3 +236,104 @@ class EveryPress(HomebrewUiTest):
     async def test_a_name_that_case_folds_long_is_refused_in_plain_words_not_crashed(self) -> None:
         saved = await self.add("ΐ" * 80)  # each letter folds to three: 240, within the limit
         self.assertEqual(len(saved.name), 80)
+
+
+class TheFile(HomebrewUiTest):
+    def with_upload(self, form: Any, text: str) -> Any:
+        """A load form whose file box holds `text`."""
+
+        class Attachment:
+            size = len(text.encode())
+
+            async def read(self) -> bytes:
+                return text.encode()
+
+        upload = form.file.component
+        upload._underlying = SimpleNamespace(values=None)
+        type(upload).values = property(lambda self: [Attachment()])  # type: ignore[assignment]
+        return form
+
+    async def test_download_sends_the_file_privately_to_a_dm_only(self) -> None:
+        await self.add("Hollow King")
+        menu = ui.ListMenu(self.campaign, [], 0, [])
+        it = self.press()
+        await menu._download(it)
+        kwargs = it.followup.send.await_args.kwargs
+        self.assertTrue(kwargs["ephemeral"])
+        self.assertEqual(kwargs["file"].filename, "homebrew-frostmaiden.txt")
+        self.assertIn(b"## Hollow King (monster)", kwargs["file"].fp.read())
+        stranger = self.press(PLAYER)
+        await menu._download(stranger)
+        self.assertEqual(self.said(stranger), ui.ONLY_DMS)
+
+    async def test_load_opens_the_form_for_a_dm_and_refuses_anyone_else(self) -> None:
+        menu = ui.ListMenu(self.campaign, [], 0, [])
+        it = self.press()
+        await menu._load(it)
+        self.assertIsInstance(it.response.modal, ui.LoadForm)
+        stranger = self.press(PLAYER)
+        await menu._load(stranger)
+        self.assertIsNone(stranger.response.modal)
+        self.assertEqual(self.said(stranger), ui.ONLY_DMS)
+
+    async def test_the_preview_counts_and_asks_about_a_book_before_storing_anything(self) -> None:
+        await self.store.add(
+            GUILD, self.campaign.id, DM, kind="monster", name="Hollow King", text="Old."
+        )
+        text = (
+            "## Hollow King (monster)\n\nNew.\n\n## Moonblade (item)\n\nA sword.\n\n"
+            "## Bad (dragon)\n\nx\n"
+        )
+        form = self.with_upload(ui.LoadForm(self.campaign), text)
+        it = self.press()
+        await form.on_submit(it)
+        said = it.followup.send.await_args.args[0]
+        self.assertIn("2 entries", said)
+        self.assertIn("1 new, 1 changed, 0 the same", said)
+        self.assertIn("could not be used", said)
+        self.assertIn(ui.FROM_BOOK_ASK, said)
+        self.assertEqual(
+            [e.name for e in await self.store.list(GUILD, self.campaign.id)], ["Hollow King"]
+        )
+        self.assertEqual((await self.store.list(GUILD, self.campaign.id))[0].text, "Old.")
+
+    async def test_no_loads_it_as_the_dms_own_and_records_no_confirmation(self) -> None:
+        ask = ui.FromBookAsk(self.campaign, (FileEntry("rule", "House", "Mine."),), "a" * 64, 0)
+        it = self.press()
+        await ask._own(it)
+        (saved,) = await self.store.list(GUILD, self.campaign.id)
+        self.assertFalse(saved.from_book)
+        self.assertEqual(await self.campaigns.confirmations(GUILD, self.campaign.id), [])
+        self.assertIn("Loaded: 1 new", self.said(it))
+
+    async def test_yes_asks_first_and_only_the_confirmation_stores_and_records_who_and_when(
+        self,
+    ) -> None:
+        ask = ui.FromBookAsk(self.campaign, (FileEntry("rule", "Booked", "Words."),), "b" * 64, 0)
+        it = self.press()
+        await ask._book(it)
+        self.assertIn("confirms you have the right", self.said(it))
+        self.assertEqual(await self.store.list(GUILD, self.campaign.id), [])  # nothing yet
+        right = ui.RightToUse(self.campaign, ask.entries, ask.digest, 0)
+        await right._confirmed(self.press())
+        (saved,) = await self.store.list(GUILD, self.campaign.id)
+        self.assertTrue(saved.from_book)
+        (record,) = await self.campaigns.confirmations(GUILD, self.campaign.id)
+        self.assertEqual(record["purpose"], "rulebook")
+        self.assertEqual(record["fingerprint"], "b" * 64)
+
+    async def test_cancel_loads_nothing_and_a_non_dm_cannot_confirm(self) -> None:
+        right = ui.RightToUse(self.campaign, (FileEntry("rule", "X", "y"),), "c" * 64, 0)
+        await right._cancel(self.press())
+        await right._confirmed(self.press(PLAYER))
+        self.assertEqual(await self.store.list(GUILD, self.campaign.id), [])
+        self.assertEqual(await self.campaigns.confirmations(GUILD, self.campaign.id), [])
+
+    async def test_a_file_over_the_limit_is_refused_with_the_count(self) -> None:
+        for n in range(200):
+            await self.store.add(GUILD, self.campaign.id, DM, kind="rule", name=f"R{n}", text="x")
+        ask = ui.FromBookAsk(self.campaign, (FileEntry("rule", "One more", "x"),), "d" * 64, 0)
+        it = self.press()
+        await ask._own(it)
+        self.assertIn("would make 201 entries", self.said(it))
+        self.assertEqual(len(await self.store.list(GUILD, self.campaign.id)), 200)
