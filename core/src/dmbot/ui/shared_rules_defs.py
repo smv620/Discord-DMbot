@@ -5,7 +5,7 @@ shown before using a set, and the one-line notes after Follow and Unfollow. The 
 
 from __future__ import annotations
 
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Collection, Sequence
 from typing import Any
 
 import discord
@@ -96,15 +96,26 @@ class ShareChoose(_Menu):
         self,
         offered: Sequence[dict[str, Any]],
         done: Callable[[discord.Interaction, list[dict[str, Any]]], Any],
+        *,
+        start: Collection[str] | None = None,
+        skip_keeps_start: bool = False,
+        go_label: str = "Share with ticked",
+        skip_label: str = "Rules only",
+        placeholder: str = "Relationships to share",
     ) -> None:
         super().__init__()
         self.offered = list(offered)[:MENU_MAX]
-        self.ticked = {d["key"] for d in self.offered}
+        # At Share everything starts ticked. When a set is published again, what the set carries
+        # starts ticked and a new one does not: the DM adds one on purpose (#1475), and takes one
+        # out by unticking it (#1479).
+        self.ticked = {d["key"] for d in self.offered} if start is None else set(start)
+        self._start = set(self.ticked)  # what "Keep as it is" keeps, whatever is picked later
+        self._skip_keeps_start = skip_keeps_start
         self._done = done
         self.add_item(
             _Select(
                 self._picked,
-                placeholder="Relationships to share",
+                placeholder=placeholder,
                 min_values=0,
                 max_values=len(self.offered),
                 options=tick_options(self.offered, self.ticked),
@@ -112,11 +123,9 @@ class ShareChoose(_Menu):
             )
         )
         self.add_item(
-            _Button(
-                self._share, label="Share with ticked", style=discord.ButtonStyle.primary, row=1
-            )
+            _Button(self._share, label=go_label, style=discord.ButtonStyle.primary, row=1)
         )
-        self.add_item(_Button(self._none, label="Rules only", row=1))
+        self.add_item(_Button(self._none, label=skip_label, row=1))
 
     async def _picked(self, interaction: discord.Interaction) -> None:
         select = next(c for c in self.children if isinstance(c, discord.ui.Select))
@@ -132,7 +141,11 @@ class ShareChoose(_Menu):
 
     async def _none(self, interaction: discord.Interaction) -> None:
         self.stop()
-        await self._done(interaction, [])
+        keep = (
+            [d for d in self.offered if d["key"] in self._start] if self._skip_keeps_start else []
+        )
+        # (the select may have been changed first: "Keep as it is" means the starting ticks)
+        await self._done(interaction, keep)
 
 
 CHOOSE_TEXT = (
@@ -142,12 +155,22 @@ CHOOSE_TEXT = (
 )
 
 
+NEW_TEXT = (
+    "Ticked relationships are shared with your rules.\n"
+    "Tick a new one to add it.\n"
+    "Untick one to stop sharing it. It stays in your campaign. Other tables lose it at their "
+    "next session start.\n"
+    "They get each one's name and meaning, never your facts, names or notes.\n"
+    "**Use ticked** applies your ticks. **Keep as it is** ignores any change you made here.\n"
+    "You'll see the changes before anything is published."
+)
+
 TEXT_MAX = 1800  # under Discord's 2,000
 
 
-def tick_list_text(offered: Sequence[dict[str, Any]]) -> str:
+def tick_list_text(offered: Sequence[dict[str, Any]], head: str = CHOOSE_TEXT) -> str:
     """The question and, under it, what each relationship says (as far as the message holds)."""
-    text = CHOOSE_TEXT
+    text = head
     shown = 0
     for d in offered[:MENU_MAX]:
         line = f"\n• {_md(sd.tick_line(d))}"

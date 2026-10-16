@@ -254,6 +254,73 @@ class Flow(DatabaseTest):
         self.assertEqual((done.updated, done.removed), (("vows loyalty to",), ("guards",)))
         self.assertEqual(set(await self.borrowed()), {"vowed_to"})
 
+    async def test_a_relationship_added_at_publish_reaches_the_follower_as_new_and_marked(
+        self,
+    ) -> None:
+        # Published with one; the DM later ticks a second at "Publish my changes" (#1475): the new
+        # version holds both, the follower is told it is new and gets it marked as the set's.
+        await self.follow(await self.publish(["vowed_to"]))
+        mine = {d["key"]: d for d in await sd.own_definitions(self.memory, GUILD_A, self.pub)}
+        await self.sets.publish_changes(
+            GUILD_A, self.pub, DM_A, self.rules, None, plan_ok=True,
+            definitions=[mine["vowed_to"], mine["guards"]],
+        )  # fmt: skip
+        update = await self.sets.pending_update(GUILD_B, self.far)
+        assert update is not None
+        self.assertEqual({(c.kind, c.key) for c in update.def_changes}, {("added", "guards")})
+        await self.sets.take_update(GUILD_B, self.far, DM_B)
+        done = await set_sync.reconcile(self.memory, self.sets, GUILD_B, self.far)
+        self.assertEqual(done.added, ("guards",))
+        self.assertEqual(set(await self.borrowed()), {"vowed_to", "guards"})
+
+    async def test_a_relationship_left_out_of_a_new_version_goes_or_is_retired_at_the_follower(
+        self,
+    ) -> None:
+        # Untick at "Publish my changes" (#1479): the new version holds only vowed_to. The
+        # follower's unused copy of guards goes; a copy that facts use is retired, not deleted.
+        await self.follow(await self.publish(["vowed_to", "guards"]))
+        a, b = [
+            (
+                await self.memory.add_entity(
+                    GUILD_B, self.far, type="character", name=n, source="dm", status="confirmed"
+                )
+            ).value.id
+            for n in ("Mira", "Cerric")
+        ]
+        await self.memory.add_relation(
+            GUILD_B, self.far, a, "vowed_to", b, source="dm", confidence=1.0
+        )
+        mine = {d["key"]: d for d in await sd.own_definitions(self.memory, GUILD_A, self.pub)}
+        await self.sets.publish_changes(
+            GUILD_A, self.pub, DM_A, self.rules, None, plan_ok=True,
+            definitions=[mine["guards"]],
+        )  # fmt: skip
+        update = await self.sets.pending_update(GUILD_B, self.far)
+        assert update is not None
+        self.assertEqual(
+            {(c.kind, c.key) for c in update.def_changes},
+            {("removed", "vowed_to")},
+        )
+        await self.sets.take_update(GUILD_B, self.far, DM_B)
+        done = await set_sync.reconcile(self.memory, self.sets, GUILD_B, self.far)
+        self.assertEqual((done.removed, done.deprecated), ((), ("vows loyalty to",)))
+        self.assertEqual(await self.borrowed(), {"vowed_to": "deprecated", "guards": "active"})
+        # The publisher's own relationships are untouched.
+        own = {d["key"] for d in await sd.own_definitions(self.memory, GUILD_A, self.pub)}
+        self.assertEqual(own, {"vowed_to", "guards"})
+
+    async def test_an_unused_relationship_left_out_is_removed_at_the_follower(self) -> None:
+        await self.follow(await self.publish(["vowed_to", "guards"]))
+        mine = {d["key"]: d for d in await sd.own_definitions(self.memory, GUILD_A, self.pub)}
+        await self.sets.publish_changes(
+            GUILD_A, self.pub, DM_A, self.rules, None, plan_ok=True,
+            definitions=[mine["vowed_to"]],
+        )  # fmt: skip
+        await self.sets.take_update(GUILD_B, self.far, DM_B)
+        done = await set_sync.reconcile(self.memory, self.sets, GUILD_B, self.far)
+        self.assertEqual((done.removed, done.deprecated), (("guards",), ()))
+        self.assertEqual(set(await self.borrowed()), {"vowed_to"})
+
     async def test_cherry_pick_takes_the_relationships_one_by_one_and_keeps_them_as_its_own(
         self,
     ) -> None:

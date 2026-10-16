@@ -77,22 +77,24 @@ export const dmSteps: Step[] = [
     names: [{ name: "/dmbot backup", file: "ui/dmbot_commands.py" }],
   },
   {
-    text: "To share your house rules with another table, press ⚙️ Settings, then 📚 Shared rules, then 📤 Share my house rules (paid campaigns only). DMbot gives you a share code. Anyone with the code can read your rules, so give it only to a game master you trust. Press 🔑 New share code to get another one. Old codes keep working; Stop sharing turns them all off.",
+    text: "To share your house rules with another table, press ⚙️ Settings, then 📚 Shared rules, then 📤 Share my house rules (paid campaigns only). DMbot gives you a share code. Anyone with the code can read your rules, so give it only to a game master you trust. Press 🔑 New share code to get another one. Old codes keep working; Stop sharing turns them all off. If your table has relationships of its own (kinds of link between people, places and things), DMbot shows them as a list before sharing. Tick the ones to share and press Share with ticked, or press Rules only. Only their names and what they mean go; never your story, your characters' or places' names, or your notes.",
     names: [
       { name: "Shared rules", file: "dm_screen/settings.py" },
       { name: "📤 Share my house rules", file: "ui/shared_rules.py" },
       { name: "🔑 New share code", file: "ui/shared_rules.py" },
+      { name: "Share with ticked", file: "ui/shared_rules_defs.py" },
+      { name: "Rules only", file: "ui/shared_rules_defs.py" },
     ],
   },
   {
-    text: "To use another table's rules, press ⚙️ Settings, then 📚 Shared rules, then 📥 Use shared rules, and type their code. DMbot shows you the rules first. Press Yes, use this set to keep them. Your own house rules always win over theirs.",
+    text: "To use another table's rules, press ⚙️ Settings, then 📚 Shared rules, then 📥 Use shared rules, and type their code. DMbot shows you the rules first. Press Yes, use this set to keep them. Your own house rules always win over theirs. If the set brings relationships, DMbot tells you which. You can't change them while you use the set. One you already have by the same name stays yours.",
     names: [
       { name: "📥 Use shared rules", file: "ui/shared_rules.py" },
       { name: "Yes, use this set", file: "ui/shared_rules.py" },
     ],
   },
   {
-    text: "When shared rules change, DMbot adds the new version at your next session and tells you. Press See changes to look, Pick changes to choose which to keep, or Undo to put your old copy back.",
+    text: "When shared rules change, DMbot adds the new version at your next session and tells you. Press See changes to look, Pick changes to choose which to keep, or Undo to put your old copy back. Relationships come one at a time like rules.",
     names: [
       { name: "See changes", file: "dm_screen/set_update.py" },
       { name: "Pick changes", file: "dm_screen/set_update.py" },
@@ -134,7 +136,7 @@ export const dmSteps: Step[] = [
     ],
   },
   {
-    text: "To stop using someone's rules, press ⚙️ Settings, then 📚 Shared rules, then Stop using shared rules. Your own rules stay as they are.",
+    text: "To stop using someone's rules, press ⚙️ Settings, then 📚 Shared rules, then Stop using shared rules. Your own rules stay as they are. Their relationships go too, unless a fact of yours uses one: that one stays, marked, and can't be used for new facts.",
     names: [{ name: "Stop using shared rules", file: "ui/shared_rules.py" }],
   },
   {
