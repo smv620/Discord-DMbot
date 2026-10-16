@@ -41,6 +41,7 @@ from dmbot.web import (
     support,
     tokens,
 )
+from dmbot.web import house_rules as house_rule_pages
 from dmbot.web import recap_audio as audio_links
 from dmbot.web import transcripts as transcript_pages
 from dmbot.web.accounts import (
@@ -753,6 +754,39 @@ def create_app(
             text.encode("utf-8"),
             media_type="text/plain; charset=utf-8",
             # `name` is a slug of letters, digits and dashes (export.file_name): safe in a header.
+            headers={"Content-Disposition": f'attachment; filename="{name}"'},
+        )
+
+    # A campaign's house rules, for anyone in the server (#1521): the table's rules, which every
+    # member may read in Discord; no plan rule, as the bot has none for them.
+    @app.get("/me/house-rules")
+    async def me_house_rule_campaigns(signed: Signed) -> dict[str, Any]:
+        """The campaigns with a house rule or a followed set in the person's servers."""
+        session, _token = signed
+        return {"campaigns": await house_rule_pages.list_campaigns(db, session)}
+
+    @app.get("/me/campaigns/{ref}/house-rules")
+    async def me_house_rules(ref: str, signed: Signed) -> dict[str, Any]:
+        session, _token = signed
+        try:
+            return await house_rule_pages.read_rules(db, session, ref)
+        except RecapError as err:
+            status, detail = recap_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+
+    @app.get("/me/campaigns/{ref}/house-rules/download")
+    async def me_house_rules_download(ref: str, signed: Signed) -> Response:
+        """The file the bot's Download button sends, byte for byte."""
+        session, _token = signed
+        try:
+            name, text = await house_rule_pages.render(db, session, ref)
+        except RecapError as err:
+            status, detail = recap_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+        return Response(
+            text.encode(),
+            media_type="text/plain; charset=utf-8",
+            # `name` is `house_file.filename`'s slug (letters, digits, dashes): safe in a header.
             headers={"Content-Disposition": f'attachment; filename="{name}"'},
         )
 

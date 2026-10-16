@@ -235,7 +235,9 @@ class ConsentDMTests(DatabaseTest):
         self.bot.ears._active = self.ears  # type: ignore[assignment]
         self.posts: list[tuple[int, str]] = []
 
-        async def fake_post(channel_id: int, text: str, view: object = None) -> bool:
+        async def fake_post(
+            channel_id: int, text: str, view: object = None, *, remember: object = None
+        ) -> bool:
             self.posts.append((channel_id, text))
             return True
 

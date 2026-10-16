@@ -136,7 +136,9 @@ class TableTest(unittest.IsolatedAsyncioTestCase):
         self.bot.house_rules = self.store  # type: ignore[assignment]
         self.posts: list[tuple[int, str, Any]] = []
 
-        async def post_message(channel_id: int, text: str, view: Any = None) -> object:
+        async def post_message(
+            channel_id: int, text: str, view: Any = None, *, remember: Any = None
+        ) -> object:
             self.posts.append((channel_id, text, view))
             return object()
 
@@ -268,7 +270,9 @@ class WhenThingsGoWrong(TableTest):
         self.assertEqual(self.posts, [])
 
     async def test_a_card_that_could_not_be_posted_gives_back_its_name_and_its_minute(self) -> None:
-        async def nowhere(channel_id: int, text: str, view: Any = None) -> None:
+        async def nowhere(
+            channel_id: int, text: str, view: Any = None, *, remember: Any = None
+        ) -> None:
             return None
 
         self.bot.post_message = nowhere  # type: ignore[method-assign]

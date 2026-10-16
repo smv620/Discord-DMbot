@@ -231,6 +231,17 @@ class SuggestionStore:
             for r in rows
         ]
 
+    async def session_counts(self, guild_id: int, session_id: str) -> tuple[int, int]:
+        """How many fixes players suggested for this session, and how many still wait (#1510)."""
+        async with self._db.guild(guild_id) as conn:
+            cur = await conn.execute(
+                "SELECT count(*) AS total, count(*) FILTER (WHERE state = 'open') AS waiting"
+                " FROM transcript_suggestions WHERE session_id = %s",
+                (session_id,),
+            )
+            row = await cur.fetchone()
+        return (int(row["total"]), int(row["waiting"])) if row is not None else (0, 0)
+
     async def decide(self, guild_id: int, suggestion_id: int, state: str, by: int) -> bool:
         """The DM's answer (accepted or declined). True only for the call that closed it: a
         second press, or one on a dropped suggestion, changes nothing."""

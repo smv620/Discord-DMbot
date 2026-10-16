@@ -353,7 +353,9 @@ class AtTheTable(Clocks):
         )
         self.posted: list[str] = []
 
-        async def post_message(channel_id: int, text: str, view: Any = None) -> None:
+        async def post_message(
+            channel_id: int, text: str, view: Any = None, *, remember: Any = None
+        ) -> None:
             self.posted.append(text)
 
         self.bot.post_message = post_message  # type: ignore[method-assign]

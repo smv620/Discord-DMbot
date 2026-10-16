@@ -17,7 +17,7 @@ import shutil
 import signal
 import time
 from collections import Counter
-from collections.abc import Awaitable, Callable, Coroutine, Sequence
+from collections.abc import Awaitable, Callable, Coroutine, Hashable, Sequence
 from dataclasses import dataclass, field
 from functools import partial
 from pathlib import Path
@@ -245,6 +245,7 @@ from dmbot.ui.claims_review import ClaimsReviewButton, claims_review_view
 from dmbot.ui.claims_review import waiting_text as claims_waiting_text
 from dmbot.ui.continuity import ContinuityButton, continuity_view
 from dmbot.ui.continuity import waiting_text as continuity_waiting_text
+from dmbot.ui.decision_lines import DecisionLines
 from dmbot.ui.dmbot_commands import _failed, dmbot_group
 from dmbot.ui.homebrew import dmbot_homebrew  # noqa: F401 (registers it)
 from dmbot.ui.house_rules import dmbot_house_rules  # noqa: F401 (registers it)
@@ -460,6 +461,10 @@ class Table:
     fix_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
     fix_queued: bool = False  # a redraw is waiting: more changes just ride along
     fix_ended: bool = False  # the session is over: the lists stay, their buttons go
+    # What the Cleaner did this session, for the one line of counts in the end-of-session message
+    # (#1510): name fixes made, "Did they mean…?" questions asked. Counts only; no words.
+    names_fixed: int = 0
+    names_asked: int = 0
     # Lines the off-topic filter left out, each run with Put it back (#677), likewise.
     left_out: left_out.LeftOut = field(default_factory=left_out.LeftOut)
     left_out_message: discord.Message | None = None
@@ -693,6 +698,7 @@ class DMBot(commands.AutoShardedBot):
         self.homebrew = homebrew  # a campaign's own homebrew entries (#1520)
         # The last entries a DM removed, per campaign, so the list can put them back (memory only).
         self.homebrew_removed: dict[tuple[int, str], list[Any]] = {}
+        self.decision_lines = DecisionLines()  # DM-screen lines to clear once decided (#1509)
         self.house_syncs = house_sync.Pendings()
         # Timed effects on that clock (#998); None without a database.
         self.effects = effects
@@ -1770,6 +1776,7 @@ class DMBot(commands.AutoShardedBot):
                         f"📜 Last session's recap is still waiting: **{shown}**. "
                         "Nothing has gone to the players.",
                         view=ready_view(cid, session_at),
+                        remember=("recap", cid, session_at),
                     )
             except Exception:
                 log.exception("The waiting-recap line failed")
@@ -1803,6 +1810,7 @@ class DMBot(commands.AutoShardedBot):
                         table.screen_channel_id,
                         dm_text(who, w.heard, w.text, w.suggested),
                         suggestion_view(w.id),
+                        remember=("fix", w.id),
                     )
                 more = len(waiting) - WAITING_SHOWN
                 if more > 0 and self.tables.get(gid) is table:
@@ -2060,6 +2068,19 @@ class DMBot(commands.AutoShardedBot):
         problems = screen_messages.summary_problems(
             self.pipeline.missed_in[session], self.pipeline.failed_in[session], caught_up
         )
+        session_id = table.transcript_session_id
+        suggested = waiting = 0
+        if session_id is not None and self.suggestions is not None:
+            try:
+                suggested, waiting = await self.suggestions.session_counts(gid, session_id)
+            except Exception:
+                log.exception("Couldn't count the session's suggested fixes")
+        edited = sum(1 for n in table.fix_notes.notes if n.fix.how == DM_EDIT and not n.undone)
+        unanswered = sum(
+            1
+            for why in table.questions.closed_why.values()
+            if why in (name_questions.EXPIRED_WHY, name_questions.ENDED)
+        )
         text = screen_messages.session_summary(
             table.campaign_name,
             table.started_at or ended_at,
@@ -2067,8 +2088,15 @@ class DMBot(commands.AutoShardedBot):
             spoke,
             problems,
             downloads_sent=downloads_sent,
+            names=screen_messages.names_line(
+                table.names_fixed,
+                table.names_asked,
+                unanswered,
+                edited,
+                suggested,
+                waiting,
+            ),
         )
-        session_id = table.transcript_session_id
         if session_id is not None and self.suggestions is not None:
             # With ✏️ Fix a line (#1499): the DM can correct any line, from the same picker.
             await self.post_message(
@@ -3082,14 +3110,28 @@ class DMBot(commands.AutoShardedBot):
         member = guild.get_member(user_id) if guild else None
         return member.display_name if member else f"<@{user_id}>"
 
-    async def post(self, channel_id: int, text: str, view: discord.ui.View | None = None) -> bool:
+    async def post(
+        self,
+        channel_id: int,
+        text: str,
+        view: discord.ui.View | None = None,
+        *,
+        remember: Hashable | None = None,
+    ) -> bool:
         """Send a message; returns False (and logs) if it could not be posted."""
-        return await self.post_message(channel_id, text, view) is not None
+        return await self.post_message(channel_id, text, view, remember=remember) is not None
 
     async def post_message(
-        self, channel_id: int, text: str, view: discord.ui.View | None = None
+        self,
+        channel_id: int,
+        text: str,
+        view: discord.ui.View | None = None,
+        *,
+        remember: Hashable | None = None,
     ) -> discord.Message | None:
-        """Send a message; returns it, or None (and logs) if it could not be posted."""
+        """Send a message; returns it, or None (and logs) if it could not be posted. `remember`:
+        a DM-screen line with buttons for this item, kept in memory so its buttons can come off
+        when the item is decided somewhere else (#1509)."""
         channel = self.get_channel(channel_id)
         if not isinstance(channel, discord.abc.Messageable):
             log.warning("Could not post to channel %s: channel not found", channel_id)
@@ -3097,11 +3139,15 @@ class DMBot(commands.AutoShardedBot):
         try:
             # discord.py's types don't accept view=None, so only pass a real view.
             if view is None:
-                return await channel.send(text, allowed_mentions=NO_PINGS)
-            return await channel.send(text, allowed_mentions=NO_PINGS, view=view)
+                sent = await channel.send(text, allowed_mentions=NO_PINGS)
+            else:
+                sent = await channel.send(text, allowed_mentions=NO_PINGS, view=view)
         except discord.HTTPException as exc:
             log.warning("Could not post to channel %s: %s", channel_id, exc)
             return None
+        if remember is not None:
+            self.decision_lines.remember(remember, sent)
+        return sent
 
     async def after_invite_change(self, campaign: Campaign) -> None:
         """A running session shows the DM's new D&D Beyond invite link from now on, and the
@@ -3502,6 +3548,7 @@ class DMBot(commands.AutoShardedBot):
             )
             result = self._clean(table, text, unsure=noted)
             cleaned = result.text
+            table.names_fixed += len(result.fixes)
             seam = self._look_back(table, utterance, text, result)
             self._offer_question(table, utterance.user_id, utterance.start_ms, text, result, seam)
             kept = table.last_piece.get(utterance.user_id)
@@ -4786,6 +4833,7 @@ class DMBot(commands.AutoShardedBot):
             prev_end=across.prev_end if across else 0,
         )
         if asked is not None:
+            table.names_asked += 1
             self._track(self._ask_dm(table, asked), "name-question")
 
     def _not_answered(self, table: Table, asked: name_questions.Asked) -> str:
@@ -6193,6 +6241,7 @@ class DMBot(commands.AutoShardedBot):
                     campaign.dm_screen_channel_id,
                     ready_text(job.title, link),
                     view=ready_view(cid, job.session_at),
+                    remember=("recap", cid, job.session_at),
                 )
             elif not campaign.recaps_email:
                 where = f": {link}" if link else " on the website"

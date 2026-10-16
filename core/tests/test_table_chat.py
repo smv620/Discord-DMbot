@@ -358,7 +358,9 @@ class AtTheTableTyped(AtTheTable):
     async def test_the_chat_channel_hears_about_it_once(self) -> None:
         posts: list[tuple[int, str]] = []
 
-        async def post(channel_id: int, text: str, view: Any = None) -> bool:
+        async def post(
+            channel_id: int, text: str, view: Any = None, *, remember: Any = None
+        ) -> bool:
             posts.append((channel_id, text))
             return True
 
@@ -374,7 +376,9 @@ class AtTheTableTyped(AtTheTable):
     async def test_a_chat_channel_set_mid_session_is_told_once(self) -> None:
         posts: list[tuple[int, str]] = []
 
-        async def post(channel_id: int, text: str, view: Any = None) -> bool:
+        async def post(
+            channel_id: int, text: str, view: Any = None, *, remember: Any = None
+        ) -> bool:
             posts.append((channel_id, text))
             return True
 

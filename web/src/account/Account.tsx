@@ -6,6 +6,7 @@ import { createContext } from "preact";
 import { useCallback, useContext, useEffect, useRef, useState } from "preact/hooks";
 
 import { RECAPS_LIVE } from "../content/recap-words";
+import { text as houseRulesText } from "../content/house-rules";
 import { text as recapText } from "../content/recaps";
 import { text as transcriptText } from "../content/transcripts";
 import { RECAP_AUDIO_LIVE } from "../content/recap-words";
@@ -480,6 +481,7 @@ function SignedIn({
       {me.canMove === true && api.getMoveCode && <MoveSection />}
       <SupportOrQuestions me={me} />
       <CampaignsSection me={me} />
+      {api.houseRuleCampaigns && <HouseRulesSection />}
       {api.transcriptCampaigns && <TranscriptsSection />}
       <ServersSection me={me} />
       <CharactersSection />
@@ -847,6 +849,18 @@ function CampaignsSection({ me }: { me: Me }) {
         </ul>
       )}
       {RECAPS_LIVE && me.campaigns.length > 0 && <a href="/account/recaps">{recapText.linkToList}</a>}
+    </section>
+  );
+}
+
+/** A link to the house rules (#1521): for anyone in a server, not only a DM, so it is not part of
+ * the campaigns list. Hidden on an API older than the house-rules pages. */
+function HouseRulesSection() {
+  return (
+    <section aria-labelledby="house-rules-heading" class="panel">
+      <h2 id="house-rules-heading">{houseRulesText.heading}</h2>
+      <p>{houseRulesText.lead}</p>
+      <a href="/account/house-rules">{houseRulesText.link}</a>
     </section>
   );
 }
