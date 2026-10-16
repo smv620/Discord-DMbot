@@ -6,7 +6,8 @@ next, so a restart picks up where it stopped.
     checked → prose     the AI writes the recap from the beat sheet only; code checks it; a cheap
                         grader scores it against a fixed rubric
     prose → housekeeping  the title and the housekeeping bullets, each citing a beat
-    housekeeping → ready  (slice 2 adds the audio stage here)
+    housekeeping → ready  the text is done and the DM is emailed; the audio, if wanted, is made
+                          afterwards by `dmbot.recaps.audio.worker` and never delays it
 
 A check that fails retries the stage once on the careful tier, told what was wrong; a second
 failure fails the job with a plain reason. A call that errors (the AI service, the network) waits
@@ -87,6 +88,7 @@ class RecapWorker:
         consenting: Callable[[int], Consenting],
         allowed: Callable[[int, str, Job], Awaitable[bool]],
         notify: Notify,
+        audio_wanted: Callable[[int, str, Job], Awaitable[bool]] | None = None,
         clock: Callable[[], float] = time.time,
     ) -> None:
         self._store = store
@@ -96,6 +98,7 @@ class RecapWorker:
         self._consenting = consenting
         self._allowed = allowed
         self._notify = notify
+        self._audio_wanted = audio_wanted
         self._now = clock
 
     async def run(self, guild_id: int, campaign_id: str, session_at: int) -> Job | None:
@@ -163,6 +166,7 @@ class RecapWorker:
                 attempt=0, errors=0, restarts=0, next_at=0, problems=[], last_error="",
                 window_done=0, window_count=0,
             )  # fmt: skip
+            await self._store.reset_audio(gid, cid, job.session_at)  # a new recap, new audio
             return await self._store.get(gid, cid, job.session_at)
         if not await self._allowed(gid, cid, job):
             return await self._fail(gid, cid, job, "recaps aren't on for this campaign")
@@ -465,7 +469,22 @@ class RecapWorker:
             last_error="",
         )
         log.info("Recap: ready after %d call(s)", job.calls)
-        return await self._store.get(gid, cid, job.session_at)
+        ready = await self._store.get(gid, cid, job.session_at)
+        if ready is not None and await self._wants_audio(gid, cid, ready):
+            await self._store.set_audio(gid, cid, job.session_at, audio="queued", tries=0)
+            ready = await self._store.get(gid, cid, job.session_at)
+        return ready
+
+    async def _wants_audio(self, gid: int, cid: str, job: Job) -> bool:
+        """Whether the audio tracks are to be made: the switch is on, a key is set and the plan
+        includes them. Never raises: the text is ready either way."""
+        if self._audio_wanted is None:
+            return False
+        try:
+            return await self._audio_wanted(gid, cid, job)
+        except Exception:
+            log.exception("Recap: couldn't tell whether to make the audio")
+            return False
 
     # --- ways out -----------------------------------------------------------------------
 

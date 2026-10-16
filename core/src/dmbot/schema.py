@@ -3895,6 +3895,42 @@ RECAP_JOBS = (
     """
 )
 
+RECAP_AUDIO_JOBS = (
+    """
+    -- The recap's two audio tracks (#1383), made after the text is ready; the text never waits
+    -- for them. Per recap, kept on its row; the files themselves are on disk, not here.
+    --   audio         off (not wanted, or no key), queued, ready or failed
+    --   audio_tries   attempts so far (one retry later, then failed)
+    --   audio_next_at not before this time (the wait before the retry)
+    --   audio_credits the provider credits the last make spent (a count, for the cost log)
+    --   audio_error   a short fixed reason, never a name or any text
+    ALTER TABLE recap_jobs ADD COLUMN audio TEXT NOT NULL DEFAULT 'off'
+        CHECK (audio IN ('off', 'queued', 'ready', 'failed'));
+    ALTER TABLE recap_jobs ADD COLUMN audio_tries INTEGER NOT NULL DEFAULT 0
+        CHECK (audio_tries BETWEEN 0 AND 3);
+    ALTER TABLE recap_jobs ADD COLUMN audio_next_at BIGINT NOT NULL DEFAULT 0;
+    ALTER TABLE recap_jobs ADD COLUMN audio_credits INTEGER NOT NULL DEFAULT 0
+        CHECK (audio_credits >= 0);
+    ALTER TABLE recap_jobs ADD COLUMN audio_error TEXT NOT NULL DEFAULT ''
+        CHECK (char_length(audio_error) <= 200);
+    -- A campaign's pronunciation dictionary at the voice company, made once and kept here with
+    -- a hash of its rules, so it is made again only when a name's spelling changes. Only
+    -- non-secret names are ever in it. It belongs to this campaign alone and goes with it.
+    CREATE TABLE recap_dictionaries (
+        """
+    + "{scope}"
+    + """
+        dictionary_id TEXT NOT NULL CHECK (char_length(dictionary_id) BETWEEN 1 AND 100),
+        version_id    TEXT NOT NULL CHECK (char_length(version_id) BETWEEN 1 AND 100),
+        rules_hash    TEXT NOT NULL CHECK (char_length(rules_hash) = 64),
+        updated_at    BIGINT NOT NULL,
+        PRIMARY KEY (guild_id, campaign_id)
+    );
+    """
+    + _isolate("recap_dictionaries")
+)
+RECAP_AUDIO_JOBS = RECAP_AUDIO_JOBS.replace("{scope}", _memory_scope())
+
 SUPPORT_TICKETS = (
     _setting("dmbot_support_admin", "dmbot.support_admin", "TEXT")
     + """
@@ -4127,6 +4163,7 @@ MIGRATIONS: tuple[Migration, ...] = (
     ("0077_extractor_progress", EXTRACTOR_PROGRESS),  # a restart resumes the extractor (#1367)
     ("0078_support_own", SUPPORT_OWN),  # a person's own questions (0077: another PR)
     ("0079_recap_jobs", RECAP_JOBS),  # the cinematic recap job of a session (#1382)
+    ("0082_recap_audio_jobs", RECAP_AUDIO_JOBS),  # the recap's audio tracks (#1383)
 )
 
 # Tables that must have row-level security. A test checks every table in the schema
@@ -4151,6 +4188,7 @@ ISOLATED_TABLES = (
     "game_clocks",
     "game_effects",
     "recap_jobs",
+    "recap_dictionaries",
     "memory_rule_links",
     "fightbot_players",
     "rule_sets",
