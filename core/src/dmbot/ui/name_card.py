@@ -91,10 +91,15 @@ NOTHING_CHANGED = (
 
 CARD_MAX = 1900  # under Discord's 2,000 characters
 SHOWN = 3  # per section, then "… and N more"
-SECRET_OFF = "🤫 Keep it secret"
+# A state, not an action: it is a setting that stays until pressed again.
+SECRET_OFF = "🤫 Secret: no"
 SECRET_ON = "🤫 Secret: yes"
-SECRET_FORCED = "One of these is a secret name, so the connection stays secret."
-SECRET_DENIED = "Only a campaign's DM can keep a connection secret, so it was saved as not secret."
+SECRET_FORCED = "You found it by a secret name, so this one is secret too."
+SECRET_DENIED_PRESS = "Only the campaign's DM can keep a connection secret."
+SECRET_DENIED_SAVE = (
+    "Players can see this one, because only the campaign's DM can keep a connection secret."
+)
+SECRET_ALREADY = "It was already secret, so it stays secret. Remove it and add it again to show it."
 SHOW_ALL = "Show all ▾"
 NOTHING_MORE = "That list has changed. Open the name card again to see it."
 NOTE_MAX = 600  # what just changed, above the card
@@ -666,7 +671,8 @@ class NameCard(_Menu):
         back = " Or take one back with Remove a connection." if removable else ""
         await _replace(
             interaction,
-            f"**How is {_md(name)} connected?** Pick how, then the other name.{back}",
+            f"**How is {_md(name)} connected?** Pick how, then the other name.{back}"
+            + (" 🤫 hides it from players." if secrets else ""),
             Connect(self.campaign_id, self.entity_id, name, removable, secrets=secrets),
         )
 
@@ -1329,7 +1335,7 @@ async def show_picks(
         if m.entity_id != entity_id
     ]
     options = [discord.SelectOption(label=_label(names, m), value=m.entity_id) for m in matches]
-    asked = f"**{_md(_asked(name, how))}**"
+    asked = f"**{_md(_asked(name, how))}**" + (" 🤫 Secret." if secret else "")
     if not matches:
         text = (
             f"{asked}\nNo other name like **{_md(typed)}** yet. Search again, or add it "
@@ -1526,19 +1532,20 @@ class Connect(_Menu):
                 row=1,
             )
             self.add_item(self.remove)
+        self.add_item(_Button(self._back, label="Back", style=discord.ButtonStyle.secondary, row=2))
         if secrets:  # only the campaign's DMs deal in secrets, as with secret names
+            # After Back, so a thumb on the left edge doesn't flip a privacy setting.
             self.toggle = _Button(
                 self._toggle_secret, label=SECRET_OFF, style=discord.ButtonStyle.secondary, row=2
             )
             self.add_item(self.toggle)
-        self.add_item(_Button(self._back, label="Back", style=discord.ButtonStyle.secondary, row=2))
 
     async def _toggle_secret(self, interaction: discord.Interaction) -> None:
         campaign = await _campaign_for(interaction, self.campaign_id)
         if campaign is None:
             return
         if not sees_secrets(campaign, interaction.user.id):  # checked on every press
-            await _tell(interaction, SECRET_DENIED)
+            await _tell(interaction, SECRET_DENIED_PRESS)
             return
         self.secret = not self.secret
         self.toggle.label = SECRET_ON if self.secret else SECRET_OFF
@@ -1626,6 +1633,11 @@ async def connect(
         await _tell(interaction, "Pick how they're connected again.")
         return
     denied = secret and not sees_secrets(campaign, interaction.user.id)
+    if denied and forced:
+        # Found through a secret name, and no longer a DM: saving it in the open would point at
+        # the secret name, so nothing is saved.
+        await _tell(interaction, SECRET_DENIED_PRESS)
+        return
     if denied:
         secret = False
     subject, obj = (other, found) if how.endswith(BACK) else (found, other)
@@ -1646,16 +1658,18 @@ async def connect(
         await _tell(interaction, f"Couldn't connect them. {exc}")
         return
     changed(interaction, campaign)
-    _, flags = written.value
+    relation, flags = written.value
     said = f"**{_md(subject[1])}** {connection_words(predicate)} **{_md(obj[1])}**"
-    if secret:
-        note = f"🧭 Saved (secret): {said} 🤫. Hidden from players."
+    if relation.secret:  # what is stored: a connection already secret is never made public
+        note = f"🧭 Saved: {said} 🤫 Secret: players can't see it."
         if forced:
             note += f" {SECRET_FORCED}"
+        elif not secret:
+            note += f" {SECRET_ALREADY}"
     else:
         note = f"🧭 Saved: {said}."
         if denied:
-            note += f" {SECRET_DENIED}"
+            note += f" {SECRET_DENIED_SAVE}"
     if flags:
         why = FLAG_WHY.get(flags[0].kind) or (
             f'It\'s an odd pair for "{connection_words(predicate)}"'

@@ -758,7 +758,7 @@ class NameCards(NamesTest):
         await name_card.connect(it, self.campaign.id, self.bell.id, "kin_of", corin.id, secret=True)
         note = it.response.edited[0][0]
         self.assertIn(
-            "🧭 Saved (secret): **Belleros** is family of **Corin** 🤫. Hidden from", note
+            "🧭 Saved: **Belleros** is family of **Corin** 🤫 Secret: players can't see it.", note
         )
         (rel,) = await self.memory.relations(
             GUILD, self.campaign.id, entity_id=corin.id, include_secret=True
@@ -774,9 +774,51 @@ class NameCards(NamesTest):
         corin, _ = await self.two_names()
         it = self.it(MANAGER)
         await name_card.connect(it, self.campaign.id, self.bell.id, "kin_of", corin.id, secret=True)
-        self.assertIn(name_card.SECRET_DENIED, it.response.edited[0][0])
+        self.assertIn(name_card.SECRET_DENIED_SAVE, it.response.edited[0][0])
         (rel,) = await self.memory.relations(GUILD, self.campaign.id, entity_id=corin.id)
         self.assertFalse(rel.secret)
+
+    async def test_a_secret_connection_saved_again_as_not_secret_stays_secret_and_says_so(
+        self,
+    ) -> None:
+        from dmbot.ui import name_card
+
+        corin, _ = await self.two_names()
+        await name_card.connect(
+            self.it(), self.campaign.id, self.bell.id, "kin_of", corin.id, secret=True
+        )
+        it = self.it()
+        await name_card.connect(it, self.campaign.id, self.bell.id, "kin_of", corin.id)
+        self.assertIn(name_card.SECRET_ALREADY, it.response.edited[0][0])
+        (rel,) = await self.memory.relations(
+            GUILD, self.campaign.id, entity_id=corin.id, include_secret=True
+        )
+        self.assertTrue(rel.secret)
+
+    async def test_a_forced_secret_is_not_saved_in_the_open_by_someone_no_longer_a_dm(
+        self,
+    ) -> None:
+        from dmbot.ui import name_card
+
+        _, vessa = await self.two_names()
+        it = self.it(MANAGER)
+        await name_card.connect(
+            it, self.campaign.id, self.bell.id, "kin_of", vessa.id, secret=True, forced=True
+        )
+        self.assertEqual(it.response.sent[0][0], name_card.SECRET_DENIED_PRESS)
+        self.assertEqual(
+            await self.memory.relations(
+                GUILD, self.campaign.id, entity_id=vessa.id, include_secret=True
+            ),
+            [],
+        )
+
+    async def test_the_toggle_comes_after_back(self) -> None:
+        from dmbot.ui import name_card
+
+        view = name_card.Connect(self.campaign.id, self.bell.id, "Belleros", [], secrets=True)
+        row = [getattr(c, "label", "") for c in view.children if c.row == 2]
+        self.assertEqual(row, ["Back", name_card.SECRET_OFF])
 
     async def test_a_name_found_through_a_secret_name_makes_it_secret_by_itself(self) -> None:
         from dmbot.ui import name_card
