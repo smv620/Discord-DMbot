@@ -17,7 +17,7 @@ import shutil
 import signal
 import time
 from collections import Counter
-from collections.abc import Awaitable, Callable, Coroutine, Sequence
+from collections.abc import Awaitable, Callable, Coroutine, Hashable, Sequence
 from dataclasses import dataclass, field
 from functools import partial
 from pathlib import Path
@@ -242,6 +242,7 @@ from dmbot.ui.claims_review import ClaimsReviewButton, claims_review_view
 from dmbot.ui.claims_review import waiting_text as claims_waiting_text
 from dmbot.ui.continuity import ContinuityButton, continuity_view
 from dmbot.ui.continuity import waiting_text as continuity_waiting_text
+from dmbot.ui.decision_lines import DecisionLines
 from dmbot.ui.dmbot_commands import _failed, dmbot_group
 from dmbot.ui.house_rules import dmbot_house_rules  # noqa: F401 (registers it)
 from dmbot.ui.line_fix import (
@@ -682,6 +683,7 @@ class DMBot(commands.AutoShardedBot):
         self.rule_sets = rule_sets  # shared house rules (#1190)
         self.recaps = recaps  # the cinematic recap of each session (#1382)
         self.suggestions = suggestions  # players' suggested line fixes (#1491)
+        self.decision_lines = DecisionLines()  # DM-screen lines to clear once decided (#1509)
         self.house_syncs = house_sync.Pendings()
         # Timed effects on that clock (#998); None without a database.
         self.effects = effects
@@ -1758,6 +1760,7 @@ class DMBot(commands.AutoShardedBot):
                         f"📜 Last session's recap is still waiting: **{shown}**. "
                         "Nothing has gone to the players.",
                         view=ready_view(cid, session_at),
+                        remember=("recap", cid, session_at),
                     )
             except Exception:
                 log.exception("The waiting-recap line failed")
@@ -1791,6 +1794,7 @@ class DMBot(commands.AutoShardedBot):
                         table.screen_channel_id,
                         dm_text(who, w.heard, w.text, w.suggested),
                         suggestion_view(w.id),
+                        remember=("fix", w.id),
                     )
                 more = len(waiting) - WAITING_SHOWN
                 if more > 0 and self.tables.get(gid) is table:
@@ -3062,14 +3066,28 @@ class DMBot(commands.AutoShardedBot):
         member = guild.get_member(user_id) if guild else None
         return member.display_name if member else f"<@{user_id}>"
 
-    async def post(self, channel_id: int, text: str, view: discord.ui.View | None = None) -> bool:
+    async def post(
+        self,
+        channel_id: int,
+        text: str,
+        view: discord.ui.View | None = None,
+        *,
+        remember: Hashable | None = None,
+    ) -> bool:
         """Send a message; returns False (and logs) if it could not be posted."""
-        return await self.post_message(channel_id, text, view) is not None
+        return await self.post_message(channel_id, text, view, remember=remember) is not None
 
     async def post_message(
-        self, channel_id: int, text: str, view: discord.ui.View | None = None
+        self,
+        channel_id: int,
+        text: str,
+        view: discord.ui.View | None = None,
+        *,
+        remember: Hashable | None = None,
     ) -> discord.Message | None:
-        """Send a message; returns it, or None (and logs) if it could not be posted."""
+        """Send a message; returns it, or None (and logs) if it could not be posted. `remember`:
+        a DM-screen line with buttons for this item, kept in memory so its buttons can come off
+        when the item is decided somewhere else (#1509)."""
         channel = self.get_channel(channel_id)
         if not isinstance(channel, discord.abc.Messageable):
             log.warning("Could not post to channel %s: channel not found", channel_id)
@@ -3077,11 +3095,15 @@ class DMBot(commands.AutoShardedBot):
         try:
             # discord.py's types don't accept view=None, so only pass a real view.
             if view is None:
-                return await channel.send(text, allowed_mentions=NO_PINGS)
-            return await channel.send(text, allowed_mentions=NO_PINGS, view=view)
+                sent = await channel.send(text, allowed_mentions=NO_PINGS)
+            else:
+                sent = await channel.send(text, allowed_mentions=NO_PINGS, view=view)
         except discord.HTTPException as exc:
             log.warning("Could not post to channel %s: %s", channel_id, exc)
             return None
+        if remember is not None:
+            self.decision_lines.remember(remember, sent)
+        return sent
 
     async def after_invite_change(self, campaign: Campaign) -> None:
         """A running session shows the DM's new D&D Beyond invite link from now on, and the
@@ -6085,6 +6107,7 @@ class DMBot(commands.AutoShardedBot):
                     campaign.dm_screen_channel_id,
                     ready_text(job.title, link),
                     view=ready_view(cid, job.session_at),
+                    remember=("recap", cid, job.session_at),
                 )
             elif not campaign.recaps_email:
                 where = f": {link}" if link else " on the website"

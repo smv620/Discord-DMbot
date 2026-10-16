@@ -408,7 +408,9 @@ class SessionStart(AtTheTable):
         table.screen_channel_id = 555
         sent: list[tuple[str, Any]] = []
 
-        async def post(channel_id: int, text: str, view: Any = None) -> bool:
+        async def post(
+            channel_id: int, text: str, view: Any = None, *, remember: Any = None
+        ) -> bool:
             sent.append((text, view))
             return True
 
