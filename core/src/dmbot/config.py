@@ -80,6 +80,7 @@ class Settings:
     recall_budget: int = DEFAULT_BUDGET
     # The DM sidebar answers from recall (#1370): on by default; off is exactly the old prompt.
     sidebar_recall: bool = True
+    presession_note: bool = True  # the note on the DM screen when a session starts (#1403)
     sidebar_recall_budget: int = SIDEBAR_RECALL_BUDGET
     # Test recordings (#1019): servers where people who agreed to it have their voices saved
     # for DMbot's own tests, and where the files go. Empty: nothing is ever saved.
@@ -158,6 +159,11 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
     if sidebar_recall_raw not in ("0", "1", "true", "false", "on", "off"):
         raise ConfigError(
             'DMBOT_SIDEBAR_RECALL must be 1 (on) or 0 (off), got "' + sidebar_recall_raw + '".'
+        )
+    presession_raw = (get("DMBOT_PRESESSION_NOTE") or "1").lower()
+    if presession_raw not in ("0", "1", "true", "false", "on", "off"):
+        raise ConfigError(
+            'DMBOT_PRESESSION_NOTE must be 1 (on) or 0 (off), got "' + presession_raw + '".'
         )
     sidebar_budget_raw = get("DMBOT_SIDEBAR_RECALL_BUDGET") or str(SIDEBAR_RECALL_BUDGET)
     if not (
@@ -257,6 +263,7 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
         continuity=continuity,
         recall_budget=recall_budget,
         sidebar_recall=sidebar_recall_raw in ("1", "true", "on"),
+        presession_note=presession_raw in ("1", "true", "on"),
         sidebar_recall_budget=int(sidebar_budget_raw),
         admin_primary_id=admin_primary,
         admin_secondary_id=admin_secondary,
