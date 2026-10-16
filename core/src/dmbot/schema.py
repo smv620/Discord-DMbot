@@ -5340,7 +5340,7 @@ WEB_HOMEBREW = """
     --
     -- What leaves the database: kind, name, summary, text, version, updated_at (the last two
     -- only reach the API process, for the file; the page never sends them). NEVER who wrote it
-    -- or its id. (0100 also withheld whether it came from a book; 0106 now tells that, as the
+    -- or its id. (0100 also withheld whether it came from a book; 0107 now tells that, as the
     -- Discord players' card does.)
     --
     -- dmbot_web_homebrew: NULL when the caller is not in the server or there is no campaign.
@@ -5656,7 +5656,7 @@ MIGRATIONS: tuple[Migration, ...] = (
     ("0102_pack_suggestions", PACK_SUGGESTIONS),  # suggest an entry to a pack (#1537)
     ("0103_web_transcript_deleted", WEB_TRANSCRIPT_DELETED),  # the site shows deleted ones (#1548)
     ("0104_homebrew_book_edition", HOMEBREW_BOOK_EDITION),  # which rules a book is for (#1563)
-    ("0106_web_homebrew_book", WEB_HOMEBREW_BOOK),  # the page tags shared-book entries (#1579)
+    ("0107_web_homebrew_book", WEB_HOMEBREW_BOOK),  # the page tags shared-book entries (#1579)
 )
 
 # Tables that must have row-level security. A test checks every table in the schema
