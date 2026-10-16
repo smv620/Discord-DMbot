@@ -226,10 +226,36 @@ class TheThankYou(HelperBase):
         self.assertEqual(str(mail["To"]), ALICE_EMAIL)
         text = f"{mail['Subject']}\n{mail.get_content()}"
         self.assertIn(SUBJECT, str(mail["Subject"]))
-        self.assertIn("a person on the team", text)
+        self.assertIn("person on the team", text)
         self.assertNotIn(MESSAGE, text)
         reply_to = str(mail["Reply-To"])
         self.assertEqual(sm.ticket_of([reply_to], SECRET), number)
+
+    async def test_with_the_helper_on_it_says_the_helper_answers_first(self) -> None:
+        await self.ticket()
+        (mail,) = self.mails()
+        body = mail.get_content()
+        self.assertEqual(body.strip(), ai.ACK_WITH_HELPER)
+        self.assertIn("a program and not a person", body)
+        self.assertIn("will answer first by email", body)
+        self.assertIn("Reply to this email to reach it", body)
+        self.assertIn("If it can't help, or you ask, a person on the team takes over", body)
+        self.assertNotIn(MESSAGE, body)  # the person's own words are not echoed
+        self.assertNotIn(SUBJECT, body)  # and the subject only in the subject line
+
+    async def test_with_the_helper_off_it_says_a_person_will_reply(self) -> None:
+        self.helper = ai.SupportHelper(
+            self.web, None, self.mailer, team_email=TEAM, site_url=SITE, link_secret=SECRET,
+            clock=lambda: float(self.now),
+        )  # fmt: skip
+        await self.ticket()
+        (mail,) = self.mails()
+        body = mail.get_content()
+        self.assertEqual(body.strip(), ai.ACK_PERSON)
+        self.assertNotIn("helper", body)
+        self.assertNotIn("program", body)
+        self.assertNotIn(MESSAGE, body)
+        self.assertNotIn(SUBJECT, body)
 
     async def test_nothing_is_sent_to_an_account_with_no_address(self) -> None:
         async with self.web.user(ALICE.id) as conn:

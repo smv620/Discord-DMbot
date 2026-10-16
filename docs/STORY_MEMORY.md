@@ -633,5 +633,5 @@ as today.
 ## Decided
 
 All of the open decisions were answered by the owner on 2026-10-06: see "Decisions"
-at the top. Still to measure before 5a is built: the "how it was said" accuracy (player
-or DM, statement or plan) and the tokens per call, on saved test sets (PyCharm session).
+at the top. The 5a extractor was measured on 2026-10-15; the numbers and costs are in
+`docs/costs.md` ("Measured 2026-10-15").

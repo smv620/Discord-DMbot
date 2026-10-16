@@ -56,6 +56,18 @@ class Own:
     started_ms: int
     heard: str
     text: str
+    user_id: int  # whose line it is (set by the reads below)
+
+
+@dataclass(frozen=True, slots=True)
+class Waiting:
+    """A suggestion still waiting for the DM, with its line as it reads now."""
+
+    id: int
+    user_id: int
+    suggested: str
+    heard: str
+    text: str
 
 
 _COLUMNS = "id, guild_id, campaign_id, session_id, started_ms, user_id, suggested, state, base_text"
@@ -92,7 +104,27 @@ class SuggestionStore:
                 " ORDER BY started_ms DESC, id DESC LIMIT %s",
                 (session_id, user_id, limit),
             )
-            return [Own(int(r["started_ms"]), r["heard"], r["text"]) for r in await cur.fetchall()]
+            return [
+                Own(int(r["started_ms"]), r["heard"], r["text"], user_id)
+                for r in await cur.fetchall()
+            ]
+
+    async def recent_lines(
+        self, guild_id: int, session_id: str, *, limit: int = PICK_LINES
+    ) -> list[Own]:
+        """The session's newest spoken lines of ANY speaker (table speech only: never a DM
+        sidebar line, never typed chat), newest first, for a DM to pick from (#1499)."""
+        async with self._db.guild(guild_id) as conn:
+            cur = await conn.execute(
+                "SELECT started_ms, user_id, heard, coalesce(text, heard) AS text"
+                " FROM transcript_lines WHERE session_id = %s AND sidebar IS NULL AND NOT typed"
+                " ORDER BY started_ms DESC, id DESC LIMIT %s",
+                (session_id, limit),
+            )
+            return [
+                Own(int(r["started_ms"]), r["heard"], r["text"], int(r["user_id"]))
+                for r in await cur.fetchall()
+            ]
 
     async def line(
         self, guild_id: int, session_id: str, user_id: int, started_ms: int
@@ -106,7 +138,7 @@ class SuggestionStore:
                 (session_id, user_id, started_ms),
             )
             r = await cur.fetchone()
-        return None if r is None else Own(int(r["started_ms"]), r["heard"], r["text"])
+        return None if r is None else Own(int(r["started_ms"]), r["heard"], r["text"], user_id)
 
     async def suggest(
         self,
@@ -177,6 +209,27 @@ class SuggestionStore:
             )
             row = await cur.fetchone()
         return None if row is None else _row(row)
+
+    async def waiting(self, guild_id: int, campaign_id: str, *, limit: int = 50) -> list[Waiting]:
+        """The campaign's open suggestions, oldest first, each with its line's words now (a
+        suggestion whose line is gone is left out). For the reminder at the next session start."""
+        async with self._db.guild(guild_id) as conn:
+            cur = await conn.execute(
+                "SELECT s.id, s.user_id, s.suggested, l.heard, coalesce(l.text, l.heard) AS text"
+                " FROM transcript_suggestions s CROSS JOIN LATERAL ("
+                "  SELECT heard, text FROM transcript_lines l"
+                "  WHERE l.session_id = s.session_id AND l.user_id = s.user_id"
+                "  AND l.started_ms = s.started_ms AND l.sidebar IS NULL AND NOT l.typed"
+                "  ORDER BY l.id LIMIT 1) l"
+                " WHERE s.campaign_id = %s AND s.state = 'open'"
+                " ORDER BY s.created_at, s.id LIMIT %s",
+                (campaign_id, limit),
+            )
+            rows = await cur.fetchall()
+        return [
+            Waiting(int(r["id"]), int(r["user_id"]), r["suggested"], r["heard"], r["text"])
+            for r in rows
+        ]
 
     async def decide(self, guild_id: int, suggestion_id: int, state: str, by: int) -> bool:
         """The DM's answer (accepted or declined). True only for the call that closed it: a

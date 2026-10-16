@@ -8,10 +8,12 @@ import { effectiveApiBase, htmlFiles, inlineScriptHashes, mockLeaks, TURNSTILE_O
 
 // pricing.html: the greeting for a personal link (#1231), the only script on that page.
 // account/recaps.html: the DM's recap pages (#1386).
+// account/transcripts.html: the session transcript pages (#1501).
 // unsubscribe.html: an offer email's unsubscribe link (#1229).
 const SCRIPTED = new Set([
   "account.html",
   "account/recaps.html",
+  "account/transcripts.html",
   "hello.html",
   "admin.html",
   "pricing.html",
@@ -55,4 +57,4 @@ if (problems.length > 0) {
   console.error(problems.join("\n"));
   process.exit(1);
 }
-console.log("Every inline script is allowed by its hash; only /account, /account/recaps, /hello, /admin, /pricing and /unsubscribe have scripts.");
+console.log("Every inline script is allowed by its hash; only /account, /account/recaps, /account/transcripts, /hello, /admin, /pricing and /unsubscribe have scripts.");
