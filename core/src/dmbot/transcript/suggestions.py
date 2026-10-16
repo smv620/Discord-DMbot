@@ -56,6 +56,7 @@ class Own:
     started_ms: int
     heard: str
     text: str
+    user_id: int  # whose line it is (set by the reads below)
 
 
 _COLUMNS = "id, guild_id, campaign_id, session_id, started_ms, user_id, suggested, state, base_text"
@@ -92,7 +93,27 @@ class SuggestionStore:
                 " ORDER BY started_ms DESC, id DESC LIMIT %s",
                 (session_id, user_id, limit),
             )
-            return [Own(int(r["started_ms"]), r["heard"], r["text"]) for r in await cur.fetchall()]
+            return [
+                Own(int(r["started_ms"]), r["heard"], r["text"], user_id)
+                for r in await cur.fetchall()
+            ]
+
+    async def recent_lines(
+        self, guild_id: int, session_id: str, *, limit: int = PICK_LINES
+    ) -> list[Own]:
+        """The session's newest spoken lines of ANY speaker (table speech only: never a DM
+        sidebar line, never typed chat), newest first, for a DM to pick from (#1499)."""
+        async with self._db.guild(guild_id) as conn:
+            cur = await conn.execute(
+                "SELECT started_ms, user_id, heard, coalesce(text, heard) AS text"
+                " FROM transcript_lines WHERE session_id = %s AND sidebar IS NULL AND NOT typed"
+                " ORDER BY started_ms DESC, id DESC LIMIT %s",
+                (session_id, limit),
+            )
+            return [
+                Own(int(r["started_ms"]), r["heard"], r["text"], int(r["user_id"]))
+                for r in await cur.fetchall()
+            ]
 
     async def line(
         self, guild_id: int, session_id: str, user_id: int, started_ms: int
@@ -106,7 +127,7 @@ class SuggestionStore:
                 (session_id, user_id, started_ms),
             )
             r = await cur.fetchone()
-        return None if r is None else Own(int(r["started_ms"]), r["heard"], r["text"])
+        return None if r is None else Own(int(r["started_ms"]), r["heard"], r["text"], user_id)
 
     async def suggest(
         self,
