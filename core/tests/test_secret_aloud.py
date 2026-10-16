@@ -188,9 +188,18 @@ class AfterTheSession(unittest.IsolatedAsyncioTestCase):
 
     async def test_consent_is_read_after_the_lines(self) -> None:
         order: list[str] = []
+
+        async def read_lines(*_: Any) -> list[Line]:
+            order.append("lines")
+            return []
+
+        async def read_consent(*_: Any) -> set[int]:
+            order.append("consent")
+            return set()
+
         bot = fake_bot([line(PLAYER, "Auril")], [AURIL], {PLAYER})
-        bot.transcripts.lines = AsyncMock(side_effect=lambda *a: order.append("lines") or [])
-        bot.consent.consenting = AsyncMock(side_effect=lambda *a: order.append("consent") or set())
+        bot.transcripts.lines = read_lines
+        bot.consent.consenting = read_consent
         await self.run_step(bot, [AURIL])
         self.assertEqual(order, ["lines", "consent"])
 
@@ -276,7 +285,7 @@ class TheButtons(unittest.IsolatedAsyncioTestCase):
 
     def test_the_view_has_the_two_buttons_with_ids_that_survive_a_restart(self) -> None:
         view = secret_aloud_view("c" * 32, "a" * 32)
-        ids = [item.custom_id for item in view.children]  # type: ignore[attr-defined]
+        ids = [item.custom_id for item in view.children]
         self.assertEqual(
             ids,
             [
