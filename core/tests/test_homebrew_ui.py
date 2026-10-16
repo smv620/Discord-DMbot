@@ -248,9 +248,7 @@ class TheFile(HomebrewUiTest):
             async def read(self) -> bytes:
                 return text.encode()
 
-        upload = form.file.component
-        upload._underlying = SimpleNamespace(values=None)
-        type(upload).values = property(lambda self: [Attachment()])  # type: ignore[assignment]
+        form.file = SimpleNamespace(component=SimpleNamespace(values=[Attachment()]))  # type: ignore[assignment]
         return form
 
     async def test_download_sends_the_file_privately_to_a_dm_only(self) -> None:
