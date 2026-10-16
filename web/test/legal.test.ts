@@ -407,16 +407,21 @@ describe("generated content belongs to the campaign (#1388)", () => {
   it("says stopping or deleting your own data does not remove it, on both pages", () => {
     const privacyPage = privacy();
     expect(privacyPage).toContain(
-      "What DMbot already made from sessions you spoke in, such as a recap or the story facts your game master kept, stays with the campaign.",
+      "What DMbot already made from sessions you took part in, such as a recap or the story facts your game master kept, stays with the campaign. Your voice was never kept.",
     );
     expect(privacyPage).toContain("What DMbot made from those sessions stays with the campaign too: deleting your account does not remove it.");
     const termsPage = terms();
     expect(termsPage).toContain("If you stop being recorded, take back your yes or delete your account");
-    expect(termsPage).toContain("What it already made from sessions you spoke in stays with the campaign.");
+    expect(termsPage).toContain("What it already made from sessions you took part in stays with the campaign.");
+    // The terms point to the privacy page for what is removed, rather than repeating it.
+    const link = doc("terms").querySelector('main a[href="/legal/privacy"]');
+    expect(text(link)).toBe("Privacy page");
   });
 
   it("says only deleting the campaign removes it, and only its game master can", () => {
-    expect(privacy()).toContain("Only deleting the campaign removes what DMbot made for it, such as its recaps, story facts and notes. Only the campaign's game master can delete a campaign.");
+    expect(privacy()).toContain(
+      "Only the campaign's game master can. Deleting it is the only thing that removes what DMbot made for it, such as its recaps, story facts and notes. A player who wants something removed can ask their game master.",
+    );
     expect(terms()).toContain("Only deleting the campaign removes it, and only the campaign's game master can delete a campaign.");
   });
 
