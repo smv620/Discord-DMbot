@@ -33,6 +33,7 @@ from dmbot.rules.homebrew import (
     NAME_MAX,
     SUMMARY_MAX,
     TEXT_MAX,
+    FileEntry,
     Homebrew,
     HomebrewError,
     clean_name,
@@ -69,15 +70,6 @@ LINE_TOO_LONG = f"a line is over {MAX_LINE} characters"
 _HEADING = re.compile(r"^##\s+(?P<name>.*?)\s*(?:\((?P<kind>[^()]*)\))?\s*$")
 _ESCAPED = re.compile(r"^(\\+)(##.*)$")
 _UNESCAPE = re.compile(r"^\\(\\*##.*)$")
-
-
-@dataclass(frozen=True, slots=True)
-class FileEntry:
-    kind: str
-    name: str
-    text: str
-    summary: str | None = None
-    players_may_know: bool | None = None  # None: the file doesn't say
 
 
 @dataclass(frozen=True, slots=True)
