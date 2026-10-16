@@ -79,10 +79,10 @@ def line_text(conflict: Conflict, numbers: Mapping[int, int]) -> str:
         # The clue is the entry; the list is the people the DM said know it. Nobody is told
         # they are wrong: a missing name may only mean DMbot was never told.
         who = _md(conflict.learner_name or "Someone")
-        listed = _md(conflict.earlier_words) or "no one yet"
+        listed = _md(conflict.earlier_words) or "the list is empty"
         return (
-            f"⚠️ **{level}: {who}** may not know **{_md(conflict.entity_name)}**. "
-            f"You said only these people do: {listed}. {now}"
+            f"⚠️ **Check: {who}** spoke of **{_md(conflict.entity_name)}** and isn't on its list "
+            f"({listed}). {now} ({conflict.level})"
         )
     if conflict.kind in (ACTS_AFTER_END, BACK_FROM_THE_END):
         ended = "was destroyed" if conflict.ended_condition == DESTROYED else "died"
@@ -108,8 +108,8 @@ def page_text(
 ) -> str:
     lines = [
         "**Heads-ups from this session.** Pick what is true in your story.\n"
-        "**Story changed:** the new thing is true now. **They learned it:** add them to the list "
-        "of people who know. **Wasn't real:** a joke or a mistake; DMbot forgets it. "
+        "**Story changed:** the new thing is true now. **They learned it:** add them to the list. "
+        "**Wasn't real:** a joke or a mistake; DMbot forgets it. "
         "**Ignore:** leave it for now."
     ]
     for number, conflict in enumerate(page, 1):

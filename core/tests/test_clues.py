@@ -240,9 +240,9 @@ class Clues(ConfirmedMemoryTest):
         await self.claim(said("Kesh", "told", "The baron's secret"))
         (conflict,) = (await self.check()).conflicts
         line = ui.line_text(conflict, {})
-        self.assertIn("Likely", line)
-        self.assertIn("Likely: Kesh** may not know **The baron's secret**", line)
-        self.assertIn("only these people do: Cerric", line)
+        self.assertIn("**Check: Kesh** spoke of **The baron's secret** and isn't on its list", line)
+        self.assertIn("(Cerric)", line)
+        self.assertTrue(line.endswith("(likely)"))
 
     # ---- who sees it ----------------------------------------------------------------------
 

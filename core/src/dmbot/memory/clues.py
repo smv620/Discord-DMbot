@@ -15,7 +15,7 @@ KNOWS = "knows"
 
 ONLY_CLUES = "Only a clue or secret can have a list of who knows it."
 ONLY_CHARACTERS = "Only a character can know a clue."
-NEEDS_SOMEONE = "Add at least one person who knows it first."
+NEEDS_SOMEONE = "Add at least one character who knows it first, then try again."
 TURNED_OFF = "Nobody is left on the list, so this clue is open to everyone again."
 
 # Words in a claim's relationship that say the character passed the clue on or used it: the

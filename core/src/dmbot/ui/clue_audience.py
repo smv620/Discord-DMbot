@@ -32,7 +32,7 @@ from dmbot.ui.names import GONE, _campaign_for, _md, _memory, changed, sees_secr
 log = logging.getLogger(__name__)
 
 
-ONLY_DM = "Only the DM can change that."
+ONLY_DM = "Only the DM can change who knows this."
 NOBODY = "Nobody is listed yet."
 
 
@@ -46,8 +46,8 @@ def audience_text(name: str, who: list[str], limited: bool, note: str = "") -> s
         )
     else:
         lines.append(
-            "**Anyone may know this,** so DMbot says nothing about it. Turn the limit on once "
-            "you've listed who knows."
+            "**DMbot isn't tracking who knows this,** so it says nothing about it. Add who knows, "
+            "then press **Only some know**."
         )
     lines.append(f"**Who knows it:** {', '.join(_md(n) for n in who) if who else NOBODY}")
     if limited:
@@ -92,14 +92,18 @@ class AudienceMenu(_Menu):
             _Button(self._add, label="➕ Add who knows", style=discord.ButtonStyle.primary)
         )
         self.add_item(
-            _Button(self._switch, label="🔓 Turn off" if limited else "🔒 Turn on", style=grey)
+            _Button(
+                self._switch,
+                label="🔓 Let anyone know" if limited else "🔒 Only some know",
+                style=grey,
+            )
         )
         self.add_item(_Button(self._back, label="↩ Back", style=grey))
         self.who: dict[str, str] = {w.id: w.name for w in who}
         if self.who:
             self.remove = _Select(
                 self._remove,
-                placeholder="Remove someone…",
+                placeholder="Take someone off…",
                 options=[
                     discord.SelectOption(label=logic.shorten(name, logic.OPTION_LABEL_MAX), value=i)
                     for i, name in list(self.who.items())[: logic.SELECT_OPTIONS_MAX]
@@ -214,7 +218,10 @@ class KnowerForm(discord.ui.Modal, title="Who knows it?"):
                 interaction,
                 self.campaign_id,
                 self.clue_id,
-                note=f"No character called **{_md(self.name.value)}**. Add them as a name first.",
+                note=(
+                    f"No character called **{_md(self.name.value)}**. "
+                    "Add them as a name first (/dmbot names)."
+                ),
             )
             return
         options = [
