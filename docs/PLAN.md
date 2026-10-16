@@ -3389,7 +3389,10 @@ months.
 #1431, #1432, #1435, #1436, #1452, #1458, #1459). Anyone with an account, **Try It included**
 (owner, 2026-10-16, #1435), writes to the team from the account page. Then:
 - **Acknowledge** at once from `MAIL_SUPPORT_FROM` (info@getdmbot.com), subject only, never
-  the words, to an account with an address.
+  the words, to an account with an address. It says in three short sentences what happens next
+  (#1500): DMbot's helper (a program, not a person) answers first by email, usually within a few
+  minutes; replying to that email reaches it; a person takes over if it can't help or you ask.
+  When the helper is off (no model or key) it says a person will reply and does not mention it.
 - **Answer** by email from DMbot's **AI helper**, the strongest tier's current Claude model
   (`SUPPORT_AI_MODEL` empty means the tier default), with fixed on-topic instructions; it says
   it is a program, not a person. It answers at most 5 times per ticket. Replies by email come
@@ -3401,6 +3404,10 @@ months.
   `SUPPORT_TEAM_EMAIL` (support@getdmbot.com) with the reason; the admin page shows the thread,
   "Needs the team", the reason (#1459) and a reply box; the team's reply is emailed from info@
   and the ticket becomes answered.
+- **Closing:** the website's hourly sweep closes an *answered* ticket the person has not written to
+  for 14 days (`SUPPORT_AUTO_CLOSE_DAYS`, #1505); new and escalated ones are never closed that way.
+  An emailed reply to a closed ticket reopens it (back to waiting, or to the team if a person had
+  a hand in it).
 - **What the person sees** on their account page: subject, date, status ("Answered by DMbot's AI
   helper", "Answered by the team", "With the team") and the first line of the last answer, never
   anyone else's and never their own words back (#1458). The privacy page says all of this; the

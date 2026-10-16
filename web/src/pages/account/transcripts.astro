@@ -1,0 +1,20 @@
+---
+import TranscriptsIsland from "../../account/TranscriptsIsland";
+import { text } from "../../content/transcripts";
+import Base from "../../layouts/Base.astro";
+import "../../styles/account.css";
+---
+
+<Base
+  title="Session transcripts"
+  description="Read or save what was said at your table, session by session."
+  noindex
+>
+  <div class="account">
+    <h1>{text.heading}</h1>
+    <TranscriptsIsland client:load />
+    <noscript>
+      <p>This page needs JavaScript to show your transcripts. Turn it on, then reload the page.</p>
+    </noscript>
+  </div>
+</Base>
