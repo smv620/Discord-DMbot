@@ -1,6 +1,8 @@
 ---
 import LegalPage from "../../components/LegalPage.astro";
 import QabotPrivacy from "../../components/QabotPrivacy.astro";
+import RecapsPrivacy from "../../components/RecapsPrivacy.astro";
+import { RECAP_AUDIO_LIVE, RECAPS_LIVE } from "../../content/recap-words";
 import { QABOT_LIVE } from "../../content/qabot";
 import {
   deletionWarnings,
@@ -165,7 +167,9 @@ import {
     </li>
     <li>
       <strong>What we send.</strong> A sign-in link and a move code, only when you ask for one, and
-      two Try It emails: one on the last day of Try It, and one if you get 30 more days. Nothing
+      two Try It emails: one on the last day of Try It, and one if you get 30 more days.{
+        RECAPS_LIVE ? " A game master also gets an email when a recap is ready or could not be written (see Recaps below)." : ""
+      } Nothing
       else.
     </li>
     <li>
@@ -222,6 +226,7 @@ import {
   </p>
 
   <QabotPrivacy live={QABOT_LIVE} />
+  <RecapsPrivacy live={RECAPS_LIVE} audio={RECAP_AUDIO_LIVE} />
 
   <h2>How long we keep it</h2>
   <p>A campaign is deleted this long after its last game:</p>
