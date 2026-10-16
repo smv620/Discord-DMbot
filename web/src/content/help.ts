@@ -158,7 +158,7 @@ export const dmSteps: Step[] = [
     ],
   },
   {
-    text: "You can choose how long a campaign keeps its transcripts: Forever, 1 year, 90 days or 30 days (⚙️ Settings → 📜 Transcripts). Older ones are deleted within a day. Recaps stay.",
+    text: "You can choose how long a campaign keeps its transcripts: Forever, 1 year, 90 days or 30 days (⚙️ Settings → 📜 Transcripts). Older ones are deleted within a day. Recaps stay. Each campaign's Transcripts page on this website shows its limit, so you can save a copy before a transcript is deleted.",
     names: [{ name: "Transcripts", file: "dm_screen/transcript_keep.py" }],
   },
   {
@@ -277,6 +277,10 @@ export const playerSteps: Step[] = [
   {
     text: "Everyone in the server can read a game's transcript. To read or download one, type /transcript.",
     names: [{ name: "/transcript", file: "ui/transcripts.py" }],
+  },
+  {
+    text: "To look up a rule, type /dmbot rule and a few words, in any of the campaign's channels. Only you see the answer. It comes from the free rules, your table's house rules, and the homebrew your game master marked for players. Entries from a shared book say From a shared book, and [Legacy 2014] if that book is for older rules than your table plays. Each person can ask once every 3 seconds. The answer ends with \"Your DM decides what applies at your table.\"",
+    names: [{ name: "/dmbot rule", file: "ui/rule_lookup.py" }],
   },
   {
     text: "Want your own lines gone? In Discord, open the ⚙️ Menu DMbot sends you and press 🗑 Delete my transcripts. It deletes every line you said in that server, from every past game. It can't be undone. Other people's lines, your game master's story notes and copies already downloaded stay.",
