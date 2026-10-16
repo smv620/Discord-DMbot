@@ -128,6 +128,18 @@ class Notes(unittest.TestCase):
         self.assertFalse(notes.on_line(MIA, 2))
 
 
+class Words(unittest.TestCase):
+    def test_a_long_tail_keeps_its_last_words_and_the_head_its_first(self) -> None:
+        from dmbot.transcript.questions import first_words, last_words, seam_text
+
+        tail = last_words("so yesterday evening at the old inn near the harbour we met Ka", 4)
+        self.assertEqual(tail, "harbour we met Ka")
+        self.assertEqual(first_words("Zeth at dawn and then", 3), "Zeth at dawn")
+        text = seam_text("Mia", tail, "Zeth at dawn")
+        self.assertIn('"…harbour we met Ka"', text)
+        self.assertIn("This joins two lines", text)
+
+
 class Saying(unittest.TestCase):
     def test_the_answer_says_how_many_earlier_lines_were_fixed(self) -> None:
         self.assertIn("Earlier lines stay as heard.", fixed_text("Sara", "Cerric", line_fixed=True))
