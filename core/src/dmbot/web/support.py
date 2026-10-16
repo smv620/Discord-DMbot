@@ -21,6 +21,7 @@ from __future__ import annotations
 import logging
 import re
 from dataclasses import dataclass
+from datetime import UTC, datetime, timedelta
 from typing import Literal
 
 from dmbot.db import Database
@@ -229,6 +230,74 @@ async def week(db: Database, now: int) -> Week:
         reasons={reason: found.get(reason, 0) for reason in REASONS},
     )
 
+
+def week_line(week: Week) -> str:
+    """The week in one sentence: the same words as the admin page's `weekLine` (web/src/content/
+    admin.ts), which tests/test_support_week_mail.py keeps in step. Counts only, never a word of a
+    ticket."""
+    if week.questions <= 0:
+        return "No questions this week."
+    noun = "question" if week.questions == 1 else "questions"
+    line = (
+        f"This week: {week.questions} {noun}, {week.helper} answered by DMbot's helper, "
+        f"{week.team} by the team, {week.waiting} waiting."
+    )
+    handed = sum(week.reasons.values())
+    if handed > 0:
+        parts = [
+            f"{REASON_WORDS[code]} {n}"
+            for code, n in week.reasons.items()
+            if n > 0 and code in REASON_WORDS
+        ]
+        detail = f" ({', '.join(parts)})" if parts else ""
+        line += f" Helper handed over {handed}{detail}."
+    return line
+
+
+# The weekly email goes out in the first sweep after this time on a Monday (UTC) (#1514).
+WEEKLY_MAIL_HOUR = 8
+
+
+def mail_week(now: int) -> int:
+    """The week the email is due for: the day number (date ordinal) of the latest Monday 08:00 UTC
+    at or before `now`. It changes once a week, so it is the once-only mark."""
+    when = datetime.fromtimestamp(now, UTC)
+    monday = when.date() - timedelta(days=when.weekday())
+    if when < datetime(monday.year, monday.month, monday.day, WEEKLY_MAIL_HOUR, tzinfo=UTC):
+        monday -= timedelta(days=7)
+    return monday.toordinal()
+
+
+async def claim_week(db: Database, week: int) -> bool:
+    """Take the weekly email for this week: True for the one call that moves the mark forward, so
+    a restart or a second copy never sends it twice. Claimed before sending, like the account
+    emails: a crash loses one email rather than doubling it."""
+    async with db.support_admin() as conn:
+        cur = await conn.execute(
+            "INSERT INTO support_week_mail (id, week) VALUES (1, %s)"
+            " ON CONFLICT (id) DO UPDATE SET week = EXCLUDED.week"
+            " WHERE support_week_mail.week < EXCLUDED.week RETURNING week",
+            (week,),
+        )
+        return await cur.fetchone() is not None
+
+
+async def release_week(db: Database, week: int) -> None:
+    """Give the claim back after a send that failed, so the next sweep tries again."""
+    async with db.support_admin() as conn:
+        await conn.execute(
+            "UPDATE support_week_mail SET week = week - 1 WHERE id = 1 AND week = %s", (week,)
+        )
+
+
+# The words for each hand-over code (the same as the admin page's weekReasonWords).
+REASON_WORDS: dict[str, str] = {
+    "unhappy": "unhappy",
+    "asked": "asked",
+    "limit": "five answers used",
+    "no-email": "no email",
+    "helper-down": "helper down",
+}
 
 # How many of their own questions a person sees at once (#1373).
 MINE_LIMIT = 20

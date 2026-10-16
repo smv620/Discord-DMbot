@@ -2407,6 +2407,8 @@ WEB_ROLE_GRANTS: tuple[tuple[str, tuple[str, ...]], ...] = (
     # door is open; the words come back through dmbot_support_thread.
     ("INSERT", ("support_replies",)),
     ("SELECT (id, ticket_id, who, created_at)", ("support_replies",)),
+    # The weekly support email's once-only mark, through the admin door only (#1514).
+    ("SELECT, INSERT, UPDATE", ("support_week_mail",)),
     ("SELECT, INSERT, UPDATE, DELETE", ("web_users", "web_sessions")),
     # Emailed sign-in links (#1231): made and used by the website, never read by anyone else.
     # (Only `used_at` can be changed: a holder of a link can spend it, never revive or move it.)
@@ -4660,6 +4662,22 @@ TRANSCRIPT_SUGGESTIONS = """
         ON transcript_suggestions (session_id, user_id, started_ms) WHERE state = 'open';
     """ + _isolate("transcript_suggestions")
 
+SUPPORT_WEEK_MAIL = """
+    -- The week the team's weekly support email was last sent for (#1514): one row, so a restart
+    -- never sends it twice. `week` is the day number (Python's date ordinal) of the Monday the
+    -- send was for. Counts only; nothing in it is private. A new table, so no existing row changes
+    -- and no row-level security needs opening; only the support admin door may read or write it.
+    CREATE TABLE support_week_mail (
+        id   SMALLINT PRIMARY KEY CHECK (id = 1),
+        week BIGINT NOT NULL
+    );
+    ALTER TABLE support_week_mail ENABLE ROW LEVEL SECURITY;
+    ALTER TABLE support_week_mail FORCE ROW LEVEL SECURITY;
+    CREATE POLICY support_admin_only ON support_week_mail
+        USING (dmbot_support_admin() = 'admin')
+        WITH CHECK (dmbot_support_admin() = 'admin');
+    """
+
 MIGRATIONS: tuple[Migration, ...] = (
     ("0001_initial", INITIAL),
     ("0002_active_sessions", ACTIVE_SESSIONS),
@@ -4757,6 +4775,10 @@ MIGRATIONS: tuple[Migration, ...] = (
     ("0091_web_recap_choices", WEB_RECAP_CHOICES),  # the DM's recap choices on the site (#1468)
     ("0092_support_handed_over", SUPPORT_HANDED_OVER),  # every hand-over, kept (#1487)
     ("0093_transcript_suggestions", TRANSCRIPT_SUGGESTIONS),  # a player's suggested fix (#1491)
+    (
+        "0096_support_week_mail",
+        SUPPORT_WEEK_MAIL,
+    ),  # the weekly support email's once-only mark (#1514)
 )
 
 # Tables that must have row-level security. A test checks every table in the schema
@@ -4817,6 +4839,8 @@ USER_ISOLATED_TABLES = (
     "support_tickets",
     # The replies of a ticket: only the admin door adds or reads them (#1431).
     "support_replies",
+    # The week the weekly support email last went; only the admin door reads or writes it (#1514).
+    "support_week_mail",
     # An owner's hours per plan month; only the meter adds to it (#437).
     "owner_hours",
     # Which campaigns an owner has, across servers; kept by a trigger on campaigns (#437).

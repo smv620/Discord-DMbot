@@ -3384,6 +3384,11 @@ months.
   for 14 days (`SUPPORT_AUTO_CLOSE_DAYS`, #1505); new and escalated ones are never closed that way.
   An emailed reply to a closed ticket reopens it (back to waiting, or to the team if a person had
   a hand in it).
+- **Weekly email to the team** (#1514): the first sweep after Monday 08:00 UTC sends `SUPPORT_TEAM_EMAIL`
+  the admin page's "this week" sentence (counts only, never a ticket's words) from
+  `MAIL_ALERTS_FROM`, subject "DMbot support this week"; nothing for a week with no questions, nothing
+  without a mailer or team address, and never twice (one row, `support_week_mail`, migration 0096). The first send after this ships can
+  come on any day of that week.
 - **What the person sees** on their account page: subject, date, status ("Answered by DMbot's AI
   helper", "Answered by the team", "With the team") and the first line of the last answer, never
   anyone else's and never their own words back (#1458). The privacy page says all of this; the
