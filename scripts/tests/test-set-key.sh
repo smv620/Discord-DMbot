@@ -293,5 +293,14 @@ run "owner@example.com"$'\n' ADMIN_EMAILS
 check "refuses ADMIN_EMAILS: a setting, not a key" refused
 check "ADMIN_EMAILS refusal changes nothing" unchanged
 
+# The real .env.example must list the ElevenLabs key as an active line, or set-key refuses it
+# (#1440: the owner could not set the key while the line was commented out).
+reset
+cp "$(dirname "$script")/../.env.example" "$DMBOT_ENV_EXAMPLE"
+run "$key"$'\n' ELEVENLABS_API_KEY
+check "the real .env.example lets set-key set ELEVENLABS_API_KEY" ok
+check "the ElevenLabs key is saved" has_line "ELEVENLABS_API_KEY=$key"
+check "the ElevenLabs key is never printed" never_says "$key"
+
 printf '%d passed, %d failed\n' "$passed" "$failed"
 ((failed == 0))

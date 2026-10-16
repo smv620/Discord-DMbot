@@ -177,10 +177,11 @@ from dmbot.recaps.audio import names as audio_names
 from dmbot.recaps.audio.eleven import ElevenLabs, HttpTransport
 from dmbot.recaps.audio.files import FILE_NAMES, MUSIC, VOICE, AudioFiles
 from dmbot.recaps.audio.worker import AudioInputs, AudioWorker, text_hash
+from dmbot.recaps.inputs import load_inputs
 from dmbot.recaps.notify import page_link, tell_the_dm
 from dmbot.recaps.pipeline import Inputs, RecapWorker
 from dmbot.recaps.store import Job, RecapSection, RecapStore
-from dmbot.recaps.text import names_a_secret, strip_cues
+from dmbot.recaps.text import names_a_secret
 from dmbot.retention import RetentionJob
 from dmbot.rules import house_voice
 from dmbot.rules import index as rules_index
@@ -202,7 +203,6 @@ from dmbot.test_recording.session import TestSession
 from dmbot.test_recording.store import TestVoiceStore
 from dmbot.timebot import combat_phrases, durations
 from dmbot.timebot import phrases as clock_phrases
-from dmbot.timebot.clock import day_of as clock_day_of
 from dmbot.timebot.effects import EffectsSection, EffectStore
 from dmbot.timebot.store import ClockSection, ClockStore
 from dmbot.transcript import fix_notes, left_out, speaker_ai
@@ -5470,39 +5470,18 @@ class DMBot(commands.AutoShardedBot):
         return sorted({n.text for n in lookup.names if n.secret})
 
     async def recap_inputs(self, gid: int, cid: str, job: Job) -> Inputs | None:
-        """What the recap stages read for one job: this campaign's transcript of that session,
-        its names (secret ones read fresh), its earlier posted recap and its game clock. None
-        when the names can't be read: then nothing is written, since a secret name couldn't be
-        kept out."""
+        """What the recap stages read for one job (see `dmbot.recaps.inputs`)."""
         if self.transcripts is None or self.lookup is None or self.recaps is None:
             return None
-        campaign = await self.campaigns.get(gid, cid)
-        if campaign is None:
-            return None
-        try:
-            lookup = await self.lookup.get(gid, cid)
-        except Exception:
-            log.exception("Recap: couldn't load the campaign's names")
-            return None
-        found = [
-            s
-            for s in await self.transcripts.sessions(gid, cid, limit=1000)
-            if s.started_at == job.session_at
-        ]
-        if not found:
-            return None
-        lines = await self.transcripts.lines(gid, found[0].id)
-        bridge = await self.recaps.bridge(gid, cid, job.session_at)
-        stored = await self.clocks.get(gid, cid) if self.clocks is not None else None
-        return Inputs(
-            lines=lines,
-            dm_ids=set(campaign.dm_user_ids),
-            allowed_names=sorted(
-                {n.text for n in lookup.names if n.confirmed and not n.secret and not n.person}
-            ),
-            secret_names=sorted({n.text for n in lookup.names if n.secret}),
-            previous=strip_cues(bridge.summary) if bridge is not None else "",
-            day=clock_day_of(stored.clock.minute) if stored is not None else None,
+        return await load_inputs(
+            campaigns=self.campaigns,
+            lookup=self.lookup,
+            transcripts=self.transcripts,
+            recaps=self.recaps,
+            clocks=self.clocks,
+            guild_id=gid,
+            campaign_id=cid,
+            session_at=job.session_at,
         )
 
     async def recap_allowed(self, gid: int, cid: str, job: Job) -> bool:
