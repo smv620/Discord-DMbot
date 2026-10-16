@@ -30,7 +30,7 @@ describe("the campaigns", () => {
     page(mockApi("table"), "/account/transcripts");
     expect(await screen.findByText("The Brynwater Crossing")).toBeTruthy();
     expect(screen.getByText(text.campaignLine("Thursday Table", 2))).toBeTruthy();
-    expect(screen.getByRole("link", { name: text.open }).getAttribute("href")).toBe(
+    expect(screen.getByRole("link", { name: text.openCampaign("The Brynwater Crossing") }).getAttribute("href")).toBe(
       `/account/transcripts/${REF}`,
     );
     expect(screen.getByText(text.lead)).toBeTruthy();
@@ -107,13 +107,21 @@ describe("reading a session", () => {
     const api = mockApi("table");
     page(api, `/account/transcripts/${REF}/2`);
     expect(await screen.findByText(/Ka'zeth draws his sword/)).toBeTruthy();
-    expect(screen.getByText(cleanedNote)).toBeTruthy();
+    expect(screen.getByText(text.difference.cleaned)).toBeTruthy();
+    expect(screen.getByText(text.shareLine)).toBeTruthy();
+    expect(screen.getByText(text.names)).toBeTruthy();
+    // The bot's full note is one fold away, with what to use on this page instead of /transcript.
+    const fold = screen.getByText(text.about).closest("details") as HTMLElement;
+    expect(fold.textContent).toContain(cleanedNote);
+    expect(fold.textContent).toContain(text.webNote);
     expect(screen.getByRole("button", { name: text.versions.cleaned }).getAttribute("aria-pressed")).toBe("true");
     expect(screen.queryByText(/did you see the match/)).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: text.versions.heard }));
     expect(await screen.findByText(/Kazeth draws his sword/)).toBeTruthy();
-    expect(screen.getByText(heardNote)).toBeTruthy();
-    expect(screen.queryByText(cleanedNote)).toBeNull();
+    expect(screen.getByText(text.difference.heard)).toBeTruthy();
+    const heardFold = screen.getByText(text.about).closest("details") as HTMLElement;
+    expect(heardFold.textContent).toContain(heardNote);
+    expect(heardFold.textContent).not.toContain(cleanedNote);
     expect(screen.getByText(/did you see the match/)).toBeTruthy();
     expect(screen.getByRole("button", { name: text.versions.heard }).getAttribute("aria-pressed")).toBe("true");
   });
@@ -128,7 +136,7 @@ describe("reading a session", () => {
     page(mockApi("table"), `/account/transcripts/${REF}/2`);
     const fold = (await screen.findByText(text.about)).closest("details") as HTMLElement;
     expect(fold.textContent).toContain("DMbot transcript: The Brynwater Crossing, session 2");
-    expect(fold.textContent).not.toContain(cleanedNote);
+    expect(fold.textContent).not.toContain(heardNote);
   });
 
   it("saves the same text as a file, named as the bot names it", async () => {

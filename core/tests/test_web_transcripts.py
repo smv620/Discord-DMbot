@@ -185,7 +185,7 @@ class Transcripts(Base):
             "x", THURSDAY.id, self.one.id, started, START + 90_000, 5, (), 2,
             ("deepgram nova-3 api.example",),
         )  # fmt: skip
-        names = transcripts.speaker_names(lines)
+        names = transcripts.speaker_names(lines, version)
         return export.render("One", stored, lines, names, version=version)
 
     async def test_the_heard_version_is_the_raw_transcript_as_export_makes_it(self) -> None:
@@ -248,6 +248,30 @@ class Transcripts(Base):
         await self.give_plan(CAROL.id, "guild")
         with self.assertRaises(RecapError):
             await self.listed(self.carol, enforce_plans=True)
+
+    async def test_a_campaign_with_no_owner_has_no_plan_to_read_with(self) -> None:
+        async with self.db.guild(THURSDAY.id) as conn:
+            await conn.execute(
+                "UPDATE campaigns SET owner_user_id = NULL WHERE id = %s", (self.one.id,)
+            )
+        with self.assertRaises(RecapError) as caught:
+            await self.listed(self.carol, enforce_plans=True)
+        self.assertEqual(caught.exception.code, "not_in_plan")
+        self.assertEqual(len(await self.listed(self.carol)), 2)  # plans not enforced: fine
+
+    async def test_the_cleaned_numbering_has_no_gap_for_someone_it_hides(self) -> None:
+        lines = [
+            Line(1, 7, "a", "a"),
+            Line(2, 8, "typed only", "typed only", typed=True),
+            Line(3, 9, "b", "b"),
+        ]
+        self.assertEqual(
+            transcripts.speaker_names(lines, export.CLEANED), {7: "Speaker 1", 9: "Speaker 2"}
+        )
+        self.assertEqual(
+            transcripts.speaker_names(lines, export.AS_HEARD),
+            {7: "Speaker 1", 8: "Speaker 2", 9: "Speaker 3"},
+        )
 
     async def test_with_plans_not_enforced_every_member_may_read(self) -> None:
         self.assertEqual(len(await self.listed(self.carol)), 2)

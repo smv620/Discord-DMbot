@@ -23,6 +23,7 @@ judged by the campaign's OWNER's plan, and only when plans are enforced. A campa
 
 from __future__ import annotations
 
+import asyncio
 from typing import Any
 
 from dmbot import plan_rules
@@ -30,7 +31,7 @@ from dmbot.db import Database
 from dmbot.entitlements import plan_grant_access
 from dmbot.recaps.notify import parse_ref
 from dmbot.transcript import export
-from dmbot.transcript.models import Line, Lineage, TranscriptSession
+from dmbot.transcript.models import QUESTION_KINDS, Line, Lineage, TranscriptSession
 from dmbot.web.me import MAX_GUILDS
 from dmbot.web.recaps import RecapError, _guild_of, _scoped
 from dmbot.web.sessions import Session
@@ -52,6 +53,8 @@ def _parse(ref: str) -> tuple[int, str]:
     return parsed[0], parsed[1]
 
 
+# Unlike the bot's `plan_gate`, which fails open so a slow database never locks a table out of a
+# Discord button, a plan that cannot be read here fails (a 500): nothing is shown unchecked.
 async def _plan_allows(db: Database, owner: str | None, now: int, *, enforce_plans: bool) -> None:
     """The bot's rule, from the campaign owner's plan: refuses with "not_in_plan". The owner's id
     comes from the door, which has already checked the caller is in the server."""
@@ -167,12 +170,16 @@ def _line(row: dict[str, Any]) -> Line:
     )
 
 
-def speaker_names(lines: list[Line]) -> dict[int, str]:
-    """ "Speaker 1", "Speaker 2", ... in the order each person first spoke (or typed, or asked)."""
+def speaker_names(lines: list[Line], version: str = export.AS_HEARD) -> dict[int, str]:
+    """ "Speaker 1", "Speaker 2", ... in the order each person first appears in THIS version. The
+    cleaned version leaves out typed chat and sidebar lines, so someone who only typed or asked
+    DMbot is not numbered there: a gap in the numbers would hint at a hidden person."""
     names: dict[int, str] = {}
     for line in sorted(lines, key=lambda x: x.started_ms):
-        if line.sidebar and line.sidebar not in ("question", "table_question"):
+        if line.sidebar and line.sidebar not in QUESTION_KINDS:
             continue  # DMbot's own answers are shown as DMbot, not as a person
+        if version == export.CLEANED and (line.sidebar or line.typed):
+            continue
         names.setdefault(line.user_id, f"{SPEAKER} {len(names) + 1}")
     return names
 
@@ -220,7 +227,10 @@ async def render(
         engines=tuple(wanted["engines"]),
     )
     kind = VERSIONS[version]
-    text = export.render(found["name"], stored, lines, speaker_names(lines), version=kind)
+    # Off the event loop, as the bot does: a long session is a lot of text to build.
+    text = await asyncio.to_thread(
+        export.render, found["name"], stored, lines, speaker_names(lines, kind), version=kind
+    )
     return export.file_name(found["name"], stored, kind), text
 
 

@@ -19,7 +19,7 @@ export const text = {
   link: "Read session transcripts",
   lead: "Read what was said at your table, or save it as a text file. Anyone in the Discord server can read these. Only people who agreed were recorded.",
   loading: "Loading…",
-  empty: "No transcripts yet. They appear here after a session that DMbot recorded.",
+  empty: "No transcripts yet. They appear here after a session that DMbot recorded. Ask your DM to start recording.",
   signedOut: "Sign in to read transcripts.",
   signIn: "Sign in with Discord",
   account: "Back to My Account",
@@ -28,6 +28,7 @@ export const text = {
     `${server} · ${sessions} ${sessions === 1 ? "session" : "sessions"}`,
   allSessions: "All sessions of this campaign",
   open: "Read",
+  openCampaign: (name: string): string => `Read: ${name}`,
   sessionTitle: (n: number): string => `Session ${n}`,
   sessionLine: (day: string, lines: number): string =>
     `${day} · ${lines} ${lines === 1 ? "line" : "lines"}`,
@@ -36,7 +37,14 @@ export const text = {
   download: "Save as a text file",
   downloading: "Saving…",
   downloadFailed: "That didn't save. Try again.",
-  about: "About this transcript",
+  about: "About this version",
+  // The bot's notes mention its /transcript command; on a web page say what to use here.
+  webNote: "On this page, use the Cleaned and As heard buttons. The /transcript command is for Discord.",
+  difference: {
+    cleaned: "Names fixed, off-topic chat left out.",
+    heard: "Every word, names not fixed.",
+  } as Record<TranscriptVersion, string>,
+  shareLine: "Anyone in your Discord server can read this. Only people who agreed were recorded.",
   noLines: "Nothing was said in this version.",
   names:
     "On the website, people are shown as Speaker 1, Speaker 2 and so on, in the order they first spoke in this session. Discord's download has their names.",

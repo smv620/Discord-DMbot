@@ -130,7 +130,12 @@ function Campaigns({ api }: { api: AccountApi }) {
                 <li key={c.ref}>
                   <span class="campaign-name">{c.name}</span>
                   <span class="small">{text.campaignLine(c.serverName, c.sessions)}</span>
-                  <a href={`/account/transcripts/${encodeURIComponent(c.ref)}`}>{text.open}</a>
+                  <a
+                    href={`/account/transcripts/${encodeURIComponent(c.ref)}`}
+                    aria-label={text.openCampaign(c.name)}
+                  >
+                    {text.open}
+                  </a>
                 </li>
               ))}
             </ul>
@@ -154,6 +159,7 @@ function Sessions({ api, campaignRef }: { api: AccountApi; campaignRef: string }
             <a href="/account/transcripts">{text.allCampaigns}</a>
           </p>
           <h2>{found.name}</h2>
+          <p class="small">{text.shareLine}</p>
           {found.sessions.length === 0 ? (
             <p class="panel" role="status">
               {text.empty}
@@ -215,7 +221,9 @@ function Reader({
           </button>
         ))}
       </div>
-      <p class="small">{versionNote[version]}</p>
+      <p class="small">{text.difference[version]}</p>
+      <p class="small">{text.shareLine}</p>
+      <p class="small">{text.names}</p>
       <Shell api={api} load={load}>
         {(view: TranscriptView) => (
           <>
@@ -233,6 +241,8 @@ function Reader({
             )}
             <details class="small muted">
               <summary>{text.about}</summary>
+              <p>{versionNote[version]}</p>
+              <p>{text.webNote}</p>
               {view.notes
                 .filter((n) => n !== versionNote[version])
                 .map((n, i) => (

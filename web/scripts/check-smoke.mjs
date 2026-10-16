@@ -141,7 +141,7 @@ await visit("Transcripts: campaigns, sessions, a session, the two versions", "/a
   await page.getByRole("heading", { level: 1, name: "Session transcripts" }).waitFor();
   await step("the campaign list", () => seen(page, "The Brynwater Crossing"));
   await step("a campaign's sessions", async () => {
-    await page.getByRole("link", { name: "Read", exact: true }).click();
+    await page.getByRole("link", { name: "Read: The Brynwater Crossing" }).click();
     await page.getByRole("heading", { name: "The Brynwater Crossing" }).waitFor();
   });
   await step("a session", async () => {

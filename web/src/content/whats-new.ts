@@ -21,7 +21,7 @@ export const entries: Entry[] = [
   {
     date: "2026-10-16",
     title: "Read transcripts on the website",
-    what: "Anyone in your Discord server can read a session's transcript on the website, cleaned or as heard, and save it as a text file. Only people who agreed were recorded.",
+    what: "Anyone in your Discord server can read a session's transcript on the website, cleaned or as heard, and save it as a text file. Open My Account, then Session transcripts.",
   },
   {
     date: "2026-10-16",
