@@ -10,6 +10,7 @@ import hashlib
 import unittest
 from typing import Any
 
+from dmbot.ai import Reply
 from dmbot.campaigns.models import Campaign
 from dmbot.memory import recall
 from dmbot.memory.lookup import CampaignLookup
@@ -346,6 +347,61 @@ class WithTheRealRecall(MemoryTest):
         assert built.recall is not None
         self.assertEqual(recall.check_citations([self.member], built.recall), ())
         self.assertEqual(recall.check_citations([self.secret], built.recall), (self.secret,))
+
+
+class NoNotesInAnyReply(unittest.IsolatedAsyncioTestCase):
+    """#1378: an entry's description is the DM's note. Neither the prompt nor a reply built from
+    it may hold it, with recall on or off."""
+
+    SECRET = "Secretly the duke's spy and the lich's brother."
+
+    def lookup(self) -> CampaignLookup:
+        from dataclasses import replace
+
+        belleros, cerric, kael = data().entities
+        return CampaignLookup.build(
+            data(entities=(replace(belleros, description=self.SECRET),
+                           replace(cerric, description=self.SECRET), kael))
+        )  # fmt: skip
+
+    async def ask(self, recall_on: bool) -> tuple[FakeAI, Any]:
+        class Echo(FakeAI):
+            """A model that repeats the longest prompt line that names the entry."""
+
+            async def complete(self, system: str, text: str, *, max_tokens: int = 8000) -> Reply:
+                self.systems.append(system)
+                self.prompts.append(text)
+                line = max((x for x in text.splitlines() if "Cerric" in x), key=len, default="")
+                return Reply(reply(line.lstrip("- ")), cut=False)
+
+        ai = Echo([])
+
+        async def gate(c: Campaign, user: int) -> None:
+            return None
+
+        async def houses(c: Campaign) -> list[Any]:
+            return []
+
+        async def names(c: Campaign) -> CampaignLookup:
+            return self.lookup()
+
+        engine = sidebar.Sidebar(
+            ai, INDEX, gate=gate, houses=houses, names=names,
+            recall=giving(recalled(fact("a", "Cerric holds the Far Keep."))) if recall_on else None,
+            clock=lambda: 0.0,
+        )  # fmt: skip
+        got = await engine.answer(campaign(), "who is Cerric", asker_id=7)
+        return ai, got
+
+    async def test_neither_the_prompt_nor_the_reply_holds_the_note(self) -> None:
+        for recall_on in (True, False):
+            ai, got = await self.ask(recall_on)
+            self.assertNotIn(self.SECRET, ai.prompts[0], recall_on)
+            self.assertNotIn("duke", ai.prompts[0], recall_on)
+            self.assertNotIn("lich", ai.prompts[0], recall_on)
+            self.assertNotIn(self.SECRET, got.text, recall_on)
+            self.assertNotIn("duke", got.text, recall_on)
+            self.assertIn("Cerric", got.text)  # the model did repeat the name's line
 
 
 if __name__ == "__main__":
