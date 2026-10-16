@@ -10,6 +10,7 @@ import { parsePage } from "./dom";
 
 import facts from "../src/content/plans.json";
 import { deletionWarnings, notAffiliated, operator, retentionRows } from "../src/content/legal";
+import { QABOT_LIVE } from "../src/content/qabot";
 import { byId, formatPeriod } from "../src/content/pricing";
 import Privacy from "../src/pages/legal/privacy.astro";
 import Refunds from "../src/pages/legal/refunds.astro";
@@ -327,7 +328,9 @@ describe("what the AI company does with the text (#1328)", () => {
 
   it("says it once, under the AI company, and nowhere else on the page", () => {
     // Not copied to another company or to the short summary (which has no such promise to make).
-    expect(privacy().match(/train/gi)).toHaveLength(1);
+    // The public Q&A section (#1356) repeats the same sentence once it is switched on, so it counts
+    // there too; qabot-privacy.test.ts checks that it is the same sentence.
+    expect(privacy().match(/train/gi)).toHaveLength(QABOT_LIVE ? 2 : 1);
   });
 
   it("makes no such promise for the speech company: it depends on that company's own setting", () => {
