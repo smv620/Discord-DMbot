@@ -45,6 +45,7 @@ from dataclasses import dataclass, field, replace
 
 from dmbot.memory.lookup import CampaignLookup, NameEntry
 from dmbot.memory.models import CONFIRMED, PROPOSED, name_key
+from dmbot.memory.ontology import is_dm_word
 from dmbot.memory.scan import COMMON, GAME_TERMS
 from dmbot.memory.scene import WORD, find_mentions, group_sizes
 from dmbot.memory.sounds import sound_codes
@@ -254,6 +255,7 @@ def clean(
                 or key in lookup.fixes
                 or key in lookup.keep_keys
                 or key in person_keys
+                or is_dm_word(key)  # "DM", "Game Master"...: never fixed into a name (#1547)
             ):
                 known[start:end] = [True] * (end - start)
 
