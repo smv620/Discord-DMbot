@@ -9,7 +9,7 @@ import { beforeAll, describe, expect, it } from "vitest";
 
 import { parsePage } from "./dom";
 
-import { accountSteps, dmSteps, emailSteps, playerSteps } from "../src/content/help";
+import { accountSteps, dmSteps, emailSteps, gettingHelp, playerSteps } from "../src/content/help";
 import Help from "../src/pages/help.astro";
 
 const botDir = fileURLToPath(new URL("../../core/src/dmbot/", import.meta.url));
@@ -27,7 +27,7 @@ describe("Help", () => {
     expect(help.querySelector("#dm-heading")?.textContent).toBe("For the game master");
     expect(help.querySelector("#player-heading")?.textContent).toBe("For players");
     const lists = [...help.querySelectorAll("section ol")];
-    expect(lists.map((l) => l.children.length)).toEqual([dmSteps.length, playerSteps.length, accountSteps.length, emailSteps.length]);
+    expect(lists.map((l) => l.children.length)).toEqual([dmSteps.length, playerSteps.length, accountSteps.length, emailSteps.length, gettingHelp.items.length]);
   });
 
   it("has a Your account section with Discord's own reset and the account page (#1215)", () => {
@@ -98,6 +98,7 @@ describe("Help", () => {
 
   it("is in the menu and the footer", () => {
     const hrefs = [...help.querySelectorAll("nav a, footer a")].map((a) => a.getAttribute("href"));
-    expect(hrefs.filter((h) => h === "/help")).toHaveLength(2);
+    expect(hrefs.filter((h) => h === "/help")).toHaveLength(1); // the menu
+    expect(hrefs.filter((h) => h === "/help#getting-help")).toHaveLength(1); // the footer (#1352)
   });
 });
