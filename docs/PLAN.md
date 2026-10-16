@@ -1972,8 +1972,27 @@ those as a name. **The answer** saves the usual rule for the joined words (so a 
 line is fixed, and step 3 re-checks the earlier lines of the session), writes the name where the tail
 words were in the earlier piece and takes the head words out of this one: both or neither (if the
 second can't be written the first is put back), only while the speaker is recorded, never where it
-would write a secret name; **one Undo** puts both pieces back. Not done: silent seam fixes; "line
-changed" events for helpers that already used a piece (the names scan may miss that one mention).
+would write a secret name; **one Undo** puts both pieces back. Not done: silent seam fixes. (Helpers'
+copies of a changed piece are brought up to date: see step 5.)
+
+**Transcript Cleaner step 5: built (2026-10-16, #127): helpers' copies follow a changed line.**
+When a piece's words change after the helpers read it (an answer to "Did they mean…?", a name
+split across two pieces, the re-check of earlier lines, an Undo), `Bot._rewrite_line` tells
+`_line_changed`, which brings the helpers' **copies** of the piece up to date, and only when the
+write really changed it and the speaker is still recorded: the names scan's line (`table.heard`), the
+sidebar's recent scene (`table.recent`, which DM sidebar answers and FightBot read), the off-topic
+filter's waiting copy (held, and the open window), and which names count as heard and in the scene
+(a name found in the new words and not the old one is counted as heard, and noted in the scene only
+if the piece was said in the last 10 minutes; an Undo takes the count off and leaves the scene,
+which fades by itself). A copy is changed only when it is certainly that piece's: the names scan's
+line only if the piece isn't held back or hidden and its words match exactly one entry, and the
+sidebar's scene only where exactly one entry matches (two identical lines from one person can't be
+told apart, and a missed update is safer than a wrong one). A speaker who stops being recorded has
+their words forgotten here too.
+**Helpers that act are never run again**: a rules card, a house-rule proposal, a clock phrase, a
+sheet re-read or a sidebar question fires once, on the first words (acting twice is worse than
+missing a name). The words each piece has in the copies are kept for the last 3,000 pieces; an older
+one is skipped quietly.
 
 **Off-topic filter (decided 2026-10-04; updated 2026-10-05).** A very light, fast AI pass
 right after the Cleaner. Scheduling, life updates, and other non-game talk are labeled
