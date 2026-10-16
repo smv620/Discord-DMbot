@@ -1632,12 +1632,18 @@ names panel nor the speech-to-text hints can be a fixed list.
   never can be; 🤫 keep it secret or 👁️ stop, for the campaign's DMs only; ✖ not this
   name), **🔗 Same as…** (find the other name, then "Call it X" or "Call it Y"; the two
   become one, with **Undo** on the card), **🧭 Connect to…** (pick how, from this
-  name's side or the other way round, then the other name; saved as confirmed, and a
-  **Remove a connection…** menu takes one back), and a **Show all ▾** select when a
+  name's side or the other way round, then the other name; saved as confirmed; for the
+  campaign's DMs only, a **🤫 Secret: no / yes** toggle sits beside Back (it starts off each time the
+  menu opens and applies to the next connection saved); a secret connection never shows on players'
+  cards or Show all, and the DM's cards mark it 🤫; a name found through a secret name makes the
+  connection secret by itself; and a
+  **Remove a connection…** menu takes one back, secret ones listed, marked 🤫, only to DMs), and a **Show all ▾** select when a
   section is cut. Decided while building: a card groups connections by how they read from that
   name's side ("is a member of **Frostwolf tribe**"; on the tribe's card "has as
-  members **Ulfgar**"; ally, enemy and family read the same both ways); connections the
-  DM adds are not secret for now (a 🤫 secret connection comes later); a connection that
+  members **Ulfgar**"; ally, enemy and family read the same both ways); a connection is
+  secret only when the DM keeps it secret (#1546: the save checks again that the person is a DM,
+  and saves it as not secret, with a line saying players can see it, if not; a connection already
+  secret is never made public by saving it again); a connection that
   breaks the usual rules (a member of a place) is still saved, flagged for the
   after-session check.
 
