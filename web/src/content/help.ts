@@ -13,6 +13,8 @@ export interface Step {
   text: string;
   /** Exact button or command names used in `text`, with the bot file that shows each. */
   names?: { name: string; file: string }[];
+  /** A page on this website the step points to (shown after the text). */
+  link?: { text: string; href: string };
 }
 
 export const helpHeading = "How to use DMbot";
@@ -277,6 +279,18 @@ export const playerSteps: Step[] = [
   {
     text: "Everyone in the server can read a game's transcript. To read or download one, type /transcript.",
     names: [{ name: "/transcript", file: "ui/transcripts.py" }],
+  },
+  {
+    text: "Your table's house rules are on this website too. Sign in, open My Account, and read them there. You can save them as a text file. Rules your table follows from another table are listed too. Only your game master can change them, in Discord.",
+    link: { text: "Read your table's house rules", href: "/account/house-rules" },
+  },
+  {
+    text: "The homebrew your game master shares (extra monsters, spells and items made for your game) is on this website too. Sign in, open My Account, and read it there. Entries from a shared book say From a shared book. If that book is for older rules than your table plays, they also say [Legacy 2014]. Homebrew your table follows from another table is listed too, but only the parts that table shares with players. You can save your table's own homebrew as a text file. You can't change it here. Your game master does that in Discord.",
+    link: { text: "Read your table's homebrew", href: "/account/homebrew" },
+  },
+  {
+    text: "You can also read transcripts on this website. Sign in, open My Account, and pick a game. Choose Cleaned, or As heard, which has every word and spoilers too. You can save a game as a text file. A game whose transcript was deleted still shows, marked as deleted. Each campaign shows how long your table keeps transcripts. Only people who said yes were recorded. To delete your own lines, see Delete my transcripts below.",
+    link: { text: "Read your game transcripts", href: "/account/transcripts" },
   },
   {
     text: "Want your own lines gone? In Discord, open the ⚙️ Menu DMbot sends you and press 🗑 Delete my transcripts. It deletes every line you said in that server, from every past game. It can't be undone. Other people's lines, your game master's story notes and copies already downloaded stay.",
