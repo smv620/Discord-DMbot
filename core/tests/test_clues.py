@@ -281,6 +281,80 @@ class Clues(ConfirmedMemoryTest):
         self.assertIn("🔒 **Only some people know this:** Cerric, Kesh", dm)
         self.assertIsNone(name_card.card_text(lookup, self.secret, connections, secrets=False))
 
+    async def view(self, secrets: bool) -> Any:
+        from dmbot.memory.lookup import CampaignLookup
+
+        return CampaignLookup.build(await self.memory.lookup_data(GUILD_A, self.c)).for_viewer(
+            secrets
+        )
+
+    async def test_a_manager_who_is_not_a_dm_finds_the_clue_nowhere(self) -> None:
+        from dmbot.memory.search import find, said_lately
+        from dmbot.ui import name_lists
+        from dmbot.ui import names as names_ui
+
+        await self.limit(self.cerric)
+        dm, other = await self.view(True), await self.view(False)
+        self.assertIn(self.secret, dm.entities)
+        self.assertNotIn(self.secret, other.entities)
+        self.assertEqual([m.entity_id for m in find(other, "baron", secrets=False)], [])
+        self.assertEqual([m.entity_id for m in find(dm, "baron", secrets=True)], [self.secret])
+        self.assertNotIn(self.secret, said_lately(other))
+        campaign = await self.campaigns.get(GUILD_A, self.c)
+        assert campaign is not None
+        text, shown = names_ui.home_text(other, campaign, 0)
+        self.assertNotIn("baron", text + " ".join(n for _, n, _ in shown))
+        self.assertEqual([k for k, _ in name_lists.kinds_in(other)].count("clue"), 0)
+        files, _count = name_lists.download_files(other, campaign, secrets=False)
+        self.assertNotIn("baron", "".join(files))
+        dm_files, _ = name_lists.download_files(dm, campaign, secrets=True)
+        self.assertIn("baron", "".join(dm_files))
+
+    async def test_a_knowers_card_does_not_mention_a_limited_clue_to_a_non_dm(self) -> None:
+        await self.limit(self.cerric)
+        connections = await self.memory.relations(GUILD_A, self.c, entity_id=self.cerric)
+        other = name_card.card_text(await self.view(False), self.cerric, connections, secrets=False)
+        dm = name_card.card_text(await self.view(True), self.cerric, connections, secrets=True)
+        assert other is not None and dm is not None
+        self.assertNotIn("baron", other)
+        self.assertIn("baron", dm)
+        clue_card = name_card.card_text(
+            await self.view(True),
+            self.secret,
+            await self.memory.relations(GUILD_A, self.c, entity_id=self.secret),
+            secrets=True,
+        )
+        assert clue_card is not None
+        self.assertNotIn("Secret:", clue_card)  # its own name is the title, not a second line
+
+    async def test_the_cleaner_never_writes_a_limited_clue_into_a_transcript(self) -> None:
+        await self.limit(self.cerric)
+        lookup = await self.view(True)
+        self.assertEqual(lookup.sounds_like("The barons secret"), ())
+        self.assertTrue(
+            all(n.secret for n in lookup.names if n.entity_id == self.secret),
+            "its names are kept as secret names",
+        )
+
+    async def test_a_switch_left_on_with_nobody_listed_warns_about_no_one(self) -> None:
+        await self.limit(self.cerric)
+        (fact,) = [
+            r
+            for r in await self.memory.relations(GUILD_A, self.c, entity_id=self.secret)
+            if r.subject_id == self.cerric
+        ]
+        # Removed some other way than the clue's own screen (a connection removed on a card).
+        await self.memory.update_relation(
+            GUILD_A, self.c, fact.id, source=DM_SOURCE, status="rejected"
+        )
+        clue = await self.memory.entity(GUILD_A, self.c, self.secret)
+        assert clue is not None
+        self.assertTrue(clue.audience_limited)
+        await self.relate(self.cerric, "ally_of", self.kesh, status="confirmed",
+                          from_session_at=EARLIER)  # fmt: skip
+        await self.claim(said("Kesh", "told", "The baron's secret"))
+        self.assertEqual((await self.check()).conflicts, ())
+
     # ---- backups --------------------------------------------------------------------------
 
     async def test_the_switch_and_the_list_come_back_from_a_backup(self) -> None:

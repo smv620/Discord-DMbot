@@ -282,7 +282,10 @@ def card_text(
     own = name_key(entity.name)
     mine = [e for e in lookup.names if e.entity_id == entity_id and e.confirmed]
     others = [_md(e.text) for e in mine if not e.secret and e.key != own]
-    hidden = [_md(e.text) for e in mine if e.secret]
+    # (a limited clue's own name is "secret" for the Cleaner, but it is the card's title)
+    hidden = [
+        _md(e.text) for e in mine if e.secret and not (entity.audience_limited and e.key == own)
+    ]
     heard = lookup.heard.get(entity_id)
     when = (
         f"Last heard <t:{heard.last_session_at}:D>"
@@ -329,8 +332,10 @@ async def _names(interaction: discord.Interaction, campaign: Campaign) -> Campai
     if cache is None:
         await _tell(interaction, NOT_AVAILABLE)
         return None
-    try:
-        return await cache.get(campaign.guild_id, campaign.id)
+    try:  # (without the clues only some people know, unless this person is a DM, #1649)
+        return (await cache.get(campaign.guild_id, campaign.id)).for_viewer(
+            sees_secrets(campaign, interaction.user.id)
+        )
     except Exception:
         log.exception("Couldn't load the campaign's names")
         await _tell(interaction, "DMbot couldn't load the names just now. Try again in a moment.")
@@ -1920,6 +1925,7 @@ async def find_typeahead(
     if names is None:  # still loading: nothing this time, ready for the next keystroke
         return []
     secrets = sees_secrets(campaign, interaction.user.id)
+    names = names.for_viewer(secrets)
     if current.strip():
         matches = find(names, current, secrets=secrets)
     else:

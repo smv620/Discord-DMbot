@@ -481,6 +481,9 @@ class ContinuityStore:
         for row in knows_rows:
             if row["object_id"] in limited:
                 limited[row["object_id"]].add(row["subject_id"])
+        # A switch on with nobody left on the list (the connection was removed elsewhere) means
+        # DMbot doesn't know who knows it, so it says nothing: an empty list is never "nobody".
+        limited = {clue: who for clue, who in limited.items() if who}
         return World(
             onto,
             names_of(entity_rows, alias_rows),
@@ -538,7 +541,12 @@ class ContinuityStore:
                         w, entity_id, back, claim.session_started_at
                     )
             for clue_id, character_id in sorted(learners):
-                await self._memory.add_knower_in(w, clue_id, character_id, claim.session_started_at)
+                try:
+                    await self._memory.add_knower_in(
+                        w, clue_id, character_id, claim.session_started_at
+                    )
+                except MemoryRuleError:
+                    continue  # the clue or the character changed meanwhile; the claim still counts
             for fact_id in clash_ids:  # the earlier fact ends where the new one starts
                 row = await w.get(RELATIONS, fact_id)
                 if row is not None and row["to_session_at"] is None and claim.session_started_at:
