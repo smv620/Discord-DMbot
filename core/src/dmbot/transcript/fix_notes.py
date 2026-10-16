@@ -28,7 +28,8 @@ from dmbot.memory.models import name_key
 from dmbot.transcript.cleaner import Fix
 
 SHOWN = 10  # lines in the message (the newest); older ones are no longer undoable here
-ANSWERS_KEPT = 20  # answers whose line can still be put back by their Undo
+ANSWERS_KEPT = 20  # answers (a batch is one answer, with the earlier lines it wrote, #127) whose
+# lines can still be put back by their Undo
 NAME_MAX = 60
 MESSAGE_MAX = 2000  # Discord's limit for one message
 HEADER = (
@@ -79,6 +80,9 @@ class Answer:
     start: int  # where the words are, as heard
     end: int
     written: str
+    # True for an earlier line an answer was written into afterwards (#127), False for the
+    # line the question was about; Undo reports only on the line that was asked about.
+    earlier: bool = False
 
     @property
     def line(self) -> tuple[int, int]:
@@ -192,12 +196,27 @@ class FixNotes:
         return rewrite(heard, edits)
 
     def answered(self, answer: Answer) -> None:
-        """Keep the newest answers, and any on a line that still has notes (its text
-        needs them)."""
+        """Keep the newest `ANSWERS_KEPT` answers, a batch (an answer and the earlier lines it
+        wrote) always whole, and any on a line that still has notes (its text needs them)."""
         answers = [*self.answers, answer]
         lines = {n.line for n in self.notes}
-        newest = answers[-ANSWERS_KEPT:]
-        self.answers = [a for a in answers[:-ANSWERS_KEPT] if a.line in lines] + newest
+
+        def key(i: int) -> object:  # an answer with no batch is its own
+            batch = answers[i].batch
+            return batch if batch is not None else ("alone", i)
+
+        newest: list[object] = []
+        for i in range(len(answers) - 1, -1, -1):
+            if key(i) not in newest:
+                newest.append(key(i))
+            if len(newest) == ANSWERS_KEPT:
+                break
+        self.answers = [a for i, a in enumerate(answers) if key(i) in newest or a.line in lines]
+
+    def on_line(self, speaker: int, started_ms: int) -> bool:
+        """Whether any fix note or answer is already on this line (so it isn't written again)."""
+        line = (speaker, started_ms)
+        return any(n.line == line for n in self.notes) or any(a.line == line for a in self.answers)
 
     def take_back(self, batch: int) -> Answer | None:
         """Its Undo was pressed: the answer no longer fixes its line (returned, so the
