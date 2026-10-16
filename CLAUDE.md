@@ -196,6 +196,39 @@ dev1 as a note on the issue.
 Only one copy of DMbot may be logged in to Discord at a time: they share the bot token.
 On the server that copy is the one in Docker Compose, run by dev1.
 
+## Rounds: how every session finds work and wakes up (owner, 2026-10-16)
+Tasks live only in GitHub: an open issue labelled with your session's name is yours, lowest number
+first; a PR comment or review on your own PR is yours too. Nothing waits on chat memory, so a new
+session of a role works from this file and GitHub alone. **Each session is woken four times an hour
+by scheduled tasks** (a scheduled task fires at most hourly, so four make the 15 minutes). The minutes
+are staggered so each role finds the others' work done:
+
+| Role | Minutes past the hour | Kind |
+|---|---|---|
+| CloudDev | :01 (hourly check), :16, :31, :46 | long-lived cloud session |
+| WebDev | :02 (hourly check), :17, :32, :47 | long-lived cloud session |
+| Supervisor | :04 (hourly summary), :19, :34, :49 | long-lived cloud session |
+| RepoManager | :09, :24, :39, :54 (hourly check) | long-lived cloud session (moved off the owner's computer, 2026-10-16) |
+| dev1 | :12 (hourly check), :27, :42, :57 | long-lived, on the server |
+
+**Every round, whatever the role:** read your open issues and your PRs (send-backs first), read #516's
+last comments, act on what is yours, and stop. A round that finds nothing to do ends in one line.
+- **Developers (CloudDev, WebDev):** fix send-backs and red CI on your PRs first; then the next issue.
+  If your queue is empty, say so to Supervisor once.
+- **dev1:** deploy what Supervisor handed over (dry run, backup, bot before web-api), check it, write the
+  testing logs; then live checks.
+- **RepoManager:** for every open PR, check compliance and the approval record, refresh stale bases,
+  merge what is approved on green CI in the order Supervisor's latest list on #516 gives, and post one
+  report on #516. **Supervisor's merge lists on #516 are standing instructions**: act on them without
+  asking the owner again, within the rules in "Workflow".
+- **Supervisor:** reviews, queues, #516, the owner's questions; on the :04 round, also check that every
+  role above has its four scheduled tasks bound to a live session, and rebind any that died.
+
+**The hourly check** (the first minute in the table): even mid-task, stop at a safe point and post one
+status line on the issue you are working on (done, next, blocked on whom), then carry on.
+**A session that restarts** (a new session id) posts "<role> online, session <id>" on #516 at once, so
+Supervisor can rebind its scheduled tasks; until then it gets no wake-ups.
+
 ## Issue log: shared memory between Claude sessions
 - **Decisions only the owner can make** (owner, 2026-10-09) carry the label `needs: owner`,
   with one comment starting "Owner, what this needs from you": numbered, plain words, full
