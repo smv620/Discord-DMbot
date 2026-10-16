@@ -371,7 +371,9 @@ def fake_bot(job: Job | None, *, allowed: bool = True, secrets: list[str] | None
     )
     bot.recap_audio_files = SimpleNamespace(present=lambda g, c, s: present or {})
     bot._post_one_recap = lambda g, c, a: DMBot._post_one_recap(cast(Any, bot), g, c, a)
-    bot._recap_audio_files = lambda g, camp, j: DMBot._recap_audio_files(cast(Any, bot), g, camp, j)
+    bot._recap_audio_files = lambda g, camp, j, ch: DMBot._recap_audio_files(
+        cast(Any, bot), g, camp, j, ch
+    )
     bot.sent = sent
     return bot
 
@@ -399,46 +401,75 @@ class ThePostStep(unittest.IsolatedAsyncioTestCase):
         kwargs = bot.sent.send.await_args.kwargs
         self.assertEqual(kwargs["allowed_mentions"].users, False)
 
-    async def test_the_narration_and_music_go_as_attachments_on_the_last_message(self) -> None:
+    def ready(self, **kw: Any) -> Job:
+        from dmbot.recaps.audio.worker import text_hash
+
+        base = self.job()
+        return self.job(audio="ready", audio_text_hash=text_hash(base.title, base.summary), **kw)
+
+    async def with_files(self, job: Job, **kw: Any) -> Any:
         import tempfile
         from pathlib import Path
 
-        with tempfile.TemporaryDirectory() as tmp:
-            voice, music_, mix_ = (Path(tmp) / n for n in ("v.mp3", "m.mp3", "x.mp3"))
-            for f in (voice, music_, mix_):
-                f.write_bytes(b"mp3")
-            files = {"voice": voice, "music": music_, "mix": mix_}
-            bot = fake_bot(self.job(audio="ready"), present=files)
-            await bot._post_one_recap(THURSDAY.id, "c" * 32, 100)
-            calls = bot.sent.send.await_args_list
-            for call in calls[:-1]:
-                self.assertNotIn("files", call.kwargs)
-            sent = calls[-1].kwargs["files"]
-            self.assertEqual([f.filename for f in sent], ["recap-voice.mp3", "recap-music.mp3"])
-            for f in sent:
-                f.close()
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        voice, music_, mix_ = (Path(tmp.name) / n for n in ("v.mp3", "m.mp3", "x.mp3"))
+        for f in (voice, music_, mix_):
+            f.write_bytes(b"mp3")
+        bot = fake_bot(job, present={"voice": voice, "music": music_, "mix": mix_}, **kw)
+        return bot
+
+    async def test_the_narration_and_music_go_as_attachments_on_the_last_message(self) -> None:
+        bot = await self.with_files(self.ready())
+        await bot._post_one_recap(THURSDAY.id, "c" * 32, 100)
+        calls = bot.sent.send.await_args_list
+        for call in calls[:-1]:
+            self.assertNotIn("files", call.kwargs)
+        sent = calls[-1].kwargs["files"]
+        self.assertEqual([f.filename for f in sent], ["recap-voice.mp3", "recap-music.mp3"])
+        for f in sent:
+            f.close()
 
     async def test_no_attachments_without_audio_or_when_the_plan_no_longer_has_it(self) -> None:
-        import tempfile
-        from pathlib import Path
+        for name, job, lapsed in (
+            ("no audio", self.job(audio="off"), False),
+            ("failed", self.job(audio="failed"), False),
+            ("lapsed", self.ready(), True),
+        ):
+            with self.subTest(name):
+                bot = await self.with_files(job)
+                if lapsed:
+                    bot.plan_allows = AsyncMock(side_effect=lambda a, *_, **__: a != "recap_audio")
+                await bot._post_one_recap(THURSDAY.id, "c" * 32, 100)
+                self.assertNotIn("files", bot.sent.send.await_args.kwargs)
+                bot.recaps.posted.assert_awaited_once()  # the text is posted either way
 
-        with tempfile.TemporaryDirectory() as tmp:
-            voice = Path(tmp) / "v.mp3"
-            voice.write_bytes(b"mp3")
-            for name, job, lapsed in (
-                ("no audio", self.job(audio="off"), False),
-                ("failed", self.job(audio="failed"), False),
-                ("lapsed", self.job(audio="ready"), True),
-            ):
-                with self.subTest(name):
-                    bot = fake_bot(job, present={"voice": voice, "music": voice})
-                    if lapsed:
-                        bot.plan_allows = AsyncMock(
-                            side_effect=lambda a, *_, **__: a != "recap_audio"
-                        )
-                    await bot._post_one_recap(THURSDAY.id, "c" * 32, 100)
-                    self.assertNotIn("files", bot.sent.send.await_args.kwargs)
-                    bot.recaps.posted.assert_awaited_once()  # the text is posted either way
+    async def test_audio_made_from_older_text_is_left_out_and_the_dm_is_told(self) -> None:
+        from dataclasses import replace
+
+        job = replace(self.ready(), summary="《Tense》 The DM changed this after the audio.")
+        bot = await self.with_files(job)
+        await bot._post_one_recap(THURSDAY.id, "c" * 32, 100)
+        self.assertNotIn("files", bot.sent.send.await_args.kwargs)
+        told = bot.post.await_args.args[1]
+        self.assertIn("text changed", told)
+        bot.recaps.posted.assert_awaited_once()
+
+    async def test_audio_too_big_for_the_servers_limit_is_left_out_and_the_dm_is_told(self) -> None:
+        bot = await self.with_files(self.ready())
+        bot.sent.guild.filesize_limit = 5  # bytes: three-byte files, two of them, are over it
+        await bot._post_one_recap(THURSDAY.id, "c" * 32, 100)
+        self.assertNotIn("files", bot.sent.send.await_args.kwargs)
+        self.assertIn("too big", bot.post.await_args.args[1])
+        bot.recaps.posted.assert_awaited_once()
+
+    async def test_a_file_that_has_gone_does_not_stop_the_post(self) -> None:
+        bot = await self.with_files(self.ready())
+        for path in bot.recap_audio_files.present(0, "", 0).values():
+            path.unlink()
+        await bot._post_one_recap(THURSDAY.id, "c" * 32, 100)
+        self.assertNotIn("files", bot.sent.send.await_args.kwargs)
+        bot.recaps.posted.assert_awaited_once()
 
     async def test_each_check_that_fails_posts_nothing_and_tells_the_dm_why(self) -> None:
         cases = {

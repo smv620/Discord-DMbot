@@ -3916,17 +3916,21 @@ RECAP_AUDIO_JOBS = (
     --   audio         off (not wanted, or no key), queued, ready or failed
     --   audio_tries   attempts so far (one retry later, then failed)
     --   audio_next_at not before this time (the wait before the retry)
-    --   audio_credits the provider credits the last make spent (a count, for the cost log)
+    --   audio_credits the provider credits this recap's audio has cost, across tries (a count)
     --   audio_error   a short fixed reason, never a name or any text
     ALTER TABLE recap_jobs ADD COLUMN audio TEXT NOT NULL DEFAULT 'off'
         CHECK (audio IN ('off', 'queued', 'ready', 'failed'));
     ALTER TABLE recap_jobs ADD COLUMN audio_tries INTEGER NOT NULL DEFAULT 0
         CHECK (audio_tries BETWEEN 0 AND 3);
     ALTER TABLE recap_jobs ADD COLUMN audio_next_at BIGINT NOT NULL DEFAULT 0;
+    ALTER TABLE recap_jobs ADD COLUMN audio_text_hash TEXT NOT NULL DEFAULT ''
+        CHECK (char_length(audio_text_hash) <= 64);
     ALTER TABLE recap_jobs ADD COLUMN audio_credits INTEGER NOT NULL DEFAULT 0
         CHECK (audio_credits >= 0);
     ALTER TABLE recap_jobs ADD COLUMN audio_error TEXT NOT NULL DEFAULT ''
         CHECK (char_length(audio_error) <= 200);
+    --   audio_text_hash  a fingerprint of the title and text the audio was made from: after the
+    --                 DM edits the text the audio no longer matches and is not attached
     -- A campaign's pronunciation dictionary at the voice company, made once and kept here with
     -- a hash of its rules, so it is made again only when a name's spelling changes. Only
     -- non-secret names are ever in it. It belongs to this campaign alone and goes with it.

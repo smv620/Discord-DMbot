@@ -21,13 +21,14 @@ import contextlib
 import logging
 import math
 import os
+import shutil
 import wave
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from pathlib import Path
 
 from dmbot.recaps.audio import mix, music
-from dmbot.recaps.audio.eleven import SAMPLE_RATE, ElevenLabs, Locator, ProviderError
+from dmbot.recaps.audio.eleven import SPEECH_RATE, ElevenLabs, Locator, ProviderError
 from dmbot.recaps.audio.files import FILE_NAMES, MIX, MUSIC, VOICE, AudioFiles
 from dmbot.recaps.audio.script import EMOTION, Script
 
@@ -39,6 +40,11 @@ GAP_SECONDS = 0.4  # breath between paragraphs
 FFMPEG_SECONDS = 300
 
 Runner = Callable[[list[str]], Awaitable[int]]
+Guard = Callable[[], Awaitable[None]]  # raises to stop the work (consent, secrets, the cap)
+
+
+async def no_guard() -> None:
+    return None
 
 
 class RenderError(Exception):
@@ -77,15 +83,20 @@ def estimate_credits(script: Script, *, ambience_needed: bool) -> int:
 
 
 def _silence(seconds: float) -> bytes:
-    return b"\x00\x00" * round(seconds * SAMPLE_RATE)
+    return b"\x00\x00" * round(seconds * SPEECH_RATE)
 
 
-def _write_wav(path: Path, pcm: bytes) -> None:
+def _write_wav(path: Path, pcm: bytes | bytearray) -> None:
     with wave.open(str(path), "wb") as out:
         out.setnchannels(1)
         out.setsampwidth(2)
-        out.setframerate(SAMPLE_RATE)
+        out.setframerate(SPEECH_RATE)
         out.writeframes(pcm)
+
+
+def _fresh(folder: Path) -> None:
+    shutil.rmtree(folder, ignore_errors=True)
+    folder.mkdir(parents=True)
 
 
 def _keep(path: Path, data: bytes) -> None:
@@ -123,14 +134,16 @@ class Renderer:
         into: Path,
         seed: int,
         dictionary: Locator | None,
+        guard: Guard = no_guard,
     ) -> Made:
-        await asyncio.to_thread(into.mkdir, parents=True, exist_ok=True)
+        await asyncio.to_thread(_fresh, into)  # nothing left by a stopped earlier try
         before = self._provider.credits
         # 1. The voice, a paragraph at a time; the moods' times come from its timestamps.
         pcm = bytearray(_silence(HEAD_SECONDS))
         starts: dict[int, float] = {}
         for paragraph in script.paragraphs:
-            begun = len(pcm) / (2 * SAMPLE_RATE)
+            begun = len(pcm) / (2 * SPEECH_RATE)
+            await guard()  # before each paid call: consent, secrets and the cap, again
             speech = await self._provider.speech(
                 paragraph.tagged,
                 previous_text=paragraph.previous_text,
@@ -144,13 +157,14 @@ class Renderer:
                     starts.setdefault(cue.offset, begun + at)
             pcm += speech.pcm + _silence(GAP_SECONDS)
         pcm += _silence(TAIL_SECONDS)
-        seconds = len(pcm) / (2 * SAMPLE_RATE)
+        seconds = len(pcm) / (2 * SPEECH_RATE)
         voice_wav = into / "in-voice.wav"
-        await asyncio.to_thread(_write_wav, voice_wav, bytes(pcm))
+        await asyncio.to_thread(_write_wav, voice_wav, pcm)
         # 2. The music: sections as long as the voice spends in each mood.
         plan = music.composition_request(script, seconds=round(seconds), starts=starts)
         total_ms = sum(s["duration_ms"] for s in plan["composition_plan"]["sections"])
         music_mp3 = into / "in-music.mp3"
+        await guard()
         piece = await self._provider.music(plan, seconds=total_ms / 1000)
         await asyncio.to_thread(music_mp3.write_bytes, piece)
         # 3. One ambience loop (the first scene found), kept for this campaign and scene kind.
@@ -159,6 +173,7 @@ class Renderer:
         if beds:
             bed = self._files.ambience_path(guild_id, campaign_id, beds[0].kind)
             if not await asyncio.to_thread(bed.is_file):
+                await guard()
                 data = await self._provider.ambience(beds[0].as_request())
                 await asyncio.to_thread(_keep, bed, data)
         # 4. The mix.
@@ -172,6 +187,7 @@ class Renderer:
             out_bed=str(into / FILE_NAMES[MUSIC]),
             out_mix=str(into / FILE_NAMES[MIX]),
         )
+        await guard()
         if await self._run(argv) != 0:
             raise RenderError("mix")
         await asyncio.to_thread(_tidy, into)

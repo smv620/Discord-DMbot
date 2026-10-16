@@ -172,7 +172,7 @@ from dmbot.recaps import post as recap_post
 from dmbot.recaps.audio import names as audio_names
 from dmbot.recaps.audio.eleven import ElevenLabs, HttpTransport
 from dmbot.recaps.audio.files import FILE_NAMES, MUSIC, VOICE, AudioFiles
-from dmbot.recaps.audio.worker import AudioInputs, AudioWorker
+from dmbot.recaps.audio.worker import AudioInputs, AudioWorker, text_hash
 from dmbot.recaps.notify import page_link, tell_the_dm
 from dmbot.recaps.pipeline import Inputs, RecapWorker
 from dmbot.recaps.store import Job, RecapSection, RecapStore
@@ -289,7 +289,8 @@ FORGET_TIMEOUT_S = 10  # removing learned names must not hold up stopping a reco
 DISPLAY_NAME_REFRESH_S = 86400  # a person's Discord name is kept on their account once a day
 DISPLAY_NAME_TIMEOUT_S = 3  # for the background update
 NAMES_NOTED_MAX = 5000  # people remembered as just noted; the oldest half go past this
-RECAP_ATTACHMENT_MAX = 24 * 1024 * 1024  # Discord's limit is 25 MB a file for a server
+RECAP_ATTACHMENT_MAX = 24 * 1024 * 1024  # Discord's own most for a message
+RECAP_DEFAULT_FILE_LIMIT = 10 * 1024 * 1024 - 65536  # a server's smallest limit, with some room
 RECAPS_PER_ROUND = 2  # recap jobs worked in one minute, across all servers (a small global limit)
 RECAP_ROUND_S = 60
 METER_INTERVAL_S = 60  # how often listening minutes are written to the hours meter (#437)
@@ -974,6 +975,11 @@ class DMBot(commands.AutoShardedBot):
             *(
                 [self._watched(self._recap_loop(), "recaps")]
                 if self.recap_worker is not None
+                else []
+            ),
+            *(
+                [self._watched(self._recap_audio_loop(), "recap-audio")]
+                if self.audio_worker is not None
                 else []
             ),
             *([self._watched(self._retention_loop(), "retention")] if self.retention else []),
@@ -5509,7 +5515,6 @@ class DMBot(commands.AutoShardedBot):
                         await self.recap_worker.run(guild.id, cid, at)
                     except Exception:
                         log.exception("Recap: a job failed unexpectedly")
-        await self.run_recap_audio()
 
     async def run_recap_audio(self) -> None:
         """One round of the audio step: recaps whose text is ready and whose narration and music
@@ -5518,17 +5523,21 @@ class DMBot(commands.AutoShardedBot):
             return
         for guild in list(self.guilds):
             try:
-                due = await self.recaps.audio_due(guild.id, limit=1)
+                if stuck := await self.recaps.fail_stuck_audio(guild.id):
+                    log.warning("Recap audio: %d recap(s) never finished and were given up", stuck)
+                due = await self.recaps.audio_due(guild.id)
             except Exception:
                 log.exception("Recap audio: couldn't list the waiting recaps for a server")
                 continue
             for cid, at in due:
                 with log_context(guild_id=guild.id, campaign_id=cid):
                     try:
-                        await self.audio_worker.run(guild.id, cid, at)
+                        ran = await self.audio_worker.run(guild.id, cid, at)
                     except Exception:
                         log.exception("Recap audio: a job failed unexpectedly")
-                return  # one recap's audio a round: the next round takes the next
+                        return
+                if ran is not None:
+                    return  # one recap's audio a round: the next round takes the next
 
     async def post_recaps(self, guild_id: int) -> None:
         """Send the recaps the DM pressed Post on, after checking again what may have changed
@@ -5580,23 +5589,25 @@ class DMBot(commands.AutoShardedBot):
         text = recap_post.to_the_table(job)
         if names_a_secret(text, secrets, []):
             return await back("It names something you keep secret. Change the text, then post.")
+        # The audio is looked up first, so the consent read below is the last await before the send.
+        audio, audio_note = await self._recap_audio_files(gid, campaign, job, channel)
         agreed = await self.consent.consenting(gid)
         if not set(job.speakers) <= set(agreed):
+            for f in audio:
+                f.close()
             return await back(
                 "A player stopped being recorded since this was written, so it can't be posted. "
                 "Write a new recap, or leave this one out."
             )
-        # Sent first and marked posted after, so a failed send is never recorded as a post. The
-        # consent read just above is the last await before the send.
+        # Sent first and marked posted after, so a failed send is never recorded as a post.
         try:
             parts = recap_post.parts_of(text)
             for i, part in enumerate(parts):
-                files = (
-                    await self._recap_audio_files(gid, campaign, job) if i == len(parts) - 1 else []
-                )
-                extra = {"files": files} if files else {}
+                extra = {"files": audio} if audio and i == len(parts) - 1 else {}
                 await channel.send(part, allowed_mentions=discord.AllowedMentions.none(), **extra)
         except Exception:
+            for f in audio:
+                f.close()
             log.warning("Recap: the send failed")
             return await back(
                 "DMbot couldn't write in the chat channel. Check it can post there, "
@@ -5604,29 +5615,40 @@ class DMBot(commands.AutoShardedBot):
             )
         await self.recaps.posted(gid, cid, at)
         if campaign.dm_screen_channel_id:
-            await self.post(campaign.dm_screen_channel_id, "📜 Recap posted to the table.")
+            await self.post(
+                campaign.dm_screen_channel_id,
+                "📜 Recap posted to the table." + (f"\n{audio_note}" if audio_note else ""),
+            )
         changed = job.summary != job.original
         log.info("Recap: posted%s", " after an edit" if changed else "")  # counts only
 
     async def _recap_audio_files(
-        self, gid: int, campaign: Campaign, job: Job
-    ) -> list[discord.File]:
-        """The narration and the music as attachments, if the recap has them and the plan still
-        includes them (fails closed). Files over Discord's size limit are left out; the text is
-        posted either way."""
-        if job.audio != "ready" or not await self.plan_allows(
-            "recap_audio", gid, campaign, fail_open=False
-        ):
-            return []
-        found = await asyncio.to_thread(
-            self.recap_audio_files.present, gid, campaign.id, job.session_at
+        self, gid: int, campaign: Campaign, job: Job, channel: Any = None
+    ) -> tuple[list[discord.File], str]:
+        """The narration and the music as attachments, and a note for the DM when they were left
+        out. Attached only if the recap has them, they were made from this very text (an edit
+        since makes them stale), the plan still includes them (fails closed) and they fit the
+        server's file limit. The text is posted either way."""
+        if job.audio != "ready":
+            return [], ""
+        if job.audio_text_hash != text_hash(job.title, job.summary):
+            return [], "The audio was left out: the text changed after it was made."
+        if not await self.plan_allows("recap_audio", gid, campaign, fail_open=False):
+            return [], ""
+        limit = min(
+            RECAP_ATTACHMENT_MAX,
+            int(
+                getattr(getattr(channel, "guild", None), "filesize_limit", RECAP_DEFAULT_FILE_LIMIT)
+            ),
         )
-        out: list[discord.File] = []
-        for kind in (VOICE, MUSIC):
-            path = found.get(kind)
-            if path is not None and path.stat().st_size <= RECAP_ATTACHMENT_MAX:
-                out.append(discord.File(path, filename=FILE_NAMES[kind]))
-        return out
+        found = await asyncio.to_thread(
+            _attachable, self.recap_audio_files, gid, campaign.id, job.session_at
+        )
+        if not found:
+            return [], ""
+        if sum(size for _, _, size in found) > limit:  # the limit is for the whole message
+            return [], "The audio was left out: it is too big for this server's file limit."
+        return [discord.File(path, filename=FILE_NAMES[kind]) for kind, path, _ in found], ""
 
     async def log_steward_tally(self, table: Table) -> None:
         """After the session's other work: one line in the server log of what the ontology
@@ -5829,6 +5851,18 @@ class DMBot(commands.AutoShardedBot):
         except discord.HTTPException:
             return "there"
         return user.display_name
+
+    async def _recap_audio_loop(self) -> None:
+        """Every minute: the narration and music of recaps whose text is ready (#1383). Its own
+        loop, because one recap's audio is minutes of waiting on the provider and must never
+        hold up the text jobs or a DM's Post."""
+        await asyncio.sleep(120)
+        while True:
+            try:
+                await self.run_recap_audio()
+            except Exception:
+                log.exception("The recap audio failed")
+            await asyncio.sleep(RECAP_ROUND_S)
 
     async def _recap_loop(self) -> None:
         """Every minute: the recap jobs that are due and the recaps the DM has pressed Post on
@@ -6625,6 +6659,22 @@ async def consent_revoke(interaction: discord.Interaction) -> None:
         view=warning_view(guild.id),
         ephemeral=True,
     )
+
+
+def _attachable(
+    files: AudioFiles, gid: int, cid: str, session_at: int
+) -> list[tuple[str, Path, int]]:
+    """The narration and music files that exist, with their sizes. A file that vanishes between
+    the look and the size (a sweep, a remake) is just left out."""
+    out: list[tuple[str, Path, int]] = []
+    for kind, path in files.present(gid, cid, session_at).items():
+        if kind not in (VOICE, MUSIC):
+            continue
+        try:
+            out.append((kind, path, path.stat().st_size))
+        except OSError:
+            continue
+    return out
 
 
 async def run(settings: Settings) -> None:

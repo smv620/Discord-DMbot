@@ -31,8 +31,16 @@ API_BASE = "https://api.elevenlabs.io"
 # The newest model that understands bracketed delivery tags; recorded here, in one place.
 SPEECH_MODEL = "eleven_v3"
 MUSIC_MODEL = "music_v1"
-SAMPLE_RATE = 44100
-SPEECH_FORMAT = f"pcm_{SAMPLE_RATE}"  # 16-bit mono PCM: mixed first, encoded after
+SAMPLE_RATE = 44100  # the mix and the deliverables
+# 24 kHz 16-bit mono PCM: the highest PCM rate every plan may use (44.1 kHz is for the top tiers),
+# plenty for a narrator, and the mix brings it up to SAMPLE_RATE.
+SPEECH_RATE = 24000
+SPEECH_FORMAT = f"pcm_{SPEECH_RATE}"
+# The models that take the neighbouring paragraphs' words and a pronunciation dictionary. The
+# tag model (v3) is not known to: those fields are left out for it rather than risk a refusal.
+# The live run (dev1) settles which model the owner's account uses; see docs/costs.md.
+CONTEXT_MODELS = frozenset({"eleven_multilingual_v2", "eleven_turbo_v2_5", "eleven_flash_v2_5"})
+SOUND_MODEL = "eleven_text_to_sound_v2"  # the one that can make a seamless loop
 MUSIC_FORMAT = "mp3_44100_128"
 VOICE_SETTINGS_VERSION = 1  # bump with the numbers below: stored recaps say which they used
 VOICE_SETTINGS = {
@@ -44,6 +52,10 @@ VOICE_SETTINGS = {
 CREDITS_PER_CHAR = 1
 CREDITS_PER_MUSIC_MINUTE = 900
 CREDITS_PER_SOUND = 200
+SPEECH_TIMEOUT_S = 180
+MUSIC_TIMEOUT_S = 420
+SPEECH_TIMEOUT_S = 180
+MUSIC_TIMEOUT_S = 420
 MAX_AUDIO_BYTES = 60_000_000  # a reply bigger than this is refused (10 minutes of 44.1 kHz PCM)
 
 # (method, path, json body) -> (status, body bytes)
@@ -80,7 +92,7 @@ class Speech:
 
     @property
     def seconds(self) -> float:
-        return len(self.pcm) / (2 * SAMPLE_RATE)
+        return len(self.pcm) / (2 * SPEECH_RATE)
 
 
 class HttpTransport:
@@ -100,8 +112,13 @@ class HttpTransport:
         self, method: str, path: str, body: Mapping[str, Any] | None
     ) -> tuple[int, bytes]:
         if self._http is None:
-            # Music can take minutes: the wait is long, the connection is not.
-            self._http = aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=420, connect=10))
+            self._http = aiohttp.ClientSession()
+        # Music can take minutes, a paragraph of speech should not: each call has its own limit
+        # (making the connection is quick either way).
+        slow = "/v1/music" in path or "sound-generation" in path
+        timeout = aiohttp.ClientTimeout(
+            total=MUSIC_TIMEOUT_S if slow else SPEECH_TIMEOUT_S, connect=10
+        )
         try:
             async with self._http.request(
                 method,
@@ -109,9 +126,18 @@ class HttpTransport:
                 data=None if body is None else json.dumps(body),
                 headers=self._headers,
                 allow_redirects=False,
+                timeout=timeout,
             ) as response:
-                data = await response.content.read(MAX_AUDIO_BYTES + 1)
-                return response.status, data
+                if response.status != 200:
+                    return response.status, b""  # the body is never kept: it could echo the text
+                # Read to the end in pieces (a single read() returns only what has arrived so
+                # far), and stop at the limit instead of filling memory.
+                data = bytearray()
+                async for chunk in response.content.iter_chunked(1 << 16):
+                    data += chunk
+                    if len(data) > MAX_AUDIO_BYTES:
+                        raise ProviderError("reply")
+                return response.status, bytes(data)
         except (aiohttp.ClientError, TimeoutError) as exc:
             raise ProviderError("network") from exc
 
@@ -161,11 +187,12 @@ class ElevenLabs:
             "seed": seed % (2**32),
             "apply_text_normalization": "auto",
         }
-        if previous_text:
+        takes_context = self._speech_model in CONTEXT_MODELS
+        if previous_text and takes_context:
             body["previous_text"] = previous_text
-        if next_text:
+        if next_text and takes_context:
             body["next_text"] = next_text
-        if dictionary is not None:
+        if dictionary is not None and takes_context:
             body["pronunciation_dictionary_locators"] = [
                 {
                     "pronunciation_dictionary_id": dictionary.dictionary_id,
@@ -180,6 +207,8 @@ class ElevenLabs:
         if status != 200:
             raise _fail(status)
         self.credits += CREDITS_PER_CHAR * len(text)
+        if len(raw) > MAX_AUDIO_BYTES:
+            raise ProviderError("reply")
         try:
             data = json.loads(raw)
             pcm = base64.b64decode(data["audio_base64"], validate=True)
@@ -195,6 +224,10 @@ class ElevenLabs:
     async def music(self, request: Mapping[str, Any], *, seconds: float) -> bytes:
         """The piece for a composition plan (`music.composition_request`), as an mp3."""
         body = {**request, "model_id": self._music_model}
+        if "composition_plan" in body:
+            # The company takes `force_instrumental` only with a prompt, not with a plan; a plan
+            # whose sections have no lyric lines (ours never has any) is instrumental already.
+            body.pop("force_instrumental", None)
         status, raw = await self._http("POST", f"/v1/music?output_format={MUSIC_FORMAT}", body)
         if status != 200:
             raise _fail(status)
@@ -206,7 +239,9 @@ class ElevenLabs:
     async def ambience(self, request: Mapping[str, Any]) -> bytes:
         """One looping sound bed (`music.Ambience.as_request`), as an mp3."""
         status, raw = await self._http(
-            "POST", f"/v1/sound-generation?output_format={MUSIC_FORMAT}", request
+            "POST",
+            f"/v1/sound-generation?output_format={MUSIC_FORMAT}",
+            {**request, "model_id": SOUND_MODEL},
         )
         if status != 200:
             raise _fail(status)
@@ -214,6 +249,13 @@ class ElevenLabs:
             raise ProviderError("reply")
         self.credits += CREDITS_PER_SOUND
         return raw
+
+    async def forget_dictionary(self, dictionary_id: str) -> None:
+        """Delete an older dictionary at the company (best effort: a failure is only a leftover)."""
+        try:
+            await self._http("DELETE", f"/v1/pronunciation-dictionaries/{dictionary_id}", None)
+        except ProviderError:
+            log.info("Recap audio: an old dictionary was left at the provider")
 
     async def dictionary(self, name: str, rules: Sequence[Rule]) -> Locator:
         """A pronunciation dictionary made from alias rules (text to text)."""
