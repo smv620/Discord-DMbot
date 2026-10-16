@@ -43,7 +43,7 @@ from dmbot import (
     usage,
 )
 from dmbot.account_move import AccountMoves
-from dmbot.ai import FEATURE_TIERS, AnthropicClient, Feature
+from dmbot.ai import FEATURE_TIERS, AIModelTier, AnthropicClient, Feature
 from dmbot.ai_watch import AIWatch
 from dmbot.audio.segmenter import Segmenter, Utterance
 from dmbot.audio_check import AudioChecker, Verdict
@@ -150,7 +150,7 @@ from dmbot.ears.server import EarsServer
 from dmbot.fightbot import FightState
 from dmbot.logs import log_context, set_log_context
 from dmbot.mail import Mailer
-from dmbot.memory import definitions, document_reader
+from dmbot.memory import definitions, document_reader, extractor
 from dmbot.memory.backup import MemorySection
 from dmbot.memory.claims import ClaimStore
 from dmbot.memory.continuity import ContinuityStore
@@ -228,7 +228,7 @@ from dmbot.ui.house_rules import dmbot_house_rules  # noqa: F401 (registers it)
 from dmbot.ui.migrate import dmbot_migrate  # noqa: F401 (registers it)
 from dmbot.ui.name_card import UndoButton
 from dmbot.ui.name_lists import UndoListButton
-from dmbot.ui.names import ReviewButton, after_session_text, review_view
+from dmbot.ui.names import ReviewButton, after_session_text, held_back_text, review_view
 from dmbot.ui.optional_rules import dmbot_optional_rules  # noqa: F401 (registers it)
 from dmbot.ui.people_review import PeopleReviewButton, people_review_view, waiting_text
 from dmbot.ui.rule_lookup import dmbot_rule  # noqa: F401 (registers it)
@@ -729,6 +729,13 @@ class DMBot(commands.AutoShardedBot):
         self.fight_ai = (
             self.ai_client.tier(FEATURE_TIERS[Feature.FIGHTBOT], Feature.FIGHTBOT)
             if self.ai_client
+            else None
+        )
+        # The story extractor's reader after a session (#1363). Built only when the switch is on,
+        # so with it off there is no client to call; the tier is a backend setting.
+        self.extractor_ai = (
+            self.ai_client.tier(AIModelTier(settings.story_extractor_tier), Feature.EXTRACTOR)
+            if self.ai_client and settings.story_extractor_on
             else None
         )
         # The off-topic filter (#52), the audio check and the DM sidebar.
@@ -1774,12 +1781,14 @@ class DMBot(commands.AutoShardedBot):
             ("name scan", lambda: self.suggest_names(table)),
             ("who is who", lambda: self.learn_people(table)),
             ("people check", lambda: self.check_people(table)),
-            ("what was said", lambda: self.ask_about_claims(table)),
-            ("heads-ups", lambda: self.warn_about_continuity(table)),
-            ("steward numbers", lambda: self.log_steward_tally(table)),
             ("definitions", lambda: self.recheck_definitions(table)),
             ("stale flags", lambda: self.close_stale_flags(table)),
             ("old undo history", lambda: self.prune_old_changes(table)),
+            # Slow when on (minutes of AI calls): after the quick steps; the next two need it.
+            ("story extractor", lambda: self.extract_claims(table, ended_at)),
+            ("what was said", lambda: self.ask_about_claims(table)),
+            ("heads-ups", lambda: self.warn_about_continuity(table)),
+            ("steward numbers", lambda: self.log_steward_tally(table)),
         ]
         for name, step in steps:
             try:
@@ -5146,6 +5155,57 @@ class DMBot(commands.AutoShardedBot):
             if kept:
                 await self.post(
                     table.screen_channel_id, waiting_text(len(kept)), view=people_review_view(cid)
+                )
+
+    async def extract_claims(self, table: Table, ended_at: int) -> None:
+        """After a session, only with DMBOT_STORY_EXTRACTOR on (it is off until #1282 passes): read
+        the stored transcript in short batches and store what the AI heard as proposals for the DM
+        (#1363). Off means off: no AI client, no stored lines read, no prompt built. Only lines from
+        people who still agree are sent, and the claims are checked against consent again after
+        each answer. The log gets counts only. Nothing here is a fact."""
+        if (
+            not self.settings.story_extractor_on
+            or self.extractor_ai is None
+            or self.memory is None
+            or self.transcripts is None
+            or table.campaign_id is None
+            or table.transcript_session_id is None
+        ):
+            return
+        gid, cid = table.guild_id, table.campaign_id
+        with log_context(guild_id=gid, campaign_id=cid):
+            session = await self.transcripts.session(gid, table.transcript_session_id)
+            if session is None or session.lines == 0:
+                return
+            lines = await self.transcripts.lines(gid, table.transcript_session_id)
+            # The people at the table are not story names (as in the name scan).
+            people = {table.dm_user_id, *table.dm_user_ids, *(await self.consent.consenting(gid))}
+            skip: set[str] = set()
+            for uid in people:
+                name = self.name_of(gid, uid)
+                if not name.startswith("<@"):
+                    skip.add(name_key(name))
+                    skip.update(name_key(word) for word in name.split())
+            report = await extractor.run(
+                self.extractor_ai,
+                ClaimStore(self.memory),
+                lines,
+                guild_id=gid,
+                campaign_id=cid,
+                dm_ids={table.dm_user_id, *table.dm_user_ids},
+                consenting=lambda: self.consent.consenting(gid),
+                model=lambda: self.extractor_ai.model if self.extractor_ai else "",
+                session_started_at=session.started_at,
+                tally=table.steward_tally,
+                max_calls=self.settings.story_extractor_max_calls,
+                skip=skip,
+            )
+            log.info(report.line())
+            if report.named:  # the DM checks them where the name scan's are checked
+                await self.post(
+                    table.screen_channel_id,
+                    held_back_text(report.new_names),
+                    view=review_view(cid),
                 )
 
     async def log_steward_tally(self, table: Table) -> None:

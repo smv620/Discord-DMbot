@@ -22,7 +22,7 @@ from dmbot.memory.continuity import (
 )
 from dmbot.memory.models import ALIVE, DEAD, MemoryRuleError
 from dmbot.ui import continuity as ui
-from tests.test_memory_store import GUILD_A, GUILD_B, MemoryTest
+from tests.test_memory_store import GUILD_A, GUILD_B, ConfirmedMemoryTest
 
 SMALL = Levels(min_facts=1, min_sessions=1)  # a little story is enough in a test
 AGREED = {7, 8}  # who is recorded now
@@ -56,7 +56,7 @@ class Levelling(unittest.TestCase):
         self.assertTrue(reached_critical_mass(50, 3, levels))
 
 
-class Continuity(MemoryTest):
+class Continuity(ConfirmedMemoryTest):
     async def asyncSetUp(self) -> None:
         await super().asyncSetUp()
         self.claims = ClaimStore(self.memory)
@@ -322,7 +322,7 @@ if __name__ == "__main__":
     unittest.main()
 
 
-class Crossing(MemoryTest):
+class Crossing(ConfirmedMemoryTest):
     async def test_crossing_the_line_is_logged_once(self) -> None:
         from dmbot.memory import continuity
 

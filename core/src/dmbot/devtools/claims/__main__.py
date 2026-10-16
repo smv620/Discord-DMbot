@@ -24,10 +24,11 @@ from pathlib import Path
 from dmbot.ai import AIError, AIModels, AIModelTier, AnthropicClient
 from dmbot.config import ConfigError, parse_ai_models
 from dmbot.devtools.claims import cost
-from dmbot.devtools.claims.extract import MAX_TOKENS, SYSTEM, Client, extract, transcript
+from dmbot.devtools.claims.extract import Client, extract, transcript
 from dmbot.devtools.claims.scenes import WORDS_PER_SECOND, Scene, batches, load_scenes
 from dmbot.devtools.claims.score import Score, score
 from dmbot.devtools.common import HISTORY, TEST_SCRIPTS, commit, history_entry, public_name
+from dmbot.memory.extractor import MAX_TOKENS, SYSTEM
 
 SCENES = TEST_SCRIPTS / "story-scenes.md"
 BATCH_S = 30.0  # live batches are 30 to 60 s of talk
