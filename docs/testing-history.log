@@ -2562,3 +2562,5 @@ Overall ...................................... PASS (Deepgram baseline: 33/33, 1
   Result: core logged "Database updated: 0104_homebrew_book_edition", "ears connected" and "Connected to 1 server(s)"; web-api healthy; schema_migrations 104 rows, last 0104_homebrew_book_edition; /health 200 inside web-api.
   Not checked (needs the owner in Discord): a DM loads a from-book homebrew file and sees "Which rules is this book written for?" after "I have the right"; /dmbot rule ranking by edition with the [Shared book] tag.
   docs/next-test-step.md stays Test J (Keep, Delete's warning with Cancel, Homebrew packs): it still needs the owner.
+  10-minute check, 17:19 UTC (10 minutes after the start): 0 ERROR, CRITICAL or traceback lines in core and web-api since 17:08; both up, web-api healthy; schema_migrations 104 rows, last 0104_homebrew_book_edition.
+  Nothing turned on for users (recaps off, no ElevenLabs key, the extractor off).
