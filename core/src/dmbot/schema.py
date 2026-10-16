@@ -5641,7 +5641,7 @@ MIGRATIONS: tuple[Migration, ...] = (
     ("0102_pack_suggestions", PACK_SUGGESTIONS),  # suggest an entry to a pack (#1537)
     ("0103_web_transcript_deleted", WEB_TRANSCRIPT_DELETED),  # the site shows deleted ones (#1548)
     ("0104_homebrew_book_edition", HOMEBREW_BOOK_EDITION),  # which rules a book is for (#1563)
-    ("0105_waiting_name_questions", WAITING_NAME_QUESTIONS),  # unanswered "Did they mean…?" (#1572)
+    ("0106_waiting_name_questions", WAITING_NAME_QUESTIONS),  # unanswered "Did they mean…?" (#1572)
 )
 
 # Tables that must have row-level security. A test checks every table in the schema
