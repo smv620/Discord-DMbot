@@ -520,7 +520,11 @@ class EntryMenu(_Menu):
             return
         _changed(interaction, c)
         packs = await _packs_followed(interaction, c)
-        note = "✅ Turned on." if saved.enabled else "✅ Turned off. DMbot will not use it."
+        note = (
+            "✅ Turned on. DMbot will use it."
+            if saved.enabled
+            else "✅ Turned off. DMbot will not use it."
+        )
         await _show(interaction, entry_text(saved, note), EntryMenu(c, saved, self.page, packs))
 
     async def _remove(self, interaction: discord.Interaction) -> None:
