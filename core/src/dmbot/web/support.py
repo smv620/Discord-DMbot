@@ -19,6 +19,7 @@ gets the free-account guard in `limits.py`: three new tickets a day and one wait
 from __future__ import annotations
 
 import logging
+import re
 from dataclasses import dataclass
 from typing import Literal
 
@@ -35,8 +36,11 @@ MAX_MESSAGE = 4000
 # up each person's name with one query per person.
 LIST_LIMIT = 100
 
-Status = Literal["new", "answered", "closed"]
-STATUSES: tuple[Status, ...] = ("new", "answered", "closed")
+# "new" is a ticket waiting for an answer (the helper's, or the team's after an escalation
+# reply from the person goes back to it); "escalated" is waiting for a person, and the helper
+# leaves it alone (#1431).
+Status = Literal["new", "answered", "closed", "escalated"]
+STATUSES: tuple[Status, ...] = ("new", "answered", "closed", "escalated")
 
 
 def may_write(plan: Entitlement | None) -> bool:
@@ -97,15 +101,19 @@ async def recent(db: Database, user_id: int, *, now: int) -> tuple[int, int]:
     return (int(row["waiting"]), int(row["today"])) if row else (0, 0)
 
 
-async def add(db: Database, user_id: int, plan: str, ticket: Ticket, *, now: int) -> None:
-    """Keep a ticket for this signed-in person. The table's policy lets them add a row for
-    their own account and nothing else, which is why the person is set (`db.user`)."""
+async def add(db: Database, user_id: int, plan: str, ticket: Ticket, *, now: int) -> int:
+    """Keep a ticket for this signed-in person; returns its number. The table's policy lets them
+    add a row for their own account and nothing else, which is why the person is set
+    (`db.user`); the number comes back through the same person's `read_own` right."""
     async with db.user(user_id) as conn:
-        await conn.execute(
+        cur = await conn.execute(
             "INSERT INTO support_tickets (created_at, user_id, plan, subject, message)"
-            " VALUES (%s, %s, %s, %s, %s)",
+            " VALUES (%s, %s, %s, %s, %s) RETURNING id",
             (now, user_id, plan, ticket.subject, ticket.message),
         )
+        row = await cur.fetchone()
+    assert row is not None
+    return int(row["id"])
 
 
 @dataclass(frozen=True)
@@ -166,6 +174,34 @@ class Mine:
     created_at: int
     subject: str
     status: Status
+    # Who wrote the latest answer ("ai": DMbot's helper, "person": the team) and its first line
+    # (#1432); None before any answer. The person's own words never come back.
+    answered_by: Literal["ai", "person"] | None = None
+    latest: str | None = None
+
+
+ANSWER_LINE_MAX = 100  # characters of an answer's first line the account page shows
+
+
+_GREETING = re.compile(
+    r"^(hi|hello|hey|dear|thanks|thank you)\b[^.!?:]{0,40}[,!.:]?$", re.IGNORECASE
+)
+
+
+def first_line(text: str) -> str:
+    """The first line of an answer that says something: not an empty line, and not a short
+    greeting ("Hi Alice,"), cut to `ANSWER_LINE_MAX` (at a word's end if it can)."""
+    lines = [" ".join(raw.split()) for raw in text.splitlines()]
+    lines = [line for line in lines if line]
+    if len(lines) > 1 and _GREETING.match(lines[0]):
+        lines = lines[1:]
+    for line in lines[:1]:
+        if line:
+            if len(line) <= ANSWER_LINE_MAX:
+                return line
+            cut = line[:ANSWER_LINE_MAX].rsplit(" ", 1)[0] or line[:ANSWER_LINE_MAX]
+            return cut.rstrip(".,;:!? ") + "…"
+    return ""
 
 
 async def mine(db: Database, user_id: int) -> list[Mine]:
@@ -173,12 +209,26 @@ async def mine(db: Database, user_id: int) -> list[Mine]:
     holds a person's session to their own rows; the WHERE says it again, so one wrong line in
     either place does not show anyone else's."""
     async with db.user(user_id) as conn:
+        # The latest answer comes through its own door (the role has no right on the words); one
+        # call for each of at most MINE_LIMIT tickets.
         cur = await conn.execute(
-            "SELECT created_at, subject, status FROM support_tickets WHERE user_id = %s"
-            " ORDER BY created_at DESC, id DESC LIMIT %s",
+            "SELECT t.created_at, t.subject, t.status, a.who AS answered_by, a.text AS latest"
+            " FROM support_tickets t LEFT JOIN LATERAL dmbot_support_latest_answer(t.id) a ON true"
+            " WHERE t.user_id = %s ORDER BY t.created_at DESC, t.id DESC LIMIT %s",
             (user_id, MINE_LIMIT),
         )
-        return [Mine(**r) for r in await cur.fetchall()]
+        found = await cur.fetchall()
+    return [
+        Mine(
+            r["created_at"],
+            r["subject"],
+            r["status"],
+            r["answered_by"],
+            # None before an answer (or one with no words in it), else its first line.
+            (first_line(r["latest"]) or None) if r["latest"] is not None else None,
+        )
+        for r in found
+    ]
 
 
 async def set_status(db: Database, ticket_id: int, status: Status) -> bool:
@@ -196,3 +246,173 @@ async def forget_old(db: Database) -> int:
     async with db.cleanup("old-tickets") as conn:
         cur = await conn.execute("DELETE FROM support_tickets")
         return cur.rowcount
+
+
+# --- the thread: the helper's answers, the person's emailed replies, the team's replies (#1431)
+
+# The most emailed replies one ticket keeps: a flood is dropped, not stored.
+MAX_CUSTOMER_REPLIES = 30
+Who = Literal["customer", "ai", "person"]
+
+
+@dataclass(frozen=True)
+class Reply:
+    id: int
+    who: Who
+    text: str
+    created_at: int
+
+
+async def thread(db: Database, ticket_id: int) -> list[Reply]:
+    """The ticket's replies, oldest first (the first message is the ticket's own). The words come
+    through a door that answers only while the admin door is open."""
+    async with db.support_admin() as conn:
+        cur = await conn.execute(
+            "SELECT id, who, text, created_at FROM dmbot_support_thread(%s)", (ticket_id,)
+        )
+        return [Reply(**r) for r in await cur.fetchall()]
+
+
+@dataclass(frozen=True)
+class Open:
+    """A ticket the helper has to look at: the words are read through their doors, and the
+    address is the account's, never copied into the ticket. Never logged."""
+
+    id: int
+    user_id: int
+    plan: str
+    subject: str
+    message: str
+    created_at: int
+    status: Status
+    ai_failed_at: int | None
+    email: str | None
+
+
+LEASE_S = (
+    600  # a ticket the helper has taken is left alone this long (an AI call is under 5 minutes)
+)
+
+
+async def waiting(db: Database, now: int, limit: int = 5) -> list[Open]:
+    """Tickets waiting for the helper whose turn has come, oldest first. Each is taken for
+    `LEASE_S` seconds in the same statement, so a second copy of the website (a restart that
+    overlaps) or the next pass never answers the same ticket twice; an answer clears the lease."""
+    async with db.support_admin() as conn:
+        cur = await conn.execute(
+            "UPDATE support_tickets SET ai_next_at = %s WHERE id IN ("
+            " SELECT id FROM support_tickets WHERE status = 'new' AND ai_next_at <= %s"
+            " ORDER BY id LIMIT %s FOR UPDATE SKIP LOCKED) RETURNING id",
+            (now + LEASE_S, now, limit),
+        )
+        ids = sorted(int(r["id"]) for r in await cur.fetchall())
+    found = [await one(db, i) for i in ids]
+    return [t for t in found if t is not None]
+
+
+async def one(db: Database, ticket_id: int) -> Open | None:
+    """One ticket as the helper and the team's reply door see it, whatever its status."""
+    async with db.support_admin() as conn:
+        cur = await conn.execute(
+            "SELECT id, user_id, plan, subject, COALESCE(dmbot_support_message(id), '') AS message,"
+            " created_at, status, ai_failed_at, dmbot_support_email(user_id) AS email"
+            " FROM support_tickets WHERE id = %s",
+            (ticket_id,),
+        )
+        row = await cur.fetchone()
+    return None if row is None else Open(**row)
+
+
+@dataclass(frozen=True)
+class Added:
+    id: int
+    before: Status  # the ticket's status when the reply came in
+    after: Status
+
+
+async def add_reply(
+    db: Database, ticket_id: int, who: Who, text: str, *, now: int, after_id: int | None = None
+) -> Added | None:
+    """Keep a reply and move the ticket's status in the same step, with the ticket's row locked,
+    so two writers (the helper's answer, a person's emailed reply, the team) can't undo each other.
+    None: nothing was kept (no such ticket; too many replies from the person; or, for the helper,
+    the ticket is no longer waiting or has a reply the helper hasn't read, `after_id` being the
+    last reply it read, 0 for none).
+    - helper (`ai`): the ticket becomes answered.
+    - the team (`person`): the ticket becomes answered.
+    - the person (`customer`): the ticket goes back to waiting, except that one a person has
+      already had a hand in (escalated, or answered by the team) goes to the team, not the
+      helper."""
+    async with db.support_admin() as conn:
+        cur = await conn.execute(
+            "SELECT status FROM support_tickets WHERE id = %s FOR UPDATE", (ticket_id,)
+        )
+        row = await cur.fetchone()
+        if row is None:
+            return None
+        before: Status = row["status"]
+        cur = await conn.execute(
+            "SELECT COALESCE(max(id), 0) AS last,"
+            " count(*) FILTER (WHERE who = 'customer') AS customers,"
+            " count(*) FILTER (WHERE who = 'person') AS team"
+            " FROM dmbot_support_thread(%s)",
+            (ticket_id,),
+        )
+        seen = await cur.fetchone()
+        assert seen is not None
+        if who == "ai" and (before != "new" or int(seen["last"]) != (after_id or 0)):
+            return None
+        if who == "customer" and int(seen["customers"]) >= MAX_CUSTOMER_REPLIES:
+            return None
+        after: Status
+        if who == "customer":
+            handled = before == "escalated" or int(seen["team"]) > 0
+            after = "escalated" if handled else "new"
+        else:
+            after = "answered"
+        cur = await conn.execute(
+            "INSERT INTO support_replies (ticket_id, who, text, created_at)"
+            " VALUES (%s, %s, %s, %s) RETURNING id",
+            (ticket_id, who, text, now),
+        )
+        inserted = await cur.fetchone()
+        assert inserted is not None
+        await conn.execute(
+            "UPDATE support_tickets SET status = %s, ai_next_at = 0, ai_failed_at = NULL"
+            " WHERE id = %s",
+            (after, ticket_id),
+        )
+        return Added(int(inserted["id"]), before, after)
+
+
+async def release(db: Database, ticket_id: int) -> None:
+    """Give a ticket back to the helper at once (what it read was out of date)."""
+    async with db.support_admin() as conn:
+        await conn.execute(
+            "UPDATE support_tickets SET ai_next_at = 0 WHERE id = %s AND status = 'new'",
+            (ticket_id,),
+        )
+
+
+async def defer(db: Database, ticket_id: int, *, now: int, wait: int) -> int:
+    """The helper's call failed: try this ticket again in `wait` seconds. Returns when the calls
+    first began to fail (now, if this is the first time)."""
+    async with db.support_admin() as conn:
+        cur = await conn.execute(
+            "UPDATE support_tickets SET ai_next_at = %s, ai_failed_at = COALESCE(ai_failed_at, %s)"
+            " WHERE id = %s RETURNING ai_failed_at",
+            (now + wait, now, ticket_id),
+        )
+        row = await cur.fetchone()
+    return now if row is None else int(row["ai_failed_at"])
+
+
+async def escalate(db: Database, ticket_id: int) -> bool:
+    """Hand a ticket to a person. True only the first time (so the team is told once)."""
+    async with db.support_admin() as conn:
+        cur = await conn.execute(
+            "UPDATE support_tickets SET status = 'escalated' WHERE id = %s"
+            " AND status <> 'escalated'",
+            (ticket_id,),
+        )
+        return cur.rowcount == 1

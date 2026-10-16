@@ -122,6 +122,9 @@ services:
       STRIPE_PRICE_EXTRA_HOURS: ${STRIPE_PRICE_EXTRA_HOURS:-}
       STRIPE_PRICE_RECAP_AUDIO: ${STRIPE_PRICE_RECAP_AUDIO:-}
       STRIPE_MANAGED_PAYMENTS: ${STRIPE_MANAGED_PAYMENTS:-}
+      # The monthly recap allowances (#1428), so the page can say "N of M this month".
+      DMBOT_RECAPS_PER_MONTH: ${DMBOT_RECAPS_PER_MONTH:-}
+      DMBOT_RECAP_AUDIO_PER_MONTH: ${DMBOT_RECAP_AUDIO_PER_MONTH:-}
       # The "Say hello" forms (#665).
       GITHUB_FEEDBACK_TOKEN: ${GITHUB_FEEDBACK_TOKEN:-}
       LINK_TOKEN_SECRET: ${LINK_TOKEN_SECRET:-}
@@ -131,6 +134,13 @@ services:
       SMTP_USER: ${SMTP_USER:-}
       SMTP_APP_PASSWORD: ${SMTP_APP_PASSWORD:-}
       MAIL_FROM: ${MAIL_FROM:-}
+      # The support flow (#1431): who writes to people, who alerts the team, the AI that answers,
+      # and the secret that proves an emailed reply came from the mail service.
+      MAIL_SUPPORT_FROM: ${MAIL_SUPPORT_FROM:-}
+      MAIL_ALERTS_FROM: ${MAIL_ALERTS_FROM:-}
+      MAIL_INBOUND_SECRET: ${MAIL_INBOUND_SECRET:-}
+      SUPPORT_AI_MODEL: ${SUPPORT_AI_MODEL:-}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
       MAIL_POSTAL_ADDRESS: ${MAIL_POSTAL_ADDRESS:-}
       MAIL_DAILY_CAP: ${MAIL_DAILY_CAP:-400}
       GITHUB_FEEDBACK_REPO: ${GITHUB_FEEDBACK_REPO:-}

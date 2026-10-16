@@ -151,11 +151,15 @@ class Tiers(unittest.TestCase):
                 Feature.FIGHTBOT: AIModelTier.FAST,  # a short reminder in combat (#1129)
                 Feature.EXTRACTOR: AIModelTier.FAST,  # the story extractor (#1363), off by default
                 Feature.RECAP: AIModelTier.FAST,  # the cinematic recap (#1382), off by default
-                Feature.RECAP_RETRY: AIModelTier.CAREFUL,  # its one more try
+                Feature.RECAP_RETRY: AIModelTier.CAREFUL,
+                Feature.SUPPORT: AIModelTier.DEEP,
             },
         )
         self.assertEqual(set(FEATURE_TIERS), set(Feature))  # none left out
-        self.assertNotIn(AIModelTier.DEEP, FEATURE_TIERS.values())  # PlotBot, later
+        # Only the website's support helper uses the strong tier (#1431); PlotBot comes later.
+        self.assertEqual(
+            [f for f, t in FEATURE_TIERS.items() if t is AIModelTier.DEEP], [Feature.SUPPORT]
+        )
 
     def test_the_bot_gives_each_job_the_client_for_its_tier(self) -> None:
         from unittest.mock import MagicMock

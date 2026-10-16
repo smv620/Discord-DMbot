@@ -159,7 +159,12 @@ export interface SupportReceipt {
 export interface SupportQuestion {
   at: number;
   subject: string;
-  status: "new" | "answered" | "closed";
+  /** "escalated": a person on the team has it (the helper gave it up, or the person asked). */
+  status: "new" | "answered" | "closed" | "escalated";
+  /** Who wrote the latest answer, and its first line (#1432). Missing from an API older than
+   * that; null before any answer. The person's own words never come back. */
+  answeredBy?: "helper" | "team" | null;
+  latest?: string | null;
 }
 
 /** The person's own questions, newest first, and whether the team can reply by email (the

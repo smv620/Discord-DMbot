@@ -4,7 +4,9 @@
 // (CLAUDE.md), so the character-sheet steps name no company.
 import { QA_URL } from "./account";
 import { minimumAge } from "./legal";
-import { RECAPS_LIVE, emailsIntroTail, recapEmailStep, recapSteps } from "./recap-words";
+import { price as narrationPrice } from "./recap-audio";
+import { RECAP_AUDIO_LIVE, RECAPS_LIVE, emailsIntroTail, recapEmailStep, recapSteps as baseRecapSteps } from "./recap-words";
+import { SUPPORT_AI_LIVE, helpNote } from "./support-words";
 
 export interface Step {
   /** The words people read. Names in `names` must appear in the bot's code. */
@@ -178,7 +180,20 @@ export const quickAnswers: Step[] = [
   },
 ];
 
-export { recapSteps };
+/** The recaps steps, with the narration add-on's price from its one constant while narration is on
+ * (#1460). The price is never typed here; with none set the sentence leaves it out. */
+export const recapSteps: Step[] = [
+  ...baseRecapSteps,
+  ...(RECAP_AUDIO_LIVE
+    ? [
+        {
+          text: `Narration comes with Guild and Pro. On the other paid plans it is an add-on${
+            narrationPrice() ? `, ${narrationPrice()}` : ""
+          }. If the audio comes out wrong, ask for it again on the recap page. You can do that once every 10 minutes.`,
+        },
+      ]
+    : []),
+];
 
 export const playerSteps: Step[] = [
   {
@@ -315,5 +330,6 @@ export const gettingHelp: { id: string; heading: string; items: { lead: string; 
         lead: "Anyone, on any plan.",
         parts: ["Email ", { text: SUPPORT_EMAIL, href: `mailto:${SUPPORT_EMAIL}` }, "."],
       },
+      ...(SUPPORT_AI_LIVE ? [{ lead: "Who answers?", parts: [helpNote] }] : []),
     ],
   };

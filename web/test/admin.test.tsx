@@ -38,8 +38,9 @@ function stub(over: Partial<AdminApi> = {}): AdminApi {
     grants: vi.fn(async () => ({ free: [], grants: [], log: [] })),
     give: vi.fn(async () => ({ action: "grant" as const, name: null })),
     revoke: vi.fn(async () => undefined),
-    tickets: vi.fn(async () => ({ tickets: [], counts: { new: 0, answered: 0, closed: 0 } })),
+    tickets: vi.fn(async () => ({ tickets: [], counts: { new: 0, answered: 0, closed: 0, escalated: 0 } })),
     setTicketStatus: vi.fn(async () => undefined),
+    replyToTicket: vi.fn(async () => undefined),
     ...over,
   };
 }

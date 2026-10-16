@@ -172,6 +172,7 @@ from dmbot.memory.sheet_store import CharacterSheet, SheetStore
 from dmbot.memory.sheet_watch import SheetWatch
 from dmbot.memory.store import MemoryStore
 from dmbot.memory.table_names import NameThenAnswer
+from dmbot.recaps import allowance as recap_allowance
 from dmbot.recaps import post as recap_post
 from dmbot.recaps.audio import names as audio_names
 from dmbot.recaps.audio.eleven import ElevenLabs, HttpTransport
@@ -246,6 +247,7 @@ from dmbot.ui.name_lists import UndoListButton
 from dmbot.ui.names import ReviewButton, after_session_text, held_back_text, review_view
 from dmbot.ui.optional_rules import dmbot_optional_rules  # noqa: F401 (registers it)
 from dmbot.ui.people_review import PeopleReviewButton, people_review_view, waiting_text
+from dmbot.ui.recap_dm import RecapButton, ready_text, ready_view
 from dmbot.ui.rule_lookup import dmbot_rule  # noqa: F401 (registers it)
 from dmbot.ui.secret_aloud import (
     SecretAloudButton,
@@ -792,6 +794,7 @@ class DMBot(commands.AutoShardedBot):
                 allowed=self.recap_allowed,
                 notify=self.recap_told,
                 audio_wanted=self.recap_audio_wanted,
+                allowance=self.recap_text_allowance,
             )
         # The recap's narration and music (#1383): a second job after the text is ready. Built
         # only with the switch on and a key and voice set; with none, recaps go out text-only.
@@ -812,6 +815,7 @@ class DMBot(commands.AutoShardedBot):
                 consenting=self.consent.consenting,
                 allowed=self.recap_audio_allowed,
                 switched=self.recap_audio_switched,
+                allowance=self.recap_audio_allowance,
                 max_credits=settings.recap_audio_max_credits,
             )
         # The off-topic filter (#52), the audio check and the DM sidebar.
@@ -954,6 +958,7 @@ class DMBot(commands.AutoShardedBot):
             ReviewButton, PeopleReviewButton, ClaimsReviewButton, ContinuityButton
         )
         self.add_dynamic_items(SecretAloudButton)  # the secret-said-aloud question (#1407)
+        self.add_dynamic_items(RecapButton)  # the recap on the DM screen (#1455)
         self.add_dynamic_items(  # #965, #1117
             clock_screen.ClockButton, clock_screen.ClockUndoButton, clock_screen.SuggestionButton
         )
@@ -5505,6 +5510,41 @@ class DMBot(commands.AutoShardedBot):
             return False
         return await self.recap_audio_allowed(gid, cid, job)
 
+    async def recap_text_allowance(self, gid: int, cid: str, job: Job) -> str | None:
+        """Why this recap can't be written under the campaign's monthly allowance, or None
+        (#1428). Raises if it can't be told: then nothing is spent."""
+        return await self._recap_allowance(gid, cid, audio=False)
+
+    async def recap_audio_allowance(self, gid: int, cid: str, job: Job) -> str | None:
+        return await self._recap_allowance(gid, cid, audio=True)
+
+    async def _recap_allowance(self, gid: int, cid: str, *, audio: bool) -> str | None:
+        """The month's count against the allowance. Free access and grants are not limited. On
+        refusal the DM screen says so, with the day the next one is."""
+        if self.recaps is None:
+            raise RuntimeError("no recap store")
+        campaign = await self.campaigns.get(gid, cid)
+        if campaign is None:
+            return None  # the other gates deal with a campaign that is gone
+        now = time.time()
+        owner = campaign.owner_user_id
+        if owner is not None and self.meter is not None:
+            access = await self.meter.access(gid, owner, int(now))
+            if access.kind in ("free", "grant"):
+                return None
+        used = await self.recaps.used_in_month(gid, cid, now)
+        count, limit = (
+            (used.narrated, self.settings.recap_audio_per_month)
+            if audio
+            else (used.recaps, self.settings.recaps_per_month)
+        )
+        if count < limit:
+            return None
+        message = recap_allowance.audio_refusal(now) if audio else recap_allowance.text_refusal(now)
+        if campaign.dm_screen_channel_id is not None:
+            await self.post(campaign.dm_screen_channel_id, f"📜 Recap: {message}")
+        return message
+
     async def recap_audio_switched(self, gid: int, cid: str, job: Job) -> bool:
         """The DM's own choice to have the narration and music (#1421); it can only turn the
         audio off, never on past the plan."""
@@ -5561,22 +5601,31 @@ class DMBot(commands.AutoShardedBot):
         )
 
     async def recap_told(self, gid: int, cid: str, job: Job) -> None:
-        """Email the DM that their recap is ready, or could not be written. If they chose not to be
-        emailed (#1421) the DM screen says it instead."""
+        """Tell the DM that their recap is ready, or could not be written. A ready recap goes on
+        the DM screen with three buttons (read it, post it, skip it; #1455), and is emailed unless
+        the DM chose not to be (#1421). A failed one is emailed, or said on the DM screen."""
         campaign = await self.campaigns.get(gid, cid)
+        link = (
+            page_link(self.settings.site_url, gid, cid, job.session_at)
+            if self.settings.site_url
+            else ""
+        )
+        if campaign is not None and campaign.dm_screen_channel_id is not None:
+            if job.state == "ready":
+                await self.post(
+                    campaign.dm_screen_channel_id,
+                    ready_text(job.title, link),
+                    view=ready_view(cid, job.session_at),
+                )
+            elif not campaign.recaps_email:
+                where = f": {link}" if link else " on the website"
+                await self.post(
+                    campaign.dm_screen_channel_id,
+                    "📜 I couldn't write this session's recap. "
+                    f"Try again from your recap page{where}",
+                )
         if campaign is not None and not campaign.recaps_email:
-            # No email by the DM's choice: the DM screen says it instead, so they still hear.
-            if campaign.dm_screen_channel_id is not None:
-                link = page_link(self.settings.site_url, gid, cid, job.session_at)
-                where = f" {link}" if self.settings.site_url else ""
-                if job.state == "ready":
-                    line = f"📜 Your recap is ready. Read it, change it or post it:{where}"
-                else:
-                    line = (
-                        f"📜 DMbot couldn't write this session's recap. You can try again:{where}"
-                    )
-                await self.post(campaign.dm_screen_channel_id, line)
-            return
+            return  # no email by the DM's choice
         if self.mailer is not None and self.recaps is not None:
             await tell_the_dm(self.mailer, self.recaps, self.settings.site_url, gid, cid, job)
 
@@ -5783,7 +5832,7 @@ class DMBot(commands.AutoShardedBot):
             for said in found:
                 await self.post(
                     table.screen_channel_id,
-                    question_text(said.text),
+                    question_text(said.text, said.entries),
                     view=secret_aloud_view(cid, said.alias_id),
                 )
             if len(every) > len(found):  # the DM should know the rest exist

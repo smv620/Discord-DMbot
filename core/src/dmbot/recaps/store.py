@@ -24,6 +24,7 @@ from psycopg.types.json import Jsonb
 
 from dmbot.campaigns.models import CampaignError
 from dmbot.db import Conn, Database
+from dmbot.recaps.allowance import Usage, month_bounds
 
 DAMAGED = "That backup file's recaps are damaged, so nothing was restored."
 MAX_TRIES = 2  # "Try again" at most this many times for one session
@@ -451,6 +452,34 @@ class RecapStore:
             row = await cur.fetchone()
         return int(row["n"]) if row else 0
 
+    async def used_in_month(self, guild_id: int, campaign_id: str, now: float) -> Usage:
+        """The campaign's recaps and narrated recaps this calendar month, UTC (#1428). A written
+        recap counts once and each Try again counts again; a job that never got written does not.
+        Read from the rows themselves; raises if it can't be read, and the caller then spends
+        nothing."""
+        start, end = month_bounds(now)
+        async with self._db.guild(guild_id) as conn:
+            cur = await conn.execute(
+                "SELECT COALESCE(sum((CASE WHEN state = 'ready' THEN 1 ELSE 0 END) + tries), 0)"
+                " AS recaps, COALESCE(sum((CASE WHEN audio = 'ready' THEN 1 ELSE 0 END)"
+                " + (CASE WHEN audio <> 'off' THEN tries ELSE 0 END)), 0)"
+                " AS narrated FROM recap_jobs WHERE guild_id = %s AND campaign_id = %s"
+                " AND created_at >= %s AND created_at < %s",
+                (guild_id, campaign_id, start, end),
+            )
+            row = await cur.fetchone()
+        assert row is not None
+        return Usage(int(row["recaps"]), int(row["narrated"]))
+
+    async def give_back_try(self, guild_id: int, campaign_id: str, session_at: int) -> None:
+        """Undo the count of a Try again that the allowance refused (#1428): nothing was written."""
+        async with self._db.guild(guild_id) as conn:
+            await conn.execute(
+                "UPDATE recap_jobs SET tries = GREATEST(tries - 1, 0) WHERE guild_id = %s"
+                " AND campaign_id = %s AND session_at = %s",
+                (guild_id, campaign_id, session_at),
+            )
+
     async def to_post(self, guild_id: int) -> list[tuple[str, int]]:
         """Recaps the DM pressed Post on, which the bot has yet to send."""
         async with self._db.guild(guild_id) as conn:
@@ -468,6 +497,24 @@ class RecapStore:
                 "UPDATE recap_jobs SET status = 'posted', decided_at = %s WHERE guild_id = %s"
                 " AND campaign_id = %s AND session_at = %s AND status = 'posting'",
                 (int(self._now()), guild_id, campaign_id, session_at),
+            )
+            return bool(cur.rowcount)
+
+    async def decide(self, guild_id: int, campaign_id: str, session_at: int, action: str) -> bool:
+        """The DM's choice made on the DM screen (#1455), the same two moves the website's page
+        makes: `post` (a ready draft becomes 'posting', which the bot then sends after its
+        checks) or `drop` (a draft is not posted). False: it was already decided, or isn't ready."""
+        if action == "post":
+            sql = "status = 'posting' WHERE state = 'ready' AND status = 'draft'"
+        elif action == "drop":
+            sql = "status = 'dropped' WHERE status = 'draft'"
+        else:
+            raise ValueError(action)
+        async with self._db.guild(guild_id) as conn:
+            cur = await conn.execute(
+                f"UPDATE recap_jobs SET {sql} AND guild_id = %s AND campaign_id = %s"
+                " AND session_at = %s",
+                (guild_id, campaign_id, session_at),
             )
             return bool(cur.rowcount)
 

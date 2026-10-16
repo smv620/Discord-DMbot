@@ -4,8 +4,9 @@ campaign's DM: the message is on the DM screen and only a DM of the campaign can
 buttons carry the campaign and the name's id, so they work after a restart.
 
 "Not secret any more" clears the flag through the memory's own change path (a change like any
-other, undoable from the name's card). "Keep it secret" changes nothing and closes the question;
-the next session asks again if a player says it again.
+other, undoable from the name's card), on every entry that shares the spelling at once, as one
+change (#1429), so one undo puts them all back. "Keep it secret" changes nothing and closes the
+question; the next session asks again if a player says it again.
 """
 
 from __future__ import annotations
@@ -24,11 +25,26 @@ NO_MEMORY = "DMbot's memory isn't available right now. Try again in a minute."
 _NAME = re.compile(r"\*\*(.+?)\*\*")
 
 
-def question_text(name: str) -> str:
-    shown = discord.utils.escape_markdown(name)
+def names_note(entries: int) -> tuple[str, str]:
+    """When DMbot's memory holds the same secret name in more than one entry (#1429), the question
+    says so after the name, "(two names)" as the owner asked, and adds that one answer covers every
+    one. Returns (the words after the name, the sentence after the question)."""
+    if entries <= 1:
+        return "", ""
+    if entries == 2:
+        return " (two names)", "\nDMbot has it twice. Your answer covers both."
     return (
-        f"🤫 A player said **{shown}** at the table. You'd marked it secret, and the transcript "
-        "(which anyone in this server can read) now has it.\n"
+        f" ({entries} names)",
+        f"\nDMbot has it {entries} times. Your answer covers all {entries}.",
+    )
+
+
+def question_text(name: str, entries: int = 1) -> str:
+    shown = discord.utils.escape_markdown(name)
+    after_name, covers = names_note(entries)
+    return (
+        f"🤫 A player said **{shown}**{after_name} at the table. You'd marked it secret, "
+        f"and the transcript (which anyone in this server can read) now has it.{covers}\n"
         "**Keep it secret:** DMbot still won't use it when it answers players.\n"
         "**Not secret any more:** DMbot may use it in answers to players."
     )
@@ -45,7 +61,13 @@ def kept_text(name: str) -> str:
     )
 
 
-def opened_text(name: str) -> str:
+def opened_text(name: str, entries: int = 1) -> str:
+    if entries > 1:
+        covered = "both" if entries == 2 else f"all {entries}"
+        return (
+            f"✅ **{name}** is no longer secret. That covers {covered} copies. DMbot may now use "
+            f"it in answers to players. To undo it, use the name's card: it puts {covered} back."
+        )
     return (
         f"✅ **{name}** is no longer secret. DMbot may now use it in answers to players. "
         "You can make it secret again from the name's card."
@@ -106,8 +128,8 @@ class SecretAloudButton(
             await _tell(interaction, NO_MEMORY)
             return
         try:
-            await memory.update_alias(
-                campaign.guild_id, campaign.id, self.alias_id, source=DM, secret=False
+            written = await memory.make_name_not_secret(
+                campaign.guild_id, campaign.id, self.alias_id, source=DM
             )
         except MemoryRuleError as exc:
             await _tell(interaction, str(exc))
@@ -115,7 +137,7 @@ class SecretAloudButton(
         if bot.lookup is not None:
             bot.lookup.drop([campaign.id])
         await interaction.response.edit_message(
-            content=opened_text(name), view=None, allowed_mentions=NO_PINGS
+            content=opened_text(name, len(written.value)), view=None, allowed_mentions=NO_PINGS
         )
 
 

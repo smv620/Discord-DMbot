@@ -32,6 +32,7 @@ from dmbot.web.recaps import (
     decide,
     edit_recap,
     list_recaps,
+    month_usage,
     read_recap,
 )
 from tests import recap_fixtures as fx
@@ -103,6 +104,27 @@ class TheDmsPage(Base):
         self.assertIn("《Tense》", one["summary"])  # and kept for the edit box
         self.assertTrue(one["canPost"] and one["canEdit"] and one["canTryAgain"])
         self.assertEqual(one["triesLeft"], 2)
+
+    async def test_the_month_line_counts_only_the_dms_own_campaigns(self) -> None:
+        await self.store.set_audio(THURSDAY.id, self.one.id, 100, audio="ready")
+        got = await month_usage(self.web, self.session, now=NOW, recaps_allowed=10, audio_allowed=8)
+        self.assertEqual(
+            got,
+            [
+                {
+                    "serverName": THURSDAY.name,
+                    "campaign": "One",
+                    "used": 1,
+                    "allowed": 10,
+                    "audioUsed": 1,
+                    "audioAllowed": 8,
+                }
+            ],
+        )  # Bob's campaign "Two" is not Alice's to see
+        later = await month_usage(
+            self.web, self.session, now=NOW + 90 * 86400, recaps_allowed=10, audio_allowed=8
+        )
+        self.assertEqual(later, [])  # a new month starts from nothing
 
     async def test_another_campaigns_recap_looks_like_none_at_all(self) -> None:
         for call in (
@@ -237,6 +259,8 @@ class TheRoutes(Base):
         listed = await self.client.get("/me/recaps")
         self.assertEqual(listed.status_code, 200, listed.text)
         self.assertEqual(len(listed.json()["recaps"]), 1)
+        (month,) = listed.json()["recapsThisMonth"]
+        self.assertEqual((month["campaign"], month["used"], month["allowed"]), ("One", 1, 10))
         got = await self.client.get(f"/me/recaps/{self.ref}")
         self.assertEqual(got.json()["title"], "The Silver Lock")
         saved = await self.client.put(
