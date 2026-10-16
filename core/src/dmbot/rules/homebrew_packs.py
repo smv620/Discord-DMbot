@@ -415,7 +415,6 @@ def from_follow(follow: Follow, campaign_id: str, place: int) -> list[Homebrew]:
             name=e["name"],
             text=e["text"],
             summary=e["summary"],
-            players_may_know=e["known"],
             created_by=0,
             created_at=follow.followed_at,
             updated_at=follow.followed_at,
@@ -449,7 +448,9 @@ class HomebrewReader:
         return [e for place, f in enumerate(follows) for e in from_follow(f, campaign_id, place)]
 
     async def list(self, guild_id: int, campaign_id: str) -> list[Homebrew]:
-        own = await self._store.list(guild_id, campaign_id)
+        # Only entries the DM has not turned off (#1629): this is what DMbot *uses* at the table.
+        # (A followed pack's entry of the same name is a different entry and still answers.)
+        own = await self._store.list(guild_id, campaign_id, usable_only=True)
         packs = await self._from_packs(guild_id, campaign_id)
         # A shared book's entry ranks below a followed pack's (#1563): a pack's entry of the same
         # name takes its place, the book's is kept behind it in the free rules' order.
@@ -465,7 +466,7 @@ class HomebrewReader:
     async def find(self, guild_id: int, campaign_id: str, name: str) -> Homebrew | None:
         """The campaign's own entry with this name, else the first followed pack's. An entry the
         DM loaded from a book ranks below a followed pack's (#1563): the pack's answers."""
-        own = await self._store.find(guild_id, campaign_id, name)
+        own = await self._store.find(guild_id, campaign_id, name, usable_only=True)
         if (own is not None and not own.from_book) or self._packs is None:
             return own
         key = name_key(name)

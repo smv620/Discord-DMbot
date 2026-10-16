@@ -135,11 +135,10 @@ Cite only labels that are given; never write a label or an ID in ANSWER."""
 # Added to SYSTEM only when the prompt holds a HOMEBREW section (#1520).
 HOMEBREW_RULES = """
 
-13. Under HOMEBREW are the campaign's own creations that its players may know. They come after \
+13. Under HOMEBREW are the campaign's own creations. They come after \
 house rules and before the free rules, and they beat the free rules for the same name. When one \
 names what the question is about, answer from it, set SOURCE to its source line exactly as given, \
 and keep its [Homebrew] tag."""
-HOMEBREW_POINTER = "That's in your homebrew. Use /dmbot rule {name}."
 CONFIRMED_SOURCE = "facts you confirmed"  # the source shown for an answer from the DM's own facts
 # A label (F1) or an id as the reply's wording would show it: never shown to anyone (#1370).
 _LEAK = re.compile(r"\s*\[?\bF\d+\b\]?|\s*\b[0-9a-f]{32}\b", re.IGNORECASE)
@@ -543,11 +542,6 @@ class Sidebar:
             homebrew=brews,
             campaign_name=campaign.name,
         )
-        if ctx.hidden_homebrew:
-            # The question is about an entry only the DM may know. Its words never reach a table
-            # answer or the raw transcript, and the book is not used for a name the campaign has
-            # overridden: no AI call, the table is sent to the DM, the DM to /dmbot rule (#1520).
-            return self._done(self._hidden_homebrew(ctx, question, table), started, used_ai=False)
         system = SYSTEM + RECALL_RULES if ctx.labels else SYSTEM
         if ctx.homebrew:
             system += HOMEBREW_RULES
@@ -684,19 +678,6 @@ class Sidebar:
             ),
             started,
         )
-
-    @staticmethod
-    def _hidden_homebrew(ctx: context.Context, question: str, table: bool) -> Answer:
-        if table:
-            return Answer(
-                ONE_FOR_DM,
-                in_game=False,
-                one_for_dm=True,
-                question=" ".join(question.split()[:RESTATED_WORDS]),
-                parts=(ONE_FOR_DM,),
-            )
-        text = HOMEBREW_POINTER.format(name=ctx.hidden_homebrew[0])
-        return Answer(text, in_game=True, parts=(text,))
 
     @staticmethod
     async def _safely(read: Awaitable[T], fallback: T, what: str) -> T:

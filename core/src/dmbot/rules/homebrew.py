@@ -3,9 +3,9 @@
 2026-10-16, #1628): `KINDS` has no "rule".
 
 An entry is the DM's own creation in the DM's own words, never a published book's text (the form
-says so; a rulebook goes through "Share a rulebook"). It is **DM-screen content by default**
-(`players_may_know` false): a homebrew monster is a spoiler, so it never reaches a public answer
-or a player's table question until the DM marks it known.
+says so; a rulebook goes through "Share a rulebook"). It is **on** or **off** (owner,
+2026-10-16, "Homebrew (part 2)"): nothing is hidden from players any more. An entry that is off is
+kept, but DMbot uses it nowhere at the table.
 
 Each campaign keeps its own, never shared between campaigns or servers. Only the campaign's DMs
 change anything: every change checks that in the same transaction, so a caller that forgets still
@@ -68,7 +68,6 @@ class Homebrew:
     name: str
     text: str
     summary: str | None
-    players_may_know: bool
     created_by: int
     created_at: int
     updated_at: int
@@ -84,6 +83,8 @@ class Homebrew:
     # of its own in this campaign (`id` is negative) and is never edited, only replaced by the
     # campaign's own entry of the same name.
     source: str | None = None
+    # Turned off by the DM (#1629): kept, but DMbot uses it nowhere at the table.
+    enabled: bool = True
 
     def shown(self) -> str:
         """The one line alerts and lists show: the summary, else the start of the text."""
@@ -159,8 +160,8 @@ BOOK_EDITIONS = ("2024", "2014", "other")  # which rules a shared book is for (#
 
 
 _COLUMNS = (
-    "id, campaign_id, kind, name, text, summary, players_may_know, created_by, created_at,"
-    " updated_at, version, from_book, book_edition"
+    "id, campaign_id, kind, name, text, summary, created_by, created_at,"
+    " updated_at, version, from_book, book_edition, enabled"
 )
 
 
@@ -172,13 +173,13 @@ def _entry(row: dict[str, Any]) -> Homebrew:
         row["name"],
         row["text"],
         row["summary"],
-        bool(row["players_may_know"]),
         int(row["created_by"]),
         int(row["created_at"]),
         int(row["updated_at"]),
         int(row["version"]),
         bool(row["from_book"]),
         row["book_edition"],
+        enabled=bool(row["enabled"]),
     )
 
 
@@ -190,7 +191,7 @@ class FileEntry:
     name: str
     text: str
     summary: str | None = None
-    players_may_know: bool | None = None  # None: the file doesn't say
+    enabled: bool | None = None  # None: the file doesn't say (`## Name (kind, off)` says off)
 
 
 @dataclass(frozen=True, slots=True)
@@ -207,23 +208,30 @@ class HomebrewStore:
         self._db = db
         self._clock = clock
 
-    async def list(self, guild_id: int, campaign_id: str) -> list[Homebrew]:
-        """The campaign's homebrew, by name. Every entry, hidden or not: the callers that
-        reach players filter on `players_may_know`."""
+    async def list(
+        self, guild_id: int, campaign_id: str, *, usable_only: bool = False
+    ) -> list[Homebrew]:
+        """The campaign's homebrew, by name. `usable_only`: not the entries the DM turned
+        off (#1629). Everything DMbot uses at the table reads through `HomebrewReader`, which
+        asks for this; the DM's own list, the file and the backup see every entry."""
         async with self._db.guild(guild_id) as conn:
             cur = await conn.execute(
                 f"SELECT {_COLUMNS} FROM homebrew_entries WHERE guild_id = %s AND campaign_id = %s"
-                " ORDER BY name_key",
+                + (" AND enabled" if usable_only else "")
+                + " ORDER BY name_key",
                 (guild_id, campaign_id),
             )
             return [_entry(r) for r in await cur.fetchall()]
 
-    async def find(self, guild_id: int, campaign_id: str, name: str) -> Homebrew | None:
-        """The campaign's entry with exactly this name (any case), by the unique index."""
+    async def find(
+        self, guild_id: int, campaign_id: str, name: str, *, usable_only: bool = False
+    ) -> Homebrew | None:
+        """The campaign's entry with exactly this name (any case), by the unique index.
+        `usable_only`: None for an entry the DM turned off (#1629)."""
         async with self._db.guild(guild_id) as conn:
             cur = await conn.execute(
                 f"SELECT {_COLUMNS} FROM homebrew_entries WHERE guild_id = %s"
-                " AND campaign_id = %s AND name_key = %s",
+                " AND campaign_id = %s AND name_key = %s" + (" AND enabled" if usable_only else ""),
                 (guild_id, campaign_id, name_key(name)),
             )
             row = await cur.fetchone()
@@ -249,7 +257,6 @@ class HomebrewStore:
         name: str,
         text: str,
         summary: str | None = None,
-        players_may_know: bool = False,
     ) -> Homebrew:
         """Save a new entry. Only the campaign's DMs; at most `HOMEBREW_MAX`; the name is
         unique in the campaign, whatever its case."""
@@ -258,9 +265,7 @@ class HomebrewStore:
         async with self._db.guild(guild_id) as conn:
             # Locking the campaign makes two adds at once take turns: the limit and the name hold.
             await require_dm(conn, guild_id, campaign_id, user_id, lock=True)
-            return await insert_entry(
-                conn, guild_id, campaign_id, user_id, *clean, players_may_know, now, now
-            )
+            return await insert_entry(conn, guild_id, campaign_id, user_id, *clean, now, now)
 
     async def edit(
         self,
@@ -273,7 +278,6 @@ class HomebrewStore:
         name: str,
         text: str,
         summary: str | None = None,
-        players_may_know: bool = False,
         unchanged_since: int | None = None,
     ) -> Homebrew:
         """Change an entry. Only the campaign's DMs. `unchanged_since`: the entry's `version` as
@@ -295,7 +299,7 @@ class HomebrewStore:
                 raise HomebrewError(SAME_NAME)
             cur = await conn.execute(
                 "UPDATE homebrew_entries SET kind = %s, name = %s, name_key = %s, text = %s,"
-                " summary = %s, players_may_know = %s, updated_at = %s, version = version + 1"
+                " summary = %s, updated_at = %s, version = version + 1"
                 " WHERE guild_id = %s AND campaign_id = %s AND id = %s"
                 " AND (%s::int IS NULL OR version = %s)"
                 f" RETURNING {_COLUMNS}",
@@ -305,7 +309,6 @@ class HomebrewStore:
                     name_key(name_),
                     text_,
                     summary_,
-                    players_may_know,
                     int(self._clock()),
                     guild_id,
                     campaign_id,
@@ -313,6 +316,33 @@ class HomebrewStore:
                     unchanged_since,
                     unchanged_since,
                 ),
+            )
+            row = await cur.fetchone()
+            if row is None:
+                raise await _missing(conn, guild_id, campaign_id, entry_id)
+            return _entry(row)
+
+    async def set_enabled(
+        self,
+        guild_id: int,
+        campaign_id: str,
+        user_id: int,
+        entry_id: int,
+        enabled: bool,
+        *,
+        unchanged_since: int | None = None,
+    ) -> Homebrew:
+        """Turn an entry on or off for the table (#1629). Only the campaign's DMs. The entry is
+        kept either way; its `version` counts the change, so an edit made from an old view is
+        told from one made on the current entry. Turning it back on asks nothing."""
+        async with self._db.guild(guild_id) as conn:
+            await require_dm(conn, guild_id, campaign_id, user_id, lock=True)
+            cur = await conn.execute(
+                "UPDATE homebrew_entries SET enabled = %s, version = version + 1"
+                " WHERE guild_id = %s AND campaign_id = %s AND id = %s"
+                " AND (%s::int IS NULL OR version = %s)"
+                f" RETURNING {_COLUMNS}",
+                (enabled, guild_id, campaign_id, entry_id, unchanged_since, unchanged_since),
             )
             row = await cur.fetchone()
             if row is None:
@@ -354,8 +384,8 @@ class HomebrewStore:
     ) -> Loaded:
         """Load a file's entries in one step, or none (#1524). An entry whose name the campaign
         already has (any case) is updated (version + 1) if anything differs, else left alone; a
-        new one is added. A line saying nothing about who may know keeps an old entry's setting
-        and makes a new one hidden. If the campaign would end up over `HOMEBREW_MAX`, nothing is
+        new one is added. A line saying nothing about on or off keeps an old entry's setting
+        and makes a new one on. If the campaign would end up over `HOMEBREW_MAX`, nothing is
         loaded and the DM is told the count. `from_book`: the DM confirmed the right to use this
         material (the caller recorded who and when); it marks what is added or changed here so
         it can never go into a shared ruleset. `book_edition`: which rules the book is for
@@ -371,7 +401,7 @@ class HomebrewStore:
                 clean_name(e.name),
                 clean_text(e.text),
                 clean_summary(e.summary),
-                e.players_may_know,
+                e.enabled,
             )
             for e in entries
         ]
@@ -391,7 +421,7 @@ class HomebrewStore:
                     "out of the file."
                 )
             added = updated = same = 0
-            for kind, name, text, summary, players in cleaned:
+            for kind, name, text, summary, switch in cleaned:
                 old = have.get(name_key(name))
                 if old is None:
                     await insert_entry(
@@ -403,24 +433,18 @@ class HomebrewStore:
                         name,
                         text,
                         summary,
-                        bool(players),
                         now,
                         now,
                         from_book,
                         book_edition,
+                        True if switch is None else switch,
                     )
                     added += 1
                     continue
-                known = old.players_may_know if players is None else players
+                on = old.enabled if switch is None else switch  # (not said: as it was)
                 if (
-                    (old.kind, old.name, old.text, old.summary, old.players_may_know)
-                    == (
-                        kind,
-                        name,
-                        text,
-                        summary,
-                        known,
-                    )
+                    (old.kind, old.name, old.text, old.summary, old.enabled)
+                    == (kind, name, text, summary, on)
                     and (old.from_book or not from_book)
                     and (not from_book or old.book_edition == book_edition)
                 ):
@@ -428,7 +452,7 @@ class HomebrewStore:
                     continue
                 await conn.execute(
                     "UPDATE homebrew_entries SET kind = %s, name = %s, text = %s, summary = %s,"
-                    " players_may_know = %s, updated_at = %s, version = version + 1,"
+                    " enabled = %s, updated_at = %s, version = version + 1,"
                     " from_book = from_book OR %s,"
                     " book_edition = CASE WHEN %s THEN %s ELSE book_edition END"
                     " WHERE guild_id = %s AND campaign_id = %s AND id = %s",
@@ -437,7 +461,7 @@ class HomebrewStore:
                         name,
                         text,
                         summary,
-                        known,
+                        on,
                         now,
                         from_book,
                         from_book,
@@ -466,11 +490,11 @@ class HomebrewStore:
                 entry.name,
                 entry.text,
                 entry.summary,
-                entry.players_may_know,
                 entry.created_at,
                 entry.updated_at,
                 entry.from_book,
                 entry.book_edition,
+                entry.enabled,
             )
 
 
@@ -492,11 +516,11 @@ async def insert_entry(
     name: str,
     text: str,
     summary: str | None,
-    players_may_know: bool,
     created_at: int,
     updated_at: int,
     from_book: bool = False,
     book_edition: str | None = None,
+    enabled: bool = True,
 ) -> Homebrew:
     """Insert an already-cleaned entry; the caller holds the campaign's lock."""
     cur = await conn.execute(
@@ -508,7 +532,7 @@ async def insert_entry(
         raise HomebrewError(FULL)
     cur = await conn.execute(
         "INSERT INTO homebrew_entries (guild_id, campaign_id, kind, name, name_key, text, summary,"
-        " players_may_know, created_by, created_at, updated_at, from_book, book_edition)"
+        " created_by, created_at, updated_at, from_book, book_edition, enabled)"
         " VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)"
         " ON CONFLICT (guild_id, campaign_id, name_key) DO NOTHING"
         f" RETURNING {_COLUMNS}",
@@ -520,12 +544,12 @@ async def insert_entry(
             name_key(name),
             text,
             summary,
-            players_may_know,
             user_id,
             created_at,
             updated_at,
             from_book,
             book_edition,
+            enabled,
         ),
     )
     saved = await cur.fetchone()
@@ -556,9 +580,10 @@ async def require_dm(
 
 # ---- backups ------------------------------------------------------------------------
 
-_KEYS = frozenset(
-    {"kind", "name", "text", "summary", "players_may_know", "by", "created_at", "updated_at"}
-)
+# ("players_may_know" is no longer kept (part 2): an old backup that has it is read and the key
+# ignored; "enabled" came with #1629: a backup from before has none, meaning on.)
+_KEYS = frozenset({"kind", "name", "text", "summary", "by", "created_at", "updated_at"})
+_OPTIONAL = frozenset({"enabled", "players_may_know"})
 _KEYS_BOOK = _KEYS | {"from_book"}  # (a backup from before #1524 has no such key: false)
 _KEYS_EDITION = _KEYS_BOOK | {"book_edition"}  # (and before #1563, none: read as "other")
 
@@ -584,12 +609,12 @@ class _Checked:
     name: str
     text: str
     summary: str | None
-    players_may_know: bool
     created_by: int
     created_at: int
     updated_at: int
     from_book: bool = False
     book_edition: str | None = None
+    enabled: bool = True
 
 
 class HomebrewSection:
@@ -600,8 +625,8 @@ class HomebrewSection:
 
     async def dump(self, conn: Conn, guild_id: int, campaign_id: str) -> list[Any]:
         cur = await conn.execute(
-            "SELECT kind, name, text, summary, players_may_know, created_by, created_at,"
-            " updated_at, from_book, book_edition FROM homebrew_entries"
+            "SELECT kind, name, text, summary, created_by, created_at,"
+            " updated_at, from_book, book_edition, enabled FROM homebrew_entries"
             " WHERE guild_id = %s AND campaign_id = %s ORDER BY name_key",
             (guild_id, campaign_id),
         )
@@ -611,12 +636,12 @@ class HomebrewSection:
                 "name": r["name"],
                 "text": r["text"],
                 "summary": r["summary"],
-                "players_may_know": bool(r["players_may_know"]),
                 "by": str(r["created_by"]),
                 "created_at": int(r["created_at"]),
                 "updated_at": int(r["updated_at"]),
                 **({"from_book": True} if r["from_book"] else {}),
                 **({"book_edition": r["book_edition"]} if r["book_edition"] else {}),
+                **({"enabled": False} if not r["enabled"] else {}),  # (on is the default)
             }
             for r in await cur.fetchall()
         ]
@@ -628,13 +653,19 @@ class HomebrewSection:
         checked: list[_Checked] = []
         keys: set[str] = set()
         for row in rows:
-            if not isinstance(row, dict) or set(row) not in (_KEYS, _KEYS_BOOK, _KEYS_EDITION):
+            if not isinstance(row, dict) or set(row) - _OPTIONAL not in (
+                _KEYS,
+                _KEYS_BOOK,
+                _KEYS_EDITION,
+            ):
+                raise CampaignError(DAMAGED)
+            if not isinstance(row.get("enabled", True), bool):
                 raise CampaignError(DAMAGED)
             if not all(isinstance(row[k], str) for k in ("kind", "name", "text")):
                 raise CampaignError(DAMAGED)
             if row["summary"] is not None and not isinstance(row["summary"], str):
                 raise CampaignError(DAMAGED)
-            if not isinstance(row["players_may_know"], bool):
+            if not isinstance(row.get("players_may_know", False), bool):
                 raise CampaignError(DAMAGED)
             if not isinstance(row.get("from_book", False), bool):
                 raise CampaignError(DAMAGED)
@@ -670,12 +701,12 @@ class HomebrewSection:
                     name,
                     text,
                     summary,
-                    row["players_may_know"],
                     _person(row["by"]),
                     created,
                     updated,
                     row.get("from_book", False),
                     edition,
+                    row.get("enabled", True),
                 )
             )
         return checked
@@ -688,8 +719,8 @@ class HomebrewSection:
             async with conn.cursor() as cur:
                 await cur.executemany(
                     "INSERT INTO homebrew_entries (guild_id, campaign_id, kind, name, name_key,"
-                    " text, summary, players_may_know, created_by, created_at, updated_at,"
-                    " from_book, book_edition)"
+                    " text, summary, created_by, created_at, updated_at,"
+                    " from_book, book_edition, enabled)"
                     " VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
                     [
                         (
@@ -700,12 +731,12 @@ class HomebrewSection:
                             name_key(r.name),
                             r.text,
                             r.summary,
-                            r.players_may_know,
                             r.created_by,
                             r.created_at,
                             r.updated_at,
                             r.from_book,
                             r.book_edition,
+                            r.enabled,
                         )
                         for r in loaded
                     ],

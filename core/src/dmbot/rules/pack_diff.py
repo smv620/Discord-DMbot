@@ -2,8 +2,8 @@
 when it takes some of the changes. Pure: no database, no Discord.
 
 Entries are matched by name (case and spacing ignored, like the campaign's own homebrew): a name
-means the same entry. A change is one of three: an entry added, changed (its kind, summary, text or
-whether players may know it) or removed.
+means the same entry. A change is one of three: an entry added, changed (its kind, summary or
+text) or removed.
 """
 
 from __future__ import annotations
@@ -55,7 +55,7 @@ def entries_of(content: Any) -> dict[str, Entry]:
                 "name": name,
                 "summary": str(item["summary"]) if item.get("summary") else None,
                 "text": text,
-                "known": bool(item.get("known")),
+                "known": True,  # (always: nothing is hidden any more; older packs may say false)
             }
         except (KeyError, TypeError, AttributeError):
             continue

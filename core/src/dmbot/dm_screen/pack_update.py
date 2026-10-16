@@ -69,30 +69,17 @@ def _shown(names: Sequence[str]) -> str:
     return shown + (f" and {len(names) - 3} more" if len(names) > 3 else "")
 
 
-def now_visible(changes: Sequence[pack_diff.Change]) -> list[str]:
-    """Entries a change makes known to players (new, or flipped from hidden to known): the DM
-    should see that, since a followed update is taken at once."""
-    return [
-        c.name
-        for c in changes
-        if c.after is not None
-        and c.after.get("known")
-        and not (c.before is not None and c.before.get("known"))
-    ]
-
-
 def note_text(
     pack_name: str,
     version: int,
     changes: int,
     overridden: Sequence[str] = (),
-    visible: Sequence[str] = (),
 ) -> str:
     text = (
         f"📦 **{_md(pack_name)}** homebrew updated to v{version}: {entries_phrase(changes)}. "
         "DMbot took the new version."
     )
-    extras = extra_lines(overridden, visible)
+    extras = extra_lines(overridden)
     return "\n".join([text, *extras])
 
 
@@ -104,12 +91,9 @@ def entries_phrase(changes: int) -> str:
     )
 
 
-def extra_lines(overridden: Sequence[str], visible: Sequence[str]) -> list[str]:
-    """What the DM should know beyond the count: players may now know something, or the campaign's
-    own homebrew still wins."""
+def extra_lines(overridden: Sequence[str]) -> list[str]:
+    """What the DM should know beyond the count: the campaign's own homebrew still wins."""
     lines = []
-    if visible:
-        lines.append(f"Players may now know: {_shown(visible)}.")
     if overridden:
         lines.append(YOURS_WIN.format(names=_shown(overridden)))
     return lines
@@ -545,14 +529,13 @@ async def _update_note(bot: Any, campaign: Campaign, update: PackUpdate) -> shar
     name, version, set_id = update.offer.name, update.offer.version, update.follow.set_id
     try:
         overridden = await _overridden(bot, campaign, update)
-        visible = now_visible(update.changes)
     except Exception:
         log.exception("Couldn't work out the extra lines of a pack update note")
-        overridden, visible = [], []
+        overridden = []
     return shared_update.Update(
         line=f"**{_md(name)}** homebrew, now v{version}: {entries_phrase(len(update.changes))}",
-        single_text=note_text(name, version, len(update.changes), overridden, visible),
+        single_text=note_text(name, version, len(update.changes), overridden),
         single_view=lambda: note_view(campaign.id, set_id, version),
         buttons=lambda row, tag: note_buttons(campaign.id, set_id, version, row, tag),
-        extras=extra_lines(overridden, visible),
+        extras=extra_lines(overridden),
     )

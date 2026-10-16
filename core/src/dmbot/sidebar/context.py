@@ -217,14 +217,11 @@ def relevant_house_rules(
     return ranked[:HOUSE_RULES_MAX]
 
 
-def relevant_homebrew(
-    entries: Sequence[Homebrew], question: str
-) -> tuple[list[Homebrew], list[Homebrew]]:
-    """The campaign's own homebrew the question is about: (entries players may know, entries only
-    the DM may know). An entry is about the question when its whole name is in it, else when the
-    two share a real word of its name. Only the first kind is ever sent to the AI; the second only
-    makes the caller answer for the DM's side (a hidden entry's words, or even its existence, must
-    not reach a table answer or the raw transcript, #933), and it still shadows the book."""
+def relevant_homebrew(entries: Sequence[Homebrew], question: str) -> list[Homebrew]:
+    """The campaign's own homebrew the question is about. An entry is about the question when its
+    whole name is in it, else when the two share a real word of its name. Every entry is on here
+    (the reader leaves out those the DM turned off) and nothing is hidden from players any more
+    ("Homebrew (part 2)"), so all of them may be sent, up to `HOMEBREW_MAX`."""
     asked = f" {normalize(question)} "
     words = {w for w in (normalize(w) for w in words_of(question)) if len(w) >= 4} - _STOP
     named, shared = [], []
@@ -234,11 +231,7 @@ def relevant_homebrew(
             named.append(entry)
         elif any(w in words for w in key.split()):
             shared.append(entry)
-    both = [*named, *shared]
-    return (
-        [e for e in both if e.players_may_know][:HOMEBREW_MAX],
-        [e for e in both if not e.players_may_know],
-    )
+    return [*named, *shared][:HOMEBREW_MAX]
 
 
 def _mentioned(question: str, lookup: CampaignLookup) -> list[tuple[str, Entity]]:
@@ -337,10 +330,8 @@ class Context:
     sources: tuple[str, ...]
     hits: tuple[Hit, ...]
     house_rules: tuple[HouseRule, ...]
-    # The campaign's own homebrew sent (players may know it), and the names of matching entries
-    # that only the DM may know, which are never sent (#1520).
+    # The campaign's own homebrew sent (#1520).
     homebrew: tuple[Homebrew, ...] = ()
-    hidden_homebrew: tuple[str, ...] = ()
     about_link: str | None = None  # the DMbot section the answer may point to, at this build
     # What recall gave the prompt (#1370), and the short label each item goes by in it (F1, F2…)
     # → its id. The reply cites the labels; the ids themselves are never shown to anyone.
@@ -367,13 +358,12 @@ def build(
     must already be this campaign's; nothing else is read here."""
     question = " ".join(question.split())[:QUESTION_MAX]
     hits = mentioned_rules(question, index, target, fallback, both=wants_both_editions(question))
-    known, hidden = relevant_homebrew(homebrew, question)
+    known = relevant_homebrew(homebrew, question)
     # A shared book's entry ranks in its edition's place (#1569): one that would come after the
     # free rules' entry of the same name is left out, and the free rules answer.
     known = [e for e in known if _book_answers(e, hits, target, fallback)]
-    hidden = [e for e in hidden if _book_answers(e, hits, target, fallback)]
-    # A homebrew name shadows the book's, hidden or not (#1520): the book is not used for it.
-    shadowed = {normalize(e.name) for e in (*known, *hidden)}
+    # A homebrew name shadows the book's (#1520): the book is not used for it.
+    shadowed = {normalize(e.name) for e in known}
     hits = [
         h
         for h in hits
@@ -461,7 +451,6 @@ def build(
         tuple(hits),
         tuple(rules),
         homebrew=tuple(known),
-        hidden_homebrew=tuple(e.name for e in hidden),
         about_link=about_link,
         recall=recalled if labels else None,
         labels=tuple(labels),

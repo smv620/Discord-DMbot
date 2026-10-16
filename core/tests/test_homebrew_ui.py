@@ -1,5 +1,5 @@
 """📚 Homebrew (#1520), the DM's private menu: the list, Add (kind, then the form), an entry's
-👀/🙈 switch and kind, Remove with Undo, and that every press checks the person is a DM. The real
+Turn off or on, its kind, Remove with Undo, and that every press checks the person is a DM. The real
 store, against the database."""
 
 from __future__ import annotations
@@ -77,14 +77,18 @@ class TheList(HomebrewUiTest):
         self.assertIn("No homebrew yet", self.said(it))
         self.assertIn("Share a rulebook", self.said(it))
 
-    async def test_each_entry_shows_who_may_know_it(self) -> None:
+    async def test_an_entry_that_is_off_says_so_in_the_list(self) -> None:
         await self.add("Hollow King")
-        await self.add("Moonblade", kind="item", players_may_know=True)
+        lamp = await self.add("Moonblade", kind="item")
+        await self.store.set_enabled(GUILD, self.campaign.id, DM, lamp.id, False)
         it = self.press()
         await ui.show_list(it, self.campaign, first=True)
         text = self.said(it)
-        self.assertIn("🙈 👹 Monster **Hollow King**", text)
-        self.assertIn("👀 🗡 Item **Moonblade**", text)
+        self.assertIn("👹 Monster **Hollow King**:", text)
+        self.assertIn("🗡 Item **Moonblade** (off):", text)
+        self.assertIn("(off) means DMbot ignores it until you turn it on.", text)
+        self.assertNotIn("🙈", text)
+        self.assertNotIn("👀", text)
 
     async def test_the_settings_button_opens_it_for_a_dm_and_refuses_anyone_else(self) -> None:
         button = HomebrewButton(self.campaign.id)
@@ -102,7 +106,7 @@ class TheList(HomebrewUiTest):
 
 
 class Adding(HomebrewUiTest):
-    async def test_add_asks_the_kind_then_the_form_and_the_entry_starts_hidden(self) -> None:
+    async def test_add_asks_the_kind_then_the_form_and_the_entry_starts_on(self) -> None:
         menu = ui.ListMenu(self.campaign, [], 0, [])
         it = self.press()
         await menu._add(it)
@@ -119,10 +123,8 @@ class Adding(HomebrewUiTest):
         submit = self.press()
         await form.on_submit(submit)
         (saved,) = await self.store.list(GUILD, self.campaign.id)
-        self.assertEqual(
-            (saved.kind, saved.name, saved.players_may_know), ("spell", "Frost Lance", False)
-        )
-        self.assertIn("Only you see it", self.said(submit))
+        self.assertEqual((saved.kind, saved.name, saved.enabled), ("spell", "Frost Lance", True))
+        self.assertIn("DMbot uses it now", self.said(submit))
 
     async def test_a_refused_save_gives_the_words_back_to_copy(self) -> None:
         await self.add("Hollow King")
@@ -155,18 +157,27 @@ class Adding(HomebrewUiTest):
 
 
 class AnEntry(HomebrewUiTest):
-    async def test_the_switch_lets_players_know_and_takes_it_back(self) -> None:
+    async def test_turn_off_and_turn_on_ask_nothing_and_only_a_dm_can(self) -> None:
         saved = await self.add()
         menu = ui.EntryMenu(self.campaign, saved, 0)
+        labels = [str(getattr(c, "label", "")) for c in menu.children]
+        self.assertIn("Turn off", labels)
+        self.assertFalse(any("👀" in label or "🙈" in label for label in labels))
+        await menu._enabled(self.press(PLAYER))
+        (same,) = await self.store.list(GUILD, self.campaign.id)
+        self.assertTrue(same.enabled)  # a player's press changed nothing
         it = self.press()
-        await menu._toggle(it)
+        await menu._enabled(it)
         (now,) = await self.store.list(GUILD, self.campaign.id)
-        self.assertTrue(now.players_may_know)
-        self.assertIn("players may know it 👀", self.said(it))
+        self.assertFalse(now.enabled)
+        self.assertIn("Turned off. DMbot will not use it.", self.said(it))
         again = ui.EntryMenu(self.campaign, now, 0)
-        await again._toggle(self.press())
+        self.assertIn("Turn on", [str(getattr(c, "label", "")) for c in again.children])
+        it2 = self.press()
+        await again._enabled(it2)
         (back,) = await self.store.list(GUILD, self.campaign.id)
-        self.assertFalse(back.players_may_know)
+        self.assertTrue(back.enabled)
+        self.assertIn("Turned on. DMbot will use it.", self.said(it2))
 
     async def test_the_kind_can_be_changed_and_only_by_a_dm(self) -> None:
         saved = await self.add()
@@ -180,7 +191,7 @@ class AnEntry(HomebrewUiTest):
         self.assertEqual(now.kind, "item")
 
     async def test_remove_asks_then_removes_and_undo_puts_it_back(self) -> None:
-        saved = await self.add(players_may_know=True)
+        saved = await self.add()
         confirm = ui.ConfirmRemove(self.campaign, saved, 0)
         it = self.press()
         await confirm._yes(it)
@@ -192,7 +203,7 @@ class AnEntry(HomebrewUiTest):
         self.assertEqual(len(undo), 1)
         await undo[0].callback(self.press())
         (back,) = await self.store.list(GUILD, self.campaign.id)
-        self.assertEqual((back.name, back.players_may_know), ("Hollow King", True))
+        self.assertEqual((back.name, back.enabled), ("Hollow King", True))
         self.assertEqual(removed, [])
 
     async def test_a_stale_view_is_refused_with_the_new_list(self) -> None:

@@ -316,16 +316,13 @@ def homebrew_parts(
     own: Homebrew, campaign_name: str, *, player: bool = False, legacy: bool = False
 ) -> list[str]:
     """The card for one of the campaign's own homebrew entries, for the DM (private): tagged
-    `[Homebrew]`, its source named, who may know it, then its words. It goes above the free
+    `[Homebrew]`, its source named, then its words. It goes above the free
     rules' card and below any house rule (the order is house rules, homebrew, the target
     ruleset, the fallback)."""
-    who = "👀 players may know it" if own.players_may_know else "🙈 hidden from players"
-    if player:  # a player already knows they are a player: the DM's tags are not for them
-        who = ""
     head = "\n".join(
         [
             f"📚 **{_fit(_md(own.name), NAME_MAX)}** ({own.kind.capitalize()}) "
-            f"{_tags(own, legacy)}{' ' + who if who else ''}",
+            f"{_tags(own, legacy)}",
             f"_Source: {_md(_fit(homebrew_citation(own, campaign_name), 200))}_",
         ]
     )
@@ -354,18 +351,17 @@ def homebrew_alert_text(
     legacy: bool = False,
 ) -> str:
     """The short card on the DM screen when the table names one of the campaign's own homebrew
-    entries (#1524): a house rule that names it first, then the entry (tagged, with who may know
-    it and its one-line summary), its source and what was heard. Hidden or not: the DM screen
-    only. **Read it all** gives the whole entry."""
+    entries (#1524): a house rule that names it first, then the entry (tagged, with its one-line
+    summary), its source and what was heard. The DM screen only. **Read it all** gives the whole
+    entry."""
     matches = house_matches(rules, [own.name, said])
     lines = house_lines(matches[:1], ALERT_HOUSE_MAX) if matches else []
     if len(matches) > 1:
         more = len(matches) - 1
         plural = "s" if more != 1 else ""
         lines.append(f"🏠 {more} more house rule{plural}: `/dmbot houserules`")
-    who = "👀 players may know it" if own.players_may_know else "🙈 hidden from players"
     name = _fit(_md(own.name), NAME_MAX)
-    lines.append(f"📚 **{name}** ({own.kind.capitalize()}) {_tags(own, legacy)} {who}")
+    lines.append(f"📚 **{name}** ({own.kind.capitalize()}) {_tags(own, legacy)}")
     lines.append(_fit(_md(own.shown()), ALERT_FACTS_MAX))
     lines.append(f"_Source: {_md(_fit(homebrew_citation(own, campaign_name), 200))}_")
     lines.append(f"_Heard: “{_fit(_md(heard), ALERT_HEARD_MAX)}”_")

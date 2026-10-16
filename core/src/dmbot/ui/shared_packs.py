@@ -55,8 +55,8 @@ LATER_LABEL = "▼ Later"
 UNFOLLOW_LABEL = "Stop following"
 UNDO_LABEL = "↩️ Undo"
 CODE_NOTE = (
-    "Any DM in this server, and anyone who has this code, can read ALL the shared entries, "
-    "including the ones hidden from players. Old codes still work until you press Stop sharing."
+    "Any DM in this server, and anyone who has this code, can read all the shared entries. "
+    "Old codes still work until you press Stop sharing."
 )
 NAMES_SHOWN = 5  # names quoted for entries that stay, so a long list stays short
 NOT_A_PACK_CODE = "That code is for house rules. Use 📚 Shared rules → Use shared rules."
@@ -85,13 +85,10 @@ def stays_home(left_out: list[str] | tuple[str, ...]) -> str:
     )
 
 
-def _count(content: dict[str, Any]) -> tuple[int, int]:
-    """(all entries, those hidden from players) in a pack's content; `known` is "players may
-    know it"."""
+def _count(content: dict[str, Any]) -> int:
+    """How many entries a pack's content holds."""
     entries = content.get("entries")
-    if not isinstance(entries, list):
-        return 0, 0
-    return len(entries), sum(1 for e in entries if isinstance(e, dict) and not e.get("known"))
+    return len(entries) if isinstance(entries, list) else 0
 
 
 def _store(interaction: discord.Interaction) -> Any:
@@ -227,12 +224,9 @@ async def share(interaction: discord.Interaction, campaign: Campaign, name: str)
     )
     code = await store.make_pack_code(current.guild_id, current.id, interaction.user.id)
     shared = [e for e in entries if not e.from_book and e.source is None]
-    hidden = sum(1 for e in shared if not e.players_may_know)  # hidden from players
     lines = [f"✅ Sharing **{_escape(done.pack.name)}**: {_entries(len(shared))}."]
     if done.left_out:
         lines.append(stays_home(done.left_out))
-    if hidden:
-        lines.append(f"{hidden} of them are hidden from players. Other DMs can read them too.")
     lines += [CODE_NOTE, f"`{code}`"]  # the code last, so it is easy to copy on a phone
     await _tell(interaction, "\n".join(lines))
 
@@ -303,7 +297,7 @@ async def _offer(
     if offer.kind != packs.HOMEBREW:
         await _tell(interaction, NOT_A_PACK_CODE)
         return
-    total, hidden = _count(offer.content)
+    total = _count(offer.content)
     listed = offer.content.get("entries")
     names = [
         str(e["name"])
@@ -315,12 +309,6 @@ async def _offer(
         f"**{_escape(offer.name)}** from {_escape(offer.publisher)}: {_entries(total)} "
         f"(update {offer.version}).\n"
         + (f"> {_names(names)}\n" if names else "")
-        + (
-            f"{hidden} of them {'is' if hidden == 1 else 'are'} hidden from players, and "
-            "stay hidden at your table.\n"
-            if hidden
-            else ""
-        )
         + "If you follow it, DMbot will use these when it looks things up. Your own homebrew wins "
         "if a name matches. You can stop any time.",
         ConfirmFollow(current, offer),
