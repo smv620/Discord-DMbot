@@ -1,7 +1,7 @@
 /** @jsxImportSource preact */
 // @vitest-environment happy-dom
 // Support tickets on the website (#1340): the Account page's "Write to the DMbot team" form for
-// paying people, the public Q&A for everyone else, the API calls, and the admin page's list.
+// everyone with an account (Try It too), the public Q&A for everyone else, the API calls, and the admin page's list.
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/preact";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -53,7 +53,7 @@ function type(label: string, value: string) {
 }
 
 describe("who sees the form", () => {
-  it("a paying account sees the form, with the privacy words before Send", async () => {
+  it("a paid account sees the form, with the privacy words before Send", async () => {
     show("table");
     expect(await screen.findByRole("heading", { name: text.supportHeading })).toBeTruthy();
     expect(screen.getByLabelText(text.supportSubjectLabel)).toBeTruthy();
@@ -69,7 +69,20 @@ describe("who sees the form", () => {
     expect(screen.queryByRole("heading", { name: text.qaHeading })).toBeNull();
   });
 
-  it.each(["no-plan", "try-it"] as const)(
+  it("a Try It account sees the form too, with the line about buying a plan (#1435)", async () => {
+    show("try-it");
+    expect(await screen.findByLabelText(text.supportMessageLabel)).toBeTruthy();
+    expect(screen.getByText(text.supportIntroTryIt)).toBeTruthy();
+    expect(screen.queryByRole("heading", { name: text.qaHeading })).toBeNull();
+  });
+
+  it("a paid account does not get the Try It line", async () => {
+    show("table");
+    await screen.findByLabelText(text.supportMessageLabel);
+    expect(screen.queryByText(text.supportIntroTryIt)).toBeNull();
+  });
+
+  it.each(["no-plan"] as const)(
     "%s sees the public Q&A, not the form",
     async (scenario) => {
       show(scenario);
@@ -181,6 +194,8 @@ describe("writing to the team", () => {
   it.each([
     "slow-down",
     "not-paying",
+    "one-waiting",
+    "daily-limit",
     "signed-out",
     "network",
     "server",
@@ -351,6 +366,8 @@ describe("the API calls", () => {
 
   it.each([
     [403, "not_paying", "not-paying"],
+    [429, "one_waiting", "one-waiting"],
+    [429, "daily", "daily-limit"],
     [429, "slow_down", "slow-down"],
     [503, "busy", "slow-down"],
     [400, "not_human", "not-human"],

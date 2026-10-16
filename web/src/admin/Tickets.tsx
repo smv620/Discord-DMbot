@@ -1,5 +1,5 @@
 /** @jsxImportSource preact */
-// The admin page's support tickets panel (#1340): private messages from people on a paid plan,
+// The admin page's support tickets panel (#1340): private messages from people with an account,
 // newest first, with Mark answered, Close and Reopen. The words are only ever shown here, to
 // the signed-in admin; the API checks the session and the CSRF token on every change.
 import { useEffect, useRef, useState } from "preact/hooks";
