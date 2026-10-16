@@ -24,7 +24,11 @@ from tests.test_memory_store import GUILD_A, GUILD_B, MemoryTest
 from tests.test_sidebar_answer import FakeAI, campaign
 
 INDEX = srd()
-SHA = lambda text: hashlib.sha256(text.encode()).hexdigest()  # noqa: E731
+
+
+def SHA(text: str) -> str:
+    return hashlib.sha256(text.encode()).hexdigest()
+
 
 # What the prompt and the system text were before #1370: hashes of the exact text.
 TODAY = {
