@@ -2571,3 +2571,5 @@ Overall ...................................... PASS (Deepgram baseline: 33/33, 1
   Result: core logged "Database updated: 0105_web_transcript_keep", "ears connected" and "Connected to 1 server(s)"; web-api healthy; schema_migrations 105 rows, last 0105_web_transcript_keep; /health 200 inside web-api.
   Not checked (needs the owner in Discord or a signed-in member): a non-DM /dmbot rule card; the Transcripts page of a campaign with a keep limit showing "Transcripts are kept for N days after each session, then deleted."
   docs/next-test-step.md stays Test J (Keep, Delete's warning with Cancel, Homebrew packs): it still needs the owner.
+  10-minute check, 18:13 UTC (10 minutes after the start): 0 ERROR, CRITICAL or traceback lines in core and web-api since 18:02; both up, web-api healthy; schema_migrations 105 rows, last 0105_web_transcript_keep.
+  Nothing turned on for users (recaps off, no ElevenLabs key, the extractor off).
