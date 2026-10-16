@@ -326,6 +326,56 @@ class Transcripts(Base):
             self.assertEqual(callers(door), {"schema.py", "web/transcripts.py"}, door)
 
 
+class DeletedTranscripts(Transcripts):
+    """A session whose transcript was deleted (#1548) keeps its number and now stays in the list,
+    marked, so the page can say so instead of showing an empty session."""
+
+    async def delete_first(self) -> None:
+        first = (await self.store_t.sessions(THURSDAY.id, self.one.id))[-1]  # the oldest
+        gone = await self.store_t.delete_session_transcript(
+            THURSDAY.id, self.one.id, first.id, START + 10**6, START + 5
+        )
+        self.assertEqual(gone, 1)
+
+    async def test_a_deleted_session_stays_listed_with_its_number_and_time(self) -> None:
+        before = await self.listed(self.carol)
+        self.assertTrue(all(s["transcriptsDeletedAt"] is None for s in before))  # null otherwise
+        await self.delete_first()
+        got = await self.listed(self.carol)
+        self.assertEqual(
+            [(s["number"], s["lines"], s["transcriptsDeletedAt"]) for s in got],
+            [(2, 3, None), (1, 0, START + 5)],  # the later session keeps number 2
+        )
+
+    async def test_a_campaign_with_only_deleted_transcripts_is_still_listed(self) -> None:
+        await self.delete_first()
+        got = await transcripts.list_campaigns(self.web, self.carol, now=NOW, enforce_plans=False)
+        self.assertEqual([(c["name"], c["sessions"]) for c in got], [("One", 2), ("Two", 1)])
+
+    async def test_a_direct_link_says_it_was_deleted_and_the_download_has_nothing(self) -> None:
+        await self.delete_first()
+        got = await read(self.web, self.carol, self.cref, 1, "cleaned")
+        self.assertEqual(
+            (got["lines"], got["next"], got["transcriptsDeletedAt"]), ([], None, START + 5)
+        )
+        with self.assertRaises(RecapError) as caught:
+            await transcripts.render(
+                self.web, self.carol, self.cref, 1, "cleaned", now=NOW, enforce_plans=False
+            )
+        self.assertEqual(caught.exception.code, "not_found")
+        # A session that still has its lines is read as before, with no deletion time.
+        other = await read(self.web, self.carol, self.cref, 2, "cleaned")
+        self.assertNotIn("transcriptsDeletedAt", other)
+
+    async def test_a_person_outside_the_server_still_learns_nothing(self) -> None:
+        await self.delete_first()
+        elsewhere = await self.session_of(CAROL, [QUILLON])
+        with self.assertRaises(RecapError):
+            await transcripts.list_sessions(
+                self.web, elsewhere, self.cref, now=NOW, enforce_plans=False
+            )
+
+
 class Characters(Transcripts):
     """The `{character}` labels (#1512): the export's rule in a door, for any member."""
 

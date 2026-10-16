@@ -147,6 +147,10 @@ export const dmSteps: Step[] = [
     ],
   },
   {
+    text: "You can choose how long a campaign keeps its transcripts: Forever, 1 year, 90 days or 30 days (⚙️ Settings → 📜 Transcripts). Older ones are deleted within a day. Recaps stay.",
+    names: [{ name: "Transcripts", file: "dm_screen/transcript_keep.py" }],
+  },
+  {
     text: "To give a campaign to another game master, press ⚙️ Settings, then Hand over. They must say yes.",
     names: [{ name: "Hand over", file: "dm_screen/handover.py" }],
   },
@@ -227,6 +231,10 @@ export const playerSteps: Step[] = [
   {
     text: "Everyone in the server can read a game's transcript. To read or download one, type /transcript.",
     names: [{ name: "/transcript", file: "ui/transcripts.py" }],
+  },
+  {
+    text: "Want your own lines gone? In Discord, open the ⚙️ Menu DMbot sends you and press 🗑 Delete my transcripts. It deletes every line you said in that server, from every past game. It can't be undone, and copies someone already saved stay.",
+    names: [{ name: "🗑 Delete my transcripts", file: "consent_dm.py" }],
   },
   {
     text: "Press 📜 My character sheet to link your online sheet, or to type your character in.",

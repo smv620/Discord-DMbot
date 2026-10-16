@@ -169,13 +169,22 @@ function Sessions({ api, campaignRef }: { api: AccountApi; campaignRef: string }
               {found.sessions.map((s) => (
                 <li key={s.number}>
                   <span class="campaign-name">{text.sessionTitle(s.number)}</span>
-                  <span class="small">{text.sessionLine(sessionDay(s.startedAt), s.lines)}</span>
-                  <a
-                    href={`/account/transcripts/${encodeURIComponent(campaignRef)}/${s.number}`}
-                    aria-label={`${text.open}: ${text.sessionTitle(s.number)}`}
-                  >
-                    {text.open}
-                  </a>
+                  {s.transcriptsDeletedAt ? (
+                    // Deleted: no line count and no Read link, since there is nothing to read.
+                    <span class="small">
+                      {sessionDay(s.startedAt)} · {text.deletedLine(sessionDay(s.transcriptsDeletedAt))}
+                    </span>
+                  ) : (
+                    <>
+                      <span class="small">{text.sessionLine(sessionDay(s.startedAt), s.lines)}</span>
+                      <a
+                        href={`/account/transcripts/${encodeURIComponent(campaignRef)}/${s.number}`}
+                        aria-label={`${text.open}: ${text.sessionTitle(s.number)}`}
+                      >
+                        {text.open}
+                      </a>
+                    </>
+                  )}
                 </li>
               ))}
             </ul>
@@ -208,6 +217,42 @@ function Reader({
         </a>
       </p>
       <h2>{text.sessionTitle(number)}</h2>
+      {load.kind === "ready" && load.value.transcriptsDeletedAt ? (
+        <p class="panel" role="status">
+          {text.deletedPage(sessionDay(load.value.transcriptsDeletedAt))}
+        </p>
+      ) : (
+        <Reading
+          api={api}
+          campaignRef={campaignRef}
+          number={number}
+          version={version}
+          setVersion={setVersion}
+          load={load}
+        />
+      )}
+    </>
+  );
+}
+
+/** What a session with a transcript shows: the two versions, the download, the lines. */
+function Reading({
+  api,
+  campaignRef,
+  number,
+  version,
+  setVersion,
+  load,
+}: {
+  api: AccountApi;
+  campaignRef: string;
+  number: number;
+  version: TranscriptVersion;
+  setVersion: (v: TranscriptVersion) => void;
+  load: Load<TranscriptView>;
+}) {
+  return (
+    <>
       <div class="row" role="group" aria-label={text.versionLabel}>
         {(["cleaned", "heard"] as const).map((v) => (
           <button

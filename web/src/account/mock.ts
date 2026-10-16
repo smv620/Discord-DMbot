@@ -428,6 +428,13 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
       return {
         name: "The Brynwater Crossing",
         sessions: [
+          {
+            number: 3,
+            startedAt: 1_792_000_000,
+            endedAt: 1_792_003_600,
+            lines: 0,
+            transcriptsDeletedAt: 1_792_500_000,
+          },
           { number: 2, startedAt: 1_791_000_000, endedAt: 1_791_007_200, lines: 3 },
           { number: 1, startedAt: 1_790_000_000, endedAt: 1_790_003_600, lines: 2 },
         ],
@@ -437,8 +444,18 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
       calls.push(`transcript:${campaignRef}:${number}:${version}`);
       await reachable();
       signedIn();
-      if (campaignRef !== "200000000000000001.cmp1" || ![1, 2].includes(number))
+      if (campaignRef !== "200000000000000001.cmp1" || ![1, 2, 3].includes(number))
         throw new ApiError("not-found");
+      if (number === 3)
+        return {
+          number,
+          version,
+          fileName: "",
+          notes: [],
+          lines: [],
+          next: null,
+          transcriptsDeletedAt: 1_792_500_000,
+        };
       return mockTranscript(number, version);
     },
     async transcriptFile(campaignRef, number, version) {

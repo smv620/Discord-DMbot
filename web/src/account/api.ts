@@ -269,6 +269,8 @@ export interface TranscriptSessionItem {
   startedAt: number;
   endedAt: number | null;
   lines: number;
+  /** When its transcript was deleted (Unix seconds), else null; missing from an older API (#1548). */
+  transcriptsDeletedAt?: number | null;
 }
 
 export type TranscriptVersion = "cleaned" | "heard";
@@ -284,6 +286,8 @@ export interface TranscriptView {
   /** The offset to ask for the next page of lines (#1512), or null on the last (or missing from an
    * older API: there is no more). */
   next?: number | null;
+  /** Set when this session's transcript was deleted: no lines, nothing to save (#1548). */
+  transcriptsDeletedAt?: number | null;
 }
 
 /** A campaign with house rules or a followed set in one of the person's servers (#1521). `ref` is

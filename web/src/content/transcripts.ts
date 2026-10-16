@@ -32,6 +32,9 @@ export const text = {
   sessionTitle: (n: number): string => `Session ${n}`,
   sessionLine: (day: string, lines: number): string =>
     `${day} · ${lines} ${lines === 1 ? "line" : "lines"}`,
+  deletedLine: (day: string): string => `Transcript deleted on ${day}`,
+  deletedPage: (day: string): string =>
+    `This transcript was deleted on ${day}, so there is nothing to read or save. The session is still in the list, with the same number.`,
   versionLabel: "Version",
   versions: { cleaned: "Cleaned", heard: "As heard" } as Record<TranscriptVersion, string>,
   download: "Save as a text file",

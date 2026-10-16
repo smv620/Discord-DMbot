@@ -141,10 +141,18 @@ async def list_sessions(
                 "startedAt": int(s["startedAt"]),
                 "endedAt": None if s["endedAt"] is None else int(s["endedAt"]),
                 "lines": int(s["lines"]),
+                # When the transcript was deleted (Unix seconds), else null: the list says so
+                # in place of the line count, and the session has nothing to read or save.
+                "transcriptsDeletedAt": _deleted_at(s),
             }
             for s in found["sessions"]
         ],
     }
+
+
+def _deleted_at(session: dict[str, Any]) -> int | None:
+    stamp = session.get("transcriptsDeletedAt")
+    return None if stamp is None else int(stamp)
 
 
 def _line(row: dict[str, Any]) -> Line:
@@ -241,7 +249,7 @@ async def _characters(
     return {int(user): str(name) for user, name in (found or {}).items()}
 
 
-async def render(
+async def _render(
     db: Database,
     session: Session,
     ref: str,
@@ -250,10 +258,9 @@ async def render(
     *,
     now: int,
     enforce_plans: bool,
-) -> tuple[str, str]:
-    """(the file's name, the file's text) for one session in one version: what Discord's button
-    gives, made by `export.render`. A person outside the server, a missing campaign or session and
-    an unknown version are "not found"."""
+) -> tuple[str, str, int | None]:
+    """(the file's name, the file's text, when its transcript was deleted). A deleted session has
+    no lines to build a file from, so its name and text are empty and only the time is set."""
     if version not in VERSIONS:
         raise RecapError("not_found")
     guild_id, campaign_id, found = await _sessions(
@@ -262,6 +269,9 @@ async def render(
     wanted = next((s for s in found["sessions"] if int(s["number"]) == number), None)
     if wanted is None:
         raise RecapError("not_found")
+    deleted = _deleted_at(wanted)
+    if deleted is not None:
+        return "", "", deleted
     lines = await _all_lines(db, session, guild_id, campaign_id, str(wanted["id"]))
     playing = await _characters(db, session, guild_id, campaign_id)
     stored = TranscriptSession(
@@ -287,7 +297,29 @@ async def render(
     )
     if len(text.encode("utf-8")) > FILE_LIMIT:
         raise RecapError("too_big")
-    return export.file_name(found["name"], stored, kind), text
+    return export.file_name(found["name"], stored, kind), text, None
+
+
+async def render(
+    db: Database,
+    session: Session,
+    ref: str,
+    number: int,
+    version: str,
+    *,
+    now: int,
+    enforce_plans: bool,
+) -> tuple[str, str]:
+    """(the file's name, the file's text) for one session in one version: what Discord's button
+    gives, made by `export.render`. A person outside the server, a missing campaign or session, a
+    session whose transcript was deleted (nothing to save) and an unknown version are "not
+    found"."""
+    name, text, deleted = await _render(
+        db, session, ref, number, version, now=now, enforce_plans=enforce_plans
+    )
+    if deleted is not None:
+        raise RecapError("not_found")
+    return name, text
 
 
 async def read_session(
@@ -304,10 +336,23 @@ async def read_session(
     """The same text as the download, split for reading: the notes at the top (`notes`) and one
     string per line of the transcript (`lines`), `READ_PAGE` of them from `offset`. `next` is the
     offset of the following page, or null on the last. The whole text is built each time (it is
-    one document, with off-topic runs gathered across any boundary), so a page is a slice of it."""
-    name, text = await render(
+    one document, with off-topic runs gathered across any boundary), so a page is a slice of it.
+
+    A session whose transcript was deleted answers `transcriptsDeletedAt` (Unix seconds) with no
+    lines, so a direct link to it says so rather than failing."""
+    name, text, deleted = await _render(
         db, session, ref, number, version, now=now, enforce_plans=enforce_plans
     )
+    if deleted is not None:
+        return {
+            "number": number,
+            "version": version,
+            "fileName": "",
+            "notes": [],
+            "lines": [],
+            "next": None,
+            "transcriptsDeletedAt": deleted,
+        }
     head, _, body = text.partition("\n\n")
     everything = body.rstrip("\n").split("\n") if body.strip() else []
     start = max(0, offset)
