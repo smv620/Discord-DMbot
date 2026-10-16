@@ -1,6 +1,7 @@
 /**
  * Every word on the account page (#434). Plain words; every message says what to do next.
  */
+import { SUPPORT_AI_LIVE, supportNote } from "./support-words";
 import { byId, data, formatPeriod, formatPrice, type PlanId } from "./pricing";
 
 const extraHours = data.extraHours.hours;
@@ -302,8 +303,7 @@ export const text = {
   // Write to the team, for people on a paid plan (#1340)
   supportHeading: "Write to the DMbot team",
   supportIntro: "Something wrong with your plan, an invoice or DMbot itself? Write to us here.",
-  supportPrivacy:
-    "Your message goes privately to the DMbot team, and is not posted anywhere public. We keep it for 12 months, then delete it. Deleting your account deletes it too.",
+  supportPrivacy: supportNote(SUPPORT_AI_LIVE),
   supportPublicLead: "A question anyone could answer? Ask it in the public",
   supportSubjectLabel: "Subject",
   supportMessageLabel: "What can we help with?",
