@@ -105,18 +105,14 @@ class Cards(TableTest):
         (post,) = self.posts
         self.assertEqual(post[0], SCREEN)
         text = post[1]
-        self.assertIn("📚 **Hollow King** (Monster) [Homebrew] 🙈 hidden from players", text)
+        self.assertIn("📚 **Hollow King** (Monster) [Homebrew]", text)
+        self.assertNotIn("hidden", text)  # (nothing is hidden from players any more)
         self.assertIn("Crowned.", text)
         self.assertIn("Source: Frostmaiden's homebrew: Hollow King", text)
         self.assertIn("Heard: “the Hollow King rises”", text)
         self.assertLessEqual(len(text.splitlines()), 6)
         labels = [str(b.item.label) for b in post[2].children]
         self.assertEqual(labels, ["Got it", "Ignore", "Override", "Read it all"])
-
-    async def test_a_known_entry_says_so(self) -> None:
-        self.own(brew("Moonblade", kind="item", known=True))
-        await self.say("grab the Moonblade")
-        self.assertIn("👀 players may know it", self.posts[0][1])
 
     async def test_a_house_rule_comes_first_then_the_homebrew(self) -> None:
         self.own(brew("Hollow King"))
@@ -233,12 +229,6 @@ class Books(TableTest):
         (post,) = self.posts
         self.assertNotIn("hidden from players", post[1])
         self.assertNotIn("From the book", post[1])
-
-    async def test_a_hidden_book_entry_that_answers_still_gets_the_dm_screen_card(self) -> None:
-        self.own(self.book("Fireball", "2024", kind="spell", known=False))
-        await self.say("I cast Fireball")
-        (post,) = self.posts
-        self.assertIn("🙈 hidden from players", post[1])
 
     async def test_a_2014_book_entry_is_tagged_legacy_when_it_answers(self) -> None:
         self.own(self.book("Orc", "2014"))

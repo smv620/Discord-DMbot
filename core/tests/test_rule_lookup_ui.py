@@ -838,15 +838,6 @@ class HomebrewLookup(LookupTest):
         self.assertIn("dragon", text)
         self.assertNotIn("📖 **Goblin Warrior**", text)  # not the book's card too
 
-    async def test_an_entry_that_is_off_is_not_found_by_anyone(self) -> None:
-        off = replace(brew(C1, "Hollow King", "A crowned skeleton."), enabled=False)
-        self.brew.entries[C1] = [off]
-        for who in (PLAYER, DM):
-            ui._last_lookup.clear()
-            text = self.sent(await self.command("Hollow King", who), 0)[0]
-            self.assertNotIn("A crowned skeleton.", text)
-            self.assertIn("couldn't find", text)
-
     async def test_a_homebrew_store_that_cannot_be_read_still_shows_the_free_rules(self) -> None:
         self.brew.find = AsyncMock(side_effect=RuntimeError("down"))  # type: ignore[method-assign]
         it = await self.command("goblin")
