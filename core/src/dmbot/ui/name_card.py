@@ -91,6 +91,8 @@ NOTHING_CHANGED = (
 
 CARD_MAX = 1900  # under Discord's 2,000 characters
 SHOWN = 3  # per section, then "… and N more"
+SHOW_ALL = "Show all ▾"
+NOTHING_MORE = "That list has changed, so there is nothing more to show. Open the name again."
 NOTE_MAX = 600  # what just changed, above the card
 NAME_LIMIT = 100  # what a form field may hold
 
@@ -173,11 +175,79 @@ def _kind(type_key: str) -> str:
     return KIND_SHORT.get(type_key, type_key)
 
 
-def _more(items: list[str], sep: str = ", ", *, full: bool = False) -> str:
-    if full:
-        return sep.join(items)
+def _more(items: list[str], sep: str = ", ") -> str:
     shown = sep.join(items[:SHOWN])
     return shown + (f" … and {len(items) - SHOWN} more" if len(items) > SHOWN else "")
+
+
+def _groups(
+    lookup: CampaignLookup, entity_id: str, connections: list[Relation], secrets: bool
+) -> dict[str, list[str]]:
+    """Connections grouped by how they're connected, read from this name's side: "is a member of
+    **Frostwolf tribe**; knows **Bell**, **Kesh**". A secret one is left out unless `secrets`."""
+    groups: dict[str, list[str]] = {}
+    for r in connections:
+        if r.status != CONFIRMED or (r.secret and not secrets):
+            continue
+        ahead = r.subject_id == entity_id or r.predicate in BOTH_WAYS
+        other = lookup.entities.get(r.object_id if r.subject_id == entity_id else r.subject_id)
+        if other is None or other.status != CONFIRMED or other.id == entity_id:
+            continue
+        words = (
+            fact_words(r)
+            if ahead
+            else (
+                f"is linked (“{_md(r.detail)}”) to"
+                if r.predicate == FALLBACK_PREDICATE and r.detail
+                else CARD_BACK.get(r.predicate, "is connected to")
+            )
+        )
+        groups.setdefault(words, []).append(f"**{_md(other.name)}**" + (" 🤫" if r.secret else ""))
+    return groups
+
+
+# What Show all can open, in the card's order: key -> how the select names it.
+NAMES, SECRETS, LINKS = "names", "secret", "links"
+SECTION_WORDS = {NAMES: "Other names", SECRETS: "Secret names", LINKS: "Connections"}
+PAGE_LINES = 25  # most lines in one Show all message, then Older / Newer
+
+
+def sections(
+    lookup: CampaignLookup, entity_id: str, connections: list[Relation], *, secrets: bool
+) -> dict[str, list[str]]:
+    """Every entry of each section the card cuts, in the card's words and order. A section with
+    nothing in it is left out, and the secret names and secret connections only when `secrets`
+    (the campaign's DMs), the same check the card makes."""
+    entity = lookup.entities.get(entity_id)
+    if entity is None:
+        return {}
+    own = name_key(entity.name)
+    mine = [e for e in lookup.names if e.entity_id == entity_id and e.confirmed]
+    found = {
+        NAMES: [_md(e.text) for e in mine if not e.secret and e.key != own],
+        SECRETS: [_md(e.text) for e in mine if e.secret] if secrets else [],
+        LINKS: [
+            f"{words} {who}"
+            for words, group in _groups(lookup, entity_id, connections, secrets).items()
+            for who in group
+        ],
+    }
+    return {key: lines for key, lines in found.items() if lines}
+
+
+def cut_sections(
+    lookup: CampaignLookup, entity_id: str, connections: list[Relation], *, secrets: bool
+) -> list[tuple[str, str]]:
+    """(key, "Other names (12)") for each section the card shows only the start of."""
+    full = sections(lookup, entity_id, connections, secrets=secrets)
+    groups = _groups(lookup, entity_id, connections, secrets)
+    cut_keys = [
+        key
+        for key, lines in full.items()
+        if (key != LINKS and len(lines) > SHOWN)
+        or (key == LINKS and any(len(who) > SHOWN for who in groups.values()))
+    ]
+    return [(key, f"{SECTION_WORDS[key]} ({len(full[key])})") for key in cut_keys]
 
 
 def card_text(
@@ -188,14 +258,12 @@ def card_text(
     secrets: bool,
     player: str | None = None,
     sheet: str | None = None,
-    full: bool = False,
     limit: int = CARD_MAX,
     item: bool | None = None,
 ) -> str | None:
     """The card for one name, or None if it's gone. `player`: who plays it (a player's
-    character); `sheet`: its D&D Beyond sheet line (#723). `full`: every entry of each
-    section (Show all), not the first few. `item`: it is an item, of the core kind or one
-    a campaign added under it (None: only the core kind counts)."""
+    character); `sheet`: its D&D Beyond sheet line (#723). `item`: it is an item, of the core
+    kind or one a campaign added under it (None: only the core kind counts)."""
     entity = lookup.entities.get(entity_id)
     if entity is None or entity.status != CONFIRMED:
         return None
@@ -217,31 +285,12 @@ def card_text(
     if sheet:
         lines.append(sheet)
     if others:
-        lines.append(f"**Also called:** {_more(others, full=full)}")
+        lines.append(f"**Also called:** {_more(others)}")
     if secrets and hidden:
-        lines.append(f"**🤫 Secret:** {_more(hidden, full=full)} (hidden from players)")
-    # Grouped by how they're connected, read from this name's side: "is a member of
-    # **Frostwolf tribe**; knows **Bell**, **Kesh**".
-    groups: dict[str, list[str]] = {}
-    for r in connections:
-        if r.status != CONFIRMED or (r.secret and not secrets):
-            continue
-        ahead = r.subject_id == entity_id or r.predicate in BOTH_WAYS
-        other = lookup.entities.get(r.object_id if r.subject_id == entity_id else r.subject_id)
-        if other is None or other.status != CONFIRMED or other.id == entity_id:
-            continue
-        words = (
-            fact_words(r)
-            if ahead
-            else (
-                f"is linked (“{_md(r.detail)}”) to"
-                if r.predicate == FALLBACK_PREDICATE and r.detail
-                else CARD_BACK.get(r.predicate, "is connected to")
-            )
-        )
-        groups.setdefault(words, []).append(f"**{_md(other.name)}**" + (" 🤫" if r.secret else ""))
+        lines.append(f"**🤫 Secret:** {_more(hidden)} (hidden from players)")
+    groups = _groups(lookup, entity_id, connections, secrets)
     if groups:
-        said = "; ".join(f"{words} {_more(who, full=full)}" for words, who in groups.items())
+        said = "; ".join(f"{words} {_more(who)}" for words, who in groups.items())
         lines.append(f"**Connections:** {said}")
     text = "\n".join(lines)
     return cut(text, limit)
@@ -268,10 +317,9 @@ async def show_card(
     *,
     replace: bool = False,
     note: str | None = None,
-    full: bool = False,
 ) -> None:
     """The card, as a new private message or in place of the one pressed; `note` goes
-    on top (what just changed). `full`: Show all."""
+    on top (what just changed)."""
     await _answer_first(interaction, in_place=replace)  # names may load slowly (#537)
     campaign = await _campaign_for(interaction, campaign_id)
     memory = _memory(interaction)
@@ -309,7 +357,6 @@ async def show_card(
         secrets=secrets,
         player=player,
         sheet=sheet,
-        full=full,
         limit=limit,
         item=is_item,
     )
@@ -319,17 +366,7 @@ async def show_card(
         else:
             await _tell(interaction, GONE)
         return
-    longer = not full and text != card_text(
-        names,
-        entity_id,
-        connections,
-        secrets=secrets,
-        player=player,
-        sheet=sheet,
-        full=True,
-        limit=limit,
-        item=is_item,
-    )
+    cuts = cut_sections(names, entity_id, connections, secrets=secrets)
     own = name_key(entity.name)
     others = any(
         e.entity_id == entity_id and e.confirmed and e.key != own and (secrets or not e.secret)
@@ -341,7 +378,7 @@ async def show_card(
         campaign.id,
         entity_id,
         others=others,
-        longer=longer,
+        cut=cuts,
         sheet=has_sheet,
         item=is_item,
         unique=entity.is_unique,
@@ -350,6 +387,90 @@ async def show_card(
         await _replace(interaction, text, view)
     else:
         await _send(interaction, text, view)
+
+
+def section_pages(lines: list[str], head: str, limit: int = CARD_MAX) -> list[str]:
+    """The section's lines in the card's order, a page at a time: at most PAGE_LINES lines and
+    inside one Discord message, so no line is ever cut."""
+    pages: list[list[str]] = [[]]
+    size = len(head)
+    for line in lines:
+        line = cut(line, limit - len(head) - 2)
+        if pages[-1] and (len(pages[-1]) >= PAGE_LINES or size + len(line) + 1 > limit):
+            pages.append([])
+            size = len(head)
+        pages[-1].append(line)
+        size += len(line) + 1
+    return [f"{head}\n" + "\n".join(page) for page in pages]
+
+
+async def show_section(
+    interaction: discord.Interaction,
+    campaign_id: str,
+    entity_id: str,
+    key: str,
+    *,
+    page: int = 0,
+    replace: bool = False,
+) -> None:
+    """Show all on a cut section: every entry of it, as a private message of its own (or the next
+    page in place). Read-only, and worked out again on every press, secrets check included."""
+    await _answer_first(interaction, in_place=replace)
+    campaign = await _campaign_for(interaction, campaign_id)
+    memory = _memory(interaction)
+    if campaign is None:
+        return
+    if memory is None:
+        await _tell(interaction, NOT_AVAILABLE)
+        return
+    names = await _names(interaction, campaign)
+    if names is None:
+        return
+    secrets = sees_secrets(campaign, interaction.user.id)
+    connections = await memory.relations(
+        campaign.guild_id, campaign.id, entity_id=entity_id, include_secret=secrets
+    )
+    entity = names.entities.get(entity_id)
+    if entity is None or entity.status != CONFIRMED:
+        await _tell(interaction, GONE)
+        return
+    lines = sections(names, entity_id, connections, secrets=secrets).get(key)
+    if not lines:  # changed since the card was drawn, or a secret section for someone who can't
+        await _tell(interaction, NOTHING_MORE)
+        return
+    head = f"**{SECTION_WORDS[key]} ({len(lines)}) · {_md(entity.name)}**"
+    pages = section_pages(lines, head)
+    page = min(max(page, 0), len(pages) - 1)
+    view = AllPages(campaign_id, entity_id, key, page, len(pages)) if len(pages) > 1 else None
+    footer = f"\n_Page {page + 1} of {len(pages)}._" if view is not None else ""
+    if replace:
+        await _replace(interaction, pages[page] + footer, view)
+    else:
+        await _send(interaction, pages[page] + footer, view)
+
+
+class AllPages(_Menu):
+    """Older / Newer under a long Show all list. Each press works the list out again."""
+
+    def __init__(self, campaign_id: str, entity_id: str, key: str, page: int, pages: int) -> None:
+        super().__init__()
+        self.campaign_id, self.entity_id, self.key, self.page = campaign_id, entity_id, key, page
+        if page > 0:
+            self.add_item(_Button(self._earlier, label="◀ Earlier"))
+        if page < pages - 1:
+            self.add_item(_Button(self._later, label="Later ▶"))
+
+    async def _earlier(self, interaction: discord.Interaction) -> None:
+        await self._go(interaction, self.page - 1)
+
+    async def _later(self, interaction: discord.Interaction) -> None:
+        await self._go(interaction, self.page + 1)
+
+    async def _go(self, interaction: discord.Interaction, page: int) -> None:
+        self.stop()
+        await show_section(
+            interaction, self.campaign_id, self.entity_id, self.key, page=page, replace=True
+        )
 
 
 async def _is_item(memory: Any, campaign: Campaign, type_key: str) -> bool:
@@ -385,7 +506,7 @@ class NameCard(_Menu):
         entity_id: str,
         *,
         others: bool = False,
-        longer: bool = False,
+        cut: list[tuple[str, str]] | None = None,
         sheet: bool = False,
         item: bool = False,
         unique: bool = False,
@@ -408,8 +529,6 @@ class NameCard(_Menu):
         self.add_item(_Button(self._same, label="🔗 Same as…", style=grey, row=1))
         # Row 2, so row 1's buttons don't clip on a phone (#393).
         self.add_item(_Button(self._connect, label="🧭 Connect to…", style=grey, row=2))
-        if longer:
-            self.add_item(_Button(self._all, label="Show all", style=grey, row=2))
         if sheet:
             self.add_item(_Button(self._unlink_sheet, label="📜 Forget sheet", style=grey, row=2))
         if item:
@@ -417,6 +536,15 @@ class NameCard(_Menu):
             # until they say otherwise (#1267). Says what it will do: it flips.
             label = MORE_THAN_ONE_BUTTON if unique else ONLY_ONE_BUTTON
             self.add_item(_Button(self._one_of_a_kind, label=label, style=grey, row=3))
+        if cut:
+            # One select for every cut section, not a button each: Discord allows five rows.
+            self.show_all = _Select(
+                self._show_all,
+                placeholder=SHOW_ALL,
+                options=[discord.SelectOption(label=label, value=key) for key, label in cut],
+                row=4,
+            )
+            self.add_item(self.show_all)
 
     async def _one_of_a_kind(self, interaction: discord.Interaction) -> None:
         await _answer_first(interaction, in_place=True)
@@ -463,9 +591,9 @@ class NameCard(_Menu):
         )
         await show_card(interaction, self.campaign_id, self.entity_id, replace=True, note=note)
 
-    async def _all(self, interaction: discord.Interaction) -> None:
-        self.stop()
-        await show_card(interaction, self.campaign_id, self.entity_id, replace=True, full=True)
+    async def _show_all(self, interaction: discord.Interaction) -> None:
+        # A new private message; the card stays as it is.
+        await show_section(interaction, self.campaign_id, self.entity_id, self.show_all.values[0])
 
     async def _edit_others(self, interaction: discord.Interaction) -> None:
         await _answer_first(interaction, in_place=True)

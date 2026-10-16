@@ -1527,8 +1527,14 @@ names panel nor the speech-to-text hints can be a fixed list.
   🧑 Add a player's character), **🔍 Find a name** (the form and `/dmbot names find:`
   with type-ahead), and the **name card** with ✏️ Fix spelling, Add another name (with
   a secret-name field for the campaign's DMs only), Change what it is, and Remove
-  (asks first; Undo). Still to come in step 2: Edit other names, Same as…, 🧭 Connect
-  to…, and "Show all" on long sections. The type-ahead answers from the copy the
+  (asks first; Undo). The rest of step 2 is built too: Edit other names, 🔗 Same as…,
+  🧭 Connect to… (#126, #1528), and **Show all ▾** on long sections (#1542): the card
+  cuts other names, secret names and connections to three, and one select under it
+  lists each cut section ("Other names (12)"); choosing one sends the whole section as
+  a private message of its own, in the card's words and order, 25 lines a page with
+  Earlier / Later, worked out again on every press. Secret names and connections are
+  listed only to the campaign's DMs (the card's own check). The card does not change,
+  and nothing is written. The type-ahead answers from the copy the
   session already keeps (no expiry for search-only copies yet). Decided while building:
   after DMbot's own change the copy is marked stale at once (not waiting for the change
   notification), so the redrawn card and the next search are right; Fix spelling and
