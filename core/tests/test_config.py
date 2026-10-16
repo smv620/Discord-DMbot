@@ -35,7 +35,7 @@ class PoolSize(unittest.TestCase):
             )
 
     def test_nonsense_is_refused_with_a_plain_message(self) -> None:
-        for raw in ("0", "101", "-2", "ten", "4.5", "1000"):
+        for raw in ("0", "101", "-2", "ten", "4.5", "1000", "\u00b2"):
             with self.assertRaisesRegex(ConfigError, "DATABASE_POOL_MAX must be a number"):
                 load_settings({**BASE, "DATABASE_POOL_MAX": raw})
 

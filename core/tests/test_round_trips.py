@@ -2,7 +2,8 @@
 transaction costs a pool checkout, BEGIN, `set_config` and COMMIT, so a change that reads the row
 before and after its UPDATE, or a session start spread over three transactions, would be paid for
 on every command once the database is not on localhost. The statements and transactions of a
-few common store calls are counted here, so a regression fails CI. A real Postgres."""
+few common store calls are counted here, so a regression fails CI. A deliberate increase
+needs the number updated here, with the reason. A real Postgres."""
 
 from __future__ import annotations
 
@@ -12,6 +13,7 @@ from typing import Any
 from unittest.mock import patch
 
 from dmbot.campaigns import CampaignError, CampaignStore
+from dmbot.campaigns.store import NOT_HERE
 from dmbot.db import Database
 from tests.pg import DatabaseTest
 
@@ -105,9 +107,11 @@ class RoundTrips(DatabaseTest):
             self.store.set_rulesets(GUILD, "f" * 32, "2024", "2014"),
             self.store.add_dm(GUILD, "f" * 32, 9),
             self.store.remove_dm(GUILD, "f" * 32, 9),
+            self.store.set_channel_number(GUILD, "f" * 32, 1),
         ):
-            with self.assertRaises(CampaignError):
+            with self.assertRaises(CampaignError) as raised:
                 await call
+            self.assertEqual(str(raised.exception), NOT_HERE)
 
     async def test_another_server_cannot_change_it(self) -> None:
         with self.assertRaises(CampaignError):

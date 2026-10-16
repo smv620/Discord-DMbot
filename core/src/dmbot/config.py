@@ -131,7 +131,7 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
         )
 
     pool_raw = get("DATABASE_POOL_MAX") or str(DEFAULT_POOL_MAX)
-    if not pool_raw.isdigit() or not 1 <= int(pool_raw) <= MAX_POOL_MAX:
+    if not (pool_raw.isascii() and pool_raw.isdigit()) or not 1 <= int(pool_raw) <= MAX_POOL_MAX:
         raise ConfigError(f"DATABASE_POOL_MAX must be a number from 1 to {MAX_POOL_MAX}.")
 
     port_raw = get("EARS_WS_PORT") or "8765"
