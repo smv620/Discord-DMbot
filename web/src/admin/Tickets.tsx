@@ -4,7 +4,7 @@
 // the signed-in admin; the API checks the session and the CSRF token on every change.
 import { useEffect, useRef, useState } from "preact/hooks";
 
-import { text, who } from "../content/admin";
+import { text, waitingFor, who } from "../content/admin";
 import { planName } from "../content/account";
 import { type PlanId } from "../content/pricing";
 import {
@@ -27,6 +27,13 @@ interface Props {
   onSignedOut: () => void;
   /** The admin page was switched off while open: the page shows that. */
   onOff: () => void;
+}
+
+/** The tickets in the order to read them: "Needs the team" oldest first, so the one that has waited
+ * longest is on top (#1485); every other filter keeps the API's order (newest first). */
+function shown(rows: SupportTicketRow[], filter: TicketFilter): SupportTicketRow[] {
+  if (filter !== "escalated") return rows;
+  return [...rows].sort((a, b) => a.at - b.at || a.id - b.id);
 }
 
 /** "Oct 8, 2026, 14:05 UTC": the API stores Unix seconds. */
@@ -315,11 +322,12 @@ export default function Tickets({ api, csrf, onSignedOut, onOff }: Props) {
       {Array.isArray(rows) && rows.length === 0 && <p>{text.ticketsNoneFor[filter] ?? text.ticketsNone}</p>}
       {Array.isArray(rows) && rows.length > 0 && (
         <ul class="tickets">
-          {rows.map((t) => (
+          {shown(rows, filter).map((t) => (
             <li key={t.id} data-ticket={t.id} data-status={t.status}>
               <h3>{t.subject}</h3>
               <p class="small muted">
                 {text.ticketFrom(who(t.name, t.discordId), t.dmbotId, plan(t.plan), when(t.at))}
+                {filter === "escalated" && ` · ${waitingFor(Math.floor(Date.now() / 1000) - t.at)}`}
               </p>
               <p class="small">
                 {/* The account's address, for replying; it is not part of the ticket. */}
