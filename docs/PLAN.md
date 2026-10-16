@@ -1765,11 +1765,17 @@ that Mike is the person who just spoke, and that this person plays the character
   `person` kind and `plays` link (the character keeps `played_by` as a mirror written in the same
   change); the four DM words refused as names; learning from "a name, then an answer" with the DM's
   questions on their own 🧑 Check who is who button; Stop recording me removing what was learned;
-  `Q (name)` and the sidebar's who-is-who lines from the `plays` link. **Not yet:** people in the
-  name lookup, so the Cleaner does not fix a person's spelling (today it also never maps a person to
-  a character, because people are left out of the lookup); the person's id column in Add many and
-  Download all (players are refused in lists and left out of downloads for now); DM aliases
-  resolving to the session's DM.
+  `Q (name)` and the sidebar's who-is-who lines from the `plays` link. **Also built (#1208, then
+  #1547):** the table's people are in the Cleaner's lookup (kept apart from the story's names, per
+  campaign), so it fixes a person's spelling under the same rules as any name, shown with Undo when
+  it is one word, and it never maps a word between a person and a character ("Mike" the player and
+  "Mikal" the character stay as heard); the four DM words are never a source or a target of a fix;
+  and the who-answers-to-what learner reads "DM", "GM", "Dungeon Master", "Game Master" or a DM's own
+  name as a call to the DM who is here (one DM who has spoken; with two, the one who spoke last in
+  the answer window; otherwise no one), never as a nickname to learn, and writes nothing to the story
+  graph. **Not yet:** the person's id column in Add many and Download all (players are refused in
+  lists and left out of downloads for now); the sidebar's "DM, GM… all mean <name>" line still names
+  the session's starter, not the DM resolved this way.
 
 *Proposed additions (2026-10-06, docs/STORY_MEMORY.md, not yet decided):* a core v2
 with story threads, promises, clues and state facts (`condition`: alive, dead, missing…,

@@ -38,6 +38,24 @@ class Pairing(unittest.TestCase):
         self.assertEqual([a.name for a in self.table.name_answers.answered(minimum=1)], ["Mike"])
 
 
+class TheDmIsKnown(unittest.TestCase):
+    """The learner is told who the DMs are before it reads a line (#1547)."""
+
+    def test_a_dm_word_and_a_dms_own_name_count_for_the_dm_who_spoke(self) -> None:
+        bot = make_bot()
+        table = make_table()
+        table.listening = True
+        table.dm_user_id, table.dm_user_ids = DM, frozenset({DM})
+        bot.tables[GUILD] = table
+        bot.sidebar.ask_at_table = MagicMock()  # type: ignore[method-assign]
+        cast(Any, bot).name_of = lambda guild_id, user_id: {DM: "Ana", PLAYER: "Mia"}[user_id]
+        bot._deliver_typed(table, DM, "Go ahead.", 1_000_000)
+        bot._deliver_typed(table, PLAYER, "DM, can I roll?", 1_002_000)
+        bot._deliver_typed(table, PLAYER, "Ana, can I roll again?", 1_004_000)
+        self.assertEqual(table.name_answers.dm_addressed(), {DM: 2})
+        self.assertEqual(table.name_answers.answered(minimum=1), [])  # nothing to learn from it
+
+
 class TheQuestionersName(unittest.IsolatedAsyncioTestCase):
     async def test_a_dm_keeps_the_nickname_a_player_gets_their_character(self) -> None:
         bot = make_bot()
