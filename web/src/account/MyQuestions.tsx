@@ -14,20 +14,25 @@ import { type AccountApi, type MySupport, type SupportQuestion } from "./api";
 const day = (seconds: number): string =>
   formatDate(new Date(seconds * 1000).toISOString().slice(0, 10));
 
-function statusWords(question: SupportQuestion, reply: boolean): string {
+function statusWords(question: SupportQuestion, reply: boolean, canWrite: boolean): string {
   if (question.status === "answered") {
     return reply ? text.questionStatus.answered : text.questionStatus.answeredNoEmail;
   }
-  return question.status === "closed" ? text.questionStatus.closed : text.questionStatus.new;
+  if (question.status === "closed") {
+    return canWrite ? text.questionStatus.closedWriteAgain : text.questionStatus.closed;
+  }
+  return text.questionStatus.new;
 }
 
 interface Props {
   api: AccountApi;
   /** Changes when a new question has just been sent: the list is read again. */
   version?: number;
+  /** The Support form is on the page (a paid plan): "Closed" can say they may write again. */
+  canWrite?: boolean;
 }
 
-export function MyQuestions({ api, version = 0 }: Props) {
+export function MyQuestions({ api, version = 0, canWrite = false }: Props) {
   const [list, setList] = useState<MySupport | null>(null);
 
   useEffect(() => {
@@ -47,13 +52,13 @@ export function MyQuestions({ api, version = 0 }: Props) {
   return (
     <section class="panel" aria-labelledby="questions-heading">
       <h2 id="questions-heading">{text.questionsHeading}</h2>
-      <p>{text.questionsLead}</p>
+      <p>{list.reply ? text.questionsLead : text.questionsLeadNoEmail}</p>
       <ul class="questions">
         {list.tickets.map((question, i) => (
           <li key={`${question.at}-${i}`} data-status={question.status}>
             <strong>{question.subject}</strong>
             <span class="small muted">
-              {text.questionSent(day(question.at))} · {statusWords(question, list.reply)}
+              {text.questionSent(day(question.at))} · {statusWords(question, list.reply, canWrite)}
             </span>
           </li>
         ))}

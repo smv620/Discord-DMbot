@@ -3858,15 +3858,15 @@ SUPPORT_OWN = """
         LANGUAGE plpgsql SECURITY DEFINER
         AS $fn$
     DECLARE
-        found TEXT;
+        words TEXT;
     BEGIN
         IF dmbot_support_admin() IS DISTINCT FROM 'admin' THEN
             RETURN NULL;
         END IF;
         -- support_tickets is forced to its policies: with the door open, support_admin_read
         -- lets this read the row (the function's owner has the column right).
-        SELECT message INTO found FROM support_tickets WHERE id = ticket;
-        RETURN found;
+        SELECT message INTO words FROM support_tickets WHERE id = ticket;
+        RETURN words;
     END
     $fn$;
     DO $do$

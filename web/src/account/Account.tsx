@@ -1117,7 +1117,7 @@ function SupportOrQuestions({ me }: { me: Me }) {
       ) : (
         <PublicQuestions />
       )}
-      <MyQuestions api={api} version={sentCount} />
+      <MyQuestions api={api} version={sentCount} canWrite={me.canSupport === true && !!api.sendSupport} />
     </>
   );
 }

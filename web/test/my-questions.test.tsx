@@ -29,6 +29,15 @@ const apiWith = (list: MySupport | (() => Promise<MySupport>)): AccountApi =>
 const DAY = 1_800_000_000; // 15 January 2027, 08:00 UTC
 
 describe("the list", () => {
+  it("tells a person who can write that a closed question can be followed by another", async () => {
+    const closed: MySupport = { reply: true, tickets: [{ at: DAY, subject: "Old", status: "closed" }] };
+    render(<MyQuestions api={apiWith(closed)} canWrite />);
+    expect(await screen.findByText(/Closed — you can write again/)).toBeTruthy();
+    cleanup();
+    render(<MyQuestions api={apiWith(closed)} />);
+    expect(await screen.findByText(/· Closed$/)).toBeTruthy();
+  });
+
   it("shows the subject, the date sent and the three status words", async () => {
     render(
       <MyQuestions
@@ -49,6 +58,7 @@ describe("the list", () => {
       "ServerSent 14 January 2027 · Answered — check your email",
       "OldSent 13 January 2027 · Closed",
     ]);
+    expect(screen.getByText(text.questionsLead)).toBeTruthy();
     expect(within(rows[1]!).getByText(/Answered/).textContent).toContain("check your email");
   });
 
@@ -60,6 +70,9 @@ describe("the list", () => {
     );
     expect(await screen.findByText(/Sent 15 January 2027 · Answered$/)).toBeTruthy();
     expect(screen.queryByText(/check your email/)).toBeNull();
+    // And the lead says why, and what to do, so "Answered" is not a dead end.
+    expect(screen.getByText(text.questionsLeadNoEmail)).toBeTruthy();
+    expect(text.questionsLeadNoEmail).toContain("Discord settings");
   });
 
   it("shows nothing at all with no questions: no heading and no empty box", async () => {
@@ -70,10 +83,11 @@ describe("the list", () => {
   });
 
   it("shows nothing when the list can't be read, or the API has no list yet", async () => {
-    const failing = render(
-      <MyQuestions api={apiWith(async () => Promise.reject(new ApiError("network")))} />,
-    );
-    await Promise.resolve();
+    const refused = vi.fn(async (): Promise<MySupport> => Promise.reject(new ApiError("network")));
+    const failing = render(<MyQuestions api={apiWith(refused)} />);
+    await waitFor(() => expect(refused).toHaveBeenCalled());
+    // Let the rejection reach the component's own handler before looking.
+    await new Promise((done) => setTimeout(done, 0));
     expect(failing.container.innerHTML).toBe("");
     cleanup();
     // An API older than #1373 has no list route at all.

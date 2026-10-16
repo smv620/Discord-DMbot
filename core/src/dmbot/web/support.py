@@ -103,6 +103,7 @@ async def newest(db: Database, *, limit: int = LIST_LIMIT) -> list[Row]:
     async with db.support_admin() as conn:
         cur = await conn.execute(
             # The words come through a door function: the website's role has no right to the column.
+            # One call per row (at most LIST_LIMIT): fine for an admin page read now and then.
             "SELECT id, created_at, user_id, plan, subject,"
             " COALESCE(dmbot_support_message(id), '') AS message, source, status,"
             " dmbot_support_email(user_id) AS email"
