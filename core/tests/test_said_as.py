@@ -38,11 +38,12 @@ class SaidAs(MemoryTest):
         self.assertIsNone(await self.said())
 
     async def test_it_can_be_undone_like_any_other_edit(self) -> None:
-        first = await self.memory.set_said_as(
-            GUILD_A, self.c, self.kazeth, "Kah-zeth", source=DM_SOURCE
+        await self.memory.set_said_as(GUILD_A, self.c, self.kazeth, "Kah-zeth", source=DM_SOURCE)
+        second = await self.memory.set_said_as(
+            GUILD_A, self.c, self.kazeth, "Kaz-eth", source=DM_SOURCE
         )
-        await self.memory.set_said_as(GUILD_A, self.c, self.kazeth, "Kaz-eth", source=DM_SOURCE)
-        await self.memory.undo(GUILD_A, self.c, first.batch + 1, source=DM_SOURCE)
+        assert second.batch is not None
+        await self.memory.undo(GUILD_A, self.c, second.batch, source=DM_SOURCE)
         self.assertEqual(await self.said(), "Kah-zeth")
 
     async def test_only_the_dm_and_only_a_sensible_spelling(self) -> None:
