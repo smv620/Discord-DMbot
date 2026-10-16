@@ -326,11 +326,20 @@ export const text = {
   questionsLeadNoEmail:
     "What you have sent the team. We have no email for your account, so the team can't write back. Add and confirm an email in your Discord settings, then sign in here again.",
   questionSent: (date: string) => `Sent ${date}`,
+  // The first line of the last reply from DMbot's AI helper or the team, under the question (#1432).
+  questionLatest: (line: string) => `Last reply: ${line}`,
   questionStatus: {
     new: "Waiting",
     answered: "Answered — check your email",
     // An account with no email gets no email: say only what the team did.
     answeredNoEmail: "Answered",
+    // Who answered (#1432): DMbot's AI helper or a person on the team.
+    answeredHelper: "Answered by DMbot's AI helper — check your email",
+    answeredHelperNoEmail: "Answered by DMbot's AI helper",
+    answeredTeam: "Answered by the team — check your email",
+    answeredTeamNoEmail: "Answered by the team",
+    // A person on the team has it and will write back.
+    escalated: "With the team",
     closed: "Closed",
     // For someone who can write again; others just see "Closed".
     closedWriteAgain: "Closed — you can write again",

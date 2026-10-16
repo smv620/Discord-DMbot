@@ -1,8 +1,8 @@
 /** @jsxImportSource preact */
 // "Your questions" (#1373): under the Support form, what the person has sent the team and where
-// each stands (Waiting, Answered, Closed). It shows the subject and the date only: the words stay
-// with the team, and the API never sends them back. With none, or with an API that has no list
-// yet, it shows nothing at all (no empty box).
+// each stands (Waiting, Answered by DMbot's helper or the team, With the team, Closed) and the first
+// line of the latest answer (#1432). Never the person's own words: those stay with the team. With
+// none, or with an API that has no list yet, it shows nothing at all (no empty box).
 import { useEffect, useState } from "preact/hooks";
 
 import { text } from "../content/account";
@@ -15,8 +15,13 @@ const day = (seconds: number): string =>
   formatDate(new Date(seconds * 1000).toISOString().slice(0, 10));
 
 function statusWords(question: SupportQuestion, reply: boolean, canWrite: boolean): string {
+  if (question.status === "escalated") return text.questionStatus.escalated;
   if (question.status === "answered") {
-    return reply ? text.questionStatus.answered : text.questionStatus.answeredNoEmail;
+    const by = question.answeredBy;
+    const words = text.questionStatus;
+    if (by === "helper") return reply ? words.answeredHelper : words.answeredHelperNoEmail;
+    if (by === "team") return reply ? words.answeredTeam : words.answeredTeamNoEmail;
+    return reply ? words.answered : words.answeredNoEmail;
   }
   if (question.status === "closed") {
     return canWrite ? text.questionStatus.closedWriteAgain : text.questionStatus.closed;
@@ -60,6 +65,9 @@ export function MyQuestions({ api, version = 0, canWrite = false }: Props) {
             <span class="small muted">
               {text.questionSent(day(question.at))} · {statusWords(question, list.reply, canWrite)}
             </span>
+            {question.latest && (
+              <span class="small">{text.questionLatest(question.latest)}</span>
+            )}
           </li>
         ))}
       </ul>

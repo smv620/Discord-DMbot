@@ -19,6 +19,7 @@ gets the free-account guard in `limits.py`: three new tickets a day and one wait
 from __future__ import annotations
 
 import logging
+import re
 from dataclasses import dataclass
 from typing import Literal
 
@@ -173,6 +174,34 @@ class Mine:
     created_at: int
     subject: str
     status: Status
+    # Who wrote the latest answer ("ai": DMbot's helper, "person": the team) and its first line
+    # (#1432); None before any answer. The person's own words never come back.
+    answered_by: Literal["ai", "person"] | None = None
+    latest: str | None = None
+
+
+ANSWER_LINE_MAX = 100  # characters of an answer's first line the account page shows
+
+
+_GREETING = re.compile(
+    r"^(hi|hello|hey|dear|thanks|thank you)\b[^.!?:]{0,40}[,!.:]?$", re.IGNORECASE
+)
+
+
+def first_line(text: str) -> str:
+    """The first line of an answer that says something: not an empty line, and not a short
+    greeting ("Hi Alice,"), cut to `ANSWER_LINE_MAX` (at a word's end if it can)."""
+    lines = [" ".join(raw.split()) for raw in text.splitlines()]
+    lines = [line for line in lines if line]
+    if len(lines) > 1 and _GREETING.match(lines[0]):
+        lines = lines[1:]
+    for line in lines[:1]:
+        if line:
+            if len(line) <= ANSWER_LINE_MAX:
+                return line
+            cut = line[:ANSWER_LINE_MAX].rsplit(" ", 1)[0] or line[:ANSWER_LINE_MAX]
+            return cut.rstrip(".,;:!? ") + "…"
+    return ""
 
 
 async def mine(db: Database, user_id: int) -> list[Mine]:
@@ -180,12 +209,26 @@ async def mine(db: Database, user_id: int) -> list[Mine]:
     holds a person's session to their own rows; the WHERE says it again, so one wrong line in
     either place does not show anyone else's."""
     async with db.user(user_id) as conn:
+        # The latest answer comes through its own door (the role has no right on the words); one
+        # call for each of at most MINE_LIMIT tickets.
         cur = await conn.execute(
-            "SELECT created_at, subject, status FROM support_tickets WHERE user_id = %s"
-            " ORDER BY created_at DESC, id DESC LIMIT %s",
+            "SELECT t.created_at, t.subject, t.status, a.who AS answered_by, a.text AS latest"
+            " FROM support_tickets t LEFT JOIN LATERAL dmbot_support_latest_answer(t.id) a ON true"
+            " WHERE t.user_id = %s ORDER BY t.created_at DESC, t.id DESC LIMIT %s",
             (user_id, MINE_LIMIT),
         )
-        return [Mine(**r) for r in await cur.fetchall()]
+        found = await cur.fetchall()
+    return [
+        Mine(
+            r["created_at"],
+            r["subject"],
+            r["status"],
+            r["answered_by"],
+            # None before an answer (or one with no words in it), else its first line.
+            (first_line(r["latest"]) or None) if r["latest"] is not None else None,
+        )
+        for r in found
+    ]
 
 
 async def set_status(db: Database, ticket_id: int, status: Status) -> bool:
