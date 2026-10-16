@@ -28,6 +28,10 @@ export const text = {
     rule: "Rules",
     other: "Other",
   } as Record<string, string>,
+  fromBook: "From a shared book",
+  legacy: "[Legacy 2014]",
+  bookNote:
+    "From a shared book: this came from a rulebook your game master shared with the table. [Legacy 2014]: that book is for the 2014 rules, but your table plays the newer ones.",
   download: "Save as a text file",
   downloadNote: "The file has only what's shown on this page.",
   downloading: "Saving…",

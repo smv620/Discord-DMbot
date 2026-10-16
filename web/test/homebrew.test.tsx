@@ -78,6 +78,36 @@ describe("the campaigns", () => {
   });
 });
 
+describe("shared-book tags (#1579)", () => {
+  it("tags a shared book's entry, and a 2014 one [Legacy 2014], and says what they mean", async () => {
+    page(mockApi("table"), `/account/homebrew/${REF}`);
+    await screen.findByText("Mud Wight");
+    expect(screen.getAllByText(text.fromBook)).toHaveLength(2); // Moon Lamp and Mud Wight
+    expect(screen.getAllByText(text.legacy)).toHaveLength(1); // Mud Wight only
+    expect(screen.getByText(text.bookNote)).toBeTruthy();
+    expect(text.bookNote).toContain("[Legacy 2014] means the 2014 rules");
+  });
+
+  it("shows no tag and no note when nothing is from a book, or on an older API", async () => {
+    const mock = mockApi("table");
+    const older = {
+      ...mock,
+      homebrew: async (ref: string) => {
+        const found = await mock.homebrew!(ref);
+        return {
+          ...found,
+          entries: found.entries.map(({ fromBook: _a, legacy: _b, ...rest }) => rest),
+        };
+      },
+    } as AccountApi;
+    page(older, `/account/homebrew/${REF}`);
+    await screen.findByText("Mud Wight");
+    expect(screen.queryByText(text.fromBook)).toBeNull();
+    expect(screen.queryByText(text.legacy)).toBeNull();
+    expect(screen.queryByText(text.bookNote)).toBeNull();
+  });
+});
+
 describe("a campaign's entries", () => {
   it("groups them by kind in the bot's order, each with its summary and words", async () => {
     page(mockApi("table"), `/account/homebrew/${REF}`);

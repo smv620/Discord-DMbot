@@ -14,8 +14,8 @@ bot's Download button sends every entry, hidden ones included, to the DM only.
 The campaign's own entries only: a followed pack's entries (#1527) are not on the page or in
 the file.
 
-Never shown: who wrote an entry, its id, or whether it came from a book. A campaign is named by
-`<server>.<campaign>`, as for the house-rules page.
+Never shown: who wrote an entry, its id, or the book's name (it is never kept). A campaign is
+named by `<server>.<campaign>`, as for the house-rules page.
 """
 
 from __future__ import annotations
@@ -93,6 +93,10 @@ async def read_homebrew(db: Database, session: Session, ref: str) -> dict[str, A
                 "name": e["name"],
                 "summary": e["summary"],
                 "text": e["text"],
+                # Tags like the Discord players' card: from a shared book, and a 2014 book while
+                # the campaign plays a newer ruleset (booleans, false when the door is older).
+                "fromBook": bool(e.get("fromBook", False)),
+                "legacy": bool(e.get("legacy", False)),
             }
             for e in entries
         ],

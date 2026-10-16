@@ -341,6 +341,11 @@ export interface HomebrewEntry {
   name: string;
   summary: string | null;
   text: string;
+  /** From a rulebook the game master shared, as the Discord players' card tags it (#1579);
+   * missing from an older API, which shows no tag. */
+  fromBook?: boolean;
+  /** A 2014 book while the campaign plays a newer ruleset: tagged [Legacy 2014]. */
+  legacy?: boolean;
 }
 
 export interface HomebrewPage {
