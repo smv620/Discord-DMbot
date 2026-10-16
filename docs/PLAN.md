@@ -2067,7 +2067,7 @@ consent check just made still holds:
   most 25 a session (the oldest go first), and saved when the session ends as a waiting question
   of the campaign (its own table, `waiting_name_questions`: the line's reference, the heard
   words and the 2 or 3 names, never the line's words). The DM screen says how many and shows
-  **❓ Check what they said**; DMs only, checked on every press. Each question reads as it did
+  **❓ Check names**; DMs only, checked on every press. Each question reads as it did
   live: **[Maren] [Marron] [Type it…] [Keep "Marin"] [Later]**. A name picked or typed is saved as
   the campaign's correction (so later sessions write it that way) and written into that one
   stored line's cleaned words, never what was heard, and only if the words are in the line exactly

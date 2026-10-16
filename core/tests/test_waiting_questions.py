@@ -204,7 +204,7 @@ class Flow(DatabaseTest):
         self.assertEqual(len(await self.store.waiting(GUILD, self.campaign.id)), 1)
         (call,) = self.posted.await_args_list
         self.assertEqual(call.args[0], SCREEN)
-        self.assertIn("1 question nobody answered", call.args[1])
+        self.assertIn("1 word needs a check", call.args[1])
         self.assertNotIn("Marin", call.args[1])  # how many, never what was said
 
     async def test_nothing_is_kept_for_a_speaker_who_stopped_or_never_agreed(self) -> None:
@@ -324,6 +324,7 @@ class Flow(DatabaseTest):
         await heard_review.start_heard_review(it, self.campaign.id)
         text, kw = it.response.sent[0]
         self.assertIn('Mia say "Marin"', text)
+        self.assertNotIn("Ignore", text)  # after the game there is nothing to ignore
         labels = [str(b.label) for b in kw["view"].children]
         self.assertEqual(
             labels,

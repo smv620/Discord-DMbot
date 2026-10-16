@@ -18,17 +18,17 @@ from dmbot.transcript.waiting_questions import Waiting
 from dmbot.ui.dmbot_commands import _bot, _Button, _Menu, _replace, _send, _tell
 from dmbot.ui.names import _campaign_for, _md
 
-NOTHING_WAITING = "✅ Nothing to check. DMbot asks after a session, when words went unanswered."
-ONLY_DMS = "Only the campaign's DM can check these."
-FAILED = "Something went wrong. Try again in a moment."
+NOTHING_WAITING = "✅ All checked. DMbot will ask after a session if it isn't sure of a name."
+ONLY_DMS = "Only the campaign's DM can check these. Ask your DM."
+FAILED = "Something went wrong. Nothing was changed. Press the button again."
 
 
 def waiting_text(count: int) -> str:
     """For the DM screen after a session: how many, never what was said."""
-    what = "question" if count == 1 else "questions"
+    what = "word needs" if count == 1 else "words need"
     return (
-        f"❓ **{count} {what} nobody answered during the game.** DMbot wasn't sure which name "
-        "some words were. Nothing changes until you say so. Press the button; only you will see it."
+        f"❓ **{count} {what} a check.** DMbot wasn't sure which name was said during the game. "
+        "Nothing changes until you pick. Only you will see it."
     )
 
 
@@ -42,7 +42,7 @@ class HeardReviewButton(
     def __init__(self, campaign_id: str) -> None:
         super().__init__(
             discord.ui.Button(
-                label="❓ Check what they said",
+                label="❓ Check names",
                 style=discord.ButtonStyle.primary,
                 custom_id=f"dmbot:names:heard:{campaign_id}",
             )
@@ -127,9 +127,13 @@ class HeardReview(_Menu):
             return None
         self.shown = first = waiting[0]
         lookup = await bot.lookup.get(guild.id, self.campaign_id)
+        offered: set[str] = set()
         for number, entity_id in enumerate(first.option_ids):
             name = own_name(lookup, entity_id)
-            if name is not None:  # a name removed, or made secret, since is not offered
+            # A name removed, or made secret, since is not offered, nor one that would look like
+            # another button (two entries called the same).
+            if name is not None and name.casefold() not in offered:
+                offered.add(name.casefold())
                 self.add_item(
                     _Button(
                         self._picker(number),
@@ -141,9 +145,12 @@ class HeardReview(_Menu):
         self.add_item(_Button(self._keep, label=questions.keep_label(first.heard), row=1))
         self.add_item(_Button(self._later, label="⏳ Later", row=1))
         who = bot.name_of(guild.id, first.speaker_id)
-        speaker = "Someone" if who.startswith("<@") else _md(who)
-        more = f"\n_{len(waiting) - 1} more after this._" if len(waiting) > 1 else ""
-        return questions.question_text(speaker, _md(first.heard)) + more
+        speaker = "a player" if who.startswith("<@") else _md(who)
+        more = f"\n{len(waiting) - 1} more after this." if len(waiting) > 1 else ""
+        return (
+            f'❓ **DMbot heard {speaker} say "{questions._short(_md(first.heard))}".** '
+            f"Did they mean…\nNot sure? Press ⏳ Later.{more}"
+        )
 
     def _picker(self, number: int) -> Any:
         async def pick(interaction: discord.Interaction) -> None:
@@ -191,7 +198,9 @@ class HeardReview(_Menu):
     async def _later(self, interaction: discord.Interaction) -> None:
         if self.shown is not None:
             self.later.add(self.shown.id)
-        await self._next(interaction, "⏳ Left for later. DMbot will ask again next time.")
+        await self._next(
+            interaction, "⏳ Left for later. DMbot will ask again when you check next."
+        )
 
 
 __all__ = ["HeardReviewButton", "heard_review_view", "start_heard_review", "waiting_text"]
