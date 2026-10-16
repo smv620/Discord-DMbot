@@ -1,6 +1,7 @@
 ---
 import Base from "../layouts/Base.astro";
-import { accountSteps, dmSteps, emailNote, emailSteps, gettingHelp, helpHeading, helpIntro, playerNote, playerSteps } from "../content/help";
+import { RECAPS_LIVE, recapsHeading } from "../content/recap-words";
+import { recapSteps, accountSteps, dmSteps, emailNote, emailSteps, gettingHelp, helpHeading, helpIntro, playerNote, playerSteps } from "../content/help";
 ---
 
 <Base
@@ -31,6 +32,18 @@ import { accountSteps, dmSteps, emailNote, emailSteps, gettingHelp, helpHeading,
         ))
       }
     </ol>
+    {
+      RECAPS_LIVE && (
+        <>
+          <h3 id="recaps-heading">{recapsHeading}</h3>
+          <ul aria-labelledby="recaps-heading">
+            {recapSteps.map((s) => (
+              <li>{s.text}</li>
+            ))}
+          </ul>
+        </>
+      )
+    }
   </section>
 
   <section aria-labelledby="player-heading">

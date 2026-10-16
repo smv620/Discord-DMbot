@@ -4,6 +4,7 @@
 // (CLAUDE.md), so the character-sheet steps name no company.
 import { QA_URL } from "./account";
 import { minimumAge } from "./legal";
+import { RECAPS_LIVE, emailsIntroTail, recapEmailStep, recapSteps } from "./recap-words";
 
 export interface Step {
   /** The words people read. Names in `names` must appear in the bot's code. */
@@ -147,6 +148,8 @@ export const dmSteps: Step[] = [
   },
 ];
 
+export { recapSteps };
+
 export const playerSteps: Step[] = [
   {
     text: `DMbot sends you a private message. Press ${consent} to say yes.`,
@@ -217,7 +220,7 @@ export const accountSteps: Step[] = [
  * ui/migrate.py. No address appears here: the emails carry the sender's postal address themselves. */
 export const emailSteps: Step[] = [
   {
-    text: "DMbot sends very few emails. A sign-in link and a move code come only when you ask for one. The only others are two Try It emails, each sent once.",
+    text: `DMbot sends very few emails. A sign-in link and a move code come only when you ask for one. ${emailsIntroTail}`,
   },
   {
     text: "Sign-in link: ask for it on your account page and type the email you paid with or the email Discord has for you. We send a link that works once and stops working after 15 minutes.",
@@ -235,6 +238,7 @@ export const emailSteps: Step[] = [
   {
     text: "Try It emails: one on the last day of Try It, and one if you get 30 more days. Each has a link to stop emails like it. Sign-in and move-code emails have no such link, because you asked for them.",
   },
+  ...(RECAPS_LIVE ? [{ text: recapEmailStep }] : []),
 ];
 
 /** Said under the list: it is not a step. */
