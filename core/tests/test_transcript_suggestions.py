@@ -76,6 +76,17 @@ class Table(DatabaseTest):
         self.assertEqual(await self.store.own_lines(GUILD, self.session, DM), [])  # sidebar only
         self.assertEqual(await self.store.own_lines(OTHER, self.session, PLAYER), [])
 
+    async def test_a_dm_sees_any_speakers_spoken_lines_newest_first_and_no_sidebar_or_typed(
+        self,
+    ) -> None:
+        got = await self.store.recent_lines(GUILD, self.session)
+        self.assertEqual(
+            [(x.user_id, x.heard) for x in got],
+            [(ANOTHER, "not yours"), (PLAYER, "then we ran"), (PLAYER, "I saw Beleros")],
+        )
+        self.assertEqual(len(await self.store.recent_lines(GUILD, self.session, limit=2)), 2)
+        self.assertEqual(await self.store.recent_lines(OTHER, self.session), [])  # another server
+
     async def test_only_the_speaker_may_suggest_for_a_line(self) -> None:
         got = await self.store.suggest(
             GUILD, self.campaign.id, self.session, ANOTHER, MS + 1000, "mine now"
@@ -238,7 +249,7 @@ def press(act: str, user: int = DM, *, suggestion: Any = "default", consent: boo
         get=AsyncMock(return_value=found() if suggestion == "default" else suggestion),
         decide=AsyncMock(return_value=True),
         reopen=AsyncMock(),
-        line=AsyncMock(return_value=sg.Own(MS + 1000, "I saw Beleros", "I saw Belleros")),
+        line=AsyncMock(return_value=sg.Own(MS + 1000, "I saw Beleros", "I saw Belleros", PLAYER)),
     )
     campaign = SimpleNamespace(guild_id=GUILD, id=CID, dm_user_ids=frozenset({DM}))
     bot = SimpleNamespace(
@@ -341,7 +352,7 @@ class TheButtons(unittest.IsolatedAsyncioTestCase):
     async def test_a_line_that_changed_since_is_not_overwritten(self) -> None:
         button, bot, interaction = press("yes")
         bot.suggestions.line = AsyncMock(
-            return_value=sg.Own(MS + 1000, "I saw Beleros", "I saw Belleros, the Smith")
+            return_value=sg.Own(MS + 1000, "I saw Beleros", "I saw Belleros, the Smith", PLAYER)
         )
         await button.callback(interaction)
         bot.apply_line_fix.assert_not_awaited()
@@ -377,7 +388,7 @@ class TheSpeakersSteps(unittest.IsolatedAsyncioTestCase):
         )
         return bot, interaction
 
-    LINE = sg.Own(MS + 1000, "I saw Beleros", "I saw Belleros")
+    LINE = sg.Own(MS + 1000, "I saw Beleros", "I saw Belleros", PLAYER)
 
     async def go(self, bot: Any, interaction: Any, words: str) -> str:
         await line_fix.submit(interaction, GUILD, CID, "s" * 32, self.LINE, words)
@@ -439,6 +450,131 @@ class TheSpeakersSteps(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("@everyone", text)
         self.assertIn("\\*x\\*", text)
         self.assertIn("Heard:", text)  # the cleaned words differ from what was heard
+
+
+class TheDmsOwnEdit(unittest.IsolatedAsyncioTestCase):
+    """A DM fixes any line at once (#1499): DM only, written through the same path, and every
+    refusal in plain words. Stand-ins for the bot."""
+
+    LINE = sg.Own(MS + 1000, "I saw Beleros", "I saw Belleros", PLAYER)
+
+    def setup(self, user: int = DM, **kw: Any) -> tuple[Any, Any]:
+        _, bot, interaction = press("yes", user, consent=kw.get("consent", True))
+        interaction.user.id = user
+        bot.apply_line_fix = AsyncMock(return_value=kw.get("written", True))
+        bot.tables = {}
+        return bot, interaction
+
+    async def go(self, interaction: Any, words: str) -> str:
+        await line_fix.submit_dm(interaction, GUILD, CID, "s" * 32, self.LINE, words)
+        return said(interaction)
+
+    async def test_only_a_dm_of_the_campaign_may_edit(self) -> None:
+        for user in (PLAYER, ANOTHER, 99):  # a player, a speaker, a server manager who isn't a DM
+            bot, interaction = self.setup(user)
+            self.assertEqual(await self.go(interaction, "better words"), line_fix.NOT_YOURS)
+            bot.apply_line_fix.assert_not_awaited()
+
+    async def test_it_is_written_at_once_noted_and_nobody_is_told(self) -> None:
+        bot, interaction = self.setup()
+        out = await self.go(interaction, "I saw Belleros there")
+        bot.apply_line_fix.assert_awaited_once_with(
+            GUILD, CID, "s" * 32, PLAYER, MS + 1000, "I saw Belleros there", noted=True
+        )
+        self.assertIn("Changed to", out)
+        bot.tell_user.assert_not_awaited()  # nothing to the player
+        sent = interaction.followup.send.await_args or interaction.response.send_message.await_args
+        self.assertTrue(sent.kwargs.get("ephemeral"))  # the one reply is private
+
+    async def test_the_refusals_are_plain(self) -> None:
+        bot, interaction = self.setup()
+        self.assertEqual(await self.go(interaction, "   "), line_fix.BAD)
+        self.assertEqual(await self.go(interaction, "I saw Belleros"), line_fix.SAME)
+        bot.apply_line_fix.assert_not_awaited()
+        bot2, interaction2 = self.setup(consent=False)
+        self.assertEqual(await self.go(interaction2, "words"), line_fix.PLAYER_STOPPED_DM)
+        bot3, interaction3 = self.setup()
+        bot3.suggestions.line = AsyncMock(return_value=None)
+        self.assertEqual(await self.go(interaction3, "words"), line_fix.LINE_GONE)
+        bot4, interaction4 = self.setup()
+        bot4.suggestions.line = AsyncMock(
+            return_value=sg.Own(MS + 1000, "I saw Beleros", "changed since", PLAYER)
+        )
+        self.assertEqual(await self.go(interaction4, "words"), line_fix.LINE_CHANGED)
+        for b in (bot2, bot3, bot4):
+            b.apply_line_fix.assert_not_awaited()
+
+    async def test_a_secret_name_is_refused_with_the_same_words_as_for_a_suggestion(self) -> None:
+        bot, interaction = self.setup()
+        with patch.object(line_fix, "text_names_a_secret", return_value=True):
+            self.assertEqual(await self.go(interaction, "words"), line_fix.SECRET)
+        bot.apply_line_fix.assert_not_awaited()
+
+    async def test_a_write_that_does_not_happen_is_said_with_the_next_step(self) -> None:
+        _, interaction = self.setup(written=False)
+        out = await self.go(interaction, "words")
+        self.assertEqual(out, line_fix.NOT_WRITTEN_DM)
+        self.assertIn("press Undo there first", out)
+
+    async def test_while_the_session_runs_the_answer_points_at_undo(self) -> None:
+        bot, interaction = self.setup()
+        bot.tables = {GUILD: SimpleNamespace(transcript_session_id="s" * 32)}
+        self.assertIn(line_fix.UNDO_HERE, await self.go(interaction, "words"))
+
+
+class ThePickers(unittest.IsolatedAsyncioTestCase):
+    """`start`: a DM sees any speaker's lines, a player only their own, and the DM need not be
+    recorded."""
+
+    def setup(self, user: int) -> tuple[Any, Any]:
+        _, bot, interaction = press("yes", user)
+        interaction.user.id = user
+        interaction.response.is_done = lambda: True  # start() defers first
+        interaction.guild = SimpleNamespace(
+            id=GUILD, get_member=lambda uid: SimpleNamespace(display_name=f"Name{uid}")
+        )
+        session = SimpleNamespace(id="s" * 32, campaign_id=CID, started_at=START)
+        bot.transcripts = SimpleNamespace(
+            session=AsyncMock(return_value=session), sessions=AsyncMock(return_value=[session])
+        )
+        bot.campaigns.list_campaigns = AsyncMock(
+            return_value=[SimpleNamespace(id=CID, guild_id=GUILD)]
+        )
+        bot.suggestions.recent_lines = AsyncMock(
+            return_value=[sg.Own(MS + 2000, "h2", "t2", PLAYER), sg.Own(MS + 1000, "h1", "t1", DM)]
+        )
+        bot.suggestions.own_lines = AsyncMock(return_value=[sg.Own(MS + 2000, "h2", "t2", PLAYER)])
+        return bot, interaction
+
+    def sent_view(self, interaction: Any) -> Any:
+        return interaction.followup.send.await_args.kwargs["view"]
+
+    async def test_a_dm_sees_any_speakers_lines_without_being_recorded(self) -> None:
+        bot, interaction = self.setup(DM)
+        bot.consent = SimpleNamespace(has_consent=lambda g, u: False)
+        await line_fix.start(interaction, session_id="s" * 32)
+        view = self.sent_view(interaction)
+        bot.suggestions.recent_lines.assert_awaited_once()
+        bot.suggestions.own_lines.assert_not_awaited()
+        self.assertTrue(view.dm)
+        self.assertEqual(len(view.lines), 2)
+        labels = [o.description for o in view.children[0].options]
+        self.assertEqual(labels, ["Name8: t2", "Name7: t1"])  # whose line, so the DM can tell
+
+    async def test_a_player_sees_only_their_own_lines(self) -> None:
+        bot, interaction = self.setup(PLAYER)
+        await line_fix.start(interaction, session_id="s" * 32)
+        bot.suggestions.own_lines.assert_awaited_once()
+        bot.suggestions.recent_lines.assert_not_awaited()
+        self.assertFalse(self.sent_view(interaction).dm)
+
+    async def test_a_person_not_recorded_and_not_a_dm_is_shown_no_lines_of_anyones(self) -> None:
+        bot, interaction = self.setup(ANOTHER)
+        bot.consent = SimpleNamespace(has_consent=lambda g, u: False)
+        await line_fix.start(interaction, session_id="s" * 32)
+        bot.suggestions.recent_lines.assert_not_awaited()
+        bot.suggestions.own_lines.assert_not_awaited()
+        self.assertEqual(said(interaction), line_fix.NO_LINES)  # same words as an empty list
 
 
 class TheRealSecretCheck(unittest.TestCase):
