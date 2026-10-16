@@ -138,6 +138,13 @@ class PlanChecksSetting(unittest.TestCase):
         self.assertFalse(load_settings({**both, "DMBOT_RECAPS": "0"}).recap_audio_on)
         self.assertNotIn("elevenlabs_key", repr(load_settings(both)))  # the key is never shown
         self.assertEqual(load_settings(BASE).recap_audio_max_credits, 15000)
+        self.assertEqual(load_settings(BASE).elevenlabs_speech_model, "eleven_v3")
+        self.assertEqual(
+            load_settings({**BASE, "ELEVENLABS_SPEECH_MODEL": "eleven_v4"}).elevenlabs_speech_model,
+            "eleven_v4",
+        )
+        with self.assertRaisesRegex(ConfigError, "ELEVENLABS_SPEECH_MODEL"):
+            load_settings({**BASE, "ELEVENLABS_SPEECH_MODEL": "../x"})
         with self.assertRaisesRegex(ConfigError, "DMBOT_RECAP_AUDIO_MAX_CREDITS"):
             load_settings({**BASE, "DMBOT_RECAP_AUDIO_MAX_CREDITS": "5"})
         with self.assertRaisesRegex(ConfigError, "ELEVENLABS_VOICE_ID"):

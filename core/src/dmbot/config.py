@@ -73,6 +73,7 @@ class Settings:
     # are set and the campaign's plan includes spoken recaps. No key: text-only, nothing fails.
     elevenlabs_key: str = field(default="", repr=False)
     elevenlabs_voice_id: str = ""
+    elevenlabs_speech_model: str = "eleven_v3"  # the voice model; dev1 compares models by ear
     recap_audio_max_credits: int = 15000  # provider credits one recap may use (about $3)
 
     @property
@@ -227,6 +228,9 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
     voice_id = get("ELEVENLABS_VOICE_ID")
     if voice_id and not (voice_id.isascii() and voice_id.isalnum() and len(voice_id) <= 64):
         raise ConfigError("ELEVENLABS_VOICE_ID must be the voice's id: letters and digits only.")
+    speech_model = get("ELEVENLABS_SPEECH_MODEL") or "eleven_v3"
+    if not (speech_model.isascii() and speech_model.replace("_", "").replace(".", "").isalnum()):
+        raise ConfigError("ELEVENLABS_SPEECH_MODEL must be a model id such as eleven_v3.")
     sidebar_raw = (get("DMBOT_SIDEBAR") or "0").lower()
     if sidebar_raw not in ("0", "1", "true", "false", "on", "off"):
         raise ConfigError('DMBOT_SIDEBAR must be 1 (on) or 0 (off), got "' + sidebar_raw + '".')
@@ -275,6 +279,7 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
         recaps_on=recaps_raw in ("1", "true", "on"),
         elevenlabs_key=get("ELEVENLABS_API_KEY"),
         elevenlabs_voice_id=voice_id,
+        elevenlabs_speech_model=speech_model,
         recap_audio_max_credits=int(audio_credits_raw),
         story_extractor_tier=extractor_tier,
         story_extractor_max_calls=int(extractor_calls_raw),

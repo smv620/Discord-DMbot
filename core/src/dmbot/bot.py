@@ -791,7 +791,11 @@ class DMBot(commands.AutoShardedBot):
             self._eleven_http = HttpTransport(settings.elevenlabs_key)
             self.audio_worker = AudioWorker(
                 recaps,
-                ElevenLabs(self._eleven_http, voice_id=settings.elevenlabs_voice_id),
+                ElevenLabs(
+                    self._eleven_http,
+                    voice_id=settings.elevenlabs_voice_id,
+                    speech_model=settings.elevenlabs_speech_model,
+                ),
                 self.recap_audio_files,
                 load=self.recap_audio_inputs,
                 consenting=self.consent.consenting,
