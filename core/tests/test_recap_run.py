@@ -166,7 +166,9 @@ class TheKeep(DatabaseTest):
         # A test run without --keep wrote nothing.
         async with self.db.guild(1) as conn:
             cur = await conn.execute("SELECT count(*) AS n FROM recap_jobs")
-            self.assertEqual((await cur.fetchone())["n"], 0)
+            row = await cur.fetchone()
+            assert row is not None
+            self.assertEqual(row["n"], 0)
         self.assertTrue(await run.keep(recaps, 1, camp.id, out, fx.DM))
         job = await recaps.get(1, camp.id, 100)
         assert job is not None
@@ -178,7 +180,9 @@ class TheKeep(DatabaseTest):
         self.assertFalse(await run.keep(recaps, 1, camp.id, out, fx.DM))  # left as it is
         async with self.db.guild(1) as conn:
             cur = await conn.execute("SELECT count(*) AS n FROM recap_jobs")
-            self.assertEqual((await cur.fetchone())["n"], 1)
+            row = await cur.fetchone()
+            assert row is not None
+            self.assertEqual(row["n"], 1)
 
 
 class TheConsent(DatabaseTest):
