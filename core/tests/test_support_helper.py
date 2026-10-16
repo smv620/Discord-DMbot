@@ -13,7 +13,7 @@ import itertools
 import json
 import unittest
 from email.message import EmailMessage
-from typing import cast
+from typing import Any, cast
 
 import httpx
 import psycopg
@@ -603,7 +603,9 @@ class TheHandOverIsKept(HelperBase):
     """Every hand-over stays on the ticket for good (#1487): `handed_over_reason` and
     `handed_over_at`, which a person's answer does not clear (the admin list's `reason` is)."""
 
-    listed = TheReason.listed  # the admin list's `reason`, which a person's answer clears
+    async def listed(self) -> dict[int, str | None]:
+        """The admin list's `reason`, which a person's answer clears."""
+        return await TheReason.listed(cast(Any, self))
 
     async def kept(self, number: int) -> tuple[str | None, int | None]:
         async with self.web.support_admin() as conn:
@@ -624,7 +626,8 @@ class TheHandOverIsKept(HelperBase):
             "/admin/auth/password", json={"email": ADMIN, "password": PASSWORD}, headers=HEADERS
         )
         got = (await client.get("/admin/support")).json()["tickets"]
-        return next(t["handedOverAt"] for t in got if t["id"] == number)
+        at: int | None = next(t["handedOverAt"] for t in got if t["id"] == number)
+        return at
 
     async def test_a_ticket_never_handed_over_has_neither(self) -> None:
         number = await self.ticket()
