@@ -29,6 +29,7 @@ from dmbot.ui.dmbot_commands import (
 )
 from dmbot.ui.shared_rules import (
     NOT_READY,
+    ONLY_DMS,
     _dm_campaign,
     _escape,
     _guarded,
@@ -52,8 +53,8 @@ LATER_LABEL = "▼ Later"
 UNFOLLOW_LABEL = "Stop following"
 UNDO_LABEL = "↩️ Undo"
 CODE_NOTE = (
-    "Anyone who has this code can read ALL the shared entries, including the ones hidden from "
-    "players. Only give it to a DM you trust. Old codes still work until you press Stop sharing."
+    "Any DM in this server, and anyone who has this code, can read ALL the shared entries, "
+    "including the ones hidden from players. Old codes still work until you press Stop sharing."
 )
 NAMES_SHOWN = 5  # names quoted for entries that stay, so a long list stays short
 NOT_A_PACK_CODE = "That code is for house rules. Use 📚 Shared rules → Use shared rules."
@@ -117,6 +118,16 @@ async def _ready(
         await _tell(interaction, NOT_READY)
         return None
     return current, store
+
+
+async def _paid(interaction: discord.Interaction, current: Campaign) -> bool:
+    """Sharing is a paid-plan feature: said before anything is published or a code is made."""
+    refused = await _bot(interaction).plan_gate(
+        "share", current.guild_id, current, interaction.user.id
+    )
+    if refused is not None:
+        await _tell(interaction, refused)
+    return refused is None
 
 
 async def _own_entries(interaction: discord.Interaction, current: Campaign) -> list[Any]:
@@ -204,10 +215,7 @@ async def share(interaction: discord.Interaction, campaign: Campaign, name: str)
     if ready is None:
         return
     current, store = ready
-    bot = _bot(interaction)
-    refused = await bot.plan_gate("share", current.guild_id, current, interaction.user.id)
-    if refused is not None:
-        await _tell(interaction, refused)
+    if not await _paid(interaction, current):
         return
     entries = await _own_entries(interaction, current)
     done = await store.publish_pack(
@@ -220,9 +228,7 @@ async def share(interaction: discord.Interaction, campaign: Campaign, name: str)
     if done.left_out:
         lines.append(stays_home(done.left_out))
     if hidden:
-        lines.append(
-            f"{hidden} of them are hidden from players. Anyone with the code can read them."
-        )
+        lines.append(f"{hidden} of them are hidden from players. Other DMs can read them too.")
     lines += [CODE_NOTE, f"`{code}`"]  # the code last, so it is easy to copy on a phone
     await _tell(interaction, "\n".join(lines))
 
@@ -235,6 +241,8 @@ async def publish_changes(interaction: discord.Interaction, campaign: Campaign) 
     if ready is None:
         return
     current, store = ready
+    if not await _paid(interaction, current):
+        return
     entries = await _own_entries(interaction, current)
     done = await store.publish_pack_changes(
         current.guild_id, current.id, interaction.user.id, entries
@@ -252,6 +260,8 @@ async def new_code(interaction: discord.Interaction, campaign: Campaign) -> None
     if ready is None:
         return
     current, store = ready
+    if not await _paid(interaction, current):
+        return
     code = await store.make_pack_code(current.guild_id, current.id, interaction.user.id)
     await _tell(interaction, f"{CODE_NOTE}\n`{code}`")
 
@@ -290,7 +300,12 @@ async def _offer(
         await _tell(interaction, NOT_A_PACK_CODE)
         return
     total, hidden = _count(offer.content)
-    names = [str(e["name"]) for e in offer.content.get("entries", [])[:NAMES_SHOWN] if "name" in e]
+    listed = offer.content.get("entries")
+    names = [
+        str(e["name"])
+        for e in (listed[:NAMES_SHOWN] if isinstance(listed, list) else [])
+        if isinstance(e, dict) and "name" in e
+    ]
     await _send(
         interaction,
         f"**{_escape(offer.name)}** from {_escape(offer.publisher)}: {_entries(total)} "
@@ -395,6 +410,7 @@ class PackActions(_Menu):
         )
 
     async def _move(self, interaction: discord.Interaction, step: int) -> None:
+        await _answer_first(interaction, in_place=True)  # the refreshed menu replaces this one
         ready = await _ready(interaction, self.campaign)
         if ready is None:
             return
@@ -445,7 +461,7 @@ class FollowChoose(_Menu):
                 placeholder=FOLLOW_PLACEHOLDER,
                 options=[
                     discord.SelectOption(
-                        label=o.name[:100], value=o.set_id, description=o.publisher[:100]
+                        label=o.name[:100], value=o.set_id, description=o.publisher[:100] or None
                     )
                     for o in self.offers.values()
                 ],
@@ -507,6 +523,9 @@ class SharedPacksMenu(_Menu):
     async def _share(self, interaction: discord.Interaction) -> None:
         # Ask about the plan before the form, so nobody types a name only to be refused. A modal
         # must be the first answer, so the check has to finish inside Discord's 3 seconds.
+        if interaction.user.id not in self.campaign.dm_user_ids:  # a quick first filter; the
+            await _tell(interaction, ONLY_DMS)  # real check is at submit (stale data is fine)
+            return
         bot = _bot(interaction)
         refused = await bot.plan_gate(
             "share", self.campaign.guild_id, self.campaign, interaction.user.id
@@ -543,7 +562,8 @@ class SharedPacksMenu(_Menu):
         await new_code(interaction, self.campaign)
 
     async def _stop(self, interaction: discord.Interaction) -> None:
-        # Stopping turns off every code handed out, so it asks first.
+        # Stopping turns off every code handed out, so it asks first. Anyone may see the question;
+        # only a DM's "yes" does anything (`stop_sharing` checks on the press).
         await _send(
             interaction,
             "Stop sharing? Every share code will stop working. Tables already following your "

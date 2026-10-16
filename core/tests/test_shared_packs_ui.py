@@ -213,3 +213,48 @@ class Following(unittest.IsolatedAsyncioTestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class Guards(unittest.IsolatedAsyncioTestCase):
+    async def test_publishing_and_codes_need_the_paid_plan(self) -> None:
+        st = store()
+        bot = bot_with(st, refusal="Sharing needs a paid plan.")
+        it = interaction(7, bot)
+        await shared_packs.publish_changes(it, campaign())
+        await shared_packs.new_code(interaction(7, bot), campaign())
+        st.publish_pack_changes.assert_not_called()
+        st.make_pack_code.assert_not_called()
+        self.assertEqual(it.sent[0][0], "Sharing needs a paid plan.")
+
+    async def test_the_select_callbacks_change_nothing_for_a_player(self) -> None:
+        st = store()
+        st.packs_here = AsyncMock(return_value=[offer()])
+        st.followed_packs = AsyncMock(return_value=[follow()])
+        menu = shared_packs.SharedPacksMenu(campaign(), sharing=False, follows=[follow()])
+        assert menu.pick is not None
+        menu.pick._values = [follow().set_id]  # type: ignore[attr-defined]
+        await menu._pick(interaction(99, bot_with(st)))
+        choose = shared_packs.FollowChoose(campaign(), [offer()])
+        assert choose.pick is not None
+        choose.pick._values = [offer().set_id]  # type: ignore[attr-defined]
+        it = interaction(99, bot_with(st))
+        await choose._picked(it)
+        st.followed_packs.assert_not_called()
+        self.assertIn("Only this campaign's DMs", it.sent[0][0])
+
+    async def test_undo_and_stop_are_for_dms_only(self) -> None:
+        st = store()
+        bot = bot_with(st)
+        await shared_packs.UndoUnfollow(campaign(), follow(), 0)._undo(interaction(99, bot))
+        await shared_packs.ConfirmStop(campaign())._yes(interaction(99, bot))
+        st.restore_pack.assert_not_called()
+        st.stop_sharing_pack.assert_not_called()
+
+    async def test_a_player_pressing_share_is_told_before_the_form(self) -> None:
+        st = store()
+        bot = bot_with(st)
+        menu = shared_packs.SharedPacksMenu(campaign(), sharing=False, follows=[])
+        it = interaction(99, bot)
+        await menu._share(it)
+        self.assertIn("Only this campaign's DMs", it.sent[0][0])
+        bot.plan_gate.assert_not_called()
