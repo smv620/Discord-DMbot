@@ -673,6 +673,13 @@ never does.
   rules reaching the sidebar, rules lookup, rules cards and alerts (a followed set's rules come after the
   campaign's own, each cited as "<set> house rules, v4"). Still to build: relationship definitions in sets,
   follower backups, and the note at a follower's next start when a set is deleted.
+  **Relationship definitions in sets** (Supervisor, 2026-10-16, #1456): at Share time the DM
+  picks which of the campaign's own active relationship definitions travel with the set, from a
+  tick list (all ticked, each with its label and description, so the DM sees exactly what
+  leaves); nothing else of memory goes. A follower gets them read-only and marked as the set's;
+  a same-name definition the follower already has wins, with a one-line note at Follow time.
+  Unfollow removes a set definition no fact uses and deprecates one that facts use (old facts
+  still read, no new ones). Cherry pick takes them one at a time with the same rules.
 
 
 **AI models by task (decided 2026-10-10, built #1006).** Every AI call names a *tier*, never
@@ -1092,7 +1099,8 @@ Each table's status shows its own backlog and delay.
   never anything that was said. Missed and failed speech is counted per session.
 - Only `/dmbot stop` ends a session today; a resume that gives up after a restart has no
   summary yet. After a restart, speaking times count only from the restart (the "ran"
-  time is the whole session). An AI recap of what happened is a later phase.
+  time is the whole session). The AI recap of what happened is built: see "Session recaps"
+  under Feature notes.
 
 **Stored transcripts and downloads: built (2026-10-06, #41, #125).** Decided while
 building:
@@ -3115,6 +3123,38 @@ deployed but blocked (for example the account move, whose code goes to the payme
 payments are off, #1096) waits in the file's `held` list with its reason. A PR that ships a
 feature people can see adds its entry, or a held one, in the same PR.
 
+**Session recaps** (Supervisor, 2026-10-15 and 2026-10-16; built in #1392, #1397, #1412, #1415,
+#1417, #1420, #1422, #1428, #1430, #1437, #1445, #1450, #1455, #1457). After a session DMbot can
+write a short story-style recap for the DM to read at the start of the next one. Recaps are for
+paid plans and are **off on the server** (`DMBOT_RECAPS`) until dev1 has checked a real one
+(#1382); the site's words about them show only when `RECAPS_LIVE` is on (web, `recap-words.ts`).
+- **Written only from consented speech**, and every detail is checked against it; anything the
+  DM keeps secret is left out, and the bot checks again at post time (a player who stopped
+  being recorded since, a secret name) and refuses with a plain reason. **The bot never posts
+  a recap by itself**: the DM reads it first, may change the words (on the website) or try
+  again (twice), and presses **Post to the table**, which puts it in the campaign's `dmb-chat`.
+- **Where the DM hears about it:** on the DM screen, always, with three buttons that survive a
+  restart: **Read it**, **Post to the table** (asks once: "Post it to the table now? The players
+  will all see it.") and **Not this one** (#1455, #1457); and by email unless the DM turned the
+  email off. The DM-screen **Recaps** panel on ⚙️ Settings holds the three choices (#1421,
+  #1422): recaps on or off, the email on or off, the narration on or off. DM only.
+- **Narration and music** (#1383, #1415, #1417): a recap can come with a narrator's voice and a
+  music bed as two audio files, made with ElevenLabs from the cleaned recap with the campaign's
+  "said as" spellings and no secret names, kept on a named volume (`recap-audio`) that the
+  website's API reads read-only. It needs the owner's ElevenLabs account (#1385; Creator plan or
+  higher, `pcm_24000`), and `RECAP_AUDIO_LIVE` on the site. Narration comes with Guild and Pro
+  (`RECAP_AUDIO_PLANS`); on the other paid plans it is an add-on priced from one constant
+  (`RECAP_AUDIO_PRICE_CENTS`, web `recap-audio.ts`; the price is the owner's, #1385). A DM may
+  ask for the audio again once every 10 minutes (#1418).
+- **Monthly allowance** (Supervisor decision 2026-10-16, #1428, #1437, #1445): each campaign gets
+  **10 recaps a month** and **8 narrated ones** (`DMBOT_RECAPS_PER_MONTH`,
+  `DMBOT_RECAP_AUDIO_PER_MONTH`; the site mirrors them in `recap-words.ts`, change both
+  together). Free access and grants are not limited. When the allowance is used the DM screen
+  says so, with the day the next one comes. Reason: one recap per weekly session with room for
+  a second table, and narration costs real money per minute (docs/costs.md, ElevenLabs).
+- **Deletion:** a recap goes with its campaign, and the DM may drop any draft; the raw
+  transcript is not changed by a recap. A recap is never in a shared ruleset.
+
 **Page changes: magic dust, and runes on the banner** (owner, 2026-10-15; Supervisor's details).
 Moving between the site's pages gets a short magic-dust dissolve: the old page breaks up into
 sparkling dust while the new one fades in, about 700 ms (owner, 2026-10-15: doubled so the
@@ -3223,14 +3263,45 @@ months.
 - **Escalation** opens a public issue labelled `support` and `from: QAbot` that links the
   discussion. The discussion is already public, so nothing private moves. QAbot replies
   "Passed to the team as #N". Supervisor triages `support` issues like any other.
-- **Support tickets from people are private.** Paying users write from the website (signed in,
-  a Support form) and anyone can write to the support email (address TBD, owner). These hold
+- **Support tickets from people are private.** Anyone with an account writes from the website
+  (signed in, a Support form; Try It included since #1436) and anyone can write to the support email
+  (support@getdmbot.com). These hold
   personal details, so **they never become public GitHub issues.** They go to a private
   `support_tickets` table in the database (add-only for the website's role, like `feedback`,
   except that a signed-in person reads back their own list: when, subject and status, never the
   words or anyone else's; #1373), shown on the admin page, with an email to the team. Kept for 12 months, then deleted by the
   website's hourly sweep. The privacy page says so. Reading the support mailbox into tickets is
   a later step. Until then the team reads the mailbox directly.
+
+**Support flow: acknowledge, answer, escalate** (owner request 2026-10-16; Supervisor's design;
+#1431, #1432, #1435, #1436, #1452, #1458, #1459). Anyone with an account, **Try It included**
+(owner, 2026-10-16, #1435), writes to the team from the account page. Then:
+- **Acknowledge** at once from `MAIL_SUPPORT_FROM` (info@getdmbot.com), subject only, never
+  the words, to an account with an address.
+- **Answer** by email from DMbot's **AI helper**, the strongest tier's current Claude model
+  (`SUPPORT_AI_MODEL` empty means the tier default), with fixed on-topic instructions; it says
+  it is a program, not a person. It answers at most 5 times per ticket. Replies by email come
+  back through the mail service's inbound webhook (`POST /mail/inbound`, signed with
+  `MAIL_INBOUND_SECRET`; 404 while unset) to `info+ticket-<id>-<token>@`.
+- **Escalate** to a person when the helper's sentiment check says the person is unhappy, they
+  ask for a person, the 5-answer limit is reached, the account has no address, or the helper
+  was down for a day. The alert goes from `MAIL_ALERTS_FROM` (jarvis@getdmbot.com) to
+  `SUPPORT_TEAM_EMAIL` (support@getdmbot.com) with the reason; the admin page shows the thread,
+  "Needs the team", the reason (#1459) and a reply box; the team's reply is emailed from info@
+  and the ticket becomes answered.
+- **What the person sees** on their account page: subject, date, status ("Answered by DMbot's AI
+  helper", "Answered by the team", "With the team") and the first line of the last answer, never
+  anyone else's and never their own words back (#1458). The privacy page says all of this; the
+  site's words show only when `SUPPORT_AI_LIVE` is on (`support-words.ts`).
+- **Spend** is bounded by the 5 answers per ticket, the Try It limit of three tickets a day and
+  one waiting, and the owner's spend limit on the Anthropic console. The web API holds
+  `ANTHROPIC_API_KEY` for this one use (a compose pass-through, never a web setting).
+
+**Deploys and CI (Supervisor, 2026-10-16).** dev1 deploys only a `development` head whose CI is
+green. One exception was granted once: `e49cdb00` (2026-10-16 04:50 UTC), whose only CI failure
+was the test-only role-creation race (`pg_authid_rolname_index`, fixed by #1442, which merged
+next); the deployed code was unchanged by the failing test. Any further exception is a
+Supervisor decision recorded here with the commit and the reason, never dev1's own call.
 
 **Retention.** Configurable auto-delete of transcripts per server (audio is never
 stored), and a "Delete my past transcripts" action for each player. Deleting a person's
