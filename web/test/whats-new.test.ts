@@ -45,7 +45,6 @@ describe("What's new", () => {
       "Your questions to the team", // until the API with the list route is deployed (#1373)
       "Ask a question in public", // until QAbot is live (#1352)
       "Move to a new Discord account",
-      "A recap of last session",
       "New names from what was said",
       "A note before tonight's session",
       "When a player says a secret name",
