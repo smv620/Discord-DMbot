@@ -62,7 +62,7 @@ UNDO_SHOWN = 1  # ...and the newest is the one button on the list
 WHICH_RULES = (
     "**Which rules is this book written for?**\n"
     "This only changes which answer DMbot shows first when the book and the free rules have "
-    "the same name (in `/dmbot rule` answers for now).\n"
+    "the same name.\n"
     "2024 book: its answer comes first.\n"
     "2014 book: the newer 2024 rule comes first.\n"
     "Not sure, or an add-on book: it goes in the middle."

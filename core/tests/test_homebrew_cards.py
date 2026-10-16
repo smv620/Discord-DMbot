@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import unittest
+from typing import Any
 from unittest.mock import AsyncMock
 
 from dmbot.rules.homebrew import Homebrew
@@ -172,6 +173,57 @@ class Cards(TableTest):
         self.brews.find = AsyncMock(side_effect=RuntimeError("down"))  # type: ignore[method-assign]
         await self.say("the Hollow King rises")
         self.assertEqual(self.posts, [])
+
+
+class Books(TableTest):
+    """A shared book's entries rank in their edition's place on the rules cards (#1569)."""
+
+    async def asyncSetUp(self) -> None:
+        await super().asyncSetUp()
+        self.brews = FakeBrew()
+        self.bot.homebrew = self.brews  # type: ignore[assignment]
+        self.table.campaign_name = "Frostmaiden"
+
+    def own(self, *entries: Homebrew) -> None:
+        self.brews.entries[C1] = list(entries)
+        self.table.homebrew_spotter = HomebrewSpotter.from_entries(entries)
+
+    def book(self, name: str, edition: str | None, **kw: Any) -> Homebrew:
+        import dataclasses
+
+        return dataclasses.replace(
+            brew(name, "From the book.", **kw), from_book=True, book_edition=edition
+        )
+
+    async def test_a_2024_book_entry_gives_the_card_and_the_free_rules_step_aside(self) -> None:
+        self.own(self.book("Fireball", "2024", kind="spell"))
+        await self.say("I cast Fireball")
+        (post,) = self.posts
+        self.assertIn("[Shared book]", post[1])
+        self.assertNotIn("Legacy", post[1])
+        self.assertNotIn("SRD", post[1])
+
+    async def gives_way(self, edition: str | None) -> None:
+        self.own(self.book("Fireball", edition, kind="spell"))
+        await self.say("I cast Fireball")
+        (post,) = self.posts
+        self.assertNotIn("[Shared book]", post[1])
+        self.assertIn("SRD", post[1])
+
+    async def test_a_2014_book_entry_gives_way_to_the_newer_free_rules(self) -> None:
+        await self.gives_way("2014")
+
+    async def test_an_add_on_book_entry_gives_way_to_the_newer_free_rules(self) -> None:
+        await self.gives_way("other")
+
+    async def test_an_entry_loaded_before_the_question_gives_way_too(self) -> None:
+        await self.gives_way(None)
+
+    async def test_a_2014_book_entry_is_tagged_legacy_when_it_answers(self) -> None:
+        self.own(self.book("Orc", "2014"))
+        await self.say("an Orc attacks")
+        (post,) = self.posts
+        self.assertIn("[Shared book] [Legacy 2014]", post[1])
 
 
 class Reading(TableTest):
