@@ -5314,6 +5314,25 @@ class DMBot(commands.AutoShardedBot):
                 view=recap_view(cid, recap.session_at, tries=recap.tries),
             )
 
+    async def recap_secret_names(self, campaign: Campaign) -> list[str] | None:
+        """Every secret name of the campaign, read fresh (a name may have been made secret since
+        the recap was written), or None when they can't be read: then nothing is posted or
+        saved, since a secret name couldn't be kept out."""
+        if self.lookup is None:
+            return None
+        try:
+            lookup = await self.lookup.get(campaign.guild_id, campaign.id)
+        except Exception:
+            log.exception("Recap: couldn't read the campaign's secret names")
+            return None
+        return sorted({n.text for n in lookup.names if n.secret})
+
+    async def recap_still_allowed(self, campaign: Campaign, recap: Recap) -> bool:
+        """Everyone whose words were sent to write the recap is still recorded: asked again
+        when the DM posts, since the draft can wait hours (CLAUDE.md, consent)."""
+        agreed = await self.consent.consenting(campaign.guild_id)
+        return set(recap.speakers) <= set(agreed)
+
     async def write_recap_again(self, campaign: Campaign, recap: Recap) -> Recap | None:
         """The DM pressed Try again (at most twice for one session): a new draft in place of the
         old one, or None, leaving the old one. The plan is checked again, closed."""
@@ -5326,7 +5345,7 @@ class DMBot(commands.AutoShardedBot):
             return None
         found = [
             s
-            for s in await self.transcripts.sessions(campaign.guild_id, campaign.id, limit=50)
+            for s in await self.transcripts.sessions(campaign.guild_id, campaign.id, limit=1000)
             if s.started_at == recap.session_at
         ]
         if not found:
@@ -5389,6 +5408,7 @@ class DMBot(commands.AutoShardedBot):
             music=d.music,
             game_day=day,
             tries=tries,
+            speakers=result.speakers,
         )
         return await self.recaps.get(gid, cid, session_at)
 

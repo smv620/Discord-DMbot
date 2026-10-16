@@ -32,6 +32,14 @@ NO_CHANNEL = (
     "session starts. Nothing was posted and your recap is kept. Press Post again then."
 )
 CANT_SEND = "Couldn't post in the chat channel. Check DMbot can write there, then press Post again."
+SECRET_IN_TEXT = (
+    "That names something you keep secret, so it can't go in a recap. Nothing was changed."
+)
+STOPPED_SINCE = (
+    "A player stopped being recorded since this was written, so it can't be posted. "
+    "Press Try again, or leave it out."
+)
+CANT_CHECK = "Couldn't check the secret names just now, so nothing was changed. Try again."
 EDIT_TOO_LONG = "Too long for one message (about 1,500 characters). Nothing was changed."
 MESSAGE_MAX = 1900  # Discord's limit is 2,000
 
@@ -56,8 +64,9 @@ def to_the_table(recap: Recap) -> str:
 def for_the_dm(recap: Recap) -> str:
     """The DM's copy: the same, and a line saying nobody else has seen it."""
     return (
-        "📜 **Recap ready. Only you can see it.** Nothing goes to the table until you press "
-        "Post.\n\n" + as_posted(recap) + (f"\n\n_{LAST_TRY}_" if recap.tries >= MAX_TRIES else "")
+        "📜 **Recap ready.** Nothing goes to the table's chat until you press Post.\n\n"
+        + as_posted(recap)
+        + (f"\n\n_{LAST_TRY}_" if recap.tries >= MAX_TRIES else "")
     )
 
 
@@ -148,6 +157,13 @@ class EditRecap(discord.ui.Modal, title="Edit the recap"):
         if recap is None or recap.status != "draft":
             await _tell(interaction, GONE)
             return
+        secrets = await bot.recap_secret_names(campaign)
+        if secrets is None:
+            await _tell(interaction, CANT_CHECK)
+            return
+        if rd.names_a_secret(value, secrets, []):
+            await _tell(interaction, SECRET_IN_TEXT)
+            return
         long = rd.shown_length(recap.title, recap.game_day, value, recap.housekeeping)
         if not value or len(value) > rd.SUMMARY_MAX or long > rd.SHOWN_MAX + 100:
             await _tell(interaction, EDIT_TOO_LONG)
@@ -217,9 +233,25 @@ async def post_to_table(interaction: discord.Interaction, campaign: Any, recap: 
     if channel is None or not hasattr(channel, "send"):
         await _tell(interaction, NO_CHANNEL)
         return
+    if getattr(getattr(channel, "guild", None), "id", campaign.guild_id) != campaign.guild_id:
+        await _tell(interaction, NO_CHANNEL)  # never another server's channel
+        return
+    # Checked again now, with the secret names read fresh: the text may have been edited, and a
+    # name may have been made secret since it was written.
+    secrets = await bot.recap_secret_names(campaign)
+    if secrets is None:
+        await _tell(interaction, CANT_CHECK)
+        return
+    if rd.names_a_secret(as_posted(recap), secrets, []):
+        await _tell(interaction, SECRET_IN_TEXT)
+        return
+    if not await bot.recap_still_allowed(campaign, recap):
+        await _tell(interaction, STOPPED_SINCE)
+        return
     if not await bot.recaps.decide(campaign.guild_id, campaign.id, recap.session_at, "posted"):
         await _tell(interaction, GONE)
         return
+    recap = await bot.recaps.get(campaign.guild_id, campaign.id, recap.session_at) or recap
     try:
         for part in parts_of(to_the_table(recap)):
             await channel.send(part, allowed_mentions=NO_PINGS)
@@ -232,7 +264,9 @@ async def post_to_table(interaction: discord.Interaction, campaign: Any, recap: 
 
 async def try_again(interaction: discord.Interaction, campaign: Any, recap: Recap) -> None:
     bot = _bot(interaction)
-    if recap.tries >= MAX_TRIES:
+    if recap.tries >= MAX_TRIES or not await bot.recaps.claim_try(
+        campaign.guild_id, campaign.id, recap.session_at
+    ):
         await _tell(interaction, NO_MORE_TRIES)
         return
     result = await bot.write_recap_again(campaign, recap)

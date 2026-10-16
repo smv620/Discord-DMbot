@@ -31,14 +31,16 @@ TITLE_MAX = 80
 MUSIC_MAX = 240  # characters of one music cue
 SECTIONS_MAX = 6  # emotion sections in one recap
 QUOTE_WORDS = 6  # a quoted run of this many words is a quote of the table
+COPY_WORDS = 8  # a run of this many words in a row from the table is a copy, quoted or not
 TRANSCRIPT_MAX = 48_000  # characters sent: the end of the session, where the cliffhanger is
 MAX_TOKENS = 2200
 
 _CUE = re.compile(r"《[^《》]{1,60}》")
 _PERFORMANCE = re.compile(r"\(\([^()]{1,60}\)\)")
 _QUOTED = re.compile(r"[\"“”]([^\"“”]{1,400})[\"“”]")
-_WORD = re.compile(r"[A-Za-z0-9'’-]+")
-_CAPITAL = re.compile(r"(?<![A-Za-z0-9'’-])([A-Z][A-Za-z'’-]*)")
+_WORD = re.compile(r"[\w'’]+")
+_CAPITAL = re.compile(r"(?<![\w'’-])([A-ZÀ-Þ][\w'’-]*)")
+_POSSESSIVE = re.compile(r"['’]s$", re.IGNORECASE)
 # Music prompts describe a sound. These name where it came from, which is not ours to imitate.
 _MUSIC_BANNED = re.compile(
     r"\b(world of warcraft|warcraft|wow|blizzard|soundtrack|ost|composer|zimmer|williams|"
@@ -47,6 +49,8 @@ _MUSIC_BANNED = re.compile(
     re.IGNORECASE,
 )
 # Capitalised words that are not names and may sit mid-sentence in a narrated recap.
+# Small words that are part of names ("Son of Ash") and say nothing on their own.
+_SMALL_WORDS = frozenset({"the", "and", "for", "son", "von", "van", "der", "del", "los", "las"})
 _NOT_NAMES = frozenset({"i", "the", "a", "an", "and", "but", "or", "as", "day", "night"})
 
 SYSTEM = """\
@@ -173,7 +177,8 @@ def parse(raw: str) -> Draft | None:
 
 
 def words(text: str) -> list[str]:
-    return [w.lower().strip("'’-") for w in _WORD.findall(text)]
+    """The words of a text, lower case, possessives taken off ("Garrick's" is "garrick")."""
+    return [_POSSESSIVE.sub("", w).lower().strip("'’-") for w in _WORD.findall(text)]
 
 
 def _proper_nouns(text: str) -> list[str]:
@@ -181,12 +186,11 @@ def _proper_nouns(text: str) -> list[str]:
     plain = _PERFORMANCE.sub(" ", _CUE.sub(" ", text))
     found: list[str] = []
     for sentence in re.split(r"(?<=[.!?])\s+|\n+", plain):
-        tokens = _CAPITAL.findall(sentence)
         first = _WORD.search(sentence)
-        for token in tokens:
-            if first is not None and sentence[first.start() :].startswith(token):
+        for match in _CAPITAL.finditer(sentence):
+            if first is not None and match.start() == first.start():
                 continue  # a sentence starts with a capital anyway
-            found.append(token)
+            found.append(match.group(1))
     return found
 
 
@@ -238,17 +242,56 @@ def check(
     for name in allowed_names:
         known |= set(words(name))
     unknown = sorted(
-        {n for n in _proper_nouns(narration) if n.lower().strip("'’-") not in known | _NOT_NAMES}
+        {
+            n
+            for n in _proper_nouns(narration)
+            if _POSSESSIVE.sub("", n).lower().strip("'’-") not in known | _NOT_NAMES
+        }
     )
     if unknown:
         problems.append(
             f"names that are not in the transcript or the names list: {', '.join(unknown[:5])}"
         )
-    everything = " ".join([draft.title, summary, *draft.housekeeping, *draft.music]).lower()
-    padded = f" {' '.join(words(everything))} "
+    if names_a_secret(
+        " ".join([draft.title, summary, *draft.housekeeping, *draft.music]),
+        secret_names,
+        allowed_names,
+    ):
+        problems.append("it names something the DM keeps secret: leave it out")
+    # Nothing copied from the table, quotation marks or not: no run of eight words in a row.
+    heard = words(transcript)
+    grams = {tuple(heard[i : i + COPY_WORDS]) for i in range(len(heard) - COPY_WORDS + 1)}
+    said = words(narration)
+    if any(tuple(said[i : i + COPY_WORDS]) in grams for i in range(len(said) - COPY_WORDS + 1)):
+        problems.append("it copies the table word for word: tell it in your own words")
+    return problems
+
+
+def names_a_secret(
+    text: str, secret_names: Collection[str], allowed_names: Collection[str]
+) -> bool:
+    """Whether the text names anything the DM keeps secret, in any form: the whole name, its
+    possessive or plural ("Vex's", "the Vexes"), a word of it longer than three letters (except
+    one the confirmed names also use), a spelling with hyphens, and a name no word pattern can
+    read (a name in symbols), which is looked for as written. Used on the draft, on the DM's
+    edit, and again when the DM posts, with the secret names read fresh each time."""
+    padded = f" {' '.join(words(text))} "
+    folded = text.casefold()
+    open_words = {w for n in allowed_names for w in words(n)}
     for secret in secret_names:
         tokens = words(secret)
-        if tokens and f" {' '.join(tokens)} " in padded:
-            problems.append("it names something the DM keeps secret: leave it out")
-            break
-    return problems
+        if not tokens:  # nothing a word regex can read: look for it as written
+            if secret.strip() and secret.strip().casefold() in folded:
+                return True
+            continue
+        plain = " ".join(tokens)
+        if any(f" {plain}{end} " in padded for end in ("", "s", "es")):
+            return True
+        for token in tokens:
+            if (
+                len(token) >= 3
+                and token not in open_words | _SMALL_WORDS
+                and f" {token} " in padded
+            ):
+                return True
+    return False

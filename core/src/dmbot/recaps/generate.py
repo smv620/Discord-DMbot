@@ -31,6 +31,7 @@ class Result:
     calls: int = 0
     why: str = ""  # plain words for the DM when there is no draft
     problems: tuple[str, ...] = field(default=())  # what the last rejected draft got wrong
+    speakers: tuple[int, ...] = ()  # whose words were sent
 
 
 async def generate(
@@ -93,6 +94,6 @@ async def generate(
             setting=setting,
         )
         if not problems:
-            return Result(parsed, calls)
+            return Result(parsed, calls, speakers=tuple(sorted(sent_from)))
         log.info("Recap: a draft failed %d check(s)", len(problems))  # counts only
     return Result(None, calls, FAILED, tuple(problems))

@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import unittest
 from collections.abc import Collection
+from dataclasses import replace
 from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
@@ -105,6 +106,45 @@ class Checks(unittest.TestCase):
                 raw, secret_names=["the Hollow King"], allowed_names=[*NAMES, "Hollow", "King"]
             )
             self.assertTrue(any("secret" in p for p in problems), (where, problems))
+
+    def test_a_possessive_of_a_known_name_is_fine(self) -> None:
+        raw = GOOD.replace(
+            "The gate swung", "Mira's blade gleamed. Oskar’s hand shook. The gate swung"
+        )
+        self.assertEqual(checked(raw), [])
+
+    def test_a_secret_name_is_caught_in_its_possessive_plural_and_other_alphabets(self) -> None:
+        for secret, said in (
+            ("Vex", "Vex's blade"),
+            ("Vex", "the Vexes arrived"),
+            ("Zoë", "Zoë waited"),
+            ("龍", "the 龍 slept"),
+        ):
+            raw = GOOD.replace("a cold wind", f"{said} and a cold wind")
+            problems = checked(
+                raw, secret_names=[secret], allowed_names=[*NAMES, "Vex", "Vexes", "Zoë"]
+            )
+            self.assertTrue(any("secret" in p for p in problems), (secret, said, problems))
+        # A secret that is only part of a longer word is not matched.
+        self.assertFalse(any("secret" in p for p in checked(GOOD, secret_names=["Mir"])))
+
+    def test_a_hyphenated_or_partial_secret_is_caught(self) -> None:
+        for said in ("Vex-the-Pale stirred", "only Vex remained"):
+            raw = GOOD.replace("a cold wind", f"{said} and a cold wind")
+            problems = checked(raw, secret_names=["Lord Vex"], allowed_names=[*NAMES, "Pale"])
+            self.assertTrue(any("secret" in p for p in problems), (said, problems))
+
+    def test_copying_the_table_is_caught_even_without_quote_marks(self) -> None:
+        copied = GOOD.replace(
+            "The gate swung", "Beyond it the hall is empty and a cold wind blows. The gate swung"
+        )
+        self.assertTrue(any("word for word" in p for p in checked(copied)))
+
+    def test_a_name_in_the_middle_of_a_sentence_is_found_where_it_stands(self) -> None:
+        # A sentence whose first word is a prefix of a later name must not hide that name.
+        text = "《Tense》 Mira saw Miranda at dusk. The gate swung."
+        found = rd._proper_nouns(text)
+        self.assertEqual(found, ["Miranda"])
 
     def test_a_recap_must_open_with_an_emotion_cue(self) -> None:
         bare = GOOD.replace("《Tense》 ", "")
@@ -293,11 +333,19 @@ class Keeping(DatabaseTest):
     async def test_a_recap_is_kept_per_campaign_and_the_bridge_is_this_campaigns_own(self) -> None:
         await self.save(self.one.id, 100, "《Calm》 One's story.")
         await self.save(self.two.id, 200, "《Calm》 Two's story.")
+        for campaign, at in ((self.one.id, 100), (self.two.id, 200)):
+            await self.store.decide(1, campaign, at, "posted")
         bridge = await self.store.bridge(1, self.one.id, 300)
         assert bridge is not None
         self.assertIn("One's story", bridge.summary)  # never the other campaign's, though newer
         self.assertIsNone(await self.store.bridge(1, self.one.id, 100))  # nothing before the first
         self.assertIsNone(await self.store.get(2, self.one.id, 100))  # another server sees nothing
+
+    async def test_only_a_posted_recap_is_a_bridge(self) -> None:
+        await self.save(self.one.id, 100)
+        self.assertIsNone(await self.store.bridge(1, self.one.id, 200))  # a draft is not
+        await self.store.decide(1, self.one.id, 100, "posted")
+        self.assertIsNotNone(await self.store.bridge(1, self.one.id, 200))
 
     async def test_a_dropped_recap_is_not_a_bridge(self) -> None:
         await self.save(self.one.id, 100)
@@ -354,6 +402,28 @@ class Keeping(DatabaseTest):
             with self.assertRaises((CampaignError, TypeError)):
                 section.check(bad if isinstance(bad, list) else list(bad))  # type: ignore[arg-type]
 
+    async def test_try_again_is_claimed_before_the_ai_and_a_failure_still_uses_it(self) -> None:
+        await self.save(self.one.id, 100)
+        self.assertTrue(await self.store.claim_try(1, self.one.id, 100))
+        self.assertTrue(await self.store.claim_try(1, self.one.id, 100))
+        self.assertFalse(await self.store.claim_try(1, self.one.id, 100))  # two is all
+        used = await self.store.get(1, self.one.id, 100)
+        assert used is not None
+        self.assertEqual(used.tries, 2)
+
+    async def test_two_quick_presses_cannot_both_claim_the_last_try(self) -> None:
+        import asyncio
+
+        await self.save(self.one.id, 100)
+        await self.store.claim_try(1, self.one.id, 100)
+        won = await asyncio.gather(*(self.store.claim_try(1, self.one.id, 100) for _ in range(5)))
+        self.assertEqual(sum(won), 1)
+
+    async def test_a_decided_recap_cannot_be_tried_again(self) -> None:
+        await self.save(self.one.id, 100)
+        await self.store.decide(1, self.one.id, 100, "dropped")
+        self.assertFalse(await self.store.claim_try(1, self.one.id, 100))
+
     async def test_it_goes_with_the_campaign(self) -> None:
         await self.save(self.one.id, 100)
         self.campaigns.register_section(RecapSection())
@@ -361,8 +431,16 @@ class Keeping(DatabaseTest):
         self.assertIsNone(await self.store.get(1, self.one.id, 100))
 
 
-def fake_interaction(user: int, store: Any, channel: Any = "default") -> Any:
+def fake_interaction(
+    user: int,
+    store: Any,
+    channel: Any = "default",
+    *,
+    secrets: list[str] | None = None,
+    allowed: bool = True,
+) -> Any:
     sent = AsyncMock()
+    sent.guild = SimpleNamespace(id=1)
     campaign = SimpleNamespace(
         id="c" * 32, guild_id=1, dm_user_ids=frozenset({DM}), dmbchat_channel_id=55
     )
@@ -371,6 +449,8 @@ def fake_interaction(user: int, store: Any, channel: Any = "default") -> Any:
         recaps=store,
         get_channel=lambda cid: sent if channel == "default" else channel,
         write_recap_again=AsyncMock(),
+        recap_secret_names=AsyncMock(return_value=secrets if secrets is not None else []),
+        recap_still_allowed=AsyncMock(return_value=allowed),
     )
     response = SimpleNamespace(
         is_done=lambda: False, defer=AsyncMock(), send_message=AsyncMock(), send_modal=AsyncMock()
@@ -407,6 +487,7 @@ class TheButtons(unittest.IsolatedAsyncioTestCase):
             get=AsyncMock(return_value=recap or a_draft()),
             decide=AsyncMock(return_value=True),
             edit=AsyncMock(return_value=True),
+            claim_try=AsyncMock(return_value=True),
         )
 
     async def test_only_a_dm_of_the_campaign_can_post(self) -> None:
@@ -435,6 +516,13 @@ class TheButtons(unittest.IsolatedAsyncioTestCase):
         await recap_ui.press(again, "post", "c" * 32, 100)
         again.channel_sent.send.assert_not_called()
 
+    async def test_try_again_with_no_try_left_calls_no_ai(self) -> None:
+        store = self.store()
+        store.claim_try = AsyncMock(return_value=False)
+        dm = fake_interaction(DM, store)
+        await recap_ui.press(dm, "again", "c" * 32, 100)
+        dm.client.write_recap_again.assert_not_called()
+
     async def test_dont_post_posts_nothing(self) -> None:
         store = self.store()
         dm = fake_interaction(DM, store)
@@ -447,6 +535,44 @@ class TheButtons(unittest.IsolatedAsyncioTestCase):
         dm = fake_interaction(DM, store, channel=None)
         await recap_ui.press(dm, "post", "c" * 32, 100)
         store.decide.assert_not_called()
+
+    async def test_a_secret_name_in_the_draft_stops_the_post_whoever_wrote_it(self) -> None:
+        store = self.store()
+        edited = replace(a_draft(), summary="《Tense》 The Hollow King rose.")
+        store.get = AsyncMock(return_value=edited)
+        dm = fake_interaction(DM, store, secrets=["Hollow King"])
+        await recap_ui.press(dm, "post", "c" * 32, 100)
+        dm.channel_sent.send.assert_not_called()
+        store.decide.assert_not_called()
+
+    async def test_secret_names_that_cannot_be_read_stop_the_post(self) -> None:
+        store = self.store()
+        dm = fake_interaction(DM, store)
+        dm.client.recap_secret_names = AsyncMock(return_value=None)
+        await recap_ui.press(dm, "post", "c" * 32, 100)
+        dm.channel_sent.send.assert_not_called()
+
+    async def test_someone_who_stopped_being_recorded_since_stops_the_post(self) -> None:
+        store = self.store()
+        dm = fake_interaction(DM, store, allowed=False)
+        await recap_ui.press(dm, "post", "c" * 32, 100)
+        dm.channel_sent.send.assert_not_called()
+        store.decide.assert_not_called()
+
+    async def test_another_servers_channel_is_never_posted_in(self) -> None:
+        store = self.store()
+        elsewhere = SimpleNamespace(send=AsyncMock(), guild=SimpleNamespace(id=999))
+        dm = fake_interaction(DM, store, channel=elsewhere)
+        await recap_ui.press(dm, "post", "c" * 32, 100)
+        elsewhere.send.assert_not_called()
+
+    async def test_an_edit_that_names_a_secret_is_refused(self) -> None:
+        store = self.store()
+        dm = fake_interaction(DM, store, secrets=["Hollow King"])
+        modal = recap_ui.EditRecap("c" * 32, 100, "x")
+        modal.text._value = "《Tense》 The Hollow King rose."  # type: ignore[attr-defined]
+        await modal.on_submit(dm)
+        store.edit.assert_not_called()
 
     async def test_a_post_that_cannot_be_sent_stays_a_draft(self) -> None:
         import discord
@@ -474,10 +600,10 @@ class TheButtons(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(ids(2)), 3)
         self.assertFalse(any(":again:" in i for i in ids(2)))
 
-    async def test_the_dms_copy_says_nobody_else_has_seen_it(self) -> None:
+    async def test_the_dms_copy_says_nothing_is_posted_until_post(self) -> None:
         text = recap_ui.for_the_dm(a_draft())
-        self.assertIn("Only you can see it", text)
-        self.assertIn("Nothing goes to the table until you press Post", text)
+        self.assertIn("Recap ready", text)
+        self.assertIn("Nothing goes to the table's chat until you press Post", text)
         self.assertLessEqual(len(text), recap_ui.MESSAGE_MAX)
 
     async def test_long_text_is_cut_into_messages_discord_accepts(self) -> None:

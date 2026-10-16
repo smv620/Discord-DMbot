@@ -3757,6 +3757,7 @@ SESSION_RECAPS = f"""
     --   music      one prompt for each emotion section (slice 2 turns them into audio)
     --   status     draft (the DM has not decided), posted, or dropped
     --   tries      how many times the DM asked for another (at most 2)
+    --   speakers   whose words were sent to write it: asked about again when the DM posts
     CREATE TABLE session_recaps (
         {_memory_scope()}
         session_at   BIGINT NOT NULL CHECK (session_at > 0),
@@ -3767,6 +3768,7 @@ SESSION_RECAPS = f"""
         game_day     INTEGER CHECK (game_day IS NULL OR game_day > 0),
         status       TEXT NOT NULL CHECK (status IN ('draft', 'posted', 'dropped')),
         tries        INTEGER NOT NULL DEFAULT 0 CHECK (tries BETWEEN 0 AND 2),
+        speakers     BIGINT[] NOT NULL DEFAULT '{{}}',
         created_at   BIGINT NOT NULL,
         decided_at   BIGINT,
         PRIMARY KEY (guild_id, campaign_id, session_at)
