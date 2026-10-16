@@ -212,7 +212,7 @@ from dmbot.sessions import SavedSession, SessionStore
 from dmbot.sidebar import knowledge
 from dmbot.sidebar.answer import PROMPT_VERSION as SIDEBAR_PROMPT_VERSION
 from dmbot.sidebar.answer import Sidebar
-from dmbot.sidebar.ask import AskLimiter
+from dmbot.sidebar.ask import AskLimiter, request_in
 from dmbot.sidebar.people import lines as people_lines
 from dmbot.sidebar.service import Recent, SidebarService
 from dmbot.test_recording import files as test_files
@@ -329,6 +329,9 @@ HINTS_WAIT_S = 1.5  # the longest a clip waits for the campaign's names to load
 # The off-topic filter (#52): one call may take this long, or the window is kept as game
 # talk; after this many failures in a row it rests this long.
 TOPIC_CALL_TIMEOUT_S = 8.0
+EARLY_CLOSE_GAP_S = (
+    10.0  # a spoken look-up closes the speaker-label window early at most this often (#1624)
+)
 TOPIC_FAILURES_BEFORE_REST = 3
 TOPIC_REST_S = 300.0
 SPEAKER_WAIT_S = 1.0  # the longest the names are waited for, before a label is saved
@@ -617,6 +620,11 @@ class Table:
     speaker_timers: set[asyncio.Task[None]] = field(default_factory=set)  # cancelled then
     speaker_failures: int = 0
     speaker_paused_until: float = 0.0  # monotonic seconds
+    # A DM's spoken look-up waits here for its line's speaker label (#1624): (speaker, started_ms)
+    # -> the label (the NPC's name, or "" for none). Set when the label is saved or the labelling
+    # call ends, so a line already flushed to the database still answers.
+    label_waits: dict[tuple[int, int], asyncio.Future[str]] = field(default_factory=dict)
+    early_close_at: float = -1e9  # monotonic seconds of the last early close of the window
     # The DM sidebar (#935): what was said lately (the scene for an answer), and the
     # safety limit on questions (6 a minute, 120 a session; #1040), spoken and typed.
     recent: Recent = field(default_factory=Recent.new)
@@ -3732,12 +3740,13 @@ class DMBot(commands.AutoShardedBot):
             table.vocabulary.note(utterance.user_id, text)
         if text:
             self._act_on_line(table, utterance.user_id, str(cleaned or text))
+        labelling = False  # is this line waiting for its speaker label? (#1624)
         if text and self.transcripts is not None:
             duration_ms = int(utterance.duration_s * 1000)
             table.unsaved.add(
                 Line(utterance.start_ms, utterance.user_id, text, cleaned or text, duration_ms)
             )
-            self._speaker_pending(table, utterance, str(cleaned or text))
+            labelling = self._speaker_pending(table, utterance, str(cleaned or text))
         saving = (
             table.test_session is not None
             and self.test_voice is not None
@@ -3762,9 +3771,16 @@ class DMBot(commands.AutoShardedBot):
                 self._feed_name_answers(
                     table, utterance.user_id, utterance.start_ms, str(cleaned or text)
                 )
-                # Only the DM's own lines can start it; consent was just re-checked. Lines
-                # the Cleaner tags as in character are not told apart yet (in_character).
-                self.sidebar.ask_at_table(table, utterance.user_id, str(cleaned or text))
+                # Only the DM's own lines can start it; consent was just re-checked. A line said
+                # as a named NPC never does (#1624): when it clearly asks DMbot something and
+                # its speaker label is on the way, the question waits for the label.
+                asked_line = str(cleaned or text)
+                if labelling and request_in(asked_line) is not None:
+                    self._ask_when_labelled(
+                        table, utterance.user_id, utterance.start_ms, asked_line
+                    )
+                else:
+                    self.sidebar.ask_at_table(table, utterance.user_id, asked_line)
         if text and self._topic_pending(table, utterance, cleaned or text, names_said):
             pass  # held for the off-topic filter: the names scan gets it once labelled
         elif text and len(table.heard) < HEARD_MAX:
@@ -4624,10 +4640,11 @@ class DMBot(commands.AutoShardedBot):
         if hide:
             await self._hide_lines(table, hide, lines)
 
-    def _speaker_pending(self, table: Table, utterance: Utterance, text: str) -> None:
+    def _speaker_pending(self, table: Table, utterance: Utterance, text: str) -> bool:
         """Who the DM was speaking as (#53): the DM's own lines, not other people's, wait
         for the AI a window at a time. No AI key, no names to choose from, a session
-        already finishing, or a resting helper: no label (never a guess in the file)."""
+        already finishing, or a resting helper: no label (never a guess in the file). True if the
+        line is now waiting to be labelled."""
         if (
             self.topic_ai is None
             or utterance.user_id not in table.dm_user_ids
@@ -4636,7 +4653,7 @@ class DMBot(commands.AutoShardedBot):
             or time.monotonic() < table.speaker_paused_until
             or not table.speaker_book.allowed(table.name_lookup)
         ):
-            return
+            return False
         first = not table.speakers.lines
         waiting = Waiting(utterance.user_id, utterance.start_ms, text, utterance.duration_s)
         if table.speakers.add(waiting, time.monotonic()):
@@ -4644,6 +4661,63 @@ class DMBot(commands.AutoShardedBot):
         elif first:
             later = self._label_speakers_later(table, table.speakers.opened_at)
             self._speaker_task(table, later, timer=True)
+        return True
+
+    def _ask_when_labelled(self, table: Table, user_id: int, started_ms: int, line: str) -> None:
+        """The DM's spoken look-up (#1624). The line's speaker label comes from an AI call over a
+        window of the DM's lines, so it is not known when the line is first handled. For a line
+        that clearly asks DMbot something (and not more than once in EARLY_CLOSE_GAP_S), the window
+        is closed at once and the question waits, bounded, for that call; the label is taken from
+        the call itself, so a line already saved to the database is still judged. No label in time
+        or not sure enough: asked as before. Called with the line already in its window and before
+        anything awaits, so no labelling that includes it can end unseen."""
+        now = time.monotonic()
+        if now - table.early_close_at < EARLY_CLOSE_GAP_S:  # not another AI call this soon
+            self.sidebar.ask_at_table(table, user_id, line)
+            return
+        table.early_close_at = now
+        key = (user_id, started_ms)
+        waiter: asyncio.Future[str] = asyncio.get_running_loop().create_future()
+        table.label_waits[key] = waiter
+        task = self._track(
+            self._ask_after_label(table, user_id, key, line, waiter), "sidebar-after-label"
+        )
+        if task is not None:  # the end of the session waits for it like any labelling window
+            table.speaker_tasks.add(task)
+            task.add_done_callback(table.speaker_tasks.discard)
+
+    async def _ask_after_label(
+        self,
+        table: Table,
+        user_id: int,
+        key: tuple[int, int],
+        line: str,
+        waiter: asyncio.Future[str],
+    ) -> None:
+        entity = ""
+        try:
+            async with asyncio.timeout(TOPIC_CALL_TIMEOUT_S * 2 + 2):
+                lines = table.speakers.take()  # (maybe this line, maybe it is already on its way)
+                if lines and not self._closing:
+                    await self._label_speakers(table, lines)
+                entity = await waiter
+        except Exception:
+            log.info("Sidebar: couldn't wait for the speaker label; asking without it")
+        finally:
+            table.label_waits.pop(key, None)
+        # The session may have moved on, or the DM stopped being recorded, while it waited.
+        if self.tables.get(table.guild_id) is not table or not self.consent.has_consent(
+            table.guild_id, user_id
+        ):
+            return
+        self.sidebar.ask_at_table(table, user_id, line, entity=entity)
+
+    @staticmethod
+    def _label_known(table: Table, speaker: int, started_ms: int, entity: str) -> None:
+        """A line's label is known (or known to be none): a look-up waiting for it goes on."""
+        waiter = table.label_waits.get((speaker, started_ms))
+        if waiter is not None and not waiter.done():
+            waiter.set_result(entity)
 
     def _speaker_task(self, table: Table, work: Awaitable[None], *, timer: bool = False) -> None:
         task = self._track(work, "speakers")
@@ -4689,6 +4763,15 @@ class DMBot(commands.AutoShardedBot):
             return None
 
     async def _label_speakers(self, table: Table, lines: list[Waiting]) -> None:
+        """`_label_speakers_now`, and whatever happens, every line in the window is known to have
+        its answer by the end (a look-up waiting for a label goes on with "none", #1624)."""
+        try:
+            await self._label_speakers_now(table, lines)
+        finally:
+            for waiting in lines:
+                self._label_known(table, waiting.speaker, waiting.started_ms, "")
+
+    async def _label_speakers_now(self, table: Table, lines: list[Waiting]) -> None:
         """Ask the AI about a window of the DM's lines (one call, bounded) and save the
         labels it is sure of. A "maybe", a slow or failed call, or a name that is no longer
         allowed when the answer comes back: no label. Consent is checked again after every
@@ -4861,6 +4944,7 @@ class DMBot(commands.AutoShardedBot):
     async def _save_entity(self, table: Table, waiting: Waiting, entity: str) -> None:
         """Save who a line was said as, waiting or saved. Only while its speaker is recorded."""
         guild_id, speaker, started = table.guild_id, waiting.speaker, waiting.started_ms
+        self._label_known(table, speaker, started, entity)  # (a look-up waiting for it, #1624)
         async with table.save_lock:
             if self.consent.has_consent(guild_id, speaker):
                 found = table.unsaved.set_entity(speaker, started, entity)
