@@ -4363,7 +4363,7 @@ MIGRATIONS: tuple[Migration, ...] = (
     ("0081_recap_audio_follow_ups", RECAP_AUDIO_FOLLOW_UPS),  # move + stray sweep (#1399)
     ("0082_recap_audio_jobs", RECAP_AUDIO_JOBS),  # the recap's audio tracks (#1383)
     ("0083_memory_said_as", MEMORY_SAID_AS),  # a spelling for the narrator (#1419)
-    ("0084_recap_audio_again", RECAP_AUDIO_AGAIN),  # the website's door to new audio (#1418)
+    ("0085_recap_audio_again", RECAP_AUDIO_AGAIN),  # the website's door to new audio (#1418)
 )
 
 # Tables that must have row-level security. A test checks every table in the schema
