@@ -271,6 +271,15 @@ PEOPLE_CACHE_MAX = 512  # campaigns whose who-is-who is kept
 YIELD_AFTER_S = 0.015  # the flag check gives the event loop a turn this often
 
 
+@dataclasses.dataclass(frozen=True, slots=True)
+class PersonAdded:
+    """What a player or DM row of a names list did (#1559)."""
+
+    names_added: int
+    linked: tuple[str, ...]  # characters now theirs
+    flagged: tuple[str, ...]  # characters named but not linked: played by someone else, or unknown
+
+
 class MemoryStore:
     """Reads and writes one campaign's memory at a time. See the module docstring."""
 
@@ -1737,6 +1746,59 @@ class MemoryStore:
             del self._people[next(iter(self._people))]
         self._people[key] = (version, [(u, list(c), list(a)) for u, c, a in result])
 
+    async def add_person_names(
+        self,
+        guild_id: int,
+        campaign_id: str,
+        user_id: int,
+        names: Sequence[str],
+        plays: Sequence[str] = (),
+    ) -> Written[PersonAdded]:
+        """A campaign DM's list says what the table calls a person and which characters they
+        play (#1559). The person is made if there is none. Each name is added as one the DM
+        confirmed, never replacing, never twice, and never the `Player 1234` placeholder. A
+        character that exists and has no player (or is already theirs) is linked as theirs;
+        any other (played by someone else, or not known) is left alone and the person is marked
+        "needs a look", as the learner does. One change, so one Undo takes it all back."""
+        async with self._write(guild_id, campaign_id, DM) as w:
+            person = await _ensure_person(w, user_id)
+            have = {str(r["key"]) for r in await w.select(ALIASES, " AND entity_id = %s", [person])}
+            have.add(lookup_key(_placeholder_name(user_id)))
+            added = 0
+            for text in names:
+                key = lookup_key(text)
+                if key in have:
+                    continue
+                have.add(key)
+                await w.insert(
+                    ALIASES, _new_alias(w, person, text, "nickname", CONFIRMED, False, None)
+                )
+                added += 1
+            characters = {
+                lookup_key(str(r["name"])): r
+                for r in await w.select(
+                    ENTITIES, " AND type = 'character' AND status IN ('proposed', 'confirmed')", []
+                )
+            }
+            linked: list[str] = []
+            flagged: list[str] = []
+            for text in plays:
+                row = characters.get(lookup_key(text))
+                if row is not None and row["played_by"] in (None, user_id):
+                    if row["played_by"] is None or row["role"] != PLAYER_CHARACTER:
+                        await w.update(
+                            ENTITIES,
+                            row["id"],
+                            {"role": PLAYER_CHARACTER, "played_by": user_id, "needs_look": False},
+                        )
+                    await _sync_plays(w, str(row["id"]))
+                    linked.append(str(row["name"]))
+                else:
+                    flagged.append(text)
+            if flagged:
+                await w.update(ENTITIES, person, {"needs_look": True})
+            return Written(PersonAdded(added, tuple(linked), tuple(flagged)), w.batch)
+
     async def accept_person_name(
         self, guild_id: int, campaign_id: str, alias_id: str, *, user_id: int | None = None
     ) -> Written[None]:
@@ -2590,6 +2652,9 @@ async def _ensure_person(w: Changes, user_id: int) -> str:
 
 def _placeholder_name(user_id: int) -> str:
     return f"Player {str(user_id)[-4:]}"
+
+
+placeholder_name = _placeholder_name  # for a names download (#1559)
 
 
 async def _unused_placeholder(w: Changes, person_id: str, user_id: int) -> bool:
