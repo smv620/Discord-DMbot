@@ -40,6 +40,10 @@ LIST_LIMIT = 100
 # reply from the person goes back to it); "escalated" is waiting for a person, and the helper
 # leaves it alone (#1431).
 Status = Literal["new", "answered", "closed", "escalated"]
+# Why a ticket was handed to a person (#1459): the sentiment check, the person asking for one, the
+# helper's five answers used, no address to write to, the helper down for a day.
+Reason = Literal["unhappy", "asked", "limit", "no-email", "helper-down"]
+REASONS: tuple[Reason, ...] = ("unhappy", "asked", "limit", "no-email", "helper-down")
 STATUSES: tuple[Status, ...] = ("new", "answered", "closed", "escalated")
 
 
@@ -126,6 +130,9 @@ class Row:
     message: str
     source: str
     status: Status
+    # Why it went to a person (#1459): one of REASONS, null when it hasn't (or has since been
+    # answered).
+    reason: str | None
     # The account's address (the one the team replies to), read through the admin door and never
     # stored in the ticket; None when the account has none. Never logged.
     email: str | None
@@ -143,7 +150,7 @@ async def newest(
             # One call per row (at most LIST_LIMIT): fine for an admin page read now and then.
             "SELECT id, created_at, user_id, plan, subject,"
             " COALESCE(dmbot_support_message(id), '') AS message, source, status,"
-            " dmbot_support_email(user_id) AS email"
+            " escalated_reason AS reason, dmbot_support_email(user_id) AS email"
             f" FROM support_tickets{where} ORDER BY created_at DESC, id DESC LIMIT %s",
             args,
         )
@@ -234,8 +241,11 @@ async def mine(db: Database, user_id: int) -> list[Mine]:
 async def set_status(db: Database, ticket_id: int, status: Status) -> bool:
     """Mark a ticket answered or closed. False: there is no such ticket (or it was deleted)."""
     async with db.support_admin() as conn:
+        # The reason is for an escalated ticket only: any other status clears it.
         cur = await conn.execute(
-            "UPDATE support_tickets SET status = %s WHERE id = %s", (status, ticket_id)
+            "UPDATE support_tickets SET status = %s, escalated_reason ="
+            " CASE WHEN %s = 'escalated' THEN escalated_reason END WHERE id = %s",
+            (status, status, ticket_id),
         )
         return cur.rowcount == 1
 
@@ -378,9 +388,10 @@ async def add_reply(
         inserted = await cur.fetchone()
         assert inserted is not None
         await conn.execute(
-            "UPDATE support_tickets SET status = %s, ai_next_at = 0, ai_failed_at = NULL"
+            "UPDATE support_tickets SET status = %s, ai_next_at = 0, ai_failed_at = NULL,"
+            " escalated_reason = CASE WHEN %s = 'escalated' THEN escalated_reason END"
             " WHERE id = %s",
-            (after, ticket_id),
+            (after, after, ticket_id),
         )
         return Added(int(inserted["id"]), before, after)
 
@@ -407,12 +418,13 @@ async def defer(db: Database, ticket_id: int, *, now: int, wait: int) -> int:
     return now if row is None else int(row["ai_failed_at"])
 
 
-async def escalate(db: Database, ticket_id: int) -> bool:
-    """Hand a ticket to a person. True only the first time (so the team is told once)."""
+async def escalate(db: Database, ticket_id: int, reason: Reason) -> bool:
+    """Hand a ticket to a person, saying why. True only the first time (so the team is told
+    once)."""
     async with db.support_admin() as conn:
         cur = await conn.execute(
-            "UPDATE support_tickets SET status = 'escalated' WHERE id = %s"
-            " AND status <> 'escalated'",
-            (ticket_id,),
+            "UPDATE support_tickets SET status = 'escalated', escalated_reason = %s"
+            " WHERE id = %s AND status <> 'escalated'",
+            (reason, ticket_id),
         )
         return cur.rowcount == 1

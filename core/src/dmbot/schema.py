@@ -2391,10 +2391,11 @@ WEB_ROLE_GRANTS: tuple[tuple[str, tuple[str, ...]], ...] = (
     # door), and closes with the status UPDATE; the sweep and account deletion delete.
     ("INSERT, DELETE", ("support_tickets",)),
     (
-        "SELECT (id, created_at, user_id, plan, subject, source, status, ai_next_at, ai_failed_at)",
+        "SELECT (id, created_at, user_id, plan, subject, source, status, ai_next_at, ai_failed_at,"
+        " escalated_reason)",
         ("support_tickets",),
     ),
-    ("UPDATE (status, ai_next_at, ai_failed_at)", ("support_tickets",)),
+    ("UPDATE (status, ai_next_at, ai_failed_at, escalated_reason)", ("support_tickets",)),
     # The thread (#1431): replies are added and listed (not their words) only while the admin
     # door is open; the words come back through dmbot_support_thread.
     ("INSERT", ("support_replies",)),
@@ -4512,6 +4513,16 @@ SUPPORT_MINE_ANSWER = """
     REVOKE ALL ON FUNCTION dmbot_support_latest_answer(BIGINT) FROM PUBLIC;
     """
 
+SUPPORT_REASON = """
+    -- Why a ticket was handed to a person (#1459): one short code set where the helper escalates
+    -- it, shown on the admin page. Null for a ticket that was never escalated or has been
+    -- answered since. No backfill: tickets escalated before this have no recorded reason, which
+    -- null already says, so no row changes and no row-level security needs opening.
+    ALTER TABLE support_tickets ADD COLUMN escalated_reason TEXT
+        CHECK (escalated_reason IS NULL OR escalated_reason IN
+               ('unhappy', 'asked', 'limit', 'no-email', 'helper-down'));
+    """
+
 MIGRATIONS: tuple[Migration, ...] = (
     ("0001_initial", INITIAL),
     ("0002_active_sessions", ACTIVE_SESSIONS),
@@ -4604,6 +4615,7 @@ MIGRATIONS: tuple[Migration, ...] = (
     ("0086_support_thread", SUPPORT_THREAD),  # the support flow's replies (#1431)
     ("0087_web_names", WEB_NAMES),  # the website's doors to the names and their spelling (#1451)
     ("0088_support_mine_answer", SUPPORT_MINE_ANSWER),  # a person's own latest answer (#1432)
+    ("0090_support_reason", SUPPORT_REASON),  # why a ticket went to a person (#1459)
 )
 
 # Tables that must have row-level security. A test checks every table in the schema

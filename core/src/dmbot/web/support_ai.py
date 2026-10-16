@@ -73,6 +73,18 @@ Reply with JSON only, no other words:
 frustrated or angry, or asks for a person; "satisfied" if it says thanks or that it worked; \
 otherwise "unclear". Do not write a closing line; one is added for you."""
 
+# What the team's email says for each code (the admin page has its own words for the same codes).
+WHY: dict[support.Reason, str] = {
+    "unhappy": "they said the help didn't help.",
+    "asked": "they asked for a person.",
+    "limit": f"the helper has already answered {MAX_AI_ANSWERS} times.",
+    "no-email": (
+        "there is no email address on this account, so we can't write to them. "
+        "Contact them another way."
+    ),
+    "helper-down": "the AI was down for a day and could not answer.",
+}
+
 ACK_SUBJECT = "We got your question"
 ESCALATED_BODY = (
     "A person on the DMbot team will read this and write back to you. You don't need to do "
@@ -310,21 +322,15 @@ class SupportHelper:
         answers = [r for r in replies if r.who == "ai"]
         latest = customer[-1].text if customer else ticket.message
         if ticket.email is None:
-            await self._escalate(
-                ticket,
-                replies,
-                "there is no email address on this account, so we can't write to them. "
-                "Contact them another way.",
-                tell_person=False,
-            )
+            await self._escalate(ticket, replies, "no-email", tell_person=False)
             return "escalated"
-        why = None
+        why: support.Reason | None = None
         if len(answers) >= MAX_AI_ANSWERS:
-            why = f"the helper has already answered {MAX_AI_ANSWERS} times."
+            why = "limit"
         elif asks_for_a_person(latest):
-            why = "they asked for a person."
+            why = "asked"
         elif ticket.ai_failed_at is not None and now - ticket.ai_failed_at >= GIVE_UP_S:
-            why = "the AI was down for a day and could not answer."
+            why = "helper-down"
         if why is not None:
             await self._escalate(ticket, replies, why)
             return "escalated"
@@ -341,7 +347,7 @@ class SupportHelper:
             await support.defer(self._db, ticket.id, now=now, wait=RETRY_S)
             return "waiting"
         if customer and verdict.unhappy:
-            await self._escalate(ticket, replies, "they said the help didn't help.")
+            await self._escalate(ticket, replies, "unhappy")
             return "escalated"
         text = with_ending(verdict.answer)
         # Only if nothing came in while the AI was thinking (a newer reply is answered next time).
@@ -354,12 +360,17 @@ class SupportHelper:
         return "answered"
 
     async def _escalate(
-        self, ticket: Open, replies: list[ThreadReply], why: str, *, tell_person: bool = True
+        self,
+        ticket: Open,
+        replies: list[ThreadReply],
+        reason: support.Reason,
+        *,
+        tell_person: bool = True,
     ) -> None:
-        if not await support.escalate(self._db, ticket.id):
+        if not await support.escalate(self._db, ticket.id, reason):
             return
         lines = [
-            f"Why: {why}",
+            f"Why: {WHY[reason]}",
             f"Reply on the admin page: {self._site}/admin",
             "",
             f"Ticket {ticket.id}: {ticket.subject}",
