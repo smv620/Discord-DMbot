@@ -4798,7 +4798,7 @@ MIGRATIONS: tuple[Migration, ...] = (
     ("0092_support_handed_over", SUPPORT_HANDED_OVER),  # every hand-over, kept (#1487)
     ("0093_transcript_suggestions", TRANSCRIPT_SUGGESTIONS),  # a player's suggested fix (#1491)
     ("0097_homebrew_entries", HOMEBREW_ENTRIES),  # a campaign's own homebrew (#1520)
-    ("0098_homebrew_from_book", HOMEBREW_FROM_BOOK),  # homebrew from a confirmed book (#1524)
+    ("0099_homebrew_from_book", HOMEBREW_FROM_BOOK),  # homebrew from a confirmed book (#1524)
 )
 
 # Tables that must have row-level security. A test checks every table in the schema

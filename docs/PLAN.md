@@ -645,7 +645,7 @@ or servers; only the campaign's DMs change anything (the store checks in the sam
     could not be used), then asks **"Is any of this from a published book?"**: **No** loads it as the DM's
     own; **Yes** shows the right-to-use warning ("DMbot doesn't check this. It is kept only in this
     campaign, never shared…") and **only after "I have the right: load it"** records who confirmed and when
-    (`shared_confirmations`, purpose `rulebook`) and loads it with `from_book` set (migration 0098): that
+    (`shared_confirmations`, purpose `rulebook`) and loads it with `from_book` set (migration 0099): that
     text can never go into a shared pack. An entry whose name the campaign has (any case) is updated
     (version + 1); a file that would take the campaign over 200 entries loads nothing and says the count.
 - **Still to come:** sharing as a pack (part 2).
