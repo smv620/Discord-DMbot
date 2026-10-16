@@ -23,16 +23,16 @@ export const recapSteps: { text: string }[] = [
     text: "After a session, DMbot can write a short story-style recap of what happened, to read at the start of next time. Recaps are for paid plans.",
   },
   {
-    text: "It uses only what was said at the table by people who said yes to being recorded. It never makes things up, and it never uses your secrets or your notes.",
+    text: "It is written only from what was said by people who said yes to being recorded, and DMbot checks that every detail came from that. It leaves out any name you marked secret. Anything said out loud at the table can still be in it, so read it before you post.",
   },
   {
-    text: "DMbot emails you when a recap is ready. The email has the title and a link to your account page, never the recap itself.",
+    text: "DMbot emails you when a recap is ready, or when it couldn't write one and why. The email has the title (or the reason) and a link to your account page, never the recap itself. The link is also on your DM screen.",
   },
   {
-    text: "You read it first. You can change the words, press Try again (up to twice), or press Don't post. Nothing goes to your players until you press Post to the table.",
+    text: "You read it first. You can change the words. Try again writes a new one and throws away your changes; you can do that up to twice. Or press Don't post. Nothing goes to your players until you press Post to the table.",
   },
   {
-    text: "Post to the table puts the recap in your table's chat channel, dmb-chat. If a player has stopped being recorded since it was written, DMbot won't post it.",
+    text: "Post to the table puts the recap in your table's chat channel, dmb-chat. It can also list hit points, items and conditions. DMbot checks again first: if a player has stopped being recorded since it was written, or it names something you keep secret, it won't post and tells you on the page. It can take a minute.",
   },
   ...(RECAP_AUDIO_LIVE
     ? [
@@ -45,9 +45,9 @@ export const recapSteps: { text: string }[] = [
 
 /** One more line in "Emails from DMbot". */
 export const recapEmailStep =
-  "Recap emails: when a recap is ready, or could not be written, DMbot emails you the title (or the reason) and a link. They come only to game masters, once for each recap, and have no link to stop them.";
+  "Recap emails: DMbot emails you when a recap is ready, or when it couldn't write one. Each has the title (or the reason) and a link. Only the game master gets them, once for each recap. They have no link to stop them.";
 
 /** Said in place of "The only others are two Try It emails, each sent once." */
 export const emailsIntroTail = RECAPS_LIVE
-  ? "The only others are two Try It emails, each sent once, and an email to a game master when a recap is ready."
+  ? "The only others are two Try It emails, each sent once, and an email to a game master when a recap is ready or could not be written."
   : "The only others are two Try It emails, each sent once.";

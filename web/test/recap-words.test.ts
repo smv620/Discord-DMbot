@@ -58,10 +58,11 @@ describe("the privacy section", () => {
     expect(t).toContain("The AI company named above (Anthropic)");
     expect(t).toContain(aiTrainingSentence);
     expect(t).toContain("never the ones marked secret");
-    expect(t).toContain("Only the game master, until they press Post");
-    expect(t).toContain("the email has the title and a link, never the recap");
-    expect(t).toContain("DMbot won't post it if a player has stopped being recorded");
-    expect(t).toContain("kept with the campaign and goes when the campaign is deleted");
+    expect(t).toContain("Only the game masters of that campaign, until one of them presses Post");
+    expect(t).toContain("the email has the title (or the reason) and a link, never the recap");
+    expect(t).toContain("DMbot won't post a recap if a player has stopped being recorded");
+    expect(t).toContain("are kept with the campaign and deleted when the campaign is deleted");
+    expect(t).toContain("with no words in it, until you delete your account");
   });
 
   it("names ElevenLabs only when audio is live", () => {
@@ -88,10 +89,12 @@ describe("Help and the emails list", () => {
     const all = recapSteps.map((s) => s.text).join(" ");
     expect(all).toContain("Recaps are for paid plans");
     expect(all).toContain("people who said yes to being recorded");
-    expect(all).toContain("never uses your secrets or your notes");
+    expect(all).toContain("Anything said out loud at the table can still be in it");
+    expect(all).toContain("Try again writes a new one and throws away your changes");
     expect(all).toContain("never the recap itself");
     expect(all).toContain("Nothing goes to your players until you press Post to the table");
-    expect(all).toContain("If a player has stopped being recorded since it was written, DMbot won't post it");
+    expect(all).toContain("if a player has stopped being recorded since it was written");
+    expect(all).toContain("or it names something you keep secret");
     expect(all).not.toMatch(/narrat|music/i); // not built yet (#1383)
     expect(recapEmailStep).toContain("once for each recap");
   });

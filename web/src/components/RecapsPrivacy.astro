@@ -23,18 +23,24 @@ const { live, audio } = Astro.props;
         </li>
         <li>
           <strong>Who writes it.</strong> The AI company named above (Anthropic). It gets the text of
-          what people who said yes said in that session, the names the game master confirmed (never
-          the ones marked secret), and the game's last recap. {aiTrainingSentence}
+          what people who said yes said in that session (marked only "DM" or "Player"), the names
+          the game master confirmed (never the ones marked secret), the game's last posted recap and
+          the day in the story. It does not get sound. {aiTrainingSentence}
         </li>
         <li>
-          <strong>Who sees it.</strong> Only the game master, until they press Post. Posting puts it
-          in the table's chat channel, where the people in that channel can read it. DMbot
-          emails the game master when it is ready: the email has the title and a link, never the
-          recap. DMbot won't post it if a player has stopped being recorded since it was written.
+          <strong>Who sees it.</strong> Only the game masters of that campaign, until one of them
+          presses Post. Posting puts it in the table's chat channel (dmb-chat), where everyone who
+          can see that channel can read it. DMbot emails a game master when it is ready or could
+          not be written: the email has the title (or the reason) and a link, never the recap, and
+          has no link to stop it. DMbot won't post a recap if a player has stopped being recorded
+          since it was written.
         </li>
         <li>
-          <strong>How long it is kept.</strong> A recap is kept with the campaign and goes when the
-          campaign is deleted. The note of the email we sent is kept until you delete your account.
+          <strong>How long it is kept.</strong> A recap, and the list of what happened that it was
+          made from, are kept with the campaign and deleted when the campaign is deleted. Trying
+          again replaces the old text, and Don't post keeps the draft saved. We keep a short note
+          that the email was sent, with no words in it, until you delete your account. The email
+          itself holds the recap's title and goes through Google, like our other email.
         </li>
         {audio && (
           <li>
