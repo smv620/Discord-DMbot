@@ -164,6 +164,13 @@ async def _is_dm(interaction: discord.Interaction, campaign: Campaign) -> bool:
     return current is not None and interaction.user.id in current.dm_user_ids
 
 
+def _changed(interaction: discord.Interaction, campaign: Campaign) -> None:
+    """Tell the running bot homebrew changed, so a session's rules cards read the new names."""
+    notify = getattr(_bot(interaction), "homebrew_changed", None)
+    if notify is not None:
+        notify(campaign.guild_id, campaign.id)
+
+
 def _removed(interaction: discord.Interaction, campaign: Campaign) -> list[Homebrew]:
     return _bot(interaction).homebrew_removed.get((campaign.guild_id, campaign.id), [])
 
@@ -325,6 +332,7 @@ class ListMenu(_Menu):
             await _redraw(interaction, c, note=str(exc), page=self.page)
             return
         kept.remove(gone)
+        _changed(interaction, c)
         await _redraw(interaction, c, note=f"↩️ Put back **{_md(gone.name)}**.", page=self.page)
 
 
@@ -415,6 +423,7 @@ class EntryMenu(_Menu):
         except HomebrewError as exc:
             await _redraw(interaction, c, note=str(exc), page=self.page)
             return
+        _changed(interaction, c)
         await _show(
             interaction, entry_text(saved, "✅ Saved."), EntryMenu(self.campaign, saved, self.page)
         )
@@ -466,6 +475,7 @@ class ConfirmRemove(_Menu):
         kept = _bot(interaction).homebrew_removed.setdefault((c.guild_id, c.id), [])
         kept.append(gone)
         del kept[:-UNDO_KEPT]
+        _changed(interaction, c)
         await _redraw(
             interaction, c, note=f"🗑 Removed **{_md(gone.name)}**. {CHANGED_MIND}", page=self.page
         )
@@ -525,6 +535,7 @@ class _EntryForm(discord.ui.Modal):
             await _tell(interaction, f"Not saved. {exc}{typed}")
             await _redraw(interaction, self.campaign, page=self.page)
             return
+        _changed(interaction, self.campaign)
         await _redraw(interaction, self.campaign, note=note, page=self.page)
 
     async def save(self, store: HomebrewStore, user_id: int) -> str:
@@ -730,6 +741,7 @@ class FromBookAsk(_Menu):
             await _redraw(interaction, c, note=str(exc), page=self.page)
             return
         self.stop()
+        _changed(interaction, c)
         words = f"📥 Loaded: {done.added} new, {done.updated} changed, {done.same} the same."
         await _redraw(interaction, c, note=words, page=self.page)
 

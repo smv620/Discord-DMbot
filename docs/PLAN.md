@@ -630,8 +630,25 @@ or servers; only the campaign's DMs change anything (the store checks in the sam
     (and the DM's own table question is answered to them privately), the DM's sidebar gets "That's in your
     homebrew. Use /dmbot rule <name>."
   - The entry form says so: "Hidden entries are for you only; DMbot's sidebar and table answers don't use them."
-- **Not in part 1 (1b):** the live rules cards from the transcript, the file import (`## Name (kind)` blocks,
-  through the right-to-use confirmation only if the DM says it is from a book), and sharing as a pack (part 2).
+- **Part 1b (#1524):**
+  - **Live rules cards** (`rules/homebrew_spotter.py`): when the table names one of the campaign's homebrew
+    entries (whole name, longest first, a plural counts; an everyday word like Light only with its lead-in,
+    and a homebrew creature with an everyday name never), a short card goes on the DM screen only, **hidden
+    or not**, tagged `[Homebrew]` with the source "<campaign>'s homebrew: <name>", after any house rule that
+    names it and before the book; a homebrew name shadows the book's card; once per entry per session and
+    within the cards' one-a-minute limit; the buttons are the book cards' (**Read it all** shows the entry).
+    The names are read when a session starts and again after any change.
+  - **A file** (`rules/homebrew_file.py`): ⚙️ Settings → 📚 Homebrew has 📤 **Download file** and 📥 **Load
+    file** (DM only). One entry per block, `## Name (kind)`, optional `Summary:` and `Players may know: yes`
+    lines, a blank line, then the words; read and written both ways without loss; a block that is not an
+    entry is reported, never guessed. Loading shows what it would do (new, changed, the same, and what
+    could not be used), then asks **"Is any of this from a published book?"**: **No** loads it as the DM's
+    own; **Yes** shows the right-to-use warning ("DMbot doesn't check this. It is kept only in this
+    campaign, never shared…") and **only after "I have the right: load it"** records who confirmed and when
+    (`shared_confirmations`, purpose `rulebook`) and loads it with `from_book` set (migration 0098): that
+    text can never go into a shared pack. An entry whose name the campaign has (any case) is updated
+    (version + 1); a file that would take the campaign over 200 entries loads nothing and says the count.
+- **Still to come:** sharing as a pack (part 2).
 
 **Shared rulesets: homebrew packs and house-rules sets (owner, 2026-10-14).** Rules can be shared between
 campaigns, in the same server or another one, when both sides choose to. Only rules cross; a campaign's story

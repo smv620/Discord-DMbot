@@ -189,6 +189,7 @@ from dmbot.rules import house_voice
 from dmbot.rules import index as rules_index
 from dmbot.rules.followed import followed_rules, own_first
 from dmbot.rules.homebrew import Homebrew, HomebrewSection, HomebrewStore
+from dmbot.rules.homebrew_spotter import HomebrewMention, HomebrewSpotter
 from dmbot.rules.house import HouseRule, HouseRulesSection, HouseRuleStore
 from dmbot.rules.house_file_link import HouseFileLinkStore
 from dmbot.rules.rule_sets import FollowedSetsSection, RuleSetStore
@@ -471,6 +472,8 @@ class Table:
     # for names in, and what was shown, ignored and when (so, at most, one a minute).
     rules_on: bool = False
     rules_rulesets: tuple[str, str] = ("2024", "2014")
+    # The campaign's own homebrew names, for the rules cards (#1524); None until read.
+    homebrew_spotter: HomebrewSpotter | None = None
     rules: rules_cards.RulesCards = field(default_factory=rules_cards.RulesCards)
     # A house rule the DM said at the table, offered with Save / Edit / Cancel (#953).
     house_voice: house_voice.HouseVoice = field(default_factory=house_voice.HouseVoice)
@@ -2629,7 +2632,7 @@ class DMBot(commands.AutoShardedBot):
             started_at=started_at,
         )
         if table.rules_on:
-            self._warm_rules(table.rules_rulesets)
+            self._warm_rules(table.rules_rulesets, table)
         # Save before joining, so a restart can always pick the session up again.
         try:
             await self.sessions.save(
@@ -2993,7 +2996,7 @@ class DMBot(commands.AutoShardedBot):
             started_at=saved.started_at,
         )
         if table.rules_on:
-            self._warm_rules(table.rules_rulesets)
+            self._warm_rules(table.rules_rulesets, table)
         if campaign.transcript_channel_id is not None and table.transcript_channel_id is None:
             await self.post(
                 screen_id, screen_messages.transcript_stopped(campaign.transcript_channel_id)
@@ -3708,7 +3711,9 @@ class DMBot(commands.AutoShardedBot):
             or self.tables.get(table.guild_id) is not table
         ):
             return
-        mentions = rules_cards.spotter_for(*table.rules_rulesets).find(line)
+        mentions: list[Mention | HomebrewMention] = list(
+            rules_cards.spotter_for(*table.rules_rulesets).find(line)
+        )
         if mentions and table.name_lookup is not None:
             # A character, NPC or place of this campaign called Sprite or Raven is a name
             # the table uses, not a rules question.
@@ -3716,8 +3721,20 @@ class DMBot(commands.AutoShardedBot):
             mentions = [
                 m
                 for m in mentions
-                if name_key(m.said) not in known and name_key(m.entry.name) not in known
+                if name_key(m.said) not in known and name_key(m.name) not in known
             ]
+        own = table.homebrew_spotter.find(line) if table.homebrew_spotter is not None else []
+        if own and table.homebrew_spotter is not None:
+            # The campaign's own homebrew comes before the book, and a homebrew name shadows the
+            # book's (hidden or not: the card is for the DM screen only).
+            shadowed = table.homebrew_spotter.names
+            mentions = [
+                m
+                for m in mentions
+                if rules_index.normalize(m.said) not in shadowed
+                and rules_index.normalize(m.name) not in shadowed
+            ]
+            mentions = [*own, *mentions]
         mention = table.rules.pick(mentions, time.monotonic()) if mentions else None
         if mention is None:
             return
@@ -4077,16 +4094,46 @@ class DMBot(commands.AutoShardedBot):
         if posted is None:
             table.house_voice.forget(proposal_id, before, now)
 
-    def _warm_rules(self, rulesets: tuple[str, str]) -> None:
+    def _warm_rules(self, rulesets: tuple[str, str], table: Table | None = None) -> None:
         """Build the names to look for off the event loop (about 0.15 s), so the first line
-        of a session with rules cards on doesn't wait for it."""
+        of a session with rules cards on doesn't wait for it. With the table, read the
+        campaign's own homebrew names too (#1524)."""
         self._track(asyncio.to_thread(rules_cards.spotter_for, *rulesets), "rules-cards-warm")
+        if table is not None:
+            self._track(self._load_homebrew_spotter(table), "homebrew-spotter")
+
+    async def _load_homebrew_spotter(self, table: Table) -> None:
+        """Read this campaign's homebrew names for its rules cards (#1524). Only this
+        campaign's own; a failure costs the homebrew cards, never the session."""
+        if self.homebrew is None or table.campaign_id is None:
+            return
+        try:
+            entries = await self.homebrew.list(table.guild_id, table.campaign_id)
+        except Exception:
+            log.exception("Couldn't read the homebrew names for the rules cards")
+            return
+        table.homebrew_spotter = HomebrewSpotter.from_entries(entries) if entries else None
+
+    def homebrew_changed(self, guild_id: int, campaign_id: str) -> None:
+        """A DM added, changed, removed or loaded homebrew (#1524): a session running for that
+        campaign reads the new names from now on."""
+        for table in [self.tables.get(guild_id), *self._ending.get(guild_id, [])]:
+            if table is not None and table.campaign_id == campaign_id and table.rules_on:
+                self._track(self._load_homebrew_spotter(table), "homebrew-spotter")
 
     async def _post_rules_card(
-        self, table: Table, user_id: int, mention: Mention, card_id: str, before: float | None
+        self,
+        table: Table,
+        user_id: int,
+        mention: Mention | HomebrewMention,
+        card_id: str,
+        before: float | None,
     ) -> None:
         """Post the card in the DM screen only (never the transcript, never to players).
         A card that can't be shown gives its name and its minute back."""
+        if isinstance(mention, HomebrewMention):
+            await self._post_homebrew_card(table, user_id, mention, card_id, before)
+            return
         target, fallback = table.rules_rulesets
         srd = rules_index.srd()
         entry = mention.entry
@@ -4126,6 +4173,46 @@ class DMBot(commands.AutoShardedBot):
         if posted is None:
             table.rules.forget(card_id, before)
 
+    async def _post_homebrew_card(
+        self,
+        table: Table,
+        user_id: int,
+        mention: HomebrewMention,
+        card_id: str,
+        before: float | None,
+    ) -> None:
+        """The card for one of the campaign's own homebrew entries (#1524), on the DM screen only:
+        the entry is read again (it may have been removed or changed since the spotter was built),
+        and the speaker must still be recorded and the session still running."""
+        if self.homebrew is None or table.campaign_id is None:
+            table.rules.forget(card_id, before)
+            return
+        rules: list[HouseRule] = []
+        try:
+            async with asyncio.timeout(RULES_CARD_DB_S):
+                own = await self.homebrew.find(table.guild_id, table.campaign_id, mention.name)
+                rules = await self.all_house_rules(table.guild_id, table.campaign_id)
+        except Exception:
+            log.exception("Couldn't read the homebrew for a rules card")
+            own = None
+        if (
+            own is None
+            or not self.consent.has_consent(table.guild_id, user_id)
+            or not table.rules_on
+            or not table.listening
+            or self.tables.get(table.guild_id) is not table
+        ):
+            table.rules.forget(card_id, before)
+            return
+        text = rule_card.homebrew_alert_text(
+            own, table.campaign_name, mention.said, mention.heard, rules
+        )
+        posted = await self.post_message(
+            table.screen_channel_id, text, rules_cards.card_view(table.guild_id, card_id)
+        )
+        if posted is None:
+            table.rules.forget(card_id, before)
+
     async def set_rules_cards(self, guild_id: int, campaign_id: str, on: bool) -> Campaign:
         """Turn rules cards on or off for a campaign (#931): saved, and a running session
         (or one still finishing) follows from now on. Under the session lock, like the
@@ -4136,7 +4223,7 @@ class DMBot(commands.AutoShardedBot):
                 if table is not None and table.campaign_id == campaign_id:
                     table.rules_on = campaign.rules_cards
                     if table.rules_on:
-                        self._warm_rules(table.rules_rulesets)
+                        self._warm_rules(table.rules_rulesets, table)
         return campaign
 
     def _topic_pending(self, table: Table, utterance: Utterance, text: str, named: int) -> bool:

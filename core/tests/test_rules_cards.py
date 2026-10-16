@@ -316,7 +316,9 @@ class WhenThingsGoWrong(TableTest):
         self.table.rules_on = False
         with patch.object(self.bot, "_warm_rules") as warm:
             await self.bot.set_rules_cards(GUILD, C1, True)
-            warm.assert_called_once_with(self.table.rules_rulesets)
+            warm.assert_called_once_with(
+                self.table.rules_rulesets, self.table
+            )  # (and the homebrew names)
             warm.reset_mock()
             await self.bot.set_rules_cards(GUILD, C1, False)
             warm.assert_not_called()

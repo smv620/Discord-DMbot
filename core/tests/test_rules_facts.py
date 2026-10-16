@@ -139,6 +139,7 @@ class NoReaderSkipsTheMetadata(unittest.TestCase):
         "rules/index.py",
         "rules/facts.py",
         "rules/homebrew.py",
+        "rules/homebrew_file.py",
         "ui/homebrew.py",
     }
 

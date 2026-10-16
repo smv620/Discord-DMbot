@@ -81,6 +81,14 @@ class Mention:
         Warrior are one)."""
         return (self.entry.kind, normalize(self.entry.name))
 
+    @property
+    def kind(self) -> str:
+        return self.entry.kind
+
+    @property
+    def name(self) -> str:
+        return self.entry.name
+
 
 @dataclass(slots=True)
 class Spotter:

@@ -83,7 +83,7 @@ export const held: Held[] = [
   {
     date: "2026-10-16",
     title: "Your own homebrew",
-    what: "Your campaign can keep its own spells, monsters, items and rules. Open Settings, then Homebrew, to add them in your own words. Only you see an entry until you let players know. When you look up a rule, your homebrew comes before the free rules.",
+    what: "Your campaign can keep its own spells, monsters, items and rules. Open Settings, then Homebrew, to add them in your own words. Only you see an entry until you let players know. When you look up a rule, your homebrew comes before the free rules. DMbot can also show a short card when your table says one of your homebrew names, and you can download your homebrew as a file or load one back.",
     reason: "Held until it has been seen working on the test server (#1520).",
   },
   {
