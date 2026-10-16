@@ -8,8 +8,8 @@ campaign. They live on the game clock, not in real time, so a restart keeps them
 
 from __future__ import annotations
 
-from collections.abc import Sequence
-from dataclasses import dataclass
+from collections.abc import Mapping, Sequence
+from dataclasses import dataclass, field
 from typing import Any, ClassVar
 
 from dmbot.campaigns.models import CampaignError
@@ -39,22 +39,26 @@ class Effect:
     ends: int  # game minute
     told: bool  # the "has likely ended" line was said
     extended: int = 0  # minutes the DM added with "Still going" (#1112)
+    # Split party (#1607): the group it counts on (None: the one clock, or the first group)
+    group: int | None = None
 
-    def line(self, now: int) -> str:
+    def line(self, now: int, group_name: str | None = None) -> str:
         who = f" on {self.target}" if self.target else ""
         mind = " 🧠" if self.concentration else ""
+        where = f" ({group_name})" if group_name else ""
         if self.ends <= now:
-            return f"⏳ {self.name}{who}: likely ended{mind}"
-        return f"⏳ {self.name}{who}: until {game.short_label(self.ends)}{mind}"
+            return f"⏳ {self.name}{who}{where}: likely ended{mind}"
+        return f"⏳ {self.name}{who}{where}: until {game.short_label(self.ends)}{mind}"
 
-    def ended_line(self) -> str:
+    def ended_line(self, group_name: str | None = None) -> str:
         who = f" on {self.target}" if self.target else ""
         mind = " (concentration)" if self.concentration else ""
         # The total, so a timer the DM kept going doesn't read as if it only ran its first
         # length, and a plain note that the DM extended it (#1112).
         total = words(self.minutes + self.extended)
         how = f"{total}, extended by the DM" if self.extended else total
-        return f"⏳ {self.name}{who} has likely ended ({how}){mind}."
+        line = f"⏳ {self.name}{who} has likely ended ({how}){mind}."
+        return f"{group_name}: {line}" if group_name else line
 
 
 def _effect(row: dict[str, Any]) -> Effect:
@@ -67,7 +71,12 @@ def _effect(row: dict[str, Any]) -> Effect:
         int(row["ends_minute"]),
         bool(row["told"]),
         int(row["extended"]),
+        row.get("group_position"),
     )
+
+
+# The columns every statement that returns an effect names, in one place.
+_COLS = "number, name, target, minutes, concentration, ends_minute, told, extended, group_position"
 
 
 def clean(text: str, limit: int) -> str:
@@ -113,23 +122,39 @@ class EffectStore:
             row = await cur.fetchone()
             assert row is not None
             number = int(row["effects_made"])
-            ends = min(game.MAX_MINUTE, now + minutes)
+            # While the party is split a timer counts on the group picked now (#1607).
+            ends = min(game.MAX_MINUTE, now.for_group(now.picked) + minutes)
             await conn.execute(
                 "INSERT INTO game_effects (guild_id, campaign_id, number, name, target,"
-                " minutes, concentration, ends_minute, told) VALUES"
-                " (%s, %s, %s, %s, %s, %s, %s, %s, FALSE)",
-                (guild_id, campaign_id, number, name, target, minutes, concentration, ends),
+                " minutes, concentration, ends_minute, told, group_position) VALUES"
+                " (%s, %s, %s, %s, %s, %s, %s, %s, FALSE, %s)",
+                (
+                    guild_id,
+                    campaign_id,
+                    number,
+                    name,
+                    target,
+                    minutes,
+                    concentration,
+                    ends,
+                    now.picked,
+                ),
             )
-            return Effect(number, name, target, minutes, concentration, ends, False)
+            return Effect(number, name, target, minutes, concentration, ends, False, 0, now.picked)
 
     async def claim_due(self, guild_id: int, campaign_id: str, now: int) -> list[Effect]:
         """The effects whose end the clock has passed and that were not yet told about, marked
-        as told in the same statement (so each is said once, however presses interleave)."""
+        as told in the same statement (so each is said once, however presses interleave).
+        While the party is split each timer is compared with its own group's time (a timer
+        with no group counts on the first), not with `now`."""
         async with self._db.guild(guild_id) as conn:
             cur = await conn.execute(
-                "UPDATE game_effects SET told = TRUE WHERE guild_id = %s AND campaign_id = %s"
-                " AND ends_minute <= %s AND NOT told RETURNING number, name, target, minutes,"
-                " concentration, ends_minute, told, extended",
+                "UPDATE game_effects e SET told = TRUE WHERE e.guild_id = %s"
+                " AND e.campaign_id = %s AND NOT e.told AND e.ends_minute <= COALESCE("
+                "(SELECT g.minute FROM game_clock_groups g WHERE g.guild_id = e.guild_id"
+                " AND g.campaign_id = e.campaign_id"
+                " AND g.position = COALESCE(e.group_position, 1)), %s)"
+                f" RETURNING {_COLS}",
                 (guild_id, campaign_id, now),
             )
             rows = sorted(await cur.fetchall(), key=lambda r: (r["ends_minute"], r["number"]))
@@ -140,8 +165,7 @@ class EffectStore:
             await self._require_dm(conn, guild_id, campaign_id, user_id)
             cur = await conn.execute(
                 "DELETE FROM game_effects WHERE guild_id = %s AND campaign_id = %s"
-                " AND number = %s RETURNING number, name, target, minutes, concentration,"
-                " ends_minute, told, extended",
+                f" AND number = %s RETURNING {_COLS}",
                 (guild_id, campaign_id, number),
             )
             row = await cur.fetchone()
@@ -150,16 +174,24 @@ class EffectStore:
             return _effect(row)
 
     async def extend(self, guild_id: int, campaign_id: str, user_id: int, number: int) -> Effect:
-        """ "Still going": it runs EXTRA_MINUTES more from where the clock is now, and is told
-        about again when that passes."""
+        """ "Still going": it runs EXTRA_MINUTES more from where its clock is now (its group's,
+        while the party is split), and is told about again when that passes."""
         async with self._db.guild(guild_id) as conn:
             await self._require_dm(conn, guild_id, campaign_id, user_id)
-            now = await self._lock_clock(conn, guild_id, campaign_id)
+            clock = await self._lock_clock(conn, guild_id, campaign_id)
+            cur = await conn.execute(
+                "SELECT group_position FROM game_effects WHERE guild_id = %s AND campaign_id = %s"
+                " AND number = %s",
+                (guild_id, campaign_id, number),
+            )
+            found = await cur.fetchone()
+            if found is None:
+                raise CampaignError(GONE)
+            now = clock.for_group(found["group_position"])
             cur = await conn.execute(
                 "UPDATE game_effects SET ends_minute = LEAST(%s, GREATEST(ends_minute, %s) + %s),"
                 " extended = extended + %s, told = FALSE WHERE guild_id = %s AND campaign_id = %s"
-                " AND number = %s RETURNING number, name, target, minutes, concentration,"
-                " ends_minute, told, extended",
+                f" AND number = %s RETURNING {_COLS}",
                 (
                     game.MAX_MINUTE,
                     now,
@@ -194,32 +226,70 @@ class EffectStore:
             raise CampaignError(NOT_A_DM)
 
     @staticmethod
-    async def _lock_clock(conn: Conn, guild_id: int, campaign_id: str) -> int:
+    async def _lock_clock(conn: Conn, guild_id: int, campaign_id: str) -> ClockNow:
         """The game minute now, with the clock row locked so numbering and counting are one
-        at a time per campaign."""
+        at a time per campaign. While the party is split, also each group's minute."""
         cur = await conn.execute(
-            "SELECT minute FROM game_clocks WHERE guild_id = %s AND campaign_id = %s FOR UPDATE",
+            "SELECT minute, picked_group FROM game_clocks"
+            " WHERE guild_id = %s AND campaign_id = %s FOR UPDATE",
             (guild_id, campaign_id),
         )
         row = await cur.fetchone()
         if row is None:
             raise CampaignError(NO_CLOCK)
-        return int(row["minute"])
+        groups: dict[int, int] = {}
+        if row["picked_group"] is not None:
+            cur = await conn.execute(
+                "SELECT position, minute FROM game_clock_groups"
+                " WHERE guild_id = %s AND campaign_id = %s",
+                (guild_id, campaign_id),
+            )
+            groups = {int(r["position"]): int(r["minute"]) for r in await cur.fetchall()}
+        picked = row["picked_group"] if row["picked_group"] in groups else None
+        return ClockNow(int(row["minute"]), picked, groups if picked else {})
 
     @staticmethod
     async def _list(conn: Conn, guild_id: int, campaign_id: str) -> list[Effect]:
         cur = await conn.execute(
-            "SELECT number, name, target, minutes, concentration, ends_minute, told, extended"
-            " FROM game_effects WHERE guild_id = %s AND campaign_id = %s"
+            f"SELECT {_COLS} FROM game_effects WHERE guild_id = %s AND campaign_id = %s"
             " ORDER BY ends_minute, number",
             (guild_id, campaign_id),
         )
         return [_effect(r) for r in await cur.fetchall()]
 
 
-def lines(effects: Sequence[Effect], now: int) -> list[str]:
-    """The clock message's lines: at most SHOWN, the soonest first, and how many more."""
-    shown = [e.line(now) for e in effects[:SHOWN]]
+@dataclass(frozen=True, slots=True)
+class ClockNow:
+    """The game minute a timer counts on: the one clock's, or (split, #1607) its group's."""
+
+    main: int
+    picked: int | None = None  # the picked group while split
+    groups: Mapping[int, int] = field(default_factory=dict)
+
+    def for_group(self, position: int | None) -> int:
+        """The minute for a group; a timer with no group counts on the first while split, and
+        everything counts on the one clock when not."""
+        if not self.groups:
+            return self.main
+        return self.groups.get(position or 1, self.main)
+
+
+def lines(
+    effects: Sequence[Effect],
+    now: int,
+    groups: Mapping[int, tuple[str, int]] | None = None,
+) -> list[str]:
+    """The clock message's lines: at most SHOWN, the soonest first, and how many more. While
+    the party is split `groups` maps a position to (name, minute): each timer is judged on its
+    own group's time and says which group it is for."""
+
+    def one(e: Effect) -> str:
+        if not groups:
+            return e.line(now)
+        name, minute = groups.get(e.group or 1, (None, now))
+        return e.line(minute, name)
+
+    shown = [one(e) for e in effects[:SHOWN]]
     if len(effects) > SHOWN:
         shown.append(f"… and {len(effects) - SHOWN} more")
     return shown
@@ -234,7 +304,8 @@ class EffectsSection:
         {"name", "target", "minutes", "concentration", "ends", "told"}
     )
     # Added with #1112: backups made before it don't have it, and mean none.
-    _OPTIONAL: ClassVar[frozenset[str]] = frozenset({"extended"})
+    # (and #1607: "group", the split-party group a timer counts on, or None).
+    _OPTIONAL: ClassVar[frozenset[str]] = frozenset({"extended", "group"})
 
     async def dump(self, conn: Conn, guild_id: int, campaign_id: str) -> list[Any]:
         return [
@@ -246,6 +317,7 @@ class EffectsSection:
                 "ends": e.ends,
                 "told": e.told,
                 "extended": e.extended,
+                "group": e.group,
             }
             for e in await EffectStore._list(conn, guild_id, campaign_id)
         ]
@@ -259,6 +331,9 @@ class EffectsSection:
                 raise CampaignError(DAMAGED)
             extended = row.get("extended", 0)
             if type(extended) is not int or not 0 <= extended <= game.MAX_MINUTE:
+                raise CampaignError(DAMAGED)
+            group = row.get("group")
+            if group is not None and (type(group) is not int or not 1 <= group <= 3):
                 raise CampaignError(DAMAGED)
             name, target = row["name"], row["target"]
             if not isinstance(name, str) or not 1 <= len(name) <= NAME_MAX:
@@ -276,7 +351,9 @@ class EffectsSection:
                 raise CampaignError(DAMAGED)
             if type(row["told"]) is not bool:
                 raise CampaignError(DAMAGED)
-            out.append({**row, "name": name, "target": target, "extended": extended})
+            out.append(
+                {**row, "name": name, "target": target, "extended": extended, "group": group}
+            )
         return out
 
     async def load(self, conn: Conn, guild_id: int, campaign_id: str, rows: Any) -> None:
@@ -284,8 +361,8 @@ class EffectsSection:
         for number, row in enumerate(checked, start=1):
             await conn.execute(
                 "INSERT INTO game_effects (guild_id, campaign_id, number, name, target, minutes,"
-                " concentration, ends_minute, told, extended)"
-                " VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
+                " concentration, ends_minute, told, extended, group_position)"
+                " VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
                 (
                     guild_id,
                     campaign_id,
@@ -297,6 +374,7 @@ class EffectsSection:
                     row["ends"],
                     row["told"],
                     row["extended"],
+                    row["group"],
                 ),
             )
 

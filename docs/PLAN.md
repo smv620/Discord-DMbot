@@ -2287,8 +2287,8 @@ one) moves a clock the DM has set, with a one-line note and **Undo** (a rest fro
 pressed it alone; it only undoes while the clock is still where the rest left it); a player's line never does. **Speaks up only for** dawn,
 noon and dusk as a button or rest passes them (not when the DM sets the time), and **24 hours
 without a long rest**, once per stretch, with its source ("Check: 24 hours since the last long rest… Optional rule, Xanathar's… Your call."); on by default, and off if the DM turns the "Going without a long rest" optional rule
-off. The first time the clock is set the party counts as rested then. Not built yet: split-party
-clocks, reading time from narration, periodic notes.
+off. The first time the clock is set the party counts as rested then. Split-party clocks are built
+(below). Not built yet: reading time from narration, periodic notes.
 
 *Built, part 2: timed effects the DM starts (2026-10-10, #998):* `game_effects` (migration 0042): per
 campaign, own server scope, deleted with the campaign, in backups (`EffectsSection`, validated),
@@ -2302,8 +2302,34 @@ index). Concentration shows as 🧠. The clock message lists the soonest five, o
 button or rest passes an effect's end, the DM screen says once "⏳ Bless on Mira has likely
 ended (1 minute)" with **Ended** and **Still going +10 min** (ten more game minutes from where the
 clock is, then said again); nothing ends silently or by itself. Only the campaign's DMs, checked in
-the transaction. Effects live on the game clock, so a restart keeps them. **Still going** is shown in the next "has likely ended" line as the total with "extended by the DM" (`game_effects.extended`, migration 0049, in backups; #1112), and the press says so on the DM screen only. Not built: split-party
-clocks, reading time from narration, AI.
+the transaction. Effects live on the game clock, so a restart keeps them. **Still going** is shown in the next "has likely ended" line as the total with "extended by the DM" (`game_effects.extended`, migration 0049, in backups; #1112), and the press says so on the DM screen only. Not built: reading time from narration, AI.
+*Split-party clocks (Supervisor, 2026-10-16, #1607; migration 0109):* when the party splits, one clock
+is wrong for half the table, so the DM can split it.
+- **Split:** **Rests & time…** holds **✂️ Split the party** (DMs only, checked on every press). The DM
+  names two or three groups (short names, like "Tower" and "Camp"; not during combat). Each group starts with the
+  current time and last long rest. The pinned message shows one line for the group times ("Tower: Day 4,
+  14:30 · Camp: Day 4, 16:10") and a group picker; the existing buttons, rests, combat and Undo act on the
+  picked group. The pick is remembered per campaign across restarts. The players' game-time channel shows
+  one line per group in the same words (the day and a rough time, never the exact time).
+- **Spoken phrases move nothing while split** (a rest, a time or a round said aloud), because DMbot can't
+  know which group the DM meant. The DM screen says once per split: "The party is split, so I didn't move
+  the clock. Use the buttons for each group."
+- **Notes** (dawn, noon, dusk, the 24-hour line, a timer that ended) are said per group, prefixed with the
+  group's name. When one group's clock is more than 8 game hours ahead of another's the DM screen says so
+  once per split ("Tower is 9 hours ahead of Camp."): a reminder, never a block.
+- **Rejoin:** **🤝 Rejoin the party** asks which time to keep, offering each group's time, the latest first.
+  It keeps that group's time and sets the last long rest to the latest any group had (never later than the
+  kept time). Then it is one clock again. **Undo** works for the split (while no group has moved) and for the
+  rejoin (while the clock is where the rejoin left it); a rest's Undo acts on the group that rested.
+- **Timers** stay campaign-wide on the one clock when not split. Split, a timer counts on the group picked
+  when it was started (one started before the split counts on the first group), is shown with its group's
+  name and is judged on that group's time. On rejoin a group's timers move with its time to the kept time
+  (the same time left).
+- **Data:** `game_clock_groups` (campaign scope, isolated like `game_clocks`: position, name, minute,
+  last_long_rest, tired_told_for, combat round) holds the groups while split; `game_clocks` keeps the clock
+  from before the split and gets `picked_group`, two once-per-split flags and `split_undo` (what the last
+  Undo needs); `game_effects.group_position` says which group a timer counts on. Backups carry the groups
+  (`ClockSection`, validated) and each timer's group. Deleting the campaign deletes them.
 *The game-time channel (owner, 2026-10-13, after Test F):*
 - **Players see the clock in its own channel.** The players see the clock in a game-time channel,
   `dmb-gametime-<slug>`, without needing the DM screen. Like the transcript channel, everyone

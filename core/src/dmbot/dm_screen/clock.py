@@ -14,7 +14,13 @@ The clock only moves when a DM presses a button or clearly says a rest happened 
 noon and dusk as they are passed (except on a long rest or Skip to dawn, whose note already
 gives the time), and for 24 hours without a long rest.
 
-Register with `bot.add_dynamic_items(ClockButton, ClockUndoButton, CombatUndoButton)`.
+**Split party** (#1607): **Rests & time…** also holds **✂️ Split the party**. The DM names two
+or three groups; the pinned message then shows one time per group and a picker, and the
+buttons, rests and Undo act on the picked group. Spoken phrases move nothing while split (said
+once). **🤝 Rejoin the party** asks which time to keep. See `timebot.split`.
+
+Register with `bot.add_dynamic_items(ClockButton, ClockUndoButton, CombatUndoButton,
+ClockPicker, SplitUndoButton)`.
 """
 
 from __future__ import annotations
@@ -32,9 +38,9 @@ from dmbot.campaigns import Campaign
 from dmbot.campaigns.models import CampaignError
 from dmbot.rules import optional
 from dmbot.timebot import clock as game
-from dmbot.timebot import durations, effects
+from dmbot.timebot import durations, effects, split
 from dmbot.timebot.clock import Clock
-from dmbot.timebot.store import ClockStore, Stored
+from dmbot.timebot.store import MOVED_ON, ClockStore, Rejoined, Stored
 
 log = logging.getLogger(__name__)
 
@@ -57,6 +63,14 @@ OFF_SCREEN = (
     "**Game clock** again."
 )
 SET_DONE = "🕰️ Clock set to {label}. It's pinned here: {where}"
+REJOIN_ASK = "Which time should the whole party keep? The latest is first. Only you see this."
+SPLIT_SAID = (
+    "✂️ The party is split into {names}. The buttons act on {first}: "
+    "pick another group under the clock."
+)
+SPLIT_PHRASE = "The party is split, so I didn't move the clock. Use the buttons for each group."
+REJOINED = "🤝 The party is together again: {when}. Kept {name}'s time."
+SPLIT_GONE = "That can't be undone now. Use **Rests & time…** to fix it."
 
 ACTIONS: dict[str, tuple[str, str, discord.ButtonStyle, int]] = {
     # id: (label, emoji, style, row)
@@ -68,6 +82,9 @@ ACTIONS: dict[str, tuple[str, str, discord.ButtonStyle, int]] = {
     "dawn": ("Skip to dawn", "🌅", discord.ButtonStyle.secondary, 0),
     "typed": ("Type the time…", "🕰️", discord.ButtonStyle.secondary, 1),
     "timer": ("Start a timer", "⏳", discord.ButtonStyle.secondary, 1),
+    # The split party (#1607), in the private Rests & time… panel.
+    "split": ("Split the party", "✂️", discord.ButtonStyle.secondary, 1),
+    "rejoin": ("Rejoin the party", "🤝", discord.ButtonStyle.primary, 1),
     # Combat (#1127): the DM's correction for what DMbot heard (or missed).
     "cstart": ("Start combat", "⚔️", discord.ButtonStyle.success, 1),
     "cnext": ("Next round", "⏭️", discord.ButtonStyle.primary, 1),
@@ -89,25 +106,41 @@ TIME_MOVING = ("m10", "h1", "short", "long", "advance", "cnext", "cend", "cround
 MARK_LINES = {"dawn": "🌅 Dawn", "noon": "☀️ Noon", "dusk": "🌇 Dusk"}
 
 
-def clock_text(clock: Clock, effect_lines: list[str] | None = None) -> str:
-    """The pinned message: the time, then the running timers one to a line (#998)."""
-    head = f"🕰️ **{game.label(clock.minute)}**"
+def clock_text(
+    clock: Clock, effect_lines: list[str] | None = None, stored: Stored | None = None
+) -> str:
+    """The pinned message: the time, then the running timers one to a line (#998). While the
+    party is split (#1607) the head has one time per group and says which group the buttons
+    act on."""
+    if stored is not None and stored.split and stored.picked_group is not None:
+        head = (
+            f"🕰️ **{split.dm_line(stored.groups)}**\nButtons act on **{stored.picked_group.name}**."
+        )
+    else:
+        head = f"🕰️ **{game.label(clock.minute)}**"
     fight = game.combat_label(clock)
     return "\n".join([head, *([fight] if fight else []), *(effect_lines or [])])
 
 
-async def render(client: Any, campaign: Campaign, clock: Clock) -> str:
+async def render(
+    client: Any, campaign: Campaign, clock: Clock, stored: Stored | None = None
+) -> str:
     """The clock message as it should read now, with the campaign's running timers. A
     timers store that can't be read just leaves them off: the time still shows."""
     store = getattr(client, "effects", None)
     if store is None:
-        return clock_text(clock)
+        return clock_text(clock, None, stored)
     try:
         running = await store.running(campaign.guild_id, campaign.id)
     except Exception:
         log.exception("Couldn't read the timers for the clock message")
-        return clock_text(clock)
-    return clock_text(clock, effects.lines(running, clock.minute))
+        return clock_text(clock, None, stored)
+    groups = (
+        {g.position: (g.name, g.clock.minute) for g in stored.groups}
+        if stored is not None and stored.split
+        else None
+    )
+    return clock_text(clock, effects.lines(running, clock.minute, groups), stored)
 
 
 @dataclass(slots=True)
@@ -118,6 +151,8 @@ class Result:
     after: Clock | None
     lines: list[str] = field(default_factory=list)
     changed: bool = False
+    # The group the change was made on while the party is split (#1607), else None.
+    group: split.Group | None = None
 
 
 def _apply(
@@ -188,8 +223,8 @@ async def press(
             result.lines.append(tired_line(new))
         return new
 
-    before, after = await store.change(guild_id, campaign_id, user_id, change)
-    result.before, result.after = before, after
+    before, after, group = await store.change_named(guild_id, campaign_id, user_id, change)
+    result.before, result.after, result.group = before, after, group
     result.changed = after is not None and after != before
     if (
         action in ENDS_COMBAT
@@ -207,6 +242,13 @@ async def press(
     if before is not None and after is not None and _speaks(action) and action not in QUIET_RESTS:
         marks = game.crossings(before.minute, after.minute)
         result.lines = [MARK_LINES[name] for _, name in marks] + result.lines
+    if group is not None:
+        # Dawn, noon, dusk and the 24-hour line are said per group (#1607).
+        result.lines = [f"{group.name}: {line}" for line in result.lines]
+        if result.changed and after is not None and before is not None and after != before:
+            drift = await store.claim_drift(guild_id, campaign_id)
+            if drift is not None:
+                result.lines.append(drift)
     return result
 
 
@@ -231,30 +273,38 @@ async def _tired_rule_on(client: Any, guild_id: int, campaign_id: str) -> bool:
     return optional.is_on(NO_REST_RULE, overrides, True)
 
 
-def clock_view(campaign_id: str, clock: Clock | None = None) -> discord.ui.View:
+def clock_view(
+    campaign_id: str, clock: Clock | None = None, stored: Stored | None = None
+) -> discord.ui.View:
     """The pinned message's buttons. Combat's (#1127) show what makes sense now: Start combat
-    out of a fight, Next round and End combat in one."""
+    out of a fight, Next round and End combat in one. While the party is split (#1607) a picker
+    of the groups sits under them."""
     view = discord.ui.View(timeout=None)
     for action in PINNED:
         view.add_item(ClockButton(campaign_id, action))
     for action in ("cnext", "cend") if game.in_combat(clock) else ("cstart",):
         view.add_item(ClockButton(campaign_id, action))
+    if stored is not None and stored.split:
+        view.add_item(ClockPicker(campaign_id, stored.groups, stored.picked))
     return view
 
 
-def panel_view(campaign_id: str) -> discord.ui.View:
+def panel_view(campaign_id: str, is_split: bool = False) -> discord.ui.View:
     """What **Rests & time…** answers with, privately: the rests, skipping to dawn and typing a
-    time. An ephemeral answer, so only the DM who pressed it sees it."""
+    time, then Split the party (or, once split, Rejoin the party). An ephemeral answer, so only
+    the DM who pressed it sees it."""
     view = discord.ui.View(timeout=600)
     for action in PANEL:
         view.add_item(ClockButton(campaign_id, action))
+    view.add_item(ClockButton(campaign_id, "rejoin" if is_split else "split"))
     return view
 
 
 async def show(client: Any, campaign: Campaign, stored: Stored) -> discord.Message | None:
     """Edit the pinned clock message in place with the clock now; post (and pin) a new one if
     there isn't one or it is gone. Returns the message, or None if nothing could be shown."""
-    text, view = await render(client, campaign, stored.clock), clock_view(campaign.id, stored.clock)
+    text = await render(client, campaign, stored.clock, stored)
+    view = clock_view(campaign.id, stored.clock, stored)
     channel = client.get_channel(stored.channel_id) if stored.channel_id else None
     if isinstance(channel, discord.abc.Messageable) and stored.message_id:
         try:
@@ -293,6 +343,14 @@ def players_text(clock: Clock) -> str:
     return head if fight is None else f"{head}\n{fight}"
 
 
+def players_text_for(stored: Stored) -> str:
+    """The players' clock: `players_text`, or while the party is split one line per group in
+    the same words as the DM's (the day and a rough time, no exact time)."""
+    if not stored.split:
+        return players_text(stored.clock)
+    return "\n".join(["🕰️ **The party is split**", *split.players_lines(stored.groups)])
+
+
 _players_locks: dict[str, asyncio.Lock] = {}  # one players' clock update at a time per campaign
 
 
@@ -315,7 +373,7 @@ async def _show_players(client: Any, campaign: Campaign, stored: Stored) -> None
     channel_id = campaign.gametime_channel_id
     if channel_id is None:
         return
-    text = players_text(stored.clock)
+    text = players_text_for(stored)
     if stored.players_channel_id == channel_id and stored.players_message_id:
         channel = client.get_channel(channel_id)
         if not isinstance(channel, discord.abc.Messageable):
@@ -374,6 +432,8 @@ async def update_players(
         await show_players(client, fresh, stored)
         after = result.after or stored.clock
         line = players_line(action, result.before, after) if announce else None
+        if line is not None and result.group is not None:
+            line = f"{result.group.name}: {line}"  # (#1607) which part of the party
         if line is not None and fresh.gametime_channel_id is not None:
             await client.post_message(fresh.gametime_channel_id, line)
     except Exception:
@@ -386,12 +446,17 @@ async def say(
     lines: list[str],
     undo: str | None = None,
     combat_undo: str | None = None,
+    split_undo: tuple[str, str] | None = None,
 ) -> None:
-    """The short lines (dawn, noon, dusk, tired, combat) on the DM screen, nowhere else."""
+    """The short lines (dawn, noon, dusk, tired, combat) on the DM screen, nowhere else.
+    `split_undo` is (kind, token): the Undo under a split or a rejoin (#1607)."""
     if campaign.dm_screen_channel_id is None or not lines:
         return
     view = None
-    if undo:
+    if split_undo:
+        view = discord.ui.View(timeout=None)
+        view.add_item(SplitUndoButton(campaign.id, *split_undo))
+    elif undo:
         view = discord.ui.View(timeout=None)
         view.add_item(ClockUndoButton(campaign.id, undo))
     elif combat_undo:
@@ -500,7 +565,7 @@ async def _run_press(
             client,
             campaign,
             [combat_note(action, result.before, result.after), *result.lines],
-            combat_undo=combat_undo_id(result.before, result.after),
+            combat_undo=combat_undo_id(result.before, result.after, result.group),
         )
     else:
         await say(client, campaign, result.lines)  # dawn, noon, dusk, tired: on the DM screen
@@ -511,7 +576,9 @@ async def _run_press(
         # The DM who pressed sees the clock change; the note with Undo is for them alone.
         note = rest_note(action, result.after)
         view = discord.ui.View(timeout=None)
-        view.add_item(ClockUndoButton(campaign.id, undo_id(result.before, result.after)))
+        view.add_item(
+            ClockUndoButton(campaign.id, undo_id(result.before, result.after, result.group))
+        )
         with contextlib.suppress(discord.HTTPException):
             await interaction.followup.send(note, view=view, ephemeral=True)
     return True
@@ -554,16 +621,16 @@ async def _show_here(
     message = interaction.message
     if message is not None and message.id == stored.message_id:
         text, view = (
-            await render(client, campaign, stored.clock),
-            clock_view(campaign.id, stored.clock),
+            await render(client, campaign, stored.clock, stored),
+            clock_view(campaign.id, stored.clock, stored),
         )
         with contextlib.suppress(discord.HTTPException):
             await message.edit(content=text, view=view, allowed_mentions=NO_PINGS)
             return message
     if message is not None and _is_clock_message(message):
         with contextlib.suppress(discord.HTTPException):
-            text = await render(client, campaign, stored.clock)
-            await message.edit(content=text, view=clock_view(campaign.id, stored.clock))
+            text = await render(client, campaign, stored.clock, stored)
+            await message.edit(content=text, view=clock_view(campaign.id, stored.clock, stored))
             await client.clocks.set_message(
                 campaign.guild_id, campaign.id, message.channel.id, message.id
             )
@@ -587,7 +654,7 @@ class ClockButton(
     discord.ui.DynamicItem[discord.ui.Button[discord.ui.View]],
     template=(
         rf"dmbot:clock:{_ID}:"
-        r"(?P<action>m10|h1|short|long|dawn|set|typed|timer|open|cstart|cnext|cend)"
+        r"(?P<action>m10|h1|short|long|dawn|set|typed|timer|open|cstart|cnext|cend|split|rejoin)"
     ),
 ):
     """One of the clock's buttons (`open` is the ⚙️ Settings button that starts or shows it)."""
@@ -631,6 +698,9 @@ class ClockButton(
                         return
                 await interaction.response.send_modal(timers.TimerForm(self.campaign_id))
                 return
+            if self.action in ("split", "rejoin"):
+                await self._split_or_rejoin(interaction, client, guild.id)
+                return
             if self.action in ("set", "typed", "open"):
                 await self._form_or_show(interaction, client, guild.id)
                 return
@@ -639,6 +709,36 @@ class ClockButton(
         except Exception:
             log.exception("The game clock button failed")
             await _reply(interaction, FAILED)
+
+    async def _split_or_rejoin(
+        self, interaction: discord.Interaction, client: Any, guild_id: int
+    ) -> None:
+        """Split the party: the form that names the groups. Rejoin: the question of which time
+        to keep. Both are checked for a DM before they are shown (and again where they save)."""
+        async with asyncio.timeout(2):
+            campaign = await client.campaigns.get(guild_id, self.campaign_id)
+            if campaign is None:
+                await _reply(interaction, GONE)
+                return
+            if interaction.user.id not in campaign.dm_user_ids:
+                await _reply(interaction, NOT_A_DM)
+                return
+            stored = await client.clocks.get(guild_id, campaign.id)
+        if stored is None:
+            await _reply(interaction, SET_FIRST)
+        elif self.action == "split":
+            if stored.split:
+                await _reply(interaction, split.ALREADY_SPLIT)
+            elif game.in_combat(stored.clock):
+                await _reply(interaction, split.IN_COMBAT)
+            else:
+                await interaction.response.send_modal(SplitForm(campaign.id))
+        elif not stored.split:
+            await _reply(interaction, split.NOT_SPLIT)
+        else:
+            await interaction.response.send_message(
+                REJOIN_ASK, view=RejoinView(campaign.id, stored.groups), ephemeral=True
+            )
 
     async def _form_or_show(
         self, interaction: discord.Interaction, client: Any, guild_id: int
@@ -655,8 +755,10 @@ class ClockButton(
             stored = await client.clocks.get(guild_id, campaign.id)
         if self.action == "set" and stored is not None:
             # The private panel: rests, skipping to dawn, typing a time. Only this DM sees it.
+            acting = stored.picked_group
+            text = PANEL_TEXT if acting is None else f"{PANEL_TEXT} Acting on **{acting.name}**."
             await interaction.response.send_message(
-                PANEL_TEXT, view=panel_view(campaign.id), ephemeral=True
+                text, view=panel_view(campaign.id, stored.split), ephemeral=True
             )
             return
         if self.action == "typed" or stored is None:
@@ -674,6 +776,268 @@ class ClockButton(
         await _reply(
             interaction, ALREADY_SHOWN.format(where=message.jump_url) + players_see(campaign)
         )
+
+
+class SplitForm(discord.ui.Modal):
+    """Name the groups: two are needed, a third is optional (#1607)."""
+
+    first: discord.ui.TextInput[SplitForm] = discord.ui.TextInput(
+        label="First group", placeholder="Tower", max_length=split.NAME_MAX
+    )
+    second: discord.ui.TextInput[SplitForm] = discord.ui.TextInput(
+        label="Second group", placeholder="Camp", max_length=split.NAME_MAX
+    )
+    third: discord.ui.TextInput[SplitForm] = discord.ui.TextInput(
+        label="Third group (if there is one)", required=False, max_length=split.NAME_MAX
+    )
+
+    def __init__(self, campaign_id: str) -> None:
+        super().__init__(title="Split the party")
+        self.campaign_id = campaign_id
+
+    async def on_submit(self, interaction: discord.Interaction) -> None:
+        checked = split.check_names([self.first.value, self.second.value, self.third.value])
+        if isinstance(checked, str):
+            await interaction.response.send_message(checked, ephemeral=True)
+            return
+        await interaction.response.defer(ephemeral=True)
+        await run_split(interaction, self.campaign_id, checked)
+
+
+def _names_in_words(names: list[str] | tuple[str, ...]) -> str:
+    bold = [f"**{discord.utils.escape_markdown(n)}**" for n in names]
+    return bold[0] if len(bold) == 1 else ", ".join(bold[:-1]) + " and " + bold[-1]
+
+
+async def run_split(interaction: discord.Interaction, campaign_id: str, names: list[str]) -> bool:
+    """The form was saved: split the party, redraw the clock, say it on the DM screen with an
+    Undo. A failure is told to the presser and returns False."""
+    client: Any = interaction.client
+    guild = interaction.guild
+    campaign = await client.campaigns.get(guild.id, campaign_id) if guild else None
+    if campaign is None:
+        await _reply(interaction, GONE)
+        return False
+    async with _locks.setdefault(campaign_id, asyncio.Lock()):
+        try:
+            stored, token = await client.clocks.split(
+                campaign.guild_id, campaign.id, interaction.user.id, names
+            )
+        except CampaignError as exc:
+            await _reply(interaction, str(exc))
+            return False
+        except Exception:
+            log.exception("Couldn't split the party")
+            await _reply(interaction, FAILED)
+            return False
+        await show(client, campaign, stored)
+        await show_players(client, campaign, stored)
+        await say(
+            client,
+            campaign,
+            [SPLIT_SAID.format(names=_names_in_words(names), first=_names_in_words(names[:1]))],
+            split_undo=("split", token),
+        )
+    await _reply(interaction, f"✂️ Split into {_names_in_words(names)}.")
+    return True
+
+
+class RejoinView(discord.ui.View):
+    """The question after **Rejoin the party**: one button per group with its time, the latest
+    first. Short-lived and private: it is an answer to one press."""
+
+    def __init__(self, campaign_id: str, groups: tuple[split.Group, ...]) -> None:
+        super().__init__(timeout=600)
+        for i, g in enumerate(split.latest_first(groups)):
+            self.add_item(_RejoinChoice(campaign_id, g, primary=i == 0))
+
+
+class _RejoinChoice(discord.ui.Button["RejoinView"]):
+    def __init__(self, campaign_id: str, group: split.Group, *, primary: bool) -> None:
+        super().__init__(
+            label=f"Keep {group.name}: {split.exact_label(group.clock.minute)}"[:80],
+            style=discord.ButtonStyle.primary if primary else discord.ButtonStyle.secondary,
+        )
+        self.campaign_id, self.position = campaign_id, group.position
+
+    async def callback(self, interaction: discord.Interaction) -> Any:
+        await interaction.response.edit_message(content="🤝 Rejoining the party…", view=None)
+        try:
+            done = await run_rejoin(interaction, self.campaign_id, self.position)
+        except Exception:
+            log.exception("Couldn't rejoin the party")
+            done = None
+            await _reply(interaction, FAILED)
+        if done is not None:
+            with contextlib.suppress(discord.HTTPException):
+                await interaction.edit_original_response(content="🤝 The party is together again.")
+
+
+async def run_rejoin(
+    interaction: discord.Interaction, campaign_id: str, keep: int
+) -> Rejoined | None:
+    """Back to one clock at the time the DM chose, shown and said with an Undo. None (and the
+    reason told to the presser) when it didn't happen."""
+    client: Any = interaction.client
+    guild = interaction.guild
+    campaign = await client.campaigns.get(guild.id, campaign_id) if guild else None
+    if campaign is None:
+        await _reply(interaction, GONE)
+        return None
+    async with _locks.setdefault(campaign_id, asyncio.Lock()):
+        try:
+            done: Rejoined = await client.clocks.rejoin(
+                campaign.guild_id, campaign.id, interaction.user.id, keep
+            )
+        except CampaignError as exc:
+            await _reply(interaction, str(exc))
+            return None
+        stored = await client.clocks.get(campaign.guild_id, campaign.id)
+        if stored is None:
+            await _reply(interaction, FAILED)
+            return None
+        await show(client, campaign, stored)
+        await show_players(client, campaign, stored)
+        from dmbot.dm_screen import effects as timers
+
+        await timers.announce_due(client, campaign, stored.clock.minute)
+        await say(
+            client,
+            campaign,
+            [REJOINED.format(when=game.short_label(done.clock.minute), name=done.kept.name)],
+            split_undo=("rejoin", done.token),
+        )
+    return done
+
+
+class ClockPicker(
+    discord.ui.DynamicItem[discord.ui.Select[discord.ui.View]],
+    template=rf"dmbot:clockpick:{_ID}",
+):
+    """Under the pinned clock while the party is split: which group the buttons act on
+    (#1607). The choice is remembered across restarts; only a DM of the campaign can change it
+    (checked where it is saved)."""
+
+    def __init__(
+        self,
+        campaign_id: str,
+        groups: tuple[split.Group, ...] = (),
+        picked: int | None = None,
+    ) -> None:
+        options = [
+            discord.SelectOption(
+                label=f"{g.name}: {split.exact_label(g.clock.minute)}"[:100],
+                value=str(g.position),
+                default=g.position == picked,
+            )
+            for g in groups
+        ] or [discord.SelectOption(label="Group", value="1")]  # (a restart: only the id matters)
+        super().__init__(
+            discord.ui.Select(
+                placeholder="Act on which group?",
+                options=options,
+                custom_id=f"dmbot:clockpick:{campaign_id}",
+                row=2,
+            )
+        )
+        self.campaign_id = campaign_id
+
+    @classmethod
+    async def from_custom_id(
+        cls, interaction: discord.Interaction, item: discord.ui.Item[Any], match: re.Match[str]
+    ) -> ClockPicker:
+        return cls(match["campaign"])
+
+    async def callback(self, interaction: discord.Interaction) -> Any:
+        client: Any = interaction.client
+        guild = interaction.guild
+        data: Any = interaction.data
+        values = data.get("values") if isinstance(data, dict) else None
+        if guild is None or not values:
+            return
+        await interaction.response.defer()
+        try:
+            campaign = await client.campaigns.get(guild.id, self.campaign_id)
+            if campaign is None:
+                await _reply(interaction, GONE)
+                return
+            async with _locks.setdefault(self.campaign_id, asyncio.Lock()):
+                stored = await client.clocks.pick(
+                    guild.id, campaign.id, interaction.user.id, int(values[0])
+                )
+                await show(client, campaign, stored)
+        except CampaignError as exc:
+            # (The pinned message still shows the old pick: put the picker back as it was.)
+            await _reply(interaction, str(exc))
+            stored = await client.clocks.get(guild.id, self.campaign_id)
+            campaign = await client.campaigns.get(guild.id, self.campaign_id)
+            if stored is not None and campaign is not None:
+                await show(client, campaign, stored)
+        except Exception:
+            log.exception("The group picker failed")
+            await _reply(interaction, FAILED)
+
+
+class SplitUndoButton(
+    discord.ui.DynamicItem[discord.ui.Button[discord.ui.View]],
+    template=rf"dmbot:splitundo:{_ID}:(?P<kind>split|rejoin):(?P<token>[0-9a-f]{{8}})",
+):
+    """↩️ Undo under a split or a rejoin (#1607): the party goes back to how it was, if it is
+    still the last of the two and no clock has moved since (the answer says so if not)."""
+
+    def __init__(self, campaign_id: str, kind: str, token: str) -> None:
+        super().__init__(
+            discord.ui.Button(
+                label="Undo",
+                emoji="↩️",
+                style=discord.ButtonStyle.secondary,
+                custom_id=f"dmbot:splitundo:{campaign_id}:{kind}:{token}",
+            )
+        )
+        self.campaign_id, self.kind, self.token = campaign_id, kind, token
+
+    @classmethod
+    async def from_custom_id(
+        cls, interaction: discord.Interaction, item: discord.ui.Item[Any], match: re.Match[str]
+    ) -> SplitUndoButton:
+        return cls(match["campaign"], match["kind"], match["token"])
+
+    async def callback(self, interaction: discord.Interaction) -> Any:
+        client: Any = interaction.client
+        guild = interaction.guild
+        if guild is None:
+            return
+        await interaction.response.defer()
+        try:
+            campaign = await client.campaigns.get(guild.id, self.campaign_id)
+            if campaign is None:
+                await _reply(interaction, GONE)
+                return
+            async with _locks.setdefault(self.campaign_id, asyncio.Lock()):
+                undo = (
+                    client.clocks.undo_split if self.kind == "split" else client.clocks.undo_rejoin
+                )
+                try:
+                    done = await undo(guild.id, campaign.id, interaction.user.id, self.token)
+                except CampaignError as exc:
+                    await _reply(interaction, str(exc))
+                    return
+                if not done:
+                    await _reply(interaction, MOVED_ON if self.kind == "split" else SPLIT_GONE)
+                    return
+                stored = await client.clocks.get(guild.id, campaign.id)
+                if stored is not None:
+                    await show(client, campaign, stored)
+                    await show_players(client, campaign, stored)
+        except Exception:
+            log.exception("Undoing a split or rejoin failed")
+            await _reply(interaction, FAILED)
+            return
+        said = (
+            "The party is together again." if self.kind == "split" else "The party is split again."
+        )
+        with contextlib.suppress(discord.HTTPException):
+            await interaction.edit_original_response(content=f"↩️ Undone. {said}", view=None)
 
 
 _answered: set[int] = set()  # suggestion messages already answered (bounded below)
@@ -761,19 +1125,20 @@ class SuggestionButton(
             await _reply(interaction, FAILED)
 
 
-def combat_undo_id(before: Clock, after: Clock) -> str:
+def combat_undo_id(before: Clock, after: Clock, group: split.Group | None = None) -> str:
     """What Undo needs for a combat change: where the clock and the round were, and where they
     must still be (round 0 means out of combat). If anything moved since, Undo does nothing."""
 
     def part(c: Clock) -> str:
         return f"{c.minute}:{c.combat_round or 0}:{c.combat_secs}"
 
-    return f"{part(before)}:{part(after)}"
+    # While the party is split (#1607) the group rides along, so Undo only ever changes that one.
+    return f"{part(before)}:{part(after)}" + (f":g{group.position}" if group else "")
 
 
 class CombatUndoButton(
     discord.ui.DynamicItem[discord.ui.Button[discord.ui.View]],
-    template=rf"dmbot:combatundo:{_ID}:(?P<spec>\d+:\d+:\d+:\d+:\d+:\d+)",
+    template=rf"dmbot:combatundo:{_ID}:(?P<spec>\d+:\d+:\d+:\d+:\d+:\d+(?::g[1-3])?)",
 ):
     """↩️ Undo on a combat change (#1127): back to the round and time before, if nothing has
     moved them since. Only a DM of the campaign (checked where the clock is changed)."""
@@ -788,7 +1153,9 @@ class CombatUndoButton(
             )
         )
         self.campaign_id, self.spec = campaign_id, spec
-        numbers = [int(x) for x in spec.split(":")]
+        parts = spec.split(":")
+        self.group = int(parts.pop()[1:]) if parts[-1].startswith("g") else None
+        numbers = [int(x) for x in parts]
         self.before, self.after = tuple(numbers[:3]), tuple(numbers[3:])
 
     @classmethod
@@ -840,8 +1207,8 @@ class CombatUndoButton(
             )
 
         try:
-            _, after = await client.clocks.change(
-                guild_id, campaign.id, interaction.user.id, change
+            _, after, _ = await client.clocks.change_named(
+                guild_id, campaign.id, interaction.user.id, change, group=self.group
             )
         except CampaignError as exc:
             await _reply(interaction, str(exc))
@@ -869,13 +1236,14 @@ class SimpleGuild:
         self.id = guild_id
 
 
-def undo_id(before: Clock, after: Clock) -> str:
+def undo_id(before: Clock, after: Clock, group: split.Group | None = None) -> str:
     """What Undo needs, in the button's own ID so it works after a restart: the clock to go
     back to, and the minute it must still be at (if the DM moved it since, Undo does nothing).
     The fight's round and seconds ride along, so a rest that ended a fight can bring it back."""
     return (
         f"{before.minute}:{before.last_long_rest}:{after.minute}"
         f":{before.combat_round or 0}:{before.combat_secs}"
+        + (f":g{group.position}" if group else "")
     )
 
 
@@ -883,7 +1251,7 @@ class ClockUndoButton(
     discord.ui.DynamicItem[discord.ui.Button[discord.ui.View]],
     # (the round and seconds are optional: buttons made before #1173 carry only the first three)
     template=rf"dmbot:clockundo:{_ID}:(?P<before>\d+):(?P<rest>\d+):(?P<after>\d+)"
-    rf"(?::(?P<round>\d+):(?P<secs>\d+))?",
+    rf"(?::(?P<round>\d+):(?P<secs>\d+))?(?::g(?P<group>[1-3]))?",
 ):
     """↩️ Undo on a rest said at the table: back to the time before, if nothing has moved
     the clock since."""
@@ -898,7 +1266,9 @@ class ClockUndoButton(
             )
         )
         self.campaign_id = campaign_id
-        before, rest, after, *fight = (int(x) for x in spec.split(":"))
+        parts = spec.split(":")
+        self.group = int(parts.pop()[1:]) if parts[-1].startswith("g") else None
+        before, rest, after, *fight = (int(x) for x in parts)
         self.before, self.rest, self.after = before, rest, after
         self.round, self.secs = (fight[0], fight[1]) if len(fight) == 2 else (0, 0)
 
@@ -909,6 +1279,8 @@ class ClockUndoButton(
         spec = f"{match['before']}:{match['rest']}:{match['after']}"
         if match["round"] is not None:
             spec += f":{match['round']}:{match['secs']}"
+        if match["group"] is not None:
+            spec += f":g{match['group']}"
         return cls(match["campaign"], spec)
 
     async def callback(self, interaction: discord.Interaction) -> Any:
@@ -948,8 +1320,8 @@ class ClockUndoButton(
             return clock
 
         try:
-            _, after = await client.clocks.change(
-                guild.id, campaign.id, interaction.user.id, change
+            _, after, acted = await client.clocks.change_named(
+                guild.id, campaign.id, interaction.user.id, change, group=self.group
             )
         except CampaignError as exc:
             await _reply(interaction, str(exc))
@@ -968,9 +1340,10 @@ class ClockUndoButton(
             fresh = await client.campaigns.get(guild.id, campaign.id) or campaign
             if fresh.gametime_channel_id is not None:
                 # The players may have been told a rest finished: say it was taken back.
+                who = f"{acted.name}: " if acted is not None else ""
                 await client.post_message(
                     fresh.gametime_channel_id,
-                    f"Correction: {game.short_label(stored.clock.minute)}.",
+                    f"Correction: {who}{game.short_label(after.minute)}.",
                 )
         with contextlib.suppress(discord.HTTPException):
             await interaction.edit_original_response(
