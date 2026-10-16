@@ -2464,3 +2464,14 @@ Overall ...................................... PASS (Deepgram baseline: 33/33, 1
   sign-in, whose API paths the public tunnel does not publish, see #1271); the Resend test sign-in email (same sign-in path). Earlier today: the sidebar checker's "after" run
   stopped on its first question twice (the 8 s budget; posted on #1370); the CI bug #1409 was fixed by #1416; scripts/set-key refuses ELEVENLABS_API_KEY because the line is
   commented out in .env.example (#1440).
+
+==============================================================================
+2026-10-16  dev1  Dry run on development edfe5a60 with 0085 recap_audio_again (#1430), and the owner's ElevenLabs key  - PASSED
+  #1430 (the website's door to new recap audio) merged. Migration 0085_recap_audio_again adds recap_jobs.audio_asked_at and the SECURITY DEFINER function
+  dmbot_recap_audio_again (the website's role may execute it). Same method: a fresh pg_dumpall of the live database (at 0084), restored into a throwaway postgres:16, migrated as
+  the dmbot role, deleted after: "Database updated: 0085_recap_audio_again" in 0.15 s; a second run applied nothing; rows unchanged (3 campaigns, 152 entries, 147 transcript
+  lines, 0 recap jobs). The same change set also edits core/Dockerfile (/data/recap-audio owned by the bot) and docker-compose.yml (a new named volume recap-audio, read-only
+  for web-api, and WEB_RECAP_AUDIO_DIR): a rebuild and a recreate, no hand-made volume. A "Ready to deploy" line is in docs/testing-status.log; no deploy yet.
+  Also today: scripts/set-key refused ELEVENLABS_API_KEY because the line was commented out in .env.example (#1440); fixed by #1443 (the line is active and empty); dev1 pulled the
+  fix and tested set-key on a throwaway env file only (it saves); the owner saves the key themselves at set-key's hidden prompt, and the narrator voice goes in .env as
+  ELEVENLABS_VOICE_ID (the code's name; #1385 said DMBOT_RECAP_VOICE_ID). Nothing turns on until DMBOT_RECAPS=1, a key and a voice id all exist.
