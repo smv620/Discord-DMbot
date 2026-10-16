@@ -40,8 +40,13 @@ CONDITION_WORDS = {
 
 
 class _LastRecap(Protocol):
-    title: str
-    game_day: int | None
+    # Read-only properties: the recap store's `Job` is a frozen dataclass, whose fields a plain
+    # protocol attribute (settable) would refuse.
+    @property
+    def title(self) -> str: ...
+
+    @property
+    def game_day(self) -> int | None: ...
 
 
 class RecapBridge(Protocol):
@@ -185,7 +190,7 @@ class PreSession:
         waiting = await self._claims.waiting_for_check(guild_id, campaign_id, opted_in=opted_in)
         title, day = None, None
         if self._recaps is not None:
-            last = await self._recaps.bridge(guild_id, campaign_id, now + 1)
-            if last is not None and last.title:
-                title, day = last.title, last.game_day
+            recap = await self._recaps.bridge(guild_id, campaign_id, now + 1)
+            if recap is not None and recap.title:
+                title, day = recap.title, recap.game_day
         return compose(Facts(title, day, sentences, conditions, waiting))
