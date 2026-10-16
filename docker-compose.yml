@@ -49,6 +49,9 @@ services:
         condition: service_healthy
     volumes:
       - dmbot-data:/data       # local files (campaign data itself is in Postgres)
+      # The recaps' narration and music (#1383). Its own volume so the website's API can read it
+      # (read-only, below) without seeing anything else in /data. Mounted over /data/recap-audio.
+      - recap-audio:/data/recap-audio
       - whisper-models:/models # downloaded Whisper models, kept across updates
       - test-recordings:/var/lib/dmbot/test-recordings   # saved test sessions (#1019), test server only
       # Read at start-up to warn when .env is missing newer settings (#31). Names only.
@@ -148,6 +151,11 @@ services:
       DMBOT_ENFORCE_PLANS: ${DMBOT_ENFORCE_PLANS:-0}
       LOG_FORMAT: ${LOG_FORMAT:-json}
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      # Where it finds the recap audio (#1418): the volume below, read-only. A path inside the
+      # container, so not an .env setting.
+      WEB_RECAP_AUDIO_DIR: /recap-audio
+    volumes:
+      - recap-audio:/recap-audio:ro
     expose:
       - "${WEB_API_PORT:-8080}"
     healthcheck:
@@ -183,5 +191,6 @@ services:
 volumes:
   postgres-data:
   dmbot-data:
+  recap-audio:   # the bot writes it; the website API reads it (#1418)
   whisper-models:
   test-recordings:

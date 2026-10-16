@@ -202,7 +202,32 @@ export interface Recap {
   canTryAgain: boolean;
   triesLeft: number;
   canDrop: boolean;
+  /** The narration and music (#1383, #1418). Missing from an API older than that. */
+  audio?: RecapAudioState;
 }
+
+/** One campaign's recaps used this month, as `GET /me/recaps` says (`recapsThisMonth`, #1428,
+ * #1444). `audio*` count the narrated ones. Missing from an API older than #1428. */
+export interface RecapMonth {
+  serverName?: string;
+  campaign: string | null;
+  used: number;
+  allowed: number;
+  audioUsed: number;
+  audioAllowed: number;
+}
+
+/** Where a recap's audio has got to. `current`: made from the text as it is now. `error` is the
+ * API's own plain sentence, shown as it is. */
+export interface RecapAudioState {
+  state: "off" | "queued" | "ready" | "failed";
+  error: string;
+  current: boolean;
+  canAskAgain: boolean;
+}
+
+/** The three audio files, as short-lived addresses to play. */
+export type RecapAudioLinks = Partial<Record<"voice" | "music" | "mix", string>>;
 
 export type RecapAction = "post" | "again" | "drop";
 
@@ -282,9 +307,16 @@ export interface AccountApi {
   sendSupport?(ticket: SupportTicket): Promise<SupportReceipt>;
   /** The DM's recent session recaps, newest first (#1386). Missing from an API older than that. */
   recaps?(): Promise<Recap[]>;
+  /** The same list with each campaign's recaps used this month (#1444). The page prefers it;
+   * `thisMonth` is empty from an API older than #1428. */
+  recapList?(): Promise<{ recaps: Recap[]; thisMonth: RecapMonth[] }>;
   recap?(ref: string): Promise<Recap>;
   /** Save the DM's edit of the recap text and its housekeeping bullets. */
   saveRecap?(ref: string, summary: string, housekeeping: string[]): Promise<Recap>;
+  /** Short-lived addresses of the recap's audio (#1418). Empty when there is none to play. */
+  recapAudioLinks?(ref: string): Promise<RecapAudioLinks>;
+  /** "Make the audio again": the API allows it once in 10 minutes for a recap. */
+  askRecapAudioAgain?(ref: string): Promise<Recap>;
   /** Post to the table (the bot sends it), Try again, or Don't post. */
   decideRecap?(ref: string, action: RecapAction): Promise<Recap>;
   /** The person's own questions to the team (#1373). Missing from an API older than that. */
@@ -453,12 +485,27 @@ export function httpApi(base: string, fetcher: typeof fetch = fetch): AccountApi
     recapAudioUrl: () => url("/billing/recap-audio"),
     downloadExport: async () => (await call("GET", "/me/export", undefined, true)) as Blob,
     recaps: async () => ((await call("GET", "/me/recaps")) as { recaps: Recap[] }).recaps,
+    recapList: async () => {
+      const got = (await call("GET", "/me/recaps")) as {
+        recaps: Recap[];
+        recapsThisMonth?: RecapMonth[];
+      };
+      return { recaps: got.recaps, thisMonth: got.recapsThisMonth ?? [] };
+    },
     recap: async (ref) => (await call("GET", `/me/recaps/${encodeURIComponent(ref)}`)) as Recap,
     saveRecap: async (ref, summary, housekeeping) =>
       (await call("PUT", `/me/recaps/${encodeURIComponent(ref)}`, {
         summary,
         housekeeping,
       })) as Recap,
+    recapAudioLinks: async (ref) =>
+      (
+        (await call("GET", `/me/recaps/${encodeURIComponent(ref)}/audio`)) as {
+          links: RecapAudioLinks;
+        }
+      ).links,
+    askRecapAudioAgain: async (ref) =>
+      (await call("POST", `/me/recaps/${encodeURIComponent(ref)}/audio/again`)) as Recap,
     decideRecap: async (ref, action) =>
       (await call("POST", `/me/recaps/${encodeURIComponent(ref)}/${action}`)) as Recap,
     characters: async () =>

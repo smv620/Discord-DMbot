@@ -63,6 +63,9 @@ class WebSettings:
     # Where "a support ticket is waiting" goes (#1340). Empty: tickets are still kept and shown on
     # the admin page, and nobody is emailed. The email never holds the ticket's words.
     support_team_email: str = ""
+    # Where the bot keeps recap audio on disk, read here only (the volume is mounted read-only).
+    # Empty: the page shows no players and the file route answers not_found (#1418).
+    recap_audio_dir: str = ""
     # Cloudflare Turnstile's secret key, the check that a person sent the form. Needed
     # whenever the forms are on, except when testing on localhost.
     turnstile_secret: str = field(default="", repr=False)
@@ -263,6 +266,7 @@ def load_web_settings(env: Mapping[str, str] | None = None) -> WebSettings:
         recaps_per_month=monthly["DMBOT_RECAPS_PER_MONTH"],
         recap_audio_per_month=monthly["DMBOT_RECAP_AUDIO_PER_MONTH"],
         support_team_email=support_team_email,
+        recap_audio_dir=get("WEB_RECAP_AUDIO_DIR"),
         turnstile_secret=turnstile_secret,
         client_ip_header=client_ip_header,
         admin_emails=admin_emails,

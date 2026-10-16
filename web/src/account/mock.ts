@@ -158,8 +158,18 @@ export const characters: Character[] = [
 ];
 
 export const recording: RecordingEntry[] = [
-  { serverId: "srv-thursday", serverName: "Thursday Table", agreedOn: "2026-09-20", on: true },
-  { serverId: "srv-gorrak", serverName: "Gorrak's Hall", agreedOn: "2026-08-02", on: true },
+  {
+    serverId: "srv-thursday",
+    serverName: "Thursday Table",
+    agreedOn: "2026-09-20",
+    on: true,
+  },
+  {
+    serverId: "srv-gorrak",
+    serverName: "Gorrak's Hall",
+    agreedOn: "2026-08-02",
+    on: true,
+  },
 ];
 
 export function scenarioMe(scenario: Scenario): Me | null {
@@ -235,7 +245,11 @@ export function scenarioMe(scenario: Scenario): Me | null {
     case "free":
       return { ...base, plan: null, access: { kind: "free" } };
     case "free-until":
-      return { ...base, plan: null, access: { kind: "free", endsOn: "2026-12-31" } };
+      return {
+        ...base,
+        plan: null,
+        access: { kind: "free", endsOn: "2026-12-31" },
+      };
     case "free-paying":
       return {
         ...base,
@@ -274,6 +288,12 @@ export function mockRecaps(): Recap[] {
     state: "ready",
     working: false,
     error: "",
+    audio: {
+      state: "off",
+      error: "",
+      current: false,
+      canAskAgain: false,
+    } as const,
   };
   return [
     {
@@ -329,6 +349,7 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
   };
 
   const recaps = mockRecaps();
+  const audioAsked = new Set<string>(); // a recap asked for again once: the next ask is "too soon"
   const find = async (ref: string): Promise<Recap> => {
     await reachable();
     signedIn();
@@ -336,7 +357,6 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
     if (!found) throw new ApiError("not-found");
     return found;
   };
-
 
   return {
     calls,
@@ -355,6 +375,25 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
       const r = await find(ref);
       if (!r.canEdit) throw new ApiError("not-editable");
       Object.assign(r, { summary, text: summary, housekeeping });
+      return { ...r };
+    },
+    async recapAudioLinks(ref) {
+      calls.push(`recapAudioLinks:${ref}`);
+      await find(ref);
+      // The real API sends none unless the audio matches the text; the page only asks then.
+      return { voice: "#demo-voice", music: "#demo-music", mix: "#demo-mix" };
+    },
+    async askRecapAudioAgain(ref) {
+      calls.push(`askRecapAudioAgain:${ref}`);
+      const r = await find(ref);
+      if (audioAsked.has(ref)) throw new ApiError("too-soon");
+      audioAsked.add(ref);
+      r.audio = {
+        state: "queued",
+        error: "",
+        current: false,
+        canAskAgain: false,
+      };
       return { ...r };
     },
     async decideRecap(ref, action) {
@@ -402,7 +441,11 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
       calls.push("support");
       signedIn();
       questions = [
-        { at: Math.floor(Date.now() / 1000), subject: ticket.subject, status: "new" },
+        {
+          at: Math.floor(Date.now() / 1000),
+          subject: ticket.subject,
+          status: "new",
+        },
         ...questions,
       ];
       return { reply: true };
@@ -450,7 +493,9 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
     },
     async downloadExport() {
       calls.push("export");
-      return new Blob(['{"about":"pretend export"}'], { type: "application/json" });
+      return new Blob(['{"about":"pretend export"}'], {
+        type: "application/json",
+      });
     },
     installUrl: (serverId: string) => `#demo-install-${serverId}`,
     async linkServer(serverId: string) {
@@ -459,7 +504,9 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
       me = {
         ...now,
         servers: now.servers.map((s) =>
-          s.id === serverId ? { ...s, canLink: false, installedByYou: true } : s,
+          s.id === serverId
+            ? { ...s, canLink: false, installedByYou: true }
+            : s,
         ),
       };
     },
@@ -483,7 +530,10 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
         personName: person.name,
         expiresAt: "2026-10-15T18:00:00Z",
       };
-      me = { ...now, offers: { ...now.offers, outgoing: [...now.offers.outgoing, offer] } };
+      me = {
+        ...now,
+        offers: { ...now.offers, outgoing: [...now.offers.outgoing, offer] },
+      };
     },
     async acceptOffer(offerId: string) {
       calls.push(`accept:${offerId}`);
@@ -502,7 +552,10 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
       me = {
         ...now,
         campaigns: [...now.campaigns, taken],
-        offers: { ...now.offers, incoming: now.offers.incoming.filter((o) => o.id !== offerId) },
+        offers: {
+          ...now.offers,
+          incoming: now.offers.incoming.filter((o) => o.id !== offerId),
+        },
       };
     },
     async declineOffer(offerId: string) {
@@ -510,20 +563,29 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
       const now = signedIn();
       me = {
         ...now,
-        offers: { ...now.offers, incoming: now.offers.incoming.filter((o) => o.id !== offerId) },
+        offers: {
+          ...now.offers,
+          incoming: now.offers.incoming.filter((o) => o.id !== offerId),
+        },
       };
     },
     async stopRecording(serverId: string) {
       calls.push(`stop-recording:${serverId}`);
       const now = signedIn();
-      me = { ...now, recording: (now.recording ?? []).filter((r) => r.serverId !== serverId) };
+      me = {
+        ...now,
+        recording: (now.recording ?? []).filter((r) => r.serverId !== serverId),
+      };
     },
     async withdrawOffer(offerId: string) {
       calls.push(`withdraw:${offerId}`);
       const now = signedIn();
       me = {
         ...now,
-        offers: { ...now.offers, outgoing: now.offers.outgoing.filter((o) => o.id !== offerId) },
+        offers: {
+          ...now.offers,
+          outgoing: now.offers.outgoing.filter((o) => o.id !== offerId),
+        },
       };
     },
     async requestDelete() {

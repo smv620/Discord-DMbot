@@ -23,7 +23,7 @@ from typing import Annotated, Any
 
 from fastapi import Depends, FastAPI, HTTPException, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse, RedirectResponse
+from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
 
 from dmbot import consent_notify, entitlements, install, mail, plans
 from dmbot.account_id import from_dmbot_id, to_dmbot_id
@@ -41,6 +41,7 @@ from dmbot.web import (
     support,
     tokens,
 )
+from dmbot.web import recap_audio as audio_links
 from dmbot.web.accounts import (
     account_email,
     active_subscription,
@@ -60,7 +61,15 @@ from dmbot.web.limits import LIMITS, RateLimit, free_ticket_refusal
 from dmbot.web.me import build_me
 from dmbot.web.moving import MoveCodes, can_move
 from dmbot.web.payments import PaymentError, PaymentProvider, paid_plan_ids
-from dmbot.web.recaps import RecapError, decide, edit_recap, list_recaps, month_usage, read_recap
+from dmbot.web.recaps import (
+    RecapError,
+    audio_again,
+    decide,
+    edit_recap,
+    list_recaps,
+    month_usage,
+    read_recap,
+)
 from dmbot.web.sessions import Session
 from dmbot.web.settings import WebSettings
 
@@ -508,7 +517,9 @@ def create_app(
         "not_allowed": (409, "not_allowed"),
         "not_editable": (409, "not_editable"),
         "bad_text": (422, "bad_text"),
+        "too_soon": (429, "too_soon"),
     }
+    recap_files = audio_links.audio_files(settings.recap_audio_dir)
 
     @app.get("/me/recaps")
     async def me_recaps(signed: Signed) -> dict[str, Any]:
@@ -555,6 +566,41 @@ def create_app(
         except RecapError as err:
             status, detail = recap_refusals.get(err.code, (404, "not_found"))
             raise HTTPException(status_code=status, detail=detail) from None
+
+    @app.get("/me/recaps/{ref}/audio")
+    async def me_recap_audio(ref: str, signed: Signed) -> dict[str, Any]:
+        """Short-lived links to this recap's narration and music (#1418). Only for a DM of the
+        campaign (the same rule as reading the recap), and only while the audio was made from the
+        recap's text as it is now."""
+        session, _token = signed
+        try:
+            recap = await read_recap(db, session, ref)
+        except RecapError as err:
+            status, detail = recap_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+        if not recap["audio"]["current"]:
+            return {"links": {}}
+        return {"links": audio_links.links(recap_files, settings.secret_key, settings.api_url, ref)}
+
+    @app.post("/me/recaps/{ref}/audio/again")
+    async def me_recap_audio_again(ref: str, signed: Signed) -> dict[str, Any]:
+        """ "Make the audio again": at most once in 10 minutes for a recap, the database's rule."""
+        session, _token = signed
+        try:
+            return await audio_again(db, session, ref)
+        except RecapError as err:
+            status, detail = recap_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+
+    @app.get("/recap-audio/{ref}/{kind}")
+    async def recap_audio_file(ref: str, kind: str, e: str = "", s: str = "") -> FileResponse:
+        """One audio file, for a link made by the route above. The signature is the whole check."""
+        path = audio_links.file_for(recap_files, settings.secret_key, ref, kind, e, s)
+        if path is None:
+            raise HTTPException(status_code=404, detail="not_found")
+        return FileResponse(
+            path, media_type="audio/mpeg", headers={"Cache-Control": "private, no-store"}
+        )
 
     @app.post("/me/recaps/{ref}/{action}")
     async def me_recap_decide(ref: str, action: str, signed: Signed) -> dict[str, Any]:

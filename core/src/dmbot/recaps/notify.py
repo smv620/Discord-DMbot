@@ -25,9 +25,14 @@ def job_ref(guild_id: int, campaign_id: str, session_at: int) -> str:
     return f"{guild_id}.{campaign_id}.{session_at}"
 
 
+def _ascii_number(text: str) -> bool:
+    return text.isascii() and text.isdecimal()
+
+
 def parse_ref(ref: str) -> tuple[int, str, int] | None:
     parts = ref.split(".")
-    if len(parts) != 3 or not parts[0].isdigit() or not parts[2].isdigit():
+    # ASCII digits only: `isdigit` is also true for characters like "²", which `int` refuses.
+    if len(parts) != 3 or not _ascii_number(parts[0]) or not _ascii_number(parts[2]):
         return None
     if not parts[1].isalnum() or len(parts[1]) > 64:
         return None

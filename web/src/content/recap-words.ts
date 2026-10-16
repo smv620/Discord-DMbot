@@ -17,6 +17,22 @@ export const RECAP_AUDIO_LIVE = false;
 
 export const recapsHeading = "Recaps";
 
+// How many recaps a campaign can have in a calendar month (UTC), and how many of those can be
+// narrated (#1428, #1449). These MIRROR the server's defaults, DMBOT_RECAPS_PER_MONTH and
+// DMBOT_RECAP_AUDIO_PER_MONTH (.env.example): change them together, or the site promises a number
+// the bot does not keep. Free access is not limited.
+export const RECAPS_PER_MONTH = 10;
+export const RECAP_AUDIO_PER_MONTH = 8;
+
+/** The one sentence about the monthly allowance, for the plans FAQ and Help. Empty while recaps
+ * are off (it would promise a feature nobody has); the narrated number only while narration is. */
+export const allowanceSentence = (recapsLive: boolean, audioLive: boolean): string =>
+  !recapsLive
+    ? ""
+    : audioLive
+      ? `Each campaign gets up to ${RECAPS_PER_MONTH} recaps a month. Up to ${RECAP_AUDIO_PER_MONTH} of those can be narrated, with a voice and music.`
+      : `Each campaign gets up to ${RECAPS_PER_MONTH} recaps a month.`;
+
 /** Under the game master's steps on the Help page. Each sentence rests on core/src/dmbot/recaps/
  * and bot.py (post_recaps, recap_inputs): see the pull request for the lines. */
 export const recapSteps: { text: string }[] = [
@@ -42,6 +58,10 @@ export const recapSteps: { text: string }[] = [
         },
       ]
     : []),
+  {
+    // These steps show only while recaps are on (Help hides the section otherwise).
+    text: `${allowanceSentence(true, RECAP_AUDIO_LIVE)} If you use them all, DMbot tells you on the DM screen, and the next recap comes on the 1st of next month.`,
+  },
 ];
 
 /** One more line in "Emails from DMbot". */
