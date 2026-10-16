@@ -113,6 +113,13 @@ export const held: Held[] = [
     reason:
       "Held until it has been seen working on the test server (#1403).",
   },
+  {
+    date: "2026-10-16",
+    title: "When a player says a secret name",
+    what: "If you keep a name secret and a player says it at the table, it is in the transcript everyone can read. After the session DMbot asks you, in private, whether to keep it secret or not any more. It asks about at most five names, and only you can answer.",
+    reason:
+      "Held until it has been seen working on the test server (#1407).",
+  },
 ];
 
 const months = [
