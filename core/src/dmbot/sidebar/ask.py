@@ -16,6 +16,8 @@ import re
 from collections import deque
 from dataclasses import dataclass
 
+from dmbot.transcript.models import NARRATING
+
 # Said first, so the DM is clearly stepping out of the game for a moment.
 _LEAD = (
     r"(?:hold on|hang on|hold up|one (?:sec|second|moment|minute)|just (?:a )?"
@@ -86,6 +88,12 @@ class Request:
         """What goes to the answer engine and the transcript: "find if you need line of
         sight for fireball", or just the question after "Hey DMbot"."""
         return f"{self.verb} {self.rest}".strip()
+
+
+def voiced_by_npc(entity: str) -> bool:
+    """A line's `entity` (#53) names an NPC the DM was voicing: then it is in character and never
+    asks DMbot anything (#1624). "" (not known, or not sure) and narrating are the DM talking."""
+    return entity not in ("", NARRATING)
 
 
 def request_in(text: str, *, in_character: bool = False) -> Request | None:

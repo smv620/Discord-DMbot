@@ -258,3 +258,34 @@ class Guards(unittest.IsolatedAsyncioTestCase):
         await menu._share(it)
         self.assertIn("Only this campaign's DMs", it.sent[0][0])
         bot.plan_gate.assert_not_called()
+
+
+class CardWords(unittest.IsolatedAsyncioTestCase):
+    """The owner's wording for the card (#1615): bold labels as Discord writes bold, no HTML,
+    and no D&D Beyond line (packs hold only the game masters' own homebrew)."""
+
+    def test_the_intro_and_the_two_bold_labels(self) -> None:
+        from dmbot.ui import shared_packs as sp
+
+        self.assertIn("A Homebrew pack is a named bundle of your own homebrew", sp.INTRO)
+        self.assertIn("⚙️ Settings → 📚 Homebrew", sp.INTRO)
+        self.assertIn(
+            "Only homebrew is shared in a pack, never your story, names or notes.", sp.INTRO
+        )
+        self.assertNotIn("D&D Beyond", sp.INTRO)
+        self.assertNotIn("<b>", sp.INTRO)
+
+    async def test_the_card_shows_the_bold_labels_for_sharing_and_following(self) -> None:
+        st = store()
+        st.published_pack = AsyncMock(return_value=None)
+        st.followed_packs = AsyncMock(return_value=[])
+        it = interaction(7, bot_with(st))
+        text, _ = await shared_packs._menu(it, campaign(), st)
+        self.assertIn("• **Sharing Status:** Not sharing your homebrew.", text)
+        self.assertIn("• **Following:** Not following any pack.", text)
+        self.assertNotIn("<b>", text)
+        self.assertNotIn("D&D Beyond", text)
+        st.followed_packs = AsyncMock(return_value=[follow("Frost")])
+        text, _ = await shared_packs._menu(it, campaign(), st)
+        self.assertIn("• **Following:** the top one wins if two packs use the same name.", text)
+        self.assertIn("1. **Frost** from Red Table", text)

@@ -80,7 +80,7 @@ class Sending(Base):
 
     async def test_an_entry_from_a_book_is_never_sent(self) -> None:
         await self.brew.load_file(
-            GUILD_B, self.far, DM_B, [FileEntry("rule", "Booked", "Book words.")], from_book=True
+            GUILD_B, self.far, DM_B, [FileEntry("feat", "Booked", "Book words.")], from_book=True
         )
         booked = await self.brew.find(GUILD_B, self.far, "Booked")
         assert booked is not None
@@ -188,7 +188,7 @@ class Answering(Base):
     async def test_an_entry_of_that_name_from_a_book_is_never_replaced(self) -> None:
         sid = await self.sent("Booked")
         await self.brew.load_file(
-            GUILD_A, self.pub, DM_A, [FileEntry("rule", "Booked", "Book words.")], from_book=True
+            GUILD_A, self.pub, DM_A, [FileEntry("feat", "Booked", "Book words.")], from_book=True
         )
         with self.assertRaises(RuleSetError) as err:
             await self.packs.accept_pack_suggestion(GUILD_A, self.pub, DM_A, sid, plan_ok=True)

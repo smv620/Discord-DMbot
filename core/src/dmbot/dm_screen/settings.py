@@ -37,6 +37,7 @@ from dmbot.campaigns.models import (
 from dmbot.dm_screen import handover, messages, table_chat_panel
 from dmbot.dm_screen.buttons import may_change_screen, save_visibility
 from dmbot.dm_screen.clock import ClockButton
+from dmbot.dm_screen.delete_campaign import DeleteButton
 from dmbot.dm_screen.pause import pause_buttons, pause_line
 from dmbot.dm_screen.recap_panel import RecapsButton
 from dmbot.dm_screen.table_chat_panel import TableChatButton
@@ -175,6 +176,7 @@ def settings_view(campaign: Campaign, offer: HandoverOffer | None, viewer: int) 
         view.add_item(SharedRulesButton(campaign.id))  # shared house rules (#1190)
         view.add_item(HomebrewButton(campaign.id))  # the campaign's own homebrew (#1520)
         view.add_item(TranscriptsButton(campaign.id))  # how long transcripts are kept (#1533)
+        view.add_item(DeleteButton(campaign.id))  # delete the campaign, plan holder only (#1608)
     return view
 
 
@@ -429,8 +431,8 @@ class HomebrewButton(
     discord.ui.DynamicItem[discord.ui.Button[discord.ui.View]],
     template=rf"dmbot:homebrew:{_ID}",
 ):
-    """📚 Homebrew, on ⚙️ Settings (#1520): the campaign's own spells, monsters, items and rules.
-    Only the campaign's DMs."""
+    """📚 Homebrew, on ⚙️ Settings (#1520): the campaign's own spells, monsters, items and other
+    game content. Only the campaign's DMs."""
 
     def __init__(self, campaign_id: str) -> None:
         super().__init__(
