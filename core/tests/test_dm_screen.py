@@ -179,7 +179,11 @@ class NoticePeekButtonTests(DatabaseTest):
         self.views: dict[int, discord.ui.View | None] = {}
 
         async def fake_post(
-            channel_id: int, text: str, view: discord.ui.View | None = None
+            channel_id: int,
+            text: str,
+            view: discord.ui.View | None = None,
+            *,
+            remember: object = None,
         ) -> bool:
             self.views[channel_id] = view
             return True

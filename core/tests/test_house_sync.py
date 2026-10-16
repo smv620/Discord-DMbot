@@ -685,7 +685,9 @@ class SessionStart(SyncTest):
         self.real.house_file_links = self.links  # type: ignore[assignment]
         self.posts: list[tuple[int, str, Any]] = []
 
-        async def post_message(channel_id: int, text: str, view: Any = None) -> object:
+        async def post_message(
+            channel_id: int, text: str, view: Any = None, *, remember: Any = None
+        ) -> object:
             self.posts.append((channel_id, text, view))
             return object()
 

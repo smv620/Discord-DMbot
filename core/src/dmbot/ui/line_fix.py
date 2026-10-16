@@ -60,6 +60,8 @@ ANSWER_YES = "✅ Your DM said yes: that line now says what you wrote."
 # learn from the answer whether their words named a secret.
 ANSWER_NO = "👍 That line stays as it is."
 LEFT = "👍 Left as it is."
+CLOSED = "Closed."  # a suggestion that could not be used (the player stopped, or the line is gone)
+KEPT = "Kept as is."  # the word on a copy of the line that was answered somewhere else
 PLAYER_STOPPED_DM = "That person isn't being recorded any more, so nothing was changed."
 NOT_WRITTEN_DM = (
     "I couldn't change that line. If it is listed in ✏️ Name fixes to check, press Undo there "
@@ -138,10 +140,11 @@ class LineFixButton(discord.ui.DynamicItem[discord.ui.Button[discord.ui.View]], 
         if found.state != suggestions.OPEN:
             await _tell(interaction, DECIDED)
             return
+        bot.decision_lines.remember_pressed(("fix", found.id), interaction)
         await interaction.response.defer(ephemeral=True, thinking=False)
         if self.act == "no":
             if await store.decide(guild.id, found.id, suggestions.DECLINED, interaction.user.id):
-                await _finish(interaction, bot, found, LEFT, ANSWER_NO)
+                await _finish(interaction, bot, found, LEFT, ANSWER_NO, KEPT)
             else:
                 await _tell(interaction, DECIDED)
             return
@@ -157,7 +160,8 @@ class LineFixButton(discord.ui.DynamicItem[discord.ui.Button[discord.ui.View]], 
         async def closed(state: str, shown: str, to_player: str | None) -> None:
             """Answer it without writing: only the press that closes it says so."""
             if await store.decide(guild_id, found.id, state, by):
-                await _finish(interaction, bot, found, shown, to_player)
+                word = CLOSED if state == suggestions.DROPPED else KEPT
+                await _finish(interaction, bot, found, shown, to_player, word)
             else:
                 await _tell(interaction, DECIDED)
 
@@ -194,7 +198,12 @@ class LineFixButton(discord.ui.DynamicItem[discord.ui.Button[discord.ui.View]], 
             await _tell(interaction, NOT_WRITTEN)
             return
         await _finish(
-            interaction, bot, found, decided_text(f"“{escape(_short(text))}”", True), ANSWER_YES
+            interaction,
+            bot,
+            found,
+            decided_text(f"“{escape(_short(text))}”", True),
+            ANSWER_YES,
+            "Accepted.",
         )
 
 
@@ -204,13 +213,18 @@ async def _finish(
     found: Any,
     shown: str,
     to_player: str | None,
+    outcome: str,
 ) -> None:
-    """Take the buttons down, say it on the DM screen, and tell the player once."""
+    """Take the buttons down, say it on the DM screen, and tell the player once. Any other copy
+    of the same line (the re-post at a session start, #1504) loses its buttons too, with the
+    outcome word (#1509)."""
     if interaction.message is not None:
         try:
             await interaction.message.edit(content=shown, view=None, allowed_mentions=NO_PINGS)
         except discord.HTTPException:
             log.warning("Couldn't update a line-fix message")
+    pressed = interaction.message.id if interaction.message is not None else None
+    await bot.decision_lines.close(("fix", found.id), outcome, pressed_id=pressed)
     with_note = shown if interaction.message is None else None
     if with_note:
         await interaction.followup.send(with_note, ephemeral=True, allowed_mentions=NO_PINGS)
@@ -361,6 +375,7 @@ async def submit(
         channel,
         dm_text(interaction.user.display_name, line.heard, line.text, text),
         suggestion_view(made.id),
+        remember=("fix", made.id),
     )
     if posted is None:  # the DM can't see it: don't leave it waiting unseen
         await store.decide(guild_id, made.id, suggestions.DROPPED, user_id)
