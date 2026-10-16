@@ -62,6 +62,7 @@ from dmbot.web.me import build_me
 from dmbot.web.moving import MoveCodes, can_move
 from dmbot.web.names import list_names, set_said_as
 from dmbot.web.payments import PaymentError, PaymentProvider, paid_plan_ids
+from dmbot.web.recap_choices import read_choices, set_choice
 from dmbot.web.recaps import (
     RecapError,
     audio_again,
@@ -529,6 +530,8 @@ def create_app(
         "not_editable": (409, "not_editable"),
         "bad_text": (422, "bad_text"),
         "too_soon": (429, "too_soon"),
+        "bad_choice": (422, "bad_choice"),
+        "not_in_plan": (409, "not_in_plan"),
     }
     recap_files = audio_links.audio_files(settings.recap_audio_dir)
 
@@ -644,6 +647,39 @@ def create_app(
             status, detail = recap_refusals.get(err.code, (404, "not_found"))
             raise HTTPException(status_code=status, detail=detail) from None
         return {"ok": True}
+
+    @app.get("/me/campaigns/{ref}/recap-choices")
+    async def me_recap_choices(ref: str, signed: Signed) -> dict[str, Any]:
+        """The DM's three recap choices for a campaign (#1468). DM only; anyone else gets "not
+        found"."""
+        session, _token = signed
+        try:
+            return await read_choices(
+                db, session, ref, now=clock(), enforce_plans=settings.enforce_plans
+            )
+        except RecapError as err:
+            status, detail = recap_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+
+    @app.post("/me/campaigns/{ref}/recap-choices")
+    async def me_recap_choice(ref: str, signed: Signed, request: Request) -> dict[str, Any]:
+        """Change one choice: `{"which": "text"|"audio"|"email", "on": true|false}` (#1468)."""
+        session, _token = signed
+        try:
+            body = await request.json()
+        except ValueError:
+            body = None
+        which = body.get("which") if isinstance(body, dict) else None
+        on = body.get("on") if isinstance(body, dict) else None
+        if not isinstance(which, str) or not isinstance(on, bool):
+            raise HTTPException(status_code=422, detail="bad_choice")
+        try:
+            return await set_choice(
+                db, session, ref, which, on, now=clock(), enforce_plans=settings.enforce_plans
+            )
+        except RecapError as err:
+            status, detail = recap_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
 
     @app.post("/me/recaps/{ref}/{action}")
     async def me_recap_decide(ref: str, action: str, signed: Signed) -> dict[str, Any]:

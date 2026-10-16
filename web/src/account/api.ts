@@ -231,6 +231,19 @@ export interface RecapAudioState {
   canAskAgain: boolean;
 }
 
+/** The DM's three recap choices for a campaign (#1468), the same as the DM screen's 📜 Recaps panel.
+ * `canAudio`: the narration switch may be offered (the campaign's owner's plan has it, and it is
+ * the signed-in DM who owns it); `audioHow`: "part of your plan" or "an add-on". */
+export interface RecapChoices {
+  text: boolean;
+  audio: boolean;
+  email: boolean;
+  canAudio: boolean;
+  audioHow: string;
+}
+
+export type RecapChoice = "text" | "audio" | "email";
+
 /** One name of the campaign, as the recap page lists it (#1451). `saidAs` is the DM's spelling
  * for the narrator, or null (the narrator says the name as written). Never a secret name. */
 export interface CampaignName {
@@ -279,6 +292,8 @@ export type ApiErrorKind =
   | "bad-text" // the recap text is empty or too long (#1386)
   | "already-included" // the plan already has narrated recaps (#1390)
   | "already-subscribed" // the add-on is already bought (#1390)
+  | "not-in-plan" // the narration can't be turned on: the plan doesn't have it (#1468)
+  | "bad-choice" // not one of the three recap choices (#1468)
   | "server"; // anything else
 
 export class ApiError extends Error {
@@ -329,6 +344,11 @@ export interface AccountApi {
   saveRecap?(ref: string, summary: string, housekeeping: string[]): Promise<Recap>;
   /** Short-lived addresses of the recap's audio (#1418). Empty when there is none to play. */
   recapAudioLinks?(ref: string): Promise<RecapAudioLinks>;
+  /** The DM's three recap choices for a campaign, and whether the narration may be offered
+   * (#1468). `campaignRef` is `<server>.<campaign>`. Missing from an API older than that. */
+  recapChoices?(campaignRef: string): Promise<RecapChoices>;
+  /** Change one of them; answers all three as they are now. */
+  setRecapChoice?(campaignRef: string, which: RecapChoice, on: boolean): Promise<RecapChoices>;
   /** The campaign's public names with the narrator's spelling (#1451). `campaignRef` is the
    * recap's address without its last part: `<server>.<campaign>`. */
   campaignNames?(campaignRef: string): Promise<CampaignName[]>;
@@ -398,6 +418,8 @@ const errorKinds: Record<string, ApiErrorKind> = {
   already_included: "already-included",
   already_subscribed: "already-subscribed",
   not_found: "not-found",
+  not_in_plan: "not-in-plan",
+  bad_choice: "bad-choice",
   not_editable: "not-editable",
   bad_text: "bad-text",
 };
@@ -537,6 +559,16 @@ export function httpApi(base: string, fetcher: typeof fetch = fetch): AccountApi
           links: RecapAudioLinks;
         }
       ).links,
+    recapChoices: async (campaignRef) =>
+      (await call(
+        "GET",
+        `/me/campaigns/${encodeURIComponent(campaignRef)}/recap-choices`,
+      )) as RecapChoices,
+    setRecapChoice: async (campaignRef, which, on) =>
+      (await call("POST", `/me/campaigns/${encodeURIComponent(campaignRef)}/recap-choices`, {
+        which,
+        on,
+      })) as RecapChoices,
     askRecapAudioAgain: async (ref) =>
       (await call("POST", `/me/recaps/${encodeURIComponent(ref)}/audio/again`)) as Recap,
     decideRecap: async (ref, action) =>

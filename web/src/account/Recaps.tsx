@@ -23,6 +23,7 @@ import {
   type RecapMonth,
   type RecapAudioLinks,
 } from "./api";
+import RecapChoicesPart from "./RecapChoices";
 import { keepFocus } from "./focus";
 import RecapNames from "./RecapNames";
 
@@ -603,6 +604,7 @@ function Review({ api, recapRef }: { api: AccountApi; recapRef: string }) {
 
       {!editing && <AudioPanel api={api} recap={recap} onRecap={setRecap} />}
       {!editing && <AudioOffer api={api} />}
+      {!editing && <RecapChoicesPart api={api} recapRef={recap.ref} />}
       {!editing && <RecapNames api={api} recapRef={recap.ref} />}
       {!editing &&
         (recap.canEdit ||

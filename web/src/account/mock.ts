@@ -15,6 +15,7 @@ import type {
   Person,
   CampaignName,
   Recap,
+  RecapChoices,
   RecordingEntry,
   SupportQuestion,
 } from "./api";
@@ -350,6 +351,14 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
   };
 
   const recaps = mockRecaps();
+  // The DM's recap choices, as the API says them (#1468).
+  const choices: RecapChoices = {
+    text: true,
+    audio: true,
+    email: true,
+    canAudio: true,
+    audioHow: "part of your plan",
+  };
   // The campaign's public names, as the API lists them (#1451).
   const names: CampaignName[] = [
     { id: "a".repeat(32), text: "Ka'zeth", kind: "full", saidAs: null },
@@ -382,6 +391,20 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
       if (!r.canEdit) throw new ApiError("not-editable");
       Object.assign(r, { summary, text: summary, housekeeping });
       return { ...r };
+    },
+    async recapChoices(campaignRef) {
+      calls.push(`recapChoices:${campaignRef}`);
+      await reachable();
+      signedIn();
+      return { ...choices };
+    },
+    async setRecapChoice(campaignRef, which, on) {
+      calls.push(`setRecapChoice:${campaignRef}:${which}:${on}`);
+      await reachable();
+      signedIn();
+      if (which === "audio" && on && !choices.canAudio) throw new ApiError("not-in-plan");
+      choices[which] = on;
+      return { ...choices };
     },
     async campaignNames(campaignRef) {
       calls.push(`campaignNames:${campaignRef}`);
