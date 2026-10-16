@@ -48,14 +48,24 @@ describe("the QAbot privacy section (#1356)", () => {
     expect(privacy.querySelector("#public-questions") !== null).toBe(QABOT_LIVE);
   });
 
+  it("sits where it ends a section: the next heading after it is 'How long we keep it'", () => {
+    // Placed before that heading so the paragraphs above (no selling, locked keys) are not read as
+    // part of the Q&A section when it is switched on.
+    expect(text(privacy.querySelector("main"))).toContain("How long we keep it");
+    const headings = [...privacy.querySelectorAll("main h2")].map((h) => h.textContent);
+    const at = headings.indexOf("If you post in the public Q&A");
+    if (QABOT_LIVE) expect(headings[at + 1]).toBe("How long we keep it");
+    else expect(at).toBe(-1);
+  });
+
   it("says posts are public on GitHub, who reads them, and what happens when it can't answer", () => {
     const words = text(on.body);
     expect(on.querySelector("h2")?.textContent).toBe("If you post in the public Q&A");
     expect(words).toContain("is on GitHub, where anyone can read it");
     expect(words).toContain("GitHub's own privacy terms apply there");
-    expect(words).toContain("QAbot, a bot and not a person, sends the text of the post, and the replies under it, to Anthropic's AI");
-    expect(words).toContain("it opens a public issue that links your post");
-    expect(words).toContain("Nothing private moves, because the post is already public");
+    expect(words).toContain("QAbot, a bot and not a person, sends the text of the post, and the replies under it, to an AI company (Anthropic) so its AI can write an answer");
+    expect(words).toContain("it adds your question to the team's public list on GitHub (an issue), with a link to your post");
+    expect(words).toContain("Nothing new is shared, because your post was already public");
   });
 
   it("uses the same training sentence as the Anthropic line, word for word", () => {
@@ -64,13 +74,14 @@ describe("the QAbot privacy section (#1356)", () => {
     expect(text(privacy.querySelector("main"))).toContain(`It gets the text it needs, not sound. ${aiTrainingSentence}`);
     // Said once in the section, not twice.
     expect(text(on.body).match(/train/gi)).toHaveLength(1);
+    expect(text(on.body)).toContain(`${aiTrainingSentence} It may also look things up on the web.`);
   });
 
   it("links the Q&A and the one support address, and tells people to keep private things out", () => {
     const hrefs = [...on.querySelectorAll("a")].map((a) => a.getAttribute("href"));
     expect(hrefs).toEqual([QA_URL, `mailto:${SUPPORT_EMAIL}`]);
-    expect(text(on.body)).toContain("Don't post account, payment or personal details there");
-    expect(text(on.body)).toContain("If you pay for DMbot, write to the team from your account page");
+    expect(text(on.body)).toContain("Don't post account, payment or personal details there, because anyone can read them");
+    expect(text(on.body)).toContain("If you pay for DMbot, use \"Write to the DMbot team\" on your account page. If you don't, email");
   });
 
   it("uses no technical terms and makes no retention promise of its own", () => {
