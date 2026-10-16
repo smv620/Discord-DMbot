@@ -1877,6 +1877,41 @@ class MemoryStore:
                         removed += 1
         return removed
 
+    async def forget_alias_user(self, guild_id: int, user_id: int) -> int:
+        """Delete my past transcripts (#1532): in every campaign of the server, take this person
+        out of any alias's "who uses it" field (the aliases whose user is one of the player
+        characters they play). The alias and its name stay: the name is the campaign's. Goes
+        through the write path, so the version moves and running copies reload, and the edit is
+        dropped from the undo log so an Undo can't put the person back. Returns how many
+        aliases changed."""
+        async with self._db.guild(guild_id) as conn:
+            cur = await conn.execute(
+                "SELECT DISTINCT campaign_id FROM memory_entities WHERE guild_id = %s"
+                " AND played_by = %s",
+                (guild_id, user_id),
+            )
+            campaigns = [str(r["campaign_id"]) for r in await cur.fetchall()]
+        changed = 0
+        for campaign_id in campaigns:
+            async with self._write(guild_id, campaign_id, "scan") as w:
+                people = [
+                    str(r["id"]) for r in await w.select(ENTITIES, " AND played_by = %s", [user_id])
+                ]
+                aliases = [
+                    str(r["id"])
+                    for r in await w.select(ALIASES, " AND used_by = ANY(%s)", [people])
+                ]
+                for alias_id in aliases:
+                    await w.update(ALIASES, alias_id, {"used_by": None})
+                if aliases:
+                    await w.conn.execute(
+                        "DELETE FROM memory_changes WHERE guild_id = %s AND campaign_id = %s"
+                        " AND batch = %s",
+                        (*w.ids, w.batch),
+                    )
+                changed += len(aliases)
+        return changed
+
     async def recheck_definitions(self, guild_id: int, campaign_id: str) -> Written[int]:
         """After a session (#1189): facts written under an older version of a relationship
         whose meaning has changed are checked against the definition they are held to now. One

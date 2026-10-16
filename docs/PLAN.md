@@ -648,7 +648,7 @@ or servers; only the campaign's DMs change anything (the store checks in the sam
     (`shared_confirmations`, purpose `rulebook`) and loads it with `from_book` set (migration 0099): that
     text can never go into a shared pack. An entry whose name the campaign has (any case) is updated
     (version + 1); a file that would take the campaign over 200 entries loads nothing and says the count.
-- **Still to come:** sharing as a pack (part 2).
+- Sharing as a pack (part 2) is built: see "Shared rulesets" (#1527).
 
 **Shared rulesets: homebrew packs and house-rules sets (owner, 2026-10-14).** Rules can be shared between
 campaigns, in the same server or another one, when both sides choose to. Only rules cross; a campaign's story
@@ -1217,8 +1217,11 @@ building:
   still in the server. People with private messages off use `/transcript`.
 - Until the cleaned download exists, there's only the "as heard" version. If saving
   fails at the start, the DM screen says there'll be no download for this session.
-- Still to come: "Delete my past transcripts", retention, cleaned and both downloads
-  (Phase 2b), and `{entity}` labels for the DM's lines (narrating, which NPC; #53).
+- **Delete my past transcripts is built (#1532):** 🗑 in the ⚙️ Menu on the consent messages, and
+  `/dmbot delete-my-lines`. One warning with the numbers ("N lines in M sessions"), one confirmation, one
+  transaction per server. What goes and what stays is in "Retention" below.
+- Still to come: configurable retention (#1533), cleaned and both downloads (Phase 2b), and `{entity}`
+  labels for the DM's lines (narrating, which NPC; #53).
 
 **Transcripts and downloads (decided 2026-10-05, #124, #125).** Sessions and their
 participants are stored. Each line is kept in two versions: **as heard** (exactly what
@@ -3506,6 +3509,19 @@ that person in any alias's "who uses it" field. When someone withdraws, recordin
 at once and they're told: "🛑 Stopped. DMbot won't record you anymore in <server>. What
 DMbot already wrote down stays, and anyone in this server can still read it." (When
 "Delete my past transcripts" ships, that message must also say how to use it.)
+
+*Delete my past transcripts, built (2026-10-16, #1532).* The stop message now ends "Want it gone? Press
+⚙️ Menu, then 🗑 Delete my transcripts." (its buttons carry the Menu; the button is short so it fits a phone).
+The action covers one server and the pressing person only, in one transaction (nothing deleted if it
+fails); a running session's waiting lines of theirs are dropped under its save lock, and if they are still
+recorded, new lines are written from then on. **Goes:** their lines in both versions (including their `[DM Sidebar]` / `[Table Q]` questions and
+DMbot's replies, which carry their id), their fix suggestions in any state, the story-memory mentions of
+those lines and their undo-log rows, the name counts kept per speaker, and the story claims that cite them
+and were never confirmed; each session's line count and speaker list are recomputed; and they are taken
+out of any alias's "who uses it" (the alias stays). **Stays:** other people's lines, the facts the DM
+confirmed and the claims they came from, recaps already built, and the session rows. A mention names its
+line by `transcript.models.line_ref(session, started_ms, user)`; anything that writes mentions uses that
+form (nothing writes them yet).
 
 **Bots are never transcribed** (music bots etc.) — enforced in ears by an allowlist.
 

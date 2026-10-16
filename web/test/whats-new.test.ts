@@ -47,6 +47,7 @@ describe("What's new", () => {
 
   it("holds back what people can't use yet, with the reason, and shows none of it (#1322)", () => {
     expect(held.map((h) => h.title)).toEqual([
+      "Delete my past transcripts", // until it has been seen working on the test server (#1532)
       "Fix a line", // until it has been seen working on the test server (#1491, #1499)
       "Your own homebrew", // until it has been seen working on the test server (#1520)
       "Recaps for your table", // until dev1 has checked a real recap (#1382, #1384)
