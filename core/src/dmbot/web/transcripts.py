@@ -184,6 +184,63 @@ def speaker_names(lines: list[Line], version: str = export.AS_HEARD) -> dict[int
     return names
 
 
+# The most lines read for one session, and the biggest text made from them: the bot's own limit for
+# a file it sends (ui/transcripts.py FILE_LIMIT). Past either, "too big" and not a half transcript.
+MAX_LINES = 200_000
+FILE_LIMIT = 10 * 1024 * 1024
+# How many of the transcript's lines one answer carries to the reading page ("Show more" asks for
+# the next ones).
+READ_PAGE = 2000
+
+
+async def _all_lines(
+    db: Database, session: Session, guild_id: int, campaign_id: str, sid: str
+) -> list[Line]:
+    """Every line of the session, read from the door a page of up to 5,000 at a time (its cap),
+    each page in its own short transaction, joined in the order the speech started. The cursor is
+    the door's own (started_ms, row), so a page boundary never splits or repeats a line."""
+    lines: list[Line] = []
+    cursor: dict[str, int] | None = None
+    while True:
+        async with db.user(session.user_id, session=session.id_hash) as conn:
+            await _scoped(conn, guild_id)
+            cur = await conn.execute(
+                "SELECT dmbot_web_transcript_lines(%s, %s, %s, %s, %s) AS found",
+                (
+                    guild_id,
+                    campaign_id,
+                    sid,
+                    None if cursor is None else cursor["ms"],
+                    None if cursor is None else cursor["id"],
+                ),
+            )
+            row = await cur.fetchone()
+        page = row["found"] if row else None
+        if page is None:
+            raise RecapError("not_found")
+        lines.extend(_line(r) for r in page["lines"])
+        if len(lines) > MAX_LINES:
+            raise RecapError("too_big")
+        cursor = page["next"]
+        if cursor is None:
+            return lines
+
+
+async def _characters(
+    db: Database, session: Session, guild_id: int, campaign_id: str
+) -> dict[int, str]:
+    """Who plays which character, for the `{character}` labels the Discord file has (a DM never
+    has one): from the door that holds the export's rule. None are shown rather than a failure."""
+    async with db.user(session.user_id, session=session.id_hash) as conn:
+        await _scoped(conn, guild_id)
+        cur = await conn.execute(
+            "SELECT dmbot_web_transcript_characters(%s, %s) AS found", (guild_id, campaign_id)
+        )
+        row = await cur.fetchone()
+    found = row["found"] if row else None
+    return {int(user): str(name) for user, name in (found or {}).items()}
+
+
 async def render(
     db: Database,
     session: Session,
@@ -205,17 +262,8 @@ async def render(
     wanted = next((s for s in found["sessions"] if int(s["number"]) == number), None)
     if wanted is None:
         raise RecapError("not_found")
-    async with db.user(session.user_id, session=session.id_hash) as conn:
-        await _scoped(conn, guild_id)
-        cur = await conn.execute(
-            "SELECT dmbot_web_transcript_lines(%s, %s, %s) AS found",
-            (guild_id, campaign_id, wanted["id"]),
-        )
-        row = await cur.fetchone()
-    rows = row["found"] if row else None
-    if rows is None:
-        raise RecapError("not_found")
-    lines = [_line(r) for r in rows]
+    lines = await _all_lines(db, session, guild_id, campaign_id, str(wanted["id"]))
+    playing = await _characters(db, session, guild_id, campaign_id)
     stored = TranscriptSession(
         id=str(wanted["id"]),
         guild_id=guild_id,
@@ -229,8 +277,16 @@ async def render(
     kind = VERSIONS[version]
     # Off the event loop, as the bot does: a long session is a lot of text to build.
     text = await asyncio.to_thread(
-        export.render, found["name"], stored, lines, speaker_names(lines, kind), version=kind
+        export.render,
+        found["name"],
+        stored,
+        lines,
+        speaker_names(lines, kind),
+        characters=playing,
+        version=kind,
     )
+    if len(text.encode("utf-8")) > FILE_LIMIT:
+        raise RecapError("too_big")
     return export.file_name(found["name"], stored, kind), text
 
 
@@ -243,17 +299,24 @@ async def read_session(
     *,
     now: int,
     enforce_plans: bool,
+    offset: int = 0,
 ) -> dict[str, Any]:
     """The same text as the download, split for reading: the notes at the top (`notes`) and one
-    string per line of the transcript (`lines`)."""
+    string per line of the transcript (`lines`), `READ_PAGE` of them from `offset`. `next` is the
+    offset of the following page, or null on the last. The whole text is built each time (it is
+    one document, with off-topic runs gathered across any boundary), so a page is a slice of it."""
     name, text = await render(
         db, session, ref, number, version, now=now, enforce_plans=enforce_plans
     )
     head, _, body = text.partition("\n\n")
+    everything = body.rstrip("\n").split("\n") if body.strip() else []
+    start = max(0, offset)
+    end = start + READ_PAGE
     return {
         "number": number,
         "version": version,
         "fileName": name,
         "notes": [*head.split("\n"), NAMES_NOTE],
-        "lines": body.rstrip("\n").split("\n") if body.strip() else [],
+        "lines": everything[start:end],
+        "next": end if end < len(everything) else None,
     }

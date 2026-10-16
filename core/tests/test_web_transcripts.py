@@ -5,12 +5,16 @@ transcript, the download is `export.render`'s own text, and the plan rule is the
 
 from __future__ import annotations
 
-from typing import Any
+import unittest.mock
+from typing import Any, ClassVar
 
 import httpx
 import psycopg
 
-from dmbot.transcript import export
+from dmbot.memory.lookup import LookupCache
+from dmbot.memory.models import DM as DM_SOURCE
+from dmbot.memory.store import MemoryStore
+from dmbot.transcript import cleaner, export
 from dmbot.transcript.models import (
     SIDEBAR_ANSWER,
     SIDEBAR_QUESTION,
@@ -52,6 +56,8 @@ async def read(web: Any, who: Any, ref: str, number: int, version: str, **kw: An
 
 
 class Transcripts(Base):
+    expected_characters: ClassVar[dict[int, str]] = {}  # the labels the page should carry
+
     async def give_plan(self, user_id: int, plan: str) -> None:
         async with self.db.plan_writer(user_id) as conn:
             await conn.execute("DELETE FROM entitlements WHERE user_id = %s", (user_id,))
@@ -186,7 +192,9 @@ class Transcripts(Base):
             ("deepgram nova-3 api.example",),
         )  # fmt: skip
         names = transcripts.speaker_names(lines, version)
-        return export.render("One", stored, lines, names, version=version)
+        return export.render(
+            "One", stored, lines, names, characters=self.expected_characters, version=version
+        )
 
     async def test_the_heard_version_is_the_raw_transcript_as_export_makes_it(self) -> None:
         shown = await read(self.web, self.carol, self.cref, 2, "heard")
@@ -290,21 +298,251 @@ class Transcripts(Base):
         async with self.web.user(CAROL.id, session=self.carol.id_hash) as conn:
             cur = await conn.execute(
                 "SELECT dmbot_web_transcript_sessions(%s, %s) AS s,"
-                " dmbot_web_transcript_lines(%s, %s, %s) AS l,"
-                " dmbot_web_transcript_campaigns(%s) AS c",
-                (THURSDAY.id, self.one.id, THURSDAY.id, self.one.id, self.sid, THURSDAY.id),
+                " dmbot_web_transcript_lines(%s, %s, %s, NULL, NULL) AS l,"
+                " dmbot_web_transcript_campaigns(%s) AS c,"
+                " dmbot_web_transcript_characters(%s, %s) AS h",
+                (
+                    THURSDAY.id,
+                    self.one.id,
+                    THURSDAY.id,
+                    self.one.id,
+                    self.sid,
+                    THURSDAY.id,
+                    THURSDAY.id,
+                    self.one.id,
+                ),
             )
             row = await cur.fetchone()
         assert row is not None
-        self.assertEqual((row["s"], row["l"], row["c"]), (None, None, None))
+        self.assertEqual((row["s"], row["l"], row["c"], row["h"]), (None, None, None, None))
 
     async def test_each_door_has_one_caller(self) -> None:
         for door in (
             "dmbot_web_transcript_sessions",
             "dmbot_web_transcript_lines",
             "dmbot_web_transcript_campaigns",
+            "dmbot_web_transcript_characters",
         ):
             self.assertEqual(callers(door), {"schema.py", "web/transcripts.py"}, door)
+
+
+class Characters(Transcripts):
+    """The `{character}` labels (#1512): the export's rule in a door, for any member."""
+
+    expected_characters: ClassVar[dict[int, str]] = {BOB.id: "Dorn"}
+
+    async def asyncSetUp(self) -> None:
+        await super().asyncSetUp()
+        self.memory = MemoryStore(self.db)
+        add = self.memory.add_entity
+        g, c = THURSDAY.id, self.one.id
+        kw = {"source": DM_SOURCE, "status": "confirmed", "role": "player_character"}
+        await add(g, c, type="character", name="Cerric", played_by=BOB.id, **kw)
+        await add(g, c, type="character", name="Dorn", played_by=BOB.id, **kw)
+        await add(g, c, type="character", name="Mira", played_by=CAROL.id, **kw)
+        await add(g, c, type="character", name="Hiro", played_by=ALICE.id, **kw)
+        await add(
+            g, c, type="character", name="Ghost", played_by=4004, source=DM_SOURCE,
+            status="proposed", role="player_character",
+        )  # fmt: skip
+        async with self.db.guild(g) as conn:
+            # Dorn is the newer of Bob's two; Mira's own name is a secret.
+            await conn.execute(
+                "UPDATE memory_entities SET created_at = 10"
+                " WHERE campaign_id = %s AND name = 'Cerric'",
+                (c,),
+            )
+            await conn.execute(
+                "UPDATE memory_entities SET created_at = 20"
+                " WHERE campaign_id = %s AND name = 'Dorn'",
+                (c,),
+            )
+            await conn.execute(
+                "UPDATE memory_aliases SET secret = TRUE WHERE campaign_id = %s AND text = 'Mira'",
+                (c,),
+            )
+
+    async def chars(self, who: Any) -> dict[int, str]:
+        return await transcripts._characters(self.web, who, THURSDAY.id, self.one.id)
+
+    async def test_newest_wins_and_a_secret_a_dm_and_a_guess_never_show(self) -> None:
+        got = await self.chars(self.carol)
+        self.assertEqual(got, {BOB.id: "Dorn"})  # Bob's newer character; not Mira (secret name),
+        # not Hiro (Alice is a DM of the campaign), not Ghost (only a guess)
+
+    async def test_any_member_may_ask_and_a_person_outside_the_server_gets_none(self) -> None:
+        self.assertEqual(await self.chars(self.session), await self.chars(self.carol))
+        elsewhere = await self.session_of(CAROL, [QUILLON])
+        with self.assertRaises(RecapError):
+            await transcripts.read_session(
+                self.web, elsewhere, self.cref, 2, "heard", now=NOW, enforce_plans=False
+            )
+
+    async def test_a_plays_link_gives_a_person_at_the_table_their_character(self) -> None:
+        g, c = THURSDAY.id, self.one.id
+        vex = (
+            await self.memory.add_entity(
+                g, c, type="character", name="Vex", source=DM_SOURCE, status="confirmed"
+            )
+        ).value.id
+        async with self.db.guild(g) as conn:
+            await conn.execute(
+                "INSERT INTO memory_entities (guild_id, campaign_id, id, type, name, description,"
+                " status, source, created_at, played_by) VALUES (%s, %s, %s, 'person', 'Player 5',"
+                " '', 'confirmed', 'dm', 0, %s)",
+                (g, c, "d" * 32, 5005),
+            )
+            await conn.execute(
+                "INSERT INTO memory_relations (guild_id, campaign_id, id, subject_id, predicate,"
+                " object_id, detail, confidence, status, source, mention_ids, secret, created_at)"
+                " VALUES (%s, %s, %s, %s, 'plays', %s, '', 1, 'confirmed', 'dm', '{}', FALSE, 5)",
+                (g, c, "f" * 32, "d" * 32, vex),
+            )
+        self.assertEqual((await self.chars(self.carol))[5005], "Vex")
+        async with self.db.guild(g) as conn:  # a secret link shows nothing
+            await conn.execute(
+                "UPDATE memory_relations SET secret = TRUE WHERE id = %s", ("f" * 32,)
+            )
+        self.assertNotIn(5005, await self.chars(self.carol))
+
+    async def test_it_agrees_with_the_bots_own_rule_for_ordinary_data(self) -> None:
+        lookup = await LookupCache(self.memory).get(THURSDAY.id, self.one.id)
+        theirs = {u: n for u, n in cleaner.characters(lookup).items() if u != ALICE.id}
+        self.assertEqual(await self.chars(self.carol), {BOB.id: theirs[BOB.id]})
+
+    async def test_the_labels_are_in_the_page_and_the_download_matches_the_bots_file(self) -> None:
+        shown = await read(self.web, self.carol, self.cref, 2, "heard")
+        self.assertTrue(any("{Dorn}" in line for line in shown["lines"]), shown["lines"])
+        name, text = await transcripts.render(
+            self.web, self.carol, self.cref, 2, "heard", now=NOW, enforce_plans=False
+        )
+        # What Discord's button builds from the same rows, names and characters.
+        lines = await self.store_t.lines(THURSDAY.id, self.sid)
+        stored = await self.store_t.session(THURSDAY.id, self.sid)
+        assert stored is not None
+        expected = export.render(
+            "One", stored, lines, transcripts.speaker_names(lines, export.AS_HEARD),
+            characters={BOB.id: "Dorn"}, version=export.AS_HEARD,
+        )  # fmt: skip
+        self.assertEqual(text, expected)
+        self.assertEqual(name, export.file_name("One", stored, export.AS_HEARD))
+
+
+class Pages(Transcripts):
+    """A session over the cap comes in pages that join exactly (#1512)."""
+
+    async def long_session(self, count: int, ties_at: int | None = None) -> str:
+        sid = await self.store_t.open_session(THURSDAY.id, self.one.id, START + 400_000)
+        base = (START + 400_000) * 1000
+        lines = []
+        for i in range(count):
+            at = (
+                base
+                + (ties_at if ties_at is not None and abs(i - 5000) < 3 else i) * 1000
+                + (1 if ties_at is None else 0)
+            )
+            lines.append(Line(at, BOB.id, f"word {i}", f"word {i}"))
+        for start in range(0, count, 2000):
+            await self.store_t.add_lines(THURSDAY.id, sid, lines[start : start + 2000])
+        return sid
+
+    async def page(self, sid: str, cursor: dict[str, int] | None) -> Any:
+        async with self.web.user(CAROL.id, session=self.carol.id_hash) as conn:
+            await conn.execute("SELECT set_config('dmbot.guild_id', %s, true)", (str(THURSDAY.id),))
+            cur = await conn.execute(
+                "SELECT dmbot_web_transcript_lines(%s, %s, %s, %s, %s) AS p",
+                (
+                    THURSDAY.id,
+                    self.one.id,
+                    sid,
+                    None if cursor is None else cursor["ms"],
+                    None if cursor is None else cursor["id"],
+                ),
+            )
+            row = await cur.fetchone()
+        assert row is not None
+        return row["p"]
+
+    async def test_a_session_over_the_cap_comes_in_two_pages_that_join_exactly(self) -> None:
+        sid = await self.long_session(5100)
+        first = await self.page(sid, None)
+        self.assertEqual(len(first["lines"]), 5000)
+        self.assertIsNotNone(first["next"])
+        second = await self.page(sid, first["next"])
+        self.assertEqual(len(second["lines"]), 100)
+        self.assertIsNone(second["next"])
+        joined = [x["heard"] for x in first["lines"] + second["lines"]]
+        self.assertEqual(joined, [f"word {i}" for i in range(5100)])
+        # The same lines the bot reads, in the same order.
+        bots = [line.heard for line in await self.store_t.lines(THURSDAY.id, sid)]
+        self.assertEqual(joined, bots)
+
+    async def test_lines_at_the_same_moment_across_a_page_boundary_are_neither_lost_nor_repeated(
+        self,
+    ) -> None:
+        sid = await self.long_session(5100, ties_at=5000)
+        first = await self.page(sid, None)
+        second = await self.page(sid, first["next"])
+        joined = [x["heard"] for x in first["lines"] + second["lines"]]
+        bots = [line.heard for line in await self.store_t.lines(THURSDAY.id, sid)]
+        self.assertEqual(len(joined), 5100)
+        self.assertEqual(joined, bots)
+
+    async def test_a_short_session_is_one_page_with_no_next(self) -> None:
+        page = await self.page(self.sid, None)
+        self.assertIsNone(page["next"])
+        self.assertEqual(len(page["lines"]), 5)
+
+    async def test_the_download_of_a_long_session_is_one_file_equal_to_the_bots(self) -> None:
+        sid = await self.long_session(5100)
+        number = 3  # after the two sessions of the fixture
+        _name, text = await transcripts.render(
+            self.web, self.carol, self.cref, number, "heard", now=NOW, enforce_plans=False
+        )
+        lines = await self.store_t.lines(THURSDAY.id, sid)
+        stored = await self.store_t.session(THURSDAY.id, sid)
+        assert stored is not None
+        expected = export.render(
+            "One", stored, lines, transcripts.speaker_names(lines, export.AS_HEARD),
+            version=export.AS_HEARD,
+        )  # fmt: skip
+        self.assertEqual(text, expected)
+
+    async def test_the_reading_page_gives_a_slice_and_where_the_next_starts(self) -> None:
+        await self.long_session(2500)
+        a = await transcripts.read_session(
+            self.web, self.carol, self.cref, 3, "heard", now=NOW, enforce_plans=False
+        )
+        self.assertEqual(
+            (len(a["lines"]), a["next"]), (transcripts.READ_PAGE, transcripts.READ_PAGE)
+        )
+        b = await transcripts.read_session(
+            self.web, self.carol, self.cref, 3, "heard", now=NOW, enforce_plans=False,
+            offset=a["next"],
+        )  # fmt: skip
+        self.assertEqual(len(b["lines"]), 500)
+        self.assertIsNone(b["next"])
+        self.assertEqual(a["lines"][0].split(": ")[-1], "word 0")
+        self.assertEqual(b["lines"][-1].split(": ")[-1], "word 2499")
+
+    async def test_a_session_past_the_limits_is_too_big_not_half_shown(self) -> None:
+        await self.long_session(120)
+        with (
+            unittest.mock.patch.object(transcripts, "MAX_LINES", 100),
+            self.assertRaises(RecapError) as caught,
+        ):
+            await transcripts.render(
+                self.web, self.carol, self.cref, 3, "heard", now=NOW, enforce_plans=False
+            )
+        self.assertEqual(caught.exception.code, "too_big")
+        with (
+            unittest.mock.patch.object(transcripts, "FILE_LIMIT", 500),
+            self.assertRaises(RecapError) as caught,
+        ):
+            await transcripts.render(
+                self.web, self.carol, self.cref, 3, "heard", now=NOW, enforce_plans=False
+            )
+        self.assertEqual(caught.exception.code, "too_big")
 
 
 class TheRoutes(Base):

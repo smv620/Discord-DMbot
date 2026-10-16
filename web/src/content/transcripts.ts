@@ -45,6 +45,10 @@ export const text = {
     heard: "Every word, names not fixed.",
   } as Record<TranscriptVersion, string>,
   shareLine: "Anyone in your Discord server can read this. Only people who agreed were recorded.",
+  showMore: "Show more",
+  loadingMore: "Loading more…",
+  moreFailed: "That didn't load. Try again.",
+  tooBig: "This transcript is too big to show here. Ask whoever runs DMbot for help.",
   noLines: "Nothing was said in this version.",
   names:
     "On the website, people are shown as Speaker 1, Speaker 2 and so on, in the order they first spoke in this session. Discord's download has their names.",
@@ -59,6 +63,7 @@ export const text = {
 export function problem(kind: string): string {
   if (kind === "not-found") return text.notFound;
   if (kind === "not-in-plan") return text.notInPlan;
+  if (kind === "too-big") return text.tooBig;
   if (kind === "slow-down") return text.tooMany;
   return text.failed;
 }

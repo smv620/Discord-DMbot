@@ -2337,9 +2337,17 @@ WEB_ROLE_FUNCTIONS: tuple[tuple[str, str], ...] = (
     # The DM's recap choices, read and written on the recap page (#1468): DM only.
     ("dmbot_web_recap_choices", "dmbot_web_recap_choices(BIGINT, TEXT)"),
     ("dmbot_web_set_recap_choice", "dmbot_web_set_recap_choice(BIGINT, TEXT, TEXT, BOOLEAN)"),
+    # A campaign's house rules, read by any member of the server (#1521).
+    ("dmbot_web_house_rules", "dmbot_web_house_rules(BIGINT, TEXT)"),
+    ("dmbot_web_house_rules_campaigns", "dmbot_web_house_rules_campaigns(BIGINT)"),
     # A campaign's session transcripts, read by any member of the server (#1501).
     ("dmbot_web_transcript_sessions", "dmbot_web_transcript_sessions(BIGINT, TEXT)"),
-    ("dmbot_web_transcript_lines", "dmbot_web_transcript_lines(BIGINT, TEXT, TEXT)"),
+    (
+        "dmbot_web_transcript_lines",
+        "dmbot_web_transcript_lines(BIGINT, TEXT, TEXT, BIGINT, BIGINT)",
+    ),
+    # Who plays which character in a campaign, for the transcript's labels (#1512).
+    ("dmbot_web_transcript_characters", "dmbot_web_transcript_characters(BIGINT, TEXT)"),
     ("dmbot_web_transcript_campaigns", "dmbot_web_transcript_campaigns(BIGINT)"),
     # The campaign's names with the narrator's spelling (#1451): read and write, DM only.
     ("dmbot_web_names", "dmbot_web_names(BIGINT, TEXT)"),
@@ -4780,6 +4788,241 @@ WEB_TRANSCRIPTS = """
     REVOKE ALL ON FUNCTION dmbot_web_transcript_campaigns(BIGINT) FROM PUBLIC;
 """
 
+WEB_TRANSCRIPT_PAGES = """
+    -- Transcripts on the website, part two (#1512): a size cap and the character labels.
+    --
+    -- dmbot_web_transcript_lines now answers one page of at most 5,000 lines, in the order the
+    -- speech started (started_ms, then the row's own order, the same order as
+    -- `TranscriptStore.lines`), starting after the cursor (after_ms, after_id; both NULL for the
+    -- first page). The answer is {"lines": [...], "next": {"ms": ..., "id": ...} or null}: `next`
+    -- is the cursor for the page after, null on the last. The same checks as before: the caller is
+    -- in the server (set for the transaction, on the session's list) and the session is this
+    -- campaign's, else NULL.
+    DROP FUNCTION dmbot_web_transcript_lines(BIGINT, TEXT, TEXT);
+    CREATE FUNCTION dmbot_web_transcript_lines(
+        g BIGINT, c TEXT, sid TEXT, after_ms BIGINT, after_id BIGINT) RETURNS JSONB
+    LANGUAGE plpgsql SECURITY DEFINER AS $fn$
+    DECLARE
+        page_size CONSTANT INT := 5000;
+        found JSONB;
+        last_ms BIGINT;
+        last_id BIGINT;
+        more BOOLEAN;
+    BEGIN
+        IF dmbot_current_guild() IS DISTINCT FROM g
+           OR NOT (g = ANY ((SELECT dmbot_web_guilds())::BIGINT[]))
+           OR NOT EXISTS (SELECT 1 FROM transcript_sessions t
+                          WHERE t.guild_id = g AND t.campaign_id = c AND t.id = sid) THEN
+            RETURN NULL;
+        END IF;
+        -- One row more than a page, to know whether there is a next one.
+        WITH page AS (
+            SELECT l.*, row_number() OVER (ORDER BY l.started_ms, l.id) AS rn
+            FROM (SELECT * FROM transcript_lines t
+                  WHERE t.guild_id = g AND t.session_id = sid
+                    AND (after_ms IS NULL OR (t.started_ms, t.id) > (after_ms, after_id))
+                  ORDER BY t.started_ms, t.id
+                  LIMIT page_size + 1) l
+        )
+        SELECT jsonb_agg(jsonb_build_object(
+                   'startedMs', p.started_ms, 'userId', p.user_id::TEXT,
+                   'heard', p.heard, 'text', COALESCE(p.text, p.heard),
+                   'durationMs', p.duration_ms, 'topic', p.topic,
+                   'entity', COALESCE(p.entity, ''), 'sidebar', COALESCE(p.sidebar, ''),
+                   'ref', p.sidebar_ref, 'replyTo', p.sidebar_reply_to,
+                   'via', p.sidebar_via, 'stt', p.sidebar_stt, 'model', p.sidebar_model,
+                   'prompt', p.sidebar_prompt, 'sources', p.sidebar_sources,
+                   'typed', p.typed) ORDER BY p.rn) FILTER (WHERE p.rn <= page_size),
+               (array_agg(p.started_ms) FILTER (WHERE p.rn = page_size))[1],
+               (array_agg(p.id) FILTER (WHERE p.rn = page_size))[1],
+               COALESCE(bool_or(p.rn > page_size), FALSE)
+          INTO found, last_ms, last_id, more
+          FROM page p;
+        RETURN jsonb_build_object(
+            'lines', COALESCE(found, '[]'::jsonb),
+            'next', CASE WHEN more THEN jsonb_build_object('ms', last_ms, 'id', last_id)
+                         ELSE NULL END);
+    END
+    $fn$;
+
+    -- dmbot_web_transcript_characters: who plays which character in the campaign, as a JSON object
+    -- of Discord user id (text) -> the character's name, for the labels `{Cerric}` the Discord
+    -- file carries. The export's rule (`cleaner.characters`, then the plays-links of
+    -- `MemoryStore.table_people`), in SQL, and a little stricter so a name is never shown that
+    -- the campaign's memory has not confirmed:
+    --   1. a confirmed player character with a player, whose own name is a confirmed alias that is
+    --      not secret; a player with more than one gets the newest (ties: the lowest id);
+    --   2. for a person at the table with none of those: the last confirmed, non-secret `plays`
+    --      link to a confirmed character whose own name is such an alias.
+    -- A DM of the campaign never gets one (a DM may voice an NPC, and the file must not tell
+    -- which). Any member of the server may ask, as for the transcripts; NULL when the caller is
+    -- not in the server (or no campaign).
+    CREATE FUNCTION dmbot_web_transcript_characters(g BIGINT, c TEXT) RETURNS JSONB
+    LANGUAGE plpgsql SECURITY DEFINER AS $fn$
+    BEGIN
+        IF dmbot_current_guild() IS DISTINCT FROM g
+           OR NOT (g = ANY ((SELECT dmbot_web_guilds())::BIGINT[]))
+           OR NOT EXISTS (SELECT 1 FROM campaigns WHERE guild_id = g AND id = c) THEN
+            RETURN NULL;
+        END IF;
+        RETURN COALESCE((
+            SELECT jsonb_object_agg(x.user_id::TEXT, x.name)
+            FROM (
+                WITH named AS (
+                    -- every confirmed, non-secret character with a name of its own
+                    SELECT e.id, e.created_at, e.role, e.played_by, a.text, a.id AS alias_id
+                    FROM memory_entities e
+                    JOIN memory_aliases a
+                      ON a.guild_id = e.guild_id AND a.campaign_id = e.campaign_id
+                     AND a.entity_id = e.id
+                    WHERE e.guild_id = g AND e.campaign_id = c
+                      AND e.type <> 'person' AND e.status = 'confirmed'
+                      AND a.status = 'confirmed' AND NOT a.secret
+                      AND a.key = (SELECT n.key FROM memory_aliases n
+                                   WHERE n.guild_id = g AND n.campaign_id = c
+                                     AND n.entity_id = e.id AND n.text = e.name
+                                     AND n.status <> 'rejected'
+                                   ORDER BY n.id LIMIT 1)
+                ), by_role AS (
+                    SELECT DISTINCT ON (played_by) played_by AS user_id, text AS name
+                    FROM named
+                    WHERE role = 'player_character' AND played_by IS NOT NULL
+                    ORDER BY played_by, created_at DESC, id, alias_id
+                ), by_plays AS (
+                    SELECT DISTINCT ON (p.played_by) p.played_by AS user_id, nm.text AS name
+                    FROM memory_entities p
+                    JOIN memory_relations r
+                      ON r.guild_id = p.guild_id AND r.campaign_id = p.campaign_id
+                     AND r.subject_id = p.id
+                    JOIN (SELECT DISTINCT ON (id) id, text FROM named ORDER BY id, alias_id) nm
+                      ON nm.id = r.object_id
+                    WHERE p.guild_id = g AND p.campaign_id = c AND p.type = 'person'
+                      AND p.status = 'confirmed' AND p.played_by IS NOT NULL
+                      AND r.predicate = 'plays' AND r.status = 'confirmed' AND NOT r.secret
+                      AND NOT EXISTS (SELECT 1 FROM by_role b WHERE b.user_id = p.played_by)
+                    ORDER BY p.played_by, r.created_at DESC, r.id DESC
+                )
+                SELECT user_id, name FROM by_role
+                UNION ALL
+                SELECT user_id, name FROM by_plays
+            ) x
+            WHERE NOT EXISTS (SELECT 1 FROM campaign_dms d
+                              WHERE d.guild_id = g AND d.campaign_id = c
+                                AND d.user_id = x.user_id)), '{}'::jsonb);
+    END
+    $fn$;
+    DO $do$
+    BEGIN
+        EXECUTE format(
+            'ALTER FUNCTION dmbot_web_transcript_lines(BIGINT, TEXT, TEXT, BIGINT, BIGINT)'
+            ' SET search_path = pg_catalog, %I, pg_temp',
+            current_schema());
+        EXECUTE format(
+            'ALTER FUNCTION dmbot_web_transcript_characters(BIGINT, TEXT)'
+            ' SET search_path = pg_catalog, %I, pg_temp',
+            current_schema());
+    END
+    $do$;
+    REVOKE ALL ON FUNCTION dmbot_web_transcript_lines(BIGINT, TEXT, TEXT, BIGINT, BIGINT)
+        FROM PUBLIC;
+    REVOKE ALL ON FUNCTION dmbot_web_transcript_characters(BIGINT, TEXT) FROM PUBLIC;
+"""
+
+WEB_HOUSE_RULES = """
+    -- A campaign's house rules on the website (#1521). They are the table's rules and every member
+    -- of the Discord server may read them with /dmbot houserules (the bot does not gate that by
+    -- plan), so these two doors answer any signed-in person whose session lists the server
+    -- (`dmbot_web_guilds()`), with that server set for the transaction, and only read. The
+    -- website's role has no grant on house_rules or rule_set_follows.
+    --
+    -- What leaves: each rule's number, words, the book rule it replaces and whether it was merged
+    -- in from a set; the followed house-rules sets' name, version and rules (the bot cites them as
+    -- "<set> house rules, vN"). NEVER a rule's scenario (the story event behind it: the Discord
+    -- list does not show it), who wrote it, the session it came from, a set's publisher or share
+    -- code, or the campaign's linked rules document (a private share link the bot shows only to
+    -- its DMs).
+    --
+    -- dmbot_web_house_rules: NULL when the caller is not in the server or there is no campaign.
+    CREATE FUNCTION dmbot_web_house_rules(g BIGINT, c TEXT) RETURNS JSONB
+    LANGUAGE plpgsql SECURITY DEFINER AS $fn$
+    DECLARE
+        camp campaigns%ROWTYPE;
+    BEGIN
+        IF dmbot_current_guild() IS DISTINCT FROM g
+           OR NOT (g = ANY ((SELECT dmbot_web_guilds())::BIGINT[])) THEN
+            RETURN NULL;
+        END IF;
+        SELECT * INTO camp FROM campaigns WHERE guild_id = g AND id = c;
+        IF NOT FOUND THEN
+            RETURN NULL;
+        END IF;
+        RETURN jsonb_build_object(
+            'name', camp.name,
+            'rules', COALESCE((
+                SELECT jsonb_agg(jsonb_build_object(
+                           'number', r.number, 'rule', r.rule, 'supersedes', r.supersedes,
+                           'fromSet', r.from_set) ORDER BY r.number DESC)
+                FROM house_rules r WHERE r.guild_id = g AND r.campaign_id = c), '[]'::jsonb),
+            'sets', COALESCE((
+                SELECT jsonb_agg(jsonb_build_object(
+                           'name', f.set_name, 'version', f.version,
+                           'rules', CASE WHEN jsonb_typeof(f.content -> 'rules') = 'array'
+                                         THEN f.content -> 'rules' ELSE '[]'::jsonb END)
+                       ORDER BY f.position, f.followed_at, f.set_id)
+                FROM rule_set_follows f
+                WHERE f.guild_id = g AND f.campaign_id = c AND f.kind = 'house_rules'),
+                '[]'::jsonb));
+    END
+    $fn$;
+
+    -- dmbot_web_house_rules_campaigns: the server's campaigns that have a house rule or follow a
+    -- house-rules set, with how many of each; at most 100. NULL when the caller is not in the
+    -- server. A person who only plays has no other list of campaigns on the site.
+    CREATE FUNCTION dmbot_web_house_rules_campaigns(g BIGINT) RETURNS JSONB
+    LANGUAGE plpgsql SECURITY DEFINER AS $fn$
+    BEGIN
+        IF dmbot_current_guild() IS DISTINCT FROM g
+           OR NOT (g = ANY ((SELECT dmbot_web_guilds())::BIGINT[])) THEN
+            RETURN NULL;
+        END IF;
+        RETURN COALESCE((
+            SELECT jsonb_agg(jsonb_build_object(
+                       'id', x.id, 'name', x.name, 'rules', x.rules, 'sets', x.sets)
+                       ORDER BY lower(x.name), x.id)
+            FROM (
+                SELECT c.id, c.name,
+                       (SELECT count(*) FROM house_rules r
+                        WHERE r.guild_id = c.guild_id AND r.campaign_id = c.id) AS rules,
+                       (SELECT count(*) FROM rule_set_follows f
+                        WHERE f.guild_id = c.guild_id AND f.campaign_id = c.id
+                          AND f.kind = 'house_rules') AS sets
+                FROM campaigns c
+                WHERE c.guild_id = g
+                  AND (EXISTS (SELECT 1 FROM house_rules r
+                               WHERE r.guild_id = c.guild_id AND r.campaign_id = c.id)
+                       OR EXISTS (SELECT 1 FROM rule_set_follows f
+                                  WHERE f.guild_id = c.guild_id AND f.campaign_id = c.id
+                                    AND f.kind = 'house_rules'))
+                ORDER BY lower(c.name), c.id LIMIT 100
+            ) x), '[]'::jsonb);
+    END
+    $fn$;
+    DO $do$
+    BEGIN
+        EXECUTE format(
+            'ALTER FUNCTION dmbot_web_house_rules(BIGINT, TEXT)'
+            ' SET search_path = pg_catalog, %I, pg_temp',
+            current_schema());
+        EXECUTE format(
+            'ALTER FUNCTION dmbot_web_house_rules_campaigns(BIGINT)'
+            ' SET search_path = pg_catalog, %I, pg_temp',
+            current_schema());
+    END
+    $do$;
+    REVOKE ALL ON FUNCTION dmbot_web_house_rules(BIGINT, TEXT) FROM PUBLIC;
+    REVOKE ALL ON FUNCTION dmbot_web_house_rules_campaigns(BIGINT) FROM PUBLIC;
+"""
+
 MIGRATIONS: tuple[Migration, ...] = (
     ("0001_initial", INITIAL),
     ("0002_active_sessions", ACTIVE_SESSIONS),
@@ -4878,6 +5121,8 @@ MIGRATIONS: tuple[Migration, ...] = (
     ("0092_support_handed_over", SUPPORT_HANDED_OVER),  # every hand-over, kept (#1487)
     ("0093_transcript_suggestions", TRANSCRIPT_SUGGESTIONS),  # a player's suggested fix (#1491)
     ("0094_web_transcripts", WEB_TRANSCRIPTS),  # the website reads a campaign's transcripts (#1501)
+    ("0095_web_transcript_pages", WEB_TRANSCRIPT_PAGES),  # transcript pages and characters (#1512)
+    ("0098_web_house_rules", WEB_HOUSE_RULES),  # the website reads a campaign's house rules (#1521)
 )
 
 # Tables that must have row-level security. A test checks every table in the schema

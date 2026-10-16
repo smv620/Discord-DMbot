@@ -228,17 +228,7 @@ function Reader({
         {(view: TranscriptView) => (
           <>
             <Download api={api} campaignRef={campaignRef} view={view} />
-            {view.lines.length === 0 ? (
-              <p class="panel" role="status">
-                {text.noLines}
-              </p>
-            ) : (
-              <ul class="transcript-lines" aria-label={text.sessionTitle(number)}>
-                {view.lines.map((line, i) => (
-                  <li key={i}>{line}</li>
-                ))}
-              </ul>
-            )}
+            <Lines key={`${version}-${number}`} api={api} campaignRef={campaignRef} view={view} />
             <details class="small muted">
               <summary>{text.about}</summary>
               <p>{versionNote[version]}</p>
@@ -298,5 +288,63 @@ function Download({
         {state === "failed" ? text.downloadFailed : ""}
       </span>
     </p>
+  );
+}
+
+/** The transcript's lines, the first page the API gave and "Show more" for the next ones. Nothing
+ * is said unless there is more. */
+function Lines({
+  api,
+  campaignRef,
+  view,
+}: {
+  api: AccountApi;
+  campaignRef: string;
+  view: TranscriptView;
+}) {
+  const [extra, setExtra] = useState<string[]>([]);
+  const [next, setNext] = useState<number | null>(view.next ?? null);
+  const [state, setState] = useState<"idle" | "busy" | "failed">("idle");
+  const busy = useRef(false);
+  const lines = [...view.lines, ...extra];
+  async function more() {
+    if (busy.current || next === null || !api.transcript) return;
+    busy.current = true;
+    setState("busy");
+    try {
+      const page = await api.transcript(campaignRef, view.number, view.version, next);
+      setExtra((before) => [...before, ...page.lines]);
+      setNext(page.next ?? null);
+      setState("idle");
+    } catch {
+      setState("failed");
+    } finally {
+      busy.current = false;
+    }
+  }
+  if (lines.length === 0)
+    return (
+      <p class="panel" role="status">
+        {text.noLines}
+      </p>
+    );
+  return (
+    <>
+      <ul class="transcript-lines" aria-label={text.sessionTitle(view.number)}>
+        {lines.map((line, i) => (
+          <li key={i}>{line}</li>
+        ))}
+      </ul>
+      {next !== null && (
+        <p>
+          <button type="button" class="button secondary" onClick={() => void more()}>
+            {state === "busy" ? text.loadingMore : text.showMore}
+          </button>{" "}
+          <span role="status" class="warn">
+            {state === "failed" ? text.moreFailed : ""}
+          </span>
+        </p>
+      )}
+    </>
   );
 }
