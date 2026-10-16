@@ -21,7 +21,8 @@ import {
   heading="Privacy"
   summary={[
     "DMbot only records people who said yes.",
-    "We never keep the sound of your voice: it is turned into text and the sound is thrown away.",
+    "We don't keep the sound of your voice: it is turned into text and the sound is thrown away (unless you give a separate yes in a test server).",
+    "DMbot uses what is said and typed to get better. You can turn that off in My Account. It does not stop recording.",
     "Everyone in your Discord server can read what was written down.",
     "We keep your Discord account number, your name, your email and a list of your servers while you are signed in, so you can sign in and use your plan.",
     "We don't sell anything about you, and there are no ads.",
@@ -95,7 +96,7 @@ import {
       master or the bot said so. A backup holds it, and it is deleted when the campaign is deleted.
       <strong>What DMbot makes from a session belongs to the campaign.</strong> That means a recap,
       story facts, notes for the game master, and anything else DMbot writes from what was said.
-      It is part of the campaign, and the campaign belongs to its game master.
+      It is part of the campaign, and is deleted only with the campaign.
     </li>
     <li>
       <strong>What was typed.</strong> While DMbot is listening, it also reads what people who
@@ -121,7 +122,8 @@ import {
     </li>
     <li>
       <strong>Your voice is not kept.</strong> The sound is sent to be written down, then thrown
-      away. It is never saved.
+      away. It is never saved, unless you give a separate yes to "Save my voice for tests", which
+      only some test servers ask.
     </li>
   </ul>
 
@@ -214,6 +216,18 @@ import {
     </li>
   </ul>
 
+  <h2>Improving DMbot</h2>
+  <p>
+    DMbot uses transcripts and what people type in the table's chat to get better. You can turn
+    this off in <a href="/account">My Account</a>. It covers every server. DMbot still runs your
+    games as usual. It just won't use your words to get better. Turning it off does not stop
+    recording, which is separate: to stop being recorded, press ⚙️ Menu in DMbot's private message
+    to you, then "Stop recording me".
+  </p>
+  <p>
+    Account details (Discord account numbers, emails and payment records) are never published.
+  </p>
+
   <h2>Companies that help us</h2>
   <p>We share only what each one needs to do its job:</p>
   <ul>
@@ -303,7 +317,7 @@ import {
       <code>/consent revoke</code> in Discord. DMbot stops recording you and removes what this
       page says it removes. What DMbot already made from sessions you took part in, such as a
       recap or the story facts your game master kept, stays with the campaign. Your voice was
-      never kept.
+      not kept.
     </li>
     <li>
       <strong>Delete your account</strong> from <a href="/account">My Account</a>. This removes
@@ -320,7 +334,8 @@ import {
       to take the campaign on. Only a game master who presses it takes over.
     </li>
     <li>
-      <strong>Delete a campaign.</strong> Only the campaign's game master can. Deleting it is the
+      <strong>Delete a campaign.</strong> Only the game master whose plan the campaign uses can
+      (for a free campaign, the one who started it). Deleting it is the
       only thing that removes what DMbot made for it, such as its recaps, story facts and notes.
       A player who wants something removed can ask their game master.
     </li>
