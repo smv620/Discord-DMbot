@@ -5,7 +5,8 @@
 //
 // HOW IT TURNS ON: when dev1 has checked a real recap and the What's new entry "Recaps for your
 // table" moves out of `held` (whats-new.ts), set RECAPS_LIVE to true in the same change. A test
-// ties the two together and fails until both are done.
+// ties the two together and fails until both are done. It also shows My Account's "Read your
+// session recaps" link and the recap list's lead and email promise (#1401).
 //
 // RECAP_AUDIO_LIVE is the narrated version (#1383): when a recap can have a narrator and music, and
 // ElevenLabs gets its script. Turning it on also needs: the owner's go-ahead on naming ElevenLabs,

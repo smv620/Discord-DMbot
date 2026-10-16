@@ -11,6 +11,7 @@ import {
   statusLine,
   text,
 } from "../content/recaps";
+import { RECAPS_LIVE } from "../content/recap-words";
 import { ApiError, type AccountApi, type Recap, type RecapAction } from "./api";
 
 const POLL_MS = 5000;
@@ -98,10 +99,12 @@ function List({ api }: { api: AccountApi }) {
     );
   return (
     <>
-      <p class="lead">{text.lead}</p>
+      {(RECAPS_LIVE || load.recaps.length > 0) && (
+        <p class="lead">{text.lead}</p>
+      )}
       {load.recaps.length === 0 ? (
         <p class="panel" role="status">
-          {text.empty}
+          {RECAPS_LIVE ? text.empty : text.emptyOff}
         </p>
       ) : (
         <ul class="campaigns">
