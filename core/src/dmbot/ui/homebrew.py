@@ -36,6 +36,7 @@ from dmbot.rules.homebrew import (
     HomebrewStore,
     name_key,
 )
+from dmbot.rules.site_urls import normalise_domain, normalise_url
 from dmbot.ui import logic
 from dmbot.ui.dmbot_commands import (
     NO_PINGS,
@@ -110,6 +111,16 @@ FROM_BOOK_WARNING = (
     "never goes into a shared ruleset.\n"
     "You can remove it any time. It is deleted with the campaign."
 )
+
+WHO_MADE_ASK = "**Who made these?** Pick one. The name stays with the entries."
+SITE_WARNING = (
+    "**Do you have the right to use {site}'s homebrew?**\n"
+    "DMbot doesn't check. If you press **I have the right**, you are saying you may use it in "
+    "this campaign. DMbot records that you said so, and when.\n"
+    "It stays in this campaign only and is never shared. You can remove it any time. You won't "
+    "be asked again for {site} in this campaign."
+)
+BAD_SITE = "DMbot can't read that as a website. Try something like dndbeyond.com."
 
 KIND_LABELS = {
     "spell": "✨ Spell",
@@ -894,7 +905,14 @@ class FromBookAsk(_Menu):
         self.add_item(_Button(self._cancel, label="Cancel"))
 
     async def _own(self, interaction: discord.Interaction) -> None:
-        await self._load(interaction, from_book=False)
+        if not await _is_dm(interaction, self.campaign):
+            await _tell(interaction, ONLY_DMS)
+            return
+        await _show(
+            interaction,
+            WHO_MADE_ASK,
+            WhoMade(self.campaign, self.entries, self.digest, self.page),
+        )
 
     async def _book(self, interaction: discord.Interaction) -> None:
         if not await _is_dm(interaction, self.campaign):
@@ -912,7 +930,12 @@ class FromBookAsk(_Menu):
     used = False  # one answer only: a double press must not record the confirmation twice
 
     async def _load(
-        self, interaction: discord.Interaction, *, from_book: bool, edition: str | None = None
+        self,
+        interaction: discord.Interaction,
+        *,
+        from_book: bool,
+        edition: str | None = None,
+        credit: tuple[str, str | None, str | None] = ("user", None, None),
     ) -> None:
         await _answer_first(interaction, in_place=True)
         if not await _is_dm(interaction, self.campaign):
@@ -946,6 +969,7 @@ class FromBookAsk(_Menu):
                 self.entries,
                 from_book=from_book,
                 book_edition=edition,
+                credit=credit,
             )
         except HomebrewError as exc:
             await _redraw(interaction, c, note=str(exc), page=self.page)
@@ -953,6 +977,12 @@ class FromBookAsk(_Menu):
         self.stop()
         _changed(interaction, c)
         words = f"📥 Loaded: {done.added} new, {done.updated} changed, {done.same} the same."
+        if credit[0] == "user":
+            words += " Credited to you."
+        elif credit[0] == "website":
+            words += f" Credited to {credit[2]}."
+        elif credit[0] == "name":
+            words += f" Credited to {_md(' '.join((credit[1] or '').split()))}."
         if from_book:
             for_rules = {"2024": "2024 book", "2014": "2014 book"}.get(edition or "", "add-on book")
             words += (
@@ -960,6 +990,128 @@ class FromBookAsk(_Menu):
                 " Your confirmation is recorded."
             )
         await _redraw(interaction, c, note=words, page=self.page)
+
+
+class WhoMade(FromBookAsk):
+    """Before anything is stored (#1633): who made these? Me (the default), a website (its site
+    needs the campaign's once-per-site approval), or someone else, by name."""
+
+    def __init__(
+        self, campaign: Campaign, entries: tuple[FileEntry, ...], digest: str, page: int
+    ) -> None:
+        _Menu.__init__(self)
+        self.campaign, self.entries, self.digest, self.page = campaign, entries, digest, page
+        self.add_item(_Button(self._me, label="Me", style=discord.ButtonStyle.primary))
+        self.add_item(_Button(self._site, label="A website"))
+        self.add_item(_Button(self._someone, label="Someone else"))
+        self.add_item(_Button(self._cancel, label="Cancel"))
+
+    async def _me(self, interaction: discord.Interaction) -> None:
+        await self._load(interaction, from_book=False)
+
+    async def _site(self, interaction: discord.Interaction) -> None:
+        if await _is_dm(interaction, self.campaign):
+            await interaction.response.send_modal(SiteForm(self))
+        else:
+            await _tell(interaction, ONLY_DMS)
+
+    async def _someone(self, interaction: discord.Interaction) -> None:
+        if await _is_dm(interaction, self.campaign):
+            await interaction.response.send_modal(NameForm(self))
+        else:
+            await _tell(interaction, ONLY_DMS)
+
+
+class NameForm(discord.ui.Modal, title="Who made them?"):
+    name: discord.ui.TextInput[NameForm] = discord.ui.TextInput(
+        label="Their name", max_length=NAME_MAX, placeholder="A name, like Sam"
+    )
+
+    def __init__(self, owner: WhoMade) -> None:
+        super().__init__(timeout=VIEW_TIMEOUT_S)
+        self.owner = owner
+
+    async def on_error(  # type: ignore[override]  # a form's has no item (discord.py)
+        self, interaction: discord.Interaction, error: Exception
+    ) -> None:
+        await _failed(interaction, error)
+
+    async def on_submit(self, interaction: discord.Interaction) -> None:
+        await self.owner._load(interaction, from_book=False, credit=("name", self.name.value, None))
+
+
+class SiteForm(discord.ui.Modal, title="Which website?"):
+    site: discord.ui.TextInput[SiteForm] = discord.ui.TextInput(
+        label="Website", max_length=200, placeholder="dndbeyond.com"
+    )
+
+    def __init__(self, owner: WhoMade) -> None:
+        super().__init__(timeout=VIEW_TIMEOUT_S)
+        self.owner = owner
+
+    async def on_error(  # type: ignore[override]  # a form's has no item (discord.py)
+        self, interaction: discord.Interaction, error: Exception
+    ) -> None:
+        await _failed(interaction, error)
+
+    async def on_submit(self, interaction: discord.Interaction) -> None:
+        await _answer_first(interaction, in_place=True)
+        owner = self.owner
+        typed = self.site.value.strip()
+        address = normalise_url(typed) if "://" in typed else None
+        domain = address[1] if address else normalise_domain(typed)
+        if domain is None:
+            await _tell(interaction, BAD_SITE)
+            return
+        if not await _is_dm(interaction, owner.campaign):
+            await _tell(interaction, ONLY_DMS)
+            return
+        sources = _bot(interaction).sources
+        if sources is None:
+            await _tell(interaction, NOT_READY)
+            return
+        c = owner.campaign
+        if await sources.approved(c.guild_id, c.id, domain):  # said once before: no new warning
+            await owner._load(interaction, from_book=False, credit=("website", None, domain))
+            return
+        await _show(
+            interaction,
+            SITE_WARNING.format(site=domain),
+            RightToUseSite(owner, domain),
+        )
+
+
+class RightToUseSite(FromBookAsk):
+    """The site warning, and the one button that confirms it. The approval is kept for the site
+    in this campaign, with who confirmed and when."""
+
+    def __init__(self, owner: WhoMade, domain: str) -> None:
+        _Menu.__init__(self)
+        self.campaign, self.entries = owner.campaign, owner.entries
+        self.digest, self.page = owner.digest, owner.page
+        self.owner, self.domain = owner, domain
+        self.add_item(_Button(self._cancel, label="Cancel"))  # first: the safe one
+        self.add_item(
+            _Button(self._confirmed, label="I have the right", style=discord.ButtonStyle.danger)
+        )
+
+    async def _confirmed(self, interaction: discord.Interaction) -> None:
+        if not await _is_dm(interaction, self.campaign):
+            await _tell(interaction, ONLY_DMS)
+            return
+        sources = _bot(interaction).sources
+        if sources is None:
+            await _tell(interaction, NOT_READY)
+            return
+        await _answer_first(interaction, in_place=True)
+        c = self.campaign
+        try:
+            await sources.approve(c.guild_id, c.id, interaction.user.id, self.domain)
+        except HomebrewError as exc:
+            await _redraw(interaction, c, note=str(exc), page=self.page)
+            return
+        log.info("Site approved for homebrew: user=%s campaign=%s", interaction.user.id, c.id)
+        await self.owner._load(interaction, from_book=False, credit=("website", None, self.domain))
 
 
 class RightToUse(FromBookAsk):

@@ -424,6 +424,7 @@ class HomebrewStore:
         *,
         from_book: bool = False,
         book_edition: str | None = None,
+        credit: tuple[str, str | None, str | None] = ("user", None, None),
     ) -> Loaded:
         """Load a file's entries in one step, or none (#1524). An entry whose name the campaign
         already has (any case) is updated (version + 1) if anything differs, else left alone; a
@@ -433,7 +434,10 @@ class HomebrewStore:
         material (the caller recorded who and when); it marks what is added or changed here so
         it can never go into a shared ruleset. `book_edition`: which rules the book is for
         (2024, 2014 or other), asked of the DM; it sets where the entry ranks. Only the
-        campaign's DMs."""
+        campaign's DMs. `credit` (#1633): who the new entries are credited to, as (kind, text,
+        domain): ("user", None, None) the person loading, ("website", None, "site.com") a site
+        (it needs the campaign's approval to be used), ("name", "a name", None) someone else."""
+        credit_kind, credit_text, credit_domain = self._clean_credit(credit)
         if book_edition is not None and (not from_book or book_edition not in BOOK_EDITIONS):
             raise HomebrewError(
                 "DMbot doesn't know which rules that book is for. Nothing was loaded."
@@ -481,9 +485,11 @@ class HomebrewStore:
                         from_book,
                         book_edition,
                         True if switch is None else switch,
-                        source_kind="upload",  # a loaded file, credited to who loaded it
+                        source_kind="upload",  # a loaded file, credited as the DM chose
                         added_by=user_id,
-                        credit_kind="user",
+                        credit_kind=credit_kind,
+                        credit_text=credit_text,
+                        credit_domain=credit_domain,
                     )
                     added += 1
                     continue
@@ -522,6 +528,24 @@ class HomebrewStore:
                 )
                 updated += 1
         return Loaded(added, updated, same)
+
+    @staticmethod
+    def _clean_credit(
+        credit: tuple[str, str | None, str | None],
+    ) -> tuple[str, str | None, str | None]:
+        kind, text, domain = credit
+        if kind == "user" and text is None and domain is None:
+            return credit
+        if (
+            kind == "website"
+            and text is None
+            and domain is not None
+            and normalise_domain(domain) == domain
+        ):
+            return credit
+        if kind == "name" and domain is None and text is not None:
+            return kind, clean_name(text), None
+        raise HomebrewError("DMbot couldn't read who made this. Nothing was loaded.")
 
     async def put_back(
         self, guild_id: int, campaign_id: str, user_id: int, entry: Homebrew
