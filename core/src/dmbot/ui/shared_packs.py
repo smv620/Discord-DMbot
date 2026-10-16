@@ -37,14 +37,14 @@ from dmbot.ui.shared_rules import (
 log = logging.getLogger(__name__)
 
 INTRO = (
-    "📦 **Homebrew packs**\nShare your homebrew with another table, or use a pack from "
-    "another DM. Only homebrew entries are shared. Never your story, names or notes."
+    "📦 **Homebrew packs**\nA pack is a named bundle of homebrew. Share yours with another "
+    "table, or follow another DM's. Only homebrew is shared. Never your story, names or notes."
 )
-SHARE_LABEL = "📤 Share my homebrew as a pack"
+SHARE_LABEL = "📤 Share my homebrew"
 PUBLISH_LABEL = "🔄 Publish my changes"
 CODE_LABEL = "🔑 New share code"
 STOP_LABEL = "Stop sharing"
-FOLLOW_LABEL = "📥 Follow a homebrew pack"
+FOLLOW_LABEL = "📥 Follow a pack"
 CONFIRM_LABEL = "Yes, follow this pack"
 CANCEL_LABEL = "Cancel"
 EARLIER_LABEL = "▲ Earlier"
@@ -52,9 +52,8 @@ LATER_LABEL = "▼ Later"
 UNFOLLOW_LABEL = "Stop following"
 UNDO_LABEL = "↩️ Undo"
 CODE_NOTE = (
-    "Give this code to a DM who should use your pack. Anyone with the code can read the "
-    "entries, including ones you keep hidden from players. Old codes still work; use Stop "
-    "sharing to turn them all off."
+    "Anyone who has this code can read ALL the shared entries, including the ones hidden from "
+    "players. Only give it to a DM you trust. Old codes still work until you press Stop sharing."
 )
 NAMES_SHOWN = 5  # names quoted for entries that stay, so a long list stays short
 NOT_A_PACK_CODE = "That code is for house rules. Use 📚 Shared rules → Use shared rules."
@@ -73,19 +72,19 @@ def _names(names: list[str]) -> str:
 
 
 def stays_home(left_out: list[str] | tuple[str, ...]) -> str:
-    """The sentence that says which entries aren't shared and why ("" when all are)."""
+    """The sentence that says which entries aren't shared and why ("" when all are): book text
+    stays in one campaign (CLAUDE.md, IP rule)."""
     if not left_out:
         return ""
-    n = len(left_out)
-    verb = "stays" if n == 1 else "stay"
     return (
-        f"{_entries(n)} from a book {verb} here and {'isn' if n == 1 else 'aren'}'t shared: "
-        f"{_names(list(left_out))}."
+        f"Not shared: {_names(list(left_out))}. They come from a book, and book text stays in "
+        "this campaign."
     )
 
 
 def _count(content: dict[str, Any]) -> tuple[int, int]:
-    """(all entries, those hidden from players) in a pack's content."""
+    """(all entries, those hidden from players) in a pack's content; `known` is "players may
+    know it"."""
     entries = content.get("entries")
     if not isinstance(entries, list):
         return 0, 0
@@ -154,17 +153,16 @@ async def _menu(
         if left_out:
             lines.append(f"• {stays_home(left_out)}")
     if follows:
-        lines.append("• Following, first has the say:")
+        lines.append("• Following (the top one wins if two packs use the same name):")
         for i, f in enumerate(follows, start=1):
             note = "" if f.updating else " (no longer updated)"
-            lines.append(
-                f"  {i}. **{_escape(f.name)}** from {_escape(f.publisher)}, version {f.version}"
-                f"{note}"
-            )
-        lines.append("Your own homebrew always comes first.")
+            lines.append(f"  {i}. **{_escape(f.name)}** from {_escape(f.publisher)}{note}")
+        lines.append("Your own homebrew always wins.")
     else:
         lines.append("• Not following any pack.")
-    return "\n".join(lines), SharedPacksMenu(current, sharing=sharing, follows=follows)
+    return "\n".join(lines), SharedPacksMenu(
+        current, sharing=sharing, follows=follows, last_name=mine.name if mine else ""
+    )
 
 
 class ShareForm(discord.ui.Modal, title="Share your homebrew"):
@@ -174,9 +172,10 @@ class ShareForm(discord.ui.Modal, title="Share your homebrew"):
         max_length=rule_sets.NAME_MAX,
     )
 
-    def __init__(self, campaign: Campaign) -> None:
+    def __init__(self, campaign: Campaign, name: str = "") -> None:
         super().__init__(timeout=30 * 60)
         self.campaign = campaign
+        self.name.default = name or None
 
     async def on_submit(self, interaction: discord.Interaction) -> None:
         await share(interaction, self.campaign, self.name.value)
@@ -215,12 +214,17 @@ async def share(interaction: discord.Interaction, campaign: Campaign, name: str)
         current.guild_id, current.id, interaction.user.id, name, entries
     )
     code = await store.make_pack_code(current.guild_id, current.id, interaction.user.id)
-    kept = f"{_entries(len(entries) - len(done.left_out))} shared."
-    await _tell(
-        interaction,
-        f"✅ Sharing **{_escape(done.pack.name)}**. {kept} {stays_home(done.left_out)}\n"
-        f"`{code}`\n{CODE_NOTE}",
-    )
+    shared = [e for e in entries if not e.from_book and e.source is None]
+    hidden = sum(1 for e in shared if not e.players_may_know)  # hidden from players
+    lines = [f"✅ Sharing **{_escape(done.pack.name)}**: {_entries(len(shared))}."]
+    if done.left_out:
+        lines.append(stays_home(done.left_out))
+    if hidden:
+        lines.append(
+            f"{hidden} of them are hidden from players. Anyone with the code can read them."
+        )
+    lines += [CODE_NOTE, f"`{code}`"]  # the code last, so it is easy to copy on a phone
+    await _tell(interaction, "\n".join(lines))
 
 
 @_guarded
@@ -249,7 +253,7 @@ async def new_code(interaction: discord.Interaction, campaign: Campaign) -> None
         return
     current, store = ready
     code = await store.make_pack_code(current.guild_id, current.id, interaction.user.id)
-    await _tell(interaction, f"`{code}`\n{CODE_NOTE}")
+    await _tell(interaction, f"{CODE_NOTE}\n`{code}`")
 
 
 @_guarded
@@ -290,15 +294,16 @@ async def _offer(
     await _send(
         interaction,
         f"**{_escape(offer.name)}** from {_escape(offer.publisher)}: {_entries(total)} "
-        f"(version {offer.version}).\n"
+        f"(update {offer.version}).\n"
         + (f"> {_names(names)}\n" if names else "")
         + (
-            f"{hidden} of them stay behind your DM screen until you let players know.\n"
+            f"{hidden} of them {'is' if hidden == 1 else 'are'} hidden from players, and "
+            "stay hidden at your table.\n"
             if hidden
             else ""
         )
-        + "If you follow it, DMbot knows these too. Your own homebrew wins if a name matches. "
-        "You can stop any time.",
+        + "If you follow it, DMbot will use these when it looks things up. Your own homebrew wins "
+        "if a name matches. You can stop any time.",
         ConfirmFollow(current, offer),
     )
 
@@ -369,7 +374,11 @@ class UndoUnfollow(_Menu):
         )
         self.stop()
         _changed(interaction, current)
-        await _tell(interaction, f"Back to following **{_escape(self.follow.name)}**.")
+        await _tell(
+            interaction,
+            f"Back to following **{_escape(self.follow.name)}**. Open 📦 Homebrew packs to see "
+            "the order.",
+        )
 
 
 class PackActions(_Menu):
@@ -462,10 +471,16 @@ class FollowChoose(_Menu):
 
 class SharedPacksMenu(_Menu):
     def __init__(
-        self, campaign: Campaign, *, sharing: bool, follows: list[rule_sets.Follow]
+        self,
+        campaign: Campaign,
+        *,
+        sharing: bool,
+        follows: list[rule_sets.Follow],
+        last_name: str = "",
     ) -> None:
         super().__init__()
         self.campaign = campaign
+        self.last_name = last_name  # offered again when the DM shares after a stop
         self.follows = {f.set_id: f for f in follows}
         if sharing:
             self.add_item(_Button(self._publish, label=PUBLISH_LABEL))
@@ -499,7 +514,7 @@ class SharedPacksMenu(_Menu):
         if refused is not None:
             await _tell(interaction, refused)
             return
-        await interaction.response.send_modal(ShareForm(self.campaign))
+        await interaction.response.send_modal(ShareForm(self.campaign, self.last_name))
 
     @_guarded
     async def _follow(self, interaction: discord.Interaction) -> None:
@@ -509,11 +524,16 @@ class SharedPacksMenu(_Menu):
         current, store = ready
         offers = await store.packs_here(current.guild_id, current.id)
         followed = set(self.follows)
+        available = [o for o in offers if o.set_id not in followed]
         await _send(
             interaction,
-            "Pick a pack another table in this server shares, or use a share code from "
-            "another server.",
-            FollowChoose(current, [o for o in offers if o.set_id not in followed]),
+            (
+                "Pick a pack another table in this server shares, or paste a share code."
+                if available
+                else "No other table in this server is sharing a pack yet. If a DM gave you a "
+                "share code, press the button."
+            ),
+            FollowChoose(current, available),
         )
 
     async def _publish(self, interaction: discord.Interaction) -> None:
@@ -551,7 +571,7 @@ class SharedPacksMenu(_Menu):
             return
         await _send(
             interaction,
-            f"**{_escape(follow.name)}**: where should it sit? The first pack has the say when "
-            "two packs use the same name.",
+            f"**{_escape(follow.name)}**: move it up or down? The pack higher in the list wins "
+            "when two packs use the same name.",
             PackActions(current, follow),
         )

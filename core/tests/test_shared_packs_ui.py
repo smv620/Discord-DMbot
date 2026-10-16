@@ -80,10 +80,8 @@ class Sharing(unittest.IsolatedAsyncioTestCase):
         await shared_packs.share(it, campaign(), "Mine")
         text = it.sent[0][0]
         self.assertIn("`ABCDEFGHJK`", text)
-        self.assertIn("1 entry shared", text)
-        self.assertIn(
-            "2 entries from a book stay here and aren't shared: Booked One, Booked Two.", text
-        )
+        self.assertIn("1 entry", text)
+        self.assertIn("Not shared: Booked One, Booked Two. They come from a book", text)
         self.assertEqual(st.publish_pack.await_args.args[-1], mine)
 
     async def test_a_problem_is_told_in_its_words(self) -> None:
@@ -95,10 +93,7 @@ class Sharing(unittest.IsolatedAsyncioTestCase):
 
     def test_the_sentence_for_what_stays(self) -> None:
         self.assertEqual(shared_packs.stays_home([]), "")
-        self.assertEqual(
-            shared_packs.stays_home(["One"]),
-            "1 entry from a book stays here and isn't shared: One.",
-        )
+        self.assertTrue(shared_packs.stays_home(["One"]).startswith("Not shared: One. They come"))
         many = shared_packs.stays_home([f"N{i}" for i in range(8)])
         self.assertIn("and 3 more", many)
 
@@ -109,7 +104,7 @@ class Sharing(unittest.IsolatedAsyncioTestCase):
         mine = [entry("A"), entry("Booked", book=True)]
         it = interaction(7, bot_with(st, mine=mine))
         await shared_packs.open_menu(it, campaign())
-        self.assertIn("1 entry from a book stays here and isn't shared: Booked.", it.sent[0][0])
+        self.assertIn("Not shared: Booked. They come from a book", it.sent[0][0])
 
     async def test_stopping_asks_first(self) -> None:
         st = store()
@@ -131,8 +126,8 @@ class Following(unittest.IsolatedAsyncioTestCase):
         it = interaction(7, bot_with(st))
         await shared_packs.look_up(it, campaign(), "code")
         text, view = it.sent[0]
-        self.assertIn("2 entries (version 2)", text)
-        self.assertIn("1 of them stay behind your DM screen", text)
+        self.assertIn("2 entries (update 2)", text)
+        self.assertIn("1 of them is hidden from players", text)
         self.assertIn("Your own homebrew wins", text)
         st.follow_pack.assert_not_called()
         self.assertIsInstance(view, shared_packs.ConfirmFollow)
