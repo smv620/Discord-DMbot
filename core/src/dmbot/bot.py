@@ -211,7 +211,9 @@ from dmbot.transcript import questions as name_questions
 from dmbot.transcript import speaker_question as speaker_q
 from dmbot.transcript import stream as transcript_lines
 from dmbot.transcript.cleaner import (
+    DM_EDIT,
     Cleaned,
+    Fix,
     Vocabulary,
     clean,
     own_name,
@@ -242,7 +244,7 @@ from dmbot.ui.continuity import ContinuityButton, continuity_view
 from dmbot.ui.continuity import waiting_text as continuity_waiting_text
 from dmbot.ui.dmbot_commands import _failed, dmbot_group
 from dmbot.ui.house_rules import dmbot_house_rules  # noqa: F401 (registers it)
-from dmbot.ui.line_fix import FixLineButton, LineFixButton
+from dmbot.ui.line_fix import FixLineButton, LineFixButton, fix_line_view
 from dmbot.ui.migrate import dmbot_migrate  # noqa: F401 (registers it)
 from dmbot.ui.name_card import UndoButton
 from dmbot.ui.name_lists import UndoListButton
@@ -2009,6 +2011,13 @@ class DMBot(commands.AutoShardedBot):
             problems,
             downloads_sent=downloads_sent,
         )
+        session_id = table.transcript_session_id
+        if session_id is not None and self.suggestions is not None:
+            # With ✏️ Fix a line (#1499): the DM can correct any line, from the same picker.
+            await self.post_message(
+                table.screen_channel_id, text, fix_line_view(gid, session_id, dm=True)
+            )
+            return
         await self.post(table.screen_channel_id, text)
 
     # ---- sessions (used by /dmbot start · stop · help) ---------------------
@@ -4746,17 +4755,21 @@ class DMBot(commands.AutoShardedBot):
         undone = table.fix_notes.undo(note_id)  # before any await: undone once
         if not undone:
             return fix_notes.ALREADY, None
-        try:
-            written = await self.memory.add_correction(
-                guild_id, table.campaign_id, note.fix.heard, action=KEEP, source=DM
-            )
-        except Exception:
-            for n in undone:
-                n.undone = False  # not saved: can be pressed again
-            raise
-        if self.lookup is not None:
-            self.lookup.mark_stale(guild_id, table.campaign_id)
-        allow = (table.campaign_id, written.batch) if written.batch is not None else None
+        allow: tuple[str, int] | None = None
+        if note.fix.how == DM_EDIT:
+            pass  # a line the DM rewrote by hand (#1499): no name, so no "keep as heard" rule
+        else:
+            try:
+                written = await self.memory.add_correction(
+                    guild_id, table.campaign_id, note.fix.heard, action=KEEP, source=DM
+                )
+            except Exception:
+                for n in undone:
+                    n.undone = False  # not saved: can be pressed again
+                raise
+            if self.lookup is not None:
+                self.lookup.mark_stale(guild_id, table.campaign_id)
+            allow = (table.campaign_id, written.batch) if written.batch is not None else None
         self._redraw_fix_notes(table)
         if not self.consent.has_consent(guild_id, note.speaker):
             return fix_notes.STOPPED, allow  # their words aren't put back anywhere
@@ -4765,6 +4778,8 @@ class DMBot(commands.AutoShardedBot):
         )
         if not self.consent.has_consent(guild_id, note.speaker):
             return fix_notes.STOPPED, allow  # stopped meanwhile: nothing about their line
+        if note.fix.how == DM_EDIT:
+            return fix_notes.edit_done_text(line_kept=not changed), None
         md = discord.utils.escape_markdown
         text = fix_notes.done_text(md(note.fix.heard), md(note.fix.written), line_kept=not changed)
         return text, allow
@@ -4789,12 +4804,17 @@ class DMBot(commands.AutoShardedBot):
         user_id: int,
         started_ms: int,
         text: str,
+        *,
+        noted: bool = False,
     ) -> bool:
         """Write a fix the DM accepted into one line's cleaned words (#1491); what was heard
-        never changes. A running session's line goes through the same writer as every fix (the
-        saved line, the one waiting to be saved, and the channel message while it is recent);
-        a finished session's saved line is changed in the database. Only while the speaker is
-        still recorded. True if a line changed."""
+        never changes. `noted` (a DM's own edit, #1499): in a running session the change is listed
+        in the "✏️ Name fixes to check" message with Undo, as a whole-line fix; a line that
+        already has a fix or an answer on it is not edited then (an Undo of the older one would
+        bring the old words back over this edit). A running session's line goes through the same
+        writer as every fix (the saved line, the one waiting to be saved, and the channel message
+        while it is recent); a finished session's saved line is changed in the database. Only
+        while the speaker is still recorded. True if a line changed."""
         if not self.consent.has_consent(guild_id, user_id) or self.suggestions is None:
             return False
         for table in [self.tables.get(guild_id), *self._ending.get(guild_id, [])]:
@@ -4804,6 +4824,31 @@ class DMBot(commands.AutoShardedBot):
                 and table.transcript_session_id == session_id
             ):
                 own = await self.suggestions.line(guild_id, session_id, user_id, started_ms)
+                if noted:
+                    asked = table.questions.open
+                    if (
+                        own is None
+                        or table.fix_notes.on_line(user_id, started_ms)
+                        # An open "Did they mean…?" about this line would write over the edit
+                        # from the words as heard when it is answered.
+                        or (
+                            asked is not None
+                            and asked.speaker == user_id
+                            and started_ms in (asked.started_ms, asked.prev_started_ms)
+                        )
+                    ):
+                        return False
+                    # The note is over the line's words now (not as heard), so an Undo puts
+                    # those back and keeps any name already fixed in it.
+                    edit = Fix(0, len(own.text), own.text, text, "", DM_EDIT, sure=False)
+                    added = table.fix_notes.add(user_id, started_ms, own.text, (edit,))
+                    words = table.fix_notes.words_now(user_id, started_ms, own.text, (edit,))
+                    done = await self._rewrite_line(table, user_id, started_ms, words)
+                    if done:
+                        self._redraw_fix_notes(table)
+                    else:  # nothing changed: nothing to undo
+                        table.fix_notes.notes = [n for n in table.fix_notes.notes if n not in added]
+                    return done
                 if own is not None:
                     # Like an answer to "Did they mean…?": the notes know the line's words
                     # now, so a later Undo of a name fix keeps this.

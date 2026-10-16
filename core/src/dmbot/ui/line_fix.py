@@ -60,6 +60,16 @@ ANSWER_YES = "✅ Your DM said yes: that line now says what you wrote."
 # learn from the answer whether their words named a secret.
 ANSWER_NO = "👍 That line stays as it is."
 LEFT = "👍 Left as it is."
+PLAYER_STOPPED_DM = "That person isn't being recorded any more, so nothing was changed."
+NOT_WRITTEN_DM = (
+    "I couldn't change that line. If it is listed in ✏️ Name fixes to check, press Undo there "
+    "first, then try again."
+)
+UNDO_HERE = "Made a mistake? Press Undo in ✏️ Name fixes to check."
+PICK_DM = (
+    "Pick the line to fix. It changes right away. DMbot keeps the words it first heard. "
+    "The player is not told."
+)
 
 _TEMPLATE = r"dmbot:linefix:(?P<act>yes|no):(?P<id>[0-9]{1,18})"
 _FIX_BUTTON = r"dmbot:fixline:(?P<guild>[0-9]{1,20}):(?P<session>[0-9a-f]{32})"
@@ -216,17 +226,32 @@ def _option_label(line: suggestions.Own, started_at: int) -> str:
 
 
 class _PickLine(_Menu):
-    """The speaker's newest lines of one session, to pick from."""
+    """Newest lines of one session, to pick from: the speaker's own, or (`dm`) anyone's."""
 
-    def __init__(self, guild_id: int, campaign_id: str, session_id: str, lines: list[Any],
-                 started_at: int) -> None:  # fmt: skip
+    def __init__(
+        self,
+        guild_id: int,
+        campaign_id: str,
+        session_id: str,
+        lines: list[Any],
+        started_at: int,
+        *,
+        dm: bool = False,
+        names: dict[int, str] | None = None,
+    ) -> None:
         super().__init__()
         self.guild_id, self.campaign_id, self.session_id = guild_id, campaign_id, session_id
+        self.dm = dm
         self.lines = {str(line.started_ms): line for line in lines}
+        names = names or {}
         options = [
             discord.SelectOption(
                 label=_option_label(line, started_at),
-                description=_short(line.text, 100),
+                description=(
+                    f"{names.get(line.user_id, 'Someone')}: {_short(line.text, 80)}"[:100]
+                    if dm
+                    else _short(line.text, 100)
+                ),
                 value=str(line.started_ms),
             )
             for line in lines
@@ -240,7 +265,7 @@ class _PickLine(_Menu):
             await _tell(interaction, GONE_LINE)
             return
         await interaction.response.send_modal(
-            _Words(self.guild_id, self.campaign_id, self.session_id, line)
+            _Words(self.guild_id, self.campaign_id, self.session_id, line, dm=self.dm)
         )
 
 
@@ -248,9 +273,16 @@ class _Words(discord.ui.Modal, title=MODAL_TITLE):
     """The corrected words, typed by the speaker."""
 
     def __init__(
-        self, guild_id: int, campaign_id: str, session_id: str, line: suggestions.Own
+        self,
+        guild_id: int,
+        campaign_id: str,
+        session_id: str,
+        line: suggestions.Own,
+        *,
+        dm: bool = False,
     ) -> None:
         super().__init__()
+        self.dm = dm
         self.guild_id, self.campaign_id, self.session_id, self.line = (
             guild_id,
             campaign_id,
@@ -267,7 +299,8 @@ class _Words(discord.ui.Modal, title=MODAL_TITLE):
         self.add_item(self.words)
 
     async def on_submit(self, interaction: discord.Interaction) -> None:
-        await submit(
+        send = submit_dm if self.dm else submit
+        await send(
             interaction,
             self.guild_id,
             self.campaign_id,
@@ -336,6 +369,68 @@ async def submit(
     await _tell(interaction, SENT)
 
 
+async def submit_dm(
+    interaction: discord.Interaction,
+    guild_id: int,
+    campaign_id: str,
+    session_id: str,
+    line: suggestions.Own,
+    words: str,
+) -> None:
+    """A DM rewrote a line (#1499): checked, then written at once through the same path as an
+    accepted suggestion (`Bot.apply_line_fix`, so the saved line, the notes, the channel message
+    and the helpers' copies follow), with Undo in the fix notes while the session runs. Only the
+    cleaned words change, never what was heard. Nothing is told to the speaker or posted."""
+    bot = _bot(interaction)
+    await interaction.response.defer(ephemeral=True, thinking=False)
+    campaign = await bot.campaigns.get(guild_id, campaign_id)
+    if campaign is None or interaction.user.id not in campaign.dm_user_ids:  # on every press
+        await _tell(interaction, NOT_YOURS)
+        return
+    store = bot.suggestions
+    if store is None:
+        await _tell(interaction, NOT_AVAILABLE)
+        return
+    text = suggestions.tidy(words)
+    if text is None:
+        await _tell(interaction, BAD)
+        return
+    if text == " ".join(line.text.split()):
+        await _tell(interaction, SAME)
+        return
+    if not bot.consent.has_consent(guild_id, line.user_id):
+        await _tell(interaction, PLAYER_STOPPED_DM)
+        return
+    now = await store.line(guild_id, session_id, line.user_id, line.started_ms)
+    if now is None:
+        await _tell(interaction, LINE_GONE)
+        return
+    if " ".join(now.text.split()) != " ".join(line.text.split()):
+        await _tell(interaction, LINE_CHANGED)  # as shown to them a moment ago
+        return
+    lookup = await bot.lookup.get(guild_id, campaign_id) if bot.lookup else None
+    if lookup is None or text_names_a_secret(lookup, text):
+        await _tell(interaction, SECRET)
+        return
+    try:
+        written = await bot.apply_line_fix(
+            guild_id, campaign_id, session_id, line.user_id, line.started_ms, text, noted=True
+        )
+    except Exception:
+        log.exception("Couldn't write a DM's edit into a line")
+        written = False
+    if not written:
+        await _tell(interaction, NOT_WRITTEN_DM)
+        return
+    running = any(
+        t is not None and t.transcript_session_id == session_id for t in (bot.tables.get(guild_id),)
+    )
+    await _tell(
+        interaction,
+        decided_text(f"“{escape(_short(text))}”", True) + (f"\n{UNDO_HERE}" if running else ""),
+    )
+
+
 def _view(suggestion_id: int) -> discord.ui.View:
     view = discord.ui.View(timeout=None)
     for act in ("yes", "no"):
@@ -346,8 +441,9 @@ def _view(suggestion_id: int) -> discord.ui.View:
 async def start(
     interaction: discord.Interaction, *, session_id: str | None = None, guild_id: int | None = None
 ) -> None:
-    """Show the speaker their newest lines to pick from: those of one session, or, with no
-    session given, of the newest session in this server that has lines of theirs."""
+    """Show newest lines to pick from: those of one session, or, with no session given, of the
+    newest session in this server that has some. A speaker sees their own lines; a DM of the
+    session's campaign sees any speaker's (#1499), and need not be recorded."""
     bot = _bot(interaction)
     gid = guild_id or (interaction.guild.id if interaction.guild else None)
     if gid is None:
@@ -359,9 +455,6 @@ async def start(
         return
     await interaction.response.defer(ephemeral=True, thinking=False)
     user_id = interaction.user.id
-    if not bot.consent.has_consent(gid, user_id):
-        await _tell(interaction, NOT_RECORDED)
-        return
     if session_id is not None:
         session = await bot.transcripts.session(gid, session_id)
         candidates = [session] if session is not None else []
@@ -370,16 +463,39 @@ async def start(
         for campaign in await bot.campaigns.list_campaigns(gid):
             candidates += await bot.transcripts.sessions(gid, campaign.id, limit=1)
         candidates.sort(key=lambda s: s.started_at, reverse=True)
+    recorded = bot.consent.has_consent(gid, user_id)
     for session in candidates:
-        lines = await store.own_lines(gid, session.id, user_id)
+        found = await bot.campaigns.get(gid, session.campaign_id)
+        is_dm = found is not None and user_id in found.dm_user_ids
+        if is_dm:
+            lines = await store.recent_lines(gid, session.id)
+        elif recorded:
+            lines = await store.own_lines(gid, session.id, user_id)
+        else:
+            continue
         if lines:
+            names = await _names(interaction, {line.user_id for line in lines}) if is_dm else {}
             await _send(
                 interaction,
-                PICK,
-                _PickLine(gid, session.campaign_id, session.id, lines, session.started_at),
-            )
+                PICK_DM if is_dm else PICK,
+                _PickLine(
+                    gid, session.campaign_id, session.id, lines, session.started_at,
+                    dm=is_dm, names=names,
+                ),
+            )  # fmt: skip
             return
-    await _tell(interaction, NO_LINES)
+    await _tell(interaction, NO_LINES if recorded or candidates else NOT_RECORDED)
+
+
+async def _names(interaction: discord.Interaction, ids: set[int]) -> dict[int, str]:
+    """Display names for a DM's picker (not stored anywhere); unknown people are "Someone"."""
+    guild = interaction.guild
+    found: dict[int, str] = {}
+    for uid in ids:
+        member = guild.get_member(uid) if guild is not None else None
+        if member is not None:
+            found[uid] = member.display_name
+    return found
 
 
 class FixLineButton(
@@ -388,10 +504,10 @@ class FixLineButton(
     """On the private message when a session ends: ✏️ Fix one of my lines. Works after a
     restart (the server and session are in the ID)."""
 
-    def __init__(self, guild_id: int, session_id: str) -> None:
+    def __init__(self, guild_id: int, session_id: str, dm: bool = False) -> None:
         super().__init__(
             discord.ui.Button(
-                label="✏️ Fix one of my lines",
+                label="✏️ Fix a line" if dm else "✏️ Fix one of my lines",
                 style=discord.ButtonStyle.secondary,
                 custom_id=f"dmbot:fixline:{guild_id}:{session_id}",
             )
@@ -411,3 +527,10 @@ class FixLineButton(
 @dmbot_group.command(name="fix", description="Fix a line DMbot heard wrong")
 async def dmbot_fix(interaction: discord.Interaction) -> None:
     await start(interaction)
+
+
+def fix_line_view(guild_id: int, session_id: str, *, dm: bool = False) -> discord.ui.View:
+    """The ✏️ button alone (for the DM screen's end-of-session summary, #1499)."""
+    view = discord.ui.View(timeout=None)
+    view.add_item(FixLineButton(guild_id, session_id, dm))
+    return view
