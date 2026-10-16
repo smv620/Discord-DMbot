@@ -10,6 +10,7 @@ import { parsePage } from "./dom";
 
 import facts from "../src/content/plans.json";
 import { deletionWarnings, notAffiliated, operator, retentionRows } from "../src/content/legal";
+import { QABOT_LIVE } from "../src/content/qabot";
 import { byId, formatPeriod } from "../src/content/pricing";
 import Privacy from "../src/pages/legal/privacy.astro";
 import Refunds from "../src/pages/legal/refunds.astro";
@@ -327,7 +328,9 @@ describe("what the AI company does with the text (#1328)", () => {
 
   it("says it once, under the AI company, and nowhere else on the page", () => {
     // Not copied to another company or to the short summary (which has no such promise to make).
-    expect(privacy().match(/train/gi)).toHaveLength(1);
+    // The public Q&A section (#1356) repeats the same sentence once it is switched on, so it counts
+    // there too; qabot-privacy.test.ts checks that it is the same sentence.
+    expect(privacy().match(/train/gi)).toHaveLength(QABOT_LIVE ? 2 : 1);
   });
 
   it("makes no such promise for the speech company: it depends on that company's own setting", () => {
@@ -378,7 +381,11 @@ describe("writing to the team (#1340)", () => {
     expect(t).toContain("goes only to the team, privately, and is not posted anywhere public");
     expect(t).toContain("We keep it for 12 months, then delete it");
     expect(t).toContain("The team replies by email to the address on your account");
-    expect(t).toContain("the website does not show it to you again");
+    // #1373: the account page lists the person's own questions, never the words.
+    expect(t).toContain(
+      "your account page shows you its subject, when you sent it and whether it was answered, never the message itself",
+    );
+    expect(t).not.toContain("does not show it to you again");
     expect(t).toContain("If you delete your account, we delete your messages too");
   });
 
