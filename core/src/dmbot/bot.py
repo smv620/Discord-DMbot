@@ -4005,6 +4005,7 @@ class DMBot(commands.AutoShardedBot):
                 user_id,
                 said.action,
                 minutes=said.minutes,
+                refuse_if_split=True,  # (#1607) checked again under the lock, not only above
             )
         except Exception:
             log.exception("The game clock couldn't take what was said at the table")
@@ -4095,7 +4096,13 @@ class DMBot(commands.AutoShardedBot):
         action = {"start": "cstart", "next": "cnext", "round": "cround", "end": "cend"}[fight.kind]
         try:
             result = await clock_screen.press(
-                self, campaign.guild_id, campaign.id, user_id, action, set_to=fight.number
+                self,
+                campaign.guild_id,
+                campaign.id,
+                user_id,
+                action,
+                set_to=fight.number,
+                refuse_if_split=True,
             )
         except CampaignError:
             return False  # no longer a DM: said quietly, not an error

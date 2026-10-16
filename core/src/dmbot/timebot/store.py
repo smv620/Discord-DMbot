@@ -71,6 +71,7 @@ class Rejoined:
     kept: Group
     clock: Clock
     token: str
+    dropped_fights: tuple[str, ...] = ()  # names of other groups that were in a fight
 
 
 @dataclass(frozen=True, slots=True)
@@ -160,6 +161,8 @@ class ClockStore:
         fn: Callable[[Clock | None], Clock | None],
         *,
         group: int | None = None,
+        ungrouped: bool = False,
+        refuse_if_split: bool = False,
     ) -> tuple[Clock | None, Clock | None, Group | None]:
         """Apply `fn` to the campaign's clock (None if not set yet); it returns the new
         clock, or None to change nothing. Only a DM of the campaign may; the row is locked
@@ -167,12 +170,19 @@ class ClockStore:
         the picked group's (#1607), or `group`'s when one is given (an Undo made for one group).
         A `group` that isn't there (the party rejoined since) is a clock that isn't there: `fn`
         gets None. Returns (before, after, the group it acted on or None); the group is read in
-        the same transaction as the change, so it is the one that moved."""
+        the same transaction as the change, so it is the one that moved. `ungrouped` is for an
+        Undo made while the party was one clock: if it is split now there is no such clock to
+        change. `refuse_if_split` is for spoken phrases, which move nothing while split; it is
+        checked here under the row lock, so a split just made cannot be raced."""
         async with self._db.guild(guild_id) as conn:
             if not await self._is_dm(conn, guild_id, campaign_id, user_id):
                 raise CampaignError(NOT_A_DM)
             current = await self._read(conn, guild_id, campaign_id, lock=True)
             acting = current.picked_group if current is not None else None
+            if current is not None and current.split and refuse_if_split:
+                return current.clock, current.clock, acting
+            if ungrouped and current is not None and current.split:
+                current, acting = None, None
             if group is not None and current is not None:
                 acting = next((g for g in current.groups if g.position == group), None)
                 if acting is None:
@@ -249,7 +259,10 @@ class ClockStore:
         """Is this campaign's table in combat? The one question other parts ask (#1127): the
         15-minute sheet reads pause in combat, and FightBot runs only in combat."""
         stored = await self.get(guild_id, campaign_id)
-        return stored is not None and game.in_combat(stored.clock)
+        if stored is None:
+            return False
+        # (#1607) split: a fight in any group is a fight at the table
+        return game.in_combat(stored.clock) or any(game.in_combat(g.clock) for g in stored.groups)
 
     async def set_message(
         self, guild_id: int, campaign_id: str, channel_id: int, message_id: int
@@ -346,7 +359,7 @@ class ClockStore:
             main = await self._read_main(conn, guild_id, campaign_id)
             cur = await conn.execute(
                 "SELECT number, group_position, ends_minute, told FROM game_effects"
-                " WHERE guild_id = %s AND campaign_id = %s",
+                " WHERE guild_id = %s AND campaign_id = %s FOR UPDATE",
                 (guild_id, campaign_id),
             )
             timers = list(await cur.fetchall())
@@ -386,7 +399,10 @@ class ClockStore:
                 " AND campaign_id = %s",
                 (Jsonb(snapshot), guild_id, campaign_id),
             )
-        return Rejoined(current.groups, kept, clock, token)
+        fights = tuple(
+            g.name for g in current.groups if g.position != keep and game.in_combat(g.clock)
+        )
+        return Rejoined(current.groups, kept, clock, token, fights)
 
     async def undo_split(self, guild_id: int, campaign_id: str, user_id: int, token: str) -> bool:
         """Take a split back, if it is the last split or rejoin and no group's clock has moved
@@ -400,7 +416,9 @@ class ClockStore:
                 return False
             main = await self._read_main(conn, guild_id, campaign_id)
             if any(
-                g.clock.minute != main.minute or g.clock.last_long_rest != main.last_long_rest
+                g.clock.minute != main.minute
+                or g.clock.last_long_rest != main.last_long_rest
+                or game.in_combat(g.clock)  # (a fight would be lost)
                 for g in current.groups
             ):
                 return False  # a group moved on: Undo would lose that
@@ -450,6 +468,16 @@ class ClockStore:
                         group.clock.combat_round,
                         group.clock.combat_secs,
                     ),
+                )
+            # A timer started after the rejoin counts on the first group now; keep its time left.
+            first = next((g for g in saved["groups"] if g[0] == 1), None)
+            known = {row[0] for row in saved["timers"]}
+            if first is not None:
+                shift = int(first[2]) - current.clock.minute
+                await conn.execute(
+                    "UPDATE game_effects SET ends_minute = LEAST(%s, GREATEST(0, ends_minute + %s))"
+                    " WHERE guild_id = %s AND campaign_id = %s AND NOT (number = ANY(%s))",
+                    (game.MAX_MINUTE, shift, guild_id, campaign_id, list(known)),
                 )
             for number, group_position, ends, told in saved["timers"]:
                 await conn.execute(

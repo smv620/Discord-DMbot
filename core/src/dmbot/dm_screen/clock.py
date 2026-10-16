@@ -208,6 +208,7 @@ async def press(
     *,
     set_to: int | None = None,
     minutes: int | None = None,
+    refuse_if_split: bool = False,
 ) -> Result:
     """Do one thing to the clock. Raises CampaignError (plain words) if the person isn't a
     DM of the campaign. The 24-hour line is worked out here, once, in the same change."""
@@ -224,7 +225,9 @@ async def press(
             result.lines.append(tired_line(new))
         return new
 
-    before, after, group = await store.change_named(guild_id, campaign_id, user_id, change)
+    before, after, group = await store.change_named(
+        guild_id, campaign_id, user_id, change, refuse_if_split=refuse_if_split
+    )
     result.before, result.after, result.group = before, after, group
     result.changed = after is not None and after != before
     if (
@@ -917,7 +920,14 @@ async def run_rejoin(
         await say(
             client,
             campaign,
-            [REJOINED.format(when=split.exact_label(done.clock.minute), name=done.kept.name)],
+            [
+                REJOINED.format(when=split.exact_label(done.clock.minute), name=done.kept.name)
+                + (
+                    f" {_names_in_words(done.dropped_fights)}: a fight there was dropped."
+                    if done.dropped_fights
+                    else ""
+                )
+            ],
             split_undo=("rejoin", done.token),
         )
     return done
@@ -1221,7 +1231,12 @@ class CombatUndoButton(
 
         try:
             _, after, _ = await client.clocks.change_named(
-                guild_id, campaign.id, interaction.user.id, change, group=self.group
+                guild_id,
+                campaign.id,
+                interaction.user.id,
+                change,
+                group=self.group,
+                ungrouped=self.group is None,
             )
         except CampaignError as exc:
             await _reply(interaction, str(exc))
@@ -1334,7 +1349,12 @@ class ClockUndoButton(
 
         try:
             _, after, acted = await client.clocks.change_named(
-                guild.id, campaign.id, interaction.user.id, change, group=self.group
+                guild.id,
+                campaign.id,
+                interaction.user.id,
+                change,
+                group=self.group,
+                ungrouped=self.group is None,
             )
         except CampaignError as exc:
             await _reply(interaction, str(exc))

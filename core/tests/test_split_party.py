@@ -520,7 +520,7 @@ class Rejoining(Party):
         self.assertEqual((await self.stored()).clock.minute, NOON4 + 60)
 
     async def test_it_must_be_split_to_rejoin(self) -> None:
-        with self.assertRaisesRegex(CampaignError, "isn't split"):
+        with self.assertRaisesRegex(CampaignError, "together already"):
             await self.clocks.rejoin(GUILD_A, self.a.id, DM, 1)
 
     async def test_undo_of_a_split_puts_the_one_clock_back(self) -> None:
@@ -583,6 +583,67 @@ class Rejoining(Party):
         self.assertFalse(await self.clocks.undo_split(GUILD_A, self.a.id, DM, done.token))
 
 
+class Review(Party):
+    """What the code review of #1607 found."""
+
+    async def test_an_undo_made_before_the_split_does_nothing_once_split(self) -> None:
+        result = await self.press("long")
+        assert result.before is not None and result.after is not None
+        spec = ui.undo_id(result.before, result.after)  # (no group: made on the one clock)
+        await self.split_up()
+        # Both groups start where the rest left the clock: the old Undo must move neither.
+        await ui.ClockUndoButton(self.a.id, spec).callback(self.interaction())
+        self.assertEqual(await self.minutes(), {"Tower": NOON4 + 480, "Camp": NOON4 + 480})
+
+    async def test_a_combat_undo_made_before_the_split_does_nothing_once_split(self) -> None:
+        result = await self.press("cstart")
+        assert result.before is not None and result.after is not None
+        spec = ui.combat_undo_id(result.before, result.after)
+        await self.press("cend")
+        await self.split_up()
+        await self.clocks.change(GUILD_A, self.a.id, DM, lambda c: result.after)
+        await ui.CombatUndoButton(self.a.id, spec).callback(self.interaction())
+        self.assertTrue(await self.clocks.in_combat(GUILD_A, self.a.id))
+
+    async def test_a_spoken_press_is_refused_under_the_lock_when_split(self) -> None:
+        await self.split_up()
+        result = await ui.press(self.fake, GUILD_A, self.a.id, DM, "short", refuse_if_split=True)
+        self.assertFalse(result.changed)
+        self.assertEqual(await self.minutes(), {"Tower": NOON4, "Camp": NOON4})
+        await self.clocks.rejoin(GUILD_A, self.a.id, DM, 1)
+        moved = await ui.press(self.fake, GUILD_A, self.a.id, DM, "short", refuse_if_split=True)
+        self.assertTrue(moved.changed)
+
+    async def test_undo_of_a_rejoin_keeps_the_time_left_on_a_timer_started_after(self) -> None:
+        await self.split_up()
+        await self.press("h1")  # Tower +1h; Camp unchanged
+        done = await self.clocks.rejoin(GUILD_A, self.a.id, DM, 2)  # keep Camp's earlier time
+        late = await self.effects.start(GUILD_A, self.a.id, DM, "Haste", None, 30, False)
+        left = late.ends - done.clock.minute
+        self.assertTrue(await self.clocks.undo_rejoin(GUILD_A, self.a.id, DM, done.token))
+        [timer] = await self.effects.running(GUILD_A, self.a.id)
+        stored = await self.stored()
+        self.assertEqual(timer.ends - stored.groups[0].clock.minute, left)
+
+    async def test_undo_of_a_split_refuses_when_a_group_started_a_fight(self) -> None:
+        token = await self.split_up()
+        await self.press("cstart")
+        self.assertFalse(await self.clocks.undo_split(GUILD_A, self.a.id, DM, token))
+
+    async def test_a_fight_in_any_group_is_a_fight_at_the_table(self) -> None:
+        await self.split_up()
+        await self.press("cstart")  # Tower fights
+        await self.clocks.pick(GUILD_A, self.a.id, DM, 2)
+        self.assertTrue(await self.clocks.in_combat(GUILD_A, self.a.id))
+
+    async def test_rejoin_says_which_other_group_was_in_a_fight(self) -> None:
+        await self.split_up()
+        await self.clocks.pick(GUILD_A, self.a.id, DM, 2)
+        await self.press("cstart")
+        done = await self.clocks.rejoin(GUILD_A, self.a.id, DM, 1)
+        self.assertEqual(done.dropped_fights, ("Camp",))
+
+
 class OnTheScreen(Party):
     """The form's work, the picker and the buttons, with the Discord side stood in for."""
 
@@ -591,7 +652,7 @@ class OnTheScreen(Party):
         self.assertTrue(await ui.run_split(it, self.a.id, ["Tower", "Camp"]))
         texts = [text for _, text, _ in self.fake.posted]
         self.assertIn("Tower: Day 4, 12:00 · Camp: Day 4, 12:00", texts[0])
-        self.assertTrue(texts[1].startswith("✂️ The party is split into **Tower** and **Camp**."))
+        self.assertTrue(texts[1].startswith("✂️ Split: **Tower** and **Camp**."))
         view = self.fake.posted[1][2]
         [button] = [i for i in view.children if isinstance(i, ui.SplitUndoButton)]
         undo = self.interaction()
@@ -627,7 +688,7 @@ class OnTheScreen(Party):
         assert done is not None
         self.assertFalse((await self.stored()).split)
         said = self.fake.posted[-1]
-        self.assertIn("The party is together again", said[1])
+        self.assertIn("Together again at Day 4, 13:00", said[1])
         [button] = [i for i in said[2].children if isinstance(i, ui.SplitUndoButton)]
         await button.callback(self.interaction())
         self.assertTrue((await self.stored()).split)

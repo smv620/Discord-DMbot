@@ -481,7 +481,8 @@ class Buttons(unittest.TestCase):
     def test_the_set_time_panel_has_them(self) -> None:
         view = ui.panel_view(self.CID)
         self.assertEqual(
-            self.labels(view), ["Short rest", "Long rest", "Skip to dawn", "Type the time…"]
+            self.labels(view),
+            ["Short rest", "Long rest", "Skip to dawn", "Type the time…", "Split the party"],
         )
         rows = [_button(item).row for item in view.children]
         self.assertTrue(all(isinstance(r, int) for r in rows))
@@ -533,7 +534,9 @@ class SetTimePanel(PlayersClock):
         self.assertTrue(sent.kwargs["ephemeral"])  # only the DM who pressed sees it
         self.assertFalse(sent.args[0].startswith("🕰️"))  # never taken for the clock message
         labels = [_button(i).label for i in sent.kwargs["view"].children]
-        self.assertEqual(labels, ["Short rest", "Long rest", "Skip to dawn", "Type the time…"])
+        self.assertEqual(
+            labels, ["Short rest", "Long rest", "Skip to dawn", "Type the time…", "Split the party"]
+        )
 
     async def test_typing_a_time_and_the_first_time_open_the_form(self) -> None:
         await self.press("set", set_to=NOON4)
