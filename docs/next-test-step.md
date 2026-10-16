@@ -4,32 +4,30 @@
 
 ---
 
-## Test I: the new consent question
+## Test J: keeping and deleting transcripts
 
 **People:** 1 (you, as the DM)
-**Time:** about 5 minutes
-**Why:** the big update is on the server. DMbot's words about recording changed, because it now also reads the table's chat. So everyone who agreed before is asked again, and nobody is recorded until they say yes. This checks that.
+**Time:** about 5 minutes. No voice needed, and nothing is deleted.
+**Why:** this update adds a way to choose how long DMbot keeps a campaign's transcripts, and a button that deletes yours. We only need to see that the screens open, that your choice is saved, and that the warning is clear.
 
 ### Steps
-1. Join your voice channel. Type `/dmbot start`, press **▶ Continue last campaign**, then **▶ Start listening** (once only).
-2. DMbot sends you a **private message** with a new question. Read it: it should say DMbot also reads the table's chat. **Don't press anything yet.**
-3. Say out loud: **"This sentence is before I agreed."**
-4. In the private message, press **I'm 16 or older, record me**. DMbot confirms, and the message has a **⚙️ Menu** button.
-5. Say out loud: **"This sentence is after I agreed."**
-6. Leave the voice channel and join it again. DMbot sends a short private reminder with the date you agreed and a **⚙️ Menu** button.
-7. Type `/dmbot stop`. Press the transcript download.
+1. In your server, type `/dmbot start` and press **▶ Continue last campaign** (don't press Start listening).
+2. Open **⚙️ Settings**, then **📜 Transcripts**. You should see a list of choices for how long to keep transcripts.
+3. Pick one choice (any one). DMbot should say it saved it. Open **📜 Transcripts** again: your choice should still be picked. Then pick the choice that keeps them as before, so nothing is lost.
+4. Open the **⚙️ Menu** (the button DMbot's private reminders carry, or the one in Settings). Press **🗑 Delete my transcripts**. Read the warning. It should be one short message with a button to confirm and a way to cancel. **Press cancel. Do not confirm.**
+5. Open **⚙️ Settings**, then **📚 Shared rules**, then **📦 Homebrew packs**. It should open (an empty list is fine).
 
 ### It worked if
-- Step 2: you were asked again, even though you agreed before, and the words mention the table's chat.
-- Step 4: DMbot confirmed it, with a **⚙️ Menu** button.
-- Step 6: the reminder shows the date and **⚙️ Menu**.
-- Step 7: the transcript has the "after" sentence and **not** the "before" one.
+- Step 2: the list of choices opens.
+- Step 3: the choice is saved and still picked when you reopen it.
+- Step 4: the warning is short and clear, and cancelling leaves everything as it was.
+- Step 5: Homebrew packs opens.
 
-**If not:** type `/dmbot stop`, then tell dev1 the step where it went wrong and what you saw.
+**If not:** tell dev1 the step where it went wrong and what you saw (a screenshot of the message is fine, with no private names in it).
 
 ### Tell dev1
-- **Worked** or **didn't work** for each of steps 2, 4, 6 and 7, and anything that felt confusing.
+- **Worked** or **didn't work** for each of steps 2 to 5, and anything that felt confusing.
 
 ---
 
-*The full test plan and every result are in `docs/testing-status.log` and `docs/testing-history.log`. This page is only the next step.*
+*Test I (the new consent question; 1 person, 5 minutes) is still waiting and goes next. The full test plan and every result are in `docs/testing-status.log` and `docs/testing-history.log`. This page is only the next step.*
