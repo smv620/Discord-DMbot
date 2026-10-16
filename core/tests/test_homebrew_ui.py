@@ -260,6 +260,23 @@ class TheFile(HomebrewUiTest):
         await menu._download(stranger)
         self.assertEqual(self.said(stranger), ui.ONLY_DMS)
 
+    async def test_download_tags_shared_book_entries_like_the_players_card(self) -> None:
+        await self.store.load_file(
+            GUILD,
+            self.campaign.id,
+            DM,
+            (FileEntry("spell", "Moonlance", "From the book.", None, False),),
+            from_book=True,
+            book_edition="2014",
+        )
+        await self.add("Hollow King")
+        menu = ui.ListMenu(self.campaign, [], 0, [])
+        it = self.press()
+        await menu._download(it)
+        text = it.followup.send.await_args.kwargs["file"].fp.read().decode()
+        self.assertIn("## Moonlance (spell)\n[Shared book] [Legacy 2014]\n", text)
+        self.assertNotIn("## Hollow King (monster)\n[Shared book]", text)
+
     async def test_load_opens_the_form_for_a_dm_and_refuses_anyone_else(self) -> None:
         menu = ui.ListMenu(self.campaign, [], 0, [])
         it = self.press()

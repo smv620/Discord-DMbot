@@ -14,6 +14,12 @@ words, which may run over many lines:
 
     A skeleton in a rusted crown. It cannot be touched while it wears the crown.
 
+An entry that came from a shared rulebook has one more line under its heading, `[Shared book]`
+(and `[Legacy 2014]` too when the book is for the older rules and the campaign plays the newer),
+the same tags the players' card carries (#1584). It is a note for whoever reads the file: `parse`
+accepts it and ignores it, so an entry loaded back is the campaign's own and never from a book;
+only the "I have the right" step marks an entry as from a book.
+
 `parse` and `write` go both ways without loss. A line of the words that starts with `##` is
 written with one more backslash in front (`\\##`) and read back without it, so the words can
 never be taken for the next entry. A block that is not an entry is reported, never guessed at.
@@ -27,6 +33,7 @@ import re
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 
+from dmbot.rules.book_rank import BOOK_TAG, LEGACY_TAG, book_tag
 from dmbot.rules.homebrew import (
     HOMEBREW_MAX,
     KINDS,
@@ -106,14 +113,23 @@ def _unescape(line: str) -> str:
     return match.group(1) if match else line
 
 
-def write(campaign_name: str, entries: Sequence[Homebrew]) -> str:
-    """The file for these entries (this campaign's), by name."""
+# The only lines `parse` skips under a heading: a tag note `write` adds (#1584).
+_TAG_LINES = frozenset({BOOK_TAG, f"{BOOK_TAG} {LEGACY_TAG}"})
+
+
+def write(campaign_name: str, entries: Sequence[Homebrew], target_ruleset: str = "2024") -> str:
+    """The file for these entries (this campaign's), by name. An entry from a shared rulebook
+    carries its tags under the heading; `target_ruleset` is the one the campaign plays, which
+    decides `[Legacy 2014]`."""
     title = " ".join(campaign_name.split()) or "Campaign"
     out = [f"Homebrew: {title}", HELP]
     if not entries:  # a template to start from
         out += ["", *(f"# {line}" if line else "#" for line in EXAMPLE.split("\n"))]
     for entry in sorted(entries, key=lambda e: name_key(e.name)):
         out += ["", f"## {entry.name} ({entry.kind})"]
+        tag = book_tag(entry, target_ruleset)
+        if tag is not None:
+            out.append(tag)
         if entry.summary:
             out.append(f"Summary: {entry.summary}")
         out.append(f"Players may know: {'yes' if entry.players_may_know else 'no'}")
@@ -200,6 +216,9 @@ def _entry(
     players: bool | None = None
     i = 0
     while i < len(lines) and lines[i].strip():
+        if i == 0 and lines[0].strip() in _TAG_LINES:
+            i += 1  # a note for the reader: never read as a fact about the entry
+            continue
         label, colon, value = lines[i].partition(":")
         key = label.strip().lower()
         if colon and key == "summary":

@@ -3,6 +3,7 @@ reported and never guessed at, and the limits."""
 
 from __future__ import annotations
 
+import dataclasses
 import unittest
 
 from dmbot.rules import homebrew_file as hf
@@ -52,6 +53,70 @@ class RoundTrip(unittest.TestCase):
     def test_an_empty_campaign_writes_a_file_that_reads_as_nothing(self) -> None:
         parsed = hf.parse(hf.write("Empty", []))
         self.assertEqual((parsed.entries, parsed.problems), ((), ()))
+
+
+def book(name: str, edition: str | None, **kw: object) -> Homebrew:
+    return dataclasses.replace(
+        entry(name, "From the book.", kind="spell"), from_book=True, book_edition=edition, **kw
+    )
+
+
+class SharedBookTags(unittest.TestCase):
+    """An entry from a shared rulebook carries the players' card tags under its heading (#1584)."""
+
+    def lines(self, e: Homebrew, target: str = "2024") -> list[str]:
+        out = hf.write("Frostmaiden", [e], target).split("\n")
+        return out[out.index(f"## {e.name} ({e.kind})") :]
+
+    def test_the_campaigns_own_entry_has_no_tag(self) -> None:
+        lines = self.lines(entry("Hollow King", "Mine."))
+        self.assertNotIn("[Shared book]", "\n".join(lines))
+
+    def test_a_2024_book_entry_is_tagged_shared_book(self) -> None:
+        lines = self.lines(book("Fireball", "2024"))
+        self.assertEqual(lines[1], "[Shared book]")
+
+    def test_a_2014_book_in_a_2024_campaign_is_tagged_legacy_too(self) -> None:
+        lines = self.lines(book("Fireball", "2014"))
+        self.assertEqual(lines[1], "[Shared book] [Legacy 2014]")
+
+    def test_a_2014_book_in_a_2014_campaign_is_not_legacy(self) -> None:
+        lines = self.lines(book("Fireball", "2014"), target="2014")
+        self.assertEqual(lines[1], "[Shared book]")
+
+    def test_an_add_on_book_or_an_older_entry_is_shared_book_without_legacy(self) -> None:
+        for edition in ("other", None):
+            self.assertEqual(self.lines(book("Fireball", edition))[1], "[Shared book]")
+
+    def test_the_tag_comes_before_the_summary_and_players_lines(self) -> None:
+        lines = self.lines(book("Fireball", "2014", summary="A ball of fire."))
+        self.assertEqual(
+            lines[1:4],
+            ["[Shared book] [Legacy 2014]", "Summary: A ball of fire.", "Players may know: no"],
+        )
+
+    def test_a_file_with_the_tags_reads_back_without_them_and_never_from_a_book(self) -> None:
+        entries = [
+            book("Fireball", "2014", summary="A ball of fire.", players_may_know=True),
+            book("Moonlance", "2024"),
+            entry("Hollow King", "Mine."),
+        ]
+        parsed = hf.parse(hf.write("Frostmaiden", entries))
+        self.assertEqual(parsed.problems, ())
+        got = {e.name: e for e in parsed.entries}
+        self.assertEqual(set(got), {"Fireball", "Moonlance", "Hollow King"})
+        self.assertEqual(got["Fireball"].text, "From the book.")  # the tag is not in the words
+        self.assertEqual(got["Fireball"].summary, "A ball of fire.")
+        self.assertTrue(got["Fireball"].players_may_know)
+        self.assertFalse(hasattr(got["Fireball"], "from_book"))  # a file never says it
+
+    def test_only_the_exact_tag_lines_directly_under_the_heading_are_skipped(self) -> None:
+        text = "## A (spell)\n\n[Shared book]\n"  # words after a blank line stay the words
+        (back,) = hf.parse(text).entries
+        self.assertEqual(back.text, "[Shared book]")
+        later = "## B (spell)\nSummary: s\n[Shared book]\n\nwords"
+        parsed = hf.parse(later)
+        self.assertEqual(parsed.entries[0].text, "[Shared book]\n\nwords")  # not under the heading
 
 
 class Reading(unittest.TestCase):
