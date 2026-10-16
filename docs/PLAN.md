@@ -1231,8 +1231,9 @@ building:
 - **Delete my past transcripts is built (#1532):** 🗑 in the ⚙️ Menu on the consent messages, and
   `/dmbot delete-my-lines`. One warning with the numbers ("N lines in M sessions"), one confirmation, one
   transaction per server. What goes and what stays is in "Retention" below.
-- Still to come: configurable retention (#1533), cleaned and both downloads (Phase 2b), and `{entity}`
-  labels for the DM's lines (narrating, which NPC; #53).
+- **Keep transcripts for is built (#1533, migration 0101):** see "Retention". Still to come: cleaned
+  and both downloads (Phase 2b), and `{entity}` labels for the DM's lines (narrating, which NPC;
+  #53; the `in_character` flag exists, nothing sets it).
 
 **Transcripts and downloads (decided 2026-10-05, #124, #125).** Sessions and their
 participants are stored. Each line is kept in two versions: **as heard** (exactly what
@@ -1917,8 +1918,10 @@ consent check just made still holds:
   56% at 500, 31% at 5,000, since in a big campaign more names sound alike and those are
   left alone. Safe, but to check on real campaign data (PyCharm session). About 5 ms per
   60-word line at 5,000 names.
-- **Next:** Undo notes for medium fixes (proposed names), re-checking earlier lines
-  after a correction, then off-topic hiding (#52).
+- Built since: Undo notes for medium fixes (`transcript/fix_notes.py`, #296), re-checking
+  earlier lines after a correction, and off-topic hiding with the DM's "🙈 Left out as
+  off-topic" list (`transcript/left_out.py`, #52, #677). Next: people in the Cleaner's lookup
+  (#1547).
 
 **Transcript Cleaner step 2: built (2026-10-07, #296).**
 - **"Did they mean…?":**
