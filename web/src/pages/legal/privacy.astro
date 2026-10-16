@@ -1,5 +1,7 @@
 ---
 import LegalPage from "../../components/LegalPage.astro";
+import QabotPrivacy from "../../components/QabotPrivacy.astro";
+import { QABOT_LIVE } from "../../content/qabot";
 import {
   deletionWarnings,
   keepAfterStopPaying,
@@ -213,6 +215,8 @@ import {
     DMbot. {paymentProvider} is the seller of record and handles withdrawal rights, invoices and
     tax.
   </p>
+
+  <QabotPrivacy live={QABOT_LIVE} />
   <p>We don't sell your information and we don't use it for ads.</p>
   <p>
     If a server uses its own AI or speech key, we keep that key locked (encrypted), use it only

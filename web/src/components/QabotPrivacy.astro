@@ -1,0 +1,41 @@
+---
+// The privacy page's section on posts in the public Q&A for DMbot (#1356). Every sentence rests on
+// the code: docs/PLAN.md "QAbot and support tickets" and docs/ci/qabot.yml (the sources are listed
+// in the pull request). It renders nothing until QAbot is live (content/qabot.ts).
+import { QA_URL } from "../content/account";
+import { SUPPORT_EMAIL } from "../content/help";
+import { aiTrainingSentence } from "../content/legal";
+
+interface Props {
+  live: boolean;
+}
+const { live } = Astro.props;
+---
+
+{
+  live && (
+    <>
+      <h2 id="public-questions">If you post in the public Q&amp;A</h2>
+      <ul>
+        <li>
+          <strong>Posts are public.</strong> Anything you write in the{" "}
+          <a href={QA_URL}>Q&amp;A for DMbot</a> is on GitHub, where anyone can read it. GitHub's own
+          privacy terms apply there.
+        </li>
+        <li>
+          <strong>A helper reads it.</strong> QAbot, a bot and not a person, sends the text of the post,
+          and the replies under it, to Anthropic's AI so it can write an answer. {aiTrainingSentence}
+        </li>
+        <li>
+          <strong>If QAbot can't answer,</strong> it opens a public issue that links your post. Nothing
+          private moves, because the post is already public.
+        </li>
+        <li>
+          <strong>Keep private things out.</strong> Don't post account, payment or personal details
+          there. If you pay for DMbot, write to the team from your account page. Anyone can email{" "}
+          <a href={`mailto:${SUPPORT_EMAIL}`}>{SUPPORT_EMAIL}</a>.
+        </li>
+      </ul>
+    </>
+  )
+}
