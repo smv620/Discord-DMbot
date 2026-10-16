@@ -2380,6 +2380,16 @@ class MemoryStore:
             term: TypeTerm | PredicateTerm | None = onto.types.get(key) or onto.predicates.get(key)
             if term is None or term.core:
                 raise MemoryRuleError(f"{key} can't be retired.")
+            borrowed = await w.conn.execute(
+                "SELECT 1 FROM memory_predicates WHERE guild_id = %s AND campaign_id = %s"
+                " AND key = %s AND from_set IS NOT NULL",
+                (*w.ids, key),
+            )
+            if await borrowed.fetchone() is not None:
+                raise MemoryRuleError(
+                    f"{term.label} comes from a shared set, so only the set can change it. "
+                    "Unfollow the set to be rid of it."
+                )
             if isinstance(term, TypeTerm):
                 if replaced_by is not None:
                     onto.active_type(replaced_by)

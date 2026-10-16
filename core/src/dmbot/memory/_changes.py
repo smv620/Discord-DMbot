@@ -54,7 +54,8 @@ PREDICATES = Table(
     ("key", "parent", "label", "description", "examples", "reason", "subject_types",
      "object_types", "is_symmetric", "max_per_subject", "conflicts_with", "status",
      "replaced_by", "created_at", "covers", "not_this", "inverse_label", "synonyms",
-     "version"),
+     "version", "from_set"),
+    defaults={"from_set": None},  # the set a relationship was borrowed from (#1456), if any
 )  # fmt: skip
 ENTITIES = Table(
     "memory_entities",
@@ -503,6 +504,7 @@ _ADDED_LATER: dict[str, dict[str, Any]] = {
     "memory_entities": {"unique_item": None},  # nobody said: the name decides (#1267)
     "memory_predicates": {
         "covers": [], "not_this": [], "inverse_label": "", "synonyms": [], "version": 1,
+        "from_set": None,
     },
 }  # fmt: skip
 

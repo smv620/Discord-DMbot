@@ -669,18 +669,23 @@ never does.
   ends updates. After a merge, the merged rules rank below the campaign's own and are cited "from <set>".
 - **Build:** #1190 (sets, publishing, following, precedence, share codes) and #1191 (updates: Follow and Cherry
   pick, pending document changes, suggestions), CloudDev.
-- **Build status (#1190):** built so far: the tables and store (#1221), the Settings menu (#1223), and house
-  rules reaching the sidebar, rules lookup, rules cards and alerts (a followed set's rules come after the
-  campaign's own, each cited as "<set> house rules, v4"). Still to build: relationship definitions in sets,
-  follower backups, and the note at a follower's next start when a set is deleted.
-  **Relationship definitions in sets** (Supervisor, 2026-10-16, #1456): at Share time the DM
-  picks which of the campaign's own active relationship definitions travel with the set, from a
-  tick list (all ticked, each with its label and description, so the DM sees exactly what
-  leaves); nothing else of memory goes. A follower gets them read-only and marked as the set's;
-  a same-name definition the follower already has wins, with a one-line note at Follow time.
-  Unfollow removes a set definition no fact uses and deprecates one that facts use (old facts
-  still read, no new ones). Cherry pick takes them one at a time with the same rules.
-
+- **Build status (#1190):** built: the tables and store (#1221), the Settings menu (#1223), house rules
+  reaching the sidebar, rules lookup, rules cards and alerts (a followed set's rules come after the campaign's
+  own, each cited as "<set> house rules, v4"), follower backups (never the share code) and the note at a
+  follower's next start when a set is gone (#1262). Homebrew packs wait until homebrew is stored.
+- **Relationship definitions travel with a set (#1456; Supervisor decision, 2026-10-16).** At Share the DM
+  sees a tick list of the campaign's own relationships (each with its label and what it means; all ticked to
+  start) and only the ticked ones go into the set's content: words only (the name, how it reads from the
+  other side, what it means, the kinds it connects: exactly what the list shows), built from the official
+  kinds of thing, never a fact, name, note or example (examples and the free-text lists hold the publisher's
+  names). A follower gets them read-only and marked as the set's (they can't be
+  retired by the table); one the follower already has by the same name, or an official one, is never
+  overwritten (its own wins, with one line at Follow time). Unfollow removes a definition no fact uses and
+  **deprecates** one facts use (old facts still read; no new fact can use it). A new version's changes to
+  them are taken at session start with the rules and come with Follow; Cherry pick takes them one at a time
+  like rules: a ticked one becomes the campaign's own (the follow ends, as for rules), the rest follow the
+  Unfollow rule. A follower's memory backup holds its own definitions and not the set's: the set's copy rides
+  in the followed-sets part and Follow makes them again.
 
 **AI models by task (decided 2026-10-10, built #1006).** Every AI call names a *tier*, never
 a model.

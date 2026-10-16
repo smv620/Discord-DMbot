@@ -17,6 +17,7 @@ SET = rule_sets.SharedSet("s", "Red Table rules", True, 4)
 BEFORE = {
     "rules": [{"number": 1, "rule": "Flanking gives advantage", "instead": None}],
     "link": None,
+    "definitions": [],
 }
 
 

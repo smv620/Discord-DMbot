@@ -4420,6 +4420,16 @@ SUPPORT_OWN = """
     REVOKE ALL ON FUNCTION dmbot_support_message(BIGINT) FROM PUBLIC;
     """
 
+MEMORY_FROM_SET = """
+    -- A relationship definition borrowed from a followed shared rule set (#1456; docs/PLAN.md,
+    -- "Shared rulesets"): the set's id, null for the campaign's own and for the official ones.
+    -- Read-only while it is the set's. A column with no default and no backfill: every existing
+    -- row is the campaign's own, which null already says, so no row changes and no row-level
+    -- security needs opening.
+    ALTER TABLE memory_predicates ADD COLUMN from_set TEXT
+        CHECK (from_set IS NULL OR from_set ~ '^[0-9a-f]{32}$');
+    """
+
 SUPPORT_THREAD = """
     -- The support flow (#1431): a ticket becomes a thread. The person's later messages, the AI
     -- helper's answers and the team's replies are rows of `support_replies`; the first message
@@ -4615,6 +4625,7 @@ MIGRATIONS: tuple[Migration, ...] = (
     ("0086_support_thread", SUPPORT_THREAD),  # the support flow's replies (#1431)
     ("0087_web_names", WEB_NAMES),  # the website's doors to the names and their spelling (#1451)
     ("0088_support_mine_answer", SUPPORT_MINE_ANSWER),  # a person's own latest answer (#1432)
+    ("0089_memory_from_set", MEMORY_FROM_SET),  # sets carry relationship definitions (#1456)
     ("0090_support_reason", SUPPORT_REASON),  # why a ticket went to a person (#1459)
 )
 
