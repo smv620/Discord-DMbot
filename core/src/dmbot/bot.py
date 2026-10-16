@@ -2586,6 +2586,12 @@ class DMBot(commands.AutoShardedBot):
         table = self.tables.get(campaign.guild_id)
         if table is not None and table.campaign_id == campaign.id:
             starter: int | None = table.dm_user_id  # who started this session
+            # "The DM" is the DM who is here: the one who has spoken, or the last to speak when
+            # two have (the same answer the learner gives, #1547); the starter when no DM has.
+            # Nobody is left out as the caller: a DM asking "what did the DM say" means themself.
+            here = table.name_answers.session_dm(0, int(time.time() * 1000))
+            if here is not None and here in agreed:
+                starter = here
         else:
             starter = next(iter(campaign.dm_user_ids)) if len(campaign.dm_user_ids) == 1 else None
         return people_lines(

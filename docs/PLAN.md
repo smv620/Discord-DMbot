@@ -1758,8 +1758,8 @@ that Mike is the person who just spoke, and that this person plays the character
   name as a call to the DM who is here (one DM who has spoken; with two, the one who spoke last in
   the answer window; otherwise no one), never as a nickname to learn, and writes nothing to the story
   graph. **Not yet:** the person's id column in Add many and Download all (players are refused in
-  lists and left out of downloads for now); the sidebar's "DM, GM… all mean <name>" line still names
-  the session's starter, not the DM resolved this way.
+  lists and left out of downloads for now). The sidebar's "DM, GM… all mean <name>" line names
+  the DM resolved this way when that DM agreed to be recorded (#1558), else the session's starter.
 
 *Proposed additions (2026-10-06, docs/STORY_MEMORY.md, not yet decided):* a core v2
 with story threads, promises, clues and state facts (`condition`: alive, dead, missing…,
