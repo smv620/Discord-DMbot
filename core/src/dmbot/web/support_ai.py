@@ -91,6 +91,7 @@ WHY: dict[support.Reason, str] = {
 }
 
 ACK_SUBJECT = "We got your question"
+WEEKLY_SUBJECT = "DMbot support this week"
 # What the thank-you says happens next: the helper answers first only if it is switched on
 # here (a model and key are configured); otherwise saying so would promise what won't come.
 ACK_WITH_HELPER = (
@@ -259,6 +260,36 @@ class SupportHelper:
             f"{ACK_SUBJECT}: {ticket.subject}",
             ACK_WITH_HELPER if self._ai is not None else ACK_PERSON,
         )
+
+    async def weekly_report(self) -> str:
+        """The hourly sweep's weekly email to the team (#1514): the week's counts, once, from the
+        alerts address to the team address, in the first sweep after Monday 08:00 UTC. "off": no
+        mailer or team address; "early": not yet this week's time or already sent; "quiet": the
+        week had no questions (marked done, nothing sent); "failed": it didn't go (tried again
+        next sweep); "sent". Counts only, never a ticket's words."""
+        if self._mail is None or not self._team:
+            return "off"
+        now = int(self._clock())
+        week = support.mail_week(now)
+        if not await support.claim_week(self._db, week):
+            return "early"
+        try:
+            report = await support.week(self._db, now)
+            if report.questions <= 0:
+                return "quiet"
+            sent = await self._mail.notify_team(
+                self._team,
+                WEEKLY_SUBJECT,
+                f"{support.week_line(report)}\n\nRead and reply: {self._site}/admin\n",
+                sender=self._mail.settings.alerts_sender,
+            )
+        except BaseException:  # a database blip must not cost the week's email
+            await support.release_week(self._db, week)
+            raise
+        if not sent:
+            await support.release_week(self._db, week)
+            return "failed"
+        return "sent"
 
     async def _alert_team(self, subject: str, body: str) -> None:
         if self._mail is None or not self._team:
