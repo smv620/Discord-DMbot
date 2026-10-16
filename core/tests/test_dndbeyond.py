@@ -46,6 +46,18 @@ class Addresses(unittest.TestCase):
         ):
             self.assertIsNone(dndbeyond.check_address(bad), bad)
 
+    def test_however_a_page_is_written_it_is_one_address(self) -> None:
+        one = "https://www.dndbeyond.com/magic-items/1-charm"
+        for written in (
+            "https://dndbeyond.com/magic-items/1-charm",
+            "https://WWW.DNDBeyond.com/Magic-Items/1-Charm/",
+            "https://www.dndbeyond.com/magic-items/1-charm?utm=x&y=2#top",
+            "  https://www.dndbeyond.com./magic-items/1-charm  ",
+        ):
+            found = dndbeyond.check_address(written)
+            assert found is not None
+            self.assertEqual(found, (one, "dndbeyond.com"), written)
+
     def test_the_kind_comes_from_the_first_part_of_the_path(self) -> None:
         cases = {
             "https://www.dndbeyond.com/magic-items/1-x": "item",
@@ -99,6 +111,20 @@ class Reading(unittest.TestCase):
         for html in ("<<<>>>", "<h1>x", "<p>" * 5000, "\x00\x01<h1>a</h1><p>b</p>", "<!--"):
             dndbeyond.parse_page(html)  # (must not raise)
 
+    def test_a_page_built_to_be_slow_is_read_quickly_or_not_at_all(self) -> None:
+        import time
+
+        slow = (
+            "<" * 400_000,
+            "<i>x</i>" * 60_000,
+            "<div>" * 60_000,
+            "<p>&amp;" * 60_000,
+        )
+        for html in slow:
+            started = time.monotonic()
+            dndbeyond.parse_page("<h1>N</h1><p>w</p>" + html)
+            self.assertLess(time.monotonic() - started, 3.0, html[:12])
+
     def test_repeated_blocks_are_kept_once(self) -> None:
         page = dndbeyond.parse_page("<h1>N</h1><p>Same.</p><p>Same.</p><p>Other.</p>")
         assert page is not None
@@ -113,6 +139,8 @@ class NotFound(unittest.TestCase):
             dndbeyond.is_not_found(200, "<title>Page Not Found - D&amp;D Beyond</title>")
         )
         self.assertFalse(dndbeyond.is_not_found(200, PAGE))
+        for title in ("Potion of 404 - D&amp;D Beyond", "Lost and Not Found - D&amp;D Beyond"):
+            self.assertFalse(dndbeyond.is_not_found(200, f"<title>{title}</title>"), title)
         self.assertFalse(dndbeyond.is_not_found(500, PAGE))
 
 

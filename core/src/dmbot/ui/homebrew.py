@@ -1136,7 +1136,7 @@ class LinkPreview(_Menu):
         if self.used:
             await _tell(interaction, "Already saving this. Give it a second.")
             return
-        self.used = True  # before any await below
+        self.used = True  # (checked and set with no await between: a second press sees it)
         c = self.campaign
         importer = _bot(interaction).importer
         if importer is None:

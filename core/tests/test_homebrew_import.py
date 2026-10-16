@@ -89,6 +89,28 @@ class Reading(ImportTest):
             cur = await conn.execute("SELECT count(*) AS n FROM homebrew_pages")
             self.assertEqual((await cur.fetchone() or {})["n"], 1)
 
+    async def test_every_spelling_of_an_address_is_the_same_page_and_one_fetch(self) -> None:
+        await self.approve()
+        first = await self.importer.read(GUILD, self.one.id, URL)
+        await self.importer.save(GUILD, self.one.id, DM, first)
+        for spelling in (
+            URL.replace("www.", ""),
+            URL.upper().replace("HTTPS", "https"),
+            URL + "?utm_source=x#top",
+            URL + "/",
+        ):
+            again = await self.importer.read(GUILD, self.one.id, spelling)
+            self.assertTrue(again.reused, spelling)
+        self.assertEqual(len(self.net.asked), 1)
+
+    async def test_a_page_is_read_off_the_event_loop_and_a_slow_one_is_cut(self) -> None:
+        await self.approve()
+        self.net.reply = page_fetch.Reply(
+            200, "<h1>Big</h1>" + "".join(f"<p>word {n}</p>" for n in range(50_000))
+        )
+        preview = await self.importer.read(GUILD, self.one.id, URL)
+        self.assertTrue(preview.truncated)
+
     async def test_a_page_that_is_not_published_says_so(self) -> None:
         await self.approve()
         for reply in (

@@ -13,6 +13,7 @@ without the page or its address.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
@@ -88,7 +89,13 @@ class HomebrewImporter:
         kept = await self._sources.page_for(url)
         if kept is not None:
             return Preview(
-                url, domain, kept.kind, kept.name, kept.text, truncated=False, reused=True
+                url,
+                domain,
+                kept.kind,
+                kept.name,
+                kept.text,
+                truncated=kept.text.endswith("…"),
+                reused=True,
             )
         try:
             self._gate.enter(guild_id, campaign_id)
@@ -106,7 +113,7 @@ class HomebrewImporter:
         if reply.status != 200:
             log.warning("Homebrew page not read: campaign=%s status=%s", campaign_id, reply.status)
             raise ImportRefused(dndbeyond.NO_ANSWER)
-        page = dndbeyond.parse_page(reply.text)
+        page = await asyncio.to_thread(dndbeyond.parse_page, reply.text)  # (CPU: off the loop)
         if page is None:
             raise ImportRefused(dndbeyond.NO_WORDS)
         return Preview(

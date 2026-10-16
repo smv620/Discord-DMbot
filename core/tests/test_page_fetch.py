@@ -15,7 +15,7 @@ from unittest.mock import patch
 from aiohttp import web
 from aiohttp.test_utils import TestServer
 
-from dmbot.fetch import Policy
+from dmbot.fetch import STRICT, LinkError, Policy
 from dmbot.rules import page_fetch
 from dmbot.rules.page_fetch import FetchGate, PageError, Reply, fetch_page
 
@@ -44,6 +44,9 @@ class Served(unittest.IsolatedAsyncioTestCase):
 
     async def asyncTearDown(self) -> None:
         await self.server.close()
+
+    def redirect(self, path: str, to: str) -> None:
+        self.routes[path] = lambda _request: web.Response(status=302, headers={"Location": to})
 
     async def get(self, path: str, ok: bool = True) -> Reply:
         return await fetch_page(self.base + path, redirect_ok=lambda host: ok, policy=self.policy)
@@ -75,6 +78,19 @@ class Fetching(Served):
         with self.assertRaises(PageError):
             await self.get("/start", ok=False)  # off the site: refused, not followed
         self.assertEqual(len([r for r in self.seen if r.path == "/end"]), 1)
+
+    async def test_a_redirect_to_another_port_scheme_or_login_is_refused(self) -> None:
+        for n, target in enumerate(
+            (
+                "http://127.0.0.1:1/x",  # another port
+                "https://127.0.0.1/x",  # another scheme (the test policy allows only http)
+                "http://user:pw@127.0.0.1:{port}/x",  # a sign-in in the address
+            )
+        ):
+            location = target.format(port=self.server.port)
+            self.redirect(f"/r{n}", location)
+            with self.assertRaises(PageError):
+                await self.get(f"/r{n}")
 
     async def test_a_redirect_loop_and_a_redirect_with_nowhere_to_go_are_refused(self) -> None:
         self.routes["/loop"] = lambda r: web.Response(status=302, headers={"Location": "/loop"})
@@ -113,6 +129,44 @@ class Fetching(Served):
         for url in ("https://127.0.0.1/a", "https://169.254.169.254/a", "https://[::1]/a"):
             with self.assertRaises(PageError):
                 await fetch_page(url, redirect_ok=lambda host: True)
+
+
+class Hosts(unittest.TestCase):
+    def test_a_redirect_stays_on_the_allowed_site(self) -> None:
+        from dmbot.rules.homebrew_import import _redirect_ok
+
+        for good in ("dndbeyond.com", "www.dndbeyond.com", "WWW.DNDBeyond.com", "dndbeyond.com."):
+            self.assertTrue(_redirect_ok(good.casefold()), good)
+        for bad in (
+            "dndbeyond.com.evil.example",
+            "evil-dndbeyond.com",
+            "notdndbeyond.com",
+            "media.dndbeyond.com",
+            "127.0.0.1",
+            "0x7f.0.0.1",
+            "",
+        ):
+            self.assertFalse(_redirect_ok(bad), bad)
+
+
+class Resolving(unittest.IsolatedAsyncioTestCase):
+    async def test_a_name_that_resolves_to_a_private_address_is_refused(self) -> None:
+        from unittest.mock import AsyncMock
+
+        from dmbot.fetch import _PublicResolver
+
+        found = [
+            {"hostname": "x", "host": "10.0.0.5", "port": 443, "family": 2, "proto": 6, "flags": 0}
+        ]
+        mixed = [*found, {**found[0], "host": "8.8.8.8"}]  # ANY private address refuses the host
+        for answer in (found, mixed):
+            with patch.object(_PublicResolver, "__init__", lambda self, policy: None):
+                resolver = _PublicResolver(None)  # type: ignore[arg-type]
+                resolver._inner = AsyncMock()
+                resolver._inner.resolve.return_value = answer
+                resolver._policy = STRICT
+                with self.assertRaises(LinkError):
+                    await resolver.resolve("example.test", 443)
 
 
 class Gate(unittest.TestCase):

@@ -53,7 +53,10 @@ _SKIPPED = frozenset(
 _BLOCKS = frozenset(
     {"p", "div", "li", "br", "tr", "h1", "h2", "h3", "h4", "h5", "h6", "section", "article", "ul"}
 )
-_NOT_FOUND = re.compile(r"page not found|404|not found", re.IGNORECASE)
+# The site's own not-found page: its title *starts* with this ("Potion of 404" is a real title).
+_NOT_FOUND = re.compile(r"^\s*(?:page not found|404(?: error)?\b|not found\b)", re.IGNORECASE)
+MAX_HTML = 300_000  # characters read: a real homebrew page is a small fraction of this
+_STRAY_LT = re.compile(r"<(?![a-zA-Z/!?])")  # a "<" that starts no tag (HTMLParser is slow on many)
 _SITE_TAIL = re.compile(r"\s+[-|–—]\s+(?:[^-|–—]*\s+)?D&D Beyond\s*$", re.IGNORECASE)
 
 
@@ -63,10 +66,15 @@ def allowed(domain: str) -> bool:
 
 
 def check_address(text: str) -> tuple[str, str] | None:
-    """(the address in its normal form, its site) if it is an https address on an allowed site;
-    None for anything else (the caller says `NOT_SUPPORTED`)."""
+    """(the address in its one form, its site) if it is an https address on an allowed site;
+    None for anything else (the caller says `NOT_SUPPORTED`). The one form is `www.` + the site,
+    the path in lower case and no query: however a page is written, it is one address, so a kept
+    page is found again and is never fetched twice."""
     found = normalise_url(text)
-    return found if found is not None and allowed(found[1]) else None
+    if found is None or not allowed(found[1]):
+        return None
+    path = urlsplit(found[0]).path.lower()
+    return f"https://www.{found[1]}{path}", found[1]
 
 
 def kind_for(url: str) -> str:
@@ -92,12 +100,10 @@ class _Reader(HTMLParser):
         self.h1: list[str] = []
         self.title: list[str] = []
         self.meta_title = ""
-        self.lines: list[str] = [""]
+        self.lines: list[list[str]] = [[]]  # blocks of text pieces, joined once at the end
         self._skip = 0
         self._in_h1 = False
         self._in_title = False
-        self._main_seen = False
-        self._in_main = 0
 
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
         if tag == "meta":
@@ -105,9 +111,6 @@ class _Reader(HTMLParser):
             if d.get("property") == "og:title" and not self.meta_title:
                 self.meta_title = d.get("content", "")
             return
-        if tag in ("main", "article"):
-            self._main_seen = True
-            self._in_main += 1
         if tag == "title":
             self._in_title = True
         if tag in _SKIPPED:
@@ -116,11 +119,9 @@ class _Reader(HTMLParser):
         if tag == "h1":
             self._in_h1 = True
         if tag in _BLOCKS:
-            self.lines.append("")
+            self.lines.append([])
 
     def handle_endtag(self, tag: str) -> None:
-        if tag in ("main", "article") and self._in_main:
-            self._in_main -= 1
         if tag == "title":
             self._in_title = False
         if tag in _SKIPPED and self._skip:
@@ -129,7 +130,7 @@ class _Reader(HTMLParser):
         if tag == "h1":
             self._in_h1 = False
         if tag in _BLOCKS:
-            self.lines.append("")
+            self.lines.append([])
 
     def handle_data(self, data: str) -> None:
         if self._in_title:
@@ -139,16 +140,17 @@ class _Reader(HTMLParser):
             return
         if self._in_h1:
             self.h1.append(data)
-        self.lines[-1] += data
+        self.lines[-1].append(data)
 
 
 def parse_page(html: str) -> Page | None:
     """The page's name and words, or None when no words can be found. The name is its first
     heading (else its title, without the site's tail); the words are every block of text outside
-    the page's menus, buttons and footers, minus the name, one block to a line."""
+    the page's menus, buttons and footers, minus the name, one block to a line. Only the first
+    `MAX_HTML` characters are read, and this does CPU work: call it off the event loop."""
     reader = _Reader()
     try:
-        reader.feed(html[: 2 * 1024 * 1024])
+        reader.feed(_STRAY_LT.sub("&lt;", html[:MAX_HTML]))
         reader.close()
     except Exception:  # an untrusted page: whatever it holds, this never raises
         return None
@@ -157,7 +159,7 @@ def parse_page(html: str) -> Page | None:
         raw = " ".join("".join(reader.title).split()) or " ".join(reader.meta_title.split())
         name = _SITE_TAIL.sub("", raw).strip()
     name = name[:NAME_MAX].strip()
-    blocks = [" ".join(line.split()) for line in reader.lines]
+    blocks = [" ".join("".join(line).split()) for line in reader.lines]
     seen: set[str] = set()
     kept: list[str] = []
     for block in blocks:

@@ -41,6 +41,7 @@ USER_AGENT = (
     "DMbot (a Discord helper for D&D tables; reads one page when a DM pastes its link; "
     "https://github.com/smv620/Discord-DMbot)"
 )
+FETCHING = asyncio.Semaphore(3)  # pages read at once, across all campaigns
 PER_WINDOW = 6  # pages a campaign may read in a window...
 WINDOW_S = 600  # ...of ten minutes
 BUSY = "DMbot is already reading a page for this campaign. Wait a moment, then try again."
@@ -96,7 +97,8 @@ async def fetch_page(
     target = yarl.URL(url)
     timeout = aiohttp.ClientTimeout(total=TIMEOUT_S)
     try:
-        async with asyncio.timeout(TIMEOUT_S):
+        # The place is taken first, then the clock starts (as dmbot.fetch does).
+        async with FETCHING, asyncio.timeout(TIMEOUT_S):
             connector = aiohttp.TCPConnector(resolver=_PublicResolver(policy), use_dns_cache=False)
             async with aiohttp.ClientSession(
                 timeout=timeout,
@@ -144,6 +146,8 @@ async def _text(resp: aiohttp.ClientResponse) -> str:
         raise PageError("an answer DMbot cannot read")
     data = bytearray()
     sent = 0
+    # (`_inflate` stops at dmbot.fetch's own 10 MB and one megabyte a step; the 2 MB checked here
+    # then refuses the page, so at most about 3 MB is ever held.)
     async for piece in resp.content.iter_chunked(64 * 1024):
         sent += len(piece)
         if sent > MAX_BYTES:
