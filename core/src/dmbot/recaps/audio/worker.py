@@ -38,7 +38,7 @@ RETRY_AFTER_S = 3600  # the one retry waits an hour
 DEADLINE_S = AUDIO_LEASE_S - 120  # all the work must end before the lease can lapse
 DEFAULT_MAX_CREDITS = 15_000  # about $3 at the Creator plan's price: a recap is about 7,000
 
-NOT_INCLUDED = "Spoken recaps aren't part of this campaign's plan, so the audio wasn't made."
+NOT_INCLUDED = "Narration and music aren't part of this campaign's plan, so they weren't made."
 STOPPED = "A player stopped being recorded, so the audio wasn't made. The text is not changed."
 SECRET = "The recap names something you keep secret, so the audio wasn't made."
 OVER_CAP = "This recap would cost more audio than DMbot allows for one, so it wasn't made."
@@ -47,6 +47,10 @@ REFUSED = "The narration and music service refused the request. The text is fine
 NO_NAMES = "DMbot couldn't check your secret names just now, so the audio waits."
 NO_MIXER = "DMbot can't mix audio on this server yet, so the audio wasn't made. The text is fine."
 EDITED = "The text changed while the audio was made, so the audio was not kept."
+
+
+class Off(Exception):
+    """The DM switched the audio off: nothing is made, and nothing is said about it."""
 
 
 class Stop(Exception):
@@ -69,6 +73,7 @@ class AudioInputs:
 Load = Callable[[int, str, Job], Awaitable["AudioInputs | None"]]
 Consenting = Callable[[int], Awaitable[Collection[int]]]
 Allowed = Callable[[int, str, Job], Awaitable[bool]]
+Switched = Callable[[int, str, Job], Awaitable[bool]]  # the DM's own choice (#1421)
 
 
 def text_hash(title: str, summary: str) -> str:
@@ -95,6 +100,7 @@ class AudioWorker:
         load: Load,
         consenting: Consenting,
         allowed: Allowed,
+        switched: Switched | None = None,
         renderer: Renderer | None = None,
         max_credits: int = DEFAULT_MAX_CREDITS,
         have_ffmpeg: Callable[[], bool] = _has_ffmpeg,
@@ -106,6 +112,7 @@ class AudioWorker:
         self._load = load
         self._consenting = consenting
         self._allowed = allowed
+        self._switched = switched
         self._renderer = renderer or (Renderer(provider, files) if provider else None)
         self._max = max_credits
         self._have_ffmpeg = have_ffmpeg
@@ -134,6 +141,8 @@ class AudioWorker:
         try:
             async with asyncio.timeout(DEADLINE_S):
                 await self._make(gid, cid, job)
+        except Off:
+            await self._store.set_audio(gid, cid, job.session_at, audio="off")
         except Stop as stop:
             await self._finish(gid, cid, job, stop.why, permanent=stop.permanent)
         except ProviderError as exc:
@@ -174,6 +183,8 @@ class AudioWorker:
     async def _check(self, gid: int, cid: str, job: Job) -> AudioInputs:
         """Everything that must hold before a paid call, read now: the plan, consent, the
         secret names, the cap. Raises `Stop` otherwise."""
+        if self._switched is not None and not await self._switched(gid, cid, job):
+            raise Off  # the DM chose no narration and music; the plan gate below still wins
         if not await self._allowed(gid, cid, job):
             raise Stop(NOT_INCLUDED)
         inputs = await self._load(gid, cid, job)

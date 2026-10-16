@@ -100,6 +100,13 @@ export const held: Held[] = [
       "Stays off until the first check on a real session (#1382).",
   },
   {
+    date: "2026-10-16",
+    title: "Choose what recaps do",
+    what: "In ⚙️ Settings, the game master can choose, for each campaign, whether DMbot writes a recap after a session, whether it makes the narration and music (where the plan includes them), and whether it emails them when it is ready. DMbot never posts one without them.",
+    reason:
+      "Goes with the recap, which stays off until the first check on a real session (#1382).",
+  },
+  {
     date: "2026-10-15",
     title: "New names from what was said",
     what: "After a session, DMbot can spot a name it does not know yet and ask the game master who or what it is. Anything said about that name waits until the game master has checked it. A name they turn down is forgotten, along with what was said about it.",
