@@ -1058,6 +1058,9 @@ Code changes: #87.
   and the card) is sent silently, so nobody gets a pop-up or phone notification for it;
   the channel still shows as unread. Misheard names are fixed since 2026-10-07 (#127);
   the channel has no `{entity}` labels (#53).
+- The end-of-session message on the DM screen ends its facts with one line of name counts when any is
+  above zero (#1510): "✏️ Names: DMbot fixed 3 by itself, asked you about 2 (1 not answered), you
+  corrected 1, players suggested 2 (1 still waiting)." Counts of the session only; nothing is stored.
 - `/dmbot stop` posts the "Session ended" divider in the background, so it answers in
   time. Words still being written down when the session stops are lost (as before,
   #109); at shutdown, waiting lines are posted first.
@@ -3245,6 +3248,11 @@ paid plans and are **off on the server** (`DMBOT_RECAPS`) until dev1 has checked
   will all see it.") and **Not this one** (#1455, #1457); and by email unless the DM turned the
   email off. The DM-screen **Recaps** panel on ⚙️ Settings holds the three choices (#1421,
   #1422): recaps on or off, the email on or off, the narration on or off. DM only.
+  Once a recap is posted or skipped, its DM-screen line loses its buttons and says "Posted." or
+  "Skipped."; so does the other copy of the line (the re-post at a session start) while the bot still
+  holds it in memory (#1509). The same for a player's suggested fix ("Accepted." / "Kept as is."). **Read
+  it** keeps its buttons. Nothing is stored, so after a restart a copy is found again only when
+  someone presses it.
 - **Narration and music** (#1383, #1415, #1417): a recap can come with a narrator's voice and a
   music bed as two audio files, made with ElevenLabs from the cleaned recap with the campaign's
   "said as" spellings and no secret names, kept on a named volume (`recap-audio`) that the

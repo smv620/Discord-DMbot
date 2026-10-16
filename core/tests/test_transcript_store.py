@@ -17,6 +17,7 @@ from dmbot.consent import ConsentStore
 from dmbot.dm_screen import messages as screen_messages
 from dmbot.sessions import SessionStore
 from dmbot.transcript import export
+from dmbot.transcript import questions as name_questions
 from dmbot.transcript.models import SIDEBAR_ANSWER, SIDEBAR_QUESTION, VIA_VOICE, Line, Lineage
 from dmbot.transcript.store import TranscriptStore
 from dmbot.transcript.suggestions import Suggestion, SuggestionStore
@@ -871,6 +872,36 @@ class BotTests(DatabaseTest):
         self.assertFalse(done)  # answering it later would write over the edit
         (line,) = await self.store.lines(GUILD, sid)
         self.assertEqual(line.text, "I saw Beleros")
+
+    async def test_the_summary_counts_what_the_cleaner_did(self) -> None:
+        from dmbot.transcript.cleaner import Fix
+
+        table, sid = await self.fix_setup()
+        started = START * 1000 + 1000
+        store = self.bot.suggestions
+        assert store is not None
+        made = await store.suggest(
+            GUILD, table.campaign_id or "", sid, PLAYER, started, "I saw Belleros"
+        )
+        assert isinstance(made, Suggestion)
+        table.names_fixed, table.names_asked = 3, 2
+        table.questions.closed_why.update({"a": "answered", "b": name_questions.ENDED})
+        edit = Fix(0, 13, "I saw Beleros", "x", "", "edit", sure=False)
+        table.fix_notes.add(PLAYER, started, "I saw Beleros", (edit,))
+        self.bot.post_message = AsyncMock(return_value=MagicMock())  # type: ignore[method-assign]
+        await self.bot.post_session_summary(table, START + 60, True, 0)
+        text = cast(Any, self.bot.post_message).await_args.args[1]
+        self.assertIn(
+            "✏️ Names: DMbot fixed 3 by itself, asked you about 2 (1 not answered), "
+            "you corrected 1, players suggested 1 (1 still waiting).",
+            text,
+        )
+
+    async def test_a_quiet_session_has_no_names_line(self) -> None:
+        table, _ = await self.fix_setup()
+        self.bot.post_message = AsyncMock(return_value=MagicMock())  # type: ignore[method-assign]
+        await self.bot.post_session_summary(table, START + 60, True, 0)
+        self.assertNotIn("Names:", cast(Any, self.bot.post_message).await_args.args[1])
 
     async def test_the_dm_screens_summary_carries_the_fix_a_line_button(self) -> None:
         table, sid = await self.fix_setup()

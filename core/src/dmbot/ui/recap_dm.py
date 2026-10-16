@@ -17,6 +17,7 @@ import discord
 
 from dmbot.recaps import post as recap_post
 from dmbot.recaps.notify import page_link
+from dmbot.ui.decision_lines import with_outcome
 from dmbot.ui.dmbot_commands import NO_PINGS, _bot, _tell
 
 NOT_YOURS = "Only this campaign's DM can do this. Ask your DM."
@@ -70,6 +71,7 @@ class RecapButton(discord.ui.DynamicItem[discord.ui.Button[discord.ui.View]], te
             )
         )
         self.act, self.campaign_id, self.session_at = act, campaign_id, session_at
+        self.key = ("recap", campaign_id, session_at)  # the item, for the other copies of its line
 
     @classmethod
     async def from_custom_id(
@@ -99,6 +101,8 @@ class RecapButton(discord.ui.DynamicItem[discord.ui.Button[discord.ui.View]], te
         if job is None:
             await _tell(interaction, GONE)
             return
+        if self.act in ("read", "post", "drop"):  # a line of the bot's own, with the three buttons
+            bot.decision_lines.remember_pressed(self.key, interaction)
         if self.act == "no":
             await _tell(interaction, NOT_NOW)
             return
@@ -118,7 +122,18 @@ class RecapButton(discord.ui.DynamicItem[discord.ui.Button[discord.ui.View]], te
             if not await store.decide(guild.id, campaign.id, self.session_at, "drop"):
                 await _tell(interaction, DECIDED)
                 return
-            await interaction.response.edit_message(view=None)
+            message = interaction.message
+            if message is not None:
+                await interaction.response.edit_message(
+                    content=with_outcome(message.content, "Skipped."),
+                    view=None,
+                    allowed_mentions=NO_PINGS,
+                )
+            else:
+                await interaction.response.edit_message(view=None)
+            await bot.decision_lines.close(
+                self.key, "Skipped.", pressed_id=message.id if message is not None else None
+            )
             await interaction.followup.send(SKIPPED, ephemeral=True, allowed_mentions=NO_PINGS)
 
     async def _read(
@@ -159,6 +174,7 @@ class RecapButton(discord.ui.DynamicItem[discord.ui.Button[discord.ui.View]], te
         await bot.post_recaps(gid)  # the same checks as the website's Post, once more
         after = await bot.recaps.get(gid, cid, self.session_at)
         if after is not None and after.status == "posted":
+            await bot.decision_lines.close(self.key, "Posted.")  # the line(s) with the buttons
             await interaction.followup.send(POSTED, ephemeral=True, allowed_mentions=NO_PINGS)
             return
         # last_error is plain words the bot's own checks wrote (post_recaps' notes); the recap is
