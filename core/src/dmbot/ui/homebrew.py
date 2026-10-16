@@ -1,4 +1,4 @@
-"""📚 Homebrew: a campaign's own spells, monsters, items and rules, from ⚙️ Settings or
+"""📚 Homebrew: a campaign's own spells, monsters, items and other game content, from ⚙️ Settings or
 `/dmbot homebrew` (#1520). A private menu for the campaign's DMs only; the store checks again that
 the person is a DM on every change.
 
@@ -81,9 +81,9 @@ NOT_YOUR_CAMPAIGN = (
 MINE_NOTE = "✏️ Saved. This is now your own, and it replaces the pack's version in this campaign."
 ENTRY_GONE = "That entry is gone, maybe removed by another DM. Here is the list now."
 INTRO = (
-    "Your own spells, monsters, items and rules. Players can't see an entry until you press 👀. "
-    "Hidden entries are for you only; DMbot's sidebar and table answers don't use them. "
-    "DMbot only keeps what you write. For a published book, use **Share a rulebook**."
+    "Your own spells, monsters, items and other game content. Players can't see an entry until "
+    "you press 👀. Hidden entries are for you only; DMbot's sidebar and table answers don't use "
+    "them. DMbot only keeps what you write. For a published book, use **Share a rulebook**."
 )
 SHORT_INTRO = "Your own creations only. Hidden entries are for you only."
 NONE_YET = "No homebrew yet. Press **➕ Add** to write the first one, or **📥 Load file**."
@@ -121,7 +121,6 @@ KIND_LABELS = {
     "item": "🗡 Item",
     "feat": "💪 Feat",
     "condition": "🌀 Condition",
-    "rule": "📜 Rule",
     "other": "❔ Other",
 }
 
@@ -999,7 +998,7 @@ class BookEdition(FromBookAsk):
 
 @dmbot_group.command(
     name="homebrew",
-    description="Your campaign's own spells, monsters, items and rules (DMs only)",
+    description="Your campaign's own spells, monsters, items and more (DMs only)",
 )
 async def dmbot_homebrew(interaction: discord.Interaction) -> None:
     guild = interaction.guild

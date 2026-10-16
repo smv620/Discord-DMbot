@@ -11,11 +11,12 @@ lists them. The download is `homebrew_file.write` over those entries and `homebr
 so it is byte-equal to the file the bot would write for them: its own pick of the entries, as the
 bot's Download button sends every entry, hidden ones included, to the DM only.
 
-The campaign's own entries only: a followed pack's entries (#1527) are not on the page or in
-the file.
+The page also shows the homebrew packs the campaign follows (#1527, #1586), only the entries each
+pack marks known to players, as a player's `/dmbot rule` answers from them. The download stays the
+campaign's own shown entries (what the bot's file holds): a followed pack's are not in it.
 
-Never shown: who wrote an entry, its id, or whether it came from a book. A campaign is named by
-`<server>.<campaign>`, as for the house-rules page.
+Never shown: who wrote an entry, its id, or the book's name (it is never kept). A campaign is
+named by `<server>.<campaign>`, as for the house-rules page.
 """
 
 from __future__ import annotations
@@ -55,6 +56,7 @@ async def list_campaigns(db: Database, session: Session) -> list[dict[str, Any]]
                         "name": item["name"],
                         "serverName": guild.name,
                         "entries": int(item["entries"]),
+                        "packs": int(item.get("packs", 0)),
                     }
                 )
     return out
@@ -79,6 +81,22 @@ def _kind_order(entry: dict[str, Any]) -> int:
     return KINDS.index(entry["kind"]) if entry["kind"] in KINDS else len(KINDS)
 
 
+def _pack(raw: dict[str, Any]) -> dict[str, Any]:
+    """A followed pack as the page shows it: name, version and its known entries by kind. Never
+    the publisher or the share code (the door does not return them)."""
+    # (a pack made before rules left homebrew, #1628, may still hold a rule: left out)
+    kept = [e for e in raw["entries"] if e["kind"] in KINDS]
+    entries = sorted(kept, key=_kind_order)  # stable: names stay in the door's order
+    return {
+        "name": raw["name"],
+        "version": int(raw["version"]),
+        "entries": [
+            {"kind": e["kind"], "name": e["name"], "summary": e["summary"], "text": e["text"]}
+            for e in entries
+        ],
+    }
+
+
 async def read_homebrew(db: Database, session: Session, ref: str) -> dict[str, Any]:
     """The shown entries, grouped by kind (the bot's order of kinds), each kind by name. Anyone
     outside the server, and a campaign that is not there, get "not found"."""
@@ -87,12 +105,17 @@ async def read_homebrew(db: Database, session: Session, ref: str) -> dict[str, A
     return {
         "name": found["name"],
         "fileName": homebrew_file.filename(found["name"]),
+        "packs": [_pack(p) for p in found.get("packs", [])],
         "entries": [
             {
                 "kind": e["kind"],
                 "name": e["name"],
                 "summary": e["summary"],
                 "text": e["text"],
+                # Tags like the Discord players' card: from a shared book, and a 2014 book while
+                # the campaign plays a newer ruleset (booleans, false when the door is older).
+                "fromBook": bool(e.get("fromBook", False)),
+                "legacy": bool(e.get("legacy", False)),
             }
             for e in entries
         ],

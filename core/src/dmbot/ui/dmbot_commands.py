@@ -37,6 +37,7 @@ from dmbot.campaigns.store import (
     encode_backup,
 )
 from dmbot.dm_screen import handover
+from dmbot.dm_screen.settings import SettingsButton
 from dmbot.logs import set_log_context
 from dmbot.ui import logic
 
@@ -207,6 +208,7 @@ async def _failed(
 
 
 NOT_IN_SERVER = "Use this in a server."
+SETTINGS_HINT = "Settings: press ⚙️ Settings here or on the card in #dm-screen."
 
 
 # ---- /dmbot start: welcome, then which campaign? ---------------------------------------
@@ -462,6 +464,9 @@ class VoicePicker(_Menu):
             row=1,
         )
         self.add_item(self.start_button)
+        # ⚙️ Settings where the DM is looking (#1619). Only those who can start this campaign
+        # reach this step, and the button checks again on every press.
+        self.add_item(SettingsButton(campaign.id, row=2))
 
     async def _picked(self, interaction: discord.Interaction) -> None:
         self.channel_id = self.pick.values[0].id
@@ -570,6 +575,7 @@ async def show_voice_step(
     text = f"{heading}\n**Which voice channel is the table in?**"
     if default_id is not None:
         text += f"\nReady to use <#{default_id}>. Pick a different one below if needed."
+    text += f"\n{SETTINGS_HINT}"
     view = VoicePicker(campaign, default_id)
     view.text = text
     if interaction.type is discord.InteractionType.component:
@@ -839,6 +845,28 @@ async def dmbot_start(interaction: discord.Interaction) -> None:
         await _send(interaction, logic.WELCOME_TEXT, Welcome())
         return
     await _send(interaction, picker_text(campaigns[0]), CampaignPicker(campaigns))
+
+
+@dmbot_group.command(name="settings", description="Open this campaign's settings (for its DM)")
+async def dmbot_settings(interaction: discord.Interaction) -> None:
+    """The same ⚙️ Settings card as the button, for a DM who can't find it (#1619): the campaign
+    running in this server, else the last one played. Private; the button's own check decides
+    who may see it (the campaign's DMs and server managers)."""
+    guild = interaction.guild
+    if guild is None:
+        await _tell(interaction, NOT_IN_SERVER)
+        return
+    bot = _bot(interaction)
+    campaign_id = bot.active_campaign_id(guild.id)
+    if campaign_id is None:
+        campaigns = await bot.campaigns.list_campaigns(guild.id)  # most recently played first
+        if not campaigns:
+            await _tell(
+                interaction, "There are no campaigns here yet. Use `/dmbot start` to set one up."
+            )
+            return
+        campaign_id = campaigns[0].id
+    await SettingsButton(campaign_id).callback(interaction)
 
 
 @dmbot_group.command(name="stop", description="Stop listening")
