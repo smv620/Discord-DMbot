@@ -2544,3 +2544,5 @@ Overall ...................................... PASS (Deepgram baseline: 33/33, 1
   Result: core logged "Database updated: 0100 ... 0102", "ears connected" and "Connected to 1 server(s)"; web-api healthy; schema_migrations 102 rows, last 0102_pack_suggestions. Signed-out GET /me/campaigns/<ref>/homebrew and /transcripts answer 401, /health 200.
   Not checked (need the owner in Discord): Settings -> Transcripts opens and saves a choice; the Menu shows Delete my transcripts with its one warning; Homebrew packs opens; the name card's Show all select.
   docs/next-test-step.md is now Test J (Keep, Delete's warning with cancel, Homebrew packs); Test I (consent v6) moves to after it.
+  10-minute check, 15:25 UTC (10 minutes after the start): 0 ERROR, CRITICAL or traceback lines in core and web-api since 15:14; both up, web-api healthy; schema_migrations 102 rows, last 0102_pack_suggestions.
+  Nothing turned on for users (recaps off, no ElevenLabs key, the extractor off, the What's new entries for these features held).
