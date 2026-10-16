@@ -141,7 +141,7 @@ _DAWN = re.compile(
 # followed by the narration's subject or end the sentence ("Two days later, meet me at the gate"
 # is an NPC talking), and must open the line ("he arrived three days later" is story).
 _DAYS = re.compile(
-    rf"{_OPENS}(?:(?P<n>\d{{1,2}}|{_NUMBER_WORD}|a|one)\s+days?\s+later"
+    rf"{_OPENS}(?:(?:(?P<n>\d{{1,2}}|{_NUMBER_WORD})\s+days|(?P<a>a|one)\s+day)\s+later"
     r"|(?P<w>a|one|two|three|four)\s+weeks?\s+later|(?:the\s+)?next\s+day)"
     r"(?:[.!,]?$|,?\s+(?:you|your|you all|all of you|the party|the group|everyone|we)\b)",
     re.IGNORECASE,
@@ -244,13 +244,17 @@ def _skip(text: str) -> Said | None:
     found = _DAYS.match(text)
     if found is None or _QUOTES.search(text):
         return None
-    if _NOT_THE_TIME.search(text[: found.end()]):
+    # The whole line, as for dawn ("Three days later, you can't go on" is not the clock moving), but
+    # with a plain "no rest" taken out first: its "no" is the DM's own "without rest".
+    if _NOT_THE_TIME.search(_WITHOUT_REST.sub("", text)):
         return None
     if found.group("w"):
         days = 7 * _WEEKS[found.group("w").lower()]
+    elif found.group("a"):
+        days = 1  # "a day later", "one day later"
     elif found.group("n"):
         word = found.group("n").lower()
-        days = 1 if word in ("a", "one") else (_number(word) or 0)
+        days = _number(word) or 0
     else:
         days = 1  # "the next day"
     if not 1 <= days <= MAX_SKIP_DAYS:

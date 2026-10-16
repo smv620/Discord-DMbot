@@ -79,14 +79,15 @@ PANEL = ("short", "long", "dawn", "typed")
 COMBAT_ACTIONS = ("cstart", "cnext", "cend", "cround")  # "cround": a named round, said
 # The actions that move game time: they say dawn, noon and dusk as they pass, and the 24-hour
 # line (#1173: one list instead of two that could drift apart).
-ENDS_COMBAT = ("long", "dawn")
+# "Three days later", said by the DM (#1594): rested, or without rest when the DM said so. Days
+# passing end a fight like a long rest does: nobody is still in round 4 three days later.
+DAY_SKIPS = ("days", "days_norest")
+ENDS_COMBAT = ("long", "dawn", *DAY_SKIPS)
 # A long rest and skipping to dawn pass the night on purpose, and the note the DM gets already
 # says the new time ("Skipped to dawn. Now ..."): saying dawn, noon and dusk too would be the
 # same news up to three more times (#1197 item 6). The tired line and "Combat is over" stay.
 # The same two actions as ENDS_COMBAT on purpose: both are "the night passes" moves.
 QUIET_RESTS = ("long", "dawn")
-# "Three days later", said by the DM (#1594): rested, or without rest when the DM said so.
-DAY_SKIPS = ("days", "days_norest")
 TIME_MOVING = ("m10", "h1", "short", "long", "advance", *DAY_SKIPS, "cnext", "cend", "cround")
 MARK_LINES = {"dawn": "🌅 Dawn", "noon": "☀️ Noon", "dusk": "🌇 Dusk"}
 

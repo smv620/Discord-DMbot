@@ -136,6 +136,12 @@ class DmWords(unittest.TestCase):
             "Five weeks later, you arrive",
             "A few days later, you arrive",
             "Several days later, you arrive",
+            "Three days later, you will hang, says the king",  # a maybe/said later in the line
+            "Three days later, you can't go on",
+            "The next day, we should",
+            "Three days later, you hear what he said",
+            "A days later, you arrive",
+            "2 weeks later, you arrive",  # weeks are in words, one to four
         ):
             self.assertIsNone(phrases.find_clock(line), line)
 
@@ -408,6 +414,21 @@ class AtTheTableMore(AtTheTable):
         interaction.client.post_message = AsyncMock(return_value=None)
         await button.callback(cast(Any, interaction))
         self.assertEqual(await self.skip_ids(), before)
+
+    async def test_days_end_a_fight_like_a_long_rest_does(self) -> None:
+        await self.press("set", set_to=NOON4)
+        await self.press("cstart")
+        await self.say(DM, "Three days later, you reach the city.")
+        stored = await self.clocks.get(GUILD_A, self.a.id)
+        assert stored is not None
+        self.assertIsNone(stored.clock.combat_round)
+        self.assertTrue(any("Combat is over" in t for t in self.posted))
+
+    async def test_the_note_says_one_day_in_the_singular_and_marks_are_not_listed(self) -> None:
+        await self.press("set", set_to=game.from_day_and_time(4, 11))
+        await self.say(DM, "A day later, you reach the city.")
+        self.assertTrue(any("⏩ 1 day later (counted as rested)" in t for t in self.posted))
+        self.assertFalse(any("Noon" in t or "Dusk" in t or "Dawn" in t for t in self.posted))
 
     async def test_the_same_skip_said_twice_in_five_minutes_counts_once(self) -> None:
         await self.press("set", set_to=NOON4)
