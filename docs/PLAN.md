@@ -2064,9 +2064,20 @@ consent check just made still holds:
     Undo only touches their words while they're still recorded.
   - **When it closes:** at the session's end the list stays but the Undo buttons go.
     After a restart, a press says it can't be undone any more.
-- **Later:** unanswered "Did they mean…?" questions (they expire quietly at the
-  session's end, the line staying as heard) go to the after-session report once it
-  exists.
+- **Built, unanswered questions go to the after-session check (2026-10-16, #1572):** a "Did they
+  mean…?" that closes with no answer (it expired, or the session ended) is kept in memory, at
+  most 25 a session (the oldest go first), and saved when the session ends as a waiting question
+  of the campaign (its own table, `waiting_name_questions`: the line's reference, the heard
+  words and the 2 or 3 names, never the line's words). The DM screen says how many and shows
+  **❓ Check names**; DMs only, checked on every press. Each question reads as it did
+  live: **[Maren] [Marron] [Type it…] [Keep "Marin"] [Later]**. A name picked or typed is saved as
+  the campaign's correction (so later sessions write it that way) and written into that one
+  stored line's cleaned words, never what was heard, and only if the words are in the line exactly
+  once and no secret name would stand there; **Keep as heard** saves the "don't change this"
+  rule. Earlier lines with the same words are not rewritten. Nothing is kept for a speaker who
+  stopped being recorded (a person who stops, or whose lines are deleted, has theirs removed), a
+  question whose line was deleted drops out of the list, one split across two pieces of speech is
+  not kept, and a question unanswered for 7 days expires quietly.
 
 **A player may suggest a fix to their own line; the DM decides (decided 2026-10-16 by Supervisor,
 built #1491).** The bot advises; the DM decides; what was heard never changes. A player who sees
@@ -2287,8 +2298,18 @@ one) moves a clock the DM has set, with a one-line note and **Undo** (a rest fro
 pressed it alone; it only undoes while the clock is still where the rest left it); a player's line never does. **Speaks up only for** dawn,
 noon and dusk as a button or rest passes them (not when the DM sets the time), and **24 hours
 without a long rest**, once per stretch, with its source ("Check: 24 hours since the last long rest… Optional rule, Xanathar's… Your call."); on by default, and off if the DM turns the "Going without a long rest" optional rule
-off. The first time the clock is set the party counts as rested then. Not built yet: split-party
-clocks, reading time from narration, periodic notes.
+off. The first time the clock is set the party counts as rested then. **Reading time from the DM's
+narration is built for hours, the next morning and days (2026-10-16, #1117, #1594):** "an hour
+later", "the next morning", "at dawn", and now a skip of days ("Three days later, you reach the
+city", "A week later, the party…", "The next day, you…"; 1 to 30 days, a week as 7). It lands at the
+same time of day that many days on and counts as a long rest for the party (a journey of days
+includes nights' sleep) unless the DM said "without resting" or "no rest" in the same line; the
+one-line note says which ("⏩ 3 days later (counted as rested)"), with **Undo**, which brings back
+the clock and the rest record. Only a DM's line that opens the scene and is followed by the
+narration's subject or ends the sentence; never "in three days", "for three days", "three days
+ago", a question, a wish, a condition, quoted speech, more than 30 days, or a player's line; the
+same skip twice in five minutes is one. A rested skip leaves no "24 hours without a long rest" note;
+one without rest over 24 hours says it once. Not built yet: split-party clocks, periodic notes.
 
 *Built, part 2: timed effects the DM starts (2026-10-10, #998):* `game_effects` (migration 0042): per
 campaign, own server scope, deleted with the campaign, in backups (`EffectsSection`, validated),

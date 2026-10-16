@@ -4,7 +4,8 @@ one. Never guessed: "you walk for a while" or "after some time" is ignored.
 
 Two kinds of speaker. A campaign's DM clearly saying a rest starts ("we take a long rest") or
 finishes ("you finish your long rest"), that the next morning has come, or how much time has
-passed ("an hour later") moves the clock (`find_clock`; the caller checks who is speaking).
+passed ("an hour later", "three days later") moves the clock (`find_clock`; the caller checks
+who is speaking).
 A player *suggesting* a rest ("let's take a short rest", "can we long rest?") moves nothing;
 it only lets DMbot ask the DM with one button (`suggested_rest`).
 """
@@ -16,10 +17,12 @@ from dataclasses import dataclass, field
 from typing import Literal
 
 Rest = Literal["short", "long"]
-Action = Literal["short", "long", "dawn", "advance"]
+Action = Literal["short", "long", "dawn", "advance", "days", "days_norest"]
 
 MAX_WORDS = 14  # a long ramble that mentions a rest isn't a ruling
 MAX_AMOUNT_MIN = 24 * 60  # "twenty-four hours later" is the most it will move by itself
+MAX_SKIP_DAYS = 30  # "thirty days later" is the most a skip moves by itself (#1594)
+MINUTES_PER_DAY = 24 * 60
 
 
 @dataclass(frozen=True, slots=True)
@@ -28,13 +31,15 @@ class Said:
     few minutes is counted once by (a rest said as starting and as finishing is one rest)."""
 
     action: Action
-    minutes: int | None = None  # for "advance"
+    minutes: int | None = None  # for "advance", and for a skip of days (a whole number of days)
     ends: bool = field(
         default=False, compare=False
     )  # a rest said as finishing ("you finish your long rest"), not starting
 
     @property
     def key(self) -> str:
+        if self.action in ("days", "days_norest"):
+            return f"days{self.minutes}"  # rested or not, the same skip said twice is one
         return f"+{self.minutes}" if self.action == "advance" else self.action
 
 
@@ -132,6 +137,19 @@ _DAWN = re.compile(
     r"(?:[.!,]?$|,?\s+(?:you|your|you all|all of you|the party|the group|everyone|we)\b)",
     re.IGNORECASE,
 )
+# A skip of days is a scene cut too: "Three days later, you reach the city." Like dawn, it must be
+# followed by the narration's subject or end the sentence ("Two days later, meet me at the gate"
+# is an NPC talking), and must open the line ("he arrived three days later" is story).
+_DAYS = re.compile(
+    rf"{_OPENS}(?:(?:(?P<n>\d{{1,2}}|{_NUMBER_WORD})\s+days|(?P<a>a|one)\s+day)\s+later"
+    r"|(?P<w>a|one|two|three|four)\s+weeks?\s+later|(?:the\s+)?next\s+day)"
+    r"(?:[.!,]?$|,?\s+(?:you|your|you all|all of you|the party|the group|everyone|we)\b)",
+    re.IGNORECASE,
+)
+_WEEKS = {"a": 1, "one": 1, "two": 2, "three": 3, "four": 4}
+# The DM said the days passed without sleep: not counted as a long rest.
+_WITHOUT_REST = re.compile(r"\b(?:without (?:any )?rest(?:ing)?|no rest)\b", re.IGNORECASE)
+_QUOTES = re.compile(r"[\"\u201c\u201d]")
 _SUGGESTS = re.compile(
     r"\b(?:let'?s|lets|can we|could we|should we|we should|we could|shall we|how about|"
     r"we need|i think we (?:should|need)|can i get|i'?d like)\b"
@@ -218,6 +236,33 @@ def _amount(text: str) -> int | None:
     return minutes if 1 <= minutes <= MAX_AMOUNT_MIN else None
 
 
+def _skip(text: str) -> Said | None:
+    """A skip of whole days the DM plainly said ("Three days later, you reach the city", "A week
+    later, the party...", "The next day, you..."), 1 to 30 days, counted as rested unless the
+    DM said "without rest" in the same line. Never inside quoted speech, a question, a wish, a
+    condition or a maybe, nor "in three days", "for three days" or "three days ago"."""
+    found = _DAYS.match(text)
+    if found is None or _QUOTES.search(text):
+        return None
+    # The whole line, as for dawn ("Three days later, you can't go on" is not the clock moving), but
+    # with a plain "no rest" taken out first: its "no" is the DM's own "without rest".
+    if _NOT_THE_TIME.search(_WITHOUT_REST.sub("", text)):
+        return None
+    if found.group("w"):
+        days = 7 * _WEEKS[found.group("w").lower()]
+    elif found.group("a"):
+        days = 1  # "a day later", "one day later"
+    elif found.group("n"):
+        word = found.group("n").lower()
+        days = _number(word) or 0
+    else:
+        days = 1  # "the next day"
+    if not 1 <= days <= MAX_SKIP_DAYS:
+        return None
+    rested = _WITHOUT_REST.search(text[found.end() :]) is None
+    return Said("days" if rested else "days_norest", days * MINUTES_PER_DAY)
+
+
 def find_clock(line: str) -> Said | None:
     """The clock change a DM's line plainly says, or None. A rest starting or finishing, the
     next morning or dawn, or an amount of time later, in that order."""
@@ -232,6 +277,9 @@ def find_clock(line: str) -> Said | None:
         return Said(rest)
     if not _NOT_THE_TIME.search(text) and _DAWN.match(text):
         return Said("dawn")
+    skip = _skip(text)
+    if skip is not None:
+        return skip
     minutes = _amount(text)
     return None if minutes is None else Said("advance", minutes)
 

@@ -1,6 +1,6 @@
 DMbot - TESTING STATUS (current testing only)
 =============================================
-Last updated: 2026-10-16 18:1x UTC by dev1 (deploy 257f5b67 live)
+Last updated: 2026-10-16 20:4x UTC by dev1 (Test J passed)
 
 **For the people at the table: docs/next-test-step.md has the one next small test (#569).**
 Short by design: see CLAUDE.md "Testing logs". Full record: docs/testing-history.log.
@@ -44,7 +44,7 @@ private (no install link) until the website launches.
 NEW LIVE CHECKS (not done; also from 257f5b67: a non-DM /dmbot rule card; the website's Transcripts page of a campaign with a keep limit shows "Transcripts are kept for N days after each session, then deleted."; also from 1df5a4e5: a DM loads a from-book homebrew file and sees the question "Which rules is this book written for?" after "I have the right"; also from 47d4ccf4: /dmbot rule as a non-DM member gives a private card ending "Your DM decides what applies at your table."; Connect to... shows Secret: no for a DM; a DM's Download all names file has the player rows section in its header; Test J covers Keep, Delete, Homebrew packs; need a game session or a signed-in member): (1) a recorded player types /dmbot fix after a session and sees the picker (nothing need be sent); (2) the DM opens Settings -> Homebrew: the empty list with Add, Download file and Load file (DM only); (3) the website's Transcripts and House rules pages open read-only for a signed-in member (signed-out calls answer 401, checked).
 
 ------------------------------------------------------------------------------
-NEXT TEST: Test J, keeping and deleting transcripts (docs/next-test-step.md); Test I, the new consent question (#1270 check 1), goes after it
+NEXT TEST: Test I, the new consent question (docs/next-test-step.md; #1270 check 1). Test J (keeping and deleting transcripts, Homebrew packs) PASSED on 2026-10-16
 ------------------------------------------------------------------------------
 After the big deploy (ee256c7) the live checks run one small test at a time, in the order of #1270: 1 consent v6 (Test I),
 2 typed chat, 3 table questions, 4 FightBot and spell slots, 5 the timer form incl. "60 seconds" (Test F again, #1194 is

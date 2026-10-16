@@ -4676,6 +4676,41 @@ TRANSCRIPT_SUGGESTIONS = """
         ON transcript_suggestions (session_id, user_id, started_ms) WHERE state = 'open';
     """ + _isolate("transcript_suggestions")
 
+WAITING_NAME_QUESTIONS = """
+    -- "Did they mean…?" questions nobody answered during a session (#1572; docs/PLAN.md,
+    -- "Transcript Cleaner"): kept for the after-session check, so the DM can still say that
+    -- "Marin" was Maren. The line is named like transcript_suggestions names one (`session_id`,
+    -- `speaker_id`, `started_ms`): its words are read from the line when the DM answers, so
+    -- nothing of the line is copied here. `heard` is the misheard word and `option_ids` the
+    -- 2 or 3 names it might be (entry IDs, read again when asked, since a name can be removed
+    -- or made secret meanwhile). One row for a word in a line; open ones expire after 7 days
+    -- (state `expired`, no message). A new table, so no existing row changes and no row-level
+    -- security needs opening.
+    CREATE TABLE waiting_name_questions (
+        id          BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+        guild_id    BIGINT NOT NULL,
+        campaign_id TEXT NOT NULL,
+        session_id  TEXT NOT NULL,
+        speaker_id  BIGINT NOT NULL CHECK (speaker_id > 0),
+        started_ms  BIGINT NOT NULL,
+        heard       TEXT NOT NULL CHECK (char_length(heard) BETWEEN 1 AND 100),
+        option_ids  TEXT[] NOT NULL CHECK (cardinality(option_ids) BETWEEN 2 AND 3),
+        state       TEXT NOT NULL DEFAULT 'open'
+                        CHECK (state IN ('open', 'answered', 'kept', 'expired')),
+        created_at  BIGINT NOT NULL,
+        decided_at  BIGINT,
+        decided_by  BIGINT,
+        FOREIGN KEY (campaign_id, guild_id)
+            REFERENCES campaigns (id, guild_id) ON DELETE CASCADE,
+        FOREIGN KEY (session_id, guild_id)
+            REFERENCES transcript_sessions (id, guild_id) ON DELETE CASCADE
+    );
+    CREATE UNIQUE INDEX waiting_name_questions_one_per_word
+        ON waiting_name_questions (session_id, speaker_id, started_ms, heard);
+    CREATE INDEX waiting_name_questions_open
+        ON waiting_name_questions (campaign_id, state, created_at);
+    """ + _isolate("waiting_name_questions")
+
 HOMEBREW_ENTRIES = f"""
     -- A campaign's own homebrew (#1520; docs/PLAN.md, "Homebrew (part 1)"): spells, monsters,
     -- items, feats, conditions and rules the DM made, in the DM's own words. Per campaign, never
@@ -5339,9 +5374,9 @@ WEB_HOMEBREW = """
     -- for the transaction; the website's role has no grant on homebrew_entries.
     --
     -- What leaves the database: kind, name, summary, text, version, updated_at (the last two
-    -- only reach the API process, for the file; the page never sends them). NEVER who wrote it,
-    -- its id or whether it came from a book (the IP rule keeps book text per campaign; the page
-    -- shows the campaign's own words only).
+    -- only reach the API process, for the file; the page never sends them). NEVER who wrote it
+    -- or its id. (0100 also withheld whether it came from a book; 0107 now tells that, as the
+    -- Discord players' card does.)
     --
     -- dmbot_web_homebrew: NULL when the caller is not in the server or there is no campaign.
     CREATE FUNCTION dmbot_web_homebrew(g BIGINT, c TEXT) RETURNS JSONB
@@ -5578,6 +5613,167 @@ WEB_TRANSCRIPT_KEEP = """
     REVOKE ALL ON FUNCTION dmbot_web_transcript_campaigns(BIGINT) FROM PUBLIC;
 """
 
+WEB_HOMEBREW_BOOK = """
+    -- The Homebrew page tags a shared book's entries like the Discord players' card (#1579). Since
+    -- #1564 the entries players may know include ones loaded from a shared rulebook (`from_book`);
+    -- the card tags them [Shared book], and [Legacy 2014] when the book is for the 2014 rules and
+    -- the campaign plays a newer ruleset (`book_is_legacy`, #1563). That is a rules-edition fact,
+    -- not story, and legacy content is tagged wherever it appears (CLAUDE.md, "Rules edition").
+    -- Still never returned: who wrote an entry, its id, the book's name (it is never kept), or an
+    -- entry the DM has not marked "players may know". Replacing a door changes no row, so no
+    -- row-level security needs opening; CREATE OR REPLACE drops the function's own settings, so
+    -- they are set again below. The campaigns door is unchanged.
+    CREATE OR REPLACE FUNCTION dmbot_web_homebrew(g BIGINT, c TEXT) RETURNS JSONB
+    LANGUAGE plpgsql SECURITY DEFINER AS $fn$
+    DECLARE
+        camp campaigns%ROWTYPE;
+    BEGIN
+        IF dmbot_current_guild() IS DISTINCT FROM g
+           OR NOT (g = ANY ((SELECT dmbot_web_guilds())::BIGINT[])) THEN
+            RETURN NULL;
+        END IF;
+        SELECT * INTO camp FROM campaigns WHERE guild_id = g AND id = c;
+        IF NOT FOUND THEN
+            RETURN NULL;
+        END IF;
+        RETURN jsonb_build_object(
+            'name', camp.name,
+            'entries', COALESCE((
+                SELECT jsonb_agg(jsonb_build_object(
+                           'kind', h.kind, 'name', h.name, 'summary', h.summary,
+                           'text', h.text, 'version', h.version, 'updatedAt', h.updated_at,
+                           'fromBook', h.from_book,
+                           -- the same test as rules/book_rank.py book_is_legacy
+                           'legacy', COALESCE(h.from_book AND h.book_edition = '2014'
+                                              AND camp.target_ruleset <> '2014', false))
+                           ORDER BY h.name_key)
+                FROM homebrew_entries h
+                WHERE h.guild_id = g AND h.campaign_id = c AND h.players_may_know),
+                '[]'::jsonb));
+    END
+    $fn$;
+    DO $do$
+    BEGIN
+        EXECUTE format(
+            'ALTER FUNCTION dmbot_web_homebrew(BIGINT, TEXT)'
+            ' SET search_path = pg_catalog, %I, pg_temp',
+            current_schema());
+    END
+    $do$;
+    REVOKE ALL ON FUNCTION dmbot_web_homebrew(BIGINT, TEXT) FROM PUBLIC;
+"""
+
+WEB_HOMEBREW_PACKS = """
+    -- The Homebrew page shows the packs a table follows, as the House rules page shows followed
+    -- sets (#1586). A player's /dmbot rule answers from a followed pack's entries the pack marks
+    -- as known to players (`known`, rules/homebrew_packs.py), so the site shows what the bot does.
+    -- Per pack: its name, version and ONLY the entries marked known (kind, name, summary, text).
+    -- NEVER the publisher, the share code, the publishing campaign or server, or an entry not
+    -- known to players. A pack holds no book text (#1529), so there are no book tags here. The
+    -- campaigns door now also counts a followed pack's known entries and says how many packs are
+    -- followed. Replacing a door changes no row, so no row-level security needs opening;
+    -- CREATE OR REPLACE drops the function's own settings, so they are set again below.
+    CREATE OR REPLACE FUNCTION dmbot_web_homebrew(g BIGINT, c TEXT) RETURNS JSONB
+    LANGUAGE plpgsql SECURITY DEFINER AS $fn$
+    DECLARE
+        camp campaigns%ROWTYPE;
+    BEGIN
+        IF dmbot_current_guild() IS DISTINCT FROM g
+           OR NOT (g = ANY ((SELECT dmbot_web_guilds())::BIGINT[])) THEN
+            RETURN NULL;
+        END IF;
+        SELECT * INTO camp FROM campaigns WHERE guild_id = g AND id = c;
+        IF NOT FOUND THEN
+            RETURN NULL;
+        END IF;
+        RETURN jsonb_build_object(
+            'name', camp.name,
+            'entries', COALESCE((
+                SELECT jsonb_agg(jsonb_build_object(
+                           'kind', h.kind, 'name', h.name, 'summary', h.summary,
+                           'text', h.text, 'version', h.version, 'updatedAt', h.updated_at,
+                           'fromBook', h.from_book,
+                           -- the same test as rules/book_rank.py book_is_legacy
+                           'legacy', COALESCE(h.from_book AND h.book_edition = '2014'
+                                              AND camp.target_ruleset <> '2014', false))
+                           ORDER BY h.name_key)
+                FROM homebrew_entries h
+                WHERE h.guild_id = g AND h.campaign_id = c AND h.players_may_know),
+                '[]'::jsonb),
+            'packs', COALESCE((
+                SELECT jsonb_agg(jsonb_build_object(
+                           'name', f.set_name, 'version', f.version,
+                           'entries', COALESCE((
+                               SELECT jsonb_agg(jsonb_build_object(
+                                          'kind', t.e ->> 'kind', 'name', t.e ->> 'name',
+                                          'summary', t.e -> 'summary', 'text', t.e ->> 'text')
+                                          ORDER BY lower(t.e ->> 'name'), t.ord)
+                               FROM jsonb_array_elements(
+                                        CASE WHEN jsonb_typeof(f.content -> 'entries') = 'array'
+                                             THEN f.content -> 'entries' ELSE '[]'::jsonb END)
+                                    WITH ORDINALITY AS t(e, ord)
+                               WHERE jsonb_typeof(t.e) = 'object' AND t.e -> 'known' = 'true'::jsonb
+                           ), '[]'::jsonb))
+                       ORDER BY f.position, f.followed_at, f.set_id)
+                FROM rule_set_follows f
+                WHERE f.guild_id = g AND f.campaign_id = c AND f.kind = 'homebrew'),
+                '[]'::jsonb));
+    END
+    $fn$;
+
+    CREATE OR REPLACE FUNCTION dmbot_web_homebrew_campaigns(g BIGINT) RETURNS JSONB
+    LANGUAGE plpgsql SECURITY DEFINER AS $fn$
+    BEGIN
+        IF dmbot_current_guild() IS DISTINCT FROM g
+           OR NOT (g = ANY ((SELECT dmbot_web_guilds())::BIGINT[])) THEN
+            RETURN NULL;
+        END IF;
+        RETURN COALESCE((
+            SELECT jsonb_agg(jsonb_build_object(
+                       'id', y.id, 'name', y.name, 'entries', y.entries, 'packs', y.packs)
+                       ORDER BY lower(y.name), y.id)
+            FROM (
+                SELECT x.*
+                FROM (
+                    SELECT c.id, c.name,
+                           (SELECT count(*) FROM homebrew_entries h
+                            WHERE h.guild_id = c.guild_id AND h.campaign_id = c.id
+                              AND h.players_may_know)
+                           + (SELECT count(*)
+                              FROM rule_set_follows f,
+                                   jsonb_array_elements(
+                                       CASE WHEN jsonb_typeof(f.content -> 'entries') = 'array'
+                                            THEN f.content -> 'entries' ELSE '[]'::jsonb END) e
+                              WHERE f.guild_id = c.guild_id AND f.campaign_id = c.id
+                                AND f.kind = 'homebrew' AND jsonb_typeof(e) = 'object'
+                                AND e -> 'known' = 'true'::jsonb) AS entries,
+                           (SELECT count(*) FROM rule_set_follows f
+                            WHERE f.guild_id = c.guild_id AND f.campaign_id = c.id
+                              AND f.kind = 'homebrew') AS packs
+                    FROM campaigns c
+                    WHERE c.guild_id = g
+                ) x
+                WHERE x.entries > 0
+                ORDER BY lower(x.name), x.id LIMIT 100
+            ) y), '[]'::jsonb);
+    END
+    $fn$;
+    DO $do$
+    BEGIN
+        EXECUTE format(
+            'ALTER FUNCTION dmbot_web_homebrew(BIGINT, TEXT)'
+            ' SET search_path = pg_catalog, %I, pg_temp',
+            current_schema());
+        EXECUTE format(
+            'ALTER FUNCTION dmbot_web_homebrew_campaigns(BIGINT)'
+            ' SET search_path = pg_catalog, %I, pg_temp',
+            current_schema());
+    END
+    $do$;
+    REVOKE ALL ON FUNCTION dmbot_web_homebrew(BIGINT, TEXT) FROM PUBLIC;
+    REVOKE ALL ON FUNCTION dmbot_web_homebrew_campaigns(BIGINT) FROM PUBLIC;
+"""
+
 MIGRATIONS: tuple[Migration, ...] = (
     ("0001_initial", INITIAL),
     ("0002_active_sessions", ACTIVE_SESSIONS),
@@ -5693,6 +5889,9 @@ MIGRATIONS: tuple[Migration, ...] = (
         "0105_web_transcript_keep",
         WEB_TRANSCRIPT_KEEP,
     ),  # the site says how long transcripts are kept (#1575)
+    ("0106_waiting_name_questions", WAITING_NAME_QUESTIONS),  # unanswered "Did they mean…?" (#1572)
+    ("0107_web_homebrew_book", WEB_HOMEBREW_BOOK),  # the page tags shared-book entries (#1579)
+    ("0108_web_homebrew_packs", WEB_HOMEBREW_PACKS),  # the page shows followed packs (#1586)
 )
 
 # Tables that must have row-level security. A test checks every table in the schema
@@ -5708,6 +5907,7 @@ ISOLATED_TABLES = (
     "transcript_sessions",
     "transcript_lines",
     "transcript_suggestions",
+    "waiting_name_questions",
     "memory_heard",
     "shared_confirmations",
     "campaign_handover_offers",
