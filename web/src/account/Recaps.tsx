@@ -11,6 +11,8 @@ import {
   statusLine,
   text,
 } from "../content/recaps";
+import { accountWords as audioWords, price as audioPrice } from "../content/recap-audio";
+import { RECAP_AUDIO_LIVE } from "../content/recap-words";
 import { ApiError, type AccountApi, type Recap, type RecapAction } from "./api";
 
 const POLL_MS = 5000;
@@ -124,6 +126,60 @@ function List({ api }: { api: AccountApi }) {
         </ul>
       )}
     </>
+  );
+}
+
+/** Where narrated recaps are not part of the plan: one line and a button to add them (#1390).
+ * Nothing at all while the audio is off, or for a plan that has them. */
+function AudioOffer({ api }: { api: AccountApi }) {
+  const [offer, setOffer] = useState<"none" | "buy">("none");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  useEffect(() => {
+    if (!RECAP_AUDIO_LIVE) return;
+    let live = true;
+    api.me().then(
+      (me) => {
+        const audio = me?.recapAudio;
+        if (!live || !audio || audio.included || audio.addOn) return;
+        if (audio.canBuy && api.recapAudioUrl) setOffer("buy");
+      },
+      () => undefined,
+    );
+    return () => {
+      live = false;
+    };
+  }, [api]);
+  if (offer === "none") return null;
+  const buy = async (): Promise<void> => {
+    if (!api.recapAudioUrl || busy) return;
+    setBusy(true);
+    setError(null);
+    try {
+      window.location.assign(await api.recapAudioUrl());
+    } catch (e) {
+      const kind = e instanceof ApiError ? e.kind : "server";
+      setError(
+        kind === "already-included" || kind === "already-subscribed"
+          ? audioWords.errors[kind]
+          : errors.other,
+      );
+      setBusy(false);
+    }
+  };
+  return (
+    <div class="panel">
+      <p class="small">{audioWords.notIncluded}</p>
+      <button type="button" class="button secondary" disabled={busy} onClick={() => void buy()}>
+        {busy ? text.busy : audioWords.buy}
+      </button>
+      <p class="muted small">{audioWords.buyNote(audioPrice())}</p>
+      {error && (
+        <p class="warn" role="alert">
+          {error}
+        </p>
+      )}
+    </div>
   );
 }
 
@@ -365,6 +421,7 @@ function Review({ api, recapRef }: { api: AccountApi; recapRef: string }) {
         )
       )}
 
+      {!editing && <AudioOffer api={api} />}
       {!editing &&
         (recap.canEdit ||
           recap.canPost ||
