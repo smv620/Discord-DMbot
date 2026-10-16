@@ -285,6 +285,30 @@ class Sending(DatabaseTest):
         self.assertEqual(await self.records(4), set())
         self.assertEqual(await self.records(5), {"other-offer"})
 
+    async def test_recap_email_notes_are_pruned_after_90_days_not_before(self) -> None:
+        now = 2_000_000_000
+        async with self.db.unscoped() as conn:
+            await conn.execute(
+                "INSERT INTO sent_emails (user_id, kind, sent_at) VALUES"
+                " (1, 'recap-ready:0123456789abcdef', %s),"
+                " (2, 'recap-failed:0123456789abcdef', %s),"
+                " (3, 'recap-ready:0123456789abcdef', %s), (4, 'recapture-offer', %s),"
+                " (5, 'other-offer', %s)",
+                (
+                    now - 91 * 86400,  # old: goes
+                    now - 91 * 86400,
+                    now - 89 * 86400,  # inside the 90 days: stays
+                    now - 91 * 86400,  # "recap" is not "recap-": stays
+                    now - 91 * 86400,  # not a recap note: stays
+                ),
+            )
+        self.assertEqual(await mail.prune_account_emails(self.db, now), 2)
+        self.assertEqual(await self.records(1), set())
+        self.assertEqual(await self.records(2), set())
+        self.assertEqual(await self.records(3), {"recap-ready:0123456789abcdef"})
+        self.assertEqual(await self.records(4), {"recapture-offer"})
+        self.assertEqual(await self.records(5), {"other-offer"})
+
     def test_the_message_id_uses_the_domain_of_the_from_address(self) -> None:
         made = Mailer(
             None,  # type: ignore[arg-type]
