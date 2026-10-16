@@ -3811,7 +3811,8 @@ RECAP_AUDIO_FOLLOW_UPS = """
     --    the hourly sweep tries again. It holds only the company's subscription id (no person's
     --    data); the website reaches it through four doors, never the table.
     CREATE TABLE recap_audio_strays (
-        subscription_id TEXT PRIMARY KEY CHECK (char_length(subscription_id) BETWEEN 1 AND 100),
+        subscription_id TEXT PRIMARY KEY
+                        CHECK (subscription_id ~ '^sub_[A-Za-z0-9_]{1,90}$'),  -- a company id only
         found_at        BIGINT NOT NULL,
         attempts        INTEGER NOT NULL DEFAULT 0,
         last_try_at     BIGINT
@@ -3824,11 +3825,11 @@ RECAP_AUDIO_FOLLOW_UPS = """
             ON CONFLICT (subscription_id) DO UPDATE SET attempts = recap_audio_strays.attempts + 1,
                 last_try_at = EXCLUDED.last_try_at;
     $fn$;
-    CREATE FUNCTION dmbot_strays_to_cancel() RETURNS TABLE (subscription_id TEXT)
+    CREATE FUNCTION dmbot_strays_to_cancel() RETURNS TABLE (subscription_id TEXT, attempts INTEGER)
         LANGUAGE sql SECURITY DEFINER
         AS $fn$
         -- At most once an hour each, oldest first, a few at a time.
-        SELECT s.subscription_id FROM recap_audio_strays s
+        SELECT s.subscription_id, s.attempts FROM recap_audio_strays s
             WHERE s.last_try_at IS NULL
                OR s.last_try_at + 3600 <= extract(epoch FROM now())::BIGINT
             ORDER BY s.found_at LIMIT 20;

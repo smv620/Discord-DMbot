@@ -696,6 +696,34 @@ class Moves(DatabaseTest):
         )
         self.assertEqual(await move_sync.sync_moves(web, fake), 0)  # done once
 
+    async def test_a_failed_add_on_retarget_leaves_the_move_to_be_tried_again(self) -> None:
+        async with self.db.plan_writer(OLD) as conn:
+            await conn.execute(
+                "UPDATE entitlements SET recap_audio_until = %s, recap_audio_subscription_id ="
+                " 'sub_audio' WHERE user_id = %s",
+                (NOW + 86400, OLD),
+            )
+        web = await self.web()
+        await self.moves.move(OLD, NEW, await self.code())
+
+        class Half(FakeProvider):
+            async def retarget(
+                self, *, customer_id: str | None, subscription_id: str | None, user_id: int
+            ) -> None:
+                if customer_id is None:
+                    raise PaymentError("Stripe answered 500")
+                await super().retarget(
+                    customer_id=customer_id, subscription_id=subscription_id, user_id=user_id
+                )
+
+        half = Half(b"s" * 32, "https://site.example.com")
+        self.assertEqual(await move_sync.sync_moves(web, half), 0)
+        self.assertIsNone(await self.scalar("SELECT stripe_done_at FROM account_moves"))
+        async with self.db.unscoped() as conn:
+            await conn.execute("UPDATE account_moves SET stripe_last_try_at = 0")
+        fake = FakeProvider(b"s" * 32, "https://site.example.com")
+        self.assertEqual(await move_sync.sync_moves(web, fake), 1)
+
     async def test_a_move_without_an_add_on_retargets_only_the_plan(self) -> None:
         web = await self.web()
         await self.moves.move(OLD, NEW, await self.code())

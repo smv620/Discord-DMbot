@@ -904,9 +904,7 @@ def create_app(
                 raise
             await entitlements_writer.forget_recap_audio(db, user_id, now=clock())
         except Exception as exc:  # the company, the database: nothing here may fail the webhook
-            log.error(
-                "Couldn't cancel a recap audio add-on: %s: kept for a retry", type(exc).__name__
-            )
+            log.error("Couldn't cancel a recap audio add-on: %s", type(exc).__name__)
 
     async def cancel_stray_add_on(subscription_id: str | None) -> None:
         """An add-on subscription that must not exist (a second one, or one bought with no

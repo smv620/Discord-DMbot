@@ -14,6 +14,7 @@ from urllib.parse import parse_qs, urlsplit
 import httpx
 
 from dmbot import entitlements, plan_rules
+from dmbot.db import Database
 from dmbot.entitlements import (
     NO_ACCESS,
     Entitlement,
@@ -25,9 +26,10 @@ from dmbot.web import accounts, entitlements_writer, strays
 from dmbot.web.app import create_app
 from dmbot.web.payments import FakeProvider, PaymentError
 from dmbot.web.stripe import RECAP_AUDIO_ITEM, StripeConfig, StripeProvider
-from tests.pg import DatabaseTest
+from tests.pg import REQUIRE_DB, SUPERUSER_URL, DatabaseTest
 from tests.test_web_api import ALICE, API, SITE, FakeDiscord, settings
 from tests.test_web_payments import DAY, HOOK_SECRET
+from tests.test_web_role import ensure_web_role, web_url
 
 NOW = 1_800_000_000
 
@@ -496,6 +498,17 @@ class Billing(Payments):
         self.provider.cancel = broken  # type: ignore[method-assign]
         self.assertEqual((await self.audio()).status_code, 200)
 
+    async def web_role(self) -> Any:
+        """The website's own database role, as the internet-facing API connects."""
+        if not SUPERUSER_URL:
+            if REQUIRE_DB:
+                self.fail("DMBOT_TEST_SUPERUSER_URL is needed to test the website's role")
+            self.skipTest("set DMBOT_TEST_SUPERUSER_URL to test the website's role")
+        await ensure_web_role()
+        web = await Database.open(web_url(), schema=self.schema, max_size=2, migrate=False)
+        self.addAsyncCleanup(web.close)
+        return web
+
     async def stray_rows(self) -> list[str]:
         async with self.db.unscoped() as conn:
             cur = await conn.execute("SELECT subscription_id FROM recap_audio_strays")
@@ -555,6 +568,41 @@ class Billing(Payments):
             await conn.execute("UPDATE recap_audio_strays SET last_try_at = 0")
         self.assertEqual(await strays.sweep(self.db, self.provider), 1)
         self.assertEqual(self.provider.cancelled, ["sub_audio"])
+
+    async def test_a_refusal_that_lasts_a_day_says_a_person_is_needed(self) -> None:
+        async def broken(*, subscription_id: str) -> None:
+            raise PaymentError("403")
+
+        self.provider.cancel = broken  # type: ignore[method-assign]
+        await self.audio()
+        async with self.db.unscoped() as conn:
+            await conn.execute("UPDATE recap_audio_strays SET attempts = 23, last_try_at = 0")
+        with self.assertLogs("dmbot.web.strays", "ERROR") as logged:
+            await strays.sweep(self.db, self.provider)
+        self.assertIn("needs a person", logged.output[0])
+        self.assertNotIn("sub_audio", logged.output[0])
+
+    async def test_only_a_company_subscription_id_can_be_kept(self) -> None:
+        await strays.note(self.db, "not a subscription")  # never raises, keeps nothing
+        self.assertEqual(await self.stray_rows(), [])
+
+    async def test_the_websites_own_role_can_use_the_doors_and_not_the_table(self) -> None:
+        web = await self.web_role()
+        await strays.note(web, "sub_x")
+        self.assertEqual(await self.stray_rows(), ["sub_x"])  # the web role's door kept it
+        async with self.db.unscoped() as conn:
+            await conn.execute("UPDATE recap_audio_strays SET last_try_at = 0")  # an hour on
+        async with web.unscoped() as conn:
+            cur = await conn.execute("SELECT subscription_id FROM dmbot_strays_to_cancel()")
+            self.assertEqual([r["subscription_id"] for r in await cur.fetchall()], ["sub_x"])
+            await conn.execute("SELECT dmbot_stray_addon_tried('sub_x')")
+            await conn.execute("SELECT old_user_id FROM dmbot_moves_to_sync()")
+        async with web.unscoped() as conn:
+            with self.assertRaises(Exception):  # noqa: B017 - permission denied, whichever class
+                await conn.execute("SELECT * FROM recap_audio_strays")
+        async with web.unscoped() as conn:
+            await conn.execute("SELECT dmbot_stray_addon_done('sub_x')")
+        self.assertEqual(await self.stray_rows(), [])
 
     async def test_no_second_checkout_while_a_subscription_is_held(self) -> None:
         await self.start_table()
