@@ -117,8 +117,8 @@ class Notes(unittest.TestCase):
         kept = {a.batch for a in notes.answers}
         self.assertEqual(len(kept), fix_notes.ANSWERS_KEPT)
         self.assertEqual(kept, set(range(3, fix_notes.ANSWERS_KEPT + 3)))  # the newest ones
-        for batch in kept:
-            self.assertEqual(len([a for a in notes.answers if a.batch == batch]), 5)
+        for whole in kept:
+            self.assertEqual(len([a for a in notes.answers if a.batch == whole]), 5)
 
     def test_a_line_with_an_answer_or_a_note_is_known(self) -> None:
         notes = fix_notes.FixNotes()
