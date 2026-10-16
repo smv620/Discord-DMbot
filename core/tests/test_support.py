@@ -725,6 +725,13 @@ class SupportAdmin(SupportBase):
         self.assertEqual(body["counts"], {"new": 1, "answered": 2, "closed": 1})
         self.assertEqual([t["subject"] for t in body["tickets"]], ["new one b", "answered one"])
 
+    async def test_the_counts_cover_every_ticket_even_past_the_list_limit(self) -> None:
+        for n in range(5):
+            await self.add_row(ALICE.id, self.now - n, f"t{n}")
+        listed = await support.newest(self.web, limit=2)
+        self.assertEqual(len(listed), 2)  # the list is cut short...
+        self.assertEqual(await support.counts(self.web), {"new": 5, "answered": 0, "closed": 0})
+
     async def test_a_bad_filter_is_refused_and_a_non_admin_gets_nothing(self) -> None:
         await self.add_row(ALICE.id, self.now)
         # Signed out: nothing, for every filter, and no counts to learn how many people write.

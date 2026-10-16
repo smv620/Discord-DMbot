@@ -423,7 +423,7 @@ describe("the admin page's tickets", () => {
     expect(item.textContent).toContain("DMbot ID 1P0Z4F6N2K9");
     expect(item.textContent).toContain("Table plan");
     expect(item.textContent).toContain("2027");
-    expect(item.textContent).toContain(adminText.ticketStatuses["new"] ?? "");
+    expect(item.textContent).toContain(adminText.ticketRowStatuses["new"] ?? "");
     // The line break is kept (the CSS class keeps it on screen).
     expect(within(item).getByText(/Line one/).textContent).toBe("Line one\nLine two");
     // A person who hasn't signed in lately shows as a shortened number, never as nothing.

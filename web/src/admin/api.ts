@@ -243,9 +243,13 @@ export function httpAdminApi(base: string, fetcher: typeof fetch = fetch): Admin
       const response = await call(`/admin/support?status=${encodeURIComponent(filter)}`);
       if (!response.ok) throw new AdminApiError(await grantProblem(response));
       const body = (await response.json()) as { tickets: SupportTicketRow[]; counts?: TicketCounts };
-      if (body.counts) return { tickets: body.tickets, counts: body.counts };
+      const c = body.counts;
+      if (c && [c.new, c.answered, c.closed].every((n) => typeof n === "number")) {
+        return { tickets: body.tickets, counts: c };
+      }
       // An API older than #1375 sends every ticket and no counts: count and filter here, so the
-      // buttons still work until it is deployed.
+      // buttons still work until it is deployed. (It sends only its newest tickets, so until then
+      // the counts and an old "Needs a reply" ticket past that limit can be missing.)
       const counts: TicketCounts = { new: 0, answered: 0, closed: 0 };
       for (const t of body.tickets) counts[t.status] += 1;
       return {

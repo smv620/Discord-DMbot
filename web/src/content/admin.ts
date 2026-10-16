@@ -126,16 +126,26 @@ export const text = {
     closed: "Closed",
     all: "All",
   } as Record<string, string>,
-  ticketFilterCount: (label: string, count: number): string => `${label} (${count})`,
+  // A non-breaking space, so the count never drops onto a line of its own on a phone.
+  ticketFilterCount: (label: string, count: number): string => `${label}\u00a0(${count})`,
+  // The same words on a ticket as on the button that finds it ("New" and "Needs a reply" were one
+  // state under two names).
+  ticketRowStatuses: {
+    new: "Needs a reply",
+    answered: "Answered",
+    closed: "Closed",
+  } as Record<string, string>,
   ticketsNoneFor: {
-    new: "Nothing needs a reply.",
+    new: "Nothing needs a reply. All caught up.",
     answered: "No answered tickets.",
     closed: "No closed tickets.",
     all: "No tickets yet.",
   } as Record<string, string>,
   copyAddress: "Copy address",
+  // The button's name for a screen reader, so each one in the list is told apart.
+  copyAddressFor: (subject: string): string => `Copy address for ${subject}`,
   addressCopied: "Address copied.",
-  copyFailed: "Couldn't copy. Select the address and copy it by hand.",
+  copyFailed: "Couldn't copy. Tap the address to open your email instead.",
   ticketStatuses: { new: "New", answered: "Answered", closed: "Closed" } as Record<string, string>,
   ticketFrom: (who: string, dmbotId: string, plan: string, when: string): string =>
     `${who} (DMbot ID ${dmbotId}), ${plan} plan, ${when}`,

@@ -74,10 +74,10 @@ describe("the filter", () => {
     expect(shown()).toEqual(["New A", "New B"]);
     const group = screen.getByRole("group", { name: text.ticketsFilterLabel });
     expect([...group.querySelectorAll("button")].map((b) => b.textContent)).toEqual([
-      "Needs a reply (2)",
-      "Answered (1)",
-      "Closed (1)",
-      "All (4)",
+      "Needs a reply\u00a0(2)",
+      "Answered\u00a0(1)",
+      "Closed\u00a0(1)",
+      "All\u00a0(4)",
     ]);
     // Buttons, not a dropdown, and the one in use says so to a screen reader.
     expect(group.querySelector("select")).toBeNull();
@@ -104,8 +104,8 @@ describe("the filter", () => {
     await screen.findByText("New A");
     fireEvent.click(button(/^Closed/));
     await screen.findByText("Closed A");
-    expect(button(/^Needs a reply/).textContent).toBe("Needs a reply (2)");
-    expect(button(/^All/).textContent).toBe("All (4)");
+    expect(button(/^Needs a reply/).textContent).toBe("Needs a reply\u00a0(2)");
+    expect(button(/^All/).textContent).toBe("All\u00a0(4)");
   });
 
   it("a ticket answered from the list leaves it and the counts follow", async () => {
@@ -113,8 +113,35 @@ describe("the filter", () => {
     await screen.findByText("New A");
     fireEvent.click(within(screen.getByText("New A").closest("li") as HTMLElement).getByRole("button", { name: text.markAnswered }));
     await waitFor(() => expect(shown()).toEqual(["New B"]));
-    expect(button(/^Needs a reply/).textContent).toBe("Needs a reply (1)");
-    expect(button(/^Answered/).textContent).toBe("Answered (2)");
+    expect(button(/^Needs a reply/).textContent).toBe("Needs a reply\u00a0(1)");
+    expect(button(/^Answered/).textContent).toBe("Answered\u00a0(2)");
+  });
+
+  it("an older, slower answer never replaces a newer one", async () => {
+    const rows = ROWS();
+    let release: () => void = () => undefined;
+    const slow = new Promise<void>((done) => {
+      release = done;
+    });
+    const api = {
+      tickets: vi.fn(async (filter: TicketFilter = "all") => {
+        if (filter === "answered") await slow; // Answered is asked for first and answers last
+        return {
+          tickets: rows.filter((r) => filter === "all" || r.status === filter),
+          counts: countsOf(rows),
+        };
+      }),
+      setTicketStatus: vi.fn(),
+    };
+    render(<Tickets api={api as unknown as AdminApi} csrf="c" onSignedOut={vi.fn()} onOff={vi.fn()} />);
+    await screen.findByText("New A");
+    fireEvent.click(button(/^Answered/));
+    fireEvent.click(button(/^Closed/));
+    await waitFor(() => expect(shown()).toEqual(["Closed A"]));
+    release(); // now the Answered answer arrives, too late
+    await new Promise((done) => setTimeout(done, 0));
+    expect(shown()).toEqual(["Closed A"]);
+    expect(button(/^Closed/).getAttribute("aria-pressed")).toBe("true");
   });
 
   it("says what is empty, in the words of the view", async () => {
@@ -136,7 +163,7 @@ describe("Copy address", () => {
     clipboard(write);
     filtering([row(1, "New A", "new", "alice+tag@example.com")]);
     const item = (await screen.findByText("New A")).closest("li") as HTMLElement;
-    fireEvent.click(within(item).getByRole("button", { name: text.copyAddress }));
+    fireEvent.click(within(item).getByRole("button", { name: /^Copy address/ }));
     await waitFor(() => expect(write).toHaveBeenCalledWith("alice+tag@example.com"));
     expect((await within(item).findByRole("status")).textContent).toContain(text.addressCopied);
   });
@@ -147,18 +174,38 @@ describe("Copy address", () => {
     });
     filtering([row(1, "New A", "new", "alice@example.com")]);
     const item = (await screen.findByText("New A")).closest("li") as HTMLElement;
-    fireEvent.click(within(item).getByRole("button", { name: text.copyAddress }));
+    fireEvent.click(within(item).getByRole("button", { name: /^Copy address/ }));
     expect((await within(item).findByRole("status")).textContent).toContain(text.copyFailed);
     expect(within(item).getByRole("link", { name: "alice@example.com" })).toBeTruthy();
+  });
+
+  it("says 'copied' only for a few seconds, and not after another view is chosen", async () => {
+    clipboard(vi.fn(async () => undefined));
+    filtering([row(1, "New A", "new"), row(2, "Answered A", "answered")]);
+    const item = (await screen.findByText("New A")).closest("li") as HTMLElement;
+    fireEvent.click(within(item).getByRole("button", { name: /^Copy address/ }));
+    expect(await within(item).findByText(text.addressCopied, { exact: false })).toBeTruthy();
+    fireEvent.click(button(/^All/));
+    await screen.findByText("Answered A");
+    expect(screen.queryByText(text.addressCopied, { exact: false })).toBeNull();
+  });
+
+  it("names each button for its ticket, so a screen reader can tell them apart", async () => {
+    filtering([row(1, "First", "new"), row(2, "Second", "new")]);
+    await screen.findByText("First");
+    expect(screen.getAllByRole("button", { name: /^Copy address for / }).map((b) => b.getAttribute("aria-label"))).toEqual([
+      "Copy address for First",
+      "Copy address for Second",
+    ]);
   });
 
   it("is only on a ticket that has an address", async () => {
     filtering([row(1, "With", "new"), row(2, "Without", "new", null)]);
     await screen.findByText("With");
     const without = screen.getByText("Without").closest("li") as HTMLElement;
-    expect(within(without).queryByRole("button", { name: text.copyAddress })).toBeNull();
+    expect(within(without).queryByRole("button", { name: /^Copy address/ })).toBeNull();
     expect(without.textContent).toContain(text.noEmail);
-    expect(screen.getAllByRole("button", { name: text.copyAddress })).toHaveLength(1);
+    expect(screen.getAllByRole("button", { name: /^Copy address/ })).toHaveLength(1);
   });
 });
 
@@ -172,6 +219,12 @@ describe("the API call", () => {
     const found = await httpAdminApi("https://api.example", fetcher).tickets("new");
     expect(found.counts).toEqual(counts);
     expect((fetcher.mock.calls[0] as unknown as [string])[0]).toBe("https://api.example/admin/support?status=new");
+  });
+
+  it("does not trust counts that are not numbers", async () => {
+    const fetcher = reply({ tickets: ROWS(), counts: {} });
+    const found = await httpAdminApi("https://api.example", fetcher).tickets("all");
+    expect(found.counts).toEqual({ new: 2, answered: 1, closed: 1 });
   });
 
   it("filters and counts here when the API is older and sends everything", async () => {

@@ -65,12 +65,19 @@ export default function Tickets({ api, csrf, onSignedOut, onOff }: Props) {
   const rowsNow = useRef<typeof rows>("loading");
   rowsNow.current = rows;
 
+  // Which read is the newest. Buttons can be pressed faster than the API answers, so an older,
+  // slower answer must not replace a newer one (or show an error for a view no longer wanted).
+  const newest = useRef(0);
+
   async function load(show: TicketFilter = filter) {
+    const mine = ++newest.current;
     try {
       const found = await api.tickets(show);
+      if (mine !== newest.current) return;
       setRows(found.tickets);
       setCounts(found.counts);
     } catch (error) {
+      if (mine !== newest.current) return;
       const kind = error instanceof AdminApiError ? error.kind : "down";
       if (kind === "signed-out") onSignedOut();
       else if (kind === "off") onOff();
@@ -85,6 +92,14 @@ export default function Tickets({ api, csrf, onSignedOut, onOff }: Props) {
   useEffect(() => {
     void load();
   }, [api, filter]);
+
+  // "Address copied." is true for a moment: it goes after a few seconds, so it can't be read as
+  // "this is still on the clipboard" ten minutes later, and when another view is chosen.
+  useEffect(() => {
+    if (!copied) return;
+    const timer = setTimeout(() => setCopied(null), 4000);
+    return () => clearTimeout(timer);
+  }, [copied]);
 
   // A "Done." takes focus: the list may be a screen away on a phone.
   useEffect(() => {
@@ -155,6 +170,7 @@ export default function Tickets({ api, csrf, onSignedOut, onOff }: Props) {
             onClick={() => {
               if (f === filter) return;
               setNews(null);
+              setCopied(null);
               setRows("loading");
               setFilter(f);
             }}
@@ -196,6 +212,7 @@ export default function Tickets({ api, csrf, onSignedOut, onOff }: Props) {
                     <button
                       type="button"
                       class="button secondary"
+                      aria-label={text.copyAddressFor(t.subject)}
                       onClick={() => void copy(t.id, t.email as string)}
                     >
                       {text.copyAddress}
@@ -212,7 +229,7 @@ export default function Tickets({ api, csrf, onSignedOut, onOff }: Props) {
                 )}
               </p>
               <p class="small">
-                <strong>{text.ticketStatuses[t.status] ?? t.status}</strong>
+                <strong>{text.ticketRowStatuses[t.status] ?? t.status}</strong>
               </p>
               <p class="ticket-text">{t.message}</p>
               <div class="row">
