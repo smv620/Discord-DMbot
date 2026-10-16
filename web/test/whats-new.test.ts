@@ -40,8 +40,8 @@ describe("What's new", () => {
 
   it("holds back what people can't use yet, with the reason, and shows none of it (#1322)", () => {
     expect(held.map((h) => h.title)).toEqual([
-      "Ask a question in public", // until QAbot is live (#1352)
       "Quick answers use your facts",
+      "Ask a question in public", // until QAbot is live (#1352)
       "Move to a new Discord account",
     ]);
     for (const h of held) {
