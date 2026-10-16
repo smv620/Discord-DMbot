@@ -26,7 +26,8 @@ export type Refusal =
   | "failed";
 
 /** Sent, with the public post's address; or why not. */
-export type SendResult = { sent: true; url: string } | { sent: false; why: Refusal };
+export type SendResult =
+  { sent: true; url: string } | { sent: false; why: Refusal };
 
 export type Send = (note: Note) => Promise<SendResult>;
 
@@ -70,8 +71,12 @@ export function httpSend(base: string, fetcher: typeof fetch = fetch): Send {
       return no("failed");
     }
     try {
-      const answer = (await response.json()) as { url?: unknown; error?: unknown };
-      if (response.ok && typeof answer.url === "string") return { sent: true, url: answer.url };
+      const answer = (await response.json()) as {
+        url?: unknown;
+        error?: unknown;
+      };
+      if (response.ok && typeof answer.url === "string")
+        return { sent: true, url: answer.url };
       // Anything else (GitHub down, a server error): try later.
       return no(refusals[String(answer.error ?? "")] ?? "failed");
     } catch {

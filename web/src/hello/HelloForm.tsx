@@ -3,7 +3,13 @@
 // button. Used twice on /hello, for feedback and for questions.
 import { useEffect, useRef, useState } from "preact/hooks";
 
-import { COUNT_FROM, lettersLeft, MAX_CONTACT, MAX_MESSAGE, text } from "../content/hello";
+import {
+  COUNT_FROM,
+  lettersLeft,
+  MAX_CONTACT,
+  MAX_MESSAGE,
+  text,
+} from "../content/hello";
 import type { Kind, Refusal, Send } from "./api";
 import Turnstile from "./Turnstile";
 
@@ -67,7 +73,12 @@ export default function HelloForm({ kind, send, siteKey }: Props) {
     }
     setBusy(true);
     setRefusal(null);
-    const outcome = await send({ kind, message: clean, contact, turnstile: token });
+    const outcome = await send({
+      kind,
+      message: clean,
+      contact,
+      turnstile: token,
+    });
     setBusy(false);
     if (outcome.sent) {
       setNoContact(contact.trim() === "");

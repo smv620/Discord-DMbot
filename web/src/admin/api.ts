@@ -123,7 +123,11 @@ export interface AdminApi {
   revoke(csrf: string, discordId: string): Promise<void>;
   /** Support tickets, newest first (#1340). */
   tickets(): Promise<SupportTicketRow[]>;
-  setTicketStatus(csrf: string, id: number, status: TicketStatus): Promise<void>;
+  setTicketStatus(
+    csrf: string,
+    id: number,
+    status: TicketStatus,
+  ): Promise<void>;
 }
 
 const grantProblems: Record<string, AdminProblem> = {
@@ -159,7 +163,10 @@ async function grantProblem(response: Response): Promise<AdminProblem> {
   return grantProblems[code] ?? "down";
 }
 
-export function httpAdminApi(base: string, fetcher: typeof fetch = fetch): AdminApi {
+export function httpAdminApi(
+  base: string,
+  fetcher: typeof fetch = fetch,
+): AdminApi {
   const root = base.replace(/\/+$/, "");
 
   async function call(path: string, init: RequestInit = {}): Promise<Response> {
@@ -167,7 +174,11 @@ export function httpAdminApi(base: string, fetcher: typeof fetch = fetch): Admin
       return await fetcher(`${root}${path}`, {
         ...init,
         credentials: "include",
-        headers: { "X-DMbot-Request": "1", Accept: "application/json", ...init.headers },
+        headers: {
+          "X-DMbot-Request": "1",
+          Accept: "application/json",
+          ...init.headers,
+        },
         signal: AbortSignal.timeout(30_000),
       });
     } catch {
@@ -197,7 +208,8 @@ export function httpAdminApi(base: string, fetcher: typeof fetch = fetch): Admin
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ email, password }),
       });
-      if (response.status === 401 || response.status === 400) throw new AdminApiError("wrong");
+      if (response.status === 401 || response.status === 400)
+        throw new AdminApiError("wrong");
       // Too many tries at once: not the owner's password's fault.
       if (response.status === 503) throw new AdminApiError("busy");
       if (!response.ok) throw new AdminApiError("down");
@@ -208,7 +220,8 @@ export function httpAdminApi(base: string, fetcher: typeof fetch = fetch): Admin
         headers: { "X-Admin-CSRF": csrf },
       });
       // Already signed out is fine: the goal is reached.
-      if (!response.ok && response.status !== 401) throw new AdminApiError("down");
+      if (!response.ok && response.status !== 401)
+        throw new AdminApiError("down");
     },
     async grants() {
       const response = await call("/admin/grants");
@@ -222,26 +235,36 @@ export function httpAdminApi(base: string, fetcher: typeof fetch = fetch): Admin
         body: JSON.stringify(request),
       });
       if (!response.ok) throw new AdminApiError(await grantProblem(response));
-      return (await response.json()) as { action: "grant" | "change"; name: string | null };
+      return (await response.json()) as {
+        action: "grant" | "change";
+        name: string | null;
+      };
     },
     async revoke(csrf, discordId) {
-      const response = await call(`/admin/grants/${encodeURIComponent(discordId)}/revoke`, {
-        method: "POST",
-        headers: { "X-Admin-CSRF": csrf },
-      });
+      const response = await call(
+        `/admin/grants/${encodeURIComponent(discordId)}/revoke`,
+        {
+          method: "POST",
+          headers: { "X-Admin-CSRF": csrf },
+        },
+      );
       if (!response.ok) throw new AdminApiError(await grantProblem(response));
     },
     async tickets() {
       const response = await call("/admin/support");
       if (!response.ok) throw new AdminApiError(await grantProblem(response));
-      return ((await response.json()) as { tickets: SupportTicketRow[] }).tickets;
+      return ((await response.json()) as { tickets: SupportTicketRow[] })
+        .tickets;
     },
     async setTicketStatus(csrf, id, status) {
-      const response = await call(`/admin/support/${encodeURIComponent(String(id))}/status`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json", "X-Admin-CSRF": csrf },
-        body: JSON.stringify({ status }),
-      });
+      const response = await call(
+        `/admin/support/${encodeURIComponent(String(id))}/status`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json", "X-Admin-CSRF": csrf },
+          body: JSON.stringify({ status }),
+        },
+      );
       if (!response.ok) throw new AdminApiError(await grantProblem(response));
     },
   };
@@ -293,16 +316,21 @@ export function pretendAdminApi(): AdminApi {
     },
     grants: async () => structuredClone(view),
     give: async (_csrf, request) => {
-      if (!/^[0-9]{17,20}$/.test(request.discordId)) throw new AdminApiError("bad-id");
+      if (!/^[0-9]{17,20}$/.test(request.discordId))
+        throw new AdminApiError("bad-id");
       const action = view.grants.some((g) => g.discordId === request.discordId)
         ? "change"
         : "grant";
-      view.grants = view.grants.filter((g) => g.discordId !== request.discordId);
+      view.grants = view.grants.filter(
+        (g) => g.discordId !== request.discordId,
+      );
       view.grants.unshift({
         discordId: request.discordId,
         name: null,
         level: request.level,
-        endsAt: request.endsOn ? Date.parse(`${request.endsOn}T00:00:00Z`) / 1000 + 86400 : null,
+        endsAt: request.endsOn
+          ? Date.parse(`${request.endsOn}T00:00:00Z`) / 1000 + 86400
+          : null,
         note: request.note.trim(),
         grantedBy: me?.email ?? "admin@example.com",
         grantedAt: now(),
@@ -317,7 +345,8 @@ export function pretendAdminApi(): AdminApi {
       return { action, name: null };
     },
     revoke: async (_csrf, discordId) => {
-      if (!view.grants.some((g) => g.discordId === discordId)) throw new AdminApiError("no-grant");
+      if (!view.grants.some((g) => g.discordId === discordId))
+        throw new AdminApiError("no-grant");
       view.grants = view.grants.filter((g) => g.discordId !== discordId);
       view.log.unshift({
         at: now(),

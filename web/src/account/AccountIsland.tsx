@@ -27,6 +27,11 @@ export default function AccountIsland() {
     });
   }, [search]);
 
-  if (!api) return <p class="muted" role="status">{text.loading}</p>;
+  if (!api)
+    return (
+      <p class="muted" role="status">
+        {text.loading}
+      </p>
+    );
   return <Account api={api} search={search} hash={hash} siteKey={siteKey} />;
 }

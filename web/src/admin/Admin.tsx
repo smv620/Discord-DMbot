@@ -4,7 +4,12 @@
 import { useEffect, useRef, useState } from "preact/hooks";
 
 import { text } from "../content/admin";
-import { type AdminApi, AdminApiError, type AdminMe, type AdminWays } from "./api";
+import {
+  type AdminApi,
+  AdminApiError,
+  type AdminMe,
+  type AdminWays,
+} from "./api";
 import Grants from "./Grants";
 import Tickets from "./Tickets";
 
@@ -29,7 +34,9 @@ const signInNotices: Record<string, string> = {
 function noticeFor(search: string): string | null {
   const why = new URLSearchParams(search).get("signin") ?? "";
   // Own keys only: ?signin=toString mustn't find the object's built-in function.
-  return Object.hasOwn(signInNotices, why) ? (signInNotices[why] ?? null) : null;
+  return Object.hasOwn(signInNotices, why)
+    ? (signInNotices[why] ?? null)
+    : null;
 }
 
 /** The page's heading (in admin.astro): where focus goes once the view changes. */
@@ -52,16 +59,26 @@ export default function Admin({ api, search }: Props) {
     setView({ kind: "loading" });
     try {
       const me = await api.me();
-      setView(me ? { kind: "in", me } : { kind: "out", ways: await api.ways() });
+      setView(
+        me ? { kind: "in", me } : { kind: "out", ways: await api.ways() },
+      );
     } catch (error) {
-      setView({ kind: error instanceof AdminApiError && error.kind === "off" ? "off" : "down" });
+      setView({
+        kind:
+          error instanceof AdminApiError && error.kind === "off"
+            ? "off"
+            : "down",
+      });
     }
   }
 
   useEffect(() => {
     void load();
     // Read once: a reload (or Back) after a later success mustn't show the old failure.
-    if (typeof window !== "undefined" && window.location.search.includes("signin=")) {
+    if (
+      typeof window !== "undefined" &&
+      window.location.search.includes("signin=")
+    ) {
       window.history.replaceState(null, "", window.location.pathname);
     }
   }, [api]);
@@ -87,7 +104,9 @@ export default function Admin({ api, search }: Props) {
       const kind = error instanceof AdminApiError ? error.kind : "down";
       const google = view.kind === "out" && view.ways.google;
       const wrong = google ? text.wrong : text.wrongNoGoogle;
-      setNotice(kind === "wrong" ? wrong : kind === "busy" ? text.busy : text.down);
+      setNotice(
+        kind === "wrong" ? wrong : kind === "busy" ? text.busy : text.down,
+      );
       setRefused((n) => n + 1);
     } finally {
       setBusy(false);
@@ -120,7 +139,9 @@ export default function Admin({ api, search }: Props) {
     return (
       <div class="stack">
         {/* Kept: "You're signed out" stays true even if the page can't load after it. */}
-        {notice && <p class={notice === text.signedOut ? "ok" : "warn"}>{notice}</p>}
+        {notice && (
+          <p class={notice === text.signedOut ? "ok" : "warn"}>{notice}</p>
+        )}
         <p class="warn" role="alert">
           {text.down}
         </p>
@@ -171,7 +192,9 @@ export default function Admin({ api, search }: Props) {
   const { ways } = view;
   // Google's refusal can't point at a password form that isn't there.
   const shown =
-    notice === text.googleFailed && !ways.password ? text.googleFailedNoPassword : notice;
+    notice === text.googleFailed && !ways.password
+      ? text.googleFailedNoPassword
+      : notice;
   return (
     <div class="stack">
       <p>{text.signInLead}</p>

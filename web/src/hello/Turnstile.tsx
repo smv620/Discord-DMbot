@@ -5,7 +5,8 @@
 // key (scripts/csp-hashes.mjs).
 import { useEffect, useRef } from "preact/hooks";
 
-const SCRIPT = "https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit";
+const SCRIPT =
+  "https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit";
 
 interface TurnstileApi {
   render(element: HTMLElement, options: Record<string, unknown>): string;
@@ -26,7 +27,8 @@ function load(): Promise<TurnstileApi> {
     const script = document.createElement("script");
     script.src = SCRIPT;
     script.async = true;
-    script.onload = () => (window.turnstile ? resolve(window.turnstile) : reject(new Error()));
+    script.onload = () =>
+      window.turnstile ? resolve(window.turnstile) : reject(new Error());
     script.onerror = () => {
       loading = null; // let the next form try again
       reject(new Error());

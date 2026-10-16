@@ -68,7 +68,10 @@ export function Support({ api, siteKey }: Props) {
             : null;
     if (local) {
       setProblem(text.supportErrors[local] ?? null);
-      (local === "ticket-empty" && cleanSubject !== "" ? messageBox : subjectBox).current?.focus();
+      (local === "ticket-empty" && cleanSubject !== ""
+        ? messageBox
+        : subjectBox
+      ).current?.focus();
       return;
     }
     // No tick yet (or the check can't run): the API would only refuse it, so don't ask.
@@ -94,7 +97,9 @@ export function Support({ api, siteKey }: Props) {
       const kind = error instanceof ApiError ? error.kind : "server";
       // "Tick the box" means nothing when the site has no person check to tick.
       const shown = kind === "not-human" && !siteKey ? "server" : kind;
-      setProblem(text.supportErrors[shown] ?? text.supportErrors["server"] ?? null);
+      setProblem(
+        text.supportErrors[shown] ?? text.supportErrors["server"] ?? null,
+      );
     } finally {
       inFlight.current = false;
       setBusy(false);
@@ -164,12 +169,14 @@ export function Support({ api, siteKey }: Props) {
             {text.supportMessageHint}
             {/* Only near the limit, and not a live region: a screen reader would read it out
                 on every key press. */}
-            {left <= 200 && ` ${left < 0 ? `${-left} too many` : `${left} left`}`}
+            {left <= 200 &&
+              ` ${left < 0 ? `${-left} too many` : `${left} left`}`}
           </p>
         </fieldset>
         {/* Normal size, not small grey: it is the one thing to read before Send. */}
         <p>
-          {text.supportPrivacy} {text.supportPublicLead} <a href={QA_URL}>{text.qaLink}</a>.
+          {text.supportPrivacy} {text.supportPublicLead}{" "}
+          <a href={QA_URL}>{text.qaLink}</a>.
         </p>
         {siteKey &&
           started &&
@@ -217,7 +224,8 @@ export function PublicQuestions() {
       <h2 id="qa-heading">{text.qaHeading}</h2>
       <p>{text.qaText}</p>
       <p>
-        <a href={QA_URL}>{text.qaLink}</a> · <a href="/hello">{text.helloLink}</a>
+        <a href={QA_URL}>{text.qaLink}</a> ·{" "}
+        <a href="/hello">{text.helloLink}</a>
       </p>
     </section>
   );

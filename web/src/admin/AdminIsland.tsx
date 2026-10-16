@@ -7,5 +7,10 @@ const base: string = import.meta.env.PUBLIC_API_BASE ?? "/api";
 const api = base === "mock" ? pretendAdminApi() : httpAdminApi(base);
 
 export default function AdminIsland() {
-  return <Admin api={api} search={typeof window === "undefined" ? "" : window.location.search} />;
+  return (
+    <Admin
+      api={api}
+      search={typeof window === "undefined" ? "" : window.location.search}
+    />
+  );
 }

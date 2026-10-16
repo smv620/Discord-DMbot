@@ -25,7 +25,8 @@ export async function fetchPersonal(
     const body = (await response.json()) as Partial<Personal>;
     if (typeof body.experiencePoints !== "number") return null;
     return {
-      name: typeof body.name === "string" && body.name !== "" ? body.name : null,
+      name:
+        typeof body.name === "string" && body.name !== "" ? body.name : null,
       experiencePoints: body.experiencePoints,
     };
   } catch {

@@ -41,7 +41,7 @@ export const dmSteps: Step[] = [
     names: [{ name: "Table chat", file: "dm_screen/table_chat_panel.py" }],
   },
   {
-    text: "After a game, press 🧑 Check who is who. DMbot notices when someone answers to a name several times (\"Mike, what do you do?\" then \"I run with my sword\"). You see who it thinks plays whom and say yes or no. Nothing is used until you say yes.",
+    text: 'After a game, press 🧑 Check who is who. DMbot notices when someone answers to a name several times ("Mike, what do you do?" then "I run with my sword"). You see who it thinks plays whom and say yes or no. Nothing is used until you say yes.',
     names: [{ name: "Check who is who", file: "ui/people_review.py" }],
   },
   {
@@ -53,12 +53,18 @@ export const dmSteps: Step[] = [
     ],
   },
   {
-    text: "To say who has something, open the name, press 🧭 Connect to…, and choose carries. It is saved either way. If it looks odd, for example \"Someone else already has that, and there is only one\", DMbot says so and will ask you about it after the session. DMbot only points it out. You decide.",
+    text: 'To say who has something, open the name, press 🧭 Connect to…, and choose carries. It is saved either way. If it looks odd, for example "Someone else already has that, and there is only one", DMbot says so and will ask you about it after the session. DMbot only points it out. You decide.',
     names: [
       { name: "Connect to…", file: "ui/name_card.py" },
       { name: "carries", file: "ui/name_card.py" },
-      { name: "Someone else already has that, and there is only one", file: "ui/name_card.py" },
-      { name: "will ask you about it after the session", file: "ui/name_card.py" },
+      {
+        name: "Someone else already has that, and there is only one",
+        file: "ui/name_card.py",
+      },
+      {
+        name: "will ask you about it after the session",
+        file: "ui/name_card.py",
+      },
     ],
   },
   {
@@ -116,7 +122,7 @@ export const dmSteps: Step[] = [
     ],
   },
   {
-    text: "If the rules you use stop being shared, your table keeps its copy and the rules keep working, but they won't get updates any more. The 📚 Shared rules screen says \"This copy no longer gets updates.\" To get updates again, ask that game master to share the rules again and send you the new code. Then press Stop using shared rules (your own rules stay, and Undo puts the copy back), then 📥 Use shared rules, and type the code.",
+    text: 'If the rules you use stop being shared, your table keeps its copy and the rules keep working, but they won\'t get updates any more. The 📚 Shared rules screen says "This copy no longer gets updates." To get updates again, ask that game master to share the rules again and send you the new code. Then press Stop using shared rules (your own rules stay, and Undo puts the copy back), then 📥 Use shared rules, and type the code.',
     names: [
       { name: "This copy no longer gets updates", file: "ui/shared_rules.py" },
       { name: "Stop using shared rules", file: "ui/shared_rules.py" },
@@ -124,7 +130,7 @@ export const dmSteps: Step[] = [
     ],
   },
   {
-    text: "A backup keeps the rules your table uses: the set's name, the version you had, and its rules. It does not keep the share code. After /dmbot restore, the Shared rules screen says \"This copy no longer gets updates\", and the rules keep working. To get updates again, ask the game master for a share code. Press Stop using shared rules, then 📥 Use shared rules, and type the code.",
+    text: 'A backup keeps the rules your table uses: the set\'s name, the version you had, and its rules. It does not keep the share code. After /dmbot restore, the Shared rules screen says "This copy no longer gets updates", and the rules keep working. To get updates again, ask the game master for a share code. Press Stop using shared rules, then 📥 Use shared rules, and type the code.',
     names: [
       { name: "/dmbot restore", file: "ui/dmbot_commands.py" },
       { name: "Stop using shared rules", file: "ui/shared_rules.py" },
@@ -238,7 +244,8 @@ export const emailSteps: Step[] = [
 ];
 
 /** Said under the list: it is not a step. */
-export const emailNote = "For now, emails are sent from DMbot's own Gmail mailbox.";
+export const emailNote =
+  "For now, emails are sent from DMbot's own Gmail mailbox.";
 
 /** Not a step to do: what players may notice at the table. */
 export const playerNote =
@@ -255,31 +262,38 @@ export type Part = string | { text: string; href: string };
 /** Getting help (#1352): one plain place that says where to ask, in the order to try them.
  * No privacy promises are made here: the Support form says its own, and the privacy page holds
  * them. The public Q&A is said to be public, so nobody posts account or payment details. */
-export const gettingHelp: { id: string; heading: string; items: { lead: string; parts: Part[] }[] } =
-  {
-    id: "getting-help",
-    heading: "Getting help",
-    items: [
-      { lead: "Look here first.", parts: ["The steps above may answer it."] },
-      {
-        lead: "Ask in public.",
-        parts: [
-          "Post a question in the ",
-          { text: "Q&A for DMbot", href: QA_URL },
-          ". A helper called QAbot (a bot, not a person) may answer first. Everything there is public, so don't post account or payment details.",
-        ],
-      },
-      {
-        lead: "On a paid plan?",
-        parts: [
-          "Write to the team in private from ",
-          { text: "your account page", href: "/account" },
-          ". The team replies by email to the address on your account, if it has one.",
-        ],
-      },
-      {
-        lead: "Anyone, on any plan.",
-        parts: ["Email ", { text: SUPPORT_EMAIL, href: `mailto:${SUPPORT_EMAIL}` }, "."],
-      },
-    ],
-  };
+export const gettingHelp: {
+  id: string;
+  heading: string;
+  items: { lead: string; parts: Part[] }[];
+} = {
+  id: "getting-help",
+  heading: "Getting help",
+  items: [
+    { lead: "Look here first.", parts: ["The steps above may answer it."] },
+    {
+      lead: "Ask in public.",
+      parts: [
+        "Post a question in the ",
+        { text: "Q&A for DMbot", href: QA_URL },
+        ". A helper called QAbot (a bot, not a person) may answer first. Everything there is public, so don't post account or payment details.",
+      ],
+    },
+    {
+      lead: "On a paid plan?",
+      parts: [
+        "Write to the team in private from ",
+        { text: "your account page", href: "/account" },
+        ". The team replies by email to the address on your account, if it has one.",
+      ],
+    },
+    {
+      lead: "Anyone, on any plan.",
+      parts: [
+        "Email ",
+        { text: SUPPORT_EMAIL, href: `mailto:${SUPPORT_EMAIL}` },
+        ".",
+      ],
+    },
+  ],
+};

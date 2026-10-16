@@ -77,7 +77,8 @@ function campaignsLine(p: PlanFacts): string {
 const tryItName = data.plans["try-it"].name;
 
 function note(p: PlanFacts): string | null {
-  if (p.trialDays !== null) return `Free for ${p.trialDays} days. No backups or downloads.`;
+  if (p.trialDays !== null)
+    return `Free for ${p.trialDays} days. No backups or downloads.`;
   if (p.priceCents === null) {
     return `Need more now? Pick ${data.plans.guild.name} and add extra hours.`;
   }
@@ -109,7 +110,11 @@ export const byId = Object.fromEntries(
 
 export const tryIt = byId["try-it"];
 /** The three paid plans shown as cards, in order. */
-export const plans: readonly Plan[] = [byId.table, byId["two-tables"], byId.guild];
+export const plans: readonly Plan[] = [
+  byId.table,
+  byId["two-tables"],
+  byId.guild,
+];
 export const pro = byId.pro;
 
 /** The owner's headline, kept word for word; split so the first sentence can be the heading. */
@@ -155,7 +160,8 @@ export interface Question {
   answer: string;
 }
 
-const keep = (id: PlanId): string => formatPeriod(byId[id].keepAfterLastSession);
+const keep = (id: PlanId): string =>
+  formatPeriod(byId[id].keepAfterLastSession);
 const [firstWarning, lastWarning] = data.deletionWarningDaysBefore;
 
 /** The plan rules, said plainly (#432). */

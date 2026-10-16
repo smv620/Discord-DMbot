@@ -3,29 +3,27 @@
  * at /account/recaps/<id>. Plain words; every message says what to do next. Nothing here
  * promises more than the API does: Post only asks DMbot, which checks once more and sends it.
  */
-import type { Recap } from "../account/api";
-import type { ApiErrorKind } from "../account/api";
+import type { ApiErrorKind, Recap } from "../account/api";
 
 export const text = {
   heading: "Your recaps",
-  title: "Your recaps",
   lead: "After a session, DMbot writes a short recap for your table. Only you can see it until you post it.",
   loading: "Loading your recaps…",
   empty: "No recaps yet. DMbot emails you when one is ready.",
   back: "All your recaps",
   linkToList: "Read your session recaps",
   account: "Back to My Account",
-  open: "Read it",
+  open: "Open",
   signedOut: "Sign in to read your recaps.",
   signIn: "Sign in with Discord",
-  noRef:
-    "That link doesn't look right. Open the recap from the email again, or pick it below.",
   untitled: "Session recap",
   notFound:
-    "We can't find that recap. It may belong to another game master's campaign, or the link is wrong.",
+    "We can't find that recap. Open it again from your email, or pick it from your list.",
   onlyYou: "Only you can see this until you post it.",
   working: "DMbot is still writing this recap. Check back in a few minutes.",
-  failed: "DMbot couldn't make this recap.",
+  failed: "DMbot couldn't write this recap. Press Try again, or don't post it.",
+  failedNoTries:
+    "DMbot couldn't write this recap, and there are no more tries. You can leave it unposted.",
   textHeading: "Recap",
   housekeepingHeading: "Housekeeping",
   housekeepingNone: "Nothing to sort out.",
@@ -42,9 +40,14 @@ export const text = {
   busy: "Working…",
   noTriesLeft:
     "You have tried twice. You can still edit it, post it or not post it.",
-  posting: "Sent. DMbot checks it one last time, then posts it to your table.",
+  posting:
+    "Sent. DMbot will check it once more, then post it. Check back here to see if it posted.",
   posted: "This recap was posted to your table.",
-  dropped: "You chose not to post this recap. It stays here for you.",
+  dropped:
+    "You chose not to post this recap. It stays here, and nobody else sees it.",
+  beforeChoosing:
+    "DMbot only suggests this recap. You decide what your players see.",
+  againHint: "Try again writes a new recap and replaces your changes.",
   tryingAgain:
     "DMbot is making it again. You will get an email when it is ready.",
 } as const;

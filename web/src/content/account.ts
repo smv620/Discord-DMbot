@@ -40,7 +40,9 @@ export function hoursLeftLine(
   renewsOn: string | null,
   plan: PlanId,
 ): string {
-  const again = renewsOn ? `Your hours start again on ${shortDate(renewsOn)}.` : "";
+  const again = renewsOn
+    ? `Your hours start again on ${shortDate(renewsOn)}.`
+    : "";
   if (used < cap) return again;
   const more =
     plan === "try-it"
@@ -52,25 +54,30 @@ export function hoursLeftLine(
 export const planName = (id: PlanId): string => byId[id].name;
 
 /** The public place for questions (the GitHub Discussions category QAbot answers, #1339). */
-export const QA_URL = "https://github.com/smv620/Discord-DMbot/discussions/categories/q-a-for-dmbot";
+export const QA_URL =
+  "https://github.com/smv620/Discord-DMbot/discussions/categories/q-a-for-dmbot";
 
 export const text = {
   heading: "My Account",
   loading: "Loading your account…",
 
   // Signed out
-  signInLead: "Sign in with Discord to see your plan, your hours and your campaigns.",
+  signInLead:
+    "Sign in with Discord to see your plan, your hours and your campaigns.",
   signIn: "Sign in with Discord",
-  signInNote: "DMbot only asks Discord for your name, your email and your list of servers.",
+  signInNote:
+    "DMbot only asks Discord for your name, your email and your list of servers.",
   startTryItFree: "Start Try It, free",
   startTryItSignIn:
     "Free for 30 days. No card needed. You'll sign in with Discord first, then confirm your plan.",
   haveAccount: "Already have a plan?",
   seePrices: "See the plans",
-  signInFailed: "You didn't finish signing in. Tap Sign in with Discord to try again.",
+  signInFailed:
+    "You didn't finish signing in. Tap Sign in with Discord to try again.",
   signInMoved:
     "This Discord account's DMbot account moved to a new Discord account. Sign in with the new one.",
-  tooManyTries: "Too many tries. Wait about 10 minutes, then tap Sign in with Discord again.",
+  tooManyTries:
+    "Too many tries. Wait about 10 minutes, then tap Sign in with Discord again.",
 
   // Sign in by an emailed link (#1231)
   emailHeading: "Or get a sign-in link by email",
@@ -83,7 +90,8 @@ export const text = {
   emailAnswer:
     "If that email belongs to a DMbot account, we've sent a link. Check your inbox (and spam). It ends in 15 minutes.",
   emailWait: "Too many tries. Wait about 10 minutes, then try again.",
-  emailLinkWait: "Too many tries. Wait a minute, then open the link in your email again.",
+  emailLinkWait:
+    "Too many tries. Wait a minute, then open the link in your email again.",
   emailLinkBad:
     "That sign-in link didn't work. It may have been used already, or it ran out of time. Ask for a new one below.",
 
@@ -91,7 +99,8 @@ export const text = {
   down: "DMbot isn't answering right now. Tap Try again in a minute.",
   tryAgain: "Try again",
   actionFailed: "That didn't work. Try again in a minute.",
-  signInAgain: "For your safety, sign in again first. Tap Sign in with Discord.",
+  signInAgain:
+    "For your safety, sign in again first. Tap Sign in with Discord.",
   errors: {
     "try-it-used": "You've already used Try It. Pick a plan to keep playing.",
     "has-plan": "You already have a plan. Tap Change plan to switch.",
@@ -108,7 +117,8 @@ export const text = {
     "slow-down":
       "Too many tries. Wait about 10 minutes, then try again. (Deleting an account can need an hour.)",
     // Only an out-of-date page gets this, so the page updates itself (like no-paid-plan).
-    "free-access": "You have free access, so there's nothing to pay. We've updated this page.",
+    "free-access":
+      "You have free access, so there's nothing to pay. We've updated this page.",
     "no-paid-plan":
       "Your plan has changed since this page opened, so we've updated it. If nothing looks different, write to us for help.",
   } as Record<string, string>,
@@ -116,7 +126,8 @@ export const text = {
     done: "Done! DMbot is in your server. In Discord, type /dmbot start to begin.",
     failed: "DMbot wasn't added. Tap Add DMbot to try again.",
     slow: "Too many tries. Wait about 10 minutes, then tap Add DMbot again.",
-    not_allowed: "You can only add DMbot to a server you run. Ask its owner to add DMbot.",
+    not_allowed:
+      "You can only add DMbot to a server you run. Ask its owner to add DMbot.",
     already_linked:
       "DMbot is in your server. Someone else is listed as the one who added it.",
     other_account:
@@ -131,7 +142,8 @@ export const text = {
   greeting: (name: string): string => `Hi, ${name}.`,
   signOut: "Sign out",
   signOutEverywhere: "Sign out everywhere",
-  signOutEverywhereNote: "Ends your sign-in on every computer and phone, this one too.",
+  signOutEverywhereNote:
+    "Ends your sign-in on every computer and phone, this one too.",
   signOutEverywhereWait: "Wait a minute, then try again.",
 
   // Plan
@@ -156,7 +168,8 @@ export const text = {
     "Your first payment didn't go through, so you have no plan yet. Pick a plan below to try again.",
   // Free access (#806): never why someone has it.
   freeAccess: "Free access",
-  freeAccessUntil: (iso: string): string => `Free access until ${shortDate(iso)}`,
+  freeAccessUntil: (iso: string): string =>
+    `Free access until ${shortDate(iso)}`,
   // Not "you're still paying": after Stop paying the plan runs out its period, so that
   // would become false. The date is the plan's own end (its next renewal if left alone).
   stillPaying: (plan: string | null, endsOn: string | null): string => {
@@ -171,7 +184,8 @@ export const text = {
     `${plan ? `Your ${plan} plan` : "Your plan"} ends on ${shortDate(iso)}. You won't be charged again.`,
   /** Hours for free access with a cap (#824); renewal only, since free people buy no more. */
   freeHoursLeft: (used: number, cap: number, iso: string | null): string => {
-    if (used < cap) return iso ? `Your hours start again on ${shortDate(iso)}.` : "";
+    if (used < cap)
+      return iso ? `Your hours start again on ${shortDate(iso)}.` : "";
     // Out of hours: free people can't buy more, so say when they come back, or where to ask.
     return iso
       ? `You're out of hours until ${shortDate(iso)}. Then they start again.`
@@ -181,7 +195,8 @@ export const text = {
   freeNext: "In Discord, type /dmbot start to play.",
   // Only without a paid plan: with one, the plan's own date is above, and what happens
   // after the grant ends depends on whether they stop paying.
-  freeEnds: (iso: string): string => `After ${shortDate(iso)}, pick a plan to keep playing.`,
+  freeEnds: (iso: string): string =>
+    `After ${shortDate(iso)}, pick a plan to keep playing.`,
   lapsed: `Your plan has stopped. Your campaigns are kept for ${formatPeriod(data.keepAfterPlanStopsPaying)}. Pick a plan to play again.`,
 
   // Campaigns
@@ -198,7 +213,8 @@ export const text = {
   handOver: "Hand over",
 
   // Hand over
-  handOverQuestion: (campaign: string): string => `Who should take over ${campaign}?`,
+  handOverQuestion: (campaign: string): string =>
+    `Who should take over ${campaign}?`,
   handOverNote:
     "Nothing changes until they say yes. They have 7 days to answer. If they say yes, it uses their hours, not yours, and you stay on as a DM.",
   handOverNoteFree:
@@ -215,9 +231,17 @@ export const text = {
   offerIncoming: (person: string, campaign: string, server: string): string =>
     `${person} wants to hand you ${campaign} in ${server}. If you accept, it uses one of your campaign slots and your plan's hours, and ${person} stays on as a DM. Tap Accept or No thanks.`,
   /** A capped grant has hours but no "plan" to name (#824). */
-  offerIncomingCapped: (person: string, campaign: string, server: string): string =>
+  offerIncomingCapped: (
+    person: string,
+    campaign: string,
+    server: string,
+  ): string =>
     `${person} wants to hand you ${campaign} in ${server}. If you accept, it uses one of your campaign slots and your hours, and ${person} stays on as a DM. Tap Accept or No thanks.`,
-  offerIncomingFree: (person: string, campaign: string, server: string): string =>
+  offerIncomingFree: (
+    person: string,
+    campaign: string,
+    server: string,
+  ): string =>
     `${person} wants to hand you ${campaign} in ${server}. If you accept, it becomes yours and ${person} stays on as a DM. Tap Accept or No thanks.`,
   offerExpires: (iso: string): string => `Answer by ${shortDateTime(iso)}.`,
   accept: "Accept",
@@ -234,7 +258,8 @@ export const text = {
   // on the site (#794, #797), so the words promise it plainly (#798).
   accepted: (campaign: string, person: string): string =>
     `${campaign} is yours now. You're a DM of it in Discord too. We'll tell ${person} in Discord.`,
-  declined: (person: string): string => `Done. The offer is closed. We'll tell ${person} in Discord.`,
+  declined: (person: string): string =>
+    `Done. The offer is closed. We'll tell ${person} in Discord.`,
   offerOutgoing: (person: string, iso: string): string =>
     `Waiting for ${person} to say yes (until ${shortDateTime(iso)}). Nothing changes until they do.`,
   withdraw: "Take back offer",
@@ -245,15 +270,18 @@ export const text = {
   serversHeading: "Add DMbot to a server",
   serversNote: "Servers you run. Tap Add DMbot to bring it to one.",
   linkServer: "This is mine",
-  linkNote: "DMbot is here, but we don't know who added it. If it was you, tap This is mine.",
+  linkNote:
+    "DMbot is here, but we don't know who added it. If it was you, tap This is mine.",
   youAddedIt: "You added DMbot here",
-  noServers: "You don't run any Discord servers. Ask a server's owner to add DMbot.",
+  noServers:
+    "You don't run any Discord servers. Ask a server's owner to add DMbot.",
   addTo: "Add DMbot",
   alreadyThere: "Already added",
 
   // My characters (#1164): read-only. Changing a sheet stays in Discord.
   charactersHeading: "My characters",
-  charactersNone: "No characters yet. In Discord, press 📜 My character sheet in your campaign.",
+  charactersNone:
+    "No characters yet. In Discord, press 📜 My character sheet in your campaign.",
   characterUnread: "Sheet saved",
   characterUnreadNote: "Its details show up after DMbot reads it.",
   characterWhere: (server: string, campaign: string | null): string =>
@@ -282,7 +310,8 @@ export const text = {
   // My DMbot ID and experience points, and moving to a new Discord account (#1231)
   idHeading: "Your DMbot ID",
   idLine: (id: string): string => `Your DMbot ID: ${id}`,
-  idNote: "It is your account number, and it shows on your invoices. It is not a password.",
+  idNote:
+    "It is your account number, and it shows on your invoices. It is not a password.",
   pointsLine: (n: number): string => `Experience points: ${n}`,
   pointsNote: "The minutes DMbot has run for you, all time.",
   moveHeading: "Moving to a new Discord account?",
@@ -291,17 +320,20 @@ export const text = {
   moveButton: "Get a move code",
   moveSent:
     "We've emailed a move code to your payment email. It works once, for 30 minutes. On your new Discord account, type /dmbot migrate, press Import my account, and type the code. You will be asked to say yes to being recorded again.",
-  moveNotReady: "Moving to a new Discord account isn't open yet. Please try again soon.",
+  moveNotReady:
+    "Moving to a new Discord account isn't open yet. Please try again soon.",
   moveWait: "Too many tries. Wait an hour, then try again.",
   moveNoEmail:
     "We don't have the email you pay with yet. It's saved when a payment goes through. Try again later, or tell us on the Say hello page.",
   moveTooSoon:
     "You can move once every 30 days, and this account moved less than 30 days ago. Try again after 30 days, or tell us on the Say hello page.",
-  moveEmailFailed: "The code couldn't be emailed just now. Try again in a few minutes.",
+  moveEmailFailed:
+    "The code couldn't be emailed just now. Try again in a few minutes.",
 
   // Write to the team, for people on a paid plan (#1340)
   supportHeading: "Write to the DMbot team",
-  supportIntro: "Something wrong with your plan, an invoice or DMbot itself? Write to us here.",
+  supportIntro:
+    "Something wrong with your plan, an invoice or DMbot itself? Write to us here.",
   supportPrivacy:
     "Your message goes privately to the DMbot team, and is not posted anywhere public. We keep it for 12 months, then delete it. Deleting your account deletes it too.",
   supportPublicLead: "A question anyone could answer? Ask it in the public",
@@ -310,7 +342,8 @@ export const text = {
   supportMessageHint: "Please don't type passwords or card numbers.",
   supportSend: "Send to the team",
   supportSending: "Sending…",
-  supportSent: "Sent. Thanks, the team will read it. We'll reply by email to the address on your account.",
+  supportSent:
+    "Sent. Thanks, the team will read it. We'll reply by email to the address on your account.",
   // The account has no email: nothing on the Account page adds one (the address is the one
   // Discord gives when you sign in, or the one you pay with), so the way is through Discord.
   supportSentNoEmail:
@@ -318,16 +351,20 @@ export const text = {
   supportAnother: "Write another",
   supportErrors: {
     "ticket-empty": "Please fill in the subject and your message.",
-    "subject-too-long": "The subject is too long. Please keep it to 120 letters or fewer.",
-    "ticket-too-long": "That's too long. Please keep it to 4,000 letters or fewer.",
+    "subject-too-long":
+      "The subject is too long. Please keep it to 120 letters or fewer.",
+    "ticket-too-long":
+      "That's too long. Please keep it to 4,000 letters or fewer.",
     "slow-down":
       "Too many messages right now. You can send one every 10 minutes. Try again in a few minutes. Your words are still here.",
     "not-human":
       "Tick the box that says you're a person, then press Send again. Your words are still here.",
     "not-paying":
       "Writing to the team is for paid plans, and your plan doesn't look active right now. Use the public Q&A for DMbot instead. If you think this is wrong, tell us on the Say hello page.",
-    "signed-out": "You were signed out. Sign in again, then send it. Your words are still here.",
-    network: "No connection. Check your internet, then press Send again. Your words are still here.",
+    "signed-out":
+      "You were signed out. Sign in again, then send it. Your words are still here.",
+    network:
+      "No connection. Check your internet, then press Send again. Your words are still here.",
     server:
       "That didn't send, and it's on our side. Your words are still here. Try again in a few minutes.",
   } as Record<string, string>,

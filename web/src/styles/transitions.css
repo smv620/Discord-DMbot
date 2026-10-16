@@ -38,10 +38,25 @@ h1 {
 ::view-transition-old(root) {
   /* Three layers of dots on different, unrelated tile sizes look scattered, not gridded. */
   mask-image:
-    radial-gradient(circle at 20% 30%, #000 var(--dust), transparent calc(var(--dust) + 1px)),
-    radial-gradient(circle at 70% 60%, #000 var(--dust), transparent calc(var(--dust) + 1px)),
-    radial-gradient(circle at 40% 80%, #000 var(--dust), transparent calc(var(--dust) + 1px));
-  mask-size: 37px 41px, 53px 47px, 29px 31px;
+    radial-gradient(
+      circle at 20% 30%,
+      #000 var(--dust),
+      transparent calc(var(--dust) + 1px)
+    ),
+    radial-gradient(
+      circle at 70% 60%,
+      #000 var(--dust),
+      transparent calc(var(--dust) + 1px)
+    ),
+    radial-gradient(
+      circle at 40% 80%,
+      #000 var(--dust),
+      transparent calc(var(--dust) + 1px)
+    );
+  mask-size:
+    37px 41px,
+    53px 47px,
+    29px 31px;
   animation: dust-out 700ms ease-in both;
 }
 
@@ -76,7 +91,8 @@ h1 {
 }
 
 ::view-transition-image-pair(banner) {
-  background: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 160 28' fill='none' stroke='%232f5d50' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path transform='translate(0 0)' d='M6 26V2 M6 8l9-6 M6 15l9-6'/><path transform='translate(20 0)' d='M5 26V2l10 8v16'/><path transform='translate(40 0)' d='M6 26V2 M6 8l9 6-9 6'/><path transform='translate(60 0)' d='M6 26V2l9 7 M6 14l9 7'/><path transform='translate(80 0)' d='M5 26V2h6l4 6-4 6H5 M5 14l10 12'/><path transform='translate(100 0)' d='M14 4L6 14l8 10'/><path transform='translate(120 0)' d='M5 4l10 20 M15 4L5 24'/><path transform='translate(140 0)' d='M5 2v24 M15 2v24 M5 10l10 6'/></svg>") repeat-x center / auto 70%;
+  background: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 160 28' fill='none' stroke='%232f5d50' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path transform='translate(0 0)' d='M6 26V2 M6 8l9-6 M6 15l9-6'/><path transform='translate(20 0)' d='M5 26V2l10 8v16'/><path transform='translate(40 0)' d='M6 26V2 M6 8l9 6-9 6'/><path transform='translate(60 0)' d='M6 26V2l9 7 M6 14l9 7'/><path transform='translate(80 0)' d='M5 26V2h6l4 6-4 6H5 M5 14l10 12'/><path transform='translate(100 0)' d='M14 4L6 14l8 10'/><path transform='translate(120 0)' d='M5 4l10 20 M15 4L5 24'/><path transform='translate(140 0)' d='M5 2v24 M15 2v24 M5 10l10 6'/></svg>")
+    repeat-x center / auto 70%;
   animation: runes 700ms ease-in-out both;
 }
 

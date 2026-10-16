@@ -152,6 +152,68 @@ describe("the review page", () => {
   });
 });
 
+describe("the page keeps up with the bot", () => {
+  it("sends one request when Post is tapped twice quickly", async () => {
+    const api = renderPage(reviewPath);
+    const post = await screen.findByRole("button", { name: text.post });
+    fireEvent.click(post);
+    fireEvent.click(post);
+    await screen.findByText(text.posting);
+    expect(api.calls.filter((c) => c.startsWith("postRecap"))).toHaveLength(1);
+  });
+
+  it("reads the recap again after a refusal, so the buttons match the truth", async () => {
+    const api = mockApi("table");
+    const fresh = {
+      ...ready,
+      status: "posted" as const,
+      canEdit: false,
+      canPost: false,
+      canTryAgain: false,
+      canDrop: false,
+    };
+    let reads = 0;
+    api.recap = async () => (reads++ === 0 ? ready : fresh);
+    api.decideRecap = async () => {
+      throw new ApiError("not-allowed");
+    };
+    renderPage(reviewPath, api);
+    fireEvent.click(await screen.findByRole("button", { name: text.post }));
+    expect(await screen.findByText(text.posted)).toBeTruthy();
+    expect(screen.queryByRole("button", { name: text.post })).toBeNull();
+  });
+
+  it("looks again while the recap is being posted, until it is posted", async () => {
+    vi.useFakeTimers();
+    try {
+      const api = mockApi("table");
+      const posting = {
+        ...ready,
+        status: "posting" as const,
+        canEdit: false,
+        canPost: false,
+      };
+      let reads = 0;
+      api.recap = async () =>
+        reads++ < 1 ? posting : { ...posting, status: "posted" as const };
+      renderPage(reviewPath, api);
+      await vi.advanceTimersByTimeAsync(0);
+      expect(screen.getByText(text.posting)).toBeTruthy();
+      await vi.advanceTimersByTimeAsync(5000);
+      expect(screen.getByText(text.posted)).toBeTruthy();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("shows an error, not an empty list, when the API has no recap route", async () => {
+    const { recaps: _recaps, ...rest } = mockApi("table");
+    renderPage("/account/recaps", rest as AccountApi);
+    expect(await screen.findByRole("alert")).toBeTruthy();
+    expect(screen.queryByText(text.empty)).toBeNull();
+  });
+});
+
 describe("the API calls", () => {
   it("sends the edit as PUT with the custom header and the id in the path", async () => {
     const fetcher = vi.fn(
@@ -215,5 +277,17 @@ describe("the API calls", () => {
       );
       await expect(api.recap!("x")).rejects.toMatchObject({ kind });
     }
+  });
+});
+
+describe("the hosting files", () => {
+  it("serve every recap id from the one recaps page, uncached", async () => {
+    const { readFileSync } = await import("node:fs");
+    const redirects = readFileSync("public/_redirects", "utf8");
+    expect(redirects).toMatch(
+      /^\/account\/recaps\/\*\s+\/account\/recaps\s+200$/m,
+    );
+    const headers = readFileSync("public/_headers", "utf8");
+    expect(headers).toMatch(/\/account\/recaps\*\n\s+Cache-Control: no-store/);
   });
 });

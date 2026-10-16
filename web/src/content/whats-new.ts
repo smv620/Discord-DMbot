@@ -82,8 +82,7 @@ export const held: Held[] = [
     date: "2026-10-16",
     title: "A recap of last session",
     what: "After a session, DMbot can write a short story of what happened to read at the start of the next one. It emails the DM when it's ready. They read it on the website, change it, ask for another, leave it out, or post it to the table. It only uses the words of people who agreed to be recorded.",
-    reason:
-      "Stays off until the first check on a real session (#1382).",
+    reason: "Stays off until the first check on a real session (#1382).",
   },
   {
     date: "2026-10-15",
@@ -95,14 +94,25 @@ export const held: Held[] = [
 ];
 
 const months = [
-  "January", "February", "March", "April", "May", "June",
-  "July", "August", "September", "October", "November", "December",
+  "January",
+  "February",
+  "March",
+  "April",
+  "May",
+  "June",
+  "July",
+  "August",
+  "September",
+  "October",
+  "November",
+  "December",
 ];
 
 /** "2026-10-15" as "15 October 2026": fixed words, so it reads the same on every computer. */
 export function formatDate(date: string): string {
   const [year, month, day] = date.split("-").map(Number);
   const name = months[(month ?? 0) - 1];
-  if (name === undefined || !year || !day) throw new Error(`Not a date: ${date}`);
+  if (name === undefined || !year || !day)
+    throw new Error(`Not a date: ${date}`);
   return `${day} ${name} ${year}`;
 }

@@ -14,7 +14,8 @@ export const text = {
   intro: "Tell us what you think of DMbot, or ask us anything.",
   qaNote: "Quick answers may already be in the",
   qaLink: "Q&A",
-  privacy: "Only your message is shown in public. How to reach you stays with the team.",
+  privacy:
+    "Only your message is shown in public. How to reach you stays with the team.",
   publicPost:
     "We post your message on GitHub, a public website anyone can read and search. Leave out names, emails and anything private.",
   feedback: {
@@ -22,7 +23,8 @@ export const text = {
     label: "What do you think of DMbot?",
     send: "Send feedback",
     contactLabel: "How can we reach you?",
-    contactHint: "Optional. A Discord name or an email. Only the team sees this.",
+    contactHint:
+      "Optional. A Discord name or an email. Only the team sees this.",
   },
   question: {
     heading: "Ask a question",
@@ -32,7 +34,8 @@ export const text = {
     contactHint:
       "Optional. A Discord name or an email, so we can answer you. Skip it, and we'll answer on GitHub instead. Only the team sees this.",
   },
-  messageHint: "Anyone can read this. Put how to reach you in the next box, not here.",
+  messageHint:
+    "Anyone can read this. Put how to reach you in the next box, not here.",
   sending: "Sending…",
   sent: "Thanks, we read every message.",
   seePost: "See your message on GitHub",
@@ -48,13 +51,15 @@ export const text = {
       "Wait for the tick above, then press send again. Your words are still here.",
     off: "Messages are switched off for now. Please try again later, or open an issue on GitHub (the link is at the bottom of this page).",
     "contact-too-long": `How to reach you is too long. Please keep it to ${MAX_CONTACT} letters or fewer.`,
-    failed: "That didn't send. Your words are still here. Please try again later.",
+    failed:
+      "That didn't send. Your words are still here. Please try again later.",
   },
   checkFailed:
     "The person check didn't load. Try another browser, or try again later. Your words are still here.",
   needsScript:
     "These forms need JavaScript. Turn it on, then reload the page. Developers can still open an issue on GitHub below.",
-  developers: "Developers: suggestions and bug reports are welcome as GitHub issues.",
+  developers:
+    "Developers: suggestions and bug reports are welcome as GitHub issues.",
   developersLink: "Open an issue on GitHub",
   repoLink: "See the code on GitHub",
 } as const;

@@ -16,12 +16,15 @@ export async function stopEmails(
   fetcher: typeof fetch = fetch,
 ): Promise<boolean> {
   try {
-    const response = await fetcher(`${base.replace(/\/+$/, "")}/email/unsubscribe`, {
-      method: "POST",
-      credentials: "omit",
-      headers: { "X-DMbot-Request": "1", "Content-Type": "application/json" },
-      body: JSON.stringify({ uid, t: token }),
-    });
+    const response = await fetcher(
+      `${base.replace(/\/+$/, "")}/email/unsubscribe`,
+      {
+        method: "POST",
+        credentials: "omit",
+        headers: { "X-DMbot-Request": "1", "Content-Type": "application/json" },
+        body: JSON.stringify({ uid, t: token }),
+      },
+    );
     return response.ok;
   } catch {
     return false;
@@ -57,8 +60,15 @@ export function Unsubscribe({
     };
   }, [search, base, fetcher]);
   return (
-    <p role="status" class={state === "bad" ? "warn" : state === "done" ? "ok" : "muted"}>
-      {state === "working" ? unsubscribe.working : state === "done" ? unsubscribe.done : unsubscribe.bad}
+    <p
+      role="status"
+      class={state === "bad" ? "warn" : state === "done" ? "ok" : "muted"}
+    >
+      {state === "working"
+        ? unsubscribe.working
+        : state === "done"
+          ? unsubscribe.done
+          : unsubscribe.bad}
     </p>
   );
 }

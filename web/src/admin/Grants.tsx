@@ -65,7 +65,9 @@ export default function Grants({ api, csrf, onSignedOut, onOff }: Props) {
   const inFlight = useRef(false);
   const [confirming, setConfirming] = useState<string | null>(null);
   // Whoever the form is changing (their id box is then read-only), or null when adding.
-  const [editing, setEditing] = useState<{ id: string; who: string } | null>(null);
+  const [editing, setEditing] = useState<{ id: string; who: string } | null>(
+    null,
+  );
   const [discordId, setDiscordId] = useState("");
   const [level, setLevel] = useState<GrantLevel>("guild");
   const [endsOn, setEndsOn] = useState("");
@@ -99,7 +101,8 @@ export default function Grants({ api, csrf, onSignedOut, onOff }: Props) {
   // scrolls to it.
   useEffect(() => {
     if (problem === "bad-id" || problem === "no-id") idBox.current?.focus();
-    else if (problem === "bad-date" || problem === "past-date") endBox.current?.focus();
+    else if (problem === "bad-date" || problem === "past-date")
+      endBox.current?.focus();
     else if (formNews) formNewsBox.current?.focus();
   }, [formNews, problem]);
 
@@ -111,12 +114,16 @@ export default function Grants({ api, csrf, onSignedOut, onOff }: Props) {
   // The confirm step takes focus; Cancel gives it back to that row's Revoke.
   useEffect(() => {
     if (confirming) yesRevoke.current?.focus();
-    else if (lastConfirm.current) revokeOf.current.get(lastConfirm.current)?.focus();
+    else if (lastConfirm.current)
+      revokeOf.current.get(lastConfirm.current)?.focus();
     lastConfirm.current = confirming;
   }, [confirming]);
 
   /** Runs one change; a refusal becomes plain words, the end of the session a sign-in. */
-  async function act(work: () => Promise<string>, show: (news: News | null) => void) {
+  async function act(
+    work: () => Promise<string>,
+    show: (news: News | null) => void,
+  ) {
     if (inFlight.current) return;
     inFlight.current = true;
     setBusy(true);
@@ -168,11 +175,21 @@ export default function Grants({ api, csrf, onSignedOut, onOff }: Props) {
     }
     setSaving(true);
     void act(async () => {
-      const done = await api.give(csrf, { discordId: id, level, endsOn: endsOn || null, note });
+      const done = await api.give(csrf, {
+        discordId: id,
+        level,
+        endsOn: endsOn || null,
+        note,
+      });
       const name = who(done.name, id);
-      const how = saved(level, endsOn ? day(Date.parse(`${endsOn}T00:00:00Z`) / 1000) : null);
+      const how = saved(
+        level,
+        endsOn ? day(Date.parse(`${endsOn}T00:00:00Z`) / 1000) : null,
+      );
       clearForm();
-      return done.action === "change" ? text.changed(name, how) : text.added(name, how);
+      return done.action === "change"
+        ? text.changed(name, how)
+        : text.added(name, how);
     }, setFormNews);
   }
 
@@ -250,10 +267,14 @@ export default function Grants({ api, csrf, onSignedOut, onOff }: Props) {
                       : text.until(day(g.endsAt - 1))}
                 </span>
                 {g.note && <span>{g.note}</span>}
-                <span class="muted small">{text.setBy(g.grantedBy, day(g.grantedAt))}</span>
+                <span class="muted small">
+                  {text.setBy(g.grantedBy, day(g.grantedAt))}
+                </span>
                 {confirming === g.discordId ? (
                   <span class="row">
-                    <span role="alert">{text.confirmRevoke(who(g.name, g.discordId))}</span>
+                    <span role="alert">
+                      {text.confirmRevoke(who(g.name, g.discordId))}
+                    </span>
                     <button
                       type="button"
                       class="button"
@@ -311,7 +332,9 @@ export default function Grants({ api, csrf, onSignedOut, onOff }: Props) {
       </section>
 
       <section aria-labelledby="add-heading">
-        <h2 id="add-heading">{editing ? text.changeHeading(editing.who) : text.addHeading}</h2>
+        <h2 id="add-heading">
+          {editing ? text.changeHeading(editing.who) : text.addHeading}
+        </h2>
         {!editing && <p>{text.addLead}</p>}
         <form onSubmit={save} class="stack" noValidate>
           <fieldset disabled={busy}>
@@ -373,7 +396,11 @@ export default function Grants({ api, csrf, onSignedOut, onOff }: Props) {
               {text.endHint}
             </p>
             {endsOn && (
-              <button type="button" class="button secondary" onClick={() => setEndsOn("")}>
+              <button
+                type="button"
+                class="button secondary"
+                onClick={() => setEndsOn("")}
+              >
                 {text.noEndButton}
               </button>
             )}
@@ -430,7 +457,12 @@ export default function Grants({ api, csrf, onSignedOut, onOff }: Props) {
           <ul class="history">
             {view.log.map((e, i) => (
               <li key={`${e.at}-${i}`}>
-                {text.logLine(day(e.at), e.by, e.action, who(e.name, e.discordId))}
+                {text.logLine(
+                  day(e.at),
+                  e.by,
+                  e.action,
+                  who(e.name, e.discordId),
+                )}
               </li>
             ))}
           </ul>

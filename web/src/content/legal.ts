@@ -34,12 +34,18 @@ export const minimumAge = 16;
 export const paymentGraceDays = facts.paymentGraceDays;
 
 /** Rows for the "how long we keep it" table, from the shared plan facts. */
-export const retentionRows: { plan: string; keep: string }[] = (facts.order as PlanId[]).map(
-  (id) => ({ plan: byId[id].name, keep: formatPeriod(byId[id].keepAfterLastSession) }),
-);
+export const retentionRows: { plan: string; keep: string }[] = (
+  facts.order as PlanId[]
+).map((id) => ({
+  plan: byId[id].name,
+  keep: formatPeriod(byId[id].keepAfterLastSession),
+}));
 
 export const keepAfterStopPaying = formatPeriod(
-  facts.keepAfterPlanStopsPaying as { count: number; unit: "day" | "month" | "year" },
+  facts.keepAfterPlanStopsPaying as {
+    count: number;
+    unit: "day" | "month" | "year";
+  },
 );
 
 /** "14 days and 3 days", from however many warnings the plan file lists. */

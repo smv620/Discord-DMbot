@@ -2,7 +2,7 @@
 // The DM's recap pages (#1386): the list, and the page to read, change and decide one recap.
 // The API shows a recap only to a DM of its campaign, so a player gets "not found" and nothing
 // is guarded here beyond that; nothing is posted from this page, the bot posts after Post.
-import { useEffect, useState } from "preact/hooks";
+import { useEffect, useRef, useState } from "preact/hooks";
 
 import {
   againLabel,
@@ -12,6 +12,8 @@ import {
   text,
 } from "../content/recaps";
 import { ApiError, type AccountApi, type Recap, type RecapAction } from "./api";
+
+const POLL_MS = 5000;
 
 type Load =
   | { kind: "loading" }
@@ -63,7 +65,11 @@ function List({ api }: { api: AccountApi }) {
   const [load, setLoad] = useState<Load>({ kind: "loading" });
   useEffect(() => {
     let live = true;
-    (api.recaps?.() ?? Promise.resolve([] as Recap[])).then(
+    if (!api.recaps) {
+      setLoad({ kind: "error", message: errors.other });
+      return;
+    }
+    api.recaps().then(
       (recaps) => live && setLoad({ kind: "ready", recaps }),
       (error: unknown) => {
         if (!live) return;
@@ -131,6 +137,8 @@ function Review({ api, recapRef }: { api: AccountApi; recapRef: string }) {
   const [note, setNote] = useState<{ ok: boolean; message: string } | null>(
     null,
   );
+  // A second tap before the page redraws must not send a second request.
+  const inFlight = useRef(false);
 
   useEffect(() => {
     let live = true;
@@ -157,6 +165,18 @@ function Review({ api, recapRef }: { api: AccountApi; recapRef: string }) {
     };
   }, [api, recapRef]);
 
+  // While DMbot is writing it or posting it, look again every few seconds.
+  const waiting =
+    recap !== null && (recap.working || recap.status === "posting");
+  useEffect(() => {
+    if (!waiting || !api.recap) return;
+    const timer = setInterval(() => {
+      if (inFlight.current) return;
+      api.recap?.(recapRef).then(setRecap, () => undefined);
+    }, POLL_MS);
+    return () => clearInterval(timer);
+  }, [api, recapRef, waiting]);
+
   if (load.kind === "loading")
     return (
       <p class="muted" role="status">
@@ -177,6 +197,24 @@ function Review({ api, recapRef }: { api: AccountApi; recapRef: string }) {
     );
   }
 
+  // After a refusal the page may be out of date (posted from another tab, say): read it again.
+  const refresh = async (error: unknown) => {
+    if (
+      !(error instanceof ApiError) ||
+      !["not-allowed", "not-editable"].includes(error.kind)
+    )
+      return;
+    try {
+      const fresh = await api.recap?.(recapRef);
+      if (fresh) {
+        setRecap(fresh);
+        setEditing(false);
+      }
+    } catch {
+      // The message above already says to reload.
+    }
+  };
+
   const startEdit = () => {
     setSummary(recap.summary);
     setBullets(recap.housekeeping.join("\n"));
@@ -186,7 +224,8 @@ function Review({ api, recapRef }: { api: AccountApi; recapRef: string }) {
 
   const save = async (event: Event) => {
     event.preventDefault();
-    if (!api.saveRecap || busy) return;
+    if (!api.saveRecap || inFlight.current) return;
+    inFlight.current = true;
     setBusy("save");
     setNote(null);
     try {
@@ -199,13 +238,16 @@ function Review({ api, recapRef }: { api: AccountApi; recapRef: string }) {
       setNote({ ok: true, message: text.saved });
     } catch (error) {
       setNote({ ok: false, message: messageFor(error) });
+      await refresh(error);
     } finally {
+      inFlight.current = false;
       setBusy(null);
     }
   };
 
   const decide = async (action: RecapAction) => {
-    if (!api.decideRecap || busy) return;
+    if (!api.decideRecap || inFlight.current) return;
+    inFlight.current = true;
     setBusy(action);
     setNote(null);
     try {
@@ -216,7 +258,9 @@ function Review({ api, recapRef }: { api: AccountApi; recapRef: string }) {
       if (action === "again") setNote({ ok: true, message: text.tryingAgain });
     } catch (error) {
       setNote({ ok: false, message: messageFor(error) });
+      await refresh(error);
     } finally {
+      inFlight.current = false;
       setBusy(null);
     }
   };
@@ -234,7 +278,12 @@ function Review({ api, recapRef }: { api: AccountApi; recapRef: string }) {
           .filter(Boolean)
           .join(" · ")}
       </p>
-      {!decided && <p class="lead">{text.onlyYou}</p>}
+      {!decided && !recap.working && recap.state !== "failed" && (
+        <>
+          <p class="lead">{text.onlyYou}</p>
+          <p>{text.beforeChoosing}</p>
+        </>
+      )}
       {recap.status === "posted" && (
         <p class="ok" role="status">
           {text.posted}

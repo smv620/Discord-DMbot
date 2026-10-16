@@ -277,7 +277,6 @@ export function scenarioMe(scenario: Scenario): Me | null {
   }
 }
 
-/** A pretend API with in-memory state. `calls` records what the page asked for. */
 /** Two pretend recaps for the DM's review page (#1386): one ready, one posted. */
 export function mockRecaps(): Recap[] {
   const base = {
@@ -326,6 +325,7 @@ export function mockRecaps(): Recap[] {
   ];
 }
 
+/** A pretend API with in-memory state. `calls` records what the page asked for. */
 export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
   console.info(MOCK_MARKER, "pretend API in use:", scenario);
   let me = scenarioMe(scenario);
@@ -353,18 +353,18 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
       calls.push("recaps");
       await reachable();
       signedIn();
-      return recaps;
+      return recaps.map((r) => ({ ...r }));
     },
     async recap(ref) {
       calls.push(`recap:${ref}`);
-      return find(ref);
+      return { ...(await find(ref)) };
     },
     async saveRecap(ref, summary, housekeeping) {
       calls.push(`saveRecap:${ref}`);
       const r = await find(ref);
       if (!r.canEdit) throw new ApiError("not-editable");
       Object.assign(r, { summary, text: summary, housekeeping });
-      return r;
+      return { ...r };
     },
     async decideRecap(ref, action) {
       calls.push(`${action}Recap:${ref}`);
@@ -379,7 +379,7 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
       if (r.status !== "draft")
         Object.assign(r, { canTryAgain: false, canDrop: false });
       else r.canTryAgain = r.triesLeft > 0;
-      return r;
+      return { ...r };
     },
     async me() {
       calls.push("me");

@@ -20,7 +20,7 @@ export const text = {
   // it names the pause (and Google, when it's set up), so a locked owner isn't sent to
   // doubt their password.
   wrong:
-    "Not signed in. Check the email and password. After 5 wrong tries, sign-in pauses for 15 minutes, even with the right password. If the wrong tries weren't yours, \"Sign in with Google\" still works.",
+    'Not signed in. Check the email and password. After 5 wrong tries, sign-in pauses for 15 minutes, even with the right password. If the wrong tries weren\'t yours, "Sign in with Google" still works.',
   wrongNoGoogle:
     "Not signed in. Check the email and password. After 5 wrong tries, sign-in pauses for 15 minutes, even with the right password.",
   busy: "Too many sign-in tries right now. Try again in a minute.",
@@ -28,7 +28,8 @@ export const text = {
     "Google sign-in didn't work. Use the Google account with the admin email, or sign in with the password below. After 5 wrong tries, wait 15 minutes before trying again.",
   googleFailedNoPassword:
     "Google sign-in didn't work. Use the Google account with the admin email. After 5 wrong tries, wait 15 minutes before trying again.",
-  googleOff: "Google sign-in isn't set up on the server. Sign in with your email and password below.",
+  googleOff:
+    "Google sign-in isn't set up on the server. Sign in with your email and password below.",
   // The full steps, not a short cut: ADMIN_EMAILS alone stops the website from starting.
   off: 'The admin page is off. To turn it on, follow "Turn on the admin page" in docs/DEPLOY.md, in DMbot\'s GitHub or on the server, then reload this page.',
   // Only the owner sees this page; the server is dev1's to look at (CLAUDE.md).
@@ -42,7 +43,8 @@ export const text = {
   // For part 3 (#773), when an admin change finds the session has ended.
   timedOut:
     "You're signed out. That happens after an hour without use, or 12 hours after you signed in. Sign in again.",
-  needsScript: "This page needs JavaScript. Turn it on in your browser, then reload the page.",
+  needsScript:
+    "This page needs JavaScript. Turn it on in your browser, then reload the page.",
 
   // Free access (#773). "Discord user id" is the one technical term: it's what Discord
   // calls the thing to copy. The error texts are the agreed #804 words (grants.py).
@@ -51,12 +53,16 @@ export const text = {
     "These people use DMbot without paying. People marked “Always free” are set on the server. Ask dev1 to change those.",
   listLoading: "Loading the list…",
   alwaysFree: "Always free (set on the server)",
-  levels: { guild: "Same as Guild", unlimited: "No limits" } as Record<string, string>,
+  levels: { guild: "Same as Guild", unlimited: "No limits" } as Record<
+    string,
+    string
+  >,
   noEnd: "No end date",
   until: (date: string): string => `Until ${date}`,
   // granted_by and granted_at are rewritten by a change, so "set", not "added".
   setBy: (by: string, date: string): string => `Set by ${by} on ${date}`,
-  ended: (date: string): string => `Ended ${date}. Tap Change to give it again.`,
+  ended: (date: string): string =>
+    `Ended ${date}. Tap Change to give it again.`,
   change: "Change",
   nobody: "Nobody has free access from this page yet. Add someone below.",
   revoke: "Revoke",
@@ -72,9 +78,11 @@ export const text = {
   idHint:
     "First turn on Developer Mode in Discord: Settings, then Advanced. Then on a computer, right-click the person. On a phone, tap their name, then the three dots. Pick Copy User ID.",
   levelLabel: "How much",
-  levelHint: "Same as Guild: the same limits as the Guild plan. No limits: no caps at all.",
+  levelHint:
+    "Same as Guild: the same limits as the Guild plan. No limits: no caps at all.",
   endLabel: "Last day (optional)",
-  endHint: "They keep free access until the end of this day. Leave it empty so it never ends.",
+  endHint:
+    "They keep free access until the end of this day. Leave it empty so it never ends.",
   noEndButton: "No end date",
   noteLabel: "Note (optional)",
   noteHint: (max: number): string =>
@@ -85,7 +93,8 @@ export const text = {
   adding: "Saving…",
   // What was saved, so a slip (the wrong level, a missing date) shows at once: `how` is
   // "Same as Guild, until Dec 31, 2026" or "No limits, no end date" (see `saved`).
-  added: (who: string, how: string): string => `Done. ${who} has free access: ${how}.`,
+  added: (who: string, how: string): string =>
+    `Done. ${who} has free access: ${how}.`,
   changed: (who: string, how: string): string =>
     `Done. Changed free access for ${who}: ${how}.`,
   historyHeading: "Recent changes",
@@ -103,14 +112,19 @@ export const text = {
       "That isn't a Discord account number. In Discord, right-click the person and pick Copy User ID.",
     "bad-level": "Pick how much: Same as Guild, or No limits.",
     "no-id": "Paste the person's Discord user ID first.",
-    "bad-date": "That end date didn't work. Pick it from the calendar, or leave it empty.",
-    "past-date": "Pick an end date after today, or leave it empty so it never ends.",
-    "long-note": (max: number): string => `Keep the note to ${max} characters or fewer.`,
-    "bad-note": "The note has a character DMbot can't keep. Type it again with plain letters.",
+    "bad-date":
+      "That end date didn't work. Pick it from the calendar, or leave it empty.",
+    "past-date":
+      "Pick an end date after today, or leave it empty so it never ends.",
+    "long-note": (max: number): string =>
+      `Keep the note to ${max} characters or fewer.`,
+    "bad-note":
+      "The note has a character DMbot can't keep. Type it again with plain letters.",
     "already-free":
       "That person is always free (set on the server), so there's nothing to add here.",
     stale: "That didn't work. Reload this page and try again.",
-    "no-grant": "That person has no free access to revoke. We've updated the list.",
+    "no-grant":
+      "That person has no free access to revoke. We've updated the list.",
   } as Record<string, string | ((max: number) => string)>,
 
   // Support tickets (#1340): private messages from people on paid plans.
@@ -118,15 +132,24 @@ export const text = {
   ticketsLead:
     "Private messages from people on a paid plan, newest first. They are deleted after 12 months, or with the account.",
   ticketsNone: "No tickets yet.",
-  ticketStatuses: { new: "New", answered: "Answered", closed: "Closed" } as Record<string, string>,
-  ticketFrom: (who: string, dmbotId: string, plan: string, when: string): string =>
-    `${who} (DMbot ID ${dmbotId}), ${plan} plan, ${when}`,
+  ticketStatuses: {
+    new: "New",
+    answered: "Answered",
+    closed: "Closed",
+  } as Record<string, string>,
+  ticketFrom: (
+    who: string,
+    dmbotId: string,
+    plan: string,
+    when: string,
+  ): string => `${who} (DMbot ID ${dmbotId}), ${plan} plan, ${when}`,
   replyTo: "Reply to",
   noEmail: "No email on this account",
   markAnswered: "Mark answered",
   closeTicket: "Close",
   reopenTicket: "Reopen",
-  ticketDone: (status: string): string => `Done. The ticket is now ${status.toLowerCase()}.`,
+  ticketDone: (status: string): string =>
+    `Done. The ticket is now ${status.toLowerCase()}.`,
   ticketGone: "That ticket is gone, so we've updated the list.",
   ticketStale: "That didn't work. Reload this page and try again.",
   ticketFailed: "That didn't save. Try again in a minute.",
@@ -153,5 +176,7 @@ export function grantError(kind: string): string | undefined {
  * signed in lately. The full id stays visible on the list; messages stay short. */
 export function who(name: string | null, discordId: string): string {
   if (name) return name;
-  return discordId.length > 10 ? `${discordId.slice(0, 4)}…${discordId.slice(-4)}` : discordId;
+  return discordId.length > 10
+    ? `${discordId.slice(0, 4)}…${discordId.slice(-4)}`
+    : discordId;
 }

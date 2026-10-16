@@ -23,7 +23,8 @@
   --danger: #b42318;
 
   /* Type scale (1.25 ratio from 16 px). */
-  --font-body: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial,
+  --font-body:
+    system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial,
     sans-serif;
   --text-sm: 0.875rem;
   --text-base: 1rem;
@@ -52,7 +53,8 @@
   /* How strong the table artwork behind the pages is (see body::before). */
   --art-opacity: 0.12; /* the picture is dark, so on the light page it is only a faint haze */
   /* The page background (#559): a soft glow of the brand colour at the top, not a flat fill. */
-  --page: radial-gradient(70rem 32rem at 50% -8rem, #d9ebe4 0%, transparent 70%),
+  --page:
+    radial-gradient(70rem 32rem at 50% -8rem, #d9ebe4 0%, transparent 70%),
     linear-gradient(180deg, #f7f5ef 0%, var(--bg) 40rem);
   --tap: 3rem; /* smallest button or link height a thumb can hit */
 }
@@ -74,7 +76,8 @@
     --danger: #f97066;
     --shadow: 0 1px 2px rgb(0 0 0 / 0.3), 0 12px 32px rgb(0 0 0 / 0.35);
     --art-opacity: 0.85;
-    --page: radial-gradient(70rem 32rem at 50% -8rem, #1d3a31 0%, transparent 70%),
+    --page:
+      radial-gradient(70rem 32rem at 50% -8rem, #1d3a31 0%, transparent 70%),
       linear-gradient(180deg, #13201c 0%, var(--bg) 40rem);
   }
 }
@@ -131,7 +134,12 @@ body::before {
   background: url("/art/table-tall.webp") 78% 0 / cover no-repeat;
   /* Phones put text across the whole width, so the picture is quieter there. */
   opacity: calc(var(--art-opacity) * 0.5);
-  -webkit-mask-image: linear-gradient(to bottom, #000 0%, #000 50%, transparent 100%);
+  -webkit-mask-image: linear-gradient(
+    to bottom,
+    #000 0%,
+    #000 50%,
+    transparent 100%
+  );
   mask-image: linear-gradient(to bottom, #000 0%, #000 50%, transparent 100%);
 }
 
@@ -146,7 +154,10 @@ body::before {
 
 /* No picture for people who asked for less data (few browsers send this yet), high contrast,
    forced colours, or paper. */
-@media (prefers-reduced-data: reduce), (prefers-contrast: more), (forced-colors: active), print {
+@media (prefers-reduced-data: reduce),
+  (prefers-contrast: more),
+  (forced-colors: active),
+  print {
   body::before {
     display: none;
   }

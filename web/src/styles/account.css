@@ -1,255 +1,255 @@
 /* The signed-in pages' shared look (/account and /account/recaps). Plain CSS, because both pages
    style islands whose markup Astro does not scope. */
-  .account {
-    max-width: var(--text-width);
-  }
+.account {
+  max-width: var(--text-width);
+}
 
-  .account .stack {
-    display: flex;
-    flex-direction: column;
-    gap: var(--space-6);
-  }
+.account .stack {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-6);
+}
 
-  .account .stack > *,
-  .account .panel p,
-  .account .stack > p {
-    margin: 0;
-  }
+.account .stack > *,
+.account .panel p,
+.account .stack > p {
+  margin: 0;
+}
 
-  .account .lead {
-    font-size: var(--text-lg);
-  }
+.account .lead {
+  font-size: var(--text-lg);
+}
 
-  .account .small {
-    font-size: var(--text-sm);
-  }
+.account .small {
+  font-size: var(--text-sm);
+}
 
-  /* A number never lands alone on the next line of a character card (#1164). */
-  .account .nowrap {
-    white-space: nowrap;
-  }
+/* A number never lands alone on the next line of a character card (#1164). */
+.account .nowrap {
+  white-space: nowrap;
+}
 
-  .account .panel {
-    display: flex;
-    flex-direction: column;
-    gap: var(--space-3);
-    padding: var(--space-6);
-    background: var(--surface);
-    border: 1px solid var(--border);
-    border-radius: var(--radius);
-  }
+.account .panel {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding: var(--space-6);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
 
-  .account .panel h2 {
-    font-size: var(--text-lg);
-    margin: 0;
-  }
+.account .panel h2 {
+  font-size: var(--text-lg);
+  margin: 0;
+}
 
-  .account .warn,
-  .account .warn-box {
-    padding: var(--space-4);
-    border-radius: var(--radius);
-    background: var(--warn-soft);
-    border: 1px solid var(--warn);
-  }
+.account .warn,
+.account .warn-box {
+  padding: var(--space-4);
+  border-radius: var(--radius);
+  background: var(--warn-soft);
+  border: 1px solid var(--warn);
+}
 
-  .account .warn-box {
-    display: flex;
-    flex-direction: column;
-    gap: var(--space-3);
-  }
+.account .warn-box {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
 
-  .account .ok {
-    color: var(--accent);
-    font-weight: 600;
-  }
+.account .ok {
+  color: var(--accent);
+  font-weight: 600;
+}
 
-  .account .hello {
-    display: flex;
-    flex-wrap: wrap;
-    align-items: center;
-    justify-content: space-between;
-    gap: var(--space-2);
-  }
+.account .hello {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+}
 
-  .account button.link {
-    min-height: var(--tap);
-    padding: 0;
-    border: 0;
-    background: none;
-    color: var(--accent);
-    font: inherit;
-    text-decoration: underline;
-    cursor: pointer;
-  }
+.account button.link {
+  min-height: var(--tap);
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--accent);
+  font: inherit;
+  text-decoration: underline;
+  cursor: pointer;
+}
 
-  .account button.button {
-    border: 0;
-    font: inherit;
-    font-weight: 600;
-    cursor: pointer;
-  }
+.account button.button {
+  border: 0;
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
 
-  .account .button {
-    align-self: flex-start;
-  }
+.account .button {
+  align-self: flex-start;
+}
 
-  .account .button.secondary {
-    background: transparent;
-    color: var(--accent);
-    border: 2px solid var(--accent);
-  }
+.account .button.secondary {
+  background: transparent;
+  color: var(--accent);
+  border: 2px solid var(--accent);
+}
 
-  .account .button.danger {
-    background: var(--danger);
-    color: var(--accent-text);
-  }
+.account .button.danger {
+  background: var(--danger);
+  color: var(--accent-text);
+}
 
-  .account .button:disabled {
-    opacity: 0.5;
-    cursor: not-allowed;
-  }
+.account .button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
 
-  .account .plan-name {
-    font-size: var(--text-xl);
-    font-weight: 700;
-  }
+.account .plan-name {
+  font-size: var(--text-xl);
+  font-weight: 700;
+}
 
-  .account .hours-line {
-    font-size: var(--text-lg);
-    font-weight: 600;
-  }
+.account .hours-line {
+  font-size: var(--text-lg);
+  font-weight: 600;
+}
 
-  .account progress {
-    width: 100%;
-    height: 0.75rem;
-    accent-color: var(--accent);
-  }
+.account progress {
+  width: 100%;
+  height: 0.75rem;
+  accent-color: var(--accent);
+}
 
-  .account ul {
-    list-style: none;
-    margin: 0;
-    padding: 0;
-  }
+.account ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
 
-  .account .choices ul li,
-  .account .servers li {
-    display: flex;
-    flex-wrap: wrap;
-    align-items: center;
-    justify-content: space-between;
-    gap: var(--space-2) var(--space-4);
-    padding-block: var(--space-3);
-    border-bottom: 1px solid var(--border);
-  }
+.account .choices ul li,
+.account .servers li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2) var(--space-4);
+  padding-block: var(--space-3);
+  border-bottom: 1px solid var(--border);
+}
 
-  /* A server's note or message sits on its own line under the name and button. */
-  .account .servers li > .row-note,
-  .account .servers li > .warn {
-    flex-basis: 100%;
-    margin: 0;
-  }
+/* A server's note or message sits on its own line under the name and button. */
+.account .servers li > .row-note,
+.account .servers li > .warn {
+  flex-basis: 100%;
+  margin: 0;
+}
 
-  .account .campaigns li {
-    display: flex;
-    flex-direction: column;
-    gap: var(--space-2);
-    padding-block: var(--space-4);
-    border-bottom: 1px solid var(--border);
-  }
+.account .campaigns li {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding-block: var(--space-4);
+  border-bottom: 1px solid var(--border);
+}
 
-  .account .campaigns li:last-child,
-  .account .servers li:last-child {
-    border-bottom: 0;
-  }
+.account .campaigns li:last-child,
+.account .servers li:last-child {
+  border-bottom: 0;
+}
 
-  .account .campaign-name {
-    font-weight: 600;
-  }
+.account .campaign-name {
+  font-weight: 600;
+}
 
-  .account .tags {
-    display: flex;
-    flex-wrap: wrap;
-    gap: var(--space-2);
-  }
+.account .tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
 
-  .account .tag {
-    padding: var(--space-1) var(--space-3);
-    border-radius: 999px;
-    background: var(--accent-soft);
-    font-size: var(--text-sm);
-  }
+.account .tag {
+  padding: var(--space-1) var(--space-3);
+  border-radius: 999px;
+  background: var(--accent-soft);
+  font-size: var(--text-sm);
+}
 
-  .account .tag.paused {
-    background: var(--warn-soft);
-  }
+.account .tag.paused {
+  background: var(--warn-soft);
+}
 
-  .account fieldset {
-    border: 0;
-    margin: 0;
-    padding: 0;
-    display: flex;
-    flex-direction: column;
-    gap: var(--space-2);
-  }
+.account fieldset {
+  border: 0;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
 
-  .account legend {
-    font-weight: 600;
-    padding: 0;
-    margin-bottom: var(--space-2);
-  }
+.account legend {
+  font-weight: 600;
+  padding: 0;
+  margin-bottom: var(--space-2);
+}
 
-  .account .choice {
-    display: flex;
-    align-items: center;
-    gap: var(--space-3);
-    min-height: var(--tap);
-  }
+.account .choice {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  min-height: var(--tap);
+}
 
-  .account .choice input {
-    width: 1.25rem;
-    height: 1.25rem;
-    accent-color: var(--accent);
-  }
+.account .choice input {
+  width: 1.25rem;
+  height: 1.25rem;
+  accent-color: var(--accent);
+}
 
-  .account .handover {
-    display: flex;
-    flex-direction: column;
-    gap: var(--space-3);
-  }
+.account .handover {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
 
-  .account .row {
-    display: flex;
-    flex-wrap: wrap;
-    gap: var(--space-3);
-  }
+.account .row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+}
 
-  /* The Support form (#1340): the same boxes as the Say hello page, sized for a thumb. */
-  .account label {
-    font-weight: 600;
-  }
+/* The Support form (#1340): the same boxes as the Say hello page, sized for a thumb. */
+.account label {
+  font-weight: 600;
+}
 
-  .account textarea,
-  .account input[type="text"] {
-    width: 100%;
-    box-sizing: border-box;
-    min-height: var(--tap);
-    padding: var(--space-2) var(--space-3);
-    border: 1px solid var(--control-edge);
-    border-radius: var(--radius);
-    background: var(--bg);
-    color: var(--text);
-    font: inherit;
-  }
+.account textarea,
+.account input[type="text"] {
+  width: 100%;
+  box-sizing: border-box;
+  min-height: var(--tap);
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--control-edge);
+  border-radius: var(--radius);
+  background: var(--bg);
+  color: var(--text);
+  font: inherit;
+}
 
-  .account textarea {
-    resize: vertical;
-  }
+.account textarea {
+  resize: vertical;
+}
 
-  .account .turnstile {
-    max-width: 100%;
-    overflow: hidden;
-  }
+.account .turnstile {
+  max-width: 100%;
+  overflow: hidden;
+}
 
-  .account .danger h2 {
-    color: var(--danger);
-  }
+.account .danger h2 {
+  color: var(--danger);
+}
