@@ -40,12 +40,16 @@ describe("What's new", () => {
 
   it("shows the two things dev1 deployed as 4d7aea9b (#1373, #1370)", () => {
     const titles = entries.map((e) => e.title);
-    expect(titles.slice(0, 2)).toEqual(["Your questions to the team", "Quick answers use your facts"]);
+    expect(titles.slice(0, 3)).toEqual([
+      "Read transcripts on the website", // #1501
+      "Your questions to the team",
+      "Quick answers use your facts",
+    ]);
   });
 
   it("holds back what people can't use yet, with the reason, and shows none of it (#1322)", () => {
     expect(held.map((h) => h.title)).toEqual([
-      "Fix your own line", // until it has been seen working on the test server (#1491)
+      "Fix a line", // until it has been seen working on the test server (#1491, #1499)
       "Recaps for your table", // until dev1 has checked a real recap (#1382, #1384)
       "Narrated recaps with music", // until narration is on (RECAP_AUDIO_LIVE, #1385)
       "DMbot's helper answers questions", // until the support helper runs (SUPPORT_AI_LIVE)
@@ -70,7 +74,7 @@ describe("What's new", () => {
     expect(shown).not.toContain("Ask a question in public"); // not until QAbot is live
     expect(shown).not.toContain("QAbot");
     expect(page.querySelectorAll(".entry")).toHaveLength(entries.length);
-    expect(entries).toHaveLength(9);
+    expect(entries).toHaveLength(10);
   });
 
   it("has dates in order, newest first, and real days", () => {

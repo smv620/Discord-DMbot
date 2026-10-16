@@ -279,3 +279,14 @@
     padding-top: var(--space-3);
     border-top: 1px solid var(--border);
   }
+
+/* A session transcript (#1501): the bot's own lines, one per item, wrapping on a phone. */
+.transcript-lines {
+  list-style: none;
+  margin: 1rem 0;
+  padding: 0;
+}
+.transcript-lines li {
+  margin: 0.35rem 0;
+  overflow-wrap: anywhere;
+}

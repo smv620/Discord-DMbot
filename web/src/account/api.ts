@@ -253,6 +253,39 @@ export interface CampaignName {
   saidAs: string | null;
 }
 
+/** A campaign with a saved transcript in one of the person's servers (#1501). `ref` is
+ * `<server>.<campaign>`. */
+export interface TranscriptCampaign {
+  ref: string;
+  name: string;
+  serverName: string;
+  sessions: number;
+}
+
+/** One saved session of a campaign (#1501); times are Unix seconds, `endedAt` null when it was
+ * still running or stopped early. */
+export interface TranscriptSessionItem {
+  number: number;
+  startedAt: number;
+  endedAt: number | null;
+  lines: number;
+}
+
+export type TranscriptVersion = "cleaned" | "heard";
+
+/** One session to read: the file's header lines (`notes`) and its transcript, one string per line,
+ * both made by the bot's own export, with the file's name for the download. */
+export interface TranscriptView {
+  number: number;
+  version: TranscriptVersion;
+  fileName: string;
+  notes: string[];
+  lines: string[];
+  /** The offset to ask for the next page of lines (#1512), or null on the last (or missing from an
+   * older API: there is no more). */
+  next?: number | null;
+}
+
 /** The three audio files, as short-lived addresses to play. */
 export type RecapAudioLinks = Partial<Record<"voice" | "music" | "mix", string>>;
 
@@ -294,6 +327,7 @@ export type ApiErrorKind =
   | "already-subscribed" // the add-on is already bought (#1390)
   | "not-in-plan" // the narration can't be turned on: the plan doesn't have it (#1468)
   | "bad-choice" // not one of the three recap choices (#1468)
+  | "too-big" // a transcript too long to show or save as one file (#1512)
   | "server"; // anything else
 
 export class ApiError extends Error {
@@ -349,6 +383,22 @@ export interface AccountApi {
   recapChoices?(campaignRef: string): Promise<RecapChoices>;
   /** Change one of them; answers all three as they are now. */
   setRecapChoice?(campaignRef: string, which: RecapChoice, on: boolean): Promise<RecapChoices>;
+  /** The campaigns with a transcript in the person's servers, for anyone in them (#1501). Missing
+   * from an API older than that. */
+  transcriptCampaigns?(): Promise<TranscriptCampaign[]>;
+  /** A campaign's name and its saved sessions, newest first. `campaignRef` is `<server>.<campaign>`. */
+  transcriptSessions?(
+    campaignRef: string,
+  ): Promise<{ name: string; sessions: TranscriptSessionItem[] }>;
+  /** One session to read, in one version. */
+  transcript?(
+    campaignRef: string,
+    number: number,
+    version: TranscriptVersion,
+    offset?: number,
+  ): Promise<TranscriptView>;
+  /** The same text as a file to save, as Discord's download button gives it. */
+  transcriptFile?(campaignRef: string, number: number, version: TranscriptVersion): Promise<Blob>;
   /** The campaign's public names with the narrator's spelling (#1451). `campaignRef` is the
    * recap's address without its last part: `<server>.<campaign>`. */
   campaignNames?(campaignRef: string): Promise<CampaignName[]>;
@@ -420,6 +470,7 @@ const errorKinds: Record<string, ApiErrorKind> = {
   not_found: "not-found",
   not_in_plan: "not-in-plan",
   bad_choice: "bad-choice",
+  too_big: "too-big",
   not_editable: "not-editable",
   bad_text: "bad-text",
 };
@@ -533,6 +584,25 @@ export function httpApi(base: string, fetcher: typeof fetch = fetch): AccountApi
       };
       return { recaps: got.recaps, thisMonth: got.recapsThisMonth ?? [] };
     },
+    transcriptCampaigns: async () =>
+      ((await call("GET", "/me/transcripts")) as { campaigns: TranscriptCampaign[] }).campaigns,
+    transcriptSessions: async (campaignRef) =>
+      (await call("GET", `/me/campaigns/${encodeURIComponent(campaignRef)}/transcripts`)) as {
+        name: string;
+        sessions: TranscriptSessionItem[];
+      },
+    transcript: async (campaignRef, number, version, offset = 0) =>
+      (await call(
+        "GET",
+        `/me/campaigns/${encodeURIComponent(campaignRef)}/transcripts/${number}?version=${version}&offset=${offset}`,
+      )) as TranscriptView,
+    transcriptFile: async (campaignRef, number, version) =>
+      (await call(
+        "GET",
+        `/me/campaigns/${encodeURIComponent(campaignRef)}/transcripts/${number}/download?version=${version}`,
+        undefined,
+        true,
+      )) as Blob,
     campaignNames: async (campaignRef) =>
       (
         (await call(

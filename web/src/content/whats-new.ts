@@ -20,6 +20,11 @@ export const whatsNewIntro =
 export const entries: Entry[] = [
   {
     date: "2026-10-16",
+    title: "Read transcripts on the website",
+    what: "Anyone in your Discord server can read a session's transcript on the website, cleaned or as heard, and save it as a text file. Open My Account, then Session transcripts.",
+  },
+  {
+    date: "2026-10-16",
     title: "Your questions to the team",
     what: "After you write to the DMbot team, your account page lists your questions, with the date you sent each one and whether it is waiting, answered or closed.",
   },
@@ -76,9 +81,9 @@ export interface Held extends Entry {
 export const held: Held[] = [
   {
     date: "2026-10-16",
-    title: "Fix your own line",
-    what: "If DMbot wrote one of your lines down wrong, type /dmbot fix, or press Fix one of my lines after a session, then pick the line and type what it should say. Your DM says yes or no on the DM screen, and nothing changes unless they say yes.",
-    reason: "Held until it has been seen working on the test server (#1491).",
+    title: "Fix a line",
+    what: "If DMbot wrote one of your lines down wrong, type /dmbot fix, or press Fix one of my lines after a session, then pick the line and type what it should say. Your DM says yes or no on the DM screen, and nothing changes unless they say yes. DMs can fix any line themselves: type /dmbot fix or press Fix a line on the DM screen. It changes right away, and you can Undo it while the session runs.",
+    reason: "Held until it has been seen working on the test server (#1491, #1499).",
   },
   {
     date: "2026-10-16",
