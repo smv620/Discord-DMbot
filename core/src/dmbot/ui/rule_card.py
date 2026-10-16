@@ -296,12 +296,15 @@ def for_player(parts: list[str]) -> list[str]:
 def homebrew_citation(entry: Homebrew, campaign_name: str) -> str:
     """Where homebrew comes from, as every answer names its source: `Frostmaiden's homebrew:
     Hollow King`. A followed pack's entry names its pack: `Frost Pack homebrew, v2: Hollow King`."""
+    # A page's entry is "from" its site; a website's upload is only "credited to" it (#1635).
+    verb = "from" if entry.source_kind == "link" else "credited to"
+    site = f" ({verb} {entry.credit_domain})" if entry.credit_domain else ""
     if entry.source:
-        return f"{entry.source}: {entry.name}"
+        return f"{entry.source}: {entry.name}{site}"
     if entry.from_book:  # the book's title is never kept (CLAUDE.md, IP rule): the campaign's copy
         edition = f" ({entry.book_edition})" if entry.book_edition in ("2024", "2014") else ""
         return f"{campaign_name}'s shared book{edition}: {entry.name}"
-    return f"{campaign_name}'s homebrew: {entry.name}"
+    return f"{campaign_name}'s homebrew: {entry.name}{site}"
 
 
 def _tags(own: Homebrew, legacy: bool) -> str:

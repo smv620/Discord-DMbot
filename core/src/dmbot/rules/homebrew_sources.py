@@ -15,7 +15,7 @@
 from __future__ import annotations
 
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Collection
 from dataclasses import dataclass
 from typing import Any
 
@@ -98,6 +98,21 @@ class SourceStore:
             )
             row = await cur.fetchone()
         return None if row is None else _page(row)
+
+    async def pages_by_url(self, urls: Collection[str]) -> dict[str, Page]:
+        """The kept pages for these addresses (each in its normal form), by address. A page
+        recreated from a backup (`restored`, never fetched) is not trusted and is left out, so a
+        followed pack never shows words only a backup file vouched for."""
+        wanted = sorted(set(urls))
+        if not wanted:
+            return {}
+        async with self._db.unscoped() as conn:
+            cur = await conn.execute(
+                f"SELECT {_PAGE_COLUMNS} FROM homebrew_pages WHERE url = ANY(%s)"
+                " AND fetch_status <> 'restored'",
+                (wanted,),
+            )
+            return {r["url"]: _page(r) for r in await cur.fetchall()}
 
     async def save_page(
         self,

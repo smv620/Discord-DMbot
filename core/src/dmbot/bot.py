@@ -4449,7 +4449,7 @@ class DMBot(commands.AutoShardedBot):
         if self.homebrew is None:
             return None
         packs = self.rule_sets if isinstance(self.rule_sets, HomebrewPackStore) else None
-        return HomebrewReader(self.homebrew, packs)
+        return HomebrewReader(self.homebrew, packs, self.sources)
 
     def homebrew_changed(self, guild_id: int, campaign_id: str) -> None:
         """A DM added, changed, removed or loaded homebrew (#1524): a session running for that
