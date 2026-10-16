@@ -14,7 +14,9 @@ from dmbot.recaps.text import strip_cues
 MESSAGE_MAX = 1900  # Discord's limit is 2,000
 
 
-def to_the_table(job: Job) -> str:
+def to_the_table(job: Job, *, footer: bool = True) -> str:
+    """What the players read. With `footer` False it is the same words without the line that says
+    the DM posted it, for the DM reading it on the DM screen first (#1455)."""
     parts = [heading(job.title, job.game_day), "", strip_cues(job.summary)]
     if job.housekeeping:
         parts += [
@@ -22,6 +24,8 @@ def to_the_table(job: Job) -> str:
             "**Numbers and items** (hit points, items, conditions)",
             *(f"- {b}" for b in job.housekeeping),
         ]
+    if not footer:
+        return "\n".join(parts)
     return "\n".join([*parts, "", "📜 _Recap of last session, posted by your DM._"])
 
 

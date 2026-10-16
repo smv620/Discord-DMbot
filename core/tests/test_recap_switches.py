@@ -178,28 +178,43 @@ class TheAudioAndTheEmail(unittest.IsolatedAsyncioTestCase):
         )
 
     async def test_the_email_is_skipped_when_off_and_sent_when_on(self) -> None:
-        job = SimpleNamespace(state="ready", session_at=100)
+        job = SimpleNamespace(state="ready", session_at=100, title="T")
         with patch("dmbot.bot.tell_the_dm", AsyncMock()) as sent:
             await fake_bot(campaign(recaps_email=False)).recap_told(GUILD, "c" * 32, job)
             sent.assert_not_awaited()
             await fake_bot(campaign()).recap_told(GUILD, "c" * 32, job)
             sent.assert_awaited_once()
 
-    async def test_with_the_email_off_the_dm_screen_says_it_is_ready_or_failed(self) -> None:
-        for state, words in (("ready", "Your recap is ready"), ("failed", "couldn't write")):
-            bot = fake_bot(campaign(recaps_email=False))
+    async def test_a_ready_recap_is_on_the_dm_screen_with_its_buttons_email_or_not(self) -> None:
+        for email in (False, True):
+            bot = fake_bot(campaign(recaps_email=email))
+            ready = SimpleNamespace(state="ready", session_at=100, title="The Silver Lock")
             with patch("dmbot.bot.tell_the_dm", AsyncMock()) as sent:
-                await bot.recap_told(GUILD, "c" * 32, SimpleNamespace(state=state, session_at=100))
-            sent.assert_not_awaited()
-            channel, line = bot.post.await_args.args
+                await bot.recap_told(GUILD, "c" * 32, ready)
+            self.assertEqual(sent.await_count, 1 if email else 0)
+            (channel, line), kwargs = bot.post.await_args.args, bot.post.await_args.kwargs
             self.assertEqual(channel, 66)
-            self.assertIn(words, line)
-            self.assertIn("https://site.example.com", line)
-        # With the email on, nothing extra goes to the DM screen (the email says it).
+            self.assertIn("Recap ready: **The Silver Lock**", line)
+            self.assertIn("Edit it here: https://site.example.com", line)
+            ids = [i.custom_id for i in kwargs["view"].children]
+            self.assertEqual(
+                ids, [f"dmbot:recap:{a}:{'c' * 32}:100" for a in ("read", "post", "drop")]
+            )
+
+    async def test_a_failed_recap_is_said_on_the_dm_screen_only_when_the_email_is_off(self) -> None:
+        failed = SimpleNamespace(state="failed", session_at=100, title="")
+        off = fake_bot(campaign(recaps_email=False))
+        with patch("dmbot.bot.tell_the_dm", AsyncMock()) as sent:
+            await off.recap_told(GUILD, "c" * 32, failed)
+        sent.assert_not_awaited()
+        channel, line = off.post.await_args.args
+        self.assertEqual(channel, 66)
+        self.assertIn("couldn't write this session", line)
+        self.assertIn("https://site.example.com", line)
         on = fake_bot(campaign())
         with patch("dmbot.bot.tell_the_dm", AsyncMock()):
-            await on.recap_told(GUILD, "c" * 32, SimpleNamespace(state="ready", session_at=100))
-        on.post.assert_not_awaited()
+            await on.recap_told(GUILD, "c" * 32, failed)
+        on.post.assert_not_awaited()  # the email says it
 
     async def test_the_panel_shows_what_the_plan_allows_and_how(self) -> None:
         facts = await fake_bot(campaign()).recap_plan_facts(campaign())
