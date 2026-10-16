@@ -1,8 +1,8 @@
 """A campaign's house rules on the website (#1521), run as the website's own database role: anyone
-in the server reads them (not only a DM) with no plan rule, a person outside it gets "not found", the
-followed sets come after the campaign's own with the bot's citation, the download is the file the
-bot's Download button sends byte for byte, and nothing private (scenario, who wrote a rule, a set's
-publisher, the linked rules document) reaches the page."""
+in the server reads them (not only a DM) with no plan rule, a person outside it gets "not found",
+the followed sets come after the campaign's own with the bot's citation, the download is the file
+the bot's Download button sends byte for byte, and nothing private (scenario, who wrote a rule, a
+set's publisher, the linked rules document) reaches the page."""
 
 from __future__ import annotations
 
