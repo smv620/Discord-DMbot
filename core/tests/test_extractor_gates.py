@@ -234,14 +234,14 @@ class Gates(unittest.IsolatedAsyncioTestCase):
     async def test_the_days_ceiling_stops_a_run_before_it_starts(self) -> None:
         me = self.fake(day=960)
         with patch.object(extractor, "run", AsyncMock()) as run:
-            await DMBot.extract_claims(me, self.table(), 0)  # type: ignore[arg-type]
+            await DMBot.extract_claims(me, self.table(), 0)
         run.assert_not_called()
         me.transcripts.record_extraction.assert_not_called()
 
     async def test_the_session_limit_counts_calls_before_a_restart(self) -> None:
         me = self.fake(used=(10, 480), day=480)
         with patch.object(extractor, "run", AsyncMock()) as run:
-            await DMBot.extract_claims(me, self.table(), 0)  # type: ignore[arg-type]
+            await DMBot.extract_claims(me, self.table(), 0)
         run.assert_not_called()
 
 

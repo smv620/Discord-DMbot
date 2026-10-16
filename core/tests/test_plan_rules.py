@@ -61,8 +61,8 @@ class Rules(unittest.TestCase):
     ) -> None:
         for access in (FREE, GRANT, TABLE):
             self.assertTrue(plan_rules.can_use_story_memory(access), access.kind)
-        for access in (TRY_IT, ENDED, None):
-            self.assertFalse(plan_rules.can_use_story_memory(access))
+        for refused in (TRY_IT, ENDED, None):
+            self.assertFalse(plan_rules.can_use_story_memory(refused))
         self.assertTrue(plan_rules.allowed(plan_rules.RULE_OF["story"], TABLE))
         self.assertFalse(plan_rules.allowed(plan_rules.RULE_OF["story"], TRY_IT))
         words = plan_rules.refusal("story", TRY_IT, is_owner=True, site_url=SITE)
