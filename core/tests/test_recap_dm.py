@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import unittest
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock
 
 from dmbot.recaps.store import RecapStore
@@ -142,7 +142,7 @@ class TheButtons(unittest.IsolatedAsyncioTestCase):
         await button.callback(interaction)
         self.assertEqual(told(interaction), ASK)
         ids = [
-            i.custom_id
+            cast(Any, i).custom_id
             for i in interaction.response.send_message.await_args.kwargs["view"].children
         ]
         self.assertEqual(ids, [f"dmbot:recap:yes:{CID}:{AT}", f"dmbot:recap:no:{CID}:{AT}"])
@@ -204,7 +204,7 @@ class TheButtons(unittest.IsolatedAsyncioTestCase):
         interaction.response.edit_message.assert_not_awaited()
 
     def test_the_views_carry_ids_that_survive_a_restart(self) -> None:
-        ids = [i.custom_id for i in ready_view(CID, AT).children]
+        ids = [cast(Any, i).custom_id for i in ready_view(CID, AT).children]
         self.assertEqual(ids, [f"dmbot:recap:{a}:{CID}:{AT}" for a in ("read", "post", "drop")])
         self.assertEqual(len(confirm_view(CID, AT).children), 2)
         longest = f"dmbot:recap:post:{CID}:{10**11}"
