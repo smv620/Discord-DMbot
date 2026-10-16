@@ -391,3 +391,44 @@ describe("writing to the team (#1340)", () => {
     expect(text(section?.nextElementSibling ?? null)).not.toContain("anyone can read");
   });
 });
+
+describe("generated content belongs to the campaign (#1388)", () => {
+  const privacy = (): string => text(doc("privacy").querySelector("main"));
+  const terms = (): string => text(doc("terms").querySelector("main"));
+
+  it("says on both pages that what DMbot makes belongs to the campaign, and the campaign to its game master", () => {
+    for (const page of [privacy(), terms()]) {
+      expect(page).toContain("What DMbot makes from a session belongs to the campaign");
+      expect(page).toContain("a recap, story facts, notes for the game master, and anything else DMbot writes from what was said");
+      expect(page).toMatch(/campaign belongs to its game master/);
+    }
+  });
+
+  it("says stopping or deleting your own data does not remove it, on both pages", () => {
+    const privacyPage = privacy();
+    expect(privacyPage).toContain(
+      "What DMbot already made from sessions you spoke in, such as a recap or the story facts your game master kept, stays with the campaign.",
+    );
+    expect(privacyPage).toContain("What DMbot made from those sessions stays with the campaign too: deleting your account does not remove it.");
+    const termsPage = terms();
+    expect(termsPage).toContain("If you stop being recorded, take back your yes or delete your account");
+    expect(termsPage).toContain("What it already made from sessions you spoke in stays with the campaign.");
+  });
+
+  it("says only deleting the campaign removes it, and only its game master can", () => {
+    expect(privacy()).toContain("Only deleting the campaign removes what DMbot made for it, such as its recaps, story facts and notes. Only the campaign's game master can delete a campaign.");
+    expect(terms()).toContain("Only deleting the campaign removes it, and only the campaign's game master can delete a campaign.");
+  });
+
+  it("keeps the retention and 120-day wording as it was", () => {
+    expect(privacy()).toContain("They are deleted 120 days later, unless another DM of the campaign takes them over.");
+    expect(terms()).toContain("They are deleted 120 days later, unless another DM of the campaign takes them over.");
+    expect(privacy()).toContain("Lines you said in someone else's campaign stay there, readable by that server, until that campaign is deleted.");
+  });
+
+  it("uses plain words: no technical terms for the content DMbot makes", () => {
+    for (const page of [privacy(), terms()]) {
+      expect(page).not.toMatch(/knowledge graph|ontology|derived data|generated content|extractor|state facts/i);
+    }
+  });
+});
