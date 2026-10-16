@@ -398,3 +398,67 @@ describe("writing to the team (#1340)", () => {
     expect(text(section?.nextElementSibling ?? null)).not.toContain("anyone can read");
   });
 });
+
+describe("questions to DMbot are in the written record (#1379)", () => {
+  // CLAUDE.md "Transcripts are shared": the DM's quick questions and DMbot's in-game answers are
+  // saved as sidebar lines in the raw transcript (sidebar/service.py _save_lines); the Help page
+  // says so, so the privacy page must too.
+  it("says so in the What was typed item", () => {
+    const page = text(doc("privacy").querySelector("main"));
+    expect(page).toContain(
+      "Questions put to DMbot, and its answers about the game, go in the written record too, marked as such.",
+    );
+  });
+});
+
+describe("generated content belongs to the campaign (#1388)", () => {
+  const privacy = (): string => text(doc("privacy").querySelector("main"));
+  const terms = (): string => text(doc("terms").querySelector("main"));
+
+  it("says on both pages that what DMbot makes belongs to the campaign, and the campaign to its game master", () => {
+    for (const page of [privacy(), terms()]) {
+      expect(page).toContain("What DMbot makes from a session belongs to the campaign");
+      expect(page).toContain("a recap, story facts, notes for the game master, and anything else DMbot writes from what was said");
+      expect(page).toMatch(/campaign belongs to its game master/);
+    }
+  });
+
+  it("says stopping or deleting your own data does not remove it, on both pages", () => {
+    const privacyPage = privacy();
+    expect(privacyPage).toContain(
+      "What DMbot already made from sessions you took part in, such as a recap or the story facts your game master kept, stays with the campaign. Your voice was never kept.",
+    );
+    expect(privacyPage).toContain("What DMbot made from those sessions stays with the campaign too: deleting your account does not remove it.");
+    const termsPage = terms();
+    expect(termsPage).toContain("If you stop being recorded, take back your yes or delete your account");
+    expect(termsPage).toContain("What it already made from sessions you took part in stays with the campaign.");
+    // The terms point to the privacy page for what is removed, rather than repeating it.
+    const link = doc("terms").querySelector('main a[href="/legal/privacy"]');
+    expect(text(link)).toBe("Privacy page");
+  });
+
+  it("says only deleting the campaign removes it, and only its game master can", () => {
+    expect(privacy()).toContain(
+      "Only the campaign's game master can. Deleting it is the only thing that removes what DMbot made for it, such as its recaps, story facts and notes. A player who wants something removed can ask their game master.",
+    );
+    expect(terms()).toContain("Only deleting the campaign removes it, and only the campaign's game master can delete a campaign.");
+  });
+
+  it("says who owns the campaign and who runs it, so the table and the game master do not disagree", () => {
+    expect(terms()).toContain(
+      "Your campaign, notes and what your table says belong to you and your table, not to us. You let us store and process them only to run DMbot for you. Within the table, the campaign is the game master's: they run it, and only they can delete it.",
+    );
+  });
+
+  it("keeps the retention and 120-day wording as it was", () => {
+    expect(privacy()).toContain("They are deleted 120 days later, unless another DM of the campaign takes them over.");
+    expect(terms()).toContain("They are deleted 120 days later, unless another DM of the campaign takes them over.");
+    expect(privacy()).toContain("Lines you said in someone else's campaign stay there, readable by that server, until that campaign is deleted.");
+  });
+
+  it("uses plain words: no technical terms for the content DMbot makes", () => {
+    for (const page of [privacy(), terms()]) {
+      expect(page).not.toMatch(/knowledge graph|ontology|derived data|generated content|extractor|state facts/i);
+    }
+  });
+});
