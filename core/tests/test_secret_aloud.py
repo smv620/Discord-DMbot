@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import unittest
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock
 
 from dmbot.bot import DMBot
@@ -308,7 +308,7 @@ class TheButtons(unittest.IsolatedAsyncioTestCase):
 
     def test_the_view_has_the_two_buttons_with_ids_that_survive_a_restart(self) -> None:
         view = secret_aloud_view("c" * 32, "a" * 32)
-        ids = [item.custom_id for item in view.children]
+        ids = [cast(Any, item).custom_id for item in view.children]
         self.assertEqual(
             ids,
             [
