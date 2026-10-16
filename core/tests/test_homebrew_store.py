@@ -107,8 +107,8 @@ class Writing(HomebrewTest):
         async with self.db.guild(GUILD_A) as conn:
             await conn.execute(
                 "INSERT INTO homebrew_entries (guild_id, campaign_id, kind, name, name_key, text,"
-                " created_by, created_at, updated_at)"
-                " SELECT %s, %s, 'feat', 'R' || n, 'r' || n, 'x', 7, 1, 1"
+                " created_by, added_by, created_at, updated_at)"
+                " SELECT %s, %s, 'feat', 'R' || n, 'r' || n, 'x', 7, 7, 1, 1"
                 " FROM generate_series(1, %s) AS n",
                 (GUILD_A, self.campaign.id, HOMEBREW_MAX),
             )

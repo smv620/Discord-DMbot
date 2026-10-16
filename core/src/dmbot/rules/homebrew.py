@@ -734,7 +734,7 @@ def _checked_page(page: object, row: dict[str, Any]) -> dict[str, Any]:
     found = normalise_url(url)
     if found is None or found != (url, domain):
         raise CampaignError(DAMAGED)
-    if page["status"] not in ("ok", "stale") or page["kind"] != row["kind"]:
+    if page["status"] not in ("ok", "stale", "restored"):
         raise CampaignError(DAMAGED)
     try:
         kind, name = clean_kind(page["kind"]), clean_name(page["name"])
@@ -743,7 +743,9 @@ def _checked_page(page: object, row: dict[str, Any]) -> dict[str, Any]:
         raise CampaignError(DAMAGED) from None
     if (kind, name, text, summary) != (page["kind"], page["name"], page["text"], page["summary"]):
         raise CampaignError(DAMAGED)
-    if (name, text, summary) != (row["name"], row["text"], row["summary"]):
+    # The entry keeps its own name and kind (the DM may have renamed it, and the page may have been
+    # fetched again with a new title); only its words are the page's.
+    if (text, summary) != (row["text"], row["summary"]):
         raise CampaignError(DAMAGED)
     return {**page, "fetched_at": _timestamp(page["fetched_at"])}
 
@@ -953,10 +955,13 @@ class HomebrewSection:
     @staticmethod
     async def _page_id(conn: Conn, page: dict[str, Any]) -> int:
         """The id of the page with this address: the one already here (it may be newer than the
-        backup's copy, so it is left as it is), else the backup's copy, recreated."""
+        backup's copy, so it is left as it is), else the backup's copy, recreated as `restored`
+        with no fetch time. A backup file is untrusted and every campaign reads a page, so words
+        from a file never become a page another campaign relies on: `SourceStore.page_for`
+        skips a restored page, and the next fetch of that address replaces it."""
         await conn.execute(
             "INSERT INTO homebrew_pages (url, domain, kind, name, text, summary, fetched_at,"
-            " fetch_status) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)"
+            " fetch_status) VALUES (%s, %s, %s, %s, %s, %s, 0, 'restored')"
             " ON CONFLICT (url) DO NOTHING",
             (
                 page["url"],
@@ -965,8 +970,6 @@ class HomebrewSection:
                 page["name"],
                 page["text"],
                 page["summary"],
-                page["fetched_at"],
-                page["status"],
             ),
         )
         cur = await conn.execute("SELECT id FROM homebrew_pages WHERE url = %s", (page["url"],))

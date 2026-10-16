@@ -5975,8 +5975,9 @@ HOMEBREW_SOURCES = (
     -- content, not a campaign's own data, so the table has no guild_id or campaign_id and no
     -- row-level security: the second exception to campaign isolation, next to shared rulesets
     -- (UNSCOPED_TABLES). It holds nothing about who imported it or where. The website's role
-    -- has no grant on it; its doors read it as their owner. `fetch_status` is 'ok' or 'stale'
-    -- (a later fetch failed, so the last good content is kept).
+    -- has no grant on it; its doors read it as their owner. `fetch_status`: 'ok' (fetched), 'stale'
+    -- (a later fetch failed, so the last good content is kept) or 'restored' (recreated from a
+    -- backup file, so NOT trusted: no campaign relies on it until a fetch replaces it).
     CREATE TABLE homebrew_pages (
         id           BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
         url          TEXT NOT NULL UNIQUE CHECK (char_length(url) BETWEEN 1 AND 2000),
@@ -5987,7 +5988,7 @@ HOMEBREW_SOURCES = (
         text         TEXT NOT NULL CHECK (char_length(text) BETWEEN 1 AND 2000),
         summary      TEXT CHECK (summary IS NULL OR char_length(summary) BETWEEN 1 AND 160),
         fetched_at   BIGINT NOT NULL,
-        fetch_status TEXT NOT NULL DEFAULT 'ok' CHECK (fetch_status IN ('ok', 'stale'))
+        fetch_status TEXT NOT NULL DEFAULT 'ok' CHECK (fetch_status IN ('ok', 'stale', 'restored'))
     );
 
     -- The source of each entry: typed (the DM who typed it), upload (a file; the uploader by

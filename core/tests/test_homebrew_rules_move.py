@@ -202,7 +202,7 @@ class Migration(DatabaseTest):
             with self.assertRaises(errors.CheckViolation):
                 await conn.execute(
                     "INSERT INTO homebrew_entries (guild_id, campaign_id, kind, name, name_key,"
-                    " text, created_by, created_at, updated_at)"
-                    " VALUES (%s, %s, 'rule', 'X', 'x', 'y', %s, 1, 1)",
-                    (GUILD, one.id, DM),
+                    " text, created_by, added_by, created_at, updated_at)"
+                    " VALUES (%s, %s, 'rule', 'X', 'x', 'y', %s, %s, 1, 1)",
+                    (GUILD, one.id, DM, DM),
                 )

@@ -17,16 +17,25 @@ DOMAIN_MAX = 253
 _LABEL = r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?"
 _DOMAIN = re.compile(rf"^{_LABEL}(?:\.{_LABEL})+$")
 _IP = re.compile(r"^[0-9.]+$")
+_HEX = re.compile(r"^0x[0-9a-f]*$")
 
 
 def normalise_domain(host: str) -> str | None:
     """The site a host belongs to, in the form approvals are kept in: lower case, no trailing dot
     and no leading `www.` (so `www.dndbeyond.com` and `dndbeyond.com` are one site). None when it
-    is not a plain host name."""
+    is not a plain ASCII host name. A name whose last part is a number (`127.1`, `0x7f.1`) is
+    refused, because resolvers read it as an IP address. This is a check on what is *written*; it
+    is not a defence against a name that *resolves* to a private address: whatever fetches a page
+    must check the address it resolves to."""
+    if not host.isascii():  # (before lower-casing: some letters fold to ASCII ones)
+        return None
     name = host.strip().lower().rstrip(".")
-    if name.startswith("www."):
+    if name.startswith("www.") and "." in name[4:]:
         name = name[4:]
     if not name or len(name) > DOMAIN_MAX or _IP.match(name) or not _DOMAIN.match(name):
+        return None
+    last = name.rsplit(".", 1)[1]
+    if last.isdigit() or _HEX.match(last):
         return None
     return name
 

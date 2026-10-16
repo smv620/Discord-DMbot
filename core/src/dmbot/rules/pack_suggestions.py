@@ -152,7 +152,7 @@ class PackSuggestionStore(PackUpdateStore):
             entry = _entry(row)
             if entry.from_book:
                 raise RuleSetError(FROM_A_BOOK)
-            if entry.source_kind == "link":  # packs carry imported entries by reference (#1635)
+            if entry.source_kind == "link" or entry.credit_domain:  # (by reference, #1635)
                 raise RuleSetError(FROM_A_LINK)
             if entry.version != shown_version:
                 raise RuleSetError(ENTRY_CHANGED)

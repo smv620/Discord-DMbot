@@ -83,14 +83,18 @@ class SourceStore:
 
     # ---- pages: one copy per address, whoever imported it ----
 
-    async def page_for(self, url: str) -> Page | None:
-        """The page kept for this address (in its normal form), if any."""
+    async def page_for(self, url: str, *, include_restored: bool = False) -> Page | None:
+        """The page kept for this address (in its normal form), if any. A page recreated from a
+        backup file is `restored` (never fetched, so not trusted): it is not returned unless
+        asked for, so the fetch step fetches again and replaces it."""
         found = normalise_url(url)
         if found is None:
             return None
         async with self._db.unscoped() as conn:
             cur = await conn.execute(
-                f"SELECT {_PAGE_COLUMNS} FROM homebrew_pages WHERE url = %s", (found[0],)
+                f"SELECT {_PAGE_COLUMNS} FROM homebrew_pages WHERE url = %s"
+                + ("" if include_restored else " AND fetch_status <> 'restored'"),
+                (found[0],),
             )
             row = await cur.fetchone()
         return None if row is None else _page(row)
@@ -107,7 +111,9 @@ class SourceStore:
     ) -> Page:
         """Keep a page's content under its address: new, or the one copy replaced when the page
         is fetched again (every campaign that imported it sees the new words). The content is
-        cleaned like any entry's. Public content only: nothing about who asked for it."""
+        cleaned like any entry's. Public content only: nothing about who asked for it.
+        **Only the bot's own fetch step may call this**, with what it read from the address
+        itself, never with words a person supplied: it writes what every campaign will read."""
         found = normalise_url(url)
         if found is None:
             raise HomebrewError(BAD_ADDRESS)
@@ -133,6 +139,8 @@ class SourceStore:
 
     async def approved(self, guild_id: int, campaign_id: str, domain: str) -> bool:
         """Has this campaign approved this site? (`domain` as `normalise_domain` makes it.)"""
+        if normalise_domain(domain) != domain:
+            return False
         async with self._db.guild(guild_id) as conn:
             cur = await conn.execute(
                 "SELECT 1 AS ok FROM site_approvals WHERE guild_id = %s AND campaign_id = %s"
@@ -184,6 +192,8 @@ class SourceStore:
     async def revoke(self, guild_id: int, campaign_id: str, user_id: int, domain: str) -> bool:
         """Take an approval back: entries from that site stop being used until it is approved
         again (they are kept). Only the campaign's DMs. False when there was none."""
+        if normalise_domain(domain) != domain:
+            return False
         async with self._db.guild(guild_id) as conn:
             await require_dm(conn, guild_id, campaign_id, user_id, lock=True)
             cur = await conn.execute(

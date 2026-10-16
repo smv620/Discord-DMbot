@@ -27,8 +27,14 @@ URL = "https://www.dndbeyond.com/magic-items/2302039-amulet-of-trueshot"
 class Addresses(unittest.TestCase):
     def test_a_site_is_one_name_whatever_its_case_or_www(self) -> None:
         self.assertEqual(normalise_domain("WWW.DNDBeyond.com."), "dndbeyond.com")
-        for bad in ("", "localhost", "10.0.0.1", "a b.com", "bad_name.com", "-a.com", "x" * 300):
+        for bad in (
+            "", "localhost", "10.0.0.1", "a b.com", "bad_name.com", "-a.com", "x" * 300,
+            "0x7f.0.0.1", "127.1", "example.0x7f", "example.123",  # read as an IP address
+            "\u212a.com",  # the Kelvin sign: folds to an ASCII k
+            "caf\u00e9.com",
+        ):  # fmt: skip
             self.assertIsNone(normalise_domain(bad), bad)
+        self.assertEqual(normalise_domain("www.com"), "www.com")  # (a site called www)
 
     def test_an_address_is_https_with_a_plain_host_and_no_fragment(self) -> None:
         self.assertEqual(normalise_url(URL + "/#top"), (URL, "dndbeyond.com"))
@@ -190,11 +196,18 @@ class Saving(SourcesTest):
         with self.assertRaisesRegex(HomebrewError, "already has homebrew with that name"):
             await self.link(self.one)
 
-    async def test_a_link_entry_is_never_copied_into_a_pack_as_words(self) -> None:
+    async def test_a_link_or_a_websites_text_is_never_copied_into_a_pack_as_words(self) -> None:
         entry = await self.link(self.one)
         typed = await self.brew.add(GUILD_A, self.one.id, DM, kind="item", name="Lamp", text="x")
-        content, _ = pack_content.content_of([entry, typed])
+        await self.raw(
+            name="Rope", name_key="rope", source_kind="upload", credit_kind="website",
+            credit_domain="example.org",
+        )  # fmt: skip
+        everything = await self.brew.list(GUILD_A, self.one.id)
+        content, left = pack_content.content_of(everything)
         self.assertEqual([e["name"] for e in content["entries"]], ["Lamp"])
+        self.assertEqual(sorted(left), sorted([entry.name, "Rope"]))
+        assert typed.id
 
 
 class Pages(SourcesTest):
@@ -366,6 +379,42 @@ class Backups(SourcesTest):
         restored = await self.campaigns.import_backup(GUILD_A, backup, DM)
         (entry,) = await self.brew.list(GUILD_A, restored.id)
         self.assertEqual((entry.text, entry.summary), ("Aim better.", "A bow charm."))
+
+    async def test_a_renamed_link_entry_and_a_refreshed_page_still_restore(self) -> None:
+        entry = await self.link(self.one)
+        async with self.db.guild(GUILD_A) as conn:  # the DM's own name and kind for it
+            await conn.execute(
+                "UPDATE homebrew_entries SET name = 'My Amulet', name_key = 'my amulet',"
+                " kind = 'other' WHERE id = %s",
+                (entry.id,),
+            )
+        backup = await self.campaigns.export(GUILD_A, self.one.id)
+        restored = await self.campaigns.import_backup(GUILD_B, backup, DM)
+        (back,) = await self.brew.list(GUILD_B, restored.id)
+        self.assertEqual((back.name, back.kind, back.text), ("My Amulet", "other", "Aim better."))
+
+    async def test_words_planted_in_a_backup_never_become_a_page_others_rely_on(self) -> None:
+        link = await self.link(self.one)
+        backup = await self.campaigns.export(GUILD_A, self.one.id)
+        forged_url = "https://www.dndbeyond.com/magic-items/999-forged"
+        row = backup["sections"]["homebrew"][0]
+        page = {**row["page"], "url": forged_url, "text": "PLANTED", "fetched_at": 4_000_000_000}
+        row = {**row, "text": "PLANTED", "page": page}
+        planted = {**backup, "sections": {**backup["sections"], "homebrew": [row]}}
+        restored = await self.campaigns.import_backup(GUILD_B, planted, DM)
+        (back,) = await self.brew.list(GUILD_B, restored.id)
+        self.assertEqual(back.text, "PLANTED")  # (that campaign's own entry shows it)
+        # Another campaign importing that address does not get the planted words as a page.
+        self.assertIsNone(await self.sources.page_for(forged_url))
+        kept = await self.sources.page_for(forged_url, include_restored=True)
+        assert kept is not None
+        self.assertEqual((kept.fetch_status, kept.fetched_at), ("restored", 0))
+        fetched = await self.sources.save_page(
+            forged_url, kind="item", name="Real", text="The real words."
+        )
+        self.assertEqual((fetched.fetch_status, fetched.text), ("ok", "The real words."))
+        self.assertEqual(fetched.id, kept.id)
+        self.assertEqual(link.page_id, (await self.page()).id)  # the real page is untouched
 
     async def test_an_older_backup_loads_as_typed_by_the_maker(self) -> None:
         await self.brew.add(GUILD_A, self.one.id, DM, kind="item", name="Lamp", text="x")
