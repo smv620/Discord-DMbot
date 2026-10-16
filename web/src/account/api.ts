@@ -159,7 +159,12 @@ export interface SupportReceipt {
 export interface SupportQuestion {
   at: number;
   subject: string;
-  status: "new" | "answered" | "closed";
+  /** "escalated": a person on the team has it (the helper gave it up, or the person asked). */
+  status: "new" | "answered" | "closed" | "escalated";
+  /** Who wrote the latest answer, and its first line (#1432). Missing from an API older than
+   * that; null before any answer. The person's own words never come back. */
+  answeredBy?: "helper" | "team" | null;
+  latest?: string | null;
 }
 
 /** The person's own questions, newest first, and whether the team can reply by email (the
@@ -224,6 +229,15 @@ export interface RecapAudioState {
   error: string;
   current: boolean;
   canAskAgain: boolean;
+}
+
+/** One name of the campaign, as the recap page lists it (#1451). `saidAs` is the DM's spelling
+ * for the narrator, or null (the narrator says the name as written). Never a secret name. */
+export interface CampaignName {
+  id: string;
+  text: string;
+  kind: string;
+  saidAs: string | null;
 }
 
 /** The three audio files, as short-lived addresses to play. */
@@ -315,6 +329,11 @@ export interface AccountApi {
   saveRecap?(ref: string, summary: string, housekeeping: string[]): Promise<Recap>;
   /** Short-lived addresses of the recap's audio (#1418). Empty when there is none to play. */
   recapAudioLinks?(ref: string): Promise<RecapAudioLinks>;
+  /** The campaign's public names with the narrator's spelling (#1451). `campaignRef` is the
+   * recap's address without its last part: `<server>.<campaign>`. */
+  campaignNames?(campaignRef: string): Promise<CampaignName[]>;
+  /** Set (a string) or clear (null) how the narrator says one name. */
+  saveSaidAs?(campaignRef: string, nameId: string, saidAs: string | null): Promise<void>;
   /** "Make the audio again": the API allows it once in 10 minutes for a recap. */
   askRecapAudioAgain?(ref: string): Promise<Recap>;
   /** Post to the table (the bot sends it), Try again, or Don't post. */
@@ -491,6 +510,20 @@ export function httpApi(base: string, fetcher: typeof fetch = fetch): AccountApi
         recapsThisMonth?: RecapMonth[];
       };
       return { recaps: got.recaps, thisMonth: got.recapsThisMonth ?? [] };
+    },
+    campaignNames: async (campaignRef) =>
+      (
+        (await call(
+          "GET",
+          `/me/campaigns/${encodeURIComponent(campaignRef)}/names`,
+        )) as { names: CampaignName[] }
+      ).names,
+    saveSaidAs: async (campaignRef, nameId, saidAs) => {
+      await call(
+        "PUT",
+        `/me/campaigns/${encodeURIComponent(campaignRef)}/names/${encodeURIComponent(nameId)}/said-as`,
+        { saidAs },
+      );
     },
     recap: async (ref) => (await call("GET", `/me/recaps/${encodeURIComponent(ref)}`)) as Recap,
     saveRecap: async (ref, summary, housekeeping) =>

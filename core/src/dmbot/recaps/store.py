@@ -480,6 +480,20 @@ class RecapStore:
                 (guild_id, campaign_id, session_at),
             )
 
+    async def waiting_drafts(
+        self, guild_id: int, campaign_id: str, limit: int = 2
+    ) -> list[tuple[int, str]]:
+        """The campaign's finished recaps the DM has neither posted nor skipped, newest first, as
+        (session_at, title) (#1474). Only 'ready' and 'draft': a posted, dropped or unfinished one
+        is never listed."""
+        async with self._db.guild(guild_id) as conn:
+            cur = await conn.execute(
+                "SELECT session_at, title FROM recap_jobs WHERE guild_id = %s AND campaign_id = %s"
+                " AND state = 'ready' AND status = 'draft' ORDER BY session_at DESC LIMIT %s",
+                (guild_id, campaign_id, limit),
+            )
+            return [(int(r["session_at"]), str(r["title"])) for r in await cur.fetchall()]
+
     async def to_post(self, guild_id: int) -> list[tuple[str, int]]:
         """Recaps the DM pressed Post on, which the bot has yet to send."""
         async with self._db.guild(guild_id) as conn:
@@ -497,6 +511,24 @@ class RecapStore:
                 "UPDATE recap_jobs SET status = 'posted', decided_at = %s WHERE guild_id = %s"
                 " AND campaign_id = %s AND session_at = %s AND status = 'posting'",
                 (int(self._now()), guild_id, campaign_id, session_at),
+            )
+            return bool(cur.rowcount)
+
+    async def decide(self, guild_id: int, campaign_id: str, session_at: int, action: str) -> bool:
+        """The DM's choice made on the DM screen (#1455), the same two moves the website's page
+        makes: `post` (a ready draft becomes 'posting', which the bot then sends after its
+        checks) or `drop` (a draft is not posted). False: it was already decided, or isn't ready."""
+        if action == "post":
+            sql = "status = 'posting' WHERE state = 'ready' AND status = 'draft'"
+        elif action == "drop":
+            sql = "status = 'dropped' WHERE status = 'draft'"
+        else:
+            raise ValueError(action)
+        async with self._db.guild(guild_id) as conn:
+            cur = await conn.execute(
+                f"UPDATE recap_jobs SET {sql} AND guild_id = %s AND campaign_id = %s"
+                " AND session_at = %s",
+                (guild_id, campaign_id, session_at),
             )
             return bool(cur.rowcount)
 

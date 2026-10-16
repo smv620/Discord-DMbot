@@ -77,9 +77,23 @@ export const held: Held[] = [
   {
     date: "2026-10-16",
     title: "Recaps for your table",
-    what: "After a session, DMbot can write a short story-style recap. You read it first, change it if you like, and press Post to the table. Nothing goes to your players until you do. Paid plans only.",
+    what: "After a session, DMbot can write a short story-style recap. You read it first, change it if you like, and press Post to the table. Nothing goes to your players until you do. You can also read, post or skip it right on the DM screen, and the next session start reminds you once if you forgot. If your plan reads recaps aloud, you can tell the narrator how to say a name. Paid plans only.",
     reason:
       "Recaps are off until dev1 has checked a real one (#1382). When they are on, move this up and turn on the recap words (RECAPS_LIVE in recap-words.ts).",
+  },
+  {
+    date: "2026-10-16",
+    title: "Narrated recaps with music",
+    what: "DMbot can read your recap out loud in a narrator's voice, with music behind it, and you can tell it how to say a name. It comes with Guild and Pro, and you can add it to other paid plans.",
+    reason:
+      "Needs the owner's ElevenLabs account and the first real narrated recap (#1385). When it is on, move this up and turn on RECAP_AUDIO_LIVE in recap-words.ts (it needs RECAPS_LIVE and the add-on's price too).",
+  },
+  {
+    date: "2026-10-16",
+    title: "DMbot's helper answers questions",
+    what: "Ask the team a question from your account page and you get an email at once to say we have it. DMbot's helper, an AI program and not a person, answers first, a person on the team takes over if it cannot help or you ask, and your account page shows who answered.",
+    reason:
+      "The helper answers only once the support helper is deployed and has answered a real question (#1431, #1452). When it is on, move this up and turn on SUPPORT_AI_LIVE in support-words.ts.",
   },
   {
     date: "2026-10-15",

@@ -92,6 +92,7 @@ from dmbot.memory.models import (
     is_id,
     lookup_key,
     new_id,
+    spelling_key,
 )
 from dmbot.memory.ontology import (
     ACTIVE,
@@ -1283,30 +1284,61 @@ class MemoryStore:
         """Confirm or reject an alias, or mark it DM-only ([🤫 Keep secret from players]).
         Only the DM confirms, or makes a secret visible again."""
         async with self._write(guild_id, campaign_id, source) as w:
+            return Written(await self._change_alias(w, alias_id, source, status, secret), w.batch)
+
+    async def make_name_not_secret(
+        self, guild_id: int, campaign_id: str, alias_id: str, *, source: str
+    ) -> Written[list[Alias]]:
+        """The secret-said-aloud question's "Not secret any more" (#1429): this name stops being
+        secret, and so does every other confirmed secret name of this campaign that is the same
+        spelling (the question was asked once for all of them). One batch, so one undo puts every
+        one of them back. The names are read inside the write, so none is missed."""
+        async with self._write(guild_id, campaign_id, source) as w:
             current = await w.get(ALIASES, alias_id)
             if current is None:
                 raise MemoryRuleError(NOT_FOUND)
-            owner = await w.get(ENTITIES, current["entity_id"])
-            if (
-                owner is not None
-                and current["key"] == lookup_key(owner["name"])
-                and (secret or status == REJECTED)
-            ):
-                # The main name is the one everyone sees and DMbot listens for.
-                raise MemoryRuleError("That's the main name. Make another name the main one first.")
-            changes: dict[str, Any] = {}
-            if status is not None:
-                _check_choice(status, FACT_STATUSES, "alias status")
-                check_status_change(current["status"], status, source)
-                changes["status"] = status
-            if secret is not None:
-                if current["secret"] and not secret and source != DM:
-                    raise MemoryRuleError("Only the DM can stop keeping that secret.")
-                changes["secret"] = secret
-                if secret:
-                    changes["said_as"] = None  # a secret name is never sent to the narrator
-            row = await w.update(ALIASES, alias_id, changes)
-            return Written(_alias(row), w.batch)
+            cur = await w.conn.execute(
+                "SELECT a.id, a.text FROM memory_aliases a JOIN memory_entities e"
+                " ON e.guild_id = a.guild_id AND e.campaign_id = a.campaign_id"
+                " AND e.id = a.entity_id WHERE a.guild_id = %s AND a.campaign_id = %s"
+                " AND a.secret AND a.status = 'confirmed' AND e.status = 'confirmed'"
+                " AND e.type <> 'person' ORDER BY a.id",
+                w.ids,
+            )
+            wanted = spelling_key(str(current["text"]))
+            ids = [alias_id]
+            for r in await cur.fetchall():
+                if str(r["id"]) != alias_id and spelling_key(str(r["text"])) == wanted:
+                    ids.append(str(r["id"]))
+            done = [await self._change_alias(w, i, source, None, False) for i in ids]
+            return Written(done, w.batch)
+
+    async def _change_alias(
+        self, w: Changes, alias_id: str, source: str, status: str | None, secret: bool | None
+    ) -> Alias:
+        current = await w.get(ALIASES, alias_id)
+        if current is None:
+            raise MemoryRuleError(NOT_FOUND)
+        owner = await w.get(ENTITIES, current["entity_id"])
+        if (
+            owner is not None
+            and current["key"] == lookup_key(owner["name"])
+            and (secret or status == REJECTED)
+        ):
+            # The main name is the one everyone sees and DMbot listens for.
+            raise MemoryRuleError("That's the main name. Make another name the main one first.")
+        changes: dict[str, Any] = {}
+        if status is not None:
+            _check_choice(status, FACT_STATUSES, "alias status")
+            check_status_change(current["status"], status, source)
+            changes["status"] = status
+        if secret is not None:
+            if current["secret"] and not secret and source != DM:
+                raise MemoryRuleError("Only the DM can stop keeping that secret.")
+            changes["secret"] = secret
+            if secret:
+                changes["said_as"] = None  # a secret name is never sent to the narrator
+        return _alias(await w.update(ALIASES, alias_id, changes))
 
     async def said_as(self, guild_id: int, campaign_id: str, entity_id: str) -> str | None:
         """How the narrator says an entry's main name, if the DM gave a spelling (#1419)."""

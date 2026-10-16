@@ -8,11 +8,13 @@ import logging
 import os
 import sys
 import time
+from dataclasses import replace
 from urllib.parse import urlsplit
 
 import uvicorn
 
 from dmbot import entitlements, mail
+from dmbot.ai import DEFAULT_MODELS, AIModelTier, AnthropicClient, Feature
 from dmbot.config import ConfigError
 from dmbot.db import Database, DatabaseError
 from dmbot.logs import LOG_FORMATS, LOG_LEVELS, configure_logging
@@ -27,6 +29,7 @@ from dmbot.web.moving import EmailedMoveCodes, forget_old_asks
 from dmbot.web.payments import FakeProvider, PaymentProvider
 from dmbot.web.settings import WebSettings, load_web_settings
 from dmbot.web.stripe import StripeProvider
+from dmbot.web.support_ai import SupportHelper, SupportSpend
 
 log = logging.getLogger("dmbot.web")
 CLEANUP_SECONDS = 3600
@@ -78,6 +81,16 @@ async def _sync_moves(db: Database, payments: PaymentProvider) -> None:
         except Exception:
             log.exception("Updating moved accounts' payment records failed; trying again")
         await asyncio.sleep(MOVE_SYNC_SECONDS)
+
+
+async def _help_with_tickets(helper: SupportHelper) -> None:
+    """The support helper's pass (#1431), every minute: tickets waiting for DMbot's helper."""
+    while True:
+        try:
+            await helper.run_once()
+        except Exception:
+            log.exception("The support helper's pass failed")
+        await asyncio.sleep(60)
 
 
 async def _sweep_strays(db: Database, payments: PaymentProvider) -> None:
@@ -138,6 +151,20 @@ async def serve(settings: WebSettings) -> None:
     )
     # A move code is mailed like a sign-in link, so it needs the same mailer (#1246).
     move_codes = EmailedMoveCodes(db, mailer) if mailer is not None else None
+    # DMbot's support helper (#1431): needs the AI key to answer; without it tickets still get their
+    # thank-you and the team's replies work, and nothing is answered by the AI.
+    ai_client: AnthropicClient | None = None
+    if settings.ai_key:
+        models = replace(DEFAULT_MODELS, deep=settings.support_ai_model or DEFAULT_MODELS.deep)
+        ai_client = AnthropicClient(settings.ai_key, models, watch=SupportSpend())
+    helper = SupportHelper(
+        db,
+        ai_client.tier(AIModelTier.DEEP, Feature.SUPPORT) if ai_client is not None else None,
+        mailer,
+        team_email=settings.support_team_email,
+        site_url=settings.site_url,
+        link_secret=settings.link_token_secret,
+    )
     app = create_app(
         settings,
         db,
@@ -148,8 +175,10 @@ async def serve(settings: WebSettings) -> None:
         google=google,
         mailer=mailer,
         move_codes=move_codes,
+        helper=helper,
     )
     sweeper = asyncio.create_task(_sweep(db))
+    helping = asyncio.create_task(_help_with_tickets(helper)) if ai_client is not None else None
     syncer = asyncio.create_task(_sync_moves(db, payments)) if payments is not None else None
     stray_sweeper = (
         asyncio.create_task(_sweep_strays(db, payments)) if payments is not None else None
@@ -168,6 +197,12 @@ async def serve(settings: WebSettings) -> None:
         sweeper.cancel()
         with contextlib.suppress(asyncio.CancelledError):
             await sweeper
+        if helping is not None:
+            helping.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await helping
+        if ai_client is not None:
+            await ai_client.close()
         if syncer is not None:
             syncer.cancel()
             with contextlib.suppress(asyncio.CancelledError):

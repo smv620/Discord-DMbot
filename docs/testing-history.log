@@ -2475,3 +2475,36 @@ Overall ...................................... PASS (Deepgram baseline: 33/33, 1
   Also today: scripts/set-key refused ELEVENLABS_API_KEY because the line was commented out in .env.example (#1440); fixed by #1443 (the line is active and empty); dev1 pulled the
   fix and tested set-key on a throwaway env file only (it saves); the owner saves the key themselves at set-key's hidden prompt, and the narrator voice goes in .env as
   ELEVENLABS_VOICE_ID (the code's name; #1385 said DMBOT_RECAP_VOICE_ID). Nothing turns on until DMBOT_RECAPS=1, a key and a voice id all exist.
+
+==============================================================================
+2026-10-16  dev1  DEPLOY: migration 0085 recap_audio_again, the rebuild and the recap-audio volume are live as e8555e2c; dry run of 0086
+  Supervisor's go on #516 (06:21): deploy the head dry-run, e8555e2c, with a green core job (06:11), rebuilding both containers (the compose volumes changed), old containers stopped first.
+  Dry run first (05:3x, at edfe5a60, the same migrations): a fresh pg_dumpall of the live database (at 0084), restored into a throwaway postgres:16, migrated as the dmbot role, deleted after:
+  "Database updated: 0085_recap_audio_again" in 0.15 s; a second run applied nothing; rows unchanged (3 campaigns, 152 entries, 147 transcript lines, 0 recap jobs); recap_jobs.audio_asked_at exists and
+  dmbot_recap_audio_again is security definer and executable by the website's role.
+  No game running (active_sessions 0). Backup: ~/db-backups/dmbot-before-e8555e2c-20261016T062559Z.sql (chmod 600). `docker compose build core web-api` with GIT_COMMIT set (core/Dockerfile now makes
+  /data/recap-audio owned by the bot; the image has ffmpeg 7.1.5); `docker compose stop core web-api` at 06:28:39 UTC (neither running afterwards); `up -d --no-deps core`; `up -d --no-deps web-api`.
+  Result: core logged "Database updated: 0085_recap_audio_again", "ears connected" and "Connected to 1 server(s)"; web-api healthy; schema_migrations 85 rows, last 0085_recap_audio_again.
+  Supervisor's checks: the volume discord-dmbot_recap-audio is mounted read-write at /data/recap-audio in core (a test write worked) and read-only at /recap-audio in web-api (a write is refused);
+  WEB_RECAP_AUDIO_DIR=/recap-audio is set in web-api; GET /recap-audio/x/voice without a signature answers 404 (inside web-api) and /health answers 200; ffmpeg 7.1.5 works in the running core.
+  Start-up warning (harmless, expected): .env is missing ELEVENLABS_API_KEY, ELEVENLABS_VOICE_ID, ELEVENLABS_SPEECH_MODEL and DMBOT_RECAP_AUDIO_MAX_CREDITS since #1443 made those lines active in
+  .env.example; defaults apply, nothing turns on; the owner saves the key with scripts/set-key (which works now) and may run scripts/update-env for the rest. The old AI_MODEL line still warns too.
+  10-minute check, 06:41 UTC (12 minutes after the start): 0 ERROR, CRITICAL or traceback lines in core and web-api since 06:28; both up, web-api healthy; 85 migrations; no session or recap in the logs.
+  Nothing turned on: recaps off (DMBOT_RECAPS unset), no ElevenLabs key, the extractor off.
+  Not checked: a Try It test account seeing the Support form, the own-ticket listing and the SUPPORT_TEAM_EMAIL test (all need the dev site's sign-in, which the public tunnel does not publish,
+  and the ticket ones need a paid account: Stripe test mode #1096); the owner's test session (the "Before tonight" note #1406, the secret-name question #1410).
+  Dry run of 0086_support_thread (#1452) on development eafa5dcd (06:4x): live copy at 0085: "Database updated: 0086_support_thread" in 0.20 s; second run nothing; rows unchanged; support_replies and
+  support_tickets have row-level security on and forced. Ready to deploy (line in docs/testing-status.log); not deployed.
+2026-10-16  dev1  DEPLOY: migrations 0086 support_thread, 0087 web_names and 0088 support_mine_answer, the rebuild and the support flow are live as 1ba2c3d3 (Supervisor's "go", cross-session message ~07:30 UTC). Core CI on the head: success.
+  Dry run (07:3x UTC) on a copy of the live database (pg_dumpall into a throwaway postgres:16 on its own network, at 0085): "Database updated: 0086_support_thread, 0087_web_names, 0088_support_mine_answer"
+  in 0.21 s; a second run applied nothing; 88 migrations; rows unchanged (147 transcript lines, 3 campaigns); support_replies and support_tickets have row-level security on and forced;
+  support_replies policies: support_admin_read, support_admin_add, read_own_answers. Copy deleted. No game running. Backup: ~/db-backups/dmbot-before-1ba2c3d3-1016-0735.sql (chmod 600).
+  `docker compose build core web-api` with GIT_COMMIT set; `docker compose stop core web-api` then `up -d --no-deps core` (07:42 UTC), then web-api.
+  Result: core logged "Database updated: 0086_support_thread, 0087_web_names, 0088_support_mine_answer"; web-api healthy; 0 ERROR, CRITICAL or traceback lines in core and web-api in the first 5 minutes.
+  Supervisor's checks: web-api has the four new settings but all are empty (MAIL_SUPPORT_FROM, MAIL_ALERTS_FROM, MAIL_INBOUND_SECRET, SUPPORT_AI_MODEL: the owner has not set them in .env), and ANTHROPIC_API_KEY is present
+  in web-api. /mail/inbound inside web-api: POST without the secret answers 404 as designed, but GET answers 405 (the route exists and takes POST only), not 404 as the handover expected.
+  Start-up warning (harmless): .env is missing 10 settings that are in .env.example (the four mail and support ones, the four ElevenLabs and recap-audio ones, DMBOT_RECAPS_PER_MONTH, DMBOT_RECAP_AUDIO_PER_MONTH); defaults apply.
+  Not done, not mine: setting MAIL_SUPPORT_FROM and MAIL_ALERTS_FROM in .env (the owner) and the Cloudflare route ^/mail/inbound$ (the owner, in the dashboard).
+  10-minute check, 07:52 UTC (10 minutes after the start): 0 ERROR, CRITICAL or traceback lines in core and web-api since 07:42; core "ears connected" and "Connected to 1 server(s)";
+  web-api healthy; schema_migrations 88 rows, last 0088_support_mine_answer. The DM-screen recap buttons (#1457) register in setup_hook with no log line; a bad registration would have stopped the start, and it did not.
+  Nothing turned on for users (recaps off, no ElevenLabs key, no mail sender set, the extractor off).

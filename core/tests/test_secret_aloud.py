@@ -6,7 +6,7 @@ from __future__ import annotations
 import unittest
 from types import SimpleNamespace
 from typing import Any, cast
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 from dmbot.bot import DMBot
 from dmbot.memory.models import DM, MemoryRuleError
@@ -73,9 +73,14 @@ class Finding(unittest.TestCase):
     def test_a_name_too_short_to_search_for_is_ignored(self) -> None:
         self.assertEqual(spoken([SecretName("f" * 32, "Al")], ["Al went home"]), [])
 
-    def test_two_entries_sharing_a_name_are_asked_once(self) -> None:
-        twins = [AURIL, SecretName("9" * 32, "auril")]
-        self.assertEqual(len(spoken(twins, ["Auril"])), 1)
+    def test_two_entries_sharing_a_name_are_asked_once_and_both_are_kept(self) -> None:
+        twins = [AURIL, SecretName("9" * 32, "auril"), SecretName("8" * 32, "Auril's")]
+        (said,) = spoken(twins, ["Auril"])
+        self.assertEqual(said.alias_id, AURIL.alias_id)  # the first one is what the buttons carry
+        self.assertEqual(said.alias_ids, (AURIL.alias_id, "9" * 32, "8" * 32))
+        self.assertEqual((said.entries, said.times), (3, 1))
+        (alone,) = spoken([AURIL], ["Auril"])
+        self.assertEqual((alone.entries, alone.alias_ids), (1, (AURIL.alias_id,)))
 
     def test_nothing_said_or_nothing_secret_finds_nothing(self) -> None:
         self.assertEqual(spoken([], ["Auril"]), [])
@@ -135,6 +140,105 @@ class Reading(MemoryTest):
         )  # fmt: skip
         await self.memory.update_alias(GUILD_A, self.c, secret.value.id, source=DM, secret=False)
         self.assertEqual(await secret_names(self.memory, GUILD_A, self.c), [])
+
+
+class SharedSpelling(MemoryTest):
+    """Two entries that keep the same name secret: one question, one answer, one undo (#1429)."""
+
+    async def twins(self, c: str | None = None, name: str = "Hooded One") -> tuple[str, str]:
+        c = c or self.c
+        mira = await self.add("Mira", campaign=c, type="character", role="npc", status="confirmed")
+        wolf = await self.add("Wolf", campaign=c, type="character", role="npc", status="confirmed")
+        first = await self.memory.add_alias(
+            GUILD_A, c, mira, name, kind="nickname", source="dm", status="confirmed", secret=True
+        )
+        second = await self.memory.add_alias(
+            GUILD_A, c, wolf, name, kind="nickname", source="dm", status="confirmed", secret=True
+        )
+        return first.value.id, second.value.id
+
+    async def test_one_press_clears_every_entry_with_the_spelling_as_one_batch(self) -> None:
+        a, b = await self.twins()
+        found = await secret_names(self.memory, GUILD_A, self.c)
+        (said,) = spoken(found, ["the hooded one"])
+        self.assertEqual(sorted(said.alias_ids), sorted([a, b]))
+        done = await self.memory.make_name_not_secret(GUILD_A, self.c, said.alias_id, source=DM)
+        self.assertEqual(sorted(x.id for x in done.value), sorted([a, b]))
+        self.assertEqual(await secret_names(self.memory, GUILD_A, self.c), [])
+        async with self.memory._read(GUILD_A, self.c) as scope:
+            cur = await scope.conn.execute(
+                "SELECT count(DISTINCT batch) AS n FROM memory_changes WHERE guild_id = %s"
+                " AND campaign_id = %s AND batch = %s",
+                (*scope.ids, done.batch),
+            )
+            row = await cur.fetchone()
+            cur = await scope.conn.execute(
+                "SELECT count(*) AS n FROM memory_changes WHERE guild_id = %s AND campaign_id = %s"
+                " AND batch = %s AND table_name = 'memory_aliases'",
+                (*scope.ids, done.batch),
+            )
+            changed = await cur.fetchone()
+        assert row is not None and changed is not None
+        self.assertEqual((row["n"], changed["n"]), (1, 2))  # both changes in the one batch
+
+    async def test_one_undo_puts_both_back(self) -> None:
+        a, b = await self.twins()
+        done = await self.memory.make_name_not_secret(GUILD_A, self.c, a, source=DM)
+        self.assertEqual(await secret_names(self.memory, GUILD_A, self.c), [])
+        assert done.batch is not None
+        await self.memory.undo(GUILD_A, self.c, done.batch)
+        back = await secret_names(self.memory, GUILD_A, self.c)
+        self.assertEqual(sorted(n.alias_id for n in back), sorted([a, b]))
+
+    async def test_pressing_from_either_entry_clears_both(self) -> None:
+        a, b = await self.twins()
+        await self.memory.make_name_not_secret(GUILD_A, self.c, b, source=DM)
+        self.assertEqual(await secret_names(self.memory, GUILD_A, self.c), [])
+        self.assertTrue(a)
+
+    async def test_a_different_name_and_another_campaign_are_left_alone(self) -> None:
+        a, _b = await self.twins()
+        mira = await self.add("Zed", type="character", role="npc", status="confirmed")
+        other_name = await self.memory.add_alias(
+            GUILD_A, self.c, mira, "Someone Else", kind="nickname", source="dm",
+            status="confirmed", secret=True,
+        )  # fmt: skip
+        other = (await self.campaigns.create(GUILD_A, "Other", 77)).id
+        theirs = await self.twins(other)
+        await self.memory.make_name_not_secret(GUILD_A, self.c, a, source=DM)
+        left = {n.alias_id for n in await secret_names(self.memory, GUILD_A, self.c)}
+        self.assertEqual(left, {other_name.value.id})
+        kept = {n.alias_id for n in await secret_names(self.memory, GUILD_A, other)}
+        self.assertEqual(kept, set(theirs))
+
+    async def test_a_rule_that_refuses_the_second_entry_leaves_the_first_secret_too(self) -> None:
+        a, b = await self.twins()
+        real = self.memory._change_alias
+        calls: list[str] = []
+
+        async def refuse_the_second(w: Any, alias_id: str, *args: Any) -> Any:
+            calls.append(alias_id)
+            if len(calls) == 2:
+                raise MemoryRuleError("No.")
+            return await real(w, alias_id, *args)
+
+        with (
+            patch.object(self.memory, "_change_alias", refuse_the_second),
+            self.assertRaises(MemoryRuleError),
+        ):
+            await self.memory.make_name_not_secret(GUILD_A, self.c, a, source=DM)
+        self.assertEqual(len(calls), 2)
+        left = {n.alias_id for n in await secret_names(self.memory, GUILD_A, self.c)}
+        self.assertEqual(left, {a, b})  # all or nothing
+
+    async def test_only_the_dm_may_clear_them(self) -> None:
+        a, b = await self.twins()
+        with self.assertRaises(MemoryRuleError):
+            await self.memory.make_name_not_secret(GUILD_A, self.c, a, source="extractor")
+        with self.assertRaises(MemoryRuleError):
+            await self.memory.make_name_not_secret(GUILD_A, self.c, "0" * 32, source=DM)
+        left = {n.alias_id for n in await secret_names(self.memory, GUILD_A, self.c)}
+        self.assertEqual(left, {a, b})
 
 
 def fake_table(*, session: str | None = "s1") -> Any:
@@ -232,7 +336,13 @@ def press(
     campaign = SimpleNamespace(guild_id=GUILD_A, id="c" * 32, dm_user_ids=frozenset({DM_ID}))
     bot = SimpleNamespace(
         campaigns=SimpleNamespace(get=AsyncMock(return_value=campaign)),
-        memory=SimpleNamespace(update_alias=AsyncMock()) if memory == "default" else memory,
+        memory=(
+            SimpleNamespace(
+                make_name_not_secret=AsyncMock(return_value=SimpleNamespace(value=[object()]))
+            )
+            if memory == "default"
+            else memory
+        ),
         lookup=SimpleNamespace(drop=MagicMock()),
     )
     response = SimpleNamespace(
@@ -252,8 +362,8 @@ class TheButtons(unittest.IsolatedAsyncioTestCase):
     async def test_not_secret_any_more_clears_the_flag_as_the_dm(self) -> None:
         button, (bot, interaction) = press("open", DM_ID)
         await button.callback(interaction)
-        bot.memory.update_alias.assert_awaited_once_with(
-            GUILD_A, "c" * 32, "a" * 32, source=DM, secret=False
+        bot.memory.make_name_not_secret.assert_awaited_once_with(
+            GUILD_A, "c" * 32, "a" * 32, source=DM
         )
         bot.lookup.drop.assert_called_once()
         self.assertEqual(
@@ -264,7 +374,7 @@ class TheButtons(unittest.IsolatedAsyncioTestCase):
     async def test_keep_it_secret_changes_nothing_and_closes_the_question(self) -> None:
         button, (bot, interaction) = press("keep", DM_ID)
         await button.callback(interaction)
-        bot.memory.update_alias.assert_not_awaited()
+        bot.memory.make_name_not_secret.assert_not_awaited()
         self.assertEqual(
             interaction.response.edit_message.await_args.kwargs["content"], kept_text("That name")
         )
@@ -273,13 +383,13 @@ class TheButtons(unittest.IsolatedAsyncioTestCase):
         for act in ("keep", "open"):
             button, (bot, interaction) = press(act, PLAYER, manager=True)
             await button.callback(interaction)
-            bot.memory.update_alias.assert_not_awaited()
+            bot.memory.make_name_not_secret.assert_not_awaited()
             interaction.response.edit_message.assert_not_awaited()
             self.assertEqual(interaction.response.send_message.await_args.args[0], NOT_YOURS)
 
     async def test_a_rule_the_memory_refuses_is_told_and_the_question_stays(self) -> None:
         button, (bot, interaction) = press("open", DM_ID)
-        bot.memory.update_alias.side_effect = MemoryRuleError("That name is gone.")
+        bot.memory.make_name_not_secret.side_effect = MemoryRuleError("That name is gone.")
         await button.callback(interaction)
         interaction.response.edit_message.assert_not_awaited()
         self.assertEqual(interaction.response.send_message.await_args.args[0], "That name is gone.")
@@ -305,6 +415,27 @@ class TheButtons(unittest.IsolatedAsyncioTestCase):
         text = question_text("Auril")
         for needed in ("anyone in this server can read", "Keep it secret", "Not secret any more"):
             self.assertIn(needed, text)
+
+    def test_the_question_says_when_several_entries_share_the_name(self) -> None:
+        self.assertNotIn("names)", question_text("Auril"))
+        self.assertNotIn("covers", question_text("Auril"))
+        self.assertIn("**Auril** (two names)", question_text("Auril", 2))
+        self.assertIn("DMbot has it twice. Your answer covers both.", question_text("Auril", 2))
+        self.assertIn("**Auril** (3 names)", question_text("Auril", 3))
+        self.assertIn("DMbot has it 3 times. Your answer covers all 3.", question_text("Auril", 3))
+        self.assertIn("covers both copies", opened_text("Auril", 2))
+        self.assertIn("puts all 3 back", opened_text("Auril", 3))
+        self.assertEqual(opened_text("Auril"), opened_text("Auril", 1))
+
+    async def test_the_reply_says_how_many_names_were_cleared(self) -> None:
+        button, (bot, interaction) = press("open", DM_ID)
+        bot.memory.make_name_not_secret.return_value = SimpleNamespace(value=[1, 2])
+        interaction.message = SimpleNamespace(content=question_text("Auril", 2))
+        await button.callback(interaction)
+        self.assertEqual(
+            interaction.response.edit_message.await_args.kwargs["content"],
+            opened_text("Auril", 2),
+        )
 
     def test_the_view_has_the_two_buttons_with_ids_that_survive_a_restart(self) -> None:
         view = secret_aloud_view("c" * 32, "a" * 32)

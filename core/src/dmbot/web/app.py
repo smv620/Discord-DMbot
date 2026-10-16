@@ -60,6 +60,7 @@ from dmbot.web.feedback import Discussions, FeedbackError, HumanCheck
 from dmbot.web.limits import LIMITS, RateLimit, free_ticket_refusal
 from dmbot.web.me import build_me
 from dmbot.web.moving import MoveCodes, can_move
+from dmbot.web.names import list_names, set_said_as
 from dmbot.web.payments import PaymentError, PaymentProvider, paid_plan_ids
 from dmbot.web.recaps import (
     RecapError,
@@ -72,6 +73,15 @@ from dmbot.web.recaps import (
 )
 from dmbot.web.sessions import Session
 from dmbot.web.settings import WebSettings
+from dmbot.web.support_ai import SupportHelper
+from dmbot.web.support_mail import (
+    MAX_BODY_BYTES,
+    fresh_words,
+    recipients,
+    sender_address,
+    ticket_of,
+    verify_signature,
+)
 
 log = logging.getLogger(__name__)
 
@@ -116,6 +126,7 @@ def create_app(
     move_codes: MoveCodes | None = None,
     route_limits: dict[str, RateLimit] | None = None,
     google: GoogleSignIn | None = None,
+    helper: SupportHelper | None = None,
     admin_sessions: AdminSessions | None = None,
     admin_tries: FailedTries | None = None,
     clock: Clock = _system_clock,
@@ -195,9 +206,9 @@ def create_app(
     async def guard(
         request: Request, call_next: Callable[[Request], Awaitable[Response]]
     ) -> Response:
-        # The payment company's webhook is checked by its signature instead (it can't send
-        # our header or come from the website).
-        webhook = request.url.path.startswith("/webhooks/")
+        # The payment company's webhook and the mail service's inbound one are checked by their
+        # signatures instead (they can't send our header or come from the website).
+        webhook = request.url.path.startswith("/webhooks/") or request.url.path == "/mail/inbound"
         if request.method not in ("GET", "HEAD", "OPTIONS") and not webhook:
             origin = request.headers.get("origin")
             if request.headers.get(REQUEST_HEADER) != "1" or (
@@ -601,6 +612,38 @@ def create_app(
         return FileResponse(
             path, media_type="audio/mpeg", headers={"Cache-Control": "private, no-store"}
         )
+
+    @app.get("/me/campaigns/{ref}/names")
+    async def me_campaign_names(ref: str, signed: Signed) -> dict[str, Any]:
+        """The campaign's confirmed public names with the narrator's spelling (#1451). DM only; a
+        player or another campaign's DM gets "not found". Never a secret name or a person."""
+        session, _token = signed
+        try:
+            return {"names": await list_names(db, session, ref)}
+        except RecapError as err:
+            status, detail = recap_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+
+    @app.put("/me/campaigns/{ref}/names/{alias_id}/said-as")
+    async def me_campaign_name_said_as(
+        ref: str, alias_id: str, signed: Signed, request: Request
+    ) -> dict[str, bool]:
+        """Set or clear how the narrator says one name: `{"saidAs": "Kah-zeth"}` or `null`."""
+        session, _token = signed
+        try:
+            body = await request.json()
+        except ValueError:
+            body = None
+        # The key must be there: a body without it is a mistake, not a request to clear.
+        said = body.get("saidAs") if isinstance(body, dict) and "saidAs" in body else 0
+        if said is not None and not isinstance(said, str):
+            raise HTTPException(status_code=422, detail="bad_text")
+        try:
+            await set_said_as(db, session, ref, alias_id, said)
+        except RecapError as err:
+            status, detail = recap_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+        return {"ok": True}
 
     @app.post("/me/recaps/{ref}/{action}")
     async def me_recap_decide(ref: str, action: str, signed: Signed) -> dict[str, Any]:
@@ -1198,7 +1241,7 @@ def create_app(
                         # A wrong answer uses the turn, so guessing Turnstile answers is slow.
                         raise _Refused("not_human")
                     raise HTTPException(status_code=400, detail="not_human")
-            await support.add(db, session.user_id, plan.plan, ticket, now=now)
+            ticket_id = await support.add(db, session.user_id, plan.plan, ticket, now=now)
         except _Refused as refused:
             raise HTTPException(status_code=400, detail=refused.code) from None
         except FeedbackError as exc:
@@ -1218,9 +1261,74 @@ def create_app(
                 "An account sent a support ticket.\n\n"
                 f"DMbot ID: {to_dmbot_id(session.user_id)}\nPlan: {plan.plan}\n\n"
                 f"Read it on the admin page: {settings.site_url}/admin\n",
+                sender=mailer.settings.alerts_sender,  # (#1431: alerts come from their own address)
             )
+        if helper is not None:
+            await helper.acknowledge(ticket_id)  # one short thank-you; never raises
         # Whether the team can reply by email: the thank-you says so, or says what to do (#1340).
         return {"ok": True, "reply": await account_email(db, session.user_id) is not None}
+
+    inbound_counts: dict[str, int] = {}
+    inbound_seen: dict[str, float] = {}  # webhook ids handled lately: a retry is not read twice
+
+    @app.post("/mail/inbound")
+    async def inbound_mail(request: Request) -> dict[str, bool]:
+        """A person's emailed reply to a support ticket (#1431), sent by the mail service's
+        inbound webhook. Signed (Svix style) with MAIL_INBOUND_SECRET; without the secret the
+        route does not exist. A message to no ticket, with a wrong token, or from any address but
+        the ticket owner's account address is dropped and only counted (the log never holds who or
+        what), and the service is still told "ok" so it does not send the same mail again."""
+        if not settings.mail_inbound_secret or helper is None:
+            raise HTTPException(status_code=404, detail="not_found")
+        with contextlib.suppress(ValueError):
+            if int(request.headers.get("content-length", "0")) > MAX_BODY_BYTES:
+                raise HTTPException(status_code=413, detail="too_long")
+        body = b""
+        async for chunk in request.stream():
+            body += chunk
+            if len(body) > MAX_BODY_BYTES:
+                raise HTTPException(status_code=413, detail="too_long")
+        if not verify_signature(
+            settings.mail_inbound_secret, request.headers, body, now=float(clock())
+        ):
+            raise HTTPException(status_code=401, detail="bad_signature")
+
+        message_id = request.headers.get("svix-id", "")
+        moment = float(clock())
+        for old in [k for k, at in inbound_seen.items() if moment - at > 600]:
+            del inbound_seen[old]
+        if message_id in inbound_seen:
+            return {"ok": True}  # a retry of a message already read
+        inbound_seen[message_id] = moment
+
+        def dropped(why: str) -> dict[str, bool]:
+            inbound_counts[why] = inbound_counts.get(why, 0) + 1
+            log.info("Inbound support mail dropped (%s); %d so far", why, inbound_counts[why])
+            return {"ok": True}
+
+        try:
+            data = json.loads(body)
+        except (ValueError, RecursionError):
+            return dropped("not_json")
+        if isinstance(data, dict) and isinstance(data.get("data"), dict):
+            data = data["data"]  # some services wrap the message
+        if not isinstance(data, dict):
+            return dropped("not_json")
+        ticket_id = ticket_of(recipients(data.get("to")), settings.link_token_secret)
+        if ticket_id is None:
+            return dropped("bad_token")
+        found = await support.one(db, ticket_id)
+        owner = (found.email or "").lower() if found is not None else ""
+        if found is None or not owner or sender_address(data.get("from")) != owner:
+            return dropped("unknown_sender")
+        text = data.get("text")
+        words = fresh_words(text) if isinstance(text, str) else ""
+        if not words:
+            return dropped("empty")
+        if not await helper.customer_replied(ticket_id, words):
+            return dropped("not_kept")
+        log.info("Inbound support mail kept on ticket %s", ticket_id)  # the number only
+        return {"ok": True}
 
     @app.get("/support/mine")
     async def my_support(signed: Signed) -> dict[str, Any]:
@@ -1232,7 +1340,15 @@ def create_app(
         reply = bool(rows) and await account_email(db, session.user_id) is not None
         return {
             "tickets": [
-                {"at": r.created_at, "subject": r.subject, "status": r.status} for r in rows
+                {
+                    "at": r.created_at,
+                    "subject": r.subject,
+                    "status": r.status,
+                    # Who wrote the latest answer and its first line (#1432); null before one.
+                    "answeredBy": {"ai": "helper", "person": "team"}.get(r.answered_by or ""),
+                    "latest": r.latest,
+                }
+                for r in rows
             ],
             "reply": reply,
         }
@@ -1246,6 +1362,7 @@ def create_app(
             settings,
             db=db,
             google=google,
+            helper=helper,
             admin_sessions=admin_sessions or AdminSessions(),
             tries=admin_tries or FailedTries(),
             client_address=client_address,

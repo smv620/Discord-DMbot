@@ -6,6 +6,7 @@ without its words; old and deleted accounts' tickets go; and its words reach no 
 
 from __future__ import annotations
 
+import json
 import logging
 import time
 import unittest
@@ -41,6 +42,9 @@ MESSAGE = "Hello, the plan on my last invoice is not the one I picked."
 BOB = 8008  # another account: its tickets are not Alice's
 NOW = 1_800_000_000
 DAY = 86400
+
+
+NO_ANSWER = {"answeredBy": None, "latest": None}
 
 
 class Outbox:
@@ -388,8 +392,8 @@ class SupportRoute(SupportBase):
             answer.json(),
             {
                 "tickets": [
-                    {"at": self.now, "subject": "newer", "status": "new"},
-                    {"at": self.now - 100, "subject": "older", "status": "new"},
+                    {"at": self.now, "subject": "newer", "status": "new", **NO_ANSWER},
+                    {"at": self.now - 100, "subject": "older", "status": "new", **NO_ANSWER},
                 ],
                 "reply": True,
             },
@@ -413,6 +417,65 @@ class SupportRoute(SupportBase):
             [(t["subject"], t["status"]) for t in answer.json()["tickets"]],
             [("three", "new"), ("two", "closed"), ("one", "answered")],
         )
+
+    async def ticket_id(self, subject: str) -> int:
+        return {r.subject: r.id for r in await support.newest(self.web)}[subject]
+
+    async def test_the_list_shows_who_answered_last_and_the_answers_first_line(self) -> None:
+        await self.add_row(ALICE.id, self.now - 3, "helped")
+        await self.add_row(ALICE.id, self.now - 2, "team")
+        await self.add_row(ALICE.id, self.now - 1, "waiting")
+        helped, team = await self.ticket_id("helped"), await self.ticket_id("team")
+        await support.add_reply(
+            self.web, helped, "ai", "Hi Alice,\nTry the Billing page.\nMore below.", now=1
+        )
+        await support.add_reply(self.web, team, "ai", "A first answer.", now=1)
+        await support.add_reply(self.web, team, "customer", "That did not help.", now=2)
+        await support.add_reply(self.web, team, "person", "  \n  I fixed it for you.  ", now=3)
+        # What the person wrote by email is never sent back as an "answer".
+        await support.add_reply(self.web, team, "customer", "Thanks, one more thing.", now=4)
+        shown = {
+            t["subject"]: t
+            for t in (await (await self.client()).get("/support/mine")).json()["tickets"]
+        }
+        self.assertEqual(
+            (shown["helped"]["answeredBy"], shown["helped"]["latest"]),
+            ("helper", "Try the Billing page."),
+        )
+        self.assertEqual(
+            (shown["team"]["answeredBy"], shown["team"]["latest"]),
+            ("team", "I fixed it for you."),
+        )
+        self.assertEqual((shown["waiting"]["answeredBy"], shown["waiting"]["latest"]), (None, None))
+
+    async def test_an_answer_is_cut_to_a_first_line_and_never_anyone_elses(self) -> None:
+        await sessions.sign_in(self.web, _bob(), [THURSDAY], now=self.now, days=30)
+        await self.add_row(ALICE.id, self.now - 2, "long")
+        await self.add_row(BOB, self.now - 1, "bobs")
+        long, bobs = await self.ticket_id("long"), await self.ticket_id("bobs")
+        await support.add_reply(self.web, long, "ai", ("word " * 60).strip(), now=1)
+        await support.add_reply(self.web, bobs, "ai", "Bob's private answer.", now=1)
+        alice = (await (await self.client()).get("/support/mine")).text
+        self.assertNotIn("Bob", alice)
+        latest = json.loads(alice)["tickets"][0]["latest"]
+        self.assertLessEqual(len(latest), support.ANSWER_LINE_MAX + 1)
+        self.assertTrue(latest.endswith("…"))
+        # The door answers nothing for a ticket that is not the signed-in person's.
+        async with self.web.user(ALICE.id) as conn:
+            cur = await conn.execute("SELECT * FROM dmbot_support_latest_answer(%s)", (bobs,))
+            self.assertEqual(await cur.fetchall(), [])
+        async with self.web.anonymous() as conn:
+            cur = await conn.execute("SELECT * FROM dmbot_support_latest_answer(%s)", (long,))
+            self.assertEqual(await cur.fetchall(), [])
+
+    async def test_the_websites_role_cannot_read_a_replys_words_itself(self) -> None:
+        await self.add_row(ALICE.id, self.now, "q")
+        await support.add_reply(
+            self.web, await self.ticket_id("q"), "ai", "Secret-ish answer.", now=1
+        )
+        async with self.web.user(ALICE.id) as conn:
+            with self.assertRaises(psycopg.errors.InsufficientPrivilege):
+                await conn.execute("SELECT text FROM support_replies")
 
     async def test_the_list_is_at_most_twenty_and_empty_for_a_person_who_never_wrote(self) -> None:
         client = await self.client()
@@ -760,7 +823,9 @@ class SupportAdmin(SupportBase):
             body = (await self.client.get("/admin/support", params={"status": status})).json()
             self.assertEqual([t["subject"] for t in body["tickets"]], subjects, status)
             # The counts are the same whichever filter is on: they label the buttons.
-            self.assertEqual(body["counts"], {"new": 2, "answered": 1, "closed": 1}, status)
+            self.assertEqual(
+                body["counts"], {"new": 2, "answered": 1, "closed": 1, "escalated": 0}, status
+            )
         # No filter is every ticket, as the page behaved before the filters.
         body = (await self.client.get("/admin/support")).json()
         self.assertEqual(len(body["tickets"]), 4)
@@ -769,13 +834,14 @@ class SupportAdmin(SupportBase):
         csrf = await self.sign_in()
         empty = (await self.client.get("/admin/support", params={"status": "new"})).json()
         self.assertEqual(
-            (empty["tickets"], empty["counts"]), ([], {"new": 0, "answered": 0, "closed": 0})
+            (empty["tickets"], empty["counts"]),
+            ([], {"new": 0, "answered": 0, "closed": 0, "escalated": 0}),
         )
         await self.make_three(csrf)
         (new_b,) = [t for t in await self.tickets() if t["subject"] == "new one b"]
         await self.set_status(csrf, new_b["id"], "answered")
         body = (await self.client.get("/admin/support", params={"status": "answered"})).json()
-        self.assertEqual(body["counts"], {"new": 1, "answered": 2, "closed": 1})
+        self.assertEqual(body["counts"], {"new": 1, "answered": 2, "closed": 1, "escalated": 0})
         self.assertEqual([t["subject"] for t in body["tickets"]], ["new one b", "answered one"])
 
     async def test_the_counts_cover_every_ticket_even_past_the_list_limit(self) -> None:
@@ -783,7 +849,9 @@ class SupportAdmin(SupportBase):
             await self.add_row(ALICE.id, self.now - n, f"t{n}")
         listed = await support.newest(self.web, limit=2)
         self.assertEqual(len(listed), 2)  # the list is cut short...
-        self.assertEqual(await support.counts(self.web), {"new": 5, "answered": 0, "closed": 0})
+        self.assertEqual(
+            await support.counts(self.web), {"new": 5, "answered": 0, "closed": 0, "escalated": 0}
+        )
 
     async def test_a_bad_filter_is_refused_and_a_non_admin_gets_nothing(self) -> None:
         await self.add_row(ALICE.id, self.now)
@@ -847,6 +915,7 @@ class DoorBoundary(unittest.TestCase):
         self.assertEqual(self.callers("db.support_admin("), {"web/support.py"})
         self.assertEqual(self.callers("support.newest("), {"web/admin_api.py"})
         self.assertEqual(self.callers("support.set_status("), {"web/admin_api.py"})
+        self.assertEqual(self.callers("support.thread("), {"web/admin_api.py", "web/support_ai.py"})
         # The reply address is read by this one query, and the SQL function only by it.
         self.assertEqual(self.callers("dmbot_support_email("), {"web/support.py", "schema.py"})
         # The setting's own name is set nowhere else (a hand-made set_config would skip the door).

@@ -45,6 +45,7 @@ from dmbot.web.admin import (
 )
 from dmbot.web.feedback import rate_key
 from dmbot.web.settings import WebSettings
+from dmbot.web.support_ai import SupportHelper
 
 log = logging.getLogger(__name__)
 
@@ -64,6 +65,7 @@ def router(
     *,
     db: Database,
     google: GoogleSignIn | None,
+    helper: SupportHelper | None = None,
     admin_sessions: AdminSessions,
     tries: FailedTries,
     client_address: Callable[[Request], str],
@@ -414,6 +416,9 @@ def router(
         counts = await support.counts(db)
         # One lookup per distinct person, so the list is kept short (support.LIST_LIMIT).
         names = await sessions.display_names(db, sorted({r.user_id for r in rows}), now=clock())
+        threads = {
+            r.id: await support.thread(db, r.id) for r in rows
+        }  # (#1431) one read per ticket
         return {
             "tickets": [
                 {
@@ -428,8 +433,15 @@ def router(
                     "message": r.message,
                     "source": r.source,
                     "status": r.status,
+                    # Why it came to a person: one of support.REASONS, or null.
+                    "reason": r.reason,
                     # Where the team replies; null when the account has no email.
                     "email": r.email,
+                    # The helper's answers, the person's emailed replies and the team's replies.
+                    "replies": [
+                        {"id": x.id, "who": x.who, "text": x.text, "at": x.created_at}
+                        for x in threads[r.id]
+                    ],
                 }
                 for r in rows
             ],
@@ -448,6 +460,26 @@ def router(
             raise HTTPException(status_code=404, detail="no_ticket")
         # The number and the new status only: never the ticket's words or the admin's email.
         log.info("Admin set support ticket %s to %s", ticket_id, status)
+        return Response(status_code=204)
+
+    @api.post("/support/{ticket_id}/reply", status_code=204)
+    async def reply_to_support(
+        ticket_id: Annotated[int, Path(ge=1, le=2**63 - 1)], request: Request, session: AdminWrite
+    ) -> Response:
+        """The team's reply to a ticket (#1431): emailed to the person from the support address
+        and kept on the ticket, which becomes answered. Never logged beyond the number."""
+        raw = await read_json(request)
+        text = raw.get("text") if isinstance(raw, dict) else None
+        if not isinstance(text, str):
+            raise HTTPException(status_code=400, detail="bad_text")
+        text = text.replace("\r\n", "\n").strip()
+        if not text or len(text) > support.MAX_MESSAGE:
+            raise HTTPException(status_code=400, detail="bad_text")
+        if helper is None:
+            raise HTTPException(status_code=503, detail="reply_off")
+        if not await helper.team_reply(ticket_id, text):
+            raise HTTPException(status_code=404, detail="no_ticket")
+        log.info("Admin replied to support ticket %s", ticket_id)
         return Response(status_code=204)
 
     return api

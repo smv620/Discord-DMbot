@@ -247,6 +247,7 @@ from dmbot.ui.name_lists import UndoListButton
 from dmbot.ui.names import ReviewButton, after_session_text, held_back_text, review_view
 from dmbot.ui.optional_rules import dmbot_optional_rules  # noqa: F401 (registers it)
 from dmbot.ui.people_review import PeopleReviewButton, people_review_view, waiting_text
+from dmbot.ui.recap_dm import RecapButton, ready_text, ready_view
 from dmbot.ui.rule_lookup import dmbot_rule  # noqa: F401 (registers it)
 from dmbot.ui.secret_aloud import (
     SecretAloudButton,
@@ -957,6 +958,7 @@ class DMBot(commands.AutoShardedBot):
             ReviewButton, PeopleReviewButton, ClaimsReviewButton, ContinuityButton
         )
         self.add_dynamic_items(SecretAloudButton)  # the secret-said-aloud question (#1407)
+        self.add_dynamic_items(RecapButton)  # the recap on the DM screen (#1455)
         self.add_dynamic_items(  # #965, #1117
             clock_screen.ClockButton, clock_screen.ClockUndoButton, clock_screen.SuggestionButton
         )
@@ -1660,6 +1662,7 @@ class DMBot(commands.AutoShardedBot):
         )
         self._track(self._fight_left_over(table), "fight-left-over")  # #1173
         self._track(self._pre_session_note(table), "pre-session-note")  # #1403
+        self._track(self._waiting_recaps(table), "waiting-recaps")  # #1474
         table.watch_task = self._track_loop(sheet_reread.run(self, table), "sheet-watch")  # #1128
         table.fight_task = self._track_loop(fightbot.run(self, table), "fightbot")  # #1129
         return sent
@@ -1702,6 +1705,37 @@ class DMBot(commands.AutoShardedBot):
                 log.info("Pre-session note: %d line(s)", len(note.lines))  # counts only
             except Exception:
                 log.exception("The pre-session note failed")
+
+    async def _waiting_recaps(self, table: Table) -> None:
+        """A session starts and a finished recap from before is still waiting for the DM (#1474):
+        the DM screen says so once, with the same three buttons as when it was ready, for at most
+        the two newest. Not after a restart in the middle of a session, and nothing for a posted,
+        skipped or unfinished recap, or when the campaign's recaps are off. No email."""
+        if (
+            self.recaps is None
+            or not self.settings.recaps_on
+            or table.campaign_id is None
+            or table.resumed
+        ):
+            return
+        gid, cid = table.guild_id, table.campaign_id
+        with log_context(guild_id=gid, campaign_id=cid):
+            try:
+                campaign = await self.campaigns.get(gid, cid)
+                if campaign is None or not campaign.recaps_text:
+                    return
+                for session_at, title in await self.recaps.waiting_drafts(gid, cid):
+                    if self.tables.get(gid) is not table:
+                        return  # the session ended meanwhile
+                    shown = discord.utils.escape_markdown(title)
+                    await self.post(
+                        table.screen_channel_id,
+                        f"📜 Last session's recap is still waiting: **{shown}**. "
+                        "Nothing has gone to the players.",
+                        view=ready_view(cid, session_at),
+                    )
+            except Exception:
+                log.exception("The waiting-recap line failed")
 
     async def _fight_left_over(self, table: Table) -> None:
         """A session starts with a fight still running from last time: one line on the DM
@@ -5599,22 +5633,31 @@ class DMBot(commands.AutoShardedBot):
         )
 
     async def recap_told(self, gid: int, cid: str, job: Job) -> None:
-        """Email the DM that their recap is ready, or could not be written. If they chose not to be
-        emailed (#1421) the DM screen says it instead."""
+        """Tell the DM that their recap is ready, or could not be written. A ready recap goes on
+        the DM screen with three buttons (read it, post it, skip it; #1455), and is emailed unless
+        the DM chose not to be (#1421). A failed one is emailed, or said on the DM screen."""
         campaign = await self.campaigns.get(gid, cid)
+        link = (
+            page_link(self.settings.site_url, gid, cid, job.session_at)
+            if self.settings.site_url
+            else ""
+        )
+        if campaign is not None and campaign.dm_screen_channel_id is not None:
+            if job.state == "ready":
+                await self.post(
+                    campaign.dm_screen_channel_id,
+                    ready_text(job.title, link),
+                    view=ready_view(cid, job.session_at),
+                )
+            elif not campaign.recaps_email:
+                where = f": {link}" if link else " on the website"
+                await self.post(
+                    campaign.dm_screen_channel_id,
+                    "📜 I couldn't write this session's recap. "
+                    f"Try again from your recap page{where}",
+                )
         if campaign is not None and not campaign.recaps_email:
-            # No email by the DM's choice: the DM screen says it instead, so they still hear.
-            if campaign.dm_screen_channel_id is not None:
-                link = page_link(self.settings.site_url, gid, cid, job.session_at)
-                where = f" {link}" if self.settings.site_url else ""
-                if job.state == "ready":
-                    line = f"📜 Your recap is ready. Read it, change it or post it:{where}"
-                else:
-                    line = (
-                        f"📜 DMbot couldn't write this session's recap. You can try again:{where}"
-                    )
-                await self.post(campaign.dm_screen_channel_id, line)
-            return
+            return  # no email by the DM's choice
         if self.mailer is not None and self.recaps is not None:
             await tell_the_dm(self.mailer, self.recaps, self.settings.site_url, gid, cid, job)
 
@@ -5821,7 +5864,7 @@ class DMBot(commands.AutoShardedBot):
             for said in found:
                 await self.post(
                     table.screen_channel_id,
-                    question_text(said.text),
+                    question_text(said.text, said.entries),
                     view=secret_aloud_view(cid, said.alias_id),
                 )
             if len(every) > len(found):  # the DM should know the rest exist

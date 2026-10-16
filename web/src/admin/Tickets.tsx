@@ -11,13 +11,14 @@ import {
   type AdminApi,
   AdminApiError,
   type SupportTicketRow,
+  type TicketReply,
   type TicketCounts,
   type TicketFilter,
   type TicketStatus,
 } from "./api";
 
 /** The filter buttons in the order the team needs them: what still needs a reply first. */
-const FILTERS: TicketFilter[] = ["new", "answered", "closed", "all"];
+const FILTERS: TicketFilter[] = ["escalated", "new", "answered", "closed", "all"];
 
 interface Props {
   api: AdminApi;
@@ -48,6 +49,120 @@ function plan(id: string): string {
   } catch {
     return id;
   }
+}
+
+const REPLY_MAX = 4000;
+
+/** The thread after the first message: who wrote each, when, and the words (admin only). */
+function Thread({ replies }: { replies: TicketReply[] }) {
+  if (replies.length === 0) return null;
+  return (
+    <div class="thread">
+      <h4>{text.threadHeading}</h4>
+      <ul class="small">
+        {replies.map((r) => (
+          <li key={r.id} data-who={r.who}>
+            <strong>{text.threadWho[r.who] ?? r.who}</strong>{" "}
+            <span class="muted">{when(r.at)}</span>
+            <p class="ticket-text">{r.text}</p>
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
+/** The team's reply to one ticket: a box, one Send, and a plain result. Disabled while sending, so
+ * a second tap cannot send it twice; the words stay if it fails. */
+function ReplyBox({
+  ticket,
+  api,
+  csrf,
+  onSent,
+  onSignedOut,
+  onOff,
+}: {
+  ticket: SupportTicketRow;
+  api: AdminApi;
+  csrf: string;
+  onSent: () => void;
+  onSignedOut: () => void;
+  onOff: () => void;
+}) {
+  const [words, setWords] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [news, setNews] = useState<{ text: string; ok: boolean } | null>(null);
+  const sending = useRef(false);
+  const box = useRef<HTMLTextAreaElement>(null);
+  if (!ticket.email) return <p class="small muted">{text.replyNoEmail}</p>;
+  const id = `reply-${ticket.id}`;
+
+  async function send(event: Event) {
+    event.preventDefault();
+    if (sending.current) return;
+    const body = words.replace(/\r\n/g, "\n").trim();
+    if (body === "") return setNews({ text: text.replyEmpty, ok: false });
+    if ([...body].length > REPLY_MAX) return setNews({ text: text.replyTooLong, ok: false });
+    sending.current = true;
+    setBusy(true);
+    setNews(null);
+    try {
+      await api.replyToTicket(csrf, ticket.id, body);
+      setWords("");
+      // The list is read again and the ticket usually leaves this view (it is answered now), so
+      // the page, not this box, says it was sent.
+      onSent();
+    } catch (error) {
+      const kind = error instanceof AdminApiError ? error.kind : "down";
+      if (kind === "signed-out") return onSignedOut();
+      if (kind === "off") return onOff();
+      setNews({
+        text:
+          kind === "no-ticket"
+            ? text.ticketGone
+            : kind === "bad-reply"
+              ? text.replyTooLong
+              : kind === "reply-off"
+                ? text.replyOff
+                : text.replyFailed,
+        ok: false,
+      });
+    } finally {
+      sending.current = false;
+      setBusy(false);
+      // The box and button were disabled while sending, which drops focus to the page: on a
+      // failure put it back in the box (the words are still there). After a success the page's
+      // "Reply sent." line takes focus (the ticket usually leaves this view).
+      setTimeout(() => {
+        if (document.activeElement === document.body && box.current?.value) box.current.focus();
+      }, 0);
+    }
+  }
+
+  return (
+    <form onSubmit={send} noValidate>
+      <fieldset disabled={busy}>
+        <label for={id}>{text.replyLabel(ticket.subject)}</label>
+        <textarea
+          id={id}
+          ref={box}
+          rows={4}
+          maxLength={REPLY_MAX}
+          value={words}
+          onInput={(e) => setWords((e.currentTarget as HTMLTextAreaElement).value)}
+        />
+        <p class="small muted">{text.replyHint}</p>
+        <button type="submit" class="button">
+          {busy ? text.replySending : text.replySend}
+        </button>
+      </fieldset>
+      {news && (
+        <p class={news.ok ? "ok" : "warn"} role={news.ok ? "status" : "alert"}>
+          {news.text}
+        </p>
+      )}
+    </form>
+  );
 }
 
 export default function Tickets({ api, csrf, onSignedOut, onOff }: Props) {
@@ -178,7 +293,9 @@ export default function Tickets({ api, csrf, onSignedOut, onOff }: Props) {
             {counts
               ? text.ticketFilterCount(
                   text.ticketFilters[f] ?? f,
-                  f === "all" ? counts.new + counts.answered + counts.closed : counts[f],
+                  f === "all"
+                    ? counts.new + counts.answered + counts.closed + counts.escalated
+                    : counts[f],
                 )
               : (text.ticketFilters[f] ?? f)}
           </button>
@@ -231,9 +348,28 @@ export default function Tickets({ api, csrf, onSignedOut, onOff }: Props) {
               <p class="small">
                 <strong>{text.ticketRowStatuses[t.status] ?? t.status}</strong>
               </p>
+              {t.status === "escalated" && t.reason && text.escalationReasons[t.reason] && (
+                <p class="small">
+                  <strong>{text.escalationReasonLabel}:</strong> {text.escalationReasons[t.reason]}
+                </p>
+              )}
               <p class="ticket-text">{t.message}</p>
+              <Thread replies={t.replies ?? []} />
+              {t.status !== "closed" && (
+                <ReplyBox
+                  ticket={t}
+                  api={api}
+                  csrf={csrf}
+                  onSent={() => {
+                    setNews({ text: text.replySent, ok: true });
+                    void load();
+                  }}
+                  onSignedOut={onSignedOut}
+                  onOff={onOff}
+                />
+              )}
               <div class="row">
-                {t.status === "new" && (
+                {(t.status === "new" || t.status === "escalated") && (
                   <button
                     type="button"
                     class="button secondary"

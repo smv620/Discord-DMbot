@@ -2331,6 +2331,12 @@ WEB_ROLE_FUNCTIONS: tuple[tuple[str, str], ...] = (
     ("dmbot_support_message", "dmbot_support_message(BIGINT)"),
     # "Make the audio again" on a DM's recap (#1418): the only write to its audio columns.
     ("dmbot_recap_audio_again", "dmbot_recap_audio_again(BIGINT, TEXT, BIGINT)"),
+    ("dmbot_support_thread", "dmbot_support_thread(BIGINT)"),  # ... and a thread's (#1431)
+    # A person's own latest answer, on their own ticket only (#1432).
+    ("dmbot_support_latest_answer", "dmbot_support_latest_answer(BIGINT)"),
+    # The campaign's names with the narrator's spelling (#1451): read and write, DM only.
+    ("dmbot_web_names", "dmbot_web_names(BIGINT, TEXT)"),
+    ("dmbot_web_set_said_as", "dmbot_web_set_said_as(BIGINT, TEXT, TEXT, TEXT)"),
     # A move code asked for on the website (#1246).
     ("dmbot_web_move_code", "dmbot_web_move_code(BIGINT, TEXT, BIGINT, TEXT, BIGINT)"),
     ("dmbot_web_cancel_move_code", "dmbot_web_cancel_move_code(BIGINT, TEXT, BIGINT)"),
@@ -2384,8 +2390,16 @@ WEB_ROLE_GRANTS: tuple[tuple[str, tuple[str, ...]], ...] = (
     # column right at all. The admin page reads the message through dmbot_support_message (a
     # door), and closes with the status UPDATE; the sweep and account deletion delete.
     ("INSERT, DELETE", ("support_tickets",)),
-    ("SELECT (id, created_at, user_id, plan, subject, source, status)", ("support_tickets",)),
-    ("UPDATE (status)", ("support_tickets",)),
+    (
+        "SELECT (id, created_at, user_id, plan, subject, source, status, ai_next_at, ai_failed_at,"
+        " escalated_reason)",
+        ("support_tickets",),
+    ),
+    ("UPDATE (status, ai_next_at, ai_failed_at, escalated_reason)", ("support_tickets",)),
+    # The thread (#1431): replies are added and listed (not their words) only while the admin
+    # door is open; the words come back through dmbot_support_thread.
+    ("INSERT", ("support_replies",)),
+    ("SELECT (id, ticket_id, who, created_at)", ("support_replies",)),
     ("SELECT, INSERT, UPDATE, DELETE", ("web_users", "web_sessions")),
     # Emailed sign-in links (#1231): made and used by the website, never read by anyone else.
     # (Only `used_at` can be changed: a holder of a link can spend it, never revive or move it.)
@@ -4116,6 +4130,126 @@ RECAP_AUDIO_AGAIN = """
     REVOKE ALL ON FUNCTION dmbot_recap_audio_again(BIGINT, TEXT, BIGINT) FROM PUBLIC;
 """
 
+WEB_NAMES = """
+    -- The campaign's names on the website, with the narrator's "said as" spelling (#1451, on
+    -- #1419). The website's role has NO grant on the memory tables (secret names live there), so
+    -- both the read and the write go through these two doors. Each answers only a DM of the
+    -- campaign, in a server on the session's list, with that server set for the transaction (the
+    -- caller does the same for every server table), and never a secret name or a person.
+    --
+    -- dmbot_web_names: the confirmed, public names of things and places (not people at the table,
+    -- not a sound-alike "misheard" note), at most 200, as JSON; NULL when the caller is no DM of
+    -- the campaign, so the page says "not found" exactly as for a missing campaign.
+    CREATE FUNCTION dmbot_web_names(g BIGINT, c TEXT) RETURNS JSONB
+    LANGUAGE plpgsql SECURITY DEFINER AS $fn$
+    BEGIN
+        IF dmbot_current_guild() IS DISTINCT FROM g
+           OR NOT (g = ANY ((SELECT dmbot_web_guilds())::BIGINT[]))
+           OR NOT EXISTS (SELECT 1 FROM campaign_dms d
+                          WHERE d.guild_id = g AND d.campaign_id = c
+                            AND d.user_id = dmbot_current_user()) THEN
+            RETURN NULL;
+        END IF;
+        RETURN COALESCE((
+            SELECT jsonb_agg(jsonb_build_object(
+                       'id', n.id, 'text', n.text, 'kind', n.kind, 'saidAs', n.said_as))
+            FROM (
+                SELECT a.id, a.text, a.kind, a.said_as
+                FROM memory_aliases a
+                JOIN memory_entities e
+                  ON e.guild_id = a.guild_id AND e.campaign_id = a.campaign_id
+                 AND e.id = a.entity_id
+                WHERE a.guild_id = g AND a.campaign_id = c
+                  AND NOT a.secret AND a.status = 'confirmed'
+                  AND e.status = 'confirmed' AND e.type <> 'person'
+                  AND a.kind <> 'misheard' AND a.used_by IS NULL
+                ORDER BY lower(e.name), lower(a.text), a.id
+                LIMIT 200
+            ) n), '[]'::jsonb);
+    END
+    $fn$;
+
+    -- dmbot_web_set_said_as: set or clear (NULL or empty) one name's spelling. The same rules as
+    -- MemoryStore.set_said_as: only a DM, up to 80 characters, no control characters, never on a
+    -- secret name. It writes through the change log exactly as the bot does (one numbered batch,
+    -- the row's before and after, the campaign's memory version, the change notice the bot's
+    -- name lists follow), so Undo on the Discord name card still takes it back. Answers
+    -- 'ok', 'not_allowed' (not this campaign's DM), 'not_found' (no such name, or a secret one) or
+    -- 'too_long'. The 80-character limit and the control-character check are the database's own
+    -- floor; the API (web/names.py) applies the bot's fuller printable-characters rule first.
+    -- Any listed name may be given a spelling, not only an entry's main name: the narrator reads
+    -- the spelling from every name (#1419), and the page lists exactly what the read door lists.
+    CREATE FUNCTION dmbot_web_set_said_as(g BIGINT, c TEXT, alias_id TEXT, spelling TEXT)
+    RETURNS TEXT
+    LANGUAGE plpgsql SECURITY DEFINER AS $fn$
+    DECLARE
+        clean TEXT := NULLIF(
+            btrim(regexp_replace(COALESCE(spelling, ''), '[[:space:]]+', ' ', 'g')), '');
+        alias_row memory_aliases%ROWTYPE;
+        v BIGINT;
+        now_s BIGINT := floor(extract(epoch FROM clock_timestamp()))::BIGINT;
+    BEGIN
+        IF dmbot_current_guild() IS DISTINCT FROM g
+           OR NOT (g = ANY ((SELECT dmbot_web_guilds())::BIGINT[]))
+           OR NOT EXISTS (SELECT 1 FROM campaign_dms d
+                          WHERE d.guild_id = g AND d.campaign_id = c
+                            AND d.user_id = dmbot_current_user()) THEN
+            RETURN 'not_allowed';
+        END IF;
+        IF clean IS NOT NULL AND (char_length(clean) > 80 OR clean ~ '[[:cntrl:]]') THEN
+            RETURN 'too_long';
+        END IF;
+        -- Changes to one campaign's memory happen one at a time (the bot takes the same lock).
+        SELECT memory_version INTO v FROM campaigns
+            WHERE guild_id = g AND id = c FOR NO KEY UPDATE;
+        IF NOT FOUND THEN
+            RETURN 'not_found';
+        END IF;
+        SELECT a.* INTO alias_row FROM memory_aliases a
+            JOIN memory_entities e
+              ON e.guild_id = a.guild_id AND e.campaign_id = a.campaign_id AND e.id = a.entity_id
+            WHERE a.guild_id = g AND a.campaign_id = c AND a.id = alias_id
+              AND NOT a.secret AND a.status = 'confirmed' AND e.status = 'confirmed'
+              AND e.type <> 'person' AND a.kind <> 'misheard' AND a.used_by IS NULL;
+        -- A secret name is "not found", the same answer as an id that does not exist, so the
+        -- caller cannot learn that a secret name with that id exists.
+        IF NOT FOUND THEN
+            RETURN 'not_found';
+        END IF;
+        IF alias_row.said_as IS NOT DISTINCT FROM clean THEN
+            RETURN 'ok';  -- nothing to change, nothing to log (as the bot does)
+        END IF;
+        UPDATE memory_aliases SET said_as = clean
+            WHERE guild_id = g AND campaign_id = c AND id = alias_id;
+        v := v + 1;
+        INSERT INTO memory_changes (guild_id, campaign_id, version, batch, table_name, row_id, op,
+                                    before, after, source, undoes, made_at)
+            SELECT g, c, v, v, 'memory_aliases', alias_id, 'update',
+                   to_jsonb(alias_row) - 'guild_id' - 'campaign_id',
+                   to_jsonb(a) - 'guild_id' - 'campaign_id', 'dm', NULL, now_s
+            FROM memory_aliases a
+            WHERE a.guild_id = g AND a.campaign_id = c AND a.id = alias_id;
+        UPDATE campaigns SET memory_version = v WHERE guild_id = g AND id = c;
+        PERFORM pg_notify('dmbot_memory', c || ':' || v || ':1');
+        RETURN 'ok';
+    END
+    $fn$;
+    DO $do$
+    BEGIN
+        EXECUTE format(
+            'ALTER FUNCTION dmbot_web_names(BIGINT, TEXT)'
+            ' SET search_path = pg_catalog, %I, pg_temp',
+            current_schema());
+        EXECUTE format(
+            'ALTER FUNCTION dmbot_web_set_said_as(BIGINT, TEXT, TEXT, TEXT)'
+            ' SET search_path = pg_catalog, %I, pg_temp',
+            current_schema());
+    END
+    $do$;
+    REVOKE ALL ON FUNCTION dmbot_web_names(BIGINT, TEXT) FROM PUBLIC;
+    REVOKE ALL ON FUNCTION dmbot_web_set_said_as(BIGINT, TEXT, TEXT, TEXT) FROM PUBLIC;
+"""
+
 MEMORY_SAID_AS = """
     -- A spelling for the recap's narrator (#1419): "Kah-zeth" for Ka'zeth. Set by the DM on a name,
     -- through the same change path as every other edit (so it can be undone), and only on a name
@@ -4296,6 +4430,109 @@ MEMORY_FROM_SET = """
         CHECK (from_set IS NULL OR from_set ~ '^[0-9a-f]{32}$');
     """
 
+SUPPORT_THREAD = """
+    -- The support flow (#1431): a ticket becomes a thread. The person's later messages, the AI
+    -- helper's answers and the team's replies are rows of `support_replies`; the first message
+    -- stays in support_tickets.message. Like that column, a reply's words can be read only through
+    -- a door that answers while the admin door (Database.support_admin) is open
+    -- (dmbot_support_thread), and the website's role has no column right on them.
+    --   who  customer (an emailed reply), ai (DMbot's helper), person (the team)
+    -- A reply goes with its ticket (the cascade is not blocked by row-level security), so the
+    -- 12-month sweep and account deletion need nothing more.
+    ALTER TABLE support_tickets DROP CONSTRAINT support_tickets_status_check;
+    ALTER TABLE support_tickets ADD CONSTRAINT support_tickets_status_check
+        CHECK (status IN ('new', 'answered', 'closed', 'escalated'));
+    -- When the helper may try this ticket again after a failed call, and when its calls began to
+    -- fail (a ticket whose calls fail for a day goes to a person).
+    ALTER TABLE support_tickets ADD COLUMN ai_next_at BIGINT NOT NULL DEFAULT 0;
+    ALTER TABLE support_tickets ADD COLUMN ai_failed_at BIGINT;
+    CREATE TABLE support_replies (
+        id         BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+        ticket_id  BIGINT NOT NULL REFERENCES support_tickets (id) ON DELETE CASCADE,
+        who        TEXT NOT NULL CHECK (who IN ('customer', 'ai', 'person')),
+        text       TEXT NOT NULL CHECK (char_length(text) BETWEEN 1 AND 8000),
+        created_at BIGINT NOT NULL
+    );
+    CREATE INDEX support_replies_by_ticket ON support_replies (ticket_id, id);
+    ALTER TABLE support_replies ENABLE ROW LEVEL SECURITY;
+    ALTER TABLE support_replies FORCE ROW LEVEL SECURITY;
+    CREATE POLICY support_admin_read ON support_replies FOR SELECT
+        USING (dmbot_support_admin() = 'admin');
+    CREATE POLICY support_admin_add ON support_replies FOR INSERT
+        WITH CHECK (dmbot_support_admin() = 'admin');
+    CREATE FUNCTION dmbot_support_thread(ticket BIGINT)
+        RETURNS TABLE (id BIGINT, who TEXT, text TEXT, created_at BIGINT)
+        LANGUAGE plpgsql SECURITY DEFINER
+        AS $fn$
+    BEGIN
+        IF dmbot_support_admin() IS DISTINCT FROM 'admin' THEN
+            RETURN;
+        END IF;
+        RETURN QUERY SELECT r.id, r.who, r.text, r.created_at FROM support_replies r
+            WHERE r.ticket_id = ticket ORDER BY r.id;
+    END
+    $fn$;
+    DO $do$
+    BEGIN
+        EXECUTE format(
+            'ALTER FUNCTION dmbot_support_thread(BIGINT)'
+            ' SET search_path = pg_catalog, %I, pg_temp',
+            current_schema());
+    END
+    $do$;
+    REVOKE ALL ON FUNCTION dmbot_support_thread(BIGINT) FROM PUBLIC;
+    """
+
+SUPPORT_MINE_ANSWER = """
+    -- A person's own latest answer, for the account page's "Your questions" (#1432): who answered
+    -- (the helper, or the team) and the answer's words, so the page can show its first line.
+    -- Only an answer (never the person's own emailed replies) and only on a ticket of the
+    -- signed-in person (`dmbot_current_user()`, set by Database.user), never anyone else's. The
+    -- website's role has no column right on a reply's words, so this door is the only way they
+    -- come back, and the policy below lets the door (not the role's own queries, which have no
+    -- right on the words) see a person's own answers. (The policy also lets a person's own session
+    -- list the ids, kinds and times of their own answers, which the role may already read in
+    -- those four columns: the answers themselves come to them by email, so nothing is exposed.)
+    CREATE POLICY read_own_answers ON support_replies FOR SELECT
+        USING (who IN ('ai', 'person') AND EXISTS (
+            SELECT 1 FROM support_tickets t
+            WHERE t.id = support_replies.ticket_id AND t.user_id = dmbot_current_user()));
+    CREATE FUNCTION dmbot_support_latest_answer(ticket BIGINT)
+        RETURNS TABLE (who TEXT, text TEXT)
+        LANGUAGE plpgsql SECURITY DEFINER
+        AS $fn$
+    BEGIN
+        IF dmbot_current_user() IS NULL THEN
+            RETURN;
+        END IF;
+        RETURN QUERY SELECT r.who, r.text FROM support_replies r
+            WHERE r.ticket_id = ticket AND r.who IN ('ai', 'person')
+              AND EXISTS (SELECT 1 FROM support_tickets t
+                          WHERE t.id = ticket AND t.user_id = dmbot_current_user())
+            ORDER BY r.id DESC LIMIT 1;
+    END
+    $fn$;
+    DO $do$
+    BEGIN
+        EXECUTE format(
+            'ALTER FUNCTION dmbot_support_latest_answer(BIGINT)'
+            ' SET search_path = pg_catalog, %I, pg_temp',
+            current_schema());
+    END
+    $do$;
+    REVOKE ALL ON FUNCTION dmbot_support_latest_answer(BIGINT) FROM PUBLIC;
+    """
+
+SUPPORT_REASON = """
+    -- Why a ticket was handed to a person (#1459): one short code set where the helper escalates
+    -- it, shown on the admin page. Null for a ticket that was never escalated or has been
+    -- answered since. No backfill: tickets escalated before this have no recorded reason, which
+    -- null already says, so no row changes and no row-level security needs opening.
+    ALTER TABLE support_tickets ADD COLUMN escalated_reason TEXT
+        CHECK (escalated_reason IS NULL OR escalated_reason IN
+               ('unhappy', 'asked', 'limit', 'no-email', 'helper-down'));
+    """
+
 MIGRATIONS: tuple[Migration, ...] = (
     ("0001_initial", INITIAL),
     ("0002_active_sessions", ACTIVE_SESSIONS),
@@ -4385,7 +4622,11 @@ MIGRATIONS: tuple[Migration, ...] = (
     ("0083_memory_said_as", MEMORY_SAID_AS),  # a spelling for the narrator (#1419)
     ("0084_recap_switches", RECAP_SWITCHES),  # the DM's recap choices (#1421)
     ("0085_recap_audio_again", RECAP_AUDIO_AGAIN),  # the website's door to new audio (#1418)
+    ("0086_support_thread", SUPPORT_THREAD),  # the support flow's replies (#1431)
+    ("0087_web_names", WEB_NAMES),  # the website's doors to the names and their spelling (#1451)
+    ("0088_support_mine_answer", SUPPORT_MINE_ANSWER),  # a person's own latest answer (#1432)
     ("0089_memory_from_set", MEMORY_FROM_SET),  # sets carry relationship definitions (#1456)
+    ("0090_support_reason", SUPPORT_REASON),  # why a ticket went to a person (#1459)
 )
 
 # Tables that must have row-level security. A test checks every table in the schema
@@ -4443,6 +4684,8 @@ USER_ISOLATED_TABLES = (
     # A person adds their own ticket and reads back only their own list, never the words; the
     # support admin door reads everything (#1340, #1373).
     "support_tickets",
+    # The replies of a ticket: only the admin door adds or reads them (#1431).
+    "support_replies",
     # An owner's hours per plan month; only the meter adds to it (#437).
     "owner_hours",
     # Which campaigns an owner has, across servers; kept by a trigger on campaigns (#437).
