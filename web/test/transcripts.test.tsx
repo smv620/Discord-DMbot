@@ -77,11 +77,35 @@ describe("a campaign's sessions", () => {
     page(mockApi("table"), `/account/transcripts/${REF}`);
     expect(await screen.findByRole("heading", { name: "The Brynwater Crossing" })).toBeTruthy();
     const titles = screen.getAllByText(/^Session \d$/).map((e) => e.textContent);
-    expect(titles).toEqual(["Session 2", "Session 1"]);
+    expect(titles).toEqual(["Session 3", "Session 2", "Session 1"]);
     expect(screen.getByText(/3 lines/)).toBeTruthy();
     expect(screen.getByRole("link", { name: `${text.open}: Session 2` }).getAttribute("href")).toBe(
       `/account/transcripts/${REF}/2`,
     );
+  });
+
+  it("says a session's transcript was deleted, with no line count or Read link (#1548)", async () => {
+    page(mockApi("table"), `/account/transcripts/${REF}`);
+    expect(await screen.findByText(/Transcript deleted on/)).toBeTruthy();
+    expect(screen.queryByRole("link", { name: `${text.open}: Session 3` })).toBeNull();
+    expect(screen.getByRole("link", { name: `${text.open}: Session 2` })).toBeTruthy();
+  });
+
+  it("an older API with no deletion time lists sessions as before", async () => {
+    const mock = mockApi("table");
+    const api = {
+      ...mock,
+      transcriptSessions: async (ref: string) => {
+        const found = await mock.transcriptSessions!(ref);
+        return {
+          ...found,
+          sessions: found.sessions.slice(1).map(({ transcriptsDeletedAt: _gone, ...rest }) => rest),
+        };
+      },
+    } as AccountApi;
+    page(api, `/account/transcripts/${REF}`);
+    expect(await screen.findByText(/3 lines/)).toBeTruthy();
+    expect(screen.queryByText(/Transcript deleted on/)).toBeNull();
   });
 
   it("is not found for a campaign that is not there or not theirs", async () => {
@@ -174,6 +198,16 @@ describe("reading a session", () => {
   it("is not found for a session that is not there", async () => {
     page(mockApi("table"), `/account/transcripts/${REF}/9`);
     expect(await screen.findByRole("alert")).toHaveProperty("textContent", text.notFound);
+  });
+});
+
+describe("a session whose transcript was deleted (#1548)", () => {
+  it("says so on its own page, with no versions, download or lines", async () => {
+    page(mockApi("table"), `/account/transcripts/${REF}/3`);
+    expect(await screen.findByText(/This transcript was deleted on/)).toBeTruthy();
+    expect(screen.queryByRole("button", { name: text.download })).toBeNull();
+    expect(screen.queryByRole("button", { name: text.versions.cleaned })).toBeNull();
+    expect(screen.queryByRole("alert")).toBeNull();
   });
 });
 

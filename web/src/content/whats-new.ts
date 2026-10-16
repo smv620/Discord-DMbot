@@ -20,6 +20,11 @@ export const whatsNewIntro =
 export const entries: Entry[] = [
   {
     date: "2026-10-16",
+    title: "Deleted transcripts show in the list",
+    what: "A session whose transcript was deleted now stays in the website's list, and says when it was deleted.",
+  },
+  {
+    date: "2026-10-16",
     title: "Read shared homebrew on the website",
     what: "Anyone in your Discord server can read the homebrew your DM shared with the table (open My Account, then Homebrew) and save it as a text file. Your DM may have more that stays behind the DM screen.",
   },
@@ -92,7 +97,7 @@ export const held: Held[] = [
   {
     date: "2026-10-16",
     title: "Delete my past transcripts",
-    what: "You can now remove what DMbot wrote down from you. In DMbot's private message to you, press Menu, then Delete my transcripts (or type /dmbot delete-my-lines in the server). DMbot tells you how many lines it will delete, and you confirm once. Your words are removed from every transcript in that server. Other people's lines, the facts your DM confirmed and recaps stay. Transcripts someone already downloaded are not changed. DMs can also choose how long a campaign keeps its transcripts: open Settings, then Transcripts, and pick Forever, 1 year, 90 days or 30 days. Older sessions are then deleted every night. Recaps and what you confirmed into story memory stay.",
+    what: "You can now remove what DMbot wrote down from you. In DMbot's private message to you, press Menu, then Delete my transcripts (or type /dmbot delete-my-lines in the server). DMbot tells you how many lines it will delete, and you confirm once. Your words are removed from every transcript in that server. Other people's lines, the facts your DM confirmed and recaps stay. Transcripts someone already downloaded are not changed. DMs can also choose how long a campaign keeps its transcripts: open Settings, then Transcripts, and pick Forever, 1 year, 90 days or 30 days. Older sessions are then deleted every night. Recaps and what you confirmed into story memory stay. The website's Help and privacy pages say the same, and its list shows when a transcript was deleted.",
     reason: "Held until it has been seen working on the test server (#1532, #1533).",
   },
   {
