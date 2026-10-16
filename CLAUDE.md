@@ -208,7 +208,7 @@ are staggered so each role finds the others' work done:
 | CloudDev | :01 (hourly check), :16, :31, :46 | long-lived cloud session |
 | WebDev | :02 (hourly check), :17, :32, :47 | long-lived cloud session |
 | Supervisor | :04 (hourly summary), :19, :34, :49 | long-lived cloud session |
-| RepoManager | :09, :24, :39, :54 | a **fresh cloud session each time**: no memory needed, it reads #516, the PR list and the reviews |
+| RepoManager | :09, :24, :39, :54 (hourly check) | long-lived cloud session (moved off the owner's computer, 2026-10-16) |
 | dev1 | :12 (hourly check), :27, :42, :57 | long-lived, on the server |
 
 **Every round, whatever the role:** read your open issues and your PRs (send-backs first), read #516's
