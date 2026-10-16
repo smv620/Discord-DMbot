@@ -152,7 +152,7 @@ describe("the facts #433 asks for", () => {
   it("names OVH US as the host and the US companies, with Stripe as seller of record", () => {
     expect(privacy()).toContain("OVH US LLC (OVHcloud, U.S.A.)");
     expect(privacy()).toContain("Its servers are in the United States");
-    expect(privacy()).toMatch(/Deepgram, Anthropic, OVH US, Cloudflare, GitHub and Stripe/);
+    expect(privacy()).toMatch(/Deepgram, Anthropic, OVH US, Cloudflare, GitHub, Resend and Stripe/);
     expect(privacy()).toContain("Stripe is the seller of record and handles withdrawal rights, invoices and tax");
     expect(privacy()).not.toContain("HOSTING PROVIDER");
   });
@@ -392,5 +392,31 @@ describe("writing to the team (#1340)", () => {
     expect(section).toBeTruthy();
     expect(text(section?.nextElementSibling ?? null)).not.toContain("GitHub");
     expect(text(section?.nextElementSibling ?? null)).not.toContain("anyone can read");
+  });
+});
+
+describe("the mail goes through Resend (#1402)", () => {
+  // docs/EMAIL.md: outbound mail moves from DMbot's own Gmail mailbox to Resend over SMTP
+  // (core/src/dmbot/mail.py sends the address and the message, nothing else). This change merges
+  // on the day the mail switches, so the page and the mail never disagree.
+  const privacy = (): string => text(doc("privacy").querySelector("main"));
+
+  it("says who sends the emails and what Resend gets", () => {
+    const t = privacy();
+    expect(t).toContain("The emails go out through Resend, a company that sends email for us.");
+    expect(t).toContain("It gets the address an email goes to and the words in it, nothing else.");
+  });
+
+  it("lists Resend as a company that helps us, and as one in the United States", () => {
+    const t = privacy();
+    expect(t).toContain("Resend: sends DMbot's emails.");
+    expect(t).toContain("GitHub, Resend and");
+  });
+
+  it("no longer says Gmail or Google carries the emails, on any page", () => {
+    for (const name of ["privacy", "terms", "refunds"]) {
+      const t = text(doc(name).querySelector("main"));
+      expect(t, name).not.toMatch(/Gmail|so Google carries|through Google/);
+    }
   });
 });
