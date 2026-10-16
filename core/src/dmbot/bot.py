@@ -1063,6 +1063,7 @@ class DMBot(commands.AutoShardedBot):
             clock_screen.ClockButton, clock_screen.ClockUndoButton, clock_screen.SuggestionButton
         )
         self.add_dynamic_items(clock_screen.CombatUndoButton)  # #1127
+        self.add_dynamic_items(clock_screen.ClockPicker, clock_screen.SplitUndoButton)  # #1607
         self.add_dynamic_items(delete_campaign.DeleteButton)  # #1608
         self.add_dynamic_items(fightbot.FightButton)  # #1129
         self.add_dynamic_items(timer_screen.EffectButton)  # timed effects (#998)
@@ -4081,6 +4082,8 @@ class DMBot(commands.AutoShardedBot):
             or not self.consent.has_consent(table.guild_id, user_id)
         ):
             return False
+        if await self._split_holds_phrase(campaign):
+            return False  # (#1607) the party is split: nothing moves, the DM was told once
         table.clock_said[said.key] = now  # (the amount a rest covered may have changed the key)
         marked.append(said.key)
         try:
@@ -4091,6 +4094,7 @@ class DMBot(commands.AutoShardedBot):
                 user_id,
                 said.action,
                 minutes=said.minutes,
+                refuse_if_split=True,  # (#1607) checked again under the lock, not only above
             )
         except Exception:
             log.exception("The game clock couldn't take what was said at the table")
@@ -4176,10 +4180,18 @@ class DMBot(commands.AutoShardedBot):
             or not self.consent.has_consent(table.guild_id, user_id)
         ):
             return False
+        if await self._split_holds_phrase(campaign):
+            return False  # (#1607) the party is split: which group's fight? The buttons say
         action = {"start": "cstart", "next": "cnext", "round": "cround", "end": "cend"}[fight.kind]
         try:
             result = await clock_screen.press(
-                self, campaign.guild_id, campaign.id, user_id, action, set_to=fight.number
+                self,
+                campaign.guild_id,
+                campaign.id,
+                user_id,
+                action,
+                set_to=fight.number,
+                refuse_if_split=True,
             )
         except CampaignError:
             return False  # no longer a DM: said quietly, not an error
@@ -4204,6 +4216,23 @@ class DMBot(commands.AutoShardedBot):
             ],
             combat_undo=clock_screen.combat_undo_id(result.before, result.after),
         )
+        return True
+
+    async def _split_holds_phrase(self, campaign: Campaign) -> bool:
+        """True while the party is split (#1607): a spoken rest, time or round moves nothing,
+        because DMbot can't know which group the DM meant. The DM screen says so once per
+        split. A clock that can't be read counts as not split (nothing is held back)."""
+        if self.clocks is None:
+            return False
+        try:
+            stored = await self.clocks.get(campaign.guild_id, campaign.id)
+            if stored is None or not stored.split:
+                return False
+            if await self.clocks.claim_phrase_notice(campaign.guild_id, campaign.id):
+                await clock_screen.say(self, campaign, [clock_screen.SPLIT_PHRASE])
+        except Exception:
+            log.exception("Couldn't check whether the party is split")
+            return False
         return True
 
     async def _less_what_a_rest_covers(
