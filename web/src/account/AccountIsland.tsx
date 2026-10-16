@@ -8,6 +8,8 @@ import Account from "./Account";
 import { httpApi, type AccountApi } from "./api";
 
 const base: string = import.meta.env.PUBLIC_API_BASE ?? "/api";
+// Turns on Cloudflare's "are you a person?" check on the Support form (as on /hello).
+const siteKey: string = import.meta.env.PUBLIC_TURNSTILE_SITE_KEY ?? "";
 
 export default function AccountIsland() {
   const [api, setApi] = useState<AccountApi | null>(null);
@@ -26,5 +28,5 @@ export default function AccountIsland() {
   }, [search]);
 
   if (!api) return <p class="muted" role="status">{text.loading}</p>;
-  return <Account api={api} search={search} hash={hash} />;
+  return <Account api={api} search={search} hash={hash} siteKey={siteKey} />;
 }

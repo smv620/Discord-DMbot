@@ -2,6 +2,7 @@
 // name is copied from what the bot shows, and web/test/help.test.ts checks each one still
 // appears in core/src/dmbot, so the page can't drift. Only built features; no game trademarks
 // (CLAUDE.md), so the character-sheet steps name no company.
+import { QA_URL } from "./account";
 import { minimumAge } from "./legal";
 
 export interface Step {
@@ -242,3 +243,43 @@ export const emailNote = "For now, emails are sent from DMbot's own Gmail mailbo
 /** Not a step to do: what players may notice at the table. */
 export const playerNote =
   'Your game master may show the story\'s day and time, like "Day 5, morning", in your own channel. You do not need to do anything.';
+
+/** The one support address (docs/EMAIL.md, owner's setup, #1341). Every other place on the site
+ * that names a way to write to us uses this constant, and a test fails if a different
+ * @getdmbot.com address shows up. */
+export const SUPPORT_EMAIL = "support@getdmbot.com";
+
+/** A line of text and its links: plain strings, and link objects in between. */
+export type Part = string | { text: string; href: string };
+
+/** Getting help (#1352): one plain place that says where to ask, in the order to try them.
+ * No privacy promises are made here: the Support form says its own, and the privacy page holds
+ * them. The public Q&A is said to be public, so nobody posts account or payment details. */
+export const gettingHelp: { id: string; heading: string; items: { lead: string; parts: Part[] }[] } =
+  {
+    id: "getting-help",
+    heading: "Getting help",
+    items: [
+      { lead: "Look here first.", parts: ["The steps above may answer it."] },
+      {
+        lead: "Ask in public.",
+        parts: [
+          "Post a question in the ",
+          { text: "Q&A for DMbot", href: QA_URL },
+          ". A helper called QAbot (a bot, not a person) may answer first. Everything there is public, so don't post account or payment details.",
+        ],
+      },
+      {
+        lead: "On a paid plan?",
+        parts: [
+          "Write to the team in private from ",
+          { text: "your account page", href: "/account" },
+          ". The team replies by email to the address on your account, if it has one.",
+        ],
+      },
+      {
+        lead: "Anyone, on any plan.",
+        parts: ["Email ", { text: SUPPORT_EMAIL, href: `mailto:${SUPPORT_EMAIL}` }, "."],
+      },
+    ],
+  };
