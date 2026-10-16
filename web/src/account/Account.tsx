@@ -7,6 +7,7 @@ import { useCallback, useContext, useEffect, useRef, useState } from "preact/hoo
 
 import { RECAPS_LIVE } from "../content/recap-words";
 import { text as recapText } from "../content/recaps";
+import { text as transcriptText } from "../content/transcripts";
 import { RECAP_AUDIO_LIVE } from "../content/recap-words";
 import { accountWords as audioWords, price as audioPrice } from "../content/recap-audio";
 import { hoursLeftLine, hoursUsedLine, planName, text } from "../content/account";
@@ -479,6 +480,7 @@ function SignedIn({
       {me.canMove === true && api.getMoveCode && <MoveSection />}
       <SupportOrQuestions me={me} />
       <CampaignsSection me={me} />
+      {api.transcriptCampaigns && <TranscriptsSection />}
       <ServersSection me={me} />
       <CharactersSection />
       <RecordingSection entries={me.recording ?? []} />
@@ -845,6 +847,18 @@ function CampaignsSection({ me }: { me: Me }) {
         </ul>
       )}
       {RECAPS_LIVE && me.campaigns.length > 0 && <a href="/account/recaps">{recapText.linkToList}</a>}
+    </section>
+  );
+}
+
+/** A link to the session transcripts (#1501): for anyone in a server, not only a DM, so it is not
+ * part of the campaigns list. Hidden on an API older than the transcript pages. */
+function TranscriptsSection() {
+  return (
+    <section aria-labelledby="transcripts-heading" class="panel">
+      <h2 id="transcripts-heading">{transcriptText.heading}</h2>
+      <p>{transcriptText.lead}</p>
+      <a href="/account/transcripts">{transcriptText.link}</a>
     </section>
   );
 }

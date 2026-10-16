@@ -20,6 +20,11 @@ export const whatsNewIntro =
 export const entries: Entry[] = [
   {
     date: "2026-10-16",
+    title: "Read transcripts on the website",
+    what: "Anyone in your Discord server can read a session's transcript on the website, cleaned or as heard, and save it as a text file. Open My Account, then Session transcripts.",
+  },
+  {
+    date: "2026-10-16",
     title: "Your questions to the team",
     what: "After you write to the DMbot team, your account page lists your questions, with the date you sent each one and whether it is waiting, answered or closed.",
   },

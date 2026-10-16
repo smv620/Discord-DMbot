@@ -1954,8 +1954,11 @@ and **No** (buttons that work after a restart, DM-only on every press). **Accept
 line's cleaned words (the running session's notes and the channel message follow, as for every fix;
 a finished session's saved line is changed in the database); **Keep as is** changes nothing. The player is
 told once in a private message. Nothing is posted publicly. One suggestion per line at a time
-(table `transcript_suggestions`, migration 0093). A suggestion that waits past the end of the next
-session is dropped with no message. Checks: the speaker must still be recorded when they send it and
+(table `transcript_suggestions`, migration 0093). At the next session start (not after a restart in
+the middle of one) the DM screen shows the oldest three still waiting again, as the same line with the
+same two buttons, and "…and N more that go when this session ends." for the rest (#1504); the
+player is told nothing. A suggestion that waits past the end of the next session is dropped with no
+message. Checks: the speaker must still be recorded when they send it and
 when it is accepted; the words must not write, or stand next to, a secret name (refused with
 "That can't be used", no reason, so it cannot hint at one); everything is escaped on the DM screen.
 
@@ -3417,7 +3420,9 @@ months.
   back through the mail service's inbound webhook (`POST /mail/inbound`, signed with
   `MAIL_INBOUND_SECRET`; 404 while unset) to `info+ticket-<id>-<token>@`.
 - **Escalate** to a person when the helper's sentiment check says the person is unhappy, they
-  ask for a person, the 5-answer limit is reached, the account has no address, or the helper
+  ask for a person (every helper answer ends "Want to talk to a person instead? Reply with just the word PERSON
+  and someone on the DMbot team will write back to you."; the whole word *person* or *human*, any case, hands over as
+  `asked` with no AI call, #1518), the 5-answer limit is reached, the account has no address, or the helper
   was down for a day. The alert goes from `MAIL_ALERTS_FROM` (jarvis@getdmbot.com) to
   `SUPPORT_TEAM_EMAIL` (support@getdmbot.com) with the reason; the admin page shows the thread,
   "Needs the team", the reason (#1459) and a reply box; the team's reply is emailed from info@

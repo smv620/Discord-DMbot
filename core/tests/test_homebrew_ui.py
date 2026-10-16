@@ -5,7 +5,7 @@ store, against the database."""
 from __future__ import annotations
 
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, cast
 from unittest.mock import AsyncMock
 
 from dmbot.campaigns import CampaignStore
@@ -97,7 +97,7 @@ class TheList(HomebrewUiTest):
 
     async def test_the_command_is_for_the_dms_of_a_campaign_here(self) -> None:
         it = self.press(PLAYER)
-        await ui.dmbot_homebrew.callback(it)
+        await cast(Any, ui.dmbot_homebrew).callback(it)
         self.assertEqual(self.said(it), ui.NOT_YOUR_CAMPAIGN)
 
 
@@ -108,7 +108,7 @@ class Adding(HomebrewUiTest):
         await menu._add(it)
         self.assertEqual(self.said(it), ui.KIND_ASK)
         pick = ui.KindPick(self.campaign, 0)
-        pick.pick._values = ["spell"]  # type: ignore[attr-defined]
+        pick.pick._values = ["spell"]
         form_it = self.press()
         await pick._picked(form_it)
         form = form_it.response.modal
@@ -141,7 +141,7 @@ class Adding(HomebrewUiTest):
         await ui.ListMenu(self.campaign, [], 0, [])._add(it)
         self.assertEqual(self.said(it), ui.ONLY_DMS)
         pick = ui.KindPick(self.campaign, 0)
-        pick.pick._values = ["spell"]  # type: ignore[attr-defined]
+        pick.pick._values = ["spell"]
         it2 = self.press(PLAYER)
         await pick._picked(it2)
         self.assertIsNone(it2.response.modal)
@@ -171,7 +171,7 @@ class AnEntry(HomebrewUiTest):
     async def test_the_kind_can_be_changed_and_only_by_a_dm(self) -> None:
         saved = await self.add()
         menu = ui.EntryMenu(self.campaign, saved, 0)
-        menu.kind._values = ["item"]  # type: ignore[attr-defined]
+        menu.kind._values = ["item"]
         await menu._kind(self.press(PLAYER))
         (same,) = await self.store.list(GUILD, self.campaign.id)
         self.assertEqual(same.kind, "monster")
@@ -216,18 +216,14 @@ class AnEntry(HomebrewUiTest):
 class EveryPress(HomebrewUiTest):
     async def test_a_person_who_is_no_longer_a_dm_cannot_page_or_go_back_to_the_list(self) -> None:
         await self.add("Hollow King")
-        for press_it in (
-            lambda m: m._older,
-            lambda m: m._newer,
-        ):
-            menu = ui.ListMenu(self.campaign, [], 1, [])
-            it = self.press(PLAYER)
-            await press_it(menu)(it)
-            self.assertEqual(self.said(it), ui.ONLY_DMS)
-        for handler in (
+        menu = ui.ListMenu(self.campaign, [], 1, [])
+        handlers = [
+            menu._older,
+            menu._newer,
             ui.KindPick(self.campaign, 0)._back,
             ui.ConfirmRemove(self.campaign, await self.add("X"), 0)._keep,
-        ):
+        ]
+        for handler in handlers:
             it = self.press(PLAYER)
             await handler(it)
             self.assertEqual(self.said(it), ui.ONLY_DMS)
