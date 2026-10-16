@@ -228,7 +228,7 @@ from dmbot.ui.house_rules import dmbot_house_rules  # noqa: F401 (registers it)
 from dmbot.ui.migrate import dmbot_migrate  # noqa: F401 (registers it)
 from dmbot.ui.name_card import UndoButton
 from dmbot.ui.name_lists import UndoListButton
-from dmbot.ui.names import ReviewButton, after_session_text, review_view
+from dmbot.ui.names import ReviewButton, after_session_text, held_back_text, review_view
 from dmbot.ui.optional_rules import dmbot_optional_rules  # noqa: F401 (registers it)
 from dmbot.ui.people_review import PeopleReviewButton, people_review_view, waiting_text
 from dmbot.ui.rule_lookup import dmbot_rule  # noqa: F401 (registers it)
@@ -5178,6 +5178,14 @@ class DMBot(commands.AutoShardedBot):
             if session is None or session.lines == 0:
                 return
             lines = await self.transcripts.lines(gid, table.transcript_session_id)
+            # The people at the table are not story names (as in the name scan).
+            people = {table.dm_user_id, *table.dm_user_ids, *(await self.consent.consenting(gid))}
+            skip: set[str] = set()
+            for uid in people:
+                name = self.name_of(gid, uid)
+                if not name.startswith("<@"):
+                    skip.add(name_key(name))
+                    skip.update(name_key(word) for word in name.split())
             report = await extractor.run(
                 self.extractor_ai,
                 ClaimStore(self.memory),
@@ -5190,8 +5198,15 @@ class DMBot(commands.AutoShardedBot):
                 session_started_at=session.started_at,
                 tally=table.steward_tally,
                 max_calls=self.settings.story_extractor_max_calls,
+                skip=skip,
             )
             log.info(report.line())
+            if report.named:  # the DM checks them where the name scan's are checked
+                await self.post(
+                    table.screen_channel_id,
+                    held_back_text(report.new_names),
+                    view=review_view(cid),
+                )
 
     async def log_steward_tally(self, table: Table) -> None:
         """After the session's other work: one line in the server log of what the ontology
