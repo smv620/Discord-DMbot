@@ -5582,10 +5582,21 @@ class DMBot(commands.AutoShardedBot):
         )
 
     async def recap_told(self, gid: int, cid: str, job: Job) -> None:
-        """Email the DM that their recap is ready, or could not be written, unless they chose not
-        to be emailed (#1421); the DM screen line still appears."""
+        """Email the DM that their recap is ready, or could not be written. If they chose not to be
+        emailed (#1421) the DM screen says it instead."""
         campaign = await self.campaigns.get(gid, cid)
         if campaign is not None and not campaign.recaps_email:
+            # No email by the DM's choice: the DM screen says it instead, so they still hear.
+            if campaign.dm_screen_channel_id is not None:
+                link = page_link(self.settings.site_url, gid, cid, job.session_at)
+                where = f" {link}" if self.settings.site_url else ""
+                if job.state == "ready":
+                    line = f"📜 Your recap is ready. Read it, change it or post it:{where}"
+                else:
+                    line = (
+                        f"📜 DMbot couldn't write this session's recap. You can try again:{where}"
+                    )
+                await self.post(campaign.dm_screen_channel_id, line)
             return
         if self.mailer is not None and self.recaps is not None:
             await tell_the_dm(self.mailer, self.recaps, self.settings.site_url, gid, cid, job)

@@ -7,7 +7,7 @@ from __future__ import annotations
 import unittest
 from types import SimpleNamespace
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 from dmbot.bot import DMBot
 from dmbot.campaigns.models import CampaignError
@@ -178,19 +178,28 @@ class TheAudioAndTheEmail(unittest.IsolatedAsyncioTestCase):
         )
 
     async def test_the_email_is_skipped_when_off_and_sent_when_on(self) -> None:
-        import dmbot.bot as bot_module
-
-        sent = AsyncMock()
-        real = bot_module.tell_the_dm
-        bot_module.tell_the_dm = sent  # type: ignore[assignment]
-        try:
-            job = SimpleNamespace()
-            await fake_bot(campaign(recaps_email=False)).recap_told(GUILD, "c", job)
+        job = SimpleNamespace(state="ready", session_at=100)
+        with patch("dmbot.bot.tell_the_dm", AsyncMock()) as sent:
+            await fake_bot(campaign(recaps_email=False)).recap_told(GUILD, "c" * 32, job)
             sent.assert_not_awaited()
-            await fake_bot(campaign()).recap_told(GUILD, "c", job)
+            await fake_bot(campaign()).recap_told(GUILD, "c" * 32, job)
             sent.assert_awaited_once()
-        finally:
-            bot_module.tell_the_dm = real  # type: ignore[assignment]
+
+    async def test_with_the_email_off_the_dm_screen_says_it_is_ready_or_failed(self) -> None:
+        for state, words in (("ready", "Your recap is ready"), ("failed", "couldn't write")):
+            bot = fake_bot(campaign(recaps_email=False))
+            with patch("dmbot.bot.tell_the_dm", AsyncMock()) as sent:
+                await bot.recap_told(GUILD, "c" * 32, SimpleNamespace(state=state, session_at=100))
+            sent.assert_not_awaited()
+            channel, line = bot.post.await_args.args
+            self.assertEqual(channel, 66)
+            self.assertIn(words, line)
+            self.assertIn("https://site.example.com", line)
+        # With the email on, nothing extra goes to the DM screen (the email says it).
+        on = fake_bot(campaign())
+        with patch("dmbot.bot.tell_the_dm", AsyncMock()):
+            await on.recap_told(GUILD, "c" * 32, SimpleNamespace(state="ready", session_at=100))
+        on.post.assert_not_awaited()
 
     async def test_the_panel_shows_what_the_plan_allows_and_how(self) -> None:
         facts = await fake_bot(campaign()).recap_plan_facts(campaign())
@@ -248,12 +257,29 @@ class ThePanel(unittest.IsolatedAsyncioTestCase):
             dm_screen_level="normal", dm_screen_visibility="peek", rules_cards=False,
             side_initiative=False, dndbeyond_invite=None, paused=False,
         )  # fmt: skip
-        ids = lambda viewer: [  # noqa: E731
-            getattr(getattr(c, "item", c), "custom_id", "")
-            for c in settings_view(camp, None, viewer).children
-        ]
+
+        def ids(viewer: int) -> list[str]:
+            return [
+                str(getattr(getattr(c, "item", c), "custom_id", ""))
+                for c in settings_view(camp, None, viewer).children
+            ]
+
         self.assertIn(f"dmbot:recaps:{'c' * 32}", ids(DM))
         self.assertNotIn(f"dmbot:recaps:{'c' * 32}", ids(OTHER))
+
+    async def test_a_server_manager_who_is_not_a_dm_cannot_change_it(self) -> None:
+        camp = campaign()
+        store = SimpleNamespace(
+            get=AsyncMock(return_value=camp), set_recap_switch=AsyncMock(return_value=camp)
+        )
+        it = MagicMock()
+        it.user = SimpleNamespace(id=OTHER, guild_permissions=SimpleNamespace(manage_guild=True))
+        it.guild, it.guild_id = SimpleNamespace(id=GUILD), GUILD
+        it.client = SimpleNamespace(campaigns=store)
+        it.response.send_message = AsyncMock()
+        await panel.RecapsPanel(camp, panel.PlanFacts(True, True, "x")).save(it, "email", False)
+        store.set_recap_switch.assert_not_awaited()
+        self.assertEqual(it.response.send_message.await_args.args[0], panel.ONLY_DM)
 
     async def test_only_the_campaigns_dm_can_open_or_change_it(self) -> None:
         camp = campaign()

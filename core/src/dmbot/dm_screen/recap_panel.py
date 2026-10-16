@@ -4,7 +4,7 @@
 ready". They are on by default and can only turn things off: what the plan allows is decided
 elsewhere (the plan gate fails closed), so a switch can never turn on something the plan does not
 include. The narration switch is shown only where the plan includes spoken recaps, and says in one
-line whether it is part of the plan or an add-on. Only the campaign's DMs (or a server manager) may
+line whether it is part of the plan or an add-on. Only the campaign's DMs may
 open or change it. One tap saves, and the panel redraws; nothing else is said.
 """
 
@@ -19,7 +19,6 @@ import discord
 
 from dmbot.campaigns import Campaign
 from dmbot.dm_screen import messages
-from dmbot.dm_screen.table_chat_panel import may_change
 from dmbot.logs import set_log_context
 
 log = logging.getLogger(__name__)
@@ -60,6 +59,12 @@ class PlanFacts:
     text: bool
     audio: bool
     audio_how: str = ""  # "part of your plan" or "an add-on", said in one line
+
+
+def may_change(interaction: discord.Interaction, campaign: Campaign) -> bool:
+    """Only the campaign's DMs: these choices spend the DM's plan (the narration's credits) and
+    decide what they are emailed, so a server manager does not get them."""
+    return interaction.user.id in campaign.dm_user_ids
 
 
 def audio_how(plan_name: str | None, kind: str, included_plans: frozenset[str]) -> str:
