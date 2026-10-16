@@ -173,6 +173,14 @@ class TranscriptBuffer:
                 return True
         return False
 
+    def entity_of(self, user_id: int, started_ms: int) -> str | None:
+        """A waiting line's entity (#53, #1624): "" if it has none (yet), None if the line is no
+        longer waiting (it was saved, or dropped)."""
+        for waiting in self._waiting:
+            if (waiting.user_id, waiting.started_ms) == (user_id, started_ms):
+                return waiting.entity
+        return None
+
     def set_entity(self, user_id: int, started_ms: int, entity: str) -> bool:
         """A waiting line's entity (#53); True if it was here."""
         for i, waiting in enumerate(self._waiting):

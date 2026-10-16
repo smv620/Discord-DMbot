@@ -211,7 +211,7 @@ from dmbot.sessions import SavedSession, SessionStore
 from dmbot.sidebar import knowledge
 from dmbot.sidebar.answer import PROMPT_VERSION as SIDEBAR_PROMPT_VERSION
 from dmbot.sidebar.answer import Sidebar
-from dmbot.sidebar.ask import AskLimiter
+from dmbot.sidebar.ask import AskLimiter, request_in
 from dmbot.sidebar.people import lines as people_lines
 from dmbot.sidebar.service import Recent, SidebarService
 from dmbot.test_recording import files as test_files
@@ -3692,12 +3692,13 @@ class DMBot(commands.AutoShardedBot):
             table.vocabulary.note(utterance.user_id, text)
         if text:
             self._act_on_line(table, utterance.user_id, str(cleaned or text))
+        labelling = False  # is this line waiting for its speaker label? (#1624)
         if text and self.transcripts is not None:
             duration_ms = int(utterance.duration_s * 1000)
             table.unsaved.add(
                 Line(utterance.start_ms, utterance.user_id, text, cleaned or text, duration_ms)
             )
-            self._speaker_pending(table, utterance, str(cleaned or text))
+            labelling = self._speaker_pending(table, utterance, str(cleaned or text))
         saving = (
             table.test_session is not None
             and self.test_voice is not None
@@ -3722,9 +3723,19 @@ class DMBot(commands.AutoShardedBot):
                 self._feed_name_answers(
                     table, utterance.user_id, utterance.start_ms, str(cleaned or text)
                 )
-                # Only the DM's own lines can start it; consent was just re-checked. Lines
-                # the Cleaner tags as in character are not told apart yet (in_character).
-                self.sidebar.ask_at_table(table, utterance.user_id, str(cleaned or text))
+                # Only the DM's own lines can start it; consent was just re-checked. A line said
+                # as a named NPC never does (#1624): when it clearly asks DMbot something and
+                # its speaker label is on the way, the question waits for the label.
+                asked_line = str(cleaned or text)
+                if labelling and request_in(asked_line) is not None:
+                    self._track(
+                        self._ask_after_label(
+                            table, utterance.user_id, utterance.start_ms, asked_line
+                        ),
+                        "sidebar-after-label",
+                    )
+                else:
+                    self.sidebar.ask_at_table(table, utterance.user_id, asked_line)
         if text and self._topic_pending(table, utterance, cleaned or text, names_said):
             pass  # held for the off-topic filter: the names scan gets it once labelled
         elif text and len(table.heard) < HEARD_MAX:
@@ -4584,10 +4595,11 @@ class DMBot(commands.AutoShardedBot):
         if hide:
             await self._hide_lines(table, hide, lines)
 
-    def _speaker_pending(self, table: Table, utterance: Utterance, text: str) -> None:
+    def _speaker_pending(self, table: Table, utterance: Utterance, text: str) -> bool:
         """Who the DM was speaking as (#53): the DM's own lines, not other people's, wait
         for the AI a window at a time. No AI key, no names to choose from, a session
-        already finishing, or a resting helper: no label (never a guess in the file)."""
+        already finishing, or a resting helper: no label (never a guess in the file). True if the
+        line is now waiting to be labelled."""
         if (
             self.topic_ai is None
             or utterance.user_id not in table.dm_user_ids
@@ -4596,7 +4608,7 @@ class DMBot(commands.AutoShardedBot):
             or time.monotonic() < table.speaker_paused_until
             or not table.speaker_book.allowed(table.name_lookup)
         ):
-            return
+            return False
         first = not table.speakers.lines
         waiting = Waiting(utterance.user_id, utterance.start_ms, text, utterance.duration_s)
         if table.speakers.add(waiting, time.monotonic()):
@@ -4604,6 +4616,34 @@ class DMBot(commands.AutoShardedBot):
         elif first:
             later = self._label_speakers_later(table, table.speakers.opened_at)
             self._speaker_task(table, later, timer=True)
+        return True
+
+    async def _ask_after_label(
+        self, table: Table, user_id: int, started_ms: int, line: str
+    ) -> None:
+        """The DM's spoken look-up (#1624): label the DM's waiting lines now, so the question is
+        not started from a line said as a named NPC. The label comes from an AI call over a
+        window of the DM's lines, so it is not known when the line is first handled; for a line
+        that clearly asks DMbot something, the window is closed at once and the answer waits for
+        that one call (bounded). No label in time or no label sure enough: asked as before."""
+        entity = ""
+        try:
+            async with asyncio.timeout(TOPIC_CALL_TIMEOUT_S + 2):
+                pending = [t for t in table.speaker_tasks if not t.done()]
+                if pending:
+                    await asyncio.wait(pending, timeout=TOPIC_CALL_TIMEOUT_S)
+                lines = table.speakers.take()
+                if lines and not self._closing:
+                    await self._label_speakers(table, lines)
+            entity = table.unsaved.entity_of(user_id, started_ms) or ""
+        except Exception:
+            log.info("Sidebar: couldn't wait for the speaker label; asking without it")
+        # The session may have moved on, or the DM stopped being recorded, while it waited.
+        if self.tables.get(table.guild_id) is not table or not self.consent.has_consent(
+            table.guild_id, user_id
+        ):
+            return
+        self.sidebar.ask_at_table(table, user_id, line, entity=entity)
 
     def _speaker_task(self, table: Table, work: Awaitable[None], *, timer: bool = False) -> None:
         task = self._track(work, "speakers")
