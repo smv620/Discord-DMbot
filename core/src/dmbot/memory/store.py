@@ -2525,6 +2525,43 @@ class MemoryStore:
         except TooLateToUndo:
             raise TooLateToUndo(self._too_late()) from None
 
+    async def undo_connection(
+        self, guild_id: int, campaign_id: str, batch: int, *, within: int, secrets: bool
+    ) -> Written[Relation]:
+        """Put back a connection the DM removed (#1566): reverses that one batch, which must be
+        a single change to one connection made by the DM, no more than `within` seconds ago. The
+        row comes back exactly as it was (secret flag, source, status, detail). A secret one is
+        only put back for someone who may see secrets (`secrets`), so a manager who isn't a DM
+        can't touch it. Refused, with nothing written, if the connection changed since."""
+        async with self._write(guild_id, campaign_id, "undo", undoes=batch) as w:
+            cur = await w.conn.execute(
+                "SELECT row_id, op, source, made_at, before, after FROM memory_changes"
+                " WHERE guild_id = %s AND campaign_id = %s AND batch = %s AND table_name = %s",
+                (*w.ids, batch, RELATIONS.name),
+            )
+            rows = await cur.fetchall()
+            cur = await w.conn.execute(
+                "SELECT count(*) AS n FROM memory_changes"
+                " WHERE guild_id = %s AND campaign_id = %s AND batch = %s",
+                (*w.ids, batch),
+            )
+            total = await cur.fetchone()
+            if not rows or total is None or total["n"] != 1:
+                raise TooLateToUndo(self._too_late())
+            (row,) = rows
+            after = row["after"] or {}
+            if row["op"] != "update" or row["source"] != DM or after.get("status") != REJECTED:
+                raise MemoryRuleError(NOT_FOUND)  # only a removal by the DM
+            if (row["before"] or {}).get("secret") and not secrets:
+                raise MemoryRuleError(NOT_FOUND)  # a secret is not even mentioned, old or not
+            if w.now - row["made_at"] > within:
+                raise TooLateToUndo(self._too_late())
+            await undo_batch(w, batch)
+            back = await w.get(RELATIONS, row["row_id"])
+            if back is None:
+                raise MemoryRuleError(NOT_FOUND)
+            return Written(_relation(back), w.batch)
+
     def _too_late(self) -> str:
         # Also true after a backup replaced the campaign: that starts a fresh log.
         return (
