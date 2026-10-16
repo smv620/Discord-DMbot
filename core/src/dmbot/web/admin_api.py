@@ -433,6 +433,8 @@ def router(
                     "message": r.message,
                     "source": r.source,
                     "status": r.status,
+                    # Why it came to a person: one of support.REASONS, or null.
+                    "reason": r.reason,
                     # Where the team replies; null when the account has no email.
                     "email": r.email,
                     # The helper's answers, the person's emailed replies and the team's replies.
