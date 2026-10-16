@@ -12,10 +12,13 @@ Run by .github/workflows/supervisor-review.yml. The rule is CLAUDE.md's:
 - A PR that changes only the testing logs needs no review (log-only, CLAUDE.md).
 - A PR written by Supervisor itself ("Session: Supervisor." in its body) is never reviewed by
   Supervisor. Outside the docs-only rule it is approved by the owner's label `approved: owner`:
-  the status is green only while that label is on the PR, was added by the owner's account, and
-  was added after the head commit was made. A push after the label keeps the status pending
-  until the label is added again (#1387). Any other PR with that label is still judged by
-  Supervisor's review alone.
+  the status is green only while that label is on the PR, the newest time it was put on was by
+  the owner's account (not taken off since), and that was after the head arrived: the earliest
+  status on the head commit, or this run if there is none yet (a commit's own date is set by
+  whoever made it, so it is only a floor). A push after the label keeps the status pending until
+  the label is added again (#1387). A "changes needed" review still wins over the label. Any
+  other PR with that label is judged by Supervisor's review alone. The owner's account is the
+  sessions' too (one GitHub account), so this guards against mistakes, not against a session.
 
 Who may give the verdict: only the repository owner's account. Anyone can post a review on a
 public repository, so a body alone proves nothing. Standard library only; the token is the
@@ -34,6 +37,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from collections.abc import Callable, Iterable, Mapping, Sequence
+from datetime import UTC, datetime
 from typing import Any
 
 CONTEXT = "supervisor-review"
@@ -107,25 +111,40 @@ def is_supervisors(body: str | None) -> bool:
     return bool(SUPERVISOR_PR.search(body or ""))
 
 
+def _when(text: object) -> datetime | None:
+    """An ISO time from GitHub as an aware time, or None if it can't be read (then nothing is
+    approved by it)."""
+    try:
+        value = datetime.fromisoformat(str(text).replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return value if value.tzinfo is not None else None
+
+
 def owner_approved(
     labels: Iterable[str],
     events: Iterable[Mapping[str, Any]],
-    head_time: str,
+    head_arrived: datetime,
     allowed: Iterable[str],
 ) -> bool:
-    """The owner's label is on the PR now, the owner's own account added it (the newest time it
-    was added), and that was after the head commit was made. ISO times compare as text."""
+    """The owner's label is on the PR now, and its newest `labeled` event (from the first event
+    to the last, an `unlabeled` clearing it) was made by the owner's account after the head
+    arrived. A label put back by anyone else does not count, whoever put it on before."""
     if OWNER_LABEL not in set(labels):
         return False
     names = {a.casefold() for a in allowed}
-    added = [
-        str(e.get("created_at") or "")
-        for e in events
-        if e.get("event") == "labeled"
-        and (e.get("label") or {}).get("name") == OWNER_LABEL
-        and ((e.get("actor") or {}).get("login") or "").casefold() in names
-    ]
-    return bool(added) and bool(head_time) and max(added) > head_time
+    current: tuple[str, datetime | None] | None = None
+    for e in events:
+        if (e.get("label") or {}).get("name") != OWNER_LABEL:
+            continue
+        if e.get("event") == "labeled":
+            who = ((e.get("actor") or {}).get("login") or "").casefold()
+            current = (who, _when(e.get("created_at")))
+        elif e.get("event") == "unlabeled":
+            current = None
+    if current is None or current[0] not in names or current[1] is None:
+        return False
+    return current[1] > head_arrived
 
 
 def decide(
@@ -141,7 +160,7 @@ def decide(
     commit)."""
     if changed_files and all(name in LOG_ONLY for name in changed_files):
         return SUCCESS, "Log-only, no review needed (CLAUDE.md)"
-    if owner_approved_supervisor_pr:
+    if owner_approved_supervisor_pr and (review is None or verdict_of(review) != "changes needed"):
         return SUCCESS, "Approved by the owner (a Supervisor PR)"
     if review is None:
         return PENDING, "Waiting for Supervisor's review"
@@ -215,6 +234,22 @@ class GitHub:
         self._request("POST", f"/repos/{self._repo}/statuses/{sha}", body)
 
 
+def now() -> datetime:
+    return datetime.now(UTC)
+
+
+def head_arrived(github: GitHub, head: str, moment: datetime) -> datetime | None:
+    """When the head commit reached the PR, by a time its pusher can't choose: the earliest
+    status on it, or `moment` (this run) when it has none yet. Never earlier than the commit's
+    own date. None if a time can't be read (nothing is approved then)."""
+    statuses = github.pages(f"/commits/{head}/statuses")
+    times = [t for t in (_when((s or {}).get("created_at")) for s in statuses) if t is not None]
+    made = _when(github.get(f"/commits/{head}")["commit"]["committer"]["date"])
+    if made is None:
+        return None
+    return max(min(times) if times else moment, made)
+
+
 def run(github: GitHub, number: int, allowed: Iterable[str]) -> Verdict:
     """Work out the check for a pull request and post it on its head commit."""
     pull = github.get(f"/pulls/{number}")
@@ -227,8 +262,8 @@ def run(github: GitHub, number: int, allowed: Iterable[str]) -> Verdict:
         labels = [(item or {}).get("name", "") for item in pull.get("labels") or []]
         if OWNER_LABEL in labels:
             events = github.pages(f"/issues/{number}/events")
-            made = github.get(f"/commits/{head}")["commit"]["committer"]["date"]
-            approved = owner_approved(labels, events, str(made), allowed)
+            arrived = head_arrived(github, head, now())
+            approved = arrived is not None and owner_approved(labels, events, arrived, allowed)
 
     def same_change(sha: str) -> bool:
         try:
