@@ -3606,6 +3606,38 @@ was the test-only role-creation race (`pg_authid_rolname_index`, fixed by #1442,
 next); the deployed code was unchanged by the failing test. Any further exception is a
 Supervisor decision recorded here with the commit and the reason, never dev1's own call.
 
+**Data, ownership and deletion (owner, 2026-10-16).** Replaces "store and process them only to run
+DMbot for you" in the terms. Decided after Supervisor advised against "DMbot owns all data as public
+art": privacy law lets people withdraw consent and erase their personal data whatever a contract
+says, and DMs would not pay for a service that claims their campaigns.
+- **Users keep ownership; DMbot gets a broad licence.** People grant DMbot a worldwide, royalty-free
+  licence to store, process and show what they and their table provide, to run DMbot and to improve it.
+  Content a DM shares from a book stays the rights holder's (the "I have the right" step is unchanged).
+- **Generated content belongs to the campaign** (#1381 decision 1): recaps, story memory, notes and
+  anything else DMbot writes from a session stay with the campaign when a player leaves, and are
+  deleted only when the campaign is deleted.
+- **Who may delete a campaign:** the game master whose plan it uses (`owner_user_id`; for a free
+  campaign, the DM who started it). Other game masters manage it but cannot delete it. Built (#1608, PR #1618):
+  ⚙️ Settings → 🗑 Delete this campaign, the plan holder only (checked again under the campaign
+  lock), not during a session, one warning and a typed name; its channels go as retention's do.
+- **Severable personal data is deleted on request, best effort:** a person's own lines and what DMbot
+  learned about them (Delete my transcripts, Stop recording me, account deletion). Generated content
+  and copies other people already downloaded stay, and the pages say so.
+- **Account data stays protected:** Discord ids, emails, payment and record-keeping data are never
+  published or shared beyond the processors the privacy page names.
+- **Improving DMbot:** DMbot uses transcripts and typed table chat to improve itself (the raw transcript
+  exists for this, #933). It is disclosed on the privacy page, and a person **opts out on the website**
+  (My Account), after which nothing they said or typed is used for improvement; running their table is
+  unaffected. Built in #1609 (store and honour the choice) and #1610 (the switch and the wording). The
+  choice applies from when it is made, at the source (the test recorder, session exports); test
+  recordings kept earlier name people only by made-up voice codes, so they are not re-filtered, and
+  **Stop saving my voice** remains the way to delete one's kept voice (decided 2026-10-16, PR #1621).
+- **Raw audio:** DMbot does not store voice in the base product. The test library's voice saving stays
+  a separate yes (⚙️ Menu → Stop saving my voice); keeping audio for troubleshooting is decided later.
+- The terms and privacy changes are one WebDev PR (#1610), held for the owner's `approved: owner` label and
+  recommended for a lawyer's read before it goes live; it merges only after the delete button and the
+  opt-out exist.
+
 **Retention.** Configurable auto-delete of transcripts per server (audio is never
 stored), and a "Delete my past transcripts" action for each player. Deleting a person's
 lines covers both versions, the fixes list, the mentions that point at those lines, and
