@@ -128,9 +128,12 @@ RECALL_RULES = """
 
 12. Under "WHAT THE DM HAS CONFIRMED ABOUT THEM" are facts the Dungeon Master confirmed, each \
 with a label like F1. Use them for questions about the campaign's people, places and things, \
-and set SOURCE to "confirmed story". Say nothing about the story that is not in them or in the \
+and set SOURCE to "facts you confirmed". Say nothing about the story that is not in them or in the \
 other material given. List the labels you used on one more line: CITED: F1, F3 (or CITED: none). \
 Cite only labels that are given; never write a label or an ID in ANSWER."""
+CONFIRMED_SOURCE = "facts you confirmed"  # the source shown for an answer from the DM's own facts
+# A label (F1) or an id as the reply's wording would show it: never shown to anyone (#1370).
+_LEAK = re.compile(r"\s*\[?\bF\d+\b\]?|\s*\b[0-9a-f]{32}\b", re.IGNORECASE)
 NO_INFO_ANSWER = "I don't have that. Your call."  # when a reply cites what it was not given
 ONE_FOR_DM = "That's one for your DM."  # a table question that needs the DM's secrets or call
 _ONE_FOR_DM = re.compile(r"that['’]s one for your dm", re.IGNORECASE)
@@ -227,7 +230,7 @@ def restated(text: str) -> str:
 def cited_labels(text: str) -> tuple[str, ...]:
     """The labels in a CITED line ("F1, F3"), each once, in the order written; none for
     "none" or nothing. Anything else written there is kept, so it can be caught as not given."""
-    words = [w.strip(" .;[]()") for w in re.split(r"[,\s]+", text)]
+    words = [w.strip(" .;[]()").upper() for w in re.split(r"[,\s]+", text)]
     return tuple(dict.fromkeys(w for w in words if w and w.lower() not in ("none", "n/a", "-")))
 
 
@@ -378,8 +381,7 @@ def canonical_source(said: str | None, ctx: context.Context) -> str | None:
             return given
     for key, given in (
         ("campaign", "campaign names"),
-        ("confirmed", "confirmed story"),
-        ("story", "confirmed story"),
+        ("confirmed", CONFIRMED_SOURCE),
         ("scene", "the scene"),
         ("dmbot", "DMbot help"),
     ):
@@ -566,7 +568,7 @@ class Sidebar:
             )
         # A source the entry or the house rule doesn't support is a failed check too, and the
         # careful tier is asked before the source is cut (#1017).
-        problems += self._uncited(fields, ctx)  # a label it was not given (#1370)
+        problems += self._uncited(fields, ctx, text)  # a label it was not given (#1370)
         quick_problems = list(problems)  # (what the same-model retry has always fixed)
         if self._careful() is not None:  # (without the careful tier, today's checks stand)
             problems += self._unsupported_source(fields, text, ctx)
@@ -597,10 +599,12 @@ class Sidebar:
                         brevity.strip_padding(_NOTE_ANYWHERE.sub("", again.answer).strip()),
                         retry,
                     )
-        if self._uncited(fields, ctx):
-            # Still citing what it was not given: the answer is not known to come from what the
-            # DM confirmed, so it is dropped for the plain "no", never shown (#1370).
-            text, fields = NO_INFO_ANSWER, replace(fields, source=None, confidence=None)
+        if ctx.recall is not None:
+            if [p for p in self._uncited(fields, ctx) if p.startswith("CITED")]:
+                # Still citing what it was not given: the answer is not known to come from what
+                # the DM confirmed, so it is dropped for the plain "no", never shown (#1370).
+                text, fields = NO_INFO_ANSWER, replace(fields, source=None, confidence=None)
+            text = _LEAK.sub("", text).strip()  # a label or id is never shown, whatever happens
         if named is not None and says_no_info(text):
             # Still no: answer with the entry's own words and its source, never contradict
             # the same question asked another way (#992). Only for an entry the question
@@ -612,6 +616,9 @@ class Sidebar:
         if not text:
             raise AIError(NO_ANSWER)
         source, confidence = canonical_source(fields.source, ctx), fields.confidence
+        if source == CONFIRMED_SOURCE:
+            # It is the DM's own confirmed facts: no "confident" beside it. And it must cite some.
+            source, confidence = (CONFIRMED_SOURCE, None) if fields.cited else (None, None)
         if source and source_unsupported(source, text, ctx):
             source, confidence = None, None  # the house rule or the page does not say this (#1015)
         text = _NOTE_ANYWHERE.sub("", text).strip()  # the model may write it; the code does
@@ -664,17 +671,24 @@ class Sidebar:
         return self._second
 
     @staticmethod
-    def _uncited(fields: Fields, ctx: context.Context) -> list[str]:
-        """Problems with the labels the reply cited: any that was not given (checked as ids by
-        `check_citations`, so a made-up label and a real ID both fail). Empty when no confirmed
-        facts were given."""
+    def _uncited(fields: Fields, ctx: context.Context, text: str = "") -> list[str]:
+        """Problems with a reply that was given confirmed facts (empty when none were): a label
+        in CITED that was not given (only the labels listed count; `check_citations` also checks
+        what they stand for), and a label or an id written into the answer itself, which is never
+        shown. A made-up label, a real id in its place and a stray "[F1]" all fail."""
         if ctx.recall is None:
             return []
         given = dict(ctx.labels)
-        bad = check_citations([given.get(c, c) for c in fields.cited], ctx.recall)
-        if not bad:
-            return []
-        return ["CITED names something that was not given: cite only the labels F1, F2… listed"]
+        bad = [c for c in fields.cited if c not in given]
+        bad += check_citations([given[c] for c in fields.cited if c in given], ctx.recall)
+        problems: list[str] = []
+        if bad:
+            problems.append(
+                "CITED names something that was not given: cite only the labels F1, F2… listed"
+            )
+        if _LEAK.search(text):
+            problems.append("ANSWER has a label or an ID in it: write the answer in plain words")
+        return problems
 
     @staticmethod
     def _unsupported_source(fields: Fields, text: str, ctx: context.Context) -> list[str]:

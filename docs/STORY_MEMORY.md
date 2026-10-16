@@ -586,8 +586,9 @@ Each step is useful on its own and ships behind the existing phases.
    **Slice 2 is built (#1370): the DM sidebar is the first helper to use recall.** A question that
    names confirmed entries adds the facts around them to the sidebar's prompt, from recall for the
    audience **players** (not the DM screen): a sidebar reply can reach the raw transcript, which
-   everyone who may read it may read, so no secret fact, no secret name and no entry note is ever
-   in it. Each fact has a short label (F1, F2…) in the prompt; the reply names the labels it used
+   everyone who may read it may read, so recall adds no secret fact, no secret name and no entry note.
+   (The older "campaign names" section is separate and unchanged: it still carries an entry's
+   description, minus the description of anyone with a secret name.) Each fact has a short label (F1, F2…) in the prompt; the reply names the labels it used
    on a CITED line, `check_citations` checks them against what was given, a reply citing anything
    else is asked again once and then dropped for "I don't have that. Your call.", and no label or
    id is ever shown. No transcript lines are quoted. Table questions never get it. It adds up to

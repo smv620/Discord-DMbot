@@ -357,7 +357,7 @@ def build(
         for number, item in enumerate(recalled.items, start=1):
             labels.append((f"F{number}", item.id))
             sections.append(f"- [F{number}] {item.text}")
-        sources.append("confirmed story")
+        sources.append("facts you confirmed")
     if people:  # names only, no ids; a table question gets them too (#1188)
         sections.append("WHO IS WHO AT THE TABLE (real people and the characters they play):")
         sections.extend(f"- {line[:PEOPLE_LINE_MAX]}" for line in people[:PEOPLE_MAX])

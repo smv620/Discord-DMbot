@@ -40,7 +40,7 @@ describe("What's new", () => {
 
   it("holds back what people can't use yet, with the reason, and shows none of it (#1322)", () => {
     expect(held.map((h) => h.title)).toEqual([
-      "Quick answers use your story",
+      "Quick answers use your facts",
       "Move to a new Discord account",
     ]);
     for (const h of held) {
@@ -49,7 +49,7 @@ describe("What's new", () => {
     }
     const shown = page.querySelector("main")?.textContent ?? "";
     expect(shown).not.toContain("Move to a new Discord account");
-    expect(shown).not.toContain("Quick answers use your story");
+    expect(shown).not.toContain("Quick answers use your facts");
     expect(shown).not.toContain("move code");
     expect(page.querySelectorAll(".entry")).toHaveLength(entries.length);
     expect(entries).toHaveLength(7);

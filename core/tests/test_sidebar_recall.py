@@ -84,7 +84,7 @@ class InThePrompt(unittest.TestCase):
         self.assertIn("- [F2] Cerric holds the Far Keep.", built.prompt)
         self.assertEqual(built.labels, (("F1", "a" * 32), ("F2", "b" * 32)))
         self.assertNotIn("a" * 32, built.prompt)  # the ids stay in code
-        self.assertIn("confirmed story", built.sources)
+        self.assertIn("facts you confirmed", built.sources)
 
     def test_a_table_question_never_gets_them(self) -> None:
         built = build(
@@ -135,7 +135,7 @@ def giving(rec: Recall | None) -> Any:
     return recaller
 
 
-def cited(answer: str, labels: str, source: str = "confirmed story") -> str:
+def cited(answer: str, labels: str, source: str = "facts you confirmed") -> str:
     return reply(answer, source, "confident") + f"\nCITED: {labels}"
 
 
@@ -150,7 +150,7 @@ class Answering(unittest.IsolatedAsyncioTestCase):
         ai = FakeAI([cited("Cerric.", "F1")])
         got = await self.ask(ai, rec)
         self.assertEqual(ai.systems[0], sidebar.SYSTEM + sidebar.RECALL_RULES)
-        self.assertIn("confirmed story", got.sources)
+        self.assertIn("facts you confirmed", got.sources)
         self.assertEqual(got.prompt_version, sidebar.PROMPT_VERSION + "+recall")
         plain = FakeAI([reply("Cerric.", "campaign names")])
         await self.ask(plain, None)
@@ -163,9 +163,37 @@ class Answering(unittest.IsolatedAsyncioTestCase):
         ai = FakeAI([cited("Cerric.", "F1")])
         got = await self.ask(ai, recalled(fact("a", "Belleros serves Cerric.")))
         self.assertTrue(got.text.startswith("Cerric."))
-        self.assertIn("confirmed story", got.text)  # the source, in words
+        self.assertIn("(facts you confirmed)", got.text)  # the source in words, not "confident"
         self.assertNotIn("F1", got.text)
         self.assertNotIn("a" * 32, got.text)
+
+    async def test_a_label_or_id_written_into_the_answer_is_retried_and_then_scrubbed(self) -> None:
+        given = "a" * 32
+        ai = FakeAI([cited(f"Cerric [F1] {given}.", "F1"), cited(f"Cerric [F1] {given}.", "F1")])
+        got = await self.ask(ai, recalled(fact("a", "Belleros serves Cerric.")))
+        self.assertIn("ANSWER has a label or an ID", ai.prompts[1])
+        self.assertTrue(got.text.startswith("Cerric."))
+        self.assertNotIn("F1", got.text)
+        self.assertNotIn(given, got.text)
+
+    async def test_a_label_in_lower_case_still_counts_and_a_given_id_raw_does_not(self) -> None:
+        rec = recalled(fact("a", "Belleros serves Cerric."))
+        low = FakeAI([cited("Cerric.", "f1")])
+        self.assertTrue((await self.ask(low, rec)).text.startswith("Cerric."))
+        raw = FakeAI([cited("Cerric.", "a" * 32), cited("Cerric.", "a" * 32)])
+        got = await self.ask(raw, rec)  # a given id is not a label: only labels are accepted
+        self.assertTrue(got.text.startswith(sidebar.NO_INFO_ANSWER))
+
+    async def test_a_source_that_merely_has_story_in_it_is_not_taken_for_the_facts(self) -> None:
+        rec = recalled(fact("a", "Belleros serves Cerric."))
+        ai = FakeAI([cited("Cerric.", "F1", source="the history of the realm")])
+        got = await self.ask(ai, rec)
+        self.assertNotIn("facts you confirmed)", got.text)
+
+    async def test_the_facts_as_a_source_need_a_citation(self) -> None:
+        ai = FakeAI([reply("Cerric.", "facts you confirmed", "confident") + "\nCITED: none"])
+        got = await self.ask(ai, recalled(fact("a", "Belleros serves Cerric.")))
+        self.assertNotIn("facts you confirmed)", got.text)  # nothing cited, nothing claimed
 
     async def test_a_label_it_was_not_given_is_caught_and_the_second_try_is_told(self) -> None:
         ai = FakeAI([cited("Cerric.", "F1, F9"), cited("Cerric.", "F1")])
