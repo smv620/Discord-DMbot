@@ -50,6 +50,7 @@ MAX_PROBLEMS = 20
 HELP = (
     "# How this file works\n"
     "# Each entry starts with: ## Name (kind)\n"
+    "# (an entry that is turned off starts with: ## Name (kind, off))\n"
     f"# Kinds: {', '.join(KINDS)}\n"
     "# Under the heading you can add:  Summary: one short line\n"
     "#                                 Players may know: yes   (or no)\n"
@@ -71,6 +72,7 @@ TOO_BIG = (
 NOT_AN_ENTRY = "this isn't under an entry. Start one with ## Name (kind)"
 NO_KIND = f"add a kind in brackets after the name, like (monster). Kinds: {', '.join(KINDS)}"
 BAD_KIND = f"that kind isn't one DMbot knows. Use: {', '.join(KINDS)}"
+BAD_STATE = "after the kind, write off (or on) or nothing, like (monster, off)"
 NO_NAME = "the heading has no name. Write ## Name (kind)"
 NAME_TOO_LONG = f"the name is over {NAME_MAX} characters"
 NO_TEXT = "add the words after a blank line under the heading"
@@ -115,7 +117,8 @@ def write(campaign_name: str, entries: Sequence[Homebrew]) -> str:
     if not entries:  # a template to start from
         out += ["", *(f"# {line}" if line else "#" for line in EXAMPLE.split("\n"))]
     for entry in sorted(entries, key=lambda e: name_key(e.name)):
-        out += ["", f"## {entry.name} ({entry.kind})"]
+        state = "" if entry.enabled else ", off"  # (on is the default and is not written)
+        out += ["", f"## {entry.name} ({entry.kind}{state})"]
         if entry.summary:
             out.append(f"Summary: {entry.summary}")
         out.append(f"Players may know: {'yes' if entry.players_may_know else 'no'}")
@@ -187,7 +190,9 @@ def _entry(
         report(n, heading, why)
 
     name, bracket = _heading(heading)
-    kind = (bracket or "").strip().lower()
+    # `## Name (kind)` or, for an entry the DM turned off, `## Name (kind, off)` (#1629).
+    kind_, _, state = (bracket or "").partition(",")
+    kind, state = kind_.strip().lower(), state.strip().lower()
     if not name:
         bad(NO_NAME)
         return None
@@ -199,6 +204,9 @@ def _entry(
         return None
     if kind not in KINDS:
         bad(BAD_KIND)
+        return None
+    if state not in ("", "on", "off"):
+        bad(BAD_STATE)
         return None
     # The lines up to the first blank one are the optional Summary and Players lines.
     summary: str | None = None
@@ -226,7 +234,9 @@ def _entry(
     except HomebrewError as exc:
         bad(_why(str(exc)))
         return None
-    return FileEntry(kind, clean_name_, text, shortened, players)
+    return FileEntry(
+        kind, clean_name_, text, shortened, players, None if not state else state == "on"
+    )
 
 
 def _heading(line: str) -> tuple[str, str | None]:

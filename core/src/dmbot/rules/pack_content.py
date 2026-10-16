@@ -36,7 +36,10 @@ def content_of(entries: Sequence[Homebrew]) -> tuple[dict[str, Any], list[str]]:
     because they came from a confirmed book. `known` is the entry's players-may-know flag as the
     DM set it: it applies at a follower's table as published (hidden stays hidden)."""
     # Only the campaign's own entries: one read from a followed pack (`source`) is not its to share.
-    own = sorted((e for e in entries if e.source is None), key=lambda e: (e.created_at, e.id))
+    # An entry the DM turned off (#1629) is not offered either: DMbot uses it nowhere.
+    own = sorted(
+        (e for e in entries if e.source is None and e.enabled), key=lambda e: (e.created_at, e.id)
+    )
     kept = [e for e in own if not e.from_book]
     left_out = [e.name for e in own if e.from_book]
     return (

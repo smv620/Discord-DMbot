@@ -647,6 +647,7 @@ DM-screen content until the DM presses 👀 ("players may know")**: a homebrew m
 200 per campaign; table `homebrew_entries` with the campaign scope and forced row-level security; in backups
 (a `homebrew` section, validated field by field) and deleted with the campaign; never read across campaigns
 or servers; only the campaign's DMs change anything (the store checks in the same transaction).
+- **Turn an entry on or off** (owner, 2026-10-16, #1629, migration 0112): each entry has **Turn off / Turn on** (no confirmation) and shows "(off)" in the list. Off means kept but used nowhere at the table: no lookups or alerts, no sidebar answers, no players' card or table questions, no homebrew spotter (one `usable` read filter). The file writes `## Name (kind, off)` and reads it back; a published pack leaves off entries out; a follower's copy can be turned off on its own and a pack update never turns it back on. The web door shows `enabled`.
 - **Where the DM manages it:** ⚙️ Settings → 📚 **Homebrew** (or `/dmbot homebrew`), DM only, checked on every
   press: the list (🙈 only the DM, 👀 players may know), ➕ Add (pick the kind, then a form), and on an entry
   Edit, 👀/🙈, its kind, 🗑 Remove. **Undo** a removal is kept in memory (the last five per campaign, gone at a

@@ -116,7 +116,8 @@ class ThePage(HomebrewBase):
         got = await pages.read_homebrew(self.web, self.carol, self.cref)
         self.assertEqual(set(got), {"name", "fileName", "entries", "packs"})
         self.assertEqual(
-            set(got["entries"][0]), {"kind", "name", "summary", "text", "fromBook", "legacy"}
+            set(got["entries"][0]),
+            {"kind", "name", "summary", "text", "fromBook", "legacy", "enabled"},
         )
         self.assertEqual(got["fileName"], homebrew_file.filename("One"))
         self.assertNotIn(str(ALICE.id), json.dumps(got))

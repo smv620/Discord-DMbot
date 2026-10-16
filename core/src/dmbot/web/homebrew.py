@@ -116,6 +116,8 @@ async def read_homebrew(db: Database, session: Session, ref: str) -> dict[str, A
                 # the campaign plays a newer ruleset (booleans, false when the door is older).
                 "fromBook": bool(e.get("fromBook", False)),
                 "legacy": bool(e.get("legacy", False)),
+                # Turned off by the DM (#1629): kept, but DMbot ignores it at the table.
+                "enabled": bool(e.get("enabled", True)),
             }
             for e in entries
         ],
@@ -140,6 +142,7 @@ async def render(db: Database, session: Session, ref: str) -> tuple[str, str]:
             created_at=0,
             updated_at=int(e["updatedAt"]),
             version=int(e["version"]),
+            enabled=bool(e.get("enabled", True)),  # (#1629: the file says `off` like the bot's)
         )
         for e in found["entries"]
     ]

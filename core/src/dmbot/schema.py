@@ -5852,6 +5852,74 @@ WEB_HOMEBREW_PACKS = """
     REVOKE ALL ON FUNCTION dmbot_web_homebrew_campaigns(BIGINT) FROM PUBLIC;
 """
 
+HOMEBREW_ENABLED = """
+    -- Turn each homebrew entry on or off for the table (owner decision 2026-10-16, #1629;
+    -- docs/PLAN.md, "Homebrew (part 1)"). An off entry is kept, but DMbot uses it nowhere at the
+    -- table (lookups, alerts, sidebar answers, the players' card, the spotter, a published pack).
+    -- A column with a default: no existing row changes, so no row-level security to open.
+    ALTER TABLE homebrew_entries ADD COLUMN enabled BOOLEAN NOT NULL DEFAULT true;
+    -- The website's door hands over each shown entry's state too, so the page can show and
+    -- change it (and its download file says `off` like the bot's). Replacing a door changes no
+    -- row; CREATE OR REPLACE drops the function's own settings, so they are set again below.
+    CREATE OR REPLACE FUNCTION dmbot_web_homebrew(g BIGINT, c TEXT) RETURNS JSONB
+    LANGUAGE plpgsql SECURITY DEFINER AS $fn$
+    DECLARE
+        camp campaigns%ROWTYPE;
+    BEGIN
+        IF dmbot_current_guild() IS DISTINCT FROM g
+           OR NOT (g = ANY ((SELECT dmbot_web_guilds())::BIGINT[])) THEN
+            RETURN NULL;
+        END IF;
+        SELECT * INTO camp FROM campaigns WHERE guild_id = g AND id = c;
+        IF NOT FOUND THEN
+            RETURN NULL;
+        END IF;
+        RETURN jsonb_build_object(
+            'name', camp.name,
+            'entries', COALESCE((
+                SELECT jsonb_agg(jsonb_build_object(
+                           'kind', h.kind, 'name', h.name, 'summary', h.summary,
+                           'text', h.text, 'version', h.version, 'updatedAt', h.updated_at,
+                           'fromBook', h.from_book, 'enabled', h.enabled,
+                           -- the same test as rules/book_rank.py book_is_legacy
+                           'legacy', COALESCE(h.from_book AND h.book_edition = '2014'
+                                              AND camp.target_ruleset <> '2014', false))
+                           ORDER BY h.name_key)
+                FROM homebrew_entries h
+                WHERE h.guild_id = g AND h.campaign_id = c AND h.players_may_know),
+                '[]'::jsonb),
+            'packs', COALESCE((
+                SELECT jsonb_agg(jsonb_build_object(
+                           'name', f.set_name, 'version', f.version,
+                           'entries', COALESCE((
+                               SELECT jsonb_agg(jsonb_build_object(
+                                          'kind', t.e ->> 'kind', 'name', t.e ->> 'name',
+                                          'summary', t.e -> 'summary', 'text', t.e ->> 'text')
+                                          ORDER BY lower(t.e ->> 'name'), t.ord)
+                               FROM jsonb_array_elements(
+                                        CASE WHEN jsonb_typeof(f.content -> 'entries') = 'array'
+                                             THEN f.content -> 'entries' ELSE '[]'::jsonb END)
+                                    WITH ORDINALITY AS t(e, ord)
+                               WHERE jsonb_typeof(t.e) = 'object' AND t.e -> 'known' = 'true'::jsonb
+                           ), '[]'::jsonb))
+                       ORDER BY f.position, f.followed_at, f.set_id)
+                FROM rule_set_follows f
+                WHERE f.guild_id = g AND f.campaign_id = c AND f.kind = 'homebrew'),
+                '[]'::jsonb));
+    END
+    $fn$;
+
+    DO $do$
+    BEGIN
+        EXECUTE format(
+            'ALTER FUNCTION dmbot_web_homebrew(BIGINT, TEXT)'
+            ' SET search_path = pg_catalog, %I, pg_temp',
+            current_schema());
+    END
+    $do$;
+    REVOKE ALL ON FUNCTION dmbot_web_homebrew(BIGINT, TEXT) FROM PUBLIC;
+"""
+
 MIGRATIONS: tuple[Migration, ...] = (
     ("0001_initial", INITIAL),
     ("0002_active_sessions", ACTIVE_SESSIONS),
@@ -5972,6 +6040,7 @@ MIGRATIONS: tuple[Migration, ...] = (
     ("0108_web_homebrew_packs", WEB_HOMEBREW_PACKS),  # the page shows followed packs (#1586)
     ("0110_improvement_opt_outs", IMPROVEMENT_OPT_OUTS),  # the improvement opt-out (#1609)
     ("0111_homebrew_rules_to_house_rules", HOMEBREW_RULES_TO_HOUSE_RULES),  # #1628
+    ("0112_homebrew_enabled", HOMEBREW_ENABLED),  # each entry on or off for the table (#1629)
 )
 
 # Tables that must have row-level security. A test checks every table in the schema

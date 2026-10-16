@@ -155,8 +155,9 @@ def list_text(campaign: Campaign, entries: list[Homebrew], page: int, note: str 
         lines.append(NONE_YET)
     shown = entries[page * PAGE_ENTRIES : (page + 1) * PAGE_ENTRIES]
     for entry in shown:
+        off = "" if entry.enabled else " (off)"
         lines.append(
-            _fit(f"{mark(entry)} {KIND_LABELS[entry.kind]} **{_md(entry.name)}**: ", 400)
+            _fit(f"{mark(entry)} {KIND_LABELS[entry.kind]} **{_md(entry.name)}**{off}: ", 400)
             + _fit(_md(entry.shown()), 120)
         )
     pages = max(1, -(-len(entries) // PAGE_ENTRIES))
@@ -164,12 +165,15 @@ def list_text(campaign: Campaign, entries: list[Homebrew], page: int, note: str 
         lines.append(f"_Page {page + 1} of {pages}. 🙈 only you, 👀 players may know._")
     elif entries:
         lines.append("_🙈 only you, 👀 players may know._")
+    if any(not e.enabled for e in entries):
+        lines.append("_(off) means DMbot ignores it until you turn it on._")
     return _fit("\n".join(lines), 1900)
 
 
 def entry_text(entry: Homebrew, note: str = "") -> str:
     who = "players may know it 👀" if entry.players_may_know else "only you can see it 🙈"
-    head = f"📚 **{_md(entry.name)}** ({entry.kind.capitalize()}, {who})"
+    off = "" if entry.enabled else " It is turned off, so DMbot ignores it."
+    head = f"📚 **{_md(entry.name)}** ({entry.kind.capitalize()}, {who}).{off}"
     body = _fit(_md(entry.text), 1500)
     summary = f"\n_Shown in alerts as:_ {_md(entry.shown())}" if entry.summary else ""
     return _fit((f"{note}\n" if note else "") + f"{head}\n{body}{summary}", 1900)
@@ -423,6 +427,9 @@ class EntryMenu(_Menu):
             )
         )
         self.add_item(_Button(self._remove, label="🗑 Remove", style=discord.ButtonStyle.danger))
+        self.add_item(  # row 2: row 1 holds the kind picker, which takes a whole row
+            _Button(self._enabled, label="Turn on" if not entry.enabled else "Turn off", row=2)
+        )
         if self.packs:
             self.add_item(_Button(self._suggest, label=SUGGEST_LABEL))
         self.add_item(_Button(self._back, label="↩ To the list"))
@@ -489,6 +496,32 @@ class EntryMenu(_Menu):
     async def _kind(self, interaction: discord.Interaction) -> None:
         if await self._guard(interaction):
             await self._change(interaction, kind=self.kind.values[0])
+
+    async def _enabled(self, interaction: discord.Interaction) -> None:
+        """Turn the entry off or on (#1629): kept either way, asks nothing."""
+        if not await self._guard(interaction):
+            return
+        await _answer_first(interaction, in_place=True)
+        store, c, e = _store(interaction), self.campaign, self.entry
+        if store is None:
+            await _tell(interaction, NOT_READY)
+            return
+        try:
+            saved = await store.set_enabled(
+                c.guild_id,
+                c.id,
+                interaction.user.id,
+                e.id,
+                not e.enabled,
+                unchanged_since=e.version,
+            )
+        except HomebrewError as exc:
+            await _redraw(interaction, c, note=str(exc), page=self.page)
+            return
+        _changed(interaction, c)
+        packs = await _packs_followed(interaction, c)
+        note = "✅ Turned on." if saved.enabled else "✅ Turned off. DMbot will not use it."
+        await _show(interaction, entry_text(saved, note), EntryMenu(c, saved, self.page, packs))
 
     async def _remove(self, interaction: discord.Interaction) -> None:
         if await self._guard(interaction):
