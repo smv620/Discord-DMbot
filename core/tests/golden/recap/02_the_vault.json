@@ -1,0 +1,102 @@
+{
+ "title": "Under the counting house",
+ "names": [
+  "Isolde",
+  "Garrick",
+  "Marrow Street",
+  "the Counting House"
+ ],
+ "secret": [
+  "Lord Hask"
+ ],
+ "lines": [
+  [
+   "dm",
+   "The vault door under the Counting House on Marrow Street is covered in frost."
+  ],
+  [
+   "a",
+   "Isolde presses her hand to the door and feels it hum."
+  ],
+  [
+   "b",
+   "Garrick reads the runes aloud and says they warn of a curse."
+  ],
+  [
+   "dm",
+   "The frost spreads across Isolde's glove and she loses feeling in two fingers."
+  ],
+  [
+   "a",
+   "Isolde pulls back and takes four points of cold damage."
+  ],
+  [
+   "b",
+   "Garrick burns a scroll of warding against the door."
+  ],
+  [
+   "dm",
+   "The hum fades and the door swings open on a room of stacked coins."
+  ],
+  [
+   "a",
+   "Isolde takes a single gold ring from the top of a pile."
+  ],
+  [
+   "dm",
+   "Behind them the door begins to close, and something scrapes in the dark."
+  ],
+  [
+   "b",
+   "Garrick drags Isolde out just as the door shuts with a boom."
+  ],
+  [
+   "dm",
+   "The street is silent. The ring is cold, and it is whispering."
+  ]
+ ],
+ "beats": [
+  {
+   "keys": [
+    "isolde",
+    "door",
+    "hum"
+   ]
+  },
+  {
+   "keys": [
+    "garrick",
+    "runes",
+    "curse"
+   ]
+  },
+  {
+   "keys": [
+    "frost",
+    "isolde",
+    "glove"
+   ]
+  },
+  {
+   "keys": [
+    "garrick",
+    "scroll",
+    "warding"
+   ]
+  },
+  {
+   "keys": [
+    "isolde",
+    "gold",
+    "ring"
+   ]
+  },
+  {
+   "keys": [
+    "garrick",
+    "drags",
+    "isolde"
+   ]
+  }
+ ]
+}

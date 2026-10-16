@@ -68,9 +68,11 @@ class Settings:
     # lines. Off, and not shown to customers, until it passes its measurement (#1282); with it
     # off nothing calls the AI and the after-session step has nothing to ask.
     story_extractor_on: bool = False
+    recaps_on: bool = False  # cinematic recaps (#1382): off until dev1's quality check
     # Which model tier reads the transcript, and how many calls one session may make (#1363).
     story_extractor_tier: str = "fast"
     story_extractor_max_calls: int = 480
+    story_extractor_max_calls_day: int = 960  # per campaign, a day (two sessions' worth)
     # Continuity warnings (#1320): where each level starts and how much confirmed story a
     # campaign needs first. Backend settings, tuned on the golden set; no switch shown to anyone.
     continuity: Levels = field(default_factory=Levels)
@@ -191,6 +193,18 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
             + extractor_calls_raw
             + '".'
         )
+    extractor_day_raw = get("DMBOT_STORY_EXTRACTOR_MAX_CALLS_DAY") or "960"
+    if not (extractor_day_raw.isascii() and extractor_day_raw.isdigit()) or not (
+        1 <= int(extractor_day_raw) <= 50000
+    ):
+        raise ConfigError(
+            'DMBOT_STORY_EXTRACTOR_MAX_CALLS_DAY must be a whole number from 1 to 50000, got "'
+            + extractor_day_raw
+            + '".'
+        )
+    recaps_raw = (get("DMBOT_RECAPS") or "0").lower()
+    if recaps_raw not in ("0", "1", "true", "false", "on", "off"):
+        raise ConfigError('DMBOT_RECAPS must be 1 (on) or 0 (off), got "' + recaps_raw + '".')
     sidebar_raw = (get("DMBOT_SIDEBAR") or "0").lower()
     if sidebar_raw not in ("0", "1", "true", "false", "on", "off"):
         raise ConfigError('DMBOT_SIDEBAR must be 1 (on) or 0 (off), got "' + sidebar_raw + '".')
@@ -236,8 +250,10 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
         link_token_secret=link_secret.encode("utf-8"),
         sidebar_on=sidebar_raw in ("1", "true", "on"),
         story_extractor_on=extractor_raw in ("1", "true", "on"),
+        recaps_on=recaps_raw in ("1", "true", "on"),
         story_extractor_tier=extractor_tier,
         story_extractor_max_calls=int(extractor_calls_raw),
+        story_extractor_max_calls_day=int(extractor_day_raw),
         continuity=continuity,
         recall_budget=recall_budget,
         sidebar_recall=sidebar_recall_raw in ("1", "true", "on"),
