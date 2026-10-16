@@ -14,6 +14,7 @@ prompts, not the decision (a restored campaign's recaps are drafts again, never 
 
 from __future__ import annotations
 
+import asyncio
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -548,4 +549,6 @@ class RecapSection:
             (guild_id, campaign_id),
         )
         if self._forget_audio is not None:
-            self._forget_audio(guild_id, campaign_id)  # the narration and music go with it
+            await asyncio.to_thread(  # the narration and music go with it
+                self._forget_audio, guild_id, campaign_id
+            )

@@ -120,7 +120,10 @@ def sections(
     the words."""
     spoken_len = max(1, len(script.spoken))
     total_ms = (seconds if seconds is not None else total_seconds(spoken_len)) * 1000
-    total_ms = max(MIN_SECONDS * 1000, min(MAX_SECONDS * 1000, total_ms))
+    # An estimate is held to 3 to 10 minutes; once the voice's real timings are known (`starts`)
+    # the music is exactly as long as the voice, only held to what the provider can make.
+    floor = MIN_SECTION_MS if starts is not None else MIN_SECONDS * 1000
+    total_ms = max(floor, min(MAX_SECONDS * 1000, total_ms))
     marks: list[tuple[int, str]] = []
     for cue in script.emotions:
         mood = style_key(cue.name) or "calm"
@@ -142,14 +145,14 @@ def sections(
         else:
             end_char = marks[i + 1][0] if i + 1 < len(marks) else spoken_len
             spans.append((name, start, max(1, end_char - start)))
-    while len(spans) > MAX_SECTIONS:
-        _merge_shortest(spans)
+    while len(spans) > MAX_SECTIONS or (len(spans) > 1 and len(spans) * MIN_SECTION_MS > total_ms):
+        _merge_shortest(spans)  # and a short piece can't hold more sections than 3 s each
     # Shares of the total in proportion to the words each covers, none under 3 s; the rounding
     # and the lifting of short ones are settled on the longest, so the sum is exact.
     sum_w = sum(c for _, _, c in spans)
     base = [max(MIN_SECTION_MS, total_ms * c // sum_w) for _, _, c in spans]
     longest = max(range(len(base)), key=lambda i: base[i])
-    base[longest] += total_ms - sum(base)  # MAX_SECTIONS * 3 s is far under the 3-minute floor
+    base[longest] += total_ms - sum(base)  # the merging above leaves room for 3 s each
     out: list[Section] = []
     for (name, start, chars), ms in zip(spans, base, strict=True):
         parts = -(-ms // MAX_SECTION_MS)

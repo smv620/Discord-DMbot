@@ -161,7 +161,7 @@ class Renderer:
         voice_wav = into / "in-voice.wav"
         await asyncio.to_thread(_write_wav, voice_wav, pcm)
         # 2. The music: sections as long as the voice spends in each mood.
-        plan = music.composition_request(script, seconds=round(seconds), starts=starts)
+        plan = music.composition_request(script, seconds=math.ceil(seconds), starts=starts)
         total_ms = sum(s["duration_ms"] for s in plan["composition_plan"]["sections"])
         music_mp3 = into / "in-music.mp3"
         await guard()

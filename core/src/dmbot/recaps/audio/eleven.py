@@ -36,9 +36,9 @@ SAMPLE_RATE = 44100  # the mix and the deliverables
 # plenty for a narrator, and the mix brings it up to SAMPLE_RATE.
 SPEECH_RATE = 24000
 SPEECH_FORMAT = f"pcm_{SPEECH_RATE}"
-# The models that take the neighbouring paragraphs' words and a pronunciation dictionary. The
-# tag model (v3) is not known to: those fields are left out for it rather than risk a refusal.
-# The live run (dev1) settles which model the owner's account uses; see docs/costs.md.
+# The models that take the neighbouring paragraphs' words (request stitching). The tag model (v3)
+# does not, so those fields are left out for it. Pronunciation dictionaries (alias rules) work
+# with every model, v3 included.
 CONTEXT_MODELS = frozenset({"eleven_multilingual_v2", "eleven_turbo_v2_5", "eleven_flash_v2_5"})
 SOUND_MODEL = "eleven_text_to_sound_v2"  # the one that can make a seamless loop
 MUSIC_FORMAT = "mp3_44100_128"
@@ -52,8 +52,6 @@ VOICE_SETTINGS = {
 CREDITS_PER_CHAR = 1
 CREDITS_PER_MUSIC_MINUTE = 900
 CREDITS_PER_SOUND = 200
-SPEECH_TIMEOUT_S = 180
-MUSIC_TIMEOUT_S = 420
 SPEECH_TIMEOUT_S = 180
 MUSIC_TIMEOUT_S = 420
 MAX_AUDIO_BYTES = 60_000_000  # a reply bigger than this is refused (10 minutes of 44.1 kHz PCM)
@@ -192,7 +190,7 @@ class ElevenLabs:
             body["previous_text"] = previous_text
         if next_text and takes_context:
             body["next_text"] = next_text
-        if dictionary is not None and takes_context:
+        if dictionary is not None:
             body["pronunciation_dictionary_locators"] = [
                 {
                     "pronunciation_dictionary_id": dictionary.dictionary_id,

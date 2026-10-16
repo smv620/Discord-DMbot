@@ -5603,8 +5603,11 @@ class DMBot(commands.AutoShardedBot):
         try:
             parts = recap_post.parts_of(text)
             for i, part in enumerate(parts):
-                extra = {"files": audio} if audio and i == len(parts) - 1 else {}
-                await channel.send(part, allowed_mentions=discord.AllowedMentions.none(), **extra)
+                none = discord.AllowedMentions.none()
+                if audio and i == len(parts) - 1:
+                    await channel.send(part, allowed_mentions=none, files=audio)
+                else:
+                    await channel.send(part, allowed_mentions=none)
         except Exception:
             for f in audio:
                 f.close()

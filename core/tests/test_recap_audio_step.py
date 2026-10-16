@@ -7,6 +7,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import json
+import math
 import os
 import tempfile
 import unittest
@@ -131,15 +132,19 @@ class TheCalls(unittest.IsolatedAsyncioTestCase):
             self.eleven.credits, len("[whispers] Hello there.")
         )  # a credit a character
 
-    async def test_the_tag_model_is_not_sent_fields_it_is_not_known_to_take(self) -> None:
+    async def test_the_tag_model_gets_the_dictionary_but_no_stitching(self) -> None:
         v3 = ElevenLabs(self.fake, voice_id="v", speech_model="eleven_v3")
         await v3.speech(
             "[whispers] Hi.", previous_text="a", next_text="b", seed=1, dictionary=Locator("d", "v")
         )
         ((_, body),) = self.fake.paths("text-to-speech")
         assert body is not None
-        for field in ("previous_text", "next_text", "pronunciation_dictionary_locators"):
+        for field in ("previous_text", "next_text"):
             self.assertNotIn(field, body)
+        self.assertEqual(  # alias rules work with every model
+            body["pronunciation_dictionary_locators"],
+            [{"pronunciation_dictionary_id": "d", "version_id": "v"}],
+        )
 
     async def test_a_plan_request_has_no_force_instrumental_and_ambience_names_its_model(
         self,
@@ -395,7 +400,9 @@ class Rendering(unittest.IsolatedAsyncioTestCase):
         assert body is not None
         sections = body["composition_plan"]["sections"]
         total = sum(s["duration_ms"] for s in sections)
-        self.assertEqual(total, max(180_000, round(made.seconds) * 1000))
+        # As long as the voice track (rounded up), not the 3-minute floor of an estimate.
+        self.assertEqual(total, math.ceil(made.seconds) * 1000)
+        self.assertLess(total, 180_000)
         # The company takes force_instrumental only with a prompt; a plan with no lyric lines is
         # instrumental, so the field is left out of a plan request.
         self.assertNotIn("force_instrumental", body)
@@ -492,7 +499,7 @@ class Working(Base):
         job = await self.worker().run(1, self.one.id, 100)
         assert job is not None
         self.assertEqual((job.state, job.audio, job.audio_error), ("ready", "ready", ""))
-        self.assertGreater(job.audio_credits, 3000)
+        self.assertGreater(job.audio_credits, 300)
         present = self.files.present(1, self.one.id, 100)
         self.assertEqual(sorted(present), sorted([VOICE, MUSIC, MIX]))
         self.assertEqual(job.summary, SUMMARY)  # the text is untouched
