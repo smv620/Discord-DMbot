@@ -2680,7 +2680,8 @@ def _upgrade(old: dict[str, Any], status: str, secret: bool, source: str) -> dic
     changes: dict[str, Any] = {}
     if secret and not old["secret"]:
         changes["secret"] = True
-        changes["said_as"] = None  # a secret name is never sent to the narrator (#1419)
+        if "said_as" in old:  # a name (relations are upgraded here too)
+            changes["said_as"] = None  # a secret name is never sent to the narrator (#1419)
     if old["status"] == REJECTED:
         if source == DM and status != REJECTED:
             changes["status"] = status
