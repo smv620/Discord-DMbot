@@ -136,7 +136,8 @@ class Flow(DatabaseTest):
             suggestions=SuggestionStore(self.db),
             heard_questions=self.store,
         )
-        self.bot.post = AsyncMock(return_value=True)  # type: ignore[method-assign]
+        self.posted = AsyncMock(return_value=True)
+        self.bot.post = self.posted  # type: ignore[method-assign]
         names = {DM: "Sam", PLAYER: "Mia"}
         self.guild = MagicMock(spec=discord.Guild)
         self.guild.id = GUILD
@@ -201,7 +202,7 @@ class Flow(DatabaseTest):
         table.unanswered = [self.asked()]
         await self.bot.save_unanswered(table)
         self.assertEqual(len(await self.store.waiting(GUILD, self.campaign.id)), 1)
-        (call,) = self.bot.post.await_args_list
+        (call,) = self.posted.await_args_list
         self.assertEqual(call.args[0], SCREEN)
         self.assertIn("1 question nobody answered", call.args[1])
         self.assertNotIn("Marin", call.args[1])  # how many, never what was said
@@ -211,7 +212,7 @@ class Flow(DatabaseTest):
         table.unanswered = [self.asked(speaker=PLAYER + 50)]
         await self.bot.save_unanswered(table)
         self.assertEqual(await self.store.waiting(GUILD, self.campaign.id), [])
-        self.bot.post.assert_not_awaited()
+        self.posted.assert_not_awaited()
 
     async def test_an_expired_or_ended_question_is_remembered_and_a_stopped_speakers_goes(
         self,
@@ -293,7 +294,7 @@ class Flow(DatabaseTest):
 
     async def test_a_name_removed_since_is_not_written(self) -> None:
         qid = await self.kept()
-        await self.memory.set_entity_status(  # type: ignore[attr-defined]
+        await self.memory.set_entity_status(
             GUILD, self.campaign.id, self.maren.id, "rejected", source="dm"
         )
         self.bot.lookup.mark_stale(GUILD, self.campaign.id)  # type: ignore[union-attr]
