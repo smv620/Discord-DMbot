@@ -637,7 +637,7 @@ no "rule" kind. A file heading `## Name (rule)` is refused for that entry alone 
 rules, not Homebrew: ⚙️ Settings → House rules."); a pack carries no rules (a pack made before is read
 without them); an old backup's rule loads as "other". Migration 0111 moved every existing rule entry of
 a campaign into its house rules (the name in front unless the text starts with it), numbered after the
-rules it already had; one the players may not know (house rules are read by everyone in the server), one from a shared
+rules it already had (a hidden rule moves too: nothing is hidden from players any more, "Homebrew (part 2)"); one from a shared
 book (its book confirmation cannot live in a house rule), one too long for a house rule (a line of 500
 characters) and any past a campaign's 200 house rules stay as homebrew of the kind "other"; open pack
 suggestions of a rule were dropped, and a linked house-rules file is not rewritten. Never a published book's text: the form says "Your own creations only. For a published
