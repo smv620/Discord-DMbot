@@ -8,7 +8,7 @@ Commands:
 - /dmbot start: pick a campaign and voice channel, then start listening. /dmbot stop: stop listening. /dmbot help: the help card. /dmbot status: what DMbot is doing now.
 - /dmbot names: the names DMbot listens for (characters, places, NPCs); the DM adds, edits and imports lists.
 - /dmbot houserules: this campaign's house rules; only its DM adds, edits or removes them.
-- /dmbot rule: look up a spell, condition or creature in the free rules (SRD); the DM only. Also under Settings, "Look up a rule".
+- /dmbot rule: look up a spell, condition or creature in the free rules (SRD). Anyone in the server can, and only the person who asks sees the answer. The DM also has "Look up a rule" under Settings.
 - /dmbot optionalrules: turn optional rules from Xanathar's and Tasha's on or off.
 - /transcript: download what was said in a session. /dmbot backup: download a complete copy of a campaign; it holds the DM's secrets, so players should not open it. /dmbot restore: bring a campaign back from a copy.
 - Playing on D&D Beyond? Press "⚙️ Menu" in DMbot's private message, then "My character sheet", so DMbot spells your spell names better.

@@ -192,6 +192,7 @@ def header(
     rules: Sequence[HouseRule],
     *,
     house_max: int = HOUSE_LINE_MAX,
+    player: bool = False,
 ) -> str:
     """Everything above the text: house rules first, the name and facts, where it comes
     from, and any note about how it was found."""
@@ -211,7 +212,8 @@ def header(
         lines.append(f"_Showing {called} (you typed {asked})._")
     if hit.tag and hit.from_fallback and entry.edition == index.LEGACY:
         lines.append(OLDER_NOTE)  # when 2014 is the campaign's own choice, the tag is enough
-    lines.append(NOT_A_RULING)
+    if not player:  # a player's card ends with PLAYER_LINE instead: "you decide" is the DM's
+        lines.append(NOT_A_RULING)
     return "\n".join(lines)
 
 
@@ -247,13 +249,15 @@ def alert_text(hit: Hit, said: str, heard: str, rules: Sequence[HouseRule]) -> s
     return "\n".join(lines)
 
 
-def card_parts(hit: Hit, typed: str, rules: Sequence[HouseRule]) -> list[str]:
+def card_parts(
+    hit: Hit, typed: str, rules: Sequence[HouseRule], *, player: bool = False
+) -> list[str]:
     """The card as messages, each short enough for Discord: the first has the heading and
     as much of the text as fits; the others carry on with the text. Many long house rules
     are cut shorter, then only counted, so the heading never fills a message."""
     head = ""
     for house_max in (HOUSE_LINE_MAX, 120, 60, 0):
-        head = header(hit, typed, rules, house_max=house_max)
+        head = header(hit, typed, rules, house_max=house_max, player=player)
         if len(head) <= PART_MAX - MIN_TEXT_ROOM:
             break
     text = _md(hit.entry.text)
@@ -276,6 +280,18 @@ HOMEBREW_FOOTER = "_Your own homebrew, as you wrote it. You decide._"
 PACK_FOOTER = "_From a homebrew pack this campaign follows, as published. You decide._"
 
 
+PLAYER_LINE = "Your DM decides what applies at your table."
+DISCORD_MAX = 2000
+
+
+def for_player(parts: list[str]) -> list[str]:
+    """A card read by a player ends with one short line: a rules card is information, and the
+    DM decides what applies (CLAUDE.md, DM authority). It joins the last part if it fits."""
+    if parts and len(parts[-1]) + len(PLAYER_LINE) + 1 <= DISCORD_MAX:
+        return [*parts[:-1], f"{parts[-1]}\n{PLAYER_LINE}"]
+    return [*parts, PLAYER_LINE]
+
+
 def homebrew_citation(entry: Homebrew, campaign_name: str) -> str:
     """Where homebrew comes from, as every answer names its source: `Frostmaiden's homebrew:
     Hollow King`. A followed pack's entry names its pack: `Frost Pack homebrew, v2: Hollow King`."""
@@ -284,16 +300,18 @@ def homebrew_citation(entry: Homebrew, campaign_name: str) -> str:
     return f"{campaign_name}'s homebrew: {entry.name}"
 
 
-def homebrew_parts(own: Homebrew, campaign_name: str) -> list[str]:
+def homebrew_parts(own: Homebrew, campaign_name: str, *, player: bool = False) -> list[str]:
     """The card for one of the campaign's own homebrew entries, for the DM (private): tagged
     `[Homebrew]`, its source named, who may know it, then its words. It goes above the free
     rules' card and below any house rule (the order is house rules, homebrew, the target
     ruleset, the fallback)."""
     who = "👀 players may know it" if own.players_may_know else "🙈 hidden from players"
+    if player:  # a player already knows they are a player: the DM's tags are not for them
+        who = ""
     head = "\n".join(
         [
             f"📚 **{_fit(_md(own.name), NAME_MAX)}** ({own.kind.capitalize()}) "
-            f"{HOMEBREW_TAG} {who}",
+            f"{HOMEBREW_TAG}{' ' + who if who else ''}",
             f"_Source: {_md(_fit(homebrew_citation(own, campaign_name), 200))}_",
         ]
     )
@@ -336,7 +354,9 @@ def homebrew_alert_text(
     return "\n".join(lines)
 
 
-def no_match_text(typed: str, rules: Sequence[HouseRule], has_suggestions: bool) -> str:
+def no_match_text(
+    typed: str, rules: Sequence[HouseRule], has_suggestions: bool, *, player: bool = False
+) -> str:
     """When the index has no entry for the name: say so plainly, show any house rule that
     names it, and say what to do next. Nothing is guessed."""
     asked = _fit(_md(" ".join(typed.split())), NAME_MAX)
@@ -344,9 +364,12 @@ def no_match_text(typed: str, rules: Sequence[HouseRule], has_suggestions: bool)
     lines.append(f"DMbot couldn't find **{asked}** in {FREE_RULES}.")
     if has_suggestions:
         lines.append("**Did you mean…?** Press a name to read it.")
+    elif player:  # (the same words whether or not the DM keeps something by that name hidden)
+        lines.append("Check the spelling, or ask your DM.")
     else:
         lines.append("Check the spelling, or try a shorter name.")
-    lines.append(ONLY_FREE_RULES)
+    if not player:
+        lines.append(ONLY_FREE_RULES)
     return "\n".join(lines)
 
 

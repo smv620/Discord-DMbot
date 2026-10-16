@@ -8,6 +8,7 @@ import asyncio
 import time
 import unittest
 import unittest.mock
+from dataclasses import replace
 from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
@@ -80,6 +81,7 @@ def brew(cid: str, name: str, text: str, *, kind: str = "monster", known: bool =
 
 class LookupTest(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self) -> None:
+        ui._last_lookup.clear()  # (one lookup a person every 3 seconds is module state)
         self.campaigns = {C1: campaign()}
         self.store = FakeStore()
         self.brew = FakeBrew()
@@ -141,13 +143,97 @@ class Command(LookupTest):
         self.assertTrue(kwargs["ephemeral"])  # never in the channel
         self.assertIsNone(view)  # it fits: no "Read the rest"
 
-    async def test_a_player_is_refused_and_sees_nothing(self) -> None:
+    async def test_a_player_gets_the_card_privately_with_the_closing_line(self) -> None:
         it = await self.command("fireball", PLAYER)
         text, _, kwargs = self.sent(it)
-        self.assertEqual(text, ui.ONLY_DMS_ANY)
-        self.assertTrue(kwargs["ephemeral"])
-        self.assertNotIn("Fireball", text)
-        self.assertEqual(self.store.asked, [])  # not even the house rules were read
+        self.assertIn("📖 **Fireball** (spell)", text)
+        self.assertTrue(kwargs["ephemeral"])  # never in the channel
+        self.assertTrue(text.endswith(rule_card.PLAYER_LINE))
+        self.assertEqual(rule_card.PLAYER_LINE, "Your DM decides what applies at your table.")
+        dm_text = self.sent(await self.command("fireball", DM))[0]
+        self.assertNotIn(rule_card.PLAYER_LINE, dm_text)  # for a player only
+
+    async def test_a_player_in_another_server_is_refused(self) -> None:
+        it = self.it(PLAYER, kind=discord.InteractionType.application_command)
+        it.guild_id = 999  # not the campaign's server
+        await ui.look_up(it, C1, "fireball", guild_id=GUILD)
+        self.assertEqual(self.sent(it)[0], ui.NOT_HERE)
+
+    async def test_a_player_looking_up_again_at_once_is_told_to_wait(self) -> None:
+        first = await self.command("fireball", PLAYER)
+        self.assertIn("Fireball", self.sent(first)[0])
+        second = await self.command("fireball", PLAYER)
+        self.assertEqual(self.sent(second)[0], ui.ONE_AT_A_TIME)
+        real = time.monotonic()
+        with unittest.mock.patch("dmbot.ui.rule_lookup.time.monotonic", lambda: real + 4):
+            third = await self.command("fireball", PLAYER)
+        self.assertIn("Fireball", self.sent(third)[0])
+        # A DM is never slowed, and one player's pace is not another's.
+        await self.command("fireball", DM)
+        again = await self.command("fireball", DM)
+        self.assertIn("Fireball", self.sent(again)[0])
+        other = await self.command("fireball", OTHER_DM)
+        self.assertIn("Fireball", self.sent(other)[0])
+
+    async def test_a_players_no_match_has_no_closing_line_and_no_dm_tags(self) -> None:
+        text = self.sent(await self.command("Xyzzyplugh", PLAYER))[0]
+        self.assertNotIn(rule_card.PLAYER_LINE, text)
+        self.assertIn("ask your DM", text)
+        self.assertNotIn("your own books", text)
+
+    async def test_a_players_free_rules_card_has_no_you_decide_line(self) -> None:
+        player = self.sent(await self.command("fireball", PLAYER))[0]
+        dm = self.sent(await self.command("fireball", DM))[0]
+        self.assertNotIn("you decide", player)
+        self.assertIn("you decide", dm)
+
+    async def test_a_players_homebrew_card_leaves_out_the_dms_tags(self) -> None:
+        self.brew.entries[C1] = [brew(C1, "Hollow King", "A crowned skeleton.", known=True)]
+        player = self.sent(await self.command("Hollow King", PLAYER))[0]
+        dm = self.sent(await self.command("Hollow King", DM))[0]
+        self.assertNotIn("players may know", player)
+        self.assertIn("players may know", dm)
+
+    async def test_a_dm_of_one_campaign_who_asks_gets_their_own_view(self) -> None:
+        # Runs C2 while C1 (someone else's) is the one being played: C2 is the one they mean.
+        self.campaigns[C2] = campaign(C2, "Mine", frozenset({OTHER_DM}))
+        self.brew.entries[C2] = [brew(C2, "Hollow King", "Mine only.")]
+        text = self.sent(await self.command("Hollow King", OTHER_DM))[0]
+        self.assertIn("Mine only.", text)
+
+    async def test_a_player_in_a_server_with_two_campaigns_picks_one(self) -> None:
+        self.campaigns[C2] = campaign(C2, "Other", frozenset({OTHER_DM}))
+        self.playing = None
+        it = await self.command("fireball", PLAYER)
+        text, view, _ = self.sent(it)
+        self.assertEqual(text, ui.WHICH_CAMPAIGN)
+        self.assertIsInstance(view, ui.CampaignChoice)
+
+    async def test_a_close_name_press_is_not_paced_again(self) -> None:
+        first = await self.command("Firball", PLAYER)
+        view = self.sent(first)[1]
+        pressed = self.it(PLAYER)
+        await self.press(view, "Fireball").callback(pressed)  # straight after: not "try again"
+        self.assertIn("Fireball", self.sent(pressed)[0])
+
+    async def test_each_server_has_its_own_pace(self) -> None:
+        self.assertFalse(ui._too_soon(1, PLAYER))
+        self.assertTrue(ui._too_soon(1, PLAYER))
+        self.assertFalse(ui._too_soon(2, PLAYER))  # another server's table
+        self.assertFalse(ui._too_soon(1, OTHER_DM))  # another person
+
+    def test_the_closing_line_still_fits_when_the_last_part_is_full(self) -> None:
+        full = ["x" * 1990]
+        self.assertEqual(rule_card.for_player(full), [full[0], rule_card.PLAYER_LINE])
+        self.assertEqual(rule_card.for_player(["a", "b"]), ["a", f"b\n{rule_card.PLAYER_LINE}"])
+
+    async def test_house_rules_come_first_for_a_player_too(self) -> None:
+        self.store.rules[C1] = [house(12, "Fireball needs a free hand.", C1)]
+        for who in (DM, PLAYER):
+            ui._last_lookup.clear()
+            text = self.sent(await self.command("fireball", who))[0]
+            self.assertIn("House rule 12", text)
+            self.assertIn("Fireball needs a free hand.", text)
 
     async def test_a_server_with_no_campaign_says_how_to_start_one(self) -> None:
         self.campaigns.clear()
@@ -246,12 +332,15 @@ class NoMatch(LookupTest):
         await self.press(view, "Fireball").callback(pressed)
         self.assertIn("📖 **Fireball** (spell)", self.sent(pressed)[0])
 
-    async def test_a_player_pressing_an_old_name_button_is_refused(self) -> None:
-        it = await self.command("Firball")
+    async def test_a_player_pressing_a_name_button_reads_it_as_a_player(self) -> None:
+        it = await self.command("Firball", PLAYER)
         view = self.sent(it)[1]
         pressed = self.it(PLAYER)
+        ui._last_lookup.clear()
         await self.press(view, "Fireball").callback(pressed)
-        self.assertEqual(self.sent(pressed)[0], ui.ONLY_DMS)
+        text = self.sent(pressed)[0]
+        self.assertIn("📖 **Fireball** (spell)", text)
+        self.assertTrue(text.endswith(rule_card.PLAYER_LINE))
 
     async def test_nothing_close_gives_plain_advice(self) -> None:
         it = await self.command("Xyzzyplugh")
@@ -307,11 +396,11 @@ class Form(LookupTest):
         it = await self.submit(ui.LookupForm(self.campaigns[C1]), "   ")
         self.assertEqual(self.sent(it)[0], ui.EMPTY)
 
-    async def test_someone_who_stopped_being_a_dm_meanwhile_is_refused(self) -> None:
+    async def test_someone_who_stopped_being_a_dm_meanwhile_reads_as_a_player(self) -> None:
         form = ui.LookupForm(self.campaigns[C1])
         self.campaigns[C1] = campaign(dms=frozenset({OTHER_DM}))
         it = await self.submit(form, "fireball")
-        self.assertEqual(self.sent(it)[0], ui.ONLY_DMS)
+        self.assertTrue(self.sent(it)[0].endswith(rule_card.PLAYER_LINE))
 
     async def test_a_campaign_deleted_meanwhile_is_said(self) -> None:
         form = ui.LookupForm(self.campaigns[C1])
@@ -405,11 +494,13 @@ class Typeahead(LookupTest):
         values = [c.value for c in await ui._typeahead(it, "goblin")]
         self.assertEqual(values[0], "Goblin")
 
-    async def test_a_player_gets_names_but_not_the_campaigns_choice_of_rules(self) -> None:
+    async def test_a_player_gets_the_names_in_the_campaigns_order_and_no_homebrew(self) -> None:
         self.campaigns[C1] = campaign(target="2014", fallback="2024")
+        self.brew.entries[C1] = [brew(C1, "Goblinoid Secret", "Hidden.")]
         it = self.it(PLAYER, kind=discord.InteractionType.autocomplete)
         values = [c.value for c in await ui._typeahead(it, "goblin")]
-        self.assertEqual(values[0], "Goblin Warrior")  # the defaults, not this campaign's
+        self.assertEqual(values[0], "Goblin")
+        self.assertNotIn("Goblinoid Secret", values)  # the list holds the free rules only
 
 
 class Timeout(LookupTest):
@@ -505,7 +596,14 @@ class Order(LookupTest):
 
 class Words(unittest.TestCase):
     def test_the_words_are_plain_and_name_the_free_rules(self) -> None:
-        for text in (ui.ONLY_DMS, ui.ONLY_DMS_ANY, ui.EMPTY, ui.TOO_LONG, ui.WHICH_CAMPAIGN):
+        for text in (
+            ui.ONLY_DMS,
+            ui.NOT_HERE,
+            ui.ONE_AT_A_TIME,
+            ui.EMPTY,
+            ui.TOO_LONG,
+            ui.WHICH_CAMPAIGN,
+        ):
             self.assertNotRegex(text, r"(?i)\b(srd|ruleset|index|query|database)\b")
         self.assertIn("free rules (SRD)", rule_card.NOT_A_RULING)
         self.assertEqual(rule_card.FREE_RULES, "the free rules (SRD)")
@@ -662,11 +760,36 @@ class HomebrewLookup(LookupTest):
         self.assertNotIn("Strahd's secret", self.sent(it, 0)[0])
         self.assertIn("couldn't find", self.sent(it, 0)[0])
 
-    async def test_a_player_still_cannot_look_up_anything(self) -> None:
-        self.brew.entries[C1] = [brew(C1, "Hollow King", "Secret.")]
+    async def test_a_player_never_meets_homebrew_the_dm_kept_hidden(self) -> None:
+        self.brew.entries[C1] = [brew(C1, "Hollow King", "Secret.", known=False)]
         it = await self.command("Hollow King", PLAYER)
-        self.assertNotIn("Secret.", " ".join(str(c) for c in it.followup.send.await_args_list))
-        self.assertEqual(self.brew.asked, [])
+        shown = " ".join(str(c) for c in it.followup.send.await_args_list)
+        self.assertNotIn("Secret.", shown)
+        self.assertNotIn("Hollow King", shown.replace("couldn't find **Hollow King**", ""))
+        self.assertIn("couldn't find", shown)  # as if it weren't there
+        ui._last_lookup.clear()
+        mine = await self.command("Hollow King", DM)
+        self.assertIn("Secret.", " ".join(str(c) for c in mine.followup.send.await_args_list))
+
+    async def test_a_player_reads_homebrew_the_dm_let_players_know(self) -> None:
+        self.brew.entries[C1] = [brew(C1, "Hollow King", "A crowned skeleton.", known=True)]
+        it = await self.command("Hollow King", PLAYER)
+        text = self.sent(it, 0)[0]
+        self.assertIn("A crowned skeleton.", text)
+        self.assertTrue(text.endswith(rule_card.PLAYER_LINE))
+
+    async def test_a_hidden_homebrew_entry_does_not_shadow_the_book_for_a_player(self) -> None:
+        self.brew.entries[C1] = [brew(C1, "Goblin", "Our goblin is secretly a dragon.")]
+        it = await self.command("Goblin", PLAYER)
+        text = self.sent(it, 0)[0]
+        self.assertIn("📖 **Goblin Warrior**", text)  # the book answers (the 2024 name)
+        self.assertNotIn("dragon", text)
+
+    async def test_a_hidden_pack_entry_follows_the_same_flag(self) -> None:
+        hidden = from_pack(C1, "Ember Lamp", "Glows warmly.")
+        self.brew.entries[C1] = [replace(hidden, players_may_know=False)]
+        it = await self.command("Ember Lamp", PLAYER)
+        self.assertNotIn("Glows warmly.", str(it.followup.send.await_args_list))
 
     async def test_a_homebrew_store_that_cannot_be_read_still_shows_the_free_rules(self) -> None:
         self.brew.find = AsyncMock(side_effect=RuntimeError("down"))  # type: ignore[method-assign]
