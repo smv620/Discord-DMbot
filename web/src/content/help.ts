@@ -158,6 +158,10 @@ export const dmSteps: Step[] = [
     ],
   },
   {
+    text: "You can choose how long a campaign keeps its transcripts: Forever, 1 year, 90 days or 30 days (⚙️ Settings → 📜 Transcripts). Older ones are deleted within a day. Recaps stay.",
+    names: [{ name: "Transcripts", file: "dm_screen/transcript_keep.py" }],
+  },
+  {
     text: "To share your homebrew with another table, press ⚙️ Settings, then 📚 Shared rules, then 📦 Homebrew packs, then 📤 Share my homebrew (paid campaigns only). DMbot gives you a share code. Any game master in your server can read everything you share, and so can anyone you give the code to. That includes entries you hide from players. Only share what you are happy for them to see. Followers get a new version only when you press 🔄 Publish my changes. Only homebrew is shared, never your story, names or notes.",
     names: [
       { name: "📦 Homebrew packs", file: "ui/shared_rules.py" },
@@ -273,6 +277,10 @@ export const playerSteps: Step[] = [
   {
     text: "Everyone in the server can read a game's transcript. To read or download one, type /transcript.",
     names: [{ name: "/transcript", file: "ui/transcripts.py" }],
+  },
+  {
+    text: "Want your own lines gone? In Discord, open the ⚙️ Menu DMbot sends you and press 🗑 Delete my transcripts. It deletes every line you said in that server, from every past game. It can't be undone, and copies someone already saved stay.",
+    names: [{ name: "🗑 Delete my transcripts", file: "consent_dm.py" }],
   },
   {
     text: "Press 📜 My character sheet to link your online sheet, or to type your character in.",
