@@ -260,6 +260,9 @@ export interface TranscriptCampaign {
   name: string;
   serverName: string;
   sessions: number;
+  /** How many days the campaign keeps transcripts (30, 90 or 365), null for until the game master
+   * deletes them; missing from an older API (#1575). */
+  keepDays?: number | null;
 }
 
 /** One saved session of a campaign (#1501); times are Unix seconds, `endedAt` null when it was
@@ -459,7 +462,7 @@ export interface AccountApi {
   /** A campaign's name and its saved sessions, newest first. `campaignRef` is `<server>.<campaign>`. */
   transcriptSessions?(
     campaignRef: string,
-  ): Promise<{ name: string; sessions: TranscriptSessionItem[] }>;
+  ): Promise<{ name: string; keepDays?: number | null; sessions: TranscriptSessionItem[] }>;
   /** One session to read, in one version. */
   transcript?(
     campaignRef: string,
@@ -673,6 +676,7 @@ export function httpApi(base: string, fetcher: typeof fetch = fetch): AccountApi
     transcriptSessions: async (campaignRef) =>
       (await call("GET", `/me/campaigns/${encodeURIComponent(campaignRef)}/transcripts`)) as {
         name: string;
+        keepDays?: number | null;
         sessions: TranscriptSessionItem[];
       },
     transcript: async (campaignRef, number, version, offset = 0) =>

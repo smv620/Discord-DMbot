@@ -102,6 +102,7 @@ async def list_campaigns(
                         "name": item["name"],
                         "serverName": guild.name,
                         "sessions": int(item["sessions"]),
+                        "keepDays": _keep_days(item),
                     }
                 )
     return out
@@ -135,6 +136,8 @@ async def list_sessions(
     _g, _c, found = await _sessions(db, session, ref, now=now, enforce_plans=enforce_plans)
     return {
         "name": found["name"],
+        # How long the campaign keeps transcripts (30, 90 or 365 days), or null for forever.
+        "keepDays": _keep_days(found),
         "sessions": [
             {
                 "number": int(s["number"]),
@@ -148,6 +151,11 @@ async def list_sessions(
             for s in found["sessions"]
         ],
     }
+
+
+def _keep_days(door: dict[str, Any]) -> int | None:
+    days = door.get("keepDays")
+    return None if days is None else int(days)
 
 
 def _deleted_at(session: dict[str, Any]) -> int | None:
