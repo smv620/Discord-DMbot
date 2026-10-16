@@ -21,6 +21,7 @@ class TranscriptSession:
     speakers: tuple[int, ...] = ()
     number: int = 0  # Session 1, 2, … in its campaign (only sessions with lines count)
     engines: tuple[str, ...] = ()  # "engine model host" of each speech-to-text used
+    deleted_at: int | None = None  # the retention job deleted its transcript (#1533)
 
 
 def line_ref(session_id: str, started_ms: int, user_id: int) -> str:
