@@ -486,6 +486,40 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
         { type: "text/plain" },
       );
     },
+    async homebrewCampaigns() {
+      calls.push("homebrewCampaigns");
+      await reachable();
+      signedIn();
+      return [
+        {
+          ref: "200000000000000001.cmp1",
+          name: "The Brynwater Crossing",
+          serverName: "Thursday Table",
+          entries: 3,
+        },
+      ];
+    },
+    async homebrew(campaignRef) {
+      calls.push(`homebrew:${campaignRef}`);
+      await reachable();
+      signedIn();
+      if (campaignRef !== "200000000000000001.cmp1") throw new ApiError("not-found");
+      return mockHomebrew();
+    },
+    async homebrewFile(campaignRef) {
+      calls.push(`homebrewFile:${campaignRef}`);
+      await reachable();
+      signedIn();
+      const shown = mockHomebrew();
+      return new Blob(
+        [
+          [`Homebrew: ${shown.name}`, ...shown.entries.map((e) => `## ${e.name} (${e.kind})`)].join(
+            "\n",
+          ) + "\n",
+        ],
+        { type: "text/plain" },
+      );
+    },
     async campaignNames(campaignRef) {
       calls.push(`campaignNames:${campaignRef}`);
       await reachable();
@@ -768,6 +802,19 @@ function mockHouseRules() {
         cite: "Red Table house rules, v4",
         rules: [{ number: 1, rule: "Inspiration stacks", supersedes: null }],
       },
+    ],
+  };
+}
+
+/** Pretend shared homebrew in the shape the API gives: by name, the page groups it by kind. */
+function mockHomebrew() {
+  return {
+    name: "The Brynwater Crossing",
+    fileName: "homebrew-the-brynwater-crossing.txt",
+    entries: [
+      { kind: "spell", name: "Frost Lance", summary: "A bolt of ice", text: "A spear of ice hits a target within 60 feet for 3d6 cold damage." },
+      { kind: "item", name: "Moon Lamp", summary: null, text: "Glows silver at night and never needs oil." },
+      { kind: "monster", name: "Mud Wight", summary: "Slow and sticky", text: "Slows anyone it touches." },
     ],
   };
 }

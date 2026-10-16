@@ -280,6 +280,11 @@
     border-top: 1px solid var(--border);
   }
 
+.homebrew-text {
+  display: block;
+  white-space: pre-line;
+}
+
 /* A campaign's house rules (#1521): one rule per item, its "instead of" and set under it. */
 .house-rules {
   list-style: none;
