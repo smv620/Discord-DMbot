@@ -716,6 +716,116 @@ class NameCards(NamesTest):
             await self.memory.relations(GUILD, self.campaign.id, entity_id=ulfgar.id), []
         )
 
+    async def removed_connection(self, *, secret: bool) -> tuple[Any, Any, Any]:
+        """Ulfgar is a member of the tribe (secret or not); the DM removes it. Returns the
+        relation as it was, the entry, and the Undo button on the redrawn card."""
+        from dmbot.ui import name_card
+
+        tribe = await ui.save_name(self.memory, self.campaign, "Frostwolf tribe", "faction", [], [])
+        ulfgar = await ui.save_name(self.memory, self.campaign, "Ulfgar", "npc", [], [])
+        await name_card.connect(
+            self.it(), self.campaign.id, tribe.id, "member_of" + name_card.BACK, ulfgar.id,
+            secret=secret,
+        )  # fmt: skip
+        self.fresh()
+        (before,) = await self.memory.relations(
+            GUILD, self.campaign.id, entity_id=ulfgar.id, include_secret=True
+        )
+        view = name_card.Connect(
+            self.campaign.id, ulfgar.id, "Ulfgar", [(before.id, "x")], secrets=True
+        )
+        view.remove = SimpleNamespace(values=[before.id])  # type: ignore[assignment]
+        it = self.it()
+        await view._remove_picked(it)
+        note, card = it.response.edited[0]
+        self.assertIn("Removed: Ulfgar is a member of Frostwolf tribe.", note)
+        self.assertNotIn("Wrong?", note)
+        (undo,) = [c for c in card.children if isinstance(c, name_card.UndoConnectionButton)]
+        return before, ulfgar, undo
+
+    async def test_undo_puts_a_removed_connection_back_exactly_as_it_was(self) -> None:
+        before, ulfgar, undo = await self.removed_connection(secret=False)
+        it = self.it()
+        await undo.callback(it)
+        self.assertIn("Put back: Ulfgar is a member of Frostwolf tribe.", it.response.edited[0][0])
+        (after,) = await self.memory.relations(GUILD, self.campaign.id, entity_id=ulfgar.id)
+        self.assertEqual(after, before)
+
+    async def test_a_secret_connection_comes_back_secret_and_only_a_dm_can_undo_it(self) -> None:
+        before, ulfgar, undo = await self.removed_connection(secret=True)
+        self.assertTrue(before.secret)
+        manager = self.it(MANAGER)
+        await undo.callback(manager)
+        from dmbot.ui import name_card
+
+        self.assertEqual(manager.response.sent[0][0], name_card.NOTHING_MORE)
+        self.assertEqual(  # nothing written
+            await self.memory.relations(
+                GUILD, self.campaign.id, entity_id=ulfgar.id, include_secret=True
+            ),
+            [],
+        )
+        await undo.callback(self.it())
+        (after,) = await self.memory.relations(
+            GUILD, self.campaign.id, entity_id=ulfgar.id, include_secret=True
+        )
+        self.assertEqual(after, before)
+        self.assertTrue(after.secret)
+
+    async def test_undo_after_the_connection_changed_says_so_and_does_nothing(self) -> None:
+        from dmbot.ui import name_card
+
+        before, ulfgar, undo = await self.removed_connection(secret=False)
+        await self.memory.update_relation(
+            GUILD, self.campaign.id, before.id, status=CONFIRMED, source=DM_SOURCE
+        )
+        await self.memory.update_relation(
+            GUILD, self.campaign.id, before.id, secret=True, source=DM_SOURCE
+        )
+        it = self.it()
+        await undo.callback(it)
+        self.assertEqual(it.response.sent[0][0], name_card.NOTHING_MORE)
+        (now,) = await self.memory.relations(
+            GUILD, self.campaign.id, entity_id=ulfgar.id, include_secret=True
+        )
+        self.assertTrue(now.secret)  # the later change stands
+
+    async def test_undo_stops_after_ten_minutes(self) -> None:
+        _, ulfgar, undo = await self.removed_connection(secret=False)
+        self.memory._clock = lambda: time.time() + 601
+        it = self.it()
+        await undo.callback(it)
+        self.assertIn("Too late to undo", it.response.sent[0][0])
+        self.assertEqual(
+            await self.memory.relations(GUILD, self.campaign.id, entity_id=ulfgar.id), []
+        )
+
+    async def test_undo_cannot_be_pressed_twice(self) -> None:
+        from dmbot.ui import name_card
+
+        _, ulfgar, undo = await self.removed_connection(secret=False)
+        await undo.callback(self.it())
+        again = self.it()
+        await undo.callback(again)
+        self.assertEqual(again.response.sent[0][0], name_card.NOTHING_MORE)
+        self.assertEqual(
+            len(await self.memory.relations(GUILD, self.campaign.id, entity_id=ulfgar.id)), 1
+        )
+
+    async def test_the_undo_button_survives_a_restart(self) -> None:
+        import re
+
+        from dmbot.ui import name_card
+
+        _, _, undo = await self.removed_connection(secret=False)
+        cid = undo.item.custom_id
+        assert cid is not None
+        self.assertLess(len(cid), 100)
+        match = name_card.UndoConnectionButton.__discord_ui_compiled_template__.fullmatch(cid)
+        assert isinstance(match, re.Match)
+        again = await name_card.UndoConnectionButton.from_custom_id(self.it(), undo.item, match)
+        self.assertEqual(again.batch, undo.batch)
+
     async def two_names(self) -> tuple[Any, Any]:
         brother = await ui.save_name(self.memory, self.campaign, "Corin", "npc", [], [])
         stranger = await ui.save_name(

@@ -326,9 +326,11 @@ async def show_card(
     *,
     replace: bool = False,
     note: str | None = None,
+    undo_connection: int | None = None,
 ) -> None:
     """The card, as a new private message or in place of the one pressed; `note` goes
-    on top (what just changed)."""
+    on top (what just changed). `undo_connection`: the batch of a connection just removed,
+    which puts an Undo on the card (#1566)."""
     await _answer_first(interaction, in_place=replace)  # names may load slowly (#537)
     campaign = await _campaign_for(interaction, campaign_id)
     memory = _memory(interaction)
@@ -399,6 +401,7 @@ async def show_card(
         sheet=has_sheet,
         item=is_item,
         unique=entity.is_unique,
+        undo_connection=undo_connection,
     )
     if replace:
         await _replace(interaction, text, view)
@@ -527,12 +530,15 @@ class NameCard(_Menu):
         sheet: bool = False,
         item: bool = False,
         unique: bool = False,
+        undo_connection: int | None = None,
     ) -> None:
         super().__init__()
         self.campaign_id = campaign_id
         self.entity_id = entity_id
         self.unique = unique
         grey = discord.ButtonStyle.secondary
+        if undo_connection is not None:  # last row but one: out of the way of the edits
+            self.add_item(UndoConnectionButton(campaign_id, entity_id, undo_connection))
         # First row: the three edits the names panel names, in its words (#353). Remove
         # says what it does and still asks first.
         self.add_item(_Button(self._fix, label="✏️ Fix spelling", style=discord.ButtonStyle.primary))
@@ -1090,6 +1096,64 @@ class UndoButton(
         await show_card(interaction, campaign.id, self.entity_id, replace=True, note=note)
 
 
+UNDO_CONNECTION_SECONDS = 600  # a wrong pick is noticed at once; later, add it again
+
+
+class UndoConnectionButton(
+    discord.ui.DynamicItem[discord.ui.Button[discord.ui.View]],
+    template=r"dmbot:unconn:(?P<campaign>[0-9a-f]{32}):(?P<entity>[0-9a-f]{32}):(?P<batch>[0-9]{1,18})",
+):
+    """Undo 🧭 Remove a connection… for ten minutes (#1566). Keeps working after a restart:
+    the batch of the removal is in its ID, and the connection comes back exactly as it was."""
+
+    def __init__(self, campaign_id: str, entity_id: str, batch: int) -> None:
+        super().__init__(
+            discord.ui.Button(
+                label="Undo",
+                style=discord.ButtonStyle.secondary,
+                custom_id=f"dmbot:unconn:{campaign_id}:{entity_id}:{batch}",
+                row=3,
+            )
+        )
+        self.campaign_id = campaign_id
+        self.entity_id = entity_id
+        self.batch = batch
+
+    @classmethod
+    async def from_custom_id(
+        cls, interaction: discord.Interaction, item: discord.ui.Item[Any], match: re.Match[str]
+    ) -> UndoConnectionButton:
+        return cls(match["campaign"], match["entity"], int(match["batch"]))
+
+    async def callback(self, interaction: discord.Interaction) -> Any:
+        # Checked on every press, like the removal itself; a secret connection also needs a DM.
+        await _answer_first(interaction, in_place=True)
+        found = await _current(interaction, self.campaign_id, self.entity_id)
+        memory = _memory(interaction)
+        if found is None or memory is None:
+            return
+        campaign = found[0]
+        try:
+            written = await memory.undo_connection(
+                campaign.guild_id,
+                campaign.id,
+                self.batch,
+                within=UNDO_CONNECTION_SECONDS,
+                secrets=sees_secrets(campaign, interaction.user.id),
+            )
+        except TooLateToUndo:
+            await _tell(interaction, "Too late to undo that. Press 🧭 Connect to… to add it again.")
+            return
+        except MemoryRuleError:
+            await _tell(interaction, NOTHING_MORE)  # changed since, or already undone
+            return
+        changed(interaction, campaign)
+        names = await _names(interaction, campaign)
+        said = sentence(names, written.value) if names is not None else None
+        note = f"Put back: {_md(said or 'that connection')}."
+        await show_card(interaction, campaign.id, self.entity_id, replace=True, note=note)
+
+
 # ---- other names: ⭐ main name, 🤫 secret, ✖ not this name -------------------------------
 
 
@@ -1591,7 +1655,7 @@ class Connect(_Menu):
             await _tell(interaction, "That connection isn't there any more.")
             return
         try:
-            await memory.update_relation(
+            written = await memory.update_relation(
                 campaign.guild_id, campaign.id, relation.id, status=REJECTED, source=DM
             )
         except MemoryRuleError:
@@ -1600,8 +1664,15 @@ class Connect(_Menu):
         changed(interaction, campaign)
         self.stop()
         said = sentence(names, relation) or "that connection"
-        note = f"Removed: {_md(said)}. Wrong? Press 🧭 Connect to… to add it again."
-        await show_card(interaction, campaign.id, self.entity_id, replace=True, note=note)
+        note = f"Removed: {_md(said)}."
+        await show_card(
+            interaction,
+            campaign.id,
+            self.entity_id,
+            replace=True,
+            note=note,
+            undo_connection=written.batch,
+        )
 
     async def _back(self, interaction: discord.Interaction) -> None:
         self.stop()
