@@ -34,7 +34,14 @@ interface Props {
  * longest is on top (#1485); every other filter keeps the API's order (newest first). */
 function shown(rows: SupportTicketRow[], filter: TicketFilter): SupportTicketRow[] {
   if (filter !== "escalated") return rows;
-  return [...rows].sort((a, b) => a.at - b.at || a.id - b.id);
+  return [...rows].sort((a, b) => waitingSince(a) - waitingSince(b) || a.id - b.id);
+}
+
+/** When the team's wait began (#1494): the hand-over time when the API says it, else the ticket's
+ * own time (an older API, or a ticket that was never handed over). Seconds. */
+export function waitingSince(ticket: Pick<SupportTicketRow, "at" | "handedOverAt">): number {
+  const handed = ticket.handedOverAt;
+  return typeof handed === "number" && Number.isFinite(handed) ? handed : ticket.at;
 }
 
 /** "Oct 8, 2026, 14:05 UTC": the API stores Unix seconds. */
@@ -331,7 +338,7 @@ export default function Tickets({ api, csrf, onSignedOut, onOff }: Props) {
               <h3>{t.subject}</h3>
               <p class="small muted">
                 {text.ticketFrom(who(t.name, t.discordId), t.dmbotId, plan(t.plan), when(t.at))}
-                {filter === "escalated" && ` · ${waitingFor(Math.floor(Date.now() / 1000) - t.at)}`}
+                {filter === "escalated" && ` · ${waitingFor(Math.floor(Date.now() / 1000) - waitingSince(t))}`}
               </p>
               <p class="small">
                 {/* The account's address, for replying; it is not part of the ticket. */}

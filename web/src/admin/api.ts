@@ -125,6 +125,9 @@ export interface SupportTicketRow {
   /** Why a person has it, when the API says (a fixed code, #1432): "unhappy", "asked",
    * "limit", "no-email" or "helper-down". Missing: nothing is shown. */
   reason?: string | null;
+  /** When it was handed to the team, Unix seconds (#1494); null when never handed over. Missing
+   * from an API older than that: the wait counts from `at`. */
+  handedOverAt?: number | null;
 }
 
 export class AdminApiError extends Error {

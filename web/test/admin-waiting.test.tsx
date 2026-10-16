@@ -5,7 +5,7 @@
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/preact";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import Tickets from "../src/admin/Tickets";
+import Tickets, { waitingSince } from "../src/admin/Tickets";
 import { type AdminApi, type SupportTicketRow, type TicketStatus } from "../src/admin/api";
 import { waitingFor } from "../src/content/admin";
 
@@ -116,5 +116,32 @@ describe("the other filters", () => {
     fireEvent.click(screen.getByRole("button", { name: /All/ }));
     await waitFor(() => expect(subjects()).toEqual(["Ticket 3", "Ticket 4", "Ticket 2", "Ticket 1"]));
     expect(document.body.textContent).not.toMatch(/waiting \d/);
+  });
+});
+
+describe("counting from the hand-over (#1494)", () => {
+  const handed = (id: number, ageS: number, handedAgeS: number | null | undefined): SupportTicketRow => {
+    const r = row(id, ageS);
+    if (handedAgeS !== undefined) r.handedOverAt = handedAgeS === null ? null : NOW - handedAgeS;
+    return r;
+  };
+
+  it("takes the hand-over time when it is there, else the ticket's own time", () => {
+    expect(waitingSince(handed(1, 2 * 86_400, 3600))).toBe(NOW - 3600); // present
+    expect(waitingSince(handed(2, 2 * 86_400, null))).toBe(NOW - 2 * 86_400); // never handed over
+    expect(waitingSince(handed(3, 2 * 86_400, undefined))).toBe(NOW - 2 * 86_400); // an older API
+  });
+
+  it("says the team's own wait for each of the three cases", async () => {
+    // Made two days ago and handed over three hours ago; never handed over; from an older API.
+    const rows = [handed(1, 2 * 86_400, 3 * 3600), handed(2, 5 * 3600, null), handed(3, 40 * 60, undefined)];
+    render(<Tickets api={api(rows)} csrf="c" onSignedOut={vi.fn()} onOff={vi.fn()} />);
+    fireEvent.click(await screen.findByRole("button", { name: /Needs the team/ }));
+    await waitFor(() => expect(subjects()).toEqual(["Ticket 2", "Ticket 1", "Ticket 3"]));
+    const items = screen.getAllByRole("listitem").filter((li) => li.getAttribute("data-ticket"));
+    const said = Object.fromEntries(
+      items.map((li) => [li.getAttribute("data-ticket"), /waiting \d+ (?:min|h|days?)/.exec(li.textContent ?? "")?.[0]]),
+    );
+    expect(said).toEqual({ "1": "waiting 3 h", "2": "waiting 5 h", "3": "waiting 40 min" });
   });
 });
