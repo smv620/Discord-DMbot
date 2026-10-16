@@ -8,7 +8,7 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from urllib.parse import urlsplit
 
-from dmbot.config import ConfigError
+from dmbot.config import MODEL_NAME, ConfigError
 from dmbot.entitlements import parse_free_users
 from dmbot.mail import MailConfigError, MailSettings, load_mail_settings, one_address
 from dmbot.web.admin_hash import decode_hash
@@ -63,6 +63,12 @@ class WebSettings:
     # Where "a support ticket is waiting" goes (#1340). Empty: tickets are still kept and shown on
     # the admin page, and nobody is emailed. The email never holds the ticket's words.
     support_team_email: str = ""
+    # The support helper (#1431): the AI account it answers with (the same key the bot uses), the
+    # strong tier's model for it (empty: the tier's default), and the secret that proves an
+    # inbound email really came from the mail service (empty: replies by email are off).
+    ai_key: str = field(default="", repr=False)
+    support_ai_model: str = ""
+    mail_inbound_secret: str = field(default="", repr=False)
     # Where the bot keeps recap audio on disk, read here only (the volume is mounted read-only).
     # Empty: the page shows no players and the file route answers not_found (#1418).
     recap_audio_dir: str = ""
@@ -185,6 +191,12 @@ def load_web_settings(env: Mapping[str, str] | None = None) -> WebSettings:
     support_team_email = get("SUPPORT_TEAM_EMAIL")
     if support_team_email and not one_address(support_team_email):
         raise ConfigError("SUPPORT_TEAM_EMAIL must be one email address, like team@example.com.")
+    support_ai_model = get("SUPPORT_AI_MODEL").strip("\"' ")
+    if support_ai_model and not MODEL_NAME.match(support_ai_model):
+        raise ConfigError(
+            "SUPPORT_AI_MODEL isn't a Claude model name. Use the name as Anthropic lists it "
+            "(no quotes or spaces), or leave it empty to use the strong tier's default."
+        )
     turnstile_secret = get("TURNSTILE_SECRET_KEY")
     if (
         feedback_token
@@ -266,6 +278,9 @@ def load_web_settings(env: Mapping[str, str] | None = None) -> WebSettings:
         recaps_per_month=monthly["DMBOT_RECAPS_PER_MONTH"],
         recap_audio_per_month=monthly["DMBOT_RECAP_AUDIO_PER_MONTH"],
         support_team_email=support_team_email,
+        ai_key=get("ANTHROPIC_API_KEY"),
+        support_ai_model=support_ai_model,
+        mail_inbound_secret=get("MAIL_INBOUND_SECRET"),
         recap_audio_dir=get("WEB_RECAP_AUDIO_DIR"),
         turnstile_secret=turnstile_secret,
         client_ip_header=client_ip_header,

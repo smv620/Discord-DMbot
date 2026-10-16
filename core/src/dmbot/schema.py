@@ -2331,6 +2331,7 @@ WEB_ROLE_FUNCTIONS: tuple[tuple[str, str], ...] = (
     ("dmbot_support_message", "dmbot_support_message(BIGINT)"),
     # "Make the audio again" on a DM's recap (#1418): the only write to its audio columns.
     ("dmbot_recap_audio_again", "dmbot_recap_audio_again(BIGINT, TEXT, BIGINT)"),
+    ("dmbot_support_thread", "dmbot_support_thread(BIGINT)"),  # ... and a thread's (#1431)
     # A move code asked for on the website (#1246).
     ("dmbot_web_move_code", "dmbot_web_move_code(BIGINT, TEXT, BIGINT, TEXT, BIGINT)"),
     ("dmbot_web_cancel_move_code", "dmbot_web_cancel_move_code(BIGINT, TEXT, BIGINT)"),
@@ -2384,8 +2385,15 @@ WEB_ROLE_GRANTS: tuple[tuple[str, tuple[str, ...]], ...] = (
     # column right at all. The admin page reads the message through dmbot_support_message (a
     # door), and closes with the status UPDATE; the sweep and account deletion delete.
     ("INSERT, DELETE", ("support_tickets",)),
-    ("SELECT (id, created_at, user_id, plan, subject, source, status)", ("support_tickets",)),
-    ("UPDATE (status)", ("support_tickets",)),
+    (
+        "SELECT (id, created_at, user_id, plan, subject, source, status, ai_next_at, ai_failed_at)",
+        ("support_tickets",),
+    ),
+    ("UPDATE (status, ai_next_at, ai_failed_at)", ("support_tickets",)),
+    # The thread (#1431): replies are added and listed (not their words) only while the admin
+    # door is open; the words come back through dmbot_support_thread.
+    ("INSERT", ("support_replies",)),
+    ("SELECT (id, ticket_id, who, created_at)", ("support_replies",)),
     ("SELECT, INSERT, UPDATE, DELETE", ("web_users", "web_sessions")),
     # Emailed sign-in links (#1231): made and used by the website, never read by anyone else.
     # (Only `used_at` can be changed: a holder of a link can spend it, never revive or move it.)
@@ -4286,6 +4294,59 @@ SUPPORT_OWN = """
     REVOKE ALL ON FUNCTION dmbot_support_message(BIGINT) FROM PUBLIC;
     """
 
+SUPPORT_THREAD = """
+    -- The support flow (#1431): a ticket becomes a thread. The person's later messages, the AI
+    -- helper's answers and the team's replies are rows of `support_replies`; the first message
+    -- stays in support_tickets.message. Like that column, a reply's words can be read only through
+    -- a door that answers while the admin door (Database.support_admin) is open
+    -- (dmbot_support_thread), and the website's role has no column right on them.
+    --   who  customer (an emailed reply), ai (DMbot's helper), person (the team)
+    -- A reply goes with its ticket (the cascade is not blocked by row-level security), so the
+    -- 12-month sweep and account deletion need nothing more.
+    ALTER TABLE support_tickets DROP CONSTRAINT support_tickets_status_check;
+    ALTER TABLE support_tickets ADD CONSTRAINT support_tickets_status_check
+        CHECK (status IN ('new', 'answered', 'closed', 'escalated'));
+    -- When the helper may try this ticket again after a failed call, and when its calls began to
+    -- fail (a ticket whose calls fail for a day goes to a person).
+    ALTER TABLE support_tickets ADD COLUMN ai_next_at BIGINT NOT NULL DEFAULT 0;
+    ALTER TABLE support_tickets ADD COLUMN ai_failed_at BIGINT;
+    CREATE TABLE support_replies (
+        id         BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+        ticket_id  BIGINT NOT NULL REFERENCES support_tickets (id) ON DELETE CASCADE,
+        who        TEXT NOT NULL CHECK (who IN ('customer', 'ai', 'person')),
+        text       TEXT NOT NULL CHECK (char_length(text) BETWEEN 1 AND 8000),
+        created_at BIGINT NOT NULL
+    );
+    CREATE INDEX support_replies_by_ticket ON support_replies (ticket_id, id);
+    ALTER TABLE support_replies ENABLE ROW LEVEL SECURITY;
+    ALTER TABLE support_replies FORCE ROW LEVEL SECURITY;
+    CREATE POLICY support_admin_read ON support_replies FOR SELECT
+        USING (dmbot_support_admin() = 'admin');
+    CREATE POLICY support_admin_add ON support_replies FOR INSERT
+        WITH CHECK (dmbot_support_admin() = 'admin');
+    CREATE FUNCTION dmbot_support_thread(ticket BIGINT)
+        RETURNS TABLE (id BIGINT, who TEXT, text TEXT, created_at BIGINT)
+        LANGUAGE plpgsql SECURITY DEFINER
+        AS $fn$
+    BEGIN
+        IF dmbot_support_admin() IS DISTINCT FROM 'admin' THEN
+            RETURN;
+        END IF;
+        RETURN QUERY SELECT r.id, r.who, r.text, r.created_at FROM support_replies r
+            WHERE r.ticket_id = ticket ORDER BY r.id;
+    END
+    $fn$;
+    DO $do$
+    BEGIN
+        EXECUTE format(
+            'ALTER FUNCTION dmbot_support_thread(BIGINT)'
+            ' SET search_path = pg_catalog, %I, pg_temp',
+            current_schema());
+    END
+    $do$;
+    REVOKE ALL ON FUNCTION dmbot_support_thread(BIGINT) FROM PUBLIC;
+    """
+
 MIGRATIONS: tuple[Migration, ...] = (
     ("0001_initial", INITIAL),
     ("0002_active_sessions", ACTIVE_SESSIONS),
@@ -4375,6 +4436,7 @@ MIGRATIONS: tuple[Migration, ...] = (
     ("0083_memory_said_as", MEMORY_SAID_AS),  # a spelling for the narrator (#1419)
     ("0084_recap_switches", RECAP_SWITCHES),  # the DM's recap choices (#1421)
     ("0085_recap_audio_again", RECAP_AUDIO_AGAIN),  # the website's door to new audio (#1418)
+    ("0086_support_thread", SUPPORT_THREAD),  # the support flow's replies (#1431)
 )
 
 # Tables that must have row-level security. A test checks every table in the schema
@@ -4432,6 +4494,8 @@ USER_ISOLATED_TABLES = (
     # A person adds their own ticket and reads back only their own list, never the words; the
     # support admin door reads everything (#1340, #1373).
     "support_tickets",
+    # The replies of a ticket: only the admin door adds or reads them (#1431).
+    "support_replies",
     # An owner's hours per plan month; only the meter adds to it (#437).
     "owner_hours",
     # Which campaigns an owner has, across servers; kept by a trigger on campaigns (#437).
