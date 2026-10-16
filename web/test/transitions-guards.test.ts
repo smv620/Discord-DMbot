@@ -25,7 +25,7 @@ const PLAIN = OPT_OUT + OPT_OUT_BANNER;
 const CSS =
   "@property --dust{syntax:'<length>';inherits:false;initial-value:48px}" +
   "h1{view-transition-name:banner}" +
-  "::view-transition-old(root){mask-image:url(\"data:image/svg+xml,<svg/>\");animation:dust 350ms}" +
+  "::view-transition-old(root){mask-image:url(\"data:image/svg+xml,<svg/>\");animation:dust 700ms}" +
   "@media (prefers-reduced-motion:reduce){::view-transition-group(*){animation:none!important}}" +
   "body{color:red}";
 

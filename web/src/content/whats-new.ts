@@ -73,6 +73,13 @@ export const held: Held[] = [
   },
   {
     date: "2026-10-15",
+    title: "Ask a question in public",
+    what: "Post a question in the Q&A for DMbot. A helper called QAbot, a bot and not a person, answers what it can from the Help page and the site, and passes the rest to the team.",
+    reason:
+      "QAbot answers only once it is installed and live (the owner's steps on #1341). Until then a post there waits for the team.",
+  },
+  {
+    date: "2026-10-15",
     title: "Move to a new Discord account",
     what: "To move to a new Discord account, press Get a move code on your account page. On the new account, type /dmbot migrate, press Import my account, and type the emailed code; you will be asked to say yes to being recorded again.",
     reason:
