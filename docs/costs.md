@@ -177,3 +177,7 @@ Read from the provider's pricing page for the design (#1381, review 2, 2026-10-1
 | Plans | Creator $22 for 121,000 credits; Pro $99 for 600,000 | commercial use of the music is listed from Creator |
 
 One recap is about 3,000 + 3,600 (+ 200 for a new ambience loop) = **about 7,000 credits, roughly $1.30 on Creator**, plus about $0.05 of DMbot's own AI for the text. `DMBOT_RECAP_AUDIO_MAX_CREDITS` (default 15,000, about $3) is the most one recap may use: a recap whose estimate is over it is not made, and its text goes out as usual. The credits each make used are kept on the recap (`audio_credits`), counts only.
+
+### One recap test run (#1424)
+
+`python -m dmbot.devtools.recap_run --session GUILD CAMPAIGN SESSION_AT --yes` costs what one live recap's text costs: up to nine AI calls (more for a very long session, one for each extra window of the transcript), about 12,000 to 20,000 input tokens and 3,000 to 5,000 output tokens for a normal session, so a few cents on the fast tier plus a little on the careful tier when a check makes it retry. It prints its own estimate first and does nothing without `--yes`. `--audio` adds the narration and music: about 7,000 provider credits (see above). `--golden` runs the three invented sessions: about three times one recap's text cost. Record the real figures here after dev1's first run.
