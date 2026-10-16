@@ -35,7 +35,7 @@ export const allowanceSentence = (recapsLive: boolean, audioLive: boolean): stri
 
 /** Under the game master's steps on the Help page. Each sentence rests on core/src/dmbot/recaps/
  * and bot.py (post_recaps, recap_inputs): see the pull request for the lines. */
-export const recapSteps: { text: string }[] = [
+export const recapSteps: { text: string; names?: { name: string; file: string }[] }[] = [
   {
     text: "After a session, DMbot can write a short story-style recap of what happened, to read at the start of next time. Recaps are for paid plans.",
   },
@@ -43,13 +43,27 @@ export const recapSteps: { text: string }[] = [
     text: "It is written only from what was said by people who said yes to being recorded, and DMbot checks that every detail came from that. It leaves out any name you marked secret. Anything said out loud at the table can still be in it, so read it before you post.",
   },
   {
-    text: "DMbot emails you when a recap is ready, or when it couldn't write one and why. The email has the title (or the reason) and a link to your account page, never the recap itself. The link is also on your DM screen.",
+    text: "DMbot tells you on the DM screen when a recap is ready, or when it couldn't write one and why. It also emails you, unless you turn that off. The email has the title (or the reason) and a link to your account page, never the recap itself.",
   },
   {
-    text: "You read it first. You can change the words. Try again writes a new one and throws away your changes; you can do that up to twice. Or press Don't post. Nothing goes to your players until you press Post to the table.",
+    text: "On the DM screen, press Read it to read the recap there. Press Post to the table to send it to your players; DMbot asks once first. Press Not this one to skip it; you can still find it on your recap page. To change the words first, use the link in the message.",
+    names: [
+      { name: "Read it", file: "ui/recap_dm.py" },
+      { name: "Post to the table", file: "ui/recap_dm.py" },
+      { name: "Not this one", file: "ui/recap_dm.py" },
+    ],
   },
   {
-    text: "Post to the table puts the recap in your table's chat channel, dmb-chat. It can also list hit points, items and conditions. DMbot checks again first: if a player has stopped being recorded since it was written, or it names something you keep secret, it won't post and tells you on the page. It can take a minute.",
+    text: `Press Recaps on ⚙️ Settings to stop the recaps, to stop only the email (the DM screen still tells you)${
+      RECAP_AUDIO_LIVE ? ", or, on plans with narration, to stop the narration" : ""
+    }. You can turn them back on there. Your plan decides what you can have.`,
+    names: [{ name: "Recaps", file: "dm_screen/recap_panel.py" }],
+  },
+  {
+    text: "You read it first. You can change the words. Try again writes a new one and throws away your changes; you can do that up to twice. Or press Don't post, which is the same as Not this one on the DM screen. Nothing goes to your players until you press Post to the table.",
+  },
+  {
+    text: "Post to the table puts the recap in your table's chat channel, dmb-chat. It can also list hit points, items and conditions. DMbot checks again first: if a player has stopped being recorded since it was written, or it names something you keep secret, it won't post and tells you why. It can take about a minute.",
   },
   ...(RECAP_AUDIO_LIVE
     ? [
