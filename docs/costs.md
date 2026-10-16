@@ -158,8 +158,85 @@ Written by dev1 from the numbers above; Supervisor decides and records it in PLA
 - **Cost:** even STRONG is under $3 a 4-hour session. Caching the repeated instructions (the earlier estimate: most of each call's input) is worth looking at before the tier is.
 - **Limits:** one run, 60 invented scenes, wide intervals; the "appears abandoned" wording is not scored yet (see above).
 
+## Speech-to-text: Deepgram (actual) against Speechmatics (estimated)
+
+Added 2026-10-15 (Supervisor, at the owner's request). **Deepgram is what DMbot uses today**, so its column is the actual list price applied to the measured speech. **Speechmatics is an estimate**: the same measured speech priced at Speechmatics' list prices. Nothing below has been billed by Speechmatics; its only real use was the 2026-10-05 quick comparison in `docs/testing-history.log` (two recordings, under 2 minutes).
+
+### Prices used
+
+| What | Price per hour | Per minute | Source | Checked |
+|---|---|---|---|---|
+| Deepgram Nova-3, pre-recorded (in use) | $0.258 | $0.0043 (billed per second) | https://deepgram.com/pricing (pay as you go; Growth plan $0.0036) | 2026-10-15 |
+| Speechmatics batch, Standard accuracy | $0.23 | $0.00383 | https://www.speechmatics.com/pricing | 2026-10-15 |
+| Speechmatics batch, Enhanced accuracy (the one compared on 2026-10-05) | $0.38 | $0.00633 | https://www.speechmatics.com/pricing | 2026-10-15 |
+| Speechmatics batch, Melia 1 (cheapest; never tested by DMbot) | $0.121 | $0.00202 | https://www.speechmatics.com/pricing | 2026-10-15 |
+| Speechmatics real-time, Enhanced (for comparison only) | about $0.40 | about $0.0067 | https://www.speechmatics.com/pricing (worked out from its credits, see below) | 2026-10-15 |
+
+How these were read: both price pages were read directly on 2026-10-15. Speechmatics shows its pre-recorded (batch) prices per hour: Melia 1 $0.12 (the page title gives $0.121), Standard $0.23 and Enhanced $0.38. Its real-time prices only appear behind a switch on the page. The page's own data gives every model in credits per hour, and the batch prices above work out at about $0.50 a credit. At that rate real-time Enhanced is about $0.40 an hour, an estimate rather than a price the page states. **Billing:** Speechmatics bills to the second, like Deepgram, so short pieces cost no more than their length. Batch is the like-for-like price, because core sends each piece of speech as a short file.
+
+Not counted:
+
+- Speechmatics' volume discount (up to 25% off) and its one-time $100 credit for new accounts.
+- Its model-training discount (33% off). That discount means letting Speechmatics train on the audio, which players have not agreed to.
+- Deepgram's Growth plan ($0.0036 a minute, about 16% off).
+
+### What the measured speech costs
+
+The real test data: the twin's four sessions (4.8 speech-minutes sent, "What was measured" above) and the dev1 bake-off recording on Deepgram (175 s of speech, `docs/testing-history.log`, 2026-10-07).
+
+| Measured | Speech | Deepgram (actual) | Speechmatics Standard | Speechmatics Enhanced | Speechmatics Melia 1 |
+|---|---|---|---|---|---|
+| Twin, four sessions | 4.8 min | $0.0206 | $0.0184 | $0.0304 | $0.0097 |
+| Bake-off recording | 2.9 min | $0.0125 | $0.0112 | $0.0185 | $0.0059 |
+
+### Per table-hour
+
+These are the same three cases as "Cost per table-hour" above. The AI parts are unchanged: the off-topic filter plus the DM sidebar come to $0.049, $0.063 and $0.077 an hour. Hosting is not included.
+
+| Case | Speech (min/hour) | Deepgram speech / total | Speechmatics Standard speech / total | Speechmatics Enhanced speech / total | Speechmatics Melia 1 speech / total |
+|---|---|---|---|---|---|
+| low | 36 | $0.155 / **$0.203** | $0.138 / **$0.187** | $0.228 / **$0.277** | $0.073 / **$0.122** |
+| typical | 48 | $0.206 / **$0.269** | $0.184 / **$0.247** | $0.304 / **$0.367** | $0.097 / **$0.160** |
+| high | 60 | $0.258 / **$0.335** | $0.230 / **$0.307** | $0.380 / **$0.457** | $0.121 / **$0.198** |
+
+### A 4-hour session and a month of each plan (typical case, speech-to-text only)
+
+Hours are the plan allowances in docs/PLAN.md (Table 18, Two Tables 43, Guild 87).
+
+| | Deepgram | Speechmatics Standard | Speechmatics Enhanced | Speechmatics Melia 1 |
+|---|---|---|---|---|
+| One 4-hour session | $0.83 | $0.74 | $1.22 | $0.39 |
+| Table, 18 hours | $3.72 | $3.31 | $5.47 | $1.74 |
+| Two Tables, 43 hours | $8.88 | $7.91 | $13.07 | $4.16 |
+| Guild, 87 hours | $17.96 | $16.01 | $26.45 | $8.42 |
+
+### What it means
+
+- **Price:** Speechmatics Standard is about 11% cheaper than Deepgram. Enhanced, the tier that was actually tested, is about 47% dearer. Melia 1 is about half Deepgram's price, but DMbot has never tested it.
+- **Accuracy, from the only real comparison (2026-10-05):**
+  - With names hinted, Deepgram and Speechmatics Enhanced tied: 23 of 24 D&D terms each.
+  - On the everyday script, Enhanced made 0 errors and Deepgram 2.
+  - Standard and Melia 1 were not tested.
+  - It was two recordings, under 2 minutes, so it settles nothing.
+- **Speed:** Speechmatics took 2.77 s to connect in that test, against Deepgram's 0.14 s. Live advice needs speed, and nothing has measured Speechmatics batch delay per short piece.
+- **So:** price alone doesn't justify a switch. A switch would be worth measuring only for Standard (cheaper, untested) or Melia 1 (much cheaper, untested). That needs the twin on Speechmatics for accuracy and delay per piece. That is a developer's issue, not a decision made here.
+
 ## The story extractor's system prompt is marked for caching (#1367)
 
 Each extractor call sends the same instructions (about 1,130 tokens by the measuring tool's cautious count of 3 characters a token; nearer 850 at the usual 4) and 5 to 15 lines of talk (about 196 tokens on the golden set). The instructions are about **85%** of every call's input. They are now sent marked for caching (`cache_system`, only for this feature). The service charges about a tenth to read a cached prompt again and a quarter more to write it, so while the cache holds (calls follow each other within a few minutes) the **input** would cost about **a quarter** of what it did (1,326 token-prices a call down to about 309). Output is not cheaper, so the whole bill falls by much less than that.
 
 **Not measured, and it may not apply to the default tier.** A real measurement needs paid calls (`python -m dmbot.devtools.claims --extractor anthropic`, about $0.04 on the golden set). The service only caches a prompt above a minimum length that depends on the model; for some models it is about 1,024 tokens and for others 2,048 or more, and this prompt (850 to 1,130) is below some of them. Below the minimum nothing is cached and nothing extra is charged: the call is the same. The log line of every AI call shows `cache_read=` and `cache_write=`, so the first live session says whether it works for the tier chosen. The spend watch counts a cache write in full and a read at a tenth.
+
+
+## Recap narration and music (#1383, ElevenLabs)
+
+Read from the provider's pricing page for the design (#1381, review 2, 2026-10-16); the live run on the server (dev1) is the check that these still hold, and this table is then updated with the real figures.
+
+| What | Price | Used for |
+|---|---|---|
+| Text to speech | 1 credit per character | the narration: about 3,000 characters |
+| Music | 900 credits per minute | about 4 minutes of music |
+| Sound effects | 200 credits per generation | one ambience loop, made once for each campaign and scene kind, then kept |
+| Plans | Creator $22 for 121,000 credits; Pro $99 for 600,000 | commercial use of the music is listed from Creator |
+
+One recap is about 3,000 + 3,600 (+ 200 for a new ambience loop) = **about 7,000 credits, roughly $1.30 on Creator**, plus about $0.05 of DMbot's own AI for the text. `DMBOT_RECAP_AUDIO_MAX_CREDITS` (default 15,000, about $3) is the most one recap may use: a recap whose estimate is over it is not made, and its text goes out as usual. The credits each make used are kept on the recap (`audio_credits`), counts only.

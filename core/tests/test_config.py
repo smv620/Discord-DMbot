@@ -127,6 +127,29 @@ class PlanChecksSetting(unittest.TestCase):
         with self.assertRaisesRegex(ConfigError, "DMBOT_RECAPS must be 1"):
             load_settings({**BASE, "DMBOT_RECAPS": "sometimes"})
 
+    def test_recap_audio_needs_the_switch_a_key_and_a_voice_and_is_checked(self) -> None:
+        on = {**BASE, "DMBOT_RECAPS": "1"}
+        self.assertFalse(load_settings(on).recap_audio_on)  # no key: text-only
+        self.assertFalse(
+            load_settings({**on, "ELEVENLABS_API_KEY": "k"}).recap_audio_on
+        )  # no voice
+        both = {**on, "ELEVENLABS_API_KEY": "k", "ELEVENLABS_VOICE_ID": "abc123"}
+        self.assertTrue(load_settings(both).recap_audio_on)
+        self.assertFalse(load_settings({**both, "DMBOT_RECAPS": "0"}).recap_audio_on)
+        self.assertNotIn("elevenlabs_key", repr(load_settings(both)))  # the key is never shown
+        self.assertEqual(load_settings(BASE).recap_audio_max_credits, 15000)
+        self.assertEqual(load_settings(BASE).elevenlabs_speech_model, "eleven_v3")
+        self.assertEqual(
+            load_settings({**BASE, "ELEVENLABS_SPEECH_MODEL": "eleven_v4"}).elevenlabs_speech_model,
+            "eleven_v4",
+        )
+        with self.assertRaisesRegex(ConfigError, "ELEVENLABS_SPEECH_MODEL"):
+            load_settings({**BASE, "ELEVENLABS_SPEECH_MODEL": "../x"})
+        with self.assertRaisesRegex(ConfigError, "DMBOT_RECAP_AUDIO_MAX_CREDITS"):
+            load_settings({**BASE, "DMBOT_RECAP_AUDIO_MAX_CREDITS": "5"})
+        with self.assertRaisesRegex(ConfigError, "ELEVENLABS_VOICE_ID"):
+            load_settings({**BASE, "ELEVENLABS_VOICE_ID": "../x"})
+
     def test_the_recall_budget_has_a_default_and_is_checked(self) -> None:
         self.assertEqual(load_settings(BASE).recall_budget, 4000)
         self.assertEqual(load_settings({**BASE, "DMBOT_RECALL_BUDGET": "9000"}).recall_budget, 9000)

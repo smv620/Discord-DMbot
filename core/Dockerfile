@@ -13,6 +13,10 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     DMBOT_DATA_DIR=/data \
     HF_HOME=/models
 
+# ffmpeg mixes the recap's narration, music and ambience (#1383): version 4.4 or newer.
+RUN apt-get update && apt-get install -y --no-install-recommends ffmpeg \
+    && rm -rf /var/lib/apt/lists/*
+
 WORKDIR /app
 COPY pyproject.toml ./
 COPY src ./src

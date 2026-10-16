@@ -285,6 +285,7 @@ class Alias:
     sound_codes: tuple[str, ...]
     source: str
     created_at: int
+    said_as: str | None = None  # how the recap's narrator says it (#1419); never on a secret name
 
 
 @dataclass(frozen=True, slots=True)
