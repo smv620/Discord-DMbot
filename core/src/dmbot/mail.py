@@ -302,13 +302,15 @@ async def unsubscribe(db: Database, user_id: int, *, now: int) -> None:
 
 async def prune_account_emails(db: Database, now: int) -> int:
     """Forget old records of emails that repeat or have done their job, so the table doesn't
-    grow for ever: sign-in and move-code records after 90 days, and a Try It's notes after a
-    year (TRIAL_EMAIL_KEEP_S). Other one-off offers stay (that is what keeps them from being
-    sent twice)."""
+    grow for ever: sign-in, move-code and recap-email records after 90 days (a recap email goes
+    once for each session, so after 90 days nothing could send it again; #1400), and a Try It's
+    notes after a year (TRIAL_EMAIL_KEEP_S). Other one-off offers stay (that is what keeps them
+    from being sent twice)."""
     async with db.unscoped() as conn:
         cur = await conn.execute(
             "DELETE FROM sent_emails WHERE"
-            " (sent_at < %s AND (kind LIKE 'sign-in:%%' OR kind LIKE 'move-code:%%'))"
+            " (sent_at < %s AND (kind LIKE 'sign-in:%%' OR kind LIKE 'move-code:%%'"
+            "   OR kind LIKE 'recap-%%'))"
             " OR (sent_at < %s AND (kind LIKE 'trial-%%' OR kind LIKE 'dm:trial-%%'))",
             (now - 90 * DAY_S, now - TRIAL_EMAIL_KEEP_S),
         )
