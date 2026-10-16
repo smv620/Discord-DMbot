@@ -5,6 +5,7 @@ import type { ComponentChildren, JSX } from "preact";
 import { createContext } from "preact";
 import { useCallback, useContext, useEffect, useRef, useState } from "preact/hooks";
 
+import { text as recapText } from "../content/recaps";
 import { hoursLeftLine, hoursUsedLine, planName, text } from "../content/account";
 import { formatPrice, plans as paidPlans, type PlanId } from "../content/pricing";
 import {
@@ -805,6 +806,7 @@ function CampaignsSection({ me }: { me: Me }) {
           ))}
         </ul>
       )}
+      {me.campaigns.length > 0 && <a href="/account/recaps">{recapText.linkToList}</a>}
     </section>
   );
 }

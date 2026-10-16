@@ -66,6 +66,13 @@ export interface Held extends Entry {
 export const held: Held[] = [
   {
     date: "2026-10-16",
+    title: "Recaps for your table",
+    what: "After a session, DMbot can write a short story-style recap. You read it first, change it if you like, and press Post to the table. Nothing goes to your players until you do. Paid plans only.",
+    reason:
+      "Recaps are off until dev1 has checked a real one (#1382). When they are on, move this up and turn on the recap words (RECAPS_LIVE in recap-words.ts).",
+  },
+  {
+    date: "2026-10-16",
     title: "Quick answers use your facts",
     what: "When you ask DMbot a quick question about someone in your campaign, it now uses the facts you confirmed, like who they work for. If it has nothing confirmed, it says so.",
     reason:
@@ -105,6 +112,20 @@ export const held: Held[] = [
     what: "After a session, DMbot can spot a name it does not know yet and ask the game master who or what it is. Anything said about that name waits until the game master has checked it. A name they turn down is forgotten, along with what was said about it.",
     reason:
       "It needs the story extractor, which stays off until its prompt passes the measurement (#1282).",
+  },
+  {
+    date: "2026-10-16",
+    title: "A note before tonight's session",
+    what: "When a session starts, DMbot can post a short note on the DM screen, for the game master only. It lists last time's recap, what you confirmed about the names heard last time, anything lost or ended, and how many things said at the table wait for your check. It shows nothing until you have confirmed something. Players do not see it.",
+    reason:
+      "Held until it has been seen working on the test server (#1403).",
+  },
+  {
+    date: "2026-10-16",
+    title: "When a player says a secret name",
+    what: "If a player says a name you've marked secret, it ends up in the transcript, which anyone in your server can read. After the session DMbot asks you privately, one name at a time (up to five), whether it should stay secret from players or be opened up. Only you can answer, and DMbot never decides for you.",
+    reason:
+      "Held until it has been seen working on the test server (#1407).",
   },
 ];
 
