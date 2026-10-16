@@ -7,6 +7,7 @@ import { useRef, useState } from "preact/hooks";
 import { nameWords as words, SAID_AS_MAX } from "../content/recap-names";
 import { RECAP_AUDIO_LIVE, RECAPS_LIVE } from "../content/recap-words";
 import { ApiError, type AccountApi, type CampaignName } from "./api";
+import { keepFocus } from "./focus";
 
 type Load =
   | { kind: "idle" }
@@ -74,9 +75,12 @@ export default function RecapNames({
     }
     saving.current.add(name.id);
     say(name.id, { kind: "saving", message: words.saving });
+    // The button is disabled while saving, which drops its focus: put it back when done.
+    const back = () => document.getElementById(`save-said-as-${name.id}`);
     saveSaidAs(ref, name.id, draft === "" ? null : draft).then(
       () => {
         saving.current.delete(name.id);
+        keepFocus(back);
         setDrafts((d) => ({ ...d, [name.id]: draft }));
         say(name.id, {
           kind: draft === "" ? "cleared" : "saved",
@@ -85,6 +89,7 @@ export default function RecapNames({
       },
       (error: unknown) => {
         saving.current.delete(name.id);
+        keepFocus(back);
         const kind = error instanceof ApiError ? error.kind : "server";
         const message =
           kind === "signed-out"
@@ -145,6 +150,7 @@ export default function RecapNames({
                   />
                   <button
                     type="button"
+                    id={`save-said-as-${name.id}`}
                     class="button secondary"
                     onClick={() => save(name)}
                     disabled={row?.kind === "saving"}
