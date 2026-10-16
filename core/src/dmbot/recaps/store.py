@@ -480,6 +480,20 @@ class RecapStore:
                 (guild_id, campaign_id, session_at),
             )
 
+    async def waiting_drafts(
+        self, guild_id: int, campaign_id: str, limit: int = 2
+    ) -> list[tuple[int, str]]:
+        """The campaign's finished recaps the DM has neither posted nor skipped, newest first, as
+        (session_at, title) (#1474). Only 'ready' and 'draft': a posted, dropped or unfinished one
+        is never listed."""
+        async with self._db.guild(guild_id) as conn:
+            cur = await conn.execute(
+                "SELECT session_at, title FROM recap_jobs WHERE guild_id = %s AND campaign_id = %s"
+                " AND state = 'ready' AND status = 'draft' ORDER BY session_at DESC LIMIT %s",
+                (guild_id, campaign_id, limit),
+            )
+            return [(int(r["session_at"]), str(r["title"])) for r in await cur.fetchall()]
+
     async def to_post(self, guild_id: int) -> list[tuple[str, int]]:
         """Recaps the DM pressed Post on, which the bot has yet to send."""
         async with self._db.guild(guild_id) as conn:
