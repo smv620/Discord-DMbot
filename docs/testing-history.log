@@ -2534,3 +2534,5 @@ Overall ...................................... PASS (Deepgram baseline: 33/33, 1
   Supervisor's checks: signed-out GET /me/campaigns/<ref>/transcripts and /me/campaigns/<ref>/house-rules answer 401, /health 200 (inside web-api).
   Not checked (need a game session or a signed-in member): the Transcripts and House rules pages for a signed-in member; Settings -> Homebrew (Add, Download file, Load file); /dmbot fix after a session.
   docs/next-test-step.md stays Test I (consent v6, not yet run): one test at a time; the new checks are in docs/testing-status.log.
+  10-minute check, 13:30 UTC (10 minutes after the start): 0 ERROR, CRITICAL or traceback lines in core and web-api since 13:19; both up, web-api healthy; schema_migrations 99 rows, last 0099_homebrew_from_book.
+  Nothing turned on for users (recaps off, no ElevenLabs key, the extractor off, homebrew's What's new entry held).
