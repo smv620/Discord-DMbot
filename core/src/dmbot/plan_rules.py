@@ -17,7 +17,7 @@ from typing import Literal
 from dmbot.entitlements import Access
 from dmbot.hours import account_link
 
-Rule = Literal["ai", "backup", "recap_audio"]
+Rule = Literal["ai", "backup", "memory", "recap", "recap_audio"]
 
 
 def can_use_ai(access: Access | None) -> bool:
@@ -41,16 +41,32 @@ def can_recap_audio(access: Access | None) -> bool:
     return access is not None and access.works and access.recap_audio
 
 
+def can_use_story_memory(access: Access | None) -> bool:
+    """The story extractor reads a whole session with the AI, the biggest spend there is, so it
+    is for a paid plan (#1367): the same plans as copies, none for Try It. `None` is a campaign
+    with no owner, whose plan nobody can be charged to."""
+    return access is not None and access.works and access.backups
+
+
+def can_recap(access: Access | None) -> bool:
+    """A cinematic recap reads a whole session with the AI (#1382): the same plans as story
+    memory, none for Try It. `None` is a campaign with no owner."""
+    return can_use_story_memory(access)
+
+
 def allowed(rule: Rule, access: Access | None) -> bool:
+    # explicit: a new rule can't inherit another's answer
     rules = {
         "ai": can_use_ai,
         "backup": can_backup,
+        "memory": can_use_story_memory,
+        "recap": can_recap,
         "recap_audio": can_recap_audio,
-    }  # explicit: a third rule can't inherit one
+    }
     return rules[rule](access)
 
 
-Action = Literal["ai", "copy", "transcript", "restore", "share", "recap_audio"]
+Action = Literal["ai", "copy", "transcript", "restore", "share", "story", "recap", "recap_audio"]
 # Each thing a person can press belongs to exactly one rule, so the pair can't drift apart.
 RULE_OF: dict[Action, Rule] = {
     "ai": "ai",
@@ -58,6 +74,8 @@ RULE_OF: dict[Action, Rule] = {
     "transcript": "backup",
     "restore": "backup",
     "share": "backup",  # sharing house rules needs a paid plan (#1190)
+    "story": "memory",  # the story extractor after a session (#1367)
+    "recap": "recap",  # the cinematic recap after a session (#1382)
     "recap_audio": "recap_audio",
 }
 
@@ -70,6 +88,8 @@ _UNAVAILABLE: dict[Action, str] = {
     "transcript": "Transcripts aren't available for this campaign",
     "restore": "Loading a copy isn't available",
     "share": "Sharing house rules isn't available for this campaign",
+    "story": "Remembering the story from a session isn't available for this campaign",
+    "recap": "Recaps aren't available for this campaign",
     "recap_audio": "Spoken recaps aren't available for this campaign",
 }
 _CANT: dict[Action, str] = {
@@ -78,6 +98,8 @@ _CANT: dict[Action, str] = {
     "transcript": "send transcripts",
     "restore": "load copies",
     "share": "share house rules",
+    "story": "remember the story",
+    "recap": "write recaps",
     "recap_audio": "make spoken recaps",
 }
 _ASK_OWNER: dict[Action, str] = {
@@ -125,6 +147,10 @@ def refusal(
     # A plan that works but has no copies: Try It, the only one (plans.json).
     if action == "share":
         return f"Sharing house rules needs a paid plan. Pick one {where}"
+    if action == "story":
+        return f"Remembering the story from a session needs a paid plan. Pick one {where}"
+    if action == "recap":
+        return f"Recaps need a paid plan. Pick one {where}"
     if action == "restore":
         return f"Nothing was loaded. Loading a copy needs a paid plan. Pick one {where}"
     return f"Try It campaigns can't make copies or transcripts. A paid plan can. See plans {where}"

@@ -60,6 +60,7 @@ from dmbot.web.limits import LIMITS, RateLimit
 from dmbot.web.me import build_me
 from dmbot.web.moving import MoveCodes, can_move
 from dmbot.web.payments import PaymentError, PaymentProvider, paid_plan_ids
+from dmbot.web.recaps import RecapError, decide, edit_recap, list_recaps, read_recap
 from dmbot.web.sessions import Session
 from dmbot.web.settings import WebSettings
 
@@ -501,6 +502,58 @@ def create_app(
         """The signed-in person's own character sheets, read-only (#1164)."""
         session, _token = signed
         return {"characters": await build_characters(db, session)}
+
+    recap_refusals = {
+        "not_found": (404, "not_found"),
+        "not_allowed": (409, "not_allowed"),
+        "not_editable": (409, "not_editable"),
+        "bad_text": (422, "bad_text"),
+    }
+
+    @app.get("/me/recaps")
+    async def me_recaps(signed: Signed) -> dict[str, Any]:
+        """The signed-in DM's latest session recaps (#1382). A player sees none."""
+        session, _token = signed
+        return {"recaps": await list_recaps(db, session)}
+
+    @app.get("/me/recaps/{ref}")
+    async def me_recap(ref: str, signed: Signed) -> dict[str, Any]:
+        session, _token = signed
+        try:
+            return await read_recap(db, session, ref)
+        except RecapError as err:
+            status, detail = recap_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+
+    @app.put("/me/recaps/{ref}")
+    async def me_recap_edit(ref: str, signed: Signed, request: Request) -> dict[str, Any]:
+        """Save the DM's edit of the text and the housekeeping (never logged)."""
+        session, _token = signed
+        try:
+            body = await request.json()
+        except ValueError:
+            body = None
+        summary = body.get("summary") if isinstance(body, dict) else None
+        bullets = body.get("housekeeping") if isinstance(body, dict) else None
+        if not isinstance(summary, str) or not (
+            isinstance(bullets, list) and all(isinstance(b, str) for b in bullets)
+        ):
+            raise HTTPException(status_code=422, detail="bad_text")
+        try:
+            return await edit_recap(db, session, ref, summary=summary, housekeeping=bullets)
+        except RecapError as err:
+            status, detail = recap_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+
+    @app.post("/me/recaps/{ref}/{action}")
+    async def me_recap_decide(ref: str, action: str, signed: Signed) -> dict[str, Any]:
+        """Post to the table (the bot sends it), Try again, or Don't post."""
+        session, _token = signed
+        try:
+            return await decide(db, session, ref, action)
+        except RecapError as err:
+            status, detail = recap_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
 
     @app.post("/me/recording/{server_id}/stop", status_code=204)
     async def stop_recording(server_id: str, signed: Signed) -> Response:

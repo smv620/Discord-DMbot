@@ -403,10 +403,15 @@ def router(
     # Support tickets (#1340)
 
     @api.get("/support")
-    async def list_support(session: Admin) -> dict[str, Any]:
-        """Private tickets from paying people, newest first. The words are shown to the
-        signed-in admin only, and never logged."""
-        rows = await support.newest(db)
+    async def list_support(session: Admin, status: str = "all") -> dict[str, Any]:
+        """Private tickets from paying people, newest first; `?status=new|answered|closed` keeps
+        one status and `all` (the default) every one (#1375). `counts` always covers all of them,
+        for the filter buttons. The words go to the signed-in admin only, and are never logged."""
+        wanted = next((s for s in support.STATUSES if s == status), None)
+        if status != "all" and wanted is None:
+            raise HTTPException(status_code=400, detail="bad_status")
+        rows = await support.newest(db, status=wanted)
+        counts = await support.counts(db)
         # One lookup per distinct person, so the list is kept short (support.LIST_LIMIT).
         names = await sessions.display_names(db, sorted({r.user_id for r in rows}), now=clock())
         return {
@@ -427,7 +432,8 @@ def router(
                     "email": r.email,
                 }
                 for r in rows
-            ]
+            ],
+            "counts": counts,
         }
 
     @api.post("/support/{ticket_id}/status", status_code=204)

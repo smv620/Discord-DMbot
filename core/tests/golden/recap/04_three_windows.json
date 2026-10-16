@@ -1,0 +1,161 @@
+{
+ "title": "The long road to Ashford",
+ "window_chars": 900,
+ "names": [
+  "Wren",
+  "Cael",
+  "Ashford",
+  "Ember Gate"
+ ],
+ "secret": [
+  "Mother Vaul"
+ ],
+ "lines": [
+  [
+   "dm",
+   "The party leaves Ashford at first light and takes the north road toward Ember Gate."
+  ],
+  [
+   "a",
+   "Wren checks the map and says the road should take two days."
+  ],
+  [
+   "b",
+   "Cael ties his pack to the mule and promises to buy more rope at the first village."
+  ],
+  [
+   "dm",
+   "By noon the road runs beside a river, and a ruined mill stands on the far bank."
+  ],
+  [
+   "a",
+   "Wren sees a thin line of smoke rising from the mill chimney."
+  ],
+  [
+   "b",
+   "Cael wades across the river to look inside the mill."
+  ],
+  [
+   "dm",
+   "Inside, the mill is empty except for a fresh fire and a pot of stew still warm."
+  ],
+  [
+   "b",
+   "Cael tastes the stew and decides it is safe, and calls Wren over."
+  ],
+  [
+   "a",
+   "Wren searches the mill and finds a loose floorboard with a brass key under it."
+  ],
+  [
+   "dm",
+   "The key is stamped with a small gate and the letters EG."
+  ],
+  [
+   "a",
+   "Wren pockets the key and says the letters must mean Ember Gate."
+  ],
+  [
+   "dm",
+   "As evening falls, hoofbeats sound from the north, three riders at least."
+  ],
+  [
+   "b",
+   "Cael hides the mule behind the mill and draws his hatchet."
+  ],
+  [
+   "dm",
+   "The riders stop at the river and call out for whoever lit the fire."
+  ],
+  [
+   "a",
+   "Wren answers that the fire was theirs, and asks the riders their business."
+  ],
+  [
+   "dm",
+   "The lead rider says they ride for the gate and the gate is closed to strangers."
+  ],
+  [
+   "b",
+   "Cael asks why the gate is closed."
+  ],
+  [
+   "dm",
+   "The rider says only that the watch has been doubled since the bells stopped ringing."
+  ],
+  [
+   "a",
+   "Wren offers to share the stew if the riders will share their news of the road."
+  ],
+  [
+   "dm",
+   "The riders dismount, and the lead rider takes off her helmet to reveal a scar across her cheek."
+  ],
+  [
+   "b",
+   "Cael stays by the door with his hand on the hatchet through the whole meal."
+  ],
+  [
+   "dm",
+   "In the night, the scarred rider asks to see the brass key, and Wren says she never mentioned it."
+  ],
+  [
+   "a",
+   "Wren holds the key tightly and says she is going to sleep with it under her pillow."
+  ],
+  [
+   "dm",
+   "The scarred rider smiles and says that is a fine plan, and the fire burns low."
+  ]
+ ],
+ "beats": [
+  {
+   "keys": [
+    "leaves",
+    "ashford",
+    "north"
+   ]
+  },
+  {
+   "keys": [
+    "wren",
+    "smoke",
+    "mill"
+   ]
+  },
+  {
+   "keys": [
+    "cael",
+    "stew",
+    "safe"
+   ]
+  },
+  {
+   "keys": [
+    "wren",
+    "brass",
+    "key"
+   ]
+  },
+  {
+   "keys": [
+    "hoofbeats",
+    "riders"
+   ]
+  },
+  {
+   "keys": [
+    "gate",
+    "closed",
+    "strangers"
+   ]
+  },
+  {
+   "keys": [
+    "scarred",
+    "rider",
+    "key"
+   ]
+  }
+ ]
+}
