@@ -13,11 +13,14 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+import re
 from pathlib import Path
 from urllib.parse import urlencode
 
 from dmbot.recaps.audio.files import KINDS, AudioFiles
 from dmbot.recaps.notify import parse_ref
+
+_HEX = re.compile(r"^[0-9a-f]{64}$")
 
 
 def link_key(secret_key: bytes) -> bytes:
@@ -62,8 +65,15 @@ def file_for(
 ) -> Path | None:
     """The file a genuine, unexpired link points at; None for anything else (one answer for a
     wrong signature, an old link, a bad kind and a missing file, so nothing is learned from it)."""
+    # Plain ASCII only, checked here before anything is parsed or compared: `str.isdigit` is true
+    # for characters `int` refuses, and comparing a non-ASCII signature raises. Both would be
+    # a 500 on a route anyone can call.
+    if not (ref.isascii() and expires.isascii() and expires.isdecimal() and len(expires) <= 12):
+        return None
+    if not _HEX.match(signature):
+        return None
     parsed = parse_ref(ref)
-    if files is None or parsed is None or not expires.isdigit() or len(expires) > 12:
+    if files is None or parsed is None:
         return None
     guild_id, campaign_id, session_at = parsed
     return files.verify(

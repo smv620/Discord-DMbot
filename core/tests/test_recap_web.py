@@ -380,6 +380,35 @@ class TheAudio(Base):
                 self.assertEqual((await self.client.get(bad)).status_code, 404)
         self.assertEqual((await self.client.get(url)).status_code, 200)
 
+    async def test_odd_characters_in_a_link_are_a_not_found_not_a_crash(self) -> None:
+        await self.make(self.one.id)
+        url = (await self.client.get(f"/me/recaps/{self.ref}/audio")).json()["links"]["voice"]
+        path, query = url.removeprefix(API).split("?")
+        good_s = query.split("s=")[1]
+        for bad in (
+            f"{path}?e=1&s=%C3%A9",  # a non-ASCII signature
+            f"{path}?e=%C2%B2&s={good_s}",  # "²": isdigit, but not a number
+            f"{path.replace(self.ref, '%C2%B2.' + self.one.id + '.100')}?{query}",
+            f"{path}?e=1&s={good_s.upper()}",
+            f"{path}?e=1&s=" + "a" * 5000,
+        ):
+            with self.subTest(bad):
+                self.assertEqual((await self.client.get(bad)).status_code, 404)
+        self.assertEqual(
+            (await self.client.get(f"/me/recaps/%C2%B2.{self.one.id}.1")).status_code, 404
+        )
+        self.assertEqual(
+            (await self.client.get(f"/me/recaps/%C2%B2.{self.one.id}.1/audio")).status_code, 404
+        )
+
+    async def test_a_player_can_ask_for_part_of_the_file(self) -> None:
+        await self.make(self.one.id)
+        url = (await self.client.get(f"/me/recaps/{self.ref}/audio")).json()["links"]["voice"]
+        part = await self.client.get(
+            url.removeprefix(API), headers={**HEADERS, "Range": "bytes=0-4"}
+        )
+        self.assertEqual((part.status_code, part.content), (206, b"audio"))
+
     async def test_an_old_link_and_a_missing_file_open_nothing(self) -> None:
         await self.make(self.one.id)
         old = AudioFiles(Path(self.dir.name), clock=lambda: 1.0)
@@ -417,6 +446,10 @@ class TheAudio(Base):
         self.assertEqual(
             (job.audio, job.audio_tries, job.audio_next_at, job.audio_error), ("queued", 0, 0, "")
         )
+        # While the bot is making it the answer is no; once it has failed again, "too soon".
+        busy = await self.client.post(f"/me/recaps/{self.ref}/audio/again")
+        self.assertEqual((busy.status_code, busy.json()["error"]), (409, "not_allowed"))
+        await self.store.set_audio(THURSDAY.id, self.one.id, 100, audio="failed", error="x")
         soon = await self.client.post(f"/me/recaps/{self.ref}/audio/again")
         self.assertEqual((soon.status_code, soon.json()["error"]), (429, "too_soon"))
         # Ten minutes later it may be asked for again (the database's own clock, so move the mark).
@@ -424,6 +457,16 @@ class TheAudio(Base):
             await conn.execute("UPDATE recap_jobs SET audio_asked_at = audio_asked_at - 601")
         later = await self.client.post(f"/me/recaps/{self.ref}/audio/again")
         self.assertEqual(later.status_code, 200, later.text)
+
+    async def test_the_door_asks_only_where_the_page_does(self) -> None:
+        for state in ("queued", "off"):
+            with self.subTest(state):
+                await self.store.set_audio(THURSDAY.id, self.one.id, 100, audio=state)
+                refused = await self.client.post(f"/me/recaps/{self.ref}/audio/again")
+                self.assertEqual(
+                    (refused.status_code, refused.json()["error"]), (409, "not_allowed")
+                )
+                self.assertEqual((await self.state(self.one.id)).audio, state)
 
     async def test_the_door_refuses_a_stranger_a_decided_recap_and_a_recap_in_progress(
         self,

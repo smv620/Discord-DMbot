@@ -150,6 +150,10 @@ function AudioPanel({
   const [links, setLinks] = useState<RecapAudioLinks>({});
   const [lost, setLost] = useState(false);
   const [busy, setBusy] = useState(false);
+  // A second tap before the page redraws must not send a second request.
+  const asking = useRef(false);
+  // One fresh read of the links when a player fails; more would loop on a file that is gone.
+  const retried = useRef(false);
   const [note, setNote] = useState<{ ok: boolean; message: string } | null>(
     null,
   );
@@ -164,18 +168,40 @@ function AudioPanel({
       setLost(true);
     }
   };
+  const failed = (): void => {
+    if (retried.current) {
+      setLost(true);
+      return;
+    }
+    retried.current = true;
+    void load();
+  };
   useEffect(() => {
+    retried.current = false;
     if (!RECAP_AUDIO_LIVE || !playable) {
       setLinks({});
       return;
     }
-    void load();
+    let live = true;
+    api.recapAudioLinks?.(recap.ref).then(
+      (found) => {
+        if (live) {
+          setLinks(found);
+          setLost(false);
+        }
+      },
+      () => live && setLost(true),
+    );
+    return () => {
+      live = false;
+    };
   }, [api, recap.ref, playable]);
 
   if (!RECAP_AUDIO_LIVE || !audio) return null;
 
   const ask = async (): Promise<void> => {
-    if (!api.askRecapAudioAgain || busy) return;
+    if (!api.askRecapAudioAgain || asking.current) return;
+    asking.current = true;
     setBusy(true);
     setNote(null);
     try {
@@ -191,6 +217,7 @@ function AudioPanel({
             : (errors[kind] ?? errors.other),
       });
     } finally {
+      asking.current = false;
       setBusy(false);
     }
   };
@@ -224,7 +251,7 @@ function AudioPanel({
                   preload="none"
                   src={links[kind]}
                   aria-label={label}
-                  onError={() => void load()}
+                  onError={failed}
                 />
               </div>
             ),

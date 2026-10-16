@@ -258,3 +258,13 @@ describe("the API calls", () => {
     ).toBe("1");
   });
 });
+
+describe("the page's security policy", () => {
+  it("lets players load audio from the site itself, and the build adds the API's address", async () => {
+    const { readFileSync } = await import("node:fs");
+    const headers = readFileSync("public/_headers", "utf8");
+    expect(headers).toContain("media-src 'self';");
+    const script = readFileSync("scripts/csp-hashes.mjs", "utf8");
+    expect(script).toContain("media-src 'self' ${origin};");
+  });
+});

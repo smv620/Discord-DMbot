@@ -4090,7 +4090,10 @@ RECAP_AUDIO_AGAIN = """
         END IF;
         SELECT * INTO job FROM recap_jobs
             WHERE guild_id = g AND campaign_id = c AND session_at = at_ FOR UPDATE;
-        IF NOT FOUND OR job.state <> 'ready' OR job.status NOT IN ('draft', 'posting') THEN
+        -- Only from where the page offers the button: made, or failed. Never while the bot is
+        -- making it (its tries and wait would be reset under it) or when it was never wanted.
+        IF NOT FOUND OR job.state <> 'ready' OR job.status NOT IN ('draft', 'posting')
+           OR job.audio NOT IN ('ready', 'failed') THEN
             RETURN 'not_allowed';
         END IF;
         IF job.audio_asked_at > now_s - 600 THEN
