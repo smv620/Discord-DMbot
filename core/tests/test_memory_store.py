@@ -102,6 +102,15 @@ class MemoryTest(DatabaseTest):
         return int(row["n"])
 
 
+class ConfirmedMemoryTest(MemoryTest):
+    """Entries the DM adds are confirmed (as the menus do): a claim only waits on a name that
+    is still proposed (#1364), so the claim tests start from confirmed ones."""
+
+    async def add(self, name: str, **kw: Any) -> str:
+        kw.setdefault("status", "confirmed")
+        return await super().add(name, **kw)
+
+
 class Isolation(MemoryTest):
     async def fill(self) -> tuple[str, str]:
         """At least one row in every memory table."""

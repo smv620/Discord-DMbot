@@ -1,5 +1,7 @@
 ---
 import LegalPage from "../../components/LegalPage.astro";
+import QabotPrivacy from "../../components/QabotPrivacy.astro";
+import { QABOT_LIVE } from "../../content/qabot";
 import {
   deletionWarnings,
   keepAfterStopPaying,
@@ -218,6 +220,8 @@ import {
     If a server uses its own AI or speech key, we keep that key locked (encrypted), use it only
     for that server, and never show it in full.
   </p>
+
+  <QabotPrivacy live={QABOT_LIVE} />
 
   <h2>How long we keep it</h2>
   <p>A campaign is deleted this long after its last game:</p>
