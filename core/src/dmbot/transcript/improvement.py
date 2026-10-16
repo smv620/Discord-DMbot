@@ -11,11 +11,16 @@ each does (the list is also in the pull request that added this):
 - the live test recorder (`test_recording`; bot.py `_save_test_audio`): an opted-out speaker is
   not saved, and what was already saved of them in the running session is dropped;
 - `devtools.recap_run --session` (a stored session read for a test run): their lines are left out;
+- the test recorder also asks again when a session ends, for everyone saved in it, and drops
+  anyone who opted out meanwhile; it will not start at all without this store;
 - the replay tools (`test_library run`, `session_replay`, `recheck`, `stt_bakeoff`) read kept
-  recordings and the operator's own audio, whose speakers are made-up numbers by design, so a
-  person cannot be found in them afterwards; they are covered at the source (the recorder above).
+  recordings and the operator's own audio. Their speakers are made-up numbers by design
+  (nothing names a person), so a later opt-out CANNOT find someone in a recording already kept:
+  they are covered at the source (the recorder) only. That is a decision for Supervisor and the
+  owner, recorded in the pull request; `library.delete_person` removes a person by voice code.
 
-A path that cannot filter must refuse to run rather than read around the choice.
+A path that can read the choice must refuse to run rather than read around it; `filter_lines`
+refuses a line that does not say whose it is.
 
 The choice is stored per Discord account, across servers, in `improvement_opt_outs` (migration
 0110); a row means opted out. It is read one person at a time through `Database.user()`, so
@@ -30,7 +35,9 @@ from typing import Any, Protocol
 
 from dmbot.db import Database
 
-CACHE_S = 20  # how long the live recorder trusts a person's last answer (a few seconds is enough)
+CACHE_S = 20  # how long the live recorder trusts a person's last answer. Each process has its
+# own cache, so a choice made on the website reaches the bot's recorder within this long.
+MAX_SEEN = 1000
 
 
 class HasUser(Protocol):
@@ -40,7 +47,7 @@ class HasUser(Protocol):
 class OptOutStore:
     """Reads and writes the choice. `clock` is for tests."""
 
-    def __init__(self, db: Database, *, clock: Callable[[], float] = time.time) -> None:
+    def __init__(self, db: Database, *, clock: Callable[[], float] = time.monotonic) -> None:
         self._db = db
         self._now = clock
         self._seen: dict[int, tuple[bool, float]] = {}  # person -> (opted out, read at)
@@ -52,8 +59,13 @@ class OptOutStore:
                 "SELECT 1 FROM improvement_opt_outs WHERE user_id = %s", (user_id,)
             )
             out = await cur.fetchone() is not None
-        self._seen[user_id] = (out, self._now())
+        self._remember(user_id, out)
         return out
+
+    def _remember(self, user_id: int, out: bool) -> None:
+        if len(self._seen) >= MAX_SEEN:  # bounded: the oldest answers are simply read again
+            self._seen.clear()
+        self._seen[user_id] = (out, self._now())
 
     async def opted_out(self, user_ids: Iterable[int]) -> set[int]:
         """Which of these people have opted out, read now (one small read each)."""
@@ -85,7 +97,7 @@ class OptOutStore:
                     " ON CONFLICT (user_id) DO NOTHING",
                     (user_id, int(self._now())),
                 )
-        self._seen[user_id] = (not improve, self._now())
+        self._remember(user_id, not improve)
         return improve
 
 
@@ -97,8 +109,7 @@ async def allowed(db: Database, user_ids: Iterable[int]) -> set[int]:
 async def filter_lines(db: Database, lines: Sequence[Any]) -> list[Any]:
     """The lines (anything with a `user_id`) of people who have not opted out, in order. Lines
     with no person (a narrator's note) are kept: they are nobody's words."""
-    people = {int(line.user_id) for line in lines if getattr(line, "user_id", None)}
+    # (a line with no `user_id` attribute at all raises: it can't say whose it is)
+    people = {int(line.user_id) for line in lines if line.user_id is not None}
     keep = await allowed(db, people)
-    return [
-        line for line in lines if not getattr(line, "user_id", None) or int(line.user_id) in keep
-    ]
+    return [line for line in lines if line.user_id is None or int(line.user_id) in keep]

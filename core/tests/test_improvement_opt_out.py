@@ -8,7 +8,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from types import SimpleNamespace
 from typing import Any, cast
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock
 
 import httpx
 from psycopg import errors
@@ -83,6 +83,10 @@ class Choice(DatabaseTest):
         self.assertEqual(await improvement.allowed(self.db, [ALICE.id]), set())  # a new store
         self.assertEqual(await improvement.allowed(self.db, [ALICE.id, BOB.id]), {BOB.id})
 
+    async def test_a_line_that_cannot_say_whose_it_is_is_refused(self) -> None:
+        with self.assertRaises(AttributeError):
+            await improvement.filter_lines(self.db, [SimpleNamespace(text="x")])
+
     async def test_lines_of_an_opted_out_person_are_left_out_and_others_kept_in_order(self) -> None:
         await self.store.set(BOB.id, improve=False)
         lines = [Said(ALICE.id, "a"), Said(BOB.id, "b"), Said(None, "n"), Said(CAROL, "c")]
@@ -135,9 +139,13 @@ class Recorder(DatabaseTest):
         assert self.bot.test_voice is not None
         self.bot.test_voice.has = lambda guild_id, user_id: True  # type: ignore[method-assign]
         self.session = SimpleNamespace(
-            add_utterance=AsyncMock(), has=lambda user_id: True, forget=AsyncMock(), gap=AsyncMock()
+            add_utterance=AsyncMock(),
+            has=lambda user_id: True,
+            forget=MagicMock(),
+            gap=MagicMock(),
+            people=lambda: [ALICE.id, BOB.id],
+            finish=MagicMock(),
         )
-        self.session.forget = AsyncMock()
         self.table = SimpleNamespace(
             guild_id=111, test_session=self.session, is_dm=lambda user_id: False
         )
@@ -168,6 +176,31 @@ class Recorder(DatabaseTest):
         self.optouts.is_opted_out_recently = AsyncMock(side_effect=RuntimeError("down"))  # type: ignore[method-assign]
         await self.bot._save_test_audio(cast(Any, self.table), self.utterance(ALICE.id), "hi")
         self.session.add_utterance.assert_not_awaited()
+
+    async def test_someone_who_opts_out_and_never_speaks_again_is_dropped_at_the_end(self) -> None:
+        await self.optouts.set(BOB.id, improve=False)
+        await self.bot._purge_opted_out(cast(Any, self.session))
+        self.session.forget.assert_called_once_with(BOB.id)
+
+    async def test_the_end_of_a_session_drops_a_speaker_whose_choice_cannot_be_read(self) -> None:
+        self.optouts.is_opted_out = AsyncMock(side_effect=RuntimeError("down"))  # type: ignore[method-assign]
+        await self.bot._purge_opted_out(cast(Any, self.session))
+        self.assertEqual(self.session.forget.call_count, 2)
+
+    async def test_finishing_the_session_purges_before_it_writes_the_last_manifest(self) -> None:
+        await self.optouts.set(ALICE.id, improve=False)
+        await self.bot._finish_test_session(cast(Any, self.table), True)
+        self.session.forget.assert_called_once_with(ALICE.id)
+        self.session.finish.assert_called_once()
+
+    async def test_no_test_session_starts_without_the_opt_out_store(self) -> None:
+        self.bot.improvement = None
+        self.table.test_session = None
+        self.bot.settings = SimpleNamespace(  # type: ignore[assignment]
+            test_recording_guilds={111}, test_recordings_dir="/nonexistent"
+        )
+        await self.bot._start_test_session(cast(Any, self.table))
+        self.assertIsNone(self.table.test_session)
 
     async def test_one_persons_opt_out_does_not_stop_anyone_else(self) -> None:
         await self.optouts.set(ALICE.id, improve=False)
