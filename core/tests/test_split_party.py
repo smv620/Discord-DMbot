@@ -622,7 +622,7 @@ class OnTheScreen(Party):
         stored = await self.stored()
         view = ui.RejoinView(self.a.id, stored.groups)
         labels = [str(i.label) for i in view.children]  # type: ignore[attr-defined]
-        self.assertEqual(labels, ["Keep Tower: Day 4, 13:00", "Keep Camp: Day 4, 12:00"])
+        self.assertEqual(labels, ["Keep Tower", "Keep Camp"])
         done = await ui.run_rejoin(self.interaction(), self.a.id, 1)
         assert done is not None
         self.assertFalse((await self.stored()).split)

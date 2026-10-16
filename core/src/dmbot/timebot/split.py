@@ -19,11 +19,13 @@ MIN_GROUPS, MAX_GROUPS = 2, 3
 NAME_MAX = 20
 DRIFT_MIN = 8 * 60  # a group more than this far ahead of another is worth a word
 
-NEED_TWO = "Give at least two groups a name, like Tower and Camp."
-SAME_NAME = "Give each group its own name."
+NEED_TWO = "Name at least two groups, like Tower and Camp. Press **Split the party** to try again."
+SAME_NAME = "Two groups have the same name. Press **Split the party** again and give each its own."
 IN_COMBAT = "End combat first, then split the party."
-ALREADY_SPLIT = "The party is already split."
-NOT_SPLIT = "The party isn't split."
+ALREADY_SPLIT = (
+    "The party is already split. Pick a group under the clock, or press **Rejoin the party**."
+)
+NOT_SPLIT = "The party is together already. Press **Split the party** to split it."
 
 
 @dataclass(frozen=True, slots=True)

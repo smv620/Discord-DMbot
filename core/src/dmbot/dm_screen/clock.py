@@ -56,21 +56,22 @@ FAILED = "That didn't save. Try again in a moment."
 BAD_TIME = "Couldn't read that time. Try day 4 and time 14 (or 14:30)."
 ALREADY_SHOWN = "The clock is already pinned on the DM screen: {where}"
 PANEL_TEXT = "Take a rest, skip to dawn, or type the time. Only you see this."
-PLAYERS_SEE = "\nPlayers see the day and a rough time in <#{channel}>."
+PLAYERS_SEE = "\nPlayers see {what}a rough time in <#{channel}>."
 NEEDS_SCREEN = "This campaign has no DM screen yet. Run `/dmbot start` once first."
 OFF_SCREEN = (
     "DMbot can't post on the DM screen. Give DMbot **Send Messages** there, then press "
     "**Game clock** again."
 )
 SET_DONE = "🕰️ Clock set to {label}. It's pinned here: {where}"
-REJOIN_ASK = "Which time should the whole party keep? The latest is first. Only you see this."
-SPLIT_SAID = (
-    "✂️ The party is split into {names}. The buttons act on {first}: "
-    "pick another group under the clock."
-)
+REJOIN_ASK = "Which time does the whole party keep? Only you see this."
+REJOIN_NOTE = "The other groups' clocks are dropped. Timers keep their time left."
+SPLIT_SAID = "✂️ Split: {names}. Buttons act on {first}. Change it under the clock."
 SPLIT_PHRASE = "The party is split, so I didn't move the clock. Use the buttons for each group."
-REJOINED = "🤝 The party is together again: {when}. Kept {name}'s time."
-SPLIT_GONE = "That can't be undone now. Use **Rests & time…** to fix it."
+REJOINED = "🤝 Together again at {when} ({name}'s time). Timers kept their time left."
+SPLIT_GONE = (
+    "Can't undo: the clock has changed since. "
+    "Press **Split the party** in **Rests & time…** to split again."
+)
 
 ACTIONS: dict[str, tuple[str, str, discord.ButtonStyle, int]] = {
     # id: (label, emoji, style, row)
@@ -328,11 +329,12 @@ async def show(client: Any, campaign: Campaign, stored: Stored) -> discord.Messa
     return cast(discord.Message, message)
 
 
-def players_see(campaign: Campaign) -> str:
-    """Where the players see the clock: said only when that channel exists."""
+def players_see(campaign: Campaign, what: str = "the day and ") -> str:
+    """Where the players see the clock: said only when that channel exists. While splitting,
+    `what` also tells the DM the players read the group names."""
     if campaign.gametime_channel_id is None:
         return ""
-    return PLAYERS_SEE.format(channel=campaign.gametime_channel_id)
+    return PLAYERS_SEE.format(channel=campaign.gametime_channel_id, what=what)
 
 
 def players_text(clock: Clock) -> str:
@@ -736,8 +738,14 @@ class ClockButton(
         elif not stored.split:
             await _reply(interaction, split.NOT_SPLIT)
         else:
+            times = [
+                f"{g.name}: {split.exact_label(g.clock.minute)}" + (" (latest)" if i == 0 else "")
+                for i, g in enumerate(split.latest_first(stored.groups))
+            ]
             await interaction.response.send_message(
-                REJOIN_ASK, view=RejoinView(campaign.id, stored.groups), ephemeral=True
+                "\n".join([REJOIN_ASK, *times, REJOIN_NOTE]),
+                view=RejoinView(campaign.id, stored.groups),
+                ephemeral=True,
             )
 
     async def _form_or_show(
@@ -782,13 +790,13 @@ class SplitForm(discord.ui.Modal):
     """Name the groups: two are needed, a third is optional (#1607)."""
 
     first: discord.ui.TextInput[SplitForm] = discord.ui.TextInput(
-        label="First group", placeholder="Tower", max_length=split.NAME_MAX
+        label="First group (players see it)", placeholder="Tower", max_length=split.NAME_MAX
     )
     second: discord.ui.TextInput[SplitForm] = discord.ui.TextInput(
         label="Second group", placeholder="Camp", max_length=split.NAME_MAX
     )
     third: discord.ui.TextInput[SplitForm] = discord.ui.TextInput(
-        label="Third group (if there is one)", required=False, max_length=split.NAME_MAX
+        label="Third group (optional)", required=False, max_length=split.NAME_MAX
     )
 
     def __init__(self, campaign_id: str) -> None:
@@ -838,7 +846,10 @@ async def run_split(interaction: discord.Interaction, campaign_id: str, names: l
             [SPLIT_SAID.format(names=_names_in_words(names), first=_names_in_words(names[:1]))],
             split_undo=("split", token),
         )
-    await _reply(interaction, f"✂️ Split into {_names_in_words(names)}.")
+    await _reply(
+        interaction,
+        f"✂️ Split into {_names_in_words(names)}." + players_see(campaign, "these names and "),
+    )
     return True
 
 
@@ -855,7 +866,7 @@ class RejoinView(discord.ui.View):
 class _RejoinChoice(discord.ui.Button["RejoinView"]):
     def __init__(self, campaign_id: str, group: split.Group, *, primary: bool) -> None:
         super().__init__(
-            label=f"Keep {group.name}: {split.exact_label(group.clock.minute)}"[:80],
+            label=f"Keep {group.name}"[:25],
             style=discord.ButtonStyle.primary if primary else discord.ButtonStyle.secondary,
         )
         self.campaign_id, self.position = campaign_id, group.position
@@ -870,7 +881,9 @@ class _RejoinChoice(discord.ui.Button["RejoinView"]):
             await _reply(interaction, FAILED)
         if done is not None:
             with contextlib.suppress(discord.HTTPException):
-                await interaction.edit_original_response(content="🤝 The party is together again.")
+                await interaction.edit_original_response(
+                    content=f"🤝 Together again at {split.exact_label(done.clock.minute)}."
+                )
 
 
 async def run_rejoin(
@@ -904,7 +917,7 @@ async def run_rejoin(
         await say(
             client,
             campaign,
-            [REJOINED.format(when=game.short_label(done.clock.minute), name=done.kept.name)],
+            [REJOINED.format(when=split.exact_label(done.clock.minute), name=done.kept.name)],
             split_undo=("rejoin", done.token),
         )
     return done
@@ -926,7 +939,7 @@ class ClockPicker(
     ) -> None:
         options = [
             discord.SelectOption(
-                label=f"{g.name}: {split.exact_label(g.clock.minute)}"[:100],
+                label=g.name[:100],
                 value=str(g.position),
                 default=g.position == picked,
             )
