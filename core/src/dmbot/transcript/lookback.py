@@ -62,7 +62,8 @@ def _overlaps(a: tuple[int, int], b: tuple[int, int]) -> bool:
 
 
 def _own_ranges(result: Cleaned, shift: int) -> list[tuple[int, int]]:
-    return [(x.start + shift, x.end + shift) for x in (*result.fixes, *result.questions)]
+    ranges = [(f.start + shift, f.end + shift) for f in result.fixes]
+    return ranges + [(q.start + shift, q.end + shift) for q in result.questions]
 
 
 def find(

@@ -8,7 +8,7 @@ import logging
 import time
 from dataclasses import replace
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import discord
@@ -2516,7 +2516,7 @@ class SaveAndResume(SessionTests):
     async def test_a_split_name_asks_the_dm_and_changes_nothing_by_itself(self) -> None:
         table = await self.seam_setup()
         await self.said_twice(table, "we meet Ka", "Zeth at dawn")
-        posted = self.bot.post_message
+        posted = cast(Any, self.bot.post_message)
         posted.assert_awaited_once()
         channel, text, _ = posted.await_args.args
         self.assertEqual(channel, SCREEN)  # the DM screen only
@@ -2535,7 +2535,7 @@ class SaveAndResume(SessionTests):
             if kw.get("user2") == DM:
                 await self.consent.grant(GUILD, DM)
             await self.said_twice(table, "we meet Ka", "Zeth at dawn", **kw)
-            self.bot.post_message.assert_not_awaited()
+            cast(Any, self.bot.post_message).assert_not_awaited()
             self.assertEqual(self.waiting(table), ["we meet Ka", "Zeth at dawn"])
             self.bot.tables.pop(GUILD, None)
 
@@ -2549,7 +2549,7 @@ class SaveAndResume(SessionTests):
         _, done, undo = await self.bot.answer_name_question(GUILD, asked.id, "0", DM)
         self.assertTrue(done)
         self.assertEqual(self.waiting(table), ["we meet Ka'zeth", "at dawn"])
-        add = self.bot.memory.add_correction
+        add = cast(Any, self.bot.memory).add_correction
         self.assertEqual(add.await_args.args[2], "Ka Zeth")  # the joined words, as the rule
         assert undo is not None
         self.assertIs(await self.bot.answer_undone(GUILD, table.campaign_id, undo[1]), True)
@@ -2567,7 +2567,7 @@ class SaveAndResume(SessionTests):
             calls.append(started)
             return False if started == asked.started_ms else await real(t, speaker, started, words)
 
-        self.bot._rewrite_line = rewrite  # type: ignore[method-assign]
+        cast(Any, self.bot)._rewrite_line = rewrite
         await self.bot.answer_name_question(GUILD, asked.id, "0", DM)
         self.assertEqual(self.waiting(table), ["we meet Ka", "Zeth at dawn"])  # both as heard
         self.assertFalse(
@@ -2624,7 +2624,7 @@ class SaveAndResume(SessionTests):
                 raise RuntimeError("down")  # ... and then it blew up
             return done
 
-        self.bot._rewrite_line = rewrite  # type: ignore[method-assign]
+        cast(Any, self.bot)._rewrite_line = rewrite
         await self.bot.answer_name_question(GUILD, asked.id, "0", DM)
         self.assertEqual(self.waiting(table), ["we meet Ka", "Zeth at dawn"])
         self.assertFalse([a for a in table.fix_notes.answers if a.batch == 51])
@@ -2642,7 +2642,7 @@ class SaveAndResume(SessionTests):
         async def rewrite(t: Any, speaker: int, started: int, words: str) -> bool:
             return False if started == 0 else await real(t, speaker, started, words)
 
-        self.bot._rewrite_line = rewrite  # type: ignore[method-assign]
+        cast(Any, self.bot)._rewrite_line = rewrite
         back = await self.bot.answer_undone(GUILD, table.campaign_id, undo[1])
         self.assertIs(back, False)
         # The earlier piece still has the name, so the head is NOT brought back: no doubling.
