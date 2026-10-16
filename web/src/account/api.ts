@@ -140,6 +140,21 @@ export interface SupportReceipt {
   reply: boolean;
 }
 
+/** One of the person's own questions to the team (#1373): when it was sent (Unix seconds), the
+ * subject, and where it stands. Never the words, and never anyone else's. */
+export interface SupportQuestion {
+  at: number;
+  subject: string;
+  status: "new" | "answered" | "closed";
+}
+
+/** The person's own questions, newest first, and whether the team can reply by email (the
+ * account has an address), so "answered" can say where to look (#1373). */
+export interface MySupport {
+  tickets: SupportQuestion[];
+  reply: boolean;
+}
+
 /** What the Support form sends (#1340). */
 export interface SupportTicket {
   subject: string;
@@ -212,6 +227,8 @@ export interface AccountApi {
   /** Send a private ticket to the DMbot team (paid plans, #1340). Missing from an API older
    * than that. `turnstile` is Cloudflare's token, or "" when the site has no key. */
   sendSupport?(ticket: SupportTicket): Promise<SupportReceipt>;
+  /** The person's own questions to the team (#1373). Missing from an API older than that. */
+  mySupport?(): Promise<MySupport>;
   /** The person's own characters. Missing from an API older than #1164. */
   characters?(): Promise<Character[]>;
   /** Stop recording me in one server (#1151). Starting again stays in Discord. */
@@ -336,6 +353,26 @@ export function httpApi(base: string, fetcher: typeof fetch = fetch): AccountApi
       // Only an explicit "no address" changes the words: an answer without the field is a
       // ticket that was kept, and the team still replies by email.
       return { reply: answer?.reply !== false };
+    },
+    mySupport: async () => {
+      const answer = (await call("GET", "/support/mine")) as {
+        tickets?: unknown;
+        reply?: unknown;
+      } | null;
+      // Anything that is not a list of questions is no list: the page shows nothing rather
+      // than guess.
+      const tickets = Array.isArray(answer?.tickets) ? answer.tickets : [];
+      return {
+        tickets: tickets.filter(
+          (t): t is SupportQuestion =>
+            typeof t === "object" &&
+            t !== null &&
+            typeof t.at === "number" &&
+            typeof t.subject === "string" &&
+            (t.status === "new" || t.status === "answered" || t.status === "closed"),
+        ),
+        reply: answer?.reply !== false,
+      };
     },
     signOutEverywhere: async () => {
       await call("POST", "/me/sign-out-everywhere");

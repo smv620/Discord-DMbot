@@ -2322,6 +2322,8 @@ WEB_ROLE_FUNCTIONS: tuple[tuple[str, str], ...] = (
     ("dmbot_forget_email_records", "dmbot_forget_email_records()"),  # account deletion, #1287
     # The admin page reads a ticket's reply address, and only while its door is open (#1340).
     ("dmbot_support_email", "dmbot_support_email(BIGINT)"),
+    # ... and its words, the same way (#1373): the website's role has no right to the column.
+    ("dmbot_support_message", "dmbot_support_message(BIGINT)"),
     # A move code asked for on the website (#1246).
     ("dmbot_web_move_code", "dmbot_web_move_code(BIGINT, TEXT, BIGINT, TEXT, BIGINT)"),
     ("dmbot_web_cancel_move_code", "dmbot_web_cancel_move_code(BIGINT, TEXT, BIGINT)"),
@@ -2370,10 +2372,12 @@ WEB_ROLE_GRANTS: tuple[tuple[str, tuple[str, ...]], ...] = (
     # has no grant on sent_emails.
     ("INSERT", ("email_unsubscribed",)),
     ("INSERT, DELETE", ("feedback",)),
-    # Support tickets (#1340): added by the signed-in person, read and closed only through the
-    # admin page's door (the policies hold SELECT and UPDATE to it); the sweep and account
-    # deletion delete. The UPDATE is for the status column alone.
-    ("SELECT, INSERT, DELETE", ("support_tickets",)),
+    # Support tickets (#1340, #1373): added by the signed-in person; read back by them only as a
+    # list of their own (`read_own`: when, subject, status), never the message, which has no
+    # column right at all. The admin page reads the message through dmbot_support_message (a
+    # door), and closes with the status UPDATE; the sweep and account deletion delete.
+    ("INSERT, DELETE", ("support_tickets",)),
+    ("SELECT (id, created_at, user_id, plan, subject, source, status)", ("support_tickets",)),
     ("UPDATE (status)", ("support_tickets",)),
     ("SELECT, INSERT, UPDATE, DELETE", ("web_users", "web_sessions")),
     # Emailed sign-in links (#1231): made and used by the website, never read by anyone else.
@@ -4000,6 +4004,46 @@ SUPPORT_EMAIL = (
     """
 )
 
+SUPPORT_OWN = """
+    -- A person sees their own questions (#1373): when they sent it, the subject and where it
+    -- stands. Never the message, and never anyone else's.
+    --   * `read_own` lets a person's session read only rows with their own user_id.
+    --   * The website's role has a column right on every column of support_tickets EXCEPT
+    --     `message` (WEB_ROLE_GRANTS), so even their own words can't be read back through that
+    --     role. The admin page reads the words through dmbot_support_message below, a door that
+    --     answers only while the admin door is open (Database.support_admin), exactly like
+    --     dmbot_support_email: a Python boundary (tests/test_support.py) whose limits are the
+    --     same as before this migration, when the admin page could read the column itself.
+    CREATE POLICY read_own ON support_tickets FOR SELECT
+        USING (user_id = dmbot_current_user());
+    -- The list is one person's tickets, newest first.
+    CREATE INDEX support_tickets_by_person ON support_tickets (user_id, created_at DESC);
+    CREATE FUNCTION dmbot_support_message(ticket BIGINT) RETURNS TEXT
+        LANGUAGE plpgsql SECURITY DEFINER
+        AS $fn$
+    DECLARE
+        words TEXT;
+    BEGIN
+        IF dmbot_support_admin() IS DISTINCT FROM 'admin' THEN
+            RETURN NULL;
+        END IF;
+        -- support_tickets is forced to its policies: with the door open, support_admin_read
+        -- lets this read the row (the function's owner has the column right).
+        SELECT message INTO words FROM support_tickets WHERE id = ticket;
+        RETURN words;
+    END
+    $fn$;
+    DO $do$
+    BEGIN
+        EXECUTE format(
+            'ALTER FUNCTION dmbot_support_message(BIGINT)'
+            ' SET search_path = pg_catalog, %I, pg_temp',
+            current_schema());
+    END
+    $do$;
+    REVOKE ALL ON FUNCTION dmbot_support_message(BIGINT) FROM PUBLIC;
+    """
+
 MIGRATIONS: tuple[Migration, ...] = (
     ("0001_initial", INITIAL),
     ("0002_active_sessions", ACTIVE_SESSIONS),
@@ -4081,6 +4125,7 @@ MIGRATIONS: tuple[Migration, ...] = (
         MEMORY_CLAIMS_BY_FACT,
     ),  # the recall service finds a fact's claim (#1350)
     ("0077_extractor_progress", EXTRACTOR_PROGRESS),  # a restart resumes the extractor (#1367)
+    ("0078_support_own", SUPPORT_OWN),  # a person's own questions (0077: another PR)
     ("0079_recap_jobs", RECAP_JOBS),  # the cinematic recap job of a session (#1382)
 )
 
@@ -4135,7 +4180,8 @@ USER_ISOLATED_TABLES = (
     "access_grants",
     # Not per person: only the grant writer adds or reads a row (#771).
     "access_log",
-    # A person adds their own ticket and can read none; only the support admin door reads (#1340).
+    # A person adds their own ticket and reads back only their own list, never the words; the
+    # support admin door reads everything (#1340, #1373).
     "support_tickets",
     # An owner's hours per plan month; only the meter adds to it (#437).
     "owner_hours",
