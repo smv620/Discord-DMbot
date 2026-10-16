@@ -31,6 +31,8 @@ from dmbot.rules.homebrew import (
     HOMEBREW_MAX,
     KINDS,
     NAME_MAX,
+    NOT_HOMEBREW,
+    RULE_KIND,
     SUMMARY_MAX,
     TEXT_MAX,
     FileEntry,
@@ -191,6 +193,9 @@ def _entry(
         return None
     if bracket is None:
         bad(NO_KIND)
+        return None
+    if kind == RULE_KIND:  # a rule is a house rule (#1628): this entry only is left out
+        bad(NOT_HOMEBREW)
         return None
     if kind not in KINDS:
         bad(BAD_KIND)

@@ -52,7 +52,7 @@ class HomebrewBase(Base):
             g, c, ALICE.id, kind="monster", name="The Lich", text=SECRET, summary="Hidden foe"
         )
         await self.store_b.add(
-            THURSDAY.id, self.two.id, BOB.id, kind="rule", name="Other", text="Another table's",
+            THURSDAY.id, self.two.id, BOB.id, kind="feat", name="Other", text="Another table's",
             players_may_know=True,
         )  # fmt: skip
         self.carol = await self.session_of(CAROL)
@@ -141,7 +141,7 @@ class ThePage(HomebrewBase):
             await self.campaigns.create(THURSDAY.id, f"Aaa {n:03d}", ALICE.id)
         zed = await self.campaigns.create(THURSDAY.id, "Zed", ALICE.id)
         await self.store_b.add(
-            THURSDAY.id, zed.id, ALICE.id, kind="rule", name="Last", text="x", players_may_know=True
+            THURSDAY.id, zed.id, ALICE.id, kind="feat", name="Last", text="x", players_may_know=True
         )
         names = [c["name"] for c in await pages.list_campaigns(self.web, self.carol)]
         self.assertEqual(names, ["One", "Two", "Zed"])
@@ -266,7 +266,7 @@ class FollowedPacks(HomebrewBase):
                 "INSERT INTO rule_set_follows (guild_id, campaign_id, set_id, kind, set_name,"
                 " publisher, version, content, updating, followed_by, followed_at)"
                 " VALUES (%s, %s, %s, 'homebrew', 'Odd', 'p', 1,"
-                ' \'{"entries": ["junk", {"kind": "rule", "name": "Ok",'
+                ' \'{"entries": ["junk", {"kind": "feat", "name": "Ok",'
                 ' "summary": null, "text": "t", "known": true}]}\'::jsonb, TRUE, %s, 5)',
                 (THURSDAY.id, self.one.id, "o" * 32, ALICE.id),
             )
@@ -295,7 +295,7 @@ class FollowedPacks(HomebrewBase):
                 "INSERT INTO rule_set_follows (guild_id, campaign_id, set_id, kind, set_name,"
                 " publisher, version, content, updating, followed_by, followed_at)"
                 " VALUES (%s, %s, %s, 'homebrew', 'Secret', 'p', 1,"
-                ' \'{"entries": [{"kind": "rule", "name": "X", "summary": null,'
+                ' \'{"entries": [{"kind": "feat", "name": "X", "summary": null,'
                 ' "text": "t", "known": false}]}\'::jsonb, TRUE, %s, 5)',
                 (THURSDAY.id, four.id, "s" * 32, ALICE.id),
             )

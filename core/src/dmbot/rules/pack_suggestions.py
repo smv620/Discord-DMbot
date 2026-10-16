@@ -19,6 +19,7 @@ from typing import Any
 from dmbot.rules import pack_content
 from dmbot.rules.homebrew import (
     _COLUMNS,
+    KINDS,
     HomebrewError,
     _entry,
     insert_entry,
@@ -308,8 +309,8 @@ class PackSuggestionStore(PackUpdateStore):
                 (guild_id, campaign_id, suggestion_id),
             )
             row = await cur.fetchone()
-            if row is None or row["status"] != "open":
-                raise RuleSetError(SUGGESTION_GONE)
+            if row is None or row["status"] != "open" or row["kind"] not in KINDS:
+                raise RuleSetError(SUGGESTION_GONE)  # (a "rule" suggested before #1628 is not one)
             if now - int(row["created_at"]) > SUGGEST_WAIT_S:
                 raise RuleSetError(EXPIRED)
             cur = await conn.execute(

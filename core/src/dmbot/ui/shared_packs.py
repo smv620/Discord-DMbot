@@ -39,9 +39,9 @@ log = logging.getLogger(__name__)
 
 INTRO = (
     "📦 **Homebrew packs**\nA Homebrew pack is a named bundle of your own homebrew: the spells, "
-    "monsters, items and rules you made in ⚙️ Settings → 📚 Homebrew. Share your pack with another "
-    "table, or follow someone else's. Only homebrew is shared in a pack, never your story, "
-    "names or notes."
+    "monsters, items and other game content you made in ⚙️ Settings → 📚 Homebrew. Share your "
+    "pack with another table, or follow someone else's. Only homebrew is shared in a pack, "
+    "never your story, names or notes."
 )
 SHARE_LABEL = "📤 Share my homebrew"
 PUBLISH_LABEL = "🔄 Publish my changes"

@@ -114,7 +114,7 @@ class Writing(HomebrewTest):
             await conn.execute(
                 "INSERT INTO homebrew_entries (guild_id, campaign_id, kind, name, name_key, text,"
                 " created_by, created_at, updated_at)"
-                " SELECT %s, %s, 'rule', 'R' || n, 'r' || n, 'x', 7, 1, 1"
+                " SELECT %s, %s, 'feat', 'R' || n, 'r' || n, 'x', 7, 1, 1"
                 " FROM generate_series(1, %s) AS n",
                 (GUILD_A, self.campaign.id, HOMEBREW_MAX),
             )
@@ -204,12 +204,12 @@ class WhoMayChange(HomebrewTest):
                 GUILD_A,
                 self.campaign.id,
                 PLAYER,
-                kind="rule",
+                kind="feat",
                 name="Sneaky",
                 text="Managers decide",
             ),
             self.store.edit(
-                GUILD_A, self.campaign.id, PLAYER, saved.id, kind="rule", name="X", text="Y"
+                GUILD_A, self.campaign.id, PLAYER, saved.id, kind="feat", name="X", text="Y"
             ),
             self.store.remove(GUILD_A, self.campaign.id, PLAYER, saved.id),
             self.store.put_back(GUILD_A, self.campaign.id, PLAYER, saved),
@@ -229,7 +229,7 @@ class Isolation(HomebrewTest):
             await self.store.remove(GUILD_A, other.id, DM, mine.id)
         with self.assertRaisesRegex(HomebrewError, "isn't here any more"):
             await self.store.edit(
-                GUILD_A, other.id, DM, mine.id, kind="rule", name="Sneaky", text="x"
+                GUILD_A, other.id, DM, mine.id, kind="feat", name="Sneaky", text="x"
             )
         self.assertEqual(await self.names(), ["Hollow King"])
 
@@ -237,7 +237,7 @@ class Isolation(HomebrewTest):
         mine = await self.add()
         self.assertEqual(await self.store.list(GUILD_B, self.campaign.id), [])
         for call in (
-            self.store.add(GUILD_B, self.campaign.id, DM, kind="rule", name="Sneaky", text="x"),
+            self.store.add(GUILD_B, self.campaign.id, DM, kind="feat", name="Sneaky", text="x"),
             self.store.remove(GUILD_B, self.campaign.id, DM, mine.id),
         ):
             with self.assertRaisesRegex(HomebrewError, "campaign isn't here"):
@@ -374,8 +374,8 @@ class LoadingAFile(HomebrewTest):
 
     async def test_over_the_limit_nothing_is_loaded_and_the_count_is_said(self) -> None:
         for n in range(HOMEBREW_MAX - 1):
-            await self.store.add(GUILD_A, self.campaign.id, DM, kind="rule", name=f"R{n}", text="x")
-        rows = self.file(("rule", "New A", "x"), ("rule", "New B", "x"))
+            await self.store.add(GUILD_A, self.campaign.id, DM, kind="feat", name=f"R{n}", text="x")
+        rows = self.file(("feat", "New A", "x"), ("feat", "New B", "x"))
         with self.assertRaisesRegex(HomebrewError, "would make 201 entries.*Nothing was loaded"):
             await self.store.load_file(GUILD_A, self.campaign.id, DM, rows)
         self.assertEqual(len(await self.store.list(GUILD_A, self.campaign.id)), HOMEBREW_MAX - 1)
@@ -386,7 +386,7 @@ class LoadingAFile(HomebrewTest):
             GUILD_A,
             self.campaign.id,
             DM,
-            self.file(("rule", "Mine", "From the book."), ("rule", "Booked", "Book words.")),
+            self.file(("feat", "Mine", "From the book."), ("feat", "Booked", "Book words.")),
             from_book=True,
         )
         self.assertEqual((done.added, done.updated), (1, 1))
@@ -394,7 +394,7 @@ class LoadingAFile(HomebrewTest):
         self.assertEqual(flags, {"Mine": True, "Booked": True})
         # A later load of the DM's own words does not clear the mark.
         await self.store.load_file(
-            GUILD_A, self.campaign.id, DM, self.file(("rule", "Mine", "Own again."))
+            GUILD_A, self.campaign.id, DM, self.file(("feat", "Mine", "Own again."))
         )
         flags = {e.name: e.from_book for e in await self.store.list(GUILD_A, self.campaign.id)}
         self.assertTrue(flags["Mine"])
@@ -407,27 +407,27 @@ class LoadingAFile(HomebrewTest):
         self,
     ) -> None:
         await self.store.load_file(
-            GUILD_A, self.campaign.id, DM, self.file(("rule", "Booked", "Words.")),
+            GUILD_A, self.campaign.id, DM, self.file(("feat", "Booked", "Words.")),
             from_book=True, book_edition="2014",
         )  # fmt: skip
         self.assertEqual(await self.editions(), {"Booked": "2014"})
         # The same words said to be for other rules is a change, not "the same".
         done = await self.store.load_file(
-            GUILD_A, self.campaign.id, DM, self.file(("rule", "Booked", "Words.")),
+            GUILD_A, self.campaign.id, DM, self.file(("feat", "Booked", "Words.")),
             from_book=True, book_edition="2024",
         )  # fmt: skip
         self.assertEqual((done.updated, done.same), (1, 0))
         self.assertEqual(await self.editions(), {"Booked": "2024"})
         # DM's own words later keep the mark and the edition.
         await self.store.load_file(
-            GUILD_A, self.campaign.id, DM, self.file(("rule", "Booked", "Own again."))
+            GUILD_A, self.campaign.id, DM, self.file(("feat", "Booked", "Own again."))
         )
         self.assertEqual(await self.editions(), {"Booked": "2024"})
         # An edition with no book, or one DMbot doesn't know, is refused.
         for bad in ({"book_edition": "2024"}, {"from_book": True, "book_edition": "5e"}):
             with self.assertRaises(HomebrewError):
                 await self.store.load_file(
-                    GUILD_A, self.campaign.id, DM, self.file(("rule", "X", "y")), **bad
+                    GUILD_A, self.campaign.id, DM, self.file(("feat", "X", "y")), **bad
                 )
         self.assertEqual(await self.names(), ["Booked"])
 
@@ -435,7 +435,7 @@ class LoadingAFile(HomebrewTest):
         from psycopg import errors
 
         async with self.db.guild(GUILD_A) as conn:
-            await self.store.add(GUILD_A, self.campaign.id, DM, kind="rule", name="Own", text="x")
+            await self.store.add(GUILD_A, self.campaign.id, DM, kind="feat", name="Own", text="x")
             with self.assertRaises(errors.CheckViolation):
                 await conn.execute(
                     "UPDATE homebrew_entries SET book_edition = '5e' WHERE guild_id = %s",
@@ -444,7 +444,7 @@ class LoadingAFile(HomebrewTest):
 
     async def test_the_edition_goes_into_a_backup_and_comes_back(self) -> None:
         await self.store.load_file(
-            GUILD_A, self.campaign.id, DM, self.file(("rule", "Booked", "x")),
+            GUILD_A, self.campaign.id, DM, self.file(("feat", "Booked", "x")),
             from_book=True, book_edition="other",
         )  # fmt: skip
         await self.add("Own", "y")
@@ -465,7 +465,7 @@ class LoadingAFile(HomebrewTest):
 
     async def test_a_removed_book_entry_comes_back_with_its_edition(self) -> None:
         await self.store.load_file(
-            GUILD_A, self.campaign.id, DM, self.file(("rule", "Booked", "x")),
+            GUILD_A, self.campaign.id, DM, self.file(("feat", "Booked", "x")),
             from_book=True, book_edition="2014",
         )  # fmt: skip
         (entry,) = await self.store.list(GUILD_A, self.campaign.id)
@@ -474,7 +474,7 @@ class LoadingAFile(HomebrewTest):
         self.assertEqual((back.from_book, back.book_edition), (True, "2014"))
 
     async def test_only_a_dm_loads_and_another_server_cannot(self) -> None:
-        rows = self.file(("rule", "Sneaky", "x"))
+        rows = self.file(("feat", "Sneaky", "x"))
         with self.assertRaisesRegex(HomebrewError, "Only this campaign's DMs"):
             await self.store.load_file(GUILD_A, self.campaign.id, PLAYER, rows)
         with self.assertRaisesRegex(HomebrewError, "campaign isn't here"):
@@ -483,7 +483,7 @@ class LoadingAFile(HomebrewTest):
 
     async def test_the_from_book_mark_goes_into_a_backup_and_comes_back(self) -> None:
         await self.store.load_file(
-            GUILD_A, self.campaign.id, DM, self.file(("rule", "Booked", "x")), from_book=True
+            GUILD_A, self.campaign.id, DM, self.file(("feat", "Booked", "x")), from_book=True
         )
         await self.add("Own", "y")
         backup = await self.campaigns.export(GUILD_A, self.campaign.id)

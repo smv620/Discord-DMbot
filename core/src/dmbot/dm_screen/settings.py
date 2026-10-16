@@ -431,8 +431,8 @@ class HomebrewButton(
     discord.ui.DynamicItem[discord.ui.Button[discord.ui.View]],
     template=rf"dmbot:homebrew:{_ID}",
 ):
-    """📚 Homebrew, on ⚙️ Settings (#1520): the campaign's own spells, monsters, items and rules.
-    Only the campaign's DMs."""
+    """📚 Homebrew, on ⚙️ Settings (#1520): the campaign's own spells, monsters, items and other
+    game content. Only the campaign's DMs."""
 
     def __init__(self, campaign_id: str) -> None:
         super().__init__(
