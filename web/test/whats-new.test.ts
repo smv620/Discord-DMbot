@@ -48,7 +48,6 @@ describe("What's new", () => {
       "Recaps for your table", // until dev1 has checked a real recap (#1382, #1384)
       "Ask a question in public", // until QAbot is live (#1352)
       "Move to a new Discord account",
-      "A recap of last session",
       "New names from what was said",
       "A note before tonight's session",
       "When a player says a secret name",
