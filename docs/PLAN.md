@@ -682,6 +682,50 @@ or servers; only the campaign's DMs change anything (the store checks in the sam
     (version + 1); a file that would take the campaign over 200 entries loads nothing and says the count.
 - Sharing as a pack (part 2) is built: see "Shared rulesets" (#1527).
 
+**Homebrew (part 2): links, sources and on/off (owner, 2026-10-16).** This changes part 1. Where the two
+differ, this wins.
+- **Rules are house rules, not homebrew.** Homebrew is game content: spells, monsters, items, feats,
+  conditions and other things. There is no "rule" kind; migration 0111 moves rule entries into house rules
+  (#1628).
+- **Homebrew can be added from a link.** The DM pastes the address of a **published** homebrew page,
+  for example `https://www.dndbeyond.com/magic-items/2302039-amulet-of-trueshot`, and DMbot reads that one
+  page and saves the entry. **Typing an entry in (➕ Add) and 📥 Load file stay**, because they already
+  work (owner, 2026-10-16), each recording its own source (below).
+  - **Only approved sites are fetched**, starting with dndbeyond.com. One address, fetched once, at the
+    direction of the one DM who pasted it: never a crawl, never a list of pages, never following links
+    from the page. https only, the site's own address after any redirect, a size and time limit, and no
+    D&D Beyond sign-in (no password or cookies, ever).
+  - **Not published:** D&D Beyond answers an unpublished homebrew page with "page not found". DMbot then
+    says: "That page isn't public. Publish your homebrew on D&D Beyond first, then paste the link again."
+  - **The risk is accepted (owner, 2026-10-16):** D&D Beyond's terms limit automated access. The owner
+    reads them as aimed at automated scraping, which this is not: a single page, pulled when a single
+    user asks for it. Revisit if D&D Beyond objects or blocks it.
+- **Permission once per site, per campaign.** The first time a campaign imports from a site, the DM sees
+  the right-to-use warning ("DMbot doesn't check this…") and confirms once. That approval sticks: every
+  later link from the same site in that campaign needs no new confirmation. Who confirmed and when is kept
+  (table of approved sites per campaign). A campaign that has not approved a site cannot use content from
+  it, whether imported there or reached through a pack.
+- **Every entry records its source.** The database keeps, for every entry:
+  - **Link:** the address it came from and its site (the domain), plus who added it.
+  - **Typed:** the Discord user who typed it.
+  - **Uploaded** (📥 Load file): the Discord user by default, or a credit the uploader gives instead: a website
+    (its domain then needs the same once-per-site approval) or a typed name.
+  Entries saved before this record "typed" by the DM who made them.
+- **One copy of a published page.** A page imported by link is public content, not a campaign's own data,
+  so DMbot keeps **one copy per address** and each campaign's entry points to it. This is the second
+  exception to campaign isolation, next to shared rulesets: only the published page's content is shared.
+  Who imported it, from which campaign, and that campaign's on/off choice stay with the campaign.
+- **On/off replaces hidden.** Homebrew and house rules are not hidden from players any more; the 🙈/👀
+  "players may know" switch goes. Instead each entry is **on** (used everywhere: rule lookups, rules cards,
+  the DM sidebar, table questions) or **off** (kept, but DMbot doesn't use it at the table). **Remove**
+  deletes it. Existing entries are all on.
+- **Packs carry imported entries.** A pack holds pointers to entries, so imported pages travel by
+  reference, never as copies. A campaign that follows a pack must have approved each site the pack's
+  entries come from, once per site, before those entries are used. Entries from a shared rulebook
+  (`from_book`) still never go into a pack.
+- **Build order:** #1628 (rules out, PR #1630) → #1629 (on/off replaces hidden) → sources and site approvals
+  (schema) → import by link → packs with imported entries → the website.
+
 **Shared rulesets: homebrew packs and house-rules sets (owner, 2026-10-14).** Rules can be shared between
 campaigns, in the same server or another one, when both sides choose to. Only rules cross; a campaign's story
 never does.
@@ -1273,9 +1317,9 @@ building:
 - **Delete my past transcripts is built (#1532):** 🗑 in the ⚙️ Menu on the consent messages, and
   `/dmbot delete-my-lines`. One warning with the numbers ("N lines in M sessions"), one confirmation, one
   transaction per server. What goes and what stays is in "Retention" below.
-- **Keep transcripts for is built (#1533, migration 0101):** see "Retention". Still to come: cleaned
-  and both downloads (Phase 2b), and `{entity}` labels for the DM's lines (narrating, which NPC;
-  #53; the `in_character` flag exists, nothing sets it).
+- **Keep transcripts for is built (#1533, migration 0101):** see "Retention". The cleaned version,
+  both downloads and the `{entity}` labels for the DM's lines (narrating, or which NPC; #53) are
+  built too; see "Transcripts and downloads" below.
 
 **Transcripts and downloads (decided 2026-10-05, #124, #125).** Sessions and their
 participants are stored. Each line is kept in two versions: **as heard** (exactly what
@@ -2532,9 +2576,14 @@ table isn't left waiting while the DM looks something up.
     `ANTHROPIC_API_KEY`); off, a DM gets "Quick answers aren't switched on yet." and the table
     trigger stays quiet. Turn it on after the sidebar's test answers have been read (#954). One
     question at a time per campaign.
-  - **Not built yet:** a line the Cleaner tags as in character is not told apart from the DM
-    speaking (the `in_character` flag exists, nothing sets it); only the "hold on" lead-in
-    guards against it.
+  - **A line said as an NPC never asks DMbot (2026-10-16, #1624):** the spoken triggers ("hold on, I
+    need to find…" and "Hey DMbot") fire only when the line's `entity` is empty or narrating; a line
+    said as a named NPC never does. The label comes from the speaker-label AI call over a window of
+    the DM's lines, so it is not known when a line is first handled: for a line that clearly asks
+    DMbot something, the window is closed at once and the question waits for that one call (bounded
+    by its timeout), then is asked unless the line was said as an NPC. With no label (no AI, no names
+    to choose from, a "maybe", a failed or slow call) it is asked as before. Typed questions and voice
+    memos are always out of character and unaffected.
   - **Limits:** DMs reach only the first shard's process, so a table on another shard's process
     is not found (single process today).
 
@@ -3613,6 +3662,38 @@ green. One exception was granted once: `e49cdb00` (2026-10-16 04:50 UTC), whose 
 was the test-only role-creation race (`pg_authid_rolname_index`, fixed by #1442, which merged
 next); the deployed code was unchanged by the failing test. Any further exception is a
 Supervisor decision recorded here with the commit and the reason, never dev1's own call.
+
+**Data, ownership and deletion (owner, 2026-10-16).** Replaces "store and process them only to run
+DMbot for you" in the terms. Decided after Supervisor advised against "DMbot owns all data as public
+art": privacy law lets people withdraw consent and erase their personal data whatever a contract
+says, and DMs would not pay for a service that claims their campaigns.
+- **Users keep ownership; DMbot gets a broad licence.** People grant DMbot a worldwide, royalty-free
+  licence to store, process and show what they and their table provide, to run DMbot and to improve it.
+  Content a DM shares from a book stays the rights holder's (the "I have the right" step is unchanged).
+- **Generated content belongs to the campaign** (#1381 decision 1): recaps, story memory, notes and
+  anything else DMbot writes from a session stay with the campaign when a player leaves, and are
+  deleted only when the campaign is deleted.
+- **Who may delete a campaign:** the game master whose plan it uses (`owner_user_id`; for a free
+  campaign, the DM who started it). Other game masters manage it but cannot delete it. Built (#1608, PR #1618):
+  ⚙️ Settings → 🗑 Delete this campaign, the plan holder only (checked again under the campaign
+  lock), not during a session, one warning and a typed name; its channels go as retention's do.
+- **Severable personal data is deleted on request, best effort:** a person's own lines and what DMbot
+  learned about them (Delete my transcripts, Stop recording me, account deletion). Generated content
+  and copies other people already downloaded stay, and the pages say so.
+- **Account data stays protected:** Discord ids, emails, payment and record-keeping data are never
+  published or shared beyond the processors the privacy page names.
+- **Improving DMbot:** DMbot uses transcripts and typed table chat to improve itself (the raw transcript
+  exists for this, #933). It is disclosed on the privacy page, and a person **opts out on the website**
+  (My Account), after which nothing they said or typed is used for improvement; running their table is
+  unaffected. Built in #1609 (store and honour the choice) and #1610 (the switch and the wording). The
+  choice applies from when it is made, at the source (the test recorder, session exports); test
+  recordings kept earlier name people only by made-up voice codes, so they are not re-filtered, and
+  **Stop saving my voice** remains the way to delete one's kept voice (decided 2026-10-16, PR #1621).
+- **Raw audio:** DMbot does not store voice in the base product. The test library's voice saving stays
+  a separate yes (⚙️ Menu → Stop saving my voice); keeping audio for troubleshooting is decided later.
+- The terms and privacy changes are one WebDev PR (#1610), held for the owner's `approved: owner` label and
+  recommended for a lawyer's read before it goes live; it merges only after the delete button and the
+  opt-out exist.
 
 **Retention.** Configurable auto-delete of transcripts per server (audio is never
 stored), and a "Delete my past transcripts" action for each player. Deleting a person's

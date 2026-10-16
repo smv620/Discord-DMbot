@@ -53,7 +53,19 @@ import { recapSteps, accountSteps, dmSteps, quickAnswers, quickAnswersHeading, e
   <section aria-labelledby="player-heading">
     <h2 id="player-heading">For players</h2>
     <ol>
-      {playerSteps.map((s) => <li>{s.text}</li>)}
+      {
+        playerSteps.map((s) => (
+          <li>
+            {s.text}
+            {s.link && (
+              <>
+                {" "}
+                <a href={s.link.href}>{s.link.text}</a>
+              </>
+            )}
+          </li>
+        ))
+      }
     </ol>
     <p class="muted">{playerNote}</p>
   </section>

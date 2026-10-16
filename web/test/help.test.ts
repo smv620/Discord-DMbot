@@ -116,3 +116,28 @@ describe("Help", () => {
     expect(hrefs.filter((h) => h === "/help#getting-help")).toHaveLength(1); // the footer (#1352)
   });
 });
+
+describe("Help: the website's read-only pages (#1588)", () => {
+  it("has an entry for each, with a link to its page, in the players' section", async () => {
+    const container = await AstroContainer.create();
+    const page = parsePage(
+      await container.renderToString(Help, { request: new Request("https://dmbot.example/help") }),
+    );
+    const players = [...page.querySelectorAll("#player-heading ~ ol li")];
+    for (const [href, word] of [
+      ["/account/house-rules", /house rules/i],
+      ["/account/homebrew", /homebrew/i],
+      ["/account/transcripts", /game/i],
+    ] as const) {
+      const item = players.find((li) => li.querySelector(`a[href="${href}"]`));
+      expect(item, href).toBeTruthy();
+      expect(item?.textContent).toMatch(word);
+    }
+  });
+
+  it("uses plain words: no technical terms", () => {
+    const texts = playerSteps.filter((s) => s.link).map((s) => s.text);
+    expect(texts).toHaveLength(3);
+    for (const t of texts) expect(t).not.toMatch(/\bAPI\b|\bdoor\b|database|\bJSON\b/i);
+  });
+});
