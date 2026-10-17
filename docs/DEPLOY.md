@@ -78,7 +78,10 @@ development: set to your test server's ID, the commands are also copied there so
 instantly. Customers' servers rely on the global commands. If you stop using a dev server, its
 old copy of the commands stays there unless you remove it once: put that server's ID in
 `DISCORD_CLEAR_GUILD_COMMANDS` (comma separated for several), restart DMbot once, then take the
-variable out again. It never clears the `DISCORD_DEV_GUILD_ID` server. For the owner's test
+variable out again. It never clears the `DISCORD_DEV_GUILD_ID` server (a listed id equal to it is
+skipped with a warning). After the restart, check the log: it counts the global commands (`Slash
+commands: N global commands registered`) and names each server it cleared (`Clearing the old
+per-server commands in <id> (<name>)`). Make sure the name is the server you meant. For the owner's test
 server today: if `DISCORD_DEV_GUILD_ID` is still set to it, it keeps its copy and shows each
 command twice (expected); to stop that, unset `DISCORD_DEV_GUILD_ID` and list the server in
 `DISCORD_CLEAR_GUILD_COMMANDS` for one restart. With the variable set, the dev

@@ -3364,8 +3364,9 @@ class DMBot(commands.AutoShardedBot):
         if 0 in self.settings.shards.ids:
             # Registered once for the whole bot, not per shard: only the pod serving shard 0
             # does it, so many pods don't all sync at startup.
+            registered: int | None = None
             try:
-                await self.tree.sync()
+                registered = len(await self.tree.sync() or [])
             except discord.HTTPException:
                 # (a rate limit must not stop the bot starting, or the dev server's copy)
                 log.warning("Couldn't register the global slash commands", exc_info=True)
@@ -3373,18 +3374,44 @@ class DMBot(commands.AutoShardedBot):
             guild = discord.Object(id=self.settings.dev_guild_id)
             self.tree.copy_global_to(guild=guild)
             await self.tree.sync(guild=guild)
+        if 0 in self.settings.shards.ids and registered is not None:
+            # One line, so a deploy can be confirmed from the log alone.
+            copied = " and copied to the dev server" if self.settings.dev_guild_id else ""
+            log.info("Slash commands: %d global commands registered%s", registered, copied)
         # One-time cleanup (DISCORD_CLEAR_GUILD_COMMANDS): servers that still show the old
         # per-server copy next to the global commands. Never the dev server, which keeps its copy.
         if 0 in self.settings.shards.ids:
             for guild_id in self.settings.clear_guild_commands:
                 if guild_id == self.settings.dev_guild_id:
+                    log.warning(
+                        "Not clearing the commands in %s: it is DISCORD_DEV_GUILD_ID", guild_id
+                    )
                     continue
                 old = discord.Object(id=guild_id)
+                # The server's name first, so the log shows it is the one that was meant.
+                log.info(
+                    "Clearing the old per-server commands in %s (%s)",
+                    guild_id,
+                    await self._guild_name(guild_id),
+                )
                 try:
                     self.tree.clear_commands(guild=old)
                     await self.tree.sync(guild=old)
                 except discord.HTTPException:
                     log.warning("Couldn't clear the old commands in %s", guild_id, exc_info=True)
+                else:
+                    log.info("Server %s: old per-server commands removed", guild_id)
+
+    async def _guild_name(self, guild_id: int) -> str:
+        """The server's name if DMbot is in it, else "not in this server". The server list is
+        not filled yet when commands are registered at start, so it is asked of Discord."""
+        found = self.get_guild(guild_id)
+        if found is None:
+            try:
+                found = await self.fetch_guild(guild_id)
+            except discord.HTTPException:
+                return "not in this server"
+        return str(found.name)
 
     async def on_guild_join(self, guild: discord.Guild) -> None:
         """DMbot was just added to a server: say hello, or say what it still needs."""
