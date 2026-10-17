@@ -129,7 +129,8 @@ async def start_timer(
     try:
         stored = await client.clocks.get(campaign.guild_id, campaign.id)
         if stored is not None:
-            line = effect.line(stored.clock.minute)
+            acting = stored.picked_group  # (#1607) while split, the timer is for this group
+            line = effect.line(stored.clock.minute, acting.name if acting else None)
             await _show_clock(client, campaign, stored)
     except Exception:
         log.exception("The timer started but the clock message couldn't be redrawn")
@@ -155,11 +156,20 @@ async def announce_due(client: Any, campaign: Campaign, minute: int) -> None:
     except Exception:
         log.exception("Couldn't look for timers that have ended")
         return
+    names: dict[int, str] = {}
+    if due:
+        try:  # while the party is split each ended timer says which group it was for (#1607)
+            stored = await client.clocks.get(campaign.guild_id, campaign.id)
+            if stored is not None and stored.split:
+                names = {g.position: g.name for g in stored.groups}
+        except Exception:
+            log.exception("Couldn't read the groups for a timer that ended")
     for effect in due:
         view = discord.ui.View(timeout=None)
         view.add_item(EffectButton(campaign.id, effect.number, "end"))
         view.add_item(EffectButton(campaign.id, effect.number, "more"))
-        posted = await client.post_message(campaign.dm_screen_channel_id, effect.ended_line(), view)
+        said = effect.ended_line(names.get(effect.group or 1) if names else None)
+        posted = await client.post_message(campaign.dm_screen_channel_id, said, view)
         if posted is None:  # it was not said: say it next time rather than lose it
             with contextlib.suppress(Exception):
                 await store.untell(campaign.guild_id, campaign.id, effect.number)
