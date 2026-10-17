@@ -129,7 +129,7 @@ export const STORY_THREADS_LIVE = false;
 
 export const storyThreadSteps: Step[] = [
   {
-    text: "To keep track of a quest, mystery, hook or goal, open the Names list and press 🧵 New thread. Its card has 🧵 Change state, 👥 Who's involved and 📌 Link an event.",
+    text: "To keep track of a quest, mystery, hook or goal, open the Names list and press 🧵 New thread. On its card, 🧵 Change state says how far along it is. 👥 Who's involved adds people or places. 📌 Link an event adds what moved it. Players never see your threads.",
     names: [
       { name: "🧵 New thread", file: "ui/names.py" },
       { name: "🧵 Change state", file: "ui/name_card.py" },
@@ -138,11 +138,14 @@ export const storyThreadSteps: Step[] = [
     ],
   },
   {
-    text: "After a session, and in the note before the next one, DMbot names threads that haven't moved for a few sessions. Press 🧵 Threads to open your list. DMbot only reminds you. You decide.",
-    names: [{ name: "🧵 Threads", file: "ui/threads.py" }],
+    text: "After a session, DMbot names threads that haven't moved for a few sessions and shows a 🧵 Check the threads button. The note before your next session has a 🧵 Threads button. Either one opens your list, where you can say Still going, Resolved or Dropped. DMbot only reminds you. You decide.",
+    names: [
+      { name: "🧵 Check the threads", file: "ui/threads.py" },
+      { name: "🧵 Threads", file: "ui/threads.py" },
+    ],
   },
   {
-    text: "To note something someone swore to do, open the Names list and press 🤝 Add a promise. Then press 🤝 Who promised, 🤝 Promised to and 📅 Due. A promise you mark Due soon is named in the note before your next session.",
+    text: "To note something someone swore to do, open the Names list and press 🤝 Add a promise. Then press 🤝 Who promised, 🤝 Promised to and 📅 Due. A promise shows as kept, broken or open. Pick Due soon under 🧵 Change state to have it named in the note before your next session.",
     names: [
       { name: "🤝 Add a promise", file: "ui/names.py" },
       { name: "🤝 Who promised", file: "ui/name_card.py" },
@@ -159,7 +162,7 @@ export const storyThreadSteps: Step[] = [
     ],
   },
   {
-    text: "Players never see your threads, promises or these links.",
+    text: "Players never see your promises or these links.",
   },
 ];
 

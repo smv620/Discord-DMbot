@@ -203,11 +203,11 @@ describe("Help: the website's read-only pages (#1588)", () => {
     const shown = dmSteps.map((x) => x.text).join(" ");
     expect(shown.includes("🧵 New thread")).toBe(STORY_THREADS_LIVE);
     const words = storyThreadSteps.map((x) => x.text).join(" ");
-    for (const label of ["🧵 Change state", "👥 Who's involved", "📌 Link an event", "🧵 Threads", "🤝 Add a promise", "🤝 Who promised", "🤝 Promised to", "📅 Due", "➡ Led to…"]) {
+    for (const label of ["🧵 Change state", "👥 Who's involved", "📌 Link an event", "🧵 Check the threads", "🧵 Threads", "🤝 Add a promise", "🤝 Who promised", "🤝 Promised to", "📅 Due", "➡ Led to…"]) {
       expect(words, label).toContain(label);
     }
     expect(words).toContain("DMbot only reminds you. You decide.");
-    expect(words).toContain("Players never see your threads, promises or these links.");
+    expect(words).toContain("Players never see your promises or these links.");
   });
 
   it("finds Settings, splits the party and deletes a campaign in plain words (#1659)", () => {
