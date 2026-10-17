@@ -89,6 +89,8 @@ KIND_WORDS: dict[str, str] = {
     "event": "event",
     "clue": "clue",
     "secret": "clue",
+    "people": "people",
+    "folk": "people",
     "idea": "concept",
     "other": "concept",
     "thing": "concept",
@@ -107,6 +109,7 @@ KIND_OUT: dict[str, str] = {
     "event": "event",
     "concept": "other",
     "clue": "clue",
+    "people": "people",
     "person": "player",
 }
 

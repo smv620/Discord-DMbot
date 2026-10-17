@@ -733,8 +733,11 @@ class MemoryStore:
         if source != DM:
             raise MemoryRuleError("Only the DM can do that.")
         async with self._write(guild_id, campaign_id, source) as w:
-            found = await w.select(ENTITIES, " AND party AND status = 'confirmed'")
+            found = await w.select(ENTITIES, " AND party")
             if found:
+                if found[0]["status"] != CONFIRMED:  # forgotten, then wanted again
+                    revived = await w.update(ENTITIES, found[0]["id"], {"status": CONFIRMED})
+                    return _entity(revived)
                 return _entity(found[0])
             row = await w.insert(
                 ENTITIES,
@@ -844,7 +847,7 @@ class MemoryStore:
             rows = await scope.select(
                 table,
                 f" AND {held} = %s AND {aimed} = %s"
-                " ORDER BY created_at, (closed_at IS NULL), id",
+                " ORDER BY created_at, COALESCE(closed_at, 9223372036854775807), id",
                 [holder_id, target_id],
             )  # fmt: skip
         return [_opinion(r, attitude) for r in rows]
@@ -852,18 +855,33 @@ class MemoryStore:
     async def find_or_add_people(
         self, guild_id: int, campaign_id: str, name: str, *, source: str
     ) -> Entity:
-        """The `people` entry called this, made on the spot if there is none (Set attitude…)."""
+        """The `people` entry called this, made on the spot if there is none (Set attitude…):
+        found and made in one write, so two quick presses make one. A waiting one is confirmed,
+        since the DM is the one naming it."""
         if source != DM:
             raise MemoryRuleError("Only the DM can do that.")
-        key = name_key(name)
-        for e in await self.entities(guild_id, campaign_id):
-            if e.type == "people" and e.status == CONFIRMED and name_key(e.name) == key:
-                return e
-        return (
-            await self.add_entity(
-                guild_id, campaign_id, type="people", name=name, source=source, status=CONFIRMED
-            )
-        ).value
+        check_named("people", name)
+        name = clean_text(name)
+        async with self._write(guild_id, campaign_id, source) as w:
+            key = name_key(name)
+            for r in await w.select(
+                ENTITIES, " AND type = 'people' AND status IN ('proposed', 'confirmed')"
+            ):
+                if name_key(r["name"]) == key:
+                    if r["status"] != CONFIRMED:
+                        r = await w.update(ENTITIES, r["id"], {"status": CONFIRMED})
+                    return _entity(r)
+            row = await w.insert(
+                ENTITIES,
+                {
+                    "id": new_id(), "type": "people", "name": name, "description": "",
+                    "status": CONFIRMED, "merged_into": None, "source": source,
+                    "created_at": w.now, "played_by": None, "role": None, "needs_look": False,
+                    "unique_item": None, "audience_limited": False, "party": False,
+                },
+            )  # fmt: skip
+            await w.insert(ALIASES, _new_alias(w, row["id"], name, "full", CONFIRMED, False, None))
+            return _entity(row)
 
     # ---- a clue only some people know (#1649) ----
 

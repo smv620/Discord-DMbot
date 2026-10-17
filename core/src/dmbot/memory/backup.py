@@ -558,10 +558,9 @@ def _check_standing(by_tag: dict[str, list[dict[str, Any]]]) -> None:
         ("attitude", "holder_id", "toward_id"),
     ):
         for r in by_tag[tag]:
-            a, b = kinds.get(r[held]), kinds.get(r[aimed])
-            if a is None or b is None or r[held] == r[aimed] or "person" in (a, b):
-                raise CampaignError(DAMAGED)
-            if tag == "attitude" and (a not in ("faction", "place") or b != "people"):
+            # Only what the database holds to: both ends are in the file and differ. (An entry
+            # may have changed kind since the DM set this, so the kinds are not checked.)
+            if r[held] not in kinds or r[aimed] not in kinds or r[held] == r[aimed]:
                 raise CampaignError(DAMAGED)
             if r["closed_at"] is None:
                 key = (tag, r[held], r[aimed])

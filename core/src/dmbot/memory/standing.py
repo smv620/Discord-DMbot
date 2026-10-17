@@ -154,16 +154,22 @@ class Index:
             for j, judged in enumerate(self.judged(subject)):
                 for v in judges:
                     for s in judged:
-                        row = self.impressions.get((v, s)) or self.attitudes.get((v, s))
-                        if row is not None and v != s:
-                            found.append((i, j, row))
+                        if v == s:
+                            continue
+                        for row in (self.impressions.get((v, s)), self.attitudes.get((v, s))):
+                            if row is not None:  # a group can hold both for the same pair
+                                found.append((i, j, row))
         if not found:
             return Standing(viewer, subject, None, None, ())
         found.sort(key=lambda f: (f[0] + f[1], f[0], f[2].holder, f[2].target))
         reasons = tuple(self._reason(row, viewer, subject) for _, _, row in found)
         # The DM always wins: the viewer's own, DM-set word on the exact pair, or toward a people
         # the subject is of, decides the step; the rungs above are only reasons.
-        decisive = [f for f in found if f[0] == 0 and f[2].source == DM_SOURCE]
+        decisive = [
+            f
+            for f in found
+            if f[0] == 0 and f[2].source == DM_SOURCE and (f[2].attitude or f[1] == 0)
+        ]
         if decisive:
             nearest = min(f[1] for f in decisive)
             rows = [f[2] for f in decisive if f[1] == nearest]

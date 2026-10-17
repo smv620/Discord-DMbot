@@ -94,6 +94,19 @@ class Rule(unittest.TestCase):
         self.assertIn("You set it.", got.reasons)
         self.assertTrue(any("Bryn is Hostile toward Tabaxi" in r for r in got.reasons))
 
+    def test_a_group_with_both_an_impression_and_an_attitude_for_a_pair_counts_both(self) -> None:
+        nodes = [node("g", "faction"), node("t", "people"), node("v")]
+        rows = [imp("g", "t", "Devoted", source="deed"), att("g", "t", "Hostile", source="deed")]
+        got = Index(nodes, [], rows).standing("g", "t")
+        self.assertEqual((got.score, len(got.reasons)), (0.0, 2))
+
+    def test_a_dm_set_word_toward_a_group_the_subject_is_in_does_not_dilute_to_decide(self) -> None:
+        # Only the exact pair, or the viewer's own attitude toward a people, decides outright.
+        index = with_rows(imp("guard", "party", "Hostile"), imp("watch", "kesh", "Devoted"))
+        got = index.standing("guard", "kesh")
+        self.assertFalse(got.decided_by_dm)
+        self.assertEqual(len(got.reasons), 2)
+
     def test_the_viewers_own_attitude_toward_a_people_decides_too(self) -> None:
         nodes = list(world().nodes.values())
         links = [Link(s, p, o) for s, p, o in LINKS]
@@ -288,6 +301,31 @@ class Stored(ConfirmedMemoryTest):
         written = await self.memory.set_entity_type(GUILD_A, self.c, party.id, "place", source="dm")
         self.assertFalse(written.value.party)
         self.assertIsNone(await self.memory.party(GUILD_A, self.c))
+
+    async def test_a_forgotten_party_is_brought_back_not_made_twice(self) -> None:
+        party = await self.memory.ensure_party(GUILD_A, self.c, source="dm")
+        await self.memory.set_entity_status(GUILD_A, self.c, party.id, "rejected", source="dm")
+        again = await self.memory.ensure_party(GUILD_A, self.c, source="dm")
+        self.assertEqual((again.id, again.status, again.party), (party.id, "confirmed", True))
+
+    async def test_a_backup_still_restores_after_a_group_became_something_else(self) -> None:
+        await self.memory.set_attitude(
+            GUILD_A, self.c, self.watch, self.tabaxi, "Wary", source="dm"
+        )
+        await self.memory.set_entity_type(GUILD_A, self.c, self.watch, "item", source="dm")
+        raw = encode_backup(await self.campaigns.export(GUILD_A, self.c))
+        restored = await self.campaigns.import_backup(GUILD_B, decode_backup(raw), DM)
+        self.assertTrue(await self.memory.entities(GUILD_B, restored.id))
+
+    async def test_three_words_for_one_pair_in_a_second_keep_their_order(self) -> None:
+        for step in ("Wary", "Friendly", "Hostile"):
+            await self.set(self.guard, self.kesh, step)
+        history = await self.memory.opinion_history(
+            GUILD_A, self.c, self.guard, self.kesh, attitude=False
+        )
+        self.assertEqual(history[-1].score, -80)
+        self.assertIsNone(history[-1].closed_at)
+        self.assertEqual(sum(h.closed_at is None for h in history), 1)
 
     async def test_a_people_is_found_or_made_by_name(self) -> None:
         again = await self.memory.find_or_add_people(GUILD_A, self.c, "  tabaxi ", source="dm")
