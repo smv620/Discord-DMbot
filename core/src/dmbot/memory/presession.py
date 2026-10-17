@@ -34,6 +34,7 @@ FACT_LINES = 3
 QUIET_PREFIX = "🧵 Quiet threads: "
 QUIET_NAMES = 3  # thread names on the quiet-threads line, then "+N more"
 DUE_PREFIX = "🤝 Due soon: "
+MORE_DUE = "🤝 +"
 DUE_LINES = 2  # promises the DM marked Due soon that get a line, then "+N more" (#1680)
 CONDITION_LINES = 3
 RECALL_BUDGET = 1500  # characters one recall may hold
@@ -112,9 +113,9 @@ def _plain(text: str) -> str:
 
 def _due_line(d: Due) -> str:
     """ "🤝 Due soon: Kael → the village: bring the healer back (due: the full moon)". Until the
-    DM says who promised and to whom, the short form: "Promise: <what>"."""
+    DM says who promised and to whom, the short form: "🤝 Due soon: <what>"."""
     what = _plain(d.what)
-    core = f"{_plain(d.by)} → {_plain(d.to)}: {what}" if d.by and d.to else f"Promise: {what}"
+    core = f"{_plain(d.by)} → {_plain(d.to)}: {what}" if d.by and d.to else what
     note = f" (due: {_plain(d.due)})" if d.due else ""
     return _clip(f"{DUE_PREFIX}{core}{note}")
 
@@ -134,15 +135,6 @@ def compose(facts: Facts) -> Note | None:
         words = CONDITION_WORDS.get(condition)
         if words:
             lines.append(_clip(f"• {_plain(name)} {words}"))
-    if facts.quiet_threads:  # in-game content: it stays on the DM screen (#1675)
-        shown = [_plain(n) for n in facts.quiet_threads[:QUIET_NAMES]]
-        more = len(facts.quiet_threads) - len(shown)
-        tail = f" (+{more} more)" if more > 0 else ""
-        lines.append(_clip(f"{QUIET_PREFIX}{', '.join(shown)}{tail}"))
-    due_lines = [_due_line(d) for d in facts.due_soon[:DUE_LINES]]
-    if due_lines and len(facts.due_soon) > DUE_LINES:
-        due_lines.append(f"🤝 +{len(facts.due_soon) - DUE_LINES} more due soon")
-    lines.extend(due_lines)  # in-game content: the DM screen only (#1680)
     if facts.waiting > 0:
         said = (
             "1 thing someone said is"
@@ -150,6 +142,17 @@ def compose(facts: Facts) -> Note | None:
             else f"{facts.waiting} things people said are"
         )
         lines.append(f"🗣️ {said} waiting for your check")
+    # The thread lines come last: when the note is full they are cut, never the claims line
+    # that has a button of its own.
+    if facts.quiet_threads:  # in-game content: it stays on the DM screen (#1675)
+        shown = [_plain(n) for n in facts.quiet_threads[:QUIET_NAMES]]
+        more = len(facts.quiet_threads) - len(shown)
+        tail = f" (+{more} more)" if more > 0 else ""
+        lines.append(_clip(f"{QUIET_PREFIX}{', '.join(shown)}{tail}"))
+    due_lines = [_due_line(d) for d in facts.due_soon[:DUE_LINES]]
+    if due_lines and len(facts.due_soon) > DUE_LINES:
+        due_lines.append(f"🤝 +{len(facts.due_soon) - DUE_LINES} more promises due soon")
+    lines.extend(due_lines)  # in-game content: the DM screen only (#1680)
     lines = lines[:MAX_LINES]
     if not lines:
         return None
@@ -163,11 +166,14 @@ def compose(facts: Facts) -> Note | None:
     if not kept:
         return None
     # No button for a line that was cut.
+    if not any(line.startswith(DUE_PREFIX) for line in kept):  # no orphaned "+N more"
+        kept = [line for line in kept if not line.startswith(MORE_DUE)]
     shown_quiet = any(line.startswith(QUIET_PREFIX) for line in kept)
     shown_due = any(line.startswith(DUE_PREFIX) for line in kept)
-    threads = (len(facts.quiet_threads) if shown_quiet else 0) + (
-        len(facts.due_soon) if shown_due else 0
-    )
+    # A due-soon promise that has also gone quiet is on both lines: counted once.
+    names = {n for n in facts.quiet_threads if shown_quiet}
+    names |= {d.what for d in facts.due_soon if shown_due}
+    threads = len(names)
     return Note(
         "\n".join([HEADER, *kept]),
         tuple(kept),

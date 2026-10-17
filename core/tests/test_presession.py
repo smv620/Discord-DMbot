@@ -82,14 +82,50 @@ class Wording(unittest.TestCase):
         more = compose(Facts(due_soon=[a, b, Due("c"), Due("d")]))
         assert more is not None
         self.assertEqual(len(more.lines), 3)
-        self.assertEqual(more.lines[2], "🤝 +2 more due soon")
+        self.assertEqual(more.lines[2], "🤝 +2 more promises due soon")
         self.assertEqual(more.quiet, 4)
+
+    def test_the_claims_line_survives_a_full_note_and_a_stalled_promise_counts_once(self) -> None:
+        full = Facts(
+            "Recap",
+            3,
+            ["a", "b", "c"],
+            [("X", "dead"), ("Y", "lost"), ("Z", "missing")],
+            2,
+            ["Vow"],
+            [Due("Vow"), Due("Other"), Due("Third")],
+        )
+        note = compose(full)
+        assert note is not None
+        self.assertEqual(len(note.lines), presession.MAX_LINES)
+        self.assertTrue(any("waiting for your check" in x for x in note.lines))
+        self.assertEqual(note.waiting, 2)
+        room = compose(Facts(quiet_threads=["Vow"], due_soon=[Due("Vow"), Due("Other")]))
+        assert room is not None
+        self.assertEqual(room.quiet, 2)  # "Vow" is on the quiet line and a due line: once
+
+    def test_no_orphaned_more_line_when_the_due_lines_did_not_fit(self) -> None:
+        big = Facts(
+            open_facts=["x" * 130] * 3,
+            conditions=[("N" * 100, "dead")] * 3,
+            quiet_threads=["q" * 100],
+            due_soon=[Due("a"), Due("b"), Due("c")],
+        )
+        note = compose(big)
+        assert note is not None
+        if not any(x.startswith(presession.DUE_PREFIX) for x in note.lines):
+            self.assertFalse([x for x in note.lines if x.startswith(presession.MORE_DUE)])
+
+    def test_a_missing_due_note_leaves_out_the_due_part(self) -> None:
+        note = compose(Facts(due_soon=[Due("p", "Kael", "Dunhollow")]))
+        assert note is not None
+        self.assertEqual(note.lines, ("🤝 Due soon: Kael → Dunhollow: p",))
 
     def test_a_promise_without_both_parties_uses_the_short_form(self) -> None:
         for d in (Due("pay the toll"), Due("pay the toll", "Kael"), Due("pay the toll", "", "X")):
             note = compose(Facts(due_soon=[d]))
             assert note is not None
-            self.assertEqual(note.lines, ("🤝 Due soon: Promise: pay the toll",))
+            self.assertEqual(note.lines, ("🤝 Due soon: pay the toll",))
 
     def test_a_due_line_is_clipped_and_cannot_open_markdown(self) -> None:
         note = compose(Facts(due_soon=[Due("x" * 400, "*K*", "[Y](z)", "_soon_")]))
@@ -254,7 +290,7 @@ class Selecting(MemoryTest):
             due,
             [
                 "🤝 Due soon: Kael → Dunhollow: Bring the healer back (due: the full moon)",
-                "🤝 Due soon: Promise: Guard the ford",
+                "🤝 Due soon: Guard the ford",
             ],
         )
 
