@@ -1,6 +1,8 @@
 ---
 import LegalPage from "../../components/LegalPage.astro";
 import { keepAfterStopPaying, operator, paymentProvider } from "../../content/legal";
+import { portalLoginUrl, portalWords } from "../../content/billing-login";
+const portalUrl = portalLoginUrl();
 ---
 
 <LegalPage
@@ -20,6 +22,13 @@ import { keepAfterStopPaying, operator, paymentProvider } from "../../content/le
     Your plan keeps working until the end of the period you already paid for. After that, your campaigns
     are kept for {keepAfterStopPaying} in case you come back.
   </p>
+  {
+    portalUrl && (
+      <p>
+        {portalWords.refunds} <a href={portalUrl} rel="noopener noreferrer">{portalWords.linkText}</a>
+      </p>
+    )
+  }
   <p>
     Deleting your account is not the same as stopping your plan: DMbot stops for you at once, you
     won't be charged again, and the rest of the month you paid for isn't paid back. If you want
