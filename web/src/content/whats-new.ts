@@ -40,6 +40,16 @@ export const entries: Entry[] = [
   },
   {
     date: "2026-10-16",
+    title: "Check names after a session",
+    what: "If DMbot isn't sure it heard a name right, it asks the game master \"Did they mean…?\". Questions nobody answered wait for you: after the session, press Check names on your DM screen and pick a name for each.",
+  },
+  {
+    date: "2026-10-16",
+    title: "Keep a connection secret",
+    what: "On a name's card, press Connect to…, then Secret, then pick the other name. Players never see that connection, and only a game master can turn Secret on.",
+  },
+  {
+    date: "2026-10-16",
     title: "Homebrew for your campaign",
     what: "Open Settings, then Homebrew, to keep your own spells, monsters and items, and turn an entry on or off for your table. On a paid plan you can also share a pack with other tables and follow theirs (Settings, Shared rules).",
   },
@@ -100,6 +110,16 @@ export const entries: Entry[] = [
   },
   {
     date: "2026-10-15",
+    title: "Fight reminders for players",
+    what: "In a fight, FightBot may send you a short private reminder of what your sheet says you still have, like a spell or spell slots. It only reminds you, and your game master decides; you can switch it off under My character sheet.",
+  },
+  {
+    date: "2026-10-15",
+    title: "Stop recording me on the website",
+    what: "On My Account, each server where DMbot may record you has a Stop recording me button. It shows a short warning first, and one confirmation stops it right away.",
+  },
+  {
+    date: "2026-10-15",
     title: "Sign in with an emailed link",
     what: "On your account page, type your email and we send you a link that signs you in. It works once and stops working after 15 minutes.",
   },
@@ -127,6 +147,11 @@ export const entries: Entry[] = [
     date: "2026-10-15",
     title: "Ask DMbot by typing",
     what: "Anyone who said yes can type a quick rules question in the table's dmb-chat channel. The short answer is posted there for everyone, with its source, and the game master has the final say.",
+  },
+  {
+    date: "2026-10-13",
+    title: "See when your plan ends",
+    what: "If you end your plan, My Account shows the day it ends and says you won't be charged again.",
   },
   {
     date: "2026-10-13",
