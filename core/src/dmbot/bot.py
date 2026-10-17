@@ -138,6 +138,12 @@ from dmbot.dm_screen.settings import (
 from dmbot.dm_screen.site_offers import SiteOffers
 from dmbot.dm_screen.speaker_question import SpeakerQuestionButton
 from dmbot.dm_screen.speaker_question import question_view as speaker_question_view
+from dmbot.dm_screen.story_mode import (
+    StoryButton,
+    StoryChoiceButton,
+    StoryNoButton,
+    StoryYesButton,
+)
 from dmbot.dm_screen.table_chat_panel import TableChatButton
 from dmbot.dm_screen.transcript_channel import (
     TranscriptChannelError,
@@ -1098,6 +1104,8 @@ class DMBot(commands.AutoShardedBot):
         self.add_dynamic_items(set_update.SetUpdateButton)  # shared rules changed (#1191)
         # how long transcripts are kept (#1533); named one by one so the registration test sees them
         self.add_dynamic_items(TranscriptsButton, KeepChoiceButton, KeepYesButton, KeepNoButton)
+        # the Shared story switch (#1692), named one by one so the registration test sees them
+        self.add_dynamic_items(StoryButton, StoryChoiceButton, StoryYesButton, StoryNoButton)
         self.add_dynamic_items(pack_update.PackUpdateButton)  # a followed pack changed (#1527)
         self.add_dynamic_items(pack_suggestion.PackSuggestionButton)  # an entry suggested (#1537)
         self.add_dynamic_items(set_suggestion.SuggestionButton)  # a table's suggestion (#1259)

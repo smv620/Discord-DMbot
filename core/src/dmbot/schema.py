@@ -1986,6 +1986,17 @@ DM_BOT_CHANNEL = """
     ALTER TABLE campaigns ADD COLUMN dm_bot_message_id BIGINT;
 """
 
+STORY_MODE = """
+    -- The Shared story switch (docs/STORY_MEMORY.md, section 6; #1692): Off (the default),
+    -- Watch the story or Guide me. Nothing reads it yet: the story-plan reader, the divergence
+    -- warnings and Guide me are the next slices. A defaulted column changes no rows, so no
+    -- row-level-security policy is needed. The DM's confirmation of the right to use the
+    -- material is a row in shared_confirmations (purpose 'shared_story'), not a column.
+    ALTER TABLE campaigns
+        ADD COLUMN story_mode TEXT NOT NULL DEFAULT 'off'
+            CHECK (story_mode IN ('off', 'watch', 'guide'));
+"""
+
 GAMETIME_CHANNEL = """
     -- The players' game-time channel (docs/PLAN.md, "TimeBot"; #1116): `dmb-gametime-<slug>`,
     -- everyone reads, only DMbot posts, with the players' pinned clock ("Day 5, morning")
@@ -6597,6 +6608,7 @@ MIGRATIONS: tuple[Migration, ...] = (
     ("0118_story_threads", STORY_THREADS),  # a thread's states beside the conditions (#1662)
     ("0119_homebrew_more_kinds", MORE_HOMEBREW_KINDS),  # species, subclass, background (#1663)
     ("0120_dm_bot_channel", DM_BOT_CHANNEL),  # the DM Bot channel and its panel (#1666)
+    ("0121_story_mode", STORY_MODE),  # the Shared story switch (#1692)
 )
 
 # Tables that must have row-level security. A test checks every table in the schema
