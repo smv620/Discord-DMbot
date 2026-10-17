@@ -30,6 +30,7 @@ from dmbot.memory.models import (
     CONFIRMED,
     FIX,
     KEEP,
+    THREAD_TYPES,
     Alias,
     Correction,
     Entity,
@@ -189,8 +190,11 @@ class CampaignLookup:
 
     @property
     def hidden(self) -> frozenset[str]:
-        """The clues only some people know (#1649): the campaign's DMs alone may see them."""
-        return frozenset(e.id for e in self.entities.values() if e.audience_limited)
+        """What the campaign's DMs alone may see: the clues only some people know (#1649) and
+        the story threads (#1662), which are the DM's plot notes."""
+        return frozenset(
+            e.id for e in self.entities.values() if e.audience_limited or e.type in THREAD_TYPES
+        )
 
     def for_viewer(self, secrets: bool) -> CampaignLookup:
         """What a person who may not see secrets (a server manager who is not a DM) gets to

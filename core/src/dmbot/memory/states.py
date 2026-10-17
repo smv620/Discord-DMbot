@@ -26,6 +26,9 @@ from dmbot.memory.checks import (
 from dmbot.memory.models import (
     DM,
     ENDED,
+    GOING,
+    HINTED,
+    OPEN,
     REJECTED,
     Entity,
     MemoryRuleError,
@@ -36,6 +39,7 @@ from dmbot.memory.models import (
 from dmbot.memory.ontology import Ontology, check_condition_change, conditions_for
 
 NOT_THE_DM = "Only the DM can change that."
+LIVE = (HINTED, OPEN, GOING)  # a story thread's states that can go on
 ONLY_ITEMS = "Only an item can be one of a kind."
 BAD_TIME = "That date isn't one DMbot can use."
 INT64_MAX = 2**63 - 1
@@ -161,6 +165,35 @@ async def set_condition(
             "id": new_id(),
             "entity_id": entity["id"],
             "condition": condition,
+            "from_session_at": from_session_at,
+            "source": w.source,
+            "created_at": w.now,
+            "closed_at": None,
+        },
+    )
+    return state_of(row)
+
+
+ONLY_LIVE_THREADS = "Only a thread that is hinted, open or going on can be checked."
+
+
+async def touch_thread(
+    w: Changes, onto: Ontology, entity: Mapping[str, Any], *, from_session_at: int | None
+) -> State:
+    """The DM looked at a thread and it is still going (#1662): the same state written again,
+    dated, so the thread counts as touched. It closes the current row and opens an equal one;
+    the history shows it as "checked, still going", never as a change."""
+    _check_when(from_session_at)
+    held = (await current_states(w, [entity["id"]])).get(entity["id"])
+    if not onto.is_a(entity["type"], "thread") or held is None or held.condition not in LIVE:
+        raise MemoryRuleError(ONLY_LIVE_THREADS)
+    await w.update(STATES, held.id, {"closed_at": w.now})
+    row = await w.insert(
+        STATES,
+        {
+            "id": new_id(),
+            "entity_id": entity["id"],
+            "condition": held.condition,
             "from_session_at": from_session_at,
             "source": w.source,
             "created_at": w.now,

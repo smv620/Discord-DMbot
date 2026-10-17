@@ -33,6 +33,11 @@ KIND_LABELS = {
     "concept": "idea",
     "clue": "clue",
     "people": "people",
+    "thread": "story thread",
+    "quest": "quest",
+    "mystery": "mystery",
+    "hook": "hook",
+    "goal": "goal",
     "person": "player or DM",
 }
 # The older kinds, in the words people used for them.
