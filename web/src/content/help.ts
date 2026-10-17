@@ -227,7 +227,7 @@ export const SHARED_STORY_LIVE = false;
 
 export const sharedStorySteps: Step[] = [
   {
-    text: "To choose how DMbot uses your adventure book, press ⚙️ Settings, then 🧭 Shared story. Off means DMbot remembers your table's story only. Watch the story works: it also tells you when your table and the book no longer fit. First give it your adventure and link names (the steps below). Guide me is not working yet: when you ask, it will say what the book has next, with the page.",
+    text: "To choose how DMbot uses your adventure book, press ⚙️ Settings, then 🧭 Shared story. Off means DMbot remembers your table's story only. Watch the story also tells you when your table and the book no longer fit. Guide me adds a button that says what the book has next. Both need you to give it your adventure first, and link names (the steps below).",
     names: [
       { name: "Shared story", file: "dm_screen/story_mode.py" },
       { name: "Watch the story", file: "dm_screen/story_mode.py" },
@@ -275,6 +275,19 @@ export const sharedStorySteps: Step[] = [
     names: [
       { name: "I know", file: "ui/story_watch.py" },
       { name: "Book's words", file: "ui/story_watch.py" },
+    ],
+  },
+  {
+    text: "With Guide me on, press 🧭 What's next? on the Shared story card, or on the note before a session. If DMbot says it hasn't read your book, press Read it now first. DMbot shows you privately which chapter your table is probably in, what else the book has in that chapter, and the book's next chapter, or says This is the book's last chapter. It guesses from the people and places your table named in the last two sessions that you matched to your adventure. If none are matched yet, it says it has no guess. Not right? Use the Pick my chapter… menu under the answer, and DMbot uses yours. A long book has ◀ Earlier chapters and Later chapters ▶, and with several files DMbot asks which one first. Use DMbot's guess goes back, and ↩ Undo that undoes your pick. Only the DM can use it; everyone else is told so. It uses no AI and only says what your book says. It never decides what happens.",
+    names: [
+      { name: "What's next?", file: "ui/guide.py" },
+      { name: "Read it now", file: "dm_screen/adventure_card.py" },
+      { name: "Pick my chapter…", file: "ui/guide.py" },
+      { name: "Earlier chapters", file: "ui/guide.py" },
+      { name: "Later chapters", file: "ui/guide.py" },
+      { name: "Use DMbot's guess", file: "ui/guide.py" },
+      { name: "Undo that", file: "ui/guide.py" },
+      { name: "This is the book's last chapter.", file: "ui/guide.py" },
     ],
   },
   {
