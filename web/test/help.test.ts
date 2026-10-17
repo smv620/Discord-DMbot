@@ -230,14 +230,14 @@ describe("Help: the website's read-only pages (#1588)", () => {
     const shown = dmSteps.map((x) => x.text).join(" ");
     expect(shown.includes("🧭 Shared story")).toBe(SHARED_STORY_LIVE);
     const words = sharedStorySteps.map((x) => x.text).join(" ");
-    expect(words).toContain("Off: DMbot remembers your table's story only.");
-    expect(words).toContain("Watch the story: DMbot also tells you when your table and the book no longer fit.");
-    expect(words).toContain("Guide me: when you ask, DMbot says what the book has next, with the page.");
+    expect(words).toContain("Not working yet: for now DMbot can keep your adventure, but nothing reads it, so you get no alerts.");
+    expect(words).toContain("with Off, DMbot remembers your table's story only.");
+    expect(words).toContain("With Watch the story, it will also tell you when your table and the book no longer fit.");
+    expect(words).toContain("With Guide me, when you ask, it will say what the book has next, with the page.");
     expect(words).toContain("Only give DMbot material you have the right to use. DMbot doesn't check this.");
-    expect(words).toContain("DMbot keeps the text, not the file, for this campaign only");
+    expect(words).toContain("DMbot keeps the text, not the file, for this campaign only. Players can't open it.");
+    expect(words).toContain('"Not now" to leave it off');
     expect(words).toContain("keeps only your adventure's name, not its text");
-    // Plain words: the switch is honest that nothing reads the adventure yet.
-    expect(words).toContain("for now none of this does anything beyond keeping your adventure");
   });
 
   it("finds Settings, splits the party and deletes a campaign in plain words (#1659)", () => {

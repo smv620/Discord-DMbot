@@ -373,7 +373,7 @@ describe("story state (#1284)", () => {
 
   it("says an adventure file's text is kept for that campaign only and is not in a backup (#1720)", () => {
     const t = text(doc("privacy").querySelector("main"));
-    expect(t).toContain("An adventure file is the one exception: DMbot keeps its text, not the file, for that campaign only, until the game master removes it or the campaign is deleted, and a backup holds only its name");
+    expect(t).toContain("An adventure file is the one exception. DMbot keeps its text, not the file, for that campaign only. It stays until the game master removes it or the campaign is deleted. A backup holds only its name");
   });
 });
 
