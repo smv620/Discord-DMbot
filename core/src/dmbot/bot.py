@@ -100,6 +100,13 @@ from dmbot.dm_screen import effects as timer_screen
 from dmbot.dm_screen import house_voice as house_voice_screen
 from dmbot.dm_screen import levels as screen_levels
 from dmbot.dm_screen import messages as screen_messages
+from dmbot.dm_screen.adventure_card import AddButton as AdventureAddButton
+from dmbot.dm_screen.adventure_card import (
+    AdventureButton,
+)
+from dmbot.dm_screen.adventure_card import RemoveButton as RemoveAdventureButton
+from dmbot.dm_screen.adventure_card import RemoveNoButton as RemoveAdventureNoButton
+from dmbot.dm_screen.adventure_card import RemoveYesButton as RemoveAdventureYesButton
 from dmbot.dm_screen.channel import update_help_card
 from dmbot.dm_screen.dm_bot_channel import DmBotChannelError, setup_dm_bot_channel
 from dmbot.dm_screen.dmbchat_channel import DmbchatChannelError, setup_dmbchat_channel
@@ -175,6 +182,7 @@ from dmbot.logs import log_context, set_log_context
 from dmbot.mail import Mailer
 from dmbot.memory import definitions, document_reader, extractor
 from dmbot.memory import health as memory_health
+from dmbot.memory.adventure import AdventureSection, AdventureStore
 from dmbot.memory.backup import MemorySection
 from dmbot.memory.claims import ClaimStore
 from dmbot.memory.continuity import ContinuityStore
@@ -713,6 +721,7 @@ class DMBot(commands.AutoShardedBot):
         improvement: OptOutStore | None = None,
         sources: SourceStore | None = None,
         importer: HomebrewImporter | None = None,
+        adventure: AdventureStore | None = None,
     ) -> None:
         intents = discord.Intents.none()
         intents.guilds = True
@@ -762,6 +771,7 @@ class DMBot(commands.AutoShardedBot):
         self.homebrew = homebrew  # a campaign's own homebrew entries (#1520)
         self.sources = sources  # which sites a campaign approved, imported pages (#1633)
         self.importer = importer  # adds homebrew from a published page's link (#1634)
+        self.adventure = adventure  # the DM's adventure text, per campaign (#1698)
         # "Did they mean…?" questions left unanswered at a session's end (#1572).
         self.heard_questions = heard_questions
         # The last entries a DM removed, per campaign, so the list can put them back (memory only).
@@ -1109,6 +1119,11 @@ class DMBot(commands.AutoShardedBot):
         self.add_dynamic_items(TranscriptsButton, KeepChoiceButton, KeepYesButton, KeepNoButton)
         # the Shared story switch (#1692), named one by one so the registration test sees them
         self.add_dynamic_items(StoryButton, StoryChoiceButton, StoryYesButton, StoryNoButton)
+        # giving DMbot an adventure (#1698), named one by one so the registration test sees them
+        self.add_dynamic_items(
+            AdventureButton, AdventureAddButton, RemoveAdventureButton,
+            RemoveAdventureYesButton, RemoveAdventureNoButton,
+        )  # fmt: skip
         self.add_dynamic_items(pack_update.PackUpdateButton)  # a followed pack changed (#1527)
         self.add_dynamic_items(pack_suggestion.PackSuggestionButton)  # an entry suggested (#1537)
         self.add_dynamic_items(set_suggestion.SuggestionButton)  # a table's suggestion (#1259)
@@ -8194,6 +8209,7 @@ async def run(settings: Settings) -> None:
         campaigns.register_section(MemorySection())  # campaign memory goes in backups
         campaigns.register_section(HouseRulesSection())  # and so do house rules (#865)
         campaigns.register_section(HomebrewSection())  # and its own homebrew (#1520)
+        campaigns.register_section(AdventureSection())  # and its adventure text (#1698)
         campaigns.register_section(SiteApprovalsSection())  # the sites it approved (#1633)
         campaigns.register_section(FollowedSetsSection())  # and the sets it follows (#1260)
         campaigns.register_section(ClockSection())  # and the game clock (#965)
@@ -8226,6 +8242,7 @@ async def run(settings: Settings) -> None:
             OptOutStore(db),
             sources,
             HomebrewImporter(homebrew_store, sources),
+            AdventureStore(db),
         )
         _close_on_sigterm(bot)
         async with bot:

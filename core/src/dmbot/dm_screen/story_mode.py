@@ -51,7 +51,7 @@ ONLY_DMS = "Only this campaign's DMs can change that. Ask one of them."
 GONE = "That campaign isn't here any more. Open ⚙️ Settings again."
 COULDNT = "That didn't work, and nothing changed. Please try again in a moment."
 INTRO = "🧭 **Shared story**"
-COMING = "Not working yet. Soon you will be able to give DMbot your adventure."
+COMING = "Not working yet. DMbot can keep your adventure now, but nothing reads it so far."
 RIGHT_LABEL = "I have the right"
 NOT_NOW_LABEL = "Not now"
 
@@ -82,11 +82,32 @@ def warning_text(mode: str) -> str:
     )
 
 
-def panel_view(campaign: Campaign) -> discord.ui.View:
+def panel_view(campaign: Campaign, *, adventure: bool = False) -> discord.ui.View:
+    """The three choices, and (`adventure`: the switch is on and the right to use the material was
+    confirmed here) the button that gives DMbot an adventure (#1698)."""
+    from dmbot.dm_screen.adventure_card import AdventureButton  # (it imports this module)
+
     view = discord.ui.View(timeout=None)
     for mode in STORY_MODES:
         view.add_item(StoryChoiceButton(campaign.id, mode, current=mode == campaign.story_mode))
+    if adventure:
+        view.add_item(AdventureButton(campaign.id))
     return view
+
+
+async def _view(interaction: discord.Interaction, campaign: Campaign) -> discord.ui.View:
+    """`panel_view`, with the adventure button when it is allowed (read now)."""
+    on = False
+    if campaign.story_mode != STORY_OFF:
+        try:
+            on = bool(
+                await interaction.client.campaigns.story_confirmed(  # type: ignore[attr-defined]
+                    campaign.guild_id, campaign.id
+                )
+            )
+        except Exception:
+            log.warning("Couldn't read the Shared story confirmation", exc_info=True)
+    return panel_view(campaign, adventure=on)
 
 
 async def _dm_campaign(interaction: discord.Interaction, campaign_id: str) -> Campaign | None:
@@ -125,7 +146,7 @@ async def _save(
         await interaction.response.edit_message(content=COULDNT, view=panel_view(campaign))
         return
     await interaction.response.edit_message(
-        content=f"Saved.\n\n{panel_text(saved)}", view=panel_view(saved)
+        content=f"Saved.\n\n{panel_text(saved)}", view=await _view(interaction, saved)
     )
 
 
@@ -159,7 +180,7 @@ class StoryButton(
         if campaign is None:
             return
         await interaction.response.send_message(
-            panel_text(campaign), view=panel_view(campaign), ephemeral=True
+            panel_text(campaign), view=await _view(interaction, campaign), ephemeral=True
         )
 
 
@@ -194,7 +215,7 @@ class StoryChoiceButton(
             return
         if self.mode == campaign.story_mode:
             await interaction.response.edit_message(
-                content=panel_text(campaign), view=panel_view(campaign)
+                content=panel_text(campaign), view=await _view(interaction, campaign)
             )
             return
         if self.mode != STORY_OFF:
@@ -275,7 +296,7 @@ class StoryNoButton(
         if campaign is None:
             return
         await interaction.response.edit_message(
-            content=panel_text(campaign), view=panel_view(campaign)
+            content=panel_text(campaign), view=await _view(interaction, campaign)
         )
 
 
