@@ -195,17 +195,19 @@ class StoryWatch:
             return await cur.fetchone() is not None
 
     async def open_for(
-        self, guild_id: int, campaign_id: str, node_ids: frozenset[str]
+        self, guild_id: int, campaign_id: str, node_ids: frozenset[str], *, verified: bool = False
     ) -> list[Clash]:
         """The clashes already told and not answered that involve these book entries (Guide me
-        lists the ones for the chapter the table is in). At most `SHOWN`."""
+        lists the ones for the chapter the table is in). At most `SHOWN`. `verified`: the caller has
+        just checked that Shared story is on with a DM's confirmation, so it is not asked twice."""
         if not node_ids:
             return []
         async with self._db.guild(guild_id) as conn:
-            try:
-                await AdventureStore.require_on(conn, guild_id, campaign_id)
-            except AdventureError:
-                return []
+            if not verified:
+                try:
+                    await AdventureStore.require_on(conn, guild_id, campaign_id)
+                except AdventureError:
+                    return []
             cur = await conn.execute(
                 "SELECT d.id, a.name AS a_name, b.name AS b_name, e.name AS entity_name, l.need,"
                 " s.condition, s.from_session_at,"

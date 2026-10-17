@@ -518,7 +518,12 @@ class FastEnough(Speed):
 
 
 def fake_bot(
-    *, on: bool = True, allowed: bool = True, resumed: bool = False, note: Note | None = None
+    *,
+    on: bool = True,
+    allowed: bool = True,
+    resumed: bool = False,
+    note: Note | None = None,
+    guide: bool = False,
 ) -> Any:
     table = SimpleNamespace(
         guild_id=GUILD_A, campaign_id="c" * 32, resumed=resumed, screen_channel_id=55
@@ -532,6 +537,7 @@ def fake_bot(
         plan_allows=AsyncMock(return_value=allowed),
         consent=SimpleNamespace(consenting=AsyncMock(return_value={7})),
         post=AsyncMock(return_value=True),
+        guide_button_allowed=AsyncMock(return_value=guide),  # the 🧭 What's next? button (#1731)
     )
     return bot, table
 
@@ -588,6 +594,14 @@ class OnTheDmScreen(unittest.IsolatedAsyncioTestCase):
         ids = [str(i.item.custom_id) for i in both.post.await_args.kwargs["view"].children]
         self.assertEqual(len(ids), 2)
         self.assertIn("dmbot:threads:list:" + "c" * 32, ids)
+
+    async def test_guide_me_brings_the_whats_next_button_only_when_it_is_allowed(self) -> None:
+        with_it = await self.go(self.NOTE, guide=True)
+        ids = [str(i.item.custom_id) for i in with_it.post.await_args.kwargs["view"].children]
+        self.assertEqual(len(ids), 1)
+        self.assertIn("guide", ids[0])
+        without = await self.go(self.NOTE, guide=False)
+        self.assertIsNone(without.post.await_args.kwargs["view"])
 
     async def test_waiting_questions_bring_the_existing_button(self) -> None:
         bot = await self.go(Note("t", ("l",), 2))

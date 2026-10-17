@@ -29,6 +29,7 @@ def campaign(**ids: int | None) -> Any:
         "transcript_channel_id": TRANSCRIPT,
         "dmbchat_channel_id": CHAT,
         "dm_bot_channel_id": None,
+        "rules_channel_id": None,
     }
     return SimpleNamespace(**{**base, **ids})
 
@@ -208,6 +209,19 @@ class Retire(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual((got.deleted, got.skipped), (2, 1))
         renamed[bot_channel].delete.assert_not_awaited()
+
+    async def test_the_rules_channel_is_deleted_only_while_it_is_still_named_so(self) -> None:
+        rules = 106
+        chans = {**self.all_four(), rules: channel(rules, name="dmb-rules-frostmaiden")}
+        got = await rc.retire_channels(guild_with(chans), campaign(rules_channel_id=rules), ME, NOW)
+        self.assertEqual((got.deleted, got.closed), (3, 2))
+        chans[rules].delete.assert_awaited_once()
+        renamed = {**self.all_four(), rules: channel(rules, name="house-rules-talk")}
+        got = await rc.retire_channels(
+            guild_with(renamed), campaign(rules_channel_id=rules), ME, NOW
+        )
+        self.assertEqual((got.deleted, got.skipped), (2, 1))
+        renamed[rules].delete.assert_not_awaited()
 
     async def test_a_renamed_game_time_channel_is_never_deleted(self) -> None:
         chans = self.all_four()

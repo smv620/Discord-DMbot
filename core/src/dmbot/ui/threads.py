@@ -18,6 +18,7 @@ from dmbot.memory import threads as model
 from dmbot.memory.models import (
     ABANDONED,
     CONFIRMED,
+    DEED,
     DM,
     OPEN,
     RESOLVED,
@@ -389,6 +390,7 @@ async def link_by_name(
         if names.entities[m.entity_id].status == CONFIRMED
         and names.entities[m.entity_id].type != "person"
         and m.entity_id != thread_id
+        and names.entities[m.entity_id].type != DEED
         and (threads_too or names.entities[m.entity_id].type not in THREAD_TYPES)
         and (kinds is None or names.entities[m.entity_id].type in kinds)
     ][:MAX_RESULTS]
