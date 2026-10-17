@@ -28,10 +28,7 @@ from dmbot.ui.names import _md
 log = logging.getLogger(__name__)
 
 NONE_YET = "No sites yet. They appear here after you add homebrew from a link."
-INTRO = (
-    "**Sites you said you may use homebrew from.** Take one back and DMbot stops using the "
-    "entries from it. Nothing is deleted."
-)
+INTRO = "**Sites you said DMbot may use homebrew from.** Take one back and DMbot stops using it."
 NOT_READY = "DMbot can't show this just now. Try again in a minute."
 
 
@@ -119,7 +116,7 @@ class SitesMenu(_Menu):
                 ],
             )
             self.add_item(self.pick)
-        self.add_item(_Button(self._back, label="↩ To the list", row=1))
+        self.add_item(_Button(self._back, label="↩ Back to homebrew", row=1))
 
     async def _picked(self, interaction: discord.Interaction) -> None:
         from dmbot.ui.homebrew import ONLY_DMS, _is_dm, _show
@@ -164,13 +161,14 @@ class TakeBack(_Menu):
             await _tell(interaction, ONLY_DMS)
             return
         if self.used:
+            await _tell(interaction, "Already done.")
             return
-        self.used = True  # a double press takes it back once
         await _answer_first(interaction, in_place=True)
         sources = _bot(interaction).sources
         if sources is None:
             await _tell(interaction, NOT_READY)
             return
+        self.used = True  # a double press takes it back once (set only once it can go through)
         c = self.campaign
         try:
             gone = await sources.revoke(c.guild_id, c.id, interaction.user.id, self.domain)
@@ -181,7 +179,7 @@ class TakeBack(_Menu):
         _changed(interaction, c)
         self.stop()
         note = (
-            f"✅ Took back **{_md(self.domain)}**."
+            f"✅ Took back **{_md(self.domain)}**. Its entries are saved but skipped."
             if gone
             else f"**{_md(self.domain)}** was already taken back."
         )

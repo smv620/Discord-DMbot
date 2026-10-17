@@ -38,7 +38,7 @@ class Sites(HomebrewUiTest):
                 for c in self.view_of(it).children
                 if hasattr(c, "label")
             ],
-            ["↩ To the list"],
+            ["↩ Back to homebrew"],
         )
 
     async def test_the_question_counts_the_entries_and_says_nothing_is_deleted(self) -> None:
@@ -63,7 +63,9 @@ class Sites(HomebrewUiTest):
         self.assertTrue(await self.sources.approved(GUILD, self.campaign.id, "dndbeyond.com"))
         it = self.press()
         await confirm._confirm(it)
-        self.assertIn("Took back **dndbeyond.com**", self.said(it))
+        self.assertIn(
+            "Took back **dndbeyond.com**. Its entries are saved but skipped.", self.said(it)
+        )
         self.assertFalse(await self.sources.approved(GUILD, self.campaign.id, "dndbeyond.com"))
         # Saved, but not used; the list says so.
         self.assertEqual(len(await self.store.list(GUILD, self.campaign.id)), 1)
