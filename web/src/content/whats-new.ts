@@ -46,7 +46,7 @@ export const entries: Entry[] = [
   {
     date: "2026-10-16",
     title: "Keep a connection secret",
-    what: "On a name's card, press Connect to…, then Secret so it reads Secret: yes, and pick the other name. Players never see that connection, and only a game master can turn Secret on.",
+    what: "On a name's card, press Connect to…, then Secret, then pick the other name. Players never see that connection, and only a game master can turn Secret on.",
   },
   {
     date: "2026-10-16",
@@ -116,7 +116,7 @@ export const entries: Entry[] = [
   {
     date: "2026-10-15",
     title: "Stop recording me on the website",
-    what: "On My Account, each server where DMbot may record you has a Stop recording me button. It shows the same warning as Discord, and one Yes stops it right away.",
+    what: "On My Account, each server where DMbot may record you has a Stop recording me button. It shows a short warning first, and one confirmation stops it right away.",
   },
   {
     date: "2026-10-15",
@@ -151,7 +151,7 @@ export const entries: Entry[] = [
   {
     date: "2026-10-13",
     title: "See when your plan ends",
-    what: "If a plan has been ended, My Account says the day it ends and that you won't be charged again.",
+    what: "If you end your plan, My Account shows the day it ends and says you won't be charged again.",
   },
   {
     date: "2026-10-13",
