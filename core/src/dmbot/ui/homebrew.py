@@ -133,6 +133,9 @@ KIND_LABELS = {
     "item": "🗡 Item",
     "feat": "💪 Feat",
     "condition": "🌀 Condition",
+    "species": "🧝 Species",
+    "subclass": "🎓 Subclass",
+    "background": "📜 Background",
     "other": "❔ Other",
 }
 

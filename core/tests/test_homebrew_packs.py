@@ -4,6 +4,7 @@ a follow or a code, and that a backup keeps a follower's copy (never the code)."
 
 from __future__ import annotations
 
+import dataclasses
 import unittest
 from typing import Any
 
@@ -48,6 +49,17 @@ class Content(unittest.TestCase):
         )
         self.assertEqual(left, ["Booked"])
         self.assertNotIn("Booked", repr(content))
+
+    def test_a_pack_carries_the_new_kinds(self) -> None:
+        mine = [
+            dataclasses.replace(entry(f"A {k}"), kind=k)
+            for k in ("species", "subclass", "background")
+        ]
+        content, _ = pack_content.content_of(mine)
+        self.assertEqual(
+            [e["kind"] for e in pack_content.valid_content(content)["entries"]],
+            ["species", "subclass", "background"],
+        )
 
     def test_the_shape_is_checked_and_a_pack_is_not_house_rules(self) -> None:
         good, _ = pack_content.content_of([entry("A")])
