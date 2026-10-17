@@ -492,6 +492,7 @@ class WhereItCameFrom(HomebrewBase):
                         created_by=0, created_at=0, updated_at=0, version=1,
                     )
                 ],
+                "2024",
             )  # fmt: skip
             await self.store_b.load_file(
                 g, c, ALICE.id, homebrew_file.parse(file_text).entries, credit=credit

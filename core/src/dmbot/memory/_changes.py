@@ -74,8 +74,9 @@ ENTITIES = Table(
         "needs_look",
         "unique_item",
         "audience_limited",
+        "party",
     ),
-    defaults={"audience_limited": False},  # a clue's switch (#1649)
+    defaults={"audience_limited": False, "party": False},  # a clue's switch (#1649), the party
 )
 # What a being or thing is now, with the history of what it was (#1267): one current row for
 # each entry, a new condition closes it.
@@ -140,8 +141,22 @@ FLAGS = Table(
     "id",
     ("id", "kind", "relation_id", "other_id", "status", "created_at"),
 )
+# How a viewer feels about a subject, and how a group or place feels about a whole people (#1655):
+# a new one for a pair closes the old, so the history stays.
+IMPRESSIONS = Table(
+    "memory_impressions",
+    "id",
+    ("id", "viewer_id", "subject_id", "score", "weight", "source", "from_session_at",
+     "created_at", "closed_at"),
+)  # fmt: skip
+ATTITUDES = Table(
+    "memory_attitudes",
+    "id",
+    ("id", "holder_id", "toward_id", "score", "weight", "source", "from_session_at",
+     "created_at", "closed_at"),
+)  # fmt: skip
 ALL = (TYPES, PREDICATES, ENTITIES, ALIASES, MENTIONS, RELATIONS, CORRECTIONS, FLAGS, RULE_LINKS,
-       STATES, CLAIMS)  # fmt: skip
+       STATES, CLAIMS, IMPRESSIONS, ATTITUDES)  # fmt: skip
 BY_NAME = {t.name: t for t in ALL}
 
 # What links to a row (table, column, is the column a list), checked before deleting it,
@@ -170,6 +185,10 @@ DEPENDENTS: dict[str, tuple[tuple[str, str, bool], ...]] = {
         ("memory_corrections", "entity_id", False),
         ("memory_rule_links", "entity_id", False),
         ("memory_states", "entity_id", False),
+        ("memory_impressions", "viewer_id", False),
+        ("memory_impressions", "subject_id", False),
+        ("memory_attitudes", "holder_id", False),
+        ("memory_attitudes", "toward_id", False),
     ),
     "memory_mentions": (("memory_relations", "mention_ids", True),),
     "memory_relations": (
@@ -504,7 +523,7 @@ class Changes(Scope):
 _ADDED_LATER: dict[str, dict[str, Any]] = {
     "memory_relations": {"definition_version": 1},
     # unique_item: nobody said, the name decides (#1267). audience_limited: off (#1649).
-    "memory_entities": {"unique_item": None, "audience_limited": False},
+    "memory_entities": {"unique_item": None, "audience_limited": False, "party": False},
     "memory_predicates": {
         "covers": [], "not_this": [], "inverse_label": "", "synonyms": [], "version": 1,
         "from_set": None,

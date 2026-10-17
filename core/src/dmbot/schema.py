@@ -6282,6 +6282,69 @@ CLUE_AUDIENCE = """
     ALTER TABLE memory_entities ADD COLUMN audience_limited BOOLEAN NOT NULL DEFAULT false;
 """
 
+STANDING = (
+    f"""
+    -- Story memory 5b, slice 4a (#1655; docs/STORY_MEMORY.md, section 5): standing the DM sets.
+    --   memory_entities.party   the campaign's party, a group whose members are worked out in code
+    --                           from its confirmed player characters. At most one a campaign.
+    --   memory_impressions      how a viewer (an NPC, a group, a place) feels about a subject (a
+    --                           character, the party, a group, a people): a score -100..100 and the
+    --                           weight of the evidence behind it. A new one for the same pair
+    --                           closes the old (closed_at), so the history is kept, like
+    --                           memory_states. Sparse: a row only where the DM said something.
+    --   memory_attitudes        the same for a group or place toward a whole people or kind.
+    -- The `people` kind and the `of_people` connection are core (in code), not rows. Like every
+    -- memory table both are one campaign's, with forced row-level security.
+    ALTER TABLE memory_entities ADD COLUMN party BOOLEAN NOT NULL DEFAULT false;
+    CREATE UNIQUE INDEX memory_entities_one_party
+        ON memory_entities (guild_id, campaign_id) WHERE party;
+    CREATE TABLE memory_impressions (
+        {_memory_scope()}
+        id              TEXT NOT NULL CHECK (id ~ '^[0-9a-f]{{32}}$'),
+        viewer_id       TEXT NOT NULL,
+        subject_id      TEXT NOT NULL,
+        score           INTEGER NOT NULL CHECK (score BETWEEN -100 AND 100),
+        weight          INTEGER NOT NULL CHECK (weight BETWEEN 1 AND 100),
+        source          TEXT NOT NULL,
+        from_session_at BIGINT,
+        created_at      BIGINT NOT NULL,
+        closed_at       BIGINT,
+        PRIMARY KEY (guild_id, campaign_id, id),
+        CHECK (viewer_id <> subject_id),
+        {_entity_link("viewer_id")},
+        {_entity_link("subject_id")}
+    );
+    CREATE UNIQUE INDEX memory_impressions_one_open
+        ON memory_impressions (guild_id, campaign_id, viewer_id, subject_id)
+        WHERE closed_at IS NULL;
+    CREATE INDEX memory_impressions_by_subject
+        ON memory_impressions (guild_id, campaign_id, subject_id);
+    CREATE TABLE memory_attitudes (
+        {_memory_scope()}
+        id              TEXT NOT NULL CHECK (id ~ '^[0-9a-f]{{32}}$'),
+        holder_id       TEXT NOT NULL,
+        toward_id       TEXT NOT NULL,
+        score           INTEGER NOT NULL CHECK (score BETWEEN -100 AND 100),
+        weight          INTEGER NOT NULL CHECK (weight BETWEEN 1 AND 100),
+        source          TEXT NOT NULL,
+        from_session_at BIGINT,
+        created_at      BIGINT NOT NULL,
+        closed_at       BIGINT,
+        PRIMARY KEY (guild_id, campaign_id, id),
+        CHECK (holder_id <> toward_id),
+        {_entity_link("holder_id")},
+        {_entity_link("toward_id")}
+    );
+    CREATE UNIQUE INDEX memory_attitudes_one_open
+        ON memory_attitudes (guild_id, campaign_id, holder_id, toward_id)
+        WHERE closed_at IS NULL;
+    CREATE INDEX memory_attitudes_by_target
+        ON memory_attitudes (guild_id, campaign_id, toward_id);
+    """
+    + _isolate("memory_impressions")
+    + _isolate("memory_attitudes")
+)
+
 HOMEBREW_SOURCE_DOOR = """
     -- The website's homebrew door adds where each entry came from (#1653): how it was added and the
     -- credit as the DM chose it. `added_by` and the page's address are not sent. Replacing a door
@@ -6488,10 +6551,8 @@ MIGRATIONS: tuple[Migration, ...] = (
     ("0113_homebrew_sources", HOMEBREW_SOURCES),  # an entry's source, one page per address (#1633)
     ("0114_homebrew_pack_doors", HOMEBREW_PACK_DOORS),  # the site's doors read pointers (#1635)
     ("0115_clue_audience", CLUE_AUDIENCE),  # a clue only some people know (#1649)
-    (
-        "0116_web_homebrew_source",
-        HOMEBREW_SOURCE_DOOR,
-    ),  # the page says where an entry came from (#1653)
+    ("0116_web_homebrew_source", HOMEBREW_SOURCE_DOOR),  # the page says where it came from (#1653)
+    ("0117_standing", STANDING),  # impressions, attitudes and the party (#1655)
 )
 
 # Tables that must have row-level security. A test checks every table in the schema
@@ -6529,6 +6590,8 @@ ISOLATED_TABLES = (
     "rule_set_follows",
     "rule_set_editors",
     "memory_states",
+    "memory_impressions",
+    "memory_attitudes",
     "memory_claims",
     "rule_set_suggestions",
     "rule_set_suggestions_sent",
