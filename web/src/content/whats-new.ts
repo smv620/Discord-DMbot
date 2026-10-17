@@ -281,9 +281,9 @@ export const held: Held[] = [
   {
     date: "2026-10-17",
     title: "A Shared story switch",
-    what: "In Settings, press Shared story to choose Off, Watch the story or Guide me. The first time you turn it on, DMbot reminds you to only give it material you have the right to use, and keeps a note that you said so. Then you can give DMbot your adventure as a PDF, Word or text file; it keeps the text, not the file, for that campaign only, and not in its backup, so after a restore you give the file again. Remove it any time and DMbot forgets it. For now nothing reads it: that comes next.",
+    what: "In Settings, press Shared story to choose Off, Watch the story or Guide me. The first time you turn it on, DMbot reminds you to only give it material you have the right to use, and keeps a note that you said so. Then you can give DMbot your adventure as a PDF, Word or text file; it keeps the text, not the file, for that campaign only, and not in its backup, so after a restore you give the file again. Press Read it now and DMbot's AI reads the file once and lists its chapters, places and people; that list is not in the backup either, and players never see it. Remove a file any time and DMbot forgets it and what it read. For now nothing uses the list: that comes next.",
     reason:
-      "Held until DMbot can read an adventure (#1692): a switch that does nothing yet is not news.",
+      "Held until DMbot uses what it read (#1692, #1714): a switch whose list nothing uses yet is not news.",
   },
   {
     date: "2026-10-17",

@@ -152,6 +152,7 @@ class Tiers(unittest.TestCase):
                 Feature.EXTRACTOR: AIModelTier.FAST,  # the story extractor (#1363), off by default
                 Feature.RECAP: AIModelTier.FAST,  # the cinematic recap (#1382), off by default
                 Feature.RECAP_RETRY: AIModelTier.CAREFUL,
+                Feature.PLAN_READER: AIModelTier.CAREFUL,
                 Feature.SUPPORT: AIModelTier.DEEP,
             },
         )

@@ -81,7 +81,7 @@ describe("What's new", () => {
       "Species, subclasses and backgrounds in homebrew", // until seen on the test server (#1663)
       "Keep track of promises made at the table", // until seen on the test server (#1674)
       "A DMbot channel for buttons", // until seen on the test server (#1666)
-      "A Shared story switch", // until the adventure reader exists (#1692)
+      "A Shared story switch", // until the story plan is used (#1692, #1714)
       "Homebrew menu by kind", // until seen on the test server (#1665)
       "Manage your plan without Discord", // until the billing login link is set in the build (#1711)
     ]);

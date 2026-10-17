@@ -440,6 +440,9 @@ def press(user: int, guild: int = GUILD_A) -> Any:
     async def edit_message(**kw: Any) -> None:
         sent.update(edited=True, **kw)
 
+    async def edit_original_response(**kw: Any) -> None:
+        sent.update(edited=True, **kw)
+
     member = MagicMock(spec=discord.Member)
     member.id = user
     it = MagicMock()
@@ -449,6 +452,8 @@ def press(user: int, guild: int = GUILD_A) -> Any:
     it.response.send_message = send_message
     it.response.edit_message = edit_message
     it.response.send_modal = AsyncMock()
+    it.response.defer = AsyncMock()
+    it.edit_original_response = edit_original_response
     it.sent = sent
     return it
 
@@ -507,7 +512,7 @@ class Card(Setup):
         text = it.sent["content"]
         self.assertIn("The Sunken Keep.pdf", text)
         self.assertIn(f"<@{DM}>", text)
-        self.assertIn("Nothing reads this yet", text)
+        self.assertIn("isn't used for anything yet", text)
         self.assertEqual(self.labels(it), ["Remove 1", "Give a file"])
         ask = self.pressing(DM)
         await ui.RemoveButton(self.a.id, doc.id).callback(ask)
@@ -530,7 +535,7 @@ class Card(Setup):
         self.assertLess(len(f"Kept.\n\n{ui.card_text(docs)}"), 2000)
         self.assertEqual(len(ui.card_view(campaign, docs).children), adv.DOCUMENTS_MAX)
         one = adv.Document(uuid.uuid4().hex, "a.txt", 100, 1, DM, CLOCK)
-        self.assertIn("(about 1 page)", ui.card_text([one]))
+        self.assertIn("(about 1 page", ui.card_text([one]))
 
     async def test_the_add_button_opens_the_form_for_a_dm(self) -> None:
         await self.switch_on()

@@ -70,6 +70,7 @@ class Feature(enum.StrEnum):
     RECAP_RETRY = "recap_retry"  # its one more try, when the first draft fails the checks
     EXTRACTOR = "extractor"  # the story extractor after a session (#1363); off by default
     SUPPORT = "support"  # DMbot's helper answering a support ticket (#1431); the website's job
+    PLAN_READER = "plan_reader"  # the story plan read from an adventure (#1714); the DM's press
 
 
 # The tier of each job. Nothing else chooses: a job names its tier here, never a model.
@@ -88,6 +89,7 @@ FEATURE_TIERS = {
     # The default; DMBOT_STORY_EXTRACTOR_TIER picks it, because the measurement (#1282) decides.
     Feature.EXTRACTOR: AIModelTier.FAST,
     Feature.RECAP: AIModelTier.FAST,
+    Feature.PLAN_READER: AIModelTier.CAREFUL,  # read once and kept; it must not make things up
     Feature.SUPPORT: AIModelTier.DEEP,  # a person is reading the answer, and it must not mislead
     Feature.RECAP_RETRY: AIModelTier.CAREFUL,
 }
@@ -128,6 +130,16 @@ DEFAULT_MODELS = AIModels(
     deep="claude-opus-5-5",
 )
 CONNECT_TIMEOUT_S = 15
+
+# List prices in dollars per million tokens, (input, output), base tokens, from
+# https://platform.claude.com/docs/en/about-claude/pricing (Sonnet 5.5 checked 2026-10-15). For the
+# money caps on reading an adventure (`dmbot.memory.story_plan`). A model that is not here (an
+# override in .env, or the strongest tier) is priced at DEFAULT_PRICE, high on purpose.
+PRICE_PER_MILLION: dict[str, tuple[int, int]] = {
+    "claude-sonnet-5-5": (2, 10),
+    "claude-haiku-4-5-20251001": (1, 5),
+}
+DEFAULT_PRICE = (15, 75)
 
 
 BUSY = (

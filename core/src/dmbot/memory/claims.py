@@ -221,6 +221,12 @@ def parse_answer(text: str, refs: Collection[str]) -> tuple[list[Extracted], int
     return out, bad
 
 
+def reads_like_instruction(text: str) -> bool:
+    """Is this text an instruction to DMbot in a story's clothes? (Also used on the story plan
+    read from an adventure, #1714: a book's text is data, as a transcript's is.)"""
+    return bool(_INSTRUCTION.search(text))
+
+
 def injection_like(claim: Extracted) -> bool:
     return any(
         _INSTRUCTION.search(text)
