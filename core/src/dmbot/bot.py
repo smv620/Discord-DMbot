@@ -1046,7 +1046,9 @@ class DMBot(commands.AutoShardedBot):
         self.tree.add_command(transcript_command)
         # DM-screen buttons keep working after a restart.
         self.add_dynamic_items(PeekButton, HideButton, VisibilityButton, StopListeningButton)
-        self.add_dynamic_items(dm_bot_buttons.OpenButton, dm_bot_buttons.HelpButton)  # #1666
+        self.add_dynamic_items(
+            dm_bot_buttons.OpenButton, dm_bot_buttons.HelpButton, dm_bot_buttons.RuleButton
+        )  # #1666, #1691
         self.add_dynamic_items(
             SettingsButton,
             LevelButton,

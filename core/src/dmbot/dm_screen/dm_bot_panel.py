@@ -10,8 +10,8 @@ Roles, from the strongest to the weakest:
 - **player**: tied to *this* campaign (a confirmed character in it, or recorded in one of its
   sessions). The personal buttons, plus the campaign ones that are about the player.
 - **member**: consented in this server, but not tied to this campaign. The personal buttons.
-- **guest**: anyone else in the server. Help only; rule lookups and reading transcripts are
-  open to the whole server anyway.
+- **guest**: anyone else in the server. Help, looking up a rule and reading the transcripts,
+  which are open to the whole server anyway (#1691).
 
 A server manager who is not a game master is a guest here: the card never offers them Settings.
 (The ⚙️ Settings button itself still lets a manager in, as it does on the DM screen today; the
@@ -22,6 +22,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import StrEnum
+from urllib.parse import urlsplit
 
 
 class Role(StrEnum):
@@ -36,6 +37,8 @@ class Button(StrEnum):
 
     OPEN = "open"  # on the shared panel: opens the person's own buttons, privately
     HELP = "help"
+    RULE = "rule"  # 📖 Look up a rule: the form and private answer of /dmbot rule (#1691)
+    TRANSCRIPTS = "transcripts"  # 📜 Transcripts: a link to the website's page, no callback
     MY_MENU = "my_menu"  # ⚙️ Menu: Stop recording me, Delete my transcripts (about the person)
     MY_CHARACTER = "my_character"  # the player's character link in this campaign
     SETTINGS = "settings"  # the campaign's Settings card, game masters only
@@ -43,11 +46,12 @@ class Button(StrEnum):
 
 # Each role's buttons, in the order they are drawn. A role never gets more than the one below it
 # plus its own, which `test_each_role_has_what_the_weaker_ones_have` checks.
+_EVERYONE = (Button.HELP, Button.RULE, Button.TRANSCRIPTS)  # open to the whole server (#1691)
 _BUTTONS: dict[Role, tuple[Button, ...]] = {
-    Role.GUEST: (Button.HELP,),
-    Role.MEMBER: (Button.HELP, Button.MY_MENU),
-    Role.PLAYER: (Button.HELP, Button.MY_MENU, Button.MY_CHARACTER),
-    Role.GAME_MASTER: (Button.HELP, Button.MY_MENU, Button.MY_CHARACTER, Button.SETTINGS),
+    Role.GUEST: _EVERYONE,
+    Role.MEMBER: (*_EVERYONE, Button.MY_MENU),
+    Role.PLAYER: (*_EVERYONE, Button.MY_MENU, Button.MY_CHARACTER),
+    Role.GAME_MASTER: (*_EVERYONE, Button.MY_MENU, Button.MY_CHARACTER, Button.SETTINGS),
 }
 
 # Only the shared panel's own buttons are labelled here; the card's buttons are DMbot's existing
@@ -55,7 +59,21 @@ _BUTTONS: dict[Role, tuple[Button, ...]] = {
 LABELS: dict[Button, str] = {
     Button.OPEN: "👤 My buttons",
     Button.HELP: "❓ Help",
+    Button.RULE: "📖 Look up a rule",
+    Button.TRANSCRIPTS: "📜 Transcripts",
 }
+
+# The website's Transcripts page, used when the bot isn't given its own address (WEB_SITE_URL).
+TRANSCRIPTS_URL = "https://getdmbot.com/account/transcripts"
+
+
+def transcripts_url(site_url: str = "") -> str:
+    """Where 📜 Transcripts goes: the configured website's page, else the public one."""
+    parts = urlsplit(site_url.strip())
+    if parts.scheme.lower() != "https" or not parts.netloc:  # Discord refuses a bad link whole
+        return TRANSCRIPTS_URL
+    return f"https://{parts.netloc}/account/transcripts"
+
 
 NOT_YOURS = "Only this campaign's DM can use that. Ask your DM."
 
