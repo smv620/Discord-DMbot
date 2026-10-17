@@ -774,7 +774,23 @@ Each step is useful on its own and ships behind the existing phases.
    does not reset the caps; a replace never lowers what a campaign has spent. When a read ends the
    DM screen gets one line ("DMbot finished reading <file>: 3 chapters, 41 places…", or why it
    stopped), and a read waiting for one of the two bot-wide slots says "waiting for a turn" on the card. No divergence, no
-   suggestions and no `same_as` yet: those are the next slices.
+   **Phase 5d slice 4 is built (#1715): the book and the table.** "The book's Captain Varn" and "our
+   Captain Varn" are joined only by the DM's word and stay two things (migration 0124, `plan_same_as`:
+   a book entry, a table entry, **same** or **not the same**, who and when). **No AI:** a book person
+   or place and a confirmed table entry of the same kind (people and groups with people, places with
+   places) are suggested when they have the same name, or the table entry is called that (names compare
+   the way they do everywhere: case, accents, apostrophes and hyphens don't matter). The Shared story
+   card's **🔗 Match names** shows up to ten at a time as "In your adventure: Captain Varn ↔ DMbot remembers: Captain Varn"
+   with two menus, *these are the same* and *these are not the same*; either answer is remembered, so
+   a pair is never asked about twice, and the next ten follow. On a name's card (DM only) **📖 In my
+   adventure…** picks from the book's entries by hand (the ones sharing a word with the name first)
+   and takes a link off. **One for one:** a book entry is the same as at most one table entry, and a
+   table entry as at most one book entry in each file; a refused answer writes nothing. Every change is
+   in the memory change log, so **↩ Undo that** (right after, and for a taken-off link) puts it back.
+   The table entry's card shows "📖 In your adventure: Captain Varn (Chapter 1: The Harbour)" to the DM only
+   (the chapter is the nearest one at or before the entry in the file). The link is the DM's alone:
+   recall, the players' views and transcripts never read it; it goes with the book entry (its file, or
+   the campaign) and with the table entry, and is not in backups, like the plan.
 5. **Throughout:** the ontology steward and graph curator take over the after-session
    cleanup; their health numbers (duplicates, orphans, unused terms, flags per session,
    how often the DM is asked, warnings ignored) go to the server logs, never to players.

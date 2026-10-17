@@ -106,6 +106,7 @@ from dmbot.dm_screen.adventure_card import (
     finished_text,
 )
 from dmbot.dm_screen.adventure_card import BackToFilesButton as BackToAdventureButton
+from dmbot.dm_screen.adventure_card import MatchButton as MatchAdventureButton
 from dmbot.dm_screen.adventure_card import ReadButton as ReadAdventureButton
 from dmbot.dm_screen.adventure_card import ReadNoButton as ReadAdventureNoButton
 from dmbot.dm_screen.adventure_card import ReadYesButton as ReadAdventureYesButton
@@ -1167,6 +1168,7 @@ class DMBot(commands.AutoShardedBot):
             RemoveAdventureYesButton, RemoveAdventureNoButton,
             ReadAdventureButton, ReadAdventureYesButton, ReadAdventureNoButton,
             RefreshAdventureButton, SeeAdventureButton, BackToAdventureButton,
+            MatchAdventureButton,
         )  # fmt: skip
         self.add_dynamic_items(pack_update.PackUpdateButton)  # a followed pack changed (#1527)
         self.add_dynamic_items(pack_suggestion.PackSuggestionButton)  # an entry suggested (#1537)
