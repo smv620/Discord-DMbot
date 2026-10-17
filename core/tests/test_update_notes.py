@@ -108,12 +108,6 @@ class Combined(unittest.IsolatedAsyncioTestCase):
         self.assertIn(f"dmbot:packupd:undo:{CAMPAIGN}:{'1' * 32}:3", ids)
         self.assertIn(f"dmbot:packupd:undo:{CAMPAIGN}:{'2' * 32}:4", ids)  # not the first's version
 
-    async def test_changes_the_dm_should_know_stay_under_their_line(self) -> None:
-        bot = bot_with(house=True, packs=1)
-        await update_notes.check_all(bot, campaign(), 99)
-        text = bot.post_message.await_args.args[1]
-        self.assertIn("   Players may now know: Torch.", text)  # Torch is new and known
-
     async def test_five_updates_give_four_rows_and_name_the_rest(self) -> None:
         bot = bot_with(house=True, packs=4)
         bot.rule_sets.pending_pack_updates = AsyncMock(
@@ -249,9 +243,8 @@ class Combined(unittest.IsolatedAsyncioTestCase):
 
     def test_the_single_notes_are_unchanged(self) -> None:
         self.assertEqual(
-            pack_update.note_text("Frost", 5, 1, visible=["Torch"]),
-            "📦 **Frost** homebrew updated to v5: 1 entry changed. DMbot took the new version.\n"
-            "Players may now know: Torch.",
+            pack_update.note_text("Frost", 5, 1),
+            "📦 **Frost** homebrew updated to v5: 1 entry changed. DMbot took the new version.",
         )
         self.assertIn("house rules updated to v4: 1 rule.", set_update.note_text("Red", 4, 1))
 

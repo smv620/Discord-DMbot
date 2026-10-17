@@ -13,9 +13,9 @@ NOW = 1_700_000_000
 
 
 def entry(
-    name: str, text: str, *, kind: str = "monster", summary: str | None = None, known: bool = False
+    name: str, text: str, *, kind: str = "monster", summary: str | None = None, on: bool = True
 ) -> Homebrew:
-    return Homebrew(1, "c", kind, name, text, summary, known, 7, NOW, NOW)
+    return Homebrew(1, "c", kind, name, text, summary, 7, NOW, NOW, enabled=on)
 
 
 class RoundTrip(unittest.TestCase):
@@ -25,10 +25,9 @@ class RoundTrip(unittest.TestCase):
                 "Hollow King",
                 "A skeleton.\nIt wears a crown.\n\nIt cannot be touched.",
                 summary="Crowned.",
-                known=True,
             ),
-            entry("Moonblade", "A silver sword.", kind="item"),
-            entry("Frost Lance", "Cold.", kind="spell", known=True),
+            entry("Moonblade", "A silver sword.", kind="item", on=False),
+            entry("Frost Lance", "Cold.", kind="spell"),
         ]
         parsed = hf.parse(hf.write("Frostmaiden", entries, "2024"))
         self.assertEqual(parsed.problems, ())
@@ -36,8 +35,13 @@ class RoundTrip(unittest.TestCase):
         for original in entries:
             back = got[original.name]
             self.assertEqual(
-                (back.kind, back.text, back.summary, back.players_may_know),
-                (original.kind, original.text, original.summary, original.players_may_know),
+                (back.kind, back.text, back.summary, back.enabled),
+                (
+                    original.kind,
+                    original.text,
+                    original.summary,
+                    None if original.enabled else False,
+                ),
             )
         self.assertEqual(len(parsed.entries), 3)
 
@@ -48,18 +52,16 @@ class RoundTrip(unittest.TestCase):
         (back,) = parsed.entries
         self.assertEqual(back.text, tricky)
         self.assertIsNone(back.summary)
-        self.assertFalse(back.players_may_know)
+        self.assertIsNone(back.enabled)
 
     def test_an_empty_campaign_writes_a_file_that_reads_as_nothing(self) -> None:
         parsed = hf.parse(hf.write("Empty", [], "2024"))
         self.assertEqual((parsed.entries, parsed.problems), ((), ()))
 
 
-def book(
-    name: str, edition: str | None, *, summary: str | None = None, players_may_know: bool = False
-) -> Homebrew:
+def book(name: str, edition: str | None, *, summary: str | None = None) -> Homebrew:
     return dataclasses.replace(
-        entry(name, "From the book.", kind="spell", summary=summary, known=players_may_know),
+        entry(name, "From the book.", kind="spell", summary=summary),
         from_book=True,
         book_edition=edition,
     )
@@ -92,16 +94,19 @@ class SharedBookTags(unittest.TestCase):
         for edition in ("other", None):
             self.assertEqual(self.lines(book("Fireball", edition))[1], "[Shared book]")
 
-    def test_the_tag_comes_before_the_summary_and_players_lines(self) -> None:
-        lines = self.lines(book("Fireball", "2014", summary="A ball of fire."))
+    def test_the_tag_comes_before_the_summary_and_the_off_line(self) -> None:
+        off = dataclasses.replace(
+            book("Fireball", "2014", summary="A ball of fire."), enabled=False
+        )
+        lines = self.lines(off)
         self.assertEqual(
             lines[1:4],
-            ["[Shared book] [Legacy 2014]", "Summary: A ball of fire.", "Players may know: no"],
+            ["[Shared book] [Legacy 2014]", "Summary: A ball of fire.", "Off: yes"],
         )
 
     def test_a_file_with_the_tags_reads_back_without_them_and_never_from_a_book(self) -> None:
         entries = [
-            book("Fireball", "2014", summary="A ball of fire.", players_may_know=True),
+            book("Fireball", "2014", summary="A ball of fire."),
             book("Moonlance", "2024"),
             entry("Hollow King", "Mine."),
         ]
@@ -111,7 +116,6 @@ class SharedBookTags(unittest.TestCase):
         self.assertEqual(set(got), {"Fireball", "Moonlance", "Hollow King"})
         self.assertEqual(got["Fireball"].text, "From the book.")  # the tag is not in the words
         self.assertEqual(got["Fireball"].summary, "A ball of fire.")
-        self.assertTrue(got["Fireball"].players_may_know)
         self.assertFalse(hasattr(got["Fireball"], "from_book"))  # a file never says it
 
     def test_a_tag_with_no_blank_line_after_it_is_skipped_and_the_words_follow(self) -> None:
@@ -123,9 +127,9 @@ class SharedBookTags(unittest.TestCase):
         self.assertEqual(back.text, "[Something else]\nwords")
 
     def test_the_tag_reads_with_windows_line_ends_and_the_short_form_alone(self) -> None:
-        parsed = hf.parse("## X (spell)\r\n[Shared book]\r\nPlayers may know: yes\r\n\r\nwords")
+        parsed = hf.parse("## X (spell)\r\n[Shared book]\r\nOff: yes\r\n\r\nwords")
         (back,) = parsed.entries
-        self.assertEqual((back.text, back.players_may_know), ("words", True))
+        self.assertEqual((back.text, back.enabled), ("words", False))
 
     def test_the_help_text_explains_the_note(self) -> None:
         self.assertIn("[Shared book]", hf.HELP)
@@ -143,16 +147,36 @@ class Reading(unittest.TestCase):
     def test_a_hand_written_file(self) -> None:
         text = (
             "My homebrew\n# a note\n\n## The Hollow King (Monster)\nSummary: Crowned.\n"
-            "Players may know: yes\n\nA skeleton.\n\n## Moonblade (item)\n\nA sword.\n"
+            "Off: yes\n\nA skeleton.\n\n## Moonblade (item)\n\nA sword.\n"
         )
         parsed = hf.parse(text)
         self.assertEqual(parsed.problems, ())
         king, blade = parsed.entries
         self.assertEqual(
-            (king.name, king.kind, king.summary, king.players_may_know),
-            ("The Hollow King", "monster", "Crowned.", True),
+            (king.name, king.kind, king.summary, king.enabled),
+            ("The Hollow King", "monster", "Crowned.", False),
         )
-        self.assertEqual((blade.text, blade.players_may_know), ("A sword.", None))  # not stated
+        self.assertEqual((blade.text, blade.enabled), ("A sword.", None))  # not stated
+
+    def test_off_no_and_the_older_players_line(self) -> None:
+        text = (
+            "## A (item)\nOff: no\n\nWords.\n"
+            "## B (item)\nPlayers may know: yes\nSummary: Short.\n\nWords.\n"
+            "## C (item)\nPlayers may know: no\n\nWords.\n"
+        )
+        parsed = hf.parse(text)
+        self.assertEqual(parsed.problems, ())
+        a, b, c = parsed.entries
+        # "Players may know" came before on/off and is accepted and ignored (part 2).
+        self.assertEqual((a.enabled, b.enabled, c.enabled, b.summary), (True, None, None, "Short."))
+
+    def test_only_an_off_entry_is_marked_in_the_written_file(self) -> None:
+        text = hf.write(
+            "T", [entry("Lamp", "Glows.", kind="item", on=False), entry("Rope", "x")], "2024"
+        )
+        self.assertEqual(text.split("\n").count("Off: yes"), 1)
+        self.assertNotIn("Players may know", text)
+        self.assertIn("## Lamp (item)\nOff: yes\n", text)
 
     def test_blocks_that_are_not_entries_are_reported_with_the_line(self) -> None:
         text = (
@@ -161,9 +185,9 @@ class Reading(unittest.TestCase):
             "## Bad kind (dragon)\nWords.\n"
             "## (item)\nWords.\n"
             "## Empty (item)\n\n"
-            "## Fine (rule)\n\nGood words.\n"
+            "## Fine (feat)\n\nGood words.\n"
             "## Fine (item)\n\nSame name again.\n"
-            "## Odd (item)\nPlayers may know: maybe\n\nWords.\n"
+            "## Odd (item)\nOff: maybe\n\nWords.\n"
         )
         parsed = hf.parse(text)
         self.assertEqual([e.name for e in parsed.entries], ["Fine"])
@@ -174,7 +198,7 @@ class Reading(unittest.TestCase):
         self.assertIn((7, hf.NO_NAME), whys)
         self.assertIn((9, hf.NO_TEXT), whys)
         self.assertIn((14, hf.TWICE), whys)
-        self.assertIn((17, hf.BAD_PLAYERS), whys)
+        self.assertIn((17, hf.BAD_OFF), whys)
 
     def test_too_long_parts_are_refused_not_cut(self) -> None:
         big = "## Long (item)\n\n" + "x" * 2001
@@ -189,7 +213,7 @@ class Reading(unittest.TestCase):
         )
 
     def test_more_than_the_limit_leaves_the_rest_out(self) -> None:
-        text = "".join(f"## E{n} (rule)\n\nWords {n}.\n" for n in range(HOMEBREW_MAX + 3))
+        text = "".join(f"## E{n} (feat)\n\nWords {n}.\n" for n in range(HOMEBREW_MAX + 3))
         parsed = hf.parse(text)
         self.assertEqual(len(parsed.entries), HOMEBREW_MAX)
         self.assertEqual(parsed.problems[0].why, hf.TOO_MANY)

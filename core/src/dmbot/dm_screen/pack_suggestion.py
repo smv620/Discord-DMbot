@@ -55,11 +55,10 @@ def _first_line(entry: PackSuggestion, limit: int = SHOWN_MAX) -> str:
 
 def note_text(pack_name: str, entry: PackSuggestion, replaces: bool = False) -> str:
     """The publisher's note: the entry and the pack, nothing about the sender."""
-    who = "players may know it" if entry.known else "hidden from players"
     what = "It would replace your entry of that name." if replaces else "It would be a new entry."
     return (
         f"💡 A table using **{_md(pack_name)} homebrew** suggests (sender not shown):\n"
-        f"**{_md(entry.name)}** ({entry.kind.capitalize()}, {who}): {_md(_first_line(entry))}\n"
+        f"**{_md(entry.name)}** ({entry.kind.capitalize()}): {_md(_first_line(entry))}\n"
         f"{what} Add to pack puts it in your homebrew and in the pack for every table that uses it,"
         " with any other changes you haven't published yet."
     )
@@ -169,13 +168,12 @@ async def _see(interaction: discord.Interaction, campaign: Campaign, asked: Pack
     brew = getattr(bot, "homebrew", None)
     if brew is not None:
         mine = await brew.find(campaign.guild_id, campaign.id, asked.name)
-    who = "Players may know it." if asked.known else "It stays hidden from players."
     head = (
         f"If you press Add to pack, your entry **{_md(mine.name)}** is replaced by:"
         if mine is not None
         else "If you press Add to pack, this new entry goes into your homebrew and the pack:"
     )
-    text = f"{head}\n**{_md(asked.name)}** ({asked.kind.capitalize()}): {_md(asked.text)}\n{who}"
+    text = f"{head}\n**{_md(asked.name)}** ({asked.kind.capitalize()}): {_md(asked.text)}"
     await _tell(interaction, text[:TEXT_MAX])
 
 
