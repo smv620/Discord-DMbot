@@ -267,18 +267,19 @@ describe("Help: the website's read-only pages (#1588)", () => {
     expect(heldTitles.includes("A quiet reminder of the game time")).toBe(!WHERE_ARE_WE_LIVE);
     const shown = dmSteps.map((x) => x.text).join(" ");
     expect(shown.includes("⚔️ Record a deed")).toBe(DEEDS_LIVE);
-    expect(shown.includes("looked at the game clock for half an hour")).toBe(WHERE_ARE_WE_LIVE);
+    expect(shown.includes("nobody has shown or moved it for half an hour")).toBe(WHERE_ARE_WE_LIVE);
     const deeds = deedSteps.map((x) => x.text).join(" ");
-    expect(deeds).toContain("Your own Standing words always win. Players never see deeds.");
+    expect(deeds).toContain("Players never see deeds, and they are never in a transcript.");
     expect(deeds).toContain("counts for less after ten sessions");
+    expect(deeds).toContain("It never listens for deeds.");
     const clock = whereAreWeSteps.map((x) => x.text).join(" ");
     expect(clock).toContain("Players never see it.");
-    expect(clock).toContain("never on Quiet");
+    expect(clock).toContain("Quiet ones never");
     // The note's exact line is not quoted: its wording is still being settled (#1745).
     expect(clock).not.toContain("Where we are");
     const guide = sharedStorySteps.map((x) => x.text).join(" ");
     expect(guide).toContain("Hey DMbot, what's next?");
-    expect(guide).toContain("never written into a transcript");
+    expect(guide).toContain("the transcript only notes that DMbot answered privately");
   });
 
   it("finds Settings, splits the party and deletes a campaign in plain words (#1659)", () => {

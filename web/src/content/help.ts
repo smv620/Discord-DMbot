@@ -278,7 +278,7 @@ export const sharedStorySteps: Step[] = [
     ],
   },
   {
-    text: "With Guide me on, press 🧭 What's next? on the Shared story card, or on the note before a session. If DMbot says it hasn't read your book, press Read it now first. DMbot shows you privately which chapter your table is probably in, what else the book has in that chapter, and the book's next chapter, or says This is the book's last chapter. It guesses from the people and places your table named in the last two sessions that you matched to your adventure. If none are matched yet, it says it has no guess. Not right? Use the Pick my chapter… menu under the answer, and DMbot uses yours. A long book has ◀ Earlier chapters and Later chapters ▶, and with several files DMbot asks which one first. Use DMbot's guess goes back, and ↩ Undo that undoes your pick. You can also ask out loud or by typing in your private chat with DMbot: \"Hey DMbot, what's next?\". The answer comes to you alone and is never written into a transcript. Only the DM can use it; everyone else is told so. It uses no AI and only says what your book says. It never decides what happens.",
+    text: "With Guide me on, press 🧭 What's next? on the Shared story card, or on the note before a session. If DMbot says it hasn't read your book, press Read it now first. DMbot shows you privately which chapter your table is probably in, what else the book has in that chapter, and the book's next chapter, or says This is the book's last chapter. It guesses from the people and places your table named in the last two sessions that you matched to your adventure. If none are matched yet, it says it has no guess. Not right? Use the Pick my chapter… menu under the answer, and DMbot uses yours. A long book has ◀ Earlier chapters and Later chapters ▶, and with several files DMbot asks which one first. Use DMbot's guess goes back, and ↩ Undo that undoes your pick. Only the DM can use it; everyone else is told so. It uses no AI and only says what your book says. It never decides what happens.",
     names: [
       { name: "What's next?", file: "ui/guide.py" },
       { name: "Read it now", file: "dm_screen/adventure_card.py" },
@@ -289,6 +289,9 @@ export const sharedStorySteps: Step[] = [
       { name: "Undo that", file: "ui/guide.py" },
       { name: "This is the book's last chapter.", file: "ui/guide.py" },
     ],
+  },
+  {
+    text: "You can also ask Guide me by saying or typing \"Hey DMbot, what's next?\" or \"Hey DMbot, where are we in the book?\". If you have agreed to be recorded, DMbot hears it. The answer comes to you alone, in your private chat with DMbot. Your question goes into the transcript, but the answer does not: the transcript only notes that DMbot answered privately. Only the DM can ask this. If Guide me is off, DMbot answers as usual.",
   },
   {
     text: "A backup of the campaign keeps only your adventure's name, not its text or what DMbot read, because anyone in your server can download a backup. After you restore, give DMbot the file again.",
@@ -303,7 +306,7 @@ export const DEEDS_LIVE = false;
 
 export const deedSteps: Step[] = [
   {
-    text: "To note something the party did, open a player character's or the party's name card and press ⚔️ Record a deed (only you, the game master, can). Say what happened, pick up to five characters, groups or places it mattered to, then say how it landed: Helped them, Pleased them, Annoyed them or Hurt them. Press ✅ Record it, or No, cancel. ↩ Undo that takes it back. The deed shows on the Standing screen as a reason, like \"(session 4, helped)\", and counts for less after ten sessions. Your own Standing words always win. Players never see deeds.",
+    text: "To note something a player character or the party did, open their name card and press ⚔️ Record a deed. Only the DM can. Type what happened, pick up to five NPCs, groups or places it mattered to, then pick how it landed: Helped them, Pleased them, Annoyed them or Hurt them. Press ✅ Record it, or No, cancel. If you have no NPCs, groups or places yet, add one under Names first.",
     names: [
       { name: "⚔️ Record a deed", file: "ui/deeds.py" },
       { name: "Helped them", file: "memory/standing.py" },
@@ -315,13 +318,16 @@ export const deedSteps: Step[] = [
       { name: "↩ Undo that", file: "ui/deeds.py" },
     ],
   },
+  {
+    text: "DMbot records only what you type. It never listens for deeds. A deed shows on the Standing screen as a reason, like \"(session 4, helped)\". It counts for less after ten sessions, and a feeling you set yourself always wins. ↩ Undo that works for a short while after you record. DMbot only reminds you; you decide how they act. Players never see deeds, and they are never in a transcript.",
+  },
 ];
 
 export const WHERE_ARE_WE_LIVE = false;
 
 export const whereAreWeSteps: Step[] = [
   {
-    text: "If nobody has looked at the game clock for half an hour during a session, DMbot posts a quiet line on your DM screen saying where the game is. It does this after 15 minutes if your DM screen is on Chatty, and never on Quiet. It stays silent during a fight, and with a split party it names each group. Players never see it.",
+    text: "While DMbot is listening, if you have set the game clock and nobody has shown or moved it for half an hour, DMbot posts one short line on your DM screen saying where the game is. Chatty DM screens get it after 15 minutes, and Quiet ones never. It stays silent during a fight, and with a split party it names each group. Players never see it.",
   },
 ];
 
