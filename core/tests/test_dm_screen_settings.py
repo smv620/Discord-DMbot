@@ -82,8 +82,8 @@ class SettingsCardTest(unittest.TestCase):
         view = settings_view(campaign("quiet", vis="private"), None, DM)
         items: list[Any] = list(view.children)
         self.assertEqual(
-            [i.row for i in items], [0, 0, 1, 1, 1, 2, 3, 3, 3, 3, 3, 4, 4, 4, 4, 4, 2, 2, 2, 0]
-        )  # Take it on, Look up, Rules cards, Clock, House file, Invite, chat, sides, ...
+            [i.row for i in items], [0, 0, 1, 1, 1, 2, 3, 3, 3, 3, 3, 4, 4, 4, 4, 2, 2, 2, 0]
+        )  # Take it on, Look up, Rules cards, Clock, House file, Invite, chat, ...
         # ... shared rules, Recaps, Homebrew, and Transcripts, Game masters and Delete by Take it on
         labels = [i.item.label for i in items]
         self.assertEqual(labels[:2], ["✓ Quiet", "Normal"])  # no Chatty
@@ -94,7 +94,6 @@ class SettingsCardTest(unittest.TestCase):
                 True,
                 False,
                 True,
-                False,
                 False,
                 False,
                 False,
