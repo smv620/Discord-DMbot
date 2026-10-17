@@ -15,7 +15,15 @@ from typing import Any
 import discord
 
 from dmbot.memory import threads as model
-from dmbot.memory.models import ABANDONED, CONFIRMED, DM, OPEN, RESOLVED, MemoryRuleError
+from dmbot.memory.models import (
+    ABANDONED,
+    CONFIRMED,
+    DM,
+    OPEN,
+    RESOLVED,
+    THREAD_TYPES,
+    MemoryRuleError,
+)
 from dmbot.memory.search import MAX_RESULTS, find
 from dmbot.ui import logic
 from dmbot.ui.dmbot_commands import (
@@ -56,8 +64,8 @@ def _stalled_after(interaction: discord.Interaction) -> int:
 def waiting_text(count: int, quiet: int) -> str:
     """For the DM screen after a session: how many, and for how long, never which."""
     return (
-        f"🧵 **{model.stalled_line(count, quiet)}** Press the button to say if they are still "
-        "going. Nothing changes until you decide. Only you can see the list."
+        f"🧵 **{model.stalled_line(count, quiet)}** Tap to check them. "
+        "Nothing changes until you say."
     )
 
 
@@ -169,16 +177,17 @@ class NewThread(_Menu):
             await _tell(interaction, ONLY_DM)
             return
         if self.used:
-            await _tell(interaction, "Already done.")
+            await _tell(interaction, "Already made. Find it under Names.")
             return
+        self.used = True  # before the await, so a double tap makes one thread
         try:
             made = await memory.new_thread(
                 campaign.guild_id, campaign.id, self.name, self.kind, self.state, source=DM
             )
         except MemoryRuleError as exc:
+            self.used = False
             await _tell(interaction, f"⚠️ {exc}")
             return
-        self.used = True
         self.stop()
         changed(interaction, campaign)
         await show_thread(interaction, campaign.id, made.value.id, note="✅ Started.")
@@ -234,9 +243,12 @@ class ChangeState(_Menu):
             return
         campaign, memory = got
         try:
-            await memory.set_condition(
+            moved = await memory.set_condition(
                 campaign.guild_id, campaign.id, self.thread_id, state, source=DM
             )
+            if moved.value[0] is None and state in model.LIVE_STATES:
+                # The state it is already in: the DM means "still", so it counts as checked.
+                await memory.check_thread(campaign.guild_id, campaign.id, self.thread_id, source=DM)
         except MemoryRuleError as exc:
             await show_thread(interaction, self.campaign_id, self.thread_id, note=f"⚠️ {exc}")
             return
@@ -246,7 +258,7 @@ class ChangeState(_Menu):
             interaction,
             self.campaign_id,
             self.thread_id,
-            note=f"✅ Now {model.STATE_WORDS[state].lower()}.",
+            note=f"✅ Marked: {model.STATE_WORDS[state]}.",
         )
 
     async def _still(self, interaction: discord.Interaction) -> None:
@@ -350,7 +362,7 @@ async def link_by_name(
         if names.entities[m.entity_id].status == CONFIRMED
         and names.entities[m.entity_id].type != "person"
         and m.entity_id != thread_id
-        and not names.entities[m.entity_id].type.startswith("thread")
+        and names.entities[m.entity_id].type not in THREAD_TYPES
         and (kinds is None or names.entities[m.entity_id].type in kinds)
     ][:MAX_RESULTS]
     if len(found) == 1:
@@ -369,7 +381,7 @@ async def link_by_name(
             interaction,
             campaign_id,
             thread_id,
-            note=f"No name like **{_md(typed)}**. Add it as a name first.",
+            note=f"Nothing called **{_md(typed)}** yet. Add it under Names, then try again.",
         )
         return
     options = [
@@ -467,11 +479,11 @@ class HowLinked(_Menu):
         self.add_item(
             _Button(
                 partial(self._link, False),
-                label="Moved it along",
+                label="Moved the thread",
                 style=discord.ButtonStyle.primary,
             )
         )
-        self.add_item(_Button(partial(self._link, True), label="Ended it"))
+        self.add_item(_Button(partial(self._link, True), label="Ended the thread"))
 
     async def _link(self, ends_it: bool, interaction: discord.Interaction) -> None:
         await _answer_first(interaction, in_place=True)
@@ -570,7 +582,7 @@ def threads_view(campaign_id: str) -> discord.ui.View:
     return view
 
 
-NOTHING_LEFT = "✅ Every thread is moving. DMbot looks again after your next session."
+NOTHING_LEFT = "✅ No threads need a check right now. DMbot looks again after your next session."
 
 
 async def start_review(interaction: discord.Interaction, campaign_id: str) -> None:
@@ -613,7 +625,7 @@ class ThreadsReview(_Menu):
         for row, info in enumerate(self.page):
             for key, label in (
                 ("still", "Still going"),
-                ("resolved", "Resolved"),
+                ("resolved", "Finished"),
                 ("dropped", "Dropped"),
             ):
                 self.add_item(
@@ -623,7 +635,10 @@ class ThreadsReview(_Menu):
                         row=row,
                     )
                 )
-        lines = ["**Threads that haven't moved.** Pick what is true in your story."]
+        lines = [
+            "**Threads that haven't moved.** Tap what is true in your story."
+            " You can change it later on the thread's card."
+        ]
         for n, info in enumerate(self.page, 1):
             lines.append(
                 f"{n}. **{_md(info.thread.name)}**: quiet for {info.quiet_sessions} "

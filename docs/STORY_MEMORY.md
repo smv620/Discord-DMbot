@@ -195,7 +195,7 @@ each with a plain label:
   has its own.
 
 **Relationships** (each with domain, range, how many, conflicts):
-- `involved_in` (being/group/item/place → thread, detail = role: quest giver, target,
+- `in_thread` (being/group/item/place → thread, detail = role: quest giver, target,
   villain, victim, reward);
 - `advances` / `resolves` (event → thread);
 - `led_to` (event → event: cause and effect, no loops);
@@ -657,7 +657,7 @@ Each step is useful on its own and ships behind the existing phases.
    the players' audience and transcripts never get them. 30 pairs take well under 5 ms.
    **Phase 5c slice 1 is built (#1662): story threads the DM keeps** (no AI; the DM writes
    them). Core gains `thread` with the kinds `quest`, `mystery`, `hook` and `goal` under it (as
-   `clue` sits under `concept`), and the connections `involved_in` (who, with their role in the
+   `clue` sits under `concept`), and the connections `in_thread` (who, with their role in the
    detail), `advances` and `resolves` (event → thread). A thread's state is kept in
    `memory_states` (migration 0118 widens its `condition` check): hinted, open, active, resolved,
    abandoned. Forward moves are free; reopening a resolved or dropped thread is the DM's alone.
@@ -669,8 +669,11 @@ Each step is useful on its own and ships behind the existing phases.
    row with the same state; the card shows it as "checked, still going (Session N)", never as a
    change, and a reading of "what changed" skips it. After a session the report says "N threads
    haven't moved for M sessions" with a button to answer each (Still going, Resolved, Dropped). A
-   thread follows the same audience rules as any entry: a secret-named thread and facts from the
-   story plan never reach players. Backups, isolation and deletion are those of every memory entry.
+   thread is the DM's plot note: lookup (`hidden`, so a server manager who is not a DM never finds
+   it) and the players' recall leave it, and every fact that points to it, out. The connection is
+   named `in_thread` because `involved_in` is already a synonym of `appears_in`. Backups,
+   isolation and deletion are those of every memory entry; `memory_heard` is not in a backup, so
+   a restored campaign shows no thread as stalled until new sessions are heard.
 3. **Phase 5c: PlotBot:** threads, promises, clues, `led_to`, stalled-thread nudges,
    summaries, the pre-session note, the AI recap.
 4. **Phase 5d: Shared story:** the story plan, `same_as` links, divergence ("Watch

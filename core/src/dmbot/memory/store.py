@@ -797,7 +797,7 @@ class MemoryStore:
             raise MemoryRuleError("Only the DM can do that.")
         async with self._write(guild_id, campaign_id, source) as w:
             fact, _flags = await self.add_relation_in(
-                w, who_id, "involved_in", thread_id, confidence=1.0, status=CONFIRMED,
+                w, who_id, "in_thread", thread_id, confidence=1.0, status=CONFIRMED,
                 detail=clean_text(role), from_session_at=from_session_at,
             )  # fmt: skip
             return Written(fact, w.batch)
@@ -3287,13 +3287,18 @@ async def _threads(scope: Scope, stalled_after: int) -> list[threads_mod.ThreadI
         return []
     ids = [r["id"] for r in rows]
     by_id: dict[str, list[State]] = {i: [] for i in ids}
-    for r in await scope.select(STATES, " AND entity_id = ANY(%s) ORDER BY created_at, id", [ids]):
+    for r in await scope.select(
+        STATES,
+        " AND entity_id = ANY(%s)"
+        " ORDER BY created_at, COALESCE(closed_at, 9223372036854775807), id",
+        [ids],
+    ):
         by_id[r["entity_id"]].append(states.state_of(r))
     facts = await scope.select(
         RELATIONS,
         " AND object_id = ANY(%s) AND predicate = ANY(%s) AND status = 'confirmed'"
         " AND to_session_at IS NULL ORDER BY created_at, id",
-        [ids, ["involved_in", "advances", "resolves"]],
+        [ids, ["in_thread", "advances", "resolves"]],
     )
     others = {
         r["id"]: _entity(r)
@@ -3322,14 +3327,14 @@ async def _threads(scope: Scope, stalled_after: int) -> list[threads_mod.ThreadI
         involved = tuple(
             threads_mod.Involved(others[f["subject_id"]], f["detail"])
             for f in mine
-            if f["predicate"] == "involved_in"
+            if f["predicate"] == "in_thread"
         )
         movers = tuple(
             threads_mod.Mover(
                 others[f["subject_id"]], f["predicate"] == "resolves", f["from_session_at"]
             )
             for f in mine
-            if f["predicate"] != "involved_in"
+            if f["predicate"] != "in_thread"
         )
         touch = threads_mod.last_touch(
             r["created_at"],

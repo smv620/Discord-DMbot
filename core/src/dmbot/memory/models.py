@@ -81,6 +81,9 @@ INTACT, DESTROYED, LOST = "intact", "destroyed", "lost"
 # claim's words are never read as one of these, since "the door is open" is not a thread.
 HINTED, OPEN, GOING, RESOLVED, ABANDONED = "hinted", "open", "active", "resolved", "abandoned"
 THREAD_STATES = (HINTED, OPEN, GOING, RESOLVED, ABANDONED)
+# The core kinds of story thread. Threads are the DM's plot notes (CLAUDE.md: DM-screen content),
+# so lookup and recall keep them from anyone who may not see secrets.
+THREAD_TYPES = ("thread", "quest", "mystery", "hook", "goal")
 BEING_CONDITIONS = (ALIVE, DEAD, MISSING, CAPTURED, TRANSFORMED, UNKNOWN)
 THING_CONDITIONS = (INTACT, DESTROYED, LOST, UNKNOWN)
 CONDITIONS = (*BEING_CONDITIONS, INTACT, DESTROYED, LOST)

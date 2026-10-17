@@ -17,10 +17,10 @@ from dmbot.memory.models import ABANDONED, GOING, HINTED, OPEN, RESOLVED, Entity
 
 # What a state is called to the DM, and the roles the screen suggests for "who is involved".
 STATE_WORDS = {
-    HINTED: "Hinted at",
-    OPEN: "Open",
-    GOING: "Going on",
-    RESOLVED: "Resolved",
+    HINTED: "Just a hint",
+    OPEN: "Not started",
+    GOING: "Happening now",
+    RESOLVED: "Finished",
     ABANDONED: "Dropped",
 }
 ROLES = ("quest giver", "target", "villain", "victim", "reward")
@@ -85,7 +85,7 @@ def checked(history: Sequence[State]) -> list[bool]:
 
 def history_lines(history: Sequence[State], numbers: dict[int, int]) -> list[str]:
     """One plain line a row, oldest first: "Open (Session 2)", "checked, still going (Session 4)",
-    "Going on (Session 5)". A same-value row is never shown as a change of state."""
+    "Happening now (Session 5)". A same-value row is never shown as a change of state."""
     lines = []
     for row, again in zip(history, checked(history), strict=True):
         number = numbers.get(row.from_session_at) if row.from_session_at is not None else None
@@ -100,5 +100,4 @@ def history_lines(history: Sequence[State], numbers: dict[int, int]) -> list[str
 def stalled_line(count: int, quiet: int) -> str:
     """For the after-session report: how many threads, and for how long."""
     what = "thread hasn't" if count == 1 else "threads haven't"
-    sessions = "session" if quiet == 1 else "sessions"
-    return f"{count} {what} moved for {quiet} {sessions}."
+    return f"{count} {what} moved for {quiet} or more sessions."

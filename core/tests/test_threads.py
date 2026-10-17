@@ -13,6 +13,7 @@ from unittest.mock import AsyncMock, MagicMock
 from dmbot.campaigns.store import decode_backup, encode_backup
 from dmbot.memory import recall
 from dmbot.memory import threads as th
+from dmbot.memory.lookup import CampaignLookup
 from dmbot.memory.models import (
     ABANDONED,
     GOING,
@@ -24,6 +25,7 @@ from dmbot.memory.models import (
     State,
 )
 from dmbot.memory.recall import DM_SCREEN, PLAYERS, RecallService
+from dmbot.memory.search import find
 from dmbot.ui import threads as ui
 from tests.test_memory_store import DM, GUILD_A, GUILD_B, ConfirmedMemoryTest
 
@@ -62,16 +64,16 @@ class Pure(unittest.TestCase):
         self.assertEqual(
             th.history_lines(history, numbers),
             [
-                "Open (Session 1)",
-                "Going on (Session 2)",
+                "Not started (Session 1)",
+                "Happening now (Session 2)",
                 "checked, still going (Session 3)",
                 "checked, still going (Session 4)",
             ],
         )
 
     def test_the_after_session_line_reads_plainly(self) -> None:
-        self.assertEqual(th.stalled_line(1, 1), "1 thread hasn't moved for 1 session.")
-        self.assertEqual(th.stalled_line(4, 3), "4 threads haven't moved for 3 sessions.")
+        self.assertEqual(th.stalled_line(1, 1), "1 thread hasn't moved for 1 or more sessions.")
+        self.assertEqual(th.stalled_line(4, 3), "4 threads haven't moved for 3 or more sessions.")
 
 
 class Threads(ConfirmedMemoryTest):
@@ -185,7 +187,7 @@ class Threads(ConfirmedMemoryTest):
         self.assertEqual(sum(s.closed_at is None for s in got.history), 1)
         lines = ui.thread_lines(got, {S1: 1, S3: 3})
         self.assertIn("checked, still going (Session 3)", " ".join(lines))
-        self.assertNotIn("Going on (Session 3)", " ".join(lines))  # never a change of state
+        self.assertNotIn("Happening now (Session 3)", " ".join(lines))  # never a change of state
 
     async def test_only_a_thread_that_can_go_on_can_be_checked(self) -> None:
         await self.memory.set_condition(GUILD_A, self.c, self.heir, RESOLVED, source="dm")
@@ -244,32 +246,22 @@ class Threads(ConfirmedMemoryTest):
 
     # ---- who sees it ----
 
-    async def test_a_thread_and_its_links_follow_recalls_audience_rules(self) -> None:
+    async def test_threads_are_the_dms_plot_notes_and_never_reach_players(self) -> None:
         await self.memory.involve(GUILD_A, self.c, self.heir, self.mira, "quest giver", source="dm")
-        dm = await RecallService(self.memory).recall(
-            GUILD_A, self.c, seeds=["Mira"], audience=DM_SCREEN, opted_in={7}
-        )
+        service = RecallService(self.memory)
+        dm = await service.recall(GUILD_A, self.c, seeds=["Mira"], audience=DM_SCREEN, opted_in={7})
         self.assertIn("The Missing Heir", " ".join(i.text for i in dm.items))
-        players = await RecallService(self.memory).recall(
-            GUILD_A, self.c, seeds=["Mira"], audience=PLAYERS, opted_in={7}
-        )
-        self.assertIn("The Missing Heir", " ".join(i.text for i in players.items))  # ordinary
-        # A thread whose own name is secret never reaches them, by name or through a neighbour.
-        await self.memory.add_alias(
-            GUILD_A, self.c, self.heir, "The Missing Heir", kind="full", source="dm",
-            status="confirmed", secret=True,
-        )  # fmt: skip
-        hidden = await RecallService(self.memory).recall(
-            GUILD_A, self.c, seeds=["Mira", "The Missing Heir"], audience=PLAYERS, opted_in={7}
-        )
-        self.assertNotIn("Missing Heir", " ".join(i.text for i in hidden.items))
+        for seeds in (["Mira"], ["The Missing Heir"], [self.heir]):
+            got = await service.recall(GUILD_A, self.c, seeds=seeds, audience=PLAYERS, opted_in={7})
+            self.assertNotIn("Missing Heir", " ".join(i.text for i in got.items), seeds)
+
+    async def test_a_manager_who_is_not_a_dm_finds_no_thread(self) -> None:
+        names = await self.memory.lookup_data(GUILD_A, self.c)
+        whole = CampaignLookup.build(names)
+        self.assertIn(self.heir, whole.entities)
+        self.assertNotIn(self.heir, whole.for_viewer(False).entities)
         self.assertEqual(
-            (
-                await RecallService(self.memory).recall(
-                    GUILD_A, self.c, seeds=["Mira"], audience="transcript", opted_in={7}
-                )
-            ).items,
-            (),
+            [m for m in find(whole.for_viewer(False), "Missing Heir", secrets=False)], []
         )
 
     async def test_a_link_from_the_story_plan_never_reaches_players(self) -> None:
@@ -344,7 +336,7 @@ class Screens(ConfirmedMemoryTest):
         await self.memory.involve(GUILD_A, self.c, self.heir, self.mira, "quest giver", source="dm")
         (info,) = await self.memory.threads(GUILD_A, self.c)
         lines = ui.thread_lines(info, {})
-        self.assertEqual(lines[0], "🧵 **Open**")
+        self.assertEqual(lines[0], "🧵 **Not started**")
         self.assertIn("**Involved:** Mira (quest giver)", lines)
 
     async def test_new_thread_and_the_card_buttons_are_for_the_dm_only(self) -> None:
@@ -368,7 +360,7 @@ class Screens(ConfirmedMemoryTest):
         self.assertIn("**The Missing Heir**: quiet for 3 sessions.", text)
         self.assertEqual(
             [getattr(b, "label", "") for b in review.children],
-            ["1 · Still going", "1 · Resolved", "1 · Dropped"],
+            ["1 · Still going", "1 · Finished", "1 · Dropped"],
         )
         self.now = S4 + 10  # the DM answers after Session 4
         it = self.interaction()

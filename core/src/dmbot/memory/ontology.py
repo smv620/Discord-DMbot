@@ -251,8 +251,10 @@ _BEINGS = ("character",)
 # The story's kinds: every active core kind except `person`, who sits at the table and not in
 # the story, so "knows" and "appears in" never reach them (#1188).
 _ANY = tuple(
-    t.key for t in CORE_TYPES if t.parent is None and t.status == ACTIVE and t.key != "person"
-)
+    t.key
+    for t in CORE_TYPES
+    if t.parent is None and t.status == ACTIVE and t.key not in ("person", "thread")
+)  # (a thread only takes its own connections, #1662)
 
 # The catch-all relationship a refused term's fact is kept on, with the steward's words as its
 # label (in the fact's `detail`), so a refusal never loses the fact (#1298, #1303).
@@ -301,7 +303,7 @@ CORE_PREDICATES: tuple[PredicateTerm, ...] = (
         synonyms=("belongs_to", "part_of", "in_group"),
     ),
     PredicateTerm(
-        "involved_in",
+        "in_thread",
         "is involved in",
         "Has a part in a story thread, and the part is the detail: the quest giver, the target, "
         "the villain, a victim, the reward.",
