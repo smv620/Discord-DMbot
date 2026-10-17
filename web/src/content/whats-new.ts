@@ -19,6 +19,21 @@ export const whatsNewIntro =
 
 export const entries: Entry[] = [
   {
+    date: "2026-10-17",
+    title: "Add homebrew from a link",
+    what: "In Settings, then Homebrew, press Add from a link and paste the address of a published homebrew page. DMbot shows you what it read and saves it only when you press Save; the first time for a site, you say you have the right to use it.",
+  },
+  {
+    date: "2026-10-17",
+    title: "Share imported homebrew in a pack",
+    what: "A pack can now include homebrew you added from a link. It travels as a pointer to the page, not a copy, and a table that follows the pack says once, for each site, that it has the right to use it before those entries are used.",
+  },
+  {
+    date: "2026-10-17",
+    title: "See the sites you approved",
+    what: "In Settings, then Homebrew, press Approved sites to see each site you said you may use, who said yes and when. You can take one back, and nothing is deleted.",
+  },
+  {
     date: "2026-10-16",
     title: "Homebrew for your campaign",
     what: "Open Settings, then Homebrew, to keep your own spells, monsters and items, and turn an entry on or off for your table. On a paid plan you can also share a pack with other tables and follow theirs (Settings, Shared rules).",
@@ -151,27 +166,6 @@ export const held: Held[] = [
     what: "In Settings, pick Game masters to add up to five people to a campaign, or take one off. Their access to the DM screen follows at once.",
     reason:
       "Merged (#1600, #1603); held until the owner's live check is recorded in docs/testing-history.log.",
-  },
-  {
-    date: "2026-10-17",
-    title: "See the sites you approved",
-    what: "In Settings, then Homebrew, press Approved sites to see each site you said you may use, who said yes and when. You can take one back, and nothing is deleted.",
-    reason:
-      "Goes with adding homebrew from a link, which waits for dev1's try on a real page (#1634, #1652).",
-  },
-  {
-    date: "2026-10-16",
-    title: "Share imported homebrew in a pack",
-    what: "A pack can now include homebrew you added from a link. It travels as a pointer to the page, not a copy, and a table that follows the pack says once, for each site, that it has the right to use it before those entries are used.",
-    reason:
-      "Goes with adding homebrew from a link, which waits for dev1's try on a real page (#1634, #1635).",
-  },
-  {
-    date: "2026-10-16",
-    title: "Add homebrew from a link",
-    what: "In Settings, then Homebrew, press Add from a link and paste the address of a published homebrew page. DMbot reads that one page, shows it to you, and saves it only when you press Save. The first time for a site, you say you have the right to use it; after that it asks nothing. You can also say who made a file you load. Approved sites, in the same place, shows each site you said yes to and lets you take one back.",
-    reason:
-      "Held until dev1 has tried one real published page from the server: the site may block server traffic (#1634).",
   },
   {
     date: "2026-10-16",
