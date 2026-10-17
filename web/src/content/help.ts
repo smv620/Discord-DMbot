@@ -74,6 +74,9 @@ export const secretClueSteps: Step[] = [
       { name: "🔓 Let anyone know", file: "ui/clue_audience.py" },
     ],
   },
+  {
+    text: "If a player asks DMbot about it, DMbot won't show a clue that only some people know.",
+  },
 ];
 
 // The DMbot channel (#1666, #1676) moves the buttons off the DM screen, so every Help line that
@@ -163,6 +166,47 @@ export const storyThreadSteps: Step[] = [
   },
   {
     text: "DMbot never sends your threads, promises or these links to players.",
+  },
+];
+
+// How NPCs feel about the party (#1655) and the homebrew kinds menu (#1663, #1665) went live on
+// 2026-10-17 with their What's new lines held until seen on the test server (#1695), so Help is
+// held the same way. Each switch flips in the same change that moves its held entries to `entries`;
+// a test ties each to them.
+export const STANDING_LIVE = false;
+
+export const standingSteps: Step[] = [
+  {
+    text: "To see how an NPC, a group or a place feels about the party, open its name card and press 🤝 Standing. It shows Hostile, Unfriendly, Wary, Friendly or Devoted for each player character, and for the party as a whole, with the reasons. Press Toward a character… to set it yourself, for one character or the party. DMbot only reminds you. You decide how they act. Players never see it.",
+    names: [
+      { name: "🤝 Standing", file: "ui/standing.py" },
+      { name: "Hostile", file: "memory/standing.py" },
+      { name: "Unfriendly", file: "memory/standing.py" },
+      { name: "Wary", file: "memory/standing.py" },
+      { name: "Friendly", file: "memory/standing.py" },
+      { name: "Devoted", file: "memory/standing.py" },
+      { name: "Toward a character…", file: "ui/standing.py" },
+    ],
+  },
+];
+
+export const HOMEBREW_KINDS_LIVE = false;
+
+export const homebrewKindSteps: Step[] = [
+  {
+    text: "Press ⚙️ Settings, then 📚 Homebrew. You see a button for each kind that has entries, like Spells 10/12, which means 10 of 12 spells are on. Press one to see only those. Press ↩ All kinds to go back.",
+    names: [
+      { name: "Spells", file: "ui/homebrew.py" },
+      { name: "↩ All kinds", file: "ui/homebrew.py" },
+    ],
+  },
+  {
+    text: "When you add homebrew, you can pick Species, Subclass or Background as the kind. Pages you add from a link are sorted into the right kind too.",
+    names: [
+      { name: "Species", file: "ui/homebrew.py" },
+      { name: "Subclass", file: "ui/homebrew.py" },
+      { name: "Background", file: "ui/homebrew.py" },
+    ],
   },
 ];
 
@@ -372,6 +416,8 @@ export const dmSteps: Step[] = [
   },
   ...(HOMEBREW_LINKS_LIVE ? homebrewLinkSteps : []),
   ...(STORY_THREADS_LIVE ? storyThreadSteps : []),
+  ...(STANDING_LIVE ? standingSteps : []),
+  ...(HOMEBREW_KINDS_LIVE ? homebrewKindSteps : []),
   ...(SECRET_CLUES_LIVE ? secretClueSteps : []),
   {
     text: "To share your homebrew with another table, press ⚙️ Settings, then 📚 Shared rules, then 📦 Homebrew packs, then 📤 Share my homebrew (paid campaigns only). DMbot gives you a share code. Any game master in your server can read everything you share, and so can anyone you give the code to. That includes entries you hide from players. Only share what you are happy for them to see. Followers get a new version only when you press 🔄 Publish my changes. Only homebrew is shared, never your story, names or notes.",
