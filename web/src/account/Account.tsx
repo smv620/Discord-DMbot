@@ -624,7 +624,7 @@ function PlanSection({ me }: { me: Me }) {
             </ActionButton>
             {portalUrl && (
               <p class="muted small">
-                <a href={portalUrl}>{portalWords.account}</a>
+                <a href={portalUrl} rel="noopener noreferrer">{portalWords.account}</a>
               </p>
             )}
           </>
@@ -729,7 +729,7 @@ function PlanSection({ me }: { me: Me }) {
       )}
       {portalUrl && (
         <p class="muted small">
-          <a href={portalUrl}>{portalWords.account}</a>
+          <a href={portalUrl} rel="noopener noreferrer">{portalWords.account}</a>
         </p>
       )}
     </section>

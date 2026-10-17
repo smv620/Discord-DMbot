@@ -25,7 +25,7 @@ const portalUrl = portalLoginUrl();
   {
     portalUrl && (
       <p>
-        {portalWords.refunds} <a href={portalUrl}>{portalWords.linkText}</a>
+        {portalWords.refunds} <a href={portalUrl} rel="noopener noreferrer">{portalWords.linkText}</a>
       </p>
     )
   }
