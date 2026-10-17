@@ -250,7 +250,7 @@ describe("Help: the website's read-only pages (#1588)", () => {
     expect(held.map((h) => h.title).includes("Link names to your adventure")).toBe(!SHARED_STORY_LIVE);
     expect(words).toContain("press 📖 In my adventure…, then pick them from the list");
     expect(words).toContain("DMbot never links names by itself");
-    expect(words).toContain("Press Take off to undo a link");
+    expect(words).toContain("then Take off. Made a mistake? Press Undo that.");
   });
 
   it("finds Settings, splits the party and deletes a campaign in plain words (#1659)", () => {
