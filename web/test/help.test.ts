@@ -232,7 +232,13 @@ describe("Help: the website's read-only pages (#1588)", () => {
     const shown = dmSteps.map((x) => x.text).join(" ");
     expect(shown.includes("🧭 Shared story")).toBe(SHARED_STORY_LIVE);
     const words = sharedStorySteps.map((x) => x.text).join(" ");
-    expect(words).toContain("Not working yet: for now DMbot can keep your adventure, but nothing reads it, so you get no alerts.");
+    expect(words).toContain("Not working yet: for now DMbot can keep and read your adventure, but nothing uses what it read, so you get no alerts.");
+    // Read it now (#1725) goes live with the same held entry, since that entry already describes the reading.
+    expect(words).toContain("press 📖 Read it now on its card, then Yes, read it");
+    expect(words).toContain("press 🔄 Refresh to check");
+    expect(words).toContain("Players never see the list. DMbot doesn't use it yet, so your alerts don't change.");
+    expect(words).toContain("not its text or what DMbot read");
+    expect(words).not.toMatch(/\$|token|\d+ (pages|files)/i);
     expect(words).toContain("with Off, DMbot remembers your table's story only.");
     expect(words).toContain("With Watch the story, it will also tell you when your table and the book no longer fit.");
     expect(words).toContain("With Guide me, when you ask, it will say what the book has next, with the page.");

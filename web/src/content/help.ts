@@ -227,7 +227,7 @@ export const SHARED_STORY_LIVE = false;
 
 export const sharedStorySteps: Step[] = [
   {
-    text: "To choose how DMbot uses your adventure book, press ⚙️ Settings, then 🧭 Shared story. Not working yet: for now DMbot can keep your adventure, but nothing reads it, so you get no alerts. Coming next: with Off, DMbot remembers your table's story only. With Watch the story, it will also tell you when your table and the book no longer fit. With Guide me, when you ask, it will say what the book has next, with the page.",
+    text: "To choose how DMbot uses your adventure book, press ⚙️ Settings, then 🧭 Shared story. Not working yet: for now DMbot can keep and read your adventure, but nothing uses what it read, so you get no alerts. Coming next: with Off, DMbot remembers your table's story only. With Watch the story, it will also tell you when your table and the book no longer fit. With Guide me, when you ask, it will say what the book has next, with the page.",
     names: [
       { name: "Shared story", file: "dm_screen/story_mode.py" },
       { name: "Watch the story", file: "dm_screen/story_mode.py" },
@@ -251,7 +251,16 @@ export const sharedStorySteps: Step[] = [
     ],
   },
   {
-    text: "A backup of the campaign keeps only your adventure's name, not its text, because anyone in your server can download a backup. After you restore, give DMbot the file again.",
+    text: "To make DMbot read your adventure, press 📖 Read it now on its card, then Yes, read it. DMbot's AI reads one file once and lists its chapters, places and people. It takes a few minutes and you can keep playing. Nothing tells you when it's done: press 🔄 Refresh to check, then 📋 See what was read to look at the list. It reads one file at a time, so press Read it now again for the next. Players never see the list. DMbot doesn't use it yet, so your alerts don't change. If a read stops, the card says why and what to press.",
+    names: [
+      { name: "Read it now", file: "dm_screen/adventure_card.py" },
+      { name: "Yes, read it", file: "dm_screen/adventure_card.py" },
+      { name: "See what was read", file: "dm_screen/adventure_card.py" },
+      { name: "Refresh", file: "dm_screen/adventure_card.py" },
+    ],
+  },
+  {
+    text: "A backup of the campaign keeps only your adventure's name, not its text or what DMbot read, because anyone in your server can download a backup. After you restore, give DMbot the file again.",
   },
 ];
 
