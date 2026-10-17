@@ -16,7 +16,7 @@ from typing import Any
 from unittest import mock
 from unittest.mock import AsyncMock, MagicMock
 
-from dmbot.ai import AIOutOfFunds, Reply
+from dmbot.ai import PRICE_PER_MILLION, AIOutOfFunds, Reply
 from dmbot.bot import DMBot
 from dmbot.campaigns import CampaignStore
 from dmbot.campaigns.models import STORY_OFF, STORY_WATCH
@@ -602,7 +602,7 @@ class Stopping(Setup):
         two = await self.adventure.add(GUILD_A, self.a.id, DM, "two.txt", BOOK + " Another part.")
         pad = await self.adventure.add(GUILD_A, self.a.id, DM, "pad.txt", BOOK + " Padding.")
         await self.plan.record_spend(
-            GUILD_A, self.a.id, pad.id, sp.MONTH_CAP_MICRO - 60_000, 0, 0
+            GUILD_A, self.a.id, pad.id, sp.MONTH_CAP_MICRO - 400_000, 0, 0
         )  # room for one call's worst case, not two
         slow_a, slow_b = Canned(FIRST, SECOND, THIRD, delay=0.2), Canned(FIRST, delay=0.2)
         first, second = await asyncio.gather(self.read(slow_a, one), self.read(slow_b, two))
@@ -1058,6 +1058,65 @@ class FollowUps(Setup):
         self.assertEqual(spent, sp.micro_usd("some-model-nobody-priced", 20_000, 3_000))
         self.assertGreater(spent, 500_000)  # priced high, never low
         self.assertEqual(len(ai.calls), 1)  # no second call at that price
+
+    async def test_the_reservation_is_at_the_dearest_price_so_no_fallback_can_cross_a_cap(
+        self,
+    ) -> None:
+        for which in ("file", "month"):
+            with self.subTest(which):
+                doc = await self.book(name=f"{which}.txt", text=BOOK + which)
+                cap = sp.DOCUMENT_CAP_MICRO if which == "file" else sp.MONTH_CAP_MICRO
+                # (the month's money is spent on another file, so this one is not at its own cap)
+                pad = (
+                    doc
+                    if which == "file"
+                    else await self.adventure.add(
+                        GUILD_A, self.a.id, DM, "pad.txt", BOOK + " Padding."
+                    )
+                )
+                already = (await self.plan.spent(GUILD_A, self.a.id, pad.id)).month
+                await self.plan.record_spend(
+                    GUILD_A,
+                    self.a.id,
+                    pad.id,
+                    cap - 100_000 - (already if which == "month" else 0),
+                    0,
+                    0,
+                )
+                dear = Reply(FIRST, False, 20_000, 3_000, "some-model-nobody-priced")
+                ai = Canned(dear)
+                report = await self.read(ai, doc)
+                # The dearest answer would not fit under the cap, so no call is made at all.
+                self.assertEqual(ai.calls, [])
+                self.assertIn(report.stopped, (reader.STOP_DOCUMENT_CAP, reader.STOP_MONTH_CAP))
+                spent = await self.plan.spent(GUILD_A, self.a.id, doc.id)
+                self.assertLessEqual(spent.document, sp.DOCUMENT_CAP_MICRO)
+                self.assertLessEqual(spent.month, sp.MONTH_CAP_MICRO)
+
+    async def test_a_dear_model_that_is_cut_short_stops_the_read_before_halving(self) -> None:
+        doc = await self.book()
+        dear = Reply("{", True, 1000, 4000, "some-model-nobody-priced")
+        with mock.patch.object(sp, "BATCH_CHUNKS", 3):
+            ai = Canned(dear, FIRST, SECOND)
+            report = await self.read(ai, doc)
+        self.assertEqual((report.stopped, len(ai.calls)), (reader.STOP_PRICE, 1))
+
+    def test_dearer_compares_input_and_output_separately(self) -> None:
+        with mock.patch.dict(PRICE_PER_MILLION, {"cheap-in": (1, 100), "cheap-out": (100, 1)}):
+            self.assertTrue(sp.dearer("cheap-in", "cheap-out"))
+            self.assertTrue(sp.dearer("cheap-out", "cheap-in"))
+            self.assertFalse(sp.dearer("cheap-in", "cheap-in"))
+
+    async def test_the_list_keeps_each_file_together(self) -> None:
+        one = await self.book()
+        two = await self.book(name="two.txt", text=BOOK + " Second.")
+        await self.read(Canned(FIRST, SECOND, THIRD), one)
+        await self.read(Canned(FIRST, SECOND, THIRD), two)
+        got, _ = await self.plan.listing(GUILD_A, self.a.id, 0, 99)
+        places = [x.title for x in got if x.kind == "place"]
+        self.assertEqual(len(places) % 2, 0)
+        half = len(places) // 2
+        self.assertEqual(places[:half], places[half:])
 
     async def test_the_ledger_comes_back_with_a_backup_by_fingerprint_amounts_only(self) -> None:
         doc = await self.book()

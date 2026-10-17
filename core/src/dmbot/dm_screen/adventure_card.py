@@ -120,8 +120,11 @@ STOPPED_WORDS = {
     "off": "Shared story was turned off. Turn it on again, then press Read it now.",
     "plan": "This campaign's plan doesn't include reading adventures.",
     "error": "Something went wrong. Press Read it now to try again.",
-    "price": "DMbot's AI changed and costs more now. It stopped to be safe. Try again later.",
-    "gone": "The file was removed while it was read.",
+    "price": (
+        "DMbot's AI changed and costs more now. It stopped to be safe."
+        " Press **Read it now** later to carry on."
+    ),
+    "gone": "The file was removed while DMbot was reading it.",
 }
 CARRY_ON = "Press Read it now to carry on."
 

@@ -62,13 +62,13 @@ def micro_usd(
 def dearer(model: str, than: str) -> bool:
     """Does `model` cost more per token than `than` (a model nobody priced counts as dear)?"""
     a, b = PRICE_PER_MILLION.get(model, DEFAULT_PRICE), PRICE_PER_MILLION.get(than, DEFAULT_PRICE)
-    return sum(a) > sum(b)
+    return a[0] > b[0] or a[1] > b[1]  # input and output each, so a swap of the two still counts
 
 
 def tokens_in(text: str) -> int:
-    """A cautious count of the tokens in a text: plain letters at `CHARS_PER_TOKEN` characters
-    each, anything else (Chinese, Japanese, symbols, emoji) at one token a character, which is
-    nearer the truth for them and never under it."""
+    """A cautious count of the tokens in a text: ASCII characters at `CHARS_PER_TOKEN` each,
+    anything else (Chinese, Japanese, accents, symbols, emoji) at one token a character, which
+    is nearer the truth for them and never under it."""
     plain = sum(1 for c in text if c.isascii())
     return int(plain / CHARS_PER_TOKEN) + (len(text) - plain) + 1
 
@@ -76,6 +76,15 @@ def tokens_in(text: str) -> int:
 def estimate_micro(model: str, text: str, max_output_tokens: int) -> int:
     """The most a call could cost: its text, counted as above, and the longest answer."""
     return micro_usd(model, tokens_in(text), max_output_tokens)
+
+
+def worst_micro(text: str, max_output_tokens: int) -> int:
+    """The most a call could cost whichever model answers: the dearest input price and the
+    dearest output price known (an unpriced fallback counts at `DEFAULT_PRICE`), so a reservation
+    made with this can't be overrun by a fallback and the caps hold."""
+    price_in = max([DEFAULT_PRICE[0], *(p[0] for p in PRICE_PER_MILLION.values())])
+    price_out = max([DEFAULT_PRICE[1], *(p[1] for p in PRICE_PER_MILLION.values())])
+    return tokens_in(text) * price_in + max_output_tokens * price_out
 
 
 def month_of(now: float) -> str:
@@ -796,7 +805,7 @@ class PlanStore:
                 "SELECT kind, name, summary, quote FROM plan_nodes WHERE guild_id = %s"
                 " AND campaign_id = %s AND document_id = %s ORDER BY"
                 " CASE kind WHEN 'chapter' THEN 0 WHEN 'place' THEN 1 ELSE 2 END,"
-                " position, created_at, name_key, id LIMIT %s OFFSET %s",
+                " document_id, position, created_at, name_key, id LIMIT %s OFFSET %s",
                 (guild_id, campaign_id, document_id, limit, offset),
             )
             return [
@@ -824,7 +833,7 @@ class PlanStore:
                     "SELECT kind, name, summary, quote FROM plan_nodes WHERE guild_id = %s"
                     " AND campaign_id = %s ORDER BY"
                     " CASE kind WHEN 'chapter' THEN 0 WHEN 'place' THEN 1 ELSE 2 END,"
-                    " position, created_at, name_key, id LIMIT %s OFFSET %s",
+                    " document_id, position, created_at, name_key, id LIMIT %s OFFSET %s",
                     (guild_id, campaign_id, limit, offset),
                 )
                 out = [
@@ -939,4 +948,5 @@ __all__ = [
     "estimate_micro",
     "micro_usd",
     "parse_answer",
+    "worst_micro",
 ]

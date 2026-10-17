@@ -6644,6 +6644,7 @@ class DMBot(commands.AutoShardedBot):
                     await plan.finish(
                         guild_id, campaign_id, document_id, "stopped", plan_reader.STOP_ERROR
                     )
+                    await self._plan_read_notice(guild_id, campaign_id, document_id)
             finally:
                 self.plan_waiting.discard(key)
 

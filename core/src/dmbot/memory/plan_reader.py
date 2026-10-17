@@ -33,6 +33,7 @@ from dmbot.memory.story_plan import (
     estimate_micro,
     micro_usd,
     parse_answer,
+    worst_micro,
 )
 
 log = logging.getLogger(__name__)
@@ -252,7 +253,7 @@ async def _read_batch(
             raise _Stop(STOP_TIME)
         if allowed is not None and not await allowed():
             raise _Stop(STOP_PLAN)
-        worst = estimate_micro(model(), SYSTEM + text, MAX_TOKENS)
+        worst = worst_micro(SYSTEM + text, MAX_TOKENS)
         try:
             reservation = await store.reserve(guild_id, campaign_id, document_id, worst)
         except CapError as cap:
@@ -303,6 +304,8 @@ async def _read_batch(
         raise _Stop(STOP_FAILED) from None
     parsed = parse_answer(reply.text, batch)
     if reply.cut and len(batch) > 1:
+        if reply.model and dearer(reply.model, model()):
+            raise _Stop(STOP_PRICE)  # before halving: the halves would go to the same dear model
         # Too much for one answer: read it again in two halves rather than lose it.
         half = len(batch) // 2
         pending[0:0] = [batch[:half], batch[half:]]
