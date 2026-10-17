@@ -1690,7 +1690,9 @@ names panel nor the speech-to-text hints can be a fixed list.
   recorded stop counting at once, and the speaker is kept so their counts can be
   removed with their lines (Retention). In campaign backups (#1747) as counts only (entry,
   session start, speaker, times): at restore, counts of anyone not recorded now in the
-  restoring server, and of entries the restored campaign lacks, are dropped; a damaged
+  restoring server, and of entries the restored campaign lacks, are dropped (the file lists
+  which speaker said which names how often, and anyone in the server may download a paid
+  campaign's backup); a damaged
   section is refused whole, and an older backup restores with no counts. The fixed tiers
   are prepared off the event loop, once per change to the names. Until the DM can add
   connections (step 2), the tip-of-the-tongue tier stays empty.

@@ -6,9 +6,11 @@ from __future__ import annotations
 
 import copy
 from typing import Any
+from unittest import mock
 
 from dmbot.campaigns import CampaignError
 from dmbot.consent import ConsentStore
+from dmbot.memory import heard_backup
 from dmbot.memory.heard_backup import HEARD_ROWS_MAX, HeardSection
 from dmbot.memory.models import GOING, OPEN, Heard
 from tests.test_memory_store import DM, GUILD_A, GUILD_B, ConfirmedMemoryTest
@@ -169,3 +171,63 @@ class HeardBackup(ConfirmedMemoryTest):
         self.assertEqual(await self.heard_rows(GUILD_B, restored.id), [(S1, KEPT, 1)])
         self.assertEqual(await self.heard_rows(GUILD_A, other), [(S3, KEPT, 4)])
         self.assertEqual(await self.heard_rows(GUILD_A, self.c), [(S1, KEPT, 1)])
+
+    async def test_a_stop_during_the_restore_removes_the_rows_again(self) -> None:
+        await self.hear(S1, self.mira, KEPT)
+        backup = await self.campaigns.export(GUILD_A, self.c)
+        real = self.consent.consenting
+        calls = 0
+
+        async def stopping(guild: int) -> frozenset[int]:
+            nonlocal calls
+            calls += 1
+            found = await real(guild)
+            return found if calls == 1 else found - {KEPT}  # the stop lands after the insert
+
+        self.campaigns._sections["memory_heard"] = HeardSection(stopping)
+        restored = await self.campaigns.import_backup(GUILD_B, backup, DM)
+        self.assertEqual(calls, 2)
+        self.assertEqual(await self.heard_rows(GUILD_B, restored.id), [])
+
+    async def test_an_empty_section_and_a_server_with_nobody_recorded_load_nothing(self) -> None:
+        backup = await self.campaigns.export(GUILD_A, self.c)
+        self.assertEqual(backup["sections"]["memory_heard"], [])
+        restored = await self.campaigns.import_backup(GUILD_B, backup, DM)
+        self.assertEqual(await self.heard_rows(GUILD_B, restored.id), [])
+        await self.hear(S1, self.mira)
+        await self.consent.revoke(GUILD_B, KEPT)
+        again = await self.campaigns.import_backup(
+            GUILD_B, await self.campaigns.export(GUILD_A, self.c), DM
+        )
+        self.assertEqual(await self.heard_rows(GUILD_B, again.id), [])
+
+    async def test_a_replace_drops_a_speaker_who_has_since_stopped(self) -> None:
+        await self.hear(S1, self.mira, KEPT)
+        backup = await self.campaigns.export(GUILD_A, self.c)
+        await self.consent.revoke(GUILD_A, KEPT)
+        await self.campaigns.import_backup(GUILD_A, backup, DM, replace_campaign_id=self.c)
+        self.assertEqual(await self.heard_rows(GUILD_A, self.c), [])
+
+    async def test_past_the_cap_the_oldest_sessions_are_left_out_of_the_file(self) -> None:
+        for s in (S1, S2, S3):
+            await self.hear(s, self.mira)
+        with mock.patch.object(heard_backup, "HEARD_ROWS_MAX", 2):
+            rows = (await self.campaigns.export(GUILD_A, self.c))["sections"]["memory_heard"]
+        self.assertEqual([r["session_started_at"] for r in rows], [S2, S3])
+
+    def test_the_cap_itself_is_accepted_and_one_more_is_not(self) -> None:
+        def rows(n: int) -> list[Any]:
+            return [
+                {"entity_id": "ab" * 16, "session_started_at": i + 1, "speaker_id": 5, "times": 1}
+                for i in range(n)
+            ]
+
+        self.assertEqual(len(heard_backup._checked(rows(HEARD_ROWS_MAX))), HEARD_ROWS_MAX)
+        with self.assertRaises(CampaignError):
+            heard_backup._checked(rows(HEARD_ROWS_MAX + 1))
+        for bad in (1.0, "1", 2**63):
+            with self.assertRaises(CampaignError):
+                heard_backup._checked([{**rows(1)[0], "speaker_id": bad}])
+        self.assertEqual(
+            heard_backup._checked([{**rows(1)[0], "speaker_id": 2**63 - 1}])[0][2], 2**63 - 1
+        )

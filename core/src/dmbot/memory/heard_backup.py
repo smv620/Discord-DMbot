@@ -9,7 +9,9 @@ two things are dropped (not refused) when the backup is loaded, because a backup
   count exists only because someone agreed; it must not outlive "Stop recording me");
 - an entry that is not in the restored campaign (the memory section loads first).
 A speaker who deleted their lines (Retention) is gone from the table already, so the export has
-no counts of theirs. An older backup has no such section and restores with no counts, as before.
+no counts of theirs. An older backup has no such section and restores with no counts, as
+before. Sections load in the file's order and the memory section is written first; a hand-reordered
+file loses its counts (never a leak).
 """
 
 from __future__ import annotations
@@ -22,7 +24,9 @@ from dmbot.db import Conn
 from dmbot.memory.models import is_id
 
 DAMAGED = "This backup file is damaged (bad heard counts)."
-HEARD_ROWS_MAX = 200_000  # a long campaign: names x sessions x speakers stays far below this
+# Names x sessions x speakers stays far below this; at ~130 bytes a row it also keeps the section
+# well inside the backup size limit (200,000 rows alone would be ~26 MB, over it).
+HEARD_ROWS_MAX = 100_000
 INT64_MAX = 2**63 - 1
 INT32_MAX = 2**31 - 1
 _KEYS = {"entity_id", "session_started_at", "speaker_id", "times"}
@@ -59,6 +63,12 @@ def _checked(rows: object) -> list[Row]:
     return out
 
 
+def _is_checked(rows: object) -> bool:
+    """True for what `check` returned: a list holding only tuples (the whole list, not a guess
+    from its first row, so a mixed list is validated)."""
+    return isinstance(rows, list) and all(isinstance(r, tuple) for r in rows)
+
+
 class HeardSection:
     name = "memory_heard"
 
@@ -71,9 +81,11 @@ class HeardSection:
         cur = await conn.execute(
             "SELECT entity_id, session_started_at, speaker_id, times FROM memory_heard"
             " WHERE guild_id = %s AND campaign_id = %s"
-            " ORDER BY session_started_at, entity_id, speaker_id",
-            (guild_id, campaign_id),
+            " ORDER BY session_started_at DESC, entity_id, speaker_id LIMIT %s",
+            (guild_id, campaign_id, HEARD_ROWS_MAX),
         )
+        # Past the cap the oldest sessions are left out (they have faded from every use), so a
+        # file this writes is one `check` accepts. Oldest first in the file, as it reads best.
         return [
             {
                 "entity_id": r["entity_id"],
@@ -81,7 +93,7 @@ class HeardSection:
                 "speaker_id": int(r["speaker_id"]),
                 "times": int(r["times"]),
             }
-            for r in await cur.fetchall()
+            for r in reversed(await cur.fetchall())
         ]
 
     def check(self, rows: list[Any]) -> list[Row]:
@@ -89,7 +101,7 @@ class HeardSection:
         return _checked(rows)
 
     async def load(self, conn: Conn, guild_id: int, campaign_id: str, rows: Any) -> None:
-        checked = _checked(rows) if rows and isinstance(rows[0], dict) else list(rows)
+        checked = list(rows) if _is_checked(rows) else _checked(rows)
         if not checked:
             return
         # Consent is read now, at restore, for this server. Entries are those the memory
@@ -118,6 +130,16 @@ class HeardSection:
                 speakers,
             ),
         )
+        # Consent is re-checked after the async insert (CLAUDE.md): a "Stop recording me" that
+        # landed meanwhile drops its holder from the cache at once, so their rows go again.
+        still = await self._consenting(guild_id)
+        gone = sorted(set(speakers) - still)
+        if gone:
+            await conn.execute(
+                "DELETE FROM memory_heard WHERE guild_id = %s AND campaign_id = %s"
+                " AND speaker_id = ANY(%s)",
+                (guild_id, campaign_id, gone),
+            )
 
     async def clear(self, conn: Conn, guild_id: int, campaign_id: str) -> None:
         # The memory section's clear deletes entries, and the counts go with them (foreign
