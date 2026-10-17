@@ -287,6 +287,13 @@ export const held: Held[] = [
   },
   {
     date: "2026-10-17",
+    title: "Watch the story",
+    what: "With Watch the story on, DMbot tells you privately, once, when your table has gone against something your adventure needs. 👍 I know clears it, and 📋 Book's words shows what the book says. It never says what to do.",
+    reason:
+      "Merged (#1730); held until dev1 deploys 0125 and the owner's live check is recorded (#1729).",
+  },
+  {
+    date: "2026-10-17",
     title: "Link names to your adventure",
     what: "After DMbot has read your adventure, open a name's card and press In my adventure… to say who or where it is. Match names on the Shared story card lists names that look the same, and you say which are the same. Nothing is linked without your say-so. Only the DM sees the links. Take off removes one, and Undo that brings it back.",
     reason:
