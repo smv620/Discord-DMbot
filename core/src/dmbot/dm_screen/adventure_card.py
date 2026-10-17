@@ -417,32 +417,32 @@ class AdventureForm(discord.ui.Modal, title="Give DMbot your adventure"):
     async def on_submit(self, interaction: discord.Interaction) -> None:
         set_log_context(guild_id=interaction.guild_id)
         await interaction.response.defer(ephemeral=True, thinking=True)  # reading takes a while
-        say = interaction.followup.send
+        reply = interaction.followup.send
         # Checked again, now: the form may have been open for minutes.
         store = _store(interaction)
         campaigns = interaction.client.campaigns  # type: ignore[attr-defined]
         guild = interaction.guild
         fresh = await campaigns.get(guild.id, self.campaign.id) if guild else None
         if fresh is None or interaction.user.id not in fresh.dm_user_ids or store is None:
-            await say("Only this campaign's DMs can do that.", ephemeral=True)
+            await reply("Only this campaign's DMs can do that.", ephemeral=True)
             return
         upload = cast(discord.ui.FileUpload[AdventureForm], self.file.component)
         if not upload.values:
-            await say(NO_FILE, ephemeral=True)
+            await reply(NO_FILE, ephemeral=True)
             return
         attachment = upload.values[0]
         if attachment.size > FILE_MAX_BYTES:
-            await say(TOO_BIG, ephemeral=True)
+            await reply(TOO_BIG, ephemeral=True)
             return
         if PurePath(attachment.filename).suffix.casefold() not in FILE_TYPES or (
             kind_of_file(attachment.filename) == "unknown"
         ):
-            await say(WRONG_TYPE, ephemeral=True)
+            await reply(WRONG_TYPE, ephemeral=True)
             return
         try:
             raw = await attachment.read()
         except discord.HTTPException:
-            await say(DOWNLOAD_FAILED, ephemeral=True)
+            await reply(DOWNLOAD_FAILED, ephemeral=True)
             return
         began = time.monotonic()
         try:
@@ -458,14 +458,14 @@ class AdventureForm(discord.ui.Modal, title="Give DMbot your adventure"):
                 fresh.guild_id, fresh.id, interaction.user.id, attachment.filename, text
             )
         except (DocumentError, AdventureError) as exc:
-            await say(str(exc), ephemeral=True)
+            await reply(str(exc), ephemeral=True)
             return
         # Counts and seconds only: never the file's name or words.
         log.info(
             "Adventure text kept: %d characters in %.1f s", len(text), time.monotonic() - began
         )
         card, view = await _card(interaction, fresh)
-        await say(f"Kept.\n\n{card}", view=view, ephemeral=True, allowed_mentions=NO_MENTIONS)
+        await reply(f"Kept.\n\n{card}", view=view, ephemeral=True, allowed_mentions=NO_MENTIONS)
 
 
 class RemoveButton(

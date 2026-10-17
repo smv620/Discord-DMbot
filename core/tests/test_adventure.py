@@ -505,6 +505,24 @@ class Card(Setup):
             line.assert_answered_first()
             self.assertIn("slow:campaign", line.events, type(button).__name__)
 
+    async def test_a_refusal_after_the_answer_is_a_private_follow_up(self) -> None:
+        sent: list[str] = []
+        it = self.pressing(PLAYER)
+        await it.response.defer()
+
+        async def follow(text: str, **kw: Any) -> None:
+            sent.append(text)
+
+        it.followup.send = follow
+        await ui.RefreshButton(self.a.id).callback(it)
+        self.assertEqual(sent, [story_mode.ONLY_DMS])
+        it = self.pressing(DM)
+        await it.response.defer()
+        it.followup.send = follow
+        await self.campaigns.set_story_mode(GUILD_A, self.a.id, STORY_OFF, confirmed_by=None)
+        await ui.RefreshButton(self.a.id).callback(it)
+        self.assertEqual(sent[-1], ui.NOT_ON)
+
     async def test_no_button_with_the_switch_off_or_without_a_confirmation(self) -> None:
         it = self.pressing(DM)
         await story_mode.StoryButton(self.a.id).callback(it)
