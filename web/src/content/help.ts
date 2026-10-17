@@ -397,17 +397,17 @@ export const INITIATIVE_STYLE_LIVE = false;
 
 export const initiativeStyleSteps: Step[] = [
   {
-    text: "FightBot listens for how your table runs initiative, and times your private reminder to just before you choose. Your game master decides.",
+    text: "FightBot listens for how your table runs initiative, and times your private reminder to just before you choose. Your game master's words decide. Players only count if two recorded players agree and the game master hasn't said.",
   },
 ];
 
 // The game master's side of it: players don't see the combat line unless they peek.
 export const initiativeStyleDmSteps: Step[] = [
   {
-    text: "FightBot listens for how your table runs initiative: one at a time, by side, or rolled each round. Your DM screen's combat line shows \"Initiative, as heard: ...\". If it's wrong, say it, like \"we use side initiative\". No button.",
+    text: "FightBot listens for how your table runs initiative: one at a time, by side, or rolled each round. Your words decide. Two agreeing players count only if you haven't said. Your DM screen's combat line shows \"Initiative, as heard: ...\".",
   },
   {
-    text: "FightBot remembers the style between sessions. The combat line says \"as heard last time\" until FightBot hears it again, and you can correct it the same way.",
+    text: "To correct it, say it out loud, like \"we use side initiative\". There is no button. The line says \"as heard last time\" until FightBot hears it again.",
   },
 ];
 

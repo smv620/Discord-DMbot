@@ -306,7 +306,7 @@ describe("Help: the website's read-only pages (#1588)", () => {
     // Players don't see the combat line, so only the game master's steps speak of it.
     expect(initiativeStyleSteps.map((x) => x.text).join(" ")).not.toContain("combat line");
     const words = initiativeStyleDmSteps.map((x) => x.text).join(" ");
-    expect(words).toContain("No button.");
+    expect(words).toContain("There is no button.");
     expect(words).toContain("as heard last time");
     expect(words).not.toMatch(/setting/i); // the side-initiative button and setting are gone (#1774)
     for (const step of [...initiativeStyleSteps, ...initiativeStyleDmSteps]) {
