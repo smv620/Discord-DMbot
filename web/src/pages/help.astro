@@ -91,6 +91,12 @@ import { recapSteps, accountSteps, dmSteps, quickAnswers, quickAnswersHeading, e
             ) : (
               s.text
             )}
+            {s.link && (
+              <>
+                {" "}
+                <a href={s.link.href} rel="noopener noreferrer">{s.link.text}</a>
+              </>
+            )}
           </li>
         ))
       }

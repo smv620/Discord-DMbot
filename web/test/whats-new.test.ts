@@ -86,6 +86,7 @@ describe("What's new", () => {
       "A DMbot channel for buttons", // until seen on the test server (#1666)
       "A Shared story switch", // until the adventure reader exists (#1692)
       "Homebrew menu by kind", // until seen on the test server (#1665)
+      "Manage your plan without Discord", // until the billing login link is set in the build (#1711)
     ]);
     for (const h of held) {
       expect(h.reason.length, h.title).toBeGreaterThan(20);

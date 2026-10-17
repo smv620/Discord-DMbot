@@ -496,6 +496,11 @@ export interface AccountApi {
   houseRules?(campaignRef: string): Promise<HouseRules>;
   /** The same rules as the file the bot's Download button sends. */
   houseRulesFile?(campaignRef: string): Promise<Blob>;
+  /** Whether DMbot may use this person's words to improve itself (#1610); on by default. Missing
+   * from an older API, which shows no switch. */
+  improvement?(): Promise<boolean>;
+  /** Turn that on or off for this person, and say what is saved. */
+  setImprovement?(on: boolean): Promise<boolean>;
   /** The campaigns with homebrew the DM shared, for anyone in the server (#1525). Missing from an
    * API older than that. */
   homebrewCampaigns?(): Promise<HomebrewCampaign[]>;
@@ -722,6 +727,10 @@ export function httpApi(base: string, fetcher: typeof fetch = fetch): AccountApi
         undefined,
         true,
       )) as Blob,
+    improvement: async () =>
+      ((await call("GET", "/me/improvement")) as { improve: boolean }).improve,
+    setImprovement: async (on) =>
+      ((await call("PUT", "/me/improvement", { improve: on })) as { improve: boolean }).improve,
     homebrewCampaigns: async () =>
       ((await call("GET", "/me/homebrew")) as { campaigns: HomebrewCampaign[] }).campaigns,
     homebrew: async (campaignRef) =>

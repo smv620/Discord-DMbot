@@ -654,6 +654,26 @@ class Table:
         return user_id == self.dm_user_id or user_id in self.dm_user_ids
 
 
+def _ms(seconds: float) -> int:
+    """Whole milliseconds, never negative."""
+    return max(0, int(seconds * 1000))
+
+
+def consent_timing_line(
+    people: int, reminders: int, status_ms: int, send_ms: list[int], since_start_ms: int | None
+) -> str:
+    """One INFO line per consent ask (#1706): how many people, how long the consent look-up and
+    the private messages took, and how long after the session began. Numbers only: no name, no
+    id, no words. A slow button for a player can then be placed (a late ask, a slow look-up, or
+    Discord taking long to open the DM)."""
+    since = "unknown" if since_start_ms is None else f"{since_start_ms}ms"
+    slowest = max(send_ms, default=0)
+    return (
+        f"Consent asked: {people} people ({reminders} reminders), status {status_ms}ms, "
+        f"sent {sum(send_ms)}ms in total (slowest {slowest}ms), since the session start {since}"
+    )
+
+
 class DMBotTree(app_commands.CommandTree["DMBot"]):
     """Tags every slash-command log line with the server it came from."""
 
@@ -1714,6 +1734,7 @@ class DMBot(commands.AutoShardedBot):
         if not people:
             return
         table.asked.update(m.id for m in people)  # before any await: nobody asked twice
+        began = time.monotonic()  # for the timing line (#1706): numbers only
         with log_context(guild_id=gid, campaign_id=table.campaign_id):
             try:
                 status = await self.consent.status(gid, [m.id for m in people])
@@ -1721,6 +1742,7 @@ class DMBot(commands.AutoShardedBot):
                 log.exception("Couldn't look up consent; they'll be asked when they rejoin")
                 table.asked.difference_update(m.id for m in people)
                 return
+            status_ms = _ms(time.monotonic() - began)
             times, renew = status.granted, status.ask_again
             if only_renewals:
                 table.asked.difference_update(m.id for m in people if m.id not in renew)
@@ -1734,6 +1756,8 @@ class DMBot(commands.AutoShardedBot):
             company = self.company
             dms_off: list[str] = []
             failed: list[str] = []
+            send_ms: list[int] = []  # how long each private message took to go
+            reminders = 0
             for member in people:
                 if self.tables.get(gid) is not table:
                     return  # the session ended: say nothing more
@@ -1750,6 +1774,7 @@ class DMBot(commands.AutoShardedBot):
                         sheets=self.sheets is not None,
                     )
                     view = menu_view(gid, table.campaign_id, invite=table.dndbeyond_invite)
+                    reminders += 1
                 else:
                     text = request_text(
                         server,
@@ -1768,10 +1793,21 @@ class DMBot(commands.AutoShardedBot):
                         test_voice=self.test_voice_listed(gid),
                         invite=table.dndbeyond_invite,
                     )
+                sending = time.monotonic()
                 result = await send_prompt(member, text, view)
+                send_ms.append(_ms(time.monotonic() - sending))
                 if result != "sent":
                     table.asked.discard(member.id)  # try again if they rejoin
                     (dms_off if result == "dms_off" else failed).append(member.display_name)
+            log.info(
+                consent_timing_line(
+                    len(people),
+                    reminders,
+                    status_ms,
+                    send_ms,
+                    _ms(time.time() - table.started_at) if table.started_at else None,
+                )
+            )
             renewed = [m.display_name for m in people if m.id in renew]
             notes = [n for n in (renewed_text(renewed), unreachable_text(dms_off, failed)) if n]
             if notes and self.tables.get(gid) is table:
