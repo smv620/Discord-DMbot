@@ -719,7 +719,7 @@ class MemoryStore:
 
     async def is_player_here(self, guild_id: int, campaign_id: str, user_id: int) -> bool:
         """Whether this person is tied to this campaign (#1666): the player of a confirmed
-        character in it, or recorded saying something in one of its sessions. A merged or
+        character in it, or heard saying a known name in one of its sessions. A merged or
         proposed character does not count, nor does the person's own entry that DMbot makes when a
         character is linked. Nothing about what was said, only that they were here."""
         async with self._read(guild_id, campaign_id) as scope:

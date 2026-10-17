@@ -686,7 +686,7 @@ class SaveAndResume(SessionTests):
         await bot._on_status(bot.tables[GUILD], Status("joined", guild_id=GUILD))
         (ids,) = [ids for text, ids in views if "listening again" in text]
         cid = self.campaign.id
-        self.assertEqual(ids, [f"dmbot:settings:{cid}", f"dmbot:stop:{cid}"])
+        self.assertEqual(ids, [f"dmbot:stop:{cid}"])  # Settings moved to the DM Bot channel (#1666)
 
     async def test_quick_repeat_restarts_stay_quiet(self) -> None:
         from dmbot.ears.protocol import Status
@@ -1162,9 +1162,8 @@ class SaveAndResume(SessionTests):
         self.assertIn("✉️ Not recorded yet: Dee. DMbot is asking privately", text)
         self.assertNotIn("0 player", text)
         # #108: the DM stops with one press; the button comes off at the end.
-        settings, button = call.args[2].children  # Settings first (#515)
+        (button,) = call.args[2].children  # only the in-game control (Settings moved, #1666)
         self.assertEqual(button.custom_id, f"dmbot:stop:{self.campaign.id}")
-        self.assertEqual(settings.custom_id, f"dmbot:settings:{self.campaign.id}")  # #515
         await self.bot.stop_table(GUILD, "test")
         await asyncio.gather(*self.bot._finishing)
         listening.edit.assert_awaited_with(view=None)
