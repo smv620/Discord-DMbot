@@ -13,6 +13,7 @@ import { text as transcriptText } from "../content/transcripts";
 import { RECAP_AUDIO_LIVE } from "../content/recap-words";
 import { accountWords as audioWords, price as audioPrice } from "../content/recap-audio";
 import { hoursLeftLine, hoursUsedLine, planName, text } from "../content/account";
+import { portalLoginUrl, portalWords } from "../content/billing-login";
 import { formatPrice, plans as paidPlans, type PlanId } from "../content/pricing";
 import {
   ApiError,
@@ -548,6 +549,7 @@ function PlanSection({ me }: { me: Me }) {
         return null;
       },
     );
+  const portalUrl = portalLoginUrl();
   const portal = (): void =>
     void run(
       async () => go(await api.billingPortalUrl()),
@@ -620,6 +622,11 @@ function PlanSection({ me }: { me: Me }) {
             <ActionButton busy={busy} kind="secondary" onClick={portal}>
               {text.stopPaying}
             </ActionButton>
+            {portalUrl && (
+              <p class="muted small">
+                <a href={portalUrl}>{portalWords.account}</a>
+              </p>
+            )}
           </>
         )}
       </section>
@@ -719,6 +726,11 @@ function PlanSection({ me }: { me: Me }) {
             </>
           )}
         </>
+      )}
+      {portalUrl && (
+        <p class="muted small">
+          <a href={portalUrl}>{portalWords.account}</a>
+        </p>
       )}
     </section>
   );

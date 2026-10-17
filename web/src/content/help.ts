@@ -7,6 +7,7 @@ import { minimumAge } from "./legal";
 import { price as narrationPrice } from "./recap-audio";
 import { RECAP_AUDIO_LIVE, RECAPS_LIVE, emailsIntroTail, recapEmailStep, recapSteps as baseRecapSteps } from "./recap-words";
 import { SUPPORT_AI_LIVE, helpNote } from "./support-words";
+import { portalLoginSteps, portalLoginUrl } from "./billing-login";
 
 export interface Step {
   /** The words people read. Names in `names` must appear in the bot's code. */
@@ -559,6 +560,8 @@ export const accountSteps: Step[] = [
       { name: "/dmbot restore", file: "ui/dmbot_commands.py" },
     ],
   },
+  // Only when the build has Stripe's billing login link (#1711).
+  ...portalLoginSteps(portalLoginUrl()),
 ];
 
 /** Emails from DMbot (#1283): every sentence is read from core/src/dmbot/mail.py, trial_jobs.py and
