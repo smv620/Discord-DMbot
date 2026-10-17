@@ -195,9 +195,12 @@ def decode(saved: str | None) -> tuple[Order, Declare]:
         return "unknown", "unknown"
     parts = (saved or "").split("+")
     order: Order = "unknown"
-    for candidate in ("each", "side", "reroll"):
-        if candidate in parts:
-            order = candidate  # type: ignore[assignment]
+    if "each" in parts:
+        order = "each"
+    elif "side" in parts:
+        order = "side"
+    elif "reroll" in parts:
+        order = "reroll"
     return order, "yes" if "declare" in parts else "unknown"
 
 

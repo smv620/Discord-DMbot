@@ -204,7 +204,8 @@ class Stored(DatabaseTest):
 
     async def test_a_damaged_style_in_a_backup_is_refused(self) -> None:
         data = await self.campaigns.export(GUILD_A, self.a.id)
-        for damaged in ("sideways", 5, ["each"], {}, True):
+        damaged_values: list[Any] = ["sideways", 5, ["each"], {}, True]
+        for damaged in damaged_values:
             data["campaign"]["initiative_style"] = damaged
             with self.assertRaises(CampaignError, msg=repr(damaged)):
                 await self.campaigns.import_backup(GUILD_B, data, 7)
