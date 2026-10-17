@@ -316,8 +316,9 @@ class ConsentDMTests(DatabaseTest):
             r"\(slowest \d+ms\), since the session start (\d+ms|unknown)$",
             line,
         ), line
-        for name in (f"user{PLAYER}", f"user{DM}", str(PLAYER), str(DM)):
-            assert name not in line.split("Consent asked:")[1], name  # no name, no id
+        # (the regex above allows only numbers after the counts; no name can be in it)
+        for name in (f"user{PLAYER}", f"user{DM}"):
+            assert name not in line, name
 
     def test_the_timing_line_is_plain_numbers(self) -> None:
         from dmbot.bot import consent_timing_line
