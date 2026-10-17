@@ -6,7 +6,6 @@ download is the bot's own file for those entries, byte for byte."""
 from __future__ import annotations
 
 import json
-from dataclasses import replace
 from typing import Any
 
 import httpx
@@ -226,15 +225,57 @@ class BookTags(HomebrewBase):
         shown = json.dumps(await pages.read_homebrew(self.web, self.carol, self.cref))
         self.assertNotIn(str(ALICE.id), shown)
 
-    async def test_a_non_member_gets_nothing_and_the_file_ignores_the_tags(self) -> None:
+    async def test_a_non_member_gets_nothing_and_the_file_carries_the_tags(self) -> None:
         await self.mark("Zap", "2014", target="2024")
         elsewhere = await self.session_of(CAROL, [QUILLON])
         with self.assertRaises(RecapError):
             await pages.read_homebrew(self.web, elsewhere, self.cref)
         _name, text = await pages.render(self.web, self.carol, self.cref)
         shown = await self.store_b.list(THURSDAY.id, self.one.id)
-        untagged = [replace(e, from_book=False, book_edition=None) for e in shown]  # (tags ignored)
-        self.assertEqual(text.encode(), homebrew_file.write("One", untagged, "2024").encode())
+        self.assertEqual(text.encode(), homebrew_file.write("One", shown, "2024").encode())
+
+    async def test_the_download_is_byte_equal_to_the_bots_file_with_the_tags(self) -> None:
+        """A 2014 book in a 2024 campaign, a 2024 book and an own entry (#1593)."""
+        await self.mark("Zap", "2014", target="2024")
+        await self.mark("Arc", "2024")
+        _name, text = await pages.render(self.web, self.carol, self.cref)
+        shown = await self.shown_entries()
+        self.assertEqual(text.encode(), homebrew_file.write("One", shown, "2024").encode())
+        lines = text.split("\n")
+        self.assertIn("[Shared book] [Legacy 2014]", lines)
+        self.assertEqual(lines.count("[Shared book]"), 1)  # the 2024 book
+        self.assertEqual(lines.count("[Shared book] [Legacy 2014]"), 1)  # only the 2014 one
+        # The tag sits right under the heading of the entry it belongs to.
+        zap = next(i for i, line in enumerate(lines) if line.startswith("## Zap"))
+        self.assertEqual(lines[zap + 1], "[Shared book] [Legacy 2014]")
+        moon = next(i for i, line in enumerate(lines) if line.startswith("## Moon Lamp"))
+        self.assertFalse(lines[moon + 1].startswith("[Shared book]"))
+
+    async def test_a_2014_book_in_a_2014_campaign_is_a_plain_shared_book_in_both_files(
+        self,
+    ) -> None:
+        await self.mark("Zap", "2014", target="2014")
+        _name, text = await pages.render(self.web, self.carol, self.cref)
+        shown = await self.shown_entries()
+        self.assertEqual(text.encode(), homebrew_file.write("One", shown, "2014").encode())
+        self.assertNotIn("[Legacy 2014]", text.replace(homebrew_file.HELP, ""))
+        self.assertIn("[Shared book]", text.replace(homebrew_file.HELP, ""))
+
+    async def test_an_older_door_without_the_flags_gives_an_untagged_file(self) -> None:
+        from unittest.mock import patch
+
+        async def older(*args: Any, **kw: Any) -> tuple[str, dict[str, Any]]:
+            campaign_id, found = await original(*args, **kw)
+            for e in found["entries"]:
+                e.pop("fromBook", None)
+                e.pop("legacy", None)
+            return campaign_id, found
+
+        original = pages._read
+        await self.mark("Zap", "2014", target="2024")
+        with patch.object(pages, "_read", older):
+            _name, text = await pages.render(self.web, self.carol, self.cref)
+        self.assertNotIn("[Shared book]", text.replace(homebrew_file.HELP, ""))
 
 
 PUBLISHER = "Publisher Campaign Name"
@@ -413,7 +454,7 @@ class TheFile(HomebrewBase):
         self.assertEqual(text.encode(), homebrew_file.write("One", shown, "2024").encode())
         self.assertEqual(name, homebrew_file.filename("One"))
         self.assertIn("## The Lich (monster)\nSummary: Foe\nOff: yes\n", text)  # (off is kept)
-        # (the help text mentions the tag, but no entry carries one: the door never says it)
+        # (the help text mentions the tag, but no entry here is from a book, so none carries one)
         self.assertNotIn("[Shared book]", text.replace(homebrew_file.HELP, ""))
 
     async def test_a_campaign_with_no_entry_has_no_file(self) -> None:
