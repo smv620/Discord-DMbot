@@ -491,9 +491,10 @@ class SidebarService:
         request = request_in(text, in_character=in_character or voiced_by_npc(entity))
         if request is None or (request.verb and not is_dm):
             return False  # (a player saying "I need to find my sheet" is not asking DMbot)
+        # No engine: quietly nothing, and the minute is not used up. Guide me alone needs none
+        # (the DM's "what's next?" is handled before the engine is used).
         if self.answerer is None and not (is_dm and guide_phrase.is_whats_next(request.question)):
-            return False  # no engine: quietly nothing, and the minute is not used up (Guide me
-            # alone needs none: the DM's "what's next?" is handled before the engine is used)
+            return False
         public = not request.verb and table.dmbchat_channel_id is not None
         if not public and not is_dm:
             return False  # nowhere everyone can read the answer
@@ -656,7 +657,11 @@ class SidebarService:
             return  # (else the usual sidebar answer: Guide me is off, or can't be given)
         answerer = self.answerer
         if answerer is None:
-            return  # (no engine: only Guide me, above, could be answered)
+            # No engine: only Guide me, above, could be answered. A typed message is told so
+            # (the same note as before this change), never left in silence.
+            if via == VIA_TYPED:
+                await reply(NOT_YET)
+            return
         now = self._monotonic()
         scene = table.recent.scene(
             lambda u: self.host.name_of(guild_id, u),

@@ -6,7 +6,7 @@ import unittest
 from dataclasses import dataclass, field
 from types import SimpleNamespace
 from typing import Any
-from unittest.mock import AsyncMock
+from unittest.mock import ANY, AsyncMock
 
 from dmbot.ai import AIError
 from dmbot.sidebar import service
@@ -1377,6 +1377,14 @@ class GuideMe(unittest.IsolatedAsyncioTestCase):
         await self.sidebar.on_dm_message(other)
         other.channel.send.assert_awaited_once()  # the usual "not yet" note
         self.assertEqual(len(self.host.dms), 1)
+
+    async def test_a_typed_whats_next_with_guide_me_off_and_no_engine_is_told_not_yet(self) -> None:
+        self.sidebar.answerer = None
+        self.host.guide = None  # Guide me can't be given
+        message = dm_message(content="what's next?")
+        await self.sidebar.on_dm_message(message)
+        self.assertEqual(self.host.dms, [])
+        message.channel.send.assert_awaited_once_with(service.NOT_YET, allowed_mentions=ANY)
 
     async def test_other_questions_about_next_are_not_taken_for_it(self) -> None:
         for said in (
