@@ -139,6 +139,12 @@ from dmbot.dm_screen.name_questions import (
 )
 from dmbot.dm_screen.pause import PauseButton
 from dmbot.dm_screen.recap_panel import PlanFacts, RecapsButton, audio_how
+from dmbot.dm_screen.rules_channel import (
+    RulesChannelError,
+    SyncResult,
+    setup_rules_channel,
+    sync_campaign,
+)
 from dmbot.dm_screen.settings import (
     HomebrewButton,
     HouseFileButton,
@@ -367,6 +373,13 @@ PIECE_WORDS_MAX = 3000  # pieces whose words the helpers' copies can be brought 
 HEARD_MAX = 20_000  # lines kept for the after-session name scan
 HINTS_FAIL_LOG_S = 60.0
 HINTS_WAIT_S = 1.5  # the longest a clip waits for the campaign's names to load
+# The rules channel (#1752): changes are gathered for this long, and each campaign's channel is
+# looked at this far apart when the bot starts (Discord's rate limits).
+RULES_ARCHIVE_DELAY_S = 3.0
+RULES_ARCHIVE_PACE_S = 2.0
+RULES_ARCHIVE_RETRY_S = 10.0  # when a pass was cut short by the caps
+RULES_ARCHIVE_PASSES = 60  # (200 rules at 25 a pass is far fewer)
+
 # The off-topic filter (#52): one call may take this long, or the window is kept as game
 # talk; after this many failures in a row it rests this long.
 TOPIC_CALL_TIMEOUT_S = 8.0
@@ -831,6 +844,13 @@ class DMBot(commands.AutoShardedBot):
         self.homebrew_removed: dict[tuple[int, str], list[Any]] = {}
         self.decision_lines = DecisionLines()  # DM-screen lines to clear once decided (#1509)
         self.house_syncs = house_sync.Pendings()
+        # The rules archive channel (#1752) hears about every change to a campaign's house rules
+        # and followed sets; a burst of changes (a file import) becomes one pass, a few seconds on.
+        self._rules_sync: dict[tuple[int, str], asyncio.Task[None]] = {}
+        self._rules_dirty: set[tuple[int, str]] = set()
+        for store in (house_rules, rule_sets):
+            if store is not None:
+                store.on_change = self._rules_archive_changed
         # Timed effects on that clock (#998); None without a database.
         self.effects = effects
         # The hours meter (#437 part 2): listening minutes are written here; None records
@@ -3034,6 +3054,7 @@ class DMBot(commands.AutoShardedBot):
         gametime_problem = await self._gametime_channel(guild, campaign, screen)
         dmbchat_id, dmbchat_problem = await self._dmbchat_channel(guild, campaign, screen)
         dm_bot_problem = await self._dm_bot_channel(guild, campaign, screen)
+        rules_problem = await self._rules_channel(guild, campaign, screen)
 
         campaign = await self.campaigns.record_start(guild.id, campaign.id, screen_id, voice.id)
         started_at = int(time.time())
@@ -3091,6 +3112,8 @@ class DMBot(commands.AutoShardedBot):
             await self.post(screen_id, dmbchat_problem)
         if dm_bot_problem:
             await self.post(screen_id, dm_bot_problem)
+        if rules_problem:
+            await self.post(screen_id, rules_problem)
         self._check_house_file(campaign, screen_id)
         self._track(update_notes.check_all(self, campaign, screen_id), "shared-rules-update")
         trial_line = ""
@@ -3258,6 +3281,9 @@ class DMBot(commands.AutoShardedBot):
                 if gaps:
                     log.warning("Missing permissions here: %s", ", ".join(gaps))
         self._background.append(asyncio.create_task(self._resume_with_retries(), name="resume"))
+        self._background.append(
+            asyncio.create_task(self._rebuild_rules_archives(), name="rules-archives")
+        )
 
     async def _resume_with_retries(self) -> None:
         """Resume saved sessions, retrying servers that failed (database or Discord not
@@ -8112,6 +8138,93 @@ class DMBot(commands.AutoShardedBot):
             log.exception("Couldn't set up the DM Bot channel")
             return screen_messages.dm_bot_failed(screen_messages.TRANSCRIPT_NO_ANSWER)
         return None
+
+    async def _rules_channel(
+        self, guild: discord.Guild, campaign: Campaign, screen: object
+    ) -> str | None:
+        """The rules archive channel (#1752), made or repaired at every start and brought up to
+        date from the saved house rules. A note for the DM if it couldn't be set up; a failure
+        here never stops a session."""
+        category = getattr(screen, "category", None)
+        try:
+            await setup_rules_channel(
+                guild,
+                campaign.id,
+                self.campaigns,
+                category=category if isinstance(category, discord.CategoryChannel) else None,
+                screen=screen if isinstance(screen, discord.TextChannel) else None,
+            )
+            fresh = await self.campaigns.get(guild.id, campaign.id)
+            if fresh is not None and self.house_rules is not None:
+                await sync_campaign(guild, fresh, self.house_rules, self.rule_sets)
+        except RulesChannelError as exc:
+            return screen_messages.rules_failed(str(exc))
+        except Exception:
+            log.exception("Couldn't set up the rules channel")
+            return screen_messages.rules_failed(screen_messages.TRANSCRIPT_NO_ANSWER)
+        return None
+
+    def _rules_archive_changed(self, guild_id: int, campaign_id: str) -> None:
+        """A campaign's house rules or followed sets changed: bring its rules channel up to date
+        soon. Quick and never raises (it only schedules)."""
+        key = (guild_id, campaign_id)
+        running = self._rules_sync.get(key)
+        if running is not None and not running.done():
+            self._rules_dirty.add(key)  # it will look again when it has finished
+            return
+        task = self._track(self._rules_archive_run(key), "rules-archive")
+        if task is not None:
+            self._rules_sync[key] = task
+
+    async def _rules_archive_run(self, key: tuple[int, str]) -> None:
+        try:
+            delay = RULES_ARCHIVE_DELAY_S
+            for _ in range(RULES_ARCHIVE_PASSES):
+                await asyncio.sleep(delay)
+                self._rules_dirty.discard(key)
+                try:
+                    done = await self._sync_rules_archive(*key)
+                    # Over the edit caps, or a message Discord refused: look again after a pause.
+                    more = done is not None and done.left_for_next_time > 0
+                except Exception:
+                    log.warning("Couldn't update a rules channel; will try again", exc_info=True)
+                    more = True
+                if key not in self._rules_dirty and not more:
+                    return
+                delay = RULES_ARCHIVE_RETRY_S if more else RULES_ARCHIVE_DELAY_S
+        finally:
+            self._rules_sync.pop(key, None)
+            self._rules_dirty.discard(key)
+
+    async def _sync_rules_archive(self, guild_id: int, campaign_id: str) -> SyncResult | None:
+        guild = self.get_guild(guild_id)
+        if guild is None or self.house_rules is None:
+            return None
+        campaign = await self.campaigns.get(guild_id, campaign_id)
+        if campaign is None:
+            return None
+        return await sync_campaign(guild, campaign, self.house_rules, self.rule_sets)
+
+    async def _rebuild_rules_archives(self) -> None:
+        """At bot start: every campaign's rules channel is brought up to date once, a few
+        edits at a time (Discord's rate limits), so a restart or a missed change never leaves it
+        stale. A campaign whose channel was deleted by hand gets a new one at its next start."""
+        for guild in list(self.guilds):
+            try:
+                found = await self.campaigns.list_campaigns(guild.id)
+            except Exception:
+                log.exception("Couldn't list campaigns for the rules channels")
+                continue
+            for campaign in found:
+                if campaign.rules_channel_id is None or self.house_rules is None:
+                    continue
+                try:
+                    done = await sync_campaign(guild, campaign, self.house_rules, self.rule_sets)
+                    if done is not None and done.left_for_next_time:
+                        self._rules_archive_changed(guild.id, campaign.id)  # finish it, paced
+                except Exception:
+                    log.warning("Couldn't update a rules channel", exc_info=True)
+                await asyncio.sleep(RULES_ARCHIVE_PACE_S)
 
     async def _dmbchat_channel(
         self, guild: discord.Guild, campaign: Campaign, screen: object

@@ -84,6 +84,7 @@ describe("What's new", () => {
       "A DMbot channel for buttons", // until seen on the test server (#1666)
       "A Shared story switch", // until the story plan is used (#1692, #1714)
       "Homebrew menu by kind", // until seen on the test server (#1665)
+      "A channel for your house rules", // until seen on the test server (#1752)
       "A time suggestion from your narration", // until the switch is on and seen live (#1758)
       "Manage your plan without Discord", // until the billing login link is set in the build (#1711)
       "A quiet reminder of the game time", // until seen on the test server (#1738)

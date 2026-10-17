@@ -33,6 +33,7 @@ from typing import Any
 
 from dmbot.campaigns.models import CampaignError
 from dmbot.db import Conn, Database
+from dmbot.rules.changes import ChangeHook, notifies
 
 RULE_MAX = 500  # the rule, "instead of" and the scenario each; matches the table's checks
 HOUSE_RULES_MAX = 200  # per campaign, so a campaign (and its backup) stays a sensible size
@@ -128,6 +129,8 @@ class HouseRuleStore:
     def __init__(self, db: Database, clock: Callable[[], float] = time.time) -> None:
         self._db = db
         self._clock = clock
+        # Told after a rule is added, edited or removed (the rules channel, #1752).
+        self.on_change: ChangeHook | None = None
 
     async def list(self, guild_id: int, campaign_id: str) -> list[HouseRule]:
         """The campaign's house rules, newest first (the highest number first). Anyone may
@@ -140,6 +143,7 @@ class HouseRuleStore:
             )
             return [_rule(r) for r in await cur.fetchall()]
 
+    @notifies
     async def add(
         self,
         guild_id: int,
@@ -178,6 +182,7 @@ class HouseRuleStore:
                 now,
             )
 
+    @notifies
     async def edit(
         self,
         guild_id: int,
@@ -218,6 +223,7 @@ class HouseRuleStore:
                 raise await _missing(conn, guild_id, campaign_id, number)
             return _rule(row)
 
+    @notifies
     async def remove(
         self,
         guild_id: int,

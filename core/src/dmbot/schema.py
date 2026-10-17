@@ -1986,6 +1986,14 @@ DM_BOT_CHANNEL = """
     ALTER TABLE campaigns ADD COLUMN dm_bot_message_id BIGINT;
 """
 
+RULES_CHANNEL = """
+    -- The rules archive channel (docs/PLAN.md, "Channels"; #1752): `dmb-rules-<slug>`, a
+    -- controlled channel that follows the DM screen's visibility and shows the campaign's house
+    -- rules, read only. Like the other channel ids it means nothing in another server, so none
+    -- goes into a backup. A nullable column: no row changes, so no row-level-security policy.
+    ALTER TABLE campaigns ADD COLUMN rules_channel_id BIGINT;
+"""
+
 STORY_MODE = """
     -- The Shared story switch (docs/STORY_MEMORY.md, section 6; #1692): Off (the default),
     -- Watch the story or Guide me. Nothing reads it yet: the story-plan reader, the divergence
@@ -6826,6 +6834,7 @@ MIGRATIONS: tuple[Migration, ...] = (
     ),  # the book's entry is the table's, by the DM's word (#1715)
     ("0125_plan_divergences", PLAN_DIVERGENCES),  # the table has left the adventure (#1729)
     ("0126_plan_position", PLAN_POSITION),  # the chapter the DM says the table is in (#1731)
+    ("0127_rules_channel", RULES_CHANNEL),  # the rules archive channel (#1752)
 )
 
 # Tables that must have row-level security. A test checks every table in the schema
