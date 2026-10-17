@@ -13,7 +13,9 @@ Roles, from the strongest to the weakest:
 - **guest**: anyone else in the server. Help only; rule lookups and reading transcripts are
   open to the whole server anyway.
 
-A server manager who is not a game master is a guest here: nothing is widened.
+A server manager who is not a game master is a guest here: the card never offers them Settings.
+(The ⚙️ Settings button itself still lets a manager in, as it does on the DM screen today; the
+whole-server decision on that is Supervisor's, slice 3.)
 """
 
 from __future__ import annotations
@@ -48,19 +50,19 @@ _BUTTONS: dict[Role, tuple[Button, ...]] = {
     Role.GAME_MASTER: (Button.HELP, Button.MY_MENU, Button.MY_CHARACTER, Button.SETTINGS),
 }
 
+# Only the shared panel's own buttons are labelled here; the card's buttons are DMbot's existing
+# menus and keep the labels they have everywhere else (⚙️ Menu, 📜 My character sheet, ⚙️ Settings).
 LABELS: dict[Button, str] = {
     Button.OPEN: "👤 My buttons",
     Button.HELP: "❓ Help",
-    Button.MY_MENU: "⚙️ My menu",
-    Button.MY_CHARACTER: "🧙 My character",
-    Button.SETTINGS: "🛠️ Settings",
 }
 
 NOT_YOURS = "Only this campaign's DM can use that. Ask your DM."
 
 # The panel's own words. Short and plain; it never names a person or a secret.
 PANEL_TEXT = (
-    "**DMbot controls**\nPress 👤 My buttons. Only you see the answer. Nothing secret is kept here."
+    "**DMbot**\n👤 Press My buttons to see what you can do. Only you see the answer. "
+    "❓ Help explains DMbot.\nRecording only starts for people who said yes."
 )
 
 

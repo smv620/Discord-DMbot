@@ -70,8 +70,10 @@ class Roles(unittest.TestCase):
                 )
 
     def test_every_button_has_a_short_label_and_the_panel_text_is_plain(self) -> None:
-        for button in Button:
-            self.assertLessEqual(len(panel.LABELS[button]), 25)
+        for label in panel.LABELS.values():
+            self.assertLessEqual(len(label), 25)
+        for button in panel.shared_panel():
+            self.assertIn(button, panel.LABELS)  # the shared message's buttons are labelled
         self.assertIn("Only you see the answer", panel.PANEL_TEXT)
 
 

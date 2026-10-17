@@ -86,9 +86,6 @@ class PanelTest(DatabaseTest):
 class Standings(PanelTest):
     async def test_each_kind_of_person_is_read_as_the_right_role(self) -> None:
         await self.make_player()
-        await self.memory.add_session_heard(
-            GUILD, self.campaign.id, 1_700_000_000, [Heard(await self.entity(), MEMBER + 100, 1)]
-        )
         got = {
             user: panel.role_of(await buttons.standing_of(self.bot, self.campaign, user))
             for user in (DM, PLAYER, MEMBER, GUEST, MANAGER)
@@ -256,3 +253,53 @@ class Keeping(PanelTest):
     async def test_no_channel_means_nothing_is_posted(self) -> None:
         self.assertIsNone(await buttons.ensure_panel(self.bot, self.campaign))
         self.assertEqual(self.bot.posted, [])
+
+    async def test_two_starts_at_once_post_one_panel(self) -> None:
+        import asyncio
+
+        await self.with_channel()
+        self.a_channel()
+        campaign = await self.reload()
+        await asyncio.gather(
+            buttons.ensure_panel(self.bot, campaign), buttons.ensure_panel(self.bot, campaign)
+        )
+        self.assertEqual(len(self.bot.posted), 1)  # the second saw the first's message id
+
+    async def test_a_post_that_fails_saves_nothing(self) -> None:
+        campaign = await self.with_channel()
+        self.a_channel()
+        self.bot.post_message = AsyncMock(return_value=None)  # type: ignore[method-assign]
+        self.assertIsNone(await buttons.ensure_panel(self.bot, campaign))
+        saved = await self.reload()
+        self.assertIsNone(saved.dm_bot_message_id)
+
+    async def test_a_panel_whose_id_cannot_be_saved_is_taken_down_again(self) -> None:
+        campaign = await self.with_channel()
+        self.a_channel()
+        posted = MagicMock()
+        posted.id = MESSAGE + 9
+        posted.delete = AsyncMock()
+        self.bot.post_message = AsyncMock(return_value=posted)  # type: ignore[method-assign]
+        self.bot.campaigns = SimpleNamespace(
+            get=self.campaigns.get, set_dm_bot_message=AsyncMock(side_effect=RuntimeError("x"))
+        )  # type: ignore[assignment]
+        self.assertIsNone(await buttons.ensure_panel(self.bot, campaign))
+        posted.delete.assert_awaited_once()  # not left as an orphan with live buttons
+
+
+class RoundTrip(PanelTest):
+    async def test_the_buttons_come_back_from_their_ids_after_a_restart(self) -> None:
+        for cls, action in ((buttons.OpenButton, "open"), (buttons.HelpButton, "help")):
+            custom_id = f"dmbot:panel:{action}:{self.campaign.id}"
+            match = cls.__discord_ui_compiled_template__.fullmatch(custom_id)
+            assert match is not None
+            made = await cls.from_custom_id(MagicMock(), MagicMock(), match)
+            self.assertEqual(made.campaign_id, self.campaign.id)
+
+    async def test_a_proposed_character_does_not_tie_someone_to_the_campaign(self) -> None:
+        made = await self.memory.add_entity(
+            GUILD, self.campaign.id, type="character", name="Kesh", source="extractor",
+            status="proposed", role=PLAYER_CHARACTER, played_by=PLAYER,
+        )  # fmt: skip
+        self.assertEqual(made.value.status, "proposed")
+        self.assertFalse(await self.memory.is_player_here(GUILD, self.campaign.id, PLAYER))
