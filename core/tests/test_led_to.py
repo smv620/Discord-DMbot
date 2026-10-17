@@ -97,6 +97,11 @@ class Chain(ConfirmedMemoryTest):
                 )
             self.assertEqual(str(button.exception), LED_TO_CONFIRM)
             self.assertEqual(str(connect.exception), LED_TO_CONFIRM)
+        with self.assertRaises(MemoryRuleError):  # an extractor's try is told the same
+            await self.memory.add_relation(
+                GUILD_A, self.c, waiting, "led_to", self.heir, confidence=0.5, source="extractor"
+            )
+        self.assertEqual(await self.memory.chain(GUILD_A, self.c, self.heir), ([], []))  # no row
         with self.assertRaises(MemoryRuleError) as kinds:  # confirmed but the wrong kind
             await self.link(person, self.heir)
         self.assertEqual(str(kinds.exception), LED_TO_KINDS)
