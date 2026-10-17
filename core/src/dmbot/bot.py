@@ -168,7 +168,6 @@ from dmbot.dm_screen.settings import (
     SettingsButton,
     SettingsVisibilityButton,
     SharedRulesButton,
-    SideInitiativeButton,
 )
 from dmbot.dm_screen.site_offers import SiteOffers
 from dmbot.dm_screen.speaker_question import SpeakerQuestionButton
@@ -1176,7 +1175,6 @@ class DMBot(commands.AutoShardedBot):
             SettingsVisibilityButton,
             RuleLookupButton,
             RulesCardsButton,
-            SideInitiativeButton,
             HouseFileButton,
             SharedRulesButton,
             HomebrewButton,

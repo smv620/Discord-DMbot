@@ -644,37 +644,6 @@ class RulesCardsButton(
         await _redraw(interaction, saved)
 
 
-SIDE_INITIATIVE_REMOVED = "This setting was removed: DMbot counts rounds the same way either way."
-
-
-class SideInitiativeButton(
-    discord.ui.DynamicItem[discord.ui.Button[discord.ui.View]],
-    template=rf"dmbot:sideinit:{_ID}:(?P<to>on|off)",
-):
-    """Retired (#1769): the old side-based initiative button changed a setting nothing read. It
-    is no longer on the Settings screen, but stays registered for one more release so a press on
-    an old Settings message gets a plain answer instead of "interaction failed". Remove this
-    class (and its registration in bot.py) after that release."""
-
-    def __init__(self, campaign_id: str, on: bool = False) -> None:
-        super().__init__(
-            discord.ui.Button(
-                label=f"Turn side initiative {'off' if on else 'on'}",
-                custom_id=f"dmbot:sideinit:{campaign_id}:{'off' if on else 'on'}",
-            )
-        )
-        self.campaign_id = campaign_id
-
-    @classmethod
-    async def from_custom_id(
-        cls, interaction: discord.Interaction, item: discord.ui.Item[Any], match: re.Match[str]
-    ) -> SideInitiativeButton:
-        return cls(match["campaign"], on=match["to"] == "off")
-
-    async def callback(self, interaction: discord.Interaction) -> Any:
-        await interaction.response.send_message(SIDE_INITIATIVE_REMOVED, ephemeral=True)
-
-
 class LevelButton(
     discord.ui.DynamicItem[discord.ui.Button[discord.ui.View]],
     template=rf"dmbot:level:{_ID}:(?P<level>{'|'.join(DM_SCREEN_LEVELS_OFFERED)})",

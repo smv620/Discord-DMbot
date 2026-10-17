@@ -598,37 +598,16 @@ class Setting(Clocks):
         with self.assertRaises(CampaignError):
             await self.campaigns.import_backup(GUILD_B, data, DM)
 
-    def test_the_button_id_matches_its_template(self) -> None:
-        from dmbot.dm_screen.settings import SideInitiativeButton
-
-        cid = "0123456789abcdef0123456789abcdef"
-        for on in (True, False):
-            button = SideInitiativeButton(cid, on)
-            self.assertIsNotNone(
-                SideInitiativeButton.__discord_ui_compiled_template__.fullmatch(
-                    str(button.item.custom_id)
-                )
-            )
-
-    async def test_an_old_button_press_is_told_the_setting_was_removed(self) -> None:
-        from unittest.mock import AsyncMock, MagicMock
-
-        from dmbot.dm_screen.settings import SIDE_INITIATIVE_REMOVED, SideInitiativeButton
-
-        interaction = MagicMock()
-        interaction.response.send_message = AsyncMock()
-        await SideInitiativeButton("0123456789abcdef0123456789abcdef").callback(interaction)
-        interaction.response.send_message.assert_awaited_once_with(
-            SIDE_INITIATIVE_REMOVED, ephemeral=True
-        )
-        self.assertIn("removed", SIDE_INITIATIVE_REMOVED)
-
     def test_settings_has_no_side_initiative_button_and_no_on_off_wording(self) -> None:
         import inspect
 
         from dmbot.dm_screen import settings
 
         self.assertNotIn("SideInitiativeButton(", inspect.getsource(settings.settings_view))
+        self.assertFalse(hasattr(settings, "SideInitiativeButton"))  # retired for good (#1791)
+        from dmbot import bot as bot_module
+
+        self.assertNotIn("SideInitiativeButton", inspect.getsource(bot_module))
         self.assertEqual(
             settings._combat_line(object()),  # type: ignore[arg-type]
             "• **Combat:** DMbot counts the rounds, never whose turn it is.",
