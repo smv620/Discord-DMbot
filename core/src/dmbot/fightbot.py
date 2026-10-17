@@ -25,6 +25,7 @@ from typing import Any
 
 import discord
 
+from dmbot import fight_style
 from dmbot.ai import AIError
 from dmbot.memory import fight_prompt
 from dmbot.memory.sheet_store import CharacterSheet, FightPlayer
@@ -51,6 +52,27 @@ INTRO = (
 )
 
 
+@dataclass(frozen=True, slots=True)
+class Due:
+    """A moment FightBot should remind a player about (#1771): their turn is next, their side
+    acts, initiative is rolled again, or the DM asked what everyone will do. Kept in memory;
+    dropped once the moment has passed (the turn moved on, or the round ended)."""
+
+    kind: str  # "turn", "next", "side", "reroll" or "declare"
+    round: int
+    turn_no: int
+    seq: int
+
+
+MOMENT_LINES = {
+    "turn": "It is your turn next",
+    "next": "It is your turn next",
+    "side": "Your side acts now",
+    "reroll": "A new round of initiative is starting",
+    "declare": "The DM is asking what everyone will do this round",
+}
+
+
 @dataclass(slots=True)
 class FightState:
     """What one session remembers in memory only: the last state each player's character was
@@ -60,6 +82,134 @@ class FightState:
 
     last_fp: dict[tuple[int, str], tuple[Any, ...]] = field(default_factory=dict)
     introduced: set[int] = field(default_factory=set)
+    # How the table runs initiative, as heard this session (#1771): kept from one fight to the
+    # next, and gone with the session. The rest is per fight.
+    style: fight_style.StyleState = field(default_factory=fight_style.StyleState)
+    round: int | None = None  # the fight's round as of the last pass; None out of combat
+    present: set[int] = field(default_factory=set)  # who is at the table, as of the last pass
+    names: dict[str, int] = field(default_factory=dict)  # lower-case name -> person
+    secrets: list[str] | None = None  # secret names, as of the last pass; None: not known
+    turn_no: int = 0  # turns called this fight
+    order_seen: list[tuple[str, int | str]] = field(default_factory=list)  # who went, in order
+    turns_this_round: bool = False
+    declare_heard: bool = False
+    due: dict[int, Due] = field(default_factory=dict)
+    seq: int = 0
+    rolled: set[int] = field(default_factory=set)  # players who said an initiative roll
+
+    def new_due(self, kind: str) -> Due:
+        self.seq += 1
+        return Due(kind, self.round or 0, self.turn_no, self.seq)
+
+    def end_fight(self) -> bool:
+        """The fight is over: its order, turns and pending moments go. What the table's style
+        was heard to be stays for the next fight. True if the heard style changed."""
+        self.round = None
+        self.turn_no = 0
+        self.order_seen.clear()
+        self.turns_this_round = self.declare_heard = False
+        self.due.clear()
+        self.rolled.clear()
+        return self.style.forget_inferred()
+
+    def due_now(self) -> dict[int, Due]:
+        """The pending moments that have not passed: a turn moment ends when the next turn is
+        called, any moment when the round ends."""
+        self.due = {
+            user: d
+            for user, d in self.due.items()
+            if d.round == self.round
+            and (d.kind not in ("turn", "next") or d.turn_no == self.turn_no)
+        }
+        return self.due
+
+
+def note_line(table: Any, user_id: int, line: str, *, is_dm: bool, consenting: Any) -> bool:
+    """A line of table talk, heard for the way the table runs initiative (#1771). Called for
+    cleaned voice lines of people who agreed and a DM's typed lines. Nothing here touches the
+    combat state, the round or what a player sees; it only lets FightBot time its reminders.
+    Only a DM's line moves a turn or calls a moment; players' lines can only vote for a style.
+    Returns True if the heard style changed (the DM's combat line then shows it)."""
+    fight: FightState | None = getattr(table, "fight", None)
+    if fight is None:
+        return False
+    secrets = fight.secrets
+    if secrets is None:  # not known yet: nothing is built without being able to leave them out
+        return False
+    lowered = line.lower()
+    if any(secret and secret.lower() in lowered for secret in secrets):
+        return False
+    heard = fight_style.hear(line, fight.names, round_number=fight.round)
+    if heard is None:
+        return False
+    changed = False
+    style = fight.style
+    if heard.order is not None:
+        changed |= style.vote("order", heard.order, user_id, from_dm=is_dm, consenting=consenting)
+    if heard.declarations is not None:
+        changed |= style.vote(
+            "declarations", heard.declarations, user_id, from_dm=is_dm, consenting=consenting
+        )
+    if heard.rolled:
+        fight.rolled.add(user_id)  # points to each or reroll, never to side: it sets nothing
+    if not is_dm or fight.round is None:
+        return changed
+    dms = getattr(table, "dm_user_ids", ())
+    everyone = sorted(u for u in fight.present if u not in dms)  # (players, not the DM)
+    if heard.declare_call:
+        fight.declare_heard = True
+        for user in everyone:
+            fight.due[user] = fight.new_due("declare")
+    if heard.reroll_call:
+        for user in everyone:
+            fight.due[user] = fight.new_due("reroll")
+    if heard.players_side:
+        for user in everyone:
+            fight.due[user] = fight.new_due("side")
+    for user in heard.on_deck:
+        if user in fight.present:
+            fight.due[user] = fight.new_due("next")
+    for user in heard.turn:
+        _turn_called(fight, ("p", user))
+    if heard.creature is not None:
+        _turn_called(fight, ("m", heard.creature))
+    return changed
+
+
+def _turn_called(fight: FightState, key: tuple[str, int | str]) -> None:
+    """A creature's turn was called. The order is learned from the turns called; a player not
+    yet placed is reminded now, and once the order is known the player after the one called is
+    reminded that their turn is next."""
+    fight.turn_no += 1
+    fight.turns_this_round = True
+    if key not in fight.order_seen:
+        fight.order_seen.append(key)
+        if key[0] == "p" and key[1] in fight.present:
+            fight.due[int(key[1])] = fight.new_due("turn")
+        return
+    at = fight.order_seen.index(key)
+    if fight.style.order == "each" and at + 1 < len(fight.order_seen):
+        following = fight.order_seen[at + 1]
+        if following[0] == "p" and following[1] in fight.present:
+            fight.due[int(following[1])] = fight.new_due("next")
+
+
+def observe(
+    fight: FightState, round_number: int | None, present: set[int], consenting: Any
+) -> bool:
+    """Once a pass: note the round (a new round ends the old one's moments, and a round that
+    played out with turns called and no call for declarations means the table doesn't declare),
+    who is here, and whose lines still count. True if the heard style changed."""
+    changed = fight.style.prune(consenting)
+    if round_number is None:
+        return fight.end_fight() or changed
+    if fight.round is not None and round_number > fight.round:
+        if fight.turns_this_round and not fight.declare_heard:
+            changed |= fight.style.infer_no_declarations()
+        fight.turns_this_round = fight.declare_heard = False
+    fight.round = round_number
+    fight.present = present
+    return changed
 
 
 def may_remind(state: FightPlayer, session_started: int, now: float) -> bool:
@@ -96,6 +246,44 @@ async def _secret_texts(bot: Any, table: Any) -> list[str] | None:
     return [n.text for n in lookup.names if n.secret]
 
 
+def _consenting(bot: Any, table: Any) -> Any:
+    return lambda user: bool(bot.consent.has_consent(table.guild_id, user))
+
+
+def _names(bot: Any, table: Any, found: list[CharacterSheet]) -> dict[str, int]:
+    """Names a turn can be called by -> the person: their characters' names and the names they
+    go by at the table (matched whole and without case), and a first name when it is unique."""
+    names: dict[str, int] = {}
+    guild = bot.get_guild(table.guild_id)
+    channel = guild.get_channel(table.voice_channel_id) if guild is not None else None
+    for member in getattr(channel, "members", []):
+        shown = getattr(member, "display_name", None)
+        if not member.bot and shown:
+            names[str(shown).lower()] = member.id
+    for sheet in found:
+        if sheet.played_by is not None and sheet.name:
+            names[sheet.name.lower()] = sheet.played_by
+    firsts: dict[str, set[int]] = {}
+    for full, user in names.items():
+        first = full.split()[0]
+        firsts.setdefault(first, set()).add(user)
+    for first, users in firsts.items():
+        if len(users) == 1:
+            names.setdefault(first, next(iter(users)))
+    return names
+
+
+async def _style_changed(bot: Any, table: Any) -> None:
+    """The heard style changed: the DM's combat line shows it. Never raises."""
+    hook = getattr(bot, "fight_style_changed", None)
+    if hook is None:
+        return
+    try:
+        await hook(table)
+    except Exception as exc:
+        log.info("FightBot: couldn't refresh the combat line (%s)", type(exc).__name__)
+
+
 def _present(bot: Any, table: Any) -> set[int]:
     """The people in the table's voice channel right now, not counting bots: only they are at
     the table tonight (consent and a sheet carry over, but an absent player is not reminded)."""
@@ -111,13 +299,22 @@ async def tick(bot: Any, table: Any) -> None:
     fight: FightState = table.fight
     if stored is None or stored.clock.combat_round is None:
         fight.last_fp.clear()  # out of combat: the next fight starts fresh
+        if fight.end_fight():
+            await _style_changed(bot, table)
         return
     round_number: int = stored.clock.combat_round
     present = _present(bot, table)
+    consenting = _consenting(bot, table)
+    if observe(fight, round_number, present, consenting):
+        await _style_changed(bot, table)
     if not present:
         return
     found: list[CharacterSheet] = await bot.sheets.sheets(table.guild_id, table.campaign_id)
     players = await bot.sheets.fight_players(table.guild_id, table.campaign_id)
+    fight.names = _names(bot, table, found)
+    fight.secrets = await _secret_texts(bot, table)  # (also what `note_line` leaves out)
+    timed = fight.style.known  # a style is heard: remind at the moment, not on a timer
+    due = fight.due_now() if timed else {}
     wall = time.time()
     secrets: list[str] | None = None
     allowed: bool | None = None
@@ -127,11 +324,15 @@ async def tick(bot: Any, table: Any) -> None:
         user = sheet.played_by
         if user is None or sheet.sheet is None or user not in present or user in done:
             continue
+        if timed and user not in due:
+            continue  # nothing is about to happen for this player
         if not may_remind(players.get(user, FightPlayer()), table.started_at, wall):
             continue
         if not bot.consent.has_consent(table.guild_id, user):
             continue
         fp = fight_prompt.fingerprint(sheet.sheet, round_number)
+        if timed:  # a new turn or a call for declarations counts as a change
+            fp = (*fp, due[user].seq)
         if fight.last_fp.get((user, sheet.entity_id)) == fp:
             continue  # nothing new since the last reminder
         if calls >= MAX_CALLS_PER_TICK:
@@ -154,13 +355,15 @@ async def tick(bot: Any, table: Any) -> None:
             return
         calls += 1
         done.add(user)
+        moment = MOMENT_LINES[due[user].kind] if timed else None
+        fight.due.pop(user, None)
         fight.last_fp[(user, sheet.entity_id)] = fp
         await bot.sheets.fight_called(table.guild_id, table.campaign_id, user, int(wall))
         said = fight_prompt.safe_lines(_table_lines(bot, table, time.monotonic()), secrets)
         try:
             reply = await bot.fight_ai.complete(
                 fight_prompt.PROMPT,
-                fight_prompt.build(sheet.sheet, round_number, said),
+                fight_prompt.build(sheet.sheet, round_number, said, moment=moment),
                 max_tokens=MAX_TOKENS,
             )
         except AIError as exc:

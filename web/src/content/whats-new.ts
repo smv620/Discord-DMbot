@@ -336,6 +336,13 @@ export const held: Held[] = [
   },
   {
     date: "2026-10-17",
+    title: "FightBot notices how you run initiative",
+    what: "FightBot now notices how your table does initiative and reminds each player just before they choose. It listens for things like \"Mira, you're up\", \"players go first\" or \"declare your actions\". Your DM screen shows what it heard, and saying it differently changes it. It never changes the fight or the round.",
+    reason:
+      "Held until dev1 has live-checked it on the test server (#1771).",
+  },
+  {
+    date: "2026-10-17",
     title: "Manage your plan without Discord",
     what: "If you can't sign in with Discord, use the email on your receipts. Stripe sends you a code, and you can cancel, update your card or get invoices.",
     reason:
