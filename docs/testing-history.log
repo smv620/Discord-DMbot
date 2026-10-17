@@ -2612,3 +2612,11 @@ Overall ...................................... PASS (Deepgram baseline: 33/33, 1
   docs/next-test-step.md is Test I (consent v6), not yet run.
   10-minute check, 03:56 UTC (10 minutes after the start): 0 ERROR, CRITICAL or traceback lines in core and web-api since 03:46; both up, web-api healthy; schema_migrations 119 rows, last 0119_homebrew_more_kinds.
   Nothing turned on for users (recaps off, no ElevenLabs key, the extractor off).
+2026-10-17  dev1  DEPLOY: migration 0120 dm_bot_channel and the code behind #1672, #1673, #1677, #1678 and #1682 are live as e25d74ea (Supervisor's go on #516 at 05:12/05:20 and by cross-session message; the owner said "restart now" when I asked). Core CI on the head: success (all jobs).
+  Dry run (05:1x UTC) on a copy of the live database (pg_dumpall into a throwaway postgres:16 on its own network, at 0119): "Database updated: 0120_dm_bot_channel" in 0.14 s; a second run applied nothing; 120 migrations; counts before and after the same:
+  147 transcript lines, 3 campaigns, 3 homebrew entries, 0 house rules; no leftover migrate_* policies. Copy deleted. No game running. Backup: ~/db-backups/dmbot-before-e25d74ea-1017-0518.sql (chmod 600).
+  docker-compose.yml, core/Dockerfile and ears are unchanged since 68a8949f (checked). `docker compose build core web-api` with GIT_COMMIT set; `docker compose stop core web-api` at 05:28:34 UTC, `up -d --no-deps core`; web-api started once core was connected.
+  Result: core logged "Database updated: 0120_dm_bot_channel", "ears connected" and "Connected to 1 server(s)"; web-api healthy; schema_migrations 120 rows, last 0120_dm_bot_channel; /health 200 inside web-api.
+  Not checked (need the owner in Discord): the dmb-dm-bot channel appears with My buttons and Help; each role sees its own buttons; the DM screen no longer shows Settings; Homebrew kinds show with counts.
+  Same morning: scripts/set-variables (#1685) merged and is on the server (a twin of set-key for non-secret settings); a PR to add its two CI lines and the QAbot workflow was refused by GitHub (the server's login has no workflow scope), see #516.
+  docs/next-test-step.md is Test I (consent v6), not yet run.
