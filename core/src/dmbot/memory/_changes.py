@@ -196,6 +196,8 @@ DEPENDENTS: dict[str, tuple[tuple[str, str, bool], ...]] = {
         ("memory_attitudes", "holder_id", False),
         ("memory_attitudes", "toward_id", False),
         ("plan_same_as", "entity_id", False),
+        # (`plan_divergences` is not listed on purpose: it is derived from the plan and the table
+        # and unlogged, so it simply goes with the entry and is worked out again when needed.)
     ),
     "memory_mentions": (("memory_relations", "mention_ids", True),),
     "memory_relations": (
