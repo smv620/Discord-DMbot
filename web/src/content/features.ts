@@ -1,6 +1,9 @@
 // What DMbot does at a table (#1141): only things that are built and merged. Add a card when
 // a feature ships, never before. Plain words, one sentence and one example each; no game or
 // publisher trademarks (CLAUDE.md), so character sheets are named without the brand.
+import { INITIATIVE_STYLE_LIVE, NPCS_CHANNEL_LIVE } from "./help";
+import { RECAPS_LIVE } from "./recap-words";
+
 export interface Feature {
   title: string;
   what: string;
@@ -9,7 +12,7 @@ export interface Feature {
 
 export const featuresHeading = "What DMbot does at your table";
 
-export const features: Feature[] = [
+const cards: (Feature & { live?: boolean })[] = [
   {
     title: "Quiet tips for the DM",
     what: "DMbot listens to the people who said yes and sends the game master a private tip with its source. It never makes up the story. The game master decides.",
@@ -36,14 +39,36 @@ export const features: Feature[] = [
     example: 'Players see "Day 5, morning". The game master can time a spell like Bless.',
   },
   {
+    title: "FightBot reminders in a fight",
+    what: `In a fight, FightBot sends each player a short private reminder of what their own sheet says they still have. It only reminds, and the game master decides.${INITIATIVE_STYLE_LIVE ? " It times the reminder to how your table runs initiative." : ""}`,
+    example: "You still have Hunter's Mark and two level 1 slots.",
+  },
+  {
     title: "Remembers your story",
     what: "Names, places and characters your game master confirms are kept from one game to the next, along with which items are one of a kind and who carries them. DMbot only points out when something doesn't add up, and never makes up story.",
     example: "The innkeeper from last month is still the innkeeper. You said there is only one magic sword, so DMbot flags it if two people carry it.",
   },
   {
+    title: "Recaps after each game",
+    what: "After a session, DMbot can write a short story-style recap. You read it first, change it if you like, and press Post to the table. Nothing goes to your players until you do.",
+    example: "Read it on your DM screen, fix a name, then press Post.",
+    live: RECAPS_LIVE,
+  },
+  {
+    title: "A who's who list",
+    what: "DMbot keeps a read-only channel listing the people and groups your game master confirmed. Players see it only as far as the DM screen lets them, and it never shows secrets.",
+    example: "A player forgets the innkeeper's name and checks the list.",
+    live: NPCS_CHANNEL_LIVE,
+  },
+  {
     title: "Character sheets",
     what: "Players link their public online sheet to their character, and the game masters see it on the character's card.",
     example: "No more asking \"what's on your sheet?\" in the middle of a fight.",
+  },
+  {
+    title: "Your own homebrew",
+    what: "Keep your own spells, monsters and items, turn each one on or off, and add one from a published page's link. DMbot shows you what it read, and saves it only when you press Save.",
+    example: "Paste the link to a spell, check what DMbot read, then press Save.",
   },
   {
     title: "Backups (paid plans)",
@@ -56,3 +81,8 @@ export const features: Feature[] = [
     example: "A friend's table starts with your house rules, then tweaks the ones that don't fit their game.",
   },
 ];
+
+// Only the cards whose feature is live (a card without a switch is always live).
+export const features: Feature[] = cards
+  .filter((c) => c.live !== false)
+  .map(({ title, what, example }) => ({ title, what, example }));
