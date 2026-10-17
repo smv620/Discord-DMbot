@@ -55,6 +55,12 @@ def in_combat(stored: Stored) -> bool:
     return game.in_combat(stored.clock) or any(game.in_combat(g.clock) for g in stored.groups)
 
 
+def _now() -> float:
+    """The one place this module reads the clock, so a test can set it (a machine that has
+    just started has a small monotonic time, which tests must not depend on)."""
+    return time.monotonic()
+
+
 def due(level: str, shown_at: float, now: float) -> bool:
     """Has the clock been quiet for a whole gap at this level? (Never on Quiet.)"""
     gap = levels.reminder_gap_s(level)
@@ -67,12 +73,12 @@ def shown(client: Any, campaign: Any) -> None:
     so one campaign's clock never delays another's."""
     table = getattr(client, "tables", {}).get(campaign.guild_id)
     if table is not None and table.campaign_id == campaign.id:
-        table.clock_shown_at = time.monotonic()
+        table.clock_shown_at = _now()
 
 
 async def tick(bot: Any, table: Any, now: float | None = None) -> bool:
     """One look: say where we are if it is time. True when a line was posted."""
-    now = time.monotonic() if now is None else now
+    now = _now() if now is None else now
     if not _still_due(bot, table, now):
         return False
     stored = await bot.clocks.get(table.guild_id, table.campaign_id)

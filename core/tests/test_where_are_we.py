@@ -8,6 +8,7 @@ import unittest
 from dataclasses import fields
 from types import SimpleNamespace
 from typing import Any
+from unittest import mock
 from unittest.mock import AsyncMock, patch
 
 from dmbot.dm_screen import clock as clock_screen
@@ -19,6 +20,17 @@ from dmbot.timebot.split import Group
 from dmbot.timebot.store import Stored
 
 START = 1000.0
+_clock = mock.patch.object(w, "_now", lambda: START + 10)  # the module's clock is the tests' own
+
+
+def setUpModule() -> None:
+    _clock.start()
+
+
+def tearDownModule() -> None:
+    _clock.stop()
+
+
 GAP = 1800.0
 
 
