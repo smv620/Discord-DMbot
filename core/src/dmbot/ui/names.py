@@ -62,6 +62,7 @@ KINDS: dict[str, str] = {
     "deity": "A god or other power",
     "event": "Something that happened (event)",
     "clue": "A clue or secret",
+    "people": "A whole people or kind (tabaxi, elves)",
     "concept": "Something else",
 }
 KIND_SHORT: dict[str, str] = {
@@ -76,6 +77,7 @@ KIND_SHORT: dict[str, str] = {
     "spell": "spell",
     "event": "event",
     "clue": "clue",
+    "people": "people",
     "concept": "other",
     "person": "player or DM",
 }

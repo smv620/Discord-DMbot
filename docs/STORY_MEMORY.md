@@ -636,6 +636,25 @@ Each step is useful on its own and ships behind the existing phases.
    audience drops a limited clue (and with it every fact that points to it), and its name card is
    the DM's alone. `witnessed` is still not a term: nothing reads it until reputation (slice 4),
    and `appears_in` serves for who was at an event.
+   **Slice 4a is built (#1655): standing the DM sets, worked out on demand** (no AI, no extractor;
+   deeds come later). Core gains the kind `people` (a subtype of `concept`: the tabaxi, outsiders)
+   and the connection `of_people` (character → people), the DM's word and never copied from a
+   species link. The party is one group per campaign flagged `party`; its members are the
+   confirmed player characters, worked out in code (nothing written when one joins). Two tables,
+   `memory_impressions` (viewer → subject) and `memory_attitudes` (group or place → a people), hold
+   a score −100..100 and the weight of the evidence, with the history kept: a newer word for a pair
+   closes the older (`closed_at`). They are campaign-scoped with forced RLS, in the change log
+   (Undo), in backups and deleted with the campaign. The DM's five steps store as −80, −40, 0, 40,
+   80 and read back at ±20 and ±60. The pure rule (`dmbot.memory.standing`) climbs at most two rungs
+   up each ladder (judged: character → party → groups → people; judging: NPC → groups and places →
+   the wider place), never in a loop, counting each found row with its weight halved per rung. **The
+   DM always wins:** the viewer's own DM-set impression on the exact pair, or its own attitude
+   toward a people the subject is of, decides the step, and the rungs above are only reasons;
+   otherwise the weighted mean decides, so direct evidence outweighs prejudice as it grows.
+   Nothing found is shown as **No opinion yet**, never as Wary. A name card for an NPC, group or
+   place has **🤝 Standing** (DM only) with the reasons, **Set standing…** and, on a group or place,
+   **Set attitude…**; a line says it only reminds the DM. Recall does not read these tables, and
+   the players' audience and transcripts never get them. 30 pairs take well under 5 ms.
 3. **Phase 5c: PlotBot:** threads, promises, clues, `led_to`, stalled-thread nudges,
    summaries, the pre-session note, the AI recap.
 4. **Phase 5d: Shared story:** the story plan, `same_as` links, divergence ("Watch

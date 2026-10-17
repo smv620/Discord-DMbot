@@ -2599,3 +2599,6 @@ Overall ...................................... PASS (Deepgram baseline: 33/33, 1
   docs/next-test-step.md is Test I (consent v6), not yet run.
   10-minute check, 00:33 UTC (10 minutes after the start): 0 ERROR, CRITICAL or traceback lines in core and web-api since 00:22; both up, web-api healthy; schema_migrations 114 rows, last 0114_homebrew_pack_doors.
   Nothing turned on for users (recaps off, no ElevenLabs key, the extractor off).
+2026-10-17  dev1  LIVE CHECK PASSED (reported by the owner to Supervisor in chat, relayed on #516 at 01:27 UTC; I did not see it myself; on 3535138d): Homebrew -> Add from a link (#1634) worked with one published D&D Beyond homebrew link: D&D Beyond DOES answer our server, so the link import works from the server's address.
+  The held Help and What's new lines for it are released by WebDev in #1664. The same check found a gap, not a bug: adding homebrew by hand offered no species or subclass kind; CloudDev adds species, subclass and background in #1663.
+  Still not checked from the 3535138d list: the Settings button on the /dmbot start voice step and /dmbot settings; Game masters; split the party; Homebrew on/off and Who made these; the Delete a campaign button for the plan holder only.
