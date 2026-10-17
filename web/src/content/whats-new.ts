@@ -280,7 +280,7 @@ export const held: Held[] = [
   {
     date: "2026-10-17",
     title: "A DMbot channel for buttons",
-    what: "Each campaign now gets a channel called dmb-dm-bot with one message of buttons. Press My buttons to see the ones for your part at the table; only you see the answer. A DM's buttons include Settings, and a player's include the menu to stop being recorded.",
+    what: "Each campaign now gets a channel called dmb-dm-bot with one message and two buttons: 👤 My buttons shows the ones for your part, and only you see them. The buttons moved off your DM screen, so it now holds only notes, alerts and Stop listening.",
     reason:
       "Held until it has been seen working on the test server (#1666).",
   },
