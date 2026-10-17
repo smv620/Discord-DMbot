@@ -164,18 +164,13 @@ async def look_up(
     srd = index.srd()
     hit = srd.lookup(typed, campaign.target_ruleset, campaign.fallback_ruleset, kind=kind)
     # The campaign's own homebrew sits between its house rules and the book (PLAN, rules
-    # precedence), and a homebrew name shadows the book's, hidden or not: the book's card for the
-    # same name is not shown. This is the DM's private answer, so an entry players may not know
-    # is shown too.
+    # precedence), and a homebrew name shadows the book's: the book's card for the same name is not
+    # shown. An entry the DM turned off is not read at all (#1629).
     own = await _homebrew(interaction, campaign, typed)
     if own is not None and not book_wins(
         own, hit, campaign.target_ruleset, campaign.fallback_ruleset
     ):
         own = None  # a shared book's entry ranks in its edition's place: the free rules answer
-    if own is not None and not is_dm and not own.players_may_know:
-        # A player never meets an entry the DM kept hidden, by its name or its words (a from-book
-        # entry follows the same flag). The book's card answers, as if it weren't there.
-        own = None
     if own is not None:
         mine = rule_card.homebrew_parts(
             own,
@@ -270,7 +265,6 @@ async def make_mine(entry: Homebrew, interaction: discord.Interaction) -> None:
             name=entry.name,
             text=entry.text,
             summary=entry.summary,
-            players_may_know=entry.players_may_know,
         )
     except Exception as exc:
         if not isinstance(exc, HomebrewError):

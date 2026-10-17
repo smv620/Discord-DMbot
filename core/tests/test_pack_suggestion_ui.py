@@ -75,10 +75,10 @@ class Words(unittest.TestCase):
     def test_the_note_names_the_pack_and_the_entry_but_nobody_else(self) -> None:
         text = ps.note_text("Frost Pack", suggestion())
         self.assertIn("A table using **Frost Pack homebrew** suggests (sender not shown)", text)
-        self.assertIn("**Hollow King** (Monster, hidden from players): A crowned skeleton.", text)
+        self.assertIn("**Hollow King** (Monster): A crowned skeleton.", text)
         self.assertIn("It would be a new entry.", text)
         self.assertIn("It would replace your entry", ps.note_text("Frost Pack", suggestion(), True))
-        self.assertIn("players may know it", ps.note_text("Frost Pack", suggestion(known=True)))
+        self.assertNotIn("hidden", text)  # (nothing is hidden from players any more)
 
     def test_names_cannot_format_or_ping(self) -> None:
         text = ps.note_text("**Evil** @everyone", suggestion())
@@ -222,7 +222,7 @@ class Notes(unittest.IsolatedAsyncioTestCase):
 def entry(book: bool = False) -> Homebrew:
     return Homebrew(
         id=5, campaign_id=CID, kind="item", name="Ember Lamp", text="Glows.", summary=None,
-        players_may_know=False, created_by=7, created_at=1, updated_at=1, version=3,
+        created_by=7, created_at=1, updated_at=1, version=3,
         from_book=book,
     )  # fmt: skip
 

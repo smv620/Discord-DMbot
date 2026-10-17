@@ -185,22 +185,24 @@ class Updates(DatabaseTest):
         (kept,) = await self.store.followed_packs(GUILD, self.me.id)
         self.assertFalse(kept.updating)  # it keeps its copy
 
-    async def test_a_merge_keeps_hidden_hidden_and_known_known(self) -> None:
-        await self.publish_new()  # Torch is added, hidden
-        entries = await self.brew.list(GUILD, self.pub.id)
-        torch = next(e for e in entries if e.name == "Torch")
-        await self.brew.edit(
-            GUILD, self.pub.id, DM_A, torch.id, kind="item", name="Torch", text="Burns.",
-            players_may_know=True,
-        )  # fmt: skip
-        await self.store.publish_pack_changes(
-            GUILD, self.pub.id, DM_A, await self.brew.list(GUILD, self.pub.id)
+    async def test_a_merge_adds_rejected_changes_on_and_keeps_a_followers_off(self) -> None:
+        mine = await self.brew.add(
+            GUILD, self.me.id, DM_B, kind="item", name="Torch", text="My own torch."
         )
+        await self.brew.set_enabled(GUILD, self.me.id, DM_B, mine.id, False)
+        await self.publish_new()  # Torch is added to the pack too
         await self.store.take_pack_update(
-            GUILD, self.me.id, DM_B, self.follow.set_id, accepted=set(), expected_version=3
+            GUILD, self.me.id, DM_B, self.follow.set_id, accepted=set(), expected_version=2
         )
-        known = {e.name: e.players_may_know for e in await self.brew.list(GUILD, self.me.id)}
-        self.assertEqual(known, {"Lamp": False, "Rope": False})  # the old copy, as published
+        entries = {e.name: e for e in await self.brew.list(GUILD, self.me.id)}
+        # The old copy's entries come into the campaign's own homebrew, on; the follower's own
+        # Torch (turned off) wins by name, is not touched, and stays off.
+        self.assertEqual(set(entries), {"Lamp", "Rope", "Torch"})
+        self.assertEqual(
+            {n: e.enabled for n, e in entries.items()}, {"Lamp": True, "Rope": True, "Torch": False}
+        )
+        self.assertEqual(entries["Torch"].text, "My own torch.")
+        self.assertEqual(entries["Torch"].version, 2)  # (one change: turning it off)
 
     async def test_dmbot_never_merges(self) -> None:
         await self.publish_new()

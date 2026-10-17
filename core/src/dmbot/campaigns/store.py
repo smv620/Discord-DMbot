@@ -72,6 +72,7 @@ MAX_BACKUP_BYTES = 25 * 1024 * 1024
 GZIP_MAGIC = b"\x1f\x8b"
 
 NOT_HERE = "That campaign doesn't exist in this server."
+PLAN_HOLDER_CHANGED = "Whose plan this campaign uses changed just now, so nothing was deleted."
 NAME_TAKEN = "This server already has a campaign with that name."
 DAMAGED = (
     "This backup file is damaged or isn't a DMbot campaign backup. "
@@ -317,6 +318,11 @@ NO_ROOM_TO_UNPAUSE = (
     "Your plan has no room to unpause this campaign. Pause one of your other campaigns first "
     "(open it, then ⚙️ Settings and ⏸️ **Pause this campaign**)."
 )
+MAX_DMS = 5  # a campaign's game masters at most (#1600)
+TOO_MANY_DMS = (
+    f"A campaign can have at most {MAX_DMS} game masters. Remove one before adding another."
+)
+LAST_DM = "A campaign needs at least one game master. Add another first."
 OWNER_STAYS = (
     "The campaign's owner can't be removed. Hand the campaign over first (only the owner can)."
 )
@@ -562,8 +568,13 @@ class CampaignStore:
             )
 
     async def add_dm(self, guild_id: int, campaign_id: str, user_id: int) -> Campaign:
+        """Make someone one of the campaign's DMs (already one: nothing changes). At most
+        `MAX_DMS`; the campaign row is locked so two adds at once cannot pass the cap (#1600)."""
         async with self._db.guild(guild_id) as conn:
-            await self._require(conn, guild_id, campaign_id)
+            await self._lock(conn, guild_id, campaign_id)
+            current = await self._require(conn, guild_id, campaign_id)
+            if user_id not in current.dm_user_ids and len(current.dm_user_ids) >= MAX_DMS:
+                raise CampaignError(TOO_MANY_DMS)
             await conn.execute(
                 "INSERT INTO campaign_dms (campaign_id, guild_id, user_id) VALUES (%s, %s, %s)"
                 " ON CONFLICT DO NOTHING",
@@ -579,7 +590,7 @@ class CampaignStore:
             if user_id == campaign.owner_user_id:  # whose plan it uses (#437)
                 raise CampaignError(OWNER_STAYS)
             if user_id in campaign.dm_user_ids and len(campaign.dm_user_ids) == 1:
-                raise CampaignError("A campaign needs at least one DM. Add the new DM first.")
+                raise CampaignError(LAST_DM)
             await conn.execute(
                 "DELETE FROM campaign_dms"
                 " WHERE guild_id = %s AND campaign_id = %s AND user_id = %s",
@@ -767,12 +778,22 @@ class CampaignStore:
     async def mark_played(self, guild_id: int, campaign_id: str) -> Campaign:
         return await self._set(guild_id, campaign_id, "last_played_at", int(self._clock()))
 
-    async def delete(self, guild_id: int, campaign_id: str) -> None:
+    async def delete(
+        self, guild_id: int, campaign_id: str, *, only_if_owner: int | None = None
+    ) -> None:
+        """Delete the campaign and all it holds. `only_if_owner` (#1608): the person deleting
+        by hand; checked again here, under the campaign's lock, that they still hold its plan
+        and are still a game master, so a hand-over between their last look and this delete
+        can't let the old owner delete it."""
         async with self._db.guild(guild_id) as conn:
             # Lock the campaign first, as campaign-memory writes do, so the two can't
             # deadlock while the sections clear their rows.
             await self._lock(conn, guild_id, campaign_id)
-            await self._require(conn, guild_id, campaign_id)
+            current = await self._require(conn, guild_id, campaign_id)
+            if only_if_owner is not None and (
+                current.owner_user_id != only_if_owner or only_if_owner not in current.dm_user_ids
+            ):
+                raise CampaignError(PLAN_HOLDER_CHANGED)
             for section in self._sections.values():
                 await section.clear(conn, guild_id, campaign_id)
             # The saved session would go with the campaign anyway (ON DELETE CASCADE);

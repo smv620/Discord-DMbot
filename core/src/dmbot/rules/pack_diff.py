@@ -2,8 +2,8 @@
 when it takes some of the changes. Pure: no database, no Discord.
 
 Entries are matched by name (case and spacing ignored, like the campaign's own homebrew): a name
-means the same entry. A change is one of three: an entry added, changed (its kind, summary, text or
-whether players may know it) or removed.
+means the same entry. A change is one of three: an entry added, changed (its kind, summary or
+text) or removed.
 """
 
 from __future__ import annotations
@@ -15,7 +15,9 @@ from typing import Any, Literal
 from dmbot.rules.homebrew import name_key
 
 Kind = Literal["added", "changed", "removed"]
-Entry = dict[str, Any]  # {"kind", "name", "summary", "text", "known"}
+# {"kind", "name", "summary", "text", "known"}, plus "domain" for an entry from a website and "page"
+# (text None) for an imported entry that travels as a pointer (#1635).
+Entry = dict[str, Any]
 
 
 @dataclass(frozen=True, slots=True)
@@ -45,16 +47,23 @@ def entries_of(content: Any) -> dict[str, Entry]:
         return out
     for item in items:
         try:
-            name, text = item["name"], item["text"]
-            if not isinstance(name, str) or not isinstance(text, str):
+            name, text, page = item["name"], item["text"], item.get("page")
+            if not isinstance(name, str) or not (isinstance(text, str) or page is not None):
                 continue
-            out[name_key(name)] = {
+            if item.get("kind") == "rule":
+                continue  # a pack made before rules left homebrew (#1628)
+            entry: Entry = {
                 "kind": str(item["kind"]),
                 "name": name,
                 "summary": str(item["summary"]) if item.get("summary") else None,
-                "text": text,
-                "known": bool(item.get("known")),
+                "text": text if isinstance(text, str) else None,
+                "known": True,  # (always: nothing is hidden any more; older packs may say false)
             }
+            if item.get("domain"):  # an imported entry (a pointer to a page) or a website's
+                entry["domain"] = str(item["domain"])
+            if page is not None:
+                entry["page"] = str(page)
+            out[name_key(name)] = entry
         except (KeyError, TypeError, AttributeError):
             continue
     return out
@@ -91,7 +100,8 @@ def apply(old: Any, changes: Sequence[Change], accepted: Collection[str] | None 
 def describe(change: Change, width: int = 140) -> str:
     """One plain line for the update note or the Pick screen."""
     verb = {"added": "New", "changed": "Changed", "removed": "Removed"}[change.kind]
-    shown = change.entry.get("summary") or change.entry["text"]
+    entry = change.entry
+    shown = entry.get("summary") or entry["text"] or f"from {entry.get('domain', 'a website')}"
     text = " ".join(str(shown).split())
     if len(text) > width:
         text = text[: width - 1] + "…"
