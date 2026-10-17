@@ -20,15 +20,10 @@ from typing import Protocol
 from dmbot.memory.claims import ClaimStore
 from dmbot.memory.recall import DM_SCREEN, FACT, RecallService
 from dmbot.memory.store import MemoryStore
+from dmbot.memory.threads import LIVE_STATES
 
 log = logging.getLogger(__name__)
 
-
-class _NoThreads(Exception):
-    """Nothing in the campaign is a live story thread: there is nothing to read."""
-
-
-LIVE_THREAD_STATES = ("hinted", "open", "active")  # the states a thread can go quiet in
 
 HEADER = "📜 **Before tonight**\n*From what you confirmed. Only you see this.*"
 MAX_LINES = 8  # lines under the header
@@ -36,6 +31,7 @@ MAX_CHARS = 1000  # the whole note
 LINE_CHARS = 140  # one line
 SEEDS = 5  # the names most heard last session
 FACT_LINES = 3
+QUIET_PREFIX = "🧵 Quiet threads: "
 QUIET_NAMES = 3  # thread names on the quiet-threads line, then "+N more"
 CONDITION_LINES = 3
 RECALL_BUDGET = 1500  # characters one recall may hold
@@ -119,7 +115,7 @@ def compose(facts: Facts) -> Note | None:
         shown = [_plain(n) for n in facts.quiet_threads[:QUIET_NAMES]]
         more = len(facts.quiet_threads) - len(shown)
         tail = f" (+{more} more)" if more > 0 else ""
-        lines.append(_clip(f"🧵 Quiet threads: {', '.join(shown)}{tail}"))
+        lines.append(_clip(f"{QUIET_PREFIX}{', '.join(shown)}{tail}"))
     if facts.waiting > 0:
         said = (
             "1 thing someone said is"
@@ -139,8 +135,12 @@ def compose(facts: Facts) -> Note | None:
         size += 1 + len(line)
     if not kept:
         return None
+    shown_quiet = any(line.startswith(QUIET_PREFIX) for line in kept)  # no button for a cut line
     return Note(
-        "\n".join([HEADER, *kept]), tuple(kept), max(0, facts.waiting), len(facts.quiet_threads)
+        "\n".join([HEADER, *kept]),
+        tuple(kept),
+        max(0, facts.waiting),
+        len(facts.quiet_threads) if shown_quiet else 0,
     )
 
 
@@ -207,7 +207,7 @@ class PreSession:
             cur = await scope.conn.execute(
                 "SELECT 1 FROM memory_states WHERE guild_id = %s AND campaign_id = %s"
                 " AND closed_at IS NULL AND condition = ANY(%s) LIMIT 1",
-                (*scope.ids, list(LIVE_THREAD_STATES)),
+                (*scope.ids, list(LIVE_STATES)),
             )
             has_threads = await cur.fetchone() is not None
         sentences: list[str] = []
@@ -230,16 +230,18 @@ class PreSession:
         # One read of the campaign's threads (the same one the cards use). A failure here costs
         # the line, never the note.
         quiet: list[str] = []
-        try:
-            if not has_threads:
-                raise _NoThreads
-            every = await self._memory.threads(guild_id, campaign_id, stalled_after=stalled_after)
-            stalled = sorted(
-                (t for t in every if t.stalled), key=lambda t: (-t.quiet_sessions, t.thread.name)
-            )
-            quiet = [t.thread.name for t in stalled]
-        except _NoThreads:
-            pass
-        except Exception:
-            log.warning("Couldn't read the quiet threads for the pre-session note", exc_info=True)
+        if has_threads:
+            try:
+                every = await self._memory.threads(
+                    guild_id, campaign_id, stalled_after=stalled_after
+                )
+                stalled = sorted(
+                    (t for t in every if t.stalled),
+                    key=lambda t: (-t.quiet_sessions, t.thread.name),
+                )
+                quiet = [t.thread.name for t in stalled]
+            except Exception:
+                log.warning(
+                    "Couldn't read the quiet threads for the pre-session note", exc_info=True
+                )
         return compose(Facts(title, day, sentences, conditions, waiting, quiet))

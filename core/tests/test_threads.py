@@ -381,10 +381,6 @@ class Screens(ConfirmedMemoryTest):
             self.assertEqual(found[made].state.condition, state)  # type: ignore[union-attr]
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
 class ThreadList(ConfirmedMemoryTest):
     """The 🧵 Threads button on the pre-session note (#1675): every live thread, in play first."""
 
@@ -451,6 +447,13 @@ class ThreadList(ConfirmedMemoryTest):
 
 
 class Buttons(unittest.TestCase):
+    def test_the_bot_registers_the_threads_button(self) -> None:
+        import inspect
+
+        from dmbot import bot
+
+        self.assertIn("ThreadListButton", inspect.getsource(bot.DMBot.setup_hook))
+
     def test_the_threads_button_comes_back_from_its_id_after_a_restart(self) -> None:
         match = ui.ThreadListButton.__discord_ui_compiled_template__.fullmatch(
             "dmbot:threads:list:" + "c" * 32
@@ -458,3 +461,7 @@ class Buttons(unittest.TestCase):
         assert match is not None
         self.assertEqual(match["campaign"], "c" * 32)
         self.assertEqual(ui.ThreadListButton("c" * 32).item.label, "🧵 Threads")
+
+
+if __name__ == "__main__":
+    unittest.main()

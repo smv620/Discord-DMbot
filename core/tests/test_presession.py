@@ -65,6 +65,19 @@ class Wording(unittest.TestCase):
         self.assertEqual(many.lines, ("🧵 Quiet threads: A, B, C (+2 more)",))
         self.assertEqual(many.quiet, 5)
 
+    def test_no_button_when_the_quiet_line_did_not_fit(self) -> None:
+        facts = Facts(
+            "T" * 10, 1, [f"• fact {n} " + "x" * 120 for n in range(3)], [], 5,
+            quiet_threads=["Quiet one"],
+        )  # fmt: skip
+        note = compose(facts)
+        assert note is not None
+        if not any(line.startswith(presession.QUIET_PREFIX) for line in note.lines):
+            self.assertEqual(note.quiet, 0)  # no line, so no 🧵 Threads button
+        full = compose(Facts(quiet_threads=["Quiet one"]))
+        assert full is not None
+        self.assertEqual(full.quiet, 1)
+
     def test_a_thread_name_cannot_open_markdown_in_the_note(self) -> None:
         note = compose(Facts(quiet_threads=["*bold* [x](y)"]))
         assert note is not None

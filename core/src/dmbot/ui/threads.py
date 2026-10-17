@@ -765,19 +765,20 @@ def threads_view(campaign_id: str) -> discord.ui.View:
     return view
 
 
+NO_LIVE_THREADS = "No live threads right now. Add one under New thread."
 NOTHING_LEFT = "✅ No threads need a check right now. DMbot looks again after your next session."
 
 
 async def start_review(
     interaction: discord.Interaction, campaign_id: str, *, all_live: bool = False
 ) -> None:
-    got = await _dm_and_memory(interaction, campaign_id)
-    if got is None:
+    if await _dm_and_memory(interaction, campaign_id) is None:
         return
+    await _answer_first(interaction)  # the read below can be slow: answer within Discord's 3 s
     review = ThreadsReview(campaign_id, all_live=all_live)
     text = await review.current_text(interaction)
     if text is None:
-        await _tell(interaction, NOTHING_LEFT)
+        await _tell(interaction, NO_LIVE_THREADS if all_live else NOTHING_LEFT)
         return
     await _send(interaction, text, review)
 
