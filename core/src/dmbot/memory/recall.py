@@ -40,7 +40,7 @@ from typing import Any
 from dmbot.memory._changes import Scope
 from dmbot.memory.continuity import _predicate_words
 from dmbot.memory.kinds import KIND_LABELS
-from dmbot.memory.models import ROLE_LABELS, name_key
+from dmbot.memory.models import ROLE_LABELS, THREAD_TYPES, name_key
 from dmbot.memory.ontology import Ontology
 from dmbot.memory.store import MemoryStore, _load_ontology
 
@@ -423,12 +423,15 @@ class RecallService:
         note = "description" if audience == DM_SCREEN else "'' AS description"
         # A clue only some people know (#1649) is the DM's alone: the players' audience gets
         # neither the clue nor, because a fact needs both ends, anyone's `knows` to it.
-        hide_clue = " AND NOT audience_limited" if audience == PLAYERS else ""
+        # Story threads (#1662) are the DM's plot notes: the same.
+        hide_clue = (
+            " AND NOT audience_limited AND NOT type = ANY(%s)" if audience == PLAYERS else ""
+        )
         cur = await scope.conn.execute(
             f"SELECT id, type, name, {note}, role FROM memory_entities"
             " WHERE guild_id = %s AND campaign_id = %s AND id = ANY(%s)"
             f" AND status = ANY(%s) AND type <> 'person'{hide_clue}",
-            (*scope.ids, list(ids), live),
+            (*scope.ids, list(ids), live, *([list(THREAD_TYPES)] if hide_clue else [])),
         )
         rows = {str(r["id"]): dict(r) for r in await cur.fetchall()}
         if audience == PLAYERS and rows:

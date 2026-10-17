@@ -256,6 +256,13 @@ export const held: Held[] = [
     reason:
       "Held until it has been seen working on the test server (#1655).",
   },
+  {
+    date: "2026-10-17",
+    title: "Story threads you keep",
+    what: "On the Names list, press New thread to keep a quest, mystery, hook or goal, and say how far along it is. Its card shows who is involved, what moved it, and its history. Say Still going when you check on it. After a session, DMbot tells you which threads haven't moved for a few sessions, so you can say Still going, Resolved or Dropped. It only reminds you; you decide. Players never see your threads.",
+    reason:
+      "Held until it has been seen working on the test server (#1662).",
+  },
 ];
 
 const months = [
