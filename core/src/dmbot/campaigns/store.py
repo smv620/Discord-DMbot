@@ -293,6 +293,7 @@ _SETTABLE = frozenset(
         "dm_bot_channel_id",
         "dm_bot_message_id",
         "rules_channel_id",
+        "npcs_channel_id",
         "dndbeyond_invite",
         "rules_cards",
         "side_initiative",
@@ -421,7 +422,8 @@ class CampaignStore:
         async with self._db.guild(guild_id, snapshot=True) as conn:
             cur = await conn.execute(
                 "SELECT dm_screen_channel_id, transcript_channel_id, gametime_channel_id,"
-                " dmbchat_channel_id, dm_bot_channel_id, rules_channel_id"
+                " dmbchat_channel_id, dm_bot_channel_id, rules_channel_id,"
+                " npcs_channel_id"
                 " FROM campaigns WHERE guild_id = %s",
                 (guild_id,),
             )
@@ -641,6 +643,12 @@ class CampaignStore:
     ) -> Campaign:
         """Store the campaign's rules archive channel (#1752): not part of a backup."""
         return await self._set(guild_id, campaign_id, "rules_channel_id", channel_id)
+
+    async def set_npcs_channel(
+        self, guild_id: int, campaign_id: str, channel_id: int | None
+    ) -> Campaign:
+        """Store the campaign's NPC roster channel (#1761): not part of a backup."""
+        return await self._set(guild_id, campaign_id, "npcs_channel_id", channel_id)
 
     async def set_dm_bot_channel(
         self, guild_id: int, campaign_id: str, channel_id: int | None
@@ -1691,6 +1699,8 @@ def _to_campaign(row: dict[str, Any], dms: set[int]) -> Campaign:
         dm_bot_message_id=row_int(row, "dm_bot_message_id") if "dm_bot_message_id" in row else None,
         # Absent in a schema older than #1752, for the same reason.
         rules_channel_id=row_int(row, "rules_channel_id") if "rules_channel_id" in row else None,
+        # Absent in a schema older than #1761, for the same reason.
+        npcs_channel_id=row_int(row, "npcs_channel_id") if "npcs_channel_id" in row else None,
         # Absent in a schema older than #1119, for the same reason.
         dndbeyond_invite=row.get("dndbeyond_invite"),
         # Absent before #1118: the default is on, with no extra channel.

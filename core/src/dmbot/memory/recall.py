@@ -76,6 +76,14 @@ _LIVE = ("proposed", "confirmed")
 
 ENTRY, FACT = "entry", "fact"
 
+# The roster (a list of the people and groups the table may know, #1761): who is in a group, and
+# who is closely tied to whom.
+ROSTER_MAX = 1000  # entries read at most; the channel shows far fewer
+ROSTER_TIES_MAX = 5  # shown for each entry, then "+N more"
+ROSTER_GROUP_LINK = "member_of"
+ROSTER_TIES = ("kin_of", "ally_of", "enemy_of", "serves", "sworn_to")
+ROSTER_NAME_KINDS = ("full", "short", "nickname", "title")  # never "misheard": a matching aid
+
 
 @dataclass(frozen=True, slots=True)
 class AsOf:
@@ -229,6 +237,22 @@ class _Walk:
 Sources = dict[str, list[tuple[str, int | None, tuple[int, ...] | None]]]
 
 
+@dataclass(frozen=True, slots=True)
+class RosterEntry:
+    """One confirmed NPC or group as the players may know it. No description (the players'
+    audience never reads the DM's note), no condition, no standing."""
+
+    id: str
+    name: str
+    kind: str  # "NPC", "god", "group", ...
+    is_group: bool
+    also_called: tuple[str, ...] = ()
+    groups: tuple[str, ...] = ()  # the groups it is in (names)
+    groups_more: int = 0
+    ties: tuple[str, ...] = ()  # closely tied (names)
+    ties_more: int = 0
+
+
 class RecallService:
     """Assembles the context for one question. One campaign at a time."""
 
@@ -295,6 +319,89 @@ class RecallService:
         onto = await _load_ontology(scope)
         self._ontologies[key] = (scope.version, onto)
         return onto
+
+    async def roster(self, guild_id: int, campaign_id: str) -> list[RosterEntry]:
+        """The confirmed NPCs and groups the players may see, groups first, then by name. The
+        same rules as the players' audience, not a second copy: `_entries` drops an entry that is
+        not confirmed, whose own name is secret, a clue only some know, a story thread or a deed,
+        and a relation counts only when it is confirmed, true now, not secret and not from the
+        story plan. Never player characters or the party. Conditions (dead, missing) and standing
+        are other tables and never read here."""
+        async with self._memory._read(guild_id, campaign_id, snapshot=True) as scope:
+            onto = await self._ontology(scope)
+            kinds = [k for k in onto.types if onto.is_any(k, ("character", "faction"))]
+            cur = await scope.conn.execute(
+                "SELECT id FROM memory_entities WHERE guild_id = %s AND campaign_id = %s"
+                " AND status = 'confirmed' AND type = ANY(%s) AND NOT party"
+                " AND role IS DISTINCT FROM 'player_character' ORDER BY id",
+                (*scope.ids, kinds),
+            )
+            candidates = [str(r["id"]) for r in await cur.fetchall()]
+            shown = await self._entries(scope, candidates, PLAYERS)
+            if len(shown) > ROSTER_MAX:  # (cut after the filter: hidden entries use no slot)
+                shown = {i: shown[i] for i in sorted(shown)[:ROSTER_MAX]}
+            if not shown:
+                return []
+            ids = sorted(shown)
+            cur = await scope.conn.execute(
+                "SELECT entity_id, text, kind FROM memory_aliases WHERE guild_id = %s"
+                " AND campaign_id = %s AND entity_id = ANY(%s) AND status = 'confirmed'"
+                " AND NOT secret AND kind = ANY(%s) ORDER BY created_at, id",
+                (*scope.ids, ids, list(ROSTER_NAME_KINDS)),
+            )
+            aliases: dict[str, list[str]] = {}
+            for r in await cur.fetchall():
+                aliases.setdefault(str(r["entity_id"]), []).append(str(r["text"]))
+            cur = await scope.conn.execute(
+                "SELECT subject_id, predicate, object_id, source FROM memory_relations"
+                " WHERE guild_id = %s AND campaign_id = %s AND status = 'confirmed'"
+                " AND to_session_at IS NULL AND NOT secret AND predicate = ANY(%s)"
+                " AND subject_id = ANY(%s) AND object_id = ANY(%s)"
+                " ORDER BY from_session_at DESC NULLS LAST, id",
+                (*scope.ids, [ROSTER_GROUP_LINK, *ROSTER_TIES], ids, ids),
+            )
+            relations = [r for r in await cur.fetchall() if str(r["source"]) not in PLAN_SOURCES]
+        names = {i: str(e["name"]) for i, e in shown.items()}
+        groups: dict[str, list[str]] = {}
+        ties: dict[str, list[str]] = {}
+        for r in relations:
+            a, b, predicate = str(r["subject_id"]), str(r["object_id"]), str(r["predicate"])
+            if a == b:
+                continue
+            if predicate == ROSTER_GROUP_LINK:
+                if onto.is_a(str(shown[b]["type"]), "faction"):
+                    groups.setdefault(a, []).append(names[b])
+            else:
+                ties.setdefault(a, []).append(names[b])
+                ties.setdefault(b, []).append(names[a])
+        out: list[RosterEntry] = []
+        for entity_id, e in shown.items():
+            kind_key = str(e["type"])
+            is_group = onto.is_a(kind_key, "faction")
+            role = e.get("role")
+            kind = (
+                "group" if is_group
+                else ROLE_LABELS.get(str(role), "") if role else ""
+            ) or onto.types[kind_key].label  # fmt: skip
+            own = names[entity_id]
+            others = [t for t in dict.fromkeys(aliases.get(entity_id, [])) if t != own]
+            g = list(dict.fromkeys(groups.get(entity_id, [])))
+            t = list(dict.fromkeys(ties.get(entity_id, [])))
+            out.append(
+                RosterEntry(
+                    id=entity_id,
+                    name=own,
+                    kind=kind,
+                    is_group=is_group,
+                    also_called=tuple(others),
+                    groups=tuple(g[:ROSTER_TIES_MAX]),
+                    groups_more=max(0, len(g) - ROSTER_TIES_MAX),
+                    ties=tuple(t[:ROSTER_TIES_MAX]),
+                    ties_more=max(0, len(t) - ROSTER_TIES_MAX),
+                )
+            )
+        out.sort(key=lambda x: (not x.is_group, name_key(x.name), x.id))
+        return out
 
     # ---- the walk --------------------------------------------------------------------
 

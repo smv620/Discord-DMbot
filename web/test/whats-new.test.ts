@@ -85,6 +85,7 @@ describe("What's new", () => {
       "A Shared story switch", // until the story plan is used (#1692, #1714)
       "Homebrew menu by kind", // until seen on the test server (#1665)
       "A channel for your house rules", // until seen on the test server (#1752)
+      "A channel listing the people and groups", // until seen on the test server (#1761)
       "Manage your plan without Discord", // until the billing login link is set in the build (#1711)
       "A quiet reminder of the game time", // until seen on the test server (#1738)
     ]);

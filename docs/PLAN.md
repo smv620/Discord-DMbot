@@ -1173,7 +1173,7 @@ so the docs always show names the way Discord does. For the campaign
 | Rules archive (house rules, overrides, rulings) | `dmb-rules-rmfthfrstmdn` | House rules: #1752 (overrides and rulings: Phase 3, with the AI rules alerts) |
 | Game time (the players' clock; owner, 2026-10-13) | `dmb-gametime-rmfthfrstmdn` | Phase 4 |
 | DMbot chat (table questions and their answers; owner, 2026-10-14) | `dmb-chat-rmfthfrstmdn` | Phase 4 |
-| NPCs (roster, relationships, factions) | `dmb-npcs-rmfthfrstmdn` | Phase 5 |
+| NPCs (roster, relationships, factions) | `dmb-npcs-rmfthfrstmdn` | Roster: #1761 (standing and relationships beyond the roster: Phase 5) |
 | Plot (story beats, places, hooks) | `dmb-plot-rmfthfrstmdn` | Phase 5 |
 
 - **The DM screen uses the full campaign name:** `rime-of-the-frostmaiden`.
@@ -1237,6 +1237,26 @@ so the docs always show names the way Discord does. For the campaign
   same list, at most 5 edits or deletes a run (the rest next time). A change reaches the channel a
   few seconds later; the bot also brings every campaign's channel up to date once at start. A
   channel deleted by hand is made again at the next `/dmbot start`. Its id is not in a backup.
+- **The NPC list is built (2026-10-17, #1761), a roster with no AI.** `dmb-npcs-<short name>` is
+  made, repaired and kept like the rules channel (own lock, batching, the start-up sweep, edits in
+  place) and is controlled the same way: it follows the DM screen's visibility and peekers, nobody
+  posts there, and a peek and a hide open and close all three channels, with the peek warning
+  naming the rules channel and the NPC list. One message per **confirmed** NPC, god or group
+  (never a player's character or the party): the name, what it is, the other names it goes by,
+  the groups it is in and who it is closely tied to (up to 5, then "+N more"), only from facts the
+  DM confirmed that are true now. Because players can peek here and the list sits in view all
+  session, it is built by `RecallService.roster`, which applies the **players** audience's rules
+  and not a second copy: never a secret name or a name only misheard, a limited clue or anything
+  that points to one, a story thread, a deed or standing, the DM's note (so there is **no
+  description line**: the only description an entry has is the DM's note), a condition such as
+  dead or missing (the table may not know yet), or anything from the adventure plan. Groups
+  come first, then people, alphabetical, at most 200 messages and then "+N more: open a name card
+  for the rest". A new entry is posted at the end, so the order is exact after the rebuild at
+  every `/dmbot start` and at bot start. A change to the campaign's memory (confirm, merge,
+  reject, rename, secret flags, Undo) refreshes the list a few seconds later, at most one pass a
+  campaign a minute. Messages are found again by the entry id in their last line, so nothing is
+  stored beyond the channel's id, which is not in a backup. Organized mode is a separate
+  decision and is not changed here.
 - Server owners and admins always see every channel (see above).
 
 *Modes.*

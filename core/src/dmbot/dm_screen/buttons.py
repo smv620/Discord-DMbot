@@ -10,6 +10,7 @@ from __future__ import annotations
 import contextlib
 import logging
 import re
+from collections.abc import Callable
 from typing import Any
 
 import discord
@@ -24,6 +25,7 @@ from dmbot.dm_screen.channel import (
     held_permissions,
     setup_dm_screen,
 )
+from dmbot.dm_screen.npcs_channel import is_npcs_name
 from dmbot.dm_screen.rules import READ_ONLY, Target, is_peeker, missing_required, restrict
 from dmbot.dm_screen.rules_channel import is_rules_name
 
@@ -64,20 +66,36 @@ async def _load(
     return campaign, channel, member
 
 
-async def _rules_channel(guild: discord.Guild, campaign: Campaign) -> discord.TextChannel | None:
-    """The campaign's rules channel (#1752), if it has one that is still there. A peek opens it
-    together with the DM screen."""
-    if campaign.rules_channel_id is None:
+async def _own_channel(
+    guild: discord.Guild, channel_id: int | None, named_right: Callable[[str], bool]
+) -> discord.TextChannel | None:
+    """One of DMbot's controlled channels, if the campaign has one that is still there."""
+    if channel_id is None:
         return None
-    found: object = guild.get_channel(campaign.rules_channel_id)
+    found: object = guild.get_channel(channel_id)
     if found is None:
         with contextlib.suppress(discord.HTTPException):
-            found = await guild.fetch_channel(campaign.rules_channel_id)
-    channel = found
-    # (only a channel still named like a rules channel: an admin may have reused the id)
-    if isinstance(channel, discord.TextChannel) and is_rules_name(channel.name):
-        return channel
+            found = await guild.fetch_channel(channel_id)
+    # (only a channel still named like ours: an admin may have reused the id)
+    if isinstance(found, discord.TextChannel) and named_right(found.name):
+        return found
     return None
+
+
+async def _rules_channel(guild: discord.Guild, campaign: Campaign) -> discord.TextChannel | None:
+    """The campaign's rules channel (#1752). A peek opens it together with the DM screen."""
+    return await _own_channel(guild, campaign.rules_channel_id, is_rules_name)
+
+
+async def _npcs_channel(guild: discord.Guild, campaign: Campaign) -> discord.TextChannel | None:
+    """The campaign's NPC roster channel (#1761), opened and closed with the rules channel."""
+    return await _own_channel(guild, campaign.npcs_channel_id, is_npcs_name)
+
+
+async def _controlled(guild: discord.Guild, campaign: Campaign) -> list[discord.TextChannel]:
+    """Every controlled channel besides the DM screen that a peek opens (the warning names them)."""
+    found = (await _rules_channel(guild, campaign), await _npcs_channel(guild, campaign))
+    return [c for c in found if c is not None]
 
 
 def _peeking(channel: discord.TextChannel, member: discord.Member) -> bool:
@@ -130,11 +148,11 @@ class PeekButton(
         else:
             confirm = ConfirmPeek(self.campaign_id, interaction)
             rules = await _rules_channel(channel.guild, campaign)
-            await reply(
-                messages.peek_warning(rules.mention if rules else None),
-                view=confirm,
-                ephemeral=True,
+            npcs = await _npcs_channel(channel.guild, campaign)
+            warning = messages.peek_warning(
+                rules.mention if rules else None, npcs.mention if npcs else None
             )
+            await reply(warning, view=confirm, ephemeral=True)
 
 
 class ConfirmPeek(discord.ui.View):
@@ -184,16 +202,15 @@ class ConfirmPeek(discord.ui.View):
                 await edit(content=messages.PLAYER_FAILED, view=None)
                 await _tell_dm_about_failure(channel)
                 return
-            rules = await _rules_channel(channel.guild, campaign)
-            if rules is not None:  # the warning named it: the peek opens both
+            for other in await _controlled(channel.guild, campaign):  # the warning named them
                 try:
-                    await rules.set_permissions(
+                    await other.set_permissions(
                         member,
                         overwrite=discord.PermissionOverwrite(**restrict(READ_ONLY, held)),
                         reason=f"DMbot: {member} chose to peek",
                     )
                 except discord.HTTPException:
-                    log.warning("Could not grant peek access in channel %s", rules.id)
+                    log.warning("Could not grant peek access in channel %s", other.id)
         await edit(content=messages.peek_done(channel.mention), view=hide_view(self.campaign_id))
         with contextlib.suppress(discord.HTTPException):
             await channel.send(messages.peeked_note(member.display_name), allowed_mentions=NO_PINGS)
@@ -252,15 +269,14 @@ class HideButton(
                 await reply(messages.PLAYER_FAILED, ephemeral=True)
                 await _tell_dm_about_failure(channel)
                 return
-            rules = await _rules_channel(channel.guild, campaign)
-            if rules is not None:
+            for other in await _controlled(channel.guild, campaign):
                 try:
-                    await rules.set_permissions(
+                    await other.set_permissions(
                         member, overwrite=None, reason=f"DMbot: {member} stopped peeking"
                     )
                 except discord.HTTPException:
-                    log.warning("Could not remove peek access in channel %s", rules.id)
-                    # The DM is told on the DM screen: the rules channel is the players' to read.
+                    log.warning("Could not remove peek access in channel %s", other.id)
+                    # The DM is told on the DM screen: these channels are the players' to read.
                     await _tell_dm_about_failure(channel)
         await reply(messages.HIDE_DONE, ephemeral=True)
         with contextlib.suppress(discord.HTTPException):

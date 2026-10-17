@@ -600,7 +600,8 @@ Each step is useful on its own and ships behind the existing phases.
    counts only.
    Start after-session only, then live.
 2. **Phase 5b: NPC tracker and reputation:** knowledge (clues, `knows`, `witnessed`),
-   deeds, standing, the NPC channel, the recall service. **Slice 1 is built (#1350): the recall
+   deeds, standing, the NPC channel (**a roster is built, #1761**: `RecallService.roster` lists the
+   confirmed NPCs and groups the players may know, in the NPC channel; see docs/PLAN.md, "Channels"), the recall service. **Slice 1 is built (#1350): the recall
    service,** `dmbot.memory.recall`, in code only (no AI, no screen, used nowhere yet). From some
    names or entry ids, an audience (`dm_screen`, `players` or `transcript`), a story time and a
    size budget (`DMBOT_RECALL_BUDGET`, 4000 characters unless set) it walks one or two steps over
