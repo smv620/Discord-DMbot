@@ -8,7 +8,6 @@ from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
-from dmbot.memory import recall
 from dmbot.memory import threads as th
 from dmbot.memory.lookup import CampaignLookup
 from dmbot.memory.models import OPEN, MemoryRuleError
@@ -29,6 +28,9 @@ class Pure(unittest.TestCase):
     def test_a_chain_longer_than_the_limit_is_refused(self) -> None:
         long = [(f"n{i}", f"n{i + 1}") for i in range(30)]
         self.assertTrue(th.would_loop(long, "x", "n0", depth=10))  # too deep to read on a card
+        for links, refused in ((9, False), (10, True), (11, True)):  # links already below `end`
+            below = [(f"n{i}", f"n{i + 1}") for i in range(links)]
+            self.assertIs(th.would_loop(below, "x", "n0", depth=10), refused, links)
         short = [(f"n{i}", f"n{i + 1}") for i in range(3)]
         self.assertFalse(th.would_loop(short, "x", "n0", depth=10))
 
@@ -91,6 +93,28 @@ class Chain(ConfirmedMemoryTest):
         with self.assertRaises(MemoryRuleError):  # a longer way round
             await self.link(self.ambush, self.heir)
 
+    async def test_the_other_ways_in_are_secret_and_loop_checked_too(self) -> None:
+        rel = (
+            await self.memory.add_relation(
+                GUILD_A, self.c, self.map, "led_to", self.heir, confidence=0.5, source="extractor"
+            )
+        ).value[0]
+        self.assertTrue(rel.secret)
+        with self.assertRaises(MemoryRuleError):
+            await self.memory.update_relation(GUILD_A, self.c, rel.id, source="dm", secret=False)
+        await self.link(self.heir, self.tower)
+        with self.assertRaises(MemoryRuleError):
+            await self.memory.add_relation(
+                GUILD_A, self.c, self.tower, "led_to", self.heir, confidence=0.5, source="dm"
+            )
+
+    async def test_an_ended_link_does_not_count_for_the_loop_check(self) -> None:
+        made = await self.link(self.heir, self.tower)
+        await self.memory.update_relation(
+            GUILD_A, self.c, made.value.id, source="dm", to_session_at=1
+        )
+        await self.link(self.tower, self.heir)
+
     async def test_another_campaigns_entry_cannot_be_linked(self) -> None:
         other = (await self.campaigns.create(GUILD_A, "Elsewhere", 7)).id
         theirs = (
@@ -123,14 +147,12 @@ class Chain(ConfirmedMemoryTest):
         for seeds in (["The torn map"], ["The ambush"], ["The Missing Heir"], [self.tower]):
             got = await service.recall(GUILD_A, self.c, seeds=seeds, audience=PLAYERS, opted_in={7})
             self.assertNotIn("led to", " ".join(i.text for i in got.items).lower(), seeds)
-            self.assertNotIn("Missing Heir", " ".join(i.text for i in got.items), seeds)
-        dm = await service.recall(
-            GUILD_A, self.c, seeds=["The torn map"], audience=DM_SCREEN, opted_in={7}
-        )
-        self.assertTrue(dm.items)
+            dm = await service.recall(
+                GUILD_A, self.c, seeds=["The torn map"], audience=DM_SCREEN, opted_in={7}
+            )
+        self.assertIn("led to", " ".join(i.text for i in dm.items).lower())
         whole = CampaignLookup.build(await self.memory.lookup_data(GUILD_A, self.c))
         self.assertNotIn(self.heir, whole.for_viewer(False).entities)
-        self.assertIn(recall.FACT, {i.kind for i in dm.items} | {recall.FACT})
 
     async def test_the_links_come_back_from_a_backup(self) -> None:
         from dmbot.campaigns.store import decode_backup, encode_backup

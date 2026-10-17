@@ -208,6 +208,8 @@ def _groups(
     for r in connections:
         if r.status != CONFIRMED or (r.secret and not secrets):
             continue
+        if r.predicate == "led_to":
+            continue  # shown as the "Came from" / "Led to" lines instead (#1679)
         ahead = r.subject_id == entity_id or r.predicate in BOTH_WAYS
         other = lookup.entities.get(r.object_id if r.subject_id == entity_id else r.subject_id)
         if other is None or other.status != CONFIRMED or other.id == entity_id:

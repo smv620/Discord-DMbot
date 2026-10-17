@@ -614,7 +614,9 @@ class LedToForm(discord.ui.Modal, title="Led to…"):
         kinds: tuple[str, ...] | None = None
         if memory is not None and interaction.guild is not None:
             ontology = await memory.ontology(interaction.guild.id, self.campaign_id)
-            kinds = tuple(k for k in ontology.types if k == "event" or ontology.is_a(k, "thread"))
+            kinds = tuple(
+                k for k in ontology.types if ontology.is_a(k, "event") or ontology.is_a(k, "thread")
+            )
         await link_by_name(
             interaction,
             self.campaign_id,

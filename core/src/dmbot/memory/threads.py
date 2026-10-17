@@ -98,8 +98,9 @@ def would_loop(
     pairs: Iterable[tuple[str, str]], start: str, end: str, depth: int = CHAIN_DEPTH
 ) -> bool:
     """Would "start led to end" close a loop (or be a link to itself)? True when `end` already
-    leads, through the live links in `pairs` (from, to), back to `start`, within `depth` steps.
-    A chain longer than that is refused too: a path nobody could read on a card is not a path."""
+    leads, through the live links in `pairs` (from, to), back to `start`. Also True when the new
+    link would make the chain below `start` longer than `depth` links (`end` already has
+    `depth` links under it): a path nobody could read on a card is not a path."""
     if start == end:
         return True
     out: dict[str, list[str]] = {}

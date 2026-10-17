@@ -859,19 +859,12 @@ class MemoryStore:
         async with self._write(guild_id, campaign_id, source) as w:
             onto = await _load_ontology(w)
             a, b = await _entity_row(w, from_id), await _entity_row(w, to_id)
+            if a["status"] != CONFIRMED or b["status"] != CONFIRMED:
+                raise MemoryRuleError(LED_TO_KINDS)
             if not any(onto.is_a(a["type"], k) for k in ("clue", "event", "thread")) or not any(
                 onto.is_a(b["type"], k) for k in ("thread", "event")
             ):
                 raise MemoryRuleError(LED_TO_KINDS)
-            live = await w.select(
-                RELATIONS,
-                " AND predicate = 'led_to' AND status = 'confirmed' AND to_session_at IS NULL",
-                [],
-            )
-            if threads_mod.would_loop(
-                [(r["subject_id"], r["object_id"]) for r in live], from_id, to_id
-            ):
-                raise MemoryRuleError(LED_TO_LOOP)
             fact, _flags = await self.add_relation_in(
                 w, from_id, "led_to", to_id, confidence=1.0, status=CONFIRMED, secret=True,
                 from_session_at=from_session_at,
@@ -910,7 +903,10 @@ class MemoryStore:
             for r in rows
             if r["subject_id"] == entity_id and r["object_id"] in found
         ]
-        key = lambda e: (name_key(e.name), e.id)  # noqa: E731
+
+        def key(e: Entity) -> tuple[str, str]:
+            return (name_key(e.name), e.id)
+
         return sorted(came, key=key), sorted(went, key=key)
 
     async def set_due(
@@ -2628,6 +2624,19 @@ class MemoryStore:
         if pred.key == PLAYS:
             # Who plays a character is set on the character, then kept here (#1188).
             raise MemoryRuleError("Say who plays a character on the character itself.")
+        if pred.key == threads_mod.LED_TO:
+            # Whatever the path (extractor, "Connect to…"), a "led to" link is the DM's secret
+            # and may not close a loop (#1679).
+            secret = True
+            live = await w.select(
+                RELATIONS,
+                " AND predicate = 'led_to' AND status = 'confirmed' AND to_session_at IS NULL",
+                [],
+            )
+            if threads_mod.would_loop(
+                [(r["subject_id"], r["object_id"]) for r in live], subject_id, object_id
+            ):
+                raise MemoryRuleError(LED_TO_LOOP)
         types = {
             subject_id: (await _entity_row(w, subject_id))["type"],
             object_id: (await _entity_row(w, object_id))["type"],
@@ -2677,6 +2686,8 @@ class MemoryStore:
                 check_status_change(current["status"], status, source)
                 changes["status"] = status
             if secret is not None:
+                if current["predicate"] == threads_mod.LED_TO and not secret:
+                    raise MemoryRuleError("A “led to” link stays the DM's alone.")
                 if current["secret"] and not secret and source != DM:
                     raise MemoryRuleError("Only the DM can stop keeping that secret.")
                 changes["secret"] = secret
