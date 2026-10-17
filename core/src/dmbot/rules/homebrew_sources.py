@@ -14,10 +14,13 @@
 
 from __future__ import annotations
 
+import logging
 import time
-from collections.abc import Callable, Collection
+from collections.abc import Callable, Collection, Iterable
 from dataclasses import dataclass
 from typing import Any
+
+from psycopg import errors
 
 from dmbot.campaigns.models import CampaignError
 from dmbot.db import Conn, Database
@@ -31,6 +34,10 @@ from dmbot.rules.homebrew import (
     require_dm,
 )
 from dmbot.rules.site_urls import normalise_domain, normalise_url
+
+log = logging.getLogger(__name__)
+
+PAGE_KEEP_S = 30 * 24 * 3600  # an unused page is kept this long, in case it is wanted again
 
 DAMAGED = "This backup file is damaged (bad site approval)."
 BAD_ADDRESS = "That isn't a web address DMbot can read. It must start with https://."
@@ -149,6 +156,55 @@ class SourceStore:
             row = await cur.fetchone()
         assert row is not None
         return _page(row)
+
+    async def sweep_pages(self, guild_ids: Iterable[int]) -> int:
+        """The daily clean-up (#1646): delete pages older than `PAGE_KEEP_S` that no entry points
+        to and no pack (followed, or published by a campaign) names. Pages are shared, but the
+        entries and packs that use them are each campaign's own, so every server is read in its
+        own scope and only the addresses are collected (no names, no words). Returns how many were
+        deleted; the log line carries the count and never an address.
+
+        A page someone starts using after the look is safe: an entry's `page_id` is a foreign key,
+        so that page's delete is refused and the rest go on; a pack naming
+        it a moment later finds no page and its entry is skipped, as for any page not kept."""
+        used: set[str] = set()
+        for guild_id in guild_ids:
+            async with self._db.guild(guild_id) as conn:
+                cur = await conn.execute(
+                    "SELECT DISTINCT p.url FROM homebrew_entries h"
+                    " JOIN homebrew_pages p ON p.id = h.page_id"
+                )
+                used.update(r["url"] for r in await cur.fetchall())
+                # (`previous_content` is a follower's copy before the last update: Undo needs it)
+                for table, column in (
+                    ("rule_set_follows", "content"),
+                    ("rule_set_follows", "previous_content"),
+                    ("rule_set_versions", "content"),
+                ):
+                    cur = await conn.execute(
+                        f"SELECT DISTINCT e ->> 'page' AS url FROM {table},"
+                        f" jsonb_array_elements(CASE WHEN jsonb_typeof({column} -> 'entries') ="
+                        f" 'array' THEN {column} -> 'entries' ELSE '[]'::jsonb END) e"
+                        " WHERE jsonb_typeof(e) = 'object' AND e ->> 'page' IS NOT NULL"
+                    )
+                    used.update(r["url"] for r in await cur.fetchall())
+        cutoff = int(self._clock()) - PAGE_KEEP_S
+        async with self._db.unscoped() as conn:
+            cur = await conn.execute(
+                "SELECT id FROM homebrew_pages WHERE fetched_at < %s AND url <> ALL(%s)",
+                (cutoff, sorted(used)),
+            )
+            candidates = [int(r["id"]) for r in await cur.fetchall()]
+        deleted = 0
+        for page_id in candidates:  # one at a time: a page that just gained an entry stays
+            try:
+                async with self._db.unscoped() as conn:
+                    await conn.execute("DELETE FROM homebrew_pages WHERE id = %s", (page_id,))
+                deleted += 1
+            except errors.ForeignKeyViolation:
+                continue
+        log.info("Homebrew pages no one uses were deleted: count=%s", deleted)
+        return deleted
 
     async def mark_stale(self, url: str) -> None:
         """The page was fetched again and is gone or private (#1645): keep its words, say they may

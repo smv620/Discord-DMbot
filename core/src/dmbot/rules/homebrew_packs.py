@@ -469,8 +469,14 @@ def from_follow(
     return out
 
 
-def waiting_by_site(follows: Sequence[Follow], approved: Collection[str]) -> dict[str, int]:
-    """How many entries of the followed packs wait for a site's approval, by site (#1635)."""
+def waiting_by_site(
+    follows: Sequence[Follow],
+    approved: Collection[str],
+    pages: Mapping[str, Any] | None = None,
+) -> dict[str, int]:
+    """How many entries of the followed packs wait for a site's approval, by site (#1635). An
+    entry pointing to a page that isn't kept here is not waiting: approving the site would not
+    turn it on (#1646). `pages` None counts every entry (no page lookup)."""
     waiting: dict[str, int] = {}
     for follow in follows:
         try:
@@ -479,6 +485,8 @@ def waiting_by_site(follows: Sequence[Follow], approved: Collection[str]) -> dic
             continue
         for e in entries:
             domain = e.get("domain")
+            if pages is not None and "page" in e and e["page"] not in pages:
+                continue
             if domain is not None and domain not in approved:
                 waiting[domain] = waiting.get(domain, 0) + 1
     return waiting
@@ -531,7 +539,9 @@ class HomebrewReader:
             return {}
         try:
             follows = await self._packs.pack_copies(guild_id, campaign_id)
-            return waiting_by_site(follows, await self._approved(guild_id, campaign_id))
+            urls = pointer_urls(follows)
+            pages = await self._sources.pages_by_url(urls) if self._sources and urls else {}
+            return waiting_by_site(follows, await self._approved(guild_id, campaign_id), pages)
         except Exception:
             log.exception("Couldn't work out which followed entries are waiting")
             return {}

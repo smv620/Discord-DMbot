@@ -62,6 +62,11 @@ Make both database passwords long, random, and letters and numbers only
 (`openssl rand -hex 24`). Compose runs Postgres for you and sets `DATABASE_URL`; the
 database is not reachable from outside the server.
 
+`DATABASE_POOL_MAX` (optional, default 10, from 1 to 100) is how many database connections
+one DMbot process may hold open. Leave it alone on the one-server setup. If you later run
+several shard processes against one Postgres, give each a smaller number so the total stays
+under Postgres's `max_connections` (or put PgBouncer in front). Changing it needs a restart.
+
 Leave `DISCORD_DEV_GUILD_ID` set to your server's ID — slash commands appear there
 instantly. (Without it, commands register globally, which can take up to an hour.)
 
