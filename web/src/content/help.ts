@@ -251,16 +251,16 @@ export const sharedStorySteps: Step[] = [
     ],
   },
   {
-    text: "After you give DMbot your adventure, press 📖 Read it now on its card. DMbot's AI reads each file once and lists its chapters, places and people. Press 📋 See what was read to check the list, and 🔄 Refresh to see how far a read has got. Players never see the list. It doesn't change your alerts yet. If a read stops, the card says why and what to press. DMbot may say it has used up its reading for this month. The list isn't in the campaign's backup: after you restore one, give the files again.",
+    text: "To make DMbot read your adventure, press 📖 Read it now on its card, then Yes, read it. DMbot's AI reads one file once and lists its chapters, places and people. It takes a few minutes and you can keep playing. Nothing tells you when it's done: press 🔄 Refresh to check, then 📋 See what was read to look at the list. It reads one file at a time, so press Read it now again for the next. Players never see the list. DMbot doesn't use it yet, so your alerts don't change. If a read stops, the card says why and what to press.",
     names: [
       { name: "Read it now", file: "dm_screen/adventure_card.py" },
+      { name: "Yes, read it", file: "dm_screen/adventure_card.py" },
       { name: "See what was read", file: "dm_screen/adventure_card.py" },
       { name: "Refresh", file: "dm_screen/adventure_card.py" },
-      { name: "used up its reading for this month", file: "dm_screen/adventure_card.py" },
     ],
   },
   {
-    text: "A backup of the campaign keeps only your adventure's name, not its text, because anyone in your server can download a backup. After you restore, give DMbot the file again.",
+    text: "A backup of the campaign keeps only your adventure's name, not its text or what DMbot read, because anyone in your server can download a backup. After you restore, give DMbot the file again.",
   },
 ];
 
