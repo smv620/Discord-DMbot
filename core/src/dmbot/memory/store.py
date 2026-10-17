@@ -2837,6 +2837,12 @@ class MemoryStore:
             )
             return cur.rowcount
 
+    # NOTE (#1740): nothing in production calls this. It was written with the first memory step
+    # (#165) for a mention index that was never wired: the after-session name scan writes
+    # `memory_heard` (add_session_heard) instead, and a confirmed fact's quoted lines come from
+    # its claim's `lines` (the extractor path, off until #1282). So `memory_mentions` is empty on
+    # a live table. To ask "was this name heard in a session?" read `memory_heard`, never this
+    # table. Wire it only together with whatever should read it.
     async def add_mention(
         self,
         guild_id: int,

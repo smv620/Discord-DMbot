@@ -477,7 +477,10 @@ class RecallService:
 
     async def _sources(self, scope: Scope, facts: Sequence[_Fact]) -> Sources:
         """For each fact, where it was said: (line reference, session, speakers who said it)
-        from its mentions and from the claim it was confirmed from."""
+        from its mentions and from the claim it was confirmed from.
+        Today the quoted lines come only from the claim (the extractor path, off until #1282):
+        nothing writes `memory_mentions` (#1740), so `mention_ids` are empty on a live table and
+        a fact the DM typed in by hand has no quoted lines until the extractor is on."""
         out: Sources = {}
         mention_ids = sorted({m for f in facts for m in f.mention_ids})
         by_mention: dict[str, tuple[str, int | None]] = {}

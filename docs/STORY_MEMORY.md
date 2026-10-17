@@ -498,6 +498,11 @@ assembles context in code; the AI only reads it.
    notes), `transcript` (nothing from here ever goes into a transcript).
 4. **Add summaries and evidence:** the entity/thread summaries for the seeds, plus a
    few transcript lines as quotes (with session and time) from the mention index.
+   **(Today, #1740:** nothing writes the mention index (`memory_mentions`; `add_mention` has no caller), so the
+   quoted lines come only from the claim a fact was confirmed from, which needs the extractor (off until
+   #1282); a fact the DM typed in by hand has none. "Was this name heard in a session?" is read from
+   `memory_heard`, which the after-session name scan writes: the pre-session note, health, recall's ranking,
+   Guide me and the deeds' fade all read it.)
 5. **Budget and cite:** a fixed token budget, ordered by score; every item carries its
    fact or line ID, and an answer is checked to cite only IDs it was given.
 
