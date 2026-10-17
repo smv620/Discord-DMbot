@@ -343,6 +343,9 @@ class FeaturesButton(
             await interaction.response.send_message(ONLY_DM, ephemeral=True)
             return
         settings = getattr(interaction.client, "settings", None)
+        if settings is None:  # (a client without one: nothing to list)
+            await interaction.response.send_message(LOAD_FAILED, ephemeral=True)
+            return
         await interaction.response.send_message(
             features.whats_on_text(settings), ephemeral=True, allowed_mentions=NO_PINGS
         )
