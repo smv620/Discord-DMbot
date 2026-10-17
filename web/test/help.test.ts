@@ -10,7 +10,7 @@ import { beforeAll, describe, expect, it } from "vitest";
 import { parsePage } from "./dom";
 
 import { entries, held } from "../src/content/whats-new";
-import { TIME_SUGGESTIONS_LIVE, timeSuggestionSteps, RULES_CHANNEL_LIVE, rulesChannelSteps, NPCS_CHANNEL_LIVE, npcsChannelSteps, DEEDS_LIVE, deedSteps, WHERE_ARE_WE_LIVE, whereAreWeSteps, SHARED_STORY_LIVE, sharedStorySteps, STANDING_LIVE, standingSteps, HOMEBREW_KINDS_LIVE, homebrewKindSteps, STORY_THREADS_LIVE, storyThreadSteps, DM_BOT_CHANNEL_LIVE, dmBotChannelSteps, settingsOnDmScreenSteps, HOMEBREW_LINKS_LIVE, SECRET_CLUES_LIVE, accountSteps, dmSteps, homebrewLinkSteps, secretClueSteps, emailSteps, recapSteps, quickAnswers, quickAnswersHeading, gettingHelp, playerSteps } from "../src/content/help";
+import { TIME_SUGGESTIONS_LIVE, timeSuggestionSteps, RULES_CHANNEL_LIVE, rulesChannelSteps, NPCS_CHANNEL_LIVE, npcsChannelSteps, DEEDS_LIVE, deedSteps, WHERE_ARE_WE_LIVE, whereAreWeSteps, SHARED_STORY_LIVE, sharedStorySteps, STANDING_LIVE, standingSteps, HOMEBREW_KINDS_LIVE, homebrewKindSteps, STORY_THREADS_LIVE, storyThreadSteps, DM_BOT_CHANNEL_LIVE, dmBotChannelSteps, settingsOnDmScreenSteps, HOMEBREW_LINKS_LIVE, SECRET_CLUES_LIVE, accountSteps, dmSteps, homebrewLinkSteps, secretClueSteps, emailSteps, recapSteps, quickAnswers, quickAnswersHeading, gettingHelp, playerSteps, snags, snagsHeading } from "../src/content/help";
 import Help from "../src/pages/help.astro";
 
 const botDir = fileURLToPath(new URL("../../core/src/dmbot/", import.meta.url));
@@ -28,7 +28,7 @@ describe("Help", () => {
     expect(help.querySelector("#dm-heading")?.textContent).toBe("For the game master");
     expect(help.querySelector("#player-heading")?.textContent).toBe("For players");
     const lists = [...help.querySelectorAll("section ol")];
-    expect(lists.map((l) => l.children.length)).toEqual([dmSteps.length, playerSteps.length, accountSteps.length, emailSteps.length, gettingHelp.items.length]);
+    expect(lists.map((l) => l.children.length)).toEqual([dmSteps.length, playerSteps.length, accountSteps.length, emailSteps.length, snags.length, gettingHelp.items.length]);
   });
 
   it("says what DMbot knows when the game master asks it a quick question (#1379)", () => {
@@ -55,13 +55,27 @@ describe("Help", () => {
   });
 
   it("names only buttons and commands that are in the bot's code", () => {
-    for (const step of [...dmSteps, ...dmBotChannelSteps, ...settingsOnDmScreenSteps, ...storyThreadSteps, ...sharedStorySteps, ...standingSteps, ...homebrewKindSteps, ...homebrewLinkSteps, ...secretClueSteps, ...recapSteps, ...quickAnswers, ...playerSteps, ...accountSteps, ...emailSteps]) {
+    for (const step of [...dmSteps, ...dmBotChannelSteps, ...settingsOnDmScreenSteps, ...storyThreadSteps, ...sharedStorySteps, ...standingSteps, ...homebrewKindSteps, ...homebrewLinkSteps, ...secretClueSteps, ...recapSteps, ...quickAnswers, ...playerSteps, ...snags, ...accountSteps, ...emailSteps]) {
       for (const { name, file } of step.names ?? []) {
         expect(step.text, `${name} is in its step`).toContain(name);
         const source = readFileSync(join(botDir, file), "utf8");
         expect(source, `${name} in ${file}`).toContain(name);
       }
     }
+  });
+
+  it("has an If something doesn't work section of five to seven short answers (#1805)", () => {
+    expect(snags.length).toBeGreaterThanOrEqual(5);
+    expect(snags.length).toBeLessThanOrEqual(7);
+    for (const snag of snags) expect(snag.text.split(" ").length, snag.question).toBeLessThanOrEqual(40);
+    const section = help.querySelector("#snags-heading")?.parentElement;
+    expect(section?.querySelector("h2")?.textContent).toBe(snagsHeading);
+    expect(section?.querySelectorAll("li").length).toBe(snags.length);
+    // The section sits before "Getting help" and links to the steps and the support route on this page.
+    const hrefs = [...(section?.querySelectorAll("a") ?? [])].map((a) => a.getAttribute("href"));
+    expect(hrefs).toEqual(["#dm-heading", "#getting-help"]);
+    const order = [...help.querySelectorAll("h2")].map((h) => h.id);
+    expect(order.indexOf("snags-heading")).toBe(order.indexOf("getting-help-heading") - 1);
   });
 
   it("says what each email is, and that a move code is only for you (#1283)", () => {

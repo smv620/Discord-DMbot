@@ -1,7 +1,7 @@
 ---
 import Base from "../layouts/Base.astro";
 import { RECAPS_LIVE, recapsHeading } from "../content/recap-words";
-import { recapSteps, accountSteps, dmSteps, quickAnswers, quickAnswersHeading, emailNote, emailSteps, gettingHelp, helpHeading, helpIntro, playerNote, playerSteps } from "../content/help";
+import { recapSteps, accountSteps, dmSteps, quickAnswers, quickAnswersHeading, snags, snagsHeading, emailNote, emailSteps, gettingHelp, helpHeading, helpIntro, playerNote, playerSteps } from "../content/help";
 ---
 
 <Base
@@ -109,6 +109,25 @@ import { recapSteps, accountSteps, dmSteps, quickAnswers, quickAnswersHeading, e
       {emailSteps.map((s) => <li>{s.text}</li>)}
     </ol>
     <p class="muted">{emailNote}</p>
+  </section>
+
+  <section aria-labelledby="snags-heading" id="snags">
+    <h2 id="snags-heading">{snagsHeading}</h2>
+    <ol>
+      {
+        snags.map((s) => (
+          <li>
+            <strong>{s.question}</strong> {s.text}
+            {s.link && (
+              <>
+                {" "}
+                <a href={s.link.href}>{s.link.text}</a>.
+              </>
+            )}
+          </li>
+        ))
+      }
+    </ol>
   </section>
 
   <section aria-labelledby="getting-help-heading" id={gettingHelp.id}>
