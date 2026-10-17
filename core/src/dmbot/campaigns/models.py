@@ -170,6 +170,8 @@ class Campaign:
     recaps_email: bool = True
     # The Shared story switch (#1692): "off", "watch" or "guide". Nothing reads it yet.
     story_mode: str = DEFAULT_STORY_MODE
+    # The initiative style the DM last set, kept for the next session (#1784): see fight_style.
+    initiative_style: str | None = None
     # Paused by its owner, or by DMbot when the owner's plan shrank (#957): it keeps all its
     # data and downloads, can't start, and doesn't count toward the owner's campaign cap.
     paused: bool = False

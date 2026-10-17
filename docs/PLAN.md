@@ -3567,10 +3567,19 @@ once. The new-campaign form's link is saved in the same step as the campaign.
     - Heard with a strict phrase list, no AI. Only from people who agreed to be recorded. A
       DM's line sets it; players' lines count only while the DM hasn't said otherwise, and only
       when two players agree. A player's words still never change combat state.
-    - Kept for the running session (no button, no setting; the DM corrects it by saying it).
-      Until something is heard, FightBot works as before. The DM screen's combat line shows what
-      was heard. The two-minute private-message cap in combat stands; a reminder whose moment has
-      passed is dropped.
+    - **Kept per campaign (#1784, migration 0129):** the last style a **DM's words** set (the
+      order, and whether actions are declared first) is kept on the campaign (`initiative_style`:
+      `each`, `side`, `reroll`, `declare` or a pair like `side+declare`), written only when it
+      changes. A style two players agreed on counts for that session only and is not kept; nor is
+      the "no declarations" FightBot works out for itself. The next session **starts from the kept
+      style** instead of "not heard yet", so the first fight is timed too. The same rules then
+      apply: a DM's line overrides it, players still need two who agree and only while no DM line
+      this session has said otherwise. It is in a campaign's backup (an old backup restores as
+      nothing kept). No button, no setting; the DM corrects it by saying it.
+    - Until something is heard (or kept), FightBot works as before. The DM screen's combat line
+      shows what was heard, or "as heard last time" until something is heard this session. The
+      two-minute private-message cap in combat stands; a reminder whose moment has passed is
+      dropped.
 *Built, part D1: the fields and the import status (2026-10-13, #1124):* the D&D Beyond snapshot (still version 1; a
 kept snapshot without the new fields reads them as unknown) now also holds hit points now (`hp`: the maximum minus the
 damage taken, never below 0) and temporary hit points, active conditions with the exhaustion level, resistances,

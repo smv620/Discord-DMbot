@@ -184,6 +184,28 @@ def hear(line: str, players: Mapping[str, int], *, round_number: int | None = No
 
 
 _ORDER_WORDS = {"each": "one at a time", "side": "by side", "reroll": "rolled each round"}
+SAVED_STYLES = frozenset(
+    {"each", "side", "reroll", "declare", "each+declare", "side+declare", "reroll+declare"}
+)  # what a campaign keeps between sessions (#1784); the same list is a CHECK in the database
+
+
+def decode(saved: str | None) -> tuple[Order, Declare]:
+    """The order and declarations a kept style stands for (anything unknown: nothing)."""
+    if saved not in SAVED_STYLES:
+        return "unknown", "unknown"
+    parts = (saved or "").split("+")
+    order: Order = "unknown"
+    for candidate in ("each", "side", "reroll"):
+        if candidate in parts:
+            order = candidate  # type: ignore[assignment]
+    return order, "yes" if "declare" in parts else "unknown"
+
+
+def encode(order: str, declarations: str) -> str | None:
+    parts = ([order] if order in _ORDER_WORDS else []) + (
+        ["declare"] if declarations == "yes" else []
+    )
+    return "+".join(parts) or None
 
 
 @dataclass(slots=True)
@@ -226,6 +248,29 @@ class StyleState:
         if len(voters) >= VOTES_NEEDED:
             return self._set(dimension, value, "players")
         return False
+
+    @classmethod
+    def from_saved(cls, saved: str | None) -> StyleState:
+        """A session's starting point: the style the campaign kept last time (#1784), marked as
+        such. A DM's line overrides it; players still need two agreeing."""
+        order, declarations = decode(saved)
+        state = cls(order=order, declarations=declarations)
+        if order != "unknown":
+            state.set_by["order"] = "saved"
+        if declarations != "unknown":
+            state.set_by["declarations"] = "saved"
+        return state
+
+    def to_keep(self, kept: str | None) -> str | None:
+        """What the campaign should keep: a dimension a DM's words set this session is kept as
+        it now is; every other stays as it was kept (a players' vote, a guess from the table's
+        talk about nothing or an inference never changes what is kept). Only a DM's words."""
+        order, declarations = decode(kept)
+        if self.set_by.get("order", "").startswith("dm"):
+            order = self.order
+        if self.set_by.get("declarations", "").startswith("dm"):
+            declarations = self.declarations
+        return encode(order, declarations)
 
     def infer_no_declarations(self) -> bool:
         if self.declarations != "unknown":
@@ -276,4 +321,7 @@ class StyleState:
             parts.append(_ORDER_WORDS[self.order])
         if self.declarations == "yes":
             parts.append("actions declared first")
-        return "Initiative, as heard: " + ("; ".join(parts) if parts else "not heard yet")
+        # Until something is heard this session, what shows is what was kept from last time.
+        last_time = bool(self.set_by) and all(by == "saved" for by in self.set_by.values())
+        head = "Initiative, as heard last time: " if last_time else "Initiative, as heard: "
+        return head + ("; ".join(parts) if parts else "not heard yet")
