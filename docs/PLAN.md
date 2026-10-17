@@ -2557,7 +2557,9 @@ is wrong for half the table, so the DM can split it.
     a clock is set, not in a fight, not while the party is split; only for a DM recorded now; paid
     plans only (the check fails closed); at most one a minute and 20 AI calls a session for a
     campaign; a failure or an 8-second wait gives no suggestion, and three failures in a row rest it
-    for 10 minutes. Players never see it and it is never in a transcript. One log line at the
+    for 10 minutes. A line the off-topic filter holds for a label waits for it, and is offered only if it is labelled
+    game talk (never an off-topic line). Players never see it and it is never in a transcript. For
+    dev1's live check: "rest" and "camp" also match chatter ("the rest of you"), which the caps bound. One log line at the
     session's end, "Time suggestions: N calls, … tokens", counts and never words.
 
   **Typed chat counts too** (owner, 2026-10-13), as described under "Typed chat at the table".

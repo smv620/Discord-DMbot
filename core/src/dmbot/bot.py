@@ -3975,7 +3975,15 @@ class DMBot(commands.AutoShardedBot):
             # (`_label_topics`, `put_back`): talk not about the game never feeds them (#1748).
             table.vocabulary.note(utterance.user_id, text)
         if text:
-            self._act_on_line(table, utterance.user_id, str(cleaned or text))
+            # A line the off-topic filter holds for a label is not offered a time suggestion now:
+            # it is, if it turns out to be game talk (`_label_topics`). The same rule that holds
+            # it for the names scan (`_topic_holds`) decides (#1758).
+            self._act_on_line(
+                table,
+                utterance.user_id,
+                str(cleaned or text),
+                held=self._topic_holds(table, cleaned or text, names_said),
+            )
         labelling = False  # is this line waiting for its speaker label? (#1624)
         if text and self.transcripts is not None:
             duration_ms = int(utterance.duration_s * 1000)
@@ -4042,7 +4050,9 @@ class DMBot(commands.AutoShardedBot):
                 utterance.start_ms,
             )
 
-    def _act_on_line(self, table: Table, user_id: int, line: str, *, typed: bool = False) -> None:
+    def _act_on_line(
+        self, table: Table, user_id: int, line: str, *, typed: bool = False, held: bool = False
+    ) -> None:
         """What a line of table talk can set off, said or typed (#1118): a rules card, a house
         rule, the game clock. The one place both ways in share, so a typed "we take a long
         rest" does what the spoken one does. Consent was checked by the caller."""
@@ -4064,7 +4074,7 @@ class DMBot(commands.AutoShardedBot):
                 return  # typed flood: skip this clock phrase, never speech (#1154)
             table.clock_waiting += 1
             task = self._track(  # a DM's words move the clock; a player's only ask the DM
-                self._note_clock_phrase(table, user_id, line), "clock-phrase"
+                self._note_clock_phrase(table, user_id, line, held=held), "clock-phrase"
             )
             if task is None:
                 table.clock_waiting -= 1
@@ -4252,7 +4262,9 @@ class DMBot(commands.AutoShardedBot):
         card_id = table.rules.remember(mention, time.monotonic())
         self._track(self._post_rules_card(table, user_id, mention, card_id, before), "rules-card")
 
-    async def _note_clock_phrase(self, table: Table, user_id: int, line: str) -> None:
+    async def _note_clock_phrase(
+        self, table: Table, user_id: int, line: str, *, held: bool = False
+    ) -> None:
         """What is said at the table that bears on the game clock (#965, #1117): no AI, and
         only people who agreed to be recorded. A campaign's DM clearly saying a rest starts or
         finishes, that the next morning has come, or how much time has passed ("an hour
@@ -4274,7 +4286,8 @@ class DMBot(commands.AutoShardedBot):
             return
         said = clock_phrases.find_clock(line)
         if said is None:
-            await self._maybe_suggest_time(table, user_id, line)  # (#1758) a suggestion at most
+            if not held:  # (a held line waits for its label, then `_suggest_after_label`)
+                await self._maybe_suggest_time(table, user_id, line)  # (#1758) a suggestion at most
             return
         now = time.monotonic()
         last = table.clock_said.get(said.key)
@@ -4321,7 +4334,7 @@ class DMBot(commands.AutoShardedBot):
             return
         if not await self.plan_allows("ai", gid, campaign, fail_open=False):
             return
-        if not self._still_listening(table, user_id) or not state.allows(cue, now):
+        if not self._still_recorded(table, user_id) or not state.allows(cue, now):
             return
         state.asked(cue, now)  # counted before the wait: a slow answer can't be asked twice
         try:
@@ -4346,7 +4359,7 @@ class DMBot(commands.AutoShardedBot):
         again = await self.clocks.get(gid, cid)
         if again is None or again.split or clock_game.in_combat(again.clock):
             return
-        if not self._still_listening(table, user_id) or user_id not in table.dm_user_ids:
+        if not self._still_recorded(table, user_id) or user_id not in table.dm_user_ids:
             return
         try:
             await self.post_message(
@@ -4357,7 +4370,17 @@ class DMBot(commands.AutoShardedBot):
         except Exception:
             log.warning("Time suggestion: couldn't post it", exc_info=True)  # (never the line)
 
-    def _still_listening(self, table: Table, user_id: int) -> bool:
+    async def _suggest_after_label(self, table: Table, user_id: int, line: str) -> None:
+        """A DM's held line was labelled game talk: the same checks `_note_clock_phrase` makes
+        for a line that was not held, then the suggestion (#1758). A line the strict phrases or
+        the combat phrases match is not a vague one: the clock phrase path has it already."""
+        if not self._still_recorded(table, user_id):
+            return
+        if clock_phrases.find_clock(line) is not None or combat_phrases.find_combat(line):
+            return
+        await self._maybe_suggest_time(table, user_id, line)
+
+    def _still_recorded(self, table: Table, user_id: int) -> bool:
         return (
             self.tables.get(table.guild_id) is table
             and table.listening
@@ -4981,6 +5004,10 @@ class DMBot(commands.AutoShardedBot):
                 continue  # stopped meanwhile: nothing about their words
             if topic != OFF_TOPIC and said is not None and len(table.heard) < HEARD_MAX:
                 table.heard.append((waiting.speaker, said))
+            if topic != OFF_TOPIC and said is not None and waiting.speaker in table.dm_user_ids:
+                self._track(  # game talk by a DM: now it may be offered a time suggestion (#1758)
+                    self._suggest_after_label(table, waiting.speaker, said), "time-suggest"
+                )
             if topic != OFF_TOPIC and said is not None:
                 # Game talk: its words count now. A window the filter couldn't judge (a slow
                 # or failed call, a resting filter) arrives here as game talk, as everywhere.

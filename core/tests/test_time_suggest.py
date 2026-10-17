@@ -58,8 +58,8 @@ class Pure(unittest.TestCase):
         got = sg.read_answer('{"minutes": 125, "why": "a long walk"}')
         assert got is not None
         self.assertEqual((got.minutes, got.why), (120, "a long walk"))
-        around = sg.read_answer('Sure! {"minutes": 45, "why": "short"} Hope that helps.')
-        assert around is not None and around.minutes == 40
+        fenced = sg.read_answer('```json\n{"minutes": 45, "why": "short"}\n```')
+        assert fenced is not None and fenced.minutes == 40
 
     def test_null_junk_and_out_of_range_are_all_dropped(self) -> None:
         for bad in (
@@ -74,6 +74,8 @@ class Pure(unittest.TestCase):
             '{"why": "x"}',
             "[120]",
             "I think about two hours.",
+            'Sure! {"minutes": 45, "why": "short"} Hope that helps.',  # the object, nothing else
+            '{"minutes": 45} {"minutes": 90}',
             "{not json}",
             "",
         ):
@@ -185,7 +187,7 @@ class Fake:
         self.allowed = True
         self.plan_calls: list[Any] = []
         self.post_message = AsyncMock(return_value=object())
-        self._still_listening: Any = lambda t, u: DMBot._still_listening(self, t, u)  # type: ignore[arg-type]
+        self._still_recorded: Any = lambda t, u: DMBot._still_recorded(self, t, u)  # type: ignore[arg-type]
 
     async def _clock(self, guild_id: int, campaign_id: str) -> Stored | None:
         return self.stored
@@ -444,6 +446,8 @@ class Buttons(DatabaseTest):
     async def asyncSetUp(self) -> None:
         await super().asyncSetUp()
         self.ids = itertools.count(1000)
+        screen._APPLIED.clear()  # (message ids start again in each test)
+        screen._BEING_APPLIED.clear()
         self.campaigns = CampaignStore(self.db)
         self.campaigns.register_section(ClockSection())
         self.clocks = ClockStore(self.db)
@@ -539,6 +543,18 @@ class Buttons(DatabaseTest):
         it = self.interaction()
         await screen.TimeJumpButton(self.a.id, "120").callback(it)
         self.assertEqual(it.response.send_message.call_args.args[0], screen.NO_CLOCK)
+
+    async def test_a_press_after_it_was_done_but_the_buttons_stayed_does_nothing(self) -> None:
+        first = self.interaction(message_id=88)
+        first.message.edit = AsyncMock(
+            side_effect=discord.HTTPException(MagicMock(status=500), "x")
+        )
+        await screen.TimeJumpButton(self.a.id, "120").callback(first)
+        self.assertEqual(await self.minute(), NOON4 + 120)
+        later = self.interaction(message_id=88)  # the same message, buttons still showing
+        await screen.TimeJumpButton(self.a.id, "120").callback(later)
+        self.assertEqual(await self.minute(), NOON4 + 120)  # not twice
+        self.assertEqual(later.response.send_message.call_args.args[0], screen.ALREADY)
 
     async def test_a_split_party_is_not_moved_by_it(self) -> None:
         await self.clocks.split(GUILD, self.a.id, DM, ["Cellar", "Tower"])

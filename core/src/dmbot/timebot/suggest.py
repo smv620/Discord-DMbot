@@ -74,7 +74,10 @@ def tidy(minutes: int) -> int:
 
 
 def prompt(line: str, game_time: str) -> str:
-    """The one line (on one line, cut short) and the game's time: nothing else."""
+    """The one line (on one line, cut short) and the game's time: nothing else. The line is a
+    JSON string: quotes and newlines in it cannot end the quote or pass for another line. (The
+    plan reader's `quoted` suits a long passage kept as paragraphs; one short line needs only
+    this.)"""
     said = " ".join(line.split())[:LINE_MAX]
     return f"Game time now: {game_time}\nLine: {json.dumps(said)}"
 
@@ -87,7 +90,7 @@ class Suggestion:
     why: str
 
 
-_JSON = re.compile(r"\{[^{}]*\}")
+_FENCE = re.compile(r"^```(?:json)?\s*(.*?)\s*```$", re.DOTALL | re.IGNORECASE)
 
 
 def _clean_why(raw: object) -> str:
@@ -99,12 +102,14 @@ def _clean_why(raw: object) -> str:
 
 def read_answer(text: str) -> Suggestion | None:
     """The suggestion in the model's answer, or None for null, out of range, or anything that is
-    not the JSON shape asked for (junk, extra keys, a number as text, an instruction)."""
-    found = _JSON.search(text)
-    if found is None:
-        return None
+    not the JSON shape asked for: the whole reply must be the object itself (a code fence round
+    it aside), so prose around it, extra keys, a number as text or an instruction all drop."""
+    body = text.strip()
+    fenced = _FENCE.match(body)
+    if fenced is not None:
+        body = fenced.group(1)
     try:
-        data = json.loads(found.group(0))
+        data = json.loads(body)
     except ValueError:
         return None
     if not isinstance(data, dict) or set(data) - {"minutes", "why"} or "minutes" not in data:

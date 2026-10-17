@@ -14,6 +14,7 @@ from __future__ import annotations
 import contextlib
 import logging
 import re
+from collections import OrderedDict
 from typing import Any
 
 import discord
@@ -31,6 +32,11 @@ NO_PINGS = discord.AllowedMentions.none()
 # or two DMs) of one suggestion must not move the clock twice. In memory is enough: the buttons
 # come off once it is done.
 _BEING_APPLIED: set[int] = set()
+# Suggestions already applied: if taking the buttons off then fails, a later press still moves
+# nothing. Bounded: the oldest are forgotten (a Discord message id only ever grows).
+_APPLIED: OrderedDict[int, None] = OrderedDict()
+_APPLIED_KEPT = 500
+ALREADY = "That one was already done."
 _ID = r"(?P<campaign>[0-9a-f]{32})"
 QUOTE_MAX = 70
 NOT_A_DM = "Only a DM of this campaign can press this. Ask your DM."
@@ -104,12 +110,19 @@ class TimeJumpButton(
             await interaction.response.defer()
             key = interaction.message.id if interaction.message is not None else None
             if key is not None:
+                if key in _APPLIED:
+                    await _reply(interaction, ALREADY)
+                    return
                 if key in _BEING_APPLIED:
                     return  # already on its way: the other press will close the buttons
                 _BEING_APPLIED.add(key)
             try:
                 moved = await self._move(interaction, client, campaign, minutes)
                 if moved is not None:
+                    if key is not None:
+                        _APPLIED[key] = None
+                        while len(_APPLIED) > _APPLIED_KEPT:
+                            _APPLIED.popitem(last=False)
                     await self._close(interaction, moved, answered=True)
             finally:
                 if key is not None:
@@ -125,12 +138,14 @@ class TimeJumpButton(
         message = interaction.message
         content = message.content if message is not None else ""
         text = f"{content}\n_{note}_"
-        with contextlib.suppress(discord.HTTPException):
+        try:
             if answered:
                 if message is not None:
                     await message.edit(content=text, view=None, allowed_mentions=NO_PINGS)
             else:
                 await interaction.response.edit_message(content=text, view=None)
+        except discord.HTTPException:
+            log.warning("The time-jump suggestion's buttons could not be taken off")
 
     async def _move(
         self, interaction: discord.Interaction, client: Any, campaign: Any, minutes: int
