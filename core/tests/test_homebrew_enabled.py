@@ -199,7 +199,7 @@ class TheMenu(DatabaseTest):
     def test_the_list_marks_an_off_entry(self) -> None:
         off = Homebrew(**{**self.entry.__dict__, "enabled": False}) if False else None
         assert off is None
-        text = ui.list_text(self.campaign, [self.entry], 0)
+        text = ui.list_text(self.campaign, [self.entry], 0, kind=self.entry.kind)
         self.assertNotIn("(off)", text)
 
     async def test_the_button_says_what_pressing_it_does(self) -> None:
@@ -211,7 +211,7 @@ class TheMenu(DatabaseTest):
             str(getattr(i, "label", "")) for i in ui.EntryMenu(self.campaign, off, 0).children
         ]
         self.assertIn("Turn on", labels)
-        self.assertIn("(off)", ui.list_text(self.campaign, [off], 0))
+        self.assertIn("(off)", ui.list_text(self.campaign, [off], 0, kind=off.kind))
         self.assertIn("It is off", ui.entry_text(off))
         self.assertNotIn("It is off", ui.entry_text(self.entry))
 
