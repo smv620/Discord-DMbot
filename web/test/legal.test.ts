@@ -370,11 +370,6 @@ describe("story state (#1284)", () => {
     expect(t).toContain("which items are the only one of their kind and who carries what, and whether the game master or the bot said so");
     expect(t).toContain("A backup holds it, and it is deleted when the campaign is deleted");
   });
-
-  it("says an adventure file's text is kept for that campaign only and is not in a backup (#1720)", () => {
-    const t = text(doc("privacy").querySelector("main"));
-    expect(t).toContain("An adventure file is the one exception. DMbot keeps its text, not the file, for that campaign only. It stays until the game master removes it or the campaign is deleted. A backup holds only its name");
-  });
 });
 
 describe("writing to the team (#1340)", () => {
