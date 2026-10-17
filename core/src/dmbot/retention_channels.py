@@ -3,10 +3,10 @@ item 1 of #618; docs/PLAN.md, "Retention").
 
 What happens to each channel follows whose words are in it:
 
-- **The DM screen, the game-time channel and the rules channel are deleted**, but only while they are still named
-  like DMbot's (`is_screen_name`, `is_gametime_name`): a channel an admin renamed and reused is
-  skipped, never deleted. They hold only DMbot's own messages, the DM screen holds DM-only notes,
-  and the data behind both is gone.
+- **The DM screen, the game-time channel and the rules channel are deleted**, but only while
+  they are still named like DMbot's (`is_screen_name`, `is_gametime_name`, `is_rules_name`): a
+  channel an admin renamed and reused is skipped, never deleted. They hold only DMbot's own
+  messages, the DM screen holds DM-only notes, and the data behind all of them is gone.
 - **The transcript channel and `dmb-chat` are kept**, with one closing note (sent first), and
   DMbot's own messages there lose their buttons (best effort, at most 25), so nothing answers
   "I can't find that campaign". They hold what people wrote or said, which is not DMbot's to

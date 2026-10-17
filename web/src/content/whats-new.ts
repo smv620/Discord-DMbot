@@ -302,7 +302,7 @@ export const held: Held[] = [
   {
     date: "2026-10-17",
     title: "A channel for your house rules",
-    what: "DMbot makes a channel for your campaign's house rules, with one message for each rule you have saved and a line for each set you follow. Players can read it but not post, and it is shown to the same people as your DM screen.",
+    what: "DMbot makes a channel for your campaign's house rules, with one message for each rule you have saved and a note for each rule set you follow. Players can read it but not post, and who can see it matches your DM screen setting (private, peek or open).",
     reason:
       "Held until seen working live (#1752): the owner has not yet checked it on the test server.",
   },

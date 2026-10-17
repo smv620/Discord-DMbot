@@ -62,9 +62,10 @@ RECENT_SCAN = 10  # an unpinned card is looked for among this many recent messag
 HISTORY_SCAN = 400  # DMbot's own messages are looked for among this many (far above the cap)
 MAX_EDITS = 5  # edits and deletes per run: Discord's rate limits; the rest is done next time
 MAX_SENDS = 25  # new messages per run, for the same reason
+MESSAGE_MAX = 2000  # Discord's limit for one message
 
 RULE_TITLE = "🏠 **House rule "
-FOLLOW_TITLE = "📚 Following "
+FOLLOW_TITLE = "📚 This campaign follows the house-rule set "
 CARD_TITLE = "📖 **What's this channel?**"
 NO_PINGS = discord.AllowedMentions.none()
 
@@ -120,20 +121,20 @@ def rule_text(rule: HouseRule) -> str:
     """One house rule as its message: its words, what it replaces, where it came from. Never the
     "what happened" note (a DM's own story), never anything but the rule."""
     if rule.from_set:
-        came = f"Came from: {rule.from_set}"
+        came = f"From the set: {rule.from_set}"
     elif rule.session_id:
-        came = "Came from: said at the table"
+        came = "Said at the table, saved by the DM"
     else:
-        came = "Came from: your DM"
+        came = "Added by the DM"
     lines = [f"{RULE_TITLE}{rule.number}**", rule.rule]
     if rule.supersedes:
-        lines.append(f"Instead of: {rule.supersedes}")
+        lines.append(f"Replaces: {rule.supersedes}")
     lines.append(f"_{came}_")
-    return "\n".join(lines)
+    return "\n".join(lines)[:MESSAGE_MAX]  # (a rule, what it replaces and a set name fit; belt)
 
 
 def follow_text(set_name: str) -> str:
-    return f"{FOLLOW_TITLE}**{set_name}**"
+    return f"{FOLLOW_TITLE}**{set_name}**"  # (found again by FOLLOW_TITLE)
 
 
 def _rule_number(content: str) -> int | None:
@@ -149,7 +150,7 @@ class SyncResult:
     sent: int = 0
     edited: int = 0
     deleted: int = 0
-    left_for_next_time: int = 0
+    left_for_next_time: int = 0  # over the caps, or a message Discord refused: run again soon
 
 
 async def sync_rules(
@@ -190,8 +191,14 @@ async def sync_rules(
             result.left_for_next_time += 1
             continue
         budget -= 1
-        with contextlib.suppress(discord.NotFound):
+        try:
             await message.delete()
+        except discord.NotFound:
+            pass  # already gone
+        except discord.HTTPException as exc:
+            log.warning("Rules channel: couldn't delete a message: %s", exc)
+            result.left_for_next_time += 1
+            continue
         result.deleted += 1
     for number, message in have_rules.items():
         if number in wanted_rules and message.content != wanted_rules[number]:
@@ -199,7 +206,12 @@ async def sync_rules(
                 result.left_for_next_time += 1
                 continue
             budget -= 1
-            await message.edit(content=wanted_rules[number], allowed_mentions=NO_PINGS)
+            try:
+                await message.edit(content=wanted_rules[number], allowed_mentions=NO_PINGS)
+            except discord.HTTPException as exc:
+                log.warning("Rules channel: couldn't edit a message: %s", exc)
+                result.left_for_next_time += 1
+                continue
             result.edited += 1
     sends = [(text, False) for number, text in wanted_rules.items() if number not in have_rules]
     sends += [(text, True) for text in wanted_follows if text not in have_follows]
@@ -207,7 +219,12 @@ async def sync_rules(
         if result.sent >= MAX_SENDS:
             result.left_for_next_time += 1
             continue
-        await channel.send(text, allowed_mentions=NO_PINGS, silent=True)
+        try:
+            await channel.send(text, allowed_mentions=NO_PINGS, silent=True)
+        except discord.HTTPException as exc:
+            log.warning("Rules channel: couldn't post a message: %s", exc)
+            result.left_for_next_time += 1
+            continue
         result.sent += 1
     return result
 
@@ -277,16 +294,19 @@ async def setup_rules_channel(
             if campaign is None:
                 raise RulesChannelError(messages.CAMPAIGN_GONE)
             held = held_permissions(me)
+            topic = messages.RULES_TOPIC
+            reason = f"DMbot: house rules for {campaign.name}"
+            channel = await _fresh(guild, campaign)
+            # The peekers are the DM screen's. With no screen to ask, keep this channel's own, so
+            # a repair never shuts out someone who is peeking.
+            peekers = screen_peekers(screen if screen is not None else channel)
             plan = rules_plan(
                 campaign.dm_screen_visibility,
                 guild_id=guild.id,
                 bot_id=me.id,
                 dm_ids=sorted(campaign.dm_user_ids),
-                peeker_ids=screen_peekers(screen),
+                peeker_ids=peekers,
             )
-            topic = messages.RULES_TOPIC
-            reason = f"DMbot: house rules for {campaign.name}"
-            channel = await _fresh(guild, campaign)
             if channel is None:
                 channel = await guild.create_text_channel(
                     rules_channel_name(campaign),
@@ -364,16 +384,16 @@ async def sync_campaign(
     """Bring the campaign's rules channel up to date from the saved rules and the sets it
     follows. None if the campaign has no rules channel or it is gone (the next start makes it
     again). Raises on a Discord or database failure: the caller logs it."""
-    channel = await _fresh(guild, campaign)
-    me = guild.me
-    if channel is None or me is None:
-        return None
-    rules = await house_rules.list(guild.id, campaign.id)
-    names: list[str] = []
-    if rule_sets is not None:
-        names = [
-            f.name
-            for f in await rule_sets.following(guild.id, campaign.id)
-            if f.kind == HOUSE_RULES
-        ]
-    return await sync_rules(channel, me.id, rules, names)
+    # One pass at a time per campaign: a start and a change at once must not both see "no
+    # message yet" and both post it.
+    async with campaign_lock(campaign.id):
+        channel = await _fresh(guild, campaign)
+        me = guild.me
+        if channel is None or me is None:
+            return None
+        rules = await house_rules.list(guild.id, campaign.id)
+        names: list[str] = []
+        if rule_sets is not None:
+            follows = await rule_sets.following(guild.id, campaign.id)
+            names = [f.name for f in follows if f.kind == HOUSE_RULES]
+        return await sync_rules(channel, me.id, rules, names)

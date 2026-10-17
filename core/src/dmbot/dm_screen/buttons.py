@@ -260,6 +260,7 @@ class HideButton(
                     )
                 except discord.HTTPException:
                     log.warning("Could not remove peek access in channel %s", rules.id)
+                    await _tell_dm_about_failure(rules)  # the player may still read the rules
         await reply(messages.HIDE_DONE, ephemeral=True)
         with contextlib.suppress(discord.HTTPException):
             await channel.send(

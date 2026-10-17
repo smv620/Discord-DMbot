@@ -9,6 +9,7 @@ import dataclasses
 import unittest
 from collections.abc import AsyncIterator
 from typing import Any
+from unittest import mock
 from unittest.mock import AsyncMock, MagicMock
 
 import discord
@@ -93,8 +94,8 @@ class Showing(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(
             chan.texts(),
             [
-                "🏠 **House rule 1**\nCrits double the dice\n_Came from: your DM_",
-                "🏠 **House rule 2**\nFlanking gives advantage\n_Came from: your DM_",
+                "🏠 **House rule 1**\nCrits double the dice\n_Added by the DM_",
+                "🏠 **House rule 2**\nFlanking gives advantage\n_Added by the DM_",
             ],
         )
         again = await sync(chan, [rule(2, "Flanking gives advantage"), rule(1)])
@@ -109,7 +110,7 @@ class Showing(unittest.IsolatedAsyncioTestCase):
         self.assertEqual((done.sent, done.edited), (0, 1))
         self.assertIs(chan.messages[0], before)
         self.assertIn("Crits triple the dice", before.content)
-        self.assertIn("Instead of: Crits double", before.content)
+        self.assertIn("Replaces: Crits double", before.content)
 
     async def test_a_removed_rule_is_deleted(self) -> None:
         chan = Chan()
@@ -120,11 +121,12 @@ class Showing(unittest.IsolatedAsyncioTestCase):
         self.assertIn("House rule 2", chan.texts()[0])
 
     async def test_where_each_rule_came_from_is_said(self) -> None:
-        self.assertIn("said at the table", rc.rule_text(rule(1, session_id="s1")))
+        self.assertIn("Said at the table, saved by the DM", rc.rule_text(rule(1, session_id="s1")))
         self.assertIn(
-            "Came from: Elf house rules, v4", rc.rule_text(rule(1, from_set="Elf house rules, v4"))
+            "From the set: Elf house rules, v4",
+            rc.rule_text(rule(1, from_set="Elf house rules, v4")),
         )
-        self.assertIn("Came from: your DM", rc.rule_text(rule(1)))
+        self.assertIn("Added by the DM", rc.rule_text(rule(1)))
 
     async def test_the_story_behind_a_rule_is_never_posted(self) -> None:
         text = rc.rule_text(rule(1, scenario="the party killed the baron's heir"))
@@ -133,7 +135,9 @@ class Showing(unittest.IsolatedAsyncioTestCase):
     async def test_a_followed_set_is_one_line_and_goes_when_it_is_dropped(self) -> None:
         chan = Chan()
         await sync(chan, [], ["Elf house rules"])
-        self.assertEqual(chan.texts(), ["📚 Following **Elf house rules**"])
+        self.assertEqual(
+            chan.texts(), ["📚 This campaign follows the house-rule set **Elf house rules**"]
+        )
         await sync(chan, [], ["Elf house rules"])
         self.assertEqual(chan.sent, 1)
         await sync(chan, [], [])
@@ -153,7 +157,7 @@ class Showing(unittest.IsolatedAsyncioTestCase):
     async def test_other_peoples_messages_are_never_touched(self) -> None:
         chan = Chan()
         chan.say(999, "🏠 **House rule 1**\nSomeone else's message")
-        chan.say(999, "📚 Following **Fake**")
+        chan.say(999, "📚 This campaign follows the house-rule set **Fake**")
         await sync(chan, [])
         self.assertEqual(len(chan.messages), 2)
         self.assertEqual((chan.edits, chan.deletes, chan.sent), (0, 0, 0))
@@ -259,8 +263,10 @@ class Setup(Fake):
         card = send.call_args.args[0]
         self.assertEqual(
             card,
-            "📖 **What's this channel?**\nHouse rules for **Rime of the Frostmaiden**. "
-            "Your DM decides what applies. Read only.",
+            "📖 **What's this channel?**\n"
+            "The house rules for **Rime of the Frostmaiden**, saved by your DM. "
+            "Only DMbot posts here, so you can read but not write. "
+            "Your DM decides what applies. If a rule isn't clear, ask your DM.",
         )
 
     async def test_the_name_follows_the_clash_number(self) -> None:
@@ -461,3 +467,257 @@ class Migration0127(DatabaseTest):
         await campaigns.set_rules_channel(GUILD, made.id, NEW)
         again = await campaigns.get(GUILD, made.id)
         assert again is not None and again.rules_channel_id == NEW
+
+
+class Keeping(unittest.IsolatedAsyncioTestCase):
+    """Work over the caps or refused by Discord is finished on later passes, never lost."""
+
+    async def test_many_stale_messages_are_cleared_over_several_runs(self) -> None:
+        chan = Chan()
+        for n in range(1, 31):
+            chan.say(ME, rc.rule_text(rule(n, f"Old {n}")))
+        runs = 0
+        while chan.texts() and runs < 20:
+            done = await sync(chan, [])
+            runs += 1
+            self.assertLessEqual(done.deleted, rc.MAX_EDITS)
+        self.assertEqual(chan.texts(), [])
+        self.assertEqual(runs, 6)  # 30 messages at 5 a run
+
+    async def test_many_new_rules_are_posted_over_several_runs(self) -> None:
+        chan = Chan()
+        rules = [rule(n, f"Rule {n}") for n in range(1, 61)]
+        first = await sync(chan, rules)
+        self.assertEqual((first.sent, first.left_for_next_time), (rc.MAX_SENDS, 35))
+        while (await sync(chan, rules)).left_for_next_time:
+            pass
+        self.assertEqual(len(chan.texts()), 60)
+
+    async def test_a_message_discord_refuses_is_counted_and_the_rest_still_done(self) -> None:
+        chan = Chan()
+        await sync(chan, [rule(1), rule(2, "Second")])
+        refuse = discord.HTTPException(MagicMock(status=403), "Forbidden")
+        chan.messages[0].edit = AsyncMock(side_effect=refuse)  # type: ignore[method-assign]
+        done = await sync(chan, [rule(1, "Changed"), rule(2, "Second changed")])
+        self.assertEqual((done.edited, done.left_for_next_time), (1, 1))
+        self.assertIn("Second changed", chan.texts()[1])
+
+    async def test_a_post_that_fails_does_not_stop_the_next_ones(self) -> None:
+        chan = Chan()
+        real = chan.send
+        calls = 0
+
+        async def flaky(content: str, **kw: Any) -> Msg:
+            nonlocal calls
+            calls += 1
+            if calls == 1:
+                raise discord.HTTPException(MagicMock(status=500), "down")
+            return await real(content, **kw)
+
+        chan.send = flaky  # type: ignore[method-assign]
+        done = await sync(chan, [rule(1), rule(2, "Second")])
+        self.assertEqual((done.sent, done.left_for_next_time), (1, 1))
+
+    async def test_a_very_long_rule_never_goes_over_the_message_limit(self) -> None:
+        text = rc.rule_text(rule(1, "x" * 500, supersedes="y" * 500, from_set="z" * 200))
+        self.assertLessEqual(len(text), 2000)
+
+    async def test_a_mention_in_a_rule_pings_nobody(self) -> None:
+        chan = Chan()
+        seen: list[Any] = []
+        real = chan.send
+
+        async def watching(content: str, **kw: Any) -> Msg:
+            seen.append(kw.get("allowed_mentions"))
+            return await real(content, **kw)
+
+        chan.send = watching  # type: ignore[method-assign]
+        await sync(chan, [rule(1, "@everyone roll twice")])
+        self.assertEqual(len(seen), 1)
+        self.assertFalse(seen[0].everyone or seen[0].users or seen[0].roles)
+
+    async def test_an_unknown_or_repeated_following_line_is_cleaned_up(self) -> None:
+        chan = Chan()
+        chan.say(ME, rc.follow_text("Old set"))
+        chan.say(ME, rc.follow_text("Elf rules"))
+        chan.say(ME, rc.follow_text("Elf rules"))
+        await sync(chan, [], ["Elf rules"])
+        self.assertEqual(chan.texts(), [rc.follow_text("Elf rules")])
+
+    async def test_a_message_that_only_looks_like_a_rule_is_not_one(self) -> None:
+        self.assertIsNone(rc._rule_number("🏠 **House rule x**\nwords"))
+        self.assertEqual(rc._rule_number("🏠 **House rule 12**\nwords"), 12)
+        self.assertIsNone(rc._rule_number("hello"))
+
+
+class OnTheBot(unittest.IsolatedAsyncioTestCase):
+    """The bot's side: changes gathered into one pass, and a second pass when more came in."""
+
+    def bot(self) -> Any:
+        from types import SimpleNamespace
+
+        bot = SimpleNamespace(
+            _rules_sync={}, _rules_dirty=set(), passes=[], _closing=False,
+        )  # fmt: skip
+
+        def track(work: Any, name: str) -> Any:
+            import asyncio
+
+            return asyncio.ensure_future(work)
+
+        async def sync_once(guild_id: int, campaign_id: str) -> Any:
+            bot.passes.append((guild_id, campaign_id))
+            return SimpleNamespace(left_for_next_time=bot.left.pop(0) if bot.left else 0)
+
+        bot._track = track
+        bot._sync_rules_archive = sync_once
+        bot.left = []
+        return bot
+
+    async def run_it(self, bot: Any) -> None:
+        import asyncio
+
+        from dmbot import bot as bot_module
+
+        with (
+            mock.patch.object(bot_module, "RULES_ARCHIVE_DELAY_S", 0.0),
+            mock.patch.object(bot_module, "RULES_ARCHIVE_RETRY_S", 0.0),
+        ):
+            for _ in range(30):
+                await asyncio.sleep(0)
+
+    async def test_ten_quick_changes_make_one_pass(self) -> None:
+        from dmbot.bot import DMBot
+
+        bot = self.bot()
+        from dmbot import bot as bot_module
+
+        with (
+            mock.patch.object(bot_module, "RULES_ARCHIVE_DELAY_S", 0.0),
+            mock.patch.object(bot_module, "RULES_ARCHIVE_RETRY_S", 0.0),
+        ):
+            bot._rules_archive_run = lambda key: DMBot._rules_archive_run(bot, key)
+            for _ in range(10):
+                DMBot._rules_archive_changed(bot, GUILD, "c" * 32)
+            await self.run_it(bot)
+        self.assertEqual(bot.passes, [(GUILD, "c" * 32)])
+        self.assertEqual(bot._rules_sync, {})  # nothing is left behind
+
+    async def test_a_change_during_a_pass_makes_exactly_one_more(self) -> None:
+        import asyncio
+
+        from dmbot import bot as bot_module
+        from dmbot.bot import DMBot
+
+        bot = self.bot()
+        key = (GUILD, "c" * 32)
+        original = bot._sync_rules_archive
+
+        async def changing(guild_id: int, campaign_id: str) -> Any:
+            done = await original(guild_id, campaign_id)
+            if len(bot.passes) == 1:
+                DMBot._rules_archive_changed(bot, *key)  # a change lands while it runs
+            return done
+
+        bot._sync_rules_archive = changing
+        bot._rules_archive_run = lambda k: DMBot._rules_archive_run(bot, k)
+        with (
+            mock.patch.object(bot_module, "RULES_ARCHIVE_DELAY_S", 0.0),
+            mock.patch.object(bot_module, "RULES_ARCHIVE_RETRY_S", 0.0),
+        ):
+            DMBot._rules_archive_changed(bot, *key)
+            for _ in range(40):
+                await asyncio.sleep(0)
+        self.assertEqual(len(bot.passes), 2)
+        self.assertEqual(bot._rules_sync, {})
+
+    async def test_work_left_over_is_run_again_until_it_is_done(self) -> None:
+        import asyncio
+
+        from dmbot import bot as bot_module
+        from dmbot.bot import DMBot
+
+        bot = self.bot()
+        bot.left = [5, 3, 0]
+        bot._rules_archive_run = lambda k: DMBot._rules_archive_run(bot, k)
+        with (
+            mock.patch.object(bot_module, "RULES_ARCHIVE_DELAY_S", 0.0),
+            mock.patch.object(bot_module, "RULES_ARCHIVE_RETRY_S", 0.0),
+        ):
+            DMBot._rules_archive_changed(bot, GUILD, "c" * 32)
+            for _ in range(40):
+                await asyncio.sleep(0)
+        self.assertEqual(len(bot.passes), 3)
+
+    async def test_a_failing_pass_is_tried_again_and_still_cleans_up(self) -> None:
+        import asyncio
+
+        from dmbot import bot as bot_module
+        from dmbot.bot import DMBot
+
+        bot = self.bot()
+        tries = 0
+
+        async def failing_once(guild_id: int, campaign_id: str) -> Any:
+            nonlocal tries
+            tries += 1
+            if tries == 1:
+                raise RuntimeError("Discord is down")
+            return None
+
+        bot._sync_rules_archive = failing_once
+        bot._rules_archive_run = lambda k: DMBot._rules_archive_run(bot, k)
+        with (
+            mock.patch.object(bot_module, "RULES_ARCHIVE_DELAY_S", 0.0),
+            mock.patch.object(bot_module, "RULES_ARCHIVE_RETRY_S", 0.0),
+        ):
+            DMBot._rules_archive_changed(bot, GUILD, "c" * 32)
+            for _ in range(40):
+                await asyncio.sleep(0)
+        self.assertEqual(tries, 2)
+        self.assertEqual((bot._rules_sync, bot._rules_dirty), ({}, set()))
+
+    async def test_nothing_is_started_while_the_bot_is_closing(self) -> None:
+        import asyncio
+
+        from dmbot.bot import DMBot
+
+        bot = self.bot()
+        bot._track = lambda work, name: (work.close(), None)[1]
+        bot._rules_archive_run = lambda k: DMBot._rules_archive_run(bot, k)
+        DMBot._rules_archive_changed(bot, GUILD, "c" * 32)
+        await asyncio.sleep(0)
+        self.assertEqual((bot.passes, bot._rules_sync), ([], {}))
+
+
+class FollowedSetsHook(DatabaseTest):
+    async def test_following_and_unfollowing_a_set_tells_the_hook(self) -> None:
+        from dmbot.rules.rule_sets import RuleSetStore
+
+        campaigns = CampaignStore(self.db)
+        mine = await campaigns.create(GUILD, "Far Away", DM)
+        pub = await campaigns.create(GUILD, "Frostmaiden", DM)
+        houses = HouseRuleStore(self.db)
+        sets = RuleSetStore(self.db, clock=lambda: 1_700_000_000)
+        await houses.add(GUILD, pub.id, DM, "Crits double the dice")
+        await sets.publish(GUILD, pub.id, DM, "Frostmaiden", await houses.list(GUILD, pub.id), None)
+        code = await sets.make_code(GUILD, pub.id, DM)
+        told: list[tuple[int, str]] = []
+        sets.on_change = lambda g, c: told.append((g, c))
+        offer = await sets.by_code(GUILD, DM, code)
+        follow = await sets.follow(GUILD, mine.id, DM, offer)
+        await sets.unfollow(GUILD, mine.id, DM)
+        await sets.restore(GUILD, mine.id, DM, follow)
+        self.assertEqual(told, [(GUILD, mine.id)] * 3)
+
+    async def test_a_refused_follow_is_not_told(self) -> None:
+        from dmbot.rules.rule_sets import RuleSetStore
+
+        campaigns = CampaignStore(self.db)
+        mine = await campaigns.create(GUILD, "Far Away", DM)
+        sets = RuleSetStore(self.db)
+        told: list[tuple[int, str]] = []
+        sets.on_change = lambda g, c: told.append((g, c))
+        with self.assertRaises(Exception):  # noqa: B017  (any refusal: nothing is followed)
+            await sets.unfollow(GUILD, mine.id, DM)  # nothing to stop following
+        self.assertEqual(told, [])

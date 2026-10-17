@@ -138,7 +138,12 @@ from dmbot.dm_screen.name_questions import (
 )
 from dmbot.dm_screen.pause import PauseButton
 from dmbot.dm_screen.recap_panel import PlanFacts, RecapsButton, audio_how
-from dmbot.dm_screen.rules_channel import RulesChannelError, setup_rules_channel, sync_campaign
+from dmbot.dm_screen.rules_channel import (
+    RulesChannelError,
+    SyncResult,
+    setup_rules_channel,
+    sync_campaign,
+)
 from dmbot.dm_screen.settings import (
     HomebrewButton,
     HouseFileButton,
@@ -367,6 +372,8 @@ HINTS_WAIT_S = 1.5  # the longest a clip waits for the campaign's names to load
 # looked at this far apart when the bot starts (Discord's rate limits).
 RULES_ARCHIVE_DELAY_S = 3.0
 RULES_ARCHIVE_PACE_S = 2.0
+RULES_ARCHIVE_RETRY_S = 10.0  # when a pass was cut short by the caps
+RULES_ARCHIVE_PASSES = 60  # (200 rules at 25 a pass is far fewer)
 
 # The off-topic filter (#52): one call may take this long, or the window is kept as game
 # talk; after this many failures in a row it rests this long.
@@ -8043,22 +8050,32 @@ class DMBot(commands.AutoShardedBot):
 
     async def _rules_archive_run(self, key: tuple[int, str]) -> None:
         try:
-            while True:
-                await asyncio.sleep(RULES_ARCHIVE_DELAY_S)
+            delay = RULES_ARCHIVE_DELAY_S
+            for _ in range(RULES_ARCHIVE_PASSES):
+                await asyncio.sleep(delay)
                 self._rules_dirty.discard(key)
-                await self._sync_rules_archive(*key)
-                if key not in self._rules_dirty:
+                try:
+                    done = await self._sync_rules_archive(*key)
+                    # Over the edit caps, or a message Discord refused: look again after a pause.
+                    more = done is not None and done.left_for_next_time > 0
+                except Exception:
+                    log.warning("Couldn't update a rules channel; will try again", exc_info=True)
+                    more = True
+                if key not in self._rules_dirty and not more:
                     return
+                delay = RULES_ARCHIVE_RETRY_S if more else RULES_ARCHIVE_DELAY_S
         finally:
             self._rules_sync.pop(key, None)
+            self._rules_dirty.discard(key)
 
-    async def _sync_rules_archive(self, guild_id: int, campaign_id: str) -> None:
+    async def _sync_rules_archive(self, guild_id: int, campaign_id: str) -> SyncResult | None:
         guild = self.get_guild(guild_id)
         if guild is None or self.house_rules is None:
-            return
+            return None
         campaign = await self.campaigns.get(guild_id, campaign_id)
-        if campaign is not None:
-            await sync_campaign(guild, campaign, self.house_rules, self.rule_sets)
+        if campaign is None:
+            return None
+        return await sync_campaign(guild, campaign, self.house_rules, self.rule_sets)
 
     async def _rebuild_rules_archives(self) -> None:
         """At bot start: every campaign's rules channel is brought up to date once, a few
