@@ -305,6 +305,29 @@ class ConsentDMTests(DatabaseTest):
         release.set()
         await self.settle()
 
+    async def test_each_ask_writes_one_timing_line_with_numbers_only(self) -> None:
+        """#1706: where a slow consent message was slow can be read from the log."""
+        await self.consent.grant(GUILD, DM)  # one reminder, one request
+        with self.assertLogs("dmbot.bot", level="INFO") as logged:
+            await self.joined()
+        (line,) = [r for r in logged.output if "Consent asked:" in r]
+        assert re.search(
+            r"Consent asked: 2 people \(1 reminders\), status \d+ms, sent \d+ms in total "
+            r"\(slowest \d+ms\), since the session start (\d+ms|unknown)$",
+            line,
+        ), line
+        for name in (f"user{PLAYER}", f"user{DM}", str(PLAYER), str(DM)):
+            assert name not in line.split("Consent asked:")[1], name  # no name, no id
+
+    def test_the_timing_line_is_plain_numbers(self) -> None:
+        from dmbot.bot import consent_timing_line
+
+        assert consent_timing_line(3, 1, 12, [40, 900, 5], 1500) == (
+            "Consent asked: 3 people (1 reminders), status 12ms, sent 945ms in total "
+            "(slowest 900ms), since the session start 1500ms"
+        )
+        assert "unknown" in consent_timing_line(1, 0, 1, [], None)
+
     async def test_someone_who_already_agreed_gets_a_reminder(self) -> None:
         await self.consent.grant(GUILD, PLAYER)
         await self.joined()
