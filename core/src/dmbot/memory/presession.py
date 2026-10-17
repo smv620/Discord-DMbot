@@ -18,9 +18,10 @@ from dataclasses import dataclass
 from typing import Protocol
 
 from dmbot.memory.claims import ClaimStore
+from dmbot.memory.models import GOING
 from dmbot.memory.recall import DM_SCREEN, FACT, RecallService
 from dmbot.memory.store import MemoryStore
-from dmbot.memory.threads import LIVE_STATES
+from dmbot.memory.threads import LIVE_STATES, PROMISE
 
 log = logging.getLogger(__name__)
 
@@ -33,6 +34,9 @@ SEEDS = 5  # the names most heard last session
 FACT_LINES = 3
 QUIET_PREFIX = "🧵 Quiet threads: "
 QUIET_NAMES = 3  # thread names on the quiet-threads line, then "+N more"
+DUE_PREFIX = "🤝 Due soon: "
+MORE_DUE = "🤝 +"
+DUE_LINES = 2  # promises the DM marked Due soon that get a line, then "+N more" (#1680)
 CONDITION_LINES = 3
 RECALL_BUDGET = 1500  # characters one recall may hold
 # What a condition reads as. Only the ones worth remembering: "alive" and "intact" are the
@@ -67,7 +71,18 @@ class Note:
     text: str
     lines: tuple[str, ...]
     waiting: int  # claims waiting to be checked: the poster adds the button when this is above 0
-    quiet: int = 0  # story threads gone quiet: the poster adds the 🧵 Threads button when above 0
+    quiet: int = 0  # threads on the note's thread lines (quiet or due soon): the poster adds the
+    # 🧵 Threads button when above 0
+
+
+@dataclass(frozen=True, slots=True)
+class Due:
+    """A promise the DM marked Due soon, in the DM's own words (the due note is never parsed)."""
+
+    what: str
+    by: str = ""  # who promised, "" until the DM says
+    to: str = ""  # promised to whom
+    due: str = ""
 
 
 @dataclass(frozen=True, slots=True)
@@ -80,6 +95,7 @@ class Facts:
     conditions: Sequence[tuple[str, str]] = ()  # (name, condition), newest first
     waiting: int = 0
     quiet_threads: Sequence[str] = ()  # names of the threads gone quiet, longest quiet first
+    due_soon: Sequence[Due] = ()  # promises marked Due soon, longest quiet first
 
 
 def _clip(text: str, limit: int = LINE_CHARS) -> str:
@@ -94,6 +110,15 @@ def _plain(text: str) -> str:
     for ch in " ".join(text.split()):
         out.append("\\" + ch if ch in "*_~|`>[]()<\\" else ch)
     return "".join(out)
+
+
+def _due_line(d: Due) -> str:
+    """ "🤝 Due soon: Kael → the village: bring the healer back (due: the full moon)". Until the
+    DM says who promised and to whom, the short form: "🤝 Due soon: <what>"."""
+    what = _plain(d.what)
+    core = f"{_plain(d.by)} → {_plain(d.to)}: {what}" if d.by and d.to else what
+    note = f" (due: {_plain(d.due)})" if d.due else ""
+    return _clip(f"{DUE_PREFIX}{core}{note}")
 
 
 def compose(facts: Facts) -> Note | None:
@@ -111,11 +136,6 @@ def compose(facts: Facts) -> Note | None:
         words = CONDITION_WORDS.get(condition)
         if words:
             lines.append(_clip(f"• {_plain(name)} {words}"))
-    if facts.quiet_threads:  # in-game content: it stays on the DM screen (#1675)
-        shown = [_plain(n) for n in facts.quiet_threads[:QUIET_NAMES]]
-        more = len(facts.quiet_threads) - len(shown)
-        tail = f" (+{more} more)" if more > 0 else ""
-        lines.append(_clip(f"{QUIET_PREFIX}{', '.join(shown)}{tail}"))
     if facts.waiting > 0:
         said = (
             "1 thing someone said is"
@@ -123,6 +143,17 @@ def compose(facts: Facts) -> Note | None:
             else f"{facts.waiting} things people said are"
         )
         lines.append(f"🗣️ {said} waiting for your check")
+    # The thread lines come last: when the note is full they are cut, never the claims line
+    # that has a button of its own.
+    if facts.quiet_threads:  # in-game content: it stays on the DM screen (#1675)
+        shown = [_plain(n) for n in facts.quiet_threads[:QUIET_NAMES]]
+        more = len(facts.quiet_threads) - len(shown)
+        tail = f" (+{more} more)" if more > 0 else ""
+        lines.append(_clip(f"{QUIET_PREFIX}{', '.join(shown)}{tail}"))
+    due_lines = [_due_line(d) for d in facts.due_soon[:DUE_LINES]]
+    if due_lines and len(facts.due_soon) > DUE_LINES:
+        due_lines.append(f"🤝 +{len(facts.due_soon) - DUE_LINES} more promises due soon")
+    lines.extend(due_lines)  # in-game content: the DM screen only (#1680)
     lines = lines[:MAX_LINES]
     if not lines:
         return None
@@ -135,12 +166,20 @@ def compose(facts: Facts) -> Note | None:
         size += 1 + len(line)
     if not kept:
         return None
-    shown_quiet = any(line.startswith(QUIET_PREFIX) for line in kept)  # no button for a cut line
+    # No button for a line that was cut.
+    if not any(line.startswith(DUE_PREFIX) for line in kept):  # no orphaned "+N more"
+        kept = [line for line in kept if not line.startswith(MORE_DUE)]
+    shown_quiet = any(line.startswith(QUIET_PREFIX) for line in kept)
+    shown_due = any(line.startswith(DUE_PREFIX) for line in kept)
+    # A due-soon promise that has also gone quiet is on both lines: counted once.
+    names = {n for n in facts.quiet_threads if shown_quiet}
+    names |= {d.what for d in facts.due_soon if shown_due}
+    threads = len(names)
     return Note(
         "\n".join([HEADER, *kept]),
         tuple(kept),
         max(0, facts.waiting),
-        len(facts.quiet_threads) if shown_quiet else 0,
+        threads,
     )
 
 
@@ -230,6 +269,7 @@ class PreSession:
         # One read of the campaign's threads (the same one the cards use). A failure here costs
         # the line, never the note.
         quiet: list[str] = []
+        due: list[Due] = []
         if has_threads:
             try:
                 every = await self._memory.threads(
@@ -240,8 +280,24 @@ class PreSession:
                     key=lambda t: (-t.quiet_sessions, t.thread.name),
                 )
                 quiet = [t.thread.name for t in stalled]
-            except Exception:
-                log.warning(
-                    "Couldn't read the quiet threads for the pre-session note", exc_info=True
+                # The same result: promises the DM put in "Due soon", longest quiet first.
+                soon = sorted(
+                    (
+                        t
+                        for t in every
+                        if t.thread.type == PROMISE and t.state and t.state.condition == GOING
+                    ),
+                    key=lambda t: (-t.quiet_sessions, t.thread.name),
                 )
-        return compose(Facts(title, day, sentences, conditions, waiting, quiet))
+                due = [
+                    Due(
+                        t.thread.name,
+                        ", ".join(e.name for e in t.promised_by),
+                        ", ".join(e.name for e in t.promised_to),
+                        t.due,
+                    )
+                    for t in soon
+                ]
+            except Exception:
+                log.warning("Couldn't read the threads for the pre-session note", exc_info=True)
+        return compose(Facts(title, day, sentences, conditions, waiting, quiet, due))
