@@ -71,7 +71,7 @@ from dmbot.ui.names import (
 )
 
 log = logging.getLogger(__name__)
-THREAD_KINDS = ("thread", "quest", "mystery", "hook", "goal")  # story threads (#1662)
+THREAD_KINDS = ("thread", "quest", "mystery", "hook", "goal", "promise")  # story threads (#1662)
 ITEM = "item"  # only an item, or a kind under item, can be one of a kind
 CORE_KINDS = frozenset(t.key for t in CORE_TYPES)
 # Why DMbot will ask, for the checks that say so in plain words; any other is "an odd pair".
@@ -88,6 +88,9 @@ MORE_THAN_ONE_BUTTON = "Allow more than one"
 THREAD_STATE_BUTTON = "🧵 Change state"  # a story thread's buttons (#1662)
 THREAD_INVOLVE_BUTTON = "👥 Who's involved"
 THREAD_LINK_BUTTON = "📌 Link an event"
+PROMISE_BY_BUTTON = "🤝 Who promised"  # a promise's buttons (#1674)
+PROMISE_TO_BUTTON = "🤝 Promised to"
+PROMISE_DUE_BUTTON = "📅 Due"
 STANDING_BUTTON = "🤝 Standing"  # how an NPC, group or place feels about the party (#1655)
 CLUE_BUTTON = "🔒 Only some know this"  # a clue's list of who knows it (#1649)
 ALSO_CALLED = "🏷️ Also called…"  # adds another name; its own icon, not Add a name's (#393)
@@ -456,6 +459,7 @@ async def show_card(
         unique=entity.is_unique,
         clue=entity.type == "clue",
         thread=is_thread and secrets,
+        promise=entity.type == "promise" and secrets,
         standing=(
             entity.type in ("character", "faction", "place")
             and not entity.is_player_character
@@ -594,6 +598,7 @@ class NameCard(_Menu):
         clue: bool = False,
         standing: bool = False,
         thread: bool = False,
+        promise: bool = False,
         undo_connection: int | None = None,
     ) -> None:
         super().__init__()
@@ -625,9 +630,16 @@ class NameCard(_Menu):
             self.add_item(_Button(self._one_of_a_kind, label=label, style=grey, row=3))
         if thread:  # a story thread (#1662): move it, say who is in it, link what moved it
             self.add_item(_Button(self._thread_state, label=THREAD_STATE_BUTTON, style=grey, row=3))
-            self.add_item(
-                _Button(self._thread_involve, label=THREAD_INVOLVE_BUTTON, style=grey, row=3)
-            )
+            if promise:  # who made it, to whom, when: instead of "who's involved"
+                self.add_item(_Button(self._promise_by, label=PROMISE_BY_BUTTON, style=grey, row=3))
+                self.add_item(_Button(self._promise_to, label=PROMISE_TO_BUTTON, style=grey, row=3))
+                self.add_item(
+                    _Button(self._promise_due, label=PROMISE_DUE_BUTTON, style=grey, row=3)
+                )
+            else:
+                self.add_item(
+                    _Button(self._thread_involve, label=THREAD_INVOLVE_BUTTON, style=grey, row=3)
+                )
             self.add_item(_Button(self._thread_link, label=THREAD_LINK_BUTTON, style=grey, row=3))
         if standing:  # an NPC, group or place: how it feels about the party (#1655)
             self.add_item(_Button(self._standing, label=STANDING_BUTTON, style=grey, row=3))
@@ -660,6 +672,31 @@ class NameCard(_Menu):
             await _tell(interaction, "Only the DM can change a story thread.")
             return
         await interaction.response.send_modal(InvolveForm(self.campaign_id, self.entity_id))
+
+    async def _promise_form(self, interaction: discord.Interaction, which: str) -> None:
+        from dmbot.ui.threads import DueForm, PartyForm
+
+        campaign = await _campaign_for(interaction, self.campaign_id)
+        if campaign is None:
+            return
+        if not sees_secrets(campaign, interaction.user.id):
+            await _tell(interaction, "Only the DM can change a story thread.")
+            return
+        form: Any = (
+            DueForm(self.campaign_id, self.entity_id)
+            if which == "due"
+            else PartyForm(self.campaign_id, self.entity_id, to=which == "to")
+        )
+        await interaction.response.send_modal(form)
+
+    async def _promise_by(self, interaction: discord.Interaction) -> None:
+        await self._promise_form(interaction, "by")
+
+    async def _promise_to(self, interaction: discord.Interaction) -> None:
+        await self._promise_form(interaction, "to")
+
+    async def _promise_due(self, interaction: discord.Interaction) -> None:
+        await self._promise_form(interaction, "due")
 
     async def _thread_link(self, interaction: discord.Interaction) -> None:
         from dmbot.ui.threads import LinkForm

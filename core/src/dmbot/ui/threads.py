@@ -43,6 +43,7 @@ from dmbot.ui.names import GONE, _campaign_for, _md, _memory, changed, sees_secr
 log = logging.getLogger(__name__)
 
 NEW_BUTTON = "➕ New thread"
+NEW_PROMISE_BUTTON = "🤝 Add a promise"
 STATE_BUTTON = "🧵 Change state"
 INVOLVE_BUTTON = "👥 Add who's involved"
 LINK_BUTTON = "📌 Link an event"
@@ -61,10 +62,10 @@ def _stalled_after(interaction: discord.Interaction) -> int:
     return int(getattr(settings, "thread_stalled_sessions", model.STALLED_AFTER))
 
 
-def waiting_text(count: int, quiet: int) -> str:
+def waiting_text(count: int, quiet: int, promises: int = 0) -> str:
     """For the DM screen after a session: how many, and for how long, never which."""
     return (
-        f"🧵 **{model.stalled_line(count, quiet)}** Tap to check them. "
+        f"🧵 **{model.stalled_line(count, quiet, promises)}** Tap to check them. "
         "Nothing changes until you say."
     )
 
@@ -73,12 +74,20 @@ def thread_lines(info: model.ThreadInfo, numbers: dict[int, int]) -> list[str]:
     """What a thread's card adds: its state (and that it has gone quiet), who is involved and in
     what part, the events that moved it, and the history of its state."""
     state = info.state.condition if info.state is not None else None
-    word = model.STATE_WORDS.get(state or "", "No state yet")
+    kind = info.thread.type
+    word = model.words_for(kind).get(state or "", "No state yet")
     quiet = ""
     if info.stalled:
         n = info.quiet_sessions
         quiet = f" — quiet for {n} {'session' if n == 1 else 'sessions'}"
-    lines = [f"🧵 **{word}**{quiet}"]
+    lines = []
+    if kind == model.PROMISE:  # "Kael promised the village: bring the healer back"
+        by = ", ".join(_md(e.name) for e in info.promised_by) or "Someone"
+        to = ", ".join(_md(e.name) for e in info.promised_to) or "someone"
+        lines.append(f"🤝 **{by}** promised **{to}**: {_md(info.thread.name)}")
+    lines.append(f"🧵 **{word}**{quiet}")
+    if info.due:
+        lines.append(f"**Due:** {_md(info.due)}")
     if info.involved:
         parts = [
             f"{_md(i.who.name)}" + (f" ({_md(i.role)})" if i.role else "") for i in info.involved
@@ -88,7 +97,7 @@ def thread_lines(info: model.ThreadInfo, numbers: dict[int, int]) -> list[str]:
         parts = [f"{_md(m.event.name)}" + (" (ended it)" if m.ends_it else "") for m in info.movers]
         lines.append("**Moved by:** " + ", ".join(parts))
     if len(info.history) > 1:
-        lines.append("**So far:** " + "; ".join(model.history_lines(info.history, numbers)))
+        lines.append("**So far:** " + "; ".join(model.history_lines(info.history, numbers, kind)))
     return lines
 
 
@@ -219,14 +228,17 @@ async def _dm_and_memory(interaction: discord.Interaction, campaign_id: str) -> 
 class ChangeState(_Menu):
     """The five states, one tap each; "Checked, still going" when it is."""
 
-    def __init__(self, campaign_id: str, thread_id: str, now: str | None) -> None:
+    def __init__(
+        self, campaign_id: str, thread_id: str, now: str | None, kind: str = "thread"
+    ) -> None:
         super().__init__()
-        self.campaign_id, self.thread_id = campaign_id, thread_id
+        self.campaign_id, self.thread_id, self.kind = campaign_id, thread_id, kind
+        words = model.words_for(kind)
         for state in model.ALL_STATES:
             self.add_item(
                 _Button(
                     partial(self._set, state),
-                    label=model.STATE_WORDS[state],
+                    label=words[state],
                     style=discord.ButtonStyle.primary
                     if state == now
                     else discord.ButtonStyle.secondary,
@@ -258,7 +270,7 @@ class ChangeState(_Menu):
             interaction,
             self.campaign_id,
             self.thread_id,
-            note=f"✅ Marked: {model.STATE_WORDS[state]}.",
+            note=f"✅ Marked: {model.words_for(self.kind)[state]}.",
         )
 
     async def _still(self, interaction: discord.Interaction) -> None:
@@ -301,7 +313,7 @@ async def open_change_state(
     await _replace(
         interaction,
         f"**{_md(infos[0].thread.name)}**: where is it now?",
-        ChangeState(campaign_id, thread_id, now),
+        ChangeState(campaign_id, thread_id, now, infos[0].thread.type),
     )
 
 
@@ -426,6 +438,142 @@ async def _save_involved(
         return
     changed(interaction, campaign)
     await show_thread(interaction, campaign_id, thread_id, note="✅ Added.")
+
+
+class PartyForm(discord.ui.Modal):
+    """Who made a promise, or who it was made to: a name, found like the other links."""
+
+    who: discord.ui.TextInput[PartyForm] = discord.ui.TextInput(
+        label="A name", placeholder="A character or a group", max_length=100
+    )
+
+    def __init__(self, campaign_id: str, promise_id: str, *, to: bool) -> None:
+        super().__init__(
+            title="Who was it promised to?" if to else "Who promised?", timeout=VIEW_TIMEOUT_S
+        )
+        self.campaign_id, self.promise_id, self.to = campaign_id, promise_id, to
+        if to:
+            self.who.placeholder = "A character, a group or a place"
+
+    async def on_error(  # type: ignore[override]  # a form's has no item (discord.py)
+        self, interaction: discord.Interaction, error: Exception
+    ) -> None:
+        await _failed(interaction, error)
+
+    async def on_submit(self, interaction: discord.Interaction) -> None:
+        await _answer_first(interaction, in_place=True)
+        await link_by_name(
+            interaction,
+            self.campaign_id,
+            self.promise_id,
+            self.who.value,
+            kinds=("character", "faction", "place") if self.to else ("character", "faction"),
+            then=partial(_save_party, to=self.to),
+        )
+
+
+async def _save_party(
+    interaction: discord.Interaction, campaign_id: str, promise_id: str, who_id: str, *, to: bool
+) -> None:
+    got = await _dm_and_memory(interaction, campaign_id)
+    if got is None:
+        return
+    campaign, memory = got
+    try:
+        await memory.promise_party(
+            campaign.guild_id, campaign.id, promise_id, who_id, to=to, source=DM
+        )
+    except MemoryRuleError as exc:
+        await show_thread(interaction, campaign_id, promise_id, note=f"⚠️ {exc}")
+        return
+    changed(interaction, campaign)
+    await show_thread(interaction, campaign_id, promise_id, note="✅ Added.")
+
+
+class DueForm(discord.ui.Modal, title="When is it due?"):
+    due: discord.ui.TextInput[DueForm] = discord.ui.TextInput(
+        label="Your note (empty clears it)",
+        placeholder="By the full moon",
+        required=False,
+        max_length=120,
+    )
+
+    def __init__(self, campaign_id: str, promise_id: str) -> None:
+        super().__init__(timeout=VIEW_TIMEOUT_S)
+        self.campaign_id, self.promise_id = campaign_id, promise_id
+
+    async def on_error(  # type: ignore[override]  # a form's has no item (discord.py)
+        self, interaction: discord.Interaction, error: Exception
+    ) -> None:
+        await _failed(interaction, error)
+
+    async def on_submit(self, interaction: discord.Interaction) -> None:
+        await _answer_first(interaction, in_place=True)
+        got = await _dm_and_memory(interaction, self.campaign_id)
+        if got is None:
+            return
+        campaign, memory = got
+        try:
+            await memory.set_due(
+                campaign.guild_id, campaign.id, self.promise_id, self.due.value, source=DM
+            )
+        except MemoryRuleError as exc:
+            await show_thread(interaction, self.campaign_id, self.promise_id, note=f"⚠️ {exc}")
+            return
+        changed(interaction, campaign)
+        await show_thread(interaction, self.campaign_id, self.promise_id, note="✅ Saved.")
+
+
+class NewPromiseForm(discord.ui.Modal, title="Add a promise"):
+    what: discord.ui.TextInput[NewPromiseForm] = discord.ui.TextInput(
+        label="What was promised",
+        placeholder="Bring the healer back",
+        max_length=100,
+    )
+    due: discord.ui.TextInput[NewPromiseForm] = discord.ui.TextInput(
+        label="When is it due? (optional)",
+        placeholder="By the full moon",
+        required=False,
+        max_length=120,
+    )
+
+    def __init__(self, campaign_id: str) -> None:
+        super().__init__(timeout=VIEW_TIMEOUT_S)
+        self.campaign_id = campaign_id
+
+    async def on_error(  # type: ignore[override]  # a form's has no item (discord.py)
+        self, interaction: discord.Interaction, error: Exception
+    ) -> None:
+        await _failed(interaction, error)
+
+    async def on_submit(self, interaction: discord.Interaction) -> None:
+        await _answer_first(interaction, in_place=True)
+        got = await _dm_and_memory(interaction, self.campaign_id)
+        if got is None:
+            return
+        campaign, memory = got
+        what = " ".join(self.what.value.split())
+        if not what:
+            await _tell(interaction, "Type what was promised.")
+            return
+        try:
+            made = await memory.new_thread(
+                campaign.guild_id, campaign.id, what, model.PROMISE, OPEN, source=DM
+            )
+            if self.due.value.strip():
+                await memory.set_due(
+                    campaign.guild_id, campaign.id, made.value.id, self.due.value, source=DM
+                )
+        except MemoryRuleError as exc:
+            await _tell(interaction, f"⚠️ {exc}")
+            return
+        changed(interaction, campaign)
+        await show_thread(
+            interaction,
+            campaign.id,
+            made.value.id,
+            note="✅ Added. Use the buttons to say who promised and to whom.",
+        )
 
 
 class LinkForm(discord.ui.Modal, title="Link an event"):
@@ -623,10 +771,11 @@ class ThreadsReview(_Menu):
         if not self.page:
             return None
         for row, info in enumerate(self.page):
+            promise = info.thread.type == model.PROMISE
             for key, label in (
                 ("still", "Still going"),
-                ("resolved", "Finished"),
-                ("dropped", "Dropped"),
+                ("resolved", "Kept" if promise else "Finished"),
+                ("dropped", "Broken" if promise else "Dropped"),
             ):
                 self.add_item(
                     _Button(
@@ -682,9 +831,12 @@ class ThreadsReview(_Menu):
 
 __all__ = [
     "ChangeState",
+    "DueForm",
     "InvolveForm",
     "LinkForm",
+    "NewPromiseForm",
     "NewThreadForm",
+    "PartyForm",
     "ThreadsButton",
     "ThreadsReview",
     "threads_view",

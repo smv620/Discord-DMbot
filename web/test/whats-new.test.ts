@@ -81,6 +81,7 @@ describe("What's new", () => {
       "Secrets only some people know", // until the extractor is on and it has been seen (#1649)
       "How NPCs feel about the party", // until it has been seen on the test server (#1655)
       "Story threads you keep", // until it has been seen on the test server (#1662)
+      "Keep track of promises made at the table", // until seen on the test server (#1674)
     ]);
     for (const h of held) {
       expect(h.reason.length, h.title).toBeGreaterThan(20);

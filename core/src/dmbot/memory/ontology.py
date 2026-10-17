@@ -156,6 +156,12 @@ CORE_TYPES: tuple[TypeTerm, ...] = (
     _t("mystery", "mystery", "Something the table is trying to find out.", "thread"),
     _t("hook", "hook", "A lead that could become a quest if the table follows it.", "thread"),
     _t("goal", "goal", "Something a character or the party wants to achieve.", "thread"),
+    _t(
+        "promise",
+        "promise",
+        "Something someone swore or agreed to do for someone else, kept or broken later.",
+        "thread",
+    ),
     # A piece of information that can be learned (#1649): its own entry, so "who knows it" is an
     # ordinary `knows` fact. A subtype of `concept`, so every range that takes an idea takes it.
     _t(
@@ -301,6 +307,30 @@ CORE_PREDICATES: tuple[PredicateTerm, ...] = (
         examples=("Cerric is a member of the Harpers.", "Snot is a member of the Red Fang."),
         inverse_label="has as a member",
         synonyms=("belongs_to", "part_of", "in_group"),
+    ),
+    PredicateTerm(
+        "promised_by",
+        "was promised by",
+        "Who made a promise: the character or group that swore or agreed to do it. The DM's word.",
+        ("character", "faction"),
+        ("promise",),
+        covers=("the character or group who swore, vowed or agreed to do something",),
+        not_this=(("a character who takes part in a thread", "in_thread"),),
+        examples=("The promise to bring the healer back was made by Kael.",),
+        inverse_label="made the promise",
+        synonyms=("vowed", "swore_to", "pledged_by"),
+    ),
+    PredicateTerm(
+        "promised_to",
+        "was promised to",
+        "Who a promise was made to: the character, group or place it was sworn to. The DM's word.",
+        ("character", "faction", "place"),
+        ("promise",),
+        covers=("the character, group or place a promise was made to",),
+        not_this=(("who made the promise", "promised_by"),),
+        examples=("The promise to bring the healer back was made to the village of Dunhollow.",),
+        inverse_label="was promised",
+        synonyms=("owed_to",),
     ),
     PredicateTerm(
         "in_thread",

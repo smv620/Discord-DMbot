@@ -23,10 +23,24 @@ STATE_WORDS = {
     RESOLVED: "Finished",
     ABANDONED: "Dropped",
 }
+# A promise says the same five states in its own words (#1674): the states stored are the same.
+PROMISE_WORDS = {
+    HINTED: "Made in passing",
+    OPEN: "Open",
+    GOING: "Due soon",
+    RESOLVED: "Kept",
+    ABANDONED: "Broken or let go",
+}
+PROMISE = "promise"
 ROLES = ("quest giver", "target", "villain", "victim", "reward")
 ALL_STATES = (HINTED, OPEN, GOING, RESOLVED, ABANDONED)
 LIVE_STATES = (HINTED, OPEN, GOING)  # a thread in one of these can stall
 STALLED_AFTER = 3  # sessions, unless DMBOT_THREAD_STALLED_SESSIONS says otherwise
+
+
+def words_for(kind: str) -> dict[str, str]:
+    """The state words for this kind of thread: a promise has its own."""
+    return PROMISE_WORDS if kind == PROMISE else STATE_WORDS
 
 
 @dataclass(frozen=True, slots=True)
@@ -52,6 +66,9 @@ class ThreadInfo:
     last_touch: int  # when anything last moved it (seconds)
     quiet_sessions: int  # known sessions that have started since
     stalled: bool
+    promised_by: tuple[Entity, ...] = ()  # a promise: who made it (the DM's word)
+    promised_to: tuple[Entity, ...] = ()  # ...and to whom
+    due: str = ""  # ...and the DM's free-text note on when it is due, never parsed
 
 
 def sessions_since(touch: int, sessions: Iterable[int]) -> int:
@@ -83,21 +100,31 @@ def checked(history: Sequence[State]) -> list[bool]:
     return [n > 0 and row.condition == history[n - 1].condition for n, row in enumerate(history)]
 
 
-def history_lines(history: Sequence[State], numbers: dict[int, int]) -> list[str]:
+def history_lines(
+    history: Sequence[State], numbers: dict[int, int], kind: str = "thread"
+) -> list[str]:
     """One plain line a row, oldest first: "Open (Session 2)", "checked, still going (Session 4)",
     "Happening now (Session 5)". A same-value row is never shown as a change of state."""
     lines = []
+    words = words_for(kind)
     for row, again in zip(history, checked(history), strict=True):
         number = numbers.get(row.from_session_at) if row.from_session_at is not None else None
         when = f" (Session {number})" if number is not None else ""
         if again:
             lines.append(f"checked, still going{when}")
         else:
-            lines.append(f"{STATE_WORDS.get(row.condition, row.condition)}{when}")
+            lines.append(f"{words.get(row.condition, row.condition)}{when}")
     return lines
 
 
-def stalled_line(count: int, quiet: int) -> str:
-    """For the after-session report: how many threads, and for how long."""
-    what = "thread hasn't" if count == 1 else "threads haven't"
+def stalled_line(count: int, quiet: int, promises: int = 0) -> str:
+    """For the after-session report: how many threads, and for how long. It says "promise"
+    where all of them are promises, and counts them in when only some are."""
+    if promises and promises == count:
+        what = "promise hasn't" if count == 1 else "promises haven't"
+    elif promises:
+        extra = "1 is a promise" if promises == 1 else f"{promises} are promises"
+        return f"{count} threads haven't moved for {quiet} or more sessions ({extra})."
+    else:
+        what = "thread hasn't" if count == 1 else "threads haven't"
     return f"{count} {what} moved for {quiet} or more sessions."

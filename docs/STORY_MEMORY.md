@@ -674,6 +674,17 @@ Each step is useful on its own and ships behind the existing phases.
    named `in_thread` because `involved_in` is already a synonym of `appears_in`. Backups,
    isolation and deletion are those of every memory entry; `memory_heard` is not in a backup, so
    a restored campaign shows no thread as stalled until new sessions are heard.
+   **Phase 5c slice 2 is built (#1674): promises the DM keeps** (no AI; the DM writes them).
+   `promise` is a fifth kind under `thread`, beside quest, mystery, hook and goal, so it reuses the
+   thread states, the stalled rule and the after-session question exactly: no new condition and no
+   migration. It shows its own words for the same states: made in passing, open, due soon, kept,
+   broken or let go. Two connections, the DM's word and both set from the promise's card:
+   `promised_by` (character or group → promise) and `promised_to` (character, group or place →
+   promise); a promise may name more than one of each. An optional due note is free text kept in the
+   entry's description and never read as a date. The card says "**Kael** promised **Dunhollow**:
+   bring the healer back", then the state and "Due: …". The after-session line says "promise" where
+   all the quiet ones are promises. Privacy and isolation are those of threads: DM only, hidden from
+   lookup and from the players' recall, in backups, deleted with the campaign.
 3. **Phase 5c: PlotBot:** threads, promises, clues, `led_to`, stalled-thread nudges,
    summaries, the pre-session note, the AI recap.
 4. **Phase 5d: Shared story:** the story plan, `same_as` links, divergence ("Watch

@@ -153,7 +153,8 @@ async def _live_ids(scope: Scope, among: Collection[str] | None = None) -> set[s
 
 
 PARTY_NAME = "The party"
-THREAD_KINDS_ONLY = "A thread is a quest, a mystery, a hook or a goal."
+DUE_MAX = 120  # letters in a promise's due note
+THREAD_KINDS_ONLY = "A thread is a quest, a mystery, a hook, a goal or a promise."
 STANDING_VIEWERS = ("character", "faction", "place")
 STANDING_SUBJECTS = ("character", "faction", "people")
 STANDING_BETWEEN = (
@@ -801,6 +802,58 @@ class MemoryStore:
                 detail=clean_text(role), from_session_at=from_session_at,
             )  # fmt: skip
             return Written(fact, w.batch)
+
+    async def promise_party(
+        self,
+        guild_id: int,
+        campaign_id: str,
+        promise_id: str,
+        who_id: str,
+        *,
+        to: bool,
+        source: str,
+        from_session_at: int | None = None,
+    ) -> Written[Relation]:
+        """The DM says who made a promise (`to` False) or who it was made to (`to` True): their
+        word, one fact each (#1674). More than one may be named."""
+        if source != DM:
+            raise MemoryRuleError("Only the DM can do that.")
+        async with self._write(guild_id, campaign_id, source) as w:
+            entity = await _entity_row(w, promise_id)
+            if entity["type"] != threads_mod.PROMISE:
+                raise MemoryRuleError("That is not a promise.")
+            onto = await _load_ontology(w)
+            who = await _entity_row(w, who_id)
+            allowed = ("character", "faction", "place") if to else ("character", "faction")
+            if not any(onto.is_a(who["type"], kind) for kind in allowed):
+                # (a wrong kind would only be flagged; this is the DM's own tap, so refuse it)
+                raise MemoryRuleError(
+                    "Pick a character, a group or a place."
+                    if to
+                    else "Pick a character or a group."
+                )
+            fact, _flags = await self.add_relation_in(
+                w, who_id, "promised_to" if to else "promised_by", promise_id, confidence=1.0,
+                status=CONFIRMED, from_session_at=from_session_at,
+            )  # fmt: skip
+            return Written(fact, w.batch)
+
+    async def set_due(
+        self, guild_id: int, campaign_id: str, promise_id: str, due: str, *, source: str
+    ) -> Written[Entity]:
+        """The DM's free-text note on when a promise is due ("by the full moon"), kept as the
+        entry's description and never parsed into a date. Empty clears it (#1674)."""
+        if source != DM:
+            raise MemoryRuleError("Only the DM can do that.")
+        text = " ".join(due.split())
+        if len(text) > DUE_MAX:
+            raise MemoryRuleError(f"Keep it to {DUE_MAX} letters or fewer.")
+        async with self._write(guild_id, campaign_id, source) as w:
+            entity = await _entity_row(w, promise_id)
+            if entity["type"] != threads_mod.PROMISE:
+                raise MemoryRuleError("That is not a promise.")
+            row = await w.update(ENTITIES, promise_id, {"description": text})
+            return Written(_entity(row), w.batch)
 
     async def link_event(
         self,
@@ -3298,7 +3351,7 @@ async def _threads(scope: Scope, stalled_after: int) -> list[threads_mod.ThreadI
         RELATIONS,
         " AND object_id = ANY(%s) AND predicate = ANY(%s) AND status = 'confirmed'"
         " AND to_session_at IS NULL ORDER BY created_at, id",
-        [ids, ["in_thread", "advances", "resolves"]],
+        [ids, ["in_thread", "advances", "resolves", "promised_by", "promised_to"]],
     )
     others = {
         r["id"]: _entity(r)
@@ -3334,8 +3387,10 @@ async def _threads(scope: Scope, stalled_after: int) -> list[threads_mod.ThreadI
                 others[f["subject_id"]], f["predicate"] == "resolves", f["from_session_at"]
             )
             for f in mine
-            if f["predicate"] != "in_thread"
+            if f["predicate"] in ("advances", "resolves")
         )
+        by = tuple(others[f["subject_id"]] for f in mine if f["predicate"] == "promised_by")
+        to = tuple(others[f["subject_id"]] for f in mine if f["predicate"] == "promised_to")
         touch = threads_mod.last_touch(
             r["created_at"],
             history,
@@ -3350,6 +3405,7 @@ async def _threads(scope: Scope, stalled_after: int) -> list[threads_mod.ThreadI
             threads_mod.ThreadInfo(
                 _entity(r), state, history, involved, movers, touch, quiet,
                 threads_mod.is_stalled(now, quiet, stalled_after),
+                by, to, r["description"] if r["type"] == threads_mod.PROMISE else "",
             )
         )  # fmt: skip
     out.sort(key=lambda t: (not t.stalled, name_key(t.thread.name), t.thread.id))

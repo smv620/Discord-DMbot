@@ -7055,7 +7055,11 @@ class DMBot(commands.AutoShardedBot):
             if quiet:
                 await self.post(
                     table.screen_channel_id,
-                    threads_waiting_text(len(quiet), min(t.quiet_sessions for t in quiet)),
+                    threads_waiting_text(
+                        len(quiet),
+                        min(t.quiet_sessions for t in quiet),
+                        sum(1 for t in quiet if t.thread.type == "promise"),
+                    ),
                     view=threads_view(cid),
                 )
 
