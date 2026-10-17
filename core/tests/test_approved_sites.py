@@ -71,7 +71,7 @@ class Sites(HomebrewUiTest):
         self.assertEqual(len(await self.store.list(GUILD, self.campaign.id)), 1)
         self.assertEqual(await self.store.list(GUILD, self.campaign.id, usable_only=True), [])
         listing = self.press()
-        await ui.show_list(listing, self.campaign, first=True)
+        await ui.show_list(listing, self.campaign, first=True, kind=entry.kind)
         self.assertIn(f"**{entry.name}**{ui.WAITING_FOR_SITE}", self.said(listing))
         # Adding from the site asks the right-to-use question again.
         self.assertFalse(await self.sources.approved(GUILD, self.campaign.id, "dndbeyond.com"))
@@ -79,7 +79,7 @@ class Sites(HomebrewUiTest):
         await self.sources.approve(GUILD, self.campaign.id, DM, "dndbeyond.com")
         self.assertEqual(len(await self.store.list(GUILD, self.campaign.id, usable_only=True)), 1)
         again = self.press()
-        await ui.show_list(again, self.campaign, first=True)
+        await ui.show_list(again, self.campaign, first=True, kind=entry.kind)
         self.assertNotIn(ui.WAITING_FOR_SITE, self.said(again))
 
     async def test_a_double_press_takes_it_back_once(self) -> None:
