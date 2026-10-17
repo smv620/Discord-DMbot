@@ -220,8 +220,8 @@ describe("Help: the website's read-only pages (#1588)", () => {
     expect(shown.includes("🤝 Standing")).toBe(STANDING_LIVE);
     expect(shown.includes("↩ All kinds")).toBe(HOMEBREW_KINDS_LIVE);
     expect(standingSteps.map((x) => x.text).join(" ")).toContain("Players never see it.");
-    expect(homebrewKindSteps.map((x) => x.text).join(" ")).toContain("Spells 10/12. That means 10 of the 12 are on.");
-    expect(secretClueSteps.map((x) => x.text).join(" ")).toContain("Players' lookups never show a clue that only some people know.");
+    expect(homebrewKindSteps.map((x) => x.text).join(" ")).toContain("Spells 10/12, which means 10 of 12 spells are on.");
+    expect(secretClueSteps.map((x) => x.text).join(" ")).toContain("If a player asks DMbot about it, DMbot won't show a clue that only some people know.");
   });
 
   it("finds Settings, splits the party and deletes a campaign in plain words (#1659)", () => {

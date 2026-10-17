@@ -66,13 +66,16 @@ export const SECRET_CLUES_LIVE = false;
 
 export const secretClueSteps: Step[] = [
   {
-    text: "To say that only some characters know a secret or clue, open the secret's card and press 🔒 Only some know this. Press ➕ Add who knows to list them, then press 🔒 Only some know to switch it on. After a session, DMbot tells you, privately, if someone who isn't listed spoke of it. DMbot never decides who learned it. You do. Press 🔓 Let anyone know to stop tracking it. Players' lookups never show a clue that only some people know.",
+    text: "To say that only some characters know a secret or clue, open the secret's card and press 🔒 Only some know this. Press ➕ Add who knows to list them, then press 🔒 Only some know to switch it on. After a session, DMbot tells you, privately, if someone who isn't listed spoke of it. DMbot never decides who learned it. You do. Press 🔓 Let anyone know to stop tracking it.",
     names: [
       { name: "🔒 Only some know this", file: "ui/name_card.py" },
       { name: "➕ Add who knows", file: "ui/clue_audience.py" },
       { name: "🔒 Only some know", file: "ui/clue_audience.py" },
       { name: "🔓 Let anyone know", file: "ui/clue_audience.py" },
     ],
+  },
+  {
+    text: "If a player asks DMbot about it, DMbot won't show a clue that only some people know.",
   },
 ];
 
@@ -174,7 +177,7 @@ export const STANDING_LIVE = false;
 
 export const standingSteps: Step[] = [
   {
-    text: "To see how an NPC, a group or a place feels about the party, open its name card and press 🤝 Standing. It shows Hostile, Unfriendly, Wary, Friendly or Devoted for each player character and the party, with the reasons. Press Toward a character… to set it yourself. DMbot only reminds you. You decide how they act. Players never see it.",
+    text: "To see how an NPC, a group or a place feels about the party, open its name card and press 🤝 Standing. It shows Hostile, Unfriendly, Wary, Friendly or Devoted for each player character, and for the party as a whole, with the reasons. Press Toward a character… to set it yourself, for one character or the party. DMbot only reminds you. You decide how they act. Players never see it.",
     names: [
       { name: "🤝 Standing", file: "ui/standing.py" },
       { name: "Hostile", file: "memory/standing.py" },
@@ -191,7 +194,7 @@ export const HOMEBREW_KINDS_LIVE = false;
 
 export const homebrewKindSteps: Step[] = [
   {
-    text: "Press ⚙️ Settings, then 📚 Homebrew to see one button for each kind that has entries, like Spells 10/12. That means 10 of the 12 are on. Press a kind to see only those entries. Press ↩ All kinds to go back.",
+    text: "Press ⚙️ Settings, then 📚 Homebrew. You see a button for each kind that has entries, like Spells 10/12, which means 10 of 12 spells are on. Press one to see only those. Press ↩ All kinds to go back.",
     names: [
       { name: "Spells", file: "ui/homebrew.py" },
       { name: "↩ All kinds", file: "ui/homebrew.py" },
