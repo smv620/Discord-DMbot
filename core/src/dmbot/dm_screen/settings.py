@@ -90,12 +90,8 @@ def _tick(label: str, current: bool) -> str:
 
 
 def _combat_line(campaign: Campaign) -> str:
-    """The combat setting (#1127): DMbot follows rounds either way, never turn order."""
-    way = "on" if campaign.side_initiative else "off"
-    return (
-        f"• **Combat:** DMbot counts the rounds, never whose turn it is. Side-based initiative "
-        f"(each side acts together) is {way}."
-    )
+    """The combat line (#1127, #1769): DMbot follows rounds, never turn order."""
+    return "• **Combat:** DMbot counts the rounds, never whose turn it is."
 
 
 def _transcripts_line(campaign: Campaign) -> str:
@@ -174,7 +170,6 @@ def settings_view(campaign: Campaign, offer: HandoverOffer | None, viewer: int) 
         view.add_item(InviteButton(campaign.id))  # the D&D Beyond invite (#1119)
         view.add_item(TableChatButton(campaign.id))  # which typed chat is read (#1118)
         view.add_item(RecapsButton(campaign.id))  # the recap choices (#1421)
-        view.add_item(SideInitiativeButton(campaign.id, campaign.side_initiative))  # #1127
         view.add_item(SharedRulesButton(campaign.id))  # shared house rules (#1190)
         view.add_item(HomebrewButton(campaign.id))  # the campaign's own homebrew (#1520)
         view.add_item(TranscriptsButton(campaign.id))  # how long transcripts are kept (#1533)
@@ -649,56 +644,35 @@ class RulesCardsButton(
         await _redraw(interaction, saved)
 
 
+SIDE_INITIATIVE_REMOVED = "This setting was removed: DMbot counts rounds the same way either way."
+
+
 class SideInitiativeButton(
     discord.ui.DynamicItem[discord.ui.Button[discord.ui.View]],
     template=rf"dmbot:sideinit:{_ID}:(?P<to>on|off)",
 ):
-    """⚔️ Side-based initiative: On or Off, one tap changes it (#1127). Only the campaign's
-    DMs have it. DMbot tracks rounds only either way; this records how the table runs a fight."""
+    """Retired (#1769): the old side-based initiative button changed a setting nothing read. It
+    is no longer on the Settings screen, but stays registered for one more release so a press on
+    an old Settings message gets a plain answer instead of "interaction failed". Remove this
+    class (and its registration in bot.py) after that release."""
 
-    def __init__(self, campaign_id: str, on: bool) -> None:
+    def __init__(self, campaign_id: str, on: bool = False) -> None:
         super().__init__(
             discord.ui.Button(
                 label=f"Turn side initiative {'off' if on else 'on'}",
-                emoji="⚔️",
-                style=discord.ButtonStyle.primary if on else discord.ButtonStyle.secondary,
-                row=4,
                 custom_id=f"dmbot:sideinit:{campaign_id}:{'off' if on else 'on'}",
             )
         )
         self.campaign_id = campaign_id
-        self.turn_on = not on  # what a press does
 
     @classmethod
     async def from_custom_id(
         cls, interaction: discord.Interaction, item: discord.ui.Item[Any], match: re.Match[str]
     ) -> SideInitiativeButton:
-        return cls(match["campaign"], on=match["to"] == "off")  # "to off" means it is on now
+        return cls(match["campaign"], on=match["to"] == "off")
 
     async def callback(self, interaction: discord.Interaction) -> Any:
-        set_log_context(guild_id=interaction.guild_id)
-        store = getattr(interaction.client, "campaigns", None)
-        guild = interaction.guild
-        if store is None or guild is None:
-            await interaction.response.send_message(GONE, ephemeral=True)
-            return
-        await interaction.response.defer()  # saving may take a moment
-        try:
-            campaign: Campaign | None = await store.get(guild.id, self.campaign_id)
-            if campaign is None:
-                await interaction.followup.send(GONE, ephemeral=True)
-                return
-            if interaction.user.id not in campaign.dm_user_ids:  # the campaign's DMs only
-                await interaction.followup.send(RULES_CARDS_ONLY_DMS, ephemeral=True)
-                return
-            saved: Campaign = await store.set_side_initiative(
-                campaign.guild_id, campaign.id, self.turn_on
-            )
-        except Exception:
-            log.exception("Couldn't change side-based initiative")
-            await interaction.followup.send(FAILED, ephemeral=True)
-            return
-        await _redraw(interaction, saved)
+        await interaction.response.send_message(SIDE_INITIATIVE_REMOVED, ephemeral=True)
 
 
 class LevelButton(
