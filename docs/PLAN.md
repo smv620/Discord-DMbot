@@ -1170,7 +1170,7 @@ so the docs always show names the way Discord does. For the campaign
 | DM screen | `dmb-dm-screen-rime-of-the-frostmaiden` | Phase 1.5 (now) |
 | DM Bot (settings and options, everyone; owner, 2026-10-17) | `dmb-dm-bot-rmfthfrstmdn` | #1666 |
 | Live transcript (cleaned lines, view only) | `dmb-transcript-rmfthfrstmdn` | Phase 1 (#124, built 2026-10-06; misheard names fixed since 2026-10-07, #127) |
-| Rules archive (house rules, overrides, rulings) | `dmb-rules-rmfthfrstmdn` | Phase 3 |
+| Rules archive (house rules, overrides, rulings) | `dmb-rules-rmfthfrstmdn` | House rules: #1752 (overrides and rulings: Phase 3, with the AI rules alerts) |
 | Game time (the players' clock; owner, 2026-10-13) | `dmb-gametime-rmfthfrstmdn` | Phase 4 |
 | DMbot chat (table questions and their answers; owner, 2026-10-14) | `dmb-chat-rmfthfrstmdn` | Phase 4 |
 | NPCs (roster, relationships, factions) | `dmb-npcs-rmfthfrstmdn` | Phase 5 |
@@ -1223,6 +1223,20 @@ so the docs always show names the way Discord does. For the campaign
   Peeking opens all controlled channels for that player; hiding closes them all. Once
   there's more than one controlled channel, the peek warning must name every channel a
   peek opens (rules, NPCs, plot), so players know exactly what they're agreeing to see.
+- **The rules archive is built (2026-10-17, #1752), house rules only.** `dmb-rules-<short name>`
+  is made and repaired at every `/dmbot start`, in the DM screen's category, with a topic and a
+  pinned "What's this channel?" card. It is controlled: its overwrites are the DM screen's, the
+  peekers included, except that nobody posts there, the DM too. Every change to the screen's
+  visibility, DMs or peekers is applied to it; a peek and a hide open and close both channels, and
+  the peek warning names both. It shows one message per saved house rule ("🏠 House rule N": the
+  words, what it replaces, where it came from: your DM, said at the table, or a followed set's
+  copy) and one "📚 This campaign follows the house-rule set **<set>**" line per followed house-rules set. Nothing proposed or waiting,
+  no DM-screen content and no rulebook text goes there, and a rule's "what happened" note stays
+  out. Messages are edited in place when a rule is edited and deleted when it is removed; they
+  are found again by their first words, so nothing about them is stored and a restart rebuilds the
+  same list, at most 5 edits or deletes a run (the rest next time). A change reaches the channel a
+  few seconds later; the bot also brings every campaign's channel up to date once at start. A
+  channel deleted by hand is made again at the next `/dmbot start`. Its id is not in a backup.
 - Server owners and admins always see every channel (see above).
 
 *Modes.*

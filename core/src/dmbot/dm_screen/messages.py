@@ -44,6 +44,20 @@ PEEK_WARNING = (
     "You'll see the DM's private notes, old ones too. They may spoil surprises.\n"
     "Your DM will see that you peeked. You can hide it again any time."
 )
+
+
+def peek_warning(rules_mention: str | None) -> str:
+    """The spoiler warning; names every channel a peek opens (docs/PLAN.md, #1752)."""
+    if rules_mention is None:
+        return PEEK_WARNING
+    return (
+        "**Peek behind the DM screen?**\n"
+        "The DM screen shows the DM's private notes, old ones too. They may spoil surprises. "
+        f"This also opens the house-rules channel {rules_mention} (no spoilers there).\n"
+        "Your DM will see that you peeked. You can hide it again any time."
+    )
+
+
 PEEK_CANCELLED = "OK, the DM screen stays hidden."
 PEEK_EXPIRED = (
     "This expired. Press 👀 **Peek behind the DM screen** again if you still want to look."
@@ -496,6 +510,22 @@ DMBCHAT_FAILED = (
 )
 
 # Plain words for the channel's description (CLAUDE.md, "Simple enough for a child").
+RULES_TOPIC = "Your table's house rules. You can read but not post. Your DM decides what applies."
+
+
+def rules_card(campaign_name: str) -> str:
+    return (
+        "📖 **What's this channel?**\n"
+        f"The house rules for **{campaign_name}**, saved by your DM. Only DMbot posts here, so "
+        "you can read but not write. Your DM decides what applies. If a rule isn't clear, ask "
+        "your DM."
+    )
+
+
+def rules_failed(cause: str) -> str:
+    return f"⚠️ DMbot couldn't set up the house-rules channel. {cause}"
+
+
 DMBCHAT_TOPIC = "Ask DMbot a quick rules question. Your DM has the final say."
 
 
