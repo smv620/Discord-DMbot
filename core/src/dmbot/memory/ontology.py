@@ -376,6 +376,22 @@ CORE_PREDICATES: tuple[PredicateTerm, ...] = (
         synonyms=("concludes", "completes"),
     ),
     PredicateTerm(
+        "led_to",
+        "led to",
+        "One thing led to another, as the DM says: a clue led to a quest, an event led to a "
+        "mystery. The DM's word, never guessed.",
+        ("clue", "event", "thread"),
+        ("thread", "event"),
+        covers=("a clue that sent the party to a place or into a quest",),
+        not_this=(
+            ("an event that moves a thread along", "advances"),
+            ("an event that ends a thread", "resolves"),
+        ),
+        examples=("The torn map led to the Missing Heir.",),
+        inverse_label="came from",
+        synonyms=("sparked", "set_off"),
+    ),
+    PredicateTerm(
         "of_people",
         "is one of",
         "Belongs to a whole people or kind, as the DM says: a tabaxi, an elf, an outsider. "
