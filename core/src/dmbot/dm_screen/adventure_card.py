@@ -121,12 +121,24 @@ STOPPED_WORDS = {
     "off": "Shared story was turned off. Turn it on again, then press Read it now.",
     "plan": "This campaign's plan doesn't include reading adventures.",
     "error": "Something went wrong. Press Read it now to try again.",
+    "price": (
+        "DMbot stopped because the AI's price went up. Press **Read it now** later to carry on."
+    ),
+    "gone": (
+        "That file was removed while DMbot was reading it."
+        " Give it again, then press **Read it now**."
+    ),
 }
 CARRY_ON = "Press Read it now to carry on."
 
 
 def read_line(
-    state: ReadState | None, counts: Counts | None, running: bool, *, short: bool = False
+    state: ReadState | None,
+    counts: Counts | None,
+    running: bool,
+    *,
+    short: bool = False,
+    waiting: bool = False,
 ) -> str:
     """Where a file's reading stands, in plain words ("" when it has not been read). A stopped
     read says what to do next, which depends on why it stopped."""
@@ -140,6 +152,8 @@ def read_line(
             else ""
         )
         return "read" if short else f"read: {found}{skipped}"
+    if running and waiting:
+        return "waiting for a turn" if not short else "waiting"
     if running:
         return f"reading {state.percent}%" if short else f"reading… {state.percent}%"
     stopped = f"stopped at {state.percent}%"
@@ -155,6 +169,7 @@ def card_text(
     states: dict[str, ReadState] | None = None,
     counts: dict[str, Counts] | None = None,
     running: frozenset[str] = frozenset(),
+    waiting: frozenset[str] = frozenset(),
 ) -> str:
     states, counts = states or {}, counts or {}
     lines = [INTRO, NOTE]
@@ -167,7 +182,13 @@ def card_text(
         if not d.has_text:
             size += ", give DMbot this file again to use it" if not short else ", give it again"
         else:
-            status = read_line(states.get(d.id), counts.get(d.id), d.id in running, short=short)
+            status = read_line(
+                states.get(d.id),
+                counts.get(d.id),
+                d.id in running,
+                short=short,
+                waiting=d.id in waiting,
+            )
             if status:
                 size += f", {status}"
         if not short:
@@ -278,9 +299,14 @@ async def _card(
         except Exception:
             log.exception("Couldn't read the story plan's state")  # the card still shows the files
     running = _running(interaction, campaign.guild_id)
+    waiting = frozenset(
+        doc
+        for guild, doc in getattr(interaction.client, "plan_waiting", ())
+        if guild == campaign.guild_id
+    )
     can_read = plan is not None and getattr(interaction.client, "plan_ai", None) is not None
     return (
-        card_text(docs, states, counts, running),
+        card_text(docs, states, counts, running, waiting),
         card_view(
             campaign,
             docs,
@@ -741,6 +767,38 @@ class RefreshButton(
         await interaction.response.edit_message(content=text, view=view)
 
 
+class BackToFilesButton(
+    discord.ui.DynamicItem[discord.ui.Button[discord.ui.View]],
+    template=rf"dmbot:advback:{_ID}",
+):
+    """↩ Back to your files, from the list of what was read."""
+
+    def __init__(self, campaign_id: str) -> None:
+        super().__init__(
+            discord.ui.Button(
+                label="Back to your files",
+                emoji="↩",
+                style=discord.ButtonStyle.secondary,
+                custom_id=f"dmbot:advback:{campaign_id}",
+            )
+        )
+        self.campaign_id = campaign_id
+
+    @classmethod
+    async def from_custom_id(
+        cls, interaction: discord.Interaction, item: discord.ui.Item[Any], match: re.Match[str]
+    ) -> BackToFilesButton:
+        return cls(match["campaign"])
+
+    async def callback(self, interaction: discord.Interaction) -> Any:
+        set_log_context(guild_id=interaction.guild_id)
+        campaign = await _dm_campaign(interaction, self.campaign_id)
+        if campaign is None:
+            return
+        text, view = await _card(interaction, campaign)
+        await interaction.response.edit_message(content=text, view=view)
+
+
 class MatchButton(
     discord.ui.DynamicItem[discord.ui.Button[discord.ui.View]],
     template=rf"dmbot:advmatch:{_ID}",
@@ -773,6 +831,19 @@ class MatchButton(
         if campaign is None:
             return
         await show_matches(interaction, campaign.id)
+
+
+def finished_text(file_name: str, state: ReadState, counts: Counts | None) -> str:
+    """The line posted on the DM screen when a read ends."""
+    name = discord.utils.escape_markdown(file_name[:NAME_SHOWN])
+    if state.status == "done":
+        found = found_line(counts or Counts())
+        return (
+            f"📖 DMbot finished reading **{name}**: {found}. Open **Shared story** in Settings, "
+            "then **Give your adventure**, to see what it read."
+        )
+    words = STOPPED_WORDS.get(state.stop_reason, CARRY_ON)
+    return f"📖 DMbot stopped reading **{name}** at {state.percent}%. {words}"
 
 
 ICONS = {"chapter": "📖", "place": "📍", "person": "🧑", "link": "🔗"}
@@ -849,7 +920,7 @@ class SeeButton(
             )
         if self.offset + len(items) < total:
             view.add_item(SeeButton(campaign.id, self.offset + PAGE_ENTRIES, label="More ▶"))
-        view.add_item(ReadNoButton(campaign.id))  # "Not now" goes back to the card
+        view.add_item(BackToFilesButton(campaign.id))
         await interaction.response.edit_message(
             content=listing_text(items, self.offset, total),
             view=view,
@@ -869,5 +940,6 @@ ADVENTURE_BUTTONS = (
     ReadNoButton,
     RefreshButton,
     SeeButton,
+    BackToFilesButton,
     MatchButton,
 )

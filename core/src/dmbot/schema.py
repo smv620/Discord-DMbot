@@ -2154,6 +2154,36 @@ PLAN_SAME_AS = f"""
         ON plan_same_as (guild_id, campaign_id, entity_id, document_id) WHERE status = 'same';
     """ + _isolate("plan_same_as")
 
+PLAN_DIVERGENCES = f"""
+    -- Where the DM's table has left the DM's adventure (docs/STORY_MEMORY.md, section 6; #1729):
+    -- the adventure says "Chapter 3 needs Captain Varn alive", the DM said the book's Varn is the
+    -- table's Varn, and the table says he is dead. One row for each such clash and each
+    -- condition it saw, so the DM is told once. `state_id` is the table's condition row at the
+    -- time; it has no foreign key because an Undo deletes that row, and the next check marks the
+    -- clash 'gone' (so does a condition that changed again, or a book link taken off). `open` was
+    -- shown, `known` is the DM's "I know". Derived from the plan and the table, so it is gone with
+    -- the plan link or the table entry, and is NOT in backups, like the plan. New table, no
+    -- existing rows.
+    CREATE TABLE plan_divergences (
+        {_memory_scope()}
+        id           TEXT NOT NULL CHECK (id ~ '^[0-9a-f]{{32}}$'),
+        plan_link_id TEXT NOT NULL,
+        entity_id    TEXT NOT NULL,
+        state_id     TEXT NOT NULL,
+        status       TEXT NOT NULL CHECK (status IN ('open', 'known', 'gone')),
+        created_at   BIGINT NOT NULL,
+        PRIMARY KEY (guild_id, campaign_id, id),
+        UNIQUE (guild_id, campaign_id, plan_link_id, state_id),
+        FOREIGN KEY (guild_id, campaign_id, plan_link_id)
+            REFERENCES plan_links (guild_id, campaign_id, id) ON DELETE CASCADE,
+        {_entity_link("entity_id")}
+    );
+    -- (The two indexes below are for the cascades, so deleting a plan entry or a table entry
+    -- doesn't scan the other tables; the check itself is served by the unique keys.)
+    CREATE INDEX plan_links_to ON plan_links (guild_id, campaign_id, to_id);
+    CREATE INDEX plan_same_as_entity ON plan_same_as (guild_id, campaign_id, entity_id);
+    """ + _isolate("plan_divergences")
+
 GAMETIME_CHANNEL = """
     -- The players' game-time channel (docs/PLAN.md, "TimeBot"; #1116): `dmb-gametime-<slug>`,
     -- everyone reads, only DMbot posts, with the players' pinned clock ("Day 5, morning")
@@ -6772,6 +6802,7 @@ MIGRATIONS: tuple[Migration, ...] = (
         "0124_plan_same_as",
         PLAN_SAME_AS,
     ),  # the book's entry is the table's, by the DM's word (#1715)
+    ("0125_plan_divergences", PLAN_DIVERGENCES),  # the table has left the adventure (#1729)
 )
 
 # Tables that must have row-level security. A test checks every table in the schema
@@ -6824,6 +6855,7 @@ ISOLATED_TABLES = (
     "plan_links",
     "plan_spend",
     "plan_same_as",
+    "plan_divergences",
 )
 # A person's own rows (the website, #435): row-level security on `user_id`, set by
 # Database.user(). Sessions can also be found by their cookie hash (Database.session()),
