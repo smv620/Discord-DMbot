@@ -30,7 +30,9 @@ from dmbot.campaigns.models import CampaignError
 from dmbot.db import Conn, Database
 from dmbot.rules.site_urls import normalise_domain, normalise_url
 
-KINDS = ("spell", "monster", "item", "feat", "condition", "other")
+KINDS = (
+    "spell", "monster", "item", "feat", "condition", "species", "subclass", "background", "other",
+)  # fmt: skip
 RULE_KIND = "rule"  # no longer a kind (#1628): kept to recognise and refuse it, or move it
 NAME_MAX = 80
 TEXT_MAX = 2000

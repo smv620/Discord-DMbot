@@ -41,6 +41,9 @@ export const text = {
     item: "Items",
     feat: "Feats",
     condition: "Conditions",
+    species: "Species",
+    subclass: "Subclasses",
+    background: "Backgrounds",
     other: "Other",
   } as Record<string, string>,
   fromBook: "From a shared book",
@@ -64,6 +67,9 @@ export const kindOrder = [
   "item",
   "feat",
   "condition",
+  "species",
+  "subclass",
+  "background",
   "other",
 ];
 

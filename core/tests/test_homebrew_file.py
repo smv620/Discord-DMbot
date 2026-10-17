@@ -45,6 +45,21 @@ class RoundTrip(unittest.TestCase):
             )
         self.assertEqual(len(parsed.entries), 3)
 
+    def test_species_subclass_and_background_write_and_read_back(self) -> None:
+        entries = [
+            entry("Moonfolk", "Pale and tall.", kind="species"),
+            entry("Oath of Dusk", "A paladin path.", kind="subclass"),
+            entry("Lamplighter", "You kept the lamps.", kind="background"),
+        ]
+        text = hf.write("X", entries, "2024")
+        self.assertIn("## Moonfolk (species)", text)
+        parsed = hf.parse(text)
+        self.assertEqual(parsed.problems, ())
+        self.assertEqual(
+            sorted((e.name, e.kind) for e in parsed.entries),
+            [("Lamplighter", "background"), ("Moonfolk", "species"), ("Oath of Dusk", "subclass")],
+        )
+
     def test_words_that_look_like_the_file_s_own_marks_survive(self) -> None:
         tricky = "## not a heading\n\\## also not\nSummary: not a summary\nPlayers may know: yes"
         parsed = hf.parse(hf.write("X", [entry("Odd", tricky)], "2024"))

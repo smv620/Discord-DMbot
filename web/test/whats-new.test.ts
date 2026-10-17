@@ -61,6 +61,11 @@ describe("What's new", () => {
 
   it("holds back what people can't use yet, with the reason, and shows none of it (#1322)", () => {
     expect(held.map((h) => h.title)).toEqual([
+      "Find Settings more easily", // until the owner's live check (#1619)
+      "Split the party", // until the owner's live check (#1607)
+      "Delete a whole campaign", // until the owner's live check (#1608)
+      "Add or remove game masters", // until the owner's live check (#1600)
+      "See the sites you approved", // with the link import (#1652)
       "Share imported homebrew in a pack", // until the link import is tried (#1635)
       "Add homebrew from a link", // until dev1 has tried one real published page (#1634)
       "Fix a line", // until it has been seen working on the test server (#1491, #1499)
@@ -76,6 +81,7 @@ describe("What's new", () => {
       "Secrets only some people know", // until the extractor is on and it has been seen (#1649)
       "How NPCs feel about the party", // until it has been seen on the test server (#1655)
       "Story threads you keep", // until it has been seen on the test server (#1662)
+      "Species, subclasses and backgrounds in homebrew", // until seen on the test server (#1663)
       "A DMbot channel for buttons", // until seen on the test server (#1666)
     ]);
     for (const h of held) {

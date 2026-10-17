@@ -125,6 +125,41 @@ export interface Held extends Entry {
 
 export const held: Held[] = [
   {
+    date: "2026-10-17",
+    title: "Find Settings more easily",
+    what: "Press Settings on the step where you pick the voice channel, or type /dmbot settings anywhere in your server. It opens privately, for the campaign's game masters.",
+    reason:
+      "Deployed 2026-10-17 (#1619); held until the owner's live check is recorded in docs/testing-history.log.",
+  },
+  {
+    date: "2026-10-17",
+    title: "Split the party",
+    what: "If the party splits up, name two or three groups and each gets its own clock. Press Rejoin the party to bring them together, and Undo if you slip.",
+    reason:
+      "Deployed 2026-10-17 (#1607); held until the owner's live check is recorded in docs/testing-history.log.",
+  },
+  {
+    date: "2026-10-17",
+    title: "Delete a whole campaign",
+    what: "The game master whose plan a campaign uses can delete it from Settings, after a warning and typing its name. It can't be undone, so there is a Back up first button.",
+    reason:
+      "Deployed 2026-10-17 (#1608); held until the owner's live check is recorded in docs/testing-history.log.",
+  },
+  {
+    date: "2026-10-17",
+    title: "Add or remove game masters",
+    what: "In Settings, pick Game masters to add up to five people to a campaign, or take one off. Their access to the DM screen follows at once.",
+    reason:
+      "Merged (#1600, #1603); held until the owner's live check is recorded in docs/testing-history.log.",
+  },
+  {
+    date: "2026-10-17",
+    title: "See the sites you approved",
+    what: "In Settings, then Homebrew, press Approved sites to see each site you said you may use, who said yes and when. You can take one back, and nothing is deleted.",
+    reason:
+      "Goes with adding homebrew from a link, which waits for dev1's try on a real page (#1634, #1652).",
+  },
+  {
     date: "2026-10-16",
     title: "Share imported homebrew in a pack",
     what: "A pack can now include homebrew you added from a link. It travels as a pointer to the page, not a copy, and a table that follows the pack says once, for each site, that it has the right to use it before those entries are used.",
@@ -227,6 +262,13 @@ export const held: Held[] = [
     what: "On the Names list, press New thread to keep a quest, mystery, hook or goal, and say how far along it is. Its card shows who is involved, what moved it, and its history. Say Still going when you check on it. After a session, DMbot tells you which threads haven't moved for a few sessions, so you can say Still going, Resolved or Dropped. It only reminds you; you decide. Players never see your threads.",
     reason:
       "Held until it has been seen working on the test server (#1662).",
+  },
+  {
+    date: "2026-10-17",
+    title: "Species, subclasses and backgrounds in homebrew",
+    what: "When you add homebrew, you can now pick Species, Subclass or Background as the kind. Pages you add from a link are sorted into the right kind too.",
+    reason:
+      "Held until it has been seen working on the test server (#1663).",
   },
   {
     date: "2026-10-17",
