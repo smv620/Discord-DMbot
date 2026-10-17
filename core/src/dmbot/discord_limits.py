@@ -13,10 +13,13 @@ which field it refused.
 
 from __future__ import annotations
 
+import importlib
 import re
-import re._parser as _regex_parser  # (private, but the only way to measure a pattern; Python 3.11+)
 from collections.abc import Mapping, Sequence
 from typing import Any
+
+# (private, but the only way to measure a pattern; Python 3.11+. Loaded by name: it has no stubs.)
+_regex_parser: Any = importlib.import_module("re._parser")
 
 MAX_CHAT_COMMANDS = 100  # top-level slash commands for one app (and 5 each for user/message menus)
 MAX_MENU_COMMANDS = 5
