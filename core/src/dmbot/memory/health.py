@@ -31,7 +31,7 @@ RECENT_SESSIONS = 3  # "heard lately" for an orphan
 
 _LIVE = "r.status <> 'rejected' AND r.to_session_at IS NULL"
 
-_COUNTS = f"""
+COUNTS = f"""
 SELECT
   (SELECT count(*) FROM memory_entities WHERE guild_id = %(g)s AND campaign_id = %(c)s
      AND status = 'confirmed') AS confirmed,
@@ -116,16 +116,9 @@ async def read(
 ) -> Health:
     """The numbers for one campaign. `since`: when the session just ended began (seconds);
     `names_asked`: the "Did they mean…?" questions put to the DM in it."""
-    # (`_read` is the store's own campaign-scoped read; the counts are SQL that belongs with these
-    # numbers, not in the store.)
-    async with memory._read(guild_id, campaign_id) as scope:
-        g, c = scope.ids
-        cur = await scope.conn.execute(
-            _COUNTS, {"g": g, "c": c, "since": since, "recent": RECENT_SESSIONS}
-        )
-        row = await cur.fetchone()
-    if row is None:  # (a SELECT of scalar subqueries always returns one row)
-        raise RuntimeError("The health counts returned no row")
+    # The store runs `COUNTS` (the SQL stays here, with the definitions) in its own
+    # campaign-scoped read.
+    row = await memory.health_counts(guild_id, campaign_id, since=since, recent=RECENT_SESSIONS)
     confirmed, proposed = int(row["confirmed"]), int(row["proposed"])
     return Health(
         entities=confirmed + proposed,
