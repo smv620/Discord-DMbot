@@ -810,7 +810,9 @@ class Card(Setup):
         self.assertIn(
             'read: 3 chapters, 2 places, 1 person, 2 "this needs that" notes', it.sent["content"]
         )
-        self.assertEqual(self.labels(it), ["Remove 1", "Give a file", "See what was read"])
+        self.assertEqual(
+            self.labels(it), ["Remove 1", "Give a file", "See what was read", "Match names"]
+        )
         nothing = self.pressing()
         await ui.ReadButton(self.a.id).callback(nothing)
         self.assertEqual(nothing.sent["content"], ui.NOTHING_TO_READ)
