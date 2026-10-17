@@ -672,8 +672,9 @@ Each step is useful on its own and ships behind the existing phases.
    thread is the DM's plot note: lookup (`hidden`, so a server manager who is not a DM never finds
    it) and the players' recall leave it, and every fact that points to it, out. The connection is
    named `in_thread` because `involved_in` is already a synonym of `appears_in`. Backups,
-   isolation and deletion are those of every memory entry; `memory_heard` is not in a backup, so
-   a restored campaign shows no thread as stalled until new sessions are heard.
+   isolation and deletion are those of every memory entry; `memory_heard` is in a backup as counts only (#1747),
+   kept at restore for people recorded now in the restoring server and for entries the campaign
+   has, so a restored campaign shows the same stalled threads.
    **Phase 5c slice 2 is built (#1674): promises the DM keeps** (no AI; the DM writes them).
    `promise` is a fifth kind under `thread`, beside quest, mystery, hook and goal, so it reuses the
    thread states, the stalled rule and the after-session question exactly: no new condition and no

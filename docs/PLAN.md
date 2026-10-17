@@ -1688,7 +1688,10 @@ names panel nor the speech-to-text hints can be a fixed list.
   since then (newest first); fill is most said first (names unsaid for about six
   months drop out), then older names never said. Lines from someone who stops being
   recorded stop counting at once, and the speaker is kept so their counts can be
-  removed with their lines (Retention). Not yet in campaign backups. The fixed tiers
+  removed with their lines (Retention). In campaign backups (#1747) as counts only (entry,
+  session start, speaker, times): at restore, counts of anyone not recorded now in the
+  restoring server, and of entries the restored campaign lacks, are dropped; a damaged
+  section is refused whole, and an older backup restores with no counts. The fixed tiers
   are prepared off the event loop, once per change to the names. Until the DM can add
   connections (step 2), the tip-of-the-tongue tier stays empty.
 - **Step 2, first part built (2026-10-06, `dmbot.ui.name_card`, `dmbot.memory.search`):**

@@ -194,6 +194,7 @@ from dmbot.memory.adventure import AdventureSection, AdventureStore
 from dmbot.memory.backup import MemorySection
 from dmbot.memory.claims import ClaimStore
 from dmbot.memory.continuity import ContinuityStore
+from dmbot.memory.heard_backup import HeardSection
 from dmbot.memory.lookup import CampaignLookup, LookupCache
 from dmbot.memory.models import DM, FIX, KEEP, Heard, MemoryRuleError, name_key
 from dmbot.memory.ontology import Tally
@@ -8417,6 +8418,8 @@ async def run(settings: Settings) -> None:
         campaigns.register_section(RecapSection(forget_audio=recap_audio_forgetter))
         # DMBot sets this too; passing it here means the store never starts out wrong.
         consent = ConsentStore(db, outside=settings.transcription.outside_engine)
+        # And how often names were said, kept only for who is recorded now (#1747).
+        campaigns.register_section(HeardSection(consent.consenting))
         bot = DMBot(
             settings,
             consent,
