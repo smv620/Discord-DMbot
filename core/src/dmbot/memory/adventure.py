@@ -28,8 +28,8 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
-from dmbot.campaigns.models import SHARED_STORY, STORY_OFF
-from dmbot.campaigns.store import DAMAGED, CampaignError
+from dmbot.campaigns.models import SHARED_STORY, STORY_OFF, CampaignError
+from dmbot.campaigns.store import DAMAGED
 from dmbot.db import Conn, Database
 from dmbot.memory.name_documents import MAX_DOCUMENT_BYTES, DocumentError, text_of
 

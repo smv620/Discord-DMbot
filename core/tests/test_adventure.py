@@ -12,6 +12,7 @@ import time
 import unittest
 import uuid
 import zipfile
+from collections.abc import Callable
 from types import SimpleNamespace
 from typing import Any
 from unittest import mock
@@ -191,7 +192,7 @@ class Setup(DatabaseTest):
     async def switch_on(self, campaign: Any = None) -> None:
         c = campaign or self.a
         await self.campaigns.set_story_mode(
-            c.guild_id, c.id, STORY_WATCH, confirmed_by=c.dm_user_ids and next(iter(c.dm_user_ids))
+            c.guild_id, c.id, STORY_WATCH, confirmed_by=next(iter(c.dm_user_ids))
         )
 
     async def count(self, table: str, guild: int = GUILD_A) -> int:
@@ -313,7 +314,7 @@ class BackingUp(Setup):
         await self.switch_on()
         await self.store.add(GUILD_A, self.a.id, DM, "a.txt", STORY)
         good = await self.campaigns.export(GUILD_A, self.a.id)
-        for damage in (
+        damages: tuple[Callable[[Any], object], ...] = (
             lambda d: d.update(fingerprint="nope"),
             lambda d: d.update(added_by="0"),
             lambda d: d.update(characters=0),
@@ -326,7 +327,8 @@ class BackingUp(Setup):
             lambda d: d["chunks"][0].update(heading="\ud800"),
             lambda d: d.update(file_name="x\ud800.txt"),
             lambda d: d.update(characters=1),  # many chunks that claim to be a one-letter file
-        ):
+        )
+        for damage in damages:
             data = await self.campaigns.export(GUILD_A, self.a.id)
             damage(data["sections"]["adventure"][0])
             with self.assertRaises(CampaignError):
