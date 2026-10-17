@@ -715,7 +715,7 @@ differ, this wins.
   the right-to-use warning ("DMbot doesn't check this…") and confirms once. That approval sticks: every
   later link from the same site in that campaign needs no new confirmation. Who confirmed and when is kept
   (table of approved sites per campaign). A campaign that has not approved a site cannot use content from
-  it, whether imported there or reached through a pack.
+  it, whether imported there or reached through a pack. **Seen and taken back (#1652):** ⚙️ Settings → 📚 Homebrew → 🌐 Approved sites lists each approved site with who approved it and when, and a DM can take one back after one plain question ("Take back dndbeyond.com? DMbot will stop using the N entries from it until a DM says yes again. Nothing is deleted."). The entries stay saved and the list marks them "(waiting for the site)"; adding from that site again asks the right-to-use question again. A follower's approvals are its own list.
 - **🔄 Update from the link (#1645).** On a link entry, a DM can fetch its one page again: same guards,
   same one-at-a-time and hourly limits, and the site's approval checked again. DMbot shows the new words
   and what changed ("Nothing changed on the page." when so); only **Save** replaces the kept copy, and
