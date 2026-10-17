@@ -51,7 +51,7 @@ while ago, compare it with `.env.example` and add any missing sections (see #31)
 Required for this test:
 ```
 DISCORD_TOKEN=<bot token>
-DISCORD_DEV_GUILD_ID=<server ID>
+DISCORD_DEV_GUILD_ID=<server ID>   # optional: instant command updates here
 EARS_SHARED_SECRET=<long random string>
 DATABASE_URL=postgresql://dmbot:dmbot@localhost:5432/dmbot
 TRANSCRIBER=none

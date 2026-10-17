@@ -21,6 +21,13 @@ class ConfigTests(unittest.TestCase):
             load_settings({**BASE, "EARS_WS_PORT": "x"})
         with self.assertRaises(ConfigError):
             load_settings({**BASE, "DISCORD_DEV_GUILD_ID": "abc"})
+        with self.assertRaises(ConfigError):
+            load_settings({**BASE, "DISCORD_CLEAR_GUILD_COMMANDS": "1,abc"})
+
+    def test_the_servers_to_clear_are_listed_with_commas(self) -> None:
+        self.assertEqual(load_settings(BASE).clear_guild_commands, ())
+        got = load_settings({**BASE, "DISCORD_CLEAR_GUILD_COMMANDS": "11, 22,"})
+        self.assertEqual(got.clear_guild_commands, (11, 22))
 
 
 class PoolSize(unittest.TestCase):

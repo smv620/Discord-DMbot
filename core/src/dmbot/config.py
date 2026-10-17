@@ -44,6 +44,8 @@ class Settings:
     ears_host: str = "127.0.0.1"
     ears_port: int = 8765
     dev_guild_id: int | None = None
+    # Servers whose old per-server copy of the slash commands is removed once at start (#1767).
+    clear_guild_commands: tuple[int, ...] = ()
     database_url: str = field(default="", repr=False)  # contains the password
     # The most connections this process holds open to Postgres (#77). Ten is what DMbot always
     # used; with many shard pods, about 4 each keeps them under Postgres' own limit.
@@ -146,6 +148,13 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
     guild_raw = get("DISCORD_DEV_GUILD_ID")
     if guild_raw and not guild_raw.isdigit():
         raise ConfigError("DISCORD_DEV_GUILD_ID must be a server ID (digits only).")
+
+    clear_raw = get("DISCORD_CLEAR_GUILD_COMMANDS")
+    clear_ids = [part.strip() for part in clear_raw.split(",") if part.strip()]
+    if not all(part.isdigit() for part in clear_ids):
+        raise ConfigError(
+            "DISCORD_CLEAR_GUILD_COMMANDS must be server IDs (digits only), separated by commas."
+        )
 
     try:
         transcription = load_transcription_settings(env)
@@ -300,6 +309,7 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
         ears_host=get("EARS_WS_HOST") or "127.0.0.1",
         ears_port=int(port_raw),
         dev_guild_id=int(guild_raw) if guild_raw else None,
+        clear_guild_commands=tuple(int(part) for part in clear_ids),
         database_url=get("DATABASE_URL"),
         database_pool_max=int(pool_raw),
         data_dir=Path(get("DMBOT_DATA_DIR") or "data"),

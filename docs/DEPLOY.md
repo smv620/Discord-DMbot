@@ -72,8 +72,17 @@ one DMbot process may hold open. Leave it alone on the one-server setup. If you 
 several shard processes against one Postgres, give each a smaller number so the total stays
 under Postgres's `max_connections` (or put PgBouncer in front). Changing it needs a restart.
 
-Leave `DISCORD_DEV_GUILD_ID` set to your server's ID — slash commands appear there
-instantly. (Without it, commands register globally, which can take up to an hour.)
+Slash commands are always registered globally, so every server that adds DMbot gets
+`/dmbot` (a new server can take a few minutes to show it). `DISCORD_DEV_GUILD_ID` is only for
+development: set to your test server's ID, the commands are also copied there so changes show up
+instantly. Customers' servers rely on the global commands. If you stop using a dev server, its
+old copy of the commands stays there unless you remove it once: put that server's ID in
+`DISCORD_CLEAR_GUILD_COMMANDS` (comma separated for several), restart DMbot once, then take the
+variable out again. It never clears the `DISCORD_DEV_GUILD_ID` server. For the owner's test
+server today: if `DISCORD_DEV_GUILD_ID` is still set to it, it keeps its copy and shows each
+command twice (expected); to stop that, unset `DISCORD_DEV_GUILD_ID` and list the server in
+`DISCORD_CLEAR_GUILD_COMMANDS` for one restart. With the variable set, the dev
+server lists each command twice (the global one and the copy); that is expected.
 
 If you use `TRANSCRIBER=deepgram`, `cloud` or `none`, also add `CORE_EXTRAS=dev` to
 `.env` for a much smaller image.
