@@ -89,7 +89,7 @@ def exported_keys() -> set[str]:
             for key, value in zip(node.keys, node.values, strict=True):
                 if isinstance(key, ast.Constant) and key.value == "campaign":
                     assert isinstance(value, ast.Dict)
-                    return {k.value for k in value.keys if isinstance(k, ast.Constant)}
+                    return {str(k.value) for k in value.keys if isinstance(k, ast.Constant)}
     raise AssertionError("export() has no 'campaign' dict")
 
 
