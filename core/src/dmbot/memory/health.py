@@ -14,9 +14,11 @@ What each number means:
   three sessions;
 - unused_terms: the campaign's own relationship terms (never the core ones) that no live relation
   uses;
-- flags_this_session: continuity and rule-check flags raised since the session began;
-- asked_dm: claims waiting for the DM from this session, plus the "Did they mean…?" questions put
-  to the DM (the caller adds those, which live in memory while the session runs).
+- flags_this_session: continuity and rule-check flags raised since the session began, of any
+  status (one raised and resolved in the session still counts);
+- asked_dm: proposed claims waiting for the DM from this session, plus the "Did they mean…?" name
+  questions the session closed (answered, expired or ended; the caller adds those, which live in
+  memory while the session runs). Speaker questions are not counted.
 """
 
 from __future__ import annotations
@@ -114,13 +116,16 @@ async def read(
 ) -> Health:
     """The numbers for one campaign. `since`: when the session just ended began (seconds);
     `names_asked`: the "Did they mean…?" questions put to the DM in it."""
+    # (`_read` is the store's own campaign-scoped read; the counts are SQL that belongs with these
+    # numbers, not in the store.)
     async with memory._read(guild_id, campaign_id) as scope:
         g, c = scope.ids
         cur = await scope.conn.execute(
             _COUNTS, {"g": g, "c": c, "since": since, "recent": RECENT_SESSIONS}
         )
         row = await cur.fetchone()
-    assert row is not None  # (a SELECT of scalar subqueries always returns one row)
+    if row is None:  # (a SELECT of scalar subqueries always returns one row)
+        raise RuntimeError("The health counts returned no row")
     confirmed, proposed = int(row["confirmed"]), int(row["proposed"])
     return Health(
         entities=confirmed + proposed,

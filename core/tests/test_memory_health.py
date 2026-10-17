@@ -98,6 +98,48 @@ class Counting(ConfirmedMemoryTest):
         )
         self.assertEqual((await self.numbers()).duplicates, 0)
 
+    async def test_one_same_as_link_among_three_leaves_two_pairs_and_an_ended_one_none(
+        self,
+    ) -> None:
+        await self.memory.add_predicate(
+            GUILD_A, self.c, health_same_as(), examples=["x"], reason="y", source="entitybot"
+        )
+        a = await self.add("Brann", type="character")
+        b = await self.add("Brann", type="character")
+        c = await self.add("Brann", type="character")
+        self.assertEqual((await self.numbers()).duplicates, 3)  # a-b, a-c, b-c
+        link = await self.memory.add_relation(
+            GUILD_A, self.c, a, "same_as", b, confidence=1.0, source="dm"
+        )
+        self.assertEqual((await self.numbers()).duplicates, 2)  # a-c and b-c remain
+        await self.memory.update_relation(
+            GUILD_A, self.c, link.value[0].id, source="dm", to_session_at=SESSION + 1
+        )
+        self.assertEqual((await self.numbers()).duplicates, 3)  # an ended link joins nothing
+        del c
+
+    async def test_people_are_not_counted_as_orphans_or_duplicates(self) -> None:
+        before = await self.numbers()
+        async with self.db.guild(GUILD_A) as conn:  # (people are made by DMbot, not by the menus)
+            for n in range(2):  # two people with one name, linked to nothing
+                made = f"{n + 1:032x}"
+                await conn.execute(
+                    "INSERT INTO memory_entities (guild_id, campaign_id, id, type, name,"
+                    " description, status, source, created_at)"
+                    " VALUES (%s, %s, %s, 'person', 'Sam', '', 'confirmed', 'dm', %s)",
+                    (GUILD_A, self.c, made, SESSION),
+                )
+                await conn.execute(
+                    "INSERT INTO memory_aliases (guild_id, campaign_id, id, entity_id, text, key,"
+                    " kind, secret, status, sound_codes, source, created_at)"
+                    " VALUES (%s, %s, %s, %s, 'Sam', 'sam', 'full', false, 'confirmed', '{}',"
+                    " 'dm', %s)",
+                    (GUILD_A, self.c, f"{n + 9:032x}", made, SESSION),
+                )
+        after = await self.numbers()
+        self.assertEqual((after.duplicates, after.orphans), (before.duplicates, before.orphans))
+        self.assertEqual(after.confirmed, before.confirmed + 2)  # (they are entities)
+
     async def test_another_campaigns_rows_never_count(self) -> None:
         mine = await self.numbers()
         other = (await self.campaigns.create(GUILD_A, "Elsewhere", 7)).id
