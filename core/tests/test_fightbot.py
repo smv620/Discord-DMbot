@@ -109,7 +109,11 @@ class Prompt(unittest.TestCase):
         )
 
 
-class Runner(unittest.IsolatedAsyncioTestCase):
+class Harness(unittest.IsolatedAsyncioTestCase):
+    """The pieces a FightBot test needs (a clock, a table, a fake bot); no tests of its own."""
+
+    now: float
+
     def setUp(self) -> None:
         self.now = 1000.0
         # One clock for both: the persisted times are wall time, the table's are monotonic.
@@ -194,6 +198,8 @@ class Runner(unittest.IsolatedAsyncioTestCase):
             user=user,
         )
 
+
+class Runner(Harness):
     async def test_a_reminder_is_a_private_message_with_the_three_silences(self) -> None:
         table = self.table()
         bot = self.bot(table)

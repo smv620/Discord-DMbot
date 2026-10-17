@@ -111,7 +111,10 @@ MARK_LINES = {"dawn": "🌅 Dawn", "noon": "☀️ Noon", "dusk": "🌇 Dusk"}
 
 
 def clock_text(
-    clock: Clock, effect_lines: list[str] | None = None, stored: Stored | None = None
+    clock: Clock,
+    effect_lines: list[str] | None = None,
+    stored: Stored | None = None,
+    style_line: str | None = None,
 ) -> str:
     """The pinned message: the time, then the running timers one to a line (#998). While the
     party is split (#1607) the head has one time per group and says which group the buttons
@@ -123,7 +126,27 @@ def clock_text(
     else:
         head = f"🕰️ **{game.label(clock.minute)}**"
     fight = game.combat_label(clock)
-    return "\n".join([head, *([fight] if fight else []), *(effect_lines or [])])
+    # (#1771) how FightBot heard the table run initiative: the DM's line only, in a fight only
+    heard = [style_line] if fight and style_line else []
+    return "\n".join([head, *([fight] if fight else []), *heard, *(effect_lines or [])])
+
+
+def _note_round(client: Any, campaign: Any, clock: Clock) -> None:
+    """The fight's round just changed: tell FightBot at once (#1771), so a line the DM says right
+    after "next round" is counted in that round and not the one before."""
+    table = getattr(client, "tables", {}).get(campaign.guild_id)
+    fight = getattr(table, "fight", None)
+    if table is not None and fight is not None and table.campaign_id == campaign.id:
+        fight.moved_to(clock.combat_round)
+
+
+def _style_line(client: Any, campaign: Campaign) -> str | None:
+    """How the running session's table does initiative, as FightBot heard it (#1771)."""
+    table = getattr(client, "tables", {}).get(campaign.guild_id)
+    if table is None or table.campaign_id != campaign.id:
+        return None
+    fight = getattr(table, "fight", None)
+    return None if fight is None else str(fight.style.dm_phrase())
 
 
 async def render(
@@ -131,20 +154,21 @@ async def render(
 ) -> str:
     """The clock message as it should read now, with the campaign's running timers. A
     timers store that can't be read just leaves them off: the time still shows."""
+    style_line = _style_line(client, campaign)
     store = getattr(client, "effects", None)
     if store is None:
-        return clock_text(clock, None, stored)
+        return clock_text(clock, None, stored, style_line)
     try:
         running = await store.running(campaign.guild_id, campaign.id)
     except Exception:
         log.exception("Couldn't read the timers for the clock message")
-        return clock_text(clock, None, stored)
+        return clock_text(clock, None, stored, style_line)
     groups = (
         {g.position: (g.name, g.clock.minute) for g in stored.groups}
         if stored is not None and stored.split
         else None
     )
-    return clock_text(clock, effects.lines(running, clock.minute, groups), stored)
+    return clock_text(clock, effects.lines(running, clock.minute, groups), stored, style_line)
 
 
 @dataclass(slots=True)
@@ -320,6 +344,7 @@ async def show(client: Any, campaign: Campaign, stored: Stored) -> discord.Messa
     """Edit the pinned clock message in place with the clock now; post (and pin) a new one if
     there isn't one or it is gone. Returns the message, or None if nothing could be shown."""
     where_are_we.shown(client, campaign)  # (the quiet "where are we" note waits again)
+    _note_round(client, campaign, stored.clock)
     text = await render(client, campaign, stored.clock, stored)
     view = clock_view(campaign.id, stored.clock, stored)
     channel = client.get_channel(stored.channel_id) if stored.channel_id else None

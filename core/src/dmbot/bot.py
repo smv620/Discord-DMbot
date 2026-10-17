@@ -3363,8 +3363,9 @@ class DMBot(commands.AutoShardedBot):
         if 0 in self.settings.shards.ids:
             # Registered once for the whole bot, not per shard: only the pod serving shard 0
             # does it, so many pods don't all sync at startup.
+            registered: int | None = None
             try:
-                await self.tree.sync()
+                registered = len(await self.tree.sync() or [])
             except discord.HTTPException:
                 # (a rate limit must not stop the bot starting, or the dev server's copy)
                 log.warning("Couldn't register the global slash commands", exc_info=True)
@@ -3372,18 +3373,44 @@ class DMBot(commands.AutoShardedBot):
             guild = discord.Object(id=self.settings.dev_guild_id)
             self.tree.copy_global_to(guild=guild)
             await self.tree.sync(guild=guild)
+        if 0 in self.settings.shards.ids and registered is not None:
+            # One line, so a deploy can be confirmed from the log alone.
+            copied = " and copied to the dev server" if self.settings.dev_guild_id else ""
+            log.info("Slash commands: %d global commands registered%s", registered, copied)
         # One-time cleanup (DISCORD_CLEAR_GUILD_COMMANDS): servers that still show the old
         # per-server copy next to the global commands. Never the dev server, which keeps its copy.
         if 0 in self.settings.shards.ids:
             for guild_id in self.settings.clear_guild_commands:
                 if guild_id == self.settings.dev_guild_id:
+                    log.warning(
+                        "Not clearing the commands in %s: it is DISCORD_DEV_GUILD_ID", guild_id
+                    )
                     continue
                 old = discord.Object(id=guild_id)
+                # The server's name first, so the log shows it is the one that was meant.
+                log.info(
+                    "Clearing the old per-server commands in %s (%s)",
+                    guild_id,
+                    await self._guild_name(guild_id),
+                )
                 try:
                     self.tree.clear_commands(guild=old)
                     await self.tree.sync(guild=old)
                 except discord.HTTPException:
                     log.warning("Couldn't clear the old commands in %s", guild_id, exc_info=True)
+                else:
+                    log.info("Server %s: old per-server commands removed", guild_id)
+
+    async def _guild_name(self, guild_id: int) -> str:
+        """The server's name if DMbot is in it, else "not in this server". The server list is
+        not filled yet when commands are registered at start, so it is asked of Discord."""
+        found = self.get_guild(guild_id)
+        if found is None:
+            try:
+                found = await self.fetch_guild(guild_id)
+            except discord.HTTPException:
+                return "not in this server"
+        return str(found.name)
 
     async def on_guild_join(self, guild: discord.Guild) -> None:
         """DMbot was just added to a server: say hello, or say what it still needs."""
@@ -4117,6 +4144,18 @@ class DMBot(commands.AutoShardedBot):
             sheet_reread.note_line(table, user_id, line)
         except Exception:
             log.exception("Sheet re-reads: couldn't look at a line")
+        try:  # how the table runs initiative (#1771): only times FightBot's reminders
+            heard_here = not held and (user_id in table.dm_user_ids or not typed)
+            if heard_here and fightbot.note_line(
+                table,
+                user_id,
+                line,
+                is_dm=user_id in table.dm_user_ids,
+                consenting=lambda u: self.consent.has_consent(table.guild_id, u),
+            ):
+                self._track(self.fight_style_changed(table), "fight-style")
+        except Exception:
+            log.exception("FightBot: couldn't look at a line")
         try:  # a card is never worth a lost line: nothing below may be skipped
             self._note_rules(table, user_id, line)
         except Exception:
@@ -4139,6 +4178,21 @@ class DMBot(commands.AutoShardedBot):
                 task.add_done_callback(
                     lambda _t: setattr(table, "clock_waiting", table.clock_waiting - 1)
                 )
+
+    async def fight_style_changed(self, table: Table) -> None:
+        """The initiative style FightBot heard changed (#1771): the DM's combat line shows it.
+        The pinned clock is edited in place; nothing is posted, and players see nothing."""
+        if (
+            self.clocks is None
+            or table.campaign_id is None
+            or self.tables.get(table.guild_id) is not table
+        ):
+            return
+        stored = await self.clocks.get(table.guild_id, table.campaign_id)
+        campaign = await self.campaigns.get(table.guild_id, table.campaign_id)
+        if stored is None or campaign is None or stored.clock.combat_round is None:
+            return
+        await clock_screen.show(self, campaign, stored)
 
     async def _chat_channel_allowed(self, message: discord.Message) -> bool:
         """False for a message in the DM's extra chat channel when that channel is any

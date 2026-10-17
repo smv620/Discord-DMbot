@@ -12,6 +12,12 @@ from dmbot.bot import DMBot
 from dmbot.install import welcome
 
 
+def discord_not_found(_id: int) -> Any:
+    import discord
+
+    raise discord.NotFound(MagicMock(status=404), "unknown guild")
+
+
 def fake_bot(
     dev_guild: int | None, shards: tuple[int, ...] = (0,), clear: tuple[int, ...] = ()
 ) -> Any:
@@ -19,7 +25,10 @@ def fake_bot(
     bot.settings = SimpleNamespace(
         dev_guild_id=dev_guild, shards=SimpleNamespace(ids=shards), clear_guild_commands=clear
     )
-    bot.tree.sync = AsyncMock()
+    bot.tree.sync = AsyncMock(return_value=[object()] * 3)
+    bot.get_guild = MagicMock(return_value=None)
+    bot._guild_name = lambda gid: DMBot._guild_name(bot, gid)
+    bot.fetch_guild = AsyncMock(side_effect=discord_not_found)
     return bot
 
 
@@ -81,6 +90,56 @@ class Sync(unittest.IsolatedAsyncioTestCase):
             bot = fake_bot(dev, shards=(1, 2))
             await DMBot._sync_commands(bot)
             bot.tree.sync.assert_not_awaited()
+
+
+class Logs(unittest.IsolatedAsyncioTestCase):
+    """What the log says about the sync, so a deploy can be checked from it alone (#1785)."""
+
+    async def run_sync(self, bot: Any) -> list[str]:
+        with self.assertLogs("dmbot.bot", level="INFO") as caught:
+            await DMBot._sync_commands(bot)
+        return [r.getMessage() for r in caught.records]
+
+    async def test_one_line_says_how_many_global_commands_and_whether_the_dev_copy(self) -> None:
+        plain = await self.run_sync(fake_bot(None))
+        self.assertIn("Slash commands: 3 global commands registered", plain)
+        dev = await self.run_sync(fake_bot(123))
+        self.assertIn(
+            "Slash commands: 3 global commands registered and copied to the dev server", dev
+        )
+
+    async def test_a_cleared_server_is_logged_with_its_name_before_and_after(self) -> None:
+        bot = fake_bot(None, clear=(555,))
+        bot.get_guild = MagicMock(return_value=SimpleNamespace(name="Frostmaiden Table"))
+        lines = await self.run_sync(bot)
+        before = "Clearing the old per-server commands in 555 (Frostmaiden Table)"
+        self.assertIn(before, lines)
+        self.assertIn("Server 555: old per-server commands removed", lines)
+        self.assertLess(
+            lines.index(before), lines.index("Server 555: old per-server commands removed")
+        )
+
+    async def test_a_server_found_only_by_asking_discord_is_named_too(self) -> None:
+        bot = fake_bot(None, clear=(555,))
+        bot.fetch_guild = AsyncMock(return_value=SimpleNamespace(name="Asked Table"))
+        self.assertIn(
+            "Clearing the old per-server commands in 555 (Asked Table)", await self.run_sync(bot)
+        )
+
+    async def test_a_server_the_bot_is_not_in_is_said_and_still_cleared(self) -> None:
+        bot = fake_bot(None, clear=(555,))
+        lines = await self.run_sync(bot)
+        self.assertIn("Clearing the old per-server commands in 555 (not in this server)", lines)
+        self.assertIn("Server 555: old per-server commands removed", lines)
+        bot.tree.clear_commands.assert_called_once()
+
+    async def test_the_dev_server_in_the_list_warns_and_is_skipped(self) -> None:
+        bot = fake_bot(123, clear=(123,))
+        with self.assertLogs("dmbot.bot", level="INFO") as caught:
+            await DMBot._sync_commands(bot)
+        warnings = [r.getMessage() for r in caught.records if r.levelname == "WARNING"]
+        self.assertEqual(warnings, ["Not clearing the commands in 123: it is DISCORD_DEV_GUILD_ID"])
+        bot.tree.clear_commands.assert_not_called()
 
 
 class Welcome(unittest.TestCase):

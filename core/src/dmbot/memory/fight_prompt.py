@@ -42,6 +42,8 @@ rule.
 - Never rule on anything, never say what the player must do, never describe the enemy, the map, \
 the story or what the dungeon master will do. You advise; the player decides.
 - Do not repeat the table talk back. Do not guess hidden things.
+- A "Right now:" line is context only and may be wrong. Use it only to pick what matters; do not \
+repeat it, and never say whose turn it is.
 - If nothing on the sheet clearly helps now, answer exactly {NOTHING}.
 - No greeting, no lists, no markdown, at most {REPLY_MAX} characters."""
 
@@ -98,10 +100,16 @@ def safe_lines(lines: Iterable[tuple[str, str]], secrets: Iterable[str]) -> list
     return list(reversed(out))
 
 
-def build(snapshot: Mapping[str, Any], round_number: int, said: list[str]) -> str:
-    """The user message for one reminder."""
+def build(
+    snapshot: Mapping[str, Any], round_number: int, said: list[str], moment: str | None = None
+) -> str:
+    """The user message for one reminder. `moment` (#1771) is one plain line from a fixed list
+    ("It is your turn next"), never anything the table said."""
     talk = "\n".join(said) if said else "(nothing said lately)"
-    return f"Round: {round_number}\n{sheet_facts(snapshot)}\n\nSaid at the table lately:\n{talk}"
+    now = f"Right now: {moment}\n" if moment else ""
+    return (
+        f"Round: {round_number}\n{now}{sheet_facts(snapshot)}\n\nSaid at the table lately:\n{talk}"
+    )
 
 
 def fingerprint(snapshot: Mapping[str, Any], round_number: int) -> tuple[Any, ...]:
