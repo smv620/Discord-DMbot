@@ -101,6 +101,10 @@ class BrokenTreeTest(unittest.TestCase):
         self.assertEqual(command_problems({"type": 3, "name": "Save Line"}), [])
         self.assertTrue(command_problems({"type": 3, "name": "n" * 33}))
 
+    def test_menu_counts_are_per_kind(self) -> None:
+        menus = [{"type": 2, "name": f"m{i}"} for i in range(6)]
+        self.assertTrue(any("user context menus" in p for p in tree_problems(menus)))
+
     def test_tree_counts_and_duplicates(self) -> None:
         many = [command(f"c{i}") for i in range(101)]
         self.assertTrue(any("at most 100" in p for p in tree_problems(many)))
@@ -128,6 +132,7 @@ class StartupErrorTest(unittest.IsolatedAsyncioTestCase):
         self.assertIn("HTTP 400", text)
         self.assertIn("50035", text)
         self.assertIn("Invalid Form Body", text)
+        bot.tree.sync.assert_awaited_once()
 
 
 if __name__ == "__main__":

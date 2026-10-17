@@ -3368,8 +3368,13 @@ class DMBot(commands.AutoShardedBot):
             # Registered once for the whole bot, not per shard: only the pod serving shard 0
             # does it, so many pods don't all sync at startup.
             registered: int | None = None
-            for problem in tree_problems([c.to_dict(self.tree) for c in self.tree.get_commands()]):
-                log.error("Slash command over a Discord limit: %s", problem)
+            try:  # advisory only: a bug in the check must not stop the sync below
+                for problem in tree_problems(
+                    [c.to_dict(self.tree) for c in self.tree.get_commands()]
+                ):
+                    log.error("Slash command over a Discord limit: %s", problem)
+            except Exception:
+                log.exception("Couldn't check the slash commands against Discord's limits")
             try:
                 registered = len(await self.tree.sync() or [])
             except discord.HTTPException as exc:

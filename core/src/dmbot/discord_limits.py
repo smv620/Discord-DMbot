@@ -48,6 +48,8 @@ def _name_problems(where: str, name: object, *, menu: bool = False) -> list[str]
     return out
 
 
+# (Localized names and descriptions also count toward the total; DMbot uses none, so they aren't
+# counted here. Add them if localizations are ever used.)
 def _size(node: Mapping[str, Any]) -> int:
     """The characters Discord counts for one command: names, descriptions and choices."""
     total = len(str(node.get("name", ""))) + len(str(node.get("description", "")))
@@ -122,11 +124,12 @@ def tree_problems(payloads: Sequence[Mapping[str, Any]]) -> list[str]:
     """Everything Discord would refuse in a whole command tree (the payloads it would send)."""
     out: list[str] = []
     chat = [p for p in payloads if p.get("type", CHAT_INPUT) == CHAT_INPUT]
-    menus = [p for p in payloads if p.get("type", CHAT_INPUT) in (USER_MENU, MESSAGE_MENU)]
     if len(chat) > MAX_CHAT_COMMANDS:
         out.append(f"{len(chat)} slash commands, at most {MAX_CHAT_COMMANDS}")
-    if len(menus) > 2 * MAX_MENU_COMMANDS:
-        out.append(f"{len(menus)} context menus, at most {MAX_MENU_COMMANDS} of each kind")
+    for kind, label in ((USER_MENU, "user"), (MESSAGE_MENU, "message")):
+        menus = [p for p in payloads if p.get("type") == kind]
+        if len(menus) > MAX_MENU_COMMANDS:
+            out.append(f"{len(menus)} {label} context menus, at most {MAX_MENU_COMMANDS}")
     names = [(p.get("type", CHAT_INPUT), p.get("name")) for p in payloads]
     for dup in {n for n in names if names.count(n) > 1}:
         out.append(f"the name {dup[1]!r} is used twice")
