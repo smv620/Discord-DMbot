@@ -113,7 +113,7 @@ async def _dm_campaign(interaction: discord.Interaction, campaign_id: str) -> Ca
 
 async def _save(
     interaction: discord.Interaction, campaign: Campaign, mode: str, *, who: int | None
-):
+) -> None:
     store = interaction.client.campaigns  # type: ignore[attr-defined]
     try:
         saved = await store.set_story_mode(campaign.guild_id, campaign.id, mode, confirmed_by=who)
