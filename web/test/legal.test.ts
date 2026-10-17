@@ -11,6 +11,7 @@ import { parsePage } from "./dom";
 import facts from "../src/content/plans.json";
 import { deletionWarnings, notAffiliated, operator, retentionRows } from "../src/content/legal";
 import { QABOT_LIVE } from "../src/content/qabot";
+import { initiativeLine, peopleListLine } from "../src/content/privacy-channels";
 import { byId, formatPeriod } from "../src/content/pricing";
 import Privacy from "../src/pages/legal/privacy.astro";
 import Refunds from "../src/pages/legal/refunds.astro";
@@ -121,6 +122,9 @@ describe("the facts #433 asks for", () => {
 
   it("says DMbot learns the names people are called, from people who said yes, and what stop removes (#1210)", () => {
     expect(privacy()).toContain("Names at the table.");
+    // The people list and initiative lines show only while their features are live (#1810).
+    expect(privacy().includes(peopleListLine.lead)).toBe(peopleListLine.live);
+    expect(privacy().includes(initiativeLine.lead)).toBe(initiativeLine.live);
     expect(privacy()).toContain("only from people who said yes to being recorded");
     expect(privacy()).toContain("Names your game master typed in themselves stay.");
   });
@@ -488,5 +492,14 @@ describe("generated content belongs to the campaign (#1388)", () => {
     for (const page of [privacy(), terms()]) {
       expect(page).not.toMatch(/knowledge graph|ontology|derived data|generated content|extractor|state facts/i);
     }
+  });
+});
+
+describe("privacy lines for new features (#1810)", () => {
+  it("say what they hear and keep, in plain words, with no AI claim for initiative", () => {
+    expect(initiativeLine.text).toContain("uses no AI");
+    expect(initiativeLine.text).toContain("only people who said yes");
+    expect(peopleListLine.text).toContain("never shows secrets, notes");
+    for (const line of [initiativeLine, peopleListLine]) expect(line.text).not.toMatch(/\bNPC\b|\bAPI\b|database/i);
   });
 });
