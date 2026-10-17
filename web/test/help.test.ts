@@ -180,7 +180,8 @@ describe("Help: the website's read-only pages (#1588)", () => {
     // Mirrors who gets which button in core/src/dmbot/dm_screen/dm_bot_panel.py (_BUTTONS).
     const words = dmBotChannelSteps.map((x) => x.text).join(" ");
     expect(words).toContain("👤 My buttons");
-    expect(words).toContain("Everyone also gets ❓ Help.");
+    expect(words).toContain("Everyone also gets 📖 Look up a rule and 📜 Transcripts.");
+    expect(words).toContain("Press 📖 Look up a rule to check a rule. Only you see the answer.");
     expect(words).toContain("you get ⚙️ Menu, where you can stop being recorded.");
     expect(words).toContain("Players also get 📜 My character sheet.");
     expect(words).toContain("Game masters get ⚙️ Settings too.");
