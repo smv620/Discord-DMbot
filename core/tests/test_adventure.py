@@ -505,6 +505,29 @@ class Card(Setup):
             line.assert_answered_first()
             self.assertIn("slow:campaign", line.events, type(button).__name__)
 
+    async def test_read_see_and_match_answer_discord_before_the_database(self) -> None:
+        await self.campaigns.set_story_mode(GUILD_A, self.a.id, STORY_WATCH, confirmed_by=DM)
+        for button in (
+            ui.ReadButton(self.a.id),
+            ui.SeeButton(self.a.id, 0),
+            ui.MatchButton(self.a.id),
+        ):
+            line = Timeline()
+            it = self.pressing(DM)
+            it.response, it.edit_original_response = line.response, line.edit_original_response
+            it.followup = line.followup
+            it.client = SimpleNamespace(
+                campaigns=SimpleNamespace(
+                    get=line.slow("campaign", await self.campaigns.get(GUILD_A, self.a.id)),
+                    story_confirmed=line.slow("confirmed", True),
+                ),
+                adventure=self.store,
+                memory=None,
+            )
+            await button.callback(it)
+            line.assert_answered_first()
+            self.assertIn("slow:campaign", line.events, type(button).__name__)
+
     async def test_a_refusal_after_the_answer_is_a_private_follow_up(self) -> None:
         sent: list[str] = []
         it = self.pressing(PLAYER)
