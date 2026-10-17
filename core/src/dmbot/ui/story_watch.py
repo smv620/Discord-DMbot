@@ -41,9 +41,10 @@ def line_text(clash: Clash, numbers: Mapping[int, int]) -> str:
     """One clash in plain words: what the adventure needs and what the table says."""
     number = numbers.get(clash.session_started_at) if clash.session_started_at is not None else None
     when = f" (Session {number})" if number is not None else ""
+    where = f" ({_name(clash.chapter)})" if clash.chapter else ""
     return (
         f"📖 Your adventure: **{_name(clash.book_name)}** needs **{_name(clash.book_needs)}** "
-        f"{_name(clash.need)}. At your table **{_name(clash.table_name)}** is "
+        f"{_name(clash.need)}{where}. At your table **{_name(clash.table_name)}** is "
         f"{clash.condition}{when}."
     )
 

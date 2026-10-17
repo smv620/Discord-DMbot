@@ -2178,8 +2178,8 @@ PLAN_DIVERGENCES = f"""
             REFERENCES plan_links (guild_id, campaign_id, id) ON DELETE CASCADE,
         {_entity_link("entity_id")}
     );
-    -- (The two indexes below make deleting a plan entry or a table entry cheap, since both
-    -- cascade; the check itself is already served by the unique keys.)
+    -- (The two indexes below are for the cascades, so deleting a plan entry or a table entry
+    -- doesn't scan the other tables; the check itself is served by the unique keys.)
     CREATE INDEX plan_links_to ON plan_links (guild_id, campaign_id, to_id);
     CREATE INDEX plan_same_as_entity ON plan_same_as (guild_id, campaign_id, entity_id);
     """ + _isolate("plan_divergences")

@@ -7256,8 +7256,8 @@ class DMBot(commands.AutoShardedBot):
                 return
             numbers: dict[int, int] = {}
             if self.transcripts is not None:
-                sessions = await self.transcripts.sessions(guild_id, campaign_id, limit=1000)
-                numbers = {x.started_at: x.number for x in sessions}
+                sessions = await self.transcripts.sessions(guild_id, campaign_id, limit=100)
+                numbers = {x.started_at: x.number for x in sessions}  # (the recent ones)
             posted = await self.post(
                 channel_id, message_text(found, numbers), view=watch_view(campaign_id, found)
             )

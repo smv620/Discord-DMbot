@@ -22,6 +22,7 @@ from typing import Any
 
 from dmbot.db import Database
 from dmbot.memory.adventure import AdventureError, AdventureStore
+from dmbot.memory.book_links import chapter_of
 from dmbot.memory.models import (
     ALIVE,
     CAPTURED,
@@ -64,6 +65,7 @@ class Clash:
 
     id: str  # the divergence
     book_name: str  # who needs it (a chapter, a place or a person)
+    chapter: str  # the chapter the book's A is in (empty when A is a chapter or none is known)
     book_needs: str  # the book's name for B
     table_name: str  # the table's name for B
     need: str
@@ -82,6 +84,7 @@ NONE = Found((), 0)
 _CANDIDATES = """
     SELECT l.id AS link_id, l.need, l.created_at AS plan_at,
            a.name AS a_name, b.name AS b_name,
+           CASE WHEN a.kind = 'chapter' THEN '' ELSE COALESCE({chapter}, '') END AS chapter,
            e.id AS entity_id, e.name AS entity_name,
            s.id AS state_id, s.condition, s.from_session_at, s.created_at AS state_at
     FROM plan_links l
@@ -151,9 +154,12 @@ class StoryWatch:
             except AdventureError:
                 return NONE
             # One check at a time for a campaign, so two at once can't split the clashes.
-            await conn.execute("SELECT pg_advisory_xact_lock(hashtext(%s))", (campaign_id,))
+            await conn.execute(
+                "SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))",
+                (f"dmbot.story_watch:{campaign_id}",),
+            )
             await conn.execute(_GONE, (guild_id, campaign_id))
-            cur = await conn.execute(_CANDIDATES.format(extra=extra), args)
+            cur = await conn.execute(_CANDIDATES.format(extra=extra, chapter=chapter_of("a")), args)
             due = [
                 r
                 for r in await cur.fetchall()
@@ -180,7 +186,10 @@ class StoryWatch:
         async with self._db.guild(guild_id) as conn:
             cur = await conn.execute(
                 "UPDATE plan_divergences SET status = 'known' WHERE guild_id = %s"
-                " AND campaign_id = %s AND id = %s AND status = 'open' RETURNING id",
+                " AND campaign_id = %s AND id = %s AND status = 'open' AND EXISTS (SELECT 1 FROM"
+                " memory_states s WHERE s.guild_id = plan_divergences.guild_id AND"
+                " s.campaign_id = plan_divergences.campaign_id AND s.id = plan_divergences.state_id"
+                " AND s.closed_at IS NULL) RETURNING id",
                 (guild_id, campaign_id, divergence_id),
             )
             return await cur.fetchone() is not None
@@ -206,7 +215,9 @@ class StoryWatch:
                 "SELECT l.quote FROM plan_divergences d JOIN plan_links l"
                 " ON l.guild_id = d.guild_id AND l.campaign_id = d.campaign_id"
                 " AND l.id = d.plan_link_id WHERE d.guild_id = %s AND d.campaign_id = %s"
-                " AND d.id = %s AND d.status <> 'gone'",
+                " AND d.id = %s AND d.status <> 'gone' AND EXISTS (SELECT 1 FROM memory_states s"
+                " WHERE s.guild_id = d.guild_id AND s.campaign_id = d.campaign_id"
+                " AND s.id = d.state_id AND s.closed_at IS NULL)",
                 (guild_id, campaign_id, divergence_id),
             )
             row = await cur.fetchone()
@@ -226,8 +237,8 @@ class StoryWatch:
 
 def _clash(divergence_id: str, r: Any) -> Clash:
     return Clash(
-        divergence_id, r["a_name"], r["b_name"], r["entity_name"], r["need"], r["condition"],
-        r["from_session_at"],
+        divergence_id, r["a_name"], r["chapter"], r["b_name"], r["entity_name"], r["need"],
+        r["condition"], r["from_session_at"],
     )  # fmt: skip
 
 

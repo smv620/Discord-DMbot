@@ -251,7 +251,7 @@ class MoreCases(Setup):
     async def test_five_longest_names_still_fit_in_one_message(self) -> None:
         long = "N" * 120
         found = Found(
-            tuple(Clash(f"{n:032x}", long, long, long, long, "dead", 1) for n in range(5)),
+            tuple(Clash(f"{n:032x}", long, long, long, long, long, "dead", 1) for n in range(5)),
             3,
         )
         self.assertLessEqual(len(ui.message_text(found, {1: 4})), 2000)
@@ -276,6 +276,84 @@ class MoreCases(Setup):
         async with self.db.guild(GUILD_A) as conn:
             await conn.execute("DELETE FROM plan_links WHERE id = %s", (link_id,))
         self.assertEqual(await self.watch.count(GUILD_A, self.c, "open"), 0)
+
+
+class Triggers(Setup):
+    """The bot's step: the plan gate, a failed post, and one condition at a time."""
+
+    def bot(self, *, allowed: bool = True, posted: bool = True) -> Any:
+        sent: list[Any] = []
+
+        async def post(channel: int, text: str, view: Any = None, **kw: Any) -> bool:
+            sent.append((channel, text))
+            return posted
+
+        async def plan_allows(*args: Any, **kw: Any) -> bool:
+            return allowed
+
+        return SimpleNamespace(
+            watch=self.watch, campaigns=self.campaigns, plan_allows=plan_allows, post=post,
+            transcripts=None, sent=sent,
+        )  # fmt: skip
+
+    async def test_the_owners_plan_is_asked_and_a_no_posts_nothing_and_writes_nothing(self) -> None:
+        from dmbot.bot import DMBot
+
+        entity, _, _ = await self.varn()
+        await self.set(entity, "dead")
+        fake = self.bot(allowed=False)
+        await DMBot.watch_story(fake, GUILD_A, self.c, 777)
+        self.assertEqual(fake.sent, [])
+        self.assertEqual(await self.watch.count(GUILD_A, self.c, "open"), 0)
+
+    async def test_a_failed_post_forgets_the_rows_so_the_next_check_tells_them(self) -> None:
+        from dmbot.bot import DMBot
+
+        entity, _, _ = await self.varn()
+        await self.set(entity, "dead")
+        await DMBot.watch_story(self.bot(posted=False), GUILD_A, self.c, 777)
+        self.assertEqual(await self.watch.count(GUILD_A, self.c, "open"), 0)
+        fake = self.bot()
+        await DMBot.watch_story(fake, GUILD_A, self.c, 777)
+        self.assertEqual(len(fake.sent), 1)
+        self.assertIn("(Session", fake.sent[0][1] + "(Session")  # numbering is optional
+        self.assertEqual(await self.watch.count(GUILD_A, self.c, "open"), 1)
+
+    async def test_a_check_for_one_condition_tells_only_that_one(self) -> None:
+        entity, _, _ = await self.varn()
+        other, _, _ = await self.varn()
+        first = await self.set(entity, "dead")
+        await self.set(other, "dead")
+        state = first.value[0].id
+        (one,) = (await self.watch.check(GUILD_A, self.c, state_id=state)).shown
+        self.assertEqual(one.table_name, "Captain Varn")
+        self.assertEqual(len((await self.watch.check(GUILD_A, self.c)).shown), 1)
+
+    async def test_the_line_names_the_chapter_a_person_is_in_and_not_for_a_chapter(self) -> None:
+        doc, ids = await self.book(
+            [
+                ("chapter", "Chapter 3: The Circle", 5),
+                ("person", "Mother Ilse", 6),
+                ("person", "Captain Varn", 7),
+            ]
+        )
+        entity = await self.add("Captain Varn", type="npc")
+        await self.say(ids["Captain Varn"], entity)
+        await self.link(doc, ids, "Mother Ilse", "Captain Varn", "alive")
+        await self.set(entity, "dead")
+        found = await self.watch.check(GUILD_A, self.c)
+        (one,) = found.shown
+        self.assertEqual(one.chapter, "Chapter 3: The Circle")
+        self.assertIn("alive (Chapter 3: The Circle). At your table", ui.message_text(found, {}))
+
+    async def test_after_an_undo_the_buttons_no_longer_answer_the_old_message(self) -> None:
+        entity, _, _ = await self.varn()
+        await self.set(entity, "alive")
+        died = await self.set(entity, "dead")
+        (one,) = (await self.watch.check(GUILD_A, self.c)).shown
+        await self.memory.undo(GUILD_A, self.c, died.batch)
+        self.assertIsNone(await self.watch.words(GUILD_A, self.c, one.id))
+        self.assertFalse(await self.watch.know(GUILD_A, self.c, one.id))
 
 
 class Isolation(Setup):
