@@ -20,7 +20,9 @@ import discord
 
 import dmbot
 from dmbot import bot as bot_module
+from dmbot.consent_dm import CONSENT_BUTTONS
 from dmbot.discord_limits import CUSTOM_ID_MAX, UnboundedId, longest_custom_id
+from dmbot.dm_screen import PeekButton
 
 # Classes that are deliberately not registered, each with the reason. Empty today: every one is.
 NOT_REGISTERED: dict[str, str] = {}
@@ -33,7 +35,7 @@ def all_dynamic_items(*modules: str) -> set[type]:
         importlib.import_module(module.name)
 
     def subclasses(cls: type) -> set[type]:
-        found = set(cls.__subclasses__())
+        found: set[type] = set(cls.__subclasses__())
         for sub in list(found):
             found |= subclasses(sub)
         return found
@@ -52,7 +54,11 @@ def registered_items(source: str | None = None) -> set[type]:
     found: set[type] = set()
     # Only `setup_hook` registers (a call anywhere else would not run at start-up); a test's
     # tiny source has a function of another name, so it is read whole.
-    hooks = [n for n in ast.walk(tree) if getattr(n, "name", "") == "setup_hook"]
+    hooks: list[ast.stmt] = [
+        n
+        for n in ast.walk(tree)
+        if isinstance(n, ast.FunctionDef | ast.AsyncFunctionDef) and n.name == "setup_hook"
+    ]
     for node in ast.walk(ast.Module(body=hooks, type_ignores=[]) if hooks else tree):
         if isinstance(node, ast.Call) and getattr(node.func, "attr", "") == "add_dynamic_items":
             for arg in node.args:
@@ -114,8 +120,8 @@ class RegisteredTest(unittest.TestCase):
             "        self.add_dynamic_items(PeekButton, *CONSENT_BUTTONS)\n"
         )
         found = registered_items(source)
-        self.assertIn(bot_module.PeekButton, found)
-        self.assertTrue(set(bot_module.CONSENT_BUTTONS) <= found)
+        self.assertIn(PeekButton, found)
+        self.assertTrue(set(CONSENT_BUTTONS) <= found)
 
 
 class IdLengthTest(unittest.TestCase):
