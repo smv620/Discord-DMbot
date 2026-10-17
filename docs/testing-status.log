@@ -1,6 +1,6 @@
 DMbot - TESTING STATUS (current testing only)
 =============================================
-Last updated: 2026-10-17 05:4x UTC by dev1 (deploy e25d74ea live)
+Last updated: 2026-10-17 06:4x UTC by dev1 (Test I passed, with a slow consent message)
 
 **For the people at the table: docs/next-test-step.md has the one next small test (#569).**
 Short by design: see CLAUDE.md "Testing logs". Full record: docs/testing-history.log.
@@ -44,7 +44,7 @@ private (no install link) until the website launches.
 NEW LIVE CHECKS (not done; also from e25d74ea, the owner in Discord: the dmb-dm-bot channel appears, with My buttons and Help; each role sees its own buttons; the DM screen no longer shows Settings; Homebrew kinds show with counts; also from 68a8949f, the owner in Discord: Approved sites in Homebrew (see and Take back); a homebrew entry's source line on the website; Standing on an NPC's name card (Set standing...); the new homebrew kinds species, subclass and background; secrets and story threads: only that their buttons appear on a name card; also from 3535138d, the owner in Discord: (1) the Settings button on the /dmbot start voice step and /dmbot settings; (2) Game masters in Settings: add and remove one; (3) Split the party on the game clock and rejoin; (4) Homebrew: Turn off / Turn on an entry, and Load a file and answer "Who made these?"; (5) Add from a link: PASSED 2026-10-17 (D&D Beyond answers our server; see the history); (6) Delete a campaign: only check the button shows for the plan holder, do not test it on a real campaign; also from a026cfd7: a DM's Check names button appears after a session that left a question unanswered; a DM's "Three days later, you..." moves the clock with Undo; the website Homebrew page shows "From a shared book" on such an entry, if one exists; also from 257f5b67: a non-DM /dmbot rule card; the website's Transcripts page of a campaign with a keep limit shows "Transcripts are kept for N days after each session, then deleted."; also from 1df5a4e5: a DM loads a from-book homebrew file and sees the question "Which rules is this book written for?" after "I have the right"; also from 47d4ccf4: /dmbot rule as a non-DM member gives a private card ending "Your DM decides what applies at your table."; Connect to... shows Secret: no for a DM; a DM's Download all names file has the player rows section in its header; Test J covers Keep, Delete, Homebrew packs; need a game session or a signed-in member): (1) a recorded player types /dmbot fix after a session and sees the picker (nothing need be sent); (2) the DM opens Settings -> Homebrew: the empty list with Add, Download file and Load file (DM only); (3) the website's Transcripts and House rules pages open read-only for a signed-in member (signed-out calls answer 401, checked).
 
 ------------------------------------------------------------------------------
-NEXT TEST: Test I, the new consent question (docs/next-test-step.md; #1270 check 1). Test J (keeping and deleting transcripts, Homebrew packs) PASSED on 2026-10-16
+NEXT TEST: none queued (Test I, the new consent question, PASSED 2026-10-17, with a slow consent button: see the history). The owner's live checks are listed below. Test J (keeping and deleting transcripts, Homebrew packs) PASSED on 2026-10-16
 ------------------------------------------------------------------------------
 After the big deploy (ee256c7) the live checks run one small test at a time, in the order of #1270: 1 consent v6 (Test I),
 2 typed chat, 3 table questions, 4 FightBot and spell slots, 5 the timer form incl. "60 seconds" (Test F again, #1194 is
@@ -86,6 +86,9 @@ entry "Status log as it stood before it was trimmed"):
      talk for a minute: DMbot still hears you and ears logs no voice errors.
  22. #147 (1 person, ~5 min): /dmbot start, press Start listening twice, Stop listening, start again, then dev1
      restarts core mid-session: it resumes, and the core log names every save and removal of the saved session.
+ 23. Memory health (#1699): after the next live session ends, dev1 reads the core log for one line
+     `memory health: entities=N confirmed=N proposed=N duplicates=N orphans=N unused_terms=N
+     flags_this_session=N asked_dm=N` (counts only, no names) and notes the numbers in the history.
 
 ------------------------------------------------------------------------------
 LATEST RESULTS

@@ -17,7 +17,7 @@ from __future__ import annotations
 import asyncio
 import dataclasses
 import time
-from collections.abc import AsyncGenerator, AsyncIterator, Callable, Collection, Sequence
+from collections.abc import AsyncGenerator, AsyncIterator, Callable, Collection, Mapping, Sequence
 from contextlib import asynccontextmanager
 from typing import Any
 
@@ -154,6 +154,7 @@ async def _live_ids(scope: Scope, among: Collection[str] | None = None) -> set[s
 
 PARTY_NAME = "The party"
 LED_TO_KINDS = "A clue, an event or a thread can lead to a thread or an event."
+LED_TO_CONFIRM = "One of them isn't confirmed yet. Confirm it, then try again."
 LED_TO_LOOP = "That would make a loop: the other one already led here."
 DUE_MAX = 120  # letters in a promise's due note
 THREAD_KINDS_ONLY = "A thread is a quest, a mystery, a hook, a goal or a promise."
@@ -877,7 +878,7 @@ class MemoryStore:
             onto = await _load_ontology(w)
             a, b = await _entity_row(w, from_id), await _entity_row(w, to_id)
             if a["status"] != CONFIRMED or b["status"] != CONFIRMED:
-                raise MemoryRuleError(LED_TO_KINDS)
+                raise MemoryRuleError(LED_TO_CONFIRM)
             if not any(onto.is_a(a["type"], k) for k in ("clue", "event", "thread")) or not any(
                 onto.is_a(b["type"], k) for k in ("thread", "event")
             ):
@@ -887,6 +888,24 @@ class MemoryStore:
                 from_session_at=from_session_at,
             )  # fmt: skip
             return Written(fact, w.batch)
+
+    async def health_counts(
+        self, guild_id: int, campaign_id: str, *, since: int, recent: int
+    ) -> Mapping[str, Any]:
+        """The one row of the story graph's health counts (#1699, #1701). The SQL and what each
+        number means are in `dmbot.memory.health`; this runs it in a read scoped to this
+        campaign, so every count is this campaign's and no other's."""
+        from dmbot.memory import health  # (it imports this module: loaded late)
+
+        async with self._read(guild_id, campaign_id) as scope:
+            g, c = scope.ids
+            cur = await scope.conn.execute(
+                health.COUNTS, {"g": g, "c": c, "since": since, "recent": recent}
+            )
+            row = await cur.fetchone()
+        if row is None:  # (a SELECT of scalar subqueries always returns one row)
+            raise RuntimeError("The health counts returned no row")
+        return row
 
     async def chain(
         self, guild_id: int, campaign_id: str, entity_id: str
@@ -2645,6 +2664,9 @@ class MemoryStore:
             # Whatever the path (extractor, "Connect to…"), a "led to" link is the DM's secret
             # and may not close a loop (#1679).
             secret = True
+            for end in (subject_id, object_id):
+                if (await _entity_row(w, end))["status"] != CONFIRMED:
+                    raise MemoryRuleError(LED_TO_CONFIRM)
             live = await w.select(
                 RELATIONS,
                 " AND predicate = 'led_to' AND status = 'confirmed' AND to_session_at IS NULL",
