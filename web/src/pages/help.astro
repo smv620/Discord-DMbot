@@ -75,8 +75,8 @@ import { accountHeading, backToTop, dmHeading, emailsHeading, onThisPage, onThis
         ))
       }
     </ol>
-    <p class="back"><a href="#top">{backToTop}</a></p>
     <p class="muted">{playerNote}</p>
+    <p class="back"><a href="#top">{backToTop}</a></p>
   </section>
 
   <section aria-labelledby="account-heading">
@@ -110,6 +110,7 @@ import { accountHeading, backToTop, dmHeading, emailsHeading, onThisPage, onThis
         ))
       }
     </ol>
+    <p class="back"><a href="#top">{backToTop}</a></p>
   </section>
 
   <section aria-labelledby="emails-heading">
@@ -118,6 +119,7 @@ import { accountHeading, backToTop, dmHeading, emailsHeading, onThisPage, onThis
       {emailSteps.map((s) => <li>{s.text}</li>)}
     </ol>
     <p class="muted">{emailNote}</p>
+    <p class="back"><a href="#top">{backToTop}</a></p>
   </section>
 
   <section aria-labelledby="snags-heading" id="snags">
@@ -139,6 +141,7 @@ import { accountHeading, backToTop, dmHeading, emailsHeading, onThisPage, onThis
         ))
       }
     </ol>
+    <p class="back"><a href="#top">{backToTop}</a></p>
   </section>
 
   <section aria-labelledby="getting-help-heading" id={gettingHelp.id}>
@@ -183,6 +186,12 @@ import { accountHeading, backToTop, dmHeading, emailsHeading, onThisPage, onThis
 
   nav li {
     margin-bottom: var(--space-2);
+  }
+
+  nav a {
+    display: inline-flex;
+    align-items: center;
+    min-height: var(--tap); /* a thumb-sized target for a DM tapping mid-session */
   }
 
   .back {
