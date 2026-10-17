@@ -27,6 +27,7 @@ from dmbot.dm_screen import story_mode
 from dmbot.memory import adventure as adv
 from dmbot.memory.adventure import AdventureError, AdventureSection, AdventureStore, chunks_of
 from dmbot.memory.document_reader import read_document
+from dmbot.memory.name_documents import DocumentError
 from dmbot.schema import MIGRATIONS
 from tests.pg import TEST_URL, DatabaseTest
 
@@ -114,6 +115,11 @@ class Cutting(unittest.TestCase):
         self.assertEqual(sum(len(c.text) for c in got), 9000)
         self.assertTrue(all(len(c.text) <= adv.CHUNK_HARD for c in got))
 
+    def test_a_list_of_short_lines_does_not_make_a_chunk_for_each_line(self) -> None:
+        text = "\n\n".join(f"Name {n}" for n in range(1000))  # every line looks like a heading
+        got = chunks_of(text)
+        self.assertLess(len(got), len(text) // adv.MIN_CHUNK + 2)
+
     def test_empty_text_has_no_chunks(self) -> None:
         self.assertEqual(chunks_of("  \n\n  "), [])
 
@@ -140,6 +146,28 @@ class Reading(unittest.IsolatedAsyncioTestCase):
             positions = [joined.find(f"part {n} ") for n in (1, 2, 4, 5, 7, 8)]
             self.assertEqual(positions, sorted(positions), name)
             self.assertNotIn(-1, positions, name)
+
+    async def test_a_long_word_file_and_a_long_pdf_are_kept_in_full_never_cut(self) -> None:
+        lines = [f"Paragraph {n}. " + "word " * 200 for n in range(300)]  # ~310,000 characters
+        word = await read_document(
+            "long.docx", docx(*lines), parse=adv.adventure_text, limit_s=adv.READ_TIME_S,
+            max_reply=adv.READ_REPLY_BYTES,
+        )  # fmt: skip
+        self.assertIn("Paragraph 299.", word)
+        self.assertGreater(len(word), 250_000)
+        pages = [[f"Page {p} line {n} " + "text " * 18 for n in range(40)] for p in range(120)]
+        book = await read_document(
+            "long.pdf", pdf(pages), parse=adv.adventure_text, limit_s=adv.READ_TIME_S,
+            max_reply=adv.READ_REPLY_BYTES,
+        )  # fmt: skip
+        self.assertIn("Page 119 line 39", book)
+        self.assertGreater(len(book), 250_000)
+
+    async def test_a_file_past_even_the_adventure_limit_is_refused_not_cut(self) -> None:
+        with mock.patch.object(adv, "DOCUMENT_MAX_CHARS", 5_000):
+            text = "word " * 2_000  # 10,000 characters
+            with self.assertRaises(DocumentError):
+                adv.adventure_text("big.txt", text.encode())
 
     async def test_a_book_longer_than_the_names_screen_takes_is_read(self) -> None:
         big = "\n\n".join(f"Paragraph {n}. " + "word " * 200 for n in range(400))  # ~420,000 chars
@@ -293,6 +321,11 @@ class BackingUp(Setup):
             lambda d: d["chunks"].append({"heading": "x", "text": ""}),
             lambda d: d["chunks"].append({"heading": "x" * 300, "text": "t"}),
             lambda d: d.update(extra=1),
+            lambda d: d.update(file_name="bad\nname.txt"),
+            lambda d: d["chunks"][0].update(text="a\x00b"),
+            lambda d: d["chunks"][0].update(heading="\ud800"),
+            lambda d: d.update(file_name="x\ud800.txt"),
+            lambda d: d.update(characters=1),  # many chunks that claim to be a one-letter file
         ):
             data = await self.campaigns.export(GUILD_A, self.a.id)
             damage(data["sections"]["adventure"][0])
@@ -410,19 +443,19 @@ class Card(Setup):
     async def test_no_button_with_the_switch_off_or_without_a_confirmation(self) -> None:
         it = self.pressing(DM)
         await story_mode.StoryButton(self.a.id).callback(it)
-        self.assertNotIn("Give DMbot your adventure", self.labels(it))
+        self.assertNotIn("Give your adventure", self.labels(it))
         await self.switch_on()
         fresh = await self.campaigns.get(GUILD_A, self.a.id)
         assert fresh is not None
         it = self.pressing(DM)
         await story_mode.StoryButton(self.a.id).callback(it)
-        self.assertIn("Give DMbot your adventure", self.labels(it))
+        self.assertIn("Give your adventure", self.labels(it))
         # A restored campaign has the mode but no press of its own: no button.
         data = await self.campaigns.export(GUILD_A, self.a.id)
         restored = await self.campaigns.import_backup(GUILD_B, data, DM)
         it = self.pressing(DM, guild=GUILD_B)
         await story_mode.StoryButton(restored.id).callback(it)
-        self.assertNotIn("Give DMbot your adventure", self.labels(it))
+        self.assertNotIn("Give your adventure", self.labels(it))
 
     async def test_a_non_dm_and_a_switched_off_card_are_refused_on_every_button(self) -> None:
         await self.switch_on()
@@ -452,7 +485,7 @@ class Card(Setup):
         text = it.sent["content"]
         self.assertIn("The Sunken Keep.pdf", text)
         self.assertIn(f"<@{DM}>", text)
-        self.assertIn("Nothing reads it yet", text)
+        self.assertIn("Nothing reads this yet", text)
         self.assertEqual(self.labels(it), ["Remove 1", "Give a file"])
         ask = self.pressing(DM)
         await ui.RemoveButton(self.a.id, doc.id).callback(ask)
@@ -464,7 +497,18 @@ class Card(Setup):
         yes = self.pressing(DM)
         await ui.RemoveYesButton(self.a.id, doc.id).callback(yes)
         self.assertEqual(await self.store.documents(GUILD_A, self.a.id), [])
-        self.assertIn("Removed.", yes.sent["content"])
+        self.assertIn("Removed. DMbot forgot it.", yes.sent["content"])
+
+    async def test_twenty_documents_with_long_names_still_fit_one_message(self) -> None:
+        docs = [
+            adv.Document(uuid.uuid4().hex, "N" * 200, 5_000_000 // 20, 100, DM, CLOCK)
+            for _ in range(adv.DOCUMENTS_MAX)
+        ]
+        campaign = await self._campaign()
+        self.assertLess(len(f"Kept.\n\n{ui.card_text(docs)}"), 2000)
+        self.assertEqual(len(ui.card_view(campaign, docs).children), adv.DOCUMENTS_MAX)
+        one = adv.Document(uuid.uuid4().hex, "a.txt", 100, 1, DM, CLOCK)
+        self.assertIn("(about 1 page)", ui.card_text([one]))
 
     async def test_the_add_button_opens_the_form_for_a_dm(self) -> None:
         await self.switch_on()

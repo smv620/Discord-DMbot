@@ -8,6 +8,9 @@ a shared ruleset, a pack, another campaign or another server, and never shown to
 in that campaign's backup (a backup is complete) and goes when the campaign is deleted. A DM can
 remove a document, which removes its chunks.
 
+The story-plan reader that comes next must check the switch and a non-restored confirmation
+again before it uses any of this text: a restored campaign holds its text but not the right.
+
 Giving a file needs the Shared story switch on and the DM's confirmation of the right to use the
 material on record (#1692): checked here, not only by the button.
 
@@ -16,6 +19,7 @@ This module has the pure part (reading a file's text and cutting it into chunks)
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import re
 import time
@@ -31,6 +35,8 @@ from dmbot.memory.name_documents import MAX_DOCUMENT_BYTES, DocumentError, text_
 
 CHUNK_CHARS = 2000  # about; a chunk ends at a heading or a blank line, never mid-word
 CHUNK_HARD = 4000  # the database's limit on one chunk
+MIN_CHUNK = 400  # a heading starts a new chunk only after this much, so a list of short lines
+# can't make a row for every line (the rows are bounded by the characters / MIN_CHUNK)
 HEADING_CHARS = 80  # the longest line taken for a heading
 HEADING_KEPT = 200
 CAMPAIGN_MAX_CHARS = 2_000_000
@@ -133,7 +139,8 @@ def chunks_of(text: str, target: int = CHUNK_CHARS) -> list[Chunk]:
             continue
         title = _is_heading(block)
         if title is not None:
-            flush()
+            if size >= MIN_CHUNK:
+                flush()
             heading = title
         for piece in _pieces(block, min(target, CHUNK_HARD)):
             if current and size + len(piece) + 2 > target:
@@ -184,7 +191,7 @@ class AdventureStore:
         """Keep a file's text for this campaign, in chunks, in one transaction. Refused with plain
         words when the person isn't one of its DMs, the switch is Off or has no confirmation, the
         same text is already here, or the campaign would pass its limit."""
-        chunks = chunks_of(text)
+        chunks = await asyncio.to_thread(chunks_of, text)  # CPU: off the event loop
         if not chunks:
             raise AdventureError("DMbot found no text in that file. Check it's the right file.")
         name = clean_file_name(file_name)
@@ -312,6 +319,20 @@ class AdventureStore:
 # ---- backups --------------------------------------------------------------------------------
 
 _DOC_KEYS = frozenset({"file_name", "fingerprint", "characters", "chunks", "added_by", "added_at"})
+
+
+def _storable(text: str) -> bool:
+    """Text the database will keep: no NUL byte (Postgres refuses it) and no lone surrogate
+    (it can't be written as UTF-8)."""
+    if "\x00" in text:
+        return False
+    try:
+        text.encode("utf-8")
+    except UnicodeEncodeError:
+        return False
+    return True
+
+
 _HEX64 = re.compile(r"[0-9a-f]{64}")
 _INT64_MAX = 2**63 - 1
 
@@ -379,6 +400,8 @@ class AdventureSection:
             if not (
                 isinstance(name, str)
                 and 1 <= len(name) <= FILE_NAME_MAX
+                and clean_file_name(name) == name  # no control characters, no path
+                and _storable(name)
                 and isinstance(digest, str)
                 and _HEX64.fullmatch(digest)
                 and digest not in seen
@@ -405,12 +428,20 @@ class AdventureSection:
                     and len(c["heading"]) <= HEADING_KEPT
                     and isinstance(c["text"], str)
                     and 1 <= len(c["text"]) <= CHUNK_HARD
+                    and _storable(c["heading"])
+                    and _storable(c["text"])
                 ):
                     raise CampaignError(DAMAGED)
                 size += len(c["text"])
                 chunks.append(Chunk(c["heading"], c["text"]))
             total += characters
-            if total > CAMPAIGN_MAX_CHARS or size > characters * 2 + len(chunks) * 4:
+            # What a real document gives: chunks of at least MIN_CHUNK (but the last), and their
+            # text, joined, about as long as the file's.
+            if (
+                total > CAMPAIGN_MAX_CHARS
+                or len(chunks) > characters // 100 + 1
+                or size > characters + 2 * len(chunks)
+            ):
                 raise CampaignError(DAMAGED)
             out.append(_Checked(name, digest, characters, int(by), at, tuple(chunks)))
         return out

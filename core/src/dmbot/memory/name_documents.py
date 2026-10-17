@@ -73,7 +73,7 @@ def text_of(filename: str, raw: bytes, *, max_chars: int = MAX_DOCUMENT_CHARS) -
         if suffix == ".pdf":
             text = _pdf_text(raw, max_chars)
         elif suffix == ".docx":
-            text = _docx_text(raw)
+            text = _docx_text(raw, max_chars)
         elif suffix in (".html", ".htm"):
             text = html_text(decode_text(raw))
         elif suffix == ".doc":
@@ -141,17 +141,20 @@ def _pdf_text(raw: bytes, max_chars: int = MAX_DOCUMENT_CHARS) -> str:
 _DOCX_PARTS = re.compile(r"<w:t(?:\s[^>]*)?>([^<]*)</w:t>|</w:p>")
 
 
-def _docx_text(raw: bytes) -> str:
+def _docx_text(raw: bytes, max_chars: int = MAX_DOCUMENT_CHARS) -> str:
     """A Word file is a zip with the text in word/document.xml. Read without an XML
-    parser (nothing in the file is run or fetched), in one pass."""
+    parser (nothing in the file is run or fetched), in one pass. A longer limit on the text
+    (an adventure's, #1698) allows a longer unpacked file too: the markup is several times the
+    words."""
+    xml_limit = max(MAX_XML_BYTES, max_chars * 6)
     try:
         with zipfile.ZipFile(io.BytesIO(raw)) as archive:
             info = archive.getinfo("word/document.xml")
-            if info.file_size > MAX_XML_BYTES:
+            if info.file_size > xml_limit:
                 raise DocumentError("That Word file is too big. Split it into smaller files.")
             with archive.open(info) as part:
-                data = part.read(MAX_XML_BYTES + 1)  # never trust the size it declares
-            if len(data) > MAX_XML_BYTES:
+                data = part.read(xml_limit + 1)  # never trust the size it declares
+            if len(data) > xml_limit:
                 raise DocumentError("That Word file is too big. Split it into smaller files.")
     except (zipfile.BadZipFile, KeyError) as exc:
         raise DocumentError(
@@ -168,7 +171,7 @@ def _docx_text(raw: bytes) -> str:
         else:
             current.append(match[1])
             size += len(match[1])
-            if size > MAX_DOCUMENT_CHARS:
+            if size > max_chars:
                 break
     paragraphs.append(html.unescape("".join(current)))
     return "\n".join(paragraphs)

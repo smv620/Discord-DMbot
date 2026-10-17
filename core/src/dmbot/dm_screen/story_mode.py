@@ -51,7 +51,10 @@ ONLY_DMS = "Only this campaign's DMs can change that. Ask one of them."
 GONE = "That campaign isn't here any more. Open ⚙️ Settings again."
 COULDNT = "That didn't work, and nothing changed. Please try again in a moment."
 INTRO = "🧭 **Shared story**"
-COMING = "Not working yet. DMbot can keep your adventure now, but nothing reads it so far."
+COMING = (
+    "Not working yet. DMbot can keep your adventure, but nothing reads it, so you get no alerts "
+    "from this."
+)
 RIGHT_LABEL = "I have the right"
 NOT_NOW_LABEL = "Not now"
 

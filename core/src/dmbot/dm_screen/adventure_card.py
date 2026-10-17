@@ -43,15 +43,18 @@ _DOC = r"(?P<doc>[0-9a-f]{32})"
 NO_MENTIONS = discord.AllowedMentions.none()
 INTRO = "📖 **Your adventure**"
 NOTE = (
-    "DMbot keeps your adventure for this campaign only. Nothing reads it yet: next, DMbot will "
-    "learn its chapters, places and people."
+    "Nothing reads this yet, so it changes no alerts. DMbot keeps the text of your files, not the "
+    "files, for this campaign only (it is in this campaign's backup too). Remove one and DMbot "
+    "forgets it."
 )
-EMPTY = "You haven't given DMbot anything yet."
-NOT_ON = "Turn on Shared story and say you have the right to use the material first."
-TOO_BIG = "That file is too big (up to 10 MB). Split it into smaller files."
+EMPTY = "Nothing yet. Press Give a file to add one."
+NOT_ON = (
+    "Not yet. In Settings, turn on Shared story and say you have the right to use the material."
+)
+TOO_BIG = "That file is over 10 MB. Try a smaller file, or save a text copy (.txt)."
 WRONG_TYPE = "DMbot can read PDF, Word (.docx) and text (.txt, .md) files. Save it as one of those."
-NO_FILE = "No file was picked. Press Give a file and pick one."
-DOWNLOAD_FAILED = "DMbot couldn't download that file. Try again."
+NO_FILE = "No file was picked. Press Give a file again and pick one."
+DOWNLOAD_FAILED = "DMbot couldn't download that file, and kept nothing. Try again."
 ADD_LABEL = "Give a file"
 FILE_TYPES = (".pdf", ".docx", ".txt", ".md", ".text")
 CHARS_PER_PAGE = 2000  # for "about N pages"
@@ -61,16 +64,27 @@ def pages_of(characters: int) -> int:
     return max(1, round(characters / CHARS_PER_PAGE))
 
 
+def _pages(characters: int) -> str:
+    return "page" if pages_of(characters) == 1 else "pages"
+
+
+NAME_SHOWN = 30  # characters of a file name on the card: twenty lines must fit one message
+FULL_LINES = 8  # up to this many documents get who and when; more get the short line
+
+
 def card_text(documents: list[Document]) -> str:
     lines = [INTRO, NOTE]
     if not documents:
         lines.append(EMPTY)
     for n, d in enumerate(documents, 1):
-        name = discord.utils.escape_markdown(d.file_name)
-        lines.append(
-            f"{n}. **{name}** (about {pages_of(d.characters)} pages), "
-            f"added by <@{d.added_by}> on <t:{d.added_at}:d>"
-        )
+        name = discord.utils.escape_markdown(d.file_name[:NAME_SHOWN])
+        size = f"about {pages_of(d.characters)} {_pages(d.characters)}"
+        if len(documents) <= FULL_LINES:
+            lines.append(
+                f"{n}. **{name}** ({size}), added by <@{d.added_by}> on <t:{d.added_at}:d>"
+            )
+        else:
+            lines.append(f"{n}. **{name}** ({size})")
     if len(documents) >= DOCUMENTS_MAX:
         lines.append(
             f"That is the most DMbot keeps here ({DOCUMENTS_MAX}). Remove one to add more."
@@ -128,7 +142,7 @@ class AdventureButton(
     def __init__(self, campaign_id: str) -> None:
         super().__init__(
             discord.ui.Button(
-                label="Give DMbot your adventure",
+                label="Give your adventure",
                 emoji="📖",
                 style=discord.ButtonStyle.primary,
                 row=1,
@@ -190,7 +204,7 @@ class AddButton(
 class AdventureForm(discord.ui.Modal, title="Give DMbot your adventure"):
     file: discord.ui.Label[AdventureForm] = discord.ui.Label(
         text="Your adventure (PDF, Word or text)",  # 45 characters at most
-        description="One file, up to 10 MB. DMbot keeps its words, not the file.",
+        description="One file, up to 10 MB. DMbot keeps the text, not the file.",
         component=discord.ui.FileUpload(max_values=1),
     )
 
@@ -293,16 +307,19 @@ class RemoveButton(
         doc = next((d for d in docs if d.id == self.document_id), None)
         if doc is None:
             await interaction.response.edit_message(
-                content=f"That document is already gone.\n\n{card_text(docs)}",
+                content=f"Already removed.\n\n{card_text(docs)}",
                 view=card_view(campaign, docs),
             )
             return
         view = discord.ui.View(timeout=None)
         view.add_item(RemoveYesButton(campaign.id, doc.id))
         view.add_item(RemoveNoButton(campaign.id))
-        name = discord.utils.escape_markdown(doc.file_name)
+        name = discord.utils.escape_markdown(doc.file_name[:NAME_SHOWN])
         await interaction.response.edit_message(
-            content=f"Remove **{name}**? DMbot forgets its words. You can give it again later.",
+            content=(
+                f"Remove **{name}**? DMbot will forget the text it kept from it. "
+                "You can add the file again later."
+            ),
             view=view,
         )
 
@@ -333,7 +350,7 @@ class RemoveYesButton(
         if campaign is None:
             return
         store = _store(interaction)
-        note = "Removed."
+        note = "Removed. DMbot forgot it."
         try:
             await store.remove(
                 campaign.guild_id, campaign.id, interaction.user.id, self.document_id

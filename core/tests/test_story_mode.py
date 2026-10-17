@@ -239,7 +239,7 @@ class Buttons(Setup):
         self.assertEqual(self.labels(it), ["Off", "Watch the story", "Guide me"])
         self.assertTrue(it.sent["ephemeral"])
         self.assertIn(
-            "Not working yet. DMbot can keep your adventure now, but nothing reads it so far.",
+            "Not working yet. DMbot can keep your adventure, but nothing reads it",
             it.sent["content"],
         )
         self.assertIn("DMbot remembers your table's story only.", it.sent["content"])
