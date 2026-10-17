@@ -202,7 +202,9 @@ from dmbot.rules import index as rules_index
 from dmbot.rules.book_rank import book_is_legacy, book_wins
 from dmbot.rules.followed import followed_rules, own_first
 from dmbot.rules.homebrew import Homebrew, HomebrewSection, HomebrewStore
+from dmbot.rules.homebrew_import import HomebrewImporter
 from dmbot.rules.homebrew_packs import HomebrewPackStore, HomebrewReader
+from dmbot.rules.homebrew_sources import SiteApprovalsSection, SourceStore
 from dmbot.rules.homebrew_spotter import HomebrewMention, HomebrewSpotter
 from dmbot.rules.house import HouseRule, HouseRulesSection, HouseRuleStore
 from dmbot.rules.house_file_link import HouseFileLinkStore
@@ -697,6 +699,8 @@ class DMBot(commands.AutoShardedBot):
         homebrew: HomebrewStore | None = None,
         heard_questions: WaitingQuestionStore | None = None,
         improvement: OptOutStore | None = None,
+        sources: SourceStore | None = None,
+        importer: HomebrewImporter | None = None,
     ) -> None:
         intents = discord.Intents.none()
         intents.guilds = True
@@ -744,6 +748,8 @@ class DMBot(commands.AutoShardedBot):
         self.recaps = recaps  # the cinematic recap of each session (#1382)
         self.suggestions = suggestions  # players' suggested line fixes (#1491)
         self.homebrew = homebrew  # a campaign's own homebrew entries (#1520)
+        self.sources = sources  # which sites a campaign approved, imported pages (#1633)
+        self.importer = importer  # adds homebrew from a published page's link (#1634)
         # "Did they mean…?" questions left unanswered at a session's end (#1572).
         self.heard_questions = heard_questions
         # The last entries a DM removed, per campaign, so the list can put them back (memory only).
@@ -4443,7 +4449,7 @@ class DMBot(commands.AutoShardedBot):
         if self.homebrew is None:
             return None
         packs = self.rule_sets if isinstance(self.rule_sets, HomebrewPackStore) else None
-        return HomebrewReader(self.homebrew, packs)
+        return HomebrewReader(self.homebrew, packs, self.sources)
 
     def homebrew_changed(self, guild_id: int, campaign_id: str) -> None:
         """A DM added, changed, removed or loaded homebrew (#1524): a session running for that
@@ -8055,9 +8061,11 @@ async def run(settings: Settings) -> None:
             if settings.enforce_plans
             else CampaignStore(db)
         )
+        homebrew_store, sources = HomebrewStore(db), SourceStore(db)
         campaigns.register_section(MemorySection())  # campaign memory goes in backups
         campaigns.register_section(HouseRulesSection())  # and so do house rules (#865)
         campaigns.register_section(HomebrewSection())  # and its own homebrew (#1520)
+        campaigns.register_section(SiteApprovalsSection())  # the sites it approved (#1633)
         campaigns.register_section(FollowedSetsSection())  # and the sets it follows (#1260)
         campaigns.register_section(ClockSection())  # and the game clock (#965)
         campaigns.register_section(EffectsSection())  # and its timed effects (#998)
@@ -8084,9 +8092,11 @@ async def run(settings: Settings) -> None:
             PackSuggestionStore(db),  # shared sets and homebrew packs (#1190, #1527, #1537)
             RecapStore(db),
             SuggestionStore(db),
-            HomebrewStore(db),
+            homebrew_store,
             WaitingQuestionStore(db),
             OptOutStore(db),
+            sources,
+            HomebrewImporter(homebrew_store, sources),
         )
         _close_on_sigterm(bot)
         async with bot:

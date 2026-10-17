@@ -649,6 +649,9 @@ on/off line below). At most
 or servers; only the campaign's DMs change anything (the store checks in the same transaction).
 - **Turn an entry on or off, instead of hiding it** (owner, 2026-10-16, #1629, migration 0112, which also drops
   `players_may_know`: every entry is on, a hidden one included): each entry has **Turn off / Turn on** (no confirmation) and shows "(off)" in the list. Off means kept but used nowhere at the table: no lookups or alerts, no sidebar answers, no players' card or table questions, no homebrew spotter (one `usable` read filter). The file writes an `Off: yes` line and reads it back, and the backup carries it (an old backup loads with every entry on); a published pack leaves off entries out; a follower's copy can be turned off on its own and a pack update never turns it back on. The web doors show every entry with `enabled`.
+- **Where an entry came from** (owner, 2026-10-16, #1633, migration 0113; no user-visible change yet): every entry records its source: **typed** (the DM who typed it), **upload** (a file; the uploader by default, or a credit: a website, whose domain needs the same approval as a link's, or a typed name) or **link** (a published page). Entries from before are typed by the DM who made them. A link entry's words and summary are read from its page, so they are not on the entry's row. `homebrew_pages` keeps **one copy per address**, with no campaign scope and no row-level security: the second exception to campaign isolation, next to shared rulesets; it holds nothing about who imported it, and the website's role has no grant on it. `site_approvals` is per campaign (isolated, deleted with the campaign, in its backups): who approved a site and when, once per site. One rule, in the store's read (`_USABLE`), decides what DMbot may use: the entry is on and, if it has a site, that site is approved in this campaign. A backup writes a link entry with its page's content (restore re-points to the page already here, else recreates it) and its sites' approvals. A link entry's words cannot be edited, and it, or an upload credited to a website, is never copied into a pack as words (packs carry them by reference later). Words in a backup file never become a page other campaigns rely on: a page recreated from a backup is `restored` (no fetch time) and is skipped by `page_for` until a fetch replaces it. A backup brings a campaign's site approvals back as they were (decided with the issue). Known costs of one copy per address: the table can tell that some campaign imported an address, and roughly when, never who or where; pages no entry points to are not yet cleaned up (a follow-up).
+- **Who made a loaded file** (owner, 2026-10-16, #1633): at the Load step, after "is any of this from a published book?" answered No, the DM picks **Who made this?**: **Me** (the default), **A website** (the site's domain; the right-to-use warning appears once per site in this campaign, and its approval is kept, then an entry credited to that site can be used) or **Someone else** (a typed name, up to 80 characters). The credit is kept with each new entry of the file; an entry already in the campaign keeps its own.
+- **Add from a link** (owner, 2026-10-16, #1634): ⚙️ Settings → 📚 Homebrew has **🔗 Add from a link** beside ➕ Add and 📥 Load file. The DM pastes the address of ONE published page; only `dndbeyond.com` (and its `www.`) for now, kept as one constant (`rules/dndbeyond.py`); anything else gets "DMbot can only add homebrew from D&D Beyond for now…". The first link from a site in a campaign shows the right-to-use warning once ("I have the right" records the site's approval); after that nothing is asked. The page is read once, when the DM asks, and shown with Save / Cancel before anything is saved: name from the page's heading, kind from the first part of the address's path (magic-items → item, spells → spell, monsters → monster, feats → feat, else other), words as plain text up to 2,000 characters (it says if the end was cut). An address already kept in `homebrew_pages` is re-used, never fetched again. The fetch (`rules/page_fetch.py`, on `dmbot.fetch`'s guards): https on port 443 only; every address the host resolves to must be public (private, loopback and link-local refused, and the connection goes to the addresses checked); redirects only within the allowed site, at most 3; no cookies, no sign-in; a plain user agent naming DMbot; 10 seconds and 2 MB; one page at a time per campaign and six in ten minutes. A 404 or a not-found page says "That page isn't public. Publish your homebrew on D&D Beyond first…"; a block or any other failure says "D&D Beyond didn't answer. Try again in a minute." and is logged without the page or its address. **The terms risk is accepted by the owner:** D&D Beyond's terms limit automated access; the owner reads them as aimed at scraping, which this is not (one page, when one user asks). Revisit if D&D Beyond objects or blocks it. Whether D&D Beyond answers server traffic at all is checked live by dev1.
 - **Where the DM manages it:** ⚙️ Settings → 📚 **Homebrew** (or `/dmbot homebrew`), DM only, checked on every
   press: the list ("(off)" marks an entry that is off), ➕ Add (pick the kind, then a form), and on an entry
   Edit, Turn off / Turn on, its kind, 🗑 Remove. **Undo** a removal is kept in memory (the last five per campaign, gone at a
@@ -705,6 +708,12 @@ differ, this wins.
   later link from the same site in that campaign needs no new confirmation. Who confirmed and when is kept
   (table of approved sites per campaign). A campaign that has not approved a site cannot use content from
   it, whether imported there or reached through a pack.
+- **🔄 Update from the link (#1645).** On a link entry, a DM can fetch its one page again: same guards,
+  same one-at-a-time and hourly limits, and the site's approval checked again. DMbot shows the new words
+  and what changed ("Nothing changed on the page." when so); only **Save** replaces the kept copy, and
+  because there is one copy per address, every campaign pointing at it gets the new words (the button says
+  so). A page that has gone private or been removed is marked stale and its words are kept. A restored
+  page becomes trusted once a fetch replaces it. Nothing refreshes by itself: only a DM's press fetches.
 - **Every entry records its source.** The database keeps, for every entry:
   - **Link:** the address it came from and its site (the domain), plus who added it.
   - **Typed:** the Discord user who typed it.
@@ -745,9 +754,19 @@ never does.
   with a name. Within the server, other DMs pick it from a list; for another server, the publishing DM gets a
   **share code** to hand out (it can be turned off, which stops new followers only). Try It campaigns can
   follow but not publish (they have no backups either).
-- **What a set may hold:** only content the campaign's DMs wrote themselves. **Never** anything from a shared
+- **What a set may hold** (updated 2026-10-16, #1635, "Homebrew (part 2)"): a homebrew pack holds the campaign's
+  homebrew: anything but an entry from a shared rulebook or adventure. **Never** anything from a shared
   rulebook or adventure (the right to use it was confirmed for one campaign only, CLAUDE.md, IP), checked by
   where each entry came from; never story memory, names, transcripts, DM notes or character sheets.
+  **Imported entries travel by reference:** an entry imported from a published page is a pointer in the pack
+  (the page's address and site, no words and no summary), because the page is kept once in `homebrew_pages`.
+  An upload credited to a website carries its words and names the site. **A follower must approve each site
+  once per campaign** before its entries are used (the same right-to-use step as importing): the Homebrew
+  packs card says how many entries from which site are waiting and has a button for each (**Use dndbeyond.com**),
+  the follow step and an update's DM-screen note say so too, and approving turns the entries on with no other
+  step. A new site in an update waits the same way; a site already approved asks nothing. A pointer whose page
+  isn't kept here (or was only recreated from a backup) is skipped, not shown. A declined change that holds a
+  pointer lands in the campaign's own homebrew as the same page.
 - **One writer.** Only the publishing campaign's DMs change a set; every change is logged with who, which
   campaign and when. *(Supervisor, 2026-10-14, #1256: no separate co-editor list. To let another DM edit the
   set, make them a DM of the publishing campaign. Publishing a version can be undone: Undo publishes the earlier

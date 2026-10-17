@@ -10,9 +10,13 @@ from unittest.mock import AsyncMock
 
 from dmbot.campaigns import CampaignStore
 from dmbot.dm_screen.settings import HomebrewButton
+from dmbot.rules import page_fetch
 from dmbot.rules.homebrew import FileEntry, HomebrewSection, HomebrewStore
+from dmbot.rules.homebrew_import import HomebrewImporter
+from dmbot.rules.homebrew_sources import SiteApprovalsSection, SourceStore
 from dmbot.ui import homebrew as ui
 from tests.pg import DatabaseTest
+from tests.test_homebrew_import import URL, Fetches
 from tests.test_memory_names import FakeResponse
 
 GUILD, DM, PLAYER = 111, 7, 9
@@ -23,11 +27,17 @@ class HomebrewUiTest(DatabaseTest):
         await super().asyncSetUp()
         self.campaigns = CampaignStore(self.db)
         self.campaigns.register_section(HomebrewSection())
+        self.campaigns.register_section(SiteApprovalsSection())
         self.store = HomebrewStore(self.db)
+        self.sources = SourceStore(self.db)
+        self.net = Fetches()
+        self.importer = HomebrewImporter(self.store, self.sources, fetch=self.net)
         self.campaign = await self.campaigns.create(GUILD, "Frostmaiden", DM)
         self.bot = SimpleNamespace(
             campaigns=self.campaigns,
             homebrew=self.store,
+            sources=self.sources,
+            importer=self.importer,
             homebrew_removed={},
             active_campaign_id=lambda g: None,
         )
@@ -304,10 +314,17 @@ class TheFile(HomebrewUiTest):
 
     async def test_no_loads_it_as_the_dms_own_and_records_no_confirmation(self) -> None:
         ask = ui.FromBookAsk(self.campaign, (FileEntry("feat", "House", "Mine."),), "a" * 64, 0)
+        asked = self.press()
+        await ask._own(asked)
+        self.assertIn("Who made these?", self.said(asked))  # one more question, nothing stored yet
+        self.assertEqual(await self.store.list(GUILD, self.campaign.id), [])
         it = self.press()
-        await ask._own(it)
+        await ui.WhoMade(self.campaign, ask.entries, ask.digest, 0)._me(it)
         (saved,) = await self.store.list(GUILD, self.campaign.id)
         self.assertFalse(saved.from_book)
+        self.assertEqual(
+            (saved.source_kind, saved.credit_kind, saved.added_by), ("upload", "user", DM)
+        )
         self.assertEqual(await self.campaigns.confirmations(GUILD, self.campaign.id), [])
         self.assertIn("Loaded: 1 new", self.said(it))
 
@@ -347,8 +364,8 @@ class TheFile(HomebrewUiTest):
 
     async def test_the_question_is_only_for_a_book_and_each_answer_is_kept(self) -> None:
         entries = (FileEntry("feat", "Mine", "Words."),)
-        own = ui.FromBookAsk(self.campaign, entries, "f" * 64, 0)
-        await own._own(self.press())  # "No, all my own": no question, no edition
+        own = ui.WhoMade(self.campaign, entries, "f" * 64, 0)
+        await own._me(self.press())  # "No, all my own", then "Me": no question, no edition
         (saved,) = await self.store.list(GUILD, self.campaign.id)
         self.assertEqual((saved.from_book, saved.book_edition), (False, None))
         for edition in ("2024", "other"):
@@ -359,12 +376,83 @@ class TheFile(HomebrewUiTest):
         got = {e.name: e.book_edition for e in await self.store.list(GUILD, self.campaign.id)}
         self.assertEqual(got, {"Mine": None, "Book 2024": "2024", "Book other": "other"})
 
+    async def test_someone_else_credits_a_typed_name(self) -> None:
+        who = ui.WhoMade(self.campaign, (FileEntry("feat", "Borrowed", "Words."),), "e" * 64, 0)
+        form = ui.NameForm(who)
+        form.name._value = "  Sam   Rivers "
+        it = self.press()
+        await form.on_submit(it)
+        (saved,) = await self.store.list(GUILD, self.campaign.id)
+        self.assertEqual(
+            (saved.source_kind, saved.credit_kind, saved.credit_text, saved.credit_domain),
+            ("upload", "name", "Sam Rivers", None),
+        )
+        self.assertIn("Credited to Sam Rivers", self.said(it))
+        self.assertEqual(await self.sources.approvals(GUILD, self.campaign.id), [])  # no site
+
+    async def test_a_website_asks_once_and_only_the_confirmation_stores_and_approves(self) -> None:
+        who = ui.WhoMade(self.campaign, (FileEntry("feat", "Webby", "Words."),), "e" * 64, 0)
+        form = ui.SiteForm(who)
+        form.site._value = "https://www.DNDBeyond.com/magic-items/1-x"
+        it = self.press()
+        await form.on_submit(it)
+        self.assertIn("right to use homebrew from dndbeyond.com", self.said(it))
+        self.assertEqual(await self.store.list(GUILD, self.campaign.id), [])  # nothing yet
+        self.assertEqual(await self.sources.approvals(GUILD, self.campaign.id), [])
+        right = self.view_of(it)
+        self.assertEqual(
+            [getattr(c, "label", "") for c in right.children], ["Cancel", "I have the right"]
+        )
+        await right._confirmed(self.press(PLAYER))  # a player's press changes nothing
+        self.assertEqual(await self.sources.approvals(GUILD, self.campaign.id), [])
+        done = self.press()
+        await right._confirmed(done)
+        (saved,) = await self.store.list(GUILD, self.campaign.id)
+        self.assertEqual(
+            (saved.credit_kind, saved.credit_domain, saved.credit_text),
+            ("website", "dndbeyond.com", None),
+        )
+        (approval,) = await self.sources.approvals(GUILD, self.campaign.id)
+        self.assertEqual((approval.domain, approval.approved_by), ("dndbeyond.com", DM))
+        self.assertIn("Credited to dndbeyond.com", self.said(done))
+        # The second time for the same site in this campaign needs no new warning.
+        again = ui.WhoMade(self.campaign, (FileEntry("feat", "Webby Two", "More."),), "f" * 64, 0)
+        form2 = ui.SiteForm(again)
+        form2.site._value = "dndbeyond.com"
+        quick = self.press()
+        await form2.on_submit(quick)
+        self.assertIn("Loaded: 1 new", self.said(quick))
+        self.assertEqual(len(await self.sources.approvals(GUILD, self.campaign.id)), 1)
+
+    async def test_a_bad_site_loads_nothing_and_cancel_approves_nothing(self) -> None:
+        who = ui.WhoMade(self.campaign, (FileEntry("feat", "Webby", "Words."),), "e" * 64, 0)
+        form = ui.SiteForm(who)
+        for bad in ("", "not a site", "http://example.com", "10.0.0.1"):
+            form.site._value = bad
+            it = self.press()
+            await form.on_submit(it)
+            self.assertIn("can't read that as a website", self.said(it))
+        form.site._value = "example.org"
+        await form.on_submit(self.press())
+        right = ui.RightToUseSite(who, "example.org")
+        await right._cancel(self.press())
+        self.assertEqual(await self.store.list(GUILD, self.campaign.id), [])
+        self.assertEqual(await self.sources.approvals(GUILD, self.campaign.id), [])
+
+    async def test_only_a_dm_gets_the_who_made_it_buttons(self) -> None:
+        who = ui.WhoMade(self.campaign, (FileEntry("feat", "X", "y"),), "e" * 64, 0)
+        for press in (who._me, who._site, who._someone):
+            it = self.press(PLAYER)
+            await press(it)
+        self.assertEqual(await self.store.list(GUILD, self.campaign.id), [])
+        self.assertIsNone(self.press(PLAYER).response.modal)
+
     async def test_a_file_over_the_limit_is_refused_with_the_count(self) -> None:
         for n in range(200):
             await self.store.add(GUILD, self.campaign.id, DM, kind="feat", name=f"R{n}", text="x")
-        ask = ui.FromBookAsk(self.campaign, (FileEntry("feat", "One more", "x"),), "d" * 64, 0)
+        ask = ui.WhoMade(self.campaign, (FileEntry("feat", "One more", "x"),), "d" * 64, 0)
         it = self.press()
-        await ask._own(it)
+        await ask._me(it)
         self.assertIn("would make 201 entries", self.said(it))
         self.assertEqual(len(await self.store.list(GUILD, self.campaign.id)), 200)
 
@@ -377,3 +465,101 @@ class OnlyOnce(HomebrewUiTest):
         await right._pick("2024", again)
         self.assertEqual(len(await self.campaigns.confirmations(GUILD, self.campaign.id)), 1)
         self.assertIn("already being loaded", self.said(again))
+
+
+class FromALink(HomebrewUiTest):
+    """🔗 Add from a link (#1634): the address, the once-per-site warning, the preview, Save."""
+
+    async def submit(self, address: str, user: int = DM) -> Any:
+        form = ui.LinkForm(self.campaign, 0)
+        form.address._value = address
+        it = self.press(user)
+        await form.on_submit(it)
+        return it
+
+    def test_the_button_is_beside_add_and_the_old_ones_stay(self) -> None:
+        labels = [
+            str(getattr(c, "label", "")) for c in ui.ListMenu(self.campaign, [], 0, []).children
+        ]
+        self.assertIn("🔗 Add from a link", labels)
+        self.assertTrue({"➕ Add", ui.LOAD_LABEL, ui.DOWNLOAD_LABEL} <= set(labels))
+
+    async def test_only_a_dm_gets_the_form(self) -> None:
+        menu = ui.ListMenu(self.campaign, [], 0, [])
+        it = self.press(PLAYER)
+        await menu._link(it)
+        self.assertIsNone(it.response.modal)
+        it = self.press()
+        await menu._link(it)
+        self.assertIsInstance(it.response.modal, ui.LinkForm)
+        it = await self.submit(URL, PLAYER)
+        self.assertEqual(self.net.asked, [])
+
+    async def test_another_site_is_told_what_is_allowed_and_nothing_is_fetched(self) -> None:
+        for address in (
+            "https://example.com/spells/1-x",
+            "http://www.dndbeyond.com/spells/1-x",
+            "x",
+        ):
+            it = await self.submit(address)
+            self.assertIn("only add homebrew from D&D Beyond", self.said(it))
+        self.assertEqual(self.net.asked, [])
+
+    async def test_the_first_link_asks_once_then_reads_then_saves_and_the_second_asks_nothing(
+        self,
+    ) -> None:
+        it = await self.submit(URL)
+        self.assertIn("right to use homebrew from dndbeyond.com", self.said(it))
+        self.assertEqual(self.net.asked, [])  # nothing is read before the confirmation
+        self.assertEqual(await self.sources.approvals(GUILD, self.campaign.id), [])
+        right = self.view_of(it)
+        self.assertEqual(
+            [getattr(c, "label", "") for c in right.children], ["Cancel", "I have the right"]
+        )
+        await right._confirmed(self.press(PLAYER))  # a player's press changes nothing
+        self.assertEqual(await self.sources.approvals(GUILD, self.campaign.id), [])
+        shown = self.press()
+        await right._confirmed(shown)
+        self.assertEqual(len(await self.sources.approvals(GUILD, self.campaign.id)), 1)
+        self.assertEqual(len(self.net.asked), 1)
+        self.assertIn("Moonlit Charm", self.said(shown))
+        self.assertIn("Not saved yet. Press **Save**", self.said(shown))
+        self.assertEqual(await self.store.list(GUILD, self.campaign.id), [])  # not saved yet
+        preview = self.view_of(shown)
+        done = self.press()
+        await preview._save(done)
+        (saved,) = await self.store.list(GUILD, self.campaign.id)
+        self.assertEqual(
+            (saved.name, saved.source_kind, saved.page_url), ("Moonlit Charm", "link", URL)
+        )
+        self.assertIn("Added **Moonlit Charm**", self.said(done))
+        # A second page from the same site in this campaign asks nothing.
+        second = await self.submit(URL.replace("2302039-moonlit-charm", "9-other") + "")
+        self.assertIn("Not saved yet. Press **Save**", self.said(second))
+        self.assertEqual(len(await self.sources.approvals(GUILD, self.campaign.id)), 1)
+
+    async def test_another_campaign_asks_again_and_cancel_adds_and_approves_nothing(self) -> None:
+        other = await self.campaigns.create(GUILD, "Other", DM)
+        await self.sources.approve(GUILD, other.id, DM, "dndbeyond.com")
+        it = await self.submit(URL)  # this campaign has not approved the site
+        right = self.view_of(it)
+        await right._cancel(self.press())
+        self.assertEqual(await self.sources.approvals(GUILD, self.campaign.id), [])
+        self.assertEqual(await self.store.list(GUILD, self.campaign.id), [])
+        self.assertEqual(self.net.asked, [])
+
+    async def test_not_public_and_no_answer_are_plain_and_a_double_save_adds_once(self) -> None:
+        await self.sources.approve(GUILD, self.campaign.id, DM, "dndbeyond.com")
+        self.net.reply = page_fetch.Reply(404, "")
+        it = await self.submit(URL)
+        self.assertIn("That page isn't public", self.said(it))
+        self.net.reply = page_fetch.Reply(500, "")
+        it = await self.submit(URL)
+        self.assertIn("D&D Beyond didn't answer", self.said(it))
+        self.net.reply = page_fetch.Reply(200, "<h1>Zap</h1><p>It zaps.</p>")
+        shown = await self.submit(URL)
+        preview = self.view_of(shown)
+        await preview._save(self.press())
+        again = self.press()
+        await preview._save(again)
+        self.assertEqual(len(await self.store.list(GUILD, self.campaign.id)), 1)

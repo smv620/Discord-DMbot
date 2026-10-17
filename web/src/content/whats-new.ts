@@ -126,6 +126,20 @@ export interface Held extends Entry {
 export const held: Held[] = [
   {
     date: "2026-10-16",
+    title: "Share imported homebrew in a pack",
+    what: "A pack can now include homebrew you added from a link. It travels as a pointer to the page, not a copy, and a table that follows the pack says once, for each site, that it has the right to use it before those entries are used.",
+    reason:
+      "Goes with adding homebrew from a link, which waits for dev1's try on a real page (#1634, #1635).",
+  },
+  {
+    date: "2026-10-16",
+    title: "Add homebrew from a link",
+    what: "In Settings, then Homebrew, press Add from a link and paste the address of a published homebrew page. DMbot reads that one page, shows it to you, and saves it only when you press Save. The first time for a site, you say you have the right to use it; after that it asks nothing. You can also say who made a file you load.",
+    reason:
+      "Held until dev1 has tried one real published page from the server: the site may block server traffic (#1634).",
+  },
+  {
+    date: "2026-10-16",
     title: "Fix a line",
     what: "If DMbot wrote one of your lines down wrong, type /dmbot fix, or press Fix one of my lines after a session, then pick the line and type what it should say. Your DM says yes or no on the DM screen, and nothing changes unless they say yes. DMs can fix any line themselves: type /dmbot fix or press Fix a line on the DM screen. It changes right away, and you can Undo it while the session runs.",
     reason: "Held until it has been seen working on the test server (#1491, #1499).",

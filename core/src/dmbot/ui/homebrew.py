@@ -36,6 +36,8 @@ from dmbot.rules.homebrew import (
     HomebrewStore,
     name_key,
 )
+from dmbot.rules.homebrew_import import ImportRefused, Preview, Refresh
+from dmbot.rules.site_urls import normalise_domain, normalise_url
 from dmbot.ui import logic
 from dmbot.ui.dmbot_commands import (
     NO_PINGS,
@@ -92,6 +94,8 @@ CHANGED_MIND = "Press ↩️ **Undo** to bring it back."
 FILE_MAX_BYTES = 4 * homebrew_file.MAX_FILE_CHARS  # UTF-8 is up to 4 bytes a character
 DOWNLOAD_LABEL = "📤 Download file"
 LOAD_LABEL = "📥 Load file"
+LINK_LABEL = "🔗 Add from a link"
+PREVIEW_SHOWN = 700  # characters of the page's words shown before saving
 DOWNLOAD_NOTE = (
     "**Your homebrew file.** Only you can see this message. Open it in any text editor, change "
     "it, then press **Load file** to bring it back. Nothing changes until you check it and say "
@@ -110,6 +114,16 @@ FROM_BOOK_WARNING = (
     "never goes into a shared ruleset.\n"
     "You can remove it any time. It is deleted with the campaign."
 )
+
+WHO_MADE_ASK = "**Who made these?** Pick one. The name stays with the entries."
+SITE_WARNING = (
+    "**Do you have the right to use homebrew from {site}?**\n"
+    "DMbot doesn't check. Press **I have the right** if you may use it in this campaign. "
+    "DMbot records that you said so, and when.\n"
+    "It stays in this campaign only and is never shared. You can remove it any time. DMbot "
+    "won't ask again for {site} here."
+)
+BAD_SITE = "DMbot can't read that as a website. Try something like dndbeyond.com."
 
 KIND_LABELS = {
     "spell": "✨ Spell",
@@ -248,6 +262,7 @@ class ListMenu(_Menu):
         super().__init__()
         self.campaign, self.entries, self.page = campaign, entries, page
         self.add_item(_Button(self._add, label="➕ Add", style=discord.ButtonStyle.primary))
+        self.add_item(_Button(self._link, label=LINK_LABEL))
         if page > 0:
             self.add_item(_Button(self._newer, label="◀ Newer"))
         if (page + 1) * PAGE_ENTRIES < len(entries):
@@ -281,6 +296,12 @@ class ListMenu(_Menu):
             await _tell(interaction, ONLY_DMS)
             return
         await _show(interaction, KIND_ASK, KindPick(self.campaign, self.page))
+
+    async def _link(self, interaction: discord.Interaction) -> None:
+        if not await _is_dm(interaction, self.campaign):
+            await _tell(interaction, ONLY_DMS)
+            return
+        await interaction.response.send_modal(LinkForm(self.campaign, self.page))
 
     async def _download(self, interaction: discord.Interaction) -> None:
         if not await _is_dm(interaction, self.campaign):
@@ -411,6 +432,8 @@ class EntryMenu(_Menu):
         self.add_item(_Button(self._edit, label="✏️ Edit"))
         self.add_item(_Button(self._enabled, label="Turn on" if not entry.enabled else "Turn off"))
         self.add_item(_Button(self._remove, label="🗑 Remove", style=discord.ButtonStyle.danger))
+        if entry.source_kind == "link" and entry.page_url:
+            self.add_item(_Button(self._update, label=UPDATE_LABEL))
         if self.packs:
             self.add_item(_Button(self._suggest, label=SUGGEST_LABEL))
         self.add_item(_Button(self._back, label="↩ To the list"))
@@ -503,6 +526,28 @@ class EntryMenu(_Menu):
         )
         await _show(interaction, entry_text(saved, note), EntryMenu(c, saved, self.page, packs))
 
+    async def _update(self, interaction: discord.Interaction) -> None:
+        """🔄 Update from the link (#1645): fetch the page again at this DM's press, show what
+        changed, save only on Save."""
+        if not await self._guard(interaction):
+            return
+        await _answer_first(interaction, in_place=True)
+        importer = _bot(interaction).importer
+        if importer is None:
+            await _tell(interaction, NOT_READY)
+            return
+        c, e = self.campaign, self.entry
+        try:
+            fresh = await importer.refresh(c.guild_id, c.id, e)
+        except ImportRefused as exc:
+            await _show(
+                interaction,
+                entry_text(e, f"⚠️ {exc}"),
+                EntryMenu(c, e, self.page, self.packs),
+            )
+            return
+        await _show(interaction, update_preview_text(fresh), UpdatePreview(c, e, self.page, fresh))
+
     async def _remove(self, interaction: discord.Interaction) -> None:
         if await self._guard(interaction):
             await _show(
@@ -532,6 +577,24 @@ class EntryMenu(_Menu):
 
     async def _back(self, interaction: discord.Interaction) -> None:
         await _redraw(interaction, self.campaign, page=self.page)
+
+
+UPDATE_LABEL = "🔄 Update from the link"
+UPDATE_WARNING = "Every table using this page gets the update."
+
+
+def update_preview_text(fresh: Refresh) -> str:
+    """The warning comes before the page's words, so trimming a long page never cuts it."""
+    preview = fresh.preview
+    lines = [f"🔄 **{_md(preview.name)}**, from {preview.domain}", fresh.note]
+    if fresh.changed:
+        words = preview.text
+        shown = words if len(words) <= PREVIEW_SHOWN else words[: PREVIEW_SHOWN - 1].rstrip() + "…"
+        lines.append(f"Not saved yet. {UPDATE_WARNING}")
+        lines.append(_md(shown))
+        if preview.truncated:
+            lines.append("_The page was longer than DMbot keeps, so the end was cut._")
+    return _fit("\n".join(lines), 1900)
 
 
 def suggest_text(entry: Homebrew, pack_name: str) -> str:
@@ -894,7 +957,14 @@ class FromBookAsk(_Menu):
         self.add_item(_Button(self._cancel, label="Cancel"))
 
     async def _own(self, interaction: discord.Interaction) -> None:
-        await self._load(interaction, from_book=False)
+        if not await _is_dm(interaction, self.campaign):
+            await _tell(interaction, ONLY_DMS)
+            return
+        await _show(
+            interaction,
+            WHO_MADE_ASK,
+            WhoMade(self.campaign, self.entries, self.digest, self.page),
+        )
 
     async def _book(self, interaction: discord.Interaction) -> None:
         if not await _is_dm(interaction, self.campaign):
@@ -912,7 +982,12 @@ class FromBookAsk(_Menu):
     used = False  # one answer only: a double press must not record the confirmation twice
 
     async def _load(
-        self, interaction: discord.Interaction, *, from_book: bool, edition: str | None = None
+        self,
+        interaction: discord.Interaction,
+        *,
+        from_book: bool,
+        edition: str | None = None,
+        credit: tuple[str, str | None, str | None] = ("user", None, None),
     ) -> None:
         await _answer_first(interaction, in_place=True)
         if not await _is_dm(interaction, self.campaign):
@@ -946,6 +1021,7 @@ class FromBookAsk(_Menu):
                 self.entries,
                 from_book=from_book,
                 book_edition=edition,
+                credit=credit,
             )
         except HomebrewError as exc:
             await _redraw(interaction, c, note=str(exc), page=self.page)
@@ -953,6 +1029,12 @@ class FromBookAsk(_Menu):
         self.stop()
         _changed(interaction, c)
         words = f"📥 Loaded: {done.added} new, {done.updated} changed, {done.same} the same."
+        if credit[0] == "user":
+            words += " Credited to you."
+        elif credit[0] == "website":
+            words += f" Credited to {credit[2]}."
+        elif credit[0] == "name":
+            words += f" Credited to {_md(' '.join((credit[1] or '').split()))}."
         if from_book:
             for_rules = {"2024": "2024 book", "2014": "2014 book"}.get(edition or "", "add-on book")
             words += (
@@ -960,6 +1042,330 @@ class FromBookAsk(_Menu):
                 " Your confirmation is recorded."
             )
         await _redraw(interaction, c, note=words, page=self.page)
+
+
+class LinkForm(discord.ui.Modal, title="Add from a link"):
+    """One box: the address of a published homebrew page (#1634). Only the sites DMbot adds
+    homebrew from are accepted; the first time for a site in a campaign, the right-to-use warning
+    comes first; then the page is read once and shown before anything is saved."""
+
+    address: discord.ui.TextInput[LinkForm] = discord.ui.TextInput(
+        label="Link to the published page",
+        max_length=500,
+        placeholder="https://www.dndbeyond.com/magic-items/…",
+    )
+
+    def __init__(self, campaign: Campaign, page: int) -> None:
+        super().__init__(timeout=VIEW_TIMEOUT_S)
+        self.campaign, self.page = campaign, page
+
+    async def on_error(  # type: ignore[override]  # a form's has no item (discord.py)
+        self, interaction: discord.Interaction, error: Exception
+    ) -> None:
+        await _failed(interaction, error)
+
+    async def on_submit(self, interaction: discord.Interaction) -> None:
+        await _answer_first(interaction, in_place=True)
+        c = self.campaign
+        if not await _is_dm(interaction, c):
+            await _tell(interaction, ONLY_DMS)
+            return
+        bot = _bot(interaction)
+        if bot.importer is None or bot.sources is None:
+            await _tell(interaction, NOT_READY)
+            return
+        try:
+            url, domain = bot.importer.check_address(self.address.value)
+        except ImportRefused as exc:
+            await _tell(interaction, str(exc))
+            return
+        if not await bot.sources.approved(c.guild_id, c.id, domain):  # said once before: no warning
+            await _show(
+                interaction,
+                SITE_WARNING.format(site=domain),
+                RightToUseLink(c, self.page, url, domain),
+            )
+            return
+        await read_link(interaction, c, self.page, url)
+
+
+async def read_link(
+    interaction: discord.Interaction, campaign: Campaign, page: int, url: str
+) -> None:
+    """Read the page once (a page kept here is re-used, not fetched again) and show what was
+    found with Save / Cancel. Nothing is saved yet."""
+    importer = _bot(interaction).importer
+    if importer is None:
+        await _tell(interaction, NOT_READY)
+        return
+    try:
+        preview = await importer.read(campaign.guild_id, campaign.id, url)
+    except ImportRefused as exc:
+        await _redraw(interaction, campaign, note=str(exc), page=page)
+        return
+    await _show(interaction, link_preview_text(preview), LinkPreview(campaign, page, preview))
+
+
+def link_preview_text(preview: Preview) -> str:
+    words = preview.text
+    shown = words if len(words) <= PREVIEW_SHOWN else words[: PREVIEW_SHOWN - 1].rstrip() + "…"
+    what = "" if preview.kind == "other" else f" ({preview.kind.capitalize()})"
+    lines = [f"🔗 **{_md(preview.name)}**{what}, from {preview.domain}", _md(shown)]
+    if preview.truncated:
+        lines.append("_The page was longer than DMbot keeps, so the end was cut._")
+    lines.append("Not saved yet. Press **Save** to add it to your homebrew.")
+    return _fit("\n".join(lines), 1900)
+
+
+class RightToUseLink(_Menu):
+    """The site warning for a link, and the one button that confirms it: the approval is kept
+    for the site in this campaign (who and when), then the page is read."""
+
+    def __init__(self, campaign: Campaign, page: int, url: str, domain: str) -> None:
+        super().__init__()
+        self.campaign, self.page, self.url, self.domain = campaign, page, url, domain
+        self.add_item(_Button(self._cancel, label="Cancel"))  # first: the safe one
+        self.add_item(
+            _Button(self._confirmed, label="I have the right", style=discord.ButtonStyle.danger)
+        )
+
+    used = False
+
+    async def _cancel(self, interaction: discord.Interaction) -> None:
+        await _redraw(interaction, self.campaign, note="Nothing was added.", page=self.page)
+
+    async def _confirmed(self, interaction: discord.Interaction) -> None:
+        if not await _is_dm(interaction, self.campaign):
+            await _tell(interaction, ONLY_DMS)
+            return
+        sources = _bot(interaction).sources
+        if sources is None or self.used:
+            if sources is None:
+                await _tell(interaction, NOT_READY)
+            return
+        self.used = True  # a double press records the confirmation once
+        await _answer_first(interaction, in_place=True)
+        c = self.campaign
+        try:
+            await sources.approve(c.guild_id, c.id, interaction.user.id, self.domain)
+        except HomebrewError as exc:
+            await _redraw(interaction, c, note=str(exc), page=self.page)
+            return
+        log.info("Site approved for homebrew: user=%s campaign=%s", interaction.user.id, c.id)
+        self.stop()
+        await read_link(interaction, c, self.page, self.url)
+
+
+class LinkPreview(_Menu):
+    """What was read from the page, with Save and Cancel."""
+
+    def __init__(self, campaign: Campaign, page: int, preview: Preview) -> None:
+        super().__init__()
+        self.campaign, self.page, self.preview = campaign, page, preview
+        self.add_item(_Button(self._save, label="Save", style=discord.ButtonStyle.primary))
+        self.add_item(_Button(self._cancel, label="Cancel"))
+
+    used = False
+
+    async def _cancel(self, interaction: discord.Interaction) -> None:
+        await _redraw(interaction, self.campaign, note="Nothing was added.", page=self.page)
+
+    async def _save(self, interaction: discord.Interaction) -> None:
+        await _answer_first(interaction, in_place=True)
+        if not await _is_dm(interaction, self.campaign):
+            await _tell(interaction, ONLY_DMS)
+            return
+        if self.used:
+            await _tell(interaction, "Already saving this. Give it a second.")
+            return
+        self.used = True  # (checked and set with no await between: a second press sees it)
+        c = self.campaign
+        importer = _bot(interaction).importer
+        if importer is None:
+            await _tell(interaction, NOT_READY)
+            return
+        try:
+            saved = await importer.save(c.guild_id, c.id, interaction.user.id, self.preview)
+        except ImportRefused as exc:
+            await _redraw(interaction, c, note=str(exc), page=self.page)
+            return
+        self.stop()
+        _changed(interaction, c)
+        note = f"🔗 Added **{_md(saved.name)}**. DMbot uses it now."
+        await _redraw(interaction, c, note=note, page=self.page)
+
+
+class UpdatePreview(_Menu):
+    """The page fetched again, with Save and Cancel (#1645). When nothing changed there is
+    nothing to save."""
+
+    def __init__(self, campaign: Campaign, entry: Homebrew, page: int, fresh: Refresh) -> None:
+        super().__init__()
+        self.campaign, self.entry, self.page, self.fresh = campaign, entry, page, fresh
+        if fresh.changed:
+            self.add_item(_Button(self._save, label="Save", style=discord.ButtonStyle.primary))
+        self.add_item(_Button(self._cancel, label="Cancel" if fresh.changed else "OK"))
+
+    used = False
+
+    async def _again(self, interaction: discord.Interaction, note: str) -> None:
+        packs = await _packs_followed(interaction, self.campaign)
+        entry = self.entry
+        store = _store(interaction)
+        if store is not None:  # (the words shown are the page's: read the entry as it is now)
+            entry = await store.get(self.campaign.guild_id, self.campaign.id, entry.id) or entry
+        await _show(
+            interaction, entry_text(entry, note), EntryMenu(self.campaign, entry, self.page, packs)
+        )
+
+    async def _cancel(self, interaction: discord.Interaction) -> None:
+        await _answer_first(interaction, in_place=True)
+        await self._again(interaction, "Nothing was changed.")
+
+    async def _save(self, interaction: discord.Interaction) -> None:
+        await _answer_first(interaction, in_place=True)
+        if not await _is_dm(interaction, self.campaign):
+            await _tell(interaction, ONLY_DMS)
+            return
+        if self.used:
+            await _tell(interaction, "Already saving this. Give it a second.")
+            return
+        self.used = True
+        c = self.campaign
+        importer = _bot(interaction).importer
+        if importer is None:
+            await _tell(interaction, NOT_READY)
+            return
+        try:
+            await importer.save_refresh(c.guild_id, c.id, self.fresh.preview)
+        except ImportRefused as exc:
+            await self._again(interaction, f"⚠️ {exc}")
+            return
+        self.stop()
+        _changed(interaction, c)
+        await self._again(interaction, f"✅ Updated. {UPDATE_WARNING}")
+
+
+class WhoMade(FromBookAsk):
+    """Before anything is stored (#1633): who made these? Me (the default), a website (its site
+    needs the campaign's once-per-site approval), or someone else, by name."""
+
+    def __init__(
+        self, campaign: Campaign, entries: tuple[FileEntry, ...], digest: str, page: int
+    ) -> None:
+        _Menu.__init__(self)
+        self.campaign, self.entries, self.digest, self.page = campaign, entries, digest, page
+        self.add_item(_Button(self._me, label="Me", style=discord.ButtonStyle.primary))
+        self.add_item(_Button(self._site, label="A website"))
+        self.add_item(_Button(self._someone, label="Someone else"))
+        self.add_item(_Button(self._cancel, label="Cancel"))
+
+    async def _me(self, interaction: discord.Interaction) -> None:
+        await self._load(interaction, from_book=False)
+
+    async def _site(self, interaction: discord.Interaction) -> None:
+        if await _is_dm(interaction, self.campaign):
+            await interaction.response.send_modal(SiteForm(self))
+        else:
+            await _tell(interaction, ONLY_DMS)
+
+    async def _someone(self, interaction: discord.Interaction) -> None:
+        if await _is_dm(interaction, self.campaign):
+            await interaction.response.send_modal(NameForm(self))
+        else:
+            await _tell(interaction, ONLY_DMS)
+
+
+class NameForm(discord.ui.Modal, title="Who made them?"):
+    name: discord.ui.TextInput[NameForm] = discord.ui.TextInput(
+        label="Their name", max_length=NAME_MAX, placeholder="A name, like Sam"
+    )
+
+    def __init__(self, owner: WhoMade) -> None:
+        super().__init__(timeout=VIEW_TIMEOUT_S)
+        self.owner = owner
+
+    async def on_error(  # type: ignore[override]  # a form's has no item (discord.py)
+        self, interaction: discord.Interaction, error: Exception
+    ) -> None:
+        await _failed(interaction, error)
+
+    async def on_submit(self, interaction: discord.Interaction) -> None:
+        await self.owner._load(interaction, from_book=False, credit=("name", self.name.value, None))
+
+
+class SiteForm(discord.ui.Modal, title="Which website?"):
+    site: discord.ui.TextInput[SiteForm] = discord.ui.TextInput(
+        label="Website", max_length=200, placeholder="dndbeyond.com"
+    )
+
+    def __init__(self, owner: WhoMade) -> None:
+        super().__init__(timeout=VIEW_TIMEOUT_S)
+        self.owner = owner
+
+    async def on_error(  # type: ignore[override]  # a form's has no item (discord.py)
+        self, interaction: discord.Interaction, error: Exception
+    ) -> None:
+        await _failed(interaction, error)
+
+    async def on_submit(self, interaction: discord.Interaction) -> None:
+        await _answer_first(interaction, in_place=True)
+        owner = self.owner
+        typed = self.site.value.strip()
+        address = normalise_url(typed) if "://" in typed else None
+        domain = address[1] if address else normalise_domain(typed)
+        if domain is None:
+            await _tell(interaction, BAD_SITE)
+            return
+        if not await _is_dm(interaction, owner.campaign):
+            await _tell(interaction, ONLY_DMS)
+            return
+        sources = _bot(interaction).sources
+        if sources is None:
+            await _tell(interaction, NOT_READY)
+            return
+        c = owner.campaign
+        if await sources.approved(c.guild_id, c.id, domain):  # said once before: no new warning
+            await owner._load(interaction, from_book=False, credit=("website", None, domain))
+            return
+        await _show(
+            interaction,
+            SITE_WARNING.format(site=domain),
+            RightToUseSite(owner, domain),
+        )
+
+
+class RightToUseSite(FromBookAsk):
+    """The site warning, and the one button that confirms it. The approval is kept for the site
+    in this campaign, with who confirmed and when."""
+
+    def __init__(self, owner: WhoMade, domain: str) -> None:
+        _Menu.__init__(self)
+        self.campaign, self.entries = owner.campaign, owner.entries
+        self.digest, self.page = owner.digest, owner.page
+        self.owner, self.domain = owner, domain
+        self.add_item(_Button(self._cancel, label="Cancel"))  # first: the safe one
+        self.add_item(
+            _Button(self._confirmed, label="I have the right", style=discord.ButtonStyle.danger)
+        )
+
+    async def _confirmed(self, interaction: discord.Interaction) -> None:
+        if not await _is_dm(interaction, self.campaign):
+            await _tell(interaction, ONLY_DMS)
+            return
+        sources = _bot(interaction).sources
+        if sources is None:
+            await _tell(interaction, NOT_READY)
+            return
+        await _answer_first(interaction, in_place=True)
+        c = self.campaign
+        try:
+            await sources.approve(c.guild_id, c.id, interaction.user.id, self.domain)
+        except HomebrewError as exc:
+            await _redraw(interaction, c, note=str(exc), page=self.page)
+            return
+        log.info("Site approved for homebrew: user=%s campaign=%s", interaction.user.id, c.id)
+        await self.owner._load(interaction, from_book=False, credit=("website", None, self.domain))
 
 
 class RightToUse(FromBookAsk):
