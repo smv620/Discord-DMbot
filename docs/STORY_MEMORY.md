@@ -824,7 +824,7 @@ Each step is useful on its own and ships behind the existing phases.
    <its summary, cut at 150 characters>" or "This is the book's last chapter."; then the clashes Watch the
    story already told for this chapter, each with its **📋 Book's words**. **Which chapter:** the one with
    the most table entries the DM linked to the book (`plan_same_as`) among those heard in the last two
-   sessions (`memory_mentions`); a tie goes to the later chapter. There is **one chapter rule**, in SQL in
+   sessions (`memory_heard`, where a session's names are kept); a tie goes to the later chapter. There is **one chapter rule**, in SQL in
    `book_links` (`chapter_of` gives the name, `chapter_id_of` the id): the nearest chapter at or before an
    entry in its file, the later when two share a place. Both the "(Chapter …)" text and Guide me use it.
    **"Pick my chapter…"** saves the DM's word (migration 0126, `plan_position`: one row for each file; it

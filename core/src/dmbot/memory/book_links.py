@@ -96,7 +96,8 @@ def _nearest_chapter(alias: str, column: str) -> str:
         f"(SELECT c.{column} FROM plan_nodes c WHERE c.guild_id = {alias}.guild_id"
         f" AND c.campaign_id = {alias}.campaign_id AND c.document_id = {alias}.document_id"
         " AND c.kind = 'chapter'"
-        f" AND c.position <= {alias}.position ORDER BY c.position DESC, c.created_at DESC LIMIT 1)"
+        f" AND c.position <= {alias}.position"
+        " ORDER BY c.position DESC, c.created_at DESC, c.id DESC LIMIT 1)"
     )
 
 

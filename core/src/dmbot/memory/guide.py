@@ -16,6 +16,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from dataclasses import dataclass, field
+from typing import Any
 
 from dmbot.memory._changes import PLAN_POSITION
 from dmbot.memory.book_links import chapter_id_of
@@ -38,15 +39,17 @@ NODES = """
     ORDER BY n.position, n.created_at, n.id
 """
 # The table entry the DM linked to each book entry of the file, and whether it was heard in one of
-# the last sessions. Kept apart from NODES: a few rows, so the joins stay cheap whatever the plan.
+# the last sessions (`memory_heard`, where a session's names are kept: the primary key leads with
+# the session, so the newest two are an index walk). Kept apart from NODES: a few rows, so the
+# joins stay cheap whatever the plan.
 LINKED = """
     WITH recent AS (
-        SELECT DISTINCT session_started_at FROM memory_mentions
-        WHERE guild_id = %(g)s AND campaign_id = %(c)s AND session_started_at IS NOT NULL
+        SELECT DISTINCT session_started_at FROM memory_heard
+        WHERE guild_id = %(g)s AND campaign_id = %(c)s
         ORDER BY session_started_at DESC LIMIT %(sessions)s
     )
     SELECT sa.plan_id, e.name,
-           EXISTS (SELECT 1 FROM memory_mentions m WHERE m.guild_id = e.guild_id
+           EXISTS (SELECT 1 FROM memory_heard m WHERE m.guild_id = e.guild_id
                AND m.campaign_id = e.campaign_id AND m.entity_id = e.id
                AND m.session_started_at IN (SELECT session_started_at FROM recent)) AS heard
     FROM plan_same_as sa
@@ -171,6 +174,14 @@ async def read(
     return nodes, pick
 
 
+async def _lock(w: Any, campaign_id: str, document_id: str) -> None:
+    """One pick or clear at a time for a file, so two never interleave."""
+    await w.conn.execute(
+        "SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))",
+        (f"dmbot.plan_position:{campaign_id}:{document_id}",),
+    )
+
+
 async def pick(
     memory: MemoryStore,
     guild_id: int,
@@ -182,10 +193,7 @@ async def pick(
     """The DM says the table is in this chapter. Returns the batch to pass to `memory.undo`."""
     async with memory._write(guild_id, campaign_id, DM) as w:
         # Two picks at once for one file: the second waits and then updates the first's row.
-        await w.conn.execute(
-            "SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))",
-            (f"dmbot.plan_position:{campaign_id}:{document_id}",),
-        )
+        await _lock(w, campaign_id, document_id)
         cur = await w.conn.execute(
             "SELECT 1 FROM plan_nodes WHERE guild_id = %s AND campaign_id = %s AND id = %s"
             " AND document_id = %s AND kind = 'chapter'",
@@ -218,10 +226,7 @@ async def clear(
 ) -> int | None:
     """Back to DMbot's guess. Returns the batch to undo (None when there was no pick)."""
     async with memory._write(guild_id, campaign_id, DM) as w:
-        await w.conn.execute(  # the same lock as `pick`, so the two never interleave
-            "SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))",
-            (f"dmbot.plan_position:{campaign_id}:{document_id}",),
-        )
+        await _lock(w, campaign_id, document_id)  # the same lock as `pick`
         for row in await w.select(PLAN_POSITION, " AND document_id = %s", [document_id]):
             await w.delete(PLAN_POSITION, row["id"])
         return w.batch

@@ -4,7 +4,6 @@ AI. The chapter rule and the guess are pure; the rest needs the test database.""
 from __future__ import annotations
 
 import unittest
-import uuid
 from dataclasses import replace
 from types import SimpleNamespace
 from typing import Any
@@ -176,10 +175,9 @@ class Setup(base.Setup):
     async def hear(self, entity: str, session: int) -> None:
         async with self.db.guild(GUILD_A) as conn:
             await conn.execute(
-                "INSERT INTO memory_mentions (guild_id, campaign_id, id, entity_id,"
-                " session_started_at, line_ref, span_start, span_end, confidence, method,"
-                " created_at) VALUES (%s, %s, %s, %s, %s, 'l', 0, 3, 1, 'dm', 1)",
-                (GUILD_A, self.c, uuid.uuid4().hex, entity, session),
+                "INSERT INTO memory_heard (guild_id, campaign_id, entity_id,"
+                " session_started_at, speaker_id, times) VALUES (%s, %s, %s, %s, 7, 1)",
+                (GUILD_A, self.c, entity, session),
             )
 
     async def linked(self, ids: dict[str, str], name: str, session: int | None) -> str:

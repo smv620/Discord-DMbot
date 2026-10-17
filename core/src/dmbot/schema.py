@@ -2204,10 +2204,6 @@ PLAN_POSITION = f"""
         FOREIGN KEY (guild_id, campaign_id, chapter_id)
             REFERENCES plan_nodes (guild_id, campaign_id, id) ON DELETE CASCADE
     );
-    -- Guide me asks for the two newest sessions that have names heard in them; without this it
-    -- would read every mention of the campaign.
-    CREATE INDEX memory_mentions_by_session ON memory_mentions (guild_id, campaign_id,
-        session_started_at DESC) WHERE session_started_at IS NOT NULL;
     """ + _isolate("plan_position")
 
 GAMETIME_CHANNEL = """

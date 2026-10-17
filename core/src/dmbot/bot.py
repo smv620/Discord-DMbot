@@ -2021,11 +2021,16 @@ class DMBot(commands.AutoShardedBot):
         """May the pre-session note carry 🧭 What's next? (#1731)? The same three checks a press
         makes: the switch is on **Guide me**, a DM said here they have the right (a confirmation
         from a backup is not one), and the owner's plan allows it (closed, like the reader)."""
-        return (
-            campaign.story_mode == STORY_GUIDE
-            and await self.campaigns.story_confirmed(guild_id, campaign.id)
-            and await self.plan_allows("adventure", guild_id, campaign, fail_open=False)
-        )
+        if campaign.story_mode != STORY_GUIDE:
+            return False
+        try:
+            return bool(
+                await self.campaigns.story_confirmed(guild_id, campaign.id)
+                and await self.plan_allows("adventure", guild_id, campaign, fail_open=False)
+            )
+        except Exception:  # a read that failed costs the button, never the whole note
+            log.exception("Couldn't check the Guide me button")
+            return False
 
     async def _waiting_recaps(self, table: Table) -> None:
         """A session starts and a finished recap from before is still waiting for the DM (#1474):
