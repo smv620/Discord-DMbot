@@ -701,6 +701,12 @@ Each step is useful on its own and ships behind the existing phases.
    with the thread. A thread's card shows "Came from" and "Led to", at most five names each then
    "+N more", from the one thread read; a clue's or event's card shows the same from a single read
    of its own links. A link is not the thread moving, so it does not reset its quiet count.
+   **Promises due soon (#1680):** the pre-session note gains up to two lines, "🤝 Due soon: <who> →
+   <whom>: <what> (due: <note>)", for the promises the DM put in **Due soon**, the quietest first, then
+   "🤝 +N more promises due soon". A promise without both parties reads "🤝 Due soon: <what>". The claims
+   line sits above the thread lines, so a full note cuts those, never it. The due note is shown
+   as the DM wrote it, never parsed into a date. They come from the same `threads()` read as the quiet
+   line (no new query), and the 🧵 Threads button covers them. DM screen only, like threads.
 3. **Phase 5c: PlotBot:** threads, promises, clues, `led_to`, stalled-thread nudges,
    summaries, the pre-session note, the AI recap.
 4. **Phase 5d: Shared story:** the story plan, `same_as` links, divergence ("Watch
