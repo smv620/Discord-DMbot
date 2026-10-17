@@ -16,7 +16,7 @@ from dmbot.config import ConfigError, load_settings
 from dmbot.memory import presession
 from dmbot.memory.claims import ClaimStore, Extracted
 from dmbot.memory.models import DEAD, Heard
-from dmbot.memory.presession import Facts, Note, PreSession, compose
+from dmbot.memory.presession import Due, Facts, Note, PreSession, compose
 from dmbot.memory.recall import RecallService
 from tests.test_config import BASE
 from tests.test_memory_store import GUILD_A, MemoryTest
@@ -64,6 +64,77 @@ class Wording(unittest.TestCase):
         assert many is not None
         self.assertEqual(many.lines, ("🧵 Quiet threads: A, B, C (+2 more)",))
         self.assertEqual(many.quiet, 5)
+
+    def test_due_soon_promises_are_two_lines_and_a_count(self) -> None:
+        self.assertIsNone(compose(Facts(due_soon=())))
+        a = Due("bring the healer back", "Kael", "Dunhollow", "the full moon")
+        b = Due("guard the ford", "Mira", "The Harpers")
+        note = compose(Facts(due_soon=[a, b]))
+        assert note is not None
+        self.assertEqual(
+            note.lines,
+            (
+                "🤝 Due soon: Kael → Dunhollow: bring the healer back (due: the full moon)",
+                "🤝 Due soon: Mira → The Harpers: guard the ford",
+            ),
+        )
+        self.assertEqual(note.quiet, 2)  # the 🧵 Threads button covers them
+        more = compose(Facts(due_soon=[a, b, Due("c"), Due("d")]))
+        assert more is not None
+        self.assertEqual(len(more.lines), 3)
+        self.assertEqual(more.lines[2], "🤝 +2 more promises due soon")
+        self.assertEqual(more.quiet, 4)
+
+    def test_the_claims_line_survives_a_full_note_and_a_stalled_promise_counts_once(self) -> None:
+        full = Facts(
+            "Recap",
+            3,
+            ["a", "b", "c"],
+            [("X", "dead"), ("Y", "lost"), ("Z", "missing")],
+            2,
+            ["Vow"],
+            [Due("Vow"), Due("Other"), Due("Third")],
+        )
+        note = compose(full)
+        assert note is not None
+        self.assertEqual(len(note.lines), presession.MAX_LINES)
+        self.assertTrue(any("waiting for your check" in x for x in note.lines))
+        self.assertEqual(note.waiting, 2)
+        room = compose(Facts(quiet_threads=["Vow"], due_soon=[Due("Vow"), Due("Other")]))
+        assert room is not None
+        self.assertEqual(room.quiet, 2)  # "Vow" is on the quiet line and a due line: once
+
+    def test_no_orphaned_more_line_when_the_due_lines_did_not_fit(self) -> None:
+        big = Facts(
+            open_facts=["x" * 130] * 3,
+            conditions=[("N" * 100, "dead")] * 3,
+            quiet_threads=["q" * 100],
+            due_soon=[Due("a"), Due("b"), Due("c")],
+        )
+        note = compose(big)
+        assert note is not None
+        if not any(x.startswith(presession.DUE_PREFIX) for x in note.lines):
+            self.assertFalse([x for x in note.lines if x.startswith(presession.MORE_DUE)])
+
+    def test_a_missing_due_note_leaves_out_the_due_part(self) -> None:
+        note = compose(Facts(due_soon=[Due("p", "Kael", "Dunhollow")]))
+        assert note is not None
+        self.assertEqual(note.lines, ("🤝 Due soon: Kael → Dunhollow: p",))
+
+    def test_a_promise_without_both_parties_uses_the_short_form(self) -> None:
+        for d in (Due("pay the toll"), Due("pay the toll", "Kael"), Due("pay the toll", "", "X")):
+            note = compose(Facts(due_soon=[d]))
+            assert note is not None
+            self.assertEqual(note.lines, ("🤝 Due soon: pay the toll",))
+
+    def test_a_due_line_is_clipped_and_cannot_open_markdown(self) -> None:
+        note = compose(Facts(due_soon=[Due("x" * 400, "*K*", "[Y](z)", "_soon_")]))
+        assert note is not None
+        self.assertLessEqual(len(note.lines[0]), presession.LINE_CHARS)
+        short = compose(Facts(due_soon=[Due("p", "*K*", "[Y](z)", "_soon_")]))
+        assert short is not None
+        self.assertIn("\\*K\\*", short.lines[0])
+        self.assertIn("\\[Y\\]\\(z\\)", short.lines[0])
 
     def test_no_button_when_the_quiet_line_did_not_fit(self) -> None:
         facts = Facts(
@@ -189,6 +260,54 @@ class Selecting(MemoryTest):
         line = next(x for x in note.lines if x.startswith("🧵"))
         self.assertEqual(line, "🧵 Quiet threads: Old thread, Newer thread")
         self.assertEqual(note.quiet, 2)
+
+    async def promise_at(
+        self, name: str, when: int, state: str, campaign: str | None = None
+    ) -> str:
+        self.now = when
+        made = await self.memory.new_thread(
+            GUILD_A, campaign or self.c, name, "promise", state, source="dm"
+        )
+        return made.value.id
+
+    async def test_due_soon_promises_come_quietest_first_with_their_words(self) -> None:
+        kael = await self.entry("Kael")
+        village = await self.entry("Dunhollow", type="place")
+        await self.promise_at("Guard the ford", S2 + 10, "active")
+        older = await self.promise_at("Bring the healer back", S1 - 100, "active")
+        await self.promise_at("Quiet vow", S1 - 100, "open")  # not Due soon: no line
+        await self.promise_at("Kept vow", S1 - 100, "resolved")
+        await self.memory.promise_party(GUILD_A, self.c, older, kael, to=False, source="dm")
+        await self.memory.promise_party(GUILD_A, self.c, older, village, to=True, source="dm")
+        await self.memory.set_due(GUILD_A, self.c, older, "the full moon", source="dm")
+        await self.later_sessions()
+        note = await self.service().note(
+            GUILD_A, self.c, now=LATER, opted_in=AGREED, stalled_after=3
+        )
+        assert note is not None
+        due = [x for x in note.lines if x.startswith("🤝")]
+        self.assertEqual(
+            due,
+            [
+                "🤝 Due soon: Kael → Dunhollow: Bring the healer back (due: the full moon)",
+                "🤝 Due soon: Guard the ford",
+            ],
+        )
+
+    async def test_no_due_soon_promise_means_no_line(self) -> None:
+        await self.promise_at("Open vow", LATER, "open")
+        await self.later_sessions()
+        note = await self.note()
+        assert note is not None
+        self.assertFalse([x for x in note.lines if x.startswith("🤝")])
+
+    async def test_another_campaigns_promises_never_appear(self) -> None:
+        other = (await self.campaigns.create(GUILD_A, "Elsewhere", 7)).id
+        await self.promise_at("Theirs", S2 + 10, "active", campaign=other)
+        await self.later_sessions()
+        note = await self.note()
+        assert note is not None
+        self.assertNotIn("Theirs", note.text)
 
     async def test_no_quiet_thread_means_no_line(self) -> None:
         await self.thread_at("Fine thread", LATER)

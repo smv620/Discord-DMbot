@@ -83,6 +83,29 @@ class Chain(ConfirmedMemoryTest):
             with self.assertRaises(MemoryRuleError):
                 await self.link(a, b)
 
+    async def test_an_unconfirmed_end_is_told_to_confirm_first_by_both_paths(self) -> None:
+        from dmbot.memory.store import LED_TO_CONFIRM, LED_TO_KINDS
+
+        waiting = await self.add("The unconfirmed lead", type="event", status="proposed")
+        person = await self.add("Mira", type="character", role="npc")
+        for a, b in ((waiting, self.heir), (self.map, waiting)):
+            with self.assertRaises(MemoryRuleError) as button:
+                await self.link(a, b)
+            with self.assertRaises(MemoryRuleError) as connect:
+                await self.memory.add_relation(
+                    GUILD_A, self.c, a, "led_to", b, confidence=0.5, source="dm"
+                )
+            self.assertEqual(str(button.exception), LED_TO_CONFIRM)
+            self.assertEqual(str(connect.exception), LED_TO_CONFIRM)
+        with self.assertRaises(MemoryRuleError):  # an extractor's try is told the same
+            await self.memory.add_relation(
+                GUILD_A, self.c, waiting, "led_to", self.heir, confidence=0.5, source="extractor"
+            )
+        self.assertEqual(await self.memory.chain(GUILD_A, self.c, self.heir), ([], []))  # no row
+        with self.assertRaises(MemoryRuleError) as kinds:  # confirmed but the wrong kind
+            await self.link(person, self.heir)
+        self.assertEqual(str(kinds.exception), LED_TO_KINDS)
+
     async def test_a_link_to_itself_or_a_loop_is_refused(self) -> None:
         with self.assertRaises(MemoryRuleError):
             await self.link(self.heir, self.heir)
