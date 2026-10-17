@@ -29,6 +29,11 @@ GUILD, DM = 111, 7
 
 
 class Kinds(unittest.TestCase):
+    def test_every_kind_has_a_label(self) -> None:
+        from dmbot.ui.homebrew import KIND_LABELS
+
+        self.assertEqual(set(KIND_LABELS), set(KINDS))
+
     def test_rule_is_not_a_kind(self) -> None:
         self.assertNotIn("rule", KINDS)
         self.assertEqual(
