@@ -169,7 +169,9 @@ database.
     anyone in the server may download a paid campaign's backup and the DM confirmed the right to
     use that text in that campaign only. A restore shows each as "give DMbot this file again".
     The story plan read from that text (#1714) is left out for the same reason, and so are its
-    read records; reading again rebuilds it.
+    read records; reading again rebuilds it. **One thing of it is kept:** what the reading cost,
+    as amounts by file fingerprint and month (#1723), so a restore does not give a file a fresh $3
+    or a campaign a fresh $10; a replace never lowers what a campaign has already spent.
   - **Flags DMbot closes itself get no status of their own (decided 2026-10-08, #347):**
     Undo of the close reopens the flag (#362), and a clash that comes back is flagged
     again when the fact is written again, so the realistic case (the DM undoes a
