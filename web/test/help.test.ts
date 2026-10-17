@@ -10,7 +10,7 @@ import { beforeAll, describe, expect, it } from "vitest";
 import { parsePage } from "./dom";
 
 import { entries, held } from "../src/content/whats-new";
-import { RULES_CHANNEL_LIVE, rulesChannelSteps, DEEDS_LIVE, deedSteps, WHERE_ARE_WE_LIVE, whereAreWeSteps, SHARED_STORY_LIVE, sharedStorySteps, STANDING_LIVE, standingSteps, HOMEBREW_KINDS_LIVE, homebrewKindSteps, STORY_THREADS_LIVE, storyThreadSteps, DM_BOT_CHANNEL_LIVE, dmBotChannelSteps, settingsOnDmScreenSteps, HOMEBREW_LINKS_LIVE, SECRET_CLUES_LIVE, accountSteps, dmSteps, homebrewLinkSteps, secretClueSteps, emailSteps, recapSteps, quickAnswers, quickAnswersHeading, gettingHelp, playerSteps } from "../src/content/help";
+import { TIME_SUGGESTIONS_LIVE, timeSuggestionSteps, RULES_CHANNEL_LIVE, rulesChannelSteps, DEEDS_LIVE, deedSteps, WHERE_ARE_WE_LIVE, whereAreWeSteps, SHARED_STORY_LIVE, sharedStorySteps, STANDING_LIVE, standingSteps, HOMEBREW_KINDS_LIVE, homebrewKindSteps, STORY_THREADS_LIVE, storyThreadSteps, DM_BOT_CHANNEL_LIVE, dmBotChannelSteps, settingsOnDmScreenSteps, HOMEBREW_LINKS_LIVE, SECRET_CLUES_LIVE, accountSteps, dmSteps, homebrewLinkSteps, secretClueSteps, emailSteps, recapSteps, quickAnswers, quickAnswersHeading, gettingHelp, playerSteps } from "../src/content/help";
 import Help from "../src/pages/help.astro";
 
 const botDir = fileURLToPath(new URL("../../core/src/dmbot/", import.meta.url));
@@ -275,6 +275,16 @@ describe("Help: the website's read-only pages (#1588)", () => {
     expect(words).toContain("Only DMbot posts in dmb-rules. Players can't, and neither can you.");
     expect(words).toContain("Hiding the DM screen again closes both.");
     expect(words).toContain("Each rule is shown in your own words.");
+  });
+
+  it("holds the time suggestion step with its held What's new entry (#1765)", () => {
+    expect(held.map((h) => h.title).includes("A time suggestion from your narration")).toBe(!TIME_SUGGESTIONS_LIVE);
+    const shown = dmSteps.map((x) => x.text).join(" ");
+    expect(shown.includes("DMbot may suggest a jump on your DM screen")).toBe(TIME_SUGGESTIONS_LIVE);
+    const words = timeSuggestionSteps.map((x) => x.text).join(" ");
+    expect(words).toContain("press Not now to skip it, or Undo to put it back. Players never see it.");
+    expect(words).toContain("only if you agreed to recording");
+    expect(words).toContain("It is off unless the person who runs your DMbot turns it on.");
   });
 
   it("holds the deeds and where-are-we steps with their held What's new entries (#1754)", () => {

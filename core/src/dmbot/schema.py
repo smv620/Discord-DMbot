@@ -1994,6 +1994,26 @@ RULES_CHANNEL = """
     ALTER TABLE campaigns ADD COLUMN rules_channel_id BIGINT;
 """
 
+NPCS_CHANNEL = f"""
+    -- The NPC roster channel (docs/PLAN.md, "Channels"; #1761): `dmb-npcs-<slug>`, a controlled
+    -- channel that follows the DM screen's visibility and lists the confirmed NPCs and groups the
+    -- players may know, read only. Like the other channel ids it means nothing in another server,
+    -- so none goes into a backup. A nullable column: no row changes, so no row-level-security
+    -- policy.
+    ALTER TABLE campaigns ADD COLUMN npcs_channel_id BIGINT;
+
+    -- Which Discord message shows which entry, so the channel's text never carries an id. Message
+    -- ids mean nothing in another server, so it is not in a backup either; a lost row is made
+    -- good at the next start (DMbot's own messages with no row are deleted and posted again).
+    -- `entry_id` is an entry's id, or 'more' for the "+N more" message. New table, no rows.
+    CREATE TABLE npcs_channel_messages (
+        {_memory_scope()}
+        entry_id    TEXT NOT NULL CHECK (length(entry_id) BETWEEN 1 AND 32),
+        message_id  BIGINT NOT NULL,
+        PRIMARY KEY (guild_id, campaign_id, entry_id)
+    );
+    """ + _isolate("npcs_channel_messages")
+
 STORY_MODE = """
     -- The Shared story switch (docs/STORY_MEMORY.md, section 6; #1692): Off (the default),
     -- Watch the story or Guide me. Nothing reads it yet: the story-plan reader, the divergence
@@ -6835,6 +6855,7 @@ MIGRATIONS: tuple[Migration, ...] = (
     ("0125_plan_divergences", PLAN_DIVERGENCES),  # the table has left the adventure (#1729)
     ("0126_plan_position", PLAN_POSITION),  # the chapter the DM says the table is in (#1731)
     ("0127_rules_channel", RULES_CHANNEL),  # the rules archive channel (#1752)
+    ("0128_npcs_channel", NPCS_CHANNEL),  # the NPC roster channel (#1761)
 )
 
 # Tables that must have row-level security. A test checks every table in the schema
@@ -6889,6 +6910,7 @@ ISOLATED_TABLES = (
     "plan_same_as",
     "plan_divergences",
     "plan_position",
+    "npcs_channel_messages",
 )
 # A person's own rows (the website, #435): row-level security on `user_id`, set by
 # Database.user(). Sessions can also be found by their cookie hash (Database.session()),
