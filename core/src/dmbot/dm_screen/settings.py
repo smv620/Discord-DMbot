@@ -25,6 +25,7 @@ from typing import Any
 
 import discord
 
+from dmbot import features
 from dmbot.campaigns import Campaign, CampaignStore
 from dmbot.campaigns.invite import parse_invite
 from dmbot.campaigns.models import (
@@ -173,6 +174,7 @@ def settings_view(campaign: Campaign, offer: HandoverOffer | None, viewer: int) 
         view.add_item(SharedRulesButton(campaign.id))  # shared house rules (#1190)
         view.add_item(HomebrewButton(campaign.id))  # the campaign's own homebrew (#1520)
         view.add_item(TranscriptsButton(campaign.id))  # how long transcripts are kept (#1533)
+        view.add_item(FeaturesButton(campaign.id, row=1))  # what is switched on (#1831)
         view.add_item(GameMastersButton(campaign.id, row=2))  # who the DMs are (#1600)
         view.add_item(DeleteButton(campaign.id))  # delete the campaign, plan holder only (#1608)
         view.add_item(story_mode.StoryButton(campaign.id, row=0))  # Shared story (#1692)
@@ -295,6 +297,55 @@ class SettingsButton(
             task = asyncio.create_task(looking, name="owner-check")
             _OWNER_CHECKS.add(task)  # a task nobody holds can be collected before it ends
             task.add_done_callback(_OWNER_CHECKS.discard)
+
+
+class FeaturesButton(
+    discord.ui.DynamicItem[discord.ui.Button[discord.ui.View]],
+    template=rf"dmbot:features:{_ID}",
+):
+    """What's switched on, on the Settings card: a private list of the features the person who runs
+    this DMbot has turned on (#1831). Names and on or off only, no values. Campaign DMs only."""
+
+    def __init__(self, campaign_id: str, row: int | None = None) -> None:
+        super().__init__(
+            discord.ui.Button(
+                label=features.BUTTON_LABEL,
+                emoji="ℹ️",
+                style=discord.ButtonStyle.secondary,
+                row=row,
+                custom_id=f"dmbot:features:{campaign_id}",
+            )
+        )
+        self.campaign_id = campaign_id
+
+    @classmethod
+    async def from_custom_id(
+        cls, interaction: discord.Interaction, item: discord.ui.Item[Any], match: re.Match[str]
+    ) -> FeaturesButton:
+        return cls(match["campaign"])
+
+    async def callback(self, interaction: discord.Interaction) -> Any:
+        set_log_context(guild_id=interaction.guild_id)
+        store = getattr(interaction.client, "campaigns", None)
+        guild = interaction.guild
+        campaign: Campaign | None = None
+        if store is not None and guild is not None:
+            try:
+                campaign = await store.get(guild.id, self.campaign_id)
+            except Exception:
+                log.exception("Couldn't load a campaign for the features list")
+                await interaction.response.send_message(LOAD_FAILED, ephemeral=True)
+                return
+        if campaign is None:
+            await interaction.response.send_message(GONE, ephemeral=True)
+            return
+        if interaction.user.id not in campaign.dm_user_ids:  # on every press
+            await interaction.response.send_message(ONLY_DM, ephemeral=True)
+            return
+        settings = getattr(interaction.client, "settings", None)
+        await interaction.response.send_message(
+            features.whats_on_text(settings), ephemeral=True, allowed_mentions=NO_PINGS
+        )
 
 
 class RuleLookupButton(
