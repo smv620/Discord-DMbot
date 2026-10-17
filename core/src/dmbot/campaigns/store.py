@@ -28,7 +28,7 @@ from typing import Any, Literal, LiteralString, Protocol, cast
 from psycopg import errors as pg_errors
 from psycopg import sql
 
-from dmbot import entitlements
+from dmbot import entitlements, fight_style
 from dmbot.campaigns import offer_notify
 from dmbot.campaigns.invite import parse_invite
 from dmbot.campaigns.models import (
@@ -297,6 +297,7 @@ _SETTABLE = frozenset(
         "dndbeyond_invite",
         "rules_cards",
         "side_initiative",
+        "initiative_style",
         "transcript_keep_days",
         "transcript_deleted_noted",
         "recaps_text",
@@ -709,6 +710,13 @@ class CampaignStore:
         """How much DMbot says in the DM screen: quiet, normal or chatty (#504)."""
         check_dm_screen_level(level)
         return await self._set(guild_id, campaign_id, "dm_screen_level", level)
+
+    async def set_initiative_style(
+        self, guild_id: int, campaign_id: str, style: str | None
+    ) -> Campaign:
+        """Keep the initiative style a DM's words set (#1784), or forget it (None). The caller
+        writes only when it changes."""
+        return await self._set(guild_id, campaign_id, "initiative_style", style)
 
     async def set_side_initiative(self, guild_id: int, campaign_id: str, on: bool) -> Campaign:
         """Side-based initiative (#1127): a DM's setting, off by default. DMbot tracks rounds
@@ -1344,6 +1352,7 @@ class CampaignStore:
                 "dm_screen_level": campaign.dm_screen_level,
                 "rules_cards": campaign.rules_cards,
                 "side_initiative": campaign.side_initiative,
+                "initiative_style": campaign.initiative_style,
                 "story_mode": campaign.story_mode,
                 "transcript_keep_days": campaign.transcript_keep_days,
                 "recaps_text": campaign.recaps_text,
@@ -1422,7 +1431,8 @@ class CampaignStore:
                     "UPDATE campaigns SET target_ruleset = %s, fallback_ruleset = %s,"
                     " optional_rules_default = %s, last_played_at = %s,"
                     " dm_screen_visibility = %s, dm_screen_level = %s, rules_cards = %s,"
-                    " table_chat = %s, side_initiative = %s, story_mode = %s,"
+                    " table_chat = %s, side_initiative = %s, initiative_style = %s,"
+                    " story_mode = %s,"
                     " recaps_text = %s, recaps_audio = %s, recaps_email = %s,"
                     # The invite link is not touched: it is the DM's join link for this
                     # server's table, and a backup doesn't record which server it came from,
@@ -1441,6 +1451,7 @@ class CampaignStore:
                         info["rules_cards"],
                         info["table_chat"],
                         info["side_initiative"],
+                        info["initiative_style"],
                         info["story_mode"],
                         info["recaps_text"],
                         info["recaps_audio"],
@@ -1491,6 +1502,12 @@ class CampaignStore:
                             "UPDATE campaigns SET side_initiative = TRUE"
                             " WHERE guild_id = %s AND id = %s",
                             (guild_id, campaign_id),
+                        )
+                    if info["initiative_style"] is not None:  # a new campaign keeps none
+                        await conn.execute(
+                            "UPDATE campaigns SET initiative_style = %s"
+                            " WHERE guild_id = %s AND id = %s",
+                            (info["initiative_style"], guild_id, campaign_id),
                         )
                     if info["story_mode"] != STORY_OFF:  # a new campaign starts with it off
                         await conn.execute(
@@ -1713,6 +1730,7 @@ def _to_campaign(row: dict[str, Any], dms: set[int]) -> Campaign:
         rules_cards=bool(row.get("rules_cards", False)),  # older schemas (tests) have none
         side_initiative=bool(row.get("side_initiative", False)),
         story_mode=str(row.get("story_mode", STORY_OFF)),
+        initiative_style=row.get("initiative_style"),
         transcript_keep_days=row_int(row, "transcript_keep_days")
         if "transcript_keep_days" in row
         else None,
@@ -1908,6 +1926,13 @@ def _validate_backup(
     if not isinstance(side_initiative, bool):
         raise CampaignError(DAMAGED)
 
+    # Backups made before the initiative style was kept have none remembered (#1784).
+    initiative_style = campaign.get("initiative_style")
+    if initiative_style is not None and (
+        not isinstance(initiative_style, str) or initiative_style not in fight_style.SAVED_STYLES
+    ):
+        raise CampaignError(DAMAGED)
+
     # Backups made before the Shared story switch existed have it off. (Whether a mode other
     # than off is kept depends on who restores the file: `import_backup`, #1692.)
     story_mode = campaign.get("story_mode", STORY_OFF)
@@ -1962,6 +1987,7 @@ def _validate_backup(
         "rules_cards": rules_cards,
         "side_initiative": side_initiative,
         "story_mode": story_mode,
+        "initiative_style": initiative_style,
         "transcript_keep_days": keep_days,
         **recap_choices,
         "dndbeyond_invite": invite,

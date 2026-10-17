@@ -2014,6 +2014,18 @@ NPCS_CHANNEL = f"""
     );
     """ + _isolate("npcs_channel_messages")
 
+INITIATIVE_STYLE = """
+    -- How the table runs initiative, as the DM's words last set it (docs/PLAN.md, "FightBot",
+    -- "Initiative style, heard"; #1784): `each`, `side`, `reroll`, then `+declare` when actions
+    -- are declared first, or `declare` alone. NULL: nothing remembered. A nullable column: no
+    -- row changes, so no row-level-security policy. It goes in a backup with the campaign.
+    ALTER TABLE campaigns ADD COLUMN initiative_style TEXT
+        CHECK (initiative_style IN (
+            'each', 'side', 'reroll', 'declare',
+            'each+declare', 'side+declare', 'reroll+declare'
+        ));
+"""
+
 STORY_MODE = """
     -- The Shared story switch (docs/STORY_MEMORY.md, section 6; #1692): Off (the default),
     -- Watch the story or Guide me. Nothing reads it yet: the story-plan reader, the divergence
@@ -6856,6 +6868,7 @@ MIGRATIONS: tuple[Migration, ...] = (
     ("0126_plan_position", PLAN_POSITION),  # the chapter the DM says the table is in (#1731)
     ("0127_rules_channel", RULES_CHANNEL),  # the rules archive channel (#1752)
     ("0128_npcs_channel", NPCS_CHANNEL),  # the NPC roster channel (#1761)
+    ("0129_initiative_style", INITIATIVE_STYLE),  # the initiative style FightBot heard (#1784)
 )
 
 # Tables that must have row-level security. A test checks every table in the schema
