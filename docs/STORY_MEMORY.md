@@ -714,6 +714,18 @@ Each step is useful on its own and ships behind the existing phases.
 5. **Throughout:** the ontology steward and graph curator take over the after-session
    cleanup; their health numbers (duplicates, orphans, unused terms, flags per session,
    how often the DM is asked, warnings ignored) go to the server logs, never to players.
+   **The graph's health numbers are built (#1699).** After each session's other after-session work
+   there is one line per campaign in the server log, counts only, never a name or any text, and
+   never shown to a player or a DM: `memory health: entities=N confirmed=N proposed=N duplicates=N
+   orphans=N unused_terms=N flags_this_session=N asked_dm=N`. *entities* is the live entities
+   (confirmed + proposed); *duplicates* is pairs of confirmed entities of one kind (people
+   excepted) that share a name or an alias key and are not joined by a live `same_as` link;
+   *orphans* is confirmed entities (people excepted) with no live relation that were not heard in
+   the last three sessions; *unused_terms* is the campaign's own relationship terms that no live
+   relation uses; *flags_this_session* is the continuity and rule-check flags raised since the
+   session began; *asked_dm* is the claims waiting for the DM from that session plus the "Did they
+   mean…?" questions put to the DM. One read per campaign, counted in SQL; a failed read is a
+   warning and never stops the other after-session steps (`dmbot.memory.health`).
 
 TimeBot (Phase 4) makes game-time checks exact; until then facts are ordered by session,
 as today.
