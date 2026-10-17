@@ -3320,6 +3320,18 @@ class DMBot(commands.AutoShardedBot):
             guild = discord.Object(id=self.settings.dev_guild_id)
             self.tree.copy_global_to(guild=guild)
             await self.tree.sync(guild=guild)
+        # One-time cleanup (DISCORD_CLEAR_GUILD_COMMANDS): servers that still show the old
+        # per-server copy next to the global commands. Never the dev server, which keeps its copy.
+        if 0 in self.settings.shards.ids:
+            for guild_id in self.settings.clear_guild_commands:
+                if guild_id == self.settings.dev_guild_id:
+                    continue
+                old = discord.Object(id=guild_id)
+                try:
+                    self.tree.clear_commands(guild=old)
+                    await self.tree.sync(guild=old)
+                except discord.HTTPException:
+                    log.warning("Couldn't clear the old commands in %s", guild_id, exc_info=True)
 
     async def on_guild_join(self, guild: discord.Guild) -> None:
         """DMbot was just added to a server: say hello, or say what it still needs."""

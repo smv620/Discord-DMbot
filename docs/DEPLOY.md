@@ -76,7 +76,12 @@ Slash commands are always registered globally, so every server that adds DMbot g
 `/dmbot` (a new server can take a few minutes to show it). `DISCORD_DEV_GUILD_ID` is only for
 development: set to your test server's ID, the commands are also copied there so changes show up
 instantly. Customers' servers rely on the global commands. If you stop using a dev server, its
-old copy of the commands stays there; nothing removes it for you. With the variable set, the dev
+old copy of the commands stays there unless you remove it once: put that server's ID in
+`DISCORD_CLEAR_GUILD_COMMANDS` (comma separated for several), restart DMbot once, then take the
+variable out again. It never clears the `DISCORD_DEV_GUILD_ID` server. For the owner's test
+server today: if `DISCORD_DEV_GUILD_ID` is still set to it, it keeps its copy and shows each
+command twice (expected); to stop that, unset `DISCORD_DEV_GUILD_ID` and list the server in
+`DISCORD_CLEAR_GUILD_COMMANDS` for one restart. With the variable set, the dev
 server lists each command twice (the global one and the copy); that is expected.
 
 If you use `TRANSCRIBER=deepgram`, `cloud` or `none`, also add `CORE_EXTRAS=dev` to
