@@ -207,7 +207,7 @@ describe("Help: the website's read-only pages (#1588)", () => {
       expect(words, label).toContain(label);
     }
     expect(words).toContain("DMbot only reminds you. You decide.");
-    expect(words).toContain("Players never see your promises or these links.");
+    expect(words).toContain("DMbot never sends your threads, promises or these links to players.");
   });
 
   it("finds Settings, splits the party and deletes a campaign in plain words (#1659)", () => {

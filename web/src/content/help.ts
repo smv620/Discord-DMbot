@@ -129,7 +129,7 @@ export const STORY_THREADS_LIVE = false;
 
 export const storyThreadSteps: Step[] = [
   {
-    text: "To keep track of a quest, mystery, hook or goal, open the Names list and press 🧵 New thread. On its card, 🧵 Change state says how far along it is. 👥 Who's involved adds people or places. 📌 Link an event adds what moved it. Players never see your threads.",
+    text: "To keep track of a quest, mystery, hook or goal, open the Names list and press 🧵 New thread. On its card, 🧵 Change state says how far along it is. 👥 Who's involved adds people or places. 📌 Link an event adds what moved it.",
     names: [
       { name: "🧵 New thread", file: "ui/names.py" },
       { name: "🧵 Change state", file: "ui/name_card.py" },
@@ -162,7 +162,7 @@ export const storyThreadSteps: Step[] = [
     ],
   },
   {
-    text: "Players never see your promises or these links.",
+    text: "DMbot never sends your threads, promises or these links to players.",
   },
 ];
 
