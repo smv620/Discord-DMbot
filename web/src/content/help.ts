@@ -837,9 +837,6 @@ export const SUPPORT_EMAIL = "support@getdmbot.com";
 /** A line of text and its links: plain strings, and link objects in between. */
 export type Part = string | { text: string; href: string };
 
-/** Getting help (#1352): one plain place that says where to ask, in the order to try them.
- * No privacy promises are made here: the Support form says its own, and the privacy page holds
- * them. The public Q&A is said to be public, so nobody posts account or payment details. */
 // "If something doesn't work" (#1805): the common snags, each checked as true today (the PR names where).
 // Every answer is 40 words at most, and a test keeps it so.
 export interface Snag extends Step {
@@ -857,34 +854,36 @@ export const snags: Snag[] = [
   },
   {
     question: "DMbot isn't hearing someone.",
-    text: "It only hears people who said yes to recording. They can say yes from DMbot's private message, or type /consent give in your server.",
+    text: "DMbot only hears people who said yes to recording. They can say yes in DMbot's private message, or type /consent give in your server. Anyone who hasn't said yes is never recorded.",
     names: [{ name: "/consent give", file: "bot.py" }],
   },
   {
+    question: "A button says \"This interaction failed\".",
+    text: "That is Discord's own message: DMbot didn't answer in time. Wait a few seconds and press the button again. If it keeps happening, tell us.",
+    link: { text: "Getting help", href: "#getting-help" },
+  },
+  {
     question: "DMbot left the voice channel or stopped listening.",
-    text: "If DMbot restarts during a game, it rejoins by itself and says so. If it can't, it says why. Then use /dmbot start and press ▶ Continue last campaign.",
+    text: "If DMbot restarts during a game, it rejoins by itself and says so. If the game is over 16 hours old, or it can't rejoin, it says why. Then type /dmbot start and press ▶ Continue last campaign.",
     names: [
       { name: "/dmbot start", file: "bot.py" },
       { name: "▶ Continue last campaign", file: "ui/logic.py" },
     ],
   },
   {
-    question: "A button says \"This interaction failed\".",
-    text: "That is Discord's own message. Press the button again. If it keeps happening, tell us.",
-    link: { text: "Getting help", href: "#getting-help" },
-  },
-  {
     question: "I can't see the DM screen.",
-    text: "Who can see it is set by the game master. Private: only DMs. Peek: players press Peek behind the DM screen. Open: everyone in the server.",
+    text: "Your game master chooses who sees it. Private means only DMs. Peek means players press Peek behind the DM screen (it warns about spoilers). Open means everyone in the server.",
     names: [{ name: "Peek behind the DM screen", file: "dm_screen/messages.py" }],
   },
   {
     question: "My character sheet didn't update.",
-    text: "A linked sheet must be set to Public on its own site. DMbot looks at it again about a minute after someone says a slot was used. It never changes your sheet.",
+    text: "A linked sheet must be set to Public on the site where it lives. After someone says a spell slot was used, DMbot checks the sheet again about a minute later. It never changes your sheet.",
   },
 ];
 
-
+/** Getting help (#1352): one plain place that says where to ask, in the order to try them.
+ * No privacy promises are made here: the Support form says its own, and the privacy page holds
+ * them. The public Q&A is said to be public, so nobody posts account or payment details. */
 export const gettingHelp: { id: string; heading: string; items: { lead: string; parts: Part[] }[] } =
   {
     id: "getting-help",

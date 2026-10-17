@@ -117,7 +117,9 @@ import { recapSteps, accountSteps, dmSteps, quickAnswers, quickAnswersHeading, s
       {
         snags.map((s) => (
           <li>
-            <strong>{s.question}</strong> {s.text}
+            <strong>{s.question}</strong>
+            <br />
+            {s.text}
             {s.link && (
               <>
                 {" "}
