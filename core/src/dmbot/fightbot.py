@@ -523,11 +523,14 @@ class FightButton(
     async def callback(self, interaction: discord.Interaction) -> Any:
         bot: Any = interaction.client
         user = interaction.user.id
+        # Answer Discord first (#1798): the checks and the save are two or three database trips,
+        # and a busy table must not make the button look broken. The message is changed after.
+        await interaction.response.defer()
         # Only ever the presser's own settings, saved whether or not a session is running.
         try:
             found = await bot.sheets.sheets(self.guild_id, self.campaign_id)
             if not any(s.played_by == user for s in found):
-                await interaction.response.send_message(NOT_PLAYING, ephemeral=True)
+                await interaction.followup.send(NOT_PLAYING, ephemeral=True)
                 return
             if self.action == "never":
                 await bot.sheets.set_fightbot(self.guild_id, self.campaign_id, user, False)
@@ -547,7 +550,7 @@ class FightButton(
                     said = QUIET
         except Exception:
             log.exception("FightBot: a silence button failed")
-            await interaction.response.send_message(NOT_SAVED, ephemeral=True)
+            await interaction.followup.send(NOT_SAVED, ephemeral=True)
             return
         text = interaction.message.content if interaction.message is not None else ""
-        await interaction.response.edit_message(content=f"{text}\n\n{said}", view=None)
+        await interaction.edit_original_response(content=f"{text}\n\n{said}", view=None)
