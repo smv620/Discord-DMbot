@@ -180,12 +180,28 @@ class Stored(ConfirmedMemoryTest):
         )
         self.assertFalse([r for r in shown if r.predicate in ("did", "affected")])
 
-    async def test_the_cleaner_never_gets_a_deeds_name_to_write_into_a_transcript(self) -> None:
-        await self.deed()
+    async def test_a_deed_has_no_name_the_table_can_match_and_hides_no_real_name(self) -> None:
+        from dmbot.memory.scene import find_mentions
+
+        brindle = await self.add("Brindle", type="character", role="npc")
+        await self.memory.add_deed(
+            GUILD_A, self.c, self.kesh, "Saved Brindle", [brindle], "Helped them", source="dm"
+        )
         lookup = CampaignLookup.build(await self.memory.lookup_data(GUILD_A, self.c))
-        deed_names = [e for e in lookup.names if "mill from the fire" in e.text]
-        self.assertTrue(deed_names)
-        self.assertTrue(all(e.secret for e in deed_names))
+        self.assertFalse([n for n in lookup.names if "Saved Brindle" in n.text])
+        heard = find_mentions(lookup, "we all saw Brindle there")
+        self.assertEqual([f.entity_id for f in heard], [brindle])  # still counted as named
+        said_whole = find_mentions(lookup, "Saved Brindle")
+        self.assertEqual([f.entity_id for f in said_whole], [brindle])
+
+    async def test_a_story_threads_name_said_aloud_still_counts_as_heard(self) -> None:
+        from dmbot.memory.scene import find_mentions
+
+        thread = await self.add("The Missing Heir", type="quest")
+        lookup = CampaignLookup.build(await self.memory.lookup_data(GUILD_A, self.c))
+        self.assertEqual(
+            [f.entity_id for f in find_mentions(lookup, "about the missing heir")], [thread]
+        )
 
     async def test_merging_the_npc_keeps_the_deed_and_the_standing(self) -> None:
         await self.deed()
@@ -239,12 +255,12 @@ class Stored(ConfirmedMemoryTest):
         self.assertEqual(weights, [st.DEED_WEIGHT // 2, st.DEED_WEIGHT])
 
     async def heard(self, entity: str, session: int) -> None:
+        """Names heard in a session, where production writes them (`memory_heard`)."""
         async with self.db.guild(GUILD_A) as conn:
             await conn.execute(
-                "INSERT INTO memory_mentions (guild_id, campaign_id, id, entity_id,"
-                " session_started_at, line_ref, span_start, span_end, confidence, method,"
-                " created_at) VALUES (%s, %s, %s, %s, %s, 'l', 0, 3, 1, 'dm', 1)",
-                (GUILD_A, self.c, f"{session:032x}", entity, session),
+                "INSERT INTO memory_heard (guild_id, campaign_id, entity_id, session_started_at,"
+                " speaker_id, times) VALUES (%s, %s, %s, %s, 7, 1)",
+                (GUILD_A, self.c, entity, session),
             )
 
     # ---- private to the DM ----
@@ -333,6 +349,24 @@ class Screens(Stored):
         await done.sent["view"]._undo(undone)
         self.assertIn("Undone", undone.sent["content"])
         self.assertEqual((await self.standing()).shown, "No opinion yet")
+
+    async def test_another_campaigns_running_table_never_dates_a_deed(self) -> None:
+        doer = await self.memory.entity(GUILD_A, self.c, self.kesh)
+        guard = await self.memory.entity(GUILD_A, self.c, self.guard)
+        assert doer is not None and guard is not None
+        confirm = ui.ConfirmMenu(self.c, doer, "Burned the mill", [guard], "Hurt them")
+        it = self.pressing()
+        it.client.tables = {GUILD_A: SimpleNamespace(campaign_id="f" * 32, started_at=424242)}
+        await confirm._yes(it)
+        index = await self.memory.standing_index(GUILD_A, self.c)
+        (row,) = index.deeds[(self.guard, self.kesh)]
+        self.assertNotEqual(row.session, 424242)
+        mine = self.pressing()
+        mine.client.tables = {GUILD_A: SimpleNamespace(campaign_id=self.c, started_at=525252)}
+        again = ui.ConfirmMenu(self.c, doer, "Burned it again", [guard], "Hurt them")
+        await again._yes(mine)
+        index = await self.memory.standing_index(GUILD_A, self.c)
+        self.assertIn(525252, [r.session for r in index.deeds[(self.guard, self.kesh)]])
 
     async def test_only_a_dm_can_use_any_step(self) -> None:
         doer = await self.memory.entity(GUILD_A, self.c, self.kesh)

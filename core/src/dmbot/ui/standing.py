@@ -102,8 +102,11 @@ async def show_standing(
     numbers: dict[int, int] = {}
     transcripts = getattr(_bot(interaction), "transcripts", None)
     if transcripts is not None:  # "session 4" in a deed's reason (#1732)
-        sessions = await transcripts.sessions(campaign.guild_id, campaign.id, limit=100)
-        numbers = {x.started_at: x.number for x in sessions}
+        try:
+            sessions = await transcripts.sessions(campaign.guild_id, campaign.id, limit=100)
+            numbers = {x.started_at: x.number for x in sessions}
+        except Exception:
+            log.exception("Couldn't number the sessions; the reasons show without them")
     index = await memory.standing_index(campaign.guild_id, campaign.id, numbers)
     targets = await _targets(memory, campaign.guild_id, campaign.id)
     targets = [t for t in targets if t.id != entity_id]

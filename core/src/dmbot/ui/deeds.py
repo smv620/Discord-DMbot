@@ -69,9 +69,8 @@ async def start(interaction: discord.Interaction, campaign_id: str, doer_id: str
     if doer is None or doer.status != CONFIRMED:
         await _tell(interaction, GONE)
         return
-    if not await _can_matter(memory, campaign, doer.id):  # before they type, not after
-        await _tell(interaction, NOBODY)
-        return
+    # (The form opens at once: Discord gives three seconds. Whether there is anyone to pick is
+    # asked when it is sent.)
     await interaction.response.send_modal(DeedForm(campaign_id, doer))
 
 
@@ -274,6 +273,8 @@ class ConfirmMenu(_Menu):
             return
         campaign, memory = found
         table = getattr(_bot(interaction), "tables", {}).get(campaign.guild_id)
+        if getattr(table, "campaign_id", None) != campaign.id:
+            table = None  # the server's running table may be another campaign's
         try:
             written = await memory.add_deed(
                 campaign.guild_id,

@@ -1093,15 +1093,13 @@ class MemoryStore:
                     "party": False,
                 },
             )  # fmt: skip
-            await w.insert(
-                ALIASES,
-                _new_alias(w, row["id"], words[:DEED_NAME_MAX], "full", CONFIRMED, False, None),
-            )
+            # No alias on purpose: a deed's words are not a name anyone says, so nothing at the
+            # table can match it (and no word in it hides a real name, like Brindle).
             if from_session_at is None:
                 # No session running: the newest one names were heard in, so a deed recorded
                 # between sessions still fades like the rest.
                 cur = await w.conn.execute(
-                    "SELECT max(session_started_at) AS at FROM memory_mentions"
+                    "SELECT max(session_started_at) AS at FROM memory_heard"
                     " WHERE guild_id = %s AND campaign_id = %s",
                     w.ids,
                 )
@@ -3775,12 +3773,20 @@ async def _deed_rows(scope: Scope, entities: dict[str, dict[str, Any]]) -> list[
         " AND status = 'confirmed' AND to_session_at IS NULL AND predicate = ANY(%s)",
         [[DID, AFFECTED]],
     )
-    doer = {r["object_id"]: r["subject_id"] for r in rows if r["predicate"] == DID}
+    doer = {
+        r["object_id"]: r["subject_id"]
+        for r in rows
+        if r["predicate"] == DID
+        and (
+            entities.get(r["subject_id"], {}).get("party")
+            or entities.get(r["subject_id"], {}).get("role") == PLAYER_CHARACTER
+        )
+    }  # (only a player character or the party does a deed, whatever else was written)
     affected = [r for r in rows if r["predicate"] == AFFECTED and r["subject_id"] in doer]
     if not affected:
         return []
     cur = await scope.conn.execute(
-        "SELECT DISTINCT session_started_at FROM memory_mentions WHERE guild_id = %s"
+        "SELECT DISTINCT session_started_at FROM memory_heard WHERE guild_id = %s"
         " AND campaign_id = %s AND session_started_at IS NOT NULL"
         " ORDER BY session_started_at DESC LIMIT %s",
         (*scope.ids, standing.DEED_FADES_AFTER),

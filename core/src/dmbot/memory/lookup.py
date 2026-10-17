@@ -120,12 +120,9 @@ class CampaignLookup:
                 a.text,
                 a.key,
                 a.kind,
-                # A clue only some people know (#1649), a story thread (#1662) and a deed (#1732)
-                # are as secret as a secret name: the Cleaner must never write them into the
-                # shared transcript, and they are the DM's alone.
-                a.secret
-                or entities[a.entity_id].audience_limited
-                or entities[a.entity_id].type in DM_ONLY_TYPES,
+                # A clue only some people know (#1649) is as secret as a secret name: the Cleaner
+                # must never write it into the shared transcript, and it is the DM's alone.
+                a.secret or entities[a.entity_id].audience_limited,
                 a.status == CONFIRMED and entities[a.entity_id].status == CONFIRMED,
                 sound_codes(a.text),  # the same function as for heard words
                 False,
