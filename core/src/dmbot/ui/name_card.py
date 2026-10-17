@@ -1288,6 +1288,7 @@ class UndoButton(
         return cls(match["campaign"], match["entity"], int(match["batch"]))
 
     async def callback(self, interaction: discord.Interaction) -> Any:
+        await _answer_first(interaction, in_place=True)  # (#1803) two reads come before "Undoing…"
         campaign = await _campaign_for(interaction, self.campaign_id)
         memory = _memory(interaction)
         if campaign is None or memory is None:
