@@ -9,7 +9,7 @@ import { beforeAll, describe, expect, it } from "vitest";
 
 import { parsePage } from "./dom";
 
-import { HOMEBREW_LINKS_LIVE, accountSteps, dmSteps, homebrewLinkSteps, emailSteps, recapSteps, quickAnswers, quickAnswersHeading, gettingHelp, playerSteps } from "../src/content/help";
+import { HOMEBREW_LINKS_LIVE, SECRET_CLUES_LIVE, accountSteps, dmSteps, homebrewLinkSteps, secretClueSteps, emailSteps, recapSteps, quickAnswers, quickAnswersHeading, gettingHelp, playerSteps } from "../src/content/help";
 import { held } from "../src/content/whats-new";
 import Help from "../src/pages/help.astro";
 
@@ -55,7 +55,7 @@ describe("Help", () => {
   });
 
   it("names only buttons and commands that are in the bot's code", () => {
-    for (const step of [...dmSteps, ...homebrewLinkSteps, ...recapSteps, ...quickAnswers, ...playerSteps, ...accountSteps, ...emailSteps]) {
+    for (const step of [...dmSteps, ...homebrewLinkSteps, ...secretClueSteps, ...recapSteps, ...quickAnswers, ...playerSteps, ...accountSteps, ...emailSteps]) {
       for (const { name, file } of step.names ?? []) {
         expect(step.text, `${name} is in its step`).toContain(name);
         const source = readFileSync(join(botDir, file), "utf8");
@@ -155,7 +155,11 @@ describe("Help: the website's read-only pages (#1588)", () => {
 
   it("holds the link-import steps with the held What's new entries, and flips them together (#1653)", () => {
     const heldTitles = held.map((h) => h.title);
-    const linkTitles = ["Add homebrew from a link", "Share imported homebrew in a pack"];
+    const linkTitles = [
+      "Add homebrew from a link",
+      "Share imported homebrew in a pack",
+      "See the sites you approved",
+    ];
     for (const title of linkTitles) {
       expect(heldTitles.includes(title), title).toBe(!HOMEBREW_LINKS_LIVE);
     }
@@ -166,5 +170,29 @@ describe("Help: the website's read-only pages (#1588)", () => {
     expect(words).toContain("never asks again for that site");
     expect(words).toContain("Every table that uses that page gets the update");
     expect(words).toContain("Use example.com");
+  });
+
+  it("finds Settings, splits the party and deletes a campaign in plain words (#1659)", () => {
+    const steps = dmSteps.map((x) => x.text);
+    const find = steps.find((t) => t.includes("Can't find ⚙️ Settings?")) ?? "";
+    expect(find).toContain("/dmbot settings");
+    expect(find).toContain("/dmbot start");
+    const split = steps.find((t) => t.includes("✂️ Split the party")) ?? "";
+    expect(split).toContain("two or three groups");
+    expect(split).toContain("🤝 Rejoin the party");
+    const del = steps.find((t) => t.includes("🗑 Delete this campaign")) ?? "";
+    expect(del).toContain("whose plan a campaign uses");
+    expect(del).toContain("It can't be undone.");
+    expect(del).toContain("type the campaign's name");
+    expect(del).toContain("💾 Back up first");
+  });
+
+  it("holds the secrets step with the held What's new entry, and flips them together (#1659)", () => {
+    const heldTitle = held.map((h) => h.title).includes("Secrets only some people know");
+    expect(heldTitle).toBe(!SECRET_CLUES_LIVE);
+    const shown = dmSteps.map((x) => x.text).join(" ");
+    expect(shown.includes("Only some know this")).toBe(SECRET_CLUES_LIVE);
+    const words = secretClueSteps.map((x) => x.text).join(" ");
+    expect(words).toContain("DMbot never decides who learned it. You do.");
   });
 });
