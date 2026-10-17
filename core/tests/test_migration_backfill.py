@@ -32,10 +32,26 @@ NOT_NEEDED: dict[tuple[str, str], str] = {}
 
 DOLLAR = re.compile(r"\$(\w*)\$")
 WRITE = re.compile(
-    r"^(?:UPDATE\s+(?:ONLY\s+)?(\w+)|DELETE\s+FROM\s+(?:ONLY\s+)?(\w+)|INSERT\s+INTO\s+(\w+))",
+    r"^(?:UPDATE\s+(?:ONLY\s+)?(?:\w+\.)?(\w+)|DELETE\s+FROM\s+(?:ONLY\s+)?(?:\w+\.)?(\w+)"
+    r"|INSERT\s+INTO\s+(?:\w+\.)?(\w+))",
     re.I,
 )
-READ = re.compile(r"\b(?:FROM|JOIN)\s+(?:ONLY\s+)?(\w+)", re.I)
+# A table list after FROM, JOIN or USING ("FROM a x, public.b AS y"): every table, not just one.
+_WORDS = "USING|WHERE|SET|JOIN|ON|LEFT|RIGHT|INNER|FULL|CROSS|NATURAL|GROUP|ORDER|LIMIT|RETURNING"
+_ONE = rf"(?:\w+\.)?\w+(?:\s+(?:AS\s+)?(?!(?:{_WORDS})\b)\w+)?"
+READ = re.compile(rf"\b(?:FROM|JOIN|USING)\s+(?:ONLY\s+)?({_ONE}(?:\s*,\s*{_ONE})*)", re.I)
+
+
+def read_tables(text: str) -> set[str]:
+    """The tables a statement reads through FROM, JOIN or USING (comma lists and schema names
+    included; an alias or the next keyword after a name is ignored)."""
+    names: set[str] = set()
+    for group in READ.findall(text):
+        for part in group.split(","):
+            names.add(part.split()[0].rsplit(".", 1)[-1].lower())
+    return names
+
+
 CONTROL = re.compile(r"^\s*(?:BEGIN|THEN|ELSE|END IF|END|LOOP|END LOOP)\b\s*", re.I)
 
 
@@ -134,7 +150,7 @@ def problems(name: str, sql: str, forced: set[str] = FORCED) -> list[str]:
         written = (match[1] or match[2] or match[3]).lower()
         if match[3] and not re.search(r"\bSELECT\b", text, re.I):
             continue  # INSERT ... VALUES reads nothing (a blocked insert fails loudly anyway)
-        tables = ({written} | {t.lower() for t in READ.findall(text)}) & forced
+        tables = ({written} | read_tables(text)) & forced
         for table in sorted(tables):
             if table in created and created[table] < offset:
                 continue  # made earlier in this migration: no rows yet
@@ -205,6 +221,16 @@ class StandInTest(unittest.TestCase):
         )
         (found,) = self.check(sql)
         self.assertIn("reads memory_entities", found)
+
+    def test_comma_lists_using_clauses_and_schema_names_are_read(self) -> None:
+        sql = wrapped(
+            "campaigns", "UPDATE campaigns SET a = 1 FROM x, memory_entities e WHERE true"
+        )
+        (found,) = self.check(sql)
+        self.assertIn("reads memory_entities", found)
+        sql = wrapped("campaigns", "DELETE FROM campaigns USING memory_entities e WHERE true")
+        self.assertIn("reads memory_entities", self.check(sql)[0])
+        self.assertTrue(self.check("UPDATE public.campaigns SET a = 1;"))
 
     def test_both_tables_wrapped_passes(self) -> None:
         sql = wrapped(
