@@ -193,17 +193,19 @@ class KeepChoiceButton(
 
 
 async def _save(interaction: discord.Interaction, campaign: Campaign, days: int | None) -> None:
+    # Answer Discord first (#1798): saving is a database write and the card is read back after.
+    await interaction.response.defer()
     store = interaction.client.campaigns  # type: ignore[attr-defined]
     try:
         saved = await store.set_transcript_keep(campaign.guild_id, campaign.id, days)
     except CampaignError as exc:
-        await interaction.response.edit_message(content=str(exc), view=None)
+        await interaction.edit_original_response(content=str(exc), view=None)
         return
     except Exception:
         log.exception("Couldn't save the transcript setting")
-        await interaction.response.edit_message(content=COULDNT, view=None)
+        await interaction.edit_original_response(content=COULDNT, view=None)
         return
-    await interaction.response.edit_message(
+    await interaction.edit_original_response(
         content=f"{saved_text(days)}\n\n{panel_text(saved)}",
         view=panel_view(saved),
     )
