@@ -57,6 +57,7 @@ from dmbot.memory.models import (
     PLAYER_CHARACTER,
     ROLES,
     SOURCES,
+    THREAD_STATES,
     is_id,
 )
 from dmbot.memory.ontology import (
@@ -122,7 +123,7 @@ _CHOICES: dict[str, Sequence[str]] = {
     "status": (*ENTITY_STATUSES, ACTIVE, DEPRECATED, "open", "resolved", *CLAIM_STATUSES),
     "how": HOWS,
     "kind": (*ALIAS_KINDS, *FLAG_KINDS, *LINK_KINDS),
-    "condition": CONDITIONS,
+    "condition": (*CONDITIONS, *THREAD_STATES),
     "role": ROLES,
     "edition": LINK_EDITIONS,
     "action": (FIX, KEEP),

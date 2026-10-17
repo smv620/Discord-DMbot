@@ -309,6 +309,8 @@ from dmbot.ui.secret_aloud import (
     secret_aloud_view,
 )
 from dmbot.ui.sheets import MySheetButton, OpenCardButton
+from dmbot.ui.threads import ThreadsButton, threads_view
+from dmbot.ui.threads import waiting_text as threads_waiting_text
 from dmbot.ui.transcripts import (
     DownloadButton,
     download_view,
@@ -1067,6 +1069,7 @@ class DMBot(commands.AutoShardedBot):
         self.add_dynamic_items(
             ReviewButton, PeopleReviewButton, ClaimsReviewButton, ContinuityButton
         )
+        self.add_dynamic_items(ThreadsButton)  # the quiet story threads (#1662)
         self.add_dynamic_items(HeardReviewButton)  # unanswered "Did they mean…?" (#1572)
         self.add_dynamic_items(SecretAloudButton)  # the secret-said-aloud question (#1407)
         self.add_dynamic_items(RecapButton)  # the recap on the DM screen (#1455)
@@ -2198,6 +2201,7 @@ class DMBot(commands.AutoShardedBot):
             ("what was said", lambda: self.ask_about_claims(table)),
             ("secrets said aloud", lambda: self.ask_about_secrets(table)),
             ("heads-ups", lambda: self.warn_about_continuity(table)),
+            ("quiet threads", lambda: self.warn_about_threads(table)),
             ("steward numbers", lambda: self.log_steward_tally(table)),
         ]
         for name, step in steps:
@@ -7037,6 +7041,26 @@ class DMBot(commands.AutoShardedBot):
                     table.screen_channel_id,
                     continuity_waiting_text(len(report.conflicts)),
                     view=continuity_view(cid),
+                )
+
+    async def warn_about_threads(self, table: Table) -> None:
+        """After a session (#1662): if story threads the DM keeps haven't moved for a few
+        sessions, the DM screen says how many and for how long, never which, with a button only
+        the DM can use. Nothing is posted with none stalled. No AI call."""
+        if self.memory is None or table.campaign_id is None:
+            return
+        gid, cid = table.guild_id, table.campaign_id
+        with log_context(guild_id=gid, campaign_id=cid):
+            found = await self.memory.threads(
+                gid, cid, stalled_after=self.settings.thread_stalled_sessions
+            )
+            quiet = [t for t in found if t.stalled]
+            log.info("Threads: %d, %d stalled", len(found), len(quiet))  # counts, never names
+            if quiet:
+                await self.post(
+                    table.screen_channel_id,
+                    threads_waiting_text(len(quiet), min(t.quiet_sessions for t in quiet)),
+                    view=threads_view(cid),
                 )
 
     async def recheck_definitions(self, table: Table) -> None:
