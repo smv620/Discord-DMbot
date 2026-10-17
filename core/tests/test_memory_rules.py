@@ -126,6 +126,7 @@ class CoreOntology(unittest.TestCase):
                 "event": "event",
                 "concept": "idea",
                 "clue": "clue or secret",  # a kind of idea (#1649)
+                "people": "people",  # a whole people or kind, a kind of idea (#1655)
                 "person": "player or DM",  # not part of the story (#1188)
             },
         )

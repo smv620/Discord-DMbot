@@ -126,6 +126,10 @@ class Isolation(MemoryTest):
             source="entitybot",
         )
         a, b = await self.add("Belleros"), await self.add("Cerric")
+        await self.memory.set_impression(GUILD_A, self.c, a, b, "Wary", source="dm")
+        people = await self.add("Tabaxi", type="people")
+        group = await self.add("The watch", type="faction")
+        await self.memory.set_attitude(GUILD_A, self.c, group, people, "Wary", source="dm")
         await self.memory.set_rule_link(
             GUILD_A, self.c, a, "species", "goblin", source="dm", rules_source="srd52", known=True
         )
@@ -1588,7 +1592,9 @@ class Lists(MemoryTest):
 
         with patch.object(AsyncConnection, "execute", counting):
             await self.memory.undo_names(GUILD_A, self.c, written.batch)  # still one Undo
-        self.assertLess(statements, 25)  # names, then entries: a few runs, not row by row
+        # Names, then entries: a few runs, not row by row. Undo checks each table that links to an
+        # entry before it deletes one (DEPENDENTS), so a new linked table adds a few to this.
+        self.assertLess(statements, 30)
         self.assertEqual(await self.snapshot(), before)
 
     async def test_a_2000_line_list_saves_faster_than_row_by_row(self) -> None:

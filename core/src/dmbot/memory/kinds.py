@@ -32,6 +32,7 @@ KIND_LABELS = {
     "event": "event",
     "concept": "idea",
     "clue": "clue",
+    "people": "people",
     "person": "player or DM",
 }
 # The older kinds, in the words people used for them.
