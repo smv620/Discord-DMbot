@@ -61,17 +61,19 @@ TYPES_HELP = (
 )
 
 
-def text_of(filename: str, raw: bytes) -> str:
+def text_of(filename: str, raw: bytes, *, max_chars: int = MAX_DOCUMENT_CHARS) -> str:
     """The text of a .txt, .pdf or .docx file. Raises DocumentError in plain words, for
-    any problem at all (a damaged or hostile file must never escape as another error)."""
+    any problem at all (a damaged or hostile file must never escape as another error).
+    `max_chars`: the longest text taken (the names screen's 200,000; an adventure's is more,
+    #1698)."""
     if len(raw) > MAX_DOCUMENT_BYTES:
         raise DocumentError("That file is too big (up to 10 MB). Split it into smaller files.")
     suffix = PurePath(filename).suffix.casefold()
     try:
         if suffix == ".pdf":
-            text = _pdf_text(raw)
+            text = _pdf_text(raw, max_chars)
         elif suffix == ".docx":
-            text = _docx_text(raw)
+            text = _docx_text(raw, max_chars)
         elif suffix in (".html", ".htm"):
             text = html_text(decode_text(raw))
         elif suffix == ".doc":
@@ -91,10 +93,10 @@ def text_of(filename: str, raw: bytes) -> str:
     text = text.replace("\x00", "")
     if not text.strip():
         raise DocumentError(NO_TEXT)
-    if len(text) > MAX_DOCUMENT_CHARS:
+    if len(text) > max_chars:
         raise DocumentError(
-            "That document is too long for one go (about 100 pages at most). Split it into "
-            "parts and add them one at a time."
+            f"That document is too long for one go (about {max_chars // 2000} pages at most). "
+            "Split it into parts and add them one at a time."
         )
     return text
 
@@ -107,7 +109,7 @@ def decode_text(raw: bytes) -> str:
         return raw.decode("cp1252", errors="replace")
 
 
-def _pdf_text(raw: bytes) -> str:
+def _pdf_text(raw: bytes, max_chars: int = MAX_DOCUMENT_CHARS) -> str:
     from pypdf import PdfReader
 
     reader = PdfReader(io.BytesIO(raw))
@@ -126,7 +128,7 @@ def _pdf_text(raw: bytes) -> str:
         text = page.extract_text() or ""
         parts.append(text)
         size += len(text)
-        if size > MAX_DOCUMENT_CHARS:
+        if size > max_chars:
             break  # too long anyway: text_of says so
     text = "\n".join(parts)
     if not text.strip():
@@ -139,17 +141,20 @@ def _pdf_text(raw: bytes) -> str:
 _DOCX_PARTS = re.compile(r"<w:t(?:\s[^>]*)?>([^<]*)</w:t>|</w:p>")
 
 
-def _docx_text(raw: bytes) -> str:
+def _docx_text(raw: bytes, max_chars: int = MAX_DOCUMENT_CHARS) -> str:
     """A Word file is a zip with the text in word/document.xml. Read without an XML
-    parser (nothing in the file is run or fetched), in one pass."""
+    parser (nothing in the file is run or fetched), in one pass. A longer limit on the text
+    (an adventure's, #1698) allows a longer unpacked file too: the markup is several times the
+    words."""
+    xml_limit = max(MAX_XML_BYTES, max_chars * 6)
     try:
         with zipfile.ZipFile(io.BytesIO(raw)) as archive:
             info = archive.getinfo("word/document.xml")
-            if info.file_size > MAX_XML_BYTES:
+            if info.file_size > xml_limit:
                 raise DocumentError("That Word file is too big. Split it into smaller files.")
             with archive.open(info) as part:
-                data = part.read(MAX_XML_BYTES + 1)  # never trust the size it declares
-            if len(data) > MAX_XML_BYTES:
+                data = part.read(xml_limit + 1)  # never trust the size it declares
+            if len(data) > xml_limit:
                 raise DocumentError("That Word file is too big. Split it into smaller files.")
     except (zipfile.BadZipFile, KeyError) as exc:
         raise DocumentError(
@@ -166,7 +171,7 @@ def _docx_text(raw: bytes) -> str:
         else:
             current.append(match[1])
             size += len(match[1])
-            if size > MAX_DOCUMENT_CHARS:
+            if size > max_chars:
                 break
     paragraphs.append(html.unescape("".join(current)))
     return "\n".join(paragraphs)

@@ -726,6 +726,25 @@ Each step is useful on its own and ships behind the existing phases.
    warnings and Guide me are the next slices, and the card says "Not working yet. Soon you will be
    able to give DMbot your adventure." Each of those must ask for the right to use the material
    it is given, not rely on this switch alone. Offered on every plan (PLAN names no plan rule for it).
+   **Phase 5d slice 2 is built (#1698): give DMbot your adventure.** On the Shared story card, once
+   the switch is on and a DM said here they have the right to use the material, **📖 Give DMbot your
+   adventure** opens a list of what DMbot holds (name, about how many pages, who added it, when) with
+   **Give a file** and a **🗑 Remove** on each (one confirmation). One file at a time, PDF, Word,
+   text or Markdown, up to 10 MB, read by the same time-limited reading process as the names screen
+   (up to 120 s) and cut into chunks of about 2,000 characters at headings and blank lines, never
+   mid-word. Migration 0122 adds `adventure_documents` and `adventure_chunks`, isolated per server
+   and deleted with the campaign. The same file twice is refused (a SHA-256 of its text); a campaign
+   holds at most 2,000,000 characters and 20 documents. **No AI and nothing reads the text yet**: the
+   next slice (the story-plan reader) will. The text stays in that one campaign: never in a
+   transcript, a shared ruleset, a pack, another campaign or a server's other campaigns, and never
+   shown to players. **The text is NOT in the campaign's backup** (Supervisor, 2026-10-17): anyone in the
+   server may download a paid campaign's backup, which would hand a commercial adventure's full
+   text to all of them, past what the DM confirmed the right to use; and unlike the DM's notes the
+   text is replaceable, the DM still has the file. The backup keeps only the list (file name,
+   characters, fingerprint, who added it and when). After a restore the card lists each as "give
+   DMbot this file again to use it", and giving the same file fills it in (the fingerprint
+   matches). A restore adds no confirmation (#1692), so a restored campaign gets no button until
+   a DM turns the switch on again and says they have the right. A 300-page test PDF reads in about 2 seconds and stores in under 1.
 5. **Throughout:** the ontology steward and graph curator take over the after-session
    cleanup; their health numbers (duplicates, orphans, unused terms, flags per session,
    how often the DM is asked, warnings ignored) go to the server logs, never to players.
