@@ -99,6 +99,7 @@ from dmbot.dm_screen import effects as timer_screen
 from dmbot.dm_screen import house_voice as house_voice_screen
 from dmbot.dm_screen import levels as screen_levels
 from dmbot.dm_screen import messages as screen_messages
+from dmbot.dm_screen.dm_bot_channel import DmBotChannelError, setup_dm_bot_channel
 from dmbot.dm_screen.dmbchat_channel import DmbchatChannelError, setup_dmbchat_channel
 from dmbot.dm_screen.game_masters import GameMastersButton
 from dmbot.dm_screen.gametime_channel import GametimeChannelError, setup_gametime_channel
@@ -2867,6 +2868,7 @@ class DMBot(commands.AutoShardedBot):
         transcript_id, transcript_problem = await self._transcript_channel(guild, campaign, screen)
         gametime_problem = await self._gametime_channel(guild, campaign, screen)
         dmbchat_id, dmbchat_problem = await self._dmbchat_channel(guild, campaign, screen)
+        dm_bot_problem = await self._dm_bot_channel(guild, campaign, screen)
 
         campaign = await self.campaigns.record_start(guild.id, campaign.id, screen_id, voice.id)
         started_at = int(time.time())
@@ -2922,6 +2924,8 @@ class DMBot(commands.AutoShardedBot):
             await self.post(screen_id, gametime_problem)
         if dmbchat_problem:
             await self.post(screen_id, dmbchat_problem)
+        if dm_bot_problem:
+            await self.post(screen_id, dm_bot_problem)
         self._check_house_file(campaign, screen_id)
         self._track(update_notes.check_all(self, campaign, screen_id), "shared-rules-update")
         trial_line = ""
@@ -7616,6 +7620,26 @@ class DMBot(commands.AutoShardedBot):
                 await clock_screen.show(self, fresh, stored)
         except Exception:
             log.exception("Couldn't put the players' clock in the game-time channel")
+        return None
+
+    async def _dm_bot_channel(
+        self, guild: discord.Guild, campaign: Campaign, screen: object
+    ) -> str | None:
+        """The DM Bot channel (#1666), made or repaired at every start. A note for the DM if it
+        couldn't be set up; a failure here never stops a session."""
+        category = getattr(screen, "category", None)
+        try:
+            await setup_dm_bot_channel(
+                guild,
+                campaign.id,
+                self.campaigns,
+                category=category if isinstance(category, discord.CategoryChannel) else None,
+            )
+        except DmBotChannelError as exc:
+            return screen_messages.dm_bot_failed(str(exc))
+        except Exception:
+            log.exception("Couldn't set up the DM Bot channel")
+            return screen_messages.dm_bot_failed(screen_messages.TRANSCRIPT_NO_ANSWER)
         return None
 
     async def _dmbchat_channel(

@@ -471,6 +471,22 @@ def gametime_topic(campaign_name: str) -> str:
     return f"{campaign_name}: the day and a rough time of day. Posted by DMbot, view only."
 
 
+# ---- the DM Bot channel (#1666) ---------------------------------------------------------
+
+DM_BOT_FAILED = (
+    "⚠️ **Couldn't make the DM Bot channel** ({cause}). The game goes on; ⚙️ Settings still "
+    "works with `/dmbot settings`. To retry, fix that and run `/dmbot start`."
+)
+
+
+def dm_bot_failed(cause: str) -> str:
+    return DM_BOT_FAILED.format(cause=cause)
+
+
+def dm_bot_topic(campaign_name: str) -> str:
+    return f"{campaign_name}: settings and options. Press a button; DMbot answers only you."
+
+
 # ---- the table's DMbot chat channel (#1187) -------------------------------------------
 
 DMBCHAT_FAILED = (
