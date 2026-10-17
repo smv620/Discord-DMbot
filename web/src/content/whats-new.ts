@@ -280,9 +280,16 @@ export const held: Held[] = [
   {
     date: "2026-10-17",
     title: "A DMbot channel for buttons",
-    what: "Each campaign now gets a channel called dmb-dm-bot with one message and two buttons: 👤 My buttons shows the ones for your part, and only you see them. The buttons moved off your DM screen, so it now holds only notes, alerts and Stop listening.",
+    what: "Each campaign now has a channel called dmb-dm-bot. Press 👤 My buttons there to see the buttons for your part; only you can see them. Anyone can press 📖 Look up a rule or 📜 Transcripts. Your DM screen now holds only notes, alerts and Stop listening.",
     reason:
       "Held until it has been seen working on the test server (#1666).",
+  },
+  {
+    date: "2026-10-17",
+    title: "A Shared story switch",
+    what: "In Settings, press Shared story to choose Off, Watch the story or Guide me. The first time you turn it on, DMbot reminds you to only give it material you have the right to use, and keeps a note that you said so. For now the switch only remembers your choice and does nothing else; reading your adventure comes next.",
+    reason:
+      "Held until DMbot can read an adventure (#1692): a switch that does nothing yet is not news.",
   },
   {
     date: "2026-10-17",

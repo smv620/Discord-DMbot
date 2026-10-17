@@ -975,6 +975,11 @@ class Transport(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(kwargs["data"], {"mode": "payment"})
         self.assertFalse(kwargs["allow_redirects"])
 
+    def test_the_pinned_api_version_is_the_one_the_webhook_endpoint_uses(self) -> None:
+        # The owner's test-mode endpoint was created on endive because the dashboard no longer
+        # offers dahlia (#1703): calls and events must agree. Moving this is a decision.
+        self.assertEqual(API_VERSION, "2026-09-30.endive")
+
     async def test_it_sends_the_idempotency_key_as_a_header_only_when_given(self) -> None:
         transport = HttpTransport("sk_test_not_real")
         context = _answering(200, {"ok": True})

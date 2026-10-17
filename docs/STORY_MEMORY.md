@@ -711,9 +711,36 @@ Each step is useful on its own and ships behind the existing phases.
    summaries, the pre-session note, the AI recap.
 4. **Phase 5d: Shared story:** the story plan, `same_as` links, divergence ("Watch
    the story"), then "Guide me".
+   **Phase 5d slice 1 is built (#1692): the Shared story switch.** Only the switch and the DM's
+   confirmation (no AI, no adventure reading). A campaign setting `story_mode` — `off` (the
+   default), `watch` or `guide` — set from ⚙️ Settings → 🧭 Shared story, DMs only, with each
+   mode's one-line meaning. The first time it is turned on the DM sees the warning from the IP
+   rule ("Only give DMbot material you have the right to use. DMbot doesn't check this.") and the
+   mode is saved only by **I have the right**, which records who and when (purpose
+   `shared_story` in `shared_confirmations`, a fingerprint of the words, not the words). Without
+   that press it stays Off; Off keeps the record, so turning it on again does not ask again. It is
+   in backups, but a record that came from a backup file never counts as a press here: the mode
+   comes back on only for the person whose confirmation is in the file (the same DM restoring
+   their own backup), anyone else restoring it starts with the switch Off and confirms for
+   themselves. **Nothing reads the mode yet**: the story-plan reader, the divergence
+   warnings and Guide me are the next slices, and the card says "Not working yet. Soon you will be
+   able to give DMbot your adventure." Each of those must ask for the right to use the material
+   it is given, not rely on this switch alone. Offered on every plan (PLAN names no plan rule for it).
 5. **Throughout:** the ontology steward and graph curator take over the after-session
    cleanup; their health numbers (duplicates, orphans, unused terms, flags per session,
    how often the DM is asked, warnings ignored) go to the server logs, never to players.
+   **The graph's health numbers are built (#1699).** After each session's other after-session work
+   there is one line per campaign in the server log, counts only, never a name or any text, and
+   never shown to a player or a DM: `memory health: entities=N confirmed=N proposed=N duplicates=N
+   orphans=N unused_terms=N flags_this_session=N asked_dm=N`. *entities* is the live entities
+   (confirmed + proposed); *duplicates* is pairs of confirmed entities of one kind (people
+   excepted) that share a name or an alias key and are not joined by a live `same_as` link;
+   *orphans* is confirmed entities (people excepted) with no live relation that were not heard in
+   the last three sessions; *unused_terms* is the campaign's own relationship terms that no live
+   relation uses; *flags_this_session* is the continuity and rule-check flags raised since the
+   session began; *asked_dm* is the claims waiting for the DM from that session plus the "Did they
+   mean…?" questions put to the DM. One read per campaign, counted in SQL; a failed read is a
+   warning and never stops the other after-session steps (`dmbot.memory.health`).
 
 TimeBot (Phase 4) makes game-time checks exact; until then facts are ordered by session,
 as today.
