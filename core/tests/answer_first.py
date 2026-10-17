@@ -21,6 +21,8 @@ class Timeline:
 
         def answer(name: str) -> AsyncMock:
             async def record(*args: Any, **kwargs: Any) -> None:
+                # (Discord allows one answer per press; a second one raises InteractionResponded.)
+                assert not self.done, f"answered twice: {self.events} then {name}"
                 self.events.append(f"answer:{name}")
                 self.done = True
 

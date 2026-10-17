@@ -128,7 +128,8 @@ class LineFixButton(discord.ui.DynamicItem[discord.ui.Button[discord.ui.View]], 
             await _tell(interaction, GONE)
             return
         # Answer Discord first (#1798): the checks below are several database trips, and a DM at a
-        # live table must not see "interaction failed". Every reply after this is a follow-up.
+        # live table must not see "interaction failed". Every reply after this is a follow-up
+        # (a button's defer is a quiet update; each follow-up sets ephemeral itself).
         await interaction.response.defer(ephemeral=True, thinking=False)
         found = await store.get(guild.id, self.suggestion_id)
         campaign = (

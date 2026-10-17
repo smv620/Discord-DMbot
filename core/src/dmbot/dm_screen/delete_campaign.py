@@ -122,6 +122,7 @@ class DeleteButton(
         if guild is None:
             return
         # Answer Discord first (#1798): the warning reads the campaign, its owner and the plan.
+        # (A button's defer is a quiet update; the follow-up below sets ephemeral itself.)
         await interaction.response.defer(ephemeral=True)
         try:
             campaign = await client.campaigns.get(guild.id, self.campaign_id)
