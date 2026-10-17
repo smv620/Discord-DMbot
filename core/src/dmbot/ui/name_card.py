@@ -84,6 +84,7 @@ ONLY_ONE = "☝️ Only one of these exists (you said so)."
 ONLY_ONE_GUESS = "☝️ Taken as the only one (it has a proper name)."
 ONLY_ONE_BUTTON = "☝️ Only one exists"
 MORE_THAN_ONE_BUTTON = "Allow more than one"
+STANDING_BUTTON = "🤝 Standing"  # how an NPC, group or place feels about the party (#1655)
 CLUE_BUTTON = "🔒 Only some know this"  # a clue's list of who knows it (#1649)
 ALSO_CALLED = "🏷️ Also called…"  # adds another name; its own icon, not Add a name's (#393)
 NOTHING_CHANGED = (
@@ -425,6 +426,12 @@ async def show_card(
         item=is_item,
         unique=entity.is_unique,
         clue=entity.type == "clue",
+        standing=(
+            entity.type in ("character", "faction", "place")
+            and not entity.is_player_character
+            and not entity.party
+            and sees_secrets(campaign, interaction.user.id)
+        ),
         undo_connection=undo_connection,
     )
     if replace:
@@ -555,6 +562,7 @@ class NameCard(_Menu):
         item: bool = False,
         unique: bool = False,
         clue: bool = False,
+        standing: bool = False,
         undo_connection: int | None = None,
     ) -> None:
         super().__init__()
@@ -584,6 +592,8 @@ class NameCard(_Menu):
             # until they say otherwise (#1267). Says what it will do: it flips.
             label = MORE_THAN_ONE_BUTTON if unique else ONLY_ONE_BUTTON
             self.add_item(_Button(self._one_of_a_kind, label=label, style=grey, row=3))
+        if standing:  # an NPC, group or place: how it feels about the party (#1655)
+            self.add_item(_Button(self._standing, label=STANDING_BUTTON, style=grey, row=3))
         if clue:  # a clue or secret: who knows it (#1649); an item has the row-3 button instead
             self.add_item(_Button(self._who_knows, label=CLUE_BUTTON, style=grey, row=3))
         if cut:
@@ -595,6 +605,13 @@ class NameCard(_Menu):
                 row=4,
             )
             self.add_item(self.show_all)
+
+    async def _standing(self, interaction: discord.Interaction) -> None:
+        from dmbot.ui.standing import show_standing
+
+        await _answer_first(interaction, in_place=True)
+        self.stop()
+        await show_standing(interaction, self.campaign_id, self.entity_id)
 
     async def _who_knows(self, interaction: discord.Interaction) -> None:
         from dmbot.ui.clue_audience import show_audience
