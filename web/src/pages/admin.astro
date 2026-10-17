@@ -60,7 +60,6 @@ import Base from "../layouts/Base.astro";
   }
 
   .admin :global(button.button) {
-    border: 0;
     font: inherit;
     font-weight: 600;
     cursor: pointer;
@@ -70,6 +69,11 @@ import Base from "../layouts/Base.astro";
     background: transparent;
     color: var(--accent);
     border: 2px solid var(--accent);
+  }
+
+  .admin :global(.button.secondary:hover) {
+    background: var(--accent-soft);
+    color: var(--accent);
   }
 
   .admin :global(.button:disabled) {

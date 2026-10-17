@@ -100,7 +100,6 @@
   }
 
   .account button.button {
-    border: 0;
     font: inherit;
     font-weight: 600;
     cursor: pointer;
@@ -116,9 +115,21 @@
     border: 2px solid var(--accent);
   }
 
+  .account .button.secondary:hover {
+    background: var(--accent-soft);
+    color: var(--accent);
+  }
+
   .account .button.danger {
     background: var(--danger);
     color: var(--accent-text);
+    border-color: var(--danger);
+  }
+
+  .account .button.danger:hover {
+    background: var(--danger);
+    color: var(--accent-text);
+    filter: brightness(1.1);
   }
 
   .account .button:disabled {

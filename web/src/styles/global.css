@@ -191,6 +191,12 @@ a {
   outline-offset: 2px;
 }
 
+/* A grey hint inside a field; the real label stays above it (#1778). */
+::placeholder {
+  color: var(--text-muted);
+  opacity: 1;
+}
+
 .wrap {
   width: 100%;
   max-width: var(--content-width);
@@ -213,14 +219,19 @@ a {
   min-height: var(--tap);
   padding: var(--space-3) var(--space-6);
   border-radius: var(--radius);
-  background: var(--accent);
-  color: var(--accent-text);
+  background: var(--accent-soft);
+  color: var(--accent);
+  border: 2px solid var(--accent);
   font-weight: 600;
   text-decoration: none;
 }
 
+/* Buttons are quiet at rest and fill in only on hover, so a page never loads
+   looking as if one of them is already chosen (#1778). Keyboard focus keeps
+   the ring from :focus-visible above. */
 .button:hover {
-  filter: brightness(1.08);
+  background: var(--accent);
+  color: var(--accent-text);
 }
 
 /* A raised surface: cards and panels stand out from the page (#559). */
