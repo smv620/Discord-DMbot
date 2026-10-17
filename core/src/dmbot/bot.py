@@ -3094,6 +3094,7 @@ class DMBot(commands.AutoShardedBot):
             segmenter=Segmenter(guild.id),
             campaign_id=campaign.id,
             campaign_name=campaign.name,
+            fight=FightState.starting_from(campaign.initiative_style),  # (#1784)
             dm_user_ids=campaign.dm_user_ids,
             screen_level=campaign.dm_screen_level,
             rules_on=campaign.rules_cards,
@@ -3517,6 +3518,7 @@ class DMBot(commands.AutoShardedBot):
             notice_posted=saved.notice_posted,
             campaign_id=campaign.id,
             campaign_name=campaign.name,
+            fight=FightState.starting_from(campaign.initiative_style),  # (#1784)
             dm_user_ids=campaign.dm_user_ids,
             screen_level=campaign.dm_screen_level,
             rules_on=campaign.rules_cards,
@@ -4158,6 +4160,7 @@ class DMBot(commands.AutoShardedBot):
                 consenting=lambda u: self.consent.has_consent(table.guild_id, u),
             ):
                 self._track(self.fight_style_changed(table), "fight-style")
+                self._track(self._remember_style(table), "fight-style-kept")
         except Exception:
             log.exception("FightBot: couldn't look at a line")
         try:  # a card is never worth a lost line: nothing below may be skipped
@@ -4182,6 +4185,23 @@ class DMBot(commands.AutoShardedBot):
                 task.add_done_callback(
                     lambda _t: setattr(table, "clock_waiting", table.clock_waiting - 1)
                 )
+
+    async def _remember_style(self, table: Table) -> None:
+        """Keep the initiative style a DM's words set, for the next session (#1784). Written only
+        when what is kept changes, never on every line heard."""
+        if table.campaign_id is None:
+            return
+        fight = table.fight
+        kept = fight.style.to_keep(fight.saved)
+        if kept == fight.saved:
+            return
+        before = fight.saved
+        fight.saved = kept  # (before the await, so two quick lines don't both write it)
+        try:
+            await self.campaigns.set_initiative_style(table.guild_id, table.campaign_id, kept)
+        except Exception:
+            log.warning("Couldn't keep the initiative style", exc_info=True)
+            fight.saved = before  # tried again with the next DM line
 
     async def fight_style_changed(self, table: Table) -> None:
         """The initiative style FightBot heard changed (#1771): the DM's combat line shows it.

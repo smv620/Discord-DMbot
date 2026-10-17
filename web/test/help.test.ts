@@ -10,7 +10,7 @@ import { beforeAll, describe, expect, it } from "vitest";
 import { parsePage } from "./dom";
 
 import { entries, held } from "../src/content/whats-new";
-import { TIME_SUGGESTIONS_LIVE, timeSuggestionSteps, RULES_CHANNEL_LIVE, rulesChannelSteps, DEEDS_LIVE, deedSteps, WHERE_ARE_WE_LIVE, whereAreWeSteps, SHARED_STORY_LIVE, sharedStorySteps, STANDING_LIVE, standingSteps, HOMEBREW_KINDS_LIVE, homebrewKindSteps, STORY_THREADS_LIVE, storyThreadSteps, DM_BOT_CHANNEL_LIVE, dmBotChannelSteps, settingsOnDmScreenSteps, HOMEBREW_LINKS_LIVE, SECRET_CLUES_LIVE, accountSteps, dmSteps, homebrewLinkSteps, secretClueSteps, emailSteps, recapSteps, quickAnswers, quickAnswersHeading, gettingHelp, playerSteps } from "../src/content/help";
+import { TIME_SUGGESTIONS_LIVE, timeSuggestionSteps, RULES_CHANNEL_LIVE, rulesChannelSteps, NPCS_CHANNEL_LIVE, npcsChannelSteps, DEEDS_LIVE, deedSteps, WHERE_ARE_WE_LIVE, whereAreWeSteps, SHARED_STORY_LIVE, sharedStorySteps, STANDING_LIVE, standingSteps, HOMEBREW_KINDS_LIVE, homebrewKindSteps, STORY_THREADS_LIVE, storyThreadSteps, DM_BOT_CHANNEL_LIVE, dmBotChannelSteps, settingsOnDmScreenSteps, HOMEBREW_LINKS_LIVE, SECRET_CLUES_LIVE, accountSteps, dmSteps, homebrewLinkSteps, secretClueSteps, emailSteps, recapSteps, quickAnswers, quickAnswersHeading, gettingHelp, playerSteps } from "../src/content/help";
 import Help from "../src/pages/help.astro";
 
 const botDir = fileURLToPath(new URL("../../core/src/dmbot/", import.meta.url));
@@ -273,8 +273,21 @@ describe("Help: the website's read-only pages (#1588)", () => {
     expect(shown.includes("a channel called dmb-rules")).toBe(RULES_CHANNEL_LIVE);
     const words = rulesChannelSteps.map((x) => x.text).join(" ");
     expect(words).toContain("Only DMbot posts in dmb-rules. Players can't, and neither can you.");
-    expect(words).toContain("Hiding the DM screen again closes both.");
+    expect(words).toContain(NPCS_CHANNEL_LIVE ? "closes all three." : "Hiding the DM screen again closes both.");
     expect(words).toContain("Each rule is shown in your own words.");
+  });
+
+  it("holds the NPC list channel steps with their held What's new entry (#1781)", () => {
+    expect(held.map((h) => h.title).includes("A channel listing the people and groups")).toBe(!NPCS_CHANNEL_LIVE);
+    const shown = dmSteps.map((x) => x.text).join(" ");
+    expect(shown.includes("a channel called dmb-npcs")).toBe(NPCS_CHANNEL_LIVE);
+    const words = npcsChannelSteps.map((x) => x.text).join(" ");
+    expect(words).toContain("Only DMbot posts there.");
+    expect(words).toContain("the next /dmbot start fixes it");
+    // The peek sentence names the NPC list only when the channel is live.
+    const peek = rulesChannelSteps.map((x) => x.text).join(" ");
+    expect(peek.includes("dmb-rules and dmb-npcs too")).toBe(NPCS_CHANNEL_LIVE);
+    for (const step of npcsChannelSteps) expect(step.text.split(" ").length).toBeLessThanOrEqual(40);
   });
 
   it("holds the time suggestion step with its held What's new entry (#1765)", () => {
