@@ -290,7 +290,9 @@ class SidebarService:
             if user_id in self._known_dms and self._note_ok(user_id, "nosession"):
                 await reply(NO_SESSION)
             return
-        if self.answerer is None:  # before any download or speech-to-text is paid for
+        # Guide me needs no AI (#1745), so a typed "what's next?" works without an answer engine.
+        if self.answerer is None and not (typed and guide_phrase.is_whats_next(typed)):
+            # (checked before any download or speech-to-text is paid for)
             if self._note_ok(user_id, "notyet"):
                 await reply(NOT_YET)
             return
@@ -483,12 +485,16 @@ class SidebarService:
         `entity` (#1624): who the DM was voicing in this line, if known (a transcript line's
         `entity`): a line said as a named NPC never asks DMbot anything; "" (not known) and
         narrating do."""
-        if self.answerer is None or table.campaign_id is None:
-            return False  # no engine: quietly nothing, and the minute is not used up
+        if table.campaign_id is None:
+            return False
         is_dm = _is_dm(table, user_id)
         request = request_in(text, in_character=in_character or voiced_by_npc(entity))
         if request is None or (request.verb and not is_dm):
             return False  # (a player saying "I need to find my sheet" is not asking DMbot)
+        # No engine: quietly nothing, and the minute is not used up. Guide me alone needs none
+        # (the DM's "what's next?" is handled before the engine is used).
+        if self.answerer is None and not (is_dm and guide_phrase.is_whats_next(request.question)):
+            return False
         public = not request.verb and table.dmbchat_channel_id is not None
         if not public and not is_dm:
             return False  # nowhere everyone can read the answer
@@ -635,9 +641,6 @@ class SidebarService:
         dm_only = not public
         if campaign_id is None or not self._still(table, user_id, dm=dm_only):
             return
-        answerer = self.answerer
-        if answerer is None:
-            return
         question = self.host.sidebar_clean(table, heard)
         asked_ms = int(self._clock() * 1000)
         campaign = await self.host.sidebar_campaign(guild_id, campaign_id)
@@ -652,6 +655,13 @@ class SidebarService:
             and await self._guide_answer(table, user_id, heard, question, asked_ms, via)
         ):
             return  # (else the usual sidebar answer: Guide me is off, or can't be given)
+        answerer = self.answerer
+        if answerer is None:
+            # No engine: only Guide me, above, could be answered. A typed message is told so
+            # (the same note as before this change), never left in silence.
+            if via == VIA_TYPED:
+                await reply(NOT_YET)
+            return
         now = self._monotonic()
         scene = table.recent.scene(
             lambda u: self.host.name_of(guild_id, u),
