@@ -2610,3 +2610,5 @@ Overall ...................................... PASS (Deepgram baseline: 33/33, 1
   Result: core logged "Database updated: 0115 ... 0119" and "Connected to 1 server(s)"; web-api healthy; schema_migrations 119 rows, last 0119_homebrew_more_kinds; /health 200 inside web-api.
   Not checked (need the owner in Discord): Approved sites in Homebrew (see and Take back); a homebrew entry's source line on the website; Standing on an NPC's name card (Set standing...); the new homebrew kinds species, subclass and background; that the secrets and story-thread buttons appear on a name card.
   docs/next-test-step.md is Test I (consent v6), not yet run.
+  10-minute check, 03:56 UTC (10 minutes after the start): 0 ERROR, CRITICAL or traceback lines in core and web-api since 03:46; both up, web-api healthy; schema_migrations 119 rows, last 0119_homebrew_more_kinds.
+  Nothing turned on for users (recaps off, no ElevenLabs key, the extractor off).
