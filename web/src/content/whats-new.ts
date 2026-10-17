@@ -20,6 +20,11 @@ export const whatsNewIntro =
 export const entries: Entry[] = [
   {
     date: "2026-10-17",
+    title: "DMbot works on any new server",
+    what: "Add DMbot to a new server and /dmbot start is ready to use. If no list pops up when you type it, wait a minute and try again.",
+  },
+  {
+    date: "2026-10-17",
     title: "Add homebrew from a link",
     what: "In Settings, then Homebrew, press Add from a link and paste the address of a published homebrew page. DMbot shows you what it read and saves it only when you press Save; the first time for a site, you say you have the right to use it.",
   },
