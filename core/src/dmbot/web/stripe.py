@@ -71,8 +71,9 @@ TOLERANCE_SECONDS = 300
 API_VERSION = "2026-09-30.endive"
 # The owner's Checkout Studio parameters (#1446), sent with every Checkout Session. `ui_mode`
 # is `hosted_page` on this API version and the one before it (older versions called it
-# `hosted`); the owner's values are fixed, so a change is a decision, not a tweak. `payment_method_collection` is added
-# only to subscriptions (see `_checkout`). Listed in STRIPE_INTEGRATION_TODO.md.
+# `hosted`); the owner's values are fixed, so a change is a decision, not a tweak.
+# `payment_method_collection` is added only to subscriptions (see `_checkout`). Listed in
+# STRIPE_INTEGRATION_TODO.md.
 CHECKOUT_STUDIO: dict[str, str] = {
     "ui_mode": "hosted_page",
     "billing_address_collection": "auto",
