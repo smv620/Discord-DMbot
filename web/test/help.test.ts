@@ -9,7 +9,7 @@ import { beforeAll, describe, expect, it } from "vitest";
 
 import { parsePage } from "./dom";
 
-import { DM_BOT_CHANNEL_LIVE, dmBotChannelSteps, settingsOnDmScreenSteps, HOMEBREW_LINKS_LIVE, SECRET_CLUES_LIVE, accountSteps, dmSteps, homebrewLinkSteps, secretClueSteps, emailSteps, recapSteps, quickAnswers, quickAnswersHeading, gettingHelp, playerSteps } from "../src/content/help";
+import { STANDING_LIVE, standingSteps, HOMEBREW_KINDS_LIVE, homebrewKindSteps, STORY_THREADS_LIVE, storyThreadSteps, DM_BOT_CHANNEL_LIVE, dmBotChannelSteps, settingsOnDmScreenSteps, HOMEBREW_LINKS_LIVE, SECRET_CLUES_LIVE, accountSteps, dmSteps, homebrewLinkSteps, secretClueSteps, emailSteps, recapSteps, quickAnswers, quickAnswersHeading, gettingHelp, playerSteps } from "../src/content/help";
 import { held } from "../src/content/whats-new";
 import Help from "../src/pages/help.astro";
 
@@ -55,7 +55,7 @@ describe("Help", () => {
   });
 
   it("names only buttons and commands that are in the bot's code", () => {
-    for (const step of [...dmSteps, ...dmBotChannelSteps, ...settingsOnDmScreenSteps, ...homebrewLinkSteps, ...secretClueSteps, ...recapSteps, ...quickAnswers, ...playerSteps, ...accountSteps, ...emailSteps]) {
+    for (const step of [...dmSteps, ...dmBotChannelSteps, ...settingsOnDmScreenSteps, ...storyThreadSteps, ...standingSteps, ...homebrewKindSteps, ...homebrewLinkSteps, ...secretClueSteps, ...recapSteps, ...quickAnswers, ...playerSteps, ...accountSteps, ...emailSteps]) {
       for (const { name, file } of step.names ?? []) {
         expect(step.text, `${name} is in its step`).toContain(name);
         const source = readFileSync(join(botDir, file), "utf8");
@@ -180,7 +180,8 @@ describe("Help: the website's read-only pages (#1588)", () => {
     // Mirrors who gets which button in core/src/dmbot/dm_screen/dm_bot_panel.py (_BUTTONS).
     const words = dmBotChannelSteps.map((x) => x.text).join(" ");
     expect(words).toContain("👤 My buttons");
-    expect(words).toContain("Everyone also gets ❓ Help.");
+    expect(words).toContain("Everyone also gets 📖 Look up a rule and 📜 Transcripts.");
+    expect(words).toContain("Press 📖 Look up a rule to check a rule. Only you see the answer.");
     expect(words).toContain("you get ⚙️ Menu, where you can stop being recorded.");
     expect(words).toContain("Players also get 📜 My character sheet.");
     expect(words).toContain("Game masters get ⚙️ Settings too.");
@@ -193,6 +194,35 @@ describe("Help: the website's read-only pages (#1588)", () => {
     } else {
       for (const phrase of ["dmb-dm-bot", "DMbot channel", "My buttons"]) expect(shown).not.toContain(phrase);
     }
+  });
+
+  it("holds the story-thread steps with the held What's new entries, and flips them together (#1694)", () => {
+    const heldTitles = held.map((h) => h.title);
+    for (const title of ["Story threads you keep", "Keep track of promises made at the table"]) {
+      expect(heldTitles.includes(title), title).toBe(!STORY_THREADS_LIVE);
+    }
+    const shown = dmSteps.map((x) => x.text).join(" ");
+    expect(shown.includes("🧵 New thread")).toBe(STORY_THREADS_LIVE);
+    const words = storyThreadSteps.map((x) => x.text).join(" ");
+    for (const label of ["🧵 Change state", "👥 Who's involved", "📌 Link an event", "🧵 Check the threads", "🧵 Threads", "🤝 Add a promise", "🤝 Who promised", "🤝 Promised to", "📅 Due", "➡ Led to…"]) {
+      expect(words, label).toContain(label);
+    }
+    expect(words).toContain("DMbot only reminds you. You decide.");
+    expect(words).toContain("DMbot never sends your threads, promises or these links to players.");
+  });
+
+  it("holds the standing and homebrew-kind steps with their held What's new entries (#1695)", () => {
+    const heldTitles = held.map((h) => h.title);
+    expect(heldTitles.includes("How NPCs feel about the party")).toBe(!STANDING_LIVE);
+    for (const title of ["Homebrew menu by kind", "Species, subclasses and backgrounds in homebrew"]) {
+      expect(heldTitles.includes(title), title).toBe(!HOMEBREW_KINDS_LIVE);
+    }
+    const shown = dmSteps.map((x) => x.text).join(" ");
+    expect(shown.includes("🤝 Standing")).toBe(STANDING_LIVE);
+    expect(shown.includes("↩ All kinds")).toBe(HOMEBREW_KINDS_LIVE);
+    expect(standingSteps.map((x) => x.text).join(" ")).toContain("Players never see it.");
+    expect(homebrewKindSteps.map((x) => x.text).join(" ")).toContain("Spells 10/12, which means 10 of 12 spells are on.");
+    expect(secretClueSteps.map((x) => x.text).join(" ")).toContain("If a player asks DMbot about it, DMbot won't show a clue that only some people know.");
   });
 
   it("finds Settings, splits the party and deletes a campaign in plain words (#1659)", () => {

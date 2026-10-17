@@ -17,7 +17,7 @@ from __future__ import annotations
 import asyncio
 import dataclasses
 import time
-from collections.abc import AsyncGenerator, AsyncIterator, Callable, Collection, Sequence
+from collections.abc import AsyncGenerator, AsyncIterator, Callable, Collection, Mapping, Sequence
 from contextlib import asynccontextmanager
 from typing import Any
 
@@ -888,6 +888,24 @@ class MemoryStore:
                 from_session_at=from_session_at,
             )  # fmt: skip
             return Written(fact, w.batch)
+
+    async def health_counts(
+        self, guild_id: int, campaign_id: str, *, since: int, recent: int
+    ) -> Mapping[str, Any]:
+        """The one row of the story graph's health counts (#1699, #1701). The SQL and what each
+        number means are in `dmbot.memory.health`; this runs it in a read scoped to this
+        campaign, so every count is this campaign's and no other's."""
+        from dmbot.memory import health  # (it imports this module: loaded late)
+
+        async with self._read(guild_id, campaign_id) as scope:
+            g, c = scope.ids
+            cur = await scope.conn.execute(
+                health.COUNTS, {"g": g, "c": c, "since": since, "recent": recent}
+            )
+            row = await cur.fetchone()
+        if row is None:  # (a SELECT of scalar subqueries always returns one row)
+            raise RuntimeError("The health counts returned no row")
+        return row
 
     async def chain(
         self, guild_id: int, campaign_id: str, entity_id: str
