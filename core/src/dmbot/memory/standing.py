@@ -160,7 +160,7 @@ class Index:
         if not found:
             return Standing(viewer, subject, None, None, ())
         found.sort(key=lambda f: (f[0] + f[1], f[0], f[2].holder, f[2].target))
-        reasons = tuple(self._reason(row) for _, _, row in found)
+        reasons = tuple(self._reason(row, viewer, subject) for _, _, row in found)
         # The DM always wins: the viewer's own, DM-set word on the exact pair, or toward a people
         # the subject is of, decides the step; the rungs above are only reasons.
         decisive = [f for f in found if f[0] == 0 and f[2].source == DM_SOURCE]
@@ -173,10 +173,12 @@ class Index:
         score = sum(row.score * row.weight * HALF ** (i + j) for i, j, row in found) / total
         return Standing(viewer, subject, score, step_of(score), reasons)
 
-    def _reason(self, row: Row) -> str:
+    def _reason(self, row: Row, viewer: str, subject: str) -> str:
+        who = "you set it" if row.source == DM_SOURCE else "from the story"
+        if row.holder == viewer and row.target == subject:
+            return f"{who.capitalize()}."  # the step above already says what
         holder = self.nodes[row.holder].name
         target = self.nodes[row.target].name
-        who = "you set it" if row.source == DM_SOURCE else "from what happened"
         return f"{holder} is {step_of(row.score)} toward {target} ({who})."
 
 

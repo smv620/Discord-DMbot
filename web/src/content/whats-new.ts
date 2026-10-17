@@ -216,8 +216,8 @@ export const held: Held[] = [
   },
   {
     date: "2026-10-17",
-    title: "How characters feel about you",
-    what: "On an NPC's, group's or place's name card, the game master can press Standing to see how it feels about each player character and the party, in five steps with the reasons, and set it. It only reminds you. You decide how they act, and players never see it.",
+    title: "How NPCs feel about the party",
+    what: "On an NPC's, group's or place's name card, press Standing to see how it feels about each player character and the party: Hostile, Unfriendly, Wary, Friendly or Devoted, with the reasons. You can set it too. It only reminds you; you decide how they act. Players never see it.",
     reason:
       "Held until it has been seen working on the test server (#1655).",
   },

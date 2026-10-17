@@ -91,7 +91,7 @@ class Rule(unittest.TestCase):
         got = index.standing("guard", "kesh")
         self.assertEqual((got.step, got.decided_by_dm), ("Friendly", True))
         self.assertEqual(len(got.reasons), 3)
-        self.assertIn("Guard is Friendly toward Kesh (you set it).", got.reasons)
+        self.assertIn("You set it.", got.reasons)
         self.assertTrue(any("Bryn is Hostile toward Tabaxi" in r for r in got.reasons))
 
     def test_the_viewers_own_attitude_toward_a_people_decides_too(self) -> None:
@@ -408,9 +408,7 @@ class Screen(ConfirmedMemoryTest):
         it = self.interaction()
         await ui.show_standing(it, self.c, self.guard)
         text = it.sent[-1]
-        self.assertIn(
-            "**Gate guard** → **Kesh**: Wary. Gate guard is Wary toward Kesh (you set it).", text
-        )
+        self.assertIn("**Gate guard** → **Kesh**: Wary. You set it.", text)
         self.assertIn(st.REMINDER, text)
 
     async def test_nothing_set_says_no_opinion_yet(self) -> None:
@@ -426,8 +424,7 @@ class Screen(ConfirmedMemoryTest):
         await ui.show_standing(player, self.c, self.guard)
         self.assertNotIn("Wary", " ".join(player.sent))
         step = ui.PickStep(self.c, guard, kesh, attitude=False)
-        step.pick._values = ["Hostile"]
-        await step._picked(self.interaction(99))
+        await step._save("Hostile", self.interaction(99))
         self.assertEqual((await self.memory.standing_index(GUILD_A, self.c)).impressions, {})
         menu = ui.StandingMenu(self.c, guard, [kesh], False)
         self.assertTrue(await menu._dm(self.interaction()))
@@ -438,9 +435,8 @@ class Screen(ConfirmedMemoryTest):
         kesh = await self.memory.entity(GUILD_A, self.c, self.kesh)
         assert guard is not None and kesh is not None
         step = ui.PickStep(self.c, guard, kesh, attitude=False)
-        step.pick._values = ["Hostile"]
         it = self.interaction()
-        await step._picked(it)
+        await step._save("Hostile", it)
         self.assertIn("Saved: **Gate guard** is **Hostile** toward **Kesh**.", it.sent[-1])
         got = (await self.memory.standing_index(GUILD_A, self.c)).standing(self.guard, self.kesh)
         self.assertEqual(got.step, "Hostile")

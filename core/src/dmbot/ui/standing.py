@@ -8,6 +8,7 @@ transcript.
 from __future__ import annotations
 
 import logging
+from functools import partial
 
 import discord
 
@@ -31,15 +32,20 @@ log = logging.getLogger(__name__)
 
 BUTTON = "🤝 Standing"  # on the name card
 ONLY_DM = "Only the DM can see or change that."
-LINE_MAX = 330
+
+
+REASONS_SHOWN = 3  # a line holds the nearest few; the rest are counted, never cut mid-sentence
 
 
 def standing_line(viewer: str, subject: str, result: standing.Standing) -> str:
-    """One line: who feels what about whom, and why."""
-    head = f"**{_md(viewer)}** → **{_md(subject)}**: {result.shown}."
-    if result.reasons:
-        head += " " + " ".join(_md(r) for r in result.reasons)
-    return head if len(head) <= LINE_MAX else head[: LINE_MAX - 1].rstrip() + "…"
+    """One line: who feels what about whom, and the nearest reasons whole."""
+    shown = result.reasons[:REASONS_SHOWN]
+    more = len(result.reasons) - len(shown)
+    parts = [f"**{_md(viewer)}** → **{_md(subject)}**: {result.shown}."]
+    parts += [_md(r) for r in shown]
+    if more > 0:
+        parts.append(f"(+{more} more)")
+    return " ".join(parts)
 
 
 def standing_text(
@@ -48,17 +54,23 @@ def standing_text(
     index: standing.Index,
     note: str = "",
 ) -> str:
+    """The reminder comes first and is never cut; a long list of characters is, by whole line."""
     lines = [note] if note else []
-    lines.append(f"🤝 **{_md(viewer.name)}**: standing")
-    if not targets:
-        lines.append("No player characters yet. Add them as names, or set standing for the party.")
-    for target in targets:
-        lines.append(
-            "• " + standing_line(viewer.name, target.name, index.standing(viewer.id, target.id))
-        )
+    lines.append(f"🤝 **{_md(viewer.name)}**: how they feel")
     lines.append(f"_{standing.REMINDER}_")
-    text = "\n".join(lines)
-    return text if len(text) <= 1900 else text[:1899].rstrip() + "…"
+    if not targets:
+        lines.append(
+            "No player characters yet. You can still set how it feels about **the party**."
+        )
+    budget = 1900 - sum(len(x) + 1 for x in lines) - 40
+    for n, target in enumerate(targets):
+        line = "• " + standing_line(viewer.name, target.name, index.standing(viewer.id, target.id))
+        if len(line) + 1 > budget:
+            lines.append(f"…and {len(targets) - n} more.")
+            break
+        budget -= len(line) + 1
+        lines.append(line)
+    return "\n".join(lines)
 
 
 async def _targets(memory: MemoryStore, guild_id: int, campaign_id: str) -> list[Entity]:
@@ -102,9 +114,11 @@ class StandingMenu(_Menu):
         self.campaign_id, self.viewer, self.group = campaign_id, viewer, group
         self.targets = targets
         grey = discord.ButtonStyle.secondary
-        self.add_item(_Button(self._set, label="Set standing…", style=discord.ButtonStyle.primary))
+        self.add_item(
+            _Button(self._set, label="Toward a character…", style=discord.ButtonStyle.primary)
+        )
         if group:
-            self.add_item(_Button(self._attitude, label="Set attitude…", style=grey))
+            self.add_item(_Button(self._attitude, label="Toward a people…", style=grey))
         self.add_item(_Button(self._back, label="↩ Back", style=grey))
 
     async def _dm(self, interaction: discord.Interaction) -> bool:
@@ -151,9 +165,9 @@ class PickTarget(_Menu):
     ) -> None:
         super().__init__()
         self.campaign_id, self.viewer = campaign_id, viewer
-        self.pick = _Select(self._picked, placeholder="Pick one…", options=options)
+        self.pick = _Select(self._picked, placeholder="Pick a character…", options=options)
         self.add_item(self.pick)
-        self.add_item(_Button(self._back, label="Back"))
+        self.add_item(_Button(self._back, label="↩ Back"))
 
     async def _picked(self, interaction: discord.Interaction) -> None:
         await _answer_first(interaction, in_place=True)
@@ -187,10 +201,10 @@ class PickTarget(_Menu):
         await show_standing(interaction, self.campaign_id, self.viewer.id)
 
 
-class PeopleForm(discord.ui.Modal, title="Toward which people?"):
+class PeopleForm(discord.ui.Modal, title="Toward which kind of folk?"):
     people: discord.ui.TextInput[PeopleForm] = discord.ui.TextInput(
-        label="A people or kind",
-        placeholder="For example: tabaxi, elves, outsiders",
+        label="Kind or people",
+        placeholder="tabaxi, elves, outsiders",
         max_length=60,
     )
 
@@ -214,7 +228,9 @@ class PeopleForm(discord.ui.Modal, title="Toward which people?"):
             return
         name = " ".join(self.people.value.split())
         if not name:
-            await show_standing(interaction, self.campaign_id, self.viewer.id)
+            await show_standing(
+                interaction, self.campaign_id, self.viewer.id, note="Nothing entered."
+            )
             return
         try:
             people = await memory.find_or_add_people(
@@ -241,15 +257,11 @@ class PickStep(_Menu):
             target,
             attitude,
         )
-        self.pick = _Select(
-            self._picked,
-            placeholder="Pick one…",
-            options=[discord.SelectOption(label=s, value=s) for s in standing.STEPS],
-        )
-        self.add_item(self.pick)
-        self.add_item(_Button(self._back, label="Back"))
+        for name in standing.STEPS:  # five buttons: one tap saves
+            self.add_item(_Button(partial(self._save, name), label=name))
+        self.add_item(_Button(self._back, label="↩ Back", row=1))
 
-    async def _picked(self, interaction: discord.Interaction) -> None:
+    async def _save(self, step: str, interaction: discord.Interaction) -> None:
         await _answer_first(interaction, in_place=True)
         campaign = await _campaign_for(interaction, self.campaign_id)
         memory = _memory(interaction)
@@ -258,7 +270,6 @@ class PickStep(_Menu):
         if not sees_secrets(campaign, interaction.user.id):
             await _tell(interaction, ONLY_DM)
             return
-        step = self.pick.values[0]
         try:
             save = memory.set_attitude if self.attitude else memory.set_impression
             await save(
@@ -272,6 +283,8 @@ class PickStep(_Menu):
         self.stop()
         who, whom = _md(self.viewer.name), _md(self.target.name)
         note = f"✅ Saved: **{who}** is **{step}** toward **{whom}**."
+        if self.attitude:
+            note += f" It shows on any character who is one of the {whom}."
         await show_standing(interaction, self.campaign_id, self.viewer.id, note=note)
 
     async def _back(self, interaction: discord.Interaction) -> None:
