@@ -344,13 +344,15 @@ class Screens(Setup):
         it = self.pressing()
         await ui.show_matches(it, self.c)
         text, menu = it.sent["content"], it.sent["view"]
-        self.assertIn("1. Book: **Bryn** ↔ Table: **Bryn**", text)
-        self.assertIn("2. Book: **Captain Varn** ↔ Table: **Captain Varn**", text)
-        self.assertIn("Only you can say", text)
+        self.assertIn("1. In your adventure: **Bryn** ↔ DMbot remembers: **Bryn**", text)
+        self.assertIn(
+            "2. In your adventure: **Captain Varn** ↔ DMbot remembers: **Captain Varn**", text
+        )
+        self.assertIn("You say; DMbot never guesses", text)
         same = self.selecting(it, menu, 0, ["0"])
         no = self.selecting(it, menu, 1, ["1"])
         await same.callback(it)  # Bryn: the same
-        self.assertIn("Saved 1 as the same", it.sent["content"])
+        self.assertIn("Linked 1 to your adventure", it.sent["content"])
         self.assertIn("↩ Undo that", [getattr(c, "label", "") for c in it.sent["view"].children])
         await no.callback(it)  # (the menu still holds its first picks) Varn: not the same
         self.assertEqual(await links.suggestions(self.memory, GUILD_A, self.c), [])
@@ -394,8 +396,8 @@ class Screens(Setup):
         menu = it.sent["view"]
         self.assertIn("which entry in your adventure is this?", it.sent["content"])
         await self.selecting(it, menu, 0, [ids["Captain Varn"]]).callback(it)
-        self.assertIn("the same as **Captain Varn** in the book", it.sent["content"])
-        self.assertIn("Same as in the book: **Captain Varn**", it.sent["content"])
+        self.assertIn("Linked to **Captain Varn** in your adventure", it.sent["content"])
+        self.assertIn("In your adventure: **Captain Varn**", it.sent["content"])
         off = next(
             c for c in it.sent["view"].children if getattr(c, "label", "").startswith("Take off")
         )
@@ -427,14 +429,14 @@ class Screens(Setup):
     async def test_the_name_card_says_who_it_is_in_the_book_to_the_dm_alone(self) -> None:
         who = await self.add("Captain Varn", type="npc")
         lookup = CampaignLookup.build(await self.memory.lookup_data(GUILD_A, self.c))
-        line = "📖 **In the book:** Captain Varn (Chapter 1)"
+        line = "📖 **In your adventure:** Captain Varn (Chapter 1)"
         dm = card_text(lookup.for_viewer(True), who, [], secrets=True, book_line=line)
         players = card_text(lookup.for_viewer(False), who, [], secrets=False, book_line=line)
         assert dm is not None and players is not None
         self.assertIn(line, dm)
-        self.assertNotIn("In the book", players)  # (even if a caller passed it by mistake)
+        self.assertNotIn("In your adventure", players)  # (even if a caller passed it by mistake)
         self.assertNotIn(
-            "In the book", card_text(lookup.for_viewer(True), who, [], secrets=True) or ""
+            "In your adventure", card_text(lookup.for_viewer(True), who, [], secrets=True) or ""
         )
         with_button = [getattr(c, "label", "") for c in NameCard(self.c, who, book=True).children]
         without = [getattr(c, "label", "") for c in NameCard(self.c, who).children]

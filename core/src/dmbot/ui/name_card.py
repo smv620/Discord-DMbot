@@ -92,7 +92,7 @@ LED_TO_BUTTON = "➡ Led to…"  # a clue, event or thread led to another (#1679
 PROMISE_BY_BUTTON = "🤝 Who promised"  # a promise's buttons (#1674)
 PROMISE_TO_BUTTON = "🤝 Promised to"
 PROMISE_DUE_BUTTON = "📅 Due"
-BOOK_BUTTON = "📖 Same as in the book…"  # the DM says who in the adventure this is (#1715)
+BOOK_BUTTON = "📖 In my adventure…"  # the DM says who in the adventure this is (#1715)
 STANDING_BUTTON = "🤝 Standing"  # how an NPC, group or place feels about the party (#1655)
 CLUE_BUTTON = "🔒 Only some know this"  # a clue's list of who knows it (#1649)
 ALSO_CALLED = "🏷️ Also called…"  # adds another name; its own icon, not Add a name's (#393)
@@ -450,7 +450,7 @@ async def show_card(
             book_ok = True
             mine = await book_links.linked(memory, campaign.guild_id, campaign.id, entity_id)
             if mine:
-                book_line = "📖 **In the book:** " + "; ".join(
+                book_line = "📖 **In your adventure:** " + "; ".join(
                     _md(m.name) + (f" ({_md(m.chapter)})" if m.chapter else "") for m in mine
                 )
     text = card_text(

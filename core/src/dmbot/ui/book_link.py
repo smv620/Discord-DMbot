@@ -33,34 +33,51 @@ from dmbot.ui.names import GONE, _campaign_for, _md, _memory, changed, sees_secr
 
 log = logging.getLogger(__name__)
 
-BUTTON = "📖 Same as in the book…"  # on a name card
+BUTTON = "📖 In my adventure…"  # on a name card
 MATCH_LABEL = "Match names"  # on the Shared story card
 ONLY_DM = links.ONLY_DM
 NOTHING_TO_MATCH = (
-    "Nothing to match right now. DMbot looks for names in your adventure that are also names at "
-    "your table. Use **Same as in the book…** on a name's card to pick one yourself."
+    "Nothing to match. No name in your adventure is also one DMbot remembers. Open a name's card "
+    "and press **📖 In my adventure…** to link one yourself."
 )
 HEAD = (
-    "🔗 **Is the book's name the same as the table's?**\n"
-    "DMbot found these by name. Only you can say, and only you see this."
+    "🔗 **Match names**\n"
+    "Is a name in your adventure the same person or place as one DMbot remembers from your "
+    "game? You say; DMbot never guesses. Nothing changes in your game. Only you see this."
 )
-SAME_HOLDER = "These are the same…"
-NOT_HOLDER = "These are not the same…"
+HOW = (
+    "Top menu: these are the same. Bottom menu: these are not, and DMbot won't ask about them "
+    "again (you can still link one by hand from its name card). Pairs you skip come back next time."
+)
+SAME_HOLDER = "Same person or place…"
+NOT_HOLDER = "Not the same…"
 UNDONE = "Undone."
 LABEL_MAX = 100  # a menu option's label
 
 
-def pair_label(pair: links.Pair) -> str:
-    """ "Book: Captain Varn ↔ Table: Captain Varn", cut to what a menu option holds."""
-    text = f"Book: {pair.plan_name} ↔ Table: {pair.entity_name}"
-    return text if len(text) <= LABEL_MAX else text[: LABEL_MAX - 1] + "…"
+LABEL_SHOWN = 25  # a phone shows about this much of a menu option's label
+
+
+def pair_label(n: int, pair: links.Pair) -> str:
+    """ "1. Captain Varn": the number ties it to the message, whose line has both names."""
+    return f"{n}. {pair.plan_name}"[:LABEL_SHOWN]
+
+
+def pair_description(pair: links.Pair) -> str:
+    """Both names, for the line under the option."""
+    text = f"In your adventure: {pair.plan_name}. DMbot remembers: {pair.entity_name}"
+    return text[:LABEL_MAX]
 
 
 def match_text(pairs: list[links.Pair], note: str = "") -> str:
     lines = [note] if note else []
     lines.append(HEAD)
     for n, pair in enumerate(pairs, 1):
-        lines.append(f"{n}. Book: **{_md(pair.plan_name)}** ↔ Table: **{_md(pair.entity_name)}**")
+        lines.append(
+            f"{n}. In your adventure: **{_md(pair.plan_name)}** ↔ "
+            f"DMbot remembers: **{_md(pair.entity_name)}**"
+        )
+    lines.append(HOW)
     return "\n".join(lines)
 
 
@@ -118,7 +135,10 @@ class MatchMenu(_Menu):
         self.campaign_id, self.pairs, self.undo = campaign_id, pairs, undo
         if pairs:
             options = [
-                discord.SelectOption(label=pair_label(p), value=str(n)) for n, p in enumerate(pairs)
+                discord.SelectOption(
+                    label=pair_label(n, p), value=str(n - 1), description=pair_description(p)
+                )
+                for n, p in enumerate(pairs, 1)
             ]
             self.same = _Select(
                 partial(self._pick, links.SAME),
@@ -157,14 +177,13 @@ class MatchMenu(_Menu):
             return
         changed(interaction, campaign)
         log.info("Book names answered: %d", written.value)  # a count only, never a name
-        word = "the same" if status == links.SAME else "not the same"
-        self.stop()
-        await show_matches(
-            interaction,
-            self.campaign_id,
-            note=f"✅ Saved {written.value} as {word}.",
-            undo=written.batch,
+        note = (
+            f"✅ Linked {written.value} to your adventure."
+            if status == links.SAME
+            else f"✅ Saved {written.value} as not the same. DMbot won't ask about them again."
         )
+        self.stop()
+        await show_matches(interaction, self.campaign_id, note=note, undo=written.batch)
 
     async def _undo(self, interaction: discord.Interaction) -> None:
         await _answer_first(interaction, in_place=True)
@@ -187,9 +206,9 @@ async def _undo(memory: Any, campaign: Any, batch: int) -> str:
     try:
         await memory.undo(campaign.guild_id, campaign.id, batch)
     except TooLateToUndo:
-        return "Too late to undo that."
+        return "Too late to undo that. Change it by hand on the name's card."
     except MemoryRuleError:
-        return "Not undone: it was changed again since."
+        return "Not undone: you changed it again after."
     return UNDONE
 
 
@@ -199,11 +218,14 @@ async def _undo(memory: Any, campaign: Any, batch: int) -> str:
 def pick_text(entity_name: str, current: list[links.Linked], total: int, note: str = "") -> str:
     lines = [note] if note else []
     lines.append(f"📖 **{_md(entity_name)}**: which entry in your adventure is this?")
-    for link in current:
+    for n, link in enumerate(current[:3], 1):
         where = f" ({_md(link.chapter)})" if link.chapter else ""
-        lines.append(f"Same as in the book: **{_md(link.name)}**{where}")
+        lines.append(f"{n}. In your adventure: **{_md(link.name)}**{where}")
     if not total:
-        lines.append("Your adventure has no other person, group or place of this kind to pick.")
+        lines.append(
+            "Nothing in your adventure to link this to. Give DMbot your adventure on the Shared "
+            "story card."
+        )
     return "\n".join(lines)
 
 
@@ -259,12 +281,14 @@ class PickMenu(_Menu):
             self.add_item(
                 _Select(
                     self._picked,
-                    placeholder="Pick the book's entry…",
+                    placeholder="Pick from your adventure…",
                     options=[
                         discord.SelectOption(
-                            label=o.name[:100],
+                            label=o.name[:LABEL_SHOWN],
                             value=o.plan_id,
-                            description=(o.chapter[:100] if o.chapter else None),
+                            description=(f"{o.chapter} · {o.name}" if o.chapter else o.name)[
+                                :LABEL_MAX
+                            ],
                         )
                         for o in options
                     ],
@@ -272,11 +296,11 @@ class PickMenu(_Menu):
             )
         if offset + len(options) < total:
             self.add_item(_Button(self._more, label="More ▶", row=1))
-        for link in current[:3]:  # (one for each file it is linked in; rarely more than one)
+        for n, link in enumerate(current[:3], 1):  # (one for each file it is linked in)
             self.add_item(
                 _Button(
                     partial(self._off, link.plan_id),
-                    label=f"Take off: {link.name}"[:80],
+                    label="Take off" if len(current) == 1 else f"Take off {n}",
                     row=2,
                 )
             )
@@ -311,7 +335,7 @@ class PickMenu(_Menu):
             interaction,
             self.campaign_id,
             self.entity_id,
-            note=f"✅ Saved: the same as **{_md(name)}** in the book.",
+            note=f"✅ Linked to **{_md(name)}** in your adventure.",
             undo=written.batch,
         )
 
