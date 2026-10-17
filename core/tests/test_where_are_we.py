@@ -20,7 +20,8 @@ from dmbot.timebot.split import Group
 from dmbot.timebot.store import Stored
 
 START = 1000.0
-_clock = mock.patch.object(w, "_now", lambda: START + 10)  # the module's clock is the tests' own
+CLOCK = [START + 10]  # what the module's clock reads: the tests set it
+_clock = mock.patch.object(w, "_now", lambda: CLOCK[0])
 
 
 def setUpModule() -> None:
@@ -44,9 +45,7 @@ def at(day: int, hour: int, minute: int = 0) -> int:
 
 class Words(unittest.TestCase):
     def test_one_time_in_the_clocks_own_words(self) -> None:
-        self.assertEqual(
-            w.line(stored(at(4, 14, 30))), "🕰️ Where we are: afternoon of Day 4 (14:30)."
-        )
+        self.assertEqual(w.line(stored(at(4, 14, 30))), "🕰️ Where we are: Day 4, afternoon (14:30).")
 
     def test_a_split_party_lists_each_group(self) -> None:
         groups = (
@@ -56,8 +55,8 @@ class Words(unittest.TestCase):
         both = Stored(Clock(at(2, 23, 10), 0), None, None, groups=groups, picked=1)
         self.assertEqual(
             w.line(both),
-            "🕰️ Where we are: the cellar group, night of Day 2 (23:10); "
-            "the tower group, dawn of Day 3 (05:40).",
+            "🕰️ Where we are: the cellar group, Day 2, night (23:10); "
+            "the tower group, Day 3, dawn (05:40).",
         )
 
     def test_every_time_of_day_uses_a_word_the_clock_already_has(self) -> None:
@@ -82,14 +81,28 @@ class Names(unittest.TestCase):
             Group(2, "tower", Clock(at(3, 5, 40), 0)),
         )
         text = w.line(Stored(groups[0].clock, None, None, groups=groups, picked=1))
-        self.assertIn("The Cellar group, night", text)
-        self.assertIn("the tower group, dawn", text)
+        self.assertIn("The Cellar group, Day 2, night", text)
+        self.assertIn("the tower group, Day 3, dawn", text)
         self.assertNotIn("the The", text)
 
-    def test_a_very_long_line_is_cut_to_fit_a_message(self) -> None:
+    def test_a_very_long_line_is_cut_between_groups_and_says_how_many_are_left(self) -> None:
         groups = tuple(Group(n, "x" * 700, Clock(at(1, 8), 0)) for n in (1, 2, 3))
         text = w.line(Stored(groups[0].clock, None, None, groups=groups, picked=1))
         self.assertLessEqual(len(text), w.LINE_MAX)
+        self.assertTrue(text.endswith("; +1 more."), text[-40:])
+        self.assertEqual(text.count(" group, Day 1, morning (08:00)"), 2)  # whole groups only
+
+    def test_a_line_that_fits_is_left_whole(self) -> None:
+        groups = tuple(Group(n, f"g{n}", Clock(at(1, 8), 0)) for n in (1, 2, 3))
+        text = w.line(Stored(groups[0].clock, None, None, groups=groups, picked=1))
+        self.assertNotIn("more", text)
+        self.assertEqual(text.count(" group, "), 3)
+
+    def test_even_one_enormous_group_never_goes_over_the_limit(self) -> None:
+        groups = (Group(1, "x" * 3000, Clock(at(1, 8), 0)), Group(2, "y", Clock(at(1, 9), 0)))
+        text = w.line(Stored(groups[0].clock, None, None, groups=groups, picked=1))
+        self.assertLessEqual(len(text), w.LINE_MAX)
+        self.assertTrue(text.endswith("more."))
 
     def test_the_table_has_the_field_and_it_starts_at_the_sessions_start(self) -> None:
         from dmbot.bot import Table
@@ -165,7 +178,11 @@ class Rule(unittest.IsolatedAsyncioTestCase):
         self.bot.stores["a" * 32] = stored(at(4, 14, 30))
 
     async def tick(self, now: float) -> bool:
-        return await w.tick(self.bot, self.table, now)
+        CLOCK[0] = now  # (saying the line reads the clock again: it is the same moment)
+        try:
+            return await w.tick(self.bot, self.table, now)
+        finally:
+            CLOCK[0] = START + 10
 
     async def test_nothing_before_thirty_minutes_one_at_thirty_and_not_again_until_the_next(
         self,
@@ -173,9 +190,9 @@ class Rule(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(await self.tick(START + GAP - 1))
         self.assertTrue(await self.tick(START + GAP))
         self.assertEqual(len(self.bot.posted), 1)
-        self.assertIn("afternoon of Day 4 (14:30)", self.bot.posted[0][1])
-        # (saying it counted as shown: the wait starts again from now)
-        self.table.clock_shown_at = START + GAP
+        self.assertIn("Day 4, afternoon (14:30)", self.bot.posted[0][1])
+        # (saying it counted as shown: tick itself started the wait again, at its own time)
+        self.assertEqual(self.table.clock_shown_at, START + GAP)
         self.assertFalse(await self.tick(START + GAP + 60))
         self.assertFalse(await self.tick(START + 2 * GAP - 1))
         self.assertTrue(await self.tick(START + 2 * GAP))
@@ -278,3 +295,33 @@ class Rule(unittest.IsolatedAsyncioTestCase):
         self.table.clock_shown_at = START
         await clock_screen.say(self.bot, campaign, ["🌅 Dawn."])
         self.assertEqual(self.table.clock_shown_at, START)
+
+
+class Timers(unittest.IsolatedAsyncioTestCase):
+    """A timer that ended is a line about the clock on the DM screen: it counts as shown (#1745)."""
+
+    async def test_an_ended_timer_line_starts_the_wait_again(self) -> None:
+        from dmbot.dm_screen import effects
+
+        bot: Any = Fake()
+        table = bot.table(1, "a" * 32)
+        campaign: Any = campaign_of(table)
+        ended = SimpleNamespace(number=1, group=None, ended_line=lambda name: "⏰ Torch ended.")
+        bot.effects = SimpleNamespace(claim_due=AsyncMock(return_value=[ended]), untell=AsyncMock())
+        bot.post_message = AsyncMock(return_value=object())
+        bot.clocks = SimpleNamespace(get=AsyncMock(return_value=None))
+        await effects.announce_due(bot, campaign, at(1, 9))
+        self.assertGreater(table.clock_shown_at, START)
+
+    async def test_a_line_that_was_not_posted_does_not(self) -> None:
+        from dmbot.dm_screen import effects
+
+        bot: Any = Fake()
+        table = bot.table(1, "a" * 32)
+        campaign: Any = campaign_of(table)
+        ended = SimpleNamespace(number=1, group=None, ended_line=lambda name: "⏰ Torch ended.")
+        bot.effects = SimpleNamespace(claim_due=AsyncMock(return_value=[ended]), untell=AsyncMock())
+        bot.post_message = AsyncMock(return_value=None)
+        bot.clocks = SimpleNamespace(get=AsyncMock(return_value=None))
+        await effects.announce_due(bot, campaign, at(1, 9))
+        self.assertEqual(table.clock_shown_at, START)

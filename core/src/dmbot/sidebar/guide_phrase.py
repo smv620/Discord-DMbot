@@ -29,6 +29,8 @@ _PHRASES = frozenset(
             for lead in ("what's next", "what is next", "what happens next", "what comes next")
             for noun in ("story", "adventure", "book", "module")
         ),
+        # The next five are broad: "what comes next" can be about a turn or a spell. Remove any
+        # that a live test shows catching the wrong question (the usual answer then takes over).
         "what comes next",
         "what's coming up",
         "what is coming up",
