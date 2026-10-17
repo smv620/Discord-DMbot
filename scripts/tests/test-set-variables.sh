@@ -139,6 +139,8 @@ check "adds a setting missing from .env" has_line "SHARD_COUNT=3"
 check "adding keeps the old lines" has_line "TRANSCRIBER=deepgram"
 
 # Values that would be misread are refused, and the text typed is not left in .env
+# The $ and ` here are meant literally: they are the characters the script must refuse.
+# shellcheck disable=SC2016
 for bad in 'a"b' "a'b" 'a$b' 'a#b' 'a\b' 'a`b'; do
   reset
   run "$bad"$'\n' MAIL_ALERTS_FROM
