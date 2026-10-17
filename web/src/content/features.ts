@@ -39,8 +39,13 @@ const cards: (Feature & { live?: boolean })[] = [
     example: 'Players see "Day 5, morning". The game master can time a spell like Bless.',
   },
   {
+    title: "Character sheets",
+    what: "Players link their public online sheet to their character, and the game masters see it on the character's card.",
+    example: "No more asking \"what's on your sheet?\" in the middle of a fight.",
+  },
+  {
     title: "FightBot reminders in a fight",
-    what: `In a fight, FightBot sends each player a short private reminder of what their own sheet says they still have. It only reminds, and the game master decides.${INITIATIVE_STYLE_LIVE ? " It times the reminder to how your table runs initiative." : ""}`,
+    what: `In a fight, FightBot privately reminds each player what their own sheet says they still have; it only reminds, and the game master decides.${INITIATIVE_STYLE_LIVE ? " It times each reminder to how your table runs initiative." : ""}`,
     example: "You still have Hunter's Mark and two level 1 slots.",
   },
   {
@@ -51,24 +56,19 @@ const cards: (Feature & { live?: boolean })[] = [
   {
     title: "Recaps after each game",
     what: "After a session, DMbot can write a short story-style recap. You read it first, change it if you like, and press Post to the table. Nothing goes to your players until you do.",
-    example: "Read it on your DM screen, fix a name, then press Post.",
+    example: "After Friday's game, fix a misspelled name, then press Post to the table.",
     live: RECAPS_LIVE,
   },
   {
     title: "A who's who list",
-    what: "DMbot keeps a read-only channel listing the people and groups your game master confirmed. Players see it only as far as the DM screen lets them, and it never shows secrets.",
+    what: "DMbot keeps a list of the people and groups your game master confirmed, which players see only as far as the DM screen allows, and never with secrets.",
     example: "A player forgets the innkeeper's name and checks the list.",
     live: NPCS_CHANNEL_LIVE,
   },
   {
-    title: "Character sheets",
-    what: "Players link their public online sheet to their character, and the game masters see it on the character's card.",
-    example: "No more asking \"what's on your sheet?\" in the middle of a fight.",
-  },
-  {
     title: "Your own homebrew",
-    what: "Keep your own spells, monsters and items, turn each one on or off, and add one from a published page's link. DMbot shows you what it read, and saves it only when you press Save.",
-    example: "Paste the link to a spell, check what DMbot read, then press Save.",
+    what: "Add your own spells, monsters and items, switch each on or off, or add one from a published page's link; DMbot shows what it read and saves only when you press Save.",
+    example: "In Settings, open Homebrew, paste a link, check what DMbot read, then press Save.",
   },
   {
     title: "Backups (paid plans)",
