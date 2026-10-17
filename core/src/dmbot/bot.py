@@ -84,6 +84,7 @@ from dmbot.dm_screen import (
     StopListeningButton,
     VisibilityButton,
     delete_campaign,
+    dm_bot_buttons,
     ensure_dm_screen,
     house_sync,
     pack_suggestion,
@@ -1038,6 +1039,7 @@ class DMBot(commands.AutoShardedBot):
         self.tree.add_command(transcript_command)
         # DM-screen buttons keep working after a restart.
         self.add_dynamic_items(PeekButton, HideButton, VisibilityButton, StopListeningButton)
+        self.add_dynamic_items(dm_bot_buttons.OpenButton, dm_bot_buttons.HelpButton)  # #1666
         self.add_dynamic_items(
             SettingsButton,
             LevelButton,
@@ -7659,6 +7661,9 @@ class DMBot(commands.AutoShardedBot):
                 self.campaigns,
                 category=category if isinstance(category, discord.CategoryChannel) else None,
             )
+            fresh = await self.campaigns.get(guild.id, campaign.id)
+            if fresh is not None:
+                await dm_bot_buttons.ensure_panel(self, fresh)  # (a failure there is logged)
         except DmBotChannelError as exc:
             return screen_messages.dm_bot_failed(str(exc))
         except Exception:
