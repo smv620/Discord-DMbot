@@ -713,11 +713,13 @@ Each step is useful on its own and ships behind the existing phases.
    mode is saved only by **I have the right**, which records who and when (purpose
    `shared_story` in `shared_confirmations`, a fingerprint of the words, not the words). Without
    that press it stays Off; Off keeps the record, so turning it on again does not ask again. It is
-   in backups; a backup that says `watch` or `guide` without a `shared_story` confirmation in the
-   file is restored Off. **Nothing reads the mode yet**: the story-plan reader, the divergence
-   warnings and Guide me are the next slices, and the card says "Coming next: give DMbot your
-   adventure." Each of those must ask for the right to use the material it is given, not rely on
-   this switch alone. Offered on every plan (PLAN names no plan rule for it).
+   in backups, but a record that came from a backup file never counts as a press here: the mode
+   comes back on only for the person whose confirmation is in the file (the same DM restoring
+   their own backup), anyone else restoring it starts with the switch Off and confirms for
+   themselves. **Nothing reads the mode yet**: the story-plan reader, the divergence
+   warnings and Guide me are the next slices, and the card says "Not working yet. Soon you will be
+   able to give DMbot your adventure." Each of those must ask for the right to use the material
+   it is given, not rely on this switch alone. Offered on every plan (PLAN names no plan rule for it).
 5. **Throughout:** the ontology steward and graph curator take over the after-session
    cleanup; their health numbers (duplicates, orphans, unused terms, flags per session,
    how often the DM is asked, warnings ignored) go to the server logs, never to players.

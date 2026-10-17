@@ -295,7 +295,6 @@ _SETTABLE = frozenset(
         "dndbeyond_invite",
         "rules_cards",
         "side_initiative",
-        "story_mode",
         "transcript_keep_days",
         "transcript_deleted_noted",
         "recaps_text",
@@ -712,7 +711,10 @@ class CampaignStore:
     async def _has_story_confirmation(conn: Conn, guild_id: int, campaign_id: str) -> bool:
         cur = await conn.execute(
             "SELECT 1 FROM shared_confirmations"
-            " WHERE guild_id = %s AND campaign_id = %s AND purpose = %s LIMIT 1",
+            " WHERE guild_id = %s AND campaign_id = %s AND purpose = %s"
+            # A row that came from a backup file says what the file says, not what a DM pressed
+            # here, so it never stands in for the confirmation (CLAUDE.md, IP rule).
+            " AND NOT restored LIMIT 1",
             (guild_id, campaign_id, SHARED_STORY),
         )
         return await cur.fetchone() is not None
@@ -1378,6 +1380,15 @@ class CampaignStore:
         # other servers) carries on, and before the transaction, so no locks are held
         # meanwhile (#164).
         info, sections = await asyncio.to_thread(self._checked, data)
+        # The Shared story switch comes back on only for the person who confirmed the right to
+        # use the material (the file's confirmation is theirs); anyone else restoring the file
+        # starts with it off and confirms for themselves (#1692, CLAUDE.md IP rule).
+        if info["story_mode"] != STORY_OFF and not any(
+            # (the checked rows: id, user, purpose, fingerprint, time)
+            row[1] == importer_id and row[2] == SHARED_STORY
+            for row in sections.get("confirmations", [])
+        ):
+            info = {**info, "story_mode": STORY_OFF}
         # Restoring counts as using the campaign: the retention clock starts from now, so a
         # copy of an old campaign isn't deleted by the next daily run (#964).
         restored_at = int(self._clock())
@@ -1878,18 +1889,11 @@ def _validate_backup(
     if not isinstance(side_initiative, bool):
         raise CampaignError(DAMAGED)
 
-    # Backups made before the Shared story switch existed have it off. A mode other than off
-    # needs the backup to carry the DM's confirmation of the right to use the material (#1692);
-    # without one it is restored as off.
+    # Backups made before the Shared story switch existed have it off. (Whether a mode other
+    # than off is kept depends on who restores the file: `import_backup`, #1692.)
     story_mode = campaign.get("story_mode", STORY_OFF)
     if not isinstance(story_mode, str) or story_mode not in STORY_MODES:
         raise CampaignError(DAMAGED)
-    confirmed_rows = sections.get("confirmations")
-    if not (
-        isinstance(confirmed_rows, list)
-        and any(isinstance(r, dict) and r.get("purpose") == SHARED_STORY for r in confirmed_rows)
-    ):
-        story_mode = STORY_OFF
 
     # Backups made before the keep setting existed keep transcripts forever.
     keep_days = campaign.get("transcript_keep_days")

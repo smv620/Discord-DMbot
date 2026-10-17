@@ -287,7 +287,7 @@ export const held: Held[] = [
   {
     date: "2026-10-17",
     title: "A Shared story switch",
-    what: "In Settings, press Shared story to choose Off, Watch the story or Guide me. The first time you turn it on, DMbot reminds you to only give it material you have the right to use, and keeps a note that you said so. For now the switch only remembers your choice; reading your adventure comes next.",
+    what: "In Settings, press Shared story to choose Off, Watch the story or Guide me. The first time you turn it on, DMbot reminds you to only give it material you have the right to use, and keeps a note that you said so. For now the switch only remembers your choice and does nothing else; reading your adventure comes next.",
     reason:
       "Held until DMbot can read an adventure (#1692): a switch that does nothing yet is not news.",
   },

@@ -12,7 +12,7 @@ material you have the right to use. DMbot doesn't check this.") and saves only o
 stays Off. Off keeps the record, so turning it on again doesn't ask again.
 
 Only the campaign's DMs, checked again on every press. The buttons' IDs carry the campaign and
-the mode, so they survive a restart (`STORY_BUTTONS` in `bot.add_dynamic_items`). Offered on
+the mode, so they survive a restart (`bot.add_dynamic_items` names the four classes). Offered on
 every plan: docs/PLAN.md names no plan rule for the switch.
 """
 
@@ -42,13 +42,16 @@ LABEL_OF = {STORY_OFF: "Off", STORY_WATCH: "Watch the story", STORY_GUIDE: "Guid
 MEANING = {
     STORY_OFF: "DMbot remembers your table's story only.",
     STORY_WATCH: "DMbot also tells you when your table and the book no longer fit.",
-    STORY_GUIDE: "When you ask, DMbot also says what the book has next, with the page.",
+    STORY_GUIDE: (
+        "Everything in Watch the story, plus: when you ask, DMbot says what the book has next, "
+        "with the page."
+    ),
 }
-ONLY_DMS = "Only this campaign's DMs can change that."
+ONLY_DMS = "Only this campaign's DMs can change that. Ask one of them."
 GONE = "That campaign isn't here any more. Open ⚙️ Settings again."
 COULDNT = "That didn't work, and nothing changed. Please try again in a moment."
 INTRO = "🧭 **Shared story**"
-COMING = "Coming next: give DMbot your adventure. Nothing reads this setting yet."
+COMING = "Not working yet. Soon you will be able to give DMbot your adventure."
 RIGHT_LABEL = "I have the right"
 NOT_NOW_LABEL = "Not now"
 
@@ -56,9 +59,11 @@ NOT_NOW_LABEL = "Not now"
 def line(campaign: Campaign) -> str:
     """The Settings card's one line about it."""
     mode = campaign.story_mode
-    return (
-        f"• **Shared story:** {LABEL_OF.get(mode, 'Off')}. {MEANING.get(mode, MEANING[STORY_OFF])}"
-    )
+    label = LABEL_OF.get(mode, "Off")
+    # Nothing reads the mode yet, and this is the line DMs look at: say so, so no one waits for
+    # alerts that cannot come. Remove with the caveat when the reader ships.
+    pending = "" if mode == STORY_OFF else " (not working yet)"
+    return f"• **Shared story:** {label}{pending}. Coming soon: DMbot will use your adventure."
 
 
 def panel_text(campaign: Campaign) -> str:
@@ -72,8 +77,8 @@ def warning_text(mode: str) -> str:
     """Shown once, the first time it is turned on. It says what pressing does."""
     return (
         f"{STORY_RIGHT_WARNING}\n"
-        f"Press **{RIGHT_LABEL}** to turn on **{LABEL_OF[mode]}**. DMbot keeps a record of who "
-        "said so, and when."
+        f"Press **{RIGHT_LABEL}** to turn on **{LABEL_OF[mode]}**. That is your word that you may "
+        "use your adventure. DMbot keeps a note of who said so, and when. Nothing is read yet."
     )
 
 
@@ -113,11 +118,11 @@ async def _save(
     try:
         saved = await store.set_story_mode(campaign.guild_id, campaign.id, mode, confirmed_by=who)
     except CampaignError as exc:
-        await interaction.response.edit_message(content=str(exc), view=None)
+        await interaction.response.edit_message(content=str(exc), view=panel_view(campaign))
         return
     except Exception:
         log.exception("Couldn't save the Shared story setting")
-        await interaction.response.edit_message(content=COULDNT, view=None)
+        await interaction.response.edit_message(content=COULDNT, view=panel_view(campaign))
         return
     await interaction.response.edit_message(
         content=f"Saved.\n\n{panel_text(saved)}", view=panel_view(saved)

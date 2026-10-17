@@ -8,7 +8,7 @@ from __future__ import annotations
 import uuid
 from types import SimpleNamespace
 from typing import Any
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
 import discord
 import psycopg
@@ -98,15 +98,44 @@ class Backup(Setup):
         await self.campaigns.set_story_mode(GUILD_A, self.a.id, STORY_GUIDE, confirmed_by=DM)
         data = await self.campaigns.export(GUILD_A, self.a.id)
         self.assertEqual(data["campaign"]["story_mode"], STORY_GUIDE)
-        restored = await self.campaigns.import_backup(GUILD_B, data, PLAYER)
+        restored = await self.campaigns.import_backup(GUILD_B, data, DM)  # the same DM
         self.assertEqual(restored.story_mode, STORY_GUIDE)
-        self.assertTrue(await self.campaigns.story_confirmed(GUILD_B, restored.id))
+        (row,) = await self.campaigns.confirmations(GUILD_B, restored.id)
+        self.assertEqual(row["user"], str(DM))  # the record travels with it
+        # ...but a record that came from a file is not one pressed here: turning it on again
+        # after Off asks again (CLAUDE.md, IP rule).
+        self.assertFalse(await self.campaigns.story_confirmed(GUILD_B, restored.id))
+
+    async def test_someone_else_restoring_the_file_starts_with_it_off(self) -> None:
+        await self.campaigns.set_story_mode(GUILD_A, self.a.id, STORY_WATCH, confirmed_by=DM)
+        data = await self.campaigns.export(GUILD_A, self.a.id)
+        restored = await self.campaigns.import_backup(GUILD_B, data, PLAYER)
+        self.assertEqual(restored.story_mode, STORY_OFF)
+        with self.assertRaises(CampaignError):  # and has to confirm for themselves
+            await self.campaigns.set_story_mode(GUILD_B, restored.id, STORY_WATCH)
+
+    async def test_a_forged_file_cannot_switch_it_on_for_someone_else(self) -> None:
+        data = await self.campaigns.export(GUILD_A, self.a.id)
+        data["campaign"]["story_mode"] = STORY_GUIDE
+        data["sections"]["confirmations"] = [
+            {
+                "id": "forged1",
+                "user": str(DM),  # somebody else's name on it
+                "purpose": SHARED_STORY,
+                "fingerprint": "0" * 64,
+                "at": CLOCK,
+                "restored": False,
+            }
+        ]
+        restored = await self.campaigns.import_backup(GUILD_B, data, PLAYER)
+        self.assertEqual(restored.story_mode, STORY_OFF)
+        self.assertFalse(await self.campaigns.story_confirmed(GUILD_B, restored.id))
 
     async def test_a_mode_without_a_confirmation_in_the_file_is_restored_off(self) -> None:
         await self.campaigns.set_story_mode(GUILD_A, self.a.id, STORY_WATCH, confirmed_by=DM)
         data = await self.campaigns.export(GUILD_A, self.a.id)
         data["sections"]["confirmations"] = []
-        restored = await self.campaigns.import_backup(GUILD_B, data, PLAYER)
+        restored = await self.campaigns.import_backup(GUILD_B, data, DM)
         self.assertEqual(restored.story_mode, STORY_OFF)
 
     async def test_an_old_backup_has_it_off_and_a_bad_one_is_refused(self) -> None:
@@ -126,6 +155,24 @@ class Backup(Setup):
             GUILD_A, data, DM, replace_campaign_id=self.a.id
         )
         self.assertEqual(replaced.story_mode, STORY_WATCH)
+
+    async def test_replacing_a_campaign_with_a_file_that_says_off_turns_it_off(self) -> None:
+        data = await self.campaigns.export(GUILD_A, self.a.id)  # made while Off
+        await self.campaigns.set_story_mode(GUILD_A, self.a.id, STORY_GUIDE, confirmed_by=DM)
+        replaced = await self.campaigns.import_backup(
+            GUILD_A, data, DM, replace_campaign_id=self.a.id
+        )
+        self.assertEqual(replaced.story_mode, STORY_OFF)
+
+    async def test_a_damaged_file_leaves_the_campaign_as_it_was(self) -> None:
+        await self.campaigns.set_story_mode(GUILD_A, self.a.id, STORY_WATCH, confirmed_by=DM)
+        data = await self.campaigns.export(GUILD_A, self.a.id)
+        data["campaign"]["story_mode"] = "loud"
+        with self.assertRaises(CampaignError):
+            await self.campaigns.import_backup(GUILD_A, data, DM, replace_campaign_id=self.a.id)
+        found = await self.campaigns.get(GUILD_A, self.a.id)
+        assert found is not None
+        self.assertEqual(found.story_mode, STORY_WATCH)
 
 
 class Migration(Setup):
@@ -191,7 +238,10 @@ class Buttons(Setup):
         await ui.StoryButton(self.a.id).callback(it)
         self.assertEqual(self.labels(it), ["Off", "Watch the story", "Guide me"])
         self.assertTrue(it.sent["ephemeral"])
-        self.assertIn("Coming next: give DMbot your adventure.", it.sent["content"])
+        self.assertIn(
+            "Not working yet. Soon you will be able to give DMbot your adventure.",
+            it.sent["content"],
+        )
         self.assertIn("DMbot remembers your table's story only.", it.sent["content"])
 
     async def test_a_non_dm_is_refused_everywhere(self) -> None:
@@ -236,6 +286,22 @@ class Buttons(Setup):
         await ui.StoryChoiceButton(self.a.id, STORY_GUIDE).callback(guide)
         self.assertEqual(await self.mode(GUILD_A, self.a.id), STORY_GUIDE)  # no second warning
         self.assertEqual(len(await self.campaigns.confirmations(GUILD_A, self.a.id)), 1)
+
+    async def test_a_failed_save_keeps_the_buttons(self) -> None:
+        self.campaigns.set_story_mode = AsyncMock(side_effect=RuntimeError("down"))  # type: ignore[method-assign]
+        it = self.pressing(DM)
+        await ui.StoryYesButton(self.a.id, STORY_WATCH).callback(it)
+        self.assertEqual(it.sent["content"], ui.COULDNT)
+        self.assertEqual(self.labels(it), ["Off", "Watch the story", "Guide me"])
+
+    async def test_the_settings_line_says_it_does_not_work_yet(self) -> None:
+        from dataclasses import replace
+
+        off = ui.line(self.a)
+        on = ui.line(replace(self.a, story_mode=STORY_WATCH))
+        self.assertIn("Coming soon", off)
+        self.assertNotIn("not working yet", off)
+        self.assertIn("(not working yet)", on)
 
     async def test_the_buttons_come_back_from_their_ids_after_a_restart(self) -> None:
         for cls, custom_id in (
