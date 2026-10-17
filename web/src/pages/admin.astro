@@ -68,10 +68,11 @@ import Base from "../layouts/Base.astro";
   .admin :global(.button.secondary) {
     background: transparent;
     color: var(--accent);
-    border: 2px solid var(--accent);
+    border: 1px solid var(--border);
+    font-weight: 500;
   }
 
-  .admin :global(.button.secondary:hover) {
+  .admin :global(.button.secondary:hover:not(:disabled)) {
     background: var(--accent-soft);
     color: var(--accent);
   }

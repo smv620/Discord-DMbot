@@ -219,7 +219,7 @@ a {
   min-height: var(--tap);
   padding: var(--space-3) var(--space-6);
   border-radius: var(--radius);
-  background: var(--accent-soft);
+  background: color-mix(in srgb, var(--accent) 16%, var(--surface));
   color: var(--accent);
   border: 2px solid var(--accent);
   font-weight: 600;
@@ -229,9 +229,11 @@ a {
 /* Buttons are quiet at rest and fill in only on hover, so a page never loads
    looking as if one of them is already chosen (#1778). Keyboard focus keeps
    the ring from :focus-visible above. */
-.button:hover {
-  background: var(--accent);
-  color: var(--accent-text);
+@media (hover: hover) {
+  .button:hover:not(:disabled) {
+    background: var(--accent);
+    color: var(--accent-text);
+  }
 }
 
 /* A raised surface: cards and panels stand out from the page (#559). */
