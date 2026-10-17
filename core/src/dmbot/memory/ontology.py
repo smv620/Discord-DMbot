@@ -162,6 +162,15 @@ CORE_TYPES: tuple[TypeTerm, ...] = (
         "Something someone swore or agreed to do for someone else, kept or broken later.",
         "thread",
     ),
+    # Something a player character or the party did that mattered to someone (#1732): the DM
+    # records it in two presses and it moves how the people it mattered to feel about the doer.
+    # A kind under `event`, so everything that takes an event takes it.
+    _t(
+        "deed",
+        "deed",
+        "Something a player character or the party did that mattered to someone.",
+        "event",
+    ),
     # A piece of information that can be learned (#1649): its own entry, so "who knows it" is an
     # ordinary `knows` fact. A subtype of `concept`, so every range that takes an idea takes it.
     _t(
@@ -593,6 +602,31 @@ CORE_PREDICATES: tuple[PredicateTerm, ...] = (
         examples=("Cerric appears in the Battle of the Bridge.",),
         inverse_label="has taking part",
         synonyms=("takes_part_in", "involved_in", "present_at"),
+    ),
+    PredicateTerm(
+        "did",
+        "did",
+        "Who did a deed: a player character or the party. The DM records it; nobody guesses it.",
+        ("character", "faction"),
+        ("deed",),
+        covers=("a player character or the party who did something that mattered to someone",),
+        not_this=(("a character who merely took part in an event", "appears_in"),),
+        examples=("The party did Saved the mill.",),
+        inverse_label="was done by",
+        synonyms=("performed", "committed"),
+    ),
+    PredicateTerm(
+        "affected",
+        "mattered to",
+        "Who a deed mattered to, and how it landed in the detail: helped them, pleased them, "
+        "annoyed them or hurt them. An NPC, a group or a place.",
+        ("deed",),
+        ("character", "faction", "place"),
+        covers=("an NPC, a group or a place a deed helped or hurt",),
+        not_this=(("an event that took place in a location", "located_in"),),
+        examples=("Saved the mill mattered to Brindle (helped them).",),
+        inverse_label="was affected by",
+        synonyms=("mattered_to", "touched"),
     ),
     PredicateTerm(
         FALLBACK_PREDICATE,

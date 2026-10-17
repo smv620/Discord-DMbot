@@ -133,6 +133,7 @@ class CoreOntology(unittest.TestCase):
                 "hook": "hook",
                 "goal": "goal",
                 "promise": "promise",
+                "deed": "deed",  # what a player character did (#1732)
                 "person": "player or DM",  # not part of the story (#1188)
             },
         )

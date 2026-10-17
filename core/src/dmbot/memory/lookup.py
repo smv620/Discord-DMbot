@@ -28,9 +28,9 @@ from typing import Protocol
 from dmbot.memory import notify
 from dmbot.memory.models import (
     CONFIRMED,
+    DM_ONLY_TYPES,
     FIX,
     KEEP,
-    THREAD_TYPES,
     Alias,
     Correction,
     Entity,
@@ -191,9 +191,9 @@ class CampaignLookup:
     @property
     def hidden(self) -> frozenset[str]:
         """What the campaign's DMs alone may see: the clues only some people know (#1649) and
-        the story threads (#1662), which are the DM's plot notes."""
+        the story threads (#1662) and deeds (#1732), which are the DM's plot notes."""
         return frozenset(
-            e.id for e in self.entities.values() if e.audience_limited or e.type in THREAD_TYPES
+            e.id for e in self.entities.values() if e.audience_limited or e.type in DM_ONLY_TYPES
         )
 
     def for_viewer(self, secrets: bool) -> CampaignLookup:
