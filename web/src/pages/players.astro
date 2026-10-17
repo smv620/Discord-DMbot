@@ -11,7 +11,7 @@ import {
   stopStep,
   transcriptStep,
 } from "../content/help";
-import { playersHeading, playersIntro, playersLead, sayingYesHeading, seeHeading } from "../content/players";
+import { askYourGm, beforeYes, playersHeading, playersIntro, playersLead, sayingYesHeading, seeHeading } from "../content/players";
 
 // The steps are the Help page's own (one copy each); the initiative sentence shows only while its
 // feature is live, with the same switch as Help (#1821).
@@ -26,6 +26,7 @@ const see = [transcriptStep, heyDmBotStep, fightBotStep, ...(INITIATIVE_STYLE_LI
 
   <section aria-labelledby="yes-heading">
     <h2 id="yes-heading">{sayingYesHeading}</h2>
+    <p>{beforeYes}</p>
     <ol>
       {yes.map((s) => <li>{s.text}</li>)}
     </ol>
@@ -40,7 +41,7 @@ const see = [transcriptStep, heyDmBotStep, fightBotStep, ...(INITIATIVE_STYLE_LI
   </section>
 
   <p class="muted">
-    More steps are on the <a href="/help#player-heading">Help page</a>. What DMbot keeps is on the{" "}
+    {askYourGm} More steps are on the <a href="/help#player-heading">Help page</a>. What DMbot keeps is on the{" "}
     <a href="/legal/privacy">Privacy page</a>.
   </p>
 </Base>
