@@ -714,10 +714,10 @@ export const INITIATIVE_STYLE_LIVE = false;
 
 export const initiativeStyleSteps: Step[] = [
   {
-    text: "FightBot listens for how your table runs initiative: one at a time, by side, or rolled each round, and whether you declare first. Your reminder comes just before you choose. Your game master's words come first.",
+    text: "FightBot listens for how your table runs initiative: one at a time, by side, or rolled each round. It times your private reminder just before you choose. The game master's words decide; players count only if two recorded players agree.",
   },
   {
-    text: "The combat line on the game master's DM screen shows what FightBot heard. If it's wrong, just say it, like \"we're doing side initiative\". There is no button. FightBot only times reminders and never changes your fight.",
+    text: "The DM screen's combat line shows \"Initiative, as heard: ...\". If it's wrong, the game master just says so out loud, like \"we use side initiative\". There is no button. This only changes when FightBot speaks, never your fight.",
   },
 ];
 
