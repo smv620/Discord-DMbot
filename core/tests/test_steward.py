@@ -120,23 +120,23 @@ class Deciding(unittest.TestCase):
         self.assertEqual(
             (got.fallback.predicate, got.fallback.label), (FALLBACK_PREDICATE, "Check")
         )
-        between = decide_term(ONTO, ask("pledged_by", "Pledged by"), lambda *_: ("between", None))
+        between = decide_term(ONTO, ask("bound_by", "Bound by"), lambda *_: ("between", None))
         assert isinstance(between, Refused)
         self.assertEqual(between.reason, REASON_BETWEEN)
-        self.assertEqual(between.fallback.label, "Pledged by")  # never loses the fact
+        self.assertEqual(between.fallback.label, "Bound by")  # never loses the fact
 
     def test_the_meaning_check_can_say_close_or_far(self) -> None:
         self.assertEqual(
-            decide_term(ONTO, ask("pledged_by"), lambda *_: ("close", "sworn_to")),
+            decide_term(ONTO, ask("bound_by"), lambda *_: ("close", "sworn_to")),
             Reused("sworn_to", REASON_CLOSE_MEANING),
         )
         self.assertEqual(
-            decide_term(ONTO, ask("pledged_by"), lambda *_: ("far", None)),
-            Accepted("pledged_by", meaning_checked=True),
+            decide_term(ONTO, ask("bound_by"), lambda *_: ("far", None)),
+            Accepted("bound_by", meaning_checked=True),
         )
 
     def test_the_same_proposal_always_gets_the_same_answer(self) -> None:
-        for key in ("born_in", "check", "owns", "locatedin", "pledged_by"):
+        for key in ("born_in", "check", "owns", "locatedin", "bound_by"):
             answers = {repr(decide_term(Ontology.build(), ask(key))) for _ in range(5)}
             self.assertEqual(len(answers), 1, key)
         # And a campaign's own extension changes nothing for another campaign's ontology.
