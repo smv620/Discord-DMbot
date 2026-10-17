@@ -102,21 +102,21 @@ export const dmBotChannelSteps: Step[] = [
     ],
   },
   {
-    text: "A game master gets ⚙️ Menu, 📜 My character sheet and ⚙️ Settings. A player gets ⚙️ Menu and 📜 My character sheet. Someone who said yes to being recorded gets ⚙️ Menu. Anyone else gets Help.",
+    text: "Everyone also gets ❓ Help. If you said yes to being recorded, you get ⚙️ Menu, where you can stop being recorded. Players also get 📜 My character sheet. Game masters get ⚙️ Settings too.",
     names: [
       { name: "⚙️ Menu", file: "consent_dm.py" },
       { name: "📜 My character sheet", file: "ui/sheets.py" },
     ],
   },
   {
-    text: "To change the game clock, house rules, or who can see the DM screen, press ⚙️ Settings in the DMbot channel. Press 👤 My buttons first if you don't see it. Only the campaign's game masters get it.",
+    text: "To change the game clock, house rules, or who can see the DM screen, press 👤 My buttons in the DMbot channel, then ⚙️ Settings.",
     names: [{ name: "Settings", file: "dm_screen/settings.py" }],
   },
   {
     text: "Can't find ⚙️ Settings? Type /dmbot settings in your server and it opens for you, privately. Only the campaign's game masters can use it.",
   },
   {
-    text: "Your DM screen now holds only things from the game: notes, alerts and ⏹ Stop listening. The buttons moved to the DMbot channel, so the DM screen has less on it.",
+    text: "Your DM screen is quieter now. It holds only notes, alerts and ⏹ Stop listening. The other buttons moved to the DMbot channel.",
     names: [{ name: "Stop listening", file: "dm_screen/messages.py" }],
   },
 ];
