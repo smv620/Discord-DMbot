@@ -287,6 +287,13 @@ export const held: Held[] = [
   },
   {
     date: "2026-10-17",
+    title: "Link names to your adventure",
+    what: "Open a name's card and press In my adventure to say who or where it is in your adventure. Press Match names on the Shared story card and DMbot lists names that look the same; you say yes or no. Only you see the links, and Take off undoes one.",
+    reason:
+      "Merged (#1724); held until dev1 deploys 0124 and the owner's live check is recorded (#1726).",
+  },
+  {
+    date: "2026-10-17",
     title: "Homebrew menu by kind",
     what: "In Settings, then Homebrew, you now see one button for each kind, like Spells 10/12, which means 10 are on out of 12. Press one to see only those entries; ↩ All kinds takes you back.",
     reason:

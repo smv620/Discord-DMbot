@@ -260,6 +260,15 @@ export const sharedStorySteps: Step[] = [
     ],
   },
   {
+    text: "To say that a name from your table is someone or somewhere in your adventure, open the name's card and press 📖 In my adventure…, then pick them from the list. The card then shows In your adventure, to you only. A name links to one thing in your adventure, and the other way round. Press Take off to undo a link. DMbot never links names by itself. To be asked, press 🔗 Match names on the Shared story card: DMbot lists names that look the same, and you say yes or no with the two menus. It doesn't use AI to do this, and it remembers a no, so it won't ask again.",
+    names: [
+      { name: "In my adventure…", file: "ui/name_card.py" },
+      { name: "In your adventure", file: "ui/name_card.py" },
+      { name: "Take off", file: "ui/book_link.py" },
+      { name: "Match names", file: "dm_screen/adventure_card.py" },
+    ],
+  },
+  {
     text: "A backup of the campaign keeps only your adventure's name, not its text or what DMbot read, because anyone in your server can download a backup. After you restore, give DMbot the file again.",
   },
 ];
