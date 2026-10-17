@@ -6634,7 +6634,9 @@ class DMBot(commands.AutoShardedBot):
             except Exception:
                 log.exception("Story-plan reader failed")
                 with contextlib.suppress(Exception):
-                    await plan.finish(guild_id, campaign_id, document_id, "stopped", "an error")
+                    await plan.finish(
+                        guild_id, campaign_id, document_id, "stopped", plan_reader.STOP_ERROR
+                    )
 
     async def extract_claims(self, table: Table, ended_at: int) -> None:
         """After a session, only with DMBOT_STORY_EXTRACTOR on (it is off until #1282 passes): read

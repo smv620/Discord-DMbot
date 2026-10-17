@@ -27,7 +27,7 @@ from pathlib import Path
 
 from dmbot.ai import DEFAULT_MODELS, AIError, AIModelTier, AIOutOfFunds, AnthropicClient, Feature
 from dmbot.memory.adventure import FILE_MAX_BYTES, adventure_text, chunks_of
-from dmbot.memory.plan_reader import MAX_TOKENS, SYSTEM, Client, book_text
+from dmbot.memory.plan_reader import MAX_TOKENS, SYSTEM, Client, book_text, unusable
 from dmbot.memory.story_plan import (
     CHARS_PER_TOKEN,
     DOCUMENT_CAP_MICRO,
@@ -74,12 +74,12 @@ async def measure(client: Client, text: str, model: str, max_micro: int) -> dict
         calls += 1
         tokens_in += reply.input_tokens
         tokens_out += reply.output_tokens
-        spent += micro_usd(model, reply.input_tokens, reply.output_tokens)
+        spent += micro_usd(reply.model or model, reply.input_tokens, reply.output_tokens)
         parsed = parse_answer(reply.text, batch)
         entries += len(parsed.nodes)
         links += len(parsed.needs)
         dropped += sum(parsed.dropped.values())
-        unreadable += 1 if (reply.cut or parsed.malformed) else 0
+        unreadable += 1 if unusable(reply, parsed) else 0
     return {
         "calls": calls,
         "tokens_in": tokens_in,

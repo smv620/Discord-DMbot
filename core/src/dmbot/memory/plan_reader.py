@@ -21,11 +21,13 @@ from dataclasses import dataclass, field
 from typing import Protocol
 
 from dmbot.ai import AIOutOfFunds, Reply
-from dmbot.memory.adventure import AdventureError
+from dmbot.memory.adventure import NOT_ON, AdventureError
 from dmbot.memory.story_plan import (
-    DOCUMENT_CAP_MICRO,
-    MONTH_CAP_MICRO,
+    CapError,
+    ChunkRow,
+    Parsed,
     PlanStore,
+    Stored,
     batches_of,
     estimate_micro,
     micro_usd,
@@ -39,8 +41,10 @@ MAX_TOKENS = 4000  # per batch: a few dozen entries with a quote each
 CALL_TIMEOUT_S = 300.0  # above the slowest tier's own request limit (ai.TIER_TIMEOUT_S)
 MAX_RUN_S = 2 * 3600.0  # one whole read: timeouts that alternate with successes can't drag on
 FAILURES_BEFORE_STOP = 3  # in a row, for the same batch
+FAILURE_BUDGET = 6  # in a whole run, however many successes come between
+PAUSES_S = (5.0, 20.0, 60.0)  # waited before trying a failed call again
 PAGE = 120  # chunks fetched at a time (a few batches)
-KNOWN_NAMES = 60  # names already found, sent so the next batch spells them the same way
+KNOWN_NAMES = 150  # names already found, sent so the next batch spells them the same way
 
 SYSTEM = """You help a Dungeon Master by reading a written adventure and listing what is in it.
 
@@ -121,16 +125,45 @@ class Report:
         )
 
 
-STOP_DOCUMENT_CAP = "the limit for one file"
-STOP_MONTH_CAP = "the limit for this month"
-STOP_FUNDS = "out of funds"
-STOP_FAILED = "the AI could not be reached"
-STOP_TIME = "time limit"
-STOP_OFF = "Shared story was turned off"
-STOP_PLAN = "the plan does not include it"
+# Why a read ended early. These are codes, stored with the read; the card turns each into words
+# (`dm_screen.adventure_card.STOPPED_WORDS`), so rewording them applies to reads already stopped.
+STOP_DOCUMENT_CAP = "file_cap"
+STOP_MONTH_CAP = "month_cap"
+STOP_FUNDS = "funds"
+STOP_FAILED = "unreachable"
+STOP_TIME = "time"
+STOP_OFF = "off"
+STOP_PLAN = "plan"
+STOP_ERROR = "error"
+STOP_GONE = "gone"  # the file was removed while it was read
 
 Allowed = Callable[[], Awaitable[bool]]
 Progress = Callable[[int], Awaitable[None]]
+Pause = Callable[[float], Awaitable[None]]
+
+
+def unusable(reply: Reply, parsed: Parsed) -> bool:
+    """An answer nothing could be kept from: cut off, or not an answer at all."""
+    return reply.cut or (parsed.malformed and not parsed.nodes and not parsed.needs)
+
+
+class _Stop(Exception):
+    """The run ends here, for this reason (one of the STOP_ codes)."""
+
+    def __init__(self, why: str) -> None:
+        super().__init__(why)
+        self.why = why
+
+
+async def _retry(call: Callable[[], Awaitable[Stored | None]]) -> Stored | None:
+    """A database write that matters, tried a second time if it failed (not for a refusal)."""
+    try:
+        return await call()
+    except AdventureError:
+        raise
+    except Exception:
+        await asyncio.sleep(0.5)
+        return await call()
 
 
 async def run(
@@ -146,108 +179,157 @@ async def run(
     progress: Progress | None = None,
     max_seconds: float = MAX_RUN_S,
     clock: Callable[[], float] = time.monotonic,
+    pause: Pause = asyncio.sleep,
 ) -> Report:
     """Read the document from chunk position `start_chunk` on, batch by batch, storing each batch
     as it is read. `allowed` is asked before every batch (the plan; the switch and the confirmation
     are checked by the store). `progress` is told how many chunks are done after each batch.
-    The state is left 'reading'; the caller says whether it ended as done or stopped."""
+    The state is left 'reading'; the caller says whether it ended as done or stopped.
+
+    Money: before each call the most it could cost is reserved against both caps (`reserve`), and
+    settled to the real cost when it returns. A call that fails keeps its input cost on the ledger
+    (the AI service may have billed it); one cut short by a restart keeps the whole reservation."""
     report = Report()
     started = clock()
     position = start_chunk
-    streak = 0
-    done = False
-    while not done:
-        rows = await store.chunks_from(guild_id, campaign_id, document_id, position, PAGE)
-        if not rows:
-            break
-        done = len(rows) < PAGE
-        for batch in batches_of(rows):
-            if clock() - started > max_seconds:
-                report.stopped = STOP_TIME
-                return report
-            while True:  # the same batch again after a failure, up to FAILURES_BEFORE_STOP
-                if allowed is not None and not await allowed():
-                    report.stopped = STOP_PLAN
-                    return report
-                try:
-                    spent = await store.check(guild_id, campaign_id, document_id)
-                except AdventureError:
-                    report.stopped = STOP_OFF
-                    return report
-                known = await store.names(guild_id, campaign_id, document_id, KNOWN_NAMES)
-                numbered = [(n, r.heading, r.text) for n, r in enumerate(batch, start=1)]
-                text = book_text(numbered, known)
-                worst = estimate_micro(model(), len(SYSTEM) + len(text), MAX_TOKENS)
-                if spent.document + worst > DOCUMENT_CAP_MICRO:
-                    report.stopped = STOP_DOCUMENT_CAP
-                    return report
-                if spent.month + worst > MONTH_CAP_MICRO:
-                    report.stopped = STOP_MONTH_CAP
-                    return report
-                report.calls += 1
-                try:
-                    reply = await asyncio.wait_for(
-                        client.complete(SYSTEM, text, max_tokens=MAX_TOKENS), CALL_TIMEOUT_S
-                    )
-                except AIOutOfFunds:
-                    report.failed += 1
-                    report.stopped = STOP_FUNDS
-                    return report
-                except Exception as exc:  # the AI service, the network or the timeout
-                    log.warning("Story-plan reader: a call failed (%s)", type(exc).__name__)
-                    report.failed += 1
-                    streak += 1
-                    if streak >= FAILURES_BEFORE_STOP:
-                        report.stopped = STOP_FAILED
-                        return report
-                    continue
-                streak = 0
+    failures = 0
+    try:
+        done = False
+        while not done:
+            rows = await store.chunks_from(guild_id, campaign_id, document_id, position, PAGE)
+            if not rows:
                 break
-            cost = micro_usd(
-                reply.model or model(),
-                reply.input_tokens,
-                reply.output_tokens,
-                reply.cache_read_tokens,
-                reply.cache_write_tokens,
-            )
-            report.micro_usd += cost
-            try:
-                await store.record_spend(
-                    guild_id,
-                    campaign_id,
-                    document_id,
-                    cost,
-                    reply.input_tokens,
-                    reply.output_tokens,
-                )
-            except Exception as exc:
-                # Not fatal for the batch, but the cap would not see this call: stop here.
-                log.warning("Story-plan reader: couldn't note the spend (%s)", type(exc).__name__)
-                report.stopped = STOP_FAILED
-                return report
-            parsed = parse_answer(reply.text, batch)
-            unusable = parsed.malformed and not parsed.nodes and not parsed.needs
-            if reply.cut or unusable:
-                report.skipped_parts += 1
-            for why, n in parsed.dropped.items():
-                report.dropped[why] = report.dropped.get(why, 0) + n
-            position = batch[-1].position + 1
-            try:
-                stored = await store.store_batch(
-                    guild_id,
-                    campaign_id,
-                    document_id,
-                    parsed,
-                    next_chunk=position,
-                    skipped=reply.cut or unusable,
-                )
-            except AdventureError:
-                report.stopped = STOP_OFF
-                return report
-            report.nodes += stored.nodes
-            report.links += stored.links
-            if stored.full:
-                report.dropped["too many"] = report.dropped.get("too many", 0) + stored.full
-            if progress is not None:
-                await progress(position)
+            done = len(rows) < PAGE
+            groups = batches_of(rows)
+            if not done and len(groups) > 1:
+                groups.pop()  # a short remainder: the next page starts with it, so no call is small
+            for group in groups:
+                pending = [group]  # a batch whose answer was cut is read again in halves
+                while pending:
+                    batch = pending.pop(0)
+                    failures = await _read_batch(
+                        client, store, report, batch, pending,
+                        guild_id=guild_id, campaign_id=campaign_id, document_id=document_id,
+                        model=model, allowed=allowed, failures=failures,
+                        out_of_time=lambda: clock() - started > max_seconds, pause=pause,
+                    )  # fmt: skip
+                    position = batch[-1].position + 1
+                    if progress is not None:
+                        await progress(position)
+            if groups:
+                position = groups[-1][-1].position + 1
+    except _Stop as stop:
+        report.stopped = stop.why
     return report
+
+
+async def _read_batch(
+    client: Client,
+    store: PlanStore,
+    report: Report,
+    batch: list[ChunkRow],
+    pending: list[list[ChunkRow]],
+    *,
+    guild_id: int,
+    campaign_id: str,
+    document_id: str,
+    model: Callable[[], str],
+    allowed: Allowed | None,
+    failures: int,
+    out_of_time: Callable[[], bool],
+    pause: Pause,
+) -> int:
+    """One batch: reserve, ask (again after a failure), settle, check, store. Returns the run's
+    failures so far. Puts the two halves on `pending` when the answer was cut short."""
+    known = await store.names(guild_id, campaign_id, document_id, KNOWN_NAMES)
+    numbered = [(n, r.heading, r.text) for n, r in enumerate(batch, start=1)]
+    text = book_text(numbered, known)
+    in_a_row = 0
+    while True:
+        if out_of_time():
+            raise _Stop(STOP_TIME)
+        if allowed is not None and not await allowed():
+            raise _Stop(STOP_PLAN)
+        worst = estimate_micro(model(), len(SYSTEM) + len(text), MAX_TOKENS)
+        try:
+            reservation = await store.reserve(guild_id, campaign_id, document_id, worst)
+        except CapError as cap:
+            raise _Stop(STOP_DOCUMENT_CAP if cap.which == "file" else STOP_MONTH_CAP) from None
+        except AdventureError as exc:
+            raise _Stop(STOP_OFF if str(exc) == NOT_ON else STOP_GONE) from None
+        report.calls += 1
+        try:
+            reply = await asyncio.wait_for(
+                client.complete(SYSTEM, text, max_tokens=MAX_TOKENS), CALL_TIMEOUT_S
+            )
+        except AIOutOfFunds:
+            report.failed += 1
+            await store.settle(guild_id, campaign_id, reservation.id, 0)  # refused: not billed
+            raise _Stop(STOP_FUNDS) from None
+        except Exception as exc:  # the AI service, the network or the timeout
+            log.warning("Story-plan reader: a call failed (%s)", type(exc).__name__)
+            report.failed += 1
+            failures += 1
+            in_a_row += 1
+            # What is certain even for a failed call: its input may have been billed.
+            sent = estimate_micro(model(), len(SYSTEM) + len(text), 0)
+            await store.settle(guild_id, campaign_id, reservation.id, sent)
+            report.micro_usd += sent
+            if in_a_row >= FAILURES_BEFORE_STOP or failures >= FAILURE_BUDGET:
+                raise _Stop(STOP_FAILED) from None
+            await pause(PAUSES_S[min(in_a_row - 1, len(PAUSES_S) - 1)])
+            continue
+        break
+    cost = micro_usd(
+        reply.model or model(),
+        reply.input_tokens,
+        reply.output_tokens,
+        reply.cache_read_tokens,
+        reply.cache_write_tokens,
+    )
+    report.micro_usd += cost
+    try:
+        await _retry(
+            lambda: store.settle(
+                guild_id, campaign_id, reservation.id, cost, reply.input_tokens, reply.output_tokens
+            )
+        )
+    except Exception as exc:
+        # The reservation stays on the ledger at its worst case, so the caps still hold; the paid
+        # answer is not stored, and this batch is read (and paid for) again on the next press.
+        log.warning("Story-plan reader: couldn't settle the spend (%s)", type(exc).__name__)
+        raise _Stop(STOP_FAILED) from None
+    parsed = parse_answer(reply.text, batch)
+    if reply.cut and len(batch) > 1:
+        # Too much for one answer: read it again in two halves rather than lose it.
+        half = len(batch) // 2
+        pending[0:0] = [batch[:half], batch[half:]]
+        return failures
+    bad = unusable(reply, parsed)
+    if bad:
+        report.skipped_parts += 1
+    for why, n in parsed.dropped.items():
+        report.dropped[why] = report.dropped.get(why, 0) + n
+    try:
+        stored = await _retry(
+            lambda: store.store_batch(
+                guild_id,
+                campaign_id,
+                document_id,
+                parsed,
+                next_chunk=batch[-1].position + 1,
+                skipped=bad,
+            )
+        )
+    except AdventureError as exc:
+        raise _Stop(STOP_OFF if str(exc) == NOT_ON else STOP_GONE) from None
+    except Exception as exc:
+        log.warning("Story-plan reader: couldn't store a batch (%s)", type(exc).__name__)
+        raise _Stop(STOP_ERROR) from None
+    assert stored is not None
+    report.nodes += stored.nodes
+    report.links += stored.links
+    for why, n in (("too many", stored.full), ("unknown name", stored.unknown)):
+        if n:
+            report.dropped[why] = report.dropped.get(why, 0) + n
+    return failures

@@ -754,14 +754,18 @@ Each step is useful on its own and ships behind the existing phases.
    **🔄 Refresh**, and when done "read: 3 chapters, 41 places, 57 people, 12 depends-on links"; **📋
    See what was read** scrolls the list. **The text goes to the AI as quoted data** (brackets
    neutralised so nothing can close the quote) with the names found so far, and the answer is read as
-   data: an entry stays only if its quote really is in the text it cites (the plan never makes up
-   what the book says) and nothing in it reads like an instruction to DMbot; the rest are dropped and
-   counted. A name seen again keeps its first entry; a link to a name nobody found is let go. **The
+   data: an entry stays only if its quote (at least 12 characters) really is in the text it cites,
+   every word of its name is in the text (the plan never makes up what the book says), and nothing in it
+   reads like an instruction to DMbot; the rest are dropped and counted. A name seen again keeps its first entry; a link to a name nobody found is let go. **The
    switch and a non-restored confirmation are checked before every batch and again before its answer
    is stored**, and so is the owner's plan. **Money** (docs/costs.md): the CAREFUL tier, about $0.70 for
    300 pages, at most **$3 a file and $10 a campaign a month**; before each call the reader works out the
    most it could cost and stops, saying so, when that would cross a cap. What each call cost goes to a
-   ledger at once, kept when the file is removed, so removing and re-adding can't get round the caps.
+   ledger, first as a reservation of the call's worst case (made while the campaign row is locked, so two
+   reads can't spend the same money) and then settled to the real cost; a failed call keeps its input cost,
+   and the ledger is kept by the file's fingerprint when the file is removed, so removing and re-adding
+   can't get round the caps. An answer cut short is read again in halves; a failed call is tried again
+   after a wait, at most three times in a row and six in a read.
    **A stopped or restarted read carries on** from the first batch not stored (the batches before it
    are kept), when the DM presses Read it now again; a read the bot's restart cut shows as "stopped".
    **Not in backups, like the text:** the plan is deleted with its file and with the campaign, and

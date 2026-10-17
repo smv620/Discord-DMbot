@@ -2045,8 +2045,10 @@ STORY_PLAN = (
     -- document that produced them (ON DELETE CASCADE) and with the campaign, and are NOT in
     -- backups (the text isn't either): after a restore the file is given again and read again.
     -- `plan_spend` is the exception to "goes with the document": it is a ledger of what reading
-    -- cost, so removing a file and giving it again can't get round the caps. It goes with the
-    -- campaign. New tables, no existing rows.
+    -- cost, kept by the file's fingerprint (the SHA-256 of its text), so removing a file and
+    -- giving it again can't get round the caps. A row is a reservation of the most a call could
+    -- cost until the call returns, then its real cost. It goes with the campaign. New tables, no
+    -- existing rows.
     CREATE TABLE adventure_reads (
         {_memory_scope()}
         document_id TEXT NOT NULL,
@@ -2104,7 +2106,7 @@ STORY_PLAN = (
     CREATE TABLE plan_spend (
         {_memory_scope()}
         id          TEXT NOT NULL CHECK (id ~ '^[0-9a-f]{{32}}$'),
-        document_id TEXT NOT NULL,
+        fingerprint TEXT NOT NULL CHECK (fingerprint ~ '^[0-9a-f]{{64}}$'),
         month       TEXT NOT NULL CHECK (month ~ '^[0-9]{{4}}-[0-9]{{2}}$'),
         micro_usd   BIGINT NOT NULL CHECK (micro_usd >= 0),
         input_tokens  INTEGER NOT NULL CHECK (input_tokens >= 0),

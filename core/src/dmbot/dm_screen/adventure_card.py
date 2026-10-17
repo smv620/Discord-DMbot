@@ -47,11 +47,12 @@ _DOC = r"(?P<doc>[0-9a-f]{32})"
 NO_MENTIONS = discord.AllowedMentions.none()
 INTRO = "📖 **Your adventure**"
 NOTE = (
-    "DMbot keeps the text of your files, not the files, for this campaign only. Press **Read it "
-    "now** and DMbot's AI reads a file once and lists its chapters, places and people. Nothing "
-    "uses that list yet, so it changes no alerts, and players never see it. None of this is in "
-    "the campaign's backup, so after a restore you give the files again. Remove a file and DMbot "
-    "forgets it and what it read."
+    "DMbot keeps the text of your files, not the files, for this campaign only.\n"
+    "Press **Read it now** and DMbot's AI reads a file once and lists its chapters, places and "
+    "people. The list isn't used for anything yet, so your alerts don't change, and players "
+    "never see it.\n"
+    "None of this is in the campaign's backup: if you restore a backup, give the files again.\n"
+    "Remove a file and DMbot forgets it and what it read."
 )
 EMPTY = "Nothing yet. Press Give a file to add one."
 NOT_ON = (
@@ -81,9 +82,15 @@ READ_LABEL = "Read it now"
 REFRESH_LABEL = "Refresh"
 SEE_LABEL = "See what was read"
 PAGE_ENTRIES = 6  # lines of the list on one page
-NEEDS_REPLY = "DMbot's AI isn't set up here, so it can't read your adventure."
+NEEDS_REPLY = (
+    "DMbot's AI isn't set up here, so it can't read your adventure. Ask whoever runs DMbot to "
+    "set it up."
+)
 BUSY = "DMbot is already reading that file. Press Refresh to see how far it is."
-NOTHING_TO_READ = "Every file DMbot has text for has been read."
+NOTHING_TO_READ = (
+    'Every file DMbot can read has been read. A file that says "give it again" needs its '
+    "file given again first."
+)
 NOTHING_READ = "Nothing was read yet. Press Read it now first."
 
 
@@ -97,15 +104,31 @@ def found_line(counts: Counts) -> str:
             _plural(counts.chapters, "chapter", "chapters"),
             _plural(counts.places, "place", "places"),
             _plural(counts.people, "person", "people"),
-            _plural(counts.links, "depends-on link", "depends-on links"),
+            _plural(counts.links, '"this needs that" note', '"this needs that" notes'),
         )
     )
+
+
+STOPPED_WORDS = {
+    "file_cap": (
+        "This file is longer than DMbot can read in full. What it read is under See what was read."
+    ),
+    "month_cap": "DMbot has used up its reading for this month. It can carry on next month.",
+    "unreachable": "DMbot's AI could not be reached. Press Read it now to try again.",
+    "funds": "DMbot can't read right now. Try again later.",
+    "time": "It took too long. Press Read it now to try again.",
+    "off": "Shared story was turned off. Turn it on again, then press Read it now.",
+    "plan": "This campaign's plan doesn't include reading adventures.",
+    "error": "Something went wrong. Press Read it now to try again.",
+}
+CARRY_ON = "Press Read it now to carry on."
 
 
 def read_line(
     state: ReadState | None, counts: Counts | None, running: bool, *, short: bool = False
 ) -> str:
-    """Where a file's reading stands, in plain words ("" when it has not been read)."""
+    """Where a file's reading stands, in plain words ("" when it has not been read). A stopped
+    read says what to do next, which depends on why it stopped."""
     if state is None:
         return "" if short else "not read yet"
     if state.status == "done":
@@ -118,18 +141,12 @@ def read_line(
         return "read" if short else f"read: {found}{skipped}"
     if running:
         return f"reading {state.percent}%" if short else f"reading… {state.percent}%"
+    stopped = f"stopped at {state.percent}%"
+    if short:
+        return stopped
     if state.status == "reading":  # nothing is running: DMbot restarted
-        return (
-            f"stopped at {state.percent}%"
-            if short
-            else f"stopped at {state.percent}%. Press Read it now to carry on."
-        )
-    why = f" ({state.stop_reason})" if state.stop_reason and not short else ""
-    return (
-        f"stopped at {state.percent}%"
-        if short
-        else f"stopped at {state.percent}%{why}. Press Read it now to carry on."
-    )
+        return f"{stopped} because DMbot restarted. {CARRY_ON}"
+    return f"{stopped}. {STOPPED_WORDS.get(state.stop_reason, CARRY_ON)}"
 
 
 def card_text(
@@ -171,7 +188,13 @@ def next_to_read(
     """The first file (in the card's order) that has its text and is not read or being read."""
     for d in documents:
         state = states.get(d.id)
-        if d.has_text and d.id not in running and (state is None or state.status != "done"):
+        stuck = state is not None and state.stop_reason == "file_cap"  # it can't go further
+        if (
+            d.has_text
+            and d.id not in running
+            and not stuck
+            and (state is None or state.status != "done")
+        ):
             return d
     return None
 
@@ -572,15 +595,26 @@ class ReadButton(
             )
             return
         name = discord.utils.escape_markdown(doc.file_name[:NAME_SHOWN])
+        others = any(
+            d.id != doc.id
+            and d.has_text
+            and (states.get(d.id) is None or states[d.id].status != "done")
+            for d in docs
+        )
         view = discord.ui.View(timeout=None)
         view.add_item(ReadYesButton(campaign.id, doc.id))
         view.add_item(ReadNoButton(campaign.id))
         await interaction.response.edit_message(
             content=(
-                f"Read **{name}** now? DMbot's AI reads the whole file once and keeps a list "
-                "of its chapters, places and people. It takes a few minutes, you can keep "
-                "playing, and it stops by itself if it reaches DMbot's limit for one file or "
-                "for the month. Press Refresh to see how far it is."
+                f"Read **{name}** now? DMbot sends its text to its AI, once, and lists the "
+                "chapters, places and people. It can take a few minutes, longer for a big book. "
+                "You can keep playing. It stops by itself at DMbot's reading limit.\n"
+                "Nothing pops up when it's done: press **Refresh** to see how far it is."
+                + (
+                    "\nOther files wait; press Read it now again afterwards for the next one."
+                    if others
+                    else ""
+                )
             ),
             view=view,
         )
@@ -622,7 +656,10 @@ class ReadYesButton(
         if (campaign.guild_id, self.document_id) in getattr(bot, "plan_reads", {}):
             await interaction.response.send_message(BUSY, ephemeral=True)
             return
-        note = "Reading started. Press Refresh to see how far it is."
+        note = (
+            "Reading started. Nothing pops up when it's done: press Refresh to see how far it is."
+        )
+        await interaction.response.defer()  # the checks below may take longer than Discord waits
         try:
             state = await plan.begin(
                 campaign.guild_id, campaign.id, interaction.user.id, self.document_id
@@ -634,7 +671,7 @@ class ReadYesButton(
             log.exception("Couldn't start reading an adventure")
             note = COULDNT
         text, view = await _card(interaction, campaign)
-        await interaction.response.edit_message(content=f"{note}\n\n{text}", view=view)
+        await interaction.edit_original_response(content=f"{note}\n\n{text}", view=view)
 
 
 class ReadNoButton(
@@ -702,6 +739,7 @@ class RefreshButton(
 ICONS = {"chapter": "📖", "place": "📍", "person": "🧑", "link": "🔗"}
 LINE_SUMMARY = 110  # characters of a line's summary on the list
 LINE_QUOTE = 90
+PAGE_CHARS = 1990  # a message holds 2000
 
 
 def listing_text(items: list[Listed], offset: int, total: int) -> str:
@@ -709,17 +747,20 @@ def listing_text(items: list[Listed], offset: int, total: int) -> str:
     shown with no mentions and no links of its own."""
     lines = [
         f"📋 **What DMbot read** ({offset + 1} to {offset + len(items)} of {total}). "
-        "This is only a list; it changes nothing and players never see it."
+        "Everything here comes from your file. It is only a list: it changes nothing and players "
+        "never see it."
     ]
     for item in items:
         title = discord.utils.escape_markdown(item.title[:120])
         what = discord.utils.escape_markdown(item.summary[:LINE_SUMMARY])
-        if item.kind == "link" and item.summary:
-            what = f"needs: {what}"
+        if item.kind == "link":
+            what = f"this needs that ({what})" if what else "this needs that"
         head = f"{ICONS.get(item.kind, '•')} **{title}**" + (f": {what}" if what else "")
         quote = discord.utils.escape_markdown(item.quote[:LINE_QUOTE])
         lines.append(f"{head}\n> “{quote}”" if quote else head)
-    return "\n".join(lines)
+    # Escaping can double a line, and the book's own words fill it: the page is cut to what a
+    # message holds, and a web address in it is broken so it is not a link.
+    return "\n".join(lines).replace("://", ":\u200b//")[:PAGE_CHARS]
 
 
 class SeeButton(
@@ -771,7 +812,10 @@ class SeeButton(
             view.add_item(SeeButton(campaign.id, self.offset + PAGE_ENTRIES, label="More ▶"))
         view.add_item(ReadNoButton(campaign.id))  # "Not now" goes back to the card
         await interaction.response.edit_message(
-            content=listing_text(items, self.offset, total), view=view, allowed_mentions=NO_MENTIONS
+            content=listing_text(items, self.offset, total),
+            view=view,
+            allowed_mentions=NO_MENTIONS,
+            suppress_embeds=True,
         )
 
 

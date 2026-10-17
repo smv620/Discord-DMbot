@@ -19,6 +19,7 @@ campaign, and a restored campaign reads again after its files are given again.
 from __future__ import annotations
 
 import json
+import re
 import time
 import uuid
 from collections.abc import Callable, Sequence
@@ -39,9 +40,9 @@ PRICE_PER_MILLION: dict[str, tuple[int, int]] = {
     "claude-sonnet-5-5": (2, 10),
     "claude-haiku-4-5-20251001": (1, 5),
 }
-# A model that is not here is priced as the careful tier is: this reader asks for that tier, and
-# a refused one falls back to a cheaper model, so this can only over-count.
-DEFAULT_PRICE = (2, 10)
+# A model that is not here (an override in .env, or the strongest tier) is priced high on purpose:
+# a price nobody checked must make the caps bite early, never late.
+DEFAULT_PRICE = (15, 75)
 DOCUMENT_CAP_MICRO = 3_000_000  # $3 for one document
 MONTH_CAP_MICRO = 10_000_000  # $10 for one campaign's calendar month (UTC)
 CHARS_PER_TOKEN = 3.0  # cautious: real text runs nearer 4, so estimates come out high
@@ -57,7 +58,7 @@ def micro_usd(
     """What a call cost, in millionths of a dollar, rounded up. A cache write is charged a
     quarter more than plain input and a read a tenth (the AI service's list rule)."""
     price_in, price_out = PRICE_PER_MILLION.get(model, DEFAULT_PRICE)
-    weighted_in = input_tokens * 4 + cache_write * 5 + cache_read // 10 * 4
+    weighted_in = input_tokens * 4 + cache_write * 5 + -(-cache_read * 4 // 10)
     return -(-(weighted_in * price_in) // 4) + output_tokens * price_out
 
 
@@ -109,13 +110,17 @@ KIND_ANSWER_KEYS = {"chapters": "chapter", "places": "place", "people": "person"
 NAME_MAX = 120
 SUMMARY_MAX = 500
 QUOTE_MAX = 200
+QUOTE_MIN = 12  # a shorter "quote" ("the") is found anywhere and proves nothing
 NEED_MAX = 120
 NODES_MAX = {"chapter": 300, "place": 1500, "person": 1500}  # per document
 LINKS_MAX = 3000  # per document
 PER_ANSWER = 200  # entries of each kind taken from one answer; the rest are let go
 
 # What a dropped entry is called in the log: counts only, never a name or a quote.
-DROPPED = ("no name", "instruction", "quote not in the text", "unknown name", "too many")
+DROPPED = (
+    "no name", "instruction", "quote not in the text", "name not in the text", "unknown name",
+    "too many",
+)  # fmt: skip
 
 
 @dataclass(frozen=True, slots=True)
@@ -195,7 +200,7 @@ def _evidence(
     if it numbers them wrongly the quote is looked for in the whole batch. A quote that is not in
     the text is not evidence, and the entry goes: the plan never makes up what the book says."""
     wanted = squash(quote)
-    if len(wanted) < 3:
+    if len(wanted) < QUOTE_MIN:
         return None
     numbers = (
         [n for n in cited if type(n) is int and 1 <= n <= len(batch)]
@@ -209,6 +214,12 @@ def _evidence(
     return None
 
 
+def _words_in(name: str, text: str) -> bool:
+    """Does every word of the name (of three letters or more) appear in the text? A book may say
+    "Varn" where the AI wrote "Captain Varn"; a name of words the book never uses is made up."""
+    return all(word in text for word in re.findall(r"\w{3,}", squash(name)))
+
+
 def parse_answer(text: str, batch: Sequence[ChunkRow]) -> Parsed:
     """The AI's answer as data. Every entry is checked in code: a name, a quote that is in the
     cited text, and nothing that reads like an instruction to DMbot. What fails is dropped and
@@ -219,6 +230,7 @@ def parse_answer(text: str, batch: Sequence[ChunkRow]) -> Parsed:
         out.malformed = True
         return out
     squashed = [squash(f"{row.heading} {row.text}") for row in batch]
+    whole = " ".join(squashed)
     for answer_key, kind in KIND_ANSWER_KEYS.items():
         entries = data.get(answer_key, [])
         if not isinstance(entries, list):
@@ -240,6 +252,9 @@ def parse_answer(text: str, batch: Sequence[ChunkRow]) -> Parsed:
             proof = _evidence(quote, entry.get("chunks"), batch, squashed)
             if proof is None:
                 out.drop("quote not in the text")
+                continue
+            if not _words_in(name, whole):
+                out.drop("name not in the text")  # a real quote can't vouch for an invented name
                 continue
             out.nodes.append(Node(kind, name, summary, proof[0][:QUOTE_MAX], proof[1]))
     needs = data.get("needs", [])
@@ -282,6 +297,21 @@ MONTH_FULL = (
 DOCUMENT_FULL = "DMbot stopped reading this file because it reached its limit for one file."
 NOT_READABLE = "DMbot has no text for that file. Give DMbot the file again, then press Read it now."
 ALREADY_READ = "DMbot has already read that file."
+GONE = "That document is already gone."
+
+
+class CapError(AdventureError):
+    """A money limit would be crossed: `which` is "file" or "month"."""
+
+    def __init__(self, which: str) -> None:
+        super().__init__(DOCUMENT_FULL if which == "file" else MONTH_FULL)
+        self.which = which
+
+
+@dataclass(frozen=True, slots=True)
+class Reservation:
+    id: str
+    spent: Spent  # what had been spent before this call
 
 
 @dataclass(frozen=True, slots=True)
@@ -317,6 +347,7 @@ class Stored:
     nodes: int = 0
     links: int = 0
     full: int = 0  # entries let go because the document is at its limit
+    unknown: int = 0  # links let go because an end was never found as an entry
 
 
 @dataclass(frozen=True, slots=True)
@@ -359,7 +390,7 @@ class PlanStore:
             await AdventureStore.require_on(conn, guild_id, campaign_id)
             doc = await self._document(conn, guild_id, campaign_id, document_id)
             if doc is None:
-                raise AdventureError("That document is already gone.")
+                raise AdventureError(GONE)
             if int(doc["chunks"]) == 0:
                 raise AdventureError(NOT_READABLE)
             cur = await conn.execute(
@@ -371,7 +402,7 @@ class PlanStore:
             row = await cur.fetchone()
             if row is not None and row["status"] == "done":
                 raise AdventureError(ALREADY_READ)
-            spent = await self._spent(conn, guild_id, campaign_id, document_id, now)
+            spent = await self._spent(conn, guild_id, campaign_id, doc["fingerprint"], now)
             if spent.document >= DOCUMENT_CAP_MICRO:
                 raise AdventureError(DOCUMENT_FULL)
             if spent.month >= MONTH_CAP_MICRO:
@@ -399,33 +430,104 @@ class PlanStore:
                 int(row["skipped_parts"]),
             )
 
-    async def check(self, guild_id: int, campaign_id: str, document_id: str) -> Spent:
-        """Before every batch: the switch is still on with a confirmation made here, the document
-        is still here with its text, and what has been spent. Refused in plain words."""
-        now = int(self._clock())
+    async def reserve(
+        self, guild_id: int, campaign_id: str, document_id: str, worst: int
+    ) -> Reservation:
+        """Before every call: the switch is still on with a confirmation made here, the document is
+        still here with its text, and the most the call could cost fits under both caps. If so,
+        that much is written to the ledger as a reservation, to be settled to the real cost when
+        the call returns. It is kept (not forgotten) when the call fails or the bot stops in the
+        middle of it, because the AI service may still bill it. The campaign row is locked, so two
+        reads in one campaign can't both see the same money as free. Refused in plain words."""
+        now = self._clock()
         async with self._db.guild(guild_id) as conn:
+            await conn.execute(
+                "SELECT 1 FROM campaigns WHERE guild_id = %s AND id = %s FOR UPDATE",
+                (guild_id, campaign_id),
+            )
             await AdventureStore.require_on(conn, guild_id, campaign_id)
             doc = await self._document(conn, guild_id, campaign_id, document_id)
             if doc is None or int(doc["chunks"]) == 0:
-                raise AdventureError("That document is already gone.")
-            return await self._spent(conn, guild_id, campaign_id, document_id, now)
+                raise AdventureError(GONE)
+            spent = await self._spent(conn, guild_id, campaign_id, doc["fingerprint"], now)
+            if spent.document + worst > DOCUMENT_CAP_MICRO:
+                raise CapError("file")
+            if spent.month + worst > MONTH_CAP_MICRO:
+                raise CapError("month")
+            reservation = uuid.uuid4().hex
+            await self._ledger(
+                conn, guild_id, campaign_id, reservation, doc["fingerprint"], worst, 0, 0, now
+            )
+            return Reservation(reservation, spent)
+
+    async def settle(
+        self,
+        guild_id: int,
+        campaign_id: str,
+        reservation: str,
+        micro: int,
+        input_tokens: int = 0,
+        output_tokens: int = 0,
+    ) -> None:
+        """A reservation becomes what the call really cost (or the part of it that is certain)."""
+        async with self._db.guild(guild_id) as conn:
+            await conn.execute(
+                "UPDATE plan_spend SET micro_usd = %s, input_tokens = %s, output_tokens = %s"
+                " WHERE guild_id = %s AND campaign_id = %s AND id = %s",
+                (
+                    max(0, micro),
+                    max(0, input_tokens),
+                    max(0, output_tokens),
+                    guild_id,
+                    campaign_id,
+                    reservation,
+                ),
+            )
+
+    @staticmethod
+    async def _ledger(
+        conn: Conn,
+        guild_id: int,
+        campaign_id: str,
+        row_id: str,
+        fingerprint: str,
+        micro: int,
+        input_tokens: int,
+        output_tokens: int,
+        now: float,
+    ) -> None:
+        await conn.execute(
+            "INSERT INTO plan_spend (guild_id, campaign_id, id, fingerprint, month, micro_usd,"
+            " input_tokens, output_tokens, at) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)",
+            (
+                guild_id,
+                campaign_id,
+                row_id,
+                fingerprint,
+                month_of(now),
+                max(0, micro),
+                max(0, input_tokens),
+                max(0, output_tokens),
+                int(now),
+            ),
+        )
 
     async def _document(self, conn: Conn, guild_id: int, campaign_id: str, document_id: str) -> Any:
         cur = await conn.execute(
-            "SELECT chunks FROM adventure_documents WHERE guild_id = %s AND campaign_id = %s"
-            " AND id = %s",
+            "SELECT chunks, fingerprint FROM adventure_documents WHERE guild_id = %s"
+            " AND campaign_id = %s AND id = %s",
             (guild_id, campaign_id, document_id),
         )
         return await cur.fetchone()
 
     async def _spent(
-        self, conn: Conn, guild_id: int, campaign_id: str, document_id: str, now: float
+        self, conn: Conn, guild_id: int, campaign_id: str, fingerprint: str, now: float
     ) -> Spent:
         cur = await conn.execute(
-            "SELECT COALESCE(sum(micro_usd) FILTER (WHERE document_id = %s), 0) AS doc,"
+            "SELECT COALESCE(sum(micro_usd) FILTER (WHERE fingerprint = %s), 0) AS doc,"
             " COALESCE(sum(micro_usd) FILTER (WHERE month = %s), 0) AS month"
             " FROM plan_spend WHERE guild_id = %s AND campaign_id = %s",
-            (document_id, month_of(now), guild_id, campaign_id),
+            (fingerprint, month_of(now), guild_id, campaign_id),
         )
         row = await cur.fetchone()
         assert row is not None
@@ -455,7 +557,7 @@ class PlanStore:
         async with self._db.guild(guild_id) as conn:
             cur = await conn.execute(
                 "SELECT name FROM plan_nodes WHERE guild_id = %s AND campaign_id = %s"
-                " AND document_id = %s ORDER BY created_at DESC, position DESC LIMIT %s",
+                " AND document_id = %s ORDER BY created_at DESC, position DESC, id LIMIT %s",
                 (guild_id, campaign_id, document_id, limit),
             )
             return [r["name"] for r in await cur.fetchall()]
@@ -469,24 +571,22 @@ class PlanStore:
         input_tokens: int,
         output_tokens: int,
     ) -> None:
-        """What a call cost, written as soon as it returns (before its answer is read), so a
-        crash or a restart can't hide it from the caps."""
-        now = self._clock()
+        """Write what something cost straight to the ledger (the reader reserves and settles
+        instead; this is for money spent some other way, and for tests)."""
         async with self._db.guild(guild_id) as conn:
-            await conn.execute(
-                "INSERT INTO plan_spend (guild_id, campaign_id, id, document_id, month, micro_usd,"
-                " input_tokens, output_tokens, at) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)",
-                (
-                    guild_id,
-                    campaign_id,
-                    uuid.uuid4().hex,
-                    document_id,
-                    month_of(now),
-                    max(0, micro),
-                    max(0, input_tokens),
-                    max(0, output_tokens),
-                    int(now),
-                ),
+            doc = await self._document(conn, guild_id, campaign_id, document_id)
+            if doc is None:
+                raise AdventureError(GONE)
+            await self._ledger(
+                conn,
+                guild_id,
+                campaign_id,
+                uuid.uuid4().hex,
+                doc["fingerprint"],
+                micro,
+                input_tokens,
+                output_tokens,
+                self._clock(),
             )
 
     async def store_batch(
@@ -508,7 +608,7 @@ class PlanStore:
             await AdventureStore.require_on(conn, guild_id, campaign_id)
             doc = await self._document(conn, guild_id, campaign_id, document_id)
             if doc is None:
-                raise AdventureError("That document is already gone.")
+                raise AdventureError(GONE)
             cur = await conn.execute(
                 "SELECT kind, count(*) AS n FROM plan_nodes WHERE guild_id = %s"
                 " AND campaign_id = %s AND document_id = %s GROUP BY kind",
@@ -522,7 +622,7 @@ class PlanStore:
             )
             row = await cur.fetchone()
             links_held = int(row["n"]) if row else 0
-            added = full = 0
+            added = full = unknown = 0
             for node in parsed.nodes:
                 if held.get(node.kind, 0) >= NODES_MAX[node.kind]:
                     full += 1
@@ -560,6 +660,7 @@ class PlanStore:
             for need in parsed.needs:
                 start, end = ids.get(need.start), ids.get(need.end)
                 if start is None or end is None:
+                    unknown += 1
                     continue
                 if links_held >= LINKS_MAX:
                     full += 1
@@ -590,7 +691,7 @@ class PlanStore:
                 " AND document_id = %s",
                 (next_chunk, now, 1 if skipped else 0, guild_id, campaign_id, document_id),
             )
-            return Stored(added, linked, full)
+            return Stored(added, linked, full, unknown)
 
     async def finish(
         self, guild_id: int, campaign_id: str, document_id: str, status: str, reason: str = ""
@@ -669,7 +770,7 @@ class PlanStore:
                 "SELECT kind, name, summary, quote FROM plan_nodes WHERE guild_id = %s"
                 " AND campaign_id = %s AND document_id = %s ORDER BY"
                 " CASE kind WHEN 'chapter' THEN 0 WHEN 'place' THEN 1 ELSE 2 END,"
-                " position, created_at, name_key LIMIT %s OFFSET %s",
+                " position, created_at, name_key, id LIMIT %s OFFSET %s",
                 (guild_id, campaign_id, document_id, limit, offset),
             )
             return [
@@ -697,7 +798,7 @@ class PlanStore:
                     "SELECT kind, name, summary, quote FROM plan_nodes WHERE guild_id = %s"
                     " AND campaign_id = %s ORDER BY"
                     " CASE kind WHEN 'chapter' THEN 0 WHEN 'place' THEN 1 ELSE 2 END,"
-                    " created_at, position, name_key LIMIT %s OFFSET %s",
+                    " created_at, position, name_key, id LIMIT %s OFFSET %s",
                     (guild_id, campaign_id, limit, offset),
                 )
                 out = [
@@ -723,10 +824,17 @@ class PlanStore:
 
     async def spent(self, guild_id: int, campaign_id: str, document_id: str) -> Spent:
         async with self._db.guild(guild_id) as conn:
-            return await self._spent(conn, guild_id, campaign_id, document_id, self._clock())
+            doc = await self._document(conn, guild_id, campaign_id, document_id)
+            if doc is None:
+                return Spent(
+                    0,
+                    (await self._spent(conn, guild_id, campaign_id, "0" * 64, self._clock())).month,
+                )
+            return await self._spent(conn, guild_id, campaign_id, doc["fingerprint"], self._clock())
 
 
 __all__ = [
+    "CapError",
     "Counts",
     "Entry",
     "Listed",
@@ -735,6 +843,7 @@ __all__ = [
     "Parsed",
     "PlanStore",
     "ReadState",
+    "Reservation",
     "Spent",
     "Stored",
     "batches_of",
