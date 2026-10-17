@@ -305,6 +305,9 @@ export const held: Held[] = [
     what: "DMbot makes a channel for your campaign's house rules, with one message for each rule you have saved and a note for each rule set you follow. Players can read it but not post, and who can see it matches your DM screen setting (private, peek or open).",
     reason:
       "Held until seen working live (#1752): the owner has not yet checked it on the test server.",
+  },
+  {
+    date: "2026-10-17",
     title: "A time suggestion from your narration",
     what: "When you narrate time passing without saying how long (\"you walk for a while\"), DMbot can suggest a time jump on your DM screen, such as +2 hours. Nothing changes unless you press the button. Press Not now to skip it.",
     reason:
