@@ -43,6 +43,11 @@ from dmbot.campaigns.models import (
     HANDOVER_SECONDS,
     NAME_MAX,
     NAME_ON_OFFER_MAX,
+    SHARED_STORY,
+    STORY_MODES,
+    STORY_NEEDS_CONFIRM,
+    STORY_OFF,
+    STORY_RIGHT_WARNING,
     Campaign,
     CampaignError,
     HandoverOffer,
@@ -51,6 +56,7 @@ from dmbot.campaigns.models import (
     check_dm_screen_visibility,
     check_rulesets,
     clean_name,
+    fingerprint,
     name_key,
 )
 from dmbot.db import Conn, Database, row_int
@@ -289,6 +295,7 @@ _SETTABLE = frozenset(
         "dndbeyond_invite",
         "rules_cards",
         "side_initiative",
+        "story_mode",
         "transcript_keep_days",
         "transcript_deleted_noted",
         "recaps_text",
@@ -693,6 +700,61 @@ class CampaignStore:
         """Side-based initiative (#1127): a DM's setting, off by default. DMbot tracks rounds
         only either way; it is kept so the table's way of running a fight is recorded."""
         return await self._set(guild_id, campaign_id, "side_initiative", bool(on))
+
+    async def story_confirmed(self, guild_id: int, campaign_id: str) -> bool:
+        """Has a DM already confirmed the right to use shared story material here (#1692)?
+        Switching the story mode off keeps that record, so turning it on again doesn't ask."""
+        async with self._db.guild(guild_id) as conn:
+            await self._require(conn, guild_id, campaign_id)
+            return await self._has_story_confirmation(conn, guild_id, campaign_id)
+
+    @staticmethod
+    async def _has_story_confirmation(conn: Conn, guild_id: int, campaign_id: str) -> bool:
+        cur = await conn.execute(
+            "SELECT 1 FROM shared_confirmations"
+            " WHERE guild_id = %s AND campaign_id = %s AND purpose = %s LIMIT 1",
+            (guild_id, campaign_id, SHARED_STORY),
+        )
+        return await cur.fetchone() is not None
+
+    async def set_story_mode(
+        self, guild_id: int, campaign_id: str, mode: str, *, confirmed_by: int | None = None
+    ) -> Campaign:
+        """The Shared story switch (#1692): "off", "watch" or "guide". Turning it on needs the
+        DM's confirmation of the right to use the material (CLAUDE.md, IP rule): already on
+        record, or given now with `confirmed_by` (who; the time is the store's clock). Without
+        one the mode is not changed and `STORY_NEEDS_CONFIRM` is raised. Off never asks and
+        keeps the record. The record and the mode are written together. Nothing reads the mode
+        yet (the later slices of Phase 5d)."""
+        if mode not in STORY_MODES:
+            raise CampaignError("That isn't a Shared story setting.")
+        async with self._db.guild(guild_id) as conn:
+            await self._require(conn, guild_id, campaign_id)
+            if mode != STORY_OFF and not await self._has_story_confirmation(
+                conn, guild_id, campaign_id
+            ):
+                if confirmed_by is None:
+                    raise CampaignError(STORY_NEEDS_CONFIRM)
+                await conn.execute(
+                    "INSERT INTO shared_confirmations (campaign_id, guild_id, id, user_id,"
+                    " purpose, fingerprint, confirmed_at) VALUES (%s, %s, %s, %s, %s, %s, %s)",
+                    (
+                        campaign_id,
+                        guild_id,
+                        uuid.uuid4().hex,
+                        confirmed_by,
+                        SHARED_STORY,
+                        fingerprint(STORY_RIGHT_WARNING),
+                        int(self._clock()),
+                    ),
+                )
+            return await self._update(
+                conn,
+                guild_id,
+                campaign_id,
+                sql.SQL("story_mode = %s"),
+                (mode,),
+            )
 
     async def set_transcript_keep(
         self, guild_id: int, campaign_id: str, days: int | None
@@ -1265,6 +1327,7 @@ class CampaignStore:
                 "dm_screen_level": campaign.dm_screen_level,
                 "rules_cards": campaign.rules_cards,
                 "side_initiative": campaign.side_initiative,
+                "story_mode": campaign.story_mode,
                 "transcript_keep_days": campaign.transcript_keep_days,
                 "recaps_text": campaign.recaps_text,
                 "recaps_audio": campaign.recaps_audio,
@@ -1333,7 +1396,7 @@ class CampaignStore:
                     "UPDATE campaigns SET target_ruleset = %s, fallback_ruleset = %s,"
                     " optional_rules_default = %s, last_played_at = %s,"
                     " dm_screen_visibility = %s, dm_screen_level = %s, rules_cards = %s,"
-                    " table_chat = %s, side_initiative = %s,"
+                    " table_chat = %s, side_initiative = %s, story_mode = %s,"
                     " recaps_text = %s, recaps_audio = %s, recaps_email = %s,"
                     # The invite link is not touched: it is the DM's join link for this
                     # server's table, and a backup doesn't record which server it came from,
@@ -1352,6 +1415,7 @@ class CampaignStore:
                         info["rules_cards"],
                         info["table_chat"],
                         info["side_initiative"],
+                        info["story_mode"],
                         info["recaps_text"],
                         info["recaps_audio"],
                         info["recaps_email"],
@@ -1401,6 +1465,11 @@ class CampaignStore:
                             "UPDATE campaigns SET side_initiative = TRUE"
                             " WHERE guild_id = %s AND id = %s",
                             (guild_id, campaign_id),
+                        )
+                    if info["story_mode"] != STORY_OFF:  # a new campaign starts with it off
+                        await conn.execute(
+                            "UPDATE campaigns SET story_mode = %s WHERE guild_id = %s AND id = %s",
+                            (info["story_mode"], guild_id, campaign_id),
                         )
                     if not info["table_chat"]:  # typed chat starts on; a backup may say off
                         await conn.execute(
@@ -1613,6 +1682,7 @@ def _to_campaign(row: dict[str, Any], dms: set[int]) -> Campaign:
         owner_user_id=row_int(row, "owner_user_id"),
         rules_cards=bool(row.get("rules_cards", False)),  # older schemas (tests) have none
         side_initiative=bool(row.get("side_initiative", False)),
+        story_mode=str(row.get("story_mode", STORY_OFF)),
         transcript_keep_days=row_int(row, "transcript_keep_days")
         if "transcript_keep_days" in row
         else None,
@@ -1808,6 +1878,19 @@ def _validate_backup(
     if not isinstance(side_initiative, bool):
         raise CampaignError(DAMAGED)
 
+    # Backups made before the Shared story switch existed have it off. A mode other than off
+    # needs the backup to carry the DM's confirmation of the right to use the material (#1692);
+    # without one it is restored as off.
+    story_mode = campaign.get("story_mode", STORY_OFF)
+    if not isinstance(story_mode, str) or story_mode not in STORY_MODES:
+        raise CampaignError(DAMAGED)
+    confirmed_rows = sections.get("confirmations")
+    if not (
+        isinstance(confirmed_rows, list)
+        and any(isinstance(r, dict) and r.get("purpose") == SHARED_STORY for r in confirmed_rows)
+    ):
+        story_mode = STORY_OFF
+
     # Backups made before the keep setting existed keep transcripts forever.
     keep_days = campaign.get("transcript_keep_days")
     if keep_days is not None and (type(keep_days) is not int or keep_days not in KEEP_CHOICES):
@@ -1855,6 +1938,7 @@ def _validate_backup(
         "dm_screen_level": level,
         "rules_cards": rules_cards,
         "side_initiative": side_initiative,
+        "story_mode": story_mode,
         "transcript_keep_days": keep_days,
         **recap_choices,
         "dndbeyond_invite": invite,

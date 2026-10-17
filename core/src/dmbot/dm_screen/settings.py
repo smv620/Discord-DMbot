@@ -34,7 +34,7 @@ from dmbot.campaigns.models import (
     CampaignError,
     HandoverOffer,
 )
-from dmbot.dm_screen import handover, messages, table_chat_panel
+from dmbot.dm_screen import handover, messages, story_mode, table_chat_panel
 from dmbot.dm_screen.buttons import may_change_screen, save_visibility
 from dmbot.dm_screen.clock import ClockButton
 from dmbot.dm_screen.delete_campaign import DeleteButton
@@ -144,6 +144,7 @@ def settings_text(
             *([INVITE_SET if campaign.dndbeyond_invite else INVITE_NOT_SET] if rules else []),
             table_chat_panel.line(campaign),
             _combat_line(campaign),
+            *([story_mode.line(campaign)] if rules else []),  # the DMs' (#1692)
             handover.owner_line(campaign, offer),
             pause_line(campaign, viewer),
             "Tap a button to change it. If DMbot is listening now, it follows the change from "
@@ -179,6 +180,7 @@ def settings_view(campaign: Campaign, offer: HandoverOffer | None, viewer: int) 
         view.add_item(TranscriptsButton(campaign.id))  # how long transcripts are kept (#1533)
         view.add_item(GameMastersButton(campaign.id, row=2))  # who the DMs are (#1600)
         view.add_item(DeleteButton(campaign.id))  # delete the campaign, plan holder only (#1608)
+        view.add_item(story_mode.StoryButton(campaign.id, row=0))  # Shared story (#1692)
     return view
 
 

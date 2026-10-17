@@ -705,6 +705,19 @@ Each step is useful on its own and ships behind the existing phases.
    summaries, the pre-session note, the AI recap.
 4. **Phase 5d: Shared story:** the story plan, `same_as` links, divergence ("Watch
    the story"), then "Guide me".
+   **Phase 5d slice 1 is built (#1692): the Shared story switch.** Only the switch and the DM's
+   confirmation (no AI, no adventure reading). A campaign setting `story_mode` — `off` (the
+   default), `watch` or `guide` — set from ⚙️ Settings → 🧭 Shared story, DMs only, with each
+   mode's one-line meaning. The first time it is turned on the DM sees the warning from the IP
+   rule ("Only give DMbot material you have the right to use. DMbot doesn't check this.") and the
+   mode is saved only by **I have the right**, which records who and when (purpose
+   `shared_story` in `shared_confirmations`, a fingerprint of the words, not the words). Without
+   that press it stays Off; Off keeps the record, so turning it on again does not ask again. It is
+   in backups; a backup that says `watch` or `guide` without a `shared_story` confirmation in the
+   file is restored Off. **Nothing reads the mode yet**: the story-plan reader, the divergence
+   warnings and Guide me are the next slices, and the card says "Coming next: give DMbot your
+   adventure." Each of those must ask for the right to use the material it is given, not rely on
+   this switch alone. Offered on every plan (PLAN names no plan rule for it).
 5. **Throughout:** the ontology steward and graph curator take over the after-session
    cleanup; their health numbers (duplicates, orphans, unused terms, flags per session,
    how often the DM is asked, warnings ignored) go to the server logs, never to players.
