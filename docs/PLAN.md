@@ -3514,6 +3514,9 @@ once. The new-campaign form's link is saved in the same step as the campaign.
       most one DMbot private message per two minutes during combat**, counting everything DMbot
       sends them. In practice that is FightBot's own gap, because the sheet questions and cards
       of #1128 are held until the fight ends. Later features keep to this rule.
+    - **Spell slots:** the sheet snapshot (D1) does not keep slot counts, so a reminder can name
+      spells and features but not how many slots are left. Adding slots to the sheet is a
+      follow-up.
   - **Initiative style, heard** (owner, 2026-10-17, #1771): FightBot listens to the DM and the
     players and works out how the table runs initiative: **one at a time** (each creature on its
     own turn), **by side** (each side acts together) or **rolled each round**, and whether
@@ -3527,9 +3530,6 @@ once. The new-campaign form's link is saved in the same step as the campaign.
       Until something is heard, FightBot works as before. The DM screen's combat line shows what
       was heard. The two-minute private-message cap in combat stands; a reminder whose moment has
       passed is dropped.
-    - **Spell slots:** the sheet snapshot (D1) does not keep slot counts, so a reminder can name
-      spells and features but not how many slots are left. Adding slots to the sheet is a
-      follow-up.
 *Built, part D1: the fields and the import status (2026-10-13, #1124):* the D&D Beyond snapshot (still version 1; a
 kept snapshot without the new fields reads them as unknown) now also holds hit points now (`hp`: the maximum minus the
 damage taken, never below 0) and temporary hit points, active conditions with the exhaustion level, resistances,
