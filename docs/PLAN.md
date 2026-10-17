@@ -2341,8 +2341,13 @@ transcript, clearly unrelated talk shows as `[1m 22s of off-topic chat skipped]`
   ends. Each line also keeps how long it was said (`duration_ms`). Every AI call has an
   8 s limit (a slow answer keeps the window as game talk, and never holds up the end of a
   session); after 3 failures in a row the filter rests 5 minutes. Consent is checked again
-  right before a window is sent. Lines of two words or fewer are never sent. Not yet held
-  back: the name fixer's word list (lower-case words from every line). The log line
+  right before a window is sent. Lines of two words or fewer are never sent. The name fixer's
+  word list (lower-case words, #1748) follows the same rule: a held line adds its words only
+  once its window is labelled game talk, an off-topic line never does, and a window the filter
+  couldn't judge counts as game talk, as above. A line the DM puts back adds its words then. The trade-off: a held line's words reach
+  the list when its window is labelled, up to one window later, and it is the cleaned words.
+  The list lives in the running session's table (one campaign, one server) and is never saved.
+  The log line
   "Off-topic filter: N calls, … tokens" gives the cost. Replay case:
   docs/test-scripts/off-topic.md.
 - **Put it back (decided 2026-10-08, Supervisor, #677; why: the DM decides).** A game line
