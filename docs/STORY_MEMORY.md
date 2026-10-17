@@ -693,6 +693,14 @@ Each step is useful on its own and ships behind the existing phases.
    promise) on each. The line is in-game content: it stays on the DM screen, never in the DM Bot
    channel, a transcript or the players' recall. A campaign with no live thread skips the read (a
    one-row look at `memory_states`); otherwise it is the one `threads()` read.
+   **Phase 5c slice 4 is built (#1679): `led_to`.** A core connection, the DM's word only: a clue,
+   an event or a thread led to a thread or an event (no AI, no migration). It is set from a card's
+   **➡ Led to…** button, which picks from the campaign's threads and events. A link to itself, or
+   one that would close a loop or run past ten steps, is refused (not flagged). The fact is stored
+   secret, so it is the DM's alone wherever facts are shown, and a link into a thread is hidden
+   with the thread. A thread's card shows "Came from" and "Led to", at most five names each then
+   "+N more", from the one thread read; a clue's or event's card shows the same from a single read
+   of its own links. A link is not the thread moving, so it does not reset its quiet count.
 3. **Phase 5c: PlotBot:** threads, promises, clues, `led_to`, stalled-thread nudges,
    summaries, the pre-session note, the AI recap.
 4. **Phase 5d: Shared story:** the story plan, `same_as` links, divergence ("Watch

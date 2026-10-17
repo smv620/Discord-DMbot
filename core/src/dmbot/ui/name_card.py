@@ -88,6 +88,7 @@ MORE_THAN_ONE_BUTTON = "Allow more than one"
 THREAD_STATE_BUTTON = "🧵 Change state"  # a story thread's buttons (#1662)
 THREAD_INVOLVE_BUTTON = "👥 Who's involved"
 THREAD_LINK_BUTTON = "📌 Link an event"
+LED_TO_BUTTON = "➡ Led to…"  # a clue, event or thread led to another (#1679)
 PROMISE_BY_BUTTON = "🤝 Who promised"  # a promise's buttons (#1674)
 PROMISE_TO_BUTTON = "🤝 Promised to"
 PROMISE_DUE_BUTTON = "📅 Due"
@@ -207,6 +208,8 @@ def _groups(
     for r in connections:
         if r.status != CONFIRMED or (r.secret and not secrets):
             continue
+        if r.predicate == "led_to":
+            continue  # shown as the "Came from" / "Led to" lines instead (#1679)
         ahead = r.subject_id == entity_id or r.predicate in BOTH_WAYS
         other = lookup.entities.get(r.object_id if r.subject_id == entity_id else r.subject_id)
         if other is None or other.status != CONFIRMED or other.id == entity_id:
@@ -416,6 +419,19 @@ async def show_card(
             lines_of_thread = thread_lines(
                 here[0], await _session_numbers(interaction, campaign.id)
             )
+    elif entity is not None and secrets and entity.type in ("clue", "event"):
+        # A clue's or an event's "Led to" / "Came from" (#1679): the DM's word, so the DM's card.
+        from dmbot.memory.threads import names_line
+
+        came, went = await memory.chain(campaign.guild_id, campaign.id, entity_id)
+        lines_of_thread = [
+            line
+            for line in (
+                names_line("Came from", [_md(e.name) for e in came]),
+                names_line("Led to", [_md(e.name) for e in went]),
+            )
+            if line
+        ] or None
     text = card_text(
         names,
         entity_id,
@@ -460,6 +476,7 @@ async def show_card(
         clue=entity.type == "clue",
         thread=is_thread and secrets,
         promise=entity.type == "promise" and secrets,
+        led=secrets and (is_thread or entity.type in ("clue", "event")),
         standing=(
             entity.type in ("character", "faction", "place")
             and not entity.is_player_character
@@ -599,6 +616,7 @@ class NameCard(_Menu):
         standing: bool = False,
         thread: bool = False,
         promise: bool = False,
+        led: bool = False,
         undo_connection: int | None = None,
     ) -> None:
         super().__init__()
@@ -621,6 +639,8 @@ class NameCard(_Menu):
         self.add_item(_Button(self._same, label="🔗 Same as…", style=grey, row=1))
         # Row 2, so row 1's buttons don't clip on a phone (#393).
         self.add_item(_Button(self._connect, label="🧭 Connect to…", style=grey, row=2))
+        if led:  # the DM's word that this led to a thread or an event (#1679)
+            self.add_item(_Button(self._led_to, label=LED_TO_BUTTON, style=grey, row=2))
         if sheet:
             self.add_item(_Button(self._unlink_sheet, label="📜 Forget sheet", style=grey, row=2))
         if item:
@@ -672,6 +692,17 @@ class NameCard(_Menu):
             await _tell(interaction, "Only the DM can change a story thread.")
             return
         await interaction.response.send_modal(InvolveForm(self.campaign_id, self.entity_id))
+
+    async def _led_to(self, interaction: discord.Interaction) -> None:
+        from dmbot.ui.threads import LedToForm
+
+        campaign = await _campaign_for(interaction, self.campaign_id)
+        if campaign is None:
+            return
+        if not sees_secrets(campaign, interaction.user.id):
+            await _tell(interaction, "Only the DM can do that.")
+            return
+        await interaction.response.send_modal(LedToForm(self.campaign_id, self.entity_id))
 
     async def _promise_form(self, interaction: discord.Interaction, which: str) -> None:
         from dmbot.ui.threads import DueForm, PartyForm

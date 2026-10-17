@@ -97,6 +97,12 @@ def thread_lines(info: model.ThreadInfo, numbers: dict[int, int]) -> list[str]:
     lines.append(f"🧵 **{word}**{quiet}")
     if info.due:
         lines.append(f"**Due:** {_md(info.due)}")
+    for line in (
+        model.names_line("Came from", [_md(e.name) for e in info.came_from]),
+        model.names_line("Led to", [_md(e.name) for e in info.led_to]),
+    ):
+        if line:
+            lines.append(line)
     if info.involved:
         parts = [
             f"{_md(i.who.name)}" + (f" ({_md(i.role)})" if i.role else "") for i in info.involved
@@ -367,6 +373,7 @@ async def link_by_name(
     kinds: tuple[str, ...] | None,
     then: Any,
     make: str | None = None,
+    threads_too: bool = False,
 ) -> None:
     """Find the one entry the DM means by name (the same search as Find a name), and hand it to
     `then`. Several: a pick list. None: nothing, or the entry made on the spot when `make` names
@@ -383,7 +390,7 @@ async def link_by_name(
         if names.entities[m.entity_id].status == CONFIRMED
         and names.entities[m.entity_id].type != "person"
         and m.entity_id != thread_id
-        and names.entities[m.entity_id].type not in THREAD_TYPES
+        and (threads_too or names.entities[m.entity_id].type not in THREAD_TYPES)
         and (kinds is None or names.entities[m.entity_id].type in kinds)
     ][:MAX_RESULTS]
     if len(found) == 1:
@@ -583,6 +590,58 @@ class NewPromiseForm(discord.ui.Modal, title="Add a promise"):
             made.value.id,
             note="✅ Added. Tap Who promised and Promised to to fill in the rest.",
         )
+
+
+class LedToForm(discord.ui.Modal, title="Led to…"):
+    """From a clue, an event or a thread: what it led to, a thread or an event of this campaign."""
+
+    target: discord.ui.TextInput[LedToForm] = discord.ui.TextInput(
+        label="What it led to", placeholder="A thread or an event", max_length=100
+    )
+
+    def __init__(self, campaign_id: str, from_id: str) -> None:
+        super().__init__(timeout=VIEW_TIMEOUT_S)
+        self.campaign_id, self.from_id = campaign_id, from_id
+
+    async def on_error(  # type: ignore[override]  # a form's has no item (discord.py)
+        self, interaction: discord.Interaction, error: Exception
+    ) -> None:
+        await _failed(interaction, error)
+
+    async def on_submit(self, interaction: discord.Interaction) -> None:
+        await _answer_first(interaction, in_place=True)
+        memory = _memory(interaction)
+        kinds: tuple[str, ...] | None = None
+        if memory is not None and interaction.guild is not None:
+            ontology = await memory.ontology(interaction.guild.id, self.campaign_id)
+            kinds = tuple(
+                k for k in ontology.types if ontology.is_a(k, "event") or ontology.is_a(k, "thread")
+            )
+        await link_by_name(
+            interaction,
+            self.campaign_id,
+            self.from_id,
+            self.target.value,
+            kinds=kinds,
+            then=_save_led_to,
+            threads_too=True,
+        )
+
+
+async def _save_led_to(
+    interaction: discord.Interaction, campaign_id: str, from_id: str, to_id: str
+) -> None:
+    got = await _dm_and_memory(interaction, campaign_id)
+    if got is None:
+        return
+    campaign, memory = got
+    try:
+        await memory.led_to(campaign.guild_id, campaign.id, from_id, to_id, source=DM)
+    except MemoryRuleError as exc:
+        await show_thread(interaction, campaign_id, from_id, note=f"⚠️ {exc}")
+        return
+    changed(interaction, campaign)
+    await show_thread(interaction, campaign_id, from_id, note="✅ Linked.")
 
 
 class LinkForm(discord.ui.Modal, title="Link an event"):
@@ -911,6 +970,7 @@ __all__ = [
     "ChangeState",
     "DueForm",
     "InvolveForm",
+    "LedToForm",
     "LinkForm",
     "NewPromiseForm",
     "NewThreadForm",

@@ -71,6 +71,8 @@ class ThreadInfo:
     promised_by: tuple[Entity, ...] = ()  # a promise: who made it (the DM's word)
     promised_to: tuple[Entity, ...] = ()  # ...and to whom
     due: str = ""  # ...and the DM's free-text note on when it is due, never parsed
+    came_from: tuple[Entity, ...] = ()  # what led to this thread (the DM's word, #1679)
+    led_to: tuple[Entity, ...] = ()  # ...and what it led to
 
 
 def in_play_first(infos: Iterable[ThreadInfo]) -> list[ThreadInfo]:
@@ -86,6 +88,51 @@ def in_play_first(infos: Iterable[ThreadInfo]) -> list[ThreadInfo]:
             t.thread.id,
         ),
     )
+
+
+LED_TO = "led_to"
+CHAIN_DEPTH = 10  # how far the loop check follows "led to" before it gives up (and refuses)
+
+
+def would_loop(
+    pairs: Iterable[tuple[str, str]], start: str, end: str, depth: int = CHAIN_DEPTH
+) -> bool:
+    """Would "start led to end" close a loop (or be a link to itself)? True when `end` already
+    leads, through the live links in `pairs` (from, to), back to `start`. Also True when the new
+    link would make the chain below `start` longer than `depth` links (`end` already has
+    `depth` links under it): a path nobody could read on a card is not a path."""
+    if start == end:
+        return True
+    out: dict[str, list[str]] = {}
+    for a, b in pairs:
+        out.setdefault(a, []).append(b)
+    seen = {end}
+    frontier = [end]
+    for _ in range(depth):
+        nxt: list[str] = []
+        for node in frontier:
+            for to in out.get(node, ()):
+                if to == start:
+                    return True
+                if to not in seen:
+                    seen.add(to)
+                    nxt.append(to)
+        if not nxt:
+            return False
+        frontier = nxt
+    return bool(frontier)  # still going after `depth` steps: too deep to trust
+
+
+CARD_NAMES = 5  # names on a "Came from" / "Led to" line, then "+N more"
+
+
+def names_line(label: str, names: Sequence[str]) -> str | None:
+    """ "Came from: A, B (+2 more)", or None when there is nothing to say."""
+    if not names:
+        return None
+    shown = list(names[:CARD_NAMES])
+    more = len(names) - len(shown)
+    return f"**{label}:** " + ", ".join(shown) + (f" (+{more} more)" if more > 0 else "")
 
 
 def sessions_since(touch: int, sessions: Iterable[int]) -> int:
