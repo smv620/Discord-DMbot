@@ -6426,6 +6426,18 @@ HOMEBREW_SOURCE_DOOR = """
     REVOKE ALL ON FUNCTION dmbot_web_homebrew(BIGINT, TEXT) FROM PUBLIC;
 """
 
+STORY_THREADS = """
+    -- Story threads (#1662; docs/STORY_MEMORY.md, section 2): a thread's state is kept in
+    -- memory_states like a condition, so the CHECK that lists the allowed values learns the five
+    -- thread states. The kinds (thread, quest, mystery, hook, goal) and the connections
+    -- (in_thread, advances, resolves) are core, in code. No row changes.
+    ALTER TABLE memory_states DROP CONSTRAINT memory_states_condition_check;
+    ALTER TABLE memory_states ADD CONSTRAINT memory_states_condition_check CHECK (condition IN
+        ('alive', 'dead', 'missing', 'captured', 'transformed', 'unknown',
+         'intact', 'destroyed', 'lost',
+         'hinted', 'open', 'active', 'resolved', 'abandoned'));
+"""
+
 MIGRATIONS: tuple[Migration, ...] = (
     ("0001_initial", INITIAL),
     ("0002_active_sessions", ACTIVE_SESSIONS),
@@ -6553,6 +6565,7 @@ MIGRATIONS: tuple[Migration, ...] = (
     ("0115_clue_audience", CLUE_AUDIENCE),  # a clue only some people know (#1649)
     ("0116_web_homebrew_source", HOMEBREW_SOURCE_DOOR),  # the page says where it came from (#1653)
     ("0117_standing", STANDING),  # impressions, attitudes and the party (#1655)
+    ("0118_story_threads", STORY_THREADS),  # a thread's states beside the conditions (#1662)
 )
 
 # Tables that must have row-level security. A test checks every table in the schema
