@@ -938,3 +938,26 @@ export const gettingHelp: { id: string; heading: string; items: { lead: string; 
       ...(SUPPORT_AI_LIVE ? [{ lead: "Who answers?", parts: [helpNote] }] : []),
     ],
   };
+
+// The page's headings, shared so the "On this page" list (#1811) uses exactly the same words.
+export const dmHeading = "For the game master";
+export const playerHeading = "For players";
+export const accountHeading = "Your account";
+export const emailsHeading = "Emails from DMbot";
+export const onThisPageHeading = "On this page";
+export const backToTop = "Back to top";
+
+/** The "On this page" list: each section that is shown, in page order, linking to its heading.
+ * The recaps heading is listed only while recaps are on, as the page itself shows it only then. */
+export function onThisPage(recapsLive: boolean, recapsHeading: string): { id: string; label: string }[] {
+  return [
+    { id: "dm-heading", label: dmHeading },
+    { id: "quick-heading", label: quickAnswersHeading },
+    ...(recapsLive ? [{ id: "recaps-heading", label: recapsHeading }] : []),
+    { id: "player-heading", label: playerHeading },
+    { id: "account-heading", label: accountHeading },
+    { id: "emails-heading", label: emailsHeading },
+    { id: "snags-heading", label: snagsHeading },
+    { id: gettingHelp.id, label: gettingHelp.heading },
+  ];
+}
