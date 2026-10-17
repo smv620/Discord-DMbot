@@ -14,6 +14,7 @@ which field it refused.
 from __future__ import annotations
 
 import re
+import re._parser as _regex_parser  # (private, but the only way to measure a pattern; Python 3.11+)
 from collections.abc import Mapping, Sequence
 from typing import Any
 
@@ -29,6 +30,11 @@ TOTAL_MAX = 4000  # name, description and every option's name, description and c
 # Lowercase letters, digits, "-" and "_" (Discord also allows some other scripts' letters; \w is
 # the closest plain pattern, and a capital is checked apart).
 NAME_PATTERN = re.compile(r"^[-_\w]{1,32}$")
+
+CUSTOM_ID_MAX = 100  # a button's or select's custom_id, in characters
+# A button id that carries a number (a game-clock minute, a round) has no length of its own; a
+# minute count under a billion is 1,900 years of play, so nine digits stand in for "any number".
+DIGITS_MAX = 9
 
 # Option types (the same numbers Discord uses).
 SUB_COMMAND, SUB_COMMAND_GROUP = 1, 2
@@ -136,3 +142,20 @@ def tree_problems(payloads: Sequence[Mapping[str, Any]]) -> list[str]:
     for payload in payloads:
         out.extend(command_problems(payload))
     return out
+
+
+class UnboundedId(ValueError):
+    """A custom_id pattern with a part that has no longest value (like `.+` or `[^:]+`)."""
+
+
+def longest_custom_id(pattern: str) -> int:
+    """How many characters the longest custom_id matching `pattern` can have. A number
+    (`\\d+`, `\\d*`) counts as `DIGITS_MAX` digits; any other unbounded part raises `UnboundedId`,
+    because then no id length can be promised."""
+    bounded = re.sub(
+        r"\\d([+*])", lambda m: f"\\d{{{1 if m[1] == '+' else 0},{DIGITS_MAX}}}", pattern
+    )
+    longest = _regex_parser.parse(bounded).getwidth()[1]
+    if longest >= _regex_parser.MAXREPEAT:
+        raise UnboundedId(pattern)
+    return int(longest)
