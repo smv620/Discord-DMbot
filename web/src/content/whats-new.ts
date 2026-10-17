@@ -288,7 +288,7 @@ export const held: Held[] = [
   {
     date: "2026-10-17",
     title: "Watch the story",
-    what: "With Watch the story on, DMbot tells you privately, once, when your table has gone against something your adventure needs. 👍 I know clears it, and 📋 Book's words shows what the book says. It never says what to do.",
+    what: "With Watch the story on, DMbot tells you privately, once, when your table breaks something your adventure needs, for example a person it needs to be there has died. 👍 I know clears it. 📋 Book's words shows what the book says. It never says what to do.",
     reason:
       "Merged (#1730); held until dev1 deploys 0125 and the owner's live check is recorded (#1729).",
   },

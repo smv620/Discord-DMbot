@@ -227,7 +227,7 @@ export const SHARED_STORY_LIVE = false;
 
 export const sharedStorySteps: Step[] = [
   {
-    text: "To choose how DMbot uses your adventure book, press ⚙️ Settings, then 🧭 Shared story. Off means DMbot remembers your table's story only. Watch the story works: it also tells you when your table and the book no longer fit. Guide me is not working yet: when you ask, it will say what the book has next, with the page.",
+    text: "To choose how DMbot uses your adventure book, press ⚙️ Settings, then 🧭 Shared story. Off means DMbot remembers your table's story only. Watch the story works: it also tells you when your table and the book no longer fit. First give it your adventure and link names (the steps below). Guide me is not working yet: when you ask, it will say what the book has next, with the page.",
     names: [
       { name: "Shared story", file: "dm_screen/story_mode.py" },
       { name: "Watch the story", file: "dm_screen/story_mode.py" },
@@ -251,7 +251,7 @@ export const sharedStorySteps: Step[] = [
     ],
   },
   {
-    text: "To make DMbot read your adventure, press 📖 Read it now on its card, then Yes, read it. DMbot's AI reads one file once and lists its chapters, places and people. It takes a few minutes and you can keep playing. When it's done, DMbot posts a line on the DM screen. 🔄 Refresh shows how far it has got, and 📋 See what was read shows the list. It reads one file at a time, so press Read it now again for the next. Players never see the list. Watch the story uses it; nothing else does yet. If a read stops, the card says why and what to press.",
+    text: "To make DMbot read your adventure, press 📖 Read it now on its card, then Yes, read it. DMbot's AI reads one file once and lists its chapters, places and people. It takes a few minutes and you can keep playing. When it's done, DMbot posts a line on the DM screen. 🔄 Refresh shows how far it has got, and 📋 See what was read shows the list, which players never see. It reads one file at a time, so press Read it now again for the next. If a read stops, the card says why and what to press.",
     names: [
       { name: "Read it now", file: "dm_screen/adventure_card.py" },
       { name: "Yes, read it", file: "dm_screen/adventure_card.py" },
@@ -271,7 +271,7 @@ export const sharedStorySteps: Step[] = [
     ],
   },
   {
-    text: "With Watch the story on, DMbot tells you, privately on the DM screen, when your table no longer fits your adventure. For example, the book needs someone alive who has died at your table. It checks after each session and when you confirm a change to someone's state. It needs the name linked to your adventure first (📖 In my adventure…). Each one is told once: press 👍 I know, or 📋 Book's words to see what the book says. It never tells you what to do; that is your call.",
+    text: "With Watch the story on, DMbot tells you, privately on the DM screen, when your table no longer fits your adventure. For example, the book needs someone alive who has died at your table. It checks after each session and when you confirm a change to someone's state. It needs the name linked to your adventure first (📖 In my adventure…). Each one is told once, five at most in a message. Press 👍 I know to clear it, or 📋 Book's words to see what the book says. It never tells you what to do; that is your call.",
     names: [
       { name: "I know", file: "ui/story_watch.py" },
       { name: "Book's words", file: "ui/story_watch.py" },

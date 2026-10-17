@@ -236,7 +236,7 @@ describe("Help: the website's read-only pages (#1588)", () => {
     // Read it now (#1725) goes live with the same held entry, since that entry already describes the reading.
     expect(words).toContain("press 📖 Read it now on its card, then Yes, read it");
     expect(words).toContain("When it's done, DMbot posts a line on the DM screen.");
-    expect(words).toContain("Players never see the list. Watch the story uses it; nothing else does yet.");
+    expect(words).toContain("which players never see");
     expect(words).toContain("not its text or what DMbot read");
     expect(words).not.toMatch(/\$|token|\d+ (pages|files)/i);
     expect(words).toContain("Off means DMbot remembers your table's story only.");
