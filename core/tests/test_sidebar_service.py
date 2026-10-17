@@ -97,6 +97,8 @@ class FakeHost:
     character_names: dict[int, str] = field(default_factory=dict)
     guide: str | None = None  # Guide me's answer (#1739); None: not on for this campaign
     guide_asked: list[int] = field(default_factory=list)
+    guide_raises: bool = False
+    guide_withdraws: bool = False  # consent goes while the answer is being made
 
     def sidebar_has_consent(self, guild_id: int, user_id: int) -> bool:
         return (guild_id, user_id) in self.agreed
@@ -154,6 +156,10 @@ class FakeHost:
 
     async def sidebar_guide(self, table: Any, user_id: int) -> str | None:
         self.guide_asked.append(user_id)
+        if self.guide_raises:
+            raise RuntimeError("boom")
+        if self.guide_withdraws:
+            self.agreed.discard((table.guild_id, user_id))
         return self.guide
 
 
@@ -1350,6 +1356,45 @@ class GuideMe(unittest.IsolatedAsyncioTestCase):
             self.sidebar.ask_at_table(self.table, DM, said)
             await self.settle()
             self.assertEqual(self.host.guide_asked, [], said)
+
+    async def test_a_failing_guide_falls_back_to_the_usual_answer_once(self) -> None:
+        self.host.guide_raises = True
+        self.sidebar.ask_at_table(self.table, DM, self.SAID)
+        await self.settle()
+        self.assertEqual(len(self.answerer.asked), 1)
+
+    async def test_consent_withdrawn_while_the_guide_is_made_sends_and_saves_nothing(self) -> None:
+        self.host.guide_withdraws = True
+        self.sidebar.ask_at_table(self.table, DM, self.SAID)
+        await self.settle()
+        self.assertEqual((self.host.dms, self.host.saved), ([], []))
+
+    async def test_the_private_path_without_a_table_chat_also_gets_it(self) -> None:
+        self.table.dmbchat_channel_id = None
+        self.sidebar.ask_at_table(self.table, DM, self.SAID)
+        await self.settle()
+        self.assertEqual(self.host.dms, [(DM, self.GUIDE)])
+
+    async def test_typed_in_the_tables_text_chat_goes_the_usual_way(self) -> None:
+        self.sidebar.ask_at_table(self.table, DM, self.SAID, typed=True)
+        await self.settle()
+        self.assertEqual(self.host.guide_asked, [])
+
+    async def test_a_message_that_could_not_be_sent_says_so_without_the_story(self) -> None:
+        self.host.can_dm = False
+        self.host.refusal = "failed"
+        self.sidebar.ask_at_table(self.table, DM, self.SAID)
+        await self.settle()
+        await asyncio.sleep(0)
+        for _, text in self.host.dms:
+            self.assertNotIn("SECRET STORY", text.replace(self.GUIDE, "") + "")
+        self.assertEqual(self.host.saved, [])  # nothing is kept for a reply that never arrived
+
+    async def test_nothing_public_or_in_a_test_session_holds_the_reply(self) -> None:
+        self.sidebar.ask_at_table(self.table, DM, self.SAID)
+        await self.settle()
+        self.assertNotIn("SECRET STORY", " ".join(self.host.chat))
+        self.assertNotIn("SECRET STORY", " ".join(self.host.screen))
 
     async def test_a_dm_who_stops_being_recorded_gets_nothing(self) -> None:
         self.host.agreed.discard((GUILD, DM))

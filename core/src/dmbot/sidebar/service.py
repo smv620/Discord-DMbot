@@ -644,7 +644,9 @@ class SidebarService:
         if campaign is None or not self._still(table, user_id, dm=dm_only):
             return
         if (
-            via in (VIA_VOICE, VIA_TYPED, VIA_TABLE)  # not typed in the table's DMbot chat
+            # Not VIA_CHAT (typed in the DMbot chat) or VIA_TABLE_CHAT (typed in the table's text
+            # chat): those are the table's questions, read by everyone.
+            via in (VIA_VOICE, VIA_TYPED, VIA_TABLE)
             and _is_dm(table, user_id)
             and guide_phrase.is_whats_next(question)
             and await self._guide_answer(table, user_id, heard, question, asked_ms, via)
@@ -753,8 +755,8 @@ class SidebarService:
         does: the question is logged as usual, and the reply as "(answered privately: Guide me)"
         and nothing more."""
         try:
-            text = await self.host.sidebar_guide(table, user_id)
-        except Exception:
+            text = await asyncio.wait_for(self.host.sidebar_guide(table, user_id), ANSWER_TIMEOUT_S)
+        except Exception:  # (a timeout too: the usual answer follows, the campaign is not held up)
             log.exception("The sidebar couldn't give Guide me's answer")
             return False
         if text is None:
@@ -762,12 +764,16 @@ class SidebarService:
         if not self._still(table, user_id, dm=True):
             return True  # (they stopped being recorded meanwhile: nothing is sent or kept)
         for part in _parts(text):
+            if not self._still(table, user_id, dm=True):
+                return True  # (consent can go while parts are sent: nothing more is sent)
             # Always the DM's own chat with DMbot, even when the DM said it at a table that has a
             # DMbot chat: nobody else may read the DM's story.
             status = await self.host.sidebar_send_dm(user_id, part)
             if status != "sent":
                 if status == "forbidden":
                     await self._cant_dm(table, user_id)
+                else:
+                    self._note_later(user_id, "guide", FAILED)  # (never the text)
                 return True
         if self._still(table, user_id, dm=True):
             self._save_lines(
