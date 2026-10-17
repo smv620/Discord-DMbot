@@ -227,7 +227,7 @@ export const SHARED_STORY_LIVE = false;
 
 export const sharedStorySteps: Step[] = [
   {
-    text: "To choose how DMbot uses your adventure book, press ⚙️ Settings, then 🧭 Shared story. Not working yet: for now DMbot can keep your adventure, but nothing reads it, so you get no alerts. Coming next: with Off, DMbot remembers your table's story only. With Watch the story, it will also tell you when your table and the book no longer fit. With Guide me, when you ask, it will say what the book has next, with the page.",
+    text: "To choose how DMbot uses your adventure book, press ⚙️ Settings, then 🧭 Shared story. Not working yet: for now DMbot can keep and read your adventure, but nothing uses what it read, so you get no alerts. Coming next: with Off, DMbot remembers your table's story only. With Watch the story, it will also tell you when your table and the book no longer fit. With Guide me, when you ask, it will say what the book has next, with the page.",
     names: [
       { name: "Shared story", file: "dm_screen/story_mode.py" },
       { name: "Watch the story", file: "dm_screen/story_mode.py" },
@@ -248,6 +248,15 @@ export const sharedStorySteps: Step[] = [
       { name: "Give your adventure", file: "dm_screen/adventure_card.py" },
       { name: "Give a file", file: "dm_screen/adventure_card.py" },
       { name: "Remove", file: "dm_screen/adventure_card.py" },
+    ],
+  },
+  {
+    text: "After you give DMbot your adventure, press 📖 Read it now on its card. DMbot's AI reads each file once and lists its chapters, places and people. Press 📋 See what was read to check the list, and 🔄 Refresh to see how far a read has got. Players never see the list. It doesn't change your alerts yet. If a read stops, the card says why and what to press. DMbot may say it has used up its reading for this month. The list isn't in the campaign's backup: after you restore one, give the files again.",
+    names: [
+      { name: "Read it now", file: "dm_screen/adventure_card.py" },
+      { name: "See what was read", file: "dm_screen/adventure_card.py" },
+      { name: "Refresh", file: "dm_screen/adventure_card.py" },
+      { name: "used up its reading for this month", file: "dm_screen/adventure_card.py" },
     ],
   },
   {
