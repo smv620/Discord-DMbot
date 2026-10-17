@@ -947,8 +947,9 @@ class SeeButton(
         await interaction.edit_original_response(
             content=listing_text(items, self.offset, total),
             view=view,
+            # (no suppress_embeds: an edit after a defer can't carry it. `listing_text` already
+            # breaks every web address, so nothing here can unfurl.)
             allowed_mentions=NO_MENTIONS,
-            suppress_embeds=True,
         )
 
 
