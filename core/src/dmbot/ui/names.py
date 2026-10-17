@@ -525,6 +525,7 @@ class AddNameForm(discord.ui.Modal, title="Add a name"):
         await _failed(interaction, error)
 
     async def on_submit(self, interaction: discord.Interaction) -> None:
+        await _answer_first(interaction)  # (#1803) the campaign and name reads come after
         campaign = await _campaign_for(interaction, self.campaign_id)
         memory = _memory(interaction)
         if campaign is None or memory is None:
@@ -701,6 +702,7 @@ class CharacterForm(discord.ui.Modal, title="Add a player's character"):
         await _failed(interaction, error)
 
     async def on_submit(self, interaction: discord.Interaction) -> None:
+        await _answer_first(interaction)  # (#1803) the save, and reading a sheet, come after
         campaign = await _campaign_for(interaction, self.campaign_id)
         memory = _memory(interaction)
         if campaign is None or memory is None:
@@ -718,7 +720,6 @@ class CharacterForm(discord.ui.Modal, title="Add a player's character"):
         if self.sheet.value.strip():
             from dmbot.ui.sheets import dm_link
 
-            await _answer_first(interaction)  # reading D&D Beyond takes a moment
             sheet_note = "\n" + await dm_link(
                 interaction, campaign.guild_id, campaign.id, entity.id, self.sheet.value
             )
