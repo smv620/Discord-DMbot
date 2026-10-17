@@ -2384,7 +2384,8 @@ Full design and rationale: docs/STORY_MEMORY.md. In short:
 - **Shared story switch** per campaign: **Off** (default; never suggests story),
   **Watch the story** (warns when the table breaks something the adventure still needs: built
   for a person the adventure needs alive or a thing it needs found, #1729; DM screen only, once, no AI),
-  **Guide me** (says what the story has next, with the section). For any written
+  **Guide me** (says what the story has next, with the section; built without AI as a
+  **🧭 What's next?** button, #1731: the chapter the table seems to be in, what is still ahead, the next chapter). For any written
   adventure: published, homebrew or fan fiction. Turning it on warns: "Only give DMbot
   material you have the right to use. DMbot doesn't check this." The story plan comes
   from the DM, chapter by chapter; only after the DM confirms the right to use it may
