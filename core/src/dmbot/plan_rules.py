@@ -66,7 +66,9 @@ def allowed(rule: Rule, access: Access | None) -> bool:
     return rules[rule](access)
 
 
-Action = Literal["ai", "copy", "transcript", "restore", "share", "story", "recap", "recap_audio"]
+Action = Literal[
+    "ai", "copy", "transcript", "restore", "share", "story", "adventure", "recap", "recap_audio"
+]
 # Each thing a person can press belongs to exactly one rule, so the pair can't drift apart.
 RULE_OF: dict[Action, Rule] = {
     "ai": "ai",
@@ -75,6 +77,7 @@ RULE_OF: dict[Action, Rule] = {
     "restore": "backup",
     "share": "backup",  # sharing house rules needs a paid plan (#1190)
     "story": "memory",  # the story extractor after a session (#1367)
+    "adventure": "memory",  # reading the DM's adventure into the story plan (#1714)
     "recap": "recap",  # the cinematic recap after a session (#1382)
     "recap_audio": "recap_audio",
 }
@@ -89,6 +92,7 @@ _UNAVAILABLE: dict[Action, str] = {
     "restore": "Loading a copy isn't available",
     "share": "Sharing house rules isn't available for this campaign",
     "story": "Remembering the story from a session isn't available for this campaign",
+    "adventure": "Reading your adventure isn't available for this campaign",
     "recap": "Recaps aren't available for this campaign",
     "recap_audio": "Narration and music aren't available for this campaign",
 }
@@ -99,6 +103,7 @@ _CANT: dict[Action, str] = {
     "restore": "load copies",
     "share": "share house rules",
     "story": "remember the story",
+    "adventure": "read your adventure",
     "recap": "write recaps",
     "recap_audio": "make narration and music",
 }

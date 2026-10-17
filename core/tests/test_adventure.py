@@ -507,7 +507,7 @@ class Card(Setup):
         text = it.sent["content"]
         self.assertIn("The Sunken Keep.pdf", text)
         self.assertIn(f"<@{DM}>", text)
-        self.assertIn("Nothing reads this yet", text)
+        self.assertIn("Nothing uses that list yet", text)
         self.assertEqual(self.labels(it), ["Remove 1", "Give a file"])
         ask = self.pressing(DM)
         await ui.RemoveButton(self.a.id, doc.id).callback(ask)

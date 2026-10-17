@@ -158,6 +158,28 @@ Written by dev1 from the numbers above; Supervisor decides and records it in PLA
 - **Cost:** even STRONG is under $3 a 4-hour session. Caching the repeated instructions (the earlier estimate: most of each call's input) is worth looking at before the tier is.
 - **Limits:** one run, 60 invented scenes, wide intervals; the "appears abandoned" wording is not scored yet (see above).
 
+## Story-plan reader (#1714)
+
+The first AI step of Shared story (docs/STORY_MEMORY.md, section 6, "5d slice 3"): the AI reads a DM's adventure **once per file, only when a DM presses Read it now and says yes**, never by itself, and keeps its chapters, places and people and the "depends on" links between them as the story plan.
+
+**Decision (Supervisor, 2026-10-17):**
+
+- **Tier:** CAREFUL (`dmbot.ai`; today Sonnet 5.5, $2 in and $10 out per million tokens, read 2026-10-15 from https://platform.claude.com/docs/en/about-claude/pricing). It goes through the same client, spend watch and key rules as every other AI job.
+- **Expected cost:** a 300-page adventure is about 170k tokens in. A structured answer is about a fifth of that (34k out). That is **$0.34 + $0.34, about $0.70 per 300 pages, paid once**.
+- **Hard caps:** **$3 per file** and **$10 per campaign per calendar month (UTC)**. Before every call the reader works out the most the call could cost (its text at 3 characters a token, and an answer as long as the 4,000-token limit) and stops if that would cross a cap. It then says why on the card, and a later press carries on from the first part not stored. What each call really cost is written to a ledger (`plan_spend`) the moment it returns, and the ledger is kept when the file is removed, so removing a file and giving it again cannot get round the caps. It goes with the campaign.
+- **The same key as the extractor:** whose key pays follows docs/PLAN.md, as for the extractor: until bring-your-own keys (#50) it is the owner's bill.
+
+**Estimate, free (2026-10-17, `python -m dmbot.devtools.plan_measure PATH`):** an invented 300-page text of 680,000 characters (so no real text is in this repository) cuts into 20 calls of about 36,000 characters. At the cautious 3 characters a token and answers at a fifth of the input, it estimates 250,000 tokens in and 47,000 out, **$0.97**, and **$1.30 at most** if every answer ran to its limit: under the $3 cap with room. Real text runs nearer 4 characters a token, which is where the $0.70 comes from. The estimate is not a measurement.
+
+**Measure it (paid, needs the key; run by dev1 or the owner on the server):**
+
+```
+cd core
+python -m dmbot.devtools.plan_measure PATH_TO_AN_OPEN_LICENCE_TEXT --reader anthropic --max-usd 3
+```
+
+Use an **open-licence** text only (SRD 5.2, CC-BY-4.0, and the like), never a sourcebook or adventure, and never put one in the repository. It uses the bot's own prompt and checks, in memory (no database), prints counts and dollars only, and stops before `--max-usd`. The numbers of that run go in this section when someone has made it.
+
 ## Speech-to-text: Deepgram (actual) against Speechmatics (estimated)
 
 Added 2026-10-15 (Supervisor, at the owner's request). **Deepgram is what DMbot uses today**, so its column is the actual list price applied to the measured speech. **Speechmatics is an estimate**: the same measured speech priced at Speechmatics' list prices. Nothing below has been billed by Speechmatics; its only real use was the 2026-10-05 quick comparison in `docs/testing-history.log` (two recordings, under 2 minutes).
