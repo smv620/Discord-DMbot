@@ -202,6 +202,8 @@ def decode(saved: str | None) -> tuple[Order, Declare]:
 
 
 def encode(order: str, declarations: str) -> str | None:
+    """The kept form. "No declarations" is not kept (it is only ever FightBot's own inference),
+    so an order of unknown with declarations of "no" keeps nothing."""
     parts = ([order] if order in _ORDER_WORDS else []) + (
         ["declare"] if declarations == "yes" else []
     )
@@ -235,8 +237,8 @@ class StyleState:
         if from_dm:
             self.votes.pop((dimension, value), None)
             if guessed:
-                if self.set_by.get(dimension) == "dm":
-                    return False  # the DM stated a style: a guess never overrules it
+                if self.set_by.get(dimension) in ("dm", "saved"):
+                    return False  # a stated or kept style: a guess never overrules it
                 return self._set(dimension, value, "dm_guess")
             return self._set(dimension, value, "dm")
         if self.set_by.get(dimension, "").startswith("dm"):
@@ -262,9 +264,10 @@ class StyleState:
         return state
 
     def to_keep(self, kept: str | None) -> str | None:
-        """What the campaign should keep: a dimension a DM's words set this session is kept as
-        it now is; every other stays as it was kept (a players' vote, a guess from the table's
-        talk about nothing or an inference never changes what is kept). Only a DM's words."""
+        """What the campaign should keep: a dimension a DM's words set this session (stated, or
+        suggested by the DM calling turns, since a table that runs "one at a time" is otherwise
+        never heard to say so) is kept as it now is; every other stays as it was kept. A players'
+        vote and the "no declarations" FightBot works out for itself are never kept."""
         order, declarations = decode(kept)
         if self.set_by.get("order", "").startswith("dm"):
             order = self.order

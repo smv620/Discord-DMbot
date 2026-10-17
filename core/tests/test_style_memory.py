@@ -102,6 +102,19 @@ class Remembering(Ground):
         keeper._saved_calls.assert_awaited_once_with(table.guild_id, table.campaign_id, "side")
         self.assertEqual(table.fight.saved, "side")
 
+    async def test_a_guess_never_overrules_a_kept_style_but_a_stated_one_does(self) -> None:
+        table = self.table()
+        table.fight = fightbot.FightState.starting_from("side")
+        table.dm_user_ids = {DM}
+        table.fight.secrets, table.fight.round = [], 1
+        table.fight.present, table.fight.names = {11, DM}, {"hero11": 11}
+        self.dm_says(table, "Hero11, you're up")
+        self.assertEqual(table.fight.style.order, "side")
+        self.assertTrue(self.dm_says(table, "players go first"))  # restating it refreshes the line
+        self.assertEqual(table.fight.style.dm_phrase(), "Initiative, as heard: by side")
+        self.dm_says(table, "side initiative")
+        self.assertEqual(table.fight.style.set_by["order"], "dm")
+
     async def test_it_is_written_only_when_it_changes(self) -> None:
         table, _bot = self.primed([11])
         keeper = self.keeper(table)
@@ -137,11 +150,11 @@ class Remembering(Ground):
         table.fight.names = {"hero11": 11}
         self.assertTrue(table.fight.style.known)
         self.assertEqual(table.fight.style.order, "side")
-        self.dm_says(table, "Hero11, you're up")  # a guess from a turn call: the DM's own style
-        self.assertEqual(table.fight.style.order, "each")
+        self.dm_says(table, "we roll initiative every round")  # the DM states another style
+        self.assertEqual(table.fight.style.order, "reroll")
         keeper = self.keeper(table)
         await self.remember(keeper, table)
-        self.assertEqual(keeper._saved_calls.await_args.args[2], "each")
+        self.assertEqual(keeper._saved_calls.await_args.args[2], "reroll")
 
 
 class Stored(DatabaseTest):
@@ -191,9 +204,10 @@ class Stored(DatabaseTest):
 
     async def test_a_damaged_style_in_a_backup_is_refused(self) -> None:
         data = await self.campaigns.export(GUILD_A, self.a.id)
-        data["campaign"]["initiative_style"] = "sideways"
-        with self.assertRaises(CampaignError):
-            await self.campaigns.import_backup(GUILD_B, data, 7)
+        for damaged in ("sideways", 5, ["each"], {}, True):
+            data["campaign"]["initiative_style"] = damaged
+            with self.assertRaises(CampaignError, msg=repr(damaged)):
+                await self.campaigns.import_backup(GUILD_B, data, 7)
 
 
 if __name__ == "__main__":

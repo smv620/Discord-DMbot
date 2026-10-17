@@ -4164,12 +4164,13 @@ class DMBot(commands.AutoShardedBot):
         kept = fight.style.to_keep(fight.saved)
         if kept == fight.saved:
             return
+        before = fight.saved
+        fight.saved = kept  # (before the await, so two quick lines don't both write it)
         try:
             await self.campaigns.set_initiative_style(table.guild_id, table.campaign_id, kept)
         except Exception:
             log.warning("Couldn't keep the initiative style", exc_info=True)
-            return
-        fight.saved = kept
+            fight.saved = before  # tried again with the next DM line
 
     async def fight_style_changed(self, table: Table) -> None:
         """The initiative style FightBot heard changed (#1771): the DM's combat line shows it.

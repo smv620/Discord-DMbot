@@ -1503,7 +1503,7 @@ class CampaignStore:
                             " WHERE guild_id = %s AND id = %s",
                             (guild_id, campaign_id),
                         )
-                    if info["initiative_style"] is not None:
+                    if info["initiative_style"] is not None:  # a new campaign keeps none
                         await conn.execute(
                             "UPDATE campaigns SET initiative_style = %s"
                             " WHERE guild_id = %s AND id = %s",
@@ -1928,7 +1928,9 @@ def _validate_backup(
 
     # Backups made before the initiative style was kept have none remembered (#1784).
     initiative_style = campaign.get("initiative_style")
-    if initiative_style is not None and initiative_style not in fight_style.SAVED_STYLES:
+    if initiative_style is not None and (
+        not isinstance(initiative_style, str) or initiative_style not in fight_style.SAVED_STYLES
+    ):
         raise CampaignError(DAMAGED)
 
     # Backups made before the Shared story switch existed have it off. (Whether a mode other
