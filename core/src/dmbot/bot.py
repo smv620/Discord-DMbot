@@ -100,6 +100,7 @@ from dmbot.dm_screen import effects as timer_screen
 from dmbot.dm_screen import house_voice as house_voice_screen
 from dmbot.dm_screen import levels as screen_levels
 from dmbot.dm_screen import messages as screen_messages
+from dmbot.dm_screen import time_suggest as time_suggest_screen
 from dmbot.dm_screen.adventure_card import AddButton as AdventureAddButton
 from dmbot.dm_screen.adventure_card import (
     AdventureButton,
@@ -265,8 +266,10 @@ from dmbot.test_recording import files as test_files
 from dmbot.test_recording import library as test_library
 from dmbot.test_recording.session import TestSession
 from dmbot.test_recording.store import TestVoiceStore
+from dmbot.timebot import clock as clock_game
 from dmbot.timebot import combat_phrases, durations, where_are_we
 from dmbot.timebot import phrases as clock_phrases
+from dmbot.timebot import suggest as time_suggest
 from dmbot.timebot.effects import EffectsSection, EffectStore
 from dmbot.timebot.store import ClockSection, ClockStore
 from dmbot.transcript import fix_notes, left_out, lookback, refix, speaker_ai
@@ -674,6 +677,8 @@ class Table:
     topic_timers: set[asyncio.Task[None]] = field(default_factory=set)  # cancelled then
     topic_failures: int = 0  # in a row: after a few, the filter rests a while
     topic_paused_until: float = 0.0  # monotonic seconds
+    # A time jump suggested from vague narration (#1758): what this session remembers about it.
+    time_suggest: time_suggest.State = field(default_factory=time_suggest.State)
     hidden: set[tuple[int, int]] = field(default_factory=set)  # lines shown as a marker
     # Who the DM was speaking as (#53): the DM's lines waiting for the AI, a window at a
     # time, and the same bookkeeping as the off-topic filter.
@@ -1043,6 +1048,11 @@ class DMBot(commands.AutoShardedBot):
             if self.ai_client
             else None
         )
+        self.time_ai = (  # a time jump suggested from vague narration (#1758)
+            self.ai_client.tier(FEATURE_TIERS[Feature.TIME_SUGGEST], Feature.TIME_SUGGEST)
+            if self.ai_client
+            else None
+        )
         self.audio_ai = (
             self.ai_client.tier(FEATURE_TIERS[Feature.AUDIO_CHECK], Feature.AUDIO_CHECK)
             if self.ai_client
@@ -1196,6 +1206,7 @@ class DMBot(commands.AutoShardedBot):
             clock_screen.ClockButton, clock_screen.ClockUndoButton, clock_screen.SuggestionButton
         )
         self.add_dynamic_items(clock_screen.CombatUndoButton)  # #1127
+        self.add_dynamic_items(time_suggest_screen.TimeJumpButton)  # #1758
         self.add_dynamic_items(clock_screen.ClockPicker, clock_screen.SplitUndoButton)  # #1607
         self.add_dynamic_items(delete_campaign.DeleteButton)  # #1608
         self.add_dynamic_items(fightbot.FightButton)  # #1129
@@ -1229,14 +1240,7 @@ class DMBot(commands.AutoShardedBot):
         self.add_dynamic_items(house_voice_screen.HouseVoiceButton)  # house rules said aloud (#953)
         # A player's 📜 My character sheet, in their private messages (#723).
         self.add_dynamic_items(MySheetButton, OpenCardButton)  # #723, #1119
-        if self.settings.dev_guild_id:
-            guild = discord.Object(id=self.settings.dev_guild_id)
-            self.tree.copy_global_to(guild=guild)
-            await self.tree.sync(guild=guild)
-        elif 0 in self.settings.shards.ids:
-            # Commands are registered once for the whole bot, not per shard: only the
-            # pod serving shard 0 does it, so many pods don't all sync at startup.
-            await self.tree.sync()
+        await self._sync_commands()
         await self.ears.start()
         self._background = [
             self._watched(self.pipeline.run(), "transcribe"),
@@ -2320,6 +2324,13 @@ class DMBot(commands.AutoShardedBot):
                         table.speaker_calls,
                         *table.speaker_tokens,
                     )
+                if table.time_suggest.calls:  # counts only, never words (#1758)
+                    log.info(
+                        "Time suggestions: %d calls, %d tokens in, %d out",
+                        table.time_suggest.calls,
+                        table.time_suggest.tokens_in,
+                        table.time_suggest.tokens_out,
+                    )
                 if table.topic_calls:  # for cost per session hour (#52)
                     log.info(
                         "Off-topic filter: %d calls, %d tokens in, %d out",
@@ -3337,6 +3348,36 @@ class DMBot(commands.AutoShardedBot):
             log.info("Resumed %d session(s)", resumed)
         return failed
 
+    async def _sync_commands(self) -> None:
+        """Register the slash commands (#1767). Always globally, so every server that adds DMbot
+        has `/dmbot`: a customer's server is never the dev server. When `DISCORD_DEV_GUILD_ID` is
+        set the commands are also copied to that server, because a guild's commands update at
+        once while global ones can take a while to show up, which is what a developer wants."""
+        if 0 in self.settings.shards.ids:
+            # Registered once for the whole bot, not per shard: only the pod serving shard 0
+            # does it, so many pods don't all sync at startup.
+            try:
+                await self.tree.sync()
+            except discord.HTTPException:
+                # (a rate limit must not stop the bot starting, or the dev server's copy)
+                log.warning("Couldn't register the global slash commands", exc_info=True)
+        if self.settings.dev_guild_id and 0 in self.settings.shards.ids:
+            guild = discord.Object(id=self.settings.dev_guild_id)
+            self.tree.copy_global_to(guild=guild)
+            await self.tree.sync(guild=guild)
+        # One-time cleanup (DISCORD_CLEAR_GUILD_COMMANDS): servers that still show the old
+        # per-server copy next to the global commands. Never the dev server, which keeps its copy.
+        if 0 in self.settings.shards.ids:
+            for guild_id in self.settings.clear_guild_commands:
+                if guild_id == self.settings.dev_guild_id:
+                    continue
+                old = discord.Object(id=guild_id)
+                try:
+                    self.tree.clear_commands(guild=old)
+                    await self.tree.sync(guild=old)
+                except discord.HTTPException:
+                    log.warning("Couldn't clear the old commands in %s", guild_id, exc_info=True)
+
     async def on_guild_join(self, guild: discord.Guild) -> None:
         """DMbot was just added to a server: say hello, or say what it still needs."""
         with log_context(guild_id=guild.id):
@@ -3984,7 +4025,15 @@ class DMBot(commands.AutoShardedBot):
             # (`_label_topics`, `put_back`): talk not about the game never feeds them (#1748).
             table.vocabulary.note(utterance.user_id, text)
         if text:
-            self._act_on_line(table, utterance.user_id, str(cleaned or text))
+            # A line the off-topic filter holds for a label is not offered a time suggestion now:
+            # it is, if it turns out to be game talk (`_label_topics`). The same rule that holds
+            # it for the names scan (`_topic_holds`) decides (#1758).
+            self._act_on_line(
+                table,
+                utterance.user_id,
+                str(cleaned or text),
+                held=self._topic_holds(table, cleaned or text, names_said),
+            )
         labelling = False  # is this line waiting for its speaker label? (#1624)
         if text and self.transcripts is not None:
             duration_ms = int(utterance.duration_s * 1000)
@@ -4051,7 +4100,9 @@ class DMBot(commands.AutoShardedBot):
                 utterance.start_ms,
             )
 
-    def _act_on_line(self, table: Table, user_id: int, line: str, *, typed: bool = False) -> None:
+    def _act_on_line(
+        self, table: Table, user_id: int, line: str, *, typed: bool = False, held: bool = False
+    ) -> None:
         """What a line of table talk can set off, said or typed (#1118): a rules card, a house
         rule, the game clock. The one place both ways in share, so a typed "we take a long
         rest" does what the spoken one does. Consent was checked by the caller."""
@@ -4073,7 +4124,7 @@ class DMBot(commands.AutoShardedBot):
                 return  # typed flood: skip this clock phrase, never speech (#1154)
             table.clock_waiting += 1
             task = self._track(  # a DM's words move the clock; a player's only ask the DM
-                self._note_clock_phrase(table, user_id, line), "clock-phrase"
+                self._note_clock_phrase(table, user_id, line, held=held), "clock-phrase"
             )
             if task is None:
                 table.clock_waiting -= 1
@@ -4261,7 +4312,9 @@ class DMBot(commands.AutoShardedBot):
         card_id = table.rules.remember(mention, time.monotonic())
         self._track(self._post_rules_card(table, user_id, mention, card_id, before), "rules-card")
 
-    async def _note_clock_phrase(self, table: Table, user_id: int, line: str) -> None:
+    async def _note_clock_phrase(
+        self, table: Table, user_id: int, line: str, *, held: bool = False
+    ) -> None:
         """What is said at the table that bears on the game clock (#965, #1117): no AI, and
         only people who agreed to be recorded. A campaign's DM clearly saying a rest starts or
         finishes, that the next morning has come, or how much time has passed ("an hour
@@ -4283,6 +4336,8 @@ class DMBot(commands.AutoShardedBot):
             return
         said = clock_phrases.find_clock(line)
         if said is None:
+            if not held:  # (a held line waits for its label, then `_suggest_after_label`)
+                await self._maybe_suggest_time(table, user_id, line)  # (#1758) a suggestion at most
             return
         now = time.monotonic()
         last = table.clock_said.get(said.key)
@@ -4299,6 +4354,88 @@ class DMBot(commands.AutoShardedBot):
             if not moved:
                 for key in marked:
                     table.clock_said.pop(key, None)
+
+    async def _maybe_suggest_time(self, table: Table, user_id: int, line: str) -> None:
+        """Vague narration that probably passes game time ("you walk for a while"), which the
+        strict phrases don't move the clock for (#1758): at most a suggestion on the DM screen
+        with one button, never a change of the clock. Only a DM's line, only while the switch is
+        on, the clock is set and not in a fight, the party is not split, and the owner's plan
+        allows the AI (closed when it can't be checked). One AI call for the one line and the
+        game time, nothing else. Consent and the session are checked again after every wait."""
+        if (
+            not self.settings.time_suggestions
+            or self.time_ai is None
+            or self.clocks is None
+            or table.campaign_id is None
+        ):
+            return
+        cue = time_suggest.cue_of(line)
+        state = table.time_suggest
+        now = time.monotonic()
+        # (the in-memory DM set first: a player's line costs no database read at all)
+        if cue is None or user_id not in table.dm_user_ids or not state.allows(cue, now):
+            return
+        gid, cid = table.guild_id, table.campaign_id
+        campaign = await self.campaigns.get(gid, cid)
+        if campaign is None or user_id not in campaign.dm_user_ids:
+            return
+        stored = await self.clocks.get(gid, cid)
+        if stored is None or stored.split or clock_game.in_combat(stored.clock):
+            return
+        if not await self.plan_allows("ai", gid, campaign, fail_open=False):
+            return
+        if not self._still_recorded(table, user_id) or not state.allows(cue, now):
+            return
+        state.asked(cue, now)  # counted before the wait: a slow answer can't be asked twice
+        try:
+            reply = await asyncio.wait_for(
+                self.time_ai.complete(
+                    time_suggest.SYSTEM,
+                    time_suggest.prompt(line, clock_game.label(stored.clock.minute)),
+                    max_tokens=time_suggest.ANSWER_TOKENS,
+                ),
+                time_suggest.TIMEOUT_S,
+            )
+        except Exception as exc:
+            state.failed(now)
+            log.info("Time suggestion: couldn't ask (%s)", type(exc).__name__)
+            return
+        state.answered(reply.input_tokens, reply.output_tokens)
+        suggestion = time_suggest.read_answer(reply.text)
+        if suggestion is None or campaign.dm_screen_channel_id is None:
+            return
+        # Again after the wait: the clock as it is now, then (last, right before posting) the
+        # person, who must still be one of the DMs, and the session.
+        again = await self.clocks.get(gid, cid)
+        if again is None or again.split or clock_game.in_combat(again.clock):
+            return
+        if not self._still_recorded(table, user_id) or user_id not in table.dm_user_ids:
+            return
+        try:
+            await self.post_message(
+                campaign.dm_screen_channel_id,
+                time_suggest_screen.suggestion_text(line, suggestion.minutes),
+                time_suggest_screen.suggestion_view(cid, suggestion.minutes),
+            )
+        except Exception:
+            log.warning("Time suggestion: couldn't post it", exc_info=True)  # (never the line)
+
+    async def _suggest_after_label(self, table: Table, user_id: int, line: str) -> None:
+        """A DM's held line was labelled game talk: the same checks `_note_clock_phrase` makes
+        for a line that was not held, then the suggestion (#1758). A line the strict phrases or
+        the combat phrases match is not a vague one: the clock phrase path has it already."""
+        if not self._still_recorded(table, user_id):
+            return
+        if clock_phrases.find_clock(line) is not None or combat_phrases.find_combat(line):
+            return
+        await self._maybe_suggest_time(table, user_id, line)
+
+    def _still_recorded(self, table: Table, user_id: int) -> bool:
+        return (
+            self.tables.get(table.guild_id) is table
+            and table.listening
+            and self.consent.has_consent(table.guild_id, user_id)
+        )
 
     async def _clock_phrase_moves(
         self,
@@ -4917,6 +5054,10 @@ class DMBot(commands.AutoShardedBot):
                 continue  # stopped meanwhile: nothing about their words
             if topic != OFF_TOPIC and said is not None and len(table.heard) < HEARD_MAX:
                 table.heard.append((waiting.speaker, said))
+            if topic != OFF_TOPIC and said is not None and waiting.speaker in table.dm_user_ids:
+                self._track(  # game talk by a DM: now it may be offered a time suggestion (#1758)
+                    self._suggest_after_label(table, waiting.speaker, said), "time-suggest"
+                )
             if topic != OFF_TOPIC and said is not None:
                 # Game talk: its words count now. A window the filter couldn't judge (a slow
                 # or failed call, a resting filter) arrives here as game talk, as everywhere.

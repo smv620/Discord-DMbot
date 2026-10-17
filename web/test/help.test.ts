@@ -10,7 +10,7 @@ import { beforeAll, describe, expect, it } from "vitest";
 import { parsePage } from "./dom";
 
 import { entries, held } from "../src/content/whats-new";
-import { STANDING_LIVE, standingSteps, HOMEBREW_KINDS_LIVE, homebrewKindSteps, STORY_THREADS_LIVE, storyThreadSteps, DM_BOT_CHANNEL_LIVE, dmBotChannelSteps, settingsOnDmScreenSteps, HOMEBREW_LINKS_LIVE, SECRET_CLUES_LIVE, accountSteps, dmSteps, homebrewLinkSteps, secretClueSteps, emailSteps, recapSteps, quickAnswers, quickAnswersHeading, gettingHelp, playerSteps } from "../src/content/help";
+import { RULES_CHANNEL_LIVE, rulesChannelSteps, DEEDS_LIVE, deedSteps, WHERE_ARE_WE_LIVE, whereAreWeSteps, SHARED_STORY_LIVE, sharedStorySteps, STANDING_LIVE, standingSteps, HOMEBREW_KINDS_LIVE, homebrewKindSteps, STORY_THREADS_LIVE, storyThreadSteps, DM_BOT_CHANNEL_LIVE, dmBotChannelSteps, settingsOnDmScreenSteps, HOMEBREW_LINKS_LIVE, SECRET_CLUES_LIVE, accountSteps, dmSteps, homebrewLinkSteps, secretClueSteps, emailSteps, recapSteps, quickAnswers, quickAnswersHeading, gettingHelp, playerSteps } from "../src/content/help";
 import Help from "../src/pages/help.astro";
 
 const botDir = fileURLToPath(new URL("../../core/src/dmbot/", import.meta.url));
@@ -55,7 +55,7 @@ describe("Help", () => {
   });
 
   it("names only buttons and commands that are in the bot's code", () => {
-    for (const step of [...dmSteps, ...dmBotChannelSteps, ...settingsOnDmScreenSteps, ...storyThreadSteps, ...standingSteps, ...homebrewKindSteps, ...homebrewLinkSteps, ...secretClueSteps, ...recapSteps, ...quickAnswers, ...playerSteps, ...accountSteps, ...emailSteps]) {
+    for (const step of [...dmSteps, ...dmBotChannelSteps, ...settingsOnDmScreenSteps, ...storyThreadSteps, ...sharedStorySteps, ...standingSteps, ...homebrewKindSteps, ...homebrewLinkSteps, ...secretClueSteps, ...recapSteps, ...quickAnswers, ...playerSteps, ...accountSteps, ...emailSteps]) {
       for (const { name, file } of step.names ?? []) {
         expect(step.text, `${name} is in its step`).toContain(name);
         const source = readFileSync(join(botDir, file), "utf8");
@@ -225,6 +225,77 @@ describe("Help: the website's read-only pages (#1588)", () => {
     expect(standingSteps.map((x) => x.text).join(" ")).toContain("Players never see it.");
     expect(homebrewKindSteps.map((x) => x.text).join(" ")).toContain("Spells 10/12, which means 10 of 12 spells are on.");
     expect(secretClueSteps.map((x) => x.text).join(" ")).toContain("If a player asks DMbot about it, DMbot won't show a clue that only some people know.");
+  });
+
+  it("holds the Shared story steps with the held What's new entry, and flips them together (#1720)", () => {
+    expect(held.map((h) => h.title).includes("A Shared story switch")).toBe(!SHARED_STORY_LIVE);
+    const shown = dmSteps.map((x) => x.text).join(" ");
+    expect(shown.includes("🧭 Shared story")).toBe(SHARED_STORY_LIVE);
+    const words = sharedStorySteps.map((x) => x.text).join(" ");
+    expect(words).toContain("Guide me adds a button that says what the book has next.");
+    // Read it now (#1725) goes live with the same held entry, since that entry already describes the reading.
+    expect(words).toContain("press 📖 Read it now on its card, then Yes, read it");
+    expect(words).toContain("When it's done, DMbot posts a line on the DM screen.");
+    expect(words).toContain("which players never see");
+    expect(words).toContain("not its text or what DMbot read");
+    expect(words).not.toMatch(/\$|token|\d+ (pages|files)/i);
+    expect(words).toContain("Off means DMbot remembers your table's story only.");
+    expect(words).toContain("Watch the story also tells you when your table and the book no longer fit.");
+    
+    expect(words).toContain("Only give DMbot material you have the right to use. DMbot doesn't check this.");
+    expect(words).toContain("DMbot keeps the text, not the file, for this campaign only. Players can't open it.");
+    expect(words).toContain('"Not now" to leave it off');
+    expect(words).toContain("keeps only your adventure's name, not its text");
+    // In my adventure… (#1726) is held with its own What's new line and goes live with the same switch.
+    expect(held.map((h) => h.title).includes("Link names to your adventure")).toBe(!SHARED_STORY_LIVE);
+    expect(words).toContain("press 📖 In my adventure…, then pick them from the list");
+    expect(words).toContain("DMbot never links names by itself");
+    // Watch the story (#1735) works in the code and is held with its own What's new line.
+    expect(held.map((h) => h.title).includes("Watch the story")).toBe(!SHARED_STORY_LIVE);
+    expect(words).toContain("With Watch the story on, DMbot tells you, privately on the DM screen");
+    expect(words).toContain("It never tells you what to do; that is your call.");
+    // Guide me (#1736) works in the code and is held with its own What's new line.
+    expect(held.map((h) => h.title).includes("Guide me: what's next in your adventure")).toBe(!SHARED_STORY_LIVE);
+    expect(words).toContain("With Guide me on, press 🧭 What's next?");
+    expect(words).toContain("It never decides what happens.");
+    expect(words).toContain("then Take off. Made a mistake? Press Undo that.");
+  });
+
+  it("says a backup keeps how often names were said, only for people still recorded (#1754)", () => {
+    const step = dmSteps.map((x) => x.text).find((t) => t.includes("/dmbot backup (paid campaigns only)")) ?? "";
+    expect(step).toContain("how often names were said and by whom");
+    expect(step).toContain("only for people who are still recorded");
+  });
+
+  it("holds the rules channel steps with their held What's new entry (#1759)", () => {
+    expect(held.map((h) => h.title).includes("A channel for your house rules")).toBe(!RULES_CHANNEL_LIVE);
+    const shown = dmSteps.map((x) => x.text).join(" ");
+    expect(shown.includes("a channel called dmb-rules")).toBe(RULES_CHANNEL_LIVE);
+    const words = rulesChannelSteps.map((x) => x.text).join(" ");
+    expect(words).toContain("Only DMbot posts in dmb-rules. Players can't, and neither can you.");
+    expect(words).toContain("Hiding the DM screen again closes both.");
+    expect(words).toContain("Each rule is shown in your own words.");
+  });
+
+  it("holds the deeds and where-are-we steps with their held What's new entries (#1754)", () => {
+    const heldTitles = held.map((h) => h.title);
+    expect(heldTitles.includes("Record what your players did")).toBe(!DEEDS_LIVE);
+    expect(heldTitles.includes("A quiet reminder of the game time")).toBe(!WHERE_ARE_WE_LIVE);
+    const shown = dmSteps.map((x) => x.text).join(" ");
+    expect(shown.includes("⚔️ Record a deed")).toBe(DEEDS_LIVE);
+    expect(shown.includes("nobody has shown or moved it for half an hour")).toBe(WHERE_ARE_WE_LIVE);
+    const deeds = deedSteps.map((x) => x.text).join(" ");
+    expect(deeds).toContain("Players never see deeds, and they are never in a transcript.");
+    expect(deeds).toContain("counts for less after ten sessions");
+    expect(deeds).toContain("It never listens for deeds.");
+    const clock = whereAreWeSteps.map((x) => x.text).join(" ");
+    expect(clock).toContain("Players never see it.");
+    expect(clock).toContain("Quiet ones never");
+    // The note's exact line is not quoted: its wording is still being settled (#1745).
+    expect(clock).not.toContain("Where we are");
+    const guide = sharedStorySteps.map((x) => x.text).join(" ");
+    expect(guide).toContain("Hey DMbot, what's next?");
+    expect(guide).toContain("the transcript only notes that DMbot answered privately");
   });
 
   it("finds Settings, splits the party and deletes a campaign in plain words (#1659)", () => {

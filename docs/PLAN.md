@@ -2496,7 +2496,7 @@ index). Concentration shows as 🧠. The clock message lists the soonest five, o
 button or rest passes an effect's end, the DM screen says once "⏳ Bless on Mira has likely
 ended (1 minute)" with **Ended** and **Still going +10 min** (ten more game minutes from where the
 clock is, then said again); nothing ends silently or by itself. Only the campaign's DMs, checked in
-the transaction. Effects live on the game clock, so a restart keeps them. **Still going** is shown in the next "has likely ended" line as the total with "extended by the DM" (`game_effects.extended`, migration 0049, in backups; #1112), and the press says so on the DM screen only. Not built: reading time from narration, AI.
+the transaction. Effects live on the game clock, so a restart keeps them. **Still going** is shown in the next "has likely ended" line as the total with "extended by the DM" (`game_effects.extended`, migration 0049, in backups; #1112), and the press says so on the DM screen only. Reading time from narration: only as a suggestion (#1758, below); the clock never moves from vague words by itself.
 *Split-party clocks (Supervisor, 2026-10-16, #1607; migration 0109):* when the party splits, one clock
 is wrong for half the table, so the DM can split it.
 - **Split:** **Rests & time…** holds **✂️ Split the party** (DMs only, checked on every press). The DM
@@ -2564,7 +2564,23 @@ is wrong for half the table, so the DM can split it.
   - When **a player** suggests one ("let's take a short rest"), the DM screen asks the DM with one
     button. The DM decides.
   - Vague narration ("you walk for a while") is never guessed. At most it is a suggestion on the
-    DM screen.
+    DM screen. **Built (#1758), off by default (`DMBOT_TIME_SUGGESTIONS=1`) until dev1 has run a live
+    check:** a DM's line (said or typed) that the strict phrases don't match but that holds a time
+    cue ("a while", "hours", "some time", "all day", "all night", "the afternoon", "evening falls",
+    "by nightfall", "travel", "journey", "march", "rest", "camp") is sent to the smallest AI model
+    alone with the game's time, asked for `{"minutes": N or null, "why": "..."}`. An answer of 10 to
+    1,440 minutes (anything else is dropped, and the line is quoted data, never instructions) is
+    rounded to a tidy step (10 or 30 minutes, then whole hours) and the DM screen offers
+    `⏳ "you walk for a while": about 2 hours? [+2 hours] [Not now]`. Only a DM of the campaign can
+    press it; it goes through the clock's own path (the note, the players' clock, an Undo). Ignored
+    or "Not now" changes nothing, and the same cue is not offered again for 10 minutes. Only while
+    a clock is set, not in a fight, not while the party is split; only for a DM recorded now; paid
+    plans only (the check fails closed); at most one a minute and 20 AI calls a session for a
+    campaign; a failure or an 8-second wait gives no suggestion, and three failures in a row rest it
+    for 10 minutes. A line the off-topic filter holds for a label waits for it, and is offered only if it is labelled
+    game talk (never an off-topic line). Players never see it and it is never in a transcript. For
+    dev1's live check: "rest" and "camp" also match chatter ("the rest of you"), which the caps bound. One log line at the
+    session's end, "Time suggestions: N calls, … tokens", counts and never words.
 
   **Typed chat counts too** (owner, 2026-10-13), as described under "Typed chat at the table".
 - **Players see only the approximate time** (owner, 2026-10-13): never `h:mm`, in any message.
@@ -2629,7 +2645,7 @@ each with the Undo note: a rest *finishing* ("you finish your long rest", "the l
 your short rest"; one rest said as starting and as finishing counts once), "the next morning" / "at dawn"
 (to the next dawn, like Skip to dawn), and explicit amounts up to 24 hours ("an hour later", "ten minutes
 later", "half an hour later", "forty-five minutes later"; words and digits; "an hour and ten minutes
-later" is two amounts and is not guessed at). Vague narration ("you walk for a while", "a few hours later")
+later" is two amounts and is not guessed at). Vague narration ("you walk for a while", "a few hours later"; at most a suggestion, #1758)
 and any question, wish, condition or long line are ignored. **A player's suggestion** ("let's take a short
 rest", "can we long rest?") moves nothing: it posts one DM-screen line, "Mira suggests a short rest", with
 **Short rest** and **Not now**, at most one per campaign every 5 minutes, and only once a clock is set; only

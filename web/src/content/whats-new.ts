@@ -294,6 +294,27 @@ export const held: Held[] = [
   },
   {
     date: "2026-10-17",
+    title: "Guide me: what's next in your adventure",
+    what: "With Guide me on, press What's next? and DMbot tells you privately which chapter your table is probably in (a guess from names heard lately), what else the book has there, and the next chapter. Pick my chapter overrides the guess. It only repeats what your book says and never decides for you.",
+    reason:
+      "Merged (#1734); held until dev1 deploys 0126 and the owner's live check is recorded (#1731).",
+  },
+  {
+    date: "2026-10-17",
+    title: "Watch the story",
+    what: "With Watch the story on, DMbot tells you privately, once, when your table breaks something your adventure needs, for example a person it needs to be there has died. 👍 I know clears it. 📋 Book's words shows what the book says. It never says what to do.",
+    reason:
+      "Merged (#1730); held until dev1 deploys 0125 and the owner's live check is recorded (#1729).",
+  },
+  {
+    date: "2026-10-17",
+    title: "Link names to your adventure",
+    what: "After DMbot has read your adventure, open a name's card and press In my adventure… to say who or where it is. Match names on the Shared story card lists names that look the same, and you say which are the same. Nothing is linked without your say-so. Only the DM sees the links. Take off removes one, and Undo that brings it back.",
+    reason:
+      "Merged (#1724); held until dev1 deploys 0124 and the owner's live check is recorded (#1726).",
+  },
+  {
+    date: "2026-10-17",
     title: "Homebrew menu by kind",
     what: "In Settings, then Homebrew, you now see one button for each kind, like Spells 10/12, which means 10 are on out of 12. Press one to see only those entries; ↩ All kinds takes you back.",
     reason:
@@ -312,6 +333,13 @@ export const held: Held[] = [
     what: "DMbot makes a channel that lists the people and groups it remembers for your campaign, as you confirmed them: their names, other names, the groups they are in and who they are connected to. Players can read it but not post, and it follows your DM screen setting. DMbot only lists what you confirmed. It never shows secrets, plot notes, or what has happened to someone.",
     reason:
       "Held until seen working live (#1761): the owner has not yet checked it on the test server.",
+  },
+  {
+    date: "2026-10-17",
+    title: "A time suggestion from your narration",
+    what: "When you narrate time passing without saying how long (\"you walk for a while\"), DMbot can suggest a time jump on your DM screen, such as +2 hours. Nothing changes unless you press the button. Press Not now to skip it.",
+    reason:
+      "Held until it has been seen working on the test server (#1758).",
   },
   {
     date: "2026-10-17",

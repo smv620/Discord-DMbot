@@ -169,7 +169,7 @@ class AtTheTableTyped(AtTheTable):
         release = asyncio.Event()
         started = 0
 
-        async def slow(table: Any, user_id: int, line: str) -> None:
+        async def slow(table: Any, user_id: int, line: str, *, held: bool = False) -> None:
             nonlocal started
             started += 1
             await release.wait()

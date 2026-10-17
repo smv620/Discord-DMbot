@@ -71,6 +71,7 @@ class Feature(enum.StrEnum):
     EXTRACTOR = "extractor"  # the story extractor after a session (#1363); off by default
     SUPPORT = "support"  # DMbot's helper answering a support ticket (#1431); the website's job
     PLAN_READER = "plan_reader"  # the story plan read from an adventure (#1714); the DM's press
+    TIME_SUGGEST = "time_suggest"  # a time jump suggested from vague narration (#1758)
 
 
 # The tier of each job. Nothing else chooses: a job names its tier here, never a model.
@@ -90,6 +91,7 @@ FEATURE_TIERS = {
     Feature.EXTRACTOR: AIModelTier.FAST,
     Feature.RECAP: AIModelTier.FAST,
     Feature.PLAN_READER: AIModelTier.CAREFUL,  # read once and kept; it must not make things up
+    Feature.TIME_SUGGEST: AIModelTier.FAST,  # one short line, one small answer, a DM presses
     Feature.SUPPORT: AIModelTier.DEEP,  # a person is reading the answer, and it must not mislead
     Feature.RECAP_RETRY: AIModelTier.CAREFUL,
 }

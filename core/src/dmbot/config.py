@@ -44,6 +44,8 @@ class Settings:
     ears_host: str = "127.0.0.1"
     ears_port: int = 8765
     dev_guild_id: int | None = None
+    # Servers whose old per-server copy of the slash commands is removed once at start (#1767).
+    clear_guild_commands: tuple[int, ...] = ()
     database_url: str = field(default="", repr=False)  # contains the password
     # The most connections this process holds open to Postgres (#77). Ten is what DMbot always
     # used; with many shard pods, about 4 each keeps them under Postgres' own limit.
@@ -76,6 +78,9 @@ class Settings:
     # off nothing calls the AI and the after-session step has nothing to ask.
     story_extractor_on: bool = False
     recaps_on: bool = False  # cinematic recaps (#1382): off until dev1's quality check
+    # A time jump suggested from vague narration (#1758): the DM screen only, never automatic.
+    # Off until dev1 has run a live check.
+    time_suggestions: bool = False
     # The recap's narration and music (#1383): made only when recaps are on, a key and a voice
     # are set and the campaign's plan includes spoken recaps. No key: text-only, nothing fails.
     elevenlabs_key: str = field(default="", repr=False)
@@ -144,6 +149,13 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
     if guild_raw and not guild_raw.isdigit():
         raise ConfigError("DISCORD_DEV_GUILD_ID must be a server ID (digits only).")
 
+    clear_raw = get("DISCORD_CLEAR_GUILD_COMMANDS")
+    clear_ids = [part.strip() for part in clear_raw.split(",") if part.strip()]
+    if not all(part.isdigit() for part in clear_ids):
+        raise ConfigError(
+            "DISCORD_CLEAR_GUILD_COMMANDS must be server IDs (digits only), separated by commas."
+        )
+
     try:
         transcription = load_transcription_settings(env)
     except TranscriptionConfigError as exc:
@@ -209,6 +221,11 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
             + '".'
         )
 
+    suggestions_raw = (get("DMBOT_TIME_SUGGESTIONS") or "0").lower()
+    if suggestions_raw not in ("0", "1", "true", "on", "false", "off"):
+        raise ConfigError(
+            'DMBOT_TIME_SUGGESTIONS must be 1 (on) or 0 (off), got "' + suggestions_raw + '".'
+        )
     extractor_raw = (get("DMBOT_STORY_EXTRACTOR") or "0").lower()
     if extractor_raw not in ("0", "1", "true", "on", "false", "off"):
         raise ConfigError(
@@ -292,6 +309,7 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
         ears_host=get("EARS_WS_HOST") or "127.0.0.1",
         ears_port=int(port_raw),
         dev_guild_id=int(guild_raw) if guild_raw else None,
+        clear_guild_commands=tuple(int(part) for part in clear_ids),
         database_url=get("DATABASE_URL"),
         database_pool_max=int(pool_raw),
         data_dir=Path(get("DMBOT_DATA_DIR") or "data"),
@@ -311,6 +329,7 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
         sidebar_on=sidebar_raw in ("1", "true", "on"),
         story_extractor_on=extractor_raw in ("1", "true", "on"),
         recaps_on=recaps_raw in ("1", "true", "on"),
+        time_suggestions=suggestions_raw in ("1", "true", "on"),
         elevenlabs_key=get("ELEVENLABS_API_KEY"),
         elevenlabs_voice_id=voice_id,
         elevenlabs_speech_model=speech_model,

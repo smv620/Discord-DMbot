@@ -73,6 +73,12 @@ FightBot is the one AI job that scales with players, not with speech. Its limit 
 
 Per call: 700 tokens in at $1.0 per million is $0.0007, and 60 tokens out at $5.0 per million is $0.0003, so about $0.001 a call. The prompt is the instructions (about 230 tokens), the player's sheet facts (about 150, up to 300 for a caster), the round, and at most 8 short table lines (at most 1200 characters, about 340 tokens). Tokens are estimates (size by about 3.5 characters each), like the rest of this file; the usage line in the log gives the real ones. It is counted in the AI cost like every other job: every call goes through the same client and watch.
 
+## Time suggestions from narration (#1758)
+
+Off by default (`DMBOT_TIME_SUGGESTIONS`). When on, one FAST-tier call for a DM's line that holds a time cue and that the strict phrases did not match: at most one a minute, 20 a session for a campaign, none on an unpaid plan, none in a fight or while the party is split.
+
+Per call: the instructions (about 150 tokens), the one line (at most 300 characters, about 90 tokens) and the game time (about 15) is about 260 tokens in at $1.0 per million, and a small JSON answer of about 25 tokens out at $5.0 per million: about $0.0004 a call. **At the cap, 20 calls cost about $0.008 a session** for a campaign (counted in memory with the running session, so a restart in the middle starts the count again); a typical table that says a few vague things gets a handful of calls, under a cent. Tokens are estimates (about 3.5 characters each); the log line "Time suggestions: N calls, … tokens in, … out" at the session's end gives the real ones. Counted in the AI cost like every other job.
+
 ## Story memory (5a extractor)
 
 For the live claim extractor of docs/STORY_MEMORY.md (section 3, and "Cost" in section 8): how many tokens one call takes, what a 4-hour session costs at 240 and at 480 calls (one call every 30 to 60 seconds), and how well a cheap model tells **how a claim was said** (the DM, a player, or a plan). Built in #1268 as a repeatable tool, so anyone with a key can run it.

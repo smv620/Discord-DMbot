@@ -83,9 +83,13 @@ describe("What's new", () => {
       "Keep track of promises made at the table", // until seen on the test server (#1674)
       "A DMbot channel for buttons", // until seen on the test server (#1666)
       "A Shared story switch", // until the story plan is used (#1692, #1714)
+      "Guide me: what's next in your adventure", // until 0126 is deployed and seen live (#1731, #1736)
+      "Watch the story", // until 0125 is deployed and seen live (#1729, #1735)
+      "Link names to your adventure", // until 0124 is deployed and seen live (#1715, #1726)
       "Homebrew menu by kind", // until seen on the test server (#1665)
       "A channel for your house rules", // until seen on the test server (#1752)
       "A channel listing the people and groups", // until seen on the test server (#1761)
+      "A time suggestion from your narration", // until the switch is on and seen live (#1758)
       "Manage your plan without Discord", // until the billing login link is set in the build (#1711)
       "A quiet reminder of the game time", // until seen on the test server (#1738)
     ]);

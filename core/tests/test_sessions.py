@@ -1537,6 +1537,42 @@ class SaveAndResume(SessionTests):
         self.assertEqual(topics["we sneak past the guards"], "game")
         self.assertEqual((table.topic_calls, table.topic_tokens), (1, [50, 6]))
 
+    async def test_a_held_line_is_offered_a_time_suggestion_only_once_labelled_game_talk(
+        self,
+    ) -> None:
+        """#1758: the suggestion waits for the off-topic filter's label, as the names scan does."""
+        for answer, offered in (("1 game\n2 game", True), ("1 other\n2 game", False)):
+            table = await self.filtered(answer)
+            table.dm_user_ids = frozenset({DM})
+            self.bot._maybe_suggest_time = AsyncMock()  # type: ignore[method-assign]
+            self.said(table, "I travelled all day for work and I am tired", user=DM)
+            self.bot._maybe_suggest_time.assert_not_awaited()  # still held: nothing yet
+            self.said(table, "we sneak past the guards", at_ms=5_000)
+            await self.settle()
+            self.assertEqual(self.bot._maybe_suggest_time.await_count, int(offered), answer)
+
+    async def test_a_player_line_or_a_strict_phrase_is_never_offered_one_after_the_label(
+        self,
+    ) -> None:
+        table = await self.filtered("1 game\n2 game")
+        table.dm_user_ids = frozenset({DM})
+        self.bot._maybe_suggest_time = AsyncMock()  # type: ignore[method-assign]
+        self.said(table, "the party travels for hours", user=PLAYER)  # not a DM's line
+        self.said(table, "An hour later, the guards come.", user=DM, at_ms=5_000)
+        await self.settle()
+        self.bot._maybe_suggest_time.assert_not_awaited()
+
+    async def test_a_line_not_held_is_offered_at_once_as_before(self) -> None:
+        table = await self.filtered("1 game\n2 game")
+        table.dm_user_ids = frozenset({DM})
+        self.bot._maybe_suggest_time = AsyncMock()  # type: ignore[method-assign]
+        self.bot.topic_ai = None  # no filter: nothing is held
+        self.addCleanup(setattr, self.bot, "clocks", self.bot.clocks)
+        self.bot.clocks = SimpleNamespace()  # type: ignore[assignment]  # (a clock is wired up)
+        self.said(table, "You walk for a while along the old road.", user=DM)
+        await self.settle()
+        self.bot._maybe_suggest_time.assert_awaited_once()
+
     async def test_off_topic_words_never_reach_the_name_fixers_word_list(self) -> None:
         """#1748: a held line adds its words only once labelled game talk."""
         table = await self.filtered("1 other\n2 game")
