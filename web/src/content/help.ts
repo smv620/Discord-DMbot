@@ -392,12 +392,15 @@ export const npcsChannelSteps: Step[] = [
 export const dmSteps: Step[] = [
   { text: "Add DMbot to your Discord server from the Add to Discord page." },
   {
-    text: "Type /dmbot start in any text channel. Then press ▶ Continue last campaign, or ＋ New campaign if this is your first game.",
+    text: "Type /dmbot start in any text channel. Wait for the list to pop up, pick /dmbot start in it, then send it. Then press ▶ Continue last campaign, or ＋ New campaign if this is your first game.",
     names: [
       { name: "/dmbot start", file: "bot.py" },
       { name: "▶ Continue last campaign", file: "ui/logic.py" },
       { name: "＋ New campaign", file: "ui/dmbot_commands.py" },
     ],
+  },
+  {
+    text: "No list pops up? DMbot's commands can take a minute to show on a new server. Wait a minute, or fully close and reopen Discord, then type /dmbot start again and pick it from the list. If it went out as plain chat, DMbot didn't get it. Delete it and try again.",
   },
   {
     text: "Pick your table's voice channel, then press ▶ Start listening. Each player gets a private message asking if they say yes. Only people who say yes are recorded.",

@@ -277,6 +277,13 @@ describe("Help: the website's read-only pages (#1588)", () => {
     expect(words).toContain("Each rule is shown in your own words.");
   });
 
+  it("says to pick /dmbot start from the list, with a tip for when no list pops up (#1770)", () => {
+    const words = dmSteps.map((x) => x.text).join(" ");
+    expect(words).toContain("Wait for the list to pop up, pick /dmbot start in it, then send it.");
+    expect(words).toContain("No list pops up?");
+    expect(words).toContain("If it went out as plain chat, DMbot didn't get it.");
+  });
+
   it("holds the NPC list channel steps with their held What's new entry (#1781)", () => {
     expect(held.map((h) => h.title).includes("A channel listing the people and groups")).toBe(!NPCS_CHANNEL_LIVE);
     const shown = dmSteps.map((x) => x.text).join(" ");
