@@ -29,15 +29,21 @@ class FakeBrew:
         self.entries: dict[str, list[Homebrew]] = {}
         self.asked: list[str] = []
 
-    async def list(self, guild_id: int, cid: str) -> list[Homebrew]:
+    async def list(self, guild_id: int, cid: str, *, usable_only: bool = False) -> list[Homebrew]:
         self.asked.append(cid)
-        return list(self.entries.get(cid, []))
+        return [e for e in self.entries.get(cid, []) if e.enabled or not usable_only]
 
-    async def find(self, guild_id: int, cid: str, name: str) -> Homebrew | None:
+    async def find(
+        self, guild_id: int, cid: str, name: str, *, usable_only: bool = False
+    ) -> Homebrew | None:
         self.asked.append(cid)
         key = " ".join(name.casefold().split())
         return next(
-            (e for e in self.entries.get(cid, []) if " ".join(e.name.casefold().split()) == key),
+            (
+                e
+                for e in self.entries.get(cid, [])
+                if (e.enabled or not usable_only) and " ".join(e.name.casefold().split()) == key
+            ),
             None,
         )
 
@@ -99,18 +105,14 @@ class Cards(TableTest):
         (post,) = self.posts
         self.assertEqual(post[0], SCREEN)
         text = post[1]
-        self.assertIn("📚 **Hollow King** (Monster) [Homebrew] 🙈 hidden from players", text)
+        self.assertIn("📚 **Hollow King** (Monster) [Homebrew]", text)
+        self.assertNotIn("hidden", text)  # (nothing is hidden from players any more)
         self.assertIn("Crowned.", text)
         self.assertIn("Source: Frostmaiden's homebrew: Hollow King", text)
         self.assertIn("Heard: “the Hollow King rises”", text)
         self.assertLessEqual(len(text.splitlines()), 6)
         labels = [str(b.item.label) for b in post[2].children]
         self.assertEqual(labels, ["Got it", "Ignore", "Override", "Read it all"])
-
-    async def test_a_known_entry_says_so(self) -> None:
-        self.own(brew("Moonblade", kind="item", known=True))
-        await self.say("grab the Moonblade")
-        self.assertIn("👀 players may know it", self.posts[0][1])
 
     async def test_a_house_rule_comes_first_then_the_homebrew(self) -> None:
         self.own(brew("Hollow King"))
@@ -160,9 +162,11 @@ class Cards(TableTest):
         self.own(brew("Hollow King"))
         real = self.brews.find
 
-        async def stop_then_find(guild_id: int, cid: str, name: str) -> Homebrew | None:
+        async def stop_then_find(
+            guild_id: int, cid: str, name: str, *, usable_only: bool = False
+        ) -> Homebrew | None:
             self.consented.discard(SPEAKER)
-            return await real(guild_id, cid, name)
+            return await real(guild_id, cid, name, usable_only=usable_only)
 
         self.brews.find = stop_then_find  # type: ignore[method-assign]
         await self.say("the Hollow King rises")
@@ -225,12 +229,6 @@ class Books(TableTest):
         (post,) = self.posts
         self.assertNotIn("hidden from players", post[1])
         self.assertNotIn("From the book", post[1])
-
-    async def test_a_hidden_book_entry_that_answers_still_gets_the_dm_screen_card(self) -> None:
-        self.own(self.book("Fireball", "2024", kind="spell", known=False))
-        await self.say("I cast Fireball")
-        (post,) = self.posts
-        self.assertIn("🙈 hidden from players", post[1])
 
     async def test_a_2014_book_entry_is_tagged_legacy_when_it_answers(self) -> None:
         self.own(self.book("Orc", "2014"))
@@ -295,13 +293,15 @@ class NewestReadWins(TableTest):
         calls = 0
         real = brews.list
 
-        async def slow_then_fast(guild_id: int, cid: str) -> list[Homebrew]:
+        async def slow_then_fast(
+            guild_id: int, cid: str, *, usable_only: bool = False
+        ) -> list[Homebrew]:
             nonlocal calls
             calls += 1
             if calls == 1:
                 await gate.wait()  # the first read is slow...
                 return [brew("Old Name")]
-            return await real(guild_id, cid)
+            return await real(guild_id, cid, usable_only=usable_only)
 
         brews.list = slow_then_fast  # type: ignore[method-assign]
         brews.entries[C1] = [brew("New Name")]

@@ -150,7 +150,7 @@ class NightlyRun(unittest.IsolatedAsyncioTestCase):
         from dmbot.bot import DMBot
 
         bot: Any = DMBot.__new__(DMBot)
-        bot.retention, bot.keep_job = plan, keep
+        bot.retention, bot.keep_job, bot.sources = plan, keep, None
         bot.check_owners_daily = AsyncMock()
         bot.settings = SimpleNamespace(data_dir=Path("/nonexistent"))
         return bot

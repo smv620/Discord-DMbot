@@ -14,7 +14,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { ApiError, type AccountApi } from "../src/account/api";
 import HomebrewPage, { refFromPath } from "../src/account/Homebrew";
 import { mockApi } from "../src/account/mock";
-import { problem, text } from "../src/content/homebrew";
+import { kindOrder, problem, text } from "../src/content/homebrew";
 
 afterEach(cleanup);
 
@@ -36,7 +36,7 @@ describe("the campaigns", () => {
     page(mockApi("table"), "/account/homebrew");
     expect(await screen.findByText("The Brynwater Crossing")).toBeTruthy();
     expect(
-      screen.getByText(text.campaignLine("Thursday Table", 3)),
+      screen.getByText(text.campaignLine("Thursday Table", 5, 1)),
     ).toBeTruthy();
     expect(
       screen
@@ -78,6 +78,102 @@ describe("the campaigns", () => {
   });
 });
 
+describe("followed packs (#1586)", () => {
+  it("shows each followed pack under the table's own entries, by kind, with its name and version", async () => {
+    page(mockApi("table"), `/account/homebrew/${REF}`);
+    expect(await screen.findByText(text.packsHeading)).toBeTruthy();
+    expect(screen.getByText(text.packLine("Frost Pack", 2))).toBeTruthy();
+    expect(screen.getByText("Ice Lance")).toBeTruthy();
+    expect(screen.getByText("Aurora Cloak")).toBeTruthy();
+    const body = document.body.textContent ?? "";
+    expect(body.indexOf("Mud Wight")).toBeLessThan(body.indexOf("Ice Lance")); // own first
+    expect(screen.getByText(text.packsNote)).toBeTruthy();
+  });
+
+  it("says so under a pack with no entries", async () => {
+    const mock = mockApi("table");
+    const api = {
+      ...mock,
+      homebrew: async (ref: string) => {
+        const found = await mock.homebrew!(ref);
+        return { ...found, packs: [{ name: "Quiet Pack", version: 1, entries: [] }] };
+      },
+    } as AccountApi;
+    page(api, `/account/homebrew/${REF}`);
+    expect(await screen.findByText(text.packLine("Quiet Pack", 1))).toBeTruthy();
+    expect(screen.getByText(text.packNone)).toBeTruthy();
+  });
+
+  it("says the campaign list follows a pack", async () => {
+    page(mockApi("table"), "/account/homebrew");
+    expect(
+      await screen.findByText("Thursday Table · 5 entries · follows another table's pack"),
+    ).toBeTruthy();
+  });
+
+  it("says there is none of its own but a pack, with no download", async () => {
+    const mock = mockApi("table");
+    const api = {
+      ...mock,
+      homebrew: async (ref: string) => ({ ...(await mock.homebrew!(ref)), entries: [] }),
+    } as AccountApi;
+    page(api, `/account/homebrew/${REF}`);
+    expect(await screen.findByText(text.emptyButPack)).toBeTruthy();
+    expect(screen.getByText("Ice Lance")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: text.download })).toBeNull();
+  });
+
+  it("shows no pack section and the short download note on an older API", async () => {
+    const mock = mockApi("table");
+    const older = {
+      ...mock,
+      homebrew: async (ref: string) => {
+        const { packs: _gone, ...rest } = await mock.homebrew!(ref);
+        return rest;
+      },
+      homebrewCampaigns: async () =>
+        (await mock.homebrewCampaigns!()).map(({ packs: _p, ...rest }) => rest),
+    } as AccountApi;
+    page(older, `/account/homebrew/${REF}`);
+    await screen.findByText("Mud Wight");
+    expect(screen.queryByText(text.packsHeading)).toBeNull();
+    expect(screen.getByText(text.downloadNote)).toBeTruthy();
+    cleanup();
+    page(older, "/account/homebrew");
+    expect(await screen.findByText("Thursday Table · 5 entries")).toBeTruthy();
+  });
+});
+
+describe("shared-book tags (#1579)", () => {
+  it("tags a shared book's entry, and a 2014 one [Legacy 2014], and says what they mean", async () => {
+    page(mockApi("table"), `/account/homebrew/${REF}`);
+    await screen.findByText("Mud Wight");
+    expect(screen.getAllByText(text.fromBook)).toHaveLength(2); // Moon Lamp and Mud Wight
+    expect(screen.getAllByText(text.legacy)).toHaveLength(1); // Mud Wight only
+    expect(screen.getByText(text.bookNote)).toBeTruthy();
+    expect(text.bookNote).toContain("that book is for the 2014 rules");
+  });
+
+  it("shows no tag and no note when nothing is from a book, or on an older API", async () => {
+    const mock = mockApi("table");
+    const older = {
+      ...mock,
+      homebrew: async (ref: string) => {
+        const found = await mock.homebrew!(ref);
+        return {
+          ...found,
+          entries: found.entries.map(({ fromBook: _a, legacy: _b, ...rest }) => rest),
+        };
+      },
+    } as AccountApi;
+    page(older, `/account/homebrew/${REF}`);
+    await screen.findByText("Mud Wight");
+    expect(screen.queryByText(text.fromBook)).toBeNull();
+    expect(screen.queryByText(text.legacy)).toBeNull();
+    expect(screen.queryByText(text.bookNote)).toBeNull();
+  });
+});
+
 describe("a campaign's entries", () => {
   it("groups them by kind in the bot's order, each with its summary and words", async () => {
     page(mockApi("table"), `/account/homebrew/${REF}`);
@@ -87,17 +183,15 @@ describe("a campaign's entries", () => {
     const kinds = screen
       .getAllByRole("heading", { level: 3 })
       .map((h) => h.textContent);
-    expect(kinds).toEqual(["Spells", "Monsters", "Items"]); // not the order the API sent
+    expect(kinds.slice(0, 3)).toEqual(["Spells", "Monsters", "Items"]); // not the API's order
     expect(screen.getByText("A bolt of ice")).toBeTruthy();
     expect(screen.getByText(/3d6 cold damage/)).toBeTruthy();
   });
 
-  it("says the DM may have more, and where the DM changes them; it is read-only", async () => {
+  it("says what (off) means, and where the DM changes things; it is read-only", async () => {
     page(mockApi("table"), `/account/homebrew/${REF}`);
     expect(await screen.findByText(text.leadOneCampaign)).toBeTruthy();
-    expect(text.leadOneCampaign).toContain(
-      "Your DM may have more that stays behind the DM screen.",
-    );
+    expect(text.leadOneCampaign).toContain("An entry marked (off) is kept");
     expect(screen.getByText(text.dmChanges)).toBeTruthy();
     expect(text.dmChanges).toContain("⚙️ Settings → 📚 Homebrew");
     expect(
@@ -124,7 +218,7 @@ describe("a campaign's entries", () => {
         entries: [
           { kind: "vehicle", name: "Sky Cart", summary: null, text: "Flies." },
           {
-            kind: "rule",
+            kind: "other",
             name: "Fast Rest",
             summary: null,
             text: "Ten minutes.",
@@ -136,12 +230,54 @@ describe("a campaign's entries", () => {
     await screen.findByText("Sky Cart");
     expect(
       screen.getAllByRole("heading", { level: 3 }).map((h) => h.textContent),
-    ).toEqual(["Rules", "vehicle"]);
+    ).toEqual(["Other", "vehicle"]);
+  });
+
+  it("marks a turned-off entry (off), muted, and keeps it in the list", async () => {
+    const mock = mockApi("table");
+    const api = {
+      ...mock,
+      homebrew: async (ref: string) => {
+        const found = await mock.homebrew!(ref);
+        return {
+          ...found,
+          entries: [
+            ...found.entries,
+            { kind: "item", name: "Old Bell", summary: null, text: "Rings.", enabled: false },
+            { kind: "item", name: "New Bell", summary: null, text: "Chimes.", enabled: true },
+          ],
+        };
+      },
+    } as AccountApi;
+    page(api, `/account/homebrew/${REF}`);
+    const off = (await screen.findByText("Old Bell")).closest("li")!;
+    expect(off.textContent).toContain(text.off);
+    expect(off.classList.contains("muted")).toBe(true);
+    const on = screen.getByText("New Bell").closest("li")!;
+    expect(on.textContent).not.toContain(text.off);
+    expect(screen.getByText("Frost Lance").closest("li")!.textContent).not.toContain(text.off);
+  });
+
+  it("has no Rules kind: made-up rules are House rules, with a link", async () => {
+    expect(kindOrder).not.toContain("rule");
+    expect(Object.keys(text.kinds)).not.toContain("rule");
+    page(mockApi("table"), `/account/homebrew/${REF}`);
+    await screen.findByText(text.leadOneCampaign);
+    const link = screen.getByRole("link", { name: text.rulesLink });
+    expect(link.getAttribute("href")).toBe("/account/house-rules");
+  });
+
+  it("points to House rules from the campaign list too", async () => {
+    page(mockApi("table"), "/account/homebrew");
+    const link = await screen.findByRole("link", { name: text.rulesLink });
+    expect(link.getAttribute("href")).toBe("/account/house-rules");
   });
 
   it("says what the file holds, next to the button", async () => {
     page(mockApi("table"), `/account/homebrew/${REF}`);
-    expect(await screen.findByText(text.downloadNote)).toBeTruthy();
+    expect(
+      await screen.findByText(text.downloadNotePacks),
+    ).toBeTruthy();
   });
 
   it("saves the file under the bot's name for it", async () => {
@@ -183,5 +319,24 @@ describe("a campaign's entries", () => {
       text.notFound,
     );
     expect(problem("not-found")).toBe(text.notFound);
+  });
+});
+
+describe("nothing is hidden from players (#1643)", () => {
+  it("the homebrew words no longer say the DM lets players know or keeps things behind the screen", async () => {
+    const { text: homebrew } = await import("../src/content/homebrew");
+    const { entries } = await import("../src/content/whats-new");
+    const help = await import("../src/content/help");
+    const homebrewHelp = [...help.dmSteps, ...help.playerSteps].filter((st) =>
+      /homebrew/i.test(st.text),
+    );
+    expect(homebrewHelp.length).toBeGreaterThan(0);
+    const words = JSON.stringify([
+      homebrew,
+      entries.filter((e) => /homebrew/i.test(e.title + e.what)),
+      homebrewHelp,
+    ]);
+    expect(words).not.toMatch(/let (the )?players know|lets players know|players may know|marked for players/i);
+    expect(words).not.toMatch(/behind the DM screen|shares with players/i);
   });
 });

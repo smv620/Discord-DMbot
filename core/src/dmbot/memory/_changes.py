@@ -73,7 +73,9 @@ ENTITIES = Table(
         "role",
         "needs_look",
         "unique_item",
+        "audience_limited",
     ),
+    defaults={"audience_limited": False},  # a clue's switch (#1649)
 )
 # What a being or thing is now, with the history of what it was (#1267): one current row for
 # each entry, a new condition closes it.
@@ -501,7 +503,8 @@ class Changes(Scope):
 # (#1189): a fact written before definitions were versioned was written under version 1.
 _ADDED_LATER: dict[str, dict[str, Any]] = {
     "memory_relations": {"definition_version": 1},
-    "memory_entities": {"unique_item": None},  # nobody said: the name decides (#1267)
+    # unique_item: nobody said, the name decides (#1267). audience_limited: off (#1649).
+    "memory_entities": {"unique_item": None, "audience_limited": False},
     "memory_predicates": {
         "covers": [], "not_this": [], "inverse_label": "", "synonyms": [], "version": 1,
         "from_set": None,

@@ -142,6 +142,14 @@ CORE_TYPES: tuple[TypeTerm, ...] = (
         "player or DM",
         "A real person at the table: a player or the DM. Not part of the story.",
     ),
+    # A piece of information that can be learned (#1649): its own entry, so "who knows it" is an
+    # ordinary `knows` fact. A subtype of `concept`, so every range that takes an idea takes it.
+    _t(
+        "clue",
+        "clue or secret",
+        "A piece of information that can be learned: a rumour, a secret.",
+        "concept",
+    ),
     _old("player_character", "player character", "character"),
     _old("npc", "NPC", "character"),
     _old("deity", "god", "character"),

@@ -12,7 +12,7 @@ import unittest
 from datetime import UTC, datetime
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any, ClassVar
+from typing import Any, ClassVar, cast
 from unittest.mock import AsyncMock, MagicMock
 
 from dmbot import consent_dm as c
@@ -397,6 +397,13 @@ class InTheBot(unittest.IsolatedAsyncioTestCase):
             MagicMock(),
             MagicMock(),
             test_voice=self.voice,
+            improvement=cast(  # nobody has opted out here (tests/test_improvement_opt_out.py)
+                Any,
+                SimpleNamespace(
+                    is_opted_out=AsyncMock(return_value=False),
+                    is_opted_out_recently=AsyncMock(return_value=False),
+                ),
+            ),
         )
         self.agreed: set[int] = {DM, ALEX}
         bot.consent.has_consent = lambda g, u: u in self.agreed  # type: ignore[method-assign,assignment]
@@ -503,7 +510,7 @@ class InTheBot(unittest.IsolatedAsyncioTestCase):
         table = self.table()
         await bot._start_test_session(table)
         assert table.test_session is not None
-        bot._finish_test_session(table, True)
+        await bot._finish_test_session(table, True)
         table.test_session.flush()
         manifest = files.read_json(table.test_session.folder / files.MANIFEST)
         assert manifest is not None

@@ -72,6 +72,7 @@ MAX_BACKUP_BYTES = 25 * 1024 * 1024
 GZIP_MAGIC = b"\x1f\x8b"
 
 NOT_HERE = "That campaign doesn't exist in this server."
+PLAN_HOLDER_CHANGED = "Whose plan this campaign uses changed just now, so nothing was deleted."
 NAME_TAKEN = "This server already has a campaign with that name."
 DAMAGED = (
     "This backup file is damaged or isn't a DMbot campaign backup. "
@@ -317,6 +318,11 @@ NO_ROOM_TO_UNPAUSE = (
     "Your plan has no room to unpause this campaign. Pause one of your other campaigns first "
     "(open it, then ⚙️ Settings and ⏸️ **Pause this campaign**)."
 )
+MAX_DMS = 5  # a campaign's game masters at most (#1600)
+TOO_MANY_DMS = (
+    f"A campaign can have at most {MAX_DMS} game masters. Remove one before adding another."
+)
+LAST_DM = "A campaign needs at least one game master. Add another first."
 OWNER_STAYS = (
     "The campaign's owner can't be removed. Hand the campaign over first (only the owner can)."
 )
@@ -520,12 +526,13 @@ class CampaignStore:
         clean = clean_name(new_name)
         try:
             async with self._db.guild(guild_id) as conn:
-                await self._require(conn, guild_id, campaign_id)
-                await conn.execute(
-                    "UPDATE campaigns SET name = %s, name_key = %s WHERE guild_id = %s AND id = %s",
-                    (clean, name_key(clean), guild_id, campaign_id),
+                return await self._update(
+                    conn,
+                    guild_id,
+                    campaign_id,
+                    sql.SQL("name = %s, name_key = %s"),
+                    (clean, name_key(clean)),
                 )
-                return await self._require(conn, guild_id, campaign_id)
         except pg_errors.UniqueViolation as exc:
             raise CampaignError(NAME_TAKEN) from exc
 
@@ -534,13 +541,13 @@ class CampaignStore:
     ) -> Campaign:
         check_rulesets(target, fallback)
         async with self._db.guild(guild_id) as conn:
-            await self._require(conn, guild_id, campaign_id)
-            await conn.execute(
-                "UPDATE campaigns SET target_ruleset = %s, fallback_ruleset = %s"
-                " WHERE guild_id = %s AND id = %s",
-                (target, fallback, guild_id, campaign_id),
+            return await self._update(
+                conn,
+                guild_id,
+                campaign_id,
+                sql.SQL("target_ruleset = %s, fallback_ruleset = %s"),
+                (target, fallback),
             )
-            return await self._require(conn, guild_id, campaign_id)
 
     async def set_optional_rules_default(
         self, guild_id: int, campaign_id: str, enabled: bool
@@ -562,30 +569,35 @@ class CampaignStore:
             )
 
     async def add_dm(self, guild_id: int, campaign_id: str, user_id: int) -> Campaign:
+        """Make someone one of the campaign's DMs (already one: nothing changes). At most
+        `MAX_DMS`; the campaign row is locked so two adds at once cannot pass the cap (#1600)."""
         async with self._db.guild(guild_id) as conn:
-            await self._require(conn, guild_id, campaign_id)
+            # Read with the row locked (#77: one read), so two adds cannot pass the cap.
+            current = await self._require(conn, guild_id, campaign_id, lock=True)
+            if user_id not in current.dm_user_ids and len(current.dm_user_ids) >= MAX_DMS:
+                raise CampaignError(TOO_MANY_DMS)
             await conn.execute(
                 "INSERT INTO campaign_dms (campaign_id, guild_id, user_id) VALUES (%s, %s, %s)"
                 " ON CONFLICT DO NOTHING",
                 (campaign_id, guild_id, user_id),
             )
-            return await self._require(conn, guild_id, campaign_id)
+            # (no read after: the locked row cannot change under this transaction)
+            return dataclasses.replace(current, dm_user_ids=current.dm_user_ids | {user_id})
 
     async def remove_dm(self, guild_id: int, campaign_id: str, user_id: int) -> Campaign:
         async with self._db.guild(guild_id) as conn:
             # Lock the campaign row so two removals can't leave it with no DM.
-            await self._lock(conn, guild_id, campaign_id)
-            campaign = await self._require(conn, guild_id, campaign_id)
+            campaign = await self._require(conn, guild_id, campaign_id, lock=True)
             if user_id == campaign.owner_user_id:  # whose plan it uses (#437)
                 raise CampaignError(OWNER_STAYS)
             if user_id in campaign.dm_user_ids and len(campaign.dm_user_ids) == 1:
-                raise CampaignError("A campaign needs at least one DM. Add the new DM first.")
+                raise CampaignError(LAST_DM)
             await conn.execute(
                 "DELETE FROM campaign_dms"
                 " WHERE guild_id = %s AND campaign_id = %s AND user_id = %s",
                 (guild_id, campaign_id, user_id),
             )
-            return await self._require(conn, guild_id, campaign_id)
+            return dataclasses.replace(campaign, dm_user_ids=campaign.dm_user_ids - {user_id})
 
     async def set_dm_screen(
         self, guild_id: int, campaign_id: str, channel_id: int | None
@@ -756,23 +768,51 @@ class CampaignStore:
         if replace:
             return await self._set(guild_id, campaign_id, "channel_number", number)
         async with self._db.guild(guild_id) as conn:
-            await self._require(conn, guild_id, campaign_id)
-            await conn.execute(
-                "UPDATE campaigns SET channel_number = %s"
-                " WHERE guild_id = %s AND id = %s AND channel_number IS NULL",
-                (number, guild_id, campaign_id),
+            return await self._update(
+                conn,
+                guild_id,
+                campaign_id,
+                sql.SQL("channel_number = %s"),
+                (number,),
+                also=sql.SQL("channel_number IS NULL"),
             )
-            return await self._require(conn, guild_id, campaign_id)
 
     async def mark_played(self, guild_id: int, campaign_id: str) -> Campaign:
         return await self._set(guild_id, campaign_id, "last_played_at", int(self._clock()))
 
-    async def delete(self, guild_id: int, campaign_id: str) -> None:
+    async def record_start(
+        self, guild_id: int, campaign_id: str, screen_id: int, voice_id: int
+    ) -> Campaign:
+        """What a session start records, in one transaction and one UPDATE (#77): the DM screen
+        channel, the voice channel, and now as the last time it was played. It used to be three
+        separate writes (three transactions)."""
+        async with self._db.guild(guild_id) as conn:
+            return await self._update(
+                conn,
+                guild_id,
+                campaign_id,
+                sql.SQL(
+                    "dm_screen_channel_id = %s, last_voice_channel_id = %s, last_played_at = %s"
+                ),
+                (screen_id, voice_id, int(self._clock())),
+            )
+
+    async def delete(
+        self, guild_id: int, campaign_id: str, *, only_if_owner: int | None = None
+    ) -> None:
+        """Delete the campaign and all it holds. `only_if_owner` (#1608): the person deleting
+        by hand; checked again here, under the campaign's lock, that they still hold its plan
+        and are still a game master, so a hand-over between their last look and this delete
+        can't let the old owner delete it."""
         async with self._db.guild(guild_id) as conn:
             # Lock the campaign first, as campaign-memory writes do, so the two can't
             # deadlock while the sections clear their rows.
             await self._lock(conn, guild_id, campaign_id)
-            await self._require(conn, guild_id, campaign_id)
+            current = await self._require(conn, guild_id, campaign_id)
+            if only_if_owner is not None and (
+                current.owner_user_id != only_if_owner or only_if_owner not in current.dm_user_ids
+            ):
+                raise CampaignError(PLAN_HOLDER_CHANGED)
             for section in self._sections.values():
                 await section.clear(conn, guild_id, campaign_id)
             # The saved session would go with the campaign anyway (ON DELETE CASCADE);
@@ -1387,18 +1427,50 @@ class CampaignStore:
         if column not in _SETTABLE:
             raise ValueError(f"Not a settable campaign column: {column}")
         async with self._db.guild(guild_id) as conn:
-            await self._require(conn, guild_id, campaign_id)
-            await conn.execute(
-                sql.SQL("UPDATE campaigns SET {} = %s WHERE guild_id = %s AND id = %s").format(
-                    sql.Identifier(column)
-                ),
-                (value, guild_id, campaign_id),
+            return await self._update(
+                conn,
+                guild_id,
+                campaign_id,
+                sql.SQL("{} = %s").format(sql.Identifier(column)),
+                (value,),
             )
-            return await self._require(conn, guild_id, campaign_id)
 
-    async def _get(self, conn: Conn, guild_id: int, campaign_id: str) -> Campaign | None:
+    async def _update(
+        self,
+        conn: Conn,
+        guild_id: int,
+        campaign_id: str,
+        assignments: sql.Composable,
+        values: tuple[object, ...],
+        *,
+        also: sql.Composable | None = None,
+    ) -> Campaign:
+        """One UPDATE ... RETURNING and one read of the DMs (#77), instead of reading the
+        campaign before and after: two statements, whatever changed. `also`: an extra condition
+        (the update then changes nothing and the campaign is returned as it is). No campaign
+        here is `NOT_HERE`, as before."""
+        where: sql.Composable = sql.SQL("guild_id = %s AND id = %s")
+        if also is not None:
+            where = sql.SQL("{} AND {}").format(where, also)
         cur = await conn.execute(
-            "SELECT * FROM campaigns WHERE guild_id = %s AND id = %s", (guild_id, campaign_id)
+            sql.SQL("UPDATE campaigns SET {} WHERE {} RETURNING *").format(assignments, where),
+            (*values, guild_id, campaign_id),
+        )
+        row = await cur.fetchone()
+        if row is None:
+            if also is None:
+                raise CampaignError(NOT_HERE)
+            return await self._require(conn, guild_id, campaign_id)  # the condition did not hold
+        dms = await self._dms_for(conn, guild_id, campaign_id)
+        return _to_campaign(row, dms.get(campaign_id, set()))
+
+    async def _get(
+        self, conn: Conn, guild_id: int, campaign_id: str, *, lock: bool = False
+    ) -> Campaign | None:
+        cur = await conn.execute(
+            "SELECT * FROM campaigns WHERE guild_id = %s AND id = %s"
+            + (" FOR UPDATE" if lock else ""),
+            (guild_id, campaign_id),
         )
         row = await cur.fetchone()
         if row is None:
@@ -1406,8 +1478,10 @@ class CampaignStore:
         dms = await self._dms_for(conn, guild_id, campaign_id)
         return _to_campaign(row, dms.get(campaign_id, set()))
 
-    async def _require(self, conn: Conn, guild_id: int, campaign_id: str) -> Campaign:
-        campaign = await self._get(conn, guild_id, campaign_id)
+    async def _require(
+        self, conn: Conn, guild_id: int, campaign_id: str, *, lock: bool = False
+    ) -> Campaign:
+        campaign = await self._get(conn, guild_id, campaign_id, lock=lock)
         if campaign is None:
             raise CampaignError(NOT_HERE)
         return campaign

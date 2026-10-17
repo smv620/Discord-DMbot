@@ -1,21 +1,25 @@
 """A campaign's homebrew on the website (#1525): read-only, for anyone in the server, with the
-download of the same file Discord gives, for the entries the DM let the players know.
+download of the same file Discord gives.
 
-Two database doors (`dmbot_web_homebrew`, `dmbot_web_homebrew_campaigns`, schema.py) hand over ONLY
-the entries marked "players may know"; a hidden entry never leaves the database, not even for the
-campaign's DM, who reads those on the DM screen (CLAUDE.md, DM authority). The bot does not gate
-homebrew by plan, so neither does the site. The DM adds and changes entries in Discord.
+Two database doors (`dmbot_web_homebrew`, `dmbot_web_homebrew_campaigns`, schema.py) hand over
+every entry with its on or off state: nothing is hidden from players any more (owner, 2026-10-16,
+"Homebrew (part 2)"). The bot does not gate homebrew by plan, so neither does the site. The DM
+adds and changes entries in Discord.
 
 The page groups entries by kind, in the bot's order of kinds (`KINDS`), each by name as the bot
 lists them. The download is `homebrew_file.write` over those entries and `homebrew_file.filename`,
 so it is byte-equal to the file the bot would write for them: its own pick of the entries, as the
-bot's Download button sends every entry, hidden ones included, to the DM only.
+bot's Download button sends every entry, the ones that are off included, to the DM only.
+Entries from a shared book carry `[Shared book]`, and `[Legacy 2014]` when the door says so (it
+judges with `book_is_legacy`'s test, in the database, because the page has no ruleset), like the
+bot's file.
 
-The campaign's own entries only: a followed pack's entries (#1527) are not on the page or in
-the file.
+The page also shows the homebrew packs the campaign follows (#1527, #1586), every entry of each
+pack, as a player's `/dmbot rule` answers from them. The download stays the
+campaign's own shown entries (what the bot's file holds): a followed pack's are not in it.
 
-Never shown: who wrote an entry, its id, or whether it came from a book. A campaign is named by
-`<server>.<campaign>`, as for the house-rules page.
+Never shown: who wrote an entry, its id, or the book's name (it is never kept). A campaign is
+named by `<server>.<campaign>`, as for the house-rules page.
 """
 
 from __future__ import annotations
@@ -55,6 +59,7 @@ async def list_campaigns(db: Database, session: Session) -> list[dict[str, Any]]
                         "name": item["name"],
                         "serverName": guild.name,
                         "entries": int(item["entries"]),
+                        "packs": int(item.get("packs", 0)),
                     }
                 )
     return out
@@ -79,6 +84,22 @@ def _kind_order(entry: dict[str, Any]) -> int:
     return KINDS.index(entry["kind"]) if entry["kind"] in KINDS else len(KINDS)
 
 
+def _pack(raw: dict[str, Any]) -> dict[str, Any]:
+    """A followed pack as the page shows it: name, version and its entries by kind. Never
+    the publisher or the share code (the door does not return them)."""
+    # (a pack made before rules left homebrew, #1628, may still hold a rule: left out)
+    kept = [e for e in raw["entries"] if e["kind"] in KINDS]
+    entries = sorted(kept, key=_kind_order)  # stable: names stay in the door's order
+    return {
+        "name": raw["name"],
+        "version": int(raw["version"]),
+        "entries": [
+            {"kind": e["kind"], "name": e["name"], "summary": e["summary"], "text": e["text"]}
+            for e in entries
+        ],
+    }
+
+
 async def read_homebrew(db: Database, session: Session, ref: str) -> dict[str, Any]:
     """The shown entries, grouped by kind (the bot's order of kinds), each kind by name. Anyone
     outside the server, and a campaign that is not there, get "not found"."""
@@ -87,12 +108,19 @@ async def read_homebrew(db: Database, session: Session, ref: str) -> dict[str, A
     return {
         "name": found["name"],
         "fileName": homebrew_file.filename(found["name"]),
+        "packs": [_pack(p) for p in found.get("packs", [])],
         "entries": [
             {
                 "kind": e["kind"],
                 "name": e["name"],
                 "summary": e["summary"],
                 "text": e["text"],
+                # Tags like the Discord players' card: from a shared book, and a 2014 book while
+                # the campaign plays a newer ruleset (booleans, false when the door is older).
+                "fromBook": bool(e.get("fromBook", False)),
+                "legacy": bool(e.get("legacy", False)),
+                # Turned off by the DM (#1629): kept, but DMbot ignores it at the table.
+                "enabled": bool(e.get("enabled", True)),
             }
             for e in entries
         ],
@@ -106,18 +134,26 @@ async def render(db: Database, session: Session, ref: str) -> tuple[str, str]:
         raise RecapError("not_found")
     entries = [
         Homebrew(
-            id=0,
+            id=i,
             campaign_id=campaign_id,
             kind=e["kind"],
             name=e["name"],
             text=e["text"],
             summary=e["summary"],
-            players_may_know=True,
             created_by=0,
             created_at=0,
             updated_at=int(e["updatedAt"]),
             version=int(e["version"]),
+            # Which come from a shared book, and whether the door judged one legacy: the same
+            # tags as the bot's file (#1593). Absent flags (an older door) mean neither.
+            from_book=bool(e.get("fromBook", False)),
+            enabled=bool(e.get("enabled", True)),  # (#1629: the file says `off` like the bot's)
         )
-        for e in found["entries"]
+        for i, e in enumerate(found["entries"], start=1)
     ]
-    return homebrew_file.filename(found["name"]), homebrew_file.write(found["name"], entries)
+    legacy_ids = {
+        i for i, e in enumerate(found["entries"], start=1) if bool(e.get("legacy", False))
+    }
+    return homebrew_file.filename(found["name"]), homebrew_file.write(
+        found["name"], entries, "", legacy=lambda entry: entry.id in legacy_ids
+    )

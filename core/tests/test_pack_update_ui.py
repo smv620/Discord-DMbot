@@ -68,11 +68,7 @@ class Note(unittest.TestCase):
         self.assertIn("1 entry", pack_update.note_text("Frost", 5, 1))
         self.assertIn("same name as Rope", pack_update.note_text("Frost", 5, 1, ["Rope"]))
 
-    def test_a_change_that_shows_an_entry_to_players_is_said(self) -> None:
-        hidden = pack_diff.diff(OLD, NEW)  # Torch is new and known: players may know it
-        self.assertEqual(pack_update.now_visible(hidden), ["Torch"])
-        note = pack_update.note_text("Frost", 2, 2, visible=["Torch"])
-        self.assertIn("Players may now know: Torch.", note)
+    def test_a_note_with_no_changes_says_so(self) -> None:
         self.assertIn("no entry is different", pack_update.note_text("Frost", 2, 0))
 
     def test_the_buttons_fit_discords_custom_id_limit_and_round_trip(self) -> None:

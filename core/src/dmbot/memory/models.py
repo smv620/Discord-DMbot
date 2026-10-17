@@ -228,6 +228,9 @@ class Entity:
     # An item of which only one exists (Heartseeker, not a longbow). None: nobody said, so a
     # proper name means yes (`looks_named`); the DM's switch on the name card sets it.
     unique_item: bool | None = None
+    # A clue only some people know (#1649): the DM's switch. Who knows it is its confirmed
+    # `knows` facts. Meaningful for a clue only; off for everything else.
+    audience_limited: bool = False
 
     @property
     def is_unique(self) -> bool:

@@ -329,25 +329,44 @@ export interface HouseRules {
   sets: HouseRuleSet[];
 }
 
-/** A campaign with homebrew the DM let the players know, in one of the person's servers (#1525).
+/** A campaign with homebrew in one of the person's servers (#1525).
  * `ref` is `<server>.<campaign>`. */
 export interface HomebrewCampaign {
   ref: string;
   name: string;
   serverName: string;
   entries: number;
+  /** How many homebrew packs the campaign follows; missing from an older API (#1586). */
+  packs?: number;
 }
 
-/** One shown homebrew entry: the API sends only what the DM let the players know. */
+/** One homebrew entry. */
 export interface HomebrewEntry {
   kind: string;
   name: string;
   summary: string | null;
   text: string;
+  /** From a rulebook the game master shared, as the Discord players' card tags it (#1579);
+   * missing from an older API, which shows no tag. */
+  fromBook?: boolean;
+  /** A 2014 book while the campaign plays a newer ruleset: tagged [Legacy 2014]. */
+  legacy?: boolean;
+  /** False when the game master turned it off (#1629): kept in the list, marked (off). Missing
+   * from an older API, which means on. */
+  enabled?: boolean;
+}
+
+/** A homebrew pack the campaign follows, with its entries. */
+export interface HomebrewPack {
+  name: string;
+  version: number;
+  entries: HomebrewEntry[];
 }
 
 export interface HomebrewPage {
   name: string;
+  /** The packs the campaign follows; missing from an older API (#1586). */
+  packs?: HomebrewPack[];
   /** What the Download button saves the file as. */
   fileName: string;
   /** Each kind's entries by name, kinds in no fixed order (the page orders them). */

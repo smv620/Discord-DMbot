@@ -1,8 +1,8 @@
 /** @jsxImportSource preact */
-// The homebrew (#1525): every campaign with an entry the DM let the players know, and one
+// The homebrew (#1525): every campaign with homebrew, and one
 // campaign's entries to read and download. Anyone in the Discord server may read them, so this is
-// for players as much as DMs; the DM adds and changes entries in Discord, never here. The API
-// sends only the entries the DM let the players know, so a hidden one is never on this page.
+// for players as much as DMs; the DM adds and changes entries in Discord, never here. Nothing is
+// hidden from players (#1643); an entry the DM turned off shows muted, marked (off).
 import { useEffect, useRef, useState } from "preact/hooks";
 
 import { kindOrder, problem, text } from "../content/homebrew";
@@ -10,6 +10,7 @@ import {
   ApiError,
   type AccountApi,
   type HomebrewCampaign,
+  type HomebrewEntry,
   type HomebrewPage,
 } from "./api";
 
@@ -124,12 +125,15 @@ function Campaigns({ api }: { api: AccountApi }) {
         ) : (
           <>
             <p class="lead">{text.lead}</p>
+            <p class="small">
+              {text.rulesNote} <a href="/account/house-rules">{text.rulesLink}</a>
+            </p>
             <ul class="campaigns">
               {campaigns.map((c) => (
                 <li key={c.ref}>
                   <span class="campaign-name">{c.name}</span>
                   <span class="small">
-                    {text.campaignLine(c.serverName, c.entries)}
+                    {text.campaignLine(c.serverName, c.entries, c.packs)}
                   </span>
                   <a
                     href={`/account/homebrew/${encodeURIComponent(c.ref)}`}
@@ -147,6 +151,68 @@ function Campaigns({ api }: { api: AccountApi }) {
   );
 }
 
+/** Entries grouped by kind in the bot's order (the API already lists each kind by name). Pack
+ * lists use plain headings, not landmarks, so the page has one region per kind of its own. */
+function EntryGroups({
+  entries,
+  landmark,
+}: {
+  entries: HomebrewEntry[];
+  landmark: boolean;
+}) {
+  const kinds = kindOrder.filter((k) => entries.some((e) => e.kind === k));
+  for (const e of entries) if (!kinds.includes(e.kind)) kinds.push(e.kind);
+  return (
+    <>
+      {kinds.map((kind) => {
+        const body = (
+          <>
+            <h3>{text.kinds[kind] ?? kind}</h3>
+            <ul class="house-rules homebrew-list">
+              {entries
+                .filter((e) => e.kind === kind)
+                .map((e) => (
+                  <li key={e.name} class={e.enabled === false ? "muted" : undefined}>
+                    <span>
+                      <strong>{e.name}</strong>
+                      {e.enabled === false && (
+                        <>
+                          {" "}
+                          <span class="muted homebrew-tag">{text.off}</span>
+                        </>
+                      )}
+                      {e.fromBook && (
+                        <>
+                          {" "}
+                          <span class="muted homebrew-tag">{text.fromBook}</span>
+                        </>
+                      )}
+                      {e.legacy && (
+                        <>
+                          {" "}
+                          <span class="muted homebrew-tag">{text.legacy}</span>
+                        </>
+                      )}
+                    </span>
+                    {e.summary && <span class="small muted">{e.summary}</span>}
+                    <span class="homebrew-text">{e.text}</span>
+                  </li>
+                ))}
+            </ul>
+          </>
+        );
+        return landmark ? (
+          <section key={kind} aria-label={text.kinds[kind] ?? kind}>
+            {body}
+          </section>
+        ) : (
+          <div key={kind}>{body}</div>
+        );
+      })}
+    </>
+  );
+}
+
 function Entries({
   api,
   campaignRef,
@@ -161,50 +227,54 @@ function Entries({
   return (
     <Shell api={api} load={load}>
       {(found: HomebrewPage) => {
-        // Grouped by kind in the bot's order; the API already lists each kind by name.
-        const kinds = kindOrder.filter((k) =>
-          found.entries.some((e) => e.kind === k),
-        );
-        for (const e of found.entries)
-          if (!kinds.includes(e.kind)) kinds.push(e.kind);
+        const packs = found.packs ?? []; // an older API has none
         return (
           <>
             <p>
               <a href="/account/homebrew">{text.allCampaigns}</a>
             </p>
             <h2>{found.name}</h2>
+            <p class="small">
+              {text.rulesNote} <a href="/account/house-rules">{text.rulesLink}</a>
+            </p>
             <p class="small">{text.leadOneCampaign}</p>
             <p class="small">{text.dmChanges}</p>
+            {(found.entries.some((e) => e.fromBook) ||
+              found.entries.some((e) => e.legacy)) && (
+              <p class="small">{text.bookNote}</p>
+            )}
             {found.entries.length === 0 ? (
               <p class="panel" role="status">
-                {text.empty}
+                {packs.length > 0 ? text.emptyButPack : text.empty}
               </p>
             ) : (
               <>
-                {kinds.map((kind) => (
-                  <section key={kind} aria-label={text.kinds[kind] ?? kind}>
-                    <h3>{text.kinds[kind] ?? kind}</h3>
-                    <ul class="house-rules homebrew-list">
-                      {found.entries
-                        .filter((e) => e.kind === kind)
-                        .map((e) => (
-                          <li key={e.name}>
-                            <strong>{e.name}</strong>
-                            {e.summary && (
-                              <span class="small muted">{e.summary}</span>
-                            )}
-                            <span class="homebrew-text">{e.text}</span>
-                          </li>
-                        ))}
-                    </ul>
-                  </section>
-                ))}
+                <EntryGroups entries={found.entries} landmark />
                 <Download
                   api={api}
                   campaignRef={campaignRef}
                   fileName={found.fileName}
+                  withPacks={packs.length > 0}
                 />
               </>
+            )}
+            {packs.length > 0 && (
+              <section aria-labelledby="packs-heading">
+                <h3 id="packs-heading">{text.packsHeading}</h3>
+                <p class="small">{text.packsNote}</p>
+                {packs.map((p) => (
+                  <div key={`${p.name}-${p.version}`}>
+                    <p>
+                      <strong>{text.packLine(p.name, p.version)}</strong>
+                    </p>
+                    {p.entries.length === 0 ? (
+                      <p class="small muted">{text.packNone}</p>
+                    ) : (
+                      <EntryGroups entries={p.entries} landmark={false} />
+                    )}
+                  </div>
+                ))}
+              </section>
             )}
           </>
         );
@@ -217,10 +287,12 @@ function Download({
   api,
   campaignRef,
   fileName,
+  withPacks,
 }: {
   api: AccountApi;
   campaignRef: string;
   fileName: string;
+  withPacks: boolean;
 }) {
   const [state, setState] = useState<"idle" | "busy" | "failed">("idle");
   const busy = useRef(false);
@@ -255,7 +327,9 @@ function Download({
       >
         {state === "busy" ? text.downloading : text.download}
       </button>{" "}
-      <span class="small muted">{text.downloadNote}</span>{" "}
+      <span class="small muted">
+        {withPacks ? text.downloadNotePacks : text.downloadNote}
+      </span>{" "}
       <span role="status" class="warn">
         {state === "failed" ? text.downloadFailed : ""}
       </span>

@@ -19,7 +19,7 @@ from __future__ import annotations
 
 import logging
 import secrets
-from collections.abc import Sequence
+from collections.abc import Collection, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
 
@@ -27,6 +27,7 @@ from psycopg.types.json import Jsonb
 
 from dmbot.rules import pack_content
 from dmbot.rules.homebrew import Homebrew, HomebrewStore, name_key
+from dmbot.rules.homebrew_sources import SourceStore
 from dmbot.rules.house import require_dm
 from dmbot.rules.pack_content import PACKS_MAX
 from dmbot.rules.rule_sets import (
@@ -399,31 +400,96 @@ def cite(name: str, version: int) -> str:
     return f"{name} homebrew, v{version}"
 
 
-def from_follow(follow: Follow, campaign_id: str, place: int) -> list[Homebrew]:
+def pointer_urls(follows: Sequence[Follow]) -> set[str]:
+    """The page addresses the followed packs point to (#1635)."""
+    urls: set[str] = set()
+    for follow in follows:
+        try:
+            entries = pack_content.valid_content(follow.content)["entries"]
+        except pack_content.BadPack:
+            continue
+        urls.update(e["page"] for e in entries if "page" in e)
+    return urls
+
+
+def from_follow(
+    follow: Follow,
+    campaign_id: str,
+    place: int,
+    pages: Mapping[str, Any] | None = None,
+    approved: Collection[str] = (),
+) -> list[Homebrew]:
     """The followed pack's entries as read-only homebrew, in the pack's order. `place`: the pack's
     place in the campaign's order, which keeps the (negative) ids apart. The content was checked
-    on the way in; an entry that still doesn't fit is skipped rather than failing the answer."""
+    on the way in; an entry that still doesn't fit is skipped rather than failing the answer.
+    An entry from a site (#1635) is used only when the campaign has approved the site
+    (`approved`); one that points to a page takes its words from `pages` (the kept pages, by
+    address), and is skipped when the page isn't there."""
     try:
         entries = pack_content.valid_content(follow.content)["entries"]
     except pack_content.BadPack:
         return []
-    return [
-        Homebrew(
-            id=-(place * 1000 + i + 1),
-            campaign_id=campaign_id,
-            kind=e["kind"],
-            name=e["name"],
-            text=e["text"],
-            summary=e["summary"],
-            players_may_know=e["known"],
-            created_by=0,
-            created_at=follow.followed_at,
-            updated_at=follow.followed_at,
-            version=follow.version,
-            source=cite(follow.name, follow.version),
+    out: list[Homebrew] = []
+    for i, e in enumerate(entries):
+        domain = e.get("domain")
+        if domain is not None and domain not in approved:
+            continue  # waiting for the DM to say they have the right to use that site's entries
+        kind, name = e["kind"], e["name"]
+        text, summary, page_url = e["text"], e["summary"], None
+        if "page" in e:
+            page = (pages or {}).get(e["page"])
+            if page is None:
+                continue
+            # The page says what it is: a publisher can't call a page "Fireball" (#1635 review).
+            kind, name, text, summary, page_url = (
+                page.kind,
+                page.name,
+                page.text,
+                page.summary,
+                e["page"],
+            )
+        out.append(
+            Homebrew(
+                id=-(place * 1000 + i + 1),
+                campaign_id=campaign_id,
+                kind=kind,
+                name=name,
+                text=text,
+                summary=summary,
+                created_by=0,
+                created_at=follow.followed_at,
+                updated_at=follow.followed_at,
+                version=follow.version,
+                source=cite(follow.name, follow.version),
+                source_kind="link" if page_url else "typed",
+                credit_domain=domain,
+                page_url=page_url,
+            )
         )
-        for i, e in enumerate(entries)
-    ]
+    return out
+
+
+def waiting_by_site(
+    follows: Sequence[Follow],
+    approved: Collection[str],
+    pages: Mapping[str, Any] | None = None,
+) -> dict[str, int]:
+    """How many entries of the followed packs wait for a site's approval, by site (#1635). An
+    entry pointing to a page that isn't kept here is not waiting: approving the site would not
+    turn it on (#1646). `pages` None counts every entry (no page lookup)."""
+    waiting: dict[str, int] = {}
+    for follow in follows:
+        try:
+            entries = pack_content.valid_content(follow.content)["entries"]
+        except pack_content.BadPack:
+            continue
+        for e in entries:
+            domain = e.get("domain")
+            if pages is not None and "page" in e and e["page"] not in pages:
+                continue
+            if domain is not None and domain not in approved:
+                waiting[domain] = waiting.get(domain, 0) + 1
+    return waiting
 
 
 class HomebrewReader:
@@ -434,22 +500,56 @@ class HomebrewReader:
     `HomebrewStore`, so the readers (`/dmbot rule`, rules cards, the sidebar) take either. A pack
     that can't be read costs only its entries, never the campaign's own."""
 
-    def __init__(self, store: HomebrewStore, packs: HomebrewPackStore | None) -> None:
+    def __init__(
+        self,
+        store: HomebrewStore,
+        packs: HomebrewPackStore | None,
+        sources: SourceStore | None = None,
+    ) -> None:
         self._store = store
         self._packs = packs
+        self._sources = sources  # which sites the campaign approved, and the kept pages (#1635)
+
+    async def _approved(self, guild_id: int, campaign_id: str) -> set[str]:
+        if self._sources is None:
+            return set()
+        return {a.domain for a in await self._sources.approvals(guild_id, campaign_id)}
 
     async def _from_packs(self, guild_id: int, campaign_id: str) -> list[Homebrew]:
         if self._packs is None:
             return []
         try:
             follows = await self._packs.pack_copies(guild_id, campaign_id)
+            approved = await self._approved(guild_id, campaign_id)
+            urls = pointer_urls(follows)
+            pages = await self._sources.pages_by_url(urls) if self._sources and urls else {}
         except Exception:
             log.exception("Couldn't read the followed homebrew packs")
             return []
-        return [e for place, f in enumerate(follows) for e in from_follow(f, campaign_id, place)]
+        return [
+            e
+            for place, f in enumerate(follows)
+            for e in from_follow(f, campaign_id, place, pages, approved)
+        ]
+
+    async def waiting(self, guild_id: int, campaign_id: str) -> dict[str, int]:
+        """The entries of the followed packs that wait for a site's approval, by site: not used
+        until the DM says they have the right to use that site's entries (#1635)."""
+        if self._packs is None:
+            return {}
+        try:
+            follows = await self._packs.pack_copies(guild_id, campaign_id)
+            urls = pointer_urls(follows)
+            pages = await self._sources.pages_by_url(urls) if self._sources and urls else {}
+            return waiting_by_site(follows, await self._approved(guild_id, campaign_id), pages)
+        except Exception:
+            log.exception("Couldn't work out which followed entries are waiting")
+            return {}
 
     async def list(self, guild_id: int, campaign_id: str) -> list[Homebrew]:
-        own = await self._store.list(guild_id, campaign_id)
+        # Only entries the DM has not turned off (#1629): this is what DMbot *uses* at the table.
+        # (A followed pack's entry of the same name is a different entry and still answers.)
+        own = await self._store.list(guild_id, campaign_id, usable_only=True)
         packs = await self._from_packs(guild_id, campaign_id)
         # A shared book's entry ranks below a followed pack's (#1563): a pack's entry of the same
         # name takes its place, the book's is kept behind it in the free rules' order.
@@ -465,7 +565,7 @@ class HomebrewReader:
     async def find(self, guild_id: int, campaign_id: str, name: str) -> Homebrew | None:
         """The campaign's own entry with this name, else the first followed pack's. An entry the
         DM loaded from a book ranks below a followed pack's (#1563): the pack's answers."""
-        own = await self._store.find(guild_id, campaign_id, name)
+        own = await self._store.find(guild_id, campaign_id, name, usable_only=True)
         if (own is not None and not own.from_book) or self._packs is None:
             return own
         key = name_key(name)

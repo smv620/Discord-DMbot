@@ -116,8 +116,10 @@ async def _names(interaction: discord.Interaction, campaign: Campaign) -> Campai
     if cache is None:
         await _tell(interaction, NOT_AVAILABLE)
         return None
-    try:
-        return await cache.get(campaign.guild_id, campaign.id)
+    try:  # (without the clues only some people know, unless this person is a DM, #1649)
+        return (await cache.get(campaign.guild_id, campaign.id)).for_viewer(
+            sees_secrets(campaign, interaction.user.id)
+        )
     except Exception:
         log.exception("Couldn't load the campaign's names")
         await _tell(interaction, "DMbot couldn't load the names just now. Try again in a moment.")
@@ -1715,7 +1717,11 @@ def download_files(
         own = name_key(e.name)
         mine = by_entity.get(e.id, [])
         others = tuple(a.text for a in mine if not a.secret and a.key != own)
-        hidden = tuple(a.text for a in mine if a.secret) if secrets else ()
+        hidden = (
+            tuple(a.text for a in mine if a.secret and not (e.audience_limited and a.key == own))
+            if secrets
+            else ()
+        )
         out.append(OutName(e.name, e.kind_key, others, hidden))
     listed = (
         [

@@ -33,7 +33,7 @@ from dmbot.ai import AIError
 from dmbot.audio.segmenter import Utterance
 from dmbot.rules import house_voice
 from dmbot.sidebar import memo, table_links
-from dmbot.sidebar.ask import AskLimiter, Request, request_in
+from dmbot.sidebar.ask import AskLimiter, Request, request_in, voiced_by_npc
 from dmbot.transcript.models import (
     SIDEBAR_ANSWER,
     SIDEBAR_QUESTION,
@@ -469,17 +469,21 @@ class SidebarService:
         *,
         in_character: bool = False,
         typed: bool = False,
+        entity: str = "",
     ) -> bool:
         """A line at the table: if it clearly asks for a look-up, answer it in the background.
         "Hey DMbot, …" works from anyone who agreed to be recorded and is answered in the
         table's DMbot chat, where everyone reads it (#1187; with no such channel only the DM's
         is answered, privately, as before). "Hold on, I need to find …" is the DM's alone and
         stays private. True if a question was started, within the safety limits. `typed`: it
-        was typed in the table's chat, and its lineage says so (no speech-to-text; #1118)."""
+        was typed in the table's chat, and its lineage says so (no speech-to-text; #1118).
+        `entity` (#1624): who the DM was voicing in this line, if known (a transcript line's
+        `entity`): a line said as a named NPC never asks DMbot anything; "" (not known) and
+        narrating do."""
         if self.answerer is None or table.campaign_id is None:
             return False  # no engine: quietly nothing, and the minute is not used up
         is_dm = _is_dm(table, user_id)
-        request = request_in(text, in_character=in_character)
+        request = request_in(text, in_character=in_character or voiced_by_npc(entity))
         if request is None or (request.verb and not is_dm):
             return False  # (a player saying "I need to find my sheet" is not asking DMbot)
         public = not request.verb and table.dmbchat_channel_id is not None
