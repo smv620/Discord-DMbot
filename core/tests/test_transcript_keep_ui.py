@@ -10,6 +10,7 @@ from unittest.mock import AsyncMock
 
 from dmbot.campaigns import CampaignError
 from dmbot.dm_screen import transcript_keep as keep
+from tests.answer_first import Timeline
 
 CID = "ab" * 16
 
@@ -30,7 +31,10 @@ def press(user: int, current: Any, saved: Any = None) -> Any:
         guild=SimpleNamespace(id=1),
         guild_id=1,
         user=SimpleNamespace(id=user),
-        response=SimpleNamespace(edit_message=AsyncMock(), send_message=AsyncMock()),
+        response=SimpleNamespace(
+            edit_message=AsyncMock(), send_message=AsyncMock(), defer=AsyncMock()
+        ),
+        edit_original_response=AsyncMock(),
     )
     return it
 
@@ -81,8 +85,17 @@ class Panel(unittest.IsolatedAsyncioTestCase):
         it.client.campaigns.set_transcript_keep.assert_awaited_once_with(1, CID, 90)
         self.assertIn(
             "Saved. Sessions older than 90 days",
-            it.response.edit_message.await_args.kwargs["content"],
+            it.edit_original_response.await_args.kwargs["content"],
         )
+
+    async def test_saving_answers_discord_before_the_database(self) -> None:
+        line = Timeline()
+        it = press(7, campaign(None), saved=campaign(90))
+        it.response, it.edit_original_response = line.response, line.edit_original_response
+        it.client.campaigns.set_transcript_keep = line.slow("set_transcript_keep", campaign(90))
+        await keep.KeepYesButton(CID, "90").callback(it)
+        line.assert_answered_first()
+        self.assertIn("slow:set_transcript_keep", line.events)
 
     async def test_cancel_changes_nothing(self) -> None:
         it = press(7, campaign(365))
@@ -108,13 +121,13 @@ class Panel(unittest.IsolatedAsyncioTestCase):
         it.client.campaigns.set_transcript_keep = AsyncMock(side_effect=RuntimeError("down"))
         with self.assertLogs("dmbot.dm_screen.transcript_keep", "ERROR"):
             await keep.KeepYesButton(CID, "30").callback(it)
-        self.assertEqual(it.response.edit_message.await_args.kwargs["content"], keep.COULDNT)
+        self.assertEqual(it.edit_original_response.await_args.kwargs["content"], keep.COULDNT)
 
     async def test_a_refused_choice_is_told_in_its_words(self) -> None:
         it = press(7, campaign(None))
         it.client.campaigns.set_transcript_keep = AsyncMock(side_effect=CampaignError("Nope."))
         await keep.KeepYesButton(CID, "30").callback(it)
-        self.assertEqual(it.response.edit_message.await_args.kwargs["content"], "Nope.")
+        self.assertEqual(it.edit_original_response.await_args.kwargs["content"], "Nope.")
 
     def test_shorter_than(self) -> None:
         self.assertTrue(keep._shorter(90, None))
