@@ -321,15 +321,19 @@ class SetupTests(DatabaseTest):
         self.new.send.assert_not_called()
         assert result.warning == messages.CANT_PIN
 
-    async def test_a_card_missing_a_new_button_is_posted_again(self) -> None:
-        # #553: the same words, but from before ⚙️ Settings: compared by buttons too.
+    async def test_a_card_with_the_old_buttons_is_posted_again_without_them(self) -> None:
+        # #1666: the same words once, but from before Settings moved to the DM Bot channel: the
+        # card is compared by buttons too, so an old one is replaced, not kept.
         ids = [f"dmbot:vis:{self.campaign.id}:{v}" for v in ("private", "peek", "open")]
+        ids.append(f"dmbot:settings:{self.campaign.id}")
         card = self.current_card(pinned=True, buttons=ids)
         await self.with_screen(card)
         await setup_dm_screen(self.guild, self.campaign.id, self.store)
         card.delete.assert_awaited_once()
         sent = self.new.send.await_args.kwargs["view"]
-        assert f"dmbot:settings:{self.campaign.id}" in [i.custom_id for i in sent.children]
+        custom_ids = [i.custom_id for i in sent.children]
+        assert f"dmbot:settings:{self.campaign.id}" not in custom_ids
+        assert not any(c.startswith("dmbot:vis:") for c in custom_ids)
 
     async def test_a_pinned_current_card_is_left_alone(self) -> None:
         card = self.current_card(pinned=True)

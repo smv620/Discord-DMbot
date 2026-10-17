@@ -284,6 +284,8 @@ _SETTABLE = frozenset(
         "transcript_channel_id",
         "gametime_channel_id",
         "dmbchat_channel_id",
+        "dm_bot_channel_id",
+        "dm_bot_message_id",
         "dndbeyond_invite",
         "rules_cards",
         "side_initiative",
@@ -412,7 +414,7 @@ class CampaignStore:
         async with self._db.guild(guild_id, snapshot=True) as conn:
             cur = await conn.execute(
                 "SELECT dm_screen_channel_id, transcript_channel_id, gametime_channel_id,"
-                " dmbchat_channel_id"
+                " dmbchat_channel_id, dm_bot_channel_id"
                 " FROM campaigns WHERE guild_id = %s",
                 (guild_id,),
             )
@@ -626,6 +628,23 @@ class CampaignStore:
     ) -> Campaign:
         """Store the campaign's DMbot chat channel (#1187): not part of a backup."""
         return await self._set(guild_id, campaign_id, "dmbchat_channel_id", channel_id)
+
+    async def set_dm_bot_channel(
+        self, guild_id: int, campaign_id: str, channel_id: int | None
+    ) -> Campaign:
+        """Store the campaign's DM Bot channel (#1666): not part of a backup. A new channel
+        starts with no panel message, so the old message id goes with the old channel."""
+        current = await self.get(guild_id, campaign_id)
+        if current is not None and current.dm_bot_channel_id == channel_id:
+            return current  # the same channel again (every start): its panel message stays
+        await self._set(guild_id, campaign_id, "dm_bot_message_id", None)
+        return await self._set(guild_id, campaign_id, "dm_bot_channel_id", channel_id)
+
+    async def set_dm_bot_message(
+        self, guild_id: int, campaign_id: str, message_id: int | None
+    ) -> Campaign:
+        """Store the id of the DM Bot channel's one panel message (#1666)."""
+        return await self._set(guild_id, campaign_id, "dm_bot_message_id", message_id)
 
     async def set_table_chat(
         self, guild_id: int, campaign_id: str, *, on: bool, channel_id: int | None
@@ -1580,6 +1599,9 @@ def _to_campaign(row: dict[str, Any], dms: set[int]) -> Campaign:
         dmbchat_channel_id=row_int(row, "dmbchat_channel_id")
         if "dmbchat_channel_id" in row
         else None,
+        # Absent in a schema older than #1666, for the same reason.
+        dm_bot_channel_id=row_int(row, "dm_bot_channel_id") if "dm_bot_channel_id" in row else None,
+        dm_bot_message_id=row_int(row, "dm_bot_message_id") if "dm_bot_message_id" in row else None,
         # Absent in a schema older than #1119, for the same reason.
         dndbeyond_invite=row.get("dndbeyond_invite"),
         # Absent before #1118: the default is on, with no extra channel.

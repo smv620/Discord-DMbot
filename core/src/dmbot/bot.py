@@ -84,6 +84,7 @@ from dmbot.dm_screen import (
     StopListeningButton,
     VisibilityButton,
     delete_campaign,
+    dm_bot_buttons,
     ensure_dm_screen,
     house_sync,
     pack_suggestion,
@@ -99,6 +100,8 @@ from dmbot.dm_screen import effects as timer_screen
 from dmbot.dm_screen import house_voice as house_voice_screen
 from dmbot.dm_screen import levels as screen_levels
 from dmbot.dm_screen import messages as screen_messages
+from dmbot.dm_screen.channel import update_help_card
+from dmbot.dm_screen.dm_bot_channel import DmBotChannelError, setup_dm_bot_channel
 from dmbot.dm_screen.dmbchat_channel import DmbchatChannelError, setup_dmbchat_channel
 from dmbot.dm_screen.game_masters import GameMastersButton
 from dmbot.dm_screen.gametime_channel import GametimeChannelError, setup_gametime_channel
@@ -1037,6 +1040,7 @@ class DMBot(commands.AutoShardedBot):
         self.tree.add_command(transcript_command)
         # DM-screen buttons keep working after a restart.
         self.add_dynamic_items(PeekButton, HideButton, VisibilityButton, StopListeningButton)
+        self.add_dynamic_items(dm_bot_buttons.OpenButton, dm_bot_buttons.HelpButton)  # #1666
         self.add_dynamic_items(
             SettingsButton,
             LevelButton,
@@ -1767,9 +1771,8 @@ class DMBot(commands.AutoShardedBot):
         button comes off when the session ends, so old messages can't be pressed."""
         view = None
         if table.campaign_id:
-            # ⚙️ Settings first (#515): the common tap isn't next to Stop's edge.
+            # (Settings moved to the DM Bot channel, #1666: only the in-game control stays.)
             view = discord.ui.View(timeout=None)
-            view.add_item(SettingsButton(table.campaign_id))
             view.add_item(StopListeningButton(table.campaign_id))
         message = await self.post_message(table.screen_channel_id, text, view)
         if message is None:
@@ -2879,6 +2882,7 @@ class DMBot(commands.AutoShardedBot):
         transcript_id, transcript_problem = await self._transcript_channel(guild, campaign, screen)
         gametime_problem = await self._gametime_channel(guild, campaign, screen)
         dmbchat_id, dmbchat_problem = await self._dmbchat_channel(guild, campaign, screen)
+        dm_bot_problem = await self._dm_bot_channel(guild, campaign, screen)
 
         campaign = await self.campaigns.record_start(guild.id, campaign.id, screen_id, voice.id)
         started_at = int(time.time())
@@ -2934,6 +2938,8 @@ class DMBot(commands.AutoShardedBot):
             await self.post(screen_id, gametime_problem)
         if dmbchat_problem:
             await self.post(screen_id, dmbchat_problem)
+        if dm_bot_problem:
+            await self.post(screen_id, dm_bot_problem)
         self._check_house_file(campaign, screen_id)
         self._track(update_notes.check_all(self, campaign, screen_id), "shared-rules-update")
         trial_line = ""
@@ -7652,6 +7658,57 @@ class DMBot(commands.AutoShardedBot):
                 await clock_screen.show(self, fresh, stored)
         except Exception:
             log.exception("Couldn't put the players' clock in the game-time channel")
+        return None
+
+    async def upgrade_dm_bot_channel(self, campaign: Campaign) -> int | None:
+        """A campaign made before the DM Bot channel (#1666) gets one when its ⚙️ Settings is
+        pressed, not only at the next session start. Returns the new channel's id, or None
+        (it already had one, or it couldn't be made: the start-time note says why). The
+        campaign is read again first, so two quick presses make one channel."""
+        guild = self.get_guild(campaign.guild_id)
+        if guild is None:
+            return None
+        current = await self.campaigns.get(guild.id, campaign.id)
+        if current is None or current.dm_bot_channel_id is not None:
+            return None
+        screen = (
+            guild.get_channel(current.dm_screen_channel_id)
+            if current.dm_screen_channel_id
+            else None
+        )
+        await self._dm_bot_channel(guild, current, screen)  # (a failed make leaves no id)
+        fresh = await self.campaigns.get(guild.id, campaign.id)
+        return fresh.dm_bot_channel_id if fresh is not None else None
+
+    async def _dm_bot_channel(
+        self, guild: discord.Guild, campaign: Campaign, screen: object
+    ) -> str | None:
+        """The DM Bot channel (#1666), made or repaired at every start. A note for the DM if it
+        couldn't be set up; a failure here never stops a session."""
+        category = getattr(screen, "category", None)
+        try:
+            await setup_dm_bot_channel(
+                guild,
+                campaign.id,
+                self.campaigns,
+                category=category if isinstance(category, discord.CategoryChannel) else None,
+            )
+            fresh = await self.campaigns.get(guild.id, campaign.id)
+            if fresh is not None:
+                await dm_bot_buttons.ensure_panel(self, fresh)  # (a failure there is logged)
+                if fresh.dm_bot_channel_id != campaign.dm_bot_channel_id and isinstance(
+                    screen, discord.TextChannel
+                ):  # a new channel: the DM screen's help card points to it now, not next start
+                    try:
+                        await update_help_card(screen, fresh, guild.me)
+                    except Exception:  # the channel exists: never report it as failed
+                        log.warning("Couldn't refresh the help card for the DM Bot channel",
+                                    exc_info=True)  # fmt: skip
+        except DmBotChannelError as exc:
+            return screen_messages.dm_bot_failed(str(exc))
+        except Exception:
+            log.exception("Couldn't set up the DM Bot channel")
+            return screen_messages.dm_bot_failed(screen_messages.TRANSCRIPT_NO_ANSWER)
         return None
 
     async def _dmbchat_channel(
