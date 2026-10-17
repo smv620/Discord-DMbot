@@ -9,6 +9,7 @@ import unittest
 from functools import partial
 from types import SimpleNamespace
 from typing import Any
+from unittest.mock import AsyncMock
 
 from dmbot.campaigns.store import decode_backup, encode_backup
 from dmbot.memory import standing as st
@@ -17,6 +18,7 @@ from dmbot.memory.models import MemoryRuleError
 from dmbot.memory.recall import DM_SCREEN, PLAYERS, RecallService
 from dmbot.memory.standing import Index, Link, Node, Row
 from dmbot.ui import deeds as ui
+from dmbot.ui import standing as standing_ui
 from tests.test_adventure import press
 from tests.test_memory_store import DM, GUILD_A, GUILD_B, ConfirmedMemoryTest
 
@@ -368,6 +370,26 @@ class Screens(Stored):
         index = await self.memory.standing_index(GUILD_A, self.c)
         self.assertIn(525252, [r.session for r in index.deeds[(self.guard, self.kesh)]])
 
+    async def test_the_standing_screen_still_shows_when_the_sessions_cannot_be_read(self) -> None:
+        await self.deed()
+
+        async def broken(*a: Any, **kw: Any) -> Any:
+            raise RuntimeError("the transcripts are down")
+
+        it = self.pressing()
+        it.client.transcripts = SimpleNamespace(sessions=broken)
+        await standing_ui.show_standing(it, self.c, self.guard)
+        shown = it.sent.get("content") or it.response.edit_message.call_args.kwargs["content"]
+        self.assertIn("⚔️ Saved the mill from the fire", shown)
+        self.assertNotIn("session 4", shown)  # the reason shows, without a session number
+        ok = self.pressing()
+        ok.client.transcripts = SimpleNamespace(
+            sessions=AsyncMock(return_value=[SimpleNamespace(started_at=700, number=4)])
+        )
+        await standing_ui.show_standing(ok, self.c, self.guard)
+        again = ok.sent.get("content") or ok.response.edit_message.call_args.kwargs["content"]
+        self.assertIn("session 4", again)
+
     async def test_only_a_dm_can_use_any_step(self) -> None:
         doer = await self.memory.entity(GUILD_A, self.c, self.kesh)
         guard = await self.memory.entity(GUILD_A, self.c, self.guard)
@@ -377,6 +399,28 @@ class Screens(Stored):
         await confirm._yes(it)
         self.assertIn(ui.ONLY_DM, it.sent["content"])
         self.assertEqual((await self.standing()).shown, "No opinion yet")
+
+
+class Doers(Stored):
+    async def test_a_deed_whose_doer_is_not_a_player_character_or_the_party_counts_for_nothing(
+        self,
+    ) -> None:
+        await self.deed()
+        index = await self.memory.standing_index(GUILD_A, self.c, {700: 4})
+        self.assertEqual(len(index.deeds[(self.guard, self.kesh)]), 1)
+        async with self.db.guild(GUILD_A) as conn:  # the doer is no longer a player character
+            await conn.execute(
+                "UPDATE memory_entities SET role = 'npc' WHERE guild_id = %s AND id = %s",
+                (GUILD_A, self.kesh),
+            )
+        index = await self.memory.standing_index(GUILD_A, self.c, {700: 4})
+        self.assertEqual(index.deeds, {})
+        self.assertEqual(index.standing(self.guard, self.kesh).shown, "No opinion yet")
+
+    async def test_the_party_counts_as_a_doer(self) -> None:
+        await self.deed(doer=self.party)
+        index = await self.memory.standing_index(GUILD_A, self.c, {700: 4})
+        self.assertEqual(len(index.deeds[(self.guard, self.party)]), 1)
 
 
 class Scale(Stored):

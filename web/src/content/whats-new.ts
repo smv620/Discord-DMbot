@@ -309,7 +309,7 @@ export const held: Held[] = [
   {
     date: "2026-10-17",
     title: "A quiet reminder of the game time",
-    what: "During a session, if nobody has looked at the game clock for half an hour, DMbot says where the game is on the DM screen: \"Where we are: afternoon of Day 4 (14:30)\". With a split party it lists each group. It stays quiet during a fight and when the DM screen is set to Quiet. Players never see it.",
+    what: "If the game clock hasn't come up for a while during a session, DMbot drops one quiet line on the DM screen: \"Where we are: Day 4, afternoon (14:30)\". With a split party it lists each group. It stays quiet during a fight and when the DM screen is set to Quiet. Players never see it.",
     reason:
       "Held until it has been seen working on the test server (#1738).",
   },

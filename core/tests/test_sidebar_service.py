@@ -6,7 +6,7 @@ import unittest
 from dataclasses import dataclass, field
 from types import SimpleNamespace
 from typing import Any
-from unittest.mock import AsyncMock
+from unittest.mock import ANY, AsyncMock
 
 from dmbot.ai import AIError
 from dmbot.sidebar import service
@@ -1345,6 +1345,46 @@ class GuideMe(unittest.IsolatedAsyncioTestCase):
         await self.sidebar.on_dm_message(message)
         self.assertEqual(self.host.dms, [(DM, self.GUIDE)])
         self.assertEqual(self.answerer.asked, [])
+
+    async def test_guide_me_works_when_the_answer_engine_is_missing(self) -> None:
+        self.sidebar.answerer = None  # no AI key: Guide me needs none (#1745)
+        self.assertTrue(self.sidebar.ask_at_table(self.table, DM, self.SAID))
+        await self.settle()
+        self.assertEqual(self.host.dms, [(DM, self.GUIDE)])
+        self.assertEqual(self.host.chat, [])
+
+    async def test_with_no_engine_anything_but_guide_me_is_still_quietly_nothing(self) -> None:
+        self.sidebar.answerer = None
+        self.assertFalse(self.sidebar.ask_at_table(self.table, DM, "Hey DMbot, what time is it?"))
+        self.assertFalse(self.sidebar.ask_at_table(self.table, PLAYER, self.SAID))  # not a DM's
+        self.assertFalse(self.sidebar.ask_in_chat(self.table, DM, "what's next in the adventure?"))
+        self.assertEqual((self.host.dms, self.host.guide_asked), ([], []))
+
+    async def test_with_no_engine_guide_me_off_says_nothing_and_asks_no_engine(self) -> None:
+        self.sidebar.answerer = None
+        self.host.guide = None  # Guide me can't be given
+        self.sidebar.ask_at_table(self.table, DM, self.SAID)
+        await self.settle()
+        self.assertEqual(self.host.dms, [])
+
+    async def test_a_typed_whats_next_works_without_an_engine_but_other_questions_wait(
+        self,
+    ) -> None:
+        self.sidebar.answerer = None
+        await self.sidebar.on_dm_message(dm_message(content="what's next?"))
+        self.assertEqual(self.host.dms, [(DM, self.GUIDE)])
+        other = dm_message(content="how does grappling work?")
+        await self.sidebar.on_dm_message(other)
+        other.channel.send.assert_awaited_once()  # the usual "not yet" note
+        self.assertEqual(len(self.host.dms), 1)
+
+    async def test_a_typed_whats_next_with_guide_me_off_and_no_engine_is_told_not_yet(self) -> None:
+        self.sidebar.answerer = None
+        self.host.guide = None  # Guide me can't be given
+        message = dm_message(content="what's next?")
+        await self.sidebar.on_dm_message(message)
+        self.assertEqual(self.host.dms, [])
+        message.channel.send.assert_awaited_once_with(service.NOT_YET, allowed_mentions=ANY)
 
     async def test_other_questions_about_next_are_not_taken_for_it(self) -> None:
         for said in (
