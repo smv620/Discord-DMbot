@@ -272,9 +272,9 @@ describe("Help: the website's read-only pages (#1588)", () => {
     const shown = dmSteps.map((x) => x.text).join(" ");
     expect(shown.includes("a channel called dmb-rules")).toBe(RULES_CHANNEL_LIVE);
     const words = rulesChannelSteps.map((x) => x.text).join(" ");
-    expect(words).toContain("Nobody can post in it, you included.");
-    expect(words).toContain("that opens dmb-rules as well, and the spoiler warning says so");
-    expect(words).toContain("There are no spoilers in dmb-rules.");
+    expect(words).toContain("Only DMbot posts in dmb-rules. Players can't, and neither can you.");
+    expect(words).toContain("Hiding the DM screen again closes both.");
+    expect(words).toContain("Each rule is shown in your own words.");
   });
 
   it("holds the deeds and where-are-we steps with their held What's new entries (#1754)", () => {

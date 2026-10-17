@@ -339,15 +339,20 @@ export const RULES_CHANNEL_LIVE = false;
 
 export const rulesChannelSteps: Step[] = [
   {
-    text: "Each campaign also gets a channel called dmb-rules, with a short name after it. It shows the house rules you have saved, one message for each rule, and a note for each house-rule set your campaign follows. DMbot keeps it up to date when you add, change or remove a rule, and makes it again at the next /dmbot start if it was deleted. Nobody can post in it, you included. It never shows rules that are only proposed, notes from your DM screen, or text from a rulebook.",
+    text: "Each campaign also gets a channel called dmb-rules, with a short name after it. It shows the house rules you have saved, one message for each rule, and a note for each house-rule set your campaign follows. DMbot keeps it up to date when you add, change or remove a rule.",
     names: [
       { name: "dmb-rules", file: "dm_screen/rules_channel.py" },
     ],
   },
   {
-    text: "Who can read dmb-rules follows your DM screen setting: only the game masters, players who choose to peek, or everyone. When a player peeks behind the DM screen, that opens dmb-rules as well, and the spoiler warning says so. There are no spoilers in dmb-rules.",
+    text: "Only DMbot posts in dmb-rules. Players can't, and neither can you. It never shows rules that are only proposed, your private notes, secret names, or text from a rulebook. Each rule is shown in your own words. If dmb-rules is deleted, or someone changes its name or who can see it, the next /dmbot start puts it right.",
+  },
+  {
+    text: "Who can read dmb-rules follows your DM screen setting. Private: only DMs. Peek (the usual setting): only players who press Peek behind the DM screen. Open: everyone in the server. When a player peeks, they get dmb-rules too, and the warning names it. Hiding the DM screen again closes both.",
+    names: [{ name: "Peek behind the DM screen", file: "dm_screen/messages.py" }],
   },
 ];
+
 
 export const dmSteps: Step[] = [
   { text: "Add DMbot to your Discord server from the Add to Discord page." },
