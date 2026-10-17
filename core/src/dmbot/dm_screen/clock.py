@@ -38,7 +38,7 @@ from dmbot.campaigns import Campaign
 from dmbot.campaigns.models import CampaignError
 from dmbot.rules import optional
 from dmbot.timebot import clock as game
-from dmbot.timebot import durations, effects, split
+from dmbot.timebot import durations, effects, split, where_are_we
 from dmbot.timebot.clock import Clock
 from dmbot.timebot.store import MOVED_ON, ClockStore, Rejoined, Stored
 
@@ -319,6 +319,7 @@ def panel_view(campaign_id: str, is_split: bool = False) -> discord.ui.View:
 async def show(client: Any, campaign: Campaign, stored: Stored) -> discord.Message | None:
     """Edit the pinned clock message in place with the clock now; post (and pin) a new one if
     there isn't one or it is gone. Returns the message, or None if nothing could be shown."""
+    where_are_we.shown(client, campaign)  # (the quiet "where are we" note waits again)
     text = await render(client, campaign, stored.clock, stored)
     view = clock_view(campaign.id, stored.clock, stored)
     channel = client.get_channel(stored.channel_id) if stored.channel_id else None
@@ -479,7 +480,9 @@ async def say(
     elif combat_undo:
         view = discord.ui.View(timeout=None)
         view.add_item(CombatUndoButton(campaign.id, combat_undo))
-    await client.post_message(campaign.dm_screen_channel_id, "\n".join(lines), view)
+    posted = await client.post_message(campaign.dm_screen_channel_id, "\n".join(lines), view)
+    if posted is not None:  # (a line that never arrived shows nothing, so the wait goes on)
+        where_are_we.shown(client, campaign)
 
 
 def parse_time(day: str, hour: str) -> int | None:
@@ -639,6 +642,7 @@ async def _show_here(
 ) -> discord.Message | None:
     """Redraw the clock in the message that was pressed; if the press came from somewhere
     else (the form opened from ⚙️ Settings), show it the usual way."""
+    where_are_we.shown(client, campaign)  # the clock is redrawn right here: shown, and moved
     message = interaction.message
     if message is not None and message.id == stored.message_id:
         text, view = (

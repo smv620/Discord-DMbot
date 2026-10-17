@@ -84,6 +84,7 @@ describe("What's new", () => {
       "A Shared story switch", // until the story plan is used (#1692, #1714)
       "Homebrew menu by kind", // until seen on the test server (#1665)
       "Manage your plan without Discord", // until the billing login link is set in the build (#1711)
+      "A quiet reminder of the game time", // until seen on the test server (#1738)
     ]);
     for (const h of held) {
       expect(h.reason.length, h.title).toBeGreaterThan(20);

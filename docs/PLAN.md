@@ -2434,7 +2434,7 @@ the clock and the rest record. Only a DM's line that opens the scene and is foll
 narration's subject or ends the sentence; never "in three days", "for three days", "three days
 ago", a question, a wish, a condition, quoted speech, more than 30 days, or a player's line; the
 same skip twice in five minutes is one. A rested skip leaves no "24 hours without a long rest" note;
-one without rest over 24 hours says it once. Split-party clocks are built (below). Not built yet: periodic notes.
+one without rest over 24 hours says it once. Split-party clocks are built (below). **The periodic "where are we" note is built (#1738):** during a session, for a campaign whose clock is set, never in combat, one line on the DM screen ("🕰️ Where we are: afternoon of Day 4 (14:30).", or each group's time while the party is split) when the clock has not been shown or moved for half an hour of real time. A dawn, noon or dusk line, an effect line, a rest, a button or a skip count as shown, so it never repeats what the DM just saw. The DM screen's level governs it (it is a reminder, not a warning): none on Quiet, every 30 minutes on Normal, every 15 on Chatty. The last time is kept in memory per session (a restart just starts the wait again) and players never see it.
 
 *Built, part 2: timed effects the DM starts (2026-10-10, #998):* `game_effects` (migration 0042): per
 campaign, own server scope, deleted with the campaign, in backups (`EffectsSection`, validated),

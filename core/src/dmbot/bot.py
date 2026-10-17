@@ -250,7 +250,7 @@ from dmbot.test_recording import files as test_files
 from dmbot.test_recording import library as test_library
 from dmbot.test_recording.session import TestSession
 from dmbot.test_recording.store import TestVoiceStore
-from dmbot.timebot import combat_phrases, durations
+from dmbot.timebot import combat_phrases, durations, where_are_we
 from dmbot.timebot import phrases as clock_phrases
 from dmbot.timebot.effects import EffectsSection, EffectStore
 from dmbot.timebot.store import ClockSection, ClockStore
@@ -513,6 +513,10 @@ class Table:
     # FightBot's memory for this session and its loop (#1129).
     fight: FightState = field(default_factory=FightState)
     fight_task: asyncio.Task[None] | None = None
+    where_task: asyncio.Task[None] | None = None  # the quiet "where are we" note (#1738)
+    # When the game clock was last shown or moved (monotonic seconds), starting at the session's
+    # start; kept in memory only (a restart just starts the wait again).
+    clock_shown_at: float = field(default_factory=time.monotonic)
     sheet_loads: int = 0  # each load of the names counts up; only the newest one is used
     # For the Transcript Cleaner (#127): what this session's lines say about words, and
     # the display names of people who agreed (never "fixed" into a name).
@@ -1965,6 +1969,9 @@ class DMBot(commands.AutoShardedBot):
         self._track(self._waiting_suggestions(table), "waiting-suggestions")  # #1504
         table.watch_task = self._track_loop(sheet_reread.run(self, table), "sheet-watch")  # #1128
         table.fight_task = self._track_loop(fightbot.run(self, table), "fightbot")  # #1129
+        if table.where_task is not None:  # started again for the same table: one loop only
+            table.where_task.cancel()
+        table.where_task = self._track_loop(where_are_we.run(self, table), "where-are-we")  # #1738
         return sent
 
     async def _pre_session_note(self, table: Table) -> None:
@@ -2184,6 +2191,8 @@ class DMBot(commands.AutoShardedBot):
             table.watch_task.cancel()
         if table.fight_task is not None:  # nor reminding players (#1129)
             table.fight_task.cancel()
+        if table.where_task is not None:  # nor saying where the game is (#1738)
+            table.where_task.cancel()
         await self.ears.send(leave_command(guild_id))
         # Speech still being heard or written down is finished, not dropped (#109): the
         # session stays "ending" until the pipeline has caught up.
