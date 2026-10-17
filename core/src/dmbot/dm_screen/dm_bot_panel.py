@@ -49,17 +49,19 @@ _BUTTONS: dict[Role, tuple[Button, ...]] = {
 }
 
 LABELS: dict[Button, str] = {
-    Button.OPEN: "🔓 My buttons",
+    Button.OPEN: "👤 My buttons",
     Button.HELP: "❓ Help",
     Button.MY_MENU: "⚙️ My menu",
     Button.MY_CHARACTER: "🧙 My character",
-    Button.SETTINGS: "⚙️ Settings",
+    Button.SETTINGS: "🛠️ Settings",
 }
 
-NOT_YOURS = "That one is for your game master."
+NOT_YOURS = "Only this campaign's DM can use that. Ask your DM."
 
 # The panel's own words. Short and plain; it never names a person or a secret.
-PANEL_TEXT = "**DM Bot**\nPress a button. DMbot answers only you."
+PANEL_TEXT = (
+    "**DMbot controls**\nPress 👤 My buttons. Only you see the answer. Nothing secret is kept here."
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -92,6 +94,6 @@ def may_press(role: Role, button: Button) -> bool:
 
 def shared_panel() -> tuple[Button, ...]:
     """What the one shared message shows. A message cannot differ per reader, so it holds only
-    what every role may press: 🔓 My buttons, which answers privately with `buttons_for` the
+    what every role may press: 👤 My buttons, which answers privately with `buttons_for` the
     presser's own role, and ❓ Help."""
     return (Button.OPEN, Button.HELP)

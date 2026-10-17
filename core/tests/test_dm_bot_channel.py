@@ -72,7 +72,7 @@ class Roles(unittest.TestCase):
     def test_every_button_has_a_short_label_and_the_panel_text_is_plain(self) -> None:
         for button in Button:
             self.assertLessEqual(len(panel.LABELS[button]), 25)
-        self.assertEqual(panel.PANEL_TEXT, "**DM Bot**\nPress a button. DMbot answers only you.")
+        self.assertIn("Only you see the answer", panel.PANEL_TEXT)
 
 
 class Setup(DatabaseTest):
@@ -131,6 +131,24 @@ class Setup(DatabaseTest):
         moved = await self.store.get(GUILD, self.campaign.id)
         assert moved is not None
         self.assertEqual((moved.dm_bot_channel_id, moved.dm_bot_message_id), (NEW + 1, None))
+
+    async def test_a_refusal_from_discord_becomes_a_plain_cause_and_nothing_is_saved(self) -> None:
+        from dmbot.dm_screen.dm_bot_channel import DmBotChannelError
+
+        self.guild.create_text_channel = AsyncMock(
+            side_effect=discord.Forbidden(MagicMock(status=403), "no")
+        )
+        with self.assertRaises(DmBotChannelError):
+            await setup_dm_bot_channel(self.guild, self.campaign.id, self.store)
+        saved = await self.store.get(GUILD, self.campaign.id)
+        assert saved is not None and saved.dm_bot_channel_id is None
+
+    async def test_an_existing_correct_channel_is_not_edited_again(self) -> None:
+        await setup_dm_bot_channel(self.guild, self.campaign.id, self.store)
+        self.guild.fetch_channel = AsyncMock(return_value=self.new)
+        self.new.edit.reset_mock()
+        await setup_dm_bot_channel(self.guild, self.campaign.id, self.store)
+        self.guild.create_text_channel.assert_awaited_once()  # still the first one
 
     async def test_a_backup_never_holds_the_ids(self) -> None:
         await self.store.set_dm_bot_channel(GUILD, self.campaign.id, NEW)

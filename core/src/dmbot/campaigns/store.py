@@ -634,6 +634,9 @@ class CampaignStore:
     ) -> Campaign:
         """Store the campaign's DM Bot channel (#1666): not part of a backup. A new channel
         starts with no panel message, so the old message id goes with the old channel."""
+        current = await self.get(guild_id, campaign_id)
+        if current is not None and current.dm_bot_channel_id == channel_id:
+            return current  # the same channel again (every start): its panel message stays
         await self._set(guild_id, campaign_id, "dm_bot_message_id", None)
         return await self._set(guild_id, campaign_id, "dm_bot_channel_id", channel_id)
 

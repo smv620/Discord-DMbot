@@ -1,7 +1,7 @@
 """The DM Bot channel (#1666; docs/PLAN.md, "The DM Bot channel").
 
 `#dmb-dm-bot-<short name>`: everyone in the server can read it, and only DMbot posts, as with
-the DM Bot channel (it reuses the transcript module's permissions, repair and per-campaign
+the game-time channel (it reuses the transcript module's permissions, repair and per-campaign
 lock). It holds one panel message of buttons by role (`dm_screen/dm_bot_panel.py`); every
 answer to a press is private, and nothing from the DM screen is ever posted here.
 `/dmbot start` creates or repairs it, and a failure never blocks the session.

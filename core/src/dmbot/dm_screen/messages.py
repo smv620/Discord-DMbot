@@ -474,8 +474,8 @@ def gametime_topic(campaign_name: str) -> str:
 # ---- the DM Bot channel (#1666) ---------------------------------------------------------
 
 DM_BOT_FAILED = (
-    "⚠️ **Couldn't make the DM Bot channel** ({cause}). The game goes on; ⚙️ Settings still "
-    "works with `/dmbot settings`. To retry, fix that and run `/dmbot start`."
+    "⚠️ **Couldn't make the DM Bot channel** ({cause}). The game goes on. For settings, type "
+    "`/dmbot settings`. To retry: fix that, then run `/dmbot start`."
 )
 
 
@@ -484,7 +484,7 @@ def dm_bot_failed(cause: str) -> str:
 
 
 def dm_bot_topic(campaign_name: str) -> str:
-    return f"{campaign_name}: settings and options. Press a button; DMbot answers only you."
+    return f"{campaign_name}: your buttons for settings and help. Only you see the answers."
 
 
 # ---- the table's DMbot chat channel (#1187) -------------------------------------------
