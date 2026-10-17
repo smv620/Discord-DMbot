@@ -137,6 +137,15 @@ from dmbot.dm_screen.name_questions import (
     fix_notes_view,
     question_view,
 )
+from dmbot.dm_screen.npcs_channel import (
+    MessageMap,
+    NpcMessageStore,
+    NpcsChannelError,
+    pass_delay,
+    setup_npcs_channel,
+)
+from dmbot.dm_screen.npcs_channel import SyncResult as NpcsSyncResult
+from dmbot.dm_screen.npcs_channel import sync_campaign as sync_npcs
 from dmbot.dm_screen.pause import PauseButton
 from dmbot.dm_screen.recap_panel import PlanFacts, RecapsButton, audio_how
 from dmbot.dm_screen.rules_channel import (
@@ -197,6 +206,7 @@ from dmbot.logs import log_context, set_log_context
 from dmbot.mail import Mailer
 from dmbot.memory import definitions, document_reader, extractor, plan_reader
 from dmbot.memory import health as memory_health
+from dmbot.memory import notify as memory_notify
 from dmbot.memory.adventure import AdventureSection, AdventureStore
 from dmbot.memory.backup import MemorySection
 from dmbot.memory.claims import ClaimStore
@@ -378,6 +388,7 @@ HINTS_WAIT_S = 1.5  # the longest a clip waits for the campaign's names to load
 RULES_ARCHIVE_DELAY_S = 3.0
 RULES_ARCHIVE_PACE_S = 2.0
 RULES_ARCHIVE_RETRY_S = 10.0  # when a pass was cut short by the caps
+NPCS_PASSES = 60  # (a pass a minute at most: an hour of an unfinished or busy list)
 RULES_ARCHIVE_PASSES = 60  # (200 rules at 25 a pass is far fewer)
 
 # The off-topic filter (#52): one call may take this long, or the window is kept as game
@@ -780,6 +791,7 @@ class DMBot(commands.AutoShardedBot):
         importer: HomebrewImporter | None = None,
         adventure: AdventureStore | None = None,
         plan: PlanStore | None = None,
+        npcs_messages: MessageMap | None = None,
     ) -> None:
         intents = discord.Intents.none()
         intents.guilds = True
@@ -848,6 +860,16 @@ class DMBot(commands.AutoShardedBot):
         # and followed sets; a burst of changes (a file import) becomes one pass, a few seconds on.
         self._rules_sync: dict[tuple[int, str], asyncio.Task[None]] = {}
         self._rules_dirty: set[tuple[int, str]] = set()
+        # The NPC list channel (#1761) hears about every change to the campaign's memory. The
+        # change notice carries only the campaign id, so the server is remembered when the
+        # channel is set up or swept at start.
+        self._npcs_sync: dict[str, asyncio.Task[None]] = {}
+        self._npcs_dirty: set[str] = set()
+        self._npcs_reorder: set[str] = set()  # a rebuild cut short: continue it in order
+        self._npcs_last: dict[str, float] = {}  # when a campaign's last pass began (monotonic)
+        self._npcs_guilds: dict[str, int] = {}
+        self._npcs_recall: RecallService | None = None
+        self._npcs_messages = npcs_messages  # which message shows which entry (#1761)
         for store in (house_rules, rule_sets):
             if store is not None:
                 store.on_change = self._rules_archive_changed
@@ -1253,6 +1275,11 @@ class DMBot(commands.AutoShardedBot):
             *(
                 [asyncio.create_task(self.lookup.follow(self.memory.listen), name="names")]
                 if self.lookup is not None and self.memory is not None
+                else []
+            ),
+            *(
+                [self._watched(self._follow_npcs(), "npcs-channel")]
+                if self.memory is not None
                 else []
             ),
             asyncio.create_task(self._transcript_poster(), name="transcripts"),
@@ -2231,6 +2258,9 @@ class DMBot(commands.AutoShardedBot):
             return None
         with log_context(guild_id=guild_id, campaign_id=table.campaign_id):
             log.info("Session ended: %s", reason)
+        if table.campaign_id:  # the moment to put the NPC list in order again (#1761)
+            self._npcs_reorder.add(table.campaign_id)
+            self._npcs_changed(table.campaign_id)
         if table.sheet_task is not None:  # no more reading sheets for it (#723)
             table.sheet_task.cancel()
         if table.watch_task is not None:  # nor re-reading them (#1128)
@@ -3048,6 +3078,7 @@ class DMBot(commands.AutoShardedBot):
         dmbchat_id, dmbchat_problem = await self._dmbchat_channel(guild, campaign, screen)
         dm_bot_problem = await self._dm_bot_channel(guild, campaign, screen)
         rules_problem = await self._rules_channel(guild, campaign, screen)
+        npcs_problem = await self._npcs_channel(guild, campaign, screen)
 
         campaign = await self.campaigns.record_start(guild.id, campaign.id, screen_id, voice.id)
         started_at = int(time.time())
@@ -3107,6 +3138,8 @@ class DMBot(commands.AutoShardedBot):
             await self.post(screen_id, dm_bot_problem)
         if rules_problem:
             await self.post(screen_id, rules_problem)
+        if npcs_problem:
+            await self.post(screen_id, npcs_problem)
         self._check_house_file(campaign, screen_id)
         self._track(update_notes.check_all(self, campaign, screen_id), "shared-rules-update")
         trial_line = ""
@@ -3277,6 +3310,7 @@ class DMBot(commands.AutoShardedBot):
         self._background.append(
             asyncio.create_task(self._rebuild_rules_archives(), name="rules-archives")
         )
+        self._background.append(asyncio.create_task(self._rebuild_npcs(), name="npcs-channels"))
 
     async def _resume_with_retries(self) -> None:
         """Resume saved sessions, retrying servers that failed (database or Discord not
@@ -8276,6 +8310,164 @@ class DMBot(commands.AutoShardedBot):
                     log.warning("Couldn't update a rules channel", exc_info=True)
                 await asyncio.sleep(RULES_ARCHIVE_PACE_S)
 
+    async def _npcs_channel(
+        self, guild: discord.Guild, campaign: Campaign, screen: object
+    ) -> str | None:
+        """The NPC list channel (#1761), made or repaired at every start and brought up to date
+        from what the players may know (the whole list in order: `reorder`). A note for the DM
+        if it couldn't be set up; a failure here never stops a session."""
+        category = getattr(screen, "category", None)
+        try:
+            await setup_npcs_channel(
+                guild,
+                campaign.id,
+                self.campaigns,
+                category=category if isinstance(category, discord.CategoryChannel) else None,
+                screen=screen if isinstance(screen, discord.TextChannel) else None,
+            )
+            self._npcs_guilds[campaign.id] = guild.id
+        except NpcsChannelError as exc:
+            return screen_messages.npcs_failed(str(exc))
+        except Exception:
+            log.exception("Couldn't set up the NPC list channel")
+            return screen_messages.npcs_failed(screen_messages.TRANSCRIPT_NO_ANSWER)
+        try:  # (the channel is there; a failed first fill is only logged, the next pass retries)
+            fresh = await self.campaigns.get(guild.id, campaign.id)
+            if fresh is not None and self.memory is not None and self._npcs_messages is not None:
+                # (a session is starting, so this is the moment to put the list in order)
+                done = await sync_npcs(
+                    guild, fresh, self._npcs_service(), self._npcs_messages, reorder=True
+                )
+                self._npcs_last[campaign.id] = time.monotonic()
+                if done is not None and done.left_for_next_time:
+                    self._npcs_reorder.add(campaign.id)
+                    self._npcs_changed(campaign.id)  # finish it, paced
+        except Exception:
+            log.warning("Couldn't fill the NPC list; will try again", exc_info=True)
+            self._npcs_changed(campaign.id)
+        return None
+
+    def _session_running(self, campaign_id: str) -> bool:
+        return any(t.campaign_id == campaign_id for t in self.tables.values())
+
+    def _npcs_service(self) -> RecallService:
+        if self._npcs_recall is None:
+            assert self.memory is not None
+            self._npcs_recall = RecallService(self.memory)
+        return self._npcs_recall
+
+    def _npcs_changed(self, campaign_id: str) -> None:
+        """A campaign's memory changed: bring its NPC list up to date soon, at most once a
+        minute. Quick and never raises (it only schedules)."""
+        running = self._npcs_sync.get(campaign_id)
+        if running is not None and not running.done():
+            self._npcs_dirty.add(campaign_id)  # it will look again when it has finished
+            return
+        if campaign_id not in self._npcs_guilds:
+            return  # no NPC list known for it
+        task = self._track(self._npcs_run(campaign_id), "npcs-channel")
+        if task is not None:
+            self._npcs_sync[campaign_id] = task
+
+    async def _npcs_run(self, campaign_id: str) -> None:
+        try:
+            for _ in range(NPCS_PASSES):
+                await asyncio.sleep(pass_delay(self._npcs_last.get(campaign_id), time.monotonic()))
+                self._npcs_dirty.discard(campaign_id)
+                self._npcs_last[campaign_id] = time.monotonic()
+                try:
+                    done = await self._sync_npcs(campaign_id)
+                    more = done is not None and done.left_for_next_time > 0
+                except Exception:
+                    log.warning("Couldn't update an NPC list; will try again", exc_info=True)
+                    more = True
+                if campaign_id not in self._npcs_dirty and not more:
+                    return
+        finally:
+            self._npcs_sync.pop(campaign_id, None)
+            late = campaign_id in self._npcs_dirty
+            self._npcs_dirty.discard(campaign_id)
+            if late:
+                self._npcs_changed(campaign_id)  # a change came in during the last pass
+
+    async def _sync_npcs(self, campaign_id: str) -> NpcsSyncResult | None:
+        guild_id = self._npcs_guilds.get(campaign_id)
+        guild = self.get_guild(guild_id) if guild_id is not None else None
+        if guild is None or self.memory is None or self._npcs_messages is None:
+            return None
+        campaign = await self.campaigns.get(guild.id, campaign_id)
+        if campaign is None:
+            self._npcs_guilds.pop(campaign_id, None)
+            self._npcs_last.pop(campaign_id, None)
+            self._npcs_reorder.discard(campaign_id)
+            return None
+        # Finish a rebuild that was cut short, but never while a session runs for the campaign.
+        reorder = campaign_id in self._npcs_reorder and not self._session_running(campaign_id)
+        done = await sync_npcs(
+            guild, campaign, self._npcs_service(), self._npcs_messages, reorder=reorder
+        )
+        if reorder and (done is None or not done.left_for_next_time):
+            self._npcs_reorder.discard(campaign_id)
+        return done
+
+    async def _follow_npcs(self) -> None:
+        """Hear every change to a campaign's memory, until cancelled, and refresh that
+        campaign's NPC list. Missed changes (the connection was down) are caught by the sweep at
+        the next start; a reconnect just carries on."""
+        assert self.memory is not None
+        failures = 0
+        while True:
+            try:
+                async with contextlib.aclosing(self.memory.listen(memory_notify.CHANNEL)) as stream:
+                    failures = 0
+                    async for raw in stream:
+                        event = memory_notify.parse(raw)
+                        if event is not None and event.names_changed:
+                            # (only entries, names and facts show on the list)
+                            self._npcs_changed(event.campaign_id)
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                log.warning("Lost campaign memory updates for the NPC lists (%s)", exc)
+            failures += 1
+            await asyncio.sleep(min(5.0 * failures, 60.0))
+
+    async def _rebuild_npcs(self) -> None:
+        """At bot start: every campaign's NPC list is brought up to date once, in order, a few
+        edits at a time (Discord's rate limits), so a restart or a missed change never leaves it
+        stale. A campaign whose channel was deleted by hand gets a new one at its next start."""
+        if self.memory is None or self._npcs_messages is None:
+            return
+        for guild in list(self.guilds):
+            try:
+                found = await self.campaigns.list_campaigns(guild.id)
+            except Exception:
+                log.exception("Couldn't list campaigns for the NPC lists")
+                continue
+            for campaign in found:
+                if campaign.npcs_channel_id is None:
+                    continue
+                self._npcs_guilds[campaign.id] = guild.id
+                try:
+                    if time.monotonic() - self._npcs_last.get(campaign.id, -1e9) < 60:
+                        continue  # a session start just did it
+                    # A start (deploy) puts the list in order only when no session is running;
+                    # `sync_roster` then does so only if 10 or more messages are out of place.
+                    done = await sync_npcs(
+                        guild,
+                        campaign,
+                        self._npcs_service(),
+                        self._npcs_messages,
+                        reorder=not self._session_running(campaign.id),
+                    )
+                    self._npcs_last[campaign.id] = time.monotonic()
+                    if done is not None and done.left_for_next_time:
+                        self._npcs_reorder.add(campaign.id)
+                        self._npcs_changed(campaign.id)  # finish it, paced
+                except Exception:
+                    log.warning("Couldn't update an NPC list", exc_info=True)
+                await asyncio.sleep(RULES_ARCHIVE_PACE_S)
+
     async def _dmbchat_channel(
         self, guild: discord.Guild, campaign: Campaign, screen: object
     ) -> tuple[int | None, str | None]:
@@ -8764,6 +8956,7 @@ async def run(settings: Settings) -> None:
             HomebrewImporter(homebrew_store, sources),
             AdventureStore(db),
             PlanStore(db),
+            npcs_messages=NpcMessageStore(db),
         )
         _close_on_sigterm(bot)
         async with bot:
