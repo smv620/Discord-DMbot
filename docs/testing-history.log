@@ -2620,3 +2620,5 @@ Overall ...................................... PASS (Deepgram baseline: 33/33, 1
   Not checked (need the owner in Discord): the dmb-dm-bot channel appears with My buttons and Help; each role sees its own buttons; the DM screen no longer shows Settings; Homebrew kinds show with counts.
   Same morning: scripts/set-variables (#1685) merged and is on the server (a twin of set-key for non-secret settings); a PR to add its two CI lines and the QAbot workflow was refused by GitHub (the server's login has no workflow scope), see #516.
   docs/next-test-step.md is Test I (consent v6), not yet run.
+  10-minute check, 05:39 UTC (10 minutes after the start): 0 ERROR, CRITICAL or traceback lines in core and web-api since 05:28; both up, web-api healthy; schema_migrations 120 rows, last 0120_dm_bot_channel.
+  Nothing turned on for users (recaps off, the extractor off).
