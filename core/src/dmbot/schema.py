@@ -6338,6 +6338,8 @@ STANDING = (
     CREATE UNIQUE INDEX memory_attitudes_one_open
         ON memory_attitudes (guild_id, campaign_id, holder_id, toward_id)
         WHERE closed_at IS NULL;
+    CREATE INDEX memory_attitudes_by_target
+        ON memory_attitudes (guild_id, campaign_id, toward_id);
     """
     + _isolate("memory_impressions")
     + _isolate("memory_attitudes")

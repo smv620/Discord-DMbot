@@ -184,15 +184,27 @@ async def settle_kind(
     for held in (await current_states(w, ids)).values():
         if allowed is None or held.condition not in allowed:
             await w.update(STATES, held.id, {"closed_at": w.now})
-    if not onto.is_a(type_key, "item"):
-        flagged = await w.select(ENTITIES, " AND unique_item IS NOT NULL AND id = ANY(%s)", [ids])
-        await w.update_rows(ENTITIES, {r["id"]: {"unique_item": None} for r in flagged})
-    if type_key != "faction":  # only a group can be the party (#1655)
-        parties = await w.select(ENTITIES, " AND party AND id = ANY(%s)", [ids])
-        await w.update_rows(ENTITIES, {r["id"]: {"party": False} for r in parties})
-    if type_key != "clue":  # only a clue has an audience (#1649)
-        limited = await w.select(ENTITIES, " AND audience_limited AND id = ANY(%s)", [ids])
-        await w.update_rows(ENTITIES, {r["id"]: {"audience_limited": False} for r in limited})
+    # One look for the flags only some kinds have: one of a kind (an item, #1267), a clue's
+    # audience (#1649) and the party (#1655), so a long list of new names costs no extra statement
+    # for each.
+    flagged = await w.select(
+        ENTITIES,
+        " AND (unique_item IS NOT NULL OR audience_limited OR party) AND id = ANY(%s)",
+        [ids],
+    )
+    clears: dict[str, dict[str, Any]] = {}
+    for r in flagged:
+        undo: dict[str, Any] = {}
+        if r["unique_item"] is not None and not onto.is_a(type_key, "item"):
+            undo["unique_item"] = None
+        if r["party"] and type_key != "faction":
+            undo["party"] = False  # only a group can be the party
+        if r["audience_limited"] and type_key != "clue":
+            undo["audience_limited"] = False  # only a clue has an audience
+        if undo:
+            clears[r["id"]] = undo
+    if clears:
+        await w.update_rows(ENTITIES, clears)
 
 
 async def move_states(
