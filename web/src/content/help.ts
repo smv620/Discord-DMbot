@@ -219,6 +219,41 @@ export const homebrewKindSteps: Step[] = [
   },
 ];
 
+// Shared story and giving DMbot your adventure (#1692, #1698) are built, but nothing reads the
+// adventure yet, so its What's new line "A Shared story switch" is held until it is useful, and Help
+// follows (#1720). Set this to true in the same change that moves that entry out of `held`; a test
+// ties the two.
+export const SHARED_STORY_LIVE = false;
+
+export const sharedStorySteps: Step[] = [
+  {
+    text: "To choose how DMbot uses your adventure book, press ⚙️ Settings, then 🧭 Shared story. Off: DMbot remembers your table's story only. Watch the story: DMbot also tells you when your table and the book no longer fit. Guide me: when you ask, DMbot says what the book has next, with the page. Coming next: for now none of this does anything beyond keeping your adventure.",
+    names: [
+      { name: "Shared story", file: "dm_screen/story_mode.py" },
+      { name: "Watch the story", file: "dm_screen/story_mode.py" },
+      { name: "Guide me", file: "dm_screen/story_mode.py" },
+    ],
+  },
+  {
+    text: "The first time you turn it on, DMbot says: \"Only give DMbot material you have the right to use. DMbot doesn't check this.\" Press I have the right to go on. DMbot keeps a note of who said so, and when.",
+    names: [
+      { name: "Only give DMbot material you have the right to use. DMbot doesn't check this.", file: "campaigns/models.py" },
+      { name: "I have the right", file: "dm_screen/story_mode.py" },
+    ],
+  },
+  {
+    text: "To give DMbot your adventure, press 📖 Give your adventure on the Shared story card, then Give a file. It reads a PDF, Word (.docx) or text (.txt, .md) file up to 10 MB. DMbot keeps the text, not the file, for this campaign only, and players never see it. Press 🗑 Remove to make it forget one.",
+    names: [
+      { name: "Give your adventure", file: "dm_screen/adventure_card.py" },
+      { name: "Give a file", file: "dm_screen/adventure_card.py" },
+      { name: "Remove", file: "dm_screen/adventure_card.py" },
+    ],
+  },
+  {
+    text: "A backup of the campaign keeps only your adventure's name, not its text, because anyone in your server can download a backup. After you restore, give DMbot the file again.",
+  },
+];
+
 export const dmSteps: Step[] = [
   { text: "Add DMbot to your Discord server from the Add to Discord page." },
   {
@@ -425,6 +460,7 @@ export const dmSteps: Step[] = [
   },
   ...(HOMEBREW_LINKS_LIVE ? homebrewLinkSteps : []),
   ...(STORY_THREADS_LIVE ? storyThreadSteps : []),
+  ...(SHARED_STORY_LIVE ? sharedStorySteps : []),
   ...(STANDING_LIVE ? standingSteps : []),
   ...(HOMEBREW_KINDS_LIVE ? homebrewKindSteps : []),
   ...(SECRET_CLUES_LIVE ? secretClueSteps : []),
