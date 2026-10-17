@@ -685,6 +685,14 @@ Each step is useful on its own and ships behind the existing phases.
    bring the healer back", then the state and "Due: …". The after-session line says "promise" where
    all the quiet ones are promises. Privacy and isolation are those of threads: DM only, hidden from
    lookup and from the players' recall, in backups, deleted with the campaign.
+   **Phase 5c slice 3 is built (#1675): quiet threads in the pre-session note.** When a session
+   starts, the note on the DM screen gains one line, only when a thread is stalled (by the rule above,
+   promises included): "🧵 Quiet threads: <name>, <name>, <name> (+N more)", the longest quiet first.
+   A **🧵 Threads** button on the note opens the DM's private list of every live thread, those in
+   play first, the quiet ones marked ⏳, with Still going, Finished/Dropped (Kept/Broken for a
+   promise) on each. The line is in-game content: it stays on the DM screen, never in the DM Bot
+   channel, a transcript or the players' recall. A campaign with no live thread skips the read (a
+   one-row look at `memory_states`); otherwise it is the one `threads()` read.
 3. **Phase 5c: PlotBot:** threads, promises, clues, `led_to`, stalled-thread nudges,
    summaries, the pre-session note, the AI recap.
 4. **Phase 5d: Shared story:** the story plan, `same_as` links, divergence ("Watch

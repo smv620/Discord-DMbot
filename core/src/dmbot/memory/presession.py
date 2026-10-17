@@ -12,6 +12,7 @@ The note is never empty padding: a campaign with nothing confirmed gets no note 
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Collection, Sequence
 from dataclasses import dataclass
 from typing import Protocol
@@ -20,12 +21,22 @@ from dmbot.memory.claims import ClaimStore
 from dmbot.memory.recall import DM_SCREEN, FACT, RecallService
 from dmbot.memory.store import MemoryStore
 
+log = logging.getLogger(__name__)
+
+
+class _NoThreads(Exception):
+    """Nothing in the campaign is a live story thread: there is nothing to read."""
+
+
+LIVE_THREAD_STATES = ("hinted", "open", "active")  # the states a thread can go quiet in
+
 HEADER = "📜 **Before tonight**\n*From what you confirmed. Only you see this.*"
 MAX_LINES = 8  # lines under the header
 MAX_CHARS = 1000  # the whole note
 LINE_CHARS = 140  # one line
 SEEDS = 5  # the names most heard last session
 FACT_LINES = 3
+QUIET_NAMES = 3  # thread names on the quiet-threads line, then "+N more"
 CONDITION_LINES = 3
 RECALL_BUDGET = 1500  # characters one recall may hold
 # What a condition reads as. Only the ones worth remembering: "alive" and "intact" are the
@@ -60,6 +71,7 @@ class Note:
     text: str
     lines: tuple[str, ...]
     waiting: int  # claims waiting to be checked: the poster adds the button when this is above 0
+    quiet: int = 0  # story threads gone quiet: the poster adds the 🧵 Threads button when above 0
 
 
 @dataclass(frozen=True, slots=True)
@@ -71,6 +83,7 @@ class Facts:
     open_facts: Sequence[str] = ()  # plain sentences, best first
     conditions: Sequence[tuple[str, str]] = ()  # (name, condition), newest first
     waiting: int = 0
+    quiet_threads: Sequence[str] = ()  # names of the threads gone quiet, longest quiet first
 
 
 def _clip(text: str, limit: int = LINE_CHARS) -> str:
@@ -102,6 +115,11 @@ def compose(facts: Facts) -> Note | None:
         words = CONDITION_WORDS.get(condition)
         if words:
             lines.append(_clip(f"• {_plain(name)} {words}"))
+    if facts.quiet_threads:  # in-game content: it stays on the DM screen (#1675)
+        shown = [_plain(n) for n in facts.quiet_threads[:QUIET_NAMES]]
+        more = len(facts.quiet_threads) - len(shown)
+        tail = f" (+{more} more)" if more > 0 else ""
+        lines.append(_clip(f"🧵 Quiet threads: {', '.join(shown)}{tail}"))
     if facts.waiting > 0:
         said = (
             "1 thing someone said is"
@@ -121,7 +139,9 @@ def compose(facts: Facts) -> Note | None:
         size += 1 + len(line)
     if not kept:
         return None
-    return Note("\n".join([HEADER, *kept]), tuple(kept), max(0, facts.waiting))
+    return Note(
+        "\n".join([HEADER, *kept]), tuple(kept), max(0, facts.waiting), len(facts.quiet_threads)
+    )
 
 
 class PreSession:
@@ -138,7 +158,13 @@ class PreSession:
         self._recaps = recaps
 
     async def note(
-        self, guild_id: int, campaign_id: str, *, now: int, opted_in: Collection[int]
+        self,
+        guild_id: int,
+        campaign_id: str,
+        *,
+        now: int,
+        opted_in: Collection[int],
+        stalled_after: int = 3,
     ) -> Note | None:
         """The note for one campaign, from its confirmed facts only (this campaign's: every read
         names the server and the campaign). None when nothing is confirmed. `opted_in` is who is
@@ -176,6 +202,14 @@ class PreSession:
                 (*scope.ids, list(CONDITION_WORDS), since, CONDITION_LINES),
             )
             conditions = [(str(r["name"]), str(r["condition"])) for r in await cur.fetchall()]
+            # A cheap look first: only a thread has one of these states, so a campaign with none
+            # (most of them) skips the full threads read and costs this note a millisecond.
+            cur = await scope.conn.execute(
+                "SELECT 1 FROM memory_states WHERE guild_id = %s AND campaign_id = %s"
+                " AND closed_at IS NULL AND condition = ANY(%s) LIMIT 1",
+                (*scope.ids, list(LIVE_THREAD_STATES)),
+            )
+            has_threads = await cur.fetchone() is not None
         sentences: list[str] = []
         if seeds:
             found = await self._recall.recall(
@@ -193,4 +227,19 @@ class PreSession:
             recap = await self._recaps.bridge(guild_id, campaign_id, now + 1)
             if recap is not None and recap.title:
                 title, day = recap.title, recap.game_day
-        return compose(Facts(title, day, sentences, conditions, waiting))
+        # One read of the campaign's threads (the same one the cards use). A failure here costs
+        # the line, never the note.
+        quiet: list[str] = []
+        try:
+            if not has_threads:
+                raise _NoThreads
+            every = await self._memory.threads(guild_id, campaign_id, stalled_after=stalled_after)
+            stalled = sorted(
+                (t for t in every if t.stalled), key=lambda t: (-t.quiet_sessions, t.thread.name)
+            )
+            quiet = [t.thread.name for t in stalled]
+        except _NoThreads:
+            pass
+        except Exception:
+            log.warning("Couldn't read the quiet threads for the pre-session note", exc_info=True)
+        return compose(Facts(title, day, sentences, conditions, waiting, quiet))

@@ -383,3 +383,78 @@ class Screens(ConfirmedMemoryTest):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ThreadList(ConfirmedMemoryTest):
+    """The 🧵 Threads button on the pre-session note (#1675): every live thread, in play first."""
+
+    def interaction(self, user: int = DM) -> Any:
+        return Screens.interaction(self, user)  # type: ignore[arg-type]
+
+    async def test_the_list_puts_threads_in_play_first_and_marks_the_quiet_ones(self) -> None:
+        self.now = S1 - 100
+        for name, state in (("Hinted one", HINTED), ("Open one", OPEN), ("Active one", GOING)):
+            await self.memory.new_thread(GUILD_A, self.c, name, "quest", state, source="dm")
+        done = await self.memory.new_thread(GUILD_A, self.c, "Done one", "quest", OPEN, source="dm")
+        await self.memory.set_condition(GUILD_A, self.c, done.value.id, RESOLVED, source="dm")
+        who = await self.add("Mira", type="character", role="npc")
+        for n in (1, 2, 3):
+            await self.memory.add_session_heard(GUILD_A, self.c, S1 + n, [Heard(who, 7, 1)])
+        review = ui.ThreadsReview(self.c, all_live=True)
+        text = await review.current_text(self.interaction())
+        assert text is not None
+        order = [line.split("**")[1] for line in text.splitlines() if line[:1].isdigit()]
+        self.assertEqual(order, ["Active one", "Open one", "Hinted one"])  # resolved is not listed
+        self.assertEqual(  # all three have been quiet for three sessions
+            sum("⏳" in line for line in text.splitlines() if line[:1].isdigit()), 3
+        )
+
+    async def test_a_long_list_pages_and_the_default_review_is_unchanged(self) -> None:
+        for n in range(6):
+            await self.memory.new_thread(GUILD_A, self.c, f"T{n}", "quest", OPEN, source="dm")
+        review = ui.ThreadsReview(self.c, all_live=True)
+        await review.current_text(self.interaction())
+        self.assertEqual(len(review.page), 4)
+        labels = [str(getattr(b, "label", "")) for b in review.children]
+        self.assertIn("Next ▶", labels)
+        self.assertNotIn("◀ Back", labels)
+        review.offset = 4
+        await review.current_text(self.interaction())
+        self.assertEqual(len(review.page), 2)
+        self.assertIn("◀ Back", [str(getattr(b, "label", "")) for b in review.children])
+        quiet_only = ui.ThreadsReview(self.c)  # nothing is stalled yet
+        self.assertIsNone(await quiet_only.current_text(self.interaction()))
+
+    async def test_the_list_is_this_campaigns_and_the_dms(self) -> None:
+        other = (await self.campaigns.create(GUILD_A, "Elsewhere", 7)).id
+        await self.memory.new_thread(GUILD_A, other, "Theirs", "quest", OPEN, source="dm")
+        await self.memory.new_thread(GUILD_A, self.c, "Ours", "quest", OPEN, source="dm")
+        review = ui.ThreadsReview(self.c, all_live=True)
+        text = await review.current_text(self.interaction())
+        assert text is not None
+        self.assertIn("Ours", text)
+        self.assertNotIn("Theirs", text)
+        it = self.interaction(99)  # a player pressing the button gets refused
+        await ui.start_review(it, self.c, all_live=True)
+        self.assertIn("DM", it.sent[-1])  # refused, no list
+
+    async def test_fifty_threads_read_fast(self) -> None:
+        import time
+
+        for n in range(50):
+            await self.memory.new_thread(GUILD_A, self.c, f"Thread {n}", "quest", OPEN, source="dm")
+        began = time.perf_counter()
+        found = await self.memory.threads(GUILD_A, self.c, stalled_after=3)
+        took = time.perf_counter() - began
+        self.assertEqual(len(found), 50)
+        self.assertLess(took, 1.0)  # a session start has 3 seconds; this is one read
+
+
+class Buttons(unittest.TestCase):
+    def test_the_threads_button_comes_back_from_its_id_after_a_restart(self) -> None:
+        match = ui.ThreadListButton.__discord_ui_compiled_template__.fullmatch(
+            "dmbot:threads:list:" + "c" * 32
+        )
+        assert match is not None
+        self.assertEqual(match["campaign"], "c" * 32)
+        self.assertEqual(ui.ThreadListButton("c" * 32).item.label, "🧵 Threads")

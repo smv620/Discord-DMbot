@@ -308,7 +308,7 @@ from dmbot.ui.secret_aloud import (
     secret_aloud_view,
 )
 from dmbot.ui.sheets import MySheetButton, OpenCardButton
-from dmbot.ui.threads import ThreadsButton, threads_view
+from dmbot.ui.threads import ThreadListButton, ThreadsButton, threads_view
 from dmbot.ui.threads import waiting_text as threads_waiting_text
 from dmbot.ui.transcripts import (
     DownloadButton,
@@ -1068,7 +1068,9 @@ class DMBot(commands.AutoShardedBot):
         self.add_dynamic_items(
             ReviewButton, PeopleReviewButton, ClaimsReviewButton, ContinuityButton
         )
-        self.add_dynamic_items(ThreadsButton)  # the quiet story threads (#1662)
+        self.add_dynamic_items(
+            ThreadsButton, ThreadListButton
+        )  # the quiet story threads (#1662, #1675)
         self.add_dynamic_items(HeardReviewButton)  # unanswered "Did they mean…?" (#1572)
         self.add_dynamic_items(SecretAloudButton)  # the secret-said-aloud question (#1407)
         self.add_dynamic_items(RecapButton)  # the recap on the DM screen (#1455)
@@ -1894,14 +1896,20 @@ class DMBot(commands.AutoShardedBot):
                     self.memory, RecallService(self.memory), ClaimStore(self.memory), self.recaps
                 )
                 async with asyncio.timeout(PRESESSION_NOTE_WAIT_S):  # never a stuck connection
-                    note = await presession.note(gid, cid, now=int(time.time()), opted_in=agreed)
+                    note = await presession.note(
+                        gid,
+                        cid,
+                        now=int(time.time()),
+                        opted_in=agreed,
+                        stalled_after=self.settings.thread_stalled_sessions,
+                    )
                 if note is None or self.tables.get(gid) is not table:
                     return  # nothing confirmed, or the session ended meanwhile
-                await self.post(
-                    table.screen_channel_id,
-                    note.text,
-                    view=claims_review_view(cid) if note.waiting else None,
-                )
+                view = claims_review_view(cid) if note.waiting else None
+                if note.quiet:  # 🧵 Threads: the DM's list, in play first (#1675)
+                    view = view or discord.ui.View(timeout=None)
+                    view.add_item(ThreadListButton(cid))
+                await self.post(table.screen_channel_id, note.text, view=view)
                 log.info("Pre-session note: %d line(s)", len(note.lines))  # counts only
             except Exception:
                 log.exception("The pre-session note failed")

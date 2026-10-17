@@ -54,6 +54,22 @@ class Wording(unittest.TestCase):
         )
         self.assertEqual(note.waiting, 3)
 
+    def test_quiet_threads_are_one_line_with_up_to_three_names_and_a_count(self) -> None:
+        self.assertIsNone(compose(Facts(quiet_threads=())))
+        note = compose(Facts(quiet_threads=["The Missing Heir", "Mira's debt"]))
+        assert note is not None
+        self.assertEqual(note.lines, ("🧵 Quiet threads: The Missing Heir, Mira's debt",))
+        self.assertEqual(note.quiet, 2)
+        many = compose(Facts(quiet_threads=["A", "B", "C", "D", "E"]))
+        assert many is not None
+        self.assertEqual(many.lines, ("🧵 Quiet threads: A, B, C (+2 more)",))
+        self.assertEqual(many.quiet, 5)
+
+    def test_a_thread_name_cannot_open_markdown_in_the_note(self) -> None:
+        note = compose(Facts(quiet_threads=["*bold* [x](y)"]))
+        assert note is not None
+        self.assertNotIn("[x](y)", note.text)
+
     def test_one_thing_is_singular_and_no_day_means_no_day(self) -> None:
         note = compose(Facts("Dusk", None, [], [], 1))
         assert note is not None
@@ -127,6 +143,72 @@ class Selecting(MemoryTest):
         return await self.service(kw.pop("recaps", "default")).note(
             GUILD_A, kw.pop("campaign"), now=LATER, opted_in=kw.pop("opted_in", AGREED)
         )
+
+    async def thread_at(self, name: str, when: int, campaign: str | None = None) -> str:
+        """A thread the DM started at `when` (the store's clock), live ("active")."""
+        self.now = when
+        made = await self.memory.new_thread(
+            GUILD_A, campaign or self.c, name, "quest", "active", source="dm"
+        )
+        return made.value.id
+
+    async def later_sessions(self, campaign: str | None = None) -> None:
+        """Three more sessions after the one in setUp, in which no thread is heard."""
+        who = (
+            self.mira
+            if campaign is None
+            else await self.add("Z", campaign=campaign, type="character", status="confirmed")
+        )
+        for n in (1, 2, 3):
+            await self.memory.add_session_heard(
+                GUILD_A, campaign or self.c, S2 + n * 86400, [Heard(who, 7, 1)]
+            )
+
+    async def test_quiet_threads_come_longest_quiet_first_and_only_stalled_ones(self) -> None:
+        await self.thread_at("Newer thread", S2 + 10)  # three sessions since
+        await self.thread_at("Old thread", S1 - 100)  # four sessions since
+        await self.thread_at("Fresh thread", LATER)  # none since
+        await self.later_sessions()
+        note = await self.service().note(
+            GUILD_A, self.c, now=LATER, opted_in=AGREED, stalled_after=3
+        )
+        assert note is not None
+        line = next(x for x in note.lines if x.startswith("🧵"))
+        self.assertEqual(line, "🧵 Quiet threads: Old thread, Newer thread")
+        self.assertEqual(note.quiet, 2)
+
+    async def test_no_quiet_thread_means_no_line(self) -> None:
+        await self.thread_at("Fine thread", LATER)
+        await self.later_sessions()
+        note = await self.note()
+        assert note is not None
+        self.assertFalse([x for x in note.lines if x.startswith("🧵")])
+        self.assertEqual(note.quiet, 0)
+
+    async def test_a_resolved_thread_is_never_quiet(self) -> None:
+        done = await self.thread_at("Done thread", S1 - 100)
+        await self.memory.set_condition(GUILD_A, self.c, done, "resolved", source="dm")
+        self.now = LATER
+        await self.later_sessions()
+        note = await self.note()
+        assert note is not None
+        self.assertEqual(note.quiet, 0)
+
+    async def test_another_campaigns_threads_never_appear(self) -> None:
+        other = (await self.campaigns.create(GUILD_A, "Elsewhere", 7)).id
+        await self.thread_at("Theirs", S1 - 100, other)
+        await self.later_sessions(other)
+        self.now = LATER
+        note = await self.note()
+        assert note is not None
+        self.assertNotIn("Theirs", note.text)
+        self.assertEqual(note.quiet, 0)
+
+    async def test_a_failed_thread_read_costs_the_line_never_the_note(self) -> None:
+        self.memory.threads = AsyncMock(side_effect=RuntimeError("x"))  # type: ignore[method-assign]
+        note = await self.note()
+        assert note is not None  # the rest of the note stands
+        self.assertEqual(note.quiet, 0)
 
     async def test_it_holds_the_last_recap_and_what_is_open_about_the_names_heard_last(
         self,
@@ -310,7 +392,7 @@ def fake_bot(
         guild_id=GUILD_A, campaign_id="c" * 32, resumed=resumed, screen_channel_id=55
     )
     bot = SimpleNamespace(
-        settings=SimpleNamespace(presession_note=on),
+        settings=SimpleNamespace(presession_note=on, thread_stalled_sessions=3),
         memory=object(),
         recaps=None,
         tables={GUILD_A: table},
@@ -365,6 +447,15 @@ class OnTheDmScreen(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(bot.post.await_args.args[0], 55)  # the DM screen channel
         self.assertEqual(bot.post.await_args.args[1], self.NOTE.text)
         self.assertIsNone(bot.post.await_args.kwargs["view"])  # nothing waiting: no button
+
+    async def test_quiet_threads_bring_the_threads_button_beside_the_claims_one(self) -> None:
+        bot = await self.go(Note("t", ("l",), 0, 2))
+        ids = [str(i.item.custom_id) for i in bot.post.await_args.kwargs["view"].children]
+        self.assertEqual(ids, ["dmbot:threads:list:" + "c" * 32])
+        both = await self.go(Note("t", ("l",), 2, 2))
+        ids = [str(i.item.custom_id) for i in both.post.await_args.kwargs["view"].children]
+        self.assertEqual(len(ids), 2)
+        self.assertIn("dmbot:threads:list:" + "c" * 32, ids)
 
     async def test_waiting_questions_bring_the_existing_button(self) -> None:
         bot = await self.go(Note("t", ("l",), 2))

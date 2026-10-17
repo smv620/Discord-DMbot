@@ -73,6 +73,21 @@ class ThreadInfo:
     due: str = ""  # ...and the DM's free-text note on when it is due, never parsed
 
 
+def in_play_first(infos: Iterable[ThreadInfo]) -> list[ThreadInfo]:
+    """Live threads for a list: the ones happening now first, then the open ones, then the
+    hinted; within each the quietest first, then by name."""
+    order = {GOING: 0, OPEN: 1, HINTED: 2}
+    return sorted(
+        infos,
+        key=lambda t: (
+            order.get(t.state.condition if t.state else "", 3),
+            -t.quiet_sessions,
+            t.thread.name.lower(),
+            t.thread.id,
+        ),
+    )
+
+
 def sessions_since(touch: int, sessions: Iterable[int]) -> int:
     """How many known sessions started after `touch`."""
     return sum(1 for s in sessions if s > touch)
