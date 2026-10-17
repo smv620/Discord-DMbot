@@ -38,7 +38,7 @@ from dmbot.campaigns import Campaign
 from dmbot.campaigns.models import CampaignError
 from dmbot.rules import optional
 from dmbot.timebot import clock as game
-from dmbot.timebot import durations, effects, split
+from dmbot.timebot import durations, effects, split, where_are_we
 from dmbot.timebot.clock import Clock
 from dmbot.timebot.store import MOVED_ON, ClockStore, Rejoined, Stored
 
@@ -319,6 +319,7 @@ def panel_view(campaign_id: str, is_split: bool = False) -> discord.ui.View:
 async def show(client: Any, campaign: Campaign, stored: Stored) -> discord.Message | None:
     """Edit the pinned clock message in place with the clock now; post (and pin) a new one if
     there isn't one or it is gone. Returns the message, or None if nothing could be shown."""
+    where_are_we.shown(client, campaign)  # (the quiet "where are we" note waits again)
     text = await render(client, campaign, stored.clock, stored)
     view = clock_view(campaign.id, stored.clock, stored)
     channel = client.get_channel(stored.channel_id) if stored.channel_id else None
@@ -469,6 +470,7 @@ async def say(
     `split_undo` is (kind, token): the Undo under a split or a rejoin (#1607)."""
     if campaign.dm_screen_channel_id is None or not lines:
         return
+    where_are_we.shown(client, campaign)
     view = None
     if split_undo:
         view = discord.ui.View(timeout=None)

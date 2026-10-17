@@ -299,6 +299,13 @@ export const held: Held[] = [
     reason:
       "Held until the billing login link is set in the website's build (PUBLIC_STRIPE_PORTAL_LOGIN_URL, #1711); move it to the news when the link shows.",
   },
+  {
+    date: "2026-10-17",
+    title: "A quiet reminder of the game time",
+    what: "During a session, if nobody has looked at the game clock for half an hour, DMbot says where the game is on the DM screen: \"Where we are: afternoon of Day 4 (14:30)\". With a split party it lists each group. It stays quiet during a fight and when the DM screen is set to Quiet. Players never see it.",
+    reason:
+      "Held until it has been seen working on the test server (#1738).",
+  },
 ];
 
 const months = [
