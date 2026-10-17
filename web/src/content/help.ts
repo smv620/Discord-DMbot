@@ -331,6 +331,24 @@ export const whereAreWeSteps: Step[] = [
   },
 ];
 
+// The rules channel (#1752, #1759) is built, but its What's new entry ("A channel for your house
+// rules") is held until it has been seen working on the test server. Set this to true in the same
+// change that moves that entry out of `held`; a test ties the two. It also carries the sentence that
+// a peek now opens this channel too, which is only true once the channel exists.
+export const RULES_CHANNEL_LIVE = false;
+
+export const rulesChannelSteps: Step[] = [
+  {
+    text: "Each campaign also gets a channel called dmb-rules, with a short name after it. It shows the house rules you have saved, one message for each rule, and a note for each house-rule set your campaign follows. DMbot keeps it up to date when you add, change or remove a rule, and makes it again at the next /dmbot start if it was deleted. Nobody can post in it, you included. It never shows rules that are only proposed, notes from your DM screen, or text from a rulebook.",
+    names: [
+      { name: "dmb-rules", file: "dm_screen/rules_channel.py" },
+    ],
+  },
+  {
+    text: "Who can read dmb-rules follows your DM screen setting: only the game masters, players who choose to peek, or everyone. When a player peeks behind the DM screen, that opens dmb-rules as well, and the spoiler warning says so. There are no spoilers in dmb-rules.",
+  },
+];
+
 export const dmSteps: Step[] = [
   { text: "Add DMbot to your Discord server from the Add to Discord page." },
   {
@@ -541,6 +559,7 @@ export const dmSteps: Step[] = [
   ...(SHARED_STORY_LIVE ? sharedStorySteps : []),
   ...(STANDING_LIVE ? standingSteps : []),
   ...(DEEDS_LIVE ? deedSteps : []),
+  ...(RULES_CHANNEL_LIVE ? rulesChannelSteps : []),
   ...(HOMEBREW_KINDS_LIVE ? homebrewKindSteps : []),
   ...(SECRET_CLUES_LIVE ? secretClueSteps : []),
   {

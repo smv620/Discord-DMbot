@@ -10,7 +10,7 @@ import { beforeAll, describe, expect, it } from "vitest";
 import { parsePage } from "./dom";
 
 import { entries, held } from "../src/content/whats-new";
-import { DEEDS_LIVE, deedSteps, WHERE_ARE_WE_LIVE, whereAreWeSteps, SHARED_STORY_LIVE, sharedStorySteps, STANDING_LIVE, standingSteps, HOMEBREW_KINDS_LIVE, homebrewKindSteps, STORY_THREADS_LIVE, storyThreadSteps, DM_BOT_CHANNEL_LIVE, dmBotChannelSteps, settingsOnDmScreenSteps, HOMEBREW_LINKS_LIVE, SECRET_CLUES_LIVE, accountSteps, dmSteps, homebrewLinkSteps, secretClueSteps, emailSteps, recapSteps, quickAnswers, quickAnswersHeading, gettingHelp, playerSteps } from "../src/content/help";
+import { RULES_CHANNEL_LIVE, rulesChannelSteps, DEEDS_LIVE, deedSteps, WHERE_ARE_WE_LIVE, whereAreWeSteps, SHARED_STORY_LIVE, sharedStorySteps, STANDING_LIVE, standingSteps, HOMEBREW_KINDS_LIVE, homebrewKindSteps, STORY_THREADS_LIVE, storyThreadSteps, DM_BOT_CHANNEL_LIVE, dmBotChannelSteps, settingsOnDmScreenSteps, HOMEBREW_LINKS_LIVE, SECRET_CLUES_LIVE, accountSteps, dmSteps, homebrewLinkSteps, secretClueSteps, emailSteps, recapSteps, quickAnswers, quickAnswersHeading, gettingHelp, playerSteps } from "../src/content/help";
 import Help from "../src/pages/help.astro";
 
 const botDir = fileURLToPath(new URL("../../core/src/dmbot/", import.meta.url));
@@ -265,6 +265,16 @@ describe("Help: the website's read-only pages (#1588)", () => {
     const step = dmSteps.map((x) => x.text).find((t) => t.includes("/dmbot backup (paid campaigns only)")) ?? "";
     expect(step).toContain("how often names were said and by whom");
     expect(step).toContain("only for people who are still recorded");
+  });
+
+  it("holds the rules channel steps with their held What's new entry (#1759)", () => {
+    expect(held.map((h) => h.title).includes("A channel for your house rules")).toBe(!RULES_CHANNEL_LIVE);
+    const shown = dmSteps.map((x) => x.text).join(" ");
+    expect(shown.includes("a channel called dmb-rules")).toBe(RULES_CHANNEL_LIVE);
+    const words = rulesChannelSteps.map((x) => x.text).join(" ");
+    expect(words).toContain("Nobody can post in it, you included.");
+    expect(words).toContain("that opens dmb-rules as well, and the spoiler warning says so");
+    expect(words).toContain("There are no spoilers in dmb-rules.");
   });
 
   it("holds the deeds and where-are-we steps with their held What's new entries (#1754)", () => {
