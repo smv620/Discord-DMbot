@@ -27,6 +27,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any
 
+from dmbot.ai import DEFAULT_PRICE, PRICE_PER_MILLION
 from dmbot.db import Conn, Database
 from dmbot.memory.adventure import AdventureError, AdventureStore
 from dmbot.memory.claims import reads_like_instruction
@@ -34,15 +35,9 @@ from dmbot.memory.claims import reads_like_instruction
 # ---- money --------------------------------------------------------------------------------
 
 # Dollars per million tokens is the same number as millionths of a dollar per token, so a cost in
-# millionths ("micro-dollars", an integer) is tokens times the price. List prices, base tokens:
-# https://platform.claude.com/docs/en/about-claude/pricing (Sonnet 5.5 checked 2026-10-15).
-PRICE_PER_MILLION: dict[str, tuple[int, int]] = {
-    "claude-sonnet-5-5": (2, 10),
-    "claude-haiku-4-5-20251001": (1, 5),
-}
-# A model that is not here (an override in .env, or the strongest tier) is priced high on purpose:
-# a price nobody checked must make the caps bite early, never late.
-DEFAULT_PRICE = (15, 75)
+# millionths ("micro-dollars", an integer) is tokens times the price. The prices are in
+# `dmbot.ai.PRICE_PER_MILLION` (the one file that names models); a model with no checked price
+# there is priced high on purpose, so the caps bite early, never late.
 DOCUMENT_CAP_MICRO = 3_000_000  # $3 for one document
 MONTH_CAP_MICRO = 10_000_000  # $10 for one campaign's calendar month (UTC)
 CHARS_PER_TOKEN = 3.0  # cautious: real text runs nearer 4, so estimates come out high

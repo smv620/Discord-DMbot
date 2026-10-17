@@ -131,6 +131,16 @@ DEFAULT_MODELS = AIModels(
 )
 CONNECT_TIMEOUT_S = 15
 
+# List prices in dollars per million tokens, (input, output), base tokens, from
+# https://platform.claude.com/docs/en/about-claude/pricing (Sonnet 5.5 checked 2026-10-15). For the
+# money caps on reading an adventure (`dmbot.memory.story_plan`). A model that is not here (an
+# override in .env, or the strongest tier) is priced at DEFAULT_PRICE, high on purpose.
+PRICE_PER_MILLION: dict[str, tuple[int, int]] = {
+    "claude-sonnet-5-5": (2, 10),
+    "claude-haiku-4-5-20251001": (1, 5),
+}
+DEFAULT_PRICE = (15, 75)
+
 
 BUSY = (
     "DMbot couldn't reach the AI service, or it's busy. Nothing was added. In a minute, run "
