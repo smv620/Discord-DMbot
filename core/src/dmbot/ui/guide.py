@@ -133,10 +133,10 @@ async def _checked(interaction: discord.Interaction, campaign_id: str) -> tuple[
     return campaign, memory
 
 
-async def _files(interaction: discord.Interaction, campaign: Any) -> list[Any]:
+async def _files(client: Any, campaign: Any) -> list[Any]:
     """The files that have chapters read from them, in the card's order."""
-    plan = getattr(_bot(interaction), "plan", None)
-    store = getattr(_bot(interaction), "adventure", None)
+    plan = getattr(client, "plan", None)
+    store = getattr(client, "adventure", None)
     if plan is None or store is None:
         return []
     counts = await plan.counts(campaign.guild_id, campaign.id)
@@ -151,11 +151,11 @@ async def start(interaction: discord.Interaction, campaign_id: str) -> None:
     if found is None:
         return
     campaign, _ = found
-    files = await _files(interaction, campaign)
+    files = await _files(_bot(interaction), campaign)
     if not files:
         await _replace(
             interaction,
-            NO_CHAPTERS if await _anything_read(interaction, campaign) else NOT_READ,
+            NO_CHAPTERS if await _anything_read(_bot(interaction), campaign) else NOT_READ,
             None,
         )
         return
@@ -165,8 +165,8 @@ async def start(interaction: discord.Interaction, campaign_id: str) -> None:
     await _replace(interaction, "🧭 Which book file?", FileMenu(campaign.id, files))
 
 
-async def _anything_read(interaction: discord.Interaction, campaign: Any) -> bool:
-    plan = getattr(_bot(interaction), "plan", None)
+async def _anything_read(client: Any, campaign: Any) -> bool:
+    plan = getattr(client, "plan", None)
     counts = await plan.counts(campaign.guild_id, campaign.id) if plan is not None else {}
     return any(c.places + c.people + c.chapters for c in counts.values())
 
@@ -202,25 +202,78 @@ async def _show(
     check. About nine calls in all: the checks (campaign, confirmation, plan), the files (2), and
     the guide's own three reads (nodes with the pick, linked entries, clashes)."""
     campaign, memory = found
+    client = _bot(interaction)
+    if files is None:
+        files = await _files(client, campaign)
+    composed = await compose(client, campaign, memory, files, document_id, note=note, verified=True)
+    if composed is None:
+        await _replace(interaction, NO_CHAPTERS, None)
+        return
+    text, guide, clashes = composed
+    await _replace(
+        interaction,
+        text,
+        GuideMenu(campaign.id, document_id, guide, clashes, undo, start=start),
+    )
+
+
+async def compose(
+    client: Any,
+    campaign: Any,
+    memory: Any,
+    files: list[Any],
+    document_id: str,
+    *,
+    note: str = "",
+    verified: bool = False,
+) -> tuple[str, model.Guide, list[Clash]] | None:
+    """The answer for one file: its text, the guide it was made from and the clashes in it, or
+    None when the file has no chapters. The one place the text is made: the 🧭 button and the
+    DM sidebar's "what's next?" (#1739) both come here, so they can never differ. `verified`: the
+    caller has just checked the three conditions."""
     nodes, pick = await model.read(memory, campaign.guild_id, campaign.id, document_id)
     guide = model.build(nodes, pick)
     if not guide.chapters:
-        await _replace(interaction, NO_CHAPTERS, None)
-        return
-    watch = getattr(_bot(interaction), "watch", None)
+        return None
+    watch = getattr(client, "watch", None)
     clashes = (
-        await watch.open_for(campaign.guild_id, campaign.id, guide.in_chapter, verified=True)
+        await watch.open_for(campaign.guild_id, campaign.id, guide.in_chapter, verified=verified)
         if watch is not None
         else []
     )
-    if files is None:
-        files = await _files(interaction, campaign)
     name = next((d.file_name for d in files if d.id == document_id), "")
-    await _replace(
-        interaction,
+    return (
         guide_text(guide, clashes, file_name=name if len(files) > 1 else "", note=note),
-        GuideMenu(campaign.id, document_id, guide, clashes, undo, start=start),
+        guide,
+        clashes,
     )
+
+
+SPOKEN_FILES = 3  # the sidebar answers for at most this many files in one message
+
+
+async def answer_text(client: Any, campaign: Any) -> str | None:
+    """The sidebar's answer (#1739): the same text as the button, for a DM whose three
+    conditions the caller has checked. With several files, one block for each (the first few).
+    None if DMbot has no memory to read."""
+    memory = getattr(client, "memory", None)
+    if memory is None:
+        return None
+    files = await _files(client, campaign)
+    if not files:
+        return NO_CHAPTERS if await _anything_read(client, campaign) else NOT_READ
+    blocks = []
+    for doc in files[:SPOKEN_FILES]:
+        composed = await compose(client, campaign, memory, files, doc.id, verified=True)
+        blocks.append(NO_CHAPTERS if composed is None else composed[0])
+    return _fit_blocks(blocks)
+
+
+def _fit_blocks(blocks: list[str]) -> str:
+    """Whole blocks joined by a blank line, the last ones dropped until it fits one message."""
+    while len("\n\n".join(blocks)) > TEXT_MAX and len(blocks) > 1:
+        blocks.pop()
+    return "\n\n".join(blocks)[:TEXT_MAX]
 
 
 class FileMenu(_Menu):

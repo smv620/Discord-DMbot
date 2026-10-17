@@ -32,7 +32,7 @@ import discord
 from dmbot.ai import AIError
 from dmbot.audio.segmenter import Utterance
 from dmbot.rules import house_voice
-from dmbot.sidebar import memo, table_links
+from dmbot.sidebar import guide_phrase, memo, table_links
 from dmbot.sidebar.ask import AskLimiter, Request, request_in, voiced_by_npc
 from dmbot.transcript.models import (
     SIDEBAR_ANSWER,
@@ -103,6 +103,7 @@ HOUSE_NOT_AGREED = (
 HOUSE_WHICH = "Which game is this house rule for?"
 WHICH = "Which game is this for?"
 SENT_PRIVATELY = "Sent to the DM privately."
+PRIVATE_NOTE = "(answered privately: Guide me)"  # all the transcript keeps of a Guide me reply
 COULDNT_SEND = "I couldn't send that to the DM. Ask again."
 TOO_MANY = "That's a lot of questions at once. Ask again in a minute."
 TYPE_INSTEAD = "I can only read typed questions and voice messages."
@@ -165,6 +166,8 @@ class Host(Protocol):
     async def sidebar_table_name(self, table: Table, user_id: int) -> str: ...
     async def sidebar_links(self, table: Table) -> tuple[str | None, tuple[str, ...]]: ...
     async def sidebar_nudge_chat(self, table: Table, user_id: int) -> None: ...
+    # Guide me's answer (#1739), or None when this campaign's three conditions don't hold.
+    async def sidebar_guide(self, table: Table, user_id: int) -> str | None: ...
 
 
 Reply = Callable[[str], Awaitable[bool]]
@@ -640,6 +643,15 @@ class SidebarService:
         campaign = await self.host.sidebar_campaign(guild_id, campaign_id)
         if campaign is None or not self._still(table, user_id, dm=dm_only):
             return
+        if (
+            # Not VIA_CHAT (typed in the DMbot chat) or VIA_TABLE_CHAT (typed in the table's text
+            # chat): those are the table's questions, read by everyone.
+            via in (VIA_VOICE, VIA_TYPED, VIA_TABLE)
+            and _is_dm(table, user_id)
+            and guide_phrase.is_whats_next(question)
+            and await self._guide_answer(table, user_id, heard, question, asked_ms, via)
+        ):
+            return  # (else the usual sidebar answer: Guide me is off, or can't be given)
         now = self._monotonic()
         scene = table.recent.scene(
             lambda u: self.host.name_of(guild_id, u),
@@ -724,6 +736,50 @@ class SidebarService:
         if answer.refused or not self._still(table, user_id, dm=dm_only):
             return
         self._save_lines(table, user_id, heard, question, asked_ms, answer, said, via, public)
+
+    async def _guide_answer(
+        self,
+        table: Table,
+        user_id: int,
+        heard: str,
+        question: str,
+        asked_ms: int,
+        via: str,
+    ) -> bool:
+        """ "Hey DMbot, what's next?" from the DM (#1739): Guide me's answer, privately, the same
+        text as the 🧭 button. True when it was handled. False (nothing sent) when Guide me is not
+        on for this campaign, so the question goes the usual way.
+
+        The answer is the DM's story, DM-screen content (CLAUDE.md), and the sidebar's replies
+        normally go into the raw transcript, which anyone in the server may read. This one never
+        does: the question is logged as usual, and the reply as "(answered privately: Guide me)"
+        and nothing more."""
+        try:
+            text = await asyncio.wait_for(self.host.sidebar_guide(table, user_id), ANSWER_TIMEOUT_S)
+        except Exception:  # (a timeout too: the usual answer follows, the campaign is not held up)
+            log.exception("The sidebar couldn't give Guide me's answer")
+            return False
+        if text is None:
+            return False
+        if not self._still(table, user_id, dm=True):
+            return True  # (they stopped being recorded meanwhile: nothing is sent or kept)
+        for part in _parts(text):
+            if not self._still(table, user_id, dm=True):
+                return True  # (consent can go while parts are sent: nothing more is sent)
+            # Always the DM's own chat with DMbot, even when the DM said it at a table that has a
+            # DMbot chat: nobody else may read the DM's story.
+            status = await self.host.sidebar_send_dm(user_id, part)
+            if status != "sent":
+                if status == "forbidden":
+                    await self._cant_dm(table, user_id)
+                else:
+                    self._note_later(user_id, "guide", FAILED)  # (never the text)
+                return True
+        if self._still(table, user_id, dm=True):
+            self._save_lines(
+                table, user_id, heard, question, asked_ms, _Private(), PRIVATE_NOTE, via, False
+            )
+        return True
 
     def _save_lines(
         self,
@@ -864,6 +920,21 @@ class SidebarService:
         log.info("Couldn't send a sidebar answer to the DM")
         if self._note_ok(user_id, "cantdm"):
             await self.host.sidebar_tell_screen(table, CANT_DM)
+
+
+@dataclass(frozen=True, slots=True)
+class _Private:
+    """The sidebar "answer" saved for a private Guide me reply: only that it was given."""
+
+    text: str = PRIVATE_NOTE
+    in_game: bool = True
+    refused: bool = False
+    model: str = ""
+    prompt_version: str = ""
+    sources: Sequence[str] = ()
+    parts: Sequence[str] = (PRIVATE_NOTE,)
+    one_for_dm: bool = False
+    question: str = ""
 
 
 def _campaign_key(table: Table) -> tuple[int, str]:

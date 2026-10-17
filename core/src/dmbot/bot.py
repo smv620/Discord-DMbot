@@ -301,6 +301,7 @@ from dmbot.transcription.base import (
 )
 from dmbot.transcription.factory import build_transcriber
 from dmbot.transcription.pipeline import TranscriptionPipeline, clip_budget_s, speech_sent_line
+from dmbot.ui import guide as guide_screen
 from dmbot.ui import logic as ui_logic
 from dmbot.ui import rule_card
 from dmbot.ui.claims_review import ClaimsReviewButton, claims_review_view
@@ -3834,6 +3835,22 @@ class DMBot(commands.AutoShardedBot):
             log.info("Couldn't message user %s privately: %s", user_id, exc)
             return "failed"
         return "sent"
+
+    async def sidebar_guide(self, table: Table, user_id: int) -> str | None:
+        """Guide me's answer for the DM sidebar's "what's next?" (#1739): the same text as the
+        🧭 button, or None when the campaign's switch isn't on Guide me, no DM's own confirmation
+        stands, or the owner's plan doesn't allow it (so the sidebar answers as it always did)."""
+        if table.campaign_id is None:
+            return None
+        campaign = await self.campaigns.get(table.guild_id, table.campaign_id)
+        if campaign is None or user_id not in campaign.dm_user_ids:
+            return None
+        if not await self.guide_button_allowed(table.guild_id, campaign):
+            return None
+        # In a fight "what's next?" means whose turn it is: the usual answer, not the book.
+        if self.clocks is not None and await self.clocks.in_combat(table.guild_id, campaign.id):
+            return None
+        return await guide_screen.answer_text(self, campaign)
 
     async def sidebar_tell_screen(self, table: Table, text: str) -> None:
         await self.post(table.screen_channel_id, text)
