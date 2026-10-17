@@ -14,7 +14,7 @@ from dmbot import fightbot
 from dmbot.dm_screen import clock as clock_ui
 from dmbot.fight_style import StyleState, hear
 from dmbot.memory import fight_prompt
-from dmbot.memory.sheet_store import CharacterSheet
+from dmbot.memory.sheet_store import CharacterSheet, FightPlayer
 from dmbot.timebot.clock import Clock
 from tests import test_fightbot as tf
 from tests.test_sheet_reread import base
@@ -200,12 +200,8 @@ def sheets_for(users: list[int]) -> list[CharacterSheet]:
     ]
 
 
-class Timed(unittest.IsolatedAsyncioTestCase):
+class Ground(tf.Harness):
     """FightBot's tick for each heard style. The harness is test_fightbot's Runner."""
-
-    setUp = tf.Runner.setUp
-    table = tf.Runner.table
-    bot = tf.Runner.bot
 
     def primed(self, users: list[int], round_number: int = 1) -> tuple[Any, Any]:
         table = self.table()
@@ -241,6 +237,8 @@ class Timed(unittest.IsolatedAsyncioTestCase):
     def last_prompt(self, bot: Any) -> str:
         return str(bot.fight_ai.complete.await_args.args[1])
 
+
+class Timed(Ground):
     # ---- each ------------------------------------------------------------------------
 
     async def test_each_learns_the_order_in_round_one_and_reminds_the_next_player_in_round_two(
@@ -287,7 +285,7 @@ class Timed(unittest.IsolatedAsyncioTestCase):
 
     async def test_a_held_reminder_is_dropped_once_the_turn_moved_on(self) -> None:
         table, bot = self.primed([11, 12])
-        players = {11: tf.FightPlayer(last_call_at=int(self.now) - 10)}  # called 10 s ago
+        players = {11: FightPlayer(last_call_at=int(self.now) - 10)}  # called 10 s ago
         bot.sheets.fight_players = AsyncMock(side_effect=lambda g, c: dict(players))
         self.dm_says(table, "Hero11, you're on deck")
         await self.tick(bot, table)
@@ -295,7 +293,7 @@ class Timed(unittest.IsolatedAsyncioTestCase):
         self.assertIn(11, table.fight.due)  # and it waits
         self.dm_says(table, "goblin one, its turn")  # the turn moved on
         self.now += 130
-        players[11] = tf.FightPlayer(last_call_at=int(self.now) - 200)
+        players[11] = FightPlayer(last_call_at=int(self.now) - 200)
         await self.tick(bot, table)
         self.assertEqual(self.calls(bot), 0)  # dropped, not sent late
         self.assertNotIn(11, table.fight.due)
@@ -342,7 +340,7 @@ class Timed(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.calls(bot), 2)
         self.assertIn("The DM seems to be asking everyone what they will do", self.last_prompt(bot))
         self.now += 20  # asked again 20 seconds later: inside the two-minute gap
-        players = {u: tf.FightPlayer(last_call_at=int(self.now) - 20) for u in (11, 12)}
+        players = {u: FightPlayer(last_call_at=int(self.now) - 20) for u in (11, 12)}
         bot.sheets.fight_players = AsyncMock(side_effect=lambda g, c: dict(players))
         self.dm_says(table, "declare your actions")
         await self.tick(bot, table)
@@ -422,23 +420,14 @@ class Timed(unittest.IsolatedAsyncioTestCase):
         bot.fight_style_changed.assert_awaited_once()
 
 
-class Hardening(unittest.IsolatedAsyncioTestCase):
+class Hardening(Ground):
     """Found in review: lag between the round moving and FightBot knowing, late reminders,
     repeats, names that end in s, and lines that are not orders."""
-
-    setUp = tf.Runner.setUp
-    table = tf.Runner.table
-    bot = tf.Runner.bot
-    primed = Timed.primed
-    dm_says = Timed.dm_says
-    player_says = Timed.player_says
-    tick = Timed.tick
-    calls = Timed.calls
 
     async def test_a_line_right_after_the_round_moves_is_counted_in_the_new_round(self) -> None:
         table, _bot = self.primed([11], round_number=1)
         client = SimpleNamespace(tables={table.guild_id: table})
-        campaign = SimpleNamespace(guild_id=table.guild_id, id=table.campaign_id)
+        campaign: Any = SimpleNamespace(guild_id=table.guild_id, id=table.campaign_id)
         clock_ui._note_round(client, campaign, Clock(0, 0, None, 2, 0))  # "next round" was said
         self.assertEqual(table.fight.round, 2)
         self.dm_says(table, "declare your actions")  # said before the next 30-second pass
@@ -464,7 +453,7 @@ class Hardening(unittest.IsolatedAsyncioTestCase):
         table, bot = self.primed([11])
         self.dm_says(table, "players go first")
         self.now += fightbot.MOMENT_TTL_S + 1
-        players = {11: tf.FightPlayer()}
+        players = {11: FightPlayer()}
         bot.sheets.fight_players = AsyncMock(side_effect=lambda g, c: dict(players))
         await self.tick(bot, table)
         self.assertEqual(self.calls(bot), 0)
@@ -516,6 +505,68 @@ class Hardening(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(table.fight.style.dm_phrase(), "Initiative, as heard: by side")
 
 
+class StatedBeatsGuessed(Ground):
+    async def test_a_turn_call_never_overrules_a_style_the_dm_stated(self) -> None:
+        table, _bot = self.primed([11])
+        self.dm_says(table, "side initiative")
+        for line in ("Hero11, you're up", "goblin one, its turn", "Hero11, you're on deck"):
+            self.dm_says(table, line)
+        self.assertEqual(
+            (table.fight.style.order, table.fight.style.set_by["order"]), ("side", "dm")
+        )
+
+    async def test_a_stated_style_replaces_one_guessed_from_turns(self) -> None:
+        table, _bot = self.primed([11])
+        self.dm_says(table, "goblin one, its turn")
+        self.assertEqual(
+            (table.fight.style.order, table.fight.style.set_by["order"]), ("each", "dm_guess")
+        )
+        self.dm_says(table, "players go first")
+        self.assertEqual(table.fight.style.order, "side")
+
+    async def test_players_cannot_overrule_a_dms_guess_either(self) -> None:
+        table, _bot = self.primed([11, 12])
+        self.dm_says(table, "goblin one, its turn")
+        for user in (11, 12):
+            self.player_says(table, user, "side initiative")
+        self.assertEqual(table.fight.style.order, "each")
+
+    async def test_once_declarations_are_called_no_turn_moments_this_round(self) -> None:
+        table, _bot = self.primed([11, 12], round_number=2)
+        table.fight.style.vote("order", "each", DM, from_dm=True, consenting=YES)
+        table.fight.order_seen = [("m", "goblin 1"), ("p", 11)]
+        self.dm_says(table, "Hero12, you're on deck")
+        self.assertEqual(table.fight.due[12].kind, "next")
+        self.dm_says(table, "declare your actions")
+        self.assertEqual({d.kind for d in table.fight.due.values()}, {"declare"})  # turn/next gone
+        self.dm_says(table, "Hero12, you're on deck")
+        self.dm_says(table, "goblin one, its turn")  # would remind Hero11 otherwise
+        self.dm_says(table, "Hero12, you're up")
+        self.assertEqual({d.kind for d in table.fight.due.values()}, {"declare"})
+        # the next round plays out the usual way again
+        clock_ui._note_round(
+            SimpleNamespace(tables={table.guild_id: table}),
+            SimpleNamespace(guild_id=table.guild_id, id=table.campaign_id),
+            Clock(0, 0, None, 3, 0),
+        )
+        self.dm_says(table, "Hero12, you're on deck")
+        self.assertEqual(table.fight.due[12].kind, "next")
+
+    async def test_a_reroll_moment_survives_the_round_changing(self) -> None:
+        table, _bot = self.primed([11], round_number=2)
+        self.dm_says(table, "roll initiative")  # said just as round 2 begins...
+        clock_ui._note_round(
+            SimpleNamespace(tables={table.guild_id: table}),
+            SimpleNamespace(guild_id=table.guild_id, id=table.campaign_id),
+            Clock(0, 0, None, 3, 0),
+        )  # ...and the clock moves on to round 3 before the pass
+        self.assertEqual(set(table.fight.due_now()), {11})
+        side = self.dm_says(table, "players go first")
+        self.assertTrue(side)
+        table.fight.round = 5  # but not for long: two rounds on it has passed
+        self.assertEqual(table.fight.due_now(), {})
+
+
 class MoreNearMisses(unittest.TestCase):
     def heard(self, line: str) -> Any:
         return hear(line, {**NAMES, "chris": 9}, round_number=2)
@@ -535,6 +586,15 @@ class MoreNearMisses(unittest.TestCase):
             got = self.heard(line)
             self.assertEqual((got.order, got.turn), ("each", (9,)), line)
         self.assertEqual(self.heard("the goblins' turn").order, "side")
+
+    def test_narration_is_not_a_turn_call(self) -> None:
+        for line in ("the bridge, it goes", "sure, you go", "the dragon's turn", "sure, you're up"):
+            self.assertIsNone(self.heard(line), line)
+
+    def test_a_possessive_turn_is_a_person_at_the_table_only(self) -> None:
+        self.assertEqual(self.heard("Mira's turn").turn, (1,))
+        self.assertIsNone(self.heard("the dragon's turn"))
+        self.assertIsNone(self.heard("Smaug's turn"))
 
     def test_filler_words_are_not_names(self) -> None:
         self.assertIsNone(self.heard("okay, you're next"))
@@ -583,7 +643,7 @@ class TheBotsEar(unittest.TestCase):
 
         bot = mock.MagicMock(spec=DMBot)
         bot.clocks = None
-        table = SimpleNamespace(dm_user_ids={DM}, guild_id=1)
+        table: Any = SimpleNamespace(dm_user_ids={DM}, guild_id=1)
         with mock.patch.object(fightbot, "note_line", return_value=False) as heard:
             DMBot._act_on_line(bot, table, user, "players go first", typed=typed, held=held)
         return list(heard.call_args_list)

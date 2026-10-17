@@ -46,6 +46,9 @@ class Heard:
     declare_call: bool = False  # the DM asked what everyone will do
     reroll_call: bool = False  # initiative called again in an ongoing fight
     rolled: bool = False  # a player said their initiative roll (each or reroll, never side)
+    # The order was only guessed from a turn being called ("Mira, you're up"). That can be
+    # narration, so it never overrules a style the DM stated ("side initiative").
+    guess: bool = False
 
 
 _DECLARE = re.compile(
@@ -77,7 +80,7 @@ _PLURAL_TURN = re.compile(
 )
 _NAME = r"[a-z][a-z0-9'\-]*(?: [a-z0-9][a-z0-9'\-]*){0,2}"
 _UP = re.compile(
-    rf"{_LEAD}(?P<name>{_NAME}),? (?:you'?re up|you are up|it'?s your turn|your turn|you go)[.!]?$",
+    rf"{_LEAD}(?P<name>{_NAME}),? (?:you'?re up|you are up|it'?s your turn|your turn)[.!]?$",
     re.IGNORECASE,
 )
 _NEXT = re.compile(
@@ -86,9 +89,10 @@ _NEXT = re.compile(
 )
 _CREATURE = re.compile(
     rf"{_LEAD}(?:the )?(?P<mon>[a-z][a-z\-]*(?: [a-z\-]+)??)(?: (?P<n>{_NUMBER}))?"
-    r"(?:,? (?:its|it'?s|his|her) turn|'s turn|,? it goes)[.!]?$",
+    r"(?:,? (?:its|it'?s|his|her) turn)[.!]?$",
     re.IGNORECASE,
 )
+_POSSESSIVE = re.compile(rf"{_LEAD}(?P<name>{_NAME})'s turn[.!]?$", re.IGNORECASE)
 _TEENS = "ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen"
 _UNITS = "one|two|three|four|five|six|seven|eight|nine"
 _SAID_NUMBER = rf"\d{{1,2}}|{_TEENS}|(?:twenty|thirty|forty)(?:[- ](?:{_UNITS}))?|{_UNITS}"  # "17"
@@ -99,7 +103,8 @@ _ROLLED = re.compile(
 )
 _NOT_NAMES = frozenset(
     {"the", "a", "an", "you", "it", "it's", "its", "he", "she", "they", "we", "i", "everyone",
-     "that", "this", "there", "now", "okay", "ok", "so", "and", "well", "right"}
+     "that", "this", "there", "now", "okay", "ok", "so", "and", "well", "right", "sure",
+     "yeah", "yes", "hey", "oh", "hmm"}
 )  # fmt: skip
 
 
@@ -144,7 +149,7 @@ def hear(line: str, players: Mapping[str, int], *, round_number: int | None = No
         who = plural.group("who").strip()
         user = players.get(who)  # "Chris' turn" is a person whose name ends in s
         if user is not None:
-            return Heard(order="each", turn=(user,))
+            return Heard(order="each", turn=(user,), guess=True)
         return Heard(order="side", players_side=who in PLAYER_SIDE)
     if _ROLLED.match(low):
         return Heard(rolled=True)
@@ -153,24 +158,28 @@ def hear(line: str, players: Mapping[str, int], *, round_number: int | None = No
         user = players.get(found.group("name").lower())
         if user is None and found.group("name").lower() in _NOT_NAMES:
             return None
-        return Heard(order="each", on_deck=() if user is None else (user,))
+        return Heard(order="each", on_deck=() if user is None else (user,), guess=True)
     found = _UP.match(low)
     if found is not None:
         user = players.get(found.group("name").lower())
         if user is None and found.group("name").lower() in _NOT_NAMES:
             return None
-        return Heard(order="each", turn=() if user is None else (user,))
+        return Heard(order="each", turn=() if user is None else (user,), guess=True)
     found = _CREATURE.match(low)
     if found is not None:
         mon = found.group("mon").lower().strip()
         user = players.get(mon)
-        if user is not None:  # "Mira's turn"
-            return Heard(order="each", turn=(user,))
+        if user is not None:
+            return Heard(order="each", turn=(user,), guess=True)
         if mon in _NOT_NAMES or mon.endswith("s"):  # "the goblins" is a side, not one creature
             return None
         number = found.group("n")
         key = mon if number is None else f"{mon} {_number(number)}"
-        return Heard(order="each", creature=key)
+        return Heard(order="each", creature=key, guess=True)
+    found = _POSSESSIVE.match(low)
+    if found is not None:  # "Mira's turn": a person at the table; "the dragon's turn" is narration
+        user = players.get(found.group("name").lower())
+        return None if user is None else Heard(order="each", turn=(user,), guess=True)
     return None
 
 
@@ -183,8 +192,9 @@ class StyleState:
 
     order: Order = "unknown"
     declarations: Declare = "unknown"
-    # Who set each: "dm" (a DM said it), "players" (two of them agreed), "inferred" (a round
-    # played out with turns and no call for declarations).
+    # Who set each: "dm" (a DM said it), "dm_guess" (a DM's turn call suggested it: a stated
+    # style outranks it), "players" (two of them agreed), "inferred" (a round played out with
+    # turns and no call for declarations).
     set_by: dict[str, str] = field(default_factory=dict)
     votes: dict[tuple[str, str], set[int]] = field(default_factory=dict)
 
@@ -196,13 +206,18 @@ class StyleState:
         *,
         from_dm: bool,
         consenting: Callable[[int], bool],
+        guessed: bool = False,
     ) -> bool:
-        """Count one line for `value` in `dimension` ("order" or "declarations"). True if the
-        heard style changed."""
+        """Count one line for `value` in `dimension` ("order" or "declarations"). `guessed`: the
+        value is only suggested by a turn being called. True if the heard style changed."""
         if from_dm:
             self.votes.pop((dimension, value), None)
+            if guessed:
+                if self.set_by.get(dimension) == "dm":
+                    return False  # the DM stated a style: a guess never overrules it
+                return self._set(dimension, value, "dm_guess")
             return self._set(dimension, value, "dm")
-        if self.set_by.get(dimension) == "dm":
+        if self.set_by.get(dimension, "").startswith("dm"):
             return False  # a DM has said: players' lines no longer count
         voters = {v for v in self.votes.setdefault((dimension, value), set()) if consenting(v)}
         if consenting(speaker):
@@ -252,7 +267,7 @@ class StyleState:
     @property
     def known(self) -> bool:
         """Is there a style to time reminders to? Otherwise FightBot works as it always did."""
-        return self.order != "unknown" or self.declarations == "yes"
+        return bool(self.order != "unknown" or self.declarations == "yes")
 
     def dm_phrase(self) -> str:
         """The one plain phrase for the DM's combat line."""

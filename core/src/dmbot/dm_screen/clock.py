@@ -131,12 +131,12 @@ def clock_text(
     return "\n".join([head, *([fight] if fight else []), *heard, *(effect_lines or [])])
 
 
-def _note_round(client: Any, campaign: Campaign, clock: Clock) -> None:
+def _note_round(client: Any, campaign: Any, clock: Clock) -> None:
     """The fight's round just changed: tell FightBot at once (#1771), so a line the DM says right
     after "next round" is counted in that round and not the one before."""
     table = getattr(client, "tables", {}).get(campaign.guild_id)
     fight = getattr(table, "fight", None)
-    if fight is not None and table.campaign_id == campaign.id:
+    if table is not None and fight is not None and table.campaign_id == campaign.id:
         fight.moved_to(clock.combat_round)
 
 

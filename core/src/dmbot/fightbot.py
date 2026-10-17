@@ -142,8 +142,12 @@ class FightState:
         return self.due
 
     def still_due(self, d: Due, now: float) -> bool:
+        # A "roll initiative" often comes just as the round changes: it keeps one round.
+        same_round = d.round == self.round or (
+            d.kind == "reroll" and self.round is not None and d.round == self.round - 1
+        )
         return (
-            d.round == self.round
+            same_round
             and now - d.at <= MOMENT_TTL_S
             and (d.kind not in ("turn", "next") or d.turn_no == self.turn_no)
         )
@@ -176,7 +180,9 @@ def note_line(table: Any, user_id: int, line: str, *, is_dm: bool, consenting: A
     before = fight.style.dm_phrase()
     style = fight.style
     if heard.order is not None:
-        style.vote("order", heard.order, user_id, from_dm=is_dm, consenting=consenting)
+        style.vote(
+            "order", heard.order, user_id, from_dm=is_dm, consenting=consenting, guessed=heard.guess
+        )
     if heard.declarations is not None:
         style.vote(
             "declarations", heard.declarations, user_id, from_dm=is_dm, consenting=consenting
@@ -192,6 +198,8 @@ def _call_moments(table: Any, fight: FightState, heard: fight_style.Heard) -> No
     everyone = sorted(u for u in fight.present if u not in dms)  # (players, not the DM)
     if heard.declare_call:
         fight.declare_heard = True
+        # Everyone says their move first: no "your turn is next" this round.
+        fight.due = {u: d for u, d in fight.due.items() if d.kind not in ("turn", "next")}
         for user in everyone:
             fight.due[user] = fight.new_due("declare")
     if heard.reroll_call:
@@ -202,7 +210,7 @@ def _call_moments(table: Any, fight: FightState, heard: fight_style.Heard) -> No
         for user in everyone:
             fight.due[user] = fight.new_due("side")
     for user in heard.on_deck:
-        if user in fight.present and user not in dms:
+        if user in fight.present and user not in dms and not fight.declare_heard:
             fight.due[user] = fight.new_due("next")
     for user in heard.turn:
         _turn_called(fight, ("p", user), dms)
@@ -222,13 +230,19 @@ def _turn_called(fight: FightState, key: tuple[str, int | str], dms: Any = ()) -
     if key not in fight.order_seen:
         if len(fight.order_seen) < ORDER_MAX:
             fight.order_seen.append(key)
-        if key[0] == "p" and key[1] in fight.present and key[1] not in dms:
+        if (
+            key[0] == "p"
+            and key[1] in fight.present
+            and key[1] not in dms
+            and not fight.declare_heard
+        ):
             fight.due[int(key[1])] = fight.new_due("turn")
         return
     at = fight.order_seen.index(key)
     if fight.style.order == "each" and len(fight.order_seen) > 1 and (fight.round or 0) >= 2:
         following = fight.order_seen[(at + 1) % len(fight.order_seen)]
-        if following[0] == "p" and following[1] in fight.present and following[1] not in dms:
+        reminded = following[0] == "p" and following[1] in fight.present
+        if reminded and following[1] not in dms and not fight.declare_heard:
             fight.due[int(following[1])] = fight.new_due("next")
 
 
