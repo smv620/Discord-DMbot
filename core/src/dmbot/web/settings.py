@@ -14,6 +14,7 @@ from dmbot.mail import MailConfigError, MailSettings, load_mail_settings, one_ad
 from dmbot.web.admin_hash import decode_hash
 from dmbot.web.payments import paid_plan_ids
 from dmbot.web.stripe import StripeConfig
+from dmbot.web.support_mail import reply_domain
 
 REQUIRED = (
     "DATABASE_URL",
@@ -69,6 +70,9 @@ class WebSettings:
     ai_key: str = field(default="", repr=False)
     support_ai_model: str = ""
     mail_inbound_secret: str = field(default="", repr=False)
+    # Where people's emailed replies to a support ticket go (#1717): a subdomain only the mail
+    # service receives. Empty: the support sender's own domain.
+    mail_reply_domain: str = ""
     # Where the bot keeps recap audio on disk, read here only (the volume is mounted read-only).
     # Empty: the page shows no players and the file route answers not_found (#1418).
     recap_audio_dir: str = ""
@@ -281,6 +285,7 @@ def load_web_settings(env: Mapping[str, str] | None = None) -> WebSettings:
         ai_key=get("ANTHROPIC_API_KEY"),
         support_ai_model=support_ai_model,
         mail_inbound_secret=get("MAIL_INBOUND_SECRET"),
+        mail_reply_domain=reply_domain(get("MAIL_REPLY_DOMAIN")),
         recap_audio_dir=get("WEB_RECAP_AUDIO_DIR"),
         turnstile_secret=turnstile_secret,
         client_ip_header=client_ip_header,

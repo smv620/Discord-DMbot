@@ -14,9 +14,12 @@ from __future__ import annotations
 import base64
 import hashlib
 import hmac
+import logging
 import re
 from collections.abc import Iterable, Mapping
 from email.utils import parseaddr
+
+log = logging.getLogger(__name__)
 
 TOKEN_CHARS = 20  # hex characters of the HMAC kept: 80 bits, far past guessing
 ADDRESS = re.compile(rf"\+ticket-(\d{{1,19}})-([0-9a-f]{{{TOKEN_CHARS}}})@")
@@ -29,18 +32,39 @@ def ticket_token(secret: bytes, ticket_id: int) -> str:
     return digest.hexdigest()[:TOKEN_CHARS]
 
 
-def reply_address(sender: str, ticket_id: int, secret: bytes) -> str | None:
+_PLAIN_DOMAIN = re.compile(r"[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+")
+
+
+def reply_domain(value: str) -> str:
+    """MAIL_REPLY_DOMAIN as a lowercase plain domain, or "" (and one warning) when it isn't one
+    (#1717). Only letters, digits, dots and hyphens are kept out of caution: the value ends up in
+    a mail header, so anything else (a space, "<", a newline) is refused, never cleaned."""
+    domain = value.strip().lower()
+    if not domain:
+        return ""
+    if len(domain) > 253 or not _PLAIN_DOMAIN.fullmatch(domain):
+        log.warning("MAIL_REPLY_DOMAIN is not a plain domain name, so it is ignored.")
+        return ""
+    return domain
+
+
+def reply_address(sender: str, ticket_id: int, secret: bytes, domain: str = "") -> str | None:
     """The Reply-To for a ticket's emails, made from the support sender (`info@x` becomes
-    `info+ticket-12-<token>@x`). None when there is no usable sender or secret."""
+    `info+ticket-12-<token>@x`). `domain`, when given, replaces x: the bare domain's mail goes
+    to a person's inbox through the host's email routing, so replies need a subdomain that only
+    the mail service receives (#1717). None when there is no usable sender or secret."""
     address = parseaddr(sender)[1]
-    local, at, domain = address.partition("@")
-    if not (local and at and domain and secret) or "+" in local:
+    local, at, own = address.partition("@")
+    if not (local and at and own and secret) or "+" in local:
         return None
+    domain = domain or own
     return f"{local}+ticket-{ticket_id}-{ticket_token(secret, ticket_id)}@{domain}"
 
 
 def ticket_of(addresses: Iterable[str], secret: bytes) -> int | None:
-    """The ticket a message was sent to, from its To addresses, when the token is right."""
+    """The ticket a message was sent to, from its To addresses, when the token is right. The
+    domain is not checked: the token is what proves the ticket, so a reply to the old address
+    (before MAIL_REPLY_DOMAIN was set) still works."""
     for raw in addresses:
         found = ADDRESS.search(parseaddr(raw)[1].lower())
         if found is None:

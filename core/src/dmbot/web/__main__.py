@@ -181,6 +181,7 @@ async def serve(settings: WebSettings) -> None:
         team_email=settings.support_team_email,
         site_url=settings.site_url,
         link_secret=settings.link_token_secret,
+        reply_domain=settings.mail_reply_domain,
     )
     app = create_app(
         settings,

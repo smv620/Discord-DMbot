@@ -205,6 +205,7 @@ class SupportHelper:
         team_email: str,
         site_url: str,
         link_secret: bytes,
+        reply_domain: str = "",
         clock: Callable[[], float] = time.time,
     ) -> None:
         self._db = db
@@ -213,6 +214,7 @@ class SupportHelper:
         self._team = team_email
         self._site = site_url.rstrip("/")
         self._secret = link_secret
+        self._reply_domain = reply_domain
         self._clock = clock
         self._lock = asyncio.Lock()
         self._funds_told_at = 0.0
@@ -222,7 +224,9 @@ class SupportHelper:
     def _reply_to(self, ticket_id: int) -> str | None:
         if self._mail is None:
             return None
-        return reply_address(self._mail.settings.support_sender, ticket_id, self._secret)
+        return reply_address(
+            self._mail.settings.support_sender, ticket_id, self._secret, self._reply_domain
+        )
 
     async def _to_person(
         self, ticket: Open, kind: str, subject: str, body: str, email: str | None = None

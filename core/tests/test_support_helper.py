@@ -97,6 +97,27 @@ class ThePureParts(unittest.TestCase):
         self.assertIsNone(sm.reply_address("not an address", 1, SECRET))
         self.assertIsNone(sm.reply_address(SUPPORT_FROM, 1, b""))
 
+    def test_replies_can_go_to_a_subdomain_and_either_domain_reads(self) -> None:
+        bare = sm.reply_address(SUPPORT_FROM, 12, SECRET)
+        sub = sm.reply_address(SUPPORT_FROM, 12, SECRET, "reply.example.org")
+        assert bare is not None and sub is not None
+        self.assertRegex(sub, r"^info\+ticket-12-[0-9a-f]{20}@reply\.example\.org$")
+        self.assertEqual(sm.ticket_of([sub], SECRET), 12)
+        self.assertEqual(sm.ticket_of([bare], SECRET), 12)  # the old address still reads
+        self.assertIsNone(sm.ticket_of([sub.replace("-12-", "-13-")], SECRET))
+        self.assertIsNone(sm.reply_address("not an address", 1, SECRET, "reply.example.org"))
+        self.assertIsNone(sm.reply_address(SUPPORT_FROM, 1, b"", "reply.example.org"))
+
+    def test_a_bad_reply_domain_is_ignored_with_one_warning(self) -> None:
+        self.assertEqual(sm.reply_domain(" Reply.Example.ORG "), "reply.example.org")
+        self.assertEqual(sm.reply_domain(""), "")
+        with self.assertLogs("dmbot.web.support_mail", "WARNING") as logged:
+            for bad in ("reply", "a b.example.org", "x@example.org", "reply.example.org\nBcc: a",
+                        "<reply.example.org>", "-a.example.org", "a..example.org"):  # fmt: skip
+                self.assertEqual(sm.reply_domain(bad), "", bad)
+        self.assertEqual(len(logged.records), 7)
+        self.assertNotIn("Bcc", "".join(r.getMessage() for r in logged.records))
+
     def test_only_what_the_person_wrote_is_kept(self) -> None:
         mail = (
             "Thanks, that worked.\n\nOn Tue, 6 Oct 2026, DMbot support wrote:\n> the answer\n> more"
@@ -230,6 +251,16 @@ class TheThankYou(HelperBase):
         self.assertNotIn(MESSAGE, text)
         reply_to = str(mail["Reply-To"])
         self.assertEqual(sm.ticket_of([reply_to], SECRET), number)
+
+    async def test_with_a_reply_domain_the_reply_to_uses_it_and_both_addresses_read(self) -> None:
+        self.helper = ai.SupportHelper(
+            self.web, self.fake, self.mailer, team_email=TEAM, site_url=SITE, link_secret=SECRET,
+            reply_domain="reply.example.org", clock=lambda: float(self.now),
+        )  # fmt: skip
+        number = await self.ticket()
+        (mail,) = self.mails()
+        self.assertRegex(str(mail["Reply-To"]), r"@reply\.example\.org$")
+        self.assertEqual(sm.ticket_of([str(mail["Reply-To"])], SECRET), number)
 
     async def test_with_the_helper_on_it_says_the_helper_answers_first(self) -> None:
         await self.ticket()
@@ -882,8 +913,13 @@ class TheSettings(unittest.TestCase):
             "ANTHROPIC_API_KEY": "sk-test",
             "SUPPORT_AI_MODEL": "claude-opus-5-5",
             "MAIL_INBOUND_SECRET": WEBHOOK_SECRET,
+            "MAIL_REPLY_DOMAIN": "Reply.Example.org",
         }
         got = load_web_settings(env)
+        self.assertEqual(got.mail_reply_domain, "reply.example.org")
+        self.assertEqual(
+            load_web_settings({**env, "MAIL_REPLY_DOMAIN": "no good"}).mail_reply_domain, ""
+        )
         self.assertEqual(
             (got.support_ai_model, got.mail_inbound_secret), ("claude-opus-5-5", WEBHOOK_SECRET)
         )
