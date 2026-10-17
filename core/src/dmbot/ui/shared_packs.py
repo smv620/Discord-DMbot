@@ -358,10 +358,13 @@ async def _sites_note(
 ) -> str:
     """Before following: the sites the pack's entries come from that this campaign hasn't
     approved, so the DM knows what will wait (#1635)."""
-    listed = content.get("entries")
+    try:
+        listed = pack_content.valid_content(content)["entries"]  # (the same check the readers use)
+    except pack_content.BadPack:
+        return ""
     counts: dict[str, int] = {}
-    for e in listed if isinstance(listed, list) else []:
-        if isinstance(e, dict) and isinstance(e.get("domain"), str):
+    for e in listed:
+        if isinstance(e.get("domain"), str):
             counts[e["domain"]] = counts.get(e["domain"], 0) + 1
     sources = getattr(_bot(interaction), "sources", None)
     if sources is not None:

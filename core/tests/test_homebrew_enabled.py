@@ -105,7 +105,7 @@ class Stored(DatabaseTest):
     async def test_the_file_round_trips_the_state(self) -> None:
         a, b = await self.add("Alpha"), await self.add("Beta")
         await self.store.set_enabled(GUILD, self.campaign.id, DM, b.id, False)
-        text = hf.write("Frost", await self.store.list(GUILD, self.campaign.id))
+        text = hf.write("Frost", await self.store.list(GUILD, self.campaign.id), "2024")
         for e in (a, b):
             await self.store.remove(GUILD, self.campaign.id, DM, e.id)
         loaded = await self.store.load_file(GUILD, self.campaign.id, DM, hf.parse(text).entries)

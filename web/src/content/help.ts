@@ -76,6 +76,22 @@ export const dmSteps: Step[] = [
     names: [{ name: "Check who is who", file: "ui/people_review.py" }],
   },
   {
+    text: "During a game, DMbot may ask \"Did they mean…?\" when it isn't sure it heard a name right. If nobody answers, DMbot keeps the question for you. After the session, your DM screen says how many are waiting. Press ❓ Check names (only you can press it). For each one, pick a name, press Type it…, Keep \"the word\", or press ⏳ Later. Your answer fixes that one line of the cleaned-up transcript, not the raw one. DMbot writes the name that way from then on. Questions you leave for a week go away on their own. Nothing changes until you answer.",
+    names: [
+      { name: "❓ Check names", file: "ui/heard_review.py" },
+      { name: "Type it…", file: "transcript/questions.py" },
+      { name: "⏳ Later", file: "ui/heard_review.py" },
+    ],
+  },
+  {
+    text: "To keep your homebrew in a text file, press ⚙️ Settings, then 📚 Homebrew, then 📤 Download file. To load a file back, press 📥 Load file. An entry that came from a book you shared gets a note line under its name: [Shared book], and also [Legacy 2014] if the book is for older rules than your table plays. The note is only for you to read. Loading the file ignores it. Entries you load are your own homebrew unless you confirm \"I have the right\" for a book.",
+    names: [
+      { name: "Homebrew", file: "dm_screen/settings.py" },
+      { name: "📤 Download file", file: "ui/homebrew.py" },
+      { name: "📥 Load file", file: "ui/homebrew.py" },
+    ],
+  },
+  {
     text: "To say an item, like a magic sword, is the only one, press 🔍 Find a name, open the item, and press ☝️ Only one exists. Press Allow more than one to undo it. An item with its own proper name is taken as the only one until you say otherwise. Only game masters can change this.",
     names: [
       { name: "Find a name", file: "ui/name_card.py" },
@@ -319,7 +335,7 @@ export const playerSteps: Step[] = [
     link: { text: "Read your table's house rules", href: "/account/house-rules" },
   },
   {
-    text: "The homebrew your game master shares (extra monsters, spells and items made for your game) is on this website too. Sign in, open My Account, and read it there. Entries from a shared book say From a shared book. If that book is for older rules than your table plays, they also say [Legacy 2014]. Homebrew your table follows from another table is listed too, but only the parts that table shares with players. You can save your table's own homebrew as a text file. You can't change it here. Your game master does that in Discord. Rules your table made up are under House rules, not Homebrew.",
+    text: "The homebrew your game master shares (extra monsters, spells and items made for your game) is on this website too. Sign in, open My Account, and read it there. Entries from a shared book say From a shared book. If that book is for older rules than your table plays, they also say [Legacy 2014]. Homebrew your table follows from another table is listed too, but only what that table shares. You can save your table's own homebrew as a text file. You can't change it here. Your game master does that in Discord. Rules your table made up are under House rules, not Homebrew.",
     link: { text: "Read your table's homebrew", href: "/account/homebrew" },
   },
   {
@@ -327,7 +343,7 @@ export const playerSteps: Step[] = [
     link: { text: "Read your game transcripts", href: "/account/transcripts" },
   },
   {
-    text: "To look up a rule, type /dmbot rule and a few words, in any of the campaign's channels. Only you see the answer. It comes from the free rules, your table's house rules, and the homebrew your game master marked for players. Entries from a shared book are tagged [Shared book], and [Shared book] [Legacy 2014] if that book is for older rules than your table plays. Each person can ask once every 3 seconds. The answer ends with \"Your DM decides what applies at your table.\"",
+    text: "To look up a rule, type /dmbot rule and a few words, in any of the campaign's channels. Only you see the answer. It comes from the free rules, your table's house rules, and the homebrew your game master turned on. Entries from a shared book are tagged [Shared book], and [Shared book] [Legacy 2014] if that book is for older rules than your table plays. Each person can ask once every 3 seconds. The answer ends with \"Your DM decides what applies at your table.\"",
     names: [{ name: "/dmbot rule", file: "ui/rule_lookup.py" }],
   },
   {
