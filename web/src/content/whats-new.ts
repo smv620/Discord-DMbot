@@ -301,6 +301,13 @@ export const held: Held[] = [
   },
   {
     date: "2026-10-17",
+    title: "A channel for your house rules",
+    what: "DMbot makes a channel for your campaign's house rules, with one message for each rule you have saved and a line for each set you follow. Players can read it but not post, and it is shown to the same people as your DM screen.",
+    reason:
+      "Held until seen working live (#1752): the owner has not yet checked it on the test server.",
+  },
+  {
+    date: "2026-10-17",
     title: "Manage your plan without Discord",
     what: "If you can't sign in with Discord, use the email on your receipts. Stripe sends you a code, and you can cancel, update your card or get invoices.",
     reason:

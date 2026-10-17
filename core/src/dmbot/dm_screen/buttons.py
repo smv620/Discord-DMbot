@@ -25,6 +25,7 @@ from dmbot.dm_screen.channel import (
     setup_dm_screen,
 )
 from dmbot.dm_screen.rules import READ_ONLY, Target, is_peeker, missing_required, restrict
+from dmbot.dm_screen.rules_channel import is_rules_name
 
 log = logging.getLogger(__name__)
 
@@ -61,6 +62,22 @@ async def _load(
         await interaction.response.send_message(messages.SCREEN_GONE, ephemeral=True)
         return None
     return campaign, channel, member
+
+
+async def _rules_channel(guild: discord.Guild, campaign: Campaign) -> discord.TextChannel | None:
+    """The campaign's rules channel (#1752), if it has one that is still there. A peek opens it
+    together with the DM screen."""
+    if campaign.rules_channel_id is None:
+        return None
+    found: object = guild.get_channel(campaign.rules_channel_id)
+    if found is None:
+        with contextlib.suppress(discord.HTTPException):
+            found = await guild.fetch_channel(campaign.rules_channel_id)
+    channel = found
+    # (only a channel still named like a rules channel: an admin may have reused the id)
+    if isinstance(channel, discord.TextChannel) and is_rules_name(channel.name):
+        return channel
+    return None
 
 
 def _peeking(channel: discord.TextChannel, member: discord.Member) -> bool:
@@ -112,7 +129,12 @@ class PeekButton(
             await reply(messages.ALREADY_PEEKING, view=hide_view(campaign.id), ephemeral=True)
         else:
             confirm = ConfirmPeek(self.campaign_id, interaction)
-            await reply(messages.PEEK_WARNING, view=confirm, ephemeral=True)
+            rules = await _rules_channel(channel.guild, campaign)
+            await reply(
+                messages.peek_warning(rules.mention if rules else None),
+                view=confirm,
+                ephemeral=True,
+            )
 
 
 class ConfirmPeek(discord.ui.View):
@@ -162,6 +184,16 @@ class ConfirmPeek(discord.ui.View):
                 await edit(content=messages.PLAYER_FAILED, view=None)
                 await _tell_dm_about_failure(channel)
                 return
+            rules = await _rules_channel(channel.guild, campaign)
+            if rules is not None:  # the warning named it: the peek opens both
+                try:
+                    await rules.set_permissions(
+                        member,
+                        overwrite=discord.PermissionOverwrite(**restrict(READ_ONLY, held)),
+                        reason=f"DMbot: {member} chose to peek",
+                    )
+                except discord.HTTPException:
+                    log.warning("Could not grant peek access in channel %s", rules.id)
         await edit(content=messages.peek_done(channel.mention), view=hide_view(self.campaign_id))
         with contextlib.suppress(discord.HTTPException):
             await channel.send(messages.peeked_note(member.display_name), allowed_mentions=NO_PINGS)
@@ -220,6 +252,14 @@ class HideButton(
                 await reply(messages.PLAYER_FAILED, ephemeral=True)
                 await _tell_dm_about_failure(channel)
                 return
+            rules = await _rules_channel(channel.guild, campaign)
+            if rules is not None:
+                try:
+                    await rules.set_permissions(
+                        member, overwrite=None, reason=f"DMbot: {member} stopped peeking"
+                    )
+                except discord.HTTPException:
+                    log.warning("Could not remove peek access in channel %s", rules.id)
         await reply(messages.HIDE_DONE, ephemeral=True)
         with contextlib.suppress(discord.HTTPException):
             await channel.send(
