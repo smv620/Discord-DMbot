@@ -6,6 +6,7 @@ never in a transcript and never shown to players. Grouped by who they are about,
 
 from __future__ import annotations
 
+import logging
 import re
 from collections.abc import Mapping
 from typing import Any
@@ -65,6 +66,22 @@ def page_text(page: list[Claim], total: int, answered: Mapping[str, str] | None 
     if total > len(page):
         lines.append(f"\n_{total - len(page)} more. Answer these and the next ones appear._")
     return "\n".join(lines)
+
+
+log = logging.getLogger(__name__)
+
+
+async def _watch_story(
+    interaction: discord.Interaction, campaign: Any, fact_id: str | None
+) -> None:
+    """A condition the DM just confirmed may have left their adventure behind (#1729): the check
+    for that one condition. It never makes the answer fail."""
+    try:
+        await _bot(interaction).watch_story(
+            campaign.guild_id, campaign.id, campaign.dm_screen_channel_id, state_id=fact_id
+        )
+    except Exception:
+        log.exception("Story watch after a confirmed fact failed")
 
 
 class ClaimsReviewButton(
@@ -191,6 +208,7 @@ class ClaimsReview(_Menu):
                 agreed = await _bot(interaction).consent.consenting(guild.id)
                 result = await claims.confirm(guild.id, self.campaign_id, claim_id, opted_in=agreed)
                 done = f"{YES} Remembered: {saying}."
+                await _watch_story(interaction, campaign, result.claim.fact_id)
                 if result.flags:
                     why = FLAG_WHY.get(result.flags[0].kind) or ODD_PAIR
                     note = f"\n⚠️ {why}. It's saved, and DMbot will ask you about it."
