@@ -4725,7 +4725,10 @@ class DMBot(commands.AutoShardedBot):
         """Would the off-topic filter hold this line for a label? One rule for the line's
         hold, the names scan and the word list, so they can't disagree (#1748). No AI key, a
         session finishing, a resting filter and a line plainly about the game are never held
-        (when unsure, keep)."""
+        (when unsure, keep). The cost of holding the words with the line: a held line's words
+        reach the word list when its window is labelled, up to a window later. And it is the
+        cleaned line's words (a name fix included) that count, as for the names scan. The
+        two callers run in one synchronous stretch (no await between), so they agree."""
         if self.topic_ai is None or self.tables.get(table.guild_id) is not table:
             return False
         return not (time.monotonic() < table.topic_paused_until or obviously_game(text, named))
@@ -4770,6 +4773,7 @@ class DMBot(commands.AutoShardedBot):
         if lines and not self._closing:
             await self._label_topics(table, lines)
         for waiting in lines if self._closing else []:
+            # (shutdown: no vocabulary note; it lives in memory and is going away)
             said = table.held.pop((waiting.speaker, waiting.started_ms), None)
             recorded = self.consent.has_consent(table.guild_id, waiting.speaker)
             if said is not None and recorded and len(table.heard) < HEARD_MAX:

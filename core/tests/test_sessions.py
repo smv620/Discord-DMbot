@@ -1569,6 +1569,37 @@ class SaveAndResume(SessionTests):
         self.said(table, "my boss called about the quarterly spreadsheet")
         self.assertTrue(table.vocabulary.is_word("spreadsheet"))
 
+    async def test_a_resting_filter_and_a_finishing_session_hold_nothing(self) -> None:
+        table = await self.filtered("1 other\n2 game")
+        table.topic_paused_until = time.monotonic() + 300  # resting after failures
+        self.said(table, "my boss called about the quarterly spreadsheet")
+        self.assertTrue(table.vocabulary.is_word("spreadsheet"))  # noted at once
+        self.assertEqual(self.ai_calls, [])
+        table.topic_paused_until = 0.0
+        self.assertTrue(self.bot._topic_holds(table, "my boss called again", 0))
+        self.assertFalse(self.bot._topic_holds(table, "I roll a d20 for initiative", 0))
+        self.bot.tables.pop(GUILD)  # the session is finishing
+        self.assertFalse(self.bot._topic_holds(table, "my boss called again", 0))
+        self.bot.tables[GUILD] = table
+
+    async def test_a_slow_answer_keeps_the_held_words_as_game_talk(self) -> None:
+        table = await self.filtered(TimeoutError())
+        self.said(table, "my boss called about the quarterly spreadsheet")
+        self.said(table, "we sneak past the guards", at_ms=5_000)
+        await self.settle()
+        self.assertTrue(table.vocabulary.is_word("spreadsheet"))
+
+    async def test_putting_a_line_back_notes_its_words_even_when_the_names_scan_is_full(
+        self,
+    ) -> None:
+        from dmbot.bot import HEARD_MAX
+
+        table, _, _ = await self.left_out_line()
+        table.heard.extend([(PLAYER, "x")] * (HEARD_MAX - len(table.heard)))
+        (run,) = table.left_out.runs
+        await self.bot.put_back(GUILD, run.id, DM)
+        self.assertTrue(table.vocabulary.is_word("boss"))
+
     async def test_putting_a_line_back_adds_its_words(self) -> None:
         table, _, _ = await self.left_out_line()
         self.assertFalse(table.vocabulary.is_word("boss"))  # left out: not a word of the game
@@ -1576,10 +1607,10 @@ class SaveAndResume(SessionTests):
         await self.bot.put_back(GUILD, run.id, DM)
         self.assertTrue(table.vocabulary.is_word("boss"))  # the DM said it is game talk
 
-    async def test_a_speaker_who_stopped_is_forgotten_and_their_held_words_never_arrive(
+    async def test_a_stop_before_the_label_means_their_held_words_never_arrive(
         self,
     ) -> None:
-        table = await self.filtered("1 game\n2 game")
+        table = await self.filtered("1 game")
         self.said(table, "my boss called about the quarterly spreadsheet")
         self.consent.stop_now(GUILD, PLAYER)  # a stop reaches the cache before the label
         self.said(table, "we sneak past the guards", user=DM, at_ms=5_000)

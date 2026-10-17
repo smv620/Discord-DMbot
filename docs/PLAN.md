@@ -2339,7 +2339,8 @@ transcript, clearly unrelated talk shows as `[1m 22s of off-topic chat skipped]`
   right before a window is sent. Lines of two words or fewer are never sent. The name fixer's
   word list (lower-case words, #1748) follows the same rule: a held line adds its words only
   once its window is labelled game talk, an off-topic line never does, and a window the filter
-  couldn't judge counts as game talk, as above. A line the DM puts back adds its words then.
+  couldn't judge counts as game talk, as above. A line the DM puts back adds its words then. The trade-off: a held line's words reach
+  the list when its window is labelled, up to one window later, and it is the cleaned words.
   The list lives in the running session's table (one campaign, one server) and is never saved.
   The log line
   "Off-topic filter: N calls, … tokens" gives the cost. Replay case:
