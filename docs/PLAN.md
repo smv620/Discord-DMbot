@@ -1251,11 +1251,16 @@ so the docs always show names the way Discord does. For the campaign
   description line**: the only description an entry has is the DM's note), a condition such as
   dead or missing (the table may not know yet), or anything from the adventure plan. Groups
   come first, then people, alphabetical, at most 200 messages and then "+N more: open a name card
-  for the rest". A new entry is posted at the end, so the order is exact after the rebuild at
-  every `/dmbot start` and at bot start. A change to the campaign's memory (confirm, merge,
-  reject, rename, secret flags, Undo) refreshes the list a few seconds later, at most one pass a
-  campaign a minute. Messages are found again by the entry id in their last line, so nothing is
-  stored beyond the channel's id, which is not in a backup. Organized mode is a separate
+  for the rest". A new entry is posted at the end, so the order is exact only after a reorder: when 10
+  or more messages are out of place and no session is running for the campaign (at the start of a
+  session, or at its end), whatever follows the first misplaced message is deleted (in bulk) and
+  posted again; a deploy's start-up sweep never does this while a session runs, and never for fewer
+  than 10. A change to the campaign's memory (confirm, merge, reject, rename, secret flags, Undo)
+  refreshes the list a few seconds later, at most one pass a campaign a minute, and a pass sends
+  edits that take a name away before cosmetic ones. Which message shows which entry is a small
+  table (`npcs_channel_messages`, migration 0128), so no id is in the text; it is not in a backup,
+  and a lost row is made good by deleting DMbot's own unrecorded messages and posting them again.
+  Organized mode is a separate
   decision and is not changed here.
 - Server owners and admins always see every channel (see above).
 

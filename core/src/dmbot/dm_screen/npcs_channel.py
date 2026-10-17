@@ -19,13 +19,19 @@ or a channel made again rebuilds the same list. Only DMbot's own messages are ev
 from __future__ import annotations
 
 import asyncio
+import bisect
 import contextlib
 import logging
+import re
+from collections.abc import Sequence
 from dataclasses import dataclass
+from datetime import UTC, datetime, timedelta
+from typing import Protocol
 
 import discord
 
 from dmbot.campaigns import Campaign, CampaignStore
+from dmbot.db import Database
 from dmbot.dm_screen import messages
 from dmbot.dm_screen.channel import (
     CACHE_WAIT_S,
@@ -59,7 +65,9 @@ NAME_PREFIX = f"{PREFIX}-{KIND}-"
 PIN_REASON = "DMbot: NPC channel card"
 MAX_ENTRIES = 200  # messages for entries; past that, one last message says how many more
 MAX_EDITS = 25  # edits per pass: a renamed group changes every member's message
-MAX_DELETES = 25  # deletes per pass (Discord's rate limits); the rest is done next time
+MAX_DELETES = 100  # deletes per pass (bulk where Discord allows); the rest is done next time
+BULK_DELETE_DAYS = 13  # Discord bulk-deletes messages under 14 days old only
+REORDER_MIN = 10  # put the list in order again only when this many messages are out of place
 OTHER_NAMES_MAX = 8  # other names shown for one entry, then "+N more"
 
 PERSON_MARK, GROUP_MARK = "👤", "👥"
@@ -67,7 +75,6 @@ SETTLE_S = 3.0  # a burst of changes (a merge, a confirm-all) becomes one pass t
 PASS_GAP_S = 60.0  # at most one pass for a campaign a minute: a busy session mustn't flood Discord
 
 MORE_TITLE = "➕ **+"
-REF = "-# ref "  # the last line of an entry's message: Discord's small print, and its id
 
 _SYNC_LOCKS: dict[str, asyncio.Lock] = {}
 
@@ -121,19 +128,11 @@ def entry_text(entry: RosterEntry) -> str:
         lines.append(f"In: {_more(entry.groups, entry.groups_more)}")
     if entry.ties:
         lines.append(f"Connected to: {_more(entry.ties, entry.ties_more)}")
-    tail = f"{REF}{entry.id}"
-    body = "\n".join(lines)[: MESSAGE_MAX - len(tail) - 1]  # (belt: names are capped already)
-    return f"{body}\n{tail}"
+    return "\n".join(lines)[:MESSAGE_MAX]  # (belt: names are capped already)
 
 
 def more_text(count: int) -> str:
     return f"{MORE_TITLE}{count} more.** Ask your DM for the rest."
-
-
-def _ref(content: str) -> str | None:
-    """The entry id a message of DMbot's is for, or None if it isn't an entry message."""
-    last = content.rsplit("\n", 1)[-1]
-    return last[len(REF) :] if last.startswith(REF) else None
 
 
 @dataclass(slots=True)
@@ -155,41 +154,171 @@ def wanted_messages(entries: list[RosterEntry]) -> list[tuple[str, str]]:
     return out
 
 
+class MessageMap(Protocol):
+    """Which Discord message shows which entry (a table, so the text never carries an id)."""
+
+    async def load(self, guild_id: int, campaign_id: str) -> dict[str, int]: ...
+
+    async def save(
+        self, guild_id: int, campaign_id: str, entry_id: str, message_id: int
+    ) -> None: ...
+
+    async def forget(self, guild_id: int, campaign_id: str, entry_ids: Sequence[str]) -> None: ...
+
+
+class NpcMessageStore:
+    """`MessageMap` in the database (table `npcs_channel_messages`, migration 0128)."""
+
+    def __init__(self, db: Database) -> None:
+        self._db = db
+
+    async def load(self, guild_id: int, campaign_id: str) -> dict[str, int]:
+        async with self._db.guild(guild_id, snapshot=True) as conn:
+            cur = await conn.execute(
+                "SELECT entry_id, message_id FROM npcs_channel_messages"
+                " WHERE guild_id = %s AND campaign_id = %s",
+                (guild_id, campaign_id),
+            )
+            return {str(r["entry_id"]): int(r["message_id"]) for r in await cur.fetchall()}
+
+    async def save(self, guild_id: int, campaign_id: str, entry_id: str, message_id: int) -> None:
+        async with self._db.guild(guild_id) as conn:
+            await conn.execute(
+                "INSERT INTO npcs_channel_messages (guild_id, campaign_id, entry_id, message_id)"
+                " VALUES (%s, %s, %s, %s) ON CONFLICT (guild_id, campaign_id, entry_id)"
+                " DO UPDATE SET message_id = EXCLUDED.message_id",
+                (guild_id, campaign_id, entry_id, message_id),
+            )
+
+    async def forget(self, guild_id: int, campaign_id: str, entry_ids: Sequence[str]) -> None:
+        if not entry_ids:
+            return
+        async with self._db.guild(guild_id) as conn:
+            await conn.execute(
+                "DELETE FROM npcs_channel_messages WHERE guild_id = %s AND campaign_id = %s"
+                " AND entry_id = ANY(%s)",
+                (guild_id, campaign_id, list(entry_ids)),
+            )
+
+
+def _young(message: discord.Message) -> bool:
+    """Discord only bulk-deletes messages under 14 days old (a day's margin is kept)."""
+    made = getattr(message, "created_at", None)
+    if not isinstance(made, datetime):
+        return False
+    return datetime.now(UTC) - made < timedelta(days=BULK_DELETE_DAYS)
+
+
+async def _delete_messages(
+    channel: discord.TextChannel, messages_: list[discord.Message]
+) -> tuple[list[discord.Message], bool]:
+    """Delete these messages, many at once where Discord allows it. Returns the ones gone and
+    whether to stop for this pass (no permission, or Discord refused)."""
+    gone: list[discord.Message] = []
+    young = [m for m in messages_ if _young(m)]
+    single = [m for m in messages_ if m not in young]
+    for at in range(0, len(young), 100):
+        chunk = young[at : at + 100]
+        if len(chunk) < 2:
+            single.extend(chunk)
+            continue
+        try:
+            await channel.delete_messages(chunk)
+            gone.extend(chunk)
+        except discord.Forbidden as exc:
+            log.warning("NPC channel: couldn't delete messages: %s", exc)
+            return gone, True
+        except discord.HTTPException:
+            single.extend(chunk)  # one at a time, below
+    for message in single:
+        try:
+            await message.delete()
+        except discord.NotFound:
+            pass  # already gone
+        except discord.Forbidden as exc:
+            log.warning("NPC channel: couldn't delete a message: %s", exc)
+            return gone, True
+        except discord.HTTPException as exc:
+            log.warning("NPC channel: couldn't delete a message: %s", exc)
+            continue
+        gone.append(message)
+    return gone, False
+
+
+_AND_MORE = re.compile(r", and \d+ more$")
+
+
+def _items(text: str) -> set[str]:
+    """The names listed under the heading line, one by one ("Also called: A, B" gives A and B)."""
+    out: set[str] = set()
+    for line in text.splitlines()[1:]:
+        _, _, names = line.partition(": ")
+        out.update(n for n in _AND_MORE.sub("", names).split(", ") if n)
+    return out
+
+
+def _removes_text(old: str, new: str) -> bool:
+    """Does this edit take a listed name away (an other name made secret, a tie that ended)?
+    Such edits go first: what players may no longer see must not wait behind cosmetic changes
+    (a new kind, a name added)."""
+    return not _items(old) <= _items(new)
+
+
+def _out_of_place(order: list[str], wanted_keys: list[str]) -> int:
+    """How many of the messages (their keys, as they sit) are not in the wanted order: all but
+    the longest run that already is. One entry added at the front is 1, not the whole list."""
+    where = {key: at for at, key in enumerate(wanted_keys)}
+    tails: list[int] = []
+    for key in order:
+        at = bisect.bisect_left(tails, where[key])
+        if at == len(tails):
+            tails.append(where[key])
+        else:
+            tails[at] = where[key]
+    return len(order) - len(tails)
+
+
 async def sync_roster(
     channel: discord.TextChannel,
     me_id: int,
     entries: list[RosterEntry],
+    mapping: MessageMap,
     *,
+    guild_id: int,
+    campaign_id: str,
     reorder: bool = False,
 ) -> SyncResult:
-    """Make the channel show exactly these entries. Looks at DMbot's own messages only; edits
-    rather than reposts; the rest is picked up next time (`left_for_next_time`). A new entry goes
-    at the end, so the order is only exact after a rebuild: with `reorder` (every start) whatever
-    comes after the first message out of place is deleted and posted again in order. Idempotent."""
+    """Make the channel show exactly these entries. Looks at DMbot's own messages only (found by
+    the message map, never by their text); edits rather than reposts; the rest is picked up next
+    time (`left_for_next_time`). A new entry goes at the end. With `reorder` the list is put in
+    order again, but only when `REORDER_MIN` or more messages are out of place: whatever follows
+    the first message out of place is deleted (in bulk) and posted again. Idempotent."""
     result = SyncResult()
     wanted = wanted_messages(entries)
     wanted_text = dict(wanted)
+    mapped = await mapping.load(guild_id, campaign_id)
+    key_of = {message_id: key for key, message_id in mapped.items()}
     have: dict[str, discord.Message] = {}
     order: list[str] = []  # the keys of `have`, as they sit in the channel
-    extras: list[discord.Message] = []  # a second copy of one thing, or one no longer wanted
+    extras: list[discord.Message] = []  # a stale message, or one that was never recorded
     async for message in channel.history(limit=HISTORY_SCAN, oldest_first=True):
-        if message.author.id != me_id:
+        if message.author.id != me_id or message.content.startswith(CARD_TITLE):
             continue
-        key = _MORE if message.content.startswith(MORE_TITLE) else _ref(message.content)
-        if key is None:
-            continue  # the pinned card, or something else of DMbot's
-        if key in have or key not in wanted_text:
+        key = key_of.get(message.id)
+        if key is None or key not in wanted_text:
             extras.append(message)
         else:
             have[key] = message
             order.append(key)
+    lost = [key for key in mapped if key not in have and key in wanted_text]
+    if lost:  # the message is gone (deleted by hand): forget the row and post it again
+        await mapping.forget(guild_id, campaign_id, lost)
     missing = [key for key, _ in wanted if key not in have]
     if reorder:
-        # Keep the leading messages that are exactly the list's start; repost the rest.
         keep = 0
         while keep < len(order) and keep < len(wanted) and order[keep] == wanted[keep][0]:
             keep += 1
-        if keep < len(order):
+        if _out_of_place(order, [k for k, _ in wanted]) >= REORDER_MIN:
             for key in order[keep:]:
                 extras.append(have.pop(key))
             missing = [key for key, _ in wanted if key not in have]
@@ -197,27 +326,18 @@ async def sync_roster(
         extras.append(have.pop(_MORE))  # it is last, so it moves behind the new messages
         missing = [key for key, _ in wanted if key not in have]
     deletes_left = False
-    for budget, message in enumerate(extras):
-        if budget >= MAX_DELETES:
-            deletes_left = True
-            result.left_for_next_time += 1
-            continue
-        try:
-            await message.delete()
-        except discord.NotFound:
-            pass  # already gone
-        except discord.HTTPException as exc:
-            log.warning("NPC channel: couldn't delete a message: %s", exc)
-            deletes_left = True
-            result.left_for_next_time += 1
-            if isinstance(exc, discord.Forbidden):
-                break  # no permission: don't hammer the rest
-            continue
-        result.deleted += 1
+    if extras:
+        todo, rest = extras[:MAX_DELETES], extras[MAX_DELETES:]
+        gone, stopped = await _delete_messages(channel, todo)
+        result.deleted += len(gone)
+        left = len(todo) - len(gone) + len(rest)
+        result.left_for_next_time += left
+        deletes_left = left > 0 or stopped
+        await mapping.forget(guild_id, campaign_id, [k for k, m in key_of_messages(mapped, gone)])
+    changes = [(k, m) for k, m in have.items() if m.content != wanted_text[k]]
+    changes.sort(key=lambda km: not _removes_text(km[1].content, wanted_text[km[0]]))
     edits = 0
-    for key, message in have.items():
-        if message.content == wanted_text[key]:
-            continue
+    for key, message in changes:
         if edits >= MAX_EDITS:
             result.left_for_next_time += 1
             continue
@@ -239,15 +359,24 @@ async def sync_roster(
             result.left_for_next_time += 1
             continue
         try:
-            await channel.send(wanted_text[key], allowed_mentions=NO_PINGS, silent=True)
+            sent = await channel.send(wanted_text[key], allowed_mentions=NO_PINGS, silent=True)
         except discord.HTTPException as exc:
             log.warning("NPC channel: couldn't post a message: %s", exc)
             result.left_for_next_time += 1
             if isinstance(exc, discord.Forbidden):
                 break
             continue
+        await mapping.save(guild_id, campaign_id, key, sent.id)
         result.sent += 1
     return result
+
+
+def key_of_messages(
+    mapped: dict[str, int], messages_: list[discord.Message]
+) -> list[tuple[str, discord.Message]]:
+    """The map keys of these messages (those that have one)."""
+    by_id = {message_id: key for key, message_id in mapped.items()}
+    return [(by_id[m.id], m) for m in messages_ if m.id in by_id]
 
 
 # ---- the channel ------------------------------------------------------------------------------
@@ -399,7 +528,12 @@ async def follow_screen(
 
 
 async def sync_campaign(
-    guild: discord.Guild, campaign: Campaign, recall: RecallService, *, reorder: bool = False
+    guild: discord.Guild,
+    campaign: Campaign,
+    recall: RecallService,
+    mapping: MessageMap,
+    *,
+    reorder: bool = False,
 ) -> SyncResult | None:
     """Bring the campaign's NPC channel up to date from what the players may know. None if the
     campaign has no NPC channel or it is gone (the next start makes it again). Raises on a
@@ -410,4 +544,12 @@ async def sync_campaign(
         if channel is None or me is None:
             return None
         entries = await recall.roster(guild.id, campaign.id)
-        return await sync_roster(channel, me.id, entries, reorder=reorder)
+        return await sync_roster(
+            channel,
+            me.id,
+            entries,
+            mapping,
+            guild_id=guild.id,
+            campaign_id=campaign.id,
+            reorder=reorder,
+        )

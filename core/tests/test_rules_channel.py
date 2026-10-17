@@ -415,8 +415,12 @@ class Peeking(Fake):
         self.interaction.guild = self.guild
         self.interaction.user = self.member
         self.interaction.client.campaigns = self.store
+        self.interaction.response.defer = AsyncMock()
         self.interaction.response.edit_message = AsyncMock()
         self.interaction.response.send_message = AsyncMock()
+        self.interaction.response.is_done = MagicMock(return_value=True)  # (the press is deferred)
+        self.interaction.followup.send = AsyncMock()
+        self.interaction.edit_original_response = AsyncMock()
 
     async def test_yes_grants_the_peek_in_both_channels(self) -> None:
         view = ConfirmPeek(self.campaign.id, self.interaction)
@@ -434,7 +438,7 @@ class Peeking(Fake):
         view = ConfirmPeek(self.campaign.id, self.interaction)
         await view.yes.callback(self.interaction)
         self.screen.set_permissions.assert_awaited_once()
-        text = self.interaction.response.edit_message.call_args.kwargs["content"]
+        text = self.interaction.edit_original_response.call_args.kwargs["content"]
         self.assertEqual(text, messages.peek_done(self.screen.mention))
 
     async def test_hide_closes_both(self) -> None:

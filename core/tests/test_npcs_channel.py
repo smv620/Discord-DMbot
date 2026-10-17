@@ -14,6 +14,7 @@ from unittest import mock
 from unittest.mock import AsyncMock, MagicMock
 
 import discord
+import psycopg
 
 from dmbot.campaigns import CampaignStore
 from dmbot.dm_screen import messages
@@ -39,8 +40,35 @@ def entry(n: int, name: str | None = None, **kw: Any) -> RosterEntry:
     return RosterEntry(f"{n:032x}", name or f"Person {n:03}", **fields)
 
 
+class MemMap:
+    """The message map in memory (the database one is tested apart)."""
+
+    def __init__(self) -> None:
+        self.rows: dict[str, int] = {}
+
+    async def load(self, guild_id: int, campaign_id: str) -> dict[str, int]:
+        return dict(self.rows)
+
+    async def save(self, guild_id: int, campaign_id: str, entry_id: str, message_id: int) -> None:
+        self.rows[entry_id] = message_id
+
+    async def forget(self, guild_id: int, campaign_id: str, entry_ids: Any) -> None:
+        for key in entry_ids:
+            self.rows.pop(key, None)
+
+
 async def sync(chan: Chan, entries: list[RosterEntry], **kw: Any) -> Any:
-    return await nc.sync_roster(chan, ME, entries, **kw)  # type: ignore[arg-type]
+    """One pass on this channel; the channel keeps its own message map between passes."""
+    mapping = chan.__dict__.setdefault("map", MemMap())
+    return await nc.sync_roster(
+        chan,  # type: ignore[arg-type]
+        ME,
+        entries,
+        mapping,
+        guild_id=1,
+        campaign_id="c" * 32,
+        **kw,
+    )
 
 
 class Saying(unittest.TestCase):
@@ -56,13 +84,12 @@ class Saying(unittest.TestCase):
             "👤 **Mira** · NPC\n"
             "Also called: The Hooded Stranger, Red\n"
             "In: Ash Cult\n"
-            "Connected to: Ulfgar, Cerric, and 3 more\n"
-            f"-# ref {1:032x}",
+            "Connected to: Ulfgar, Cerric, and 3 more",
         )
 
     def test_a_group_has_its_own_mark_and_a_bare_entry_is_two_lines(self) -> None:
         text = nc.entry_text(entry(2, "Ash Cult", kind="group", is_group=True))
-        self.assertEqual(text, f"👥 **Ash Cult** · group\n-# ref {2:032x}")
+        self.assertEqual(text, "👥 **Ash Cult** · group")
 
     def test_names_cannot_ping_or_format_the_message(self) -> None:
         text = nc.entry_text(entry(3, "**@everyone** _x_", groups=("<@123>",)))
@@ -73,12 +100,11 @@ class Saying(unittest.TestCase):
         names = tuple("n" * 100 for _ in range(30))
         text = nc.entry_text(entry(4, "x" * 100, also_called=names, groups=names, ties=names))
         self.assertLessEqual(len(text), 2000)
-        self.assertTrue(text.endswith(f"-# ref {4:032x}"))
 
-    def test_the_entry_is_found_again_by_the_last_line(self) -> None:
-        self.assertEqual(nc._ref(nc.entry_text(entry(5))), f"{5:032x}")
-        self.assertIsNone(nc._ref("📖 **What's this channel?**\nSomething"))
-        self.assertIsNone(nc._ref("-# reference"))
+    def test_a_message_never_carries_an_id(self) -> None:
+        text = nc.entry_text(entry(5, "Mira", groups=("Ash Cult",), ties=("Ulfgar",)))
+        self.assertNotIn(f"{5:032x}", text)
+        self.assertNotIn("ref", text)
 
     def test_the_names_of_the_channel_are_recognised(self) -> None:
         self.assertTrue(nc.is_npcs_name("dmb-npcs-x"))
@@ -126,31 +152,87 @@ class Keeping(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(chan.texts()), 1)
         self.assertIn("Ulfgar", chan.texts()[0])
 
-    async def test_a_new_entry_goes_at_the_end_until_the_next_rebuild_puts_it_in_order(
-        self,
-    ) -> None:
+    def names(self, chan: Chan) -> list[str]:
+        return [t.splitlines()[0] for t in chan.texts()]
+
+    async def test_a_new_entry_goes_at_the_end_and_a_start_does_not_reorder_for_one(self) -> None:
         chan = Chan()
-        await sync(chan, [entry(2, "Bram"), entry(3, "Cerric")])
-        both = [entry(1, "Aldric"), entry(2, "Bram"), entry(3, "Cerric")]
+        base = [entry(n, f"B{n:02}") for n in range(2, 12)]
+        await sync(chan, base)
+        both = [entry(1, "Aldric"), *base]
         await sync(chan, both)
-        names = lambda: [t.splitlines()[0] for t in chan.texts()]  # noqa: E731
-        self.assertEqual(
-            names(), ["👤 **Bram** · NPC", "👤 **Cerric** · NPC", "👤 **Aldric** · NPC"]
-        )
-        done = await sync(chan, both, reorder=True)  # every start
-        self.assertEqual(
-            names(), ["👤 **Aldric** · NPC", "👤 **Bram** · NPC", "👤 **Cerric** · NPC"]
-        )
-        self.assertEqual((done.deleted, done.sent), (3, 3))  # all after the first misplaced one
-        quiet = await sync(chan, both, reorder=True)
+        self.assertEqual(self.names(chan)[-1], "👤 **Aldric** · NPC")
+        quiet = await sync(chan, both, reorder=True)  # a start: one out of place is left alone
         self.assertEqual((quiet.deleted, quiet.sent, quiet.edited), (0, 0, 0))
 
-    async def test_a_rebuild_that_changes_nothing_in_order_posts_nothing(self) -> None:
+    async def test_ten_messages_out_of_place_are_put_in_order_when_reordering(self) -> None:
         chan = Chan()
-        entries = [entry(n) for n in range(1, 6)]
-        await sync(chan, entries[:3], reorder=True)
-        done = await sync(chan, entries, reorder=True)  # the new ones belong at the end
-        self.assertEqual((done.deleted, done.sent), (0, 2))
+        base = [entry(n, f"B{n:02}") for n in range(20, 32)]
+        await sync(chan, base)
+        both = [entry(n, f"A{n:02}") for n in range(1, 13)] + base  # twelve new, sorted first
+        await sync(chan, both)  # appended at the end
+        before = self.names(chan)
+        done = await sync(chan, both, reorder=True)
+        after = self.names(chan)
+        self.assertNotEqual(before, after)
+        self.assertEqual(after, sorted(after))
+        self.assertEqual((done.deleted, done.sent), (24, 24))
+        again = await sync(chan, both, reorder=True)
+        self.assertEqual((again.deleted, again.sent), (0, 0))
+
+    async def test_fewer_than_ten_out_of_place_are_left_alone_even_when_reordering(self) -> None:
+        chan = Chan()
+        base = [entry(n, f"B{n:02}") for n in range(20, 26)]
+        await sync(chan, base)
+        both = [entry(1, "Aldric"), *base]
+        await sync(chan, both)
+        done = await sync(chan, both, reorder=True)
+        self.assertEqual((done.deleted, done.sent), (0, 0))
+
+    async def test_a_reorder_uses_one_bulk_delete_for_young_messages(self) -> None:
+        import datetime as dt
+
+        chan = Chan()
+        bulk: list[int] = []
+
+        async def delete_messages(msgs: Any) -> None:
+            bulk.append(len(msgs))
+            for m in list(msgs):
+                chan.messages.remove(m)
+
+        chan.delete_messages = delete_messages  # type: ignore[attr-defined]
+        base = [entry(n, f"B{n:02}") for n in range(20, 32)]
+        await sync(chan, base)
+        both = [entry(n, f"A{n:02}") for n in range(1, 13)] + base
+        await sync(chan, both)
+        for m in chan.messages:
+            m.created_at = dt.datetime.now(dt.UTC)  # type: ignore[attr-defined]
+        await sync(chan, both, reorder=True)
+        self.assertEqual(bulk, [24])
+        self.assertEqual(self.names(chan), sorted(self.names(chan)))
+
+    async def test_old_messages_are_deleted_one_at_a_time(self) -> None:
+        import datetime as dt
+
+        chan = Chan()
+        chan.delete_messages = AsyncMock()  # type: ignore[attr-defined]
+        await sync(chan, [entry(n) for n in range(1, 4)])
+        for m in chan.messages:
+            m.created_at = dt.datetime.now(dt.UTC) - dt.timedelta(days=30)  # type: ignore[attr-defined]
+        await sync(chan, [])
+        chan.delete_messages.assert_not_awaited()  # type: ignore[attr-defined]
+        self.assertEqual(chan.texts(), [])
+
+    async def test_a_secret_making_edit_goes_out_before_cosmetic_ones(self) -> None:
+        chan = Chan()
+        entries = [entry(n, f"P{n:02}", also_called=("Red",)) for n in range(1, 41)]
+        await sync(chan, entries)
+        await sync(chan, entries)
+        changed = [dataclasses.replace(e, kind="god") for e in entries]  # 40 cosmetic edits
+        changed[39] = dataclasses.replace(changed[39], also_called=())  # the last: a name goes
+        done = await sync(chan, changed)
+        self.assertEqual(done.edited, 25)
+        self.assertNotIn("Also called", chan.texts()[39])  # first in line, though last in order
 
     async def test_other_peoples_messages_and_the_card_are_never_touched(self) -> None:
         chan = Chan()
@@ -160,13 +242,22 @@ class Keeping(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(chan.messages), 2)
         self.assertEqual((chan.edits, chan.deletes, chan.sent), (0, 0, 0))
 
-    async def test_a_second_copy_of_one_entry_is_cleaned_up(self) -> None:
+    async def test_a_message_with_no_row_is_cleaned_up_and_posted_again(self) -> None:
         chan = Chan()
         text = nc.entry_text(entry(1))
-        chan.say(ME, text)
-        chan.say(ME, text)
-        await sync(chan, [entry(1)])
+        chan.say(ME, text)  # DMbot's own, but not in the map (a crash, or a lost row)
+        done = await sync(chan, [entry(1)])
+        self.assertEqual((done.deleted, done.sent), (1, 1))
         self.assertEqual(chan.texts(), [text])
+        self.assertIn(f"{1:032x}", chan.map.rows)  # type: ignore[attr-defined]
+
+    async def test_a_message_deleted_by_hand_is_posted_again(self) -> None:
+        chan = Chan()
+        await sync(chan, [entry(1), entry(2)])
+        chan.messages.pop(0)  # an admin deleted it
+        done = await sync(chan, [entry(1), entry(2)])
+        self.assertEqual(done.sent, 1)
+        self.assertEqual(len(chan.texts()), 2)
 
     async def test_at_most_25_edits_a_pass_and_the_rest_next_time(self) -> None:
         chan = Chan()
@@ -181,23 +272,28 @@ class Keeping(unittest.IsolatedAsyncioTestCase):
 
     async def test_a_rebuild_cut_short_by_the_delete_cap_finishes_in_order(self) -> None:
         chan = Chan()
-        rest = [entry(n) for n in range(10, 70)]
-        await sync(chan, rest, reorder=True)
-        await sync(chan, rest, reorder=True)
-        await sync(chan, rest, reorder=True)
-        everyone = [entry(1, "Aaa first"), *rest]
+        rest = [entry(n, f"B{n:03}") for n in range(100, 280)]
         for _ in range(8):
+            await sync(chan, rest)
+        # twelve new entries sort before all of them but were posted last
+        everyone = [entry(n, f"A{n:02}") for n in range(1, 13)] + rest
+        for _ in range(3):
+            await sync(chan, everyone)
+        for _ in range(12):
             done = await sync(chan, everyone, reorder=True)
             if not done.left_for_next_time:
                 break
-        heads = [t.splitlines()[0] for t in chan.texts()]
-        self.assertEqual(heads[0], "👤 **Aaa first** · NPC")
-        self.assertEqual(heads, sorted(heads, key=lambda h: (h != heads[0], h)))
-        self.assertEqual(len(heads), 61)
+        heads = self.names(chan)
+        self.assertEqual(heads[0], "👤 **A01** · NPC")
+        self.assertEqual(heads, sorted(heads))
+        self.assertEqual(len(heads), 192)
 
     async def test_no_permission_stops_the_pass_after_one_try_of_each_kind(self) -> None:
         chan = Chan()
         await sync(chan, [entry(1), entry(2), entry(3)])
+        chan.delete_messages = AsyncMock(  # type: ignore[attr-defined]
+            side_effect=discord.Forbidden(MagicMock(status=403), "no")
+        )
         denied = discord.Forbidden(MagicMock(status=403), "no")
         for msg in chan.messages:
             msg.delete = AsyncMock(side_effect=denied)  # type: ignore[method-assign]
@@ -262,7 +358,7 @@ class TheCap(unittest.IsolatedAsyncioTestCase):
         texts = chan.texts()
         self.assertEqual(len(texts), 201)
         self.assertEqual(texts[-1], "➕ **+13 more.** Ask your DM for the rest.")
-        self.assertNotIn(f"-# ref {201:032x}", " ".join(texts))
+        self.assertNotIn(f"{201:032x}", " ".join(texts))
 
     async def test_the_more_message_changes_in_place_and_stays_last(self) -> None:
         chan = Chan()
@@ -617,7 +713,7 @@ class Setup(Fake):
     async def test_nothing_happens_for_a_campaign_with_no_npc_channel(self) -> None:
         await nc.follow_screen(self.guild, self.campaign, self.screen)
         self.new.edit.assert_not_awaited()
-        self.assertIsNone(await nc.sync_campaign(self.guild, self.campaign, mock.Mock()))
+        self.assertIsNone(await nc.sync_campaign(self.guild, self.campaign, mock.Mock(), MemMap()))
 
     async def test_a_backup_never_holds_the_channel_id(self) -> None:
         await self.store.set_npcs_channel(GUILD, self.campaign.id, NEW)
@@ -654,7 +750,7 @@ class FromRecall(Fake):
         self.guild.fetch_channel = AsyncMock(return_value=shown)
         service = MagicMock()
         service.roster = AsyncMock(return_value=[entry(1, "Mira"), entry(2, "Ulfgar")])
-        done = await nc.sync_campaign(self.guild, mine, service)
+        done = await nc.sync_campaign(self.guild, mine, service, MemMap())
         assert done is not None
         service.roster.assert_awaited_once_with(GUILD, mine.id)
         self.assertEqual(done.sent, 2)
@@ -691,8 +787,12 @@ class Peeking(Fake):
         self.interaction.guild = self.guild
         self.interaction.user = self.member
         self.interaction.client.campaigns = self.store
+        self.interaction.response.defer = AsyncMock()
         self.interaction.response.edit_message = AsyncMock()
         self.interaction.response.send_message = AsyncMock()
+        self.interaction.response.is_done = MagicMock(return_value=True)  # (the press is deferred)
+        self.interaction.followup.send = AsyncMock()
+        self.interaction.edit_original_response = AsyncMock()
 
     def test_the_warning_names_every_channel_it_opens(self) -> None:
         both = messages.peek_warning("<#99>", "<#77>")
@@ -709,7 +809,7 @@ class Peeking(Fake):
         from dmbot.dm_screen.buttons import PeekButton
 
         await PeekButton(self.campaign.id).callback(self.interaction)
-        said = self.interaction.response.send_message.call_args.args[0]
+        said = self.interaction.followup.send.call_args.args[0]
         self.assertIn(self.rules.mention, said)
         self.assertIn(self.new.mention, said)
 
@@ -730,7 +830,7 @@ class Peeking(Fake):
         await view.yes.callback(self.interaction)
         self.screen.set_permissions.assert_awaited_once()
         self.rules.set_permissions.assert_awaited_once()
-        text = self.interaction.response.edit_message.call_args.kwargs["content"]
+        text = self.interaction.edit_original_response.call_args.kwargs["content"]
         self.assertEqual(text, messages.peek_done(self.screen.mention))
 
     async def test_hide_closes_all_three(self) -> None:
@@ -753,6 +853,30 @@ class Peeking(Fake):
         self.new.send.assert_not_awaited()  # nothing in the players' channel
         self.assertTrue(self.screen.send.await_count >= 1)
 
+    async def test_every_press_is_deferred_before_any_channel_work(self) -> None:
+        order: list[str] = []
+        self.interaction.response.defer = AsyncMock(side_effect=lambda **_: order.append("defer"))
+        real = self.guild.fetch_channel.side_effect
+
+        def fetch(cid: int) -> Any:
+            order.append("fetch")
+            return real(cid)
+
+        self.guild.fetch_channel = AsyncMock(side_effect=fetch)
+        from dmbot.dm_screen.buttons import PeekButton
+
+        await PeekButton(self.campaign.id).callback(self.interaction)
+        self.assertEqual(order[0], "defer")
+        order.clear()
+        await ConfirmPeek(self.campaign.id, self.interaction).yes.callback(self.interaction)
+        self.assertEqual(order[0], "defer")
+        order.clear()
+        self.screen.overwrites = {
+            self.member: discord.PermissionOverwrite(view_channel=True, send_messages=False)
+        }
+        await HideButton(self.campaign.id).callback(self.interaction)
+        self.assertEqual(order[0], "defer")
+
     async def test_a_channel_that_is_not_ours_is_never_touched_by_a_peek(self) -> None:
         await self.store.set_npcs_channel(GUILD, self.campaign.id, GENERAL)
         found = {GENERAL: self.general, RULES: self.rules, SCREEN: self.screen}
@@ -761,6 +885,46 @@ class Peeking(Fake):
         view = ConfirmPeek(self.campaign.id, self.interaction)
         await view.yes.callback(self.interaction)
         self.general.set_permissions.assert_not_awaited()
+
+
+class MessageTable(DatabaseTest):
+    """The message map in the database: scoped to one campaign of one server."""
+
+    async def asyncSetUp(self) -> None:
+        await super().asyncSetUp()
+        self.store = CampaignStore(self.db)
+        self.a = await self.store.create(GUILD, "Table A", DM)
+        self.b = await self.store.create(GUILD, "Table B", DM)
+        self.far = await self.store.create(222, "Far away", DM)
+        self.map = nc.NpcMessageStore(self.db)
+
+    async def test_save_load_replace_and_forget(self) -> None:
+        await self.map.save(GUILD, self.a.id, "e1", 11)
+        await self.map.save(GUILD, self.a.id, "e2", 12)
+        await self.map.save(GUILD, self.a.id, "e1", 13)  # the entry's message was posted again
+        self.assertEqual(await self.map.load(GUILD, self.a.id), {"e1": 13, "e2": 12})
+        await self.map.forget(GUILD, self.a.id, ["e1", "nope"])
+        self.assertEqual(await self.map.load(GUILD, self.a.id), {"e2": 12})
+        await self.map.forget(GUILD, self.a.id, [])
+
+    async def test_two_campaigns_and_two_servers_never_mix(self) -> None:
+        await self.map.save(GUILD, self.a.id, "e1", 11)
+        await self.map.save(GUILD, self.b.id, "e1", 21)
+        await self.map.save(222, self.far.id, "e1", 31)
+        self.assertEqual(await self.map.load(GUILD, self.a.id), {"e1": 11})
+        self.assertEqual(await self.map.load(GUILD, self.b.id), {"e1": 21})
+        self.assertEqual(await self.map.load(222, self.far.id), {"e1": 31})
+        self.assertEqual(await self.map.load(GUILD, self.far.id), {})  # wrong server
+        await self.map.forget(GUILD, self.a.id, ["e1"])
+        self.assertEqual(await self.map.load(GUILD, self.b.id), {"e1": 21})
+        with self.assertRaises(psycopg.Error):  # a campaign of another server is refused
+            await self.map.save(GUILD, self.far.id, "e1", 1)
+
+    async def test_it_goes_with_the_campaign_and_is_not_in_a_backup(self) -> None:
+        await self.map.save(GUILD, self.a.id, "e1", 11)
+        self.assertNotIn("npcs_channel_messages", repr(await self.store.export(GUILD, self.a.id)))
+        await self.store.delete(GUILD, self.a.id)
+        self.assertEqual(await self.map.load(GUILD, self.a.id), {})
 
 
 class Passes(unittest.IsolatedAsyncioTestCase):

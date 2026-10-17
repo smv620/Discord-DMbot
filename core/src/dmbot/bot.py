@@ -138,6 +138,8 @@ from dmbot.dm_screen.name_questions import (
     question_view,
 )
 from dmbot.dm_screen.npcs_channel import (
+    MessageMap,
+    NpcMessageStore,
     NpcsChannelError,
     pass_delay,
     setup_npcs_channel,
@@ -789,6 +791,7 @@ class DMBot(commands.AutoShardedBot):
         importer: HomebrewImporter | None = None,
         adventure: AdventureStore | None = None,
         plan: PlanStore | None = None,
+        npcs_messages: MessageMap | None = None,
     ) -> None:
         intents = discord.Intents.none()
         intents.guilds = True
@@ -866,6 +869,7 @@ class DMBot(commands.AutoShardedBot):
         self._npcs_last: dict[str, float] = {}  # when a campaign's last pass began (monotonic)
         self._npcs_guilds: dict[str, int] = {}
         self._npcs_recall: RecallService | None = None
+        self._npcs_messages = npcs_messages  # which message shows which entry (#1761)
         for store in (house_rules, rule_sets):
             if store is not None:
                 store.on_change = self._rules_archive_changed
@@ -2254,6 +2258,9 @@ class DMBot(commands.AutoShardedBot):
             return None
         with log_context(guild_id=guild_id, campaign_id=table.campaign_id):
             log.info("Session ended: %s", reason)
+        if table.campaign_id:  # the moment to put the NPC list in order again (#1761)
+            self._npcs_reorder.add(table.campaign_id)
+            self._npcs_changed(table.campaign_id)
         if table.sheet_task is not None:  # no more reading sheets for it (#723)
             table.sheet_task.cancel()
         if table.watch_task is not None:  # nor re-reading them (#1128)
@@ -8319,19 +8326,29 @@ class DMBot(commands.AutoShardedBot):
                 screen=screen if isinstance(screen, discord.TextChannel) else None,
             )
             self._npcs_guilds[campaign.id] = guild.id
-            fresh = await self.campaigns.get(guild.id, campaign.id)
-            if fresh is not None and self.memory is not None:
-                done = await sync_npcs(guild, fresh, self._npcs_service(), reorder=True)
-                self._npcs_last[campaign.id] = time.monotonic()
-                if done is not None and done.left_for_next_time:
-                    self._npcs_reorder.add(campaign.id)
-                    self._npcs_changed(campaign.id)  # finish it, paced
         except NpcsChannelError as exc:
             return screen_messages.npcs_failed(str(exc))
         except Exception:
             log.exception("Couldn't set up the NPC list channel")
             return screen_messages.npcs_failed(screen_messages.TRANSCRIPT_NO_ANSWER)
+        try:  # (the channel is there; a failed first fill is only logged, the next pass retries)
+            fresh = await self.campaigns.get(guild.id, campaign.id)
+            if fresh is not None and self.memory is not None and self._npcs_messages is not None:
+                # (a session is starting, so this is the moment to put the list in order)
+                done = await sync_npcs(
+                    guild, fresh, self._npcs_service(), self._npcs_messages, reorder=True
+                )
+                self._npcs_last[campaign.id] = time.monotonic()
+                if done is not None and done.left_for_next_time:
+                    self._npcs_reorder.add(campaign.id)
+                    self._npcs_changed(campaign.id)  # finish it, paced
+        except Exception:
+            log.warning("Couldn't fill the NPC list; will try again", exc_info=True)
+            self._npcs_changed(campaign.id)
         return None
+
+    def _session_running(self, campaign_id: str) -> bool:
+        return any(t.campaign_id == campaign_id for t in self.tables.values())
 
     def _npcs_service(self) -> RecallService:
         if self._npcs_recall is None:
@@ -8376,7 +8393,7 @@ class DMBot(commands.AutoShardedBot):
     async def _sync_npcs(self, campaign_id: str) -> NpcsSyncResult | None:
         guild_id = self._npcs_guilds.get(campaign_id)
         guild = self.get_guild(guild_id) if guild_id is not None else None
-        if guild is None or self.memory is None:
+        if guild is None or self.memory is None or self._npcs_messages is None:
             return None
         campaign = await self.campaigns.get(guild.id, campaign_id)
         if campaign is None:
@@ -8384,8 +8401,11 @@ class DMBot(commands.AutoShardedBot):
             self._npcs_last.pop(campaign_id, None)
             self._npcs_reorder.discard(campaign_id)
             return None
-        reorder = campaign_id in self._npcs_reorder  # finish a rebuild that was cut short
-        done = await sync_npcs(guild, campaign, self._npcs_service(), reorder=reorder)
+        # Finish a rebuild that was cut short, but never while a session runs for the campaign.
+        reorder = campaign_id in self._npcs_reorder and not self._session_running(campaign_id)
+        done = await sync_npcs(
+            guild, campaign, self._npcs_service(), self._npcs_messages, reorder=reorder
+        )
         if reorder and (done is None or not done.left_for_next_time):
             self._npcs_reorder.discard(campaign_id)
         return done
@@ -8416,7 +8436,7 @@ class DMBot(commands.AutoShardedBot):
         """At bot start: every campaign's NPC list is brought up to date once, in order, a few
         edits at a time (Discord's rate limits), so a restart or a missed change never leaves it
         stale. A campaign whose channel was deleted by hand gets a new one at its next start."""
-        if self.memory is None:
+        if self.memory is None or self._npcs_messages is None:
             return
         for guild in list(self.guilds):
             try:
@@ -8431,7 +8451,15 @@ class DMBot(commands.AutoShardedBot):
                 try:
                     if time.monotonic() - self._npcs_last.get(campaign.id, -1e9) < 60:
                         continue  # a session start just did it
-                    done = await sync_npcs(guild, campaign, self._npcs_service(), reorder=True)
+                    # A start (deploy) puts the list in order only when no session is running;
+                    # `sync_roster` then does so only if 10 or more messages are out of place.
+                    done = await sync_npcs(
+                        guild,
+                        campaign,
+                        self._npcs_service(),
+                        self._npcs_messages,
+                        reorder=not self._session_running(campaign.id),
+                    )
                     self._npcs_last[campaign.id] = time.monotonic()
                     if done is not None and done.left_for_next_time:
                         self._npcs_reorder.add(campaign.id)
@@ -8928,6 +8956,7 @@ async def run(settings: Settings) -> None:
             HomebrewImporter(homebrew_store, sources),
             AdventureStore(db),
             PlanStore(db),
+            npcs_messages=NpcMessageStore(db),
         )
         _close_on_sigterm(bot)
         async with bot:
