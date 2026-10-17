@@ -165,6 +165,11 @@ class Document:
     added_by: int
     added_at: int
 
+    @property
+    def has_text(self) -> bool:
+        """False for a document restored from a backup: its name is kept, its text is not."""
+        return self.chunks > 0
+
 
 def fingerprint_of(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8", errors="replace")).hexdigest()
@@ -210,7 +215,31 @@ class AdventureStore:
             row = await cur.fetchone()
             assert row is not None
             if row["same"]:
-                raise AdventureError(ALREADY)
+                # A document that came back from a backup has its name but no text (#1698): the
+                # same file given again fills it in. A document that has its text is a repeat.
+                cur = await conn.execute(
+                    "SELECT id, added_by, added_at FROM adventure_documents WHERE guild_id = %s"
+                    " AND campaign_id = %s AND fingerprint = %s AND chunks = 0 FOR UPDATE",
+                    (guild_id, campaign_id, digest),
+                )
+                empty = await cur.fetchone()
+                if empty is None:
+                    raise AdventureError(ALREADY)
+                doc_id = empty["id"]
+                await conn.execute(
+                    "UPDATE adventure_documents SET chunks = %s WHERE guild_id = %s"
+                    " AND campaign_id = %s AND id = %s",
+                    (len(chunks), guild_id, campaign_id, doc_id),
+                )
+                await self._insert_chunks(conn, guild_id, campaign_id, doc_id, chunks, now, user_id)
+                return Document(
+                    doc_id,
+                    name,
+                    len(text),
+                    len(chunks),
+                    int(empty["added_by"]),
+                    int(empty["added_at"]),
+                )
             if int(row["n"]) >= DOCUMENTS_MAX:
                 raise AdventureError(TOO_MANY)
             if int(row["total"]) + len(text) > CAMPAIGN_MAX_CHARS:
@@ -221,27 +250,39 @@ class AdventureStore:
                 " VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)",
                 (guild_id, campaign_id, doc_id, name, digest, len(text), len(chunks), user_id, now),
             )
-            async with conn.cursor() as cur2:
-                await cur2.executemany(
-                    "INSERT INTO adventure_chunks (guild_id, campaign_id, id, document_id,"
-                    " position, heading, text, created_at, created_by)"
-                    " VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)",
-                    [
-                        (
-                            guild_id,
-                            campaign_id,
-                            uuid.uuid4().hex,
-                            doc_id,
-                            position,
-                            c.heading,
-                            c.text,
-                            now,
-                            user_id,
-                        )
-                        for position, c in enumerate(chunks)
-                    ],
-                )
+            await self._insert_chunks(conn, guild_id, campaign_id, doc_id, chunks, now, user_id)
         return Document(doc_id, name, len(text), len(chunks), user_id, now)
+
+    @staticmethod
+    async def _insert_chunks(
+        conn: Conn,
+        guild_id: int,
+        campaign_id: str,
+        doc_id: str,
+        chunks: list[Chunk],
+        now: int,
+        user_id: int,
+    ) -> None:
+        async with conn.cursor() as cur:
+            await cur.executemany(
+                "INSERT INTO adventure_chunks (guild_id, campaign_id, id, document_id,"
+                " position, heading, text, created_at, created_by)"
+                " VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)",
+                [
+                    (
+                        guild_id,
+                        campaign_id,
+                        uuid.uuid4().hex,
+                        doc_id,
+                        n,
+                        c.heading,
+                        c.text,
+                        now,
+                        user_id,
+                    )
+                    for n, c in enumerate(chunks)
+                ],
+            )
 
     async def documents(self, guild_id: int, campaign_id: str) -> list[Document]:
         async with self._db.guild(guild_id) as conn:
@@ -318,7 +359,7 @@ class AdventureStore:
 
 # ---- backups --------------------------------------------------------------------------------
 
-_DOC_KEYS = frozenset({"file_name", "fingerprint", "characters", "chunks", "added_by", "added_at"})
+_DOC_KEYS = frozenset({"file_name", "fingerprint", "characters", "added_by", "added_at"})
 
 
 def _storable(text: str) -> bool:
@@ -344,34 +385,25 @@ class _Checked:
     characters: int
     added_by: int
     added_at: int
-    chunks: tuple[Chunk, ...]
 
 
 class AdventureSection:
-    """The adventure text in campaign backups (an `ExportSection`): a backup is complete. The
-    ids mean nothing in another campaign, so they are made again on restore. Restoring does not
-    add a confirmation (#1692): the Shared story switch decides what is allowed from here."""
+    """The adventure's document list in campaign backups (an `ExportSection`), **never its text**
+    (Supervisor, 2026-10-17): anyone in the server may download a paid campaign's backup, and that
+    would hand a commercial adventure's full text to all of them, past what the DM confirmed the
+    right to use (CLAUDE.md, IP rule). A restored document keeps its name, size, fingerprint and
+    who added it, with no chunks; giving DMbot the same file again fills it in. The ids mean
+    nothing in another campaign, so they are made again. Restoring adds no confirmation (#1692)."""
 
     name = "adventure"
 
     async def dump(self, conn: Conn, guild_id: int, campaign_id: str) -> list[Any]:
         cur = await conn.execute(
-            "SELECT id, file_name, fingerprint, characters, chunks, added_by, added_at"
+            "SELECT file_name, fingerprint, characters, added_by, added_at"
             " FROM adventure_documents WHERE guild_id = %s AND campaign_id = %s"
             " ORDER BY added_at, id",
             (guild_id, campaign_id),
         )
-        docs = await cur.fetchall()
-        cur = await conn.execute(
-            "SELECT document_id, heading, text FROM adventure_chunks"
-            " WHERE guild_id = %s AND campaign_id = %s ORDER BY document_id, position",
-            (guild_id, campaign_id),
-        )
-        by_doc: dict[str, list[dict[str, str]]] = {}
-        for r in await cur.fetchall():
-            by_doc.setdefault(r["document_id"], []).append(
-                {"heading": r["heading"], "text": r["text"]}
-            )
         return [
             {
                 "file_name": d["file_name"],
@@ -379,9 +411,8 @@ class AdventureSection:
                 "characters": int(d["characters"]),
                 "added_by": str(d["added_by"]),
                 "added_at": int(d["added_at"]),
-                "chunks": by_doc.get(d["id"], []),
             }
-            for d in docs
+            for d in await cur.fetchall()
         ]
 
     def check(self, rows: list[Any]) -> list[_Checked]:
@@ -413,37 +444,13 @@ class AdventureSection:
                 and 0 < int(by) <= _INT64_MAX
                 and type(at) is int
                 and 0 <= at <= _INT64_MAX
-                and isinstance(row["chunks"], list)
-                and row["chunks"]
             ):
                 raise CampaignError(DAMAGED)
             seen.add(digest)
-            chunks: list[Chunk] = []
-            size = 0
-            for c in row["chunks"]:
-                if not (
-                    isinstance(c, dict)
-                    and set(c) == {"heading", "text"}
-                    and isinstance(c["heading"], str)
-                    and len(c["heading"]) <= HEADING_KEPT
-                    and isinstance(c["text"], str)
-                    and 1 <= len(c["text"]) <= CHUNK_HARD
-                    and _storable(c["heading"])
-                    and _storable(c["text"])
-                ):
-                    raise CampaignError(DAMAGED)
-                size += len(c["text"])
-                chunks.append(Chunk(c["heading"], c["text"]))
             total += characters
-            # What a real document gives: chunks of at least MIN_CHUNK (but the last), and their
-            # text, joined, about as long as the file's.
-            if (
-                total > CAMPAIGN_MAX_CHARS
-                or len(chunks) > characters // 100 + 1
-                or size > characters + 2 * len(chunks)
-            ):
+            if total > CAMPAIGN_MAX_CHARS:
                 raise CampaignError(DAMAGED)
-            out.append(_Checked(name, digest, characters, int(by), at, tuple(chunks)))
+            out.append(_Checked(name, digest, characters, int(by), at))
         return out
 
     async def load(self, conn: Conn, guild_id: int, campaign_id: str, rows: Any) -> None:
@@ -461,31 +468,11 @@ class AdventureSection:
                     doc.file_name,
                     doc.fingerprint,
                     doc.characters,
-                    len(doc.chunks),
+                    0,  # no text comes back from a backup
                     doc.added_by,
                     doc.added_at,
                 ),
             )
-            async with conn.cursor() as cur:
-                await cur.executemany(
-                    "INSERT INTO adventure_chunks (guild_id, campaign_id, id, document_id,"
-                    " position, heading, text, created_at, created_by)"
-                    " VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)",
-                    [
-                        (
-                            guild_id,
-                            campaign_id,
-                            uuid.uuid4().hex,
-                            doc_id,
-                            position,
-                            c.heading,
-                            c.text,
-                            doc.added_at,
-                            doc.added_by,
-                        )
-                        for position, c in enumerate(doc.chunks)
-                    ],
-                )
 
     @staticmethod
     def _is_checked(rows: Any) -> bool:

@@ -44,8 +44,8 @@ NO_MENTIONS = discord.AllowedMentions.none()
 INTRO = "📖 **Your adventure**"
 NOTE = (
     "Nothing reads this yet, so it changes no alerts. DMbot keeps the text of your files, not the "
-    "files, for this campaign only (it is in this campaign's backup too). Remove one and DMbot "
-    "forgets it."
+    "files, for this campaign only. It is NOT in this campaign's backup, so after a restore you "
+    "give the files again. Remove one and DMbot forgets it."
 )
 EMPTY = "Nothing yet. Press Give a file to add one."
 NOT_ON = (
@@ -79,6 +79,8 @@ def card_text(documents: list[Document]) -> str:
     for n, d in enumerate(documents, 1):
         name = discord.utils.escape_markdown(d.file_name[:NAME_SHOWN])
         size = f"about {pages_of(d.characters)} {_pages(d.characters)}"
+        if not d.has_text:
+            size += ", give DMbot this file again to use it"
         if len(documents) <= FULL_LINES:
             lines.append(
                 f"{n}. **{name}** ({size}), added by <@{d.added_by}> on <t:{d.added_at}:d>"

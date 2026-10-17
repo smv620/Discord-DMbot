@@ -164,6 +164,10 @@ database.
   - **Backups** include everything except the change log (a restored campaign starts
     with a fresh undo history) and mentions, which are most of the size (about 15 MB
     for a long campaign) and are rebuilt as new sessions are transcribed.
+    **One exception to "complete" (Supervisor, 2026-10-17, #1698):** the text of an adventure the
+    DM gave DMbot is not in a backup, only its list (name, size, fingerprint, who, when), because
+    anyone in the server may download a paid campaign's backup and the DM confirmed the right to
+    use that text in that campaign only. A restore shows each as "give DMbot this file again".
   - **Flags DMbot closes itself get no status of their own (decided 2026-10-08, #347):**
     Undo of the close reopens the flag (#362), and a clash that comes back is flagged
     again when the fact is written again, so the realistic case (the DM undoes a

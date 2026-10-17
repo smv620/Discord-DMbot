@@ -2011,7 +2011,7 @@ ADVENTURE_TEXT = (
         file_name   TEXT NOT NULL CHECK (char_length(file_name) BETWEEN 1 AND 200),
         fingerprint TEXT NOT NULL CHECK (fingerprint ~ '^[0-9a-f]{{64}}$'),
         characters  INTEGER NOT NULL CHECK (characters > 0),
-        chunks      INTEGER NOT NULL CHECK (chunks > 0),
+        chunks      INTEGER NOT NULL CHECK (chunks >= 0),  -- 0: restored from a backup, no text
         added_by    BIGINT NOT NULL CHECK (added_by > 0),
         added_at    BIGINT NOT NULL,
         PRIMARY KEY (guild_id, campaign_id, id),

@@ -7,6 +7,7 @@ rows, and a 300-page PDF's time. The store tests need Postgres."""
 from __future__ import annotations
 
 import io
+import json
 import re
 import time
 import unittest
@@ -288,27 +289,50 @@ class Storing(Setup):
 
 
 class BackingUp(Setup):
-    async def test_the_documents_and_chunks_come_back_and_restoring_adds_no_confirmation(
-        self,
-    ) -> None:
+    async def test_the_backup_holds_the_list_and_never_the_text(self) -> None:
         await self.switch_on()
         doc = await self.store.add(GUILD_A, self.a.id, DM, "a.txt", STORY)
         data = await self.campaigns.export(GUILD_A, self.a.id)
-        self.assertEqual(len(data["sections"]["adventure"]), 1)
+        (entry,) = data["sections"]["adventure"]
+        self.assertEqual(
+            set(entry), {"file_name", "fingerprint", "characters", "added_by", "added_at"}
+        )
+        self.assertNotIn(STORY[:40], json.dumps(data))  # no chunk text anywhere in the backup
         restored = await self.campaigns.import_backup(GUILD_B, data, DM)
         (back,) = await self.store.documents(GUILD_B, restored.id)
         self.assertEqual(
-            (back.file_name, back.characters, back.chunks),
-            (doc.file_name, doc.characters, doc.chunks),
+            (back.file_name, back.characters, back.chunks, back.has_text),
+            (doc.file_name, doc.characters, 0, False),
         )
-        self.assertEqual(
-            [c.text for c in await self.store.chunks(GUILD_B, restored.id, back.id)],
-            [c.text for c in await self.store.chunks(GUILD_A, self.a.id, doc.id)],
-        )
+        self.assertEqual(await self.store.chunks(GUILD_B, restored.id, back.id), [])
+        self.assertIn("give DMbot this file again", ui.card_text([back]))
         # A restored copy never stands in for the DM's own press (#1692): no button, no more files.
         self.assertFalse(await self.campaigns.story_confirmed(GUILD_B, restored.id))
         with self.assertRaises(AdventureError):
-            await self.store.add(GUILD_B, restored.id, DM, "b.txt", "something else " * 20)
+            await self.store.add(GUILD_B, restored.id, DM, "a.txt", STORY)
+
+    async def test_giving_the_same_file_again_fills_in_a_restored_document(self) -> None:
+        await self.switch_on()
+        doc = await self.store.add(GUILD_A, self.a.id, DM, "a.txt", STORY)
+        data = await self.campaigns.export(GUILD_A, self.a.id)
+        restored = await self.campaigns.import_backup(GUILD_B, data, DM)
+        await self.campaigns.set_story_mode(
+            GUILD_B, restored.id, STORY_WATCH, confirmed_by=DM
+        )  # the DM says here they have the right
+        other = await self.store.add(GUILD_B, restored.id, DM, "b.txt", STORY + " more")
+        self.assertTrue(other.has_text)  # a different file is just a new document
+        filled = await self.store.add(GUILD_B, restored.id, DM, "renamed.txt", STORY)
+        docs = await self.store.documents(GUILD_B, restored.id)
+        self.assertEqual(len(docs), 2)
+        mine = next(d for d in docs if d.id == filled.id)
+        self.assertTrue(mine.has_text)
+        self.assertEqual(mine.chunks, doc.chunks)
+        self.assertEqual(
+            [c.text for c in await self.store.chunks(GUILD_B, restored.id, mine.id)],
+            [c.text for c in chunks_of(STORY)],
+        )
+        with self.assertRaises(AdventureError):  # now it is a repeat
+            await self.store.add(GUILD_B, restored.id, DM, "a.txt", STORY)
 
     async def test_a_damaged_adventure_section_is_refused_whole(self) -> None:
         await self.switch_on()
