@@ -23,6 +23,34 @@ export const helpIntro =
 
 const consent = `I'm ${minimumAge} or older, record me`;
 
+// Adding homebrew from a link (#1634, #1635, #1645) waits for dev1 to try one real published page
+// from the server, so its Help steps are held with the What's new entries "Add homebrew from a
+// link" and "Share imported homebrew in a pack" (whats-new.ts, `held`). When those move to
+// `entries`, set this to true in the same change; a test keeps the two in step.
+export const HOMEBREW_LINKS_LIVE = false;
+
+export const homebrewLinkSteps: Step[] = [
+  {
+    text: "To add homebrew from a web page, press ⚙️ Settings, then 📚 Homebrew, then 🔗 Add from a link, and paste the address of a published homebrew page. If the site says the page isn't public, publish it there first. DMbot reads that one page and shows it to you. It is saved only when you press Save. The first time for a site, DMbot asks you to press I have the right. After that it never asks again for that site in this campaign.",
+    names: [
+      { name: "🔗 Add from a link", file: "ui/homebrew.py" },
+      { name: "Save", file: "ui/homebrew.py" },
+      { name: "I have the right", file: "ui/homebrew.py" },
+    ],
+  },
+  {
+    text: "An entry added from a link keeps the page's words, so you can't edit them in DMbot. To fetch the page again, open the entry and press 🔄 Update from the link. Every table that uses that page gets the update.",
+    names: [{ name: "🔄 Update from the link", file: "ui/homebrew.py" }],
+  },
+  {
+    text: "A homebrew pack can carry entries added from links. If you follow such a pack, DMbot tells you which site its entries come from and waits. Press the Use button for the site (for example Use example.com) and then I have the right. Until you do, DMbot skips those entries.",
+    names: [
+      { name: "Use ", file: "ui/shared_packs.py" },
+      { name: "I have the right", file: "ui/shared_packs.py" },
+    ],
+  },
+];
+
 export const dmSteps: Step[] = [
   { text: "Add DMbot to your Discord server from the Add to Discord page." },
   {
@@ -205,6 +233,24 @@ export const dmSteps: Step[] = [
     text: "You can choose how long a campaign keeps its transcripts: Forever, 1 year, 90 days or 30 days (⚙️ Settings → 📜 Transcripts). Older ones are deleted within a day. Recaps stay. Each campaign's Transcripts page on this website shows its limit, so you can save a copy before a transcript is deleted.",
     names: [{ name: "Transcripts", file: "dm_screen/transcript_keep.py" }],
   },
+  {
+    text: "To add homebrew (your own spells, monsters, items and other game content), press ⚙️ Settings, then 📚 Homebrew. Press ➕ Add to type an entry in, or 📥 Load file to bring in a text file. When you load a file, DMbot asks Who made these? Pick Me, A website or Someone else, and the name stays with the entries. It also asks whether it is from a book. Made-up rules go in House rules, not here.",
+    names: [
+      { name: "➕ Add", file: "ui/homebrew.py" },
+      { name: "📥 Load file", file: "ui/homebrew.py" },
+      { name: "Who made these?", file: "ui/homebrew.py" },
+      { name: "A website", file: "ui/homebrew.py" },
+      { name: "Someone else", file: "ui/homebrew.py" },
+    ],
+  },
+  {
+    text: "To keep an entry but stop DMbot using it, open it and press Turn off. An entry that is off is kept, and DMbot ignores it. Press Turn on to use it again. Everyone in your server can see which entries are off on this website.",
+    names: [
+      { name: "Turn off", file: "ui/homebrew.py" },
+      { name: "Turn on", file: "ui/homebrew.py" },
+    ],
+  },
+  ...(HOMEBREW_LINKS_LIVE ? homebrewLinkSteps : []),
   {
     text: "To share your homebrew with another table, press ⚙️ Settings, then 📚 Shared rules, then 📦 Homebrew packs, then 📤 Share my homebrew (paid campaigns only). DMbot gives you a share code. Any game master in your server can read everything you share, and so can anyone you give the code to. That includes entries you hide from players. Only share what you are happy for them to see. Followers get a new version only when you press 🔄 Publish my changes. Only homebrew is shared, never your story, names or notes.",
     names: [
