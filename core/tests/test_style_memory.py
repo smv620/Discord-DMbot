@@ -239,9 +239,9 @@ class Backfill(DatabaseTest):
     """Migrations run with no server set; 0130 must reach every row, and only the right ones."""
 
     async def test_the_old_switch_seeds_the_style_and_nothing_else_changes(self) -> None:
-        from dmbot.db import Database
+        from dmbot.db import Database, drop_schema
         from dmbot.schema import MIGRATIONS
-        from tests.pg import TEST_URL, drop_schema
+        from tests.pg import TEST_URL
 
         before = [m for m in MIGRATIONS if m[0] < "0130"]
         await self.db.close()  # start again from a schema as it was before 0130
