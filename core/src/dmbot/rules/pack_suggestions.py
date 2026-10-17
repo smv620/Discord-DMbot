@@ -1,7 +1,7 @@
 """Suggest to <pack> (#1537): a following campaign's DM sends one of its own homebrew entries to
 the pack's publisher, as #1259 does for house-rules sets.
 
-Only the entry's words cross (kind, name, summary, text, whether players may know it), never who
+Only the entry's words cross (kind, name, summary, text), never who
 sent it: the publisher's table holds no sender, server or campaign. An entry that came from a
 book (`from_book`, #1524) is never sent: book text stays in its campaign (CLAUDE.md, IP rule).
 The publisher's DM answers with Add to pack or No thanks; adding writes the entry into the
@@ -19,6 +19,8 @@ from typing import Any
 from dmbot.rules import pack_content
 from dmbot.rules.homebrew import (
     _COLUMNS,
+    _FROM,
+    KINDS,
     HomebrewError,
     _entry,
     insert_entry,
@@ -42,6 +44,10 @@ from dmbot.rules.rule_sets import (
 
 NO_SUCH_ENTRY = "That homebrew entry isn't here any more."
 FROM_A_BOOK = "That entry came from a book you shared, so it stays in this campaign."
+FROM_A_LINK = "That entry comes from a link, so it can't be sent to a pack yet."
+LINK_NAME = (
+    "You have an entry of that name from a link, which stays as it is, so it wasn't replaced."
+)
 ENTRY_CHANGED = "That entry was changed since you looked, so nothing was sent. Look at it again."
 ALREADY_SENT = "This campaign already sent that entry. The answer comes at your next session."
 PICK_A_PACK = "This campaign follows more than one pack. Pick which one to send it to."
@@ -136,8 +142,8 @@ class PackSuggestionStore(PackUpdateStore):
                     raise RuleSetError(NOT_THAT_PACK)
                 follow = found
             cur = await conn.execute(
-                f"SELECT {_COLUMNS} FROM homebrew_entries WHERE guild_id = %s AND campaign_id = %s"
-                " AND id = %s",
+                f"SELECT {_COLUMNS} FROM {_FROM} WHERE h.guild_id = %s AND h.campaign_id = %s"
+                " AND h.id = %s",
                 (guild_id, campaign_id, entry_id),
             )
             row = await cur.fetchone()
@@ -146,6 +152,8 @@ class PackSuggestionStore(PackUpdateStore):
             entry = _entry(row)
             if entry.from_book:
                 raise RuleSetError(FROM_A_BOOK)
+            if entry.source_kind == "link" or entry.credit_domain:  # (by reference, #1635)
+                raise RuleSetError(FROM_A_LINK)
             if entry.version != shown_version:
                 raise RuleSetError(ENTRY_CHANGED)
             cur = await conn.execute(
@@ -160,11 +168,13 @@ class PackSuggestionStore(PackUpdateStore):
                 raise RuleSetError(ALREADY_SENT)
             if counts["n"] >= SUGGEST_FOLLOWER_MAX:
                 raise RuleSetError(TOO_MANY_SENT)
+            # (`known` is always true: nothing is hidden from players any more, part 2. The column
+            # stays so suggestions already stored and the door keep their shape.)
             cur = await conn.execute(
                 "SELECT outcome, pub_guild, pub_campaign FROM dmbot_suggest_entry("
                 "%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
                 (sid, follow.set_id, campaign_id, entry.kind, entry.name, entry.summary,
-                 entry.text, entry.players_may_know, now, SUGGEST_SET_MAX, SUGGEST_WAIT_S),
+                 entry.text, True, now, SUGGEST_SET_MAX, SUGGEST_WAIT_S),
             )  # fmt: skip
             door = await cur.fetchone()
             assert door is not None
@@ -308,8 +318,8 @@ class PackSuggestionStore(PackUpdateStore):
                 (guild_id, campaign_id, suggestion_id),
             )
             row = await cur.fetchone()
-            if row is None or row["status"] != "open":
-                raise RuleSetError(SUGGESTION_GONE)
+            if row is None or row["status"] != "open" or row["kind"] not in KINDS:
+                raise RuleSetError(SUGGESTION_GONE)  # (a "rule" suggested before #1628 is not one)
             if now - int(row["created_at"]) > SUGGEST_WAIT_S:
                 raise RuleSetError(EXPIRED)
             cur = await conn.execute(
@@ -321,17 +331,18 @@ class PackSuggestionStore(PackUpdateStore):
             if pack is None:
                 raise RuleSetError(NOT_SHARED_ANY_MORE)
             cur = await conn.execute(
-                f"SELECT {_COLUMNS} FROM homebrew_entries WHERE guild_id = %s AND campaign_id = %s"
-                " AND name_key = %s",
+                f"SELECT {_COLUMNS} FROM {_FROM} WHERE h.guild_id = %s AND h.campaign_id = %s"
+                " AND h.name_key = %s",
                 (guild_id, campaign_id, name_key(str(row["name"]))),
             )
             mine = await cur.fetchone()
             if mine is not None and mine["from_book"]:
                 raise RuleSetError(BOOK_NAME)
+            if mine is not None and mine["source_kind"] == "link":
+                raise RuleSetError(LINK_NAME)  # its words are a page's, not the pack's to replace
             unchanged = mine is not None and (
                 (mine["kind"], mine["name"], mine["text"], mine["summary"])
                 == (row["kind"], row["name"], row["text"], row["summary"])
-                and bool(mine["players_may_know"]) == bool(row["known"])
             )
             try:
                 if unchanged:
@@ -339,16 +350,16 @@ class PackSuggestionStore(PackUpdateStore):
                 elif mine is not None:
                     await conn.execute(
                         "UPDATE homebrew_entries SET kind = %s, name = %s, name_key = %s,"
-                        " text = %s, summary = %s, players_may_know = %s, updated_at = %s,"
+                        " text = %s, summary = %s, updated_at = %s,"
                         " version = version + 1 WHERE guild_id = %s AND campaign_id = %s"
                         " AND id = %s",
                         (row["kind"], row["name"], name_key(str(row["name"])), row["text"],
-                         row["summary"], row["known"], now, guild_id, campaign_id, mine["id"]),
+                         row["summary"], now, guild_id, campaign_id, mine["id"]),
                     )  # fmt: skip
                 else:
                     await insert_entry(
                         conn, guild_id, campaign_id, user_id, str(row["kind"]), str(row["name"]),
-                        str(row["text"]), row["summary"], bool(row["known"]), now, now,
+                        str(row["text"]), row["summary"], now, now,
                     )  # fmt: skip
             except HomebrewError as exc:
                 raise RuleSetError(str(exc) or NO_ROOM) from None
@@ -385,8 +396,8 @@ class PackSuggestionStore(PackUpdateStore):
 
     async def _pack_entries(self, conn: Any, guild_id: int, campaign_id: str) -> list[Any]:
         cur = await conn.execute(
-            f"SELECT {_COLUMNS} FROM homebrew_entries WHERE guild_id = %s AND campaign_id = %s"
-            " ORDER BY created_at, id",
+            f"SELECT {_COLUMNS} FROM {_FROM} WHERE h.guild_id = %s AND h.campaign_id = %s"
+            " ORDER BY h.created_at, h.id",
             (guild_id, campaign_id),
         )
         return [_entry(r) for r in await cur.fetchall()]

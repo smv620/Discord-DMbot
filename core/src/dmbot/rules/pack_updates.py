@@ -201,10 +201,32 @@ class PackUpdateStore(HomebrewPackStore):
                     if key in have:  # the campaign's own entry of that name wins
                         skipped += 1
                         continue
-                    saved = await insert_entry(
-                        conn, guild_id, campaign_id, user_id, entry["kind"], entry["name"],
-                        entry["text"], entry["summary"], entry["known"], now, now,
-                    )  # fmt: skip
+                    if "page" in entry:  # an imported entry: the same page, as the campaign's own
+                        cur = await conn.execute(
+                            "SELECT id FROM homebrew_pages WHERE url = %s"
+                            " AND fetch_status <> 'restored'",
+                            (entry["page"],),
+                        )
+                        page = await cur.fetchone()
+                        if page is None:  # the page isn't kept here: nothing to point to
+                            skipped += 1
+                            continue
+                        saved = await insert_entry(
+                            conn, guild_id, campaign_id, user_id, entry["kind"], entry["name"],
+                            None, None, now, now, source_kind="link", page_id=int(page["id"]),
+                            credit_domain=entry["domain"],
+                        )  # fmt: skip
+                    elif entry.get("domain"):  # an upload credited to a website stays credited
+                        saved = await insert_entry(
+                            conn, guild_id, campaign_id, user_id, entry["kind"], entry["name"],
+                            entry["text"], entry["summary"], now, now, source_kind="upload",
+                            credit_kind="website", credit_domain=entry["domain"],
+                        )  # fmt: skip
+                    else:
+                        saved = await insert_entry(
+                            conn, guild_id, campaign_id, user_id, entry["kind"], entry["name"],
+                            entry["text"], entry["summary"], now, now,
+                        )  # fmt: skip
                     added.append(saved.id)
             except HomebrewError as exc:
                 raise RuleSetError(str(exc)) from None

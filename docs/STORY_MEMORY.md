@@ -195,7 +195,7 @@ each with a plain label:
   has its own.
 
 **Relationships** (each with domain, range, how many, conflicts):
-- `involved_in` (being/group/item/place → thread, detail = role: quest giver, target,
+- `in_thread` (being/group/item/place → thread, detail = role: quest giver, target,
   villain, victim, reward);
 - `advances` / `resolves` (event → thread);
 - `led_to` (event → event: cause and effect, no loops);
@@ -204,7 +204,7 @@ each with a plain label:
 - `knows` (being/group → clue): who knows what, and since when. A clue is an entry of
   its own, so this is an ordinary relationship, never one that points at another
   relationship. A clue can have a **limited audience** (only these people know it);
-  most clues don't;
+  most clues don't (as built, #1649: only a character is listed; `knows` has no group on its subject side);
 - `witnessed` (being → event): feeds who knows and reputation;
 - `owns` stays as it is: owning isn't holding, and owning has no limit on the item side;
 - `carries` (being → item, new): who has it right now. **One holder at a time, only for
@@ -619,6 +619,88 @@ Each step is useful on its own and ships behind the existing phases.
    `DMBOT_SIDEBAR_RECALL_BUDGET` (1000) characters beside today's "campaign names" section, which
    stays (names, kinds and other names only). `DMBOT_SIDEBAR_RECALL=0` makes the prompt exactly
    the names-only one.
+   **Slice 3 is built (#1649): who knows a secret.** `clue` ("clue or secret") is a core kind, a
+   subtype of `concept`, and an entry of its own. A clue carries one flag, `audience_limited`
+   (migration 0115), the DM's switch **🔒 Only some know this** on its name card (DM only). Who
+   knows it is its confirmed, still-true `knows` facts from characters, so there is no new table
+   and no relationship pointing at a relationship. The switch can be turned on only with at least
+   one person listed; when the last person is removed it turns itself off. The flag is cleared if
+   the entry becomes another kind, kept if two clues merge, and carried in backups (an older
+   backup restores it off). After a session, the continuity run (`dmbot.memory.continuity`,
+   the same list, quoting rules, critical mass and buttons) adds a heads-up when a claim ties a
+   confirmed character who is not on the list to a limited clue: **possible** by default, **likely**
+   when the claim's words say they told it or used it. A character still waiting to be confirmed
+   gives none. Its buttons are **They learned it** (confirms the claim and writes a dated `knows`
+   fact, which also stops the warning), **Wasn't real** and **Ignore**. A clue without the switch
+   never warns about anyone: a missing `knows` means DMbot doesn't know. Recall's **players**
+   audience drops a limited clue (and with it every fact that points to it), and its name card is
+   the DM's alone. `witnessed` is still not a term: nothing reads it until reputation (slice 4),
+   and `appears_in` serves for who was at an event.
+   **Slice 4a is built (#1655): standing the DM sets, worked out on demand** (no AI, no extractor;
+   deeds come later). Core gains the kind `people` (a subtype of `concept`: the tabaxi, outsiders)
+   and the connection `of_people` (character → people), the DM's word and never copied from a
+   species link. The party is one group per campaign flagged `party`; its members are the
+   confirmed player characters, worked out in code (nothing written when one joins). Two tables,
+   `memory_impressions` (viewer → subject) and `memory_attitudes` (group or place → a people), hold
+   a score −100..100 and the weight of the evidence, with the history kept: a newer word for a pair
+   closes the older (`closed_at`). They are campaign-scoped with forced RLS, in the change log
+   (Undo), in backups and deleted with the campaign. The DM's five steps store as −80, −40, 0, 40,
+   80 and read back at ±20 and ±60. The pure rule (`dmbot.memory.standing`) climbs at most two rungs
+   up each ladder (judged: character → party → groups → people; judging: NPC → groups and places →
+   the wider place), never in a loop, counting each found row with its weight halved per rung. **The
+   DM always wins:** the viewer's own DM-set impression on the exact pair, or its own attitude
+   toward a people the subject is of, decides the step, and the rungs above are only reasons;
+   otherwise the weighted mean decides, so direct evidence outweighs prejudice as it grows.
+   Nothing found is shown as **No opinion yet**, never as Wary. A name card for an NPC, group or
+   place has **🤝 Standing** (DM only) with the reasons, **Set standing…** and, on a group or place,
+   **Set attitude…**; a line says it only reminds the DM. Recall does not read these tables, and
+   the players' audience and transcripts never get them. 30 pairs take well under 5 ms.
+   **Phase 5c slice 1 is built (#1662): story threads the DM keeps** (no AI; the DM writes
+   them). Core gains `thread` with the kinds `quest`, `mystery`, `hook` and `goal` under it (as
+   `clue` sits under `concept`), and the connections `in_thread` (who, with their role in the
+   detail), `advances` and `resolves` (event → thread). A thread's state is kept in
+   `memory_states` (migration 0118 widens its `condition` check): hinted, open, active, resolved,
+   abandoned. Forward moves are free; reopening a resolved or dropped thread is the DM's alone.
+   Resolving never changes the state by itself: the DM is offered "Is the thread resolved now?".
+   **Stalled is worked out, never stored:** a hinted, open or active thread is stalled when at
+   least N known sessions (distinct `session_started_at` in `memory_heard`, N from
+   `DMBOT_THREAD_STALLED_SESSIONS`, default 3) started since it last moved: its newest state row,
+   its newest connection, or the session its name was last heard. **Still going** writes a dated
+   row with the same state; the card shows it as "checked, still going (Session N)", never as a
+   change, and a reading of "what changed" skips it. After a session the report says "N threads
+   haven't moved for M sessions" with a button to answer each (Still going, Resolved, Dropped). A
+   thread is the DM's plot note: lookup (`hidden`, so a server manager who is not a DM never finds
+   it) and the players' recall leave it, and every fact that points to it, out. The connection is
+   named `in_thread` because `involved_in` is already a synonym of `appears_in`. Backups,
+   isolation and deletion are those of every memory entry; `memory_heard` is not in a backup, so
+   a restored campaign shows no thread as stalled until new sessions are heard.
+   **Phase 5c slice 2 is built (#1674): promises the DM keeps** (no AI; the DM writes them).
+   `promise` is a fifth kind under `thread`, beside quest, mystery, hook and goal, so it reuses the
+   thread states, the stalled rule and the after-session question exactly: no new condition and no
+   migration. It shows its own words for the same states: made in passing, open, due soon, kept,
+   broken or let go. Two connections, the DM's word and both set from the promise's card:
+   `promised_by` (character or group → promise) and `promised_to` (character, group or place →
+   promise); a promise may name more than one of each. An optional due note is free text kept in the
+   entry's description and never read as a date. The card says "**Kael** promised **Dunhollow**:
+   bring the healer back", then the state and "Due: …". The after-session line says "promise" where
+   all the quiet ones are promises. Privacy and isolation are those of threads: DM only, hidden from
+   lookup and from the players' recall, in backups, deleted with the campaign.
+   **Phase 5c slice 3 is built (#1675): quiet threads in the pre-session note.** When a session
+   starts, the note on the DM screen gains one line, only when a thread is stalled (by the rule above,
+   promises included): "🧵 Quiet threads: <name>, <name>, <name> (+N more)", the longest quiet first.
+   A **🧵 Threads** button on the note opens the DM's private list of every live thread, those in
+   play first, the quiet ones marked ⏳, with Still going, Finished/Dropped (Kept/Broken for a
+   promise) on each. The line is in-game content: it stays on the DM screen, never in the DM Bot
+   channel, a transcript or the players' recall. A campaign with no live thread skips the read (a
+   one-row look at `memory_states`); otherwise it is the one `threads()` read.
+   **Phase 5c slice 4 is built (#1679): `led_to`.** A core connection, the DM's word only: a clue,
+   an event or a thread led to a thread or an event (no AI, no migration). It is set from a card's
+   **➡ Led to…** button, which picks from the campaign's threads and events. A link to itself, or
+   one that would close a loop or run past ten steps, is refused (not flagged). The fact is stored
+   secret, so it is the DM's alone wherever facts are shown, and a link into a thread is hidden
+   with the thread. A thread's card shows "Came from" and "Led to", at most five names each then
+   "+N more", from the one thread read; a clue's or event's card shows the same from a single read
+   of its own links. A link is not the thread moving, so it does not reset its quiet count.
 3. **Phase 5c: PlotBot:** threads, promises, clues, `led_to`, stalled-thread nudges,
    summaries, the pre-session note, the AI recap.
 4. **Phase 5d: Shared story:** the story plan, `same_as` links, divergence ("Watch

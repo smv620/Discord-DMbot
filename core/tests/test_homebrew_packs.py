@@ -4,6 +4,7 @@ a follow or a code, and that a backup keeps a follower's copy (never the code)."
 
 from __future__ import annotations
 
+import dataclasses
 import unittest
 from typing import Any
 
@@ -22,18 +23,16 @@ GUILD_A, GUILD_B = 1001, 2002
 DM_A, DM_B, PLAYER = 11, 22, 33
 
 
-def entry(name: str, *, book: bool = False, known: bool = False) -> Homebrew:
+def entry(name: str, *, book: bool = False) -> Homebrew:
     return Homebrew(
         id=1, campaign_id="x", kind="monster", name=name, text=f"{name} text", summary=None,
-        players_may_know=known, created_by=DM_A, created_at=1, updated_at=1, from_book=book,
+        created_by=DM_A, created_at=1, updated_at=1, from_book=book,
     )  # fmt: skip
 
 
 class Content(unittest.TestCase):
     def test_a_pack_carries_entries_only_and_leaves_a_book_out_by_name(self) -> None:
-        content, left = pack_content.content_of(
-            [entry("Hollow King", known=True), entry("Booked", book=True)]
-        )
+        content, left = pack_content.content_of([entry("Hollow King"), entry("Booked", book=True)])
         self.assertEqual(
             content,
             {
@@ -50,6 +49,17 @@ class Content(unittest.TestCase):
         )
         self.assertEqual(left, ["Booked"])
         self.assertNotIn("Booked", repr(content))
+
+    def test_a_pack_carries_the_new_kinds(self) -> None:
+        mine = [
+            dataclasses.replace(entry(f"A {k}"), kind=k)
+            for k in ("species", "subclass", "background")
+        ]
+        content, _ = pack_content.content_of(mine)
+        self.assertEqual(
+            [e["kind"] for e in pack_content.valid_content(content)["entries"]],
+            ["species", "subclass", "background"],
+        )
 
     def test_the_shape_is_checked_and_a_pack_is_not_house_rules(self) -> None:
         good, _ = pack_content.content_of([entry("A")])
@@ -81,12 +91,12 @@ class Packs(DatabaseTest):
         self.same = await self.campaigns.create(GUILD_A, "Sunken City", DM_A)
         self.far = await self.campaigns.create(GUILD_B, "Far Away", DM_B)
         await self.brew.add(GUILD_A, self.pub.id, DM_A, kind="monster", name="Hollow King",
-                            text="A crowned skeleton.", players_may_know=True)  # fmt: skip
+                            text="A crowned skeleton.")  # fmt: skip
         await self.brew.add(GUILD_A, self.pub.id, DM_A, kind="spell", name="Ember Step",
                             text="Step through fire.")  # fmt: skip
         await self.brew.load_file(
             GUILD_A, self.pub.id, DM_A,
-            [FileEntry("rule", "Booked Rule", "Words from a book.")], from_book=True,
+            [FileEntry("feat", "Booked Rule", "Words from a book.")], from_book=True,
         )  # fmt: skip
 
     async def mine(self, campaign: Campaign) -> list[Homebrew]:
@@ -104,7 +114,7 @@ class Packs(DatabaseTest):
         assert got is not None
         self.assertEqual(
             {e["name"]: e["known"] for e in got["entries"]},
-            {"Hollow King": True, "Ember Step": False},  # hidden stays hidden as published
+            {"Hollow King": True, "Ember Step": True},  # (always true now: nothing is hidden)
         )
 
     async def test_only_a_dm_publishes_and_only_once_and_not_nothing(self) -> None:
@@ -222,7 +232,7 @@ class Packs(DatabaseTest):
         await self.publish("Frost Pack")
         other = await self.campaigns.create(GUILD_A, "Other", DM_A)
         await self.brew.add(GUILD_A, other.id, DM_A, kind="monster", name="hollow king",
-                            text="Other's king.", players_may_know=True)  # fmt: skip
+                            text="Other's king.")  # fmt: skip
         await self.brew.add(GUILD_A, other.id, DM_A, kind="item", name="Lamp", text="Glows.")
         await self.packs.publish_pack(GUILD_A, other.id, DM_A, "Lamp Pack", await self.mine(other))
         await self.brew.add(GUILD_A, self.same.id, DM_A, kind="spell", name="EMBER STEP",
@@ -260,7 +270,7 @@ class Packs(DatabaseTest):
         # A book entry no pack names is still read from the campaign's own.
         await self.brew.load_file(
             GUILD_A, self.same.id, DM_A,
-            [FileEntry("rule", "Only In The Book", "x")], from_book=True, book_edition="other",
+            [FileEntry("feat", "Only In The Book", "x")], from_book=True, book_edition="other",
         )  # fmt: skip
         only = await reader.find(GUILD_A, self.same.id, "Only In The Book")
         assert only is not None
@@ -268,7 +278,7 @@ class Packs(DatabaseTest):
 
     async def test_a_book_entry_with_an_edition_still_never_goes_into_a_pack(self) -> None:
         await self.brew.load_file(
-            GUILD_A, self.pub.id, DM_A, [FileEntry("rule", "Edition Book", "x")],
+            GUILD_A, self.pub.id, DM_A, [FileEntry("feat", "Edition Book", "x")],
             from_book=True, book_edition="2024",
         )  # fmt: skip
         done = await self.packs.publish_pack(
@@ -279,14 +289,13 @@ class Packs(DatabaseTest):
         assert got is not None
         self.assertNotIn("Edition Book", str(got))
 
-    async def test_hidden_stays_hidden_and_the_source_names_the_pack(self) -> None:
+    async def test_every_entry_is_read_and_the_source_names_the_pack(self) -> None:
         await self.publish()
         await self.follow_all(self.same)
         reader = HomebrewReader(self.brew, self.packs)
         entries = await reader.list(GUILD_A, self.same.id)
-        known, hidden = relevant_homebrew(entries, "what does the Hollow King and Ember Step do")
-        self.assertEqual([e.name for e in known], ["Hollow King"])
-        self.assertEqual([e.name for e in hidden], ["Ember Step"])
+        known = relevant_homebrew(entries, "what does the Hollow King and Ember Step do")
+        self.assertEqual([e.name for e in known], ["Hollow King", "Ember Step"])
         self.assertEqual(
             homebrew_source(known[0], "Sunken City"),
             "Frost Pack homebrew, v1: Hollow King [Homebrew]",

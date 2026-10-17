@@ -45,11 +45,30 @@ describe("What's new", () => {
     );
   });
 
+  it("shows what Test J saw working on the live bot (#1532, #1533, #1527), and the rule lookups (#1552)", () => {
+    const titles = entries.map((e) => e.title);
+    for (const t of [
+      "Delete my transcripts",
+      "Keep transcripts for a set time",
+      "Homebrew for your campaign",
+      "Copy a pack's entry to edit",
+      "Players can look up rules",
+    ])
+      expect(titles, t).toContain(t);
+    expect(held.map((h) => h.title)).not.toContain("Delete my past transcripts");
+    expect(held.map((h) => h.title)).not.toContain("Your own homebrew");
+  });
+
   it("holds back what people can't use yet, with the reason, and shows none of it (#1322)", () => {
     expect(held.map((h) => h.title)).toEqual([
-      "Delete my past transcripts", // until it has been seen working on the test server (#1532)
+      "Find Settings more easily", // until the owner's live check (#1619)
+      "Split the party", // until the owner's live check (#1607)
+      "Delete a whole campaign", // until the owner's live check (#1608)
+      "Add or remove game masters", // until the owner's live check (#1600)
+      "See the sites you approved", // with the link import (#1652)
+      "Share imported homebrew in a pack", // until the link import is tried (#1635)
+      "Add homebrew from a link", // until dev1 has tried one real published page (#1634)
       "Fix a line", // until it has been seen working on the test server (#1491, #1499)
-      "Your own homebrew", // until it has been seen working on the test server (#1520)
       "Recaps for your table", // until dev1 has checked a real recap (#1382, #1384)
       "Narrated recaps with music", // until narration is on (RECAP_AUDIO_LIVE, #1385)
       "DMbot's helper answers questions", // until the support helper runs (SUPPORT_AI_LIVE)
@@ -59,6 +78,13 @@ describe("What's new", () => {
       "New names from what was said",
       "A note before tonight's session",
       "When a player says a secret name",
+      "Secrets only some people know", // until the extractor is on and it has been seen (#1649)
+      "How NPCs feel about the party", // until it has been seen on the test server (#1655)
+      "Story threads you keep", // until it has been seen on the test server (#1662)
+      "Species, subclasses and backgrounds in homebrew", // until seen on the test server (#1663)
+      "Keep track of promises made at the table", // until seen on the test server (#1674)
+      "A DMbot channel for buttons", // until seen on the test server (#1666)
+      "Homebrew menu by kind", // until seen on the test server (#1665)
     ]);
     for (const h of held) {
       expect(h.reason.length, h.title).toBeGreaterThan(20);

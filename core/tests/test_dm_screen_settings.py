@@ -82,9 +82,9 @@ class SettingsCardTest(unittest.TestCase):
         view = settings_view(campaign("quiet", vis="private"), None, DM)
         items: list[Any] = list(view.children)
         self.assertEqual(
-            [i.row for i in items], [0, 0, 1, 1, 1, 2, 3, 3, 3, 3, 3, 4, 4, 4, 4, 4, 2]
+            [i.row for i in items], [0, 0, 1, 1, 1, 2, 3, 3, 3, 3, 3, 4, 4, 4, 4, 4, 2, 2, 2]
         )  # Take it on, Look up, Rules cards, Clock, House file, Invite, chat, sides, ...
-        # ... shared rules, Recaps, Homebrew, and Transcripts beside Take it on
+        # ... shared rules, Recaps, Homebrew, and Transcripts, Game masters and Delete by Take it on
         labels = [i.item.label for i in items]
         self.assertEqual(labels[:2], ["✓ Quiet", "Normal"])  # no Chatty
         self.assertEqual(labels[2], "✓ Only the DM")  # the current one, the same way
@@ -94,6 +94,8 @@ class SettingsCardTest(unittest.TestCase):
                 True,
                 False,
                 True,
+                False,
+                False,
                 False,
                 False,
                 False,
@@ -126,10 +128,9 @@ class SettingsCardTest(unittest.TestCase):
             self.assertEqual("Look up a rule" in settings_text(c, None, viewer), expected, viewer)
         self.assertIn("free rules (SRD)", settings_text(c, None, DM))
 
-    def test_the_help_card_has_settings_between_sessions(self) -> None:
+    def test_the_help_card_no_longer_has_settings(self) -> None:
         ids = [str(i.item.custom_id) for i in card_view(campaign()).children]  # type: ignore[attr-defined]
-        self.assertIn(f"dmbot:settings:{CAMPAIGN}", ids)
-        self.assertLessEqual(len(ids), 5)  # one row
+        self.assertNotIn(f"dmbot:settings:{CAMPAIGN}", ids)  # it is in the DM Bot channel (#1666)
 
 
 class SettingsButtonsTest(unittest.IsolatedAsyncioTestCase):
@@ -143,6 +144,28 @@ class SettingsButtonsTest(unittest.IsolatedAsyncioTestCase):
             kwargs = it.response.send_message.await_args.kwargs
             self.assertTrue(kwargs["ephemeral"])  # only they see it
             self.assertIsNotNone(kwargs["view"])
+
+    async def test_a_campaign_without_the_dm_bot_channel_gets_one_and_is_told_where(self) -> None:
+        it = press(DM, found=campaign())
+        it.client.upgrade_dm_bot_channel = AsyncMock(return_value=680000000000000077)
+        await SettingsButton(CAMPAIGN).callback(it)
+        it.client.upgrade_dm_bot_channel.assert_awaited_once()
+        said = it.followup.send.await_args
+        self.assertIn("<#680000000000000077>", said.args[0])
+        self.assertTrue(said.kwargs["ephemeral"])
+
+    async def test_a_campaign_that_has_it_hears_nothing_more(self) -> None:
+        it = press(DM, found=campaign())
+        it.client.upgrade_dm_bot_channel = AsyncMock(return_value=None)
+        await SettingsButton(CAMPAIGN).callback(it)
+        it.followup.send.assert_not_awaited()
+
+    async def test_a_failed_upgrade_never_blocks_the_card(self) -> None:
+        it = press(DM, found=campaign())
+        it.client.upgrade_dm_bot_channel = AsyncMock(side_effect=RuntimeError("x"))
+        with self.assertLogs("dmbot.dm_screen.settings", "ERROR"):
+            await SettingsButton(CAMPAIGN).callback(it)
+        self.assertIsNotNone(it.response.send_message.await_args.kwargs["view"])
 
     async def test_another_servers_campaign_finds_nothing(self) -> None:
         it = press(DM, found=None)

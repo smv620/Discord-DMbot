@@ -20,6 +20,31 @@ export const whatsNewIntro =
 export const entries: Entry[] = [
   {
     date: "2026-10-16",
+    title: "Homebrew for your campaign",
+    what: "Open Settings, then Homebrew, to keep your own spells, monsters and items, and turn an entry on or off for your table. On a paid plan you can also share a pack with other tables and follow theirs (Settings, Shared rules).",
+  },
+  {
+    date: "2026-10-16",
+    title: "Copy a pack's entry to edit",
+    what: "Look up an entry from a homebrew pack you follow, then press Make it my own. It copies the entry into your campaign's homebrew so you can change it, and the pack stays as it was.",
+  },
+  {
+    date: "2026-10-16",
+    title: "Players can look up rules",
+    what: "Anyone at the table can type /dmbot rule and a few words to look up a rule, and only they see the answer. It uses the free rules and the house rules and homebrew your DM shared; your DM decides what applies.",
+  },
+  {
+    date: "2026-10-16",
+    title: "Keep transcripts for a set time",
+    what: "A DM can choose how long a campaign keeps its transcripts: forever, 1 year, 90 days or 30 days (Settings, then Transcripts). Anything older is deleted every night, and recaps stay.",
+  },
+  {
+    date: "2026-10-16",
+    title: "Delete my transcripts",
+    what: "Press ⚙️ Menu in DMbot's private message to you, then Delete my transcripts, to remove every line you said in that server. It can't be undone, and other people's lines and downloaded copies stay.",
+  },
+  {
+    date: "2026-10-16",
     title: "See how long transcripts are kept",
     what: "The website's Transcripts pages now say how long your table keeps its transcripts, so you can save a copy before they are deleted.",
   },
@@ -31,7 +56,7 @@ export const entries: Entry[] = [
   {
     date: "2026-10-16",
     title: "Read shared homebrew on the website",
-    what: "Anyone in your Discord server can read the homebrew your DM shared with the table (open My Account, then Homebrew) and save it as a text file. Your DM may have more that stays behind the DM screen.",
+    what: "Anyone in your Discord server can read the homebrew your DM shared with the table (open My Account, then Homebrew) and save it as a text file.",
   },
   {
     date: "2026-10-16",
@@ -100,23 +125,59 @@ export interface Held extends Entry {
 
 export const held: Held[] = [
   {
+    date: "2026-10-17",
+    title: "Find Settings more easily",
+    what: "Press Settings on the step where you pick the voice channel, or type /dmbot settings anywhere in your server. It opens privately, for the campaign's game masters.",
+    reason:
+      "Deployed 2026-10-17 (#1619); held until the owner's live check is recorded in docs/testing-history.log.",
+  },
+  {
+    date: "2026-10-17",
+    title: "Split the party",
+    what: "If the party splits up, name two or three groups and each gets its own clock. Press Rejoin the party to bring them together, and Undo if you slip.",
+    reason:
+      "Deployed 2026-10-17 (#1607); held until the owner's live check is recorded in docs/testing-history.log.",
+  },
+  {
+    date: "2026-10-17",
+    title: "Delete a whole campaign",
+    what: "The game master whose plan a campaign uses can delete it from Settings, after a warning and typing its name. It can't be undone, so there is a Back up first button.",
+    reason:
+      "Deployed 2026-10-17 (#1608); held until the owner's live check is recorded in docs/testing-history.log.",
+  },
+  {
+    date: "2026-10-17",
+    title: "Add or remove game masters",
+    what: "In Settings, pick Game masters to add up to five people to a campaign, or take one off. Their access to the DM screen follows at once.",
+    reason:
+      "Merged (#1600, #1603); held until the owner's live check is recorded in docs/testing-history.log.",
+  },
+  {
+    date: "2026-10-17",
+    title: "See the sites you approved",
+    what: "In Settings, then Homebrew, press Approved sites to see each site you said you may use, who said yes and when. You can take one back, and nothing is deleted.",
+    reason:
+      "Goes with adding homebrew from a link, which waits for dev1's try on a real page (#1634, #1652).",
+  },
+  {
     date: "2026-10-16",
-    title: "Delete my past transcripts",
-    what: "You can now remove what DMbot wrote down from you. In DMbot's private message to you, press Menu, then Delete my transcripts (or type /dmbot delete-my-lines in the server). DMbot tells you how many lines it will delete, and you confirm once. Your words are removed from every transcript in that server. Other people's lines, the facts your DM confirmed and recaps stay. Transcripts someone already downloaded are not changed. DMs can also choose how long a campaign keeps its transcripts: open Settings, then Transcripts, and pick Forever, 1 year, 90 days or 30 days. Older sessions are then deleted every night. Recaps and what you confirmed into story memory stay. The website's Help and privacy pages say the same, and its list shows when a transcript was deleted.",
-    reason: "Held until it has been seen working on the test server (#1532, #1533).",
+    title: "Share imported homebrew in a pack",
+    what: "A pack can now include homebrew you added from a link. It travels as a pointer to the page, not a copy, and a table that follows the pack says once, for each site, that it has the right to use it before those entries are used.",
+    reason:
+      "Goes with adding homebrew from a link, which waits for dev1's try on a real page (#1634, #1635).",
+  },
+  {
+    date: "2026-10-16",
+    title: "Add homebrew from a link",
+    what: "In Settings, then Homebrew, press Add from a link and paste the address of a published homebrew page. DMbot reads that one page, shows it to you, and saves it only when you press Save. The first time for a site, you say you have the right to use it; after that it asks nothing. You can also say who made a file you load. Approved sites, in the same place, shows each site you said yes to and lets you take one back.",
+    reason:
+      "Held until dev1 has tried one real published page from the server: the site may block server traffic (#1634).",
   },
   {
     date: "2026-10-16",
     title: "Fix a line",
     what: "If DMbot wrote one of your lines down wrong, type /dmbot fix, or press Fix one of my lines after a session, then pick the line and type what it should say. Your DM says yes or no on the DM screen, and nothing changes unless they say yes. DMs can fix any line themselves: type /dmbot fix or press Fix a line on the DM screen. It changes right away, and you can Undo it while the session runs.",
     reason: "Held until it has been seen working on the test server (#1491, #1499).",
-  },
-  {
-    date: "2026-10-16",
-    title: "Your own homebrew",
-    what: "Your campaign can keep its own spells, monsters, items and rules. Open Settings, then Homebrew, to add them in your own words. Only you see an entry until you let players know. When you look up a rule, your homebrew comes before the free rules. DMbot can also show a short card when your table says one of your homebrew names, and you can download your homebrew as a file or load one back. On a paid plan you can share your homebrew as a pack with another table, and follow packs other DMs share. Your own homebrew always wins, new versions of a pack you follow arrive at your next session start, and you can undo them or pick only the changes you want. If your table made an entry the pack lacks, you can suggest it to the pack's DM without your name.",
-    reason:
-      "Held until it has been seen working on the test server (#1520, #1527). The website's Help describes homebrew packs, so it goes live with this entry.",
   },
   {
     date: "2026-10-16",
@@ -180,6 +241,55 @@ export const held: Held[] = [
     what: "If a player says a name you've marked secret, it ends up in the transcript, which anyone in your server can read. After the session DMbot asks you privately, one name at a time (up to five), whether it should stay secret from players or be opened up. Only you can answer, and DMbot never decides for you.",
     reason:
       "Held until it has been seen working on the test server (#1407).",
+  },
+  {
+    date: "2026-10-16",
+    title: "Secrets only some people know",
+    what: "Mark a clue or secret as something only some characters know, and list who. After a session, DMbot tells you, privately, if someone who isn't on the list spoke of it. You decide whether they really learned it. DMbot never decides, and players never see the list.",
+    reason:
+      "It needs the story extractor, which stays off until its prompt passes the measurement (#1282); held until it has been seen working on the test server (#1649).",
+  },
+  {
+    date: "2026-10-17",
+    title: "How NPCs feel about the party",
+    what: "On an NPC's, group's or place's name card, press Standing to see how it feels about each player character and the party: Hostile, Unfriendly, Wary, Friendly or Devoted, with the reasons. You can set it too. It only reminds you; you decide how they act. Players never see it.",
+    reason:
+      "Held until it has been seen working on the test server (#1655).",
+  },
+  {
+    date: "2026-10-17",
+    title: "Story threads you keep",
+    what: "On the Names list, press New thread to keep a quest, mystery, hook or goal, and say how far along it is. Its card shows who is involved, what moved it, and its history. Say Still going when you check on it. After a session, DMbot tells you which threads haven't moved for a few sessions, so you can say Still going, Resolved or Dropped. When a session starts, the note before it names the quiet ones, with a Threads button for your list. On a clue, event or thread, press Led to to say what it led to, and the cards show where each came from. It only reminds you; you decide. Players never see your threads.",
+    reason:
+      "Held until it has been seen working on the test server (#1662).",
+  },
+  {
+    date: "2026-10-17",
+    title: "Species, subclasses and backgrounds in homebrew",
+    what: "When you add homebrew, you can now pick Species, Subclass or Background as the kind. Pages you add from a link are sorted into the right kind too.",
+    reason:
+      "Held until it has been seen working on the test server (#1663).",
+  },
+  {
+    date: "2026-10-17",
+    title: "Keep track of promises made at the table",
+    what: "On the Names list, press Add a promise to note something someone swore to do, then say who promised it and who it was promised to. It shows as kept, broken or open, and after a session DMbot tells you which promises haven't moved for a few sessions. It only reminds you; you decide. Players never see your promises.",
+    reason:
+      "Held until it has been seen working on the test server (#1674).",
+  },
+  {
+    date: "2026-10-17",
+    title: "A DMbot channel for buttons",
+    what: "Each campaign now gets a channel called dmb-dm-bot with one message of buttons. Press My buttons to see the ones for your part at the table; only you see the answer. A DM's buttons include Settings, and a player's include the menu to stop being recorded.",
+    reason:
+      "Held until it has been seen working on the test server (#1666).",
+  },
+  {
+    date: "2026-10-17",
+    title: "Homebrew menu by kind",
+    what: "In Settings, then Homebrew, you now see one button for each kind, like Spells 10/12, which means 10 are on out of 12. Press one to see only those entries; ↩ All kinds takes you back.",
+    reason:
+      "Held until it has been seen working on the test server (#1665).",
   },
 ];
 

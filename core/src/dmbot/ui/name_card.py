@@ -71,6 +71,7 @@ from dmbot.ui.names import (
 )
 
 log = logging.getLogger(__name__)
+THREAD_KINDS = ("thread", "quest", "mystery", "hook", "goal", "promise")  # story threads (#1662)
 ITEM = "item"  # only an item, or a kind under item, can be one of a kind
 CORE_KINDS = frozenset(t.key for t in CORE_TYPES)
 # Why DMbot will ask, for the checks that say so in plain words; any other is "an odd pair".
@@ -84,6 +85,15 @@ ONLY_ONE = "☝️ Only one of these exists (you said so)."
 ONLY_ONE_GUESS = "☝️ Taken as the only one (it has a proper name)."
 ONLY_ONE_BUTTON = "☝️ Only one exists"
 MORE_THAN_ONE_BUTTON = "Allow more than one"
+THREAD_STATE_BUTTON = "🧵 Change state"  # a story thread's buttons (#1662)
+THREAD_INVOLVE_BUTTON = "👥 Who's involved"
+THREAD_LINK_BUTTON = "📌 Link an event"
+LED_TO_BUTTON = "➡ Led to…"  # a clue, event or thread led to another (#1679)
+PROMISE_BY_BUTTON = "🤝 Who promised"  # a promise's buttons (#1674)
+PROMISE_TO_BUTTON = "🤝 Promised to"
+PROMISE_DUE_BUTTON = "📅 Due"
+STANDING_BUTTON = "🤝 Standing"  # how an NPC, group or place feels about the party (#1655)
+CLUE_BUTTON = "🔒 Only some know this"  # a clue's list of who knows it (#1649)
 ALSO_CALLED = "🏷️ Also called…"  # adds another name; its own icon, not Add a name's (#393)
 NOTHING_CHANGED = (
     "Something went wrong and nothing was changed. Press 🔍 Find a name to open it and try again."
@@ -198,6 +208,8 @@ def _groups(
     for r in connections:
         if r.status != CONFIRMED or (r.secret and not secrets):
             continue
+        if r.predicate == "led_to":
+            continue  # shown as the "Came from" / "Led to" lines instead (#1679)
         ahead = r.subject_id == entity_id or r.predicate in BOTH_WAYS
         other = lookup.entities.get(r.object_id if r.subject_id == entity_id else r.subject_id)
         if other is None or other.status != CONFIRMED or other.id == entity_id:
@@ -269,6 +281,7 @@ def card_text(
     sheet: str | None = None,
     limit: int = CARD_MAX,
     item: bool | None = None,
+    thread_lines: list[str] | None = None,
 ) -> str | None:
     """The card for one name, or None if it's gone. `player`: who plays it (a player's
     character); `sheet`: its D&D Beyond sheet line (#723). `item`: it is an item, of the core
@@ -276,10 +289,15 @@ def card_text(
     entity = lookup.entities.get(entity_id)
     if entity is None or entity.status != CONFIRMED:
         return None
+    if entity.audience_limited and not secrets:
+        return None  # a clue only some people know is the DM's alone (#1649)
     own = name_key(entity.name)
     mine = [e for e in lookup.names if e.entity_id == entity_id and e.confirmed]
     others = [_md(e.text) for e in mine if not e.secret and e.key != own]
-    hidden = [_md(e.text) for e in mine if e.secret]
+    # (a limited clue's own name is "secret" for the Cleaner, but it is the card's title)
+    hidden = [
+        _md(e.text) for e in mine if e.secret and not (entity.audience_limited and e.key == own)
+    ]
     heard = lookup.heard.get(entity_id)
     when = (
         f"Last heard <t:{heard.last_session_at}:D>"
@@ -291,6 +309,23 @@ def card_text(
     lines = [f"🪪 **{_md(entity.name)}** · {what} · {when}"]
     if (entity.type == ITEM if item is None else item) and entity.is_unique:
         lines.append(ONLY_ONE if entity.unique_item else ONLY_ONE_GUESS)
+    if thread_lines:  # a story thread (#1662): its state, who is involved, what moved it
+        lines.extend(thread_lines)
+    if entity.audience_limited:
+        knowers = sorted(
+            (
+                lookup.entities[r.subject_id].name
+                for r in connections
+                if r.predicate == "knows"
+                and r.object_id == entity_id
+                and r.status == CONFIRMED
+                and r.to_session_at is None
+                and r.subject_id in lookup.entities
+            ),
+            key=name_key,
+        )
+        who = _more([_md(n) for n in knowers]) if knowers else "—"
+        lines.append(f"🔒 **Only some people know this:** {who}")
     if sheet:
         lines.append(sheet)
     if others:
@@ -311,8 +346,10 @@ async def _names(interaction: discord.Interaction, campaign: Campaign) -> Campai
     if cache is None:
         await _tell(interaction, NOT_AVAILABLE)
         return None
-    try:
-        return await cache.get(campaign.guild_id, campaign.id)
+    try:  # (without the clues only some people know, unless this person is a DM, #1649)
+        return (await cache.get(campaign.guild_id, campaign.id)).for_viewer(
+            sees_secrets(campaign, interaction.user.id)
+        )
     except Exception:
         log.exception("Couldn't load the campaign's names")
         await _tell(interaction, "DMbot couldn't load the names just now. Try again in a moment.")
@@ -361,6 +398,40 @@ async def show_card(
     note = cut(note, NOTE_MAX) if note else None
     limit = CARD_MAX - (len(note) + 2 if note else 0)
     is_item = entity is not None and await _is_item(memory, campaign, entity.type)
+    is_thread = entity is not None and entity.type in THREAD_KINDS
+    lines_of_thread: list[str] | None = None
+    if is_thread and secrets:  # a story thread is the DM's: its state, who is in it, what moved it
+        from dmbot.ui.continuity import _session_numbers
+        from dmbot.ui.threads import thread_lines
+
+        here = [
+            t
+            for t in await memory.threads(
+                campaign.guild_id,
+                campaign.id,
+                stalled_after=int(
+                    getattr(_bot(interaction).settings, "thread_stalled_sessions", 3)
+                ),
+            )
+            if t.thread.id == entity_id
+        ]
+        if here:
+            lines_of_thread = thread_lines(
+                here[0], await _session_numbers(interaction, campaign.id)
+            )
+    elif entity is not None and secrets and entity.type in ("clue", "event"):
+        # A clue's or an event's "Led to" / "Came from" (#1679): the DM's word, so the DM's card.
+        from dmbot.memory.threads import names_line
+
+        came, went = await memory.chain(campaign.guild_id, campaign.id, entity_id)
+        lines_of_thread = [
+            line
+            for line in (
+                names_line("Came from", [_md(e.name) for e in came]),
+                names_line("Led to", [_md(e.name) for e in went]),
+            )
+            if line
+        ] or None
     text = card_text(
         names,
         entity_id,
@@ -370,6 +441,7 @@ async def show_card(
         sheet=sheet,
         limit=limit,
         item=is_item,
+        thread_lines=lines_of_thread,
     )
     if text is None or entity is None:
         if replace:  # never leave the message pressed on a step that's over
@@ -380,7 +452,7 @@ async def show_card(
     cuts = cut_sections(names, entity_id, connections, secrets=secrets)
     if not cuts and text != card_text(
         names, entity_id, connections, secrets=secrets, player=player, sheet=sheet,
-        limit=10**6, item=is_item,
+        limit=10**6, item=is_item, thread_lines=lines_of_thread,
     ):  # fmt: skip
         # Every section is short, but the whole card still didn't fit one message (a long note,
         # a sheet line, many groups): offer every section that has anything in it.
@@ -401,6 +473,16 @@ async def show_card(
         sheet=has_sheet,
         item=is_item,
         unique=entity.is_unique,
+        clue=entity.type == "clue",
+        thread=is_thread and secrets,
+        promise=entity.type == "promise" and secrets,
+        led=secrets and (is_thread or entity.type in ("clue", "event")),
+        standing=(
+            entity.type in ("character", "faction", "place")
+            and not entity.is_player_character
+            and not entity.party
+            and sees_secrets(campaign, interaction.user.id)
+        ),
         undo_connection=undo_connection,
     )
     if replace:
@@ -530,6 +612,11 @@ class NameCard(_Menu):
         sheet: bool = False,
         item: bool = False,
         unique: bool = False,
+        clue: bool = False,
+        standing: bool = False,
+        thread: bool = False,
+        promise: bool = False,
+        led: bool = False,
         undo_connection: int | None = None,
     ) -> None:
         super().__init__()
@@ -552,6 +639,8 @@ class NameCard(_Menu):
         self.add_item(_Button(self._same, label="🔗 Same as…", style=grey, row=1))
         # Row 2, so row 1's buttons don't clip on a phone (#393).
         self.add_item(_Button(self._connect, label="🧭 Connect to…", style=grey, row=2))
+        if led:  # the DM's word that this led to a thread or an event (#1679)
+            self.add_item(_Button(self._led_to, label=LED_TO_BUTTON, style=grey, row=2))
         if sheet:
             self.add_item(_Button(self._unlink_sheet, label="📜 Forget sheet", style=grey, row=2))
         if item:
@@ -559,6 +648,23 @@ class NameCard(_Menu):
             # until they say otherwise (#1267). Says what it will do: it flips.
             label = MORE_THAN_ONE_BUTTON if unique else ONLY_ONE_BUTTON
             self.add_item(_Button(self._one_of_a_kind, label=label, style=grey, row=3))
+        if thread:  # a story thread (#1662): move it, say who is in it, link what moved it
+            self.add_item(_Button(self._thread_state, label=THREAD_STATE_BUTTON, style=grey, row=3))
+            if promise:  # who made it, to whom, when: instead of "who's involved"
+                self.add_item(_Button(self._promise_by, label=PROMISE_BY_BUTTON, style=grey, row=3))
+                self.add_item(_Button(self._promise_to, label=PROMISE_TO_BUTTON, style=grey, row=3))
+                self.add_item(
+                    _Button(self._promise_due, label=PROMISE_DUE_BUTTON, style=grey, row=3)
+                )
+            else:
+                self.add_item(
+                    _Button(self._thread_involve, label=THREAD_INVOLVE_BUTTON, style=grey, row=3)
+                )
+            self.add_item(_Button(self._thread_link, label=THREAD_LINK_BUTTON, style=grey, row=3))
+        if standing:  # an NPC, group or place: how it feels about the party (#1655)
+            self.add_item(_Button(self._standing, label=STANDING_BUTTON, style=grey, row=3))
+        if clue:  # a clue or secret: who knows it (#1649); an item has the row-3 button instead
+            self.add_item(_Button(self._who_knows, label=CLUE_BUTTON, style=grey, row=3))
         if cut:
             # One select for every cut section, not a button each: Discord allows five rows.
             self.show_all = _Select(
@@ -568,6 +674,85 @@ class NameCard(_Menu):
                 row=4,
             )
             self.add_item(self.show_all)
+
+    async def _thread_state(self, interaction: discord.Interaction) -> None:
+        from dmbot.ui.threads import open_change_state
+
+        await _answer_first(interaction, in_place=True)
+        self.stop()
+        await open_change_state(interaction, self.campaign_id, self.entity_id)
+
+    async def _thread_involve(self, interaction: discord.Interaction) -> None:
+        from dmbot.ui.threads import InvolveForm
+
+        campaign = await _campaign_for(interaction, self.campaign_id)
+        if campaign is None:
+            return
+        if not sees_secrets(campaign, interaction.user.id):
+            await _tell(interaction, "Only the DM can change a story thread.")
+            return
+        await interaction.response.send_modal(InvolveForm(self.campaign_id, self.entity_id))
+
+    async def _led_to(self, interaction: discord.Interaction) -> None:
+        from dmbot.ui.threads import LedToForm
+
+        campaign = await _campaign_for(interaction, self.campaign_id)
+        if campaign is None:
+            return
+        if not sees_secrets(campaign, interaction.user.id):
+            await _tell(interaction, "Only the DM can do that.")
+            return
+        await interaction.response.send_modal(LedToForm(self.campaign_id, self.entity_id))
+
+    async def _promise_form(self, interaction: discord.Interaction, which: str) -> None:
+        from dmbot.ui.threads import DueForm, PartyForm
+
+        campaign = await _campaign_for(interaction, self.campaign_id)
+        if campaign is None:
+            return
+        if not sees_secrets(campaign, interaction.user.id):
+            await _tell(interaction, "Only the DM can change a story thread.")
+            return
+        form: Any = (
+            DueForm(self.campaign_id, self.entity_id)
+            if which == "due"
+            else PartyForm(self.campaign_id, self.entity_id, to=which == "to")
+        )
+        await interaction.response.send_modal(form)
+
+    async def _promise_by(self, interaction: discord.Interaction) -> None:
+        await self._promise_form(interaction, "by")
+
+    async def _promise_to(self, interaction: discord.Interaction) -> None:
+        await self._promise_form(interaction, "to")
+
+    async def _promise_due(self, interaction: discord.Interaction) -> None:
+        await self._promise_form(interaction, "due")
+
+    async def _thread_link(self, interaction: discord.Interaction) -> None:
+        from dmbot.ui.threads import LinkForm
+
+        campaign = await _campaign_for(interaction, self.campaign_id)
+        if campaign is None:
+            return
+        if not sees_secrets(campaign, interaction.user.id):
+            await _tell(interaction, "Only the DM can change a story thread.")
+            return
+        await interaction.response.send_modal(LinkForm(self.campaign_id, self.entity_id))
+
+    async def _standing(self, interaction: discord.Interaction) -> None:
+        from dmbot.ui.standing import show_standing
+
+        await _answer_first(interaction, in_place=True)
+        self.stop()
+        await show_standing(interaction, self.campaign_id, self.entity_id)
+
+    async def _who_knows(self, interaction: discord.Interaction) -> None:
+        from dmbot.ui.clue_audience import show_audience
+
+        await _answer_first(interaction, in_place=True)
+        self.stop()
+        await show_audience(interaction, self.campaign_id, self.entity_id)
 
     async def _one_of_a_kind(self, interaction: discord.Interaction) -> None:
         await _answer_first(interaction, in_place=True)
@@ -1891,6 +2076,7 @@ async def find_typeahead(
     if names is None:  # still loading: nothing this time, ready for the next keystroke
         return []
     secrets = sees_secrets(campaign, interaction.user.id)
+    names = names.for_viewer(secrets)
     if current.strip():
         matches = find(names, current, secrets=secrets)
     else:

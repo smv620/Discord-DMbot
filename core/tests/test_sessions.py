@@ -686,7 +686,7 @@ class SaveAndResume(SessionTests):
         await bot._on_status(bot.tables[GUILD], Status("joined", guild_id=GUILD))
         (ids,) = [ids for text, ids in views if "listening again" in text]
         cid = self.campaign.id
-        self.assertEqual(ids, [f"dmbot:settings:{cid}", f"dmbot:stop:{cid}"])
+        self.assertEqual(ids, [f"dmbot:stop:{cid}"])  # Settings moved to the DM Bot channel (#1666)
 
     async def test_quick_repeat_restarts_stay_quiet(self) -> None:
         from dmbot.ears.protocol import Status
@@ -1162,9 +1162,8 @@ class SaveAndResume(SessionTests):
         self.assertIn("✉️ Not recorded yet: Dee. DMbot is asking privately", text)
         self.assertNotIn("0 player", text)
         # #108: the DM stops with one press; the button comes off at the end.
-        settings, button = call.args[2].children  # Settings first (#515)
+        (button,) = call.args[2].children  # only the in-game control (Settings moved, #1666)
         self.assertEqual(button.custom_id, f"dmbot:stop:{self.campaign.id}")
-        self.assertEqual(settings.custom_id, f"dmbot:settings:{self.campaign.id}")  # #515
         await self.bot.stop_table(GUILD, "test")
         await asyncio.gather(*self.bot._finishing)
         listening.edit.assert_awaited_with(view=None)
@@ -1589,6 +1588,91 @@ class SaveAndResume(SessionTests):
         self.assertEqual(said_as["The door creaks open slowly."], "narrating")
         self.assertEqual(said_as["My lines are not asked about."], "")
         self.assertEqual((table.speaker_calls, table.speaker_tokens), (1, [70, 5]))
+
+    async def asking(self, table: Any) -> Any:
+        """The sidebar with an engine and a spy where a question would start (#1624)."""
+        from unittest.mock import MagicMock
+
+        starts = MagicMock(return_value=True)
+        self.addCleanup(setattr, self.bot.sidebar, "answerer", self.bot.sidebar.answerer)
+        self.bot.sidebar.answerer = object()  # type: ignore[assignment]  # only checked for None
+        self.addCleanup(setattr, self.bot.sidebar, "_start", self.bot.sidebar._start)
+        self.bot.sidebar._start = starts  # type: ignore[method-assign]
+        return starts
+
+    async def test_a_hold_on_line_said_as_an_npc_starts_no_sidebar_question(self) -> None:
+        table = await self.speaking("1 npc 2")
+        starts = await self.asking(table)
+        self.said(table, "Hold on, I need to find the key to the cellar.", user=DM)
+        await self.settle()
+        self.assertEqual(len(self.speaker_asks), 1)  # the window was closed for the label
+        self.assertEqual([line.entity for line in table.unsaved._waiting], ["Brother Hiro"])
+        starts.assert_not_called()
+
+    async def test_a_line_saved_to_the_database_before_its_label_is_still_judged(self) -> None:
+        # The 2-second flush takes a line out of `unsaved` while its label is still being asked
+        # for; the label is then written to the database. The look-up must still not start.
+        hold = asyncio.Event()
+        table = await self.speaking("1 npc 2", hold=hold)
+        starts = await self.asking(table)
+        self.said(table, "Hold on, I need to find the key to the cellar.", user=DM)
+        await self.settle()
+        self.assertEqual(len(self.speaker_asks), 1)  # asked, and waiting for the answer
+        table.unsaved._waiting.clear()  # the flush
+        hold.set()
+        await self.settle()
+        starts.assert_not_called()
+
+    async def test_a_second_look_up_soon_after_is_asked_at_once_without_another_call(self) -> None:
+        table = await self.speaking("1 narrating")
+        starts = await self.asking(table)
+        self.said(table, "Hold on, I need to find the key to the cellar.", user=DM)
+        await self.settle()
+        starts.assert_called_once()
+        self.said(table, "Hang on, I have to check the grapple rules.", user=DM, at_ms=2_000)
+        await self.settle()
+        self.assertEqual(starts.call_count, 2)  # (no waiting: the early close is limited)
+        self.assertEqual(len(self.speaker_asks), 1)
+
+    async def test_the_same_line_while_narrating_asks(self) -> None:
+        table = await self.speaking("1 narrating")
+        starts = await self.asking(table)
+        self.said(table, "Hold on, I need to find the key to the cellar.", user=DM)
+        await self.settle()
+        starts.assert_called_once()
+
+    async def test_a_label_that_is_not_sure_still_asks(self) -> None:
+        table = await self.speaking("1 npc 2 maybe")
+        starts = await self.asking(table)
+        self.said(table, "Hold on, I need to find the key to the cellar.", user=DM)
+        await self.settle()
+        starts.assert_called_once()
+
+    async def test_when_the_label_cannot_be_had_the_question_is_asked_as_before(self) -> None:
+        table = await self.speaking(RuntimeError("down"))
+        starts = await self.asking(table)
+        self.said(table, "Hold on, I need to find the key to the cellar.", user=DM)
+        await self.settle()
+        starts.assert_called_once()
+
+    async def test_ordinary_dm_talk_is_not_held_for_a_label(self) -> None:
+        table = await self.speaking("1 npc 2")
+        starts = await self.asking(table)
+        self.said(table, "Welcome, weary travellers, sit by the fire.", user=DM)
+        await self.settle()
+        self.assertEqual(self.speaker_asks, [])  # nothing closed the window early
+        starts.assert_not_called()
+
+    async def test_a_dm_who_stops_while_waiting_for_the_label_asks_nothing(self) -> None:
+        hold = asyncio.Event()
+        table = await self.speaking("1 narrating", hold=hold)
+        starts = await self.asking(table)
+        self.said(table, "Hold on, I need to find the key to the cellar.", user=DM)
+        await self.settle()
+        self.bot.stop_recording(GUILD, DM)
+        hold.set()
+        await self.settle()
+        starts.assert_not_called()
 
     async def test_a_maybe_or_an_unsure_line_gets_no_label(self) -> None:
         table = await self.speaking("1 npc 2 maybe\n2 unsure")
@@ -3566,3 +3650,67 @@ class SaveAndResume(SessionTests):
         await self.bot.stop_table(GUILD, "test")  # answers at once; posts in the background
         await asyncio.gather(*self.bot._finishing)
         self.assertIn("Session ended", sent[-1])
+
+
+class UpgradeDmBotChannel(SessionTests):
+    """A campaign made before the DM Bot channel (#1666) gets one on a Settings press."""
+
+    async def asyncSetUp(self) -> None:
+        await super().asyncSetUp()
+        self.bot.get_guild = lambda gid: self.guild if gid == GUILD else None  # type: ignore[method-assign]
+        self.made = 680000000000000091
+
+    def make_channel(self, note: str | None = None) -> AsyncMock:
+        async def fake(guild: Any, campaign: Any, screen: Any) -> str | None:
+            if note is None:
+                await self.campaigns.set_dm_bot_channel(GUILD, campaign.id, self.made)
+            return note
+
+        mock = AsyncMock(side_effect=fake)
+        self.bot._dm_bot_channel = mock  # type: ignore[method-assign]
+        return mock
+
+    async def test_an_older_campaign_gets_the_channel_and_hears_where(self) -> None:
+        mock = self.make_channel()
+        self.assertEqual(await self.bot.upgrade_dm_bot_channel(self.campaign), self.made)
+        mock.assert_awaited_once()
+
+    async def test_a_campaign_that_has_one_is_left_alone(self) -> None:
+        await self.campaigns.set_dm_bot_channel(GUILD, self.campaign.id, self.made)
+        mock = self.make_channel()
+        self.assertIsNone(await self.bot.upgrade_dm_bot_channel(self.campaign))
+        mock.assert_not_awaited()
+
+    async def test_two_quick_presses_make_one_channel(self) -> None:
+        mock = self.make_channel()
+        first = await self.bot.upgrade_dm_bot_channel(self.campaign)  # (the stale campaign twice)
+        second = await self.bot.upgrade_dm_bot_channel(self.campaign)
+        self.assertEqual((first, second), (self.made, None))
+        mock.assert_awaited_once()
+
+    async def test_a_server_the_bot_is_not_in_gets_nothing(self) -> None:
+        self.bot.get_guild = lambda gid: None  # type: ignore[method-assign]
+        mock = self.make_channel()
+        self.assertIsNone(await self.bot.upgrade_dm_bot_channel(self.campaign))
+        mock.assert_not_awaited()
+
+    async def test_a_channel_that_could_not_be_made_returns_nothing(self) -> None:
+        self.make_channel(note="⚠️ no permission")
+        self.assertIsNone(await self.bot.upgrade_dm_bot_channel(self.campaign))
+
+    async def test_a_help_card_that_cannot_refresh_is_not_a_failed_channel(self) -> None:
+        screen = MagicMock(spec=discord.TextChannel)
+        screen.id = SCREEN
+
+        async def made(*_: Any, **__: Any) -> Any:
+            await self.campaigns.set_dm_bot_channel(GUILD, self.campaign.id, self.made)
+            return SimpleNamespace(id=self.made)
+
+        with (
+            patch("dmbot.bot.setup_dm_bot_channel", made),
+            patch("dmbot.bot.dm_bot_buttons.ensure_panel", AsyncMock()),
+            patch("dmbot.bot.update_help_card", AsyncMock(side_effect=RuntimeError("x"))),
+            self.assertLogs("dmbot.bot", "WARNING"),
+        ):
+            note = await DMBot._dm_bot_channel(self.bot, self.guild, self.campaign, screen)
+        self.assertIsNone(note)  # the channel exists: no "couldn't make it" note

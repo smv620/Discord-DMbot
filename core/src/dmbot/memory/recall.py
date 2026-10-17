@@ -10,8 +10,9 @@ transcript line it comes from, and `check_citations` confirms an answer cites on
 Who may see what is decided here, before anything is returned (never by the prompt):
 
 - `dm_screen`: everything, secrets included.
-- `players`: no secret facts, no secret names, no entry notes (the DM's own description of an
-  entry), no conditions (alive, dead) and nothing from the story plan.
+- `players`: no secret facts, no secret names, no clue only some people know, no entry notes
+  (the DM's own description of an entry), no conditions (alive, dead) and nothing from the
+  story plan.
 - `transcript`: always empty. Nothing from here ever goes into a transcript.
 
 Evidence is quoted only from speakers who are recorded *now*: the caller passes who that is (or
@@ -39,7 +40,7 @@ from typing import Any
 from dmbot.memory._changes import Scope
 from dmbot.memory.continuity import _predicate_words
 from dmbot.memory.kinds import KIND_LABELS
-from dmbot.memory.models import ROLE_LABELS, name_key
+from dmbot.memory.models import ROLE_LABELS, THREAD_TYPES, name_key
 from dmbot.memory.ontology import Ontology
 from dmbot.memory.store import MemoryStore, _load_ontology
 
@@ -420,11 +421,17 @@ class RecallService:
         live = ["confirmed"] if audience == PLAYERS else list(_LIVE)
         # An entry's note is the DM's own: the players' audience never even reads it.
         note = "description" if audience == DM_SCREEN else "'' AS description"
+        # A clue only some people know (#1649) is the DM's alone: the players' audience gets
+        # neither the clue nor, because a fact needs both ends, anyone's `knows` to it.
+        # Story threads (#1662) are the DM's plot notes: the same.
+        hide_clue = (
+            " AND NOT audience_limited AND NOT type = ANY(%s)" if audience == PLAYERS else ""
+        )
         cur = await scope.conn.execute(
             f"SELECT id, type, name, {note}, role FROM memory_entities"
             " WHERE guild_id = %s AND campaign_id = %s AND id = ANY(%s)"
-            " AND status = ANY(%s) AND type <> 'person'",
-            (*scope.ids, list(ids), live),
+            f" AND status = ANY(%s) AND type <> 'person'{hide_clue}",
+            (*scope.ids, list(ids), live, *([list(THREAD_TYPES)] if hide_clue else [])),
         )
         rows = {str(r["id"]): dict(r) for r in await cur.fetchall()}
         if audience == PLAYERS and rows:

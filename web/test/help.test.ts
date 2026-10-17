@@ -9,7 +9,8 @@ import { beforeAll, describe, expect, it } from "vitest";
 
 import { parsePage } from "./dom";
 
-import { accountSteps, dmSteps, emailSteps, recapSteps, quickAnswers, quickAnswersHeading, gettingHelp, playerSteps } from "../src/content/help";
+import { HOMEBREW_LINKS_LIVE, SECRET_CLUES_LIVE, accountSteps, dmSteps, homebrewLinkSteps, secretClueSteps, emailSteps, recapSteps, quickAnswers, quickAnswersHeading, gettingHelp, playerSteps } from "../src/content/help";
+import { held } from "../src/content/whats-new";
 import Help from "../src/pages/help.astro";
 
 const botDir = fileURLToPath(new URL("../../core/src/dmbot/", import.meta.url));
@@ -54,7 +55,7 @@ describe("Help", () => {
   });
 
   it("names only buttons and commands that are in the bot's code", () => {
-    for (const step of [...dmSteps, ...recapSteps, ...quickAnswers, ...playerSteps, ...accountSteps, ...emailSteps]) {
+    for (const step of [...dmSteps, ...homebrewLinkSteps, ...secretClueSteps, ...recapSteps, ...quickAnswers, ...playerSteps, ...accountSteps, ...emailSteps]) {
       for (const { name, file } of step.names ?? []) {
         expect(step.text, `${name} is in its step`).toContain(name);
         const source = readFileSync(join(botDir, file), "utf8");
@@ -114,5 +115,84 @@ describe("Help", () => {
     const hrefs = [...help.querySelectorAll("nav a, footer a")].map((a) => a.getAttribute("href"));
     expect(hrefs.filter((h) => h === "/help")).toHaveLength(1); // the menu
     expect(hrefs.filter((h) => h === "/help#getting-help")).toHaveLength(1); // the footer (#1352)
+  });
+});
+
+describe("Help: the website's read-only pages (#1588)", () => {
+  it("has an entry for each, with a link to its page, in the players' section", async () => {
+    const container = await AstroContainer.create();
+    const page = parsePage(
+      await container.renderToString(Help, { request: new Request("https://dmbot.example/help") }),
+    );
+    const players = [...page.querySelectorAll("#player-heading ~ ol li")];
+    for (const [href, word] of [
+      ["/account/house-rules", /house rules/i],
+      ["/account/homebrew", /homebrew/i],
+      ["/account/transcripts", /game/i],
+    ] as const) {
+      const item = players.find((li) => li.querySelector(`a[href="${href}"]`));
+      expect(item, href).toBeTruthy();
+      expect(item?.textContent).toMatch(word);
+    }
+  });
+
+  it("uses plain words: no technical terms", () => {
+    const texts = playerSteps.filter((s) => s.link).map((s) => s.text);
+    expect(texts).toHaveLength(3);
+    for (const t of texts) expect(t).not.toMatch(/\bAPI\b|\bdoor\b|database|\bJSON\b/i);
+  });
+
+  it("adds homebrew by typing or a file, and says what off means (#1653)", () => {
+    const steps = dmSteps.map((x) => x.text);
+    const adding = steps.find((t) => t.includes("Who made these?")) ?? "";
+    expect(adding).toContain("➕ Add");
+    expect(adding).toContain("Who made these?");
+    expect(adding).toContain("House rules");
+    const off = steps.find((t) => t.includes("Turn off")) ?? "";
+    expect(off).toContain("An entry that is off is kept, and DMbot ignores it.");
+    expect(off).toContain("Turn on");
+  });
+
+  it("holds the link-import steps with the held What's new entries, and flips them together (#1653)", () => {
+    const heldTitles = held.map((h) => h.title);
+    const linkTitles = [
+      "Add homebrew from a link",
+      "Share imported homebrew in a pack",
+      "See the sites you approved",
+    ];
+    for (const title of linkTitles) {
+      expect(heldTitles.includes(title), title).toBe(!HOMEBREW_LINKS_LIVE);
+    }
+    const shown = dmSteps.map((x) => x.text).join(" ");
+    expect(shown.includes("🔗 Add from a link")).toBe(HOMEBREW_LINKS_LIVE);
+    const words = homebrewLinkSteps.map((x) => x.text).join(" ");
+    expect(words).toContain("isn't public, publish it there first");
+    expect(words).toContain("never asks again for that site");
+    expect(words).toContain("Every table that uses that page gets the update");
+    expect(words).toContain("Use example.com");
+  });
+
+  it("finds Settings, splits the party and deletes a campaign in plain words (#1659)", () => {
+    const steps = dmSteps.map((x) => x.text);
+    const find = steps.find((t) => t.includes("Can't find ⚙️ Settings?")) ?? "";
+    expect(find).toContain("/dmbot settings");
+    expect(find).toContain("/dmbot start");
+    const split = steps.find((t) => t.includes("✂️ Split the party")) ?? "";
+    expect(split).toContain("two or three groups");
+    expect(split).toContain("🤝 Rejoin the party");
+    const del = steps.find((t) => t.includes("🗑 Delete this campaign")) ?? "";
+    expect(del).toContain("whose plan a campaign uses");
+    expect(del).toContain("It can't be undone.");
+    expect(del).toContain("type the campaign's name");
+    expect(del).toContain("💾 Back up first");
+  });
+
+  it("holds the secrets step with the held What's new entry, and flips them together (#1659)", () => {
+    const heldTitle = held.map((h) => h.title).includes("Secrets only some people know");
+    expect(heldTitle).toBe(!SECRET_CLUES_LIVE);
+    const shown = dmSteps.map((x) => x.text).join(" ");
+    expect(shown.includes("Only some know this")).toBe(SECRET_CLUES_LIVE);
+    const words = secretClueSteps.map((x) => x.text).join(" ");
+    expect(words).toContain("DMbot never decides who learned it. You do.");
   });
 });

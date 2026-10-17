@@ -40,6 +40,13 @@ RELEASED = {
     ("sworn_to", 1): "924d02543c8d4ae8",
     ("plays", 1): "8e243f3375034f3a",
     ("appears_in", 1): "e35920d115999396",
+    ("of_people", 1): "bb3ebbef732e6ad4",  # the DM's word that a character is of a people (#1655)
+    ("led_to", 1): "85af23ae5f495e35",  # one thing led to another (#1679)
+    ("promised_by", 1): "614c63ec0cd9acef",  # who made a promise (#1674)
+    ("promised_to", 1): "e1cb64b67f87e7be",  # who it was made to (#1674)
+    ("in_thread", 1): "cbc940251441c3b4",  # who is in a story thread (#1662)
+    ("advances", 1): "fa3b7b2b0aae2deb",  # an event moved a thread (#1662)
+    ("resolves", 1): "aa8c8c7d656fce4e",  # an event ended a thread (#1662)
     ("associated_with", 1): "9b1afee4b882cde9",  # the catch-all for a refused term (#1303)
 }
 

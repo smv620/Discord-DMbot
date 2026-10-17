@@ -576,3 +576,83 @@ class CampaignPickersFitAPhone(unittest.TestCase):
         self.assertTrue((menu.options[0].description or "").startswith("Last played"))
         self.assertEqual(menu.options[1].description, "No transcripts yet")
         self.assertEqual(menu.options[2].description, "No transcripts yet")
+
+
+class SettingsWhereTheDmLooks(CommandTests):
+    """#1619: ⚙️ Settings on the step after /dmbot start, and /dmbot settings as a fallback."""
+
+    def interaction(self, user_id: int = DM, **guild: Any) -> Any:
+        it = fake_interaction(self.bot, user_id)
+        it.guild.voice_channels, it.guild.stage_channels, it.guild.me = [], [], None
+        it.type = discord.InteractionType.application_command
+        it.user.guild_permissions = discord.Permissions.none()
+        it.guild.__dict__.update(guild)
+        return it
+
+    @staticmethod
+    def settings_buttons(view: Any) -> list[Any]:
+        from dmbot.dm_screen.settings import SettingsButton
+
+        return [i for i in view.children if isinstance(i, SettingsButton)]
+
+    async def test_the_voice_step_carries_settings_for_the_dm_and_says_where(self) -> None:
+        campaign = await self.campaigns.create(GUILD, "Frostmaiden", DM)
+        it = self.interaction()
+        await cmds.choose_campaign(it, campaign.id)
+        text, kw = it.response.sent[0]
+        self.assertEqual(len(self.settings_buttons(kw["view"])), 1)
+        self.assertIn(cmds.SETTINGS_HINT, text)
+
+    async def test_a_player_never_reaches_the_step_so_never_gets_the_button(self) -> None:
+        campaign = await self.campaigns.create(GUILD, "Frostmaiden", DM)
+        it = self.interaction(OTHER_DM)
+        await cmds.choose_campaign(it, campaign.id)
+        text, kw = it.response.sent[0]
+        self.assertIn("can start it", text)
+        self.assertNotIn("view", kw)
+
+    async def test_the_button_checks_again_on_every_press(self) -> None:
+        campaign = await self.campaigns.create(GUILD, "Frostmaiden", DM)
+        it = self.interaction()
+        await cmds.choose_campaign(it, campaign.id)
+        (button,) = self.settings_buttons(it.response.sent[0][1]["view"])
+        stranger = self.interaction(OTHER_DM)
+        await button.callback(stranger)
+        text, kw = stranger.response.sent[0]
+        self.assertIn("Only this campaign's DM", text)
+        self.assertNotIn("view", kw)
+
+    async def test_the_settings_command_opens_the_menu_for_the_dm(self) -> None:
+        await self.campaigns.create(GUILD, "Frostmaiden", DM)
+        it = self.interaction()
+        await cmds.dmbot_settings.callback(it)  # type: ignore[call-arg]
+        text, kw = it.response.sent[0]
+        self.assertIn("Settings for Frostmaiden", text)
+        self.assertTrue(kw["ephemeral"])
+
+    async def test_the_settings_command_refuses_a_player(self) -> None:
+        await self.campaigns.create(GUILD, "Frostmaiden", DM)
+        it = self.interaction(OTHER_DM)
+        await cmds.dmbot_settings.callback(it)  # type: ignore[call-arg]
+        text, _ = it.response.sent[0]
+        self.assertIn("Only this campaign's DM", text)
+        self.assertNotIn("Settings for", text)
+
+    async def test_the_settings_command_prefers_the_running_campaign_else_the_last_played(
+        self,
+    ) -> None:
+        first = await self.campaigns.create(GUILD, "Older", DM)
+        second = await self.campaigns.create(GUILD, "Newer", DM)
+        await self.campaigns.mark_played(GUILD, second.id)
+        it = self.interaction()
+        await cmds.dmbot_settings.callback(it)  # type: ignore[call-arg]
+        self.assertIn("Settings for Newer", it.response.sent[0][0])
+        self.bot.tables[GUILD] = SimpleNamespace(campaign_id=first.id)  # type: ignore[assignment]
+        again = self.interaction()
+        await cmds.dmbot_settings.callback(again)  # type: ignore[call-arg]
+        self.assertIn("Settings for Older", again.response.sent[0][0])
+
+    async def test_the_settings_command_with_no_campaign_points_to_start(self) -> None:
+        it = self.interaction()
+        await cmds.dmbot_settings.callback(it)  # type: ignore[call-arg]
+        self.assertIn("/dmbot start", it.response.sent[0][0])

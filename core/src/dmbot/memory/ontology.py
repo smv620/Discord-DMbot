@@ -18,6 +18,7 @@ from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 
 from dmbot.memory.models import (
+    ABANDONED,
     ALIVE,
     BEING_CONDITIONS,
     CAPTURED,
@@ -27,12 +28,17 @@ from dmbot.memory.models import (
     DESTROYED,
     DM,
     GOD,
+    GOING,
+    HINTED,
     INTACT,
     LOST,
     MISSING,
     NPC,
+    OPEN,
     PLAYER_CHARACTER,
+    RESOLVED,
     THING_CONDITIONS,
+    THREAD_STATES,
     TRANSFORMED,
     UNKNOWN,
     MemoryRuleError,
@@ -142,6 +148,32 @@ CORE_TYPES: tuple[TypeTerm, ...] = (
         "player or DM",
         "A real person at the table: a player or the DM. Not part of the story.",
     ),
+    # A storyline the table is following (#1662), and the four kinds the DM tells apart. Each
+    # subtype is a kind of its own under `thread`, like a clue under an idea, so anything that
+    # takes a thread takes all of them.
+    _t("thread", "story thread", "A storyline the table is following: a quest, a mystery, a hook."),
+    _t("quest", "quest", "A job someone wants done, with a goal and a reward.", "thread"),
+    _t("mystery", "mystery", "Something the table is trying to find out.", "thread"),
+    _t("hook", "hook", "A lead that could become a quest if the table follows it.", "thread"),
+    _t("goal", "goal", "Something a character or the party wants to achieve.", "thread"),
+    _t(
+        "promise",
+        "promise",
+        "Something someone swore or agreed to do for someone else, kept or broken later.",
+        "thread",
+    ),
+    # A piece of information that can be learned (#1649): its own entry, so "who knows it" is an
+    # ordinary `knows` fact. A subtype of `concept`, so every range that takes an idea takes it.
+    _t(
+        "clue",
+        "clue or secret",
+        "A piece of information that can be learned: a rumour, a secret.",
+        "concept",
+    ),
+    # A whole people or kind: the tabaxi, elves, outsiders (#1655). Its own entry, so a group or
+    # place can have an attitude toward it. The DM says who is of it; it is never copied from a
+    # character's species link.
+    _t("people", "people", "A whole people or kind: the tabaxi, the elves, outsiders.", "concept"),
     _old("player_character", "player character", "character"),
     _old("npc", "NPC", "character"),
     _old("deity", "god", "character"),
@@ -225,8 +257,10 @@ _BEINGS = ("character",)
 # The story's kinds: every active core kind except `person`, who sits at the table and not in
 # the story, so "knows" and "appears in" never reach them (#1188).
 _ANY = tuple(
-    t.key for t in CORE_TYPES if t.parent is None and t.status == ACTIVE and t.key != "person"
-)
+    t.key
+    for t in CORE_TYPES
+    if t.parent is None and t.status == ACTIVE and t.key not in ("person", "thread")
+)  # (a thread only takes its own connections, #1662)
 
 # The catch-all relationship a refused term's fact is kept on, with the steward's words as its
 # label (in the fact's `detail`), so a refusal never loses the fact (#1298, #1303).
@@ -273,6 +307,105 @@ CORE_PREDICATES: tuple[PredicateTerm, ...] = (
         examples=("Cerric is a member of the Harpers.", "Snot is a member of the Red Fang."),
         inverse_label="has as a member",
         synonyms=("belongs_to", "part_of", "in_group"),
+    ),
+    PredicateTerm(
+        "promised_by",
+        "was promised by",
+        "Who made a promise: the character or group that swore or agreed to do it. The DM's word.",
+        ("character", "faction"),
+        ("promise",),
+        covers=("the character or group who swore, vowed or agreed to do something",),
+        not_this=(("a character who takes part in a thread", "in_thread"),),
+        examples=("The promise to bring the healer back was made by Kael.",),
+        inverse_label="made the promise",
+        synonyms=("vowed", "swore_to", "pledged_by"),
+    ),
+    PredicateTerm(
+        "promised_to",
+        "was promised to",
+        "Who a promise was made to: the character, group or place it was sworn to. The DM's word.",
+        ("character", "faction", "place"),
+        ("promise",),
+        covers=("the character, group or place a promise was made to",),
+        not_this=(("who made the promise", "promised_by"),),
+        examples=("The promise to bring the healer back was made to the village of Dunhollow.",),
+        inverse_label="was promised",
+        synonyms=("owed_to",),
+    ),
+    PredicateTerm(
+        "in_thread",
+        "is involved in",
+        "Has a part in a story thread, and the part is the detail: the quest giver, the target, "
+        "the villain, a victim, the reward.",
+        ("character", "faction", "item", "place", "event", "concept"),
+        ("thread",),
+        covers=(
+            "a character who gives, chases or is the target of a quest",
+            "an item that is the reward, or a place where a mystery centres",
+        ),
+        not_this=(
+            ("an event that moves a thread along", "advances"),
+            ("an event that ends a thread", "resolves"),
+        ),
+        examples=("Mira is involved in the Missing Heir (the quest giver).",),
+        inverse_label="has taking part",
+        synonyms=("part_of_quest", "quest_giver_of", "target_of"),
+    ),
+    PredicateTerm(
+        "advances",
+        "moves along",
+        "Something that happened moved a story thread forward, without ending it.",
+        ("event",),
+        ("thread",),
+        covers=("a scene where the party learns a new lead for a quest",),
+        not_this=(("an event that finishes the thread", "resolves"),),
+        examples=("The Ambush at the Ford moves along the Missing Heir.",),
+        inverse_label="was moved by",
+        synonyms=("progresses", "pushes_forward"),
+    ),
+    PredicateTerm(
+        "resolves",
+        "ends",
+        "Something that happened ended a story thread: the quest done, the mystery solved.",
+        ("event",),
+        ("thread",),
+        covers=("the final fight that finishes a quest",),
+        not_this=(("an event that only moves a thread along", "advances"),),
+        examples=("The Heir Found ends the Missing Heir.",),
+        inverse_label="was ended by",
+        synonyms=("concludes", "completes"),
+    ),
+    PredicateTerm(
+        "led_to",
+        "led to",
+        "One thing led to another, as the DM says: a clue led to a quest, an event led to a "
+        "mystery. The DM's word, never guessed.",
+        ("clue", "event", "thread"),
+        ("thread", "event"),
+        covers=("a clue that sent the party to a place or into a quest",),
+        not_this=(
+            ("an event that moves a thread along", "advances"),
+            ("an event that ends a thread", "resolves"),
+        ),
+        examples=("The torn map led to the Missing Heir.",),
+        inverse_label="came from",
+        synonyms=("sparked", "set_off"),
+    ),
+    PredicateTerm(
+        "of_people",
+        "is one of",
+        "Belongs to a whole people or kind, as the DM says: a tabaxi, an elf, an outsider. "
+        "The DM's word; it is not read from the character's species.",
+        ("character",),
+        ("people",),
+        covers=("a character who is a tabaxi, a dwarf or an outsider",),
+        not_this=(
+            ("belonging to a guild or an army", "member_of"),
+            ("living in a town", "located_in"),
+        ),
+        examples=("Kesh is one of the tabaxi.",),
+        inverse_label="has among them",
+        synonyms=("is_a", "race_of", "belongs_to_people"),
     ),
     PredicateTerm(
         "ally_of",
@@ -487,6 +620,12 @@ CORE_PREDICATES: tuple[PredicateTerm, ...] = (
 # allowed are this small table: from a condition, which ones may follow. Anything not listed
 # (a character "missing" to "intact") is no change at all.
 STATE_CHANGES: Mapping[str, frozenset[str]] = {
+    # A story thread moves as the DM says; going back from an end is the DM's alone.
+    HINTED: frozenset({OPEN, GOING, RESOLVED, ABANDONED}),
+    OPEN: frozenset({HINTED, GOING, RESOLVED, ABANDONED}),
+    GOING: frozenset({HINTED, OPEN, RESOLVED, ABANDONED}),
+    RESOLVED: frozenset({OPEN, GOING}),
+    ABANDONED: frozenset({HINTED, OPEN, GOING}),
     ALIVE: frozenset({DEAD, MISSING, CAPTURED, TRANSFORMED, UNKNOWN}),
     DEAD: frozenset({ALIVE, TRANSFORMED}),
     MISSING: frozenset({ALIVE, DEAD, CAPTURED, TRANSFORMED, UNKNOWN}),
@@ -500,15 +639,26 @@ STATE_CHANGES: Mapping[str, frozenset[str]] = {
 # The way back from an end is never inferred from a proposal: only the DM's word ("brought
 # back") brings the dead or a destroyed thing back, so a clear-sounding claim can't undo it.
 DM_ONLY_CHANGES: frozenset[tuple[str, str]] = frozenset(
-    {(DEAD, ALIVE), (DEAD, TRANSFORMED), (DESTROYED, INTACT)}
+    {
+        (DEAD, ALIVE),
+        (DEAD, TRANSFORMED),
+        (DESTROYED, INTACT),
+        (RESOLVED, OPEN),
+        (RESOLVED, GOING),
+        (ABANDONED, HINTED),
+        (ABANDONED, OPEN),
+        (ABANDONED, GOING),
+    }
 )
-STATE_NOT_KEPT = "DMbot keeps track of this only for characters, items and places."
+STATE_NOT_KEPT = "DMbot keeps track of this only for characters, items, places and story threads."
 STATE_BAD = "That isn't one of the things DMbot keeps track of for {label}."
 STATE_NEEDS_DM = "Only the DM can say that {name} is back."
 
 
 def conditions_for(onto: Ontology, type_key: str) -> tuple[str, ...] | None:
     """The conditions an entry of this kind can have, or None when it has no state."""
+    if onto.is_a(type_key, "thread"):
+        return THREAD_STATES
     if onto.is_a(type_key, "character"):
         return BEING_CONDITIONS
     if onto.is_a(type_key, "item") or onto.is_a(type_key, "place"):

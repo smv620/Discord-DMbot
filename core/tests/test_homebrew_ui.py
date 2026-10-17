@@ -1,5 +1,5 @@
 """📚 Homebrew (#1520), the DM's private menu: the list, Add (kind, then the form), an entry's
-👀/🙈 switch and kind, Remove with Undo, and that every press checks the person is a DM. The real
+Turn off or on, its kind, Remove with Undo, and that every press checks the person is a DM. The real
 store, against the database."""
 
 from __future__ import annotations
@@ -10,9 +10,13 @@ from unittest.mock import AsyncMock
 
 from dmbot.campaigns import CampaignStore
 from dmbot.dm_screen.settings import HomebrewButton
+from dmbot.rules import page_fetch
 from dmbot.rules.homebrew import FileEntry, HomebrewSection, HomebrewStore
+from dmbot.rules.homebrew_import import HomebrewImporter
+from dmbot.rules.homebrew_sources import SiteApprovalsSection, SourceStore
 from dmbot.ui import homebrew as ui
 from tests.pg import DatabaseTest
+from tests.test_homebrew_import import URL, Fetches
 from tests.test_memory_names import FakeResponse
 
 GUILD, DM, PLAYER = 111, 7, 9
@@ -23,11 +27,17 @@ class HomebrewUiTest(DatabaseTest):
         await super().asyncSetUp()
         self.campaigns = CampaignStore(self.db)
         self.campaigns.register_section(HomebrewSection())
+        self.campaigns.register_section(SiteApprovalsSection())
         self.store = HomebrewStore(self.db)
+        self.sources = SourceStore(self.db)
+        self.net = Fetches()
+        self.importer = HomebrewImporter(self.store, self.sources, fetch=self.net)
         self.campaign = await self.campaigns.create(GUILD, "Frostmaiden", DM)
         self.bot = SimpleNamespace(
             campaigns=self.campaigns,
             homebrew=self.store,
+            sources=self.sources,
+            importer=self.importer,
             homebrew_removed={},
             active_campaign_id=lambda g: None,
         )
@@ -67,7 +77,9 @@ class HomebrewUiTest(DatabaseTest):
     def view_of(self, it: Any) -> Any:
         if it.edit_original_response.await_args is not None:
             return it.edit_original_response.await_args.kwargs["view"]
-        return it.response.edited[-1][1]
+        if it.response.edited:
+            return it.response.edited[-1][1]
+        return it.response.sent[-1][1]["view"]
 
 
 class TheList(HomebrewUiTest):
@@ -77,14 +89,21 @@ class TheList(HomebrewUiTest):
         self.assertIn("No homebrew yet", self.said(it))
         self.assertIn("Share a rulebook", self.said(it))
 
-    async def test_each_entry_shows_who_may_know_it(self) -> None:
+    async def test_an_entry_that_is_off_says_so_in_the_list(self) -> None:
         await self.add("Hollow King")
-        await self.add("Moonblade", kind="item", players_may_know=True)
+        lamp = await self.add("Moonblade", kind="item")
+        await self.store.set_enabled(GUILD, self.campaign.id, DM, lamp.id, False)
         it = self.press()
-        await ui.show_list(it, self.campaign, first=True)
+        await ui.show_list(it, self.campaign, first=True, kind="monster")
+        self.assertIn("👹 Monster **Hollow King**:", self.said(it))
+        it = self.press()
+        await ui.show_list(it, self.campaign, first=True, kind="item")
         text = self.said(it)
-        self.assertIn("🙈 👹 Monster **Hollow King**", text)
-        self.assertIn("👀 🗡 Item **Moonblade**", text)
+        self.assertIn("🗡 Item **Moonblade** (off):", text)
+        self.assertIn("(off) means DMbot ignores it until you turn it on.", text)
+        self.assertNotIn("Hollow King", text)  # only this kind
+        self.assertNotIn("🙈", text)
+        self.assertNotIn("👀", text)
 
     async def test_the_settings_button_opens_it_for_a_dm_and_refuses_anyone_else(self) -> None:
         button = HomebrewButton(self.campaign.id)
@@ -101,8 +120,85 @@ class TheList(HomebrewUiTest):
         self.assertEqual(self.said(it), ui.NOT_YOUR_CAMPAIGN)
 
 
+def labels(view: Any) -> list[str]:
+    return [str(getattr(c, "label", "")) for c in view.children if hasattr(c, "label")]
+
+
+class KindsMenu(HomebrewUiTest):
+    async def test_one_button_for_each_kind_with_entries_and_how_many_are_on(self) -> None:
+        for n in range(3):
+            await self.add(f"Bolt {n}", kind="spell")
+        (bolt,) = (await self.store.list(GUILD, self.campaign.id))[:1]
+        await self.store.set_enabled(GUILD, self.campaign.id, DM, bolt.id, False)
+        await self.add("Moonfolk", kind="species")
+        it = self.press()
+        await ui.show_list(it, self.campaign, first=True)
+        shown = labels(self.view_of(it))
+        self.assertEqual(shown[:2], ["Spells 2/3", "Species 1/1"])  # the kinds, in KINDS order
+        self.assertNotIn("Monsters", " ".join(shown))  # no entries, no button
+        for action in ("➕ Add", ui.LINK_LABEL, ui.LOAD_LABEL, ui.DOWNLOAD_LABEL, ui.SITES_LABEL):
+            self.assertIn(action, shown)
+        self.assertIn(ui.PACKS_LABEL, shown)
+        self.assertNotIn("Bolt 0", self.said(it))  # the long list is not drawn
+
+    async def test_a_kind_opens_its_list_and_all_kinds_goes_back(self) -> None:
+        await self.add("Frost Lance", kind="spell")
+        await self.add("Hollow King")
+        menu = ui.ListMenu(self.campaign, await self.store.list(GUILD, self.campaign.id), 0, [])
+        it = self.press()
+        await menu._open_kind("spell", it)
+        self.assertIn("Frost Lance", self.said(it))
+        self.assertNotIn("Hollow King", self.said(it))
+        inner = self.view_of(it)
+        self.assertIn(ui.ALL_KINDS_LABEL, labels(inner))
+        back = self.press()
+        await inner._all_kinds(back)
+        self.assertEqual(labels(self.view_of(back))[:2], ["Spells 1/1", "Monsters 1/1"])
+
+    async def test_a_kind_on_a_later_page_with_an_undo_still_builds(self) -> None:
+        for n in range(27):
+            await self.add(f"Bolt {n:02}", kind="spell")
+        gone = (await self.store.list(GUILD, self.campaign.id))[0]
+        entries = await self.store.list(GUILD, self.campaign.id)
+        view = ui.ListMenu(self.campaign, entries, 1, [gone], "spell")  # (no ValueError)
+        self.assertEqual(
+            [str(c.label) for c in view.children if hasattr(c, "label") and c.row == 2],
+            ["◀ Newer", "↩️ Put back Bolt 00"],
+        )
+
+    async def test_a_player_cannot_use_the_packs_button(self) -> None:
+        await self.add("Frost Lance", kind="spell")
+        menu = ui.ListMenu(self.campaign, await self.store.list(GUILD, self.campaign.id), 0, [])
+        it = self.press(PLAYER)
+        await menu._packs(it)
+        self.assertEqual(self.said(it), ui.ONLY_DMS)
+
+    async def test_no_homebrew_shows_no_kind_buttons(self) -> None:
+        it = self.press()
+        await ui.show_list(it, self.campaign, first=True)
+        self.assertFalse([b for b in labels(self.view_of(it)) if "/" in b])
+
+    async def test_the_last_entry_of_a_kind_removed_goes_back_to_the_menu(self) -> None:
+        await self.add("Frost Lance", kind="spell")
+        await self.add("Hollow King")
+        spell = next(e for e in await self.store.list(GUILD, self.campaign.id) if e.kind == "spell")
+        await self.store.remove(
+            GUILD, self.campaign.id, DM, spell.id, unchanged_since=spell.version
+        )
+        it = self.press()
+        await ui._redraw(it, self.campaign, kind="spell")
+        self.assertEqual(labels(self.view_of(it))[0], "Monsters 1/1")
+
+    async def test_a_players_press_on_a_kind_does_nothing(self) -> None:
+        await self.add("Frost Lance", kind="spell")
+        menu = ui.ListMenu(self.campaign, await self.store.list(GUILD, self.campaign.id), 0, [])
+        it = self.press(PLAYER)
+        await menu._open_kind("spell", it)
+        self.assertEqual(self.said(it), ui.ONLY_DMS)
+
+
 class Adding(HomebrewUiTest):
-    async def test_add_asks_the_kind_then_the_form_and_the_entry_starts_hidden(self) -> None:
+    async def test_add_asks_the_kind_then_the_form_and_the_entry_starts_on(self) -> None:
         menu = ui.ListMenu(self.campaign, [], 0, [])
         it = self.press()
         await menu._add(it)
@@ -119,10 +215,8 @@ class Adding(HomebrewUiTest):
         submit = self.press()
         await form.on_submit(submit)
         (saved,) = await self.store.list(GUILD, self.campaign.id)
-        self.assertEqual(
-            (saved.kind, saved.name, saved.players_may_know), ("spell", "Frost Lance", False)
-        )
-        self.assertIn("Only you see it", self.said(submit))
+        self.assertEqual((saved.kind, saved.name, saved.enabled), ("spell", "Frost Lance", True))
+        self.assertIn("DMbot uses it now", self.said(submit))
 
     async def test_a_refused_save_gives_the_words_back_to_copy(self) -> None:
         await self.add("Hollow King")
@@ -155,18 +249,27 @@ class Adding(HomebrewUiTest):
 
 
 class AnEntry(HomebrewUiTest):
-    async def test_the_switch_lets_players_know_and_takes_it_back(self) -> None:
+    async def test_turn_off_and_turn_on_ask_nothing_and_only_a_dm_can(self) -> None:
         saved = await self.add()
         menu = ui.EntryMenu(self.campaign, saved, 0)
+        labels = [str(getattr(c, "label", "")) for c in menu.children]
+        self.assertIn("Turn off", labels)
+        self.assertFalse(any("👀" in label or "🙈" in label for label in labels))
+        await menu._enabled(self.press(PLAYER))
+        (same,) = await self.store.list(GUILD, self.campaign.id)
+        self.assertTrue(same.enabled)  # a player's press changed nothing
         it = self.press()
-        await menu._toggle(it)
+        await menu._enabled(it)
         (now,) = await self.store.list(GUILD, self.campaign.id)
-        self.assertTrue(now.players_may_know)
-        self.assertIn("players may know it 👀", self.said(it))
+        self.assertFalse(now.enabled)
+        self.assertIn("Turned off. DMbot will not use it.", self.said(it))
         again = ui.EntryMenu(self.campaign, now, 0)
-        await again._toggle(self.press())
+        self.assertIn("Turn on", [str(getattr(c, "label", "")) for c in again.children])
+        it2 = self.press()
+        await again._enabled(it2)
         (back,) = await self.store.list(GUILD, self.campaign.id)
-        self.assertFalse(back.players_may_know)
+        self.assertTrue(back.enabled)
+        self.assertIn("Turned on. DMbot will use it.", self.said(it2))
 
     async def test_the_kind_can_be_changed_and_only_by_a_dm(self) -> None:
         saved = await self.add()
@@ -180,7 +283,7 @@ class AnEntry(HomebrewUiTest):
         self.assertEqual(now.kind, "item")
 
     async def test_remove_asks_then_removes_and_undo_puts_it_back(self) -> None:
-        saved = await self.add(players_may_know=True)
+        saved = await self.add()
         confirm = ui.ConfirmRemove(self.campaign, saved, 0)
         it = self.press()
         await confirm._yes(it)
@@ -188,11 +291,11 @@ class AnEntry(HomebrewUiTest):
         self.assertIn("Removed **Hollow King**", self.said(it))
         removed = self.bot.homebrew_removed[(GUILD, self.campaign.id)]
         menu = ui.ListMenu(self.campaign, [], 0, removed)
-        undo = [c for c in menu.children if "Undo" in str(getattr(c, "label", ""))]
+        undo = [c for c in menu.children if "Put back" in str(getattr(c, "label", ""))]
         self.assertEqual(len(undo), 1)
         await undo[0].callback(self.press())
         (back,) = await self.store.list(GUILD, self.campaign.id)
-        self.assertEqual((back.name, back.players_may_know), ("Hollow King", True))
+        self.assertEqual((back.name, back.enabled), ("Hollow King", True))
         self.assertEqual(removed, [])
 
     async def test_a_stale_view_is_refused_with_the_new_list(self) -> None:
@@ -260,6 +363,23 @@ class TheFile(HomebrewUiTest):
         await menu._download(stranger)
         self.assertEqual(self.said(stranger), ui.ONLY_DMS)
 
+    async def test_download_tags_shared_book_entries_like_the_players_card(self) -> None:
+        await self.store.load_file(
+            GUILD,
+            self.campaign.id,
+            DM,
+            (FileEntry("spell", "Moonlance", "From the book.", None, False),),
+            from_book=True,
+            book_edition="2014",
+        )
+        await self.add("Hollow King")
+        menu = ui.ListMenu(self.campaign, [], 0, [])
+        it = self.press()
+        await menu._download(it)
+        text = it.followup.send.await_args.kwargs["file"].fp.read().decode()
+        self.assertIn("## Moonlance (spell)\n[Shared book] [Legacy 2014]\n", text)
+        self.assertNotIn("## Hollow King (monster)\n[Shared book]", text)
+
     async def test_load_opens_the_form_for_a_dm_and_refuses_anyone_else(self) -> None:
         menu = ui.ListMenu(self.campaign, [], 0, [])
         it = self.press()
@@ -292,18 +412,25 @@ class TheFile(HomebrewUiTest):
         self.assertEqual((await self.store.list(GUILD, self.campaign.id))[0].text, "Old.")
 
     async def test_no_loads_it_as_the_dms_own_and_records_no_confirmation(self) -> None:
-        ask = ui.FromBookAsk(self.campaign, (FileEntry("rule", "House", "Mine."),), "a" * 64, 0)
+        ask = ui.FromBookAsk(self.campaign, (FileEntry("feat", "House", "Mine."),), "a" * 64, 0)
+        asked = self.press()
+        await ask._own(asked)
+        self.assertIn("Who made these?", self.said(asked))  # one more question, nothing stored yet
+        self.assertEqual(await self.store.list(GUILD, self.campaign.id), [])
         it = self.press()
-        await ask._own(it)
+        await ui.WhoMade(self.campaign, ask.entries, ask.digest, 0)._me(it)
         (saved,) = await self.store.list(GUILD, self.campaign.id)
         self.assertFalse(saved.from_book)
+        self.assertEqual(
+            (saved.source_kind, saved.credit_kind, saved.added_by), ("upload", "user", DM)
+        )
         self.assertEqual(await self.campaigns.confirmations(GUILD, self.campaign.id), [])
         self.assertIn("Loaded: 1 new", self.said(it))
 
     async def test_yes_asks_first_and_only_the_confirmation_stores_and_records_who_and_when(
         self,
     ) -> None:
-        ask = ui.FromBookAsk(self.campaign, (FileEntry("rule", "Booked", "Words."),), "b" * 64, 0)
+        ask = ui.FromBookAsk(self.campaign, (FileEntry("feat", "Booked", "Words."),), "b" * 64, 0)
         it = self.press()
         await ask._book(it)
         self.assertIn("you say you may use this text", self.said(it))
@@ -328,41 +455,210 @@ class TheFile(HomebrewUiTest):
         self.assertEqual(record["fingerprint"], "b" * 64)
 
     async def test_cancel_loads_nothing_and_a_non_dm_cannot_confirm(self) -> None:
-        right = ui.RightToUse(self.campaign, (FileEntry("rule", "X", "y"),), "c" * 64, 0)
+        right = ui.RightToUse(self.campaign, (FileEntry("feat", "X", "y"),), "c" * 64, 0)
         await right._cancel(self.press())
         await right._confirmed(self.press(PLAYER))
         self.assertEqual(await self.store.list(GUILD, self.campaign.id), [])
         self.assertEqual(await self.campaigns.confirmations(GUILD, self.campaign.id), [])
 
     async def test_the_question_is_only_for_a_book_and_each_answer_is_kept(self) -> None:
-        entries = (FileEntry("rule", "Mine", "Words."),)
-        own = ui.FromBookAsk(self.campaign, entries, "f" * 64, 0)
-        await own._own(self.press())  # "No, all my own": no question, no edition
+        entries = (FileEntry("feat", "Mine", "Words."),)
+        own = ui.WhoMade(self.campaign, entries, "f" * 64, 0)
+        await own._me(self.press())  # "No, all my own", then "Me": no question, no edition
         (saved,) = await self.store.list(GUILD, self.campaign.id)
         self.assertEqual((saved.from_book, saved.book_edition), (False, None))
         for edition in ("2024", "other"):
             book = ui.BookEdition(
-                self.campaign, (FileEntry("rule", f"Book {edition}", "x"),), "a" * 64, 0
+                self.campaign, (FileEntry("feat", f"Book {edition}", "x"),), "a" * 64, 0
             )
             await book._pick(edition, self.press())
         got = {e.name: e.book_edition for e in await self.store.list(GUILD, self.campaign.id)}
         self.assertEqual(got, {"Mine": None, "Book 2024": "2024", "Book other": "other"})
 
+    async def test_someone_else_credits_a_typed_name(self) -> None:
+        who = ui.WhoMade(self.campaign, (FileEntry("feat", "Borrowed", "Words."),), "e" * 64, 0)
+        form = ui.NameForm(who)
+        form.name._value = "  Sam   Rivers "
+        it = self.press()
+        await form.on_submit(it)
+        (saved,) = await self.store.list(GUILD, self.campaign.id)
+        self.assertEqual(
+            (saved.source_kind, saved.credit_kind, saved.credit_text, saved.credit_domain),
+            ("upload", "name", "Sam Rivers", None),
+        )
+        self.assertIn("Credited to Sam Rivers", self.said(it))
+        self.assertEqual(await self.sources.approvals(GUILD, self.campaign.id), [])  # no site
+
+    async def test_a_website_asks_once_and_only_the_confirmation_stores_and_approves(self) -> None:
+        who = ui.WhoMade(self.campaign, (FileEntry("feat", "Webby", "Words."),), "e" * 64, 0)
+        form = ui.SiteForm(who)
+        form.site._value = "https://www.DNDBeyond.com/magic-items/1-x"
+        it = self.press()
+        await form.on_submit(it)
+        self.assertIn("right to use homebrew from dndbeyond.com", self.said(it))
+        self.assertEqual(await self.store.list(GUILD, self.campaign.id), [])  # nothing yet
+        self.assertEqual(await self.sources.approvals(GUILD, self.campaign.id), [])
+        right = self.view_of(it)
+        self.assertEqual(
+            [getattr(c, "label", "") for c in right.children], ["Cancel", "I have the right"]
+        )
+        await right._confirmed(self.press(PLAYER))  # a player's press changes nothing
+        self.assertEqual(await self.sources.approvals(GUILD, self.campaign.id), [])
+        done = self.press()
+        await right._confirmed(done)
+        (saved,) = await self.store.list(GUILD, self.campaign.id)
+        self.assertEqual(
+            (saved.credit_kind, saved.credit_domain, saved.credit_text),
+            ("website", "dndbeyond.com", None),
+        )
+        (approval,) = await self.sources.approvals(GUILD, self.campaign.id)
+        self.assertEqual((approval.domain, approval.approved_by), ("dndbeyond.com", DM))
+        self.assertIn("Credited to dndbeyond.com", self.said(done))
+        # The second time for the same site in this campaign needs no new warning.
+        again = ui.WhoMade(self.campaign, (FileEntry("feat", "Webby Two", "More."),), "f" * 64, 0)
+        form2 = ui.SiteForm(again)
+        form2.site._value = "dndbeyond.com"
+        quick = self.press()
+        await form2.on_submit(quick)
+        self.assertIn("Loaded: 1 new", self.said(quick))
+        self.assertEqual(len(await self.sources.approvals(GUILD, self.campaign.id)), 1)
+
+    async def test_a_bad_site_loads_nothing_and_cancel_approves_nothing(self) -> None:
+        who = ui.WhoMade(self.campaign, (FileEntry("feat", "Webby", "Words."),), "e" * 64, 0)
+        form = ui.SiteForm(who)
+        for bad in ("", "not a site", "http://example.com", "10.0.0.1"):
+            form.site._value = bad
+            it = self.press()
+            await form.on_submit(it)
+            self.assertIn("can't read that as a website", self.said(it))
+        form.site._value = "example.org"
+        await form.on_submit(self.press())
+        right = ui.RightToUseSite(who, "example.org")
+        await right._cancel(self.press())
+        self.assertEqual(await self.store.list(GUILD, self.campaign.id), [])
+        self.assertEqual(await self.sources.approvals(GUILD, self.campaign.id), [])
+
+    async def test_only_a_dm_gets_the_who_made_it_buttons(self) -> None:
+        who = ui.WhoMade(self.campaign, (FileEntry("feat", "X", "y"),), "e" * 64, 0)
+        for press in (who._me, who._site, who._someone):
+            it = self.press(PLAYER)
+            await press(it)
+        self.assertEqual(await self.store.list(GUILD, self.campaign.id), [])
+        self.assertIsNone(self.press(PLAYER).response.modal)
+
     async def test_a_file_over_the_limit_is_refused_with_the_count(self) -> None:
         for n in range(200):
-            await self.store.add(GUILD, self.campaign.id, DM, kind="rule", name=f"R{n}", text="x")
-        ask = ui.FromBookAsk(self.campaign, (FileEntry("rule", "One more", "x"),), "d" * 64, 0)
+            await self.store.add(GUILD, self.campaign.id, DM, kind="feat", name=f"R{n}", text="x")
+        ask = ui.WhoMade(self.campaign, (FileEntry("feat", "One more", "x"),), "d" * 64, 0)
         it = self.press()
-        await ask._own(it)
+        await ask._me(it)
         self.assertIn("would make 201 entries", self.said(it))
         self.assertEqual(len(await self.store.list(GUILD, self.campaign.id)), 200)
 
 
 class OnlyOnce(HomebrewUiTest):
     async def test_a_double_press_records_the_confirmation_and_loads_once(self) -> None:
-        right = ui.BookEdition(self.campaign, (FileEntry("rule", "Booked", "Words."),), "e" * 64, 0)
+        right = ui.BookEdition(self.campaign, (FileEntry("feat", "Booked", "Words."),), "e" * 64, 0)
         await right._pick("2024", self.press())
         again = self.press()
         await right._pick("2024", again)
         self.assertEqual(len(await self.campaigns.confirmations(GUILD, self.campaign.id)), 1)
         self.assertIn("already being loaded", self.said(again))
+
+
+class FromALink(HomebrewUiTest):
+    """🔗 Add from a link (#1634): the address, the once-per-site warning, the preview, Save."""
+
+    async def submit(self, address: str, user: int = DM) -> Any:
+        form = ui.LinkForm(self.campaign, 0)
+        form.address._value = address
+        it = self.press(user)
+        await form.on_submit(it)
+        return it
+
+    def test_the_button_is_beside_add_and_the_old_ones_stay(self) -> None:
+        labels = [
+            str(getattr(c, "label", "")) for c in ui.ListMenu(self.campaign, [], 0, []).children
+        ]
+        self.assertIn("🔗 Add from a link", labels)
+        self.assertTrue({"➕ Add", ui.LOAD_LABEL, ui.DOWNLOAD_LABEL} <= set(labels))
+
+    async def test_only_a_dm_gets_the_form(self) -> None:
+        menu = ui.ListMenu(self.campaign, [], 0, [])
+        it = self.press(PLAYER)
+        await menu._link(it)
+        self.assertIsNone(it.response.modal)
+        it = self.press()
+        await menu._link(it)
+        self.assertIsInstance(it.response.modal, ui.LinkForm)
+        it = await self.submit(URL, PLAYER)
+        self.assertEqual(self.net.asked, [])
+
+    async def test_another_site_is_told_what_is_allowed_and_nothing_is_fetched(self) -> None:
+        for address in (
+            "https://example.com/spells/1-x",
+            "http://www.dndbeyond.com/spells/1-x",
+            "x",
+        ):
+            it = await self.submit(address)
+            self.assertIn("only add homebrew from D&D Beyond", self.said(it))
+        self.assertEqual(self.net.asked, [])
+
+    async def test_the_first_link_asks_once_then_reads_then_saves_and_the_second_asks_nothing(
+        self,
+    ) -> None:
+        it = await self.submit(URL)
+        self.assertIn("right to use homebrew from dndbeyond.com", self.said(it))
+        self.assertEqual(self.net.asked, [])  # nothing is read before the confirmation
+        self.assertEqual(await self.sources.approvals(GUILD, self.campaign.id), [])
+        right = self.view_of(it)
+        self.assertEqual(
+            [getattr(c, "label", "") for c in right.children], ["Cancel", "I have the right"]
+        )
+        await right._confirmed(self.press(PLAYER))  # a player's press changes nothing
+        self.assertEqual(await self.sources.approvals(GUILD, self.campaign.id), [])
+        shown = self.press()
+        await right._confirmed(shown)
+        self.assertEqual(len(await self.sources.approvals(GUILD, self.campaign.id)), 1)
+        self.assertEqual(len(self.net.asked), 1)
+        self.assertIn("Moonlit Charm", self.said(shown))
+        self.assertIn("Not saved yet. Press **Save**", self.said(shown))
+        self.assertEqual(await self.store.list(GUILD, self.campaign.id), [])  # not saved yet
+        preview = self.view_of(shown)
+        done = self.press()
+        await preview._save(done)
+        (saved,) = await self.store.list(GUILD, self.campaign.id)
+        self.assertEqual(
+            (saved.name, saved.source_kind, saved.page_url), ("Moonlit Charm", "link", URL)
+        )
+        self.assertIn("Added **Moonlit Charm**", self.said(done))
+        # A second page from the same site in this campaign asks nothing.
+        second = await self.submit(URL.replace("2302039-moonlit-charm", "9-other") + "")
+        self.assertIn("Not saved yet. Press **Save**", self.said(second))
+        self.assertEqual(len(await self.sources.approvals(GUILD, self.campaign.id)), 1)
+
+    async def test_another_campaign_asks_again_and_cancel_adds_and_approves_nothing(self) -> None:
+        other = await self.campaigns.create(GUILD, "Other", DM)
+        await self.sources.approve(GUILD, other.id, DM, "dndbeyond.com")
+        it = await self.submit(URL)  # this campaign has not approved the site
+        right = self.view_of(it)
+        await right._cancel(self.press())
+        self.assertEqual(await self.sources.approvals(GUILD, self.campaign.id), [])
+        self.assertEqual(await self.store.list(GUILD, self.campaign.id), [])
+        self.assertEqual(self.net.asked, [])
+
+    async def test_not_public_and_no_answer_are_plain_and_a_double_save_adds_once(self) -> None:
+        await self.sources.approve(GUILD, self.campaign.id, DM, "dndbeyond.com")
+        self.net.reply = page_fetch.Reply(404, "")
+        it = await self.submit(URL)
+        self.assertIn("That page isn't public", self.said(it))
+        self.net.reply = page_fetch.Reply(500, "")
+        it = await self.submit(URL)
+        self.assertIn("D&D Beyond didn't answer", self.said(it))
+        self.net.reply = page_fetch.Reply(200, "<h1>Zap</h1><p>It zaps.</p>")
+        shown = await self.submit(URL)
+        preview = self.view_of(shown)
+        await preview._save(self.press())
+        again = self.press()
+        await preview._save(again)
+        self.assertEqual(len(await self.store.list(GUILD, self.campaign.id)), 1)

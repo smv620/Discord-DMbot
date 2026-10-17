@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import dataclasses
 import logging
 import time
 from collections import defaultdict
@@ -29,6 +30,7 @@ from dmbot.memory.models import (
     CONFIRMED,
     FIX,
     KEEP,
+    THREAD_TYPES,
     Alias,
     Correction,
     Entity,
@@ -118,7 +120,9 @@ class CampaignLookup:
                 a.text,
                 a.key,
                 a.kind,
-                a.secret,
+                # A clue only some people know (#1649) is as secret as a secret name: the Cleaner
+                # must never write it into the shared transcript, and it is the DM's alone.
+                a.secret or entities[a.entity_id].audience_limited,
                 a.status == CONFIRMED and entities[a.entity_id].status == CONFIRMED,
                 sound_codes(a.text),  # the same function as for heard words
                 False,
@@ -182,6 +186,39 @@ class CampaignLookup:
             tuple(sorted({e.key for e in names if e.secret and not e.codes})),
             {k: tuple(v) for k, v in people_by_key.items()},
             {k: tuple(v) for k, v in people_by_sound.items()},
+        )
+
+    @property
+    def hidden(self) -> frozenset[str]:
+        """What the campaign's DMs alone may see: the clues only some people know (#1649) and
+        the story threads (#1662), which are the DM's plot notes."""
+        return frozenset(
+            e.id for e in self.entities.values() if e.audience_limited or e.type in THREAD_TYPES
+        )
+
+    def for_viewer(self, secrets: bool) -> CampaignLookup:
+        """What a person who may not see secrets (a server manager who is not a DM) gets to
+        read: the same names without the clues only some people know, in every list, search,
+        card and file. The campaign's DMs, and the Cleaner, get the whole thing."""
+        gone = self.hidden
+        if secrets or not gone:
+            return self
+
+        def keep(entries: tuple[NameEntry, ...]) -> tuple[NameEntry, ...]:
+            return tuple(e for e in entries if e.entity_id not in gone)
+
+        return dataclasses.replace(
+            self,
+            entities={k: v for k, v in self.entities.items() if k not in gone},
+            names=keep(self.names),
+            by_key={k: v for k, v in ((k, keep(v)) for k, v in self.by_key.items()) if v},
+            by_sound={k: v for k, v in ((k, keep(v)) for k, v in self.by_sound.items()) if v},
+            neighbours={k: v - gone for k, v in self.neighbours.items() if k not in gone},
+            confirmed_neighbours={
+                k: v - gone for k, v in self.confirmed_neighbours.items() if k not in gone
+            },
+            heard={k: v for k, v in self.heard.items() if k not in gone},
+            links={k: v for k, v in self.links.items() if k not in gone},
         )
 
     def exact(self, heard: str) -> tuple[NameEntry, ...]:

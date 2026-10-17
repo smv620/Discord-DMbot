@@ -61,6 +61,13 @@ KINDS: dict[str, str] = {
     "item": "An item",
     "deity": "A god or other power",
     "event": "Something that happened (event)",
+    "clue": "A clue or secret",
+    "people": "A whole people or kind (tabaxi, elves)",
+    "quest": "A quest",
+    "mystery": "A mystery",
+    "hook": "A hook (a lead)",
+    "goal": "A goal",
+    "promise": "A promise",
     "concept": "Something else",
 }
 KIND_SHORT: dict[str, str] = {
@@ -74,6 +81,14 @@ KIND_SHORT: dict[str, str] = {
     "deity": "god",
     "spell": "spell",
     "event": "event",
+    "clue": "clue",
+    "people": "people",
+    "thread": "thread",
+    "quest": "quest",
+    "mystery": "mystery",
+    "hook": "hook",
+    "goal": "goal",
+    "promise": "promise",
     "concept": "other",
     "person": "player or DM",
 }
@@ -253,6 +268,8 @@ class NamesHome(_Menu):
         self.add_item(_Button(self._browse, label="📚 Browse by kind", style=grey, row=1))
         self.add_item(_Button(self._add_many, label="📥 Add many", style=grey, row=1))
         self.add_item(_Button(self._download, label="📤 Download all", style=grey, row=1))
+        self.add_item(_Button(self._new_thread, label="🧵 New thread", style=grey, row=3))
+        self.add_item(_Button(self._new_promise, label="🤝 Add a promise", style=grey, row=3))
         # Players' D&D Beyond sheets (#723): read again now, not only at /dmbot start.
         self.add_item(_Button(self._sheets, label="📜 Refresh sheets", style=grey, row=3))
         if shown:
@@ -268,6 +285,28 @@ class NamesHome(_Menu):
                 row=2,
             )
             self.add_item(self.open)
+
+    async def _new_thread(self, interaction: discord.Interaction) -> None:
+        from dmbot.ui.threads import NewThreadForm
+
+        campaign = await _campaign_for(interaction, self.campaign_id)
+        if campaign is None:
+            return
+        if not sees_secrets(campaign, interaction.user.id):
+            await _tell(interaction, "Only the DM can start a story thread.")
+            return
+        await interaction.response.send_modal(NewThreadForm(self.campaign_id))
+
+    async def _new_promise(self, interaction: discord.Interaction) -> None:
+        from dmbot.ui.threads import NewPromiseForm
+
+        campaign = await _campaign_for(interaction, self.campaign_id)
+        if campaign is None:
+            return
+        if not sees_secrets(campaign, interaction.user.id):
+            await _tell(interaction, "Only the DM can add a promise.")
+            return
+        await interaction.response.send_modal(NewPromiseForm(self.campaign_id))
 
     async def _find(self, interaction: discord.Interaction) -> None:
         from dmbot.ui.name_card import FindForm
@@ -331,7 +370,9 @@ async def show_home(interaction: discord.Interaction, campaign_id: str) -> None:
     if campaign is None:
         return
     try:
-        names = await cache.get(campaign.guild_id, campaign.id)
+        names = (await cache.get(campaign.guild_id, campaign.id)).for_viewer(
+            sees_secrets(campaign, interaction.user.id)
+        )
     except Exception:
         log.exception("Couldn't load the campaign's names")
         await _tell(interaction, "DMbot couldn't load the names just now. Try again in a moment.")
