@@ -691,6 +691,13 @@ or servers; only the campaign's DMs change anything (the store checks in the sam
     door returns `fromBook` and `legacy` for each entry (`legacy` is `book_is_legacy`'s test, worked out in
     the database against the campaign's own ruleset), and `homebrew_file.write` takes that answer per entry,
     so the two files are byte-equal for the same entries.
+  - **On the website** (#1525, #1545, migration 0100; tags 2026-10-16, #1579, migration 0107): the signed-in
+    Homebrew page shows a campaign's entries to anyone in the server, with a text-file download that is
+    byte-equal to the bot's file. Since part 2 (#1650) it shows every entry, an entry that is off muted and
+    marked "(off)", and where each came from (#1657: "from dndbeyond.com", "by Sam"). Entries loaded from a
+    shared book are tagged like the Discord players' card: "From a shared book", and "[Legacy 2014]" for a
+    2014 book while the campaign plays newer rules (legacy content is tagged wherever it appears). Still
+    never: who added an entry (a Discord id), its id, a page's address or the book's name.
 - Sharing as a pack (part 2) is built: see "Shared rulesets" (#1527).
 
 **Homebrew (part 2): links, sources and on/off (owner, 2026-10-16).** This changes part 1. Where the two
@@ -2798,7 +2805,7 @@ answer **where the whole table can read it**, so nobody waits while someone look
   transcript or the live transcript channel.
 - **Consent:** the consent message adds that questions typed in `dmb-chat` are read, so the consent terms
   version goes up (everyone is asked again once).
-- **Not built yet:** #1187 (CloudDev). The site's help and privacy pages follow (WebDev, with #1155).
+- **Built** (#1187, CloudDev; the site's help and privacy pages with #1155, WebDev).
 
 **Who pays for AI and speech (decided 2026-10-04, replaced 2026-10-07).** Bring-your-own
 keys is dropped: it asked ordinary DMs to open developer accounts, fund them and paste
