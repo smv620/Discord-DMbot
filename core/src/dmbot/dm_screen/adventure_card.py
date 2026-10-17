@@ -25,7 +25,7 @@ import discord
 
 from dmbot.campaigns import Campaign
 from dmbot.campaigns.models import STORY_GUIDE, STORY_OFF
-from dmbot.dm_screen.story_mode import COULDNT, _dm_campaign
+from dmbot.dm_screen.story_mode import COULDNT, _dm_campaign, say
 from dmbot.logs import set_log_context
 from dmbot.memory.adventure import (
     DOCUMENTS_MAX,
@@ -269,10 +269,10 @@ async def _allowed(interaction: discord.Interaction, campaign_id: str) -> Campai
         )
     except Exception:
         log.exception("Couldn't read the Shared story confirmation")
-        await interaction.response.send_message(COULDNT, ephemeral=True)
+        await say(interaction, COULDNT)
         return None
     if not said:
-        await interaction.response.send_message(NOT_ON, ephemeral=True)
+        await say(interaction, NOT_ON)
         return None
     return campaign
 
@@ -493,6 +493,8 @@ class RemoveButton(
 
     async def callback(self, interaction: discord.Interaction) -> Any:
         set_log_context(guild_id=interaction.guild_id)
+        # Answer Discord first (#1803): the permission check and the card are several reads.
+        await interaction.response.defer()
         campaign = await _allowed(interaction, self.campaign_id)
         if campaign is None:
             return
@@ -500,7 +502,7 @@ class RemoveButton(
         doc = next((d for d in docs if d.id == self.document_id), None)
         if doc is None:
             text, card = await _card(interaction, campaign)
-            await interaction.response.edit_message(
+            await interaction.edit_original_response(
                 content=f"Already removed.\n\n{text}", view=card
             )
             return
@@ -508,7 +510,7 @@ class RemoveButton(
         view.add_item(RemoveYesButton(campaign.id, doc.id))
         view.add_item(RemoveNoButton(campaign.id))
         name = discord.utils.escape_markdown(doc.file_name[:NAME_SHOWN])
-        await interaction.response.edit_message(
+        await interaction.edit_original_response(
             content=(
                 f"Remove **{name}**? DMbot will forget the text it kept from it. "
                 "You can add the file again later."
@@ -539,6 +541,8 @@ class RemoveYesButton(
 
     async def callback(self, interaction: discord.Interaction) -> Any:
         set_log_context(guild_id=interaction.guild_id)
+        # Answer Discord first (#1803): the permission check and the card are several reads.
+        await interaction.response.defer()
         campaign = await _dm_campaign(interaction, self.campaign_id)  # (removing needs only a DM)
         if campaign is None:
             return
@@ -554,7 +558,7 @@ class RemoveYesButton(
             log.exception("Couldn't remove an adventure document")
             note = COULDNT
         text, view = await _card(interaction, campaign)
-        await interaction.response.edit_message(content=f"{note}\n\n{text}", view=view)
+        await interaction.edit_original_response(content=f"{note}\n\n{text}", view=view)
 
 
 class RemoveNoButton(
@@ -579,11 +583,13 @@ class RemoveNoButton(
 
     async def callback(self, interaction: discord.Interaction) -> Any:
         set_log_context(guild_id=interaction.guild_id)
+        # Answer Discord first (#1803): the permission check and the card are several reads.
+        await interaction.response.defer()
         campaign = await _dm_campaign(interaction, self.campaign_id)
         if campaign is None:
             return
         text, view = await _card(interaction, campaign)
-        await interaction.response.edit_message(content=text, view=view)
+        await interaction.edit_original_response(content=text, view=view)
 
 
 class ReadButton(
@@ -734,11 +740,13 @@ class ReadNoButton(
 
     async def callback(self, interaction: discord.Interaction) -> Any:
         set_log_context(guild_id=interaction.guild_id)
+        # Answer Discord first (#1803): the permission check and the card are several reads.
+        await interaction.response.defer()
         campaign = await _dm_campaign(interaction, self.campaign_id)
         if campaign is None:
             return
         text, view = await _card(interaction, campaign)
-        await interaction.response.edit_message(content=text, view=view)
+        await interaction.edit_original_response(content=text, view=view)
 
 
 class RefreshButton(
@@ -767,11 +775,13 @@ class RefreshButton(
 
     async def callback(self, interaction: discord.Interaction) -> Any:
         set_log_context(guild_id=interaction.guild_id)
+        # Answer Discord first (#1803): the permission check and the card are several reads.
+        await interaction.response.defer()
         campaign = await _allowed(interaction, self.campaign_id)
         if campaign is None:
             return
         text, view = await _card(interaction, campaign)
-        await interaction.response.edit_message(content=text, view=view)
+        await interaction.edit_original_response(content=text, view=view)
 
 
 class BackToFilesButton(
@@ -799,11 +809,13 @@ class BackToFilesButton(
 
     async def callback(self, interaction: discord.Interaction) -> Any:
         set_log_context(guild_id=interaction.guild_id)
+        # Answer Discord first (#1803): the permission check and the card are several reads.
+        await interaction.response.defer()
         campaign = await _dm_campaign(interaction, self.campaign_id)
         if campaign is None:
             return
         text, view = await _card(interaction, campaign)
-        await interaction.response.edit_message(content=text, view=view)
+        await interaction.edit_original_response(content=text, view=view)
 
 
 class MatchButton(

@@ -113,24 +113,32 @@ async def _view(interaction: discord.Interaction, campaign: Campaign) -> discord
     return panel_view(campaign, adventure=on)
 
 
+async def say(interaction: discord.Interaction, text: str) -> None:
+    """Tell only the presser: as the answer, or as a follow-up once the press was deferred."""
+    if interaction.response.is_done():
+        await interaction.followup.send(text, ephemeral=True)
+    else:
+        await interaction.response.send_message(text, ephemeral=True)
+
+
 async def _dm_campaign(interaction: discord.Interaction, campaign_id: str) -> Campaign | None:
     """The campaign as it is now, if this person is one of its DMs; else they are told."""
     store = getattr(interaction.client, "campaigns", None)
     guild = interaction.guild
     if store is None or guild is None:
-        await interaction.response.send_message(COULDNT, ephemeral=True)
+        await say(interaction, COULDNT)
         return None
     try:
         campaign = await store.get(guild.id, campaign_id)
     except Exception:
         log.exception("Couldn't load a campaign for the Shared story setting")
-        await interaction.response.send_message(COULDNT, ephemeral=True)
+        await say(interaction, COULDNT)
         return None
     if campaign is None:
-        await interaction.response.send_message(GONE, ephemeral=True)
+        await say(interaction, GONE)
         return None
     if interaction.user.id not in campaign.dm_user_ids:
-        await interaction.response.send_message(ONLY_DMS, ephemeral=True)
+        await say(interaction, ONLY_DMS)
         return None
     return cast(Campaign, campaign)
 
