@@ -346,6 +346,26 @@ class Triggers(Setup):
         self.assertEqual(one.chapter, "Chapter 3: The Circle")
         self.assertIn("alive (Chapter 3: The Circle). At your table", ui.message_text(found, {}))
 
+    async def test_open_for_lists_the_told_clashes_of_some_entries_with_their_chapter(self) -> None:
+        doc, ids = await self.book(
+            [
+                ("chapter", "Chapter 3", 5),
+                ("person", "Mother Ilse", 6),
+                ("person", "Captain Varn", 7),
+            ]
+        )
+        entity = await self.add("Captain Varn", type="npc")
+        await self.say(ids["Captain Varn"], entity)
+        await self.link(doc, ids, "Mother Ilse", "Captain Varn", "alive")
+        await self.set(entity, "dead")
+        self.assertEqual(await self.watch.open_for(GUILD_A, self.c, frozenset(ids.values())), [])
+        await self.watch.check(GUILD_A, self.c)
+        (one,) = await self.watch.open_for(GUILD_A, self.c, frozenset([ids["Captain Varn"]]))
+        self.assertEqual((one.book_name, one.chapter), ("Mother Ilse", "Chapter 3"))
+        self.assertEqual(await self.watch.open_for(GUILD_A, self.c, frozenset()), [])
+        await self.watch.know(GUILD_A, self.c, one.id)
+        self.assertEqual(await self.watch.open_for(GUILD_A, self.c, frozenset(ids.values())), [])
+
     async def test_after_an_undo_the_buttons_no_longer_answer_the_old_message(self) -> None:
         entity, _, _ = await self.varn()
         await self.set(entity, "alive")

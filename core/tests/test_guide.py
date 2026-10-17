@@ -117,6 +117,43 @@ class Rules(unittest.TestCase):
         self.assertEqual(len(model.summary_of(node("chapter", "c", 1, summary="x" * 400))), 150)
 
 
+class Menus(unittest.TestCase):
+    def test_more_than_25_chapters_can_all_be_reached(self) -> None:
+        nodes = [node("chapter", f"Chapter {n}", n * 10) for n in range(40)]
+        guide = build(nodes, "chapter-5")
+        seen: set[str] = set()
+        menu = ui.GuideMenu("c" * 32, "d" * 32, guide, [], None)
+        for _ in range(4):
+            seen |= {o.value for o in menu.select.options}
+            if not any("Later" in str(getattr(c, "label", "")) for c in menu.children):
+                break
+            menu = ui.GuideMenu("c" * 32, "d" * 32, guide, [], None, start=menu.start + 25)
+        self.assertEqual(len(seen), 40)
+        self.assertLessEqual(len(menu.select.options), 25)
+
+    def test_the_worst_case_message_drops_whole_lines_and_keeps_markers_closed(self) -> None:
+        from dmbot.memory.story_watch import Clash
+
+        long = "N" * 120
+        guide = build(
+            [
+                node("chapter", long, 1, summary="s" * 400),
+                node("chapter", long + "2", 5, summary="t" * 400),
+                *[node("person", long + str(n), 2) for n in range(9)],
+            ],
+            long.lower().replace(" ", "-"),
+        )
+        clashes = [Clash(f"{n:032x}", long, long, long, long, long, "dead", 1) for n in range(5)]
+        text = ui.guide_text(guide, clashes, file_name=long, note="x" * 200)
+        self.assertLessEqual(len(text), 1990)
+        self.assertEqual(text.count("**") % 2, 0)
+
+    def test_the_chapter_rule_with_no_chapters_or_on_a_chapters_own_place(self) -> None:
+        self.assertIsNone(chapter_at(5, []))
+        chapters = [node("chapter", "A", 5)]
+        self.assertEqual(chapter_at(5, chapters).name, "A")  # type: ignore[union-attr]
+
+
 class Setup(base.Setup):
     async def chapters(self) -> tuple[str, dict[str, str]]:
         doc, ids = await self.book(
@@ -268,9 +305,9 @@ class Pressing(Setup):
         it = self.pressing()
         await ui.GuideButton(self.c).callback(it)
         text = it.sent["content"]
-        self.assertIn("You seem to be in **Chapter 1** (from: Captain Varn).", text)
-        self.assertIn("Still ahead in this chapter: Saltmere.", text)
-        self.assertIn("Next chapter: **Chapter 2**", text)
+        self.assertIn("Probably **Chapter 1** (heard: Captain Varn).", text)
+        self.assertIn("In the book, this chapter also has: Saltmere.", text)
+        self.assertIn("The book's next chapter: **Chapter 2**", text)
         labels = [
             str(getattr(getattr(c, "item", c), "label", "")) for c in it.sent["view"].children
         ]
@@ -287,11 +324,11 @@ class Pressing(Setup):
         it2 = self.pressing()
         menu.select._values = [ids["Chapter 2"]]
         await menu._picked(it2)
-        self.assertIn("You said you're in **Chapter 2**", it2.sent["content"])
+        self.assertIn("**Chapter 2** (you picked it)", it2.sent["content"])
         undo_menu = it2.sent["view"]
         it3 = self.pressing()
         await undo_menu._undo(it3)
-        self.assertIn("You seem to be in **Chapter 1**", it3.sent["content"])
+        self.assertIn("Probably **Chapter 1**", it3.sent["content"])
 
     async def test_no_press_works_in_watch_mode_off_a_restored_confirmation_or_without_the_plan(
         self,
@@ -317,6 +354,31 @@ class Pressing(Setup):
         it = self.pressing()
         await ui.GuideButton(self.c).callback(it)
         self.assertIn(ui.NOT_GUIDE, it.sent["content"])
+
+    async def test_the_menus_ask_again_so_nothing_is_saved_after_the_switch_goes_off(self) -> None:
+        doc, ids = await self.chapters()
+        await self.linked(ids, "Captain Varn", 100)
+        it = self.pressing()
+        await ui.show(it, self.c, doc)
+        menu = it.sent["view"]
+        await self.campaigns.set_story_mode(GUILD_A, self.c, STORY_OFF)
+        menu.select._values = [ids["Chapter 2"]]
+        refused = self.pressing()
+        await menu._picked(refused)
+        self.assertIn(ui.NOT_GUIDE, refused.sent["content"])
+        _, pick = await model.read(self.memory, GUILD_A, self.c, doc)
+        self.assertIsNone(pick)  # nothing was written
+
+    async def test_a_bad_pick_says_a_fixed_line_not_the_error(self) -> None:
+        doc, ids = await self.chapters()
+        await self.linked(ids, "Captain Varn", 100)
+        it = self.pressing()
+        await ui.show(it, self.c, doc)
+        menu = it.sent["view"]
+        menu.select._values = [ids["Saltmere"]]  # a place, not a chapter
+        again = self.pressing()
+        await menu._picked(again)
+        self.assertIn(ui.CANT_SAVE, again.sent["content"])
 
     async def test_only_a_dm_can_press(self) -> None:
         await self.chapters()

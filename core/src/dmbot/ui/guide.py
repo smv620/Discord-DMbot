@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import logging
 import re
+from functools import partial
 from typing import Any
 
 import discord
@@ -40,12 +41,19 @@ log = logging.getLogger(__name__)
 
 LABEL = "🧭 What's next?"
 ONLY_DM = "Only this campaign's DM can use this button."
-NOT_GUIDE = "Not now. In Settings, set Shared story to **Guide me** and say you have the right."
-NO_PLAN = "DMbot can't check this right now. Try again in a moment."
-NOT_READ = "Nothing read yet. Press **Read it now** on the Shared story card first."
-NO_CHAPTERS = "DMbot didn't find chapters in this file."
-LAST = "This is the last chapter in the file."
+NOT_GUIDE = (
+    "What's next? is off. To turn it on: open Settings, set Shared story to **Guide me**, then "
+    "confirm you have the right to use the book."
+)
+NO_PLAN = "Can't check your plan right now. Try again in a moment."
+NOT_READ = (
+    "DMbot hasn't read your book yet. Press **Read it now** on the Shared story card, "
+    "then try again."
+)
+NO_CHAPTERS = "DMbot didn't find chapters in this file. Try another file."
+LAST = "This is the book's last chapter."
 UNDONE = "↩ Undone."
+CANT_SAVE = "⚠️ Couldn't save that. Try again."
 TEXT_MAX = 1990
 NAME_SHOWN = 40  # characters of a name on a line, so a full message stays under 2000
 LABEL_SHOWN = 25
@@ -54,6 +62,14 @@ MENU_MAX = 25  # options in a Discord menu
 
 def _short(name: str) -> str:
     return _md(name if len(name) <= NAME_SHOWN else name[: NAME_SHOWN - 1] + "…")
+
+
+def _fit(lines: list[str]) -> str:
+    """The lines as one message: whole lines are dropped from the end, never cut in the middle
+    (an open ** would turn the rest of the message bold)."""
+    while len("\n".join(lines)) > TEXT_MAX and len(lines) > 1:
+        lines.pop()
+    return "\n".join(lines)[:TEXT_MAX]
 
 
 def guide_text(
@@ -65,31 +81,30 @@ def guide_text(
         lines.append(f"📖 {_short(file_name)}")
     chapter = guide.chapter
     if chapter is None:
-        lines.append("🧭 DMbot can't tell where you are yet. Pick your chapter below.")
-        return "\n".join(lines)[:TEXT_MAX]
+        lines.append("🧭 No names heard yet, so no guess. Pick your chapter below.")
+        return _fit(lines)
     if guide.picked:
-        lines.append(f"🧭 You said you're in **{_short(chapter.name)}**.")
+        lines.append(f"🧭 **{_short(chapter.name)}** (you picked it).")
     else:
         names = ", ".join(_short(n) for n in guide.evidence)
-        lines.append(f"🧭 You seem to be in **{_short(chapter.name)}** (from: {names}).")
+        lines.append(f"🧭 Probably **{_short(chapter.name)}** (heard: {names}).")
     if guide.ahead:
         more = f", +{guide.ahead_more} more" if guide.ahead_more else ""
-        lines.append(
-            f"Still ahead in this chapter: {', '.join(_short(n) for n in guide.ahead)}{more}."
-        )
+        names = ", ".join(_short(n) for n in guide.ahead)
+        lines.append(f"In the book, this chapter also has: {names}{more}.")
     else:
-        lines.append("Nothing else is listed in this chapter that your table hasn't met.")
+        lines.append("Nothing else listed in this chapter that your table hasn't met.")
     following = guide.following
     if following is None:
         lines.append(LAST)
     else:
         summary = model.summary_of(following)
-        tail = f", {_md(summary)}" if summary else ""
-        lines.append(f"Next chapter: **{_short(following.name)}**{tail}")
+        tail = f": {_md(summary)}" if summary else ""
+        lines.append(f"The book's next chapter: **{_short(following.name)}**{tail}")
     for n, clash in enumerate(clashes, 1):
         prefix = f"{n}. " if len(clashes) > 1 else ""
         lines.append(f"{prefix}{clash_line(clash, {})}")
-    return "\n".join(lines)[:TEXT_MAX]
+    return _fit(lines)
 
 
 async def _checked(interaction: discord.Interaction, campaign_id: str) -> tuple[Any, Any] | None:
@@ -145,7 +160,7 @@ async def start(interaction: discord.Interaction, campaign_id: str) -> None:
     if len(files) == 1:
         await show(interaction, campaign_id, files[0].id)
         return
-    await _replace(interaction, "🧭 Which file?", FileMenu(campaign.id, files))
+    await _replace(interaction, "🧭 Which book file?", FileMenu(campaign.id, files))
 
 
 async def _anything_read(interaction: discord.Interaction, campaign: Any) -> bool:
@@ -161,6 +176,7 @@ async def show(
     *,
     note: str = "",
     undo: int | None = None,
+    start: int | None = None,
 ) -> None:
     await _answer_first(interaction, in_place=True)
     found = await _checked(interaction, campaign_id)
@@ -183,7 +199,7 @@ async def show(
     await _replace(
         interaction,
         guide_text(guide, clashes, file_name=name if len(files) > 1 else "", note=note),
-        GuideMenu(campaign.id, document_id, guide, clashes, undo, many_files=len(files) > 1),
+        GuideMenu(campaign.id, document_id, guide, clashes, undo, start=start),
     )
 
 
@@ -217,17 +233,25 @@ class GuideMenu(_Menu):
         clashes: list[Clash],
         undo: int | None,
         *,
-        many_files: bool = False,
+        start: int | None = None,
     ) -> None:
         super().__init__()
         self.campaign_id, self.document_id, self.undo = campaign_id, document_id, undo
-        self.many_files = many_files
         chapters = list(guide.chapters)
         here = chapters.index(guide.chapter) if guide.chapter in chapters else 0
-        start = max(0, min(here - MENU_MAX // 2, len(chapters) - MENU_MAX))
+        # A menu holds 25: the ones around the chapter shown, and Earlier / Later move the window.
+        last = max(0, len(chapters) - MENU_MAX)
+        self.start = max(0, min(here - MENU_MAX // 2 if start is None else start, last))
+        start = self.start
+        cut = len(chapters) > MENU_MAX
         self.select = _Select(
             self._picked,
-            placeholder="I'm in another chapter…",
+            placeholder=(
+                f"Pick my chapter… ({start + 1} to {min(start + MENU_MAX, len(chapters))}"
+                f" of {len(chapters)})"
+                if cut
+                else "Pick my chapter…"
+            ),
             options=[
                 discord.SelectOption(label=c.name[:LABEL_SHOWN] or "Chapter", value=c.id)
                 for c in chapters[start : start + MENU_MAX]
@@ -236,6 +260,12 @@ class GuideMenu(_Menu):
         self.add_item(self.select)
         for n, clash in enumerate(clashes, 1):
             self.add_item(WordsButton(campaign_id, clash.id, n if len(clashes) > 1 else 0, row=1))
+        if start > 0:
+            self.add_item(
+                _Button(partial(self._move, -MENU_MAX), label="◀ Earlier chapters", row=3)
+            )
+        if start < last:
+            self.add_item(_Button(partial(self._move, MENU_MAX), label="Later chapters ▶", row=3))
         if guide.picked:
             self.add_item(_Button(self._guess, label="Use DMbot's guess", row=2))
         if undo is not None:
@@ -257,12 +287,19 @@ class GuideMenu(_Menu):
                 interaction.user.id,
             )
         except MemoryRuleError as exc:
+            log.info("Guide me pick refused: %s", exc)
             self.stop()
-            await show(interaction, self.campaign_id, self.document_id, note=f"⚠️ {exc}")
+            await show(interaction, self.campaign_id, self.document_id, note=CANT_SAVE)
             return
         changed(interaction, campaign)
         self.stop()
         await show(interaction, self.campaign_id, self.document_id, undo=batch)
+
+    async def _move(self, step: int, interaction: discord.Interaction) -> None:
+        self.stop()
+        await show(
+            interaction, self.campaign_id, self.document_id, undo=self.undo, start=self.start + step
+        )
 
     async def _guess(self, interaction: discord.Interaction) -> None:
         await _answer_first(interaction, in_place=True)
@@ -285,9 +322,9 @@ class GuideMenu(_Menu):
         try:
             await memory.undo(campaign.guild_id, campaign.id, self.undo)
         except TooLateToUndo:
-            note = "Too late to undo that."
+            note = "Can't undo that any more."
         except MemoryRuleError:
-            note = "Not undone: it changed again after."
+            note = "Not undone. Something changed since. Pick your chapter again if you need to."
         changed(interaction, campaign)
         self.stop()
         await show(interaction, self.campaign_id, self.document_id, note=note)

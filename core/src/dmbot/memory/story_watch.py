@@ -208,7 +208,10 @@ class StoryWatch:
                 return []
             cur = await conn.execute(
                 "SELECT d.id, a.name AS a_name, b.name AS b_name, e.name AS entity_name, l.need,"
-                " s.condition, s.from_session_at FROM plan_divergences d"
+                " s.condition, s.from_session_at,"
+                " CASE WHEN a.kind = 'chapter' THEN '' ELSE COALESCE("
+                + chapter_of("a")
+                + ", '') END AS chapter FROM plan_divergences d"
                 " JOIN plan_links l ON l.guild_id = d.guild_id AND l.campaign_id = d.campaign_id"
                 " AND l.id = d.plan_link_id"
                 " JOIN plan_nodes a ON a.guild_id = l.guild_id AND a.campaign_id = l.campaign_id"
