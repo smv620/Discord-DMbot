@@ -3452,12 +3452,13 @@ once. The new-campaign form's link is saved in the same step as the campaign.
   - DMbot knows whether the table is **in combat** and which **round** it is.
   - From what the DM says ("roll initiative", "round three", "the fight's over") and from DM-screen
     buttons (**Start combat**, **Next round**, **End combat**) that correct it.
-  - With **side-based initiative** (a campaign setting) it tracks rounds only, not turn order.
+  - It tracks rounds only, never turn order. (The side-based initiative button was removed, owner
+    2026-10-17, #1769: it changed nothing. FightBot hears the table's initiative style instead, below.)
   - Combat state goes on the DM screen. Players see "⚔️ Combat, round 3" in the game-time channel.
   - **How it runs (built in #1127):**
     - **Kept with the game clock** (`combat_round`, plus the seconds already spent toward the
       next minute), so it survives a restart. A backup does not carry it: a restored campaign
-      starts out of combat. The side-initiative switch is a campaign setting and is in backups.
+      starts out of combat. The old side-initiative field stays in the table and in backups, unused (#1769).
     - **Heard from a DM only** (voice or typed), whole lines only: "roll initiative" or "combat
       starts" begins round 1; "round two" or "next round" sets or moves the round; "combat's
       over" or "the fight ends" ends it. Questions, wishes, conditions and stories ("the goblin
@@ -3513,6 +3514,19 @@ once. The new-campaign form's link is saved in the same step as the campaign.
       most one DMbot private message per two minutes during combat**, counting everything DMbot
       sends them. In practice that is FightBot's own gap, because the sheet questions and cards
       of #1128 are held until the fight ends. Later features keep to this rule.
+  - **Initiative style, heard** (owner, 2026-10-17, #1771): FightBot listens to the DM and the
+    players and works out how the table runs initiative: **one at a time** (each creature on its
+    own turn), **by side** (each side acts together) or **rolled each round**, and whether
+    everyone **declares** what they'll do first. It changes only *when* FightBot speaks: just
+    before the player has to choose (the player before them is acting; their side starts; the DM
+    calls for declarations). Never the combat state, the round, or anything a player sees.
+    - Heard with a strict phrase list, no AI. Only from people who agreed to be recorded. A
+      DM's line sets it; players' lines count only while the DM hasn't said otherwise, and only
+      when two players agree. A player's words still never change combat state.
+    - Kept for the running session (no button, no setting; the DM corrects it by saying it).
+      Until something is heard, FightBot works as before. The DM screen's combat line shows what
+      was heard. The two-minute private-message cap in combat stands; a reminder whose moment has
+      passed is dropped.
     - **Spell slots:** the sheet snapshot (D1) does not keep slot counts, so a reminder can name
       spells and features but not how many slots are left. Adding slots to the sheet is a
       follow-up.
