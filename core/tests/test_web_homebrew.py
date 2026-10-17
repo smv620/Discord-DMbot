@@ -6,7 +6,6 @@ download is the bot's own file for those entries, byte for byte."""
 from __future__ import annotations
 
 import json
-from dataclasses import replace
 from typing import Any
 
 import httpx
