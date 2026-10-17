@@ -7651,20 +7651,20 @@ class DMBot(commands.AutoShardedBot):
     async def upgrade_dm_bot_channel(self, campaign: Campaign) -> int | None:
         """A campaign made before the DM Bot channel (#1666) gets one when its ⚙️ Settings is
         pressed, not only at the next session start. Returns the new channel's id, or None
-        (it already had one, or it couldn't be made: the start-time note says why)."""
-        if campaign.dm_bot_channel_id is not None:
-            return None
+        (it already had one, or it couldn't be made: the start-time note says why). The
+        campaign is read again first, so two quick presses make one channel."""
         guild = self.get_guild(campaign.guild_id)
         if guild is None:
             return None
+        current = await self.campaigns.get(guild.id, campaign.id)
+        if current is None or current.dm_bot_channel_id is not None:
+            return None
         screen = (
-            guild.get_channel(campaign.dm_screen_channel_id)
-            if campaign.dm_screen_channel_id
+            guild.get_channel(current.dm_screen_channel_id)
+            if current.dm_screen_channel_id
             else None
         )
-        note = await self._dm_bot_channel(guild, campaign, screen)
-        if note is not None:
-            return None
+        await self._dm_bot_channel(guild, current, screen)  # (a failed make leaves no id)
         fresh = await self.campaigns.get(guild.id, campaign.id)
         return fresh.dm_bot_channel_id if fresh is not None else None
 
@@ -7687,7 +7687,11 @@ class DMBot(commands.AutoShardedBot):
                 if fresh.dm_bot_channel_id != campaign.dm_bot_channel_id and isinstance(
                     screen, discord.TextChannel
                 ):  # a new channel: the DM screen's help card points to it now, not next start
-                    await update_help_card(screen, fresh, guild.me)
+                    try:
+                        await update_help_card(screen, fresh, guild.me)
+                    except Exception:  # the channel exists: never report it as failed
+                        log.warning("Couldn't refresh the help card for the DM Bot channel",
+                                    exc_info=True)  # fmt: skip
         except DmBotChannelError as exc:
             return screen_messages.dm_bot_failed(str(exc))
         except Exception:

@@ -3650,3 +3650,67 @@ class SaveAndResume(SessionTests):
         await self.bot.stop_table(GUILD, "test")  # answers at once; posts in the background
         await asyncio.gather(*self.bot._finishing)
         self.assertIn("Session ended", sent[-1])
+
+
+class UpgradeDmBotChannel(SessionTests):
+    """A campaign made before the DM Bot channel (#1666) gets one on a Settings press."""
+
+    async def asyncSetUp(self) -> None:
+        await super().asyncSetUp()
+        self.bot.get_guild = lambda gid: self.guild if gid == GUILD else None  # type: ignore[method-assign]
+        self.made = 680000000000000091
+
+    def make_channel(self, note: str | None = None) -> AsyncMock:
+        async def fake(guild: Any, campaign: Any, screen: Any) -> str | None:
+            if note is None:
+                await self.campaigns.set_dm_bot_channel(GUILD, campaign.id, self.made)
+            return note
+
+        mock = AsyncMock(side_effect=fake)
+        self.bot._dm_bot_channel = mock  # type: ignore[method-assign]
+        return mock
+
+    async def test_an_older_campaign_gets_the_channel_and_hears_where(self) -> None:
+        mock = self.make_channel()
+        self.assertEqual(await self.bot.upgrade_dm_bot_channel(self.campaign), self.made)
+        mock.assert_awaited_once()
+
+    async def test_a_campaign_that_has_one_is_left_alone(self) -> None:
+        await self.campaigns.set_dm_bot_channel(GUILD, self.campaign.id, self.made)
+        mock = self.make_channel()
+        self.assertIsNone(await self.bot.upgrade_dm_bot_channel(self.campaign))
+        mock.assert_not_awaited()
+
+    async def test_two_quick_presses_make_one_channel(self) -> None:
+        mock = self.make_channel()
+        first = await self.bot.upgrade_dm_bot_channel(self.campaign)  # (the stale campaign twice)
+        second = await self.bot.upgrade_dm_bot_channel(self.campaign)
+        self.assertEqual((first, second), (self.made, None))
+        mock.assert_awaited_once()
+
+    async def test_a_server_the_bot_is_not_in_gets_nothing(self) -> None:
+        self.bot.get_guild = lambda gid: None  # type: ignore[method-assign]
+        mock = self.make_channel()
+        self.assertIsNone(await self.bot.upgrade_dm_bot_channel(self.campaign))
+        mock.assert_not_awaited()
+
+    async def test_a_channel_that_could_not_be_made_returns_nothing(self) -> None:
+        self.make_channel(note="⚠️ no permission")
+        self.assertIsNone(await self.bot.upgrade_dm_bot_channel(self.campaign))
+
+    async def test_a_help_card_that_cannot_refresh_is_not_a_failed_channel(self) -> None:
+        screen = MagicMock(spec=discord.TextChannel)
+        screen.id = SCREEN
+
+        async def made(*_: Any, **__: Any) -> Any:
+            await self.campaigns.set_dm_bot_channel(GUILD, self.campaign.id, self.made)
+            return SimpleNamespace(id=self.made)
+
+        with (
+            patch("dmbot.bot.setup_dm_bot_channel", made),
+            patch("dmbot.bot.dm_bot_buttons.ensure_panel", AsyncMock()),
+            patch("dmbot.bot.update_help_card", AsyncMock(side_effect=RuntimeError("x"))),
+            self.assertLogs("dmbot.bot", "WARNING"),
+        ):
+            note = await DMBot._dm_bot_channel(self.bot, self.guild, self.campaign, screen)
+        self.assertIsNone(note)  # the channel exists: no "couldn't make it" note

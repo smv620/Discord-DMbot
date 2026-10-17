@@ -284,11 +284,12 @@ class SettingsButton(
                 log.exception("Couldn't make the DM Bot channel on a Settings press")
                 made = None
             if made is not None:
-                await interaction.followup.send(
-                    f"Settings and options now also live in <#{made}>.",
-                    ephemeral=True,
-                    allowed_mentions=NO_PINGS,
-                )
+                with contextlib.suppress(discord.HTTPException):  # (the owner check follows)
+                    await interaction.followup.send(
+                        f"Settings and options now also live in <#{made}>.",
+                        ephemeral=True,
+                        allowed_mentions=NO_PINGS,
+                    )
         # Then, without making the card wait, see whether the owner is still in the server
         # (#1214); if not, the DMs are told and the card's Take it on appears next time.
         check = getattr(interaction.client, "check_owner_present", None)
