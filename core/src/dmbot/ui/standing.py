@@ -19,6 +19,7 @@ from dmbot.ui import logic
 from dmbot.ui.dmbot_commands import (
     VIEW_TIMEOUT_S,
     _answer_first,
+    _bot,
     _Button,
     _failed,
     _Menu,
@@ -98,7 +99,15 @@ async def show_standing(
     if viewer is None or viewer.status != CONFIRMED:
         await _tell(interaction, GONE)
         return
-    index = await memory.standing_index(campaign.guild_id, campaign.id)
+    numbers: dict[int, int] = {}
+    transcripts = getattr(_bot(interaction), "transcripts", None)
+    if transcripts is not None:  # "session 4" in a deed's reason (#1732)
+        try:
+            sessions = await transcripts.sessions(campaign.guild_id, campaign.id, limit=100)
+            numbers = {x.started_at: x.number for x in sessions}
+        except Exception:
+            log.exception("Couldn't number the sessions; the reasons show without them")
+    index = await memory.standing_index(campaign.guild_id, campaign.id, numbers)
     targets = await _targets(memory, campaign.guild_id, campaign.id)
     targets = [t for t in targets if t.id != entity_id]
     text = standing_text(viewer, targets, index, note)

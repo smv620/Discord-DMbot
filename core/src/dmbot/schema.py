@@ -2184,6 +2184,28 @@ PLAN_DIVERGENCES = f"""
     CREATE INDEX plan_same_as_entity ON plan_same_as (guild_id, campaign_id, entity_id);
     """ + _isolate("plan_divergences")
 
+PLAN_POSITION = f"""
+    -- Where the DM says the table is in their adventure (docs/STORY_MEMORY.md, section 6; #1731,
+    -- Guide me): one chapter for each file, the DM's word, which beats DMbot's guess from the
+    -- names heard in the last two sessions until the DM clears it. Only ever written by the DM's
+    -- press; logged in the memory change log (an Undo works). Gone with its file, its chapter and
+    -- the campaign, and NOT in backups, like the plan. New table, no existing rows.
+    CREATE TABLE plan_position (
+        {_memory_scope()}
+        id          TEXT NOT NULL CHECK (id ~ '^[0-9a-f]{{32}}$'),
+        document_id TEXT NOT NULL,
+        chapter_id  TEXT NOT NULL,
+        set_by      BIGINT NOT NULL CHECK (set_by > 0),
+        created_at  BIGINT NOT NULL,
+        PRIMARY KEY (guild_id, campaign_id, id),
+        UNIQUE (guild_id, campaign_id, document_id),
+        FOREIGN KEY (guild_id, campaign_id, document_id)
+            REFERENCES adventure_documents (guild_id, campaign_id, id) ON DELETE CASCADE,
+        FOREIGN KEY (guild_id, campaign_id, chapter_id)
+            REFERENCES plan_nodes (guild_id, campaign_id, id) ON DELETE CASCADE
+    );
+    """ + _isolate("plan_position")
+
 GAMETIME_CHANNEL = """
     -- The players' game-time channel (docs/PLAN.md, "TimeBot"; #1116): `dmb-gametime-<slug>`,
     -- everyone reads, only DMbot posts, with the players' pinned clock ("Day 5, morning")
@@ -6803,6 +6825,7 @@ MIGRATIONS: tuple[Migration, ...] = (
         PLAN_SAME_AS,
     ),  # the book's entry is the table's, by the DM's word (#1715)
     ("0125_plan_divergences", PLAN_DIVERGENCES),  # the table has left the adventure (#1729)
+    ("0126_plan_position", PLAN_POSITION),  # the chapter the DM says the table is in (#1731)
 )
 
 # Tables that must have row-level security. A test checks every table in the schema
@@ -6856,6 +6879,7 @@ ISOLATED_TABLES = (
     "plan_spend",
     "plan_same_as",
     "plan_divergences",
+    "plan_position",
 )
 # A person's own rows (the website, #435): row-level security on `user_id`, set by
 # Database.user(). Sessions can also be found by their cookie hash (Database.session()),

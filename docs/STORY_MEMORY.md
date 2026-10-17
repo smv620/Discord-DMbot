@@ -498,6 +498,11 @@ assembles context in code; the AI only reads it.
    notes), `transcript` (nothing from here ever goes into a transcript).
 4. **Add summaries and evidence:** the entity/thread summaries for the seeds, plus a
    few transcript lines as quotes (with session and time) from the mention index.
+   **(Today, #1740:** nothing writes the mention index (`memory_mentions`; `add_mention` has no caller), so the
+   quoted lines come only from the claim a fact was confirmed from, which needs the extractor (off until
+   #1282); a fact the DM typed in by hand has none. "Was this name heard in a session?" is read from
+   `memory_heard`, which the after-session name scan writes: the pre-session note, health, recall's ranking,
+   Guide me and the deeds' fade all read it.)
 5. **Budget and cite:** a fixed token budget, ordered by score; every item carries its
    fact or line ID, and an answer is checked to cite only IDs it was given.
 
@@ -655,6 +660,26 @@ Each step is useful on its own and ships behind the existing phases.
    place has **🤝 Standing** (DM only) with the reasons, **Set standing…** and, on a group or place,
    **Set attitude…**; a line says it only reminds the DM. Recall does not read these tables, and
    the players' audience and transcripts never get them. 30 pairs take well under 5 ms.
+   **Slice 4b is built (#1732): deeds the DM confirms move standing** (no AI, no extractor, nothing
+   reads speech). On a player character's or the party's name card, **⚔️ Record a deed** (DM only):
+   what happened (up to 200 characters), who it mattered to (up to five NPCs, groups or places), how it
+   landed (**Helped them** +20, **Pleased them** +10, **Annoyed them** −10, **Hurt them** −20), one
+   confirmation, then **↩ Undo that**. No new table: core gains the kind `deed` (under `event`) and the
+   connections `did` (doer → deed) and `affected` (deed → whom, the effect as the detail); the words
+   are the deed's description. All of it is one change in the memory change log (one Undo), in
+   backups, and deleted with the campaign. A deed is the DM's own note, with no name the table can match (its words are not a name anyone says,
+   and no real name inside them is hidden): recall's players audience, the players' lookup and name
+   cards, and transcripts never get it. **Standing:** each deed is evidence
+   of weight 20 (score from how it landed) from each one it mattered to toward the doer, climbing the
+   same ladders as an impression (so a deed by the party reaches each player character). A deed older
+   than ten sessions counts at half weight (old news fades; the DM can always set it); the sessions
+   counted are the ones names were heard in (`memory_heard`) and the ones deeds were recorded for; a deed
+   recorded with no session running takes the newest one. The DM's own word
+   on the exact pair still decides outright, and the deed shows only as a reason. **🤝 Standing**
+   lists it: "⚔️ Saved the mill (session 4, helped)". Because Helped them (+20) is exactly the
+   Friendly line, deeds alone take "No opinion yet" to Friendly at once, and mixed with a Wary word
+   they move it only as far as the mean goes. A later slice may propose deeds from claims for the DM
+   to confirm.
    **Phase 5c slice 1 is built (#1662): story threads the DM keeps** (no AI; the DM writes
    them). Core gains `thread` with the kinds `quest`, `mystery`, `hook` and `goal` under it (as
    `clue` sits under `concept`), and the connections `in_thread` (who, with their role in the
@@ -816,6 +841,30 @@ Each step is useful on its own and ships behind the existing phases.
    already told goes `gone` at the next check and its buttons stop answering; a deleted or merged name that
    comes back by Undo may tell a clash the DM already answered again (`plan_divergences` is derived and not
    in the memory change log's dependents).
+
+   **Phase 5d slice 6 is built (#1731): Guide me, no AI.** With Shared story on **Guide me**, **🧭 What's
+   next?** (on the Shared story card, and on the pre-session note) answers the DM who pressed, privately:
+   "🧭 Probably **Chapter 2** (heard: Bryn, Pell)." / "In the book, this chapter also has: …, +N more." (the
+   book's people and places with no link to the table, up to 6) / "The book's next chapter: **Chapter 3**:
+   <its summary, cut at 150 characters>" or "This is the book's last chapter."; then the clashes Watch the
+   story already told for this chapter, each with its **📋 Book's words**. **Which chapter:** the one with
+   the most table entries the DM linked to the book (`plan_same_as`) among those heard in the last two
+   sessions (`memory_heard`, where a session's names are kept); a tie goes to the later chapter. There is **one chapter rule**, in SQL in
+   `book_links` (`chapter_of` gives the name, `chapter_id_of` the id): the nearest chapter at or before an
+   entry in its file, the later when two share a place. Both the "(Chapter …)" text and Guide me use it.
+   **"Pick my chapter…"** saves the DM's word (migration 0126, `plan_position`: one row for each file; it
+   beats the guess until **Use DMbot's guess**; in the memory change log, so **↩ Undo that** works; gone
+   with its file, its chapter or the campaign; not in backups). With several files it asks which first;
+   with more than 25 chapters, Earlier / Later chapters move the menu. If nothing is linked and heard:
+   "No names heard yet, so no guess. Pick your chapter below." Nothing is invented: every name and summary
+   is what the reader stored. No chapters: "DMbot didn't find chapters in this file. Try another file."
+   **Checks:** Guide me, a DM's own (non-restored) confirmation, and the owner's plan are asked again once
+   in every interaction (the button, and each menu choice), and the pre-session note shows the button only
+   when all three hold. **Cost:** none. About nine calls a press: the checks (campaign, confirmation,
+   plan), the files (2), and the guide's own three reads (nodes with the pick, linked entries, clashes);
+   the reads took about 17 ms on a plan of 440 entries and 20 links. **Help and the website** are WebDev's
+   later.
+
 5. **Throughout:** the ontology steward and graph curator take over the after-session
    cleanup; their health numbers (duplicates, orphans, unused terms, flags per session,
    how often the DM is asked, warnings ignored) go to the server logs, never to players.
