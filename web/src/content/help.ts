@@ -389,6 +389,28 @@ export const npcsChannelSteps: Step[] = [
   },
 ];
 
+// How the table runs initiative, heard by FightBot (#1788; #1771, merged in #1783). Off until dev1 has
+// live-checked it; flip it in the same change that moves "FightBot follows your turn order" out of
+// `held` in whats-new.ts, a test ties the two. There is no setting or button for it (the side-initiative
+// button went in #1774), so the steps name none.
+export const INITIATIVE_STYLE_LIVE = false;
+
+export const initiativeStyleSteps: Step[] = [
+  {
+    text: "FightBot listens for how your table runs initiative, and times your private reminder to just before you choose. Your game master decides.",
+  },
+];
+
+// The game master's side of it: players don't see the combat line unless they peek.
+export const initiativeStyleDmSteps: Step[] = [
+  {
+    text: "FightBot listens for how your table runs initiative: one at a time, by side, or rolled each round. Your DM screen's combat line shows \"Initiative, as heard: ...\". If it's wrong, say it, like \"we use side initiative\". No button.",
+  },
+  {
+    text: "FightBot remembers the style between sessions. The combat line says \"as heard last time\" until FightBot hears it again, and you can correct it the same way.",
+  },
+];
+
 export const dmSteps: Step[] = [
   { text: "Add DMbot to your Discord server from the Add to Discord page." },
   {
@@ -447,6 +469,7 @@ export const dmSteps: Step[] = [
       { name: "Time it", file: "dm_screen/rules_cards.py" },
     ],
   },
+  ...(INITIATIVE_STYLE_LIVE ? initiativeStyleDmSteps : []),
   {
     text: "After a game, press 🧑 Check who is who. DMbot notices when someone answers to a name several times (\"Mike, what do you do?\" then \"I run with my sword\"). You see who it thinks plays whom and say yes or no. Nothing is used until you say yes.",
     names: [{ name: "Check who is who", file: "ui/people_review.py" }],
@@ -709,23 +732,6 @@ export const recapSteps: Step[] = [
     : []),
 ];
 
-// How the table runs initiative, heard by FightBot (#1788; #1771, merged in #1783). Off until dev1 has
-// live-checked it; flip it in the same change that moves "FightBot follows your turn order" out of
-// `held` in whats-new.ts, a test ties the two. There is no setting or button for it (the side-initiative
-// button went in #1774), so the steps name none.
-export const INITIATIVE_STYLE_LIVE = false;
-
-export const initiativeStyleSteps: Step[] = [
-  {
-    text: "FightBot listens for how your table runs initiative: one at a time, by side, or rolled each round. It times your private reminder just before you choose. The game master's words decide; players count only if two recorded players agree.",
-  },
-  {
-    text: "The DM screen's combat line shows \"Initiative, as heard: ...\". If it's wrong, the game master just says so out loud, like \"we use side initiative\". There is no button. This only changes when FightBot speaks, never your fight.",
-  },
-  {
-    text: "FightBot remembers the style between sessions. The combat line says \"as heard last time\" until FightBot hears it again, and you can correct it the same way.",
-  },
-];
 
 export const playerSteps: Step[] = [
   {

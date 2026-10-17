@@ -10,7 +10,7 @@ import { beforeAll, describe, expect, it } from "vitest";
 import { parsePage } from "./dom";
 
 import { entries, held } from "../src/content/whats-new";
-import { TIME_SUGGESTIONS_LIVE, timeSuggestionSteps, RULES_CHANNEL_LIVE, rulesChannelSteps, INITIATIVE_STYLE_LIVE, initiativeStyleSteps, NPCS_CHANNEL_LIVE, npcsChannelSteps, DEEDS_LIVE, deedSteps, WHERE_ARE_WE_LIVE, whereAreWeSteps, SHARED_STORY_LIVE, sharedStorySteps, STANDING_LIVE, standingSteps, HOMEBREW_KINDS_LIVE, homebrewKindSteps, STORY_THREADS_LIVE, storyThreadSteps, DM_BOT_CHANNEL_LIVE, dmBotChannelSteps, settingsOnDmScreenSteps, HOMEBREW_LINKS_LIVE, SECRET_CLUES_LIVE, accountSteps, dmSteps, homebrewLinkSteps, secretClueSteps, emailSteps, recapSteps, quickAnswers, quickAnswersHeading, gettingHelp, playerSteps } from "../src/content/help";
+import { TIME_SUGGESTIONS_LIVE, timeSuggestionSteps, RULES_CHANNEL_LIVE, rulesChannelSteps, INITIATIVE_STYLE_LIVE, initiativeStyleSteps, initiativeStyleDmSteps, NPCS_CHANNEL_LIVE, npcsChannelSteps, DEEDS_LIVE, deedSteps, WHERE_ARE_WE_LIVE, whereAreWeSteps, SHARED_STORY_LIVE, sharedStorySteps, STANDING_LIVE, standingSteps, HOMEBREW_KINDS_LIVE, homebrewKindSteps, STORY_THREADS_LIVE, storyThreadSteps, DM_BOT_CHANNEL_LIVE, dmBotChannelSteps, settingsOnDmScreenSteps, HOMEBREW_LINKS_LIVE, SECRET_CLUES_LIVE, accountSteps, dmSteps, homebrewLinkSteps, secretClueSteps, emailSteps, recapSteps, quickAnswers, quickAnswersHeading, gettingHelp, playerSteps } from "../src/content/help";
 import Help from "../src/pages/help.astro";
 
 const botDir = fileURLToPath(new URL("../../core/src/dmbot/", import.meta.url));
@@ -299,12 +299,19 @@ describe("Help: the website's read-only pages (#1588)", () => {
 
   it("holds the initiative style steps with their held What's new entry (#1788)", () => {
     expect(held.map((h) => h.title).includes("FightBot follows your turn order")).toBe(!INITIATIVE_STYLE_LIVE);
-    const shown = playerSteps.map((x) => x.text).join(" ");
-    expect(shown.includes("FightBot listens for how your table runs initiative")).toBe(INITIATIVE_STYLE_LIVE);
-    const words = initiativeStyleSteps.map((x) => x.text).join(" ");
-    expect(words).toContain("There is no button.");
+    const players = playerSteps.map((x) => x.text).join(" ");
+    expect(players.includes("FightBot listens for how your table runs initiative, and times")).toBe(INITIATIVE_STYLE_LIVE);
+    const dm = dmSteps.map((x) => x.text).join(" ");
+    expect(dm.includes("Initiative, as heard:")).toBe(INITIATIVE_STYLE_LIVE);
+    // Players don't see the combat line, so only the game master's steps speak of it.
+    expect(initiativeStyleSteps.map((x) => x.text).join(" ")).not.toContain("combat line");
+    const words = initiativeStyleDmSteps.map((x) => x.text).join(" ");
+    expect(words).toContain("No button.");
+    expect(words).toContain("as heard last time");
     expect(words).not.toMatch(/setting/i); // the side-initiative button and setting are gone (#1774)
-    for (const step of initiativeStyleSteps) expect(step.text.split(" ").length).toBeLessThanOrEqual(40);
+    for (const step of [...initiativeStyleSteps, ...initiativeStyleDmSteps]) {
+      expect(step.text.split(" ").length).toBeLessThanOrEqual(40);
+    }
   });
 
   it("holds the time suggestion step with its held What's new entry (#1765)", () => {
