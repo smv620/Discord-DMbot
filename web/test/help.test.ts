@@ -246,6 +246,11 @@ describe("Help: the website's read-only pages (#1588)", () => {
     expect(words).toContain("DMbot keeps the text, not the file, for this campaign only. Players can't open it.");
     expect(words).toContain('"Not now" to leave it off');
     expect(words).toContain("keeps only your adventure's name, not its text");
+    // In my adventure… (#1726) is held with its own What's new line and goes live with the same switch.
+    expect(held.map((h) => h.title).includes("Link names to your adventure")).toBe(!SHARED_STORY_LIVE);
+    expect(words).toContain("press 📖 In my adventure…, then pick them from the list");
+    expect(words).toContain("DMbot never links names by itself");
+    expect(words).toContain("then Take off. Made a mistake? Press Undo that.");
   });
 
   it("finds Settings, splits the party and deletes a campaign in plain words (#1659)", () => {
