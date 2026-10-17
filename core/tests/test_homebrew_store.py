@@ -257,6 +257,18 @@ class Isolation(HomebrewTest):
         self.assertEqual(row["n"], 1)
 
 
+class MoreKinds(HomebrewTest):
+    async def test_species_subclass_and_background_are_kept_and_travel_in_a_backup(self) -> None:
+        for kind in ("species", "subclass", "background"):
+            await self.add(f"A {kind}", "Words.", kind=kind)
+        backup = await self.campaigns.export(GUILD_A, self.campaign.id)
+        restored = await self.campaigns.import_backup(GUILD_B, backup, PLAYER)
+        got = {e.name: e.kind for e in await self.store.list(GUILD_B, restored.id)}
+        self.assertEqual(
+            got, {"A species": "species", "A subclass": "subclass", "A background": "background"}
+        )
+
+
 class Backups(HomebrewTest):
     async def test_entries_go_into_a_backup_and_come_back_exactly(self) -> None:
         a = await self.add("Hollow King", "Line one.\nLine two.", summary="Crowned.")

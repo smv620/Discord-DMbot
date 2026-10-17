@@ -46,6 +46,10 @@ _KINDS = {
     "spells": "spell",
     "monsters": "monster",
     "feats": "feat",
+    "species": "species",
+    "races": "species",  # the site's older path for species
+    "subclasses": "subclass",
+    "backgrounds": "background",
 }
 _SKIPPED = frozenset(
     {"script", "style", "nav", "header", "footer", "aside", "form", "button", "noscript", "svg"}

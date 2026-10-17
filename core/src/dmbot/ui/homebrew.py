@@ -133,6 +133,9 @@ KIND_LABELS = {
     "item": "🗡 Item",
     "feat": "💪 Feat",
     "condition": "🌀 Condition",
+    "species": "🧝 Species",
+    "subclass": "🔱 Subclass",
+    "background": "📖 Background",
     "other": "❔ Other",
 }
 
@@ -478,7 +481,7 @@ class EntryMenu(_Menu):
         self.add_item(_Button(self._back, label="↩ To the list"))
         self.kind = _Select(
             self._kind,
-            placeholder=f"Change kind (now: {entry.kind})",
+            placeholder=f"Change kind (now: {KIND_LABELS[entry.kind]})",
             options=[
                 discord.SelectOption(label=KIND_LABELS[k], value=k, default=k == entry.kind)
                 for k in KINDS

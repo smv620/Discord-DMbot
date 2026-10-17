@@ -265,6 +265,13 @@ export const held: Held[] = [
   },
   {
     date: "2026-10-17",
+    title: "Species, subclasses and backgrounds in homebrew",
+    what: "When you add homebrew, you can now pick Species, Subclass or Background as the kind. Pages you add from a link are sorted into the right kind too.",
+    reason:
+      "Held until it has been seen working on the test server (#1663).",
+  },
+  {
+    date: "2026-10-17",
     title: "Keep track of promises made at the table",
     what: "On the Names list, press Add a promise to note something someone swore to do, then say who promised it and who it was promised to. It shows as kept, broken or open, and after a session DMbot tells you which promises haven't moved for a few sessions. It only reminds you; you decide. Players never see your promises.",
     reason:
