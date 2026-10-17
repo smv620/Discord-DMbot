@@ -354,6 +354,9 @@ export interface HomebrewEntry {
   /** False when the game master turned it off (#1629): kept in the list, marked (off). Missing
    * from an older API, which means on. */
   enabled?: boolean;
+  /** Where it came from, in the bot's words: "from dndbeyond.com", "credited to dndbeyond.com" or
+   * "by Sam" (#1653). Null for the DM's own entries; never who added it. Missing from an older API. */
+  source?: string | null;
 }
 
 /** A homebrew pack the campaign follows, with its entries. */

@@ -18,6 +18,7 @@ from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 
 from dmbot.memory.models import (
+    ABANDONED,
     ALIVE,
     BEING_CONDITIONS,
     CAPTURED,
@@ -27,12 +28,17 @@ from dmbot.memory.models import (
     DESTROYED,
     DM,
     GOD,
+    GOING,
+    HINTED,
     INTACT,
     LOST,
     MISSING,
     NPC,
+    OPEN,
     PLAYER_CHARACTER,
+    RESOLVED,
     THING_CONDITIONS,
+    THREAD_STATES,
     TRANSFORMED,
     UNKNOWN,
     MemoryRuleError,
@@ -142,6 +148,14 @@ CORE_TYPES: tuple[TypeTerm, ...] = (
         "player or DM",
         "A real person at the table: a player or the DM. Not part of the story.",
     ),
+    # A storyline the table is following (#1662), and the four kinds the DM tells apart. Each
+    # subtype is a kind of its own under `thread`, like a clue under an idea, so anything that
+    # takes a thread takes all of them.
+    _t("thread", "story thread", "A storyline the table is following: a quest, a mystery, a hook."),
+    _t("quest", "quest", "A job someone wants done, with a goal and a reward.", "thread"),
+    _t("mystery", "mystery", "Something the table is trying to find out.", "thread"),
+    _t("hook", "hook", "A lead that could become a quest if the table follows it.", "thread"),
+    _t("goal", "goal", "Something a character or the party wants to achieve.", "thread"),
     # A piece of information that can be learned (#1649): its own entry, so "who knows it" is an
     # ordinary `knows` fact. A subtype of `concept`, so every range that takes an idea takes it.
     _t(
@@ -237,8 +251,10 @@ _BEINGS = ("character",)
 # The story's kinds: every active core kind except `person`, who sits at the table and not in
 # the story, so "knows" and "appears in" never reach them (#1188).
 _ANY = tuple(
-    t.key for t in CORE_TYPES if t.parent is None and t.status == ACTIVE and t.key != "person"
-)
+    t.key
+    for t in CORE_TYPES
+    if t.parent is None and t.status == ACTIVE and t.key not in ("person", "thread")
+)  # (a thread only takes its own connections, #1662)
 
 # The catch-all relationship a refused term's fact is kept on, with the steward's words as its
 # label (in the fact's `detail`), so a refusal never loses the fact (#1298, #1303).
@@ -285,6 +301,49 @@ CORE_PREDICATES: tuple[PredicateTerm, ...] = (
         examples=("Cerric is a member of the Harpers.", "Snot is a member of the Red Fang."),
         inverse_label="has as a member",
         synonyms=("belongs_to", "part_of", "in_group"),
+    ),
+    PredicateTerm(
+        "in_thread",
+        "is involved in",
+        "Has a part in a story thread, and the part is the detail: the quest giver, the target, "
+        "the villain, a victim, the reward.",
+        ("character", "faction", "item", "place", "event", "concept"),
+        ("thread",),
+        covers=(
+            "a character who gives, chases or is the target of a quest",
+            "an item that is the reward, or a place where a mystery centres",
+        ),
+        not_this=(
+            ("an event that moves a thread along", "advances"),
+            ("an event that ends a thread", "resolves"),
+        ),
+        examples=("Mira is involved in the Missing Heir (the quest giver).",),
+        inverse_label="has taking part",
+        synonyms=("part_of_quest", "quest_giver_of", "target_of"),
+    ),
+    PredicateTerm(
+        "advances",
+        "moves along",
+        "Something that happened moved a story thread forward, without ending it.",
+        ("event",),
+        ("thread",),
+        covers=("a scene where the party learns a new lead for a quest",),
+        not_this=(("an event that finishes the thread", "resolves"),),
+        examples=("The Ambush at the Ford moves along the Missing Heir.",),
+        inverse_label="was moved by",
+        synonyms=("progresses", "pushes_forward"),
+    ),
+    PredicateTerm(
+        "resolves",
+        "ends",
+        "Something that happened ended a story thread: the quest done, the mystery solved.",
+        ("event",),
+        ("thread",),
+        covers=("the final fight that finishes a quest",),
+        not_this=(("an event that only moves a thread along", "advances"),),
+        examples=("The Heir Found ends the Missing Heir.",),
+        inverse_label="was ended by",
+        synonyms=("concludes", "completes"),
     ),
     PredicateTerm(
         "of_people",
@@ -515,6 +574,12 @@ CORE_PREDICATES: tuple[PredicateTerm, ...] = (
 # allowed are this small table: from a condition, which ones may follow. Anything not listed
 # (a character "missing" to "intact") is no change at all.
 STATE_CHANGES: Mapping[str, frozenset[str]] = {
+    # A story thread moves as the DM says; going back from an end is the DM's alone.
+    HINTED: frozenset({OPEN, GOING, RESOLVED, ABANDONED}),
+    OPEN: frozenset({HINTED, GOING, RESOLVED, ABANDONED}),
+    GOING: frozenset({HINTED, OPEN, RESOLVED, ABANDONED}),
+    RESOLVED: frozenset({OPEN, GOING}),
+    ABANDONED: frozenset({HINTED, OPEN, GOING}),
     ALIVE: frozenset({DEAD, MISSING, CAPTURED, TRANSFORMED, UNKNOWN}),
     DEAD: frozenset({ALIVE, TRANSFORMED}),
     MISSING: frozenset({ALIVE, DEAD, CAPTURED, TRANSFORMED, UNKNOWN}),
@@ -528,15 +593,26 @@ STATE_CHANGES: Mapping[str, frozenset[str]] = {
 # The way back from an end is never inferred from a proposal: only the DM's word ("brought
 # back") brings the dead or a destroyed thing back, so a clear-sounding claim can't undo it.
 DM_ONLY_CHANGES: frozenset[tuple[str, str]] = frozenset(
-    {(DEAD, ALIVE), (DEAD, TRANSFORMED), (DESTROYED, INTACT)}
+    {
+        (DEAD, ALIVE),
+        (DEAD, TRANSFORMED),
+        (DESTROYED, INTACT),
+        (RESOLVED, OPEN),
+        (RESOLVED, GOING),
+        (ABANDONED, HINTED),
+        (ABANDONED, OPEN),
+        (ABANDONED, GOING),
+    }
 )
-STATE_NOT_KEPT = "DMbot keeps track of this only for characters, items and places."
+STATE_NOT_KEPT = "DMbot keeps track of this only for characters, items, places and story threads."
 STATE_BAD = "That isn't one of the things DMbot keeps track of for {label}."
 STATE_NEEDS_DM = "Only the DM can say that {name} is back."
 
 
 def conditions_for(onto: Ontology, type_key: str) -> tuple[str, ...] | None:
     """The conditions an entry of this kind can have, or None when it has no state."""
+    if onto.is_a(type_key, "thread"):
+        return THREAD_STATES
     if onto.is_a(type_key, "character"):
         return BEING_CONDITIONS
     if onto.is_a(type_key, "item") or onto.is_a(type_key, "place"):

@@ -127,6 +127,11 @@ class CoreOntology(unittest.TestCase):
                 "concept": "idea",
                 "clue": "clue or secret",  # a kind of idea (#1649)
                 "people": "people",  # a whole people or kind, a kind of idea (#1655)
+                "thread": "story thread",  # the DM's running threads (#1662)
+                "quest": "quest",
+                "mystery": "mystery",
+                "hook": "hook",
+                "goal": "goal",
                 "person": "player or DM",  # not part of the story (#1188)
             },
         )
