@@ -29,6 +29,7 @@ from dmbot.memory.story_plan import (
     PlanStore,
     Stored,
     batches_of,
+    dearer,
     estimate_micro,
     micro_usd,
     parse_answer,
@@ -136,6 +137,7 @@ STOP_OFF = "off"
 STOP_PLAN = "plan"
 STOP_ERROR = "error"
 STOP_GONE = "gone"  # the file was removed while it was read
+STOP_PRICE = "price"  # an answer cost more than was reserved: a pricier model answered
 
 Allowed = Callable[[], Awaitable[bool]]
 Progress = Callable[[int], Awaitable[None]]
@@ -250,7 +252,7 @@ async def _read_batch(
             raise _Stop(STOP_TIME)
         if allowed is not None and not await allowed():
             raise _Stop(STOP_PLAN)
-        worst = estimate_micro(model(), len(SYSTEM) + len(text), MAX_TOKENS)
+        worst = estimate_micro(model(), SYSTEM + text, MAX_TOKENS)
         try:
             reservation = await store.reserve(guild_id, campaign_id, document_id, worst)
         except CapError as cap:
@@ -272,7 +274,7 @@ async def _read_batch(
             failures += 1
             in_a_row += 1
             # What is certain even for a failed call: its input may have been billed.
-            sent = estimate_micro(model(), len(SYSTEM) + len(text), 0)
+            sent = estimate_micro(model(), SYSTEM + text, 0)
             await store.settle(guild_id, campaign_id, reservation.id, sent)
             report.micro_usd += sent
             if in_a_row >= FAILURES_BEFORE_STOP or failures >= FAILURE_BUDGET:
@@ -332,4 +334,8 @@ async def _read_batch(
     for why, n in (("too many", stored.full), ("unknown name", stored.unknown)):
         if n:
             report.dropped[why] = report.dropped.get(why, 0) + n
+    if reply.model and dearer(reply.model, model()):
+        # A model dearer than the one reserved for (a fallback nobody priced) answered: what it
+        # cost is on the ledger, and the run stops here rather than go on at that price.
+        raise _Stop(STOP_PRICE)
     return failures

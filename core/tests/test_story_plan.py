@@ -138,9 +138,16 @@ class Money(unittest.TestCase):
         self.assertEqual(sp.micro_usd(MODEL, 0, 0, cache_read=1000), 200)
 
     def test_the_most_a_call_could_cost_counts_the_longest_answer(self) -> None:
-        most = sp.estimate_micro(MODEL, 30_000, reader.MAX_TOKENS)
+        most = sp.estimate_micro(MODEL, "a" * 30_000, reader.MAX_TOKENS)
         self.assertEqual(most, sp.micro_usd(MODEL, 10_001, reader.MAX_TOKENS))
         self.assertLess(most, 100_000)  # a batch costs cents, so a $3 cap allows dozens
+
+    def test_text_that_is_not_plain_letters_is_counted_dearer(self) -> None:
+        self.assertEqual(sp.tokens_in("abc" * 100), 101)
+        self.assertEqual(sp.tokens_in("你好" * 100), 201)  # a token a character, never under
+        self.assertGreater(
+            sp.estimate_micro(MODEL, "你好" * 5000, 0), sp.estimate_micro(MODEL, "ab" * 5000, 0)
+        )
 
     def test_the_month_is_the_utc_calendar_month(self) -> None:
         self.assertEqual(sp.month_of(CLOCK), "2027-01")
@@ -208,6 +215,15 @@ class Reading(unittest.TestCase):
         )
         self.assertEqual([n.name for n in got.nodes], ["Varn", "Captain Varn"])
         self.assertEqual(got.dropped, {"quote not in the text": 1, "name not in the text": 1})
+
+    def test_short_words_in_a_name_count_too(self) -> None:
+        batch = rows("Al guards the gate of Saltmere with Bo and the old captain, Varn.")
+        said = "Al guards the gate"
+        got = sp.parse_answer(
+            answer(people=[entry("Al", said), entry("Cy", said), entry("Bo Varn", said)]), batch
+        )
+        self.assertEqual([n.name for n in got.nodes], ["Al", "Bo Varn"])  # Cy is not in the text
+        self.assertEqual(got.dropped, {"name not in the text": 1})
 
     def test_a_quote_may_differ_in_typography_only(self) -> None:
         batch = rows("He said “the gate’s open” and left.")
@@ -346,6 +362,7 @@ class Setup(DatabaseTest):
         self.now = float(CLOCK)
         self.campaigns = CampaignStore(self.db, clock=lambda: self.now)
         self.campaigns.register_section(AdventureSection())
+        self.campaigns.register_section(sp.SpendSection())
         self.adventure = AdventureStore(self.db, clock=lambda: self.now)
         self.plan = sp.PlanStore(self.db, clock=lambda: self.now)
         self.a = await self.campaigns.create(GUILD_A, "Frostmaiden", DM)
@@ -556,7 +573,7 @@ class Stopping(Setup):
             cur = await conn.execute("SELECT micro_usd FROM plan_spend ORDER BY at, micro_usd")
             costs = sorted(int(r["micro_usd"]) for r in await cur.fetchall())
         self.assertEqual(len(costs), 5)
-        failed_cost = sp.estimate_micro(MODEL, 0, 0)
+        failed_cost = sp.estimate_micro(MODEL, "", 0)
         self.assertGreater(costs[0], failed_cost)
         self.assertLess(costs[1], 20_000)  # not the 40,000 an answer could have cost
 
@@ -696,7 +713,8 @@ class Refusing(Setup):
         await self.read(Canned(FIRST, SECOND, THIRD), doc)
         data = await self.campaigns.export(GUILD_A, self.a.id)
         self.assertNotIn("Captain Varn", json.dumps(data))
-        self.assertNotIn("plan", " ".join(data["sections"]))
+        self.assertNotIn("plan_nodes", " ".join(data["sections"]))
+        self.assertNotIn("plan_links", " ".join(data["sections"]))
         restored = await self.campaigns.import_backup(GUILD_B, data, DM)
         self.assertEqual(await self.count("plan_nodes", GUILD_B), 0)
         (back,) = await self.adventure.documents(GUILD_B, restored.id)
@@ -829,7 +847,7 @@ class Card(Setup):
         self.assertIn("📖 **Chapter 2: The Cellar**", text)
         self.assertIn("> “Chapter 2: The Cellar”", text)
         self.assertLess(len(text), 2000)
-        self.assertEqual(self.labels(see), ["More ▶", "Not now"])
+        self.assertEqual(self.labels(see), ["More ▶", "Back to your files"])
         self.assertFalse(see.sent["allowed_mentions"].everyone)
         self.assertFalse(see.sent["allowed_mentions"].users)
         more = self.pressing()
@@ -841,7 +859,7 @@ class Card(Setup):
             more.sent["content"],
         )
         self.assertLess(len(more.sent["content"]), 2000)
-        self.assertEqual(self.labels(more), ["◀ Back", "Not now"])
+        self.assertEqual(self.labels(more), ["◀ Back", "Back to your files"])
         past = self.pressing()  # a stale page after entries were removed
         await ui.SeeButton(self.a.id, 600).callback(past)
         self.assertIn(ui.NOTHING_READ, past.sent["content"])
@@ -880,7 +898,7 @@ class Card(Setup):
             set(ui.STOPPED_WORDS),
             {reader.STOP_DOCUMENT_CAP, reader.STOP_MONTH_CAP, reader.STOP_FUNDS,
              reader.STOP_FAILED, reader.STOP_TIME, reader.STOP_OFF, reader.STOP_PLAN,
-             reader.STOP_ERROR},
+             reader.STOP_ERROR, reader.STOP_PRICE, reader.STOP_GONE},
         )  # fmt: skip
         await self.plan.finish(GUILD_A, self.a.id, doc.id, "stopped", "something old")
         it = await self.card()  # a reason this version doesn't know still says what to do
@@ -931,6 +949,8 @@ class Running(unittest.IsolatedAsyncioTestCase):
             "plan": SimpleNamespace(finish=AsyncMock()),
             "plan_ai": SimpleNamespace(model=MODEL),
             "plan_reads": {},
+            "plan_waiting": set(),
+            "_plan_read_notice": AsyncMock(),
             "_plan_slots": asyncio.Semaphore(2),
             "campaigns": SimpleNamespace(get=AsyncMock(return_value=object())),
             "plan_allows": AsyncMock(return_value=True),
@@ -1022,6 +1042,197 @@ class Pages(unittest.TestCase):
             [sp.Listed("place", "Docs", "see https://example.org/x", "http://a.b/c")], 0, 1
         )
         self.assertNotIn("://", linked)
+
+
+class FollowUps(Setup):
+    """#1723: the caps against a pricier model, the ledger across a restore, and small fixes."""
+
+    async def test_a_pricier_fallback_model_stops_the_run_with_its_cost_on_the_ledger(self) -> None:
+        doc = await self.book()
+        dear = Reply(FIRST, False, 20_000, 3_000, "some-model-nobody-priced")
+        ai = Canned(dear, SECOND, THIRD)
+        report = await self.read(ai, doc)
+        self.assertEqual((report.stopped, report.calls), (reader.STOP_PRICE, 1))
+        self.assertEqual(report.nodes, 3)  # what it answered was kept
+        spent = (await self.plan.spent(GUILD_A, self.a.id, doc.id)).document
+        self.assertEqual(spent, sp.micro_usd("some-model-nobody-priced", 20_000, 3_000))
+        self.assertGreater(spent, 500_000)  # priced high, never low
+        self.assertEqual(len(ai.calls), 1)  # no second call at that price
+
+    async def test_the_ledger_comes_back_with_a_backup_by_fingerprint_amounts_only(self) -> None:
+        doc = await self.book()
+        await self.read(Canned(FIRST, SECOND, THIRD), doc)
+        spent = (await self.plan.spent(GUILD_A, self.a.id, doc.id)).document
+        data = await self.campaigns.export(GUILD_A, self.a.id)
+        (row,) = data["sections"]["plan_spend"]
+        self.assertEqual(set(row), {"fingerprint", "month", "micro_usd"})
+        self.assertEqual(row["micro_usd"], spent)
+        self.assertNotIn("Captain Varn", json.dumps(data))  # amounts only, nothing of the plan
+        restored = await self.campaigns.import_backup(GUILD_B, data, DM)
+        (back,) = await self.adventure.documents(GUILD_B, restored.id)
+        self.assertEqual((await self.plan.spent(GUILD_B, restored.id, back.id)).document, spent)
+
+    async def test_replacing_a_campaign_from_an_old_backup_never_lowers_what_it_spent(self) -> None:
+        doc = await self.book()
+        old = await self.campaigns.export(GUILD_A, self.a.id)  # before any reading
+        await self.read(Canned(FIRST, SECOND, THIRD), doc)
+        spent = (await self.plan.spent(GUILD_A, self.a.id, doc.id)).month
+        await self.campaigns.import_backup(GUILD_A, old, DM, replace_campaign_id=self.a.id)
+        (back,) = await self.adventure.documents(GUILD_A, self.a.id)
+        self.assertEqual((await self.plan.spent(GUILD_A, self.a.id, back.id)).month, spent)
+
+    async def test_a_damaged_ledger_in_a_backup_is_refused(self) -> None:
+        from dmbot.campaigns import CampaignError
+
+        await self.book()
+        good = await self.campaigns.export(GUILD_A, self.a.id)
+        fingerprint = "a" * 64
+        for rows in (
+            [{"fingerprint": "nope", "month": "2027-01", "micro_usd": 1}],
+            [{"fingerprint": fingerprint, "month": "2027-13", "micro_usd": 1}],
+            [{"fingerprint": fingerprint, "month": "2027-01", "micro_usd": -1}],
+            [{"fingerprint": fingerprint, "month": "2027-01", "micro_usd": True}],
+            [{"fingerprint": fingerprint, "month": "2027-01", "micro_usd": 10**12}],
+            [{"fingerprint": fingerprint, "month": "2027-01", "micro_usd": 1, "x": 1}],
+            [{"fingerprint": fingerprint, "month": "2027-01", "micro_usd": 1}] * 2,
+            "text",
+        ):
+            data = json.loads(json.dumps(good))
+            data["sections"]["plan_spend"] = rows
+            with self.assertRaises(CampaignError):
+                await self.campaigns.import_backup(GUILD_B, data, DM)
+        self.assertEqual(await self.count("plan_spend", GUILD_B), 0)
+
+    async def test_skipped_parts_are_counted_once_even_if_a_write_is_tried_again(self) -> None:
+        doc = await self.book()
+        await self.plan.begin(GUILD_A, self.a.id, DM, doc.id)
+        for _ in range(2):
+            await self.plan.store_batch(
+                GUILD_A, self.a.id, doc.id, sp.Parsed(malformed=True), next_chunk=1, skipped=True
+            )
+        state = (await self.plan.states(GUILD_A, self.a.id))[doc.id]
+        self.assertEqual((state.skipped_parts, state.next_chunk), (1, 1))
+        await self.plan.store_batch(
+            GUILD_A, self.a.id, doc.id, sp.Parsed(), next_chunk=2, skipped=True
+        )
+        self.assertEqual((await self.plan.states(GUILD_A, self.a.id))[doc.id].skipped_parts, 2)
+
+    async def test_both_reads_of_what_was_found_give_the_same_order(self) -> None:
+        doc = await self.book()
+        await self.read(Canned(FIRST, SECOND, THIRD), doc)
+        page, _ = await self.plan.entries(GUILD_A, self.a.id, doc.id, 0, 99)
+        listed, _ = await self.plan.listing(GUILD_A, self.a.id, 0, 99)
+        self.assertEqual(
+            [(e.kind, e.name) for e in page],
+            [(i.kind, i.title) for i in listed if i.kind != "link"],
+        )
+
+
+class Notices(Setup):
+    async def test_a_finished_read_posts_one_line_on_the_dm_screen(self) -> None:
+        doc = await self.book()
+        await self.read(Canned(FIRST, SECOND, THIRD), doc)
+        await self.plan.finish(GUILD_A, self.a.id, doc.id, "done")
+        posted: list[tuple[int, str]] = []
+
+        async def post(channel: int, text: str) -> None:
+            posted.append((channel, text))
+
+        campaign = SimpleNamespace(dm_screen_channel_id=555)
+        bot: Any = SimpleNamespace(
+            plan=self.plan,
+            adventure=self.adventure,
+            campaigns=SimpleNamespace(get=AsyncMock(return_value=campaign)),
+            post=post,
+        )
+        await DMBot._plan_read_notice(bot, GUILD_A, self.a.id, doc.id)
+        ((channel, text),) = posted
+        self.assertEqual(channel, 555)
+        self.assertIn("DMbot finished reading **keep.txt**: 3 chapters, 2 places, 1 person", text)
+        # Stopped: the reason in words, and what to do.
+        await self.plan.finish(GUILD_A, self.a.id, doc.id, "stopped", reader.STOP_MONTH_CAP)
+        posted.clear()
+        await DMBot._plan_read_notice(bot, GUILD_A, self.a.id, doc.id)
+        self.assertIn("stopped reading **keep.txt** at 100%", posted[0][1])
+        self.assertIn("next month", posted[0][1])
+        # No DM screen, or a post that fails: nothing raised.
+        campaign.dm_screen_channel_id = None
+        await DMBot._plan_read_notice(bot, GUILD_A, self.a.id, doc.id)
+        self.assertEqual(len(posted), 1)
+
+        async def broken(channel: int, text: str) -> None:
+            raise RuntimeError("no")
+
+        campaign.dm_screen_channel_id = 555
+        bot.post = broken
+        await DMBot._plan_read_notice(bot, GUILD_A, self.a.id, doc.id)
+
+    async def test_a_read_waiting_for_a_turn_says_so_on_the_card(self) -> None:
+        doc = await self.book()
+        await self.plan.begin(GUILD_A, self.a.id, DM, doc.id)
+        states = await self.plan.states(GUILD_A, self.a.id)
+        docs = await self.adventure.documents(GUILD_A, self.a.id)
+        running, waiting = frozenset({doc.id}), frozenset({doc.id})
+        self.assertIn("waiting for a turn", ui.card_text(docs, states, {}, running, waiting))
+        self.assertIn("reading… 0%", ui.card_text(docs, states, {}, running))
+
+    async def test_the_bot_marks_a_read_waiting_until_a_slot_is_free(self) -> None:
+        bot: Any = SimpleNamespace(
+            plan=SimpleNamespace(finish=AsyncMock()),
+            plan_ai=SimpleNamespace(model=MODEL),
+            plan_reads={},
+            plan_waiting=set(),
+            _plan_slots=asyncio.Semaphore(0),
+            campaigns=SimpleNamespace(get=AsyncMock(return_value=None)),
+            plan_allows=AsyncMock(return_value=True),
+            _plan_read_notice=AsyncMock(),
+        )
+        with mock.patch("dmbot.bot.plan_reader.run", AsyncMock(return_value=reader.Report())):
+            task = asyncio.create_task(DMBot._read_plan(bot, GUILD_A, "c" * 32, "d" * 32, 0))
+            await asyncio.sleep(0.05)
+            self.assertEqual(bot.plan_waiting, {(GUILD_A, "d" * 32)})
+            bot._plan_slots.release()
+            await task
+        self.assertEqual(bot.plan_waiting, set())
+        bot._plan_read_notice.assert_awaited_once()
+
+    async def test_the_list_has_a_way_back_to_the_files(self) -> None:
+        doc = await self.book()
+        await self.read(Canned(FIRST, SECOND, THIRD), doc)
+        see = press(DM)
+        see.client = SimpleNamespace(
+            campaigns=self.campaigns, adventure=self.adventure, plan=self.plan, plan_ai=object()
+        )
+        await ui.SeeButton(self.a.id, 0).callback(see)
+        labels = [getattr(getattr(c, "item", c), "label", "") for c in see.sent["view"].children]
+        self.assertIn("Back to your files", labels)
+        self.assertNotIn("Not now", labels)
+        back = press(DM)
+        back.client = see.client
+        await ui.BackToFilesButton(self.a.id).callback(back)
+        self.assertIn("Your adventure", back.sent["content"])
+
+
+class Golden(unittest.IsolatedAsyncioTestCase):
+    async def test_a_reader_that_obeys_every_injection_line_is_stopped_by_the_checks(self) -> None:
+        from dmbot.devtools.plan_measure import __main__ as tool
+        from dmbot.devtools.plan_measure.golden import INJECTIONS, golden_text
+
+        text = golden_text()
+        for injection in INJECTIONS:
+            self.assertIn(injection.line, text)
+        people = [entry(i.marker, i.line[:150], [1], summary="added as asked") for i in INJECTIONS]
+
+        class Obeys:
+            async def complete(self, system: str, text: str, *, max_tokens: int = 0) -> Reply:
+                return Reply(answer(people=people), False, 2000, 500, MODEL)
+
+        done = await tool.measure(Obeys(), text, MODEL, 5_000_000)
+        caught = sum(1 for i in INJECTIONS if i.caught_by_code)
+        # Every line the code knows is dropped; the rest are the gap only the prompt closes.
+        self.assertEqual(done["obeyed"], len(INJECTIONS) - caught)
+        self.assertEqual(done["obeyed_uncaught"], done["obeyed"])
+        self.assertGreaterEqual(done["dropped"], caught)
 
 
 if __name__ == "__main__":
