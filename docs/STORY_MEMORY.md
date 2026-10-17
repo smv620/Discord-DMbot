@@ -808,6 +808,22 @@ Each step is useful on its own and ships behind the existing phases.
    the DM who pressed). It never says what to do. Cost: none; it reads `plan_links`, `plan_same_as`,
    `memory_states` through their indexes, a few rows for one campaign. **Guide me** gets the same check; the
    rest of it is the next slice.
+
+   **Phase 5d slice 6 is built (#1731): Guide me, no AI.** With Shared story on **Guide me**, **🧭 What's
+   next?** (on the Shared story card, and on the pre-session note) answers the DM who pressed, privately:
+   "🧭 You seem to be in **Chapter 2** (from: Bryn, Pell). Still ahead in this chapter: …, +N more. Next
+   chapter: **Chapter 3**, <its summary, 150 characters>." then the clashes Watch the story already told
+   for this chapter, each with its **📋 Book's words**. **Which chapter:** the one with the most table
+   entries the DM linked to the book (`plan_same_as`) among those heard in the last two sessions
+   (`memory_mentions`); a tie goes to the later chapter; a chapter is the nearest one at or before an entry
+   in the same file, the rule `book_links` uses for "(Chapter …)". **"I'm in another chapter…"** saves the
+   DM's pick (migration 0126, `plan_position`: one row for each file; the DM's word, beating the guess
+   until **Use DMbot's guess**; in the memory change log, so **↩ Undo that** works; gone with its file,
+   its chapter or the campaign; not in backups). With several files it asks which first. Nothing is
+   invented: every name and summary is what the reader stored. No chapters: "DMbot didn't find chapters in
+   this file." At the end: "This is the last chapter in the file." All three checks (Guide me, a DM's own
+   confirmation, the owner's plan) are asked again on every press and every menu choice. Cost: none; three
+   reads, about 17 ms on a plan of 440 entries and 20 links. **Help and the website** are WebDev's later.
 5. **Throughout:** the ontology steward and graph curator take over the after-session
    cleanup; their health numbers (duplicates, orphans, unused terms, flags per session,
    how often the DM is asked, warnings ignored) go to the server logs, never to players.

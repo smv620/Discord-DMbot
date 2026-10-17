@@ -185,6 +185,38 @@ class StoryWatch:
             )
             return await cur.fetchone() is not None
 
+    async def open_for(
+        self, guild_id: int, campaign_id: str, node_ids: frozenset[str]
+    ) -> list[Clash]:
+        """The clashes already told and not answered that involve these book entries (Guide me
+        lists the ones for the chapter the table is in). At most `SHOWN`."""
+        if not node_ids:
+            return []
+        async with self._db.guild(guild_id) as conn:
+            try:
+                await AdventureStore.require_on(conn, guild_id, campaign_id)
+            except AdventureError:
+                return []
+            cur = await conn.execute(
+                "SELECT d.id, a.name AS a_name, b.name AS b_name, e.name AS entity_name, l.need,"
+                " s.condition, s.from_session_at FROM plan_divergences d"
+                " JOIN plan_links l ON l.guild_id = d.guild_id AND l.campaign_id = d.campaign_id"
+                " AND l.id = d.plan_link_id"
+                " JOIN plan_nodes a ON a.guild_id = l.guild_id AND a.campaign_id = l.campaign_id"
+                " AND a.id = l.from_id"
+                " JOIN plan_nodes b ON b.guild_id = l.guild_id AND b.campaign_id = l.campaign_id"
+                " AND b.id = l.to_id"
+                " JOIN memory_entities e ON e.guild_id = d.guild_id"
+                " AND e.campaign_id = d.campaign_id AND e.id = d.entity_id"
+                " JOIN memory_states s ON s.guild_id = d.guild_id AND s.campaign_id = d.campaign_id"
+                " AND s.id = d.state_id AND s.closed_at IS NULL"
+                " WHERE d.guild_id = %s AND d.campaign_id = %s AND d.status = 'open'"
+                " AND (l.from_id = ANY(%s) OR l.to_id = ANY(%s))"
+                " ORDER BY d.created_at, d.id LIMIT %s",
+                (guild_id, campaign_id, list(node_ids), list(node_ids), SHOWN),
+            )
+            return [_clash(r["id"], r) for r in await cur.fetchall()]
+
     async def retract(self, guild_id: int, campaign_id: str, divergence_ids: list[str]) -> None:
         """Forget clashes that could not be posted (Discord was down), so the next check tells
         them again instead of losing them. Only ones still unanswered."""

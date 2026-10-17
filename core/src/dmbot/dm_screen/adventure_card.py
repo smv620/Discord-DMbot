@@ -24,7 +24,7 @@ from typing import Any, cast
 import discord
 
 from dmbot.campaigns import Campaign
-from dmbot.campaigns.models import STORY_OFF
+from dmbot.campaigns.models import STORY_GUIDE, STORY_OFF
 from dmbot.dm_screen.story_mode import COULDNT, _dm_campaign
 from dmbot.logs import set_log_context
 from dmbot.memory.adventure import (
@@ -209,6 +209,7 @@ def card_view(
     running: frozenset[str] = frozenset(),
     has_plan: bool = False,
     can_match: bool = False,
+    can_guide: bool = False,
 ) -> discord.ui.View:
     """Remove on each file (rows 0 to 3, up to twenty), and the other buttons on the last row:
     Give a file, Read it now (only when the AI is set up and a file waits), Refresh (while a read
@@ -227,6 +228,10 @@ def card_view(
         view.add_item(SeeButton(campaign.id, 0, row=4))
     if can_match:
         view.add_item(MatchButton(campaign.id, row=4))
+    if can_guide:
+        from dmbot.ui.guide import GuideButton  # (here: the menus import this module's helpers)
+
+        view.add_item(GuideButton(campaign.id, row=4))
     return view
 
 
@@ -289,6 +294,8 @@ async def _card(
             running=running,
             has_plan=any(c.chapters + c.places + c.people for c in counts.values()),
             can_match=any(c.places + c.people for c in counts.values()),
+            can_guide=campaign.story_mode == STORY_GUIDE
+            and any(c.chapters for c in counts.values()),
         ),
     )
 

@@ -161,8 +161,12 @@ PLAN_SAME_AS = Table(
     "id",
     ("id", "plan_id", "document_id", "entity_id", "status", "decided_by", "created_at"),
 )
+# The chapter the DM says the table is in, for each adventure file (#1731).
+PLAN_POSITION = Table(
+    "plan_position", "id", ("id", "document_id", "chapter_id", "set_by", "created_at")
+)
 ALL = (TYPES, PREDICATES, ENTITIES, ALIASES, MENTIONS, RELATIONS, CORRECTIONS, FLAGS, RULE_LINKS,
-       STATES, CLAIMS, IMPRESSIONS, ATTITUDES, PLAN_SAME_AS)  # fmt: skip
+       STATES, CLAIMS, IMPRESSIONS, ATTITUDES, PLAN_SAME_AS, PLAN_POSITION)  # fmt: skip
 BY_NAME = {t.name: t for t in ALL}
 
 # What links to a row (table, column, is the column a list), checked before deleting it,

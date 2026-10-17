@@ -93,13 +93,15 @@ class WordsButton(
     discord.ui.DynamicItem[discord.ui.Button[discord.ui.View]],
     template=r"dmbot:watch:words:(?P<campaign>[0-9a-f]{32}):(?P<id>[0-9a-f]{32})",
 ):
-    def __init__(self, campaign_id: str, divergence_id: str, number: int = 0) -> None:
+    def __init__(
+        self, campaign_id: str, divergence_id: str, number: int = 0, row: int | None = None
+    ) -> None:
         super().__init__(
             discord.ui.Button(
                 label=f"{WORDS_LABEL} ({number})" if number else WORDS_LABEL,
                 style=discord.ButtonStyle.secondary,
                 custom_id=f"dmbot:watch:words:{campaign_id}:{divergence_id}",
-                row=max(number - 1, 0),
+                row=max(number - 1, 0) if row is None else row,
             )
         )
         self.campaign_id, self.divergence_id = campaign_id, divergence_id
