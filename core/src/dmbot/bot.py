@@ -174,6 +174,7 @@ from dmbot.fightbot import FightState
 from dmbot.logs import log_context, set_log_context
 from dmbot.mail import Mailer
 from dmbot.memory import definitions, document_reader, extractor
+from dmbot.memory import health as memory_health
 from dmbot.memory.backup import MemorySection
 from dmbot.memory.claims import ClaimStore
 from dmbot.memory.continuity import ContinuityStore
@@ -2223,6 +2224,7 @@ class DMBot(commands.AutoShardedBot):
             ("heads-ups", lambda: self.warn_about_continuity(table)),
             ("quiet threads", lambda: self.warn_about_threads(table)),
             ("steward numbers", lambda: self.log_steward_tally(table)),
+            ("memory health", lambda: self.log_memory_health(table, ended_at)),
         ]
         for name, step in steps:
             try:
@@ -6980,6 +6982,27 @@ class DMBot(commands.AutoShardedBot):
         tally, table.steward_tally = table.steward_tally, Tally()
         if tally.refused or tally.reused or tally.accepted:
             tally.write_to_log()
+
+    async def log_memory_health(self, table: Table, ended_at: int) -> None:
+        """After the session's other work: one line in the server log with the story graph's
+        health numbers for this campaign (#1699), counts only. Never shown to a player or a DM.
+        A failed read is a warning and nothing else: it never stops the steps after it."""
+        if self.memory is None or table.campaign_id is None:
+            return
+        gid, cid = table.guild_id, table.campaign_id
+        with log_context(guild_id=gid, campaign_id=cid):
+            try:
+                numbers = await memory_health.read(
+                    self.memory,
+                    gid,
+                    cid,
+                    since=table.started_at or ended_at,
+                    names_asked=len(table.questions.closed_why),
+                )
+            except Exception:
+                log.warning("Couldn't read the memory health numbers", exc_info=True)
+                return
+            log.info(numbers.line())
 
     async def ask_about_secrets(self, table: Table) -> None:
         """After a session: a name the DM keeps secret was said by a player, so it is now in the
