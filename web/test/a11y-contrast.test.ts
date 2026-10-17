@@ -53,6 +53,32 @@ const pairs: [string, string, number][] = [
   ["control-edge", "surface", 3],
 ];
 
+// The quiet buttons (#1782): accent words on a 16% accent tint over the card or the page, the filled
+// hover look, and the grey email hint. The tint is blended here as the stylesheet's color-mix does.
+function blend(fg: string, bg: string, share: number): string {
+  const f = parseInt(fg.slice(1), 16);
+  const b = parseInt(bg.slice(1), 16);
+  const mix = (shift: number) => Math.round(((f >> shift) & 255) * share + ((b >> shift) & 255) * (1 - share));
+  return "#" + [16, 8, 0].map((shift) => mix(shift).toString(16).padStart(2, "0")).join("");
+}
+
+describe.each([
+  ["light", light],
+  ["dark", dark],
+])("%s quiet buttons (#1806)", (_name, t) => {
+  it.each(["surface", "bg"])("accent words on the tint over %s are at least 4.5:1", (under) => {
+    expect(ratio(t.accent!, blend(t.accent!, t[under]!, 0.16))).toBeGreaterThanOrEqual(4.5);
+  });
+  it("the grey email hint is at least 4.5:1 on the page and on cards", () => {
+    expect(ratio(t["text-muted"]!, t.bg!)).toBeGreaterThanOrEqual(4.5);
+    expect(ratio(t["text-muted"]!, t.surface!)).toBeGreaterThanOrEqual(4.5);
+  });
+  it("the quiet secondary button's edge is at least 3:1", () => {
+    expect(ratio(t["control-edge"]!, t.surface!)).toBeGreaterThanOrEqual(3);
+    expect(ratio(t["control-edge"]!, t.bg!)).toBeGreaterThanOrEqual(3);
+  });
+});
+
 describe.each([
   ["light", light],
   ["dark", dark],
