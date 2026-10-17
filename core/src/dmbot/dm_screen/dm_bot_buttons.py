@@ -156,7 +156,8 @@ class OpenButton(
         who = await standing_of(interaction.client, campaign, interaction.user.id)
         role = panel.role_of(who)
         sheets = getattr(interaction.client, "sheets", None) is not None
-        site = str(interaction.client.settings.site_url or "")
+        settings = getattr(interaction.client, "settings", None)  # (a client without one: no link)
+        site = str(getattr(settings, "site_url", "") or "")
         await interaction.response.send_message(
             CARD_TEXT[role],
             view=role_view(role, campaign, sheets=sheets, site_url=site),

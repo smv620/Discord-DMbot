@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import unittest.mock
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock
 
 import discord
@@ -37,6 +37,8 @@ class Fake:
         self.campaigns = campaigns
         self.memory: Any = memory
         self.sheets: object | None = object()
+        self.all_house_rules: Any = AsyncMock(return_value=[])
+        self.homebrew_reader: Any = None
         self.settings: Any = SimpleNamespace(site_url="")
         self.consenting = {PLAYER, MEMBER}
         self.posted: list[tuple[int, str, Any]] = []
@@ -185,6 +187,16 @@ class Cards(PanelTest):
         )
         self.assertEqual(panel.transcripts_url("http://plain.example.org"), panel.TRANSCRIPTS_URL)
 
+    async def test_a_client_without_settings_still_gets_the_card_with_the_public_link(self) -> None:
+        self.bot.settings = None  # (no settings at all)
+        del self.bot.settings
+        it = self.press(GUEST)
+        await buttons.OpenButton(self.campaign.id).callback(it)
+        (link,) = [
+            c for c in it.sent["view"].children if getattr(c, "label", "") == "📜 Transcripts"
+        ]
+        self.assertEqual(link.url, panel.TRANSCRIPTS_URL)
+
     async def test_the_rule_button_opens_the_lookup_form_for_a_guest_and_a_dm(self) -> None:
         for user in (GUEST, DM):
             it = self.press(user)
@@ -196,7 +208,9 @@ class Cards(PanelTest):
     async def test_the_rule_button_with_an_unreadable_campaign_says_gone(self) -> None:
         it = self.press(GUEST)
         it.response.send_modal = AsyncMock()
-        self.bot.campaigns = SimpleNamespace(get=AsyncMock(side_effect=RuntimeError("down")))
+        self.bot.campaigns = cast(
+            Any, SimpleNamespace(get=AsyncMock(side_effect=RuntimeError("down")))
+        )
         await buttons.RuleButton(self.campaign.id).callback(it)
         it.response.send_modal.assert_not_awaited()
         self.assertEqual(it.sent["text"], buttons.GONE)
@@ -236,8 +250,6 @@ class Cards(PanelTest):
         it = self.press(GUEST)
         it.guild_id = GUILD
         it.client = self.bot
-        self.bot.all_house_rules = AsyncMock(return_value=[])
-        self.bot.homebrew_reader = None
         with (
             unittest.mock.patch.object(rule_lookup, "_send", capture),
             unittest.mock.patch.object(rule_lookup, "_answer_first", AsyncMock()),
