@@ -22,6 +22,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import StrEnum
+from urllib.parse import urlsplit
 
 
 class Role(StrEnum):
@@ -68,8 +69,10 @@ TRANSCRIPTS_URL = "https://getdmbot.com/account/transcripts"
 
 def transcripts_url(site_url: str = "") -> str:
     """Where 📜 Transcripts goes: the configured website's page, else the public one."""
-    site = site_url.strip().rstrip("/")
-    return f"{site}/account/transcripts" if site.startswith("https://") else TRANSCRIPTS_URL
+    parts = urlsplit(site_url.strip())
+    if parts.scheme.lower() != "https" or not parts.netloc:  # Discord refuses a bad link whole
+        return TRANSCRIPTS_URL
+    return f"https://{parts.netloc}/account/transcripts"
 
 
 NOT_YOURS = "Only this campaign's DM can use that. Ask your DM."

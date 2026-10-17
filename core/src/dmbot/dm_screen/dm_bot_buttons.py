@@ -33,22 +33,21 @@ NO_PINGS = discord.AllowedMentions.none()
 _ID = r"(?P<campaign>[0-9a-f]{32})"
 GONE = "DMbot can't find that campaign. Ask your DM."
 WENT_WRONG = "Something went wrong. Please press it again."
+# The same closing sentence on every card, in the buttons' own words (the 📜 icon is also on
+# "My character sheet", so the text names buttons, not icons).
+_TAIL = " Press Look up a rule to check a rule, or Transcripts to read what was said."
 CARD_TEXT = {
     Role.GAME_MASTER: (
         "You are a DM here. ⚙️ Menu is about you (stop recording, delete your transcripts). "
-        "⚙️ Settings is for the whole game. 📖 looks up a rule; 📜 opens the transcripts."
+        "⚙️ Settings is for the whole game." + _TAIL
     ),
     Role.PLAYER: (
-        "You play here. Press ⚙️ Menu to stop being recorded or delete your transcripts. "
-        "📖 looks up a rule; 📜 opens the transcripts."
+        "You play here. Press ⚙️ Menu to stop being recorded or delete your transcripts." + _TAIL
     ),
-    Role.MEMBER: (
-        "You agreed to be recorded in this server. Press ⚙️ Menu to stop. "
-        "📖 looks up a rule; 📜 opens the transcripts."
-    ),
+    Role.MEMBER: ("You agreed to be recorded in this server. Press ⚙️ Menu to stop." + _TAIL),
     Role.GUEST: (
-        "DMbot is not recording you. To play, join the voice channel: DMbot will message you "
-        "to ask. ❓ Help explains DMbot. 📖 looks up a rule; 📜 opens the transcripts."
+        "DMbot is not recording you. To play, join the voice channel and DMbot will message "
+        "you to ask. Help explains DMbot." + _TAIL
     ),
 }
 
@@ -157,7 +156,7 @@ class OpenButton(
         who = await standing_of(interaction.client, campaign, interaction.user.id)
         role = panel.role_of(who)
         sheets = getattr(interaction.client, "sheets", None) is not None
-        site = str(getattr(getattr(interaction.client, "settings", None), "site_url", "") or "")
+        site = str(interaction.client.settings.site_url or "")
         await interaction.response.send_message(
             CARD_TEXT[role],
             view=role_view(role, campaign, sheets=sheets, site_url=site),

@@ -37,6 +37,7 @@ class Fake:
         self.campaigns = campaigns
         self.memory: Any = memory
         self.sheets: object | None = object()
+        self.settings: Any = SimpleNamespace(site_url="")
         self.consenting = {PLAYER, MEMBER}
         self.posted: list[tuple[int, str, Any]] = []
         self.channel: Any = None
@@ -191,6 +192,31 @@ class Cards(PanelTest):
             await buttons.RuleButton(self.campaign.id).callback(it)
             (form,) = it.response.send_modal.await_args.args
             self.assertEqual(form.campaign.id, self.campaign.id, user)
+
+    async def test_the_rule_button_with_an_unreadable_campaign_says_gone(self) -> None:
+        it = self.press(GUEST)
+        it.response.send_modal = AsyncMock()
+        self.bot.campaigns = SimpleNamespace(get=AsyncMock(side_effect=RuntimeError("down")))
+        await buttons.RuleButton(self.campaign.id).callback(it)
+        it.response.send_modal.assert_not_awaited()
+        self.assertEqual(it.sent["text"], buttons.GONE)
+
+    async def test_a_lookup_form_submitted_from_another_server_is_refused(self) -> None:
+        from dmbot.ui import rule_lookup
+
+        told: list[str] = []
+
+        async def tell(interaction: Any, text: str) -> None:
+            told.append(text)
+
+        it = self.press(GUEST, guild=OTHER_GUILD)
+        it.guild_id = OTHER_GUILD
+        with (
+            unittest.mock.patch.object(rule_lookup, "_tell", tell),
+            unittest.mock.patch.object(rule_lookup, "_answer_first", AsyncMock()),
+        ):
+            await rule_lookup.look_up(it, self.campaign.id, "Fireball", guild_id=GUILD, paced=False)
+        self.assertEqual(told, [rule_lookup.NOT_HERE])
 
     async def test_the_rule_button_from_another_server_is_refused(self) -> None:
         it = self.press(DM, guild=OTHER_GUILD)
