@@ -9,7 +9,8 @@ import { beforeAll, describe, expect, it } from "vitest";
 
 import { parsePage } from "./dom";
 
-import { accountSteps, dmSteps, emailSteps, recapSteps, quickAnswers, quickAnswersHeading, gettingHelp, playerSteps } from "../src/content/help";
+import { HOMEBREW_LINKS_LIVE, accountSteps, dmSteps, homebrewLinkSteps, emailSteps, recapSteps, quickAnswers, quickAnswersHeading, gettingHelp, playerSteps } from "../src/content/help";
+import { held } from "../src/content/whats-new";
 import Help from "../src/pages/help.astro";
 
 const botDir = fileURLToPath(new URL("../../core/src/dmbot/", import.meta.url));
@@ -54,7 +55,7 @@ describe("Help", () => {
   });
 
   it("names only buttons and commands that are in the bot's code", () => {
-    for (const step of [...dmSteps, ...recapSteps, ...quickAnswers, ...playerSteps, ...accountSteps, ...emailSteps]) {
+    for (const step of [...dmSteps, ...homebrewLinkSteps, ...recapSteps, ...quickAnswers, ...playerSteps, ...accountSteps, ...emailSteps]) {
       for (const { name, file } of step.names ?? []) {
         expect(step.text, `${name} is in its step`).toContain(name);
         const source = readFileSync(join(botDir, file), "utf8");
@@ -139,5 +140,31 @@ describe("Help: the website's read-only pages (#1588)", () => {
     const texts = playerSteps.filter((s) => s.link).map((s) => s.text);
     expect(texts).toHaveLength(3);
     for (const t of texts) expect(t).not.toMatch(/\bAPI\b|\bdoor\b|database|\bJSON\b/i);
+  });
+
+  it("adds homebrew by typing or a file, and says what off means (#1653)", () => {
+    const steps = dmSteps.map((x) => x.text);
+    const adding = steps.find((t) => t.includes("Who made these?")) ?? "";
+    expect(adding).toContain("➕ Add");
+    expect(adding).toContain("Who made these?");
+    expect(adding).toContain("House rules");
+    const off = steps.find((t) => t.includes("Turn off")) ?? "";
+    expect(off).toContain("An entry that is off is kept, and DMbot ignores it.");
+    expect(off).toContain("Turn on");
+  });
+
+  it("holds the link-import steps with the held What's new entries, and flips them together (#1653)", () => {
+    const heldTitles = held.map((h) => h.title);
+    const linkTitles = ["Add homebrew from a link", "Share imported homebrew in a pack"];
+    for (const title of linkTitles) {
+      expect(heldTitles.includes(title), title).toBe(!HOMEBREW_LINKS_LIVE);
+    }
+    const shown = dmSteps.map((x) => x.text).join(" ");
+    expect(shown.includes("🔗 Add from a link")).toBe(HOMEBREW_LINKS_LIVE);
+    const words = homebrewLinkSteps.map((x) => x.text).join(" ");
+    expect(words).toContain("isn't public, publish it there first");
+    expect(words).toContain("never asks again for that site");
+    expect(words).toContain("Every table that uses that page gets the update");
+    expect(words).toContain("Use example.com");
   });
 });
