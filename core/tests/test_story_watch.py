@@ -13,6 +13,7 @@ from dmbot.memory import book_links as links
 from dmbot.memory.story_watch import Clash, Found, StoryWatch, clashes
 from dmbot.ui import story_watch as ui
 from tests import test_book_links as base
+from tests.answer_first import Timeline
 from tests.test_adventure import press
 from tests.test_memory_store import DM, GUILD_A, GUILD_B
 
@@ -428,6 +429,21 @@ class Buttons(Setup):
         self.assertIn("He must live to the end.", str(seen.sent))
         await know.callback(self.pressing(DM))
         self.assertEqual(await self.watch.count(GUILD_A, self.c, "known"), 1)
+
+    async def test_the_buttons_answer_discord_before_the_database(self) -> None:
+        entity, _, _ = await self.varn()
+        await self.set(entity, "dead")
+        (one,) = (await self.watch.check(GUILD_A, self.c)).shown
+        for button in (ui.KnowButton(self.c, one.id), ui.WordsButton(self.c, one.id)):
+            line = Timeline()
+            it = self.pressing(DM)
+            it.response, it.followup = line.response, line.followup
+            it.client.campaigns = SimpleNamespace(
+                get=line.slow("campaign", await self.campaigns.get(GUILD_A, self.c))
+            )
+            await button.callback(it)
+            line.assert_answered_first()
+            self.assertIn("slow:campaign", line.events, type(button).__name__)
 
     async def test_the_view_has_two_buttons_for_each_line_and_numbered_when_many(self) -> None:
         entity, _, _ = await self.varn()

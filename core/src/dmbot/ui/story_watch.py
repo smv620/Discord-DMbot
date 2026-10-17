@@ -82,6 +82,8 @@ class KnowButton(
         return cls(match["campaign"], match["id"])
 
     async def callback(self, interaction: discord.Interaction) -> Any:
+        # Answer Discord first (#1803): the DM check, the plan check and the read are several trips.
+        await interaction.response.defer(ephemeral=True, thinking=False)
         got = await _dm_and_watch(interaction, self.campaign_id)
         if got is None:
             return
@@ -114,6 +116,8 @@ class WordsButton(
         return cls(match["campaign"], match["id"])
 
     async def callback(self, interaction: discord.Interaction) -> Any:
+        # Answer Discord first (#1803): the DM check, the plan check and the read are several trips.
+        await interaction.response.defer(ephemeral=True, thinking=False)
         got = await _dm_and_watch(interaction, self.campaign_id, needs_plan=True)
         if got is None:
             return
