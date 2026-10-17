@@ -204,7 +204,7 @@ each with a plain label:
 - `knows` (being/group → clue): who knows what, and since when. A clue is an entry of
   its own, so this is an ordinary relationship, never one that points at another
   relationship. A clue can have a **limited audience** (only these people know it);
-  most clues don't;
+  most clues don't (as built, #1649: only a character is listed; `knows` has no group on its subject side);
 - `witnessed` (being → event): feeds who knows and reputation;
 - `owns` stays as it is: owning isn't holding, and owning has no limit on the item side;
 - `carries` (being → item, new): who has it right now. **One holder at a time, only for
@@ -619,6 +619,42 @@ Each step is useful on its own and ships behind the existing phases.
    `DMBOT_SIDEBAR_RECALL_BUDGET` (1000) characters beside today's "campaign names" section, which
    stays (names, kinds and other names only). `DMBOT_SIDEBAR_RECALL=0` makes the prompt exactly
    the names-only one.
+   **Slice 3 is built (#1649): who knows a secret.** `clue` ("clue or secret") is a core kind, a
+   subtype of `concept`, and an entry of its own. A clue carries one flag, `audience_limited`
+   (migration 0115), the DM's switch **🔒 Only some know this** on its name card (DM only). Who
+   knows it is its confirmed, still-true `knows` facts from characters, so there is no new table
+   and no relationship pointing at a relationship. The switch can be turned on only with at least
+   one person listed; when the last person is removed it turns itself off. The flag is cleared if
+   the entry becomes another kind, kept if two clues merge, and carried in backups (an older
+   backup restores it off). After a session, the continuity run (`dmbot.memory.continuity`,
+   the same list, quoting rules, critical mass and buttons) adds a heads-up when a claim ties a
+   confirmed character who is not on the list to a limited clue: **possible** by default, **likely**
+   when the claim's words say they told it or used it. A character still waiting to be confirmed
+   gives none. Its buttons are **They learned it** (confirms the claim and writes a dated `knows`
+   fact, which also stops the warning), **Wasn't real** and **Ignore**. A clue without the switch
+   never warns about anyone: a missing `knows` means DMbot doesn't know. Recall's **players**
+   audience drops a limited clue (and with it every fact that points to it), and its name card is
+   the DM's alone. `witnessed` is still not a term: nothing reads it until reputation (slice 4),
+   and `appears_in` serves for who was at an event.
+   **Slice 4a is built (#1655): standing the DM sets, worked out on demand** (no AI, no extractor;
+   deeds come later). Core gains the kind `people` (a subtype of `concept`: the tabaxi, outsiders)
+   and the connection `of_people` (character → people), the DM's word and never copied from a
+   species link. The party is one group per campaign flagged `party`; its members are the
+   confirmed player characters, worked out in code (nothing written when one joins). Two tables,
+   `memory_impressions` (viewer → subject) and `memory_attitudes` (group or place → a people), hold
+   a score −100..100 and the weight of the evidence, with the history kept: a newer word for a pair
+   closes the older (`closed_at`). They are campaign-scoped with forced RLS, in the change log
+   (Undo), in backups and deleted with the campaign. The DM's five steps store as −80, −40, 0, 40,
+   80 and read back at ±20 and ±60. The pure rule (`dmbot.memory.standing`) climbs at most two rungs
+   up each ladder (judged: character → party → groups → people; judging: NPC → groups and places →
+   the wider place), never in a loop, counting each found row with its weight halved per rung. **The
+   DM always wins:** the viewer's own DM-set impression on the exact pair, or its own attitude
+   toward a people the subject is of, decides the step, and the rungs above are only reasons;
+   otherwise the weighted mean decides, so direct evidence outweighs prejudice as it grows.
+   Nothing found is shown as **No opinion yet**, never as Wary. A name card for an NPC, group or
+   place has **🤝 Standing** (DM only) with the reasons, **Set standing…** and, on a group or place,
+   **Set attitude…**; a line says it only reminds the DM. Recall does not read these tables, and
+   the players' audience and transcripts never get them. 30 pairs take well under 5 ms.
 3. **Phase 5c: PlotBot:** threads, promises, clues, `led_to`, stalled-thread nudges,
    summaries, the pre-session note, the AI recap.
 4. **Phase 5d: Shared story:** the story plan, `same_as` links, divergence ("Watch

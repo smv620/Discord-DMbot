@@ -228,6 +228,12 @@ class Entity:
     # An item of which only one exists (Heartseeker, not a longbow). None: nobody said, so a
     # proper name means yes (`looks_named`); the DM's switch on the name card sets it.
     unique_item: bool | None = None
+    # A clue only some people know (#1649): the DM's switch. Who knows it is its confirmed
+    # `knows` facts. Meaningful for a clue only; off for everything else.
+    audience_limited: bool = False
+    # The campaign's party (#1655): one group per campaign whose members are its confirmed player
+    # characters, worked out in code and not stored fact by fact.
+    party: bool = False
 
     @property
     def is_unique(self) -> bool:
@@ -248,6 +254,23 @@ class Entity:
                 self.role or "", "character"
             )
         return self.type
+
+
+@dataclass(frozen=True, slots=True)
+class Opinion:
+    """An impression (a viewer's feeling about a subject) or an attitude (a group's or place's
+    feeling toward a whole people) the DM set (#1655). A newer one for the same pair closes the
+    older, so the history stays: `closed_at` is None while it is the current one."""
+
+    id: str
+    holder_id: str  # the viewer (an impression) or the group or place (an attitude)
+    target_id: str  # the subject (an impression) or the people (an attitude)
+    score: int
+    weight: int
+    source: str
+    from_session_at: int | None
+    created_at: int
+    closed_at: int | None
 
 
 _ARTICLES = frozenset({"a", "an", "the"})

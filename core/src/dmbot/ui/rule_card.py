@@ -17,6 +17,7 @@ import discord
 
 from dmbot.rules import facts as rule_facts
 from dmbot.rules import index
+from dmbot.rules.book_rank import BOOK_TAG, LEGACY_TAG
 from dmbot.rules.followed import FollowedRule
 from dmbot.rules.homebrew import Homebrew, credit_label
 from dmbot.rules.house import HouseRule
@@ -276,7 +277,6 @@ def card_parts(
 
 
 HOMEBREW_TAG = "[Homebrew]"
-BOOK_TAG = "[Shared book]"
 HOMEBREW_FOOTER = "_Your own homebrew, as you wrote it. You decide._"
 PACK_FOOTER = "_From a homebrew pack this campaign follows, as published. You decide._"
 
@@ -312,7 +312,7 @@ def _tags(own: Homebrew, legacy: bool) -> str:
     """`[Homebrew]`; for a shared book's entry `[Shared book]`, with `[Legacy 2014]` when it is
     for the older rules and the campaign plays the newer (#1563)."""
     if own.from_book:
-        return f"{BOOK_TAG} [Legacy 2014]" if legacy else BOOK_TAG
+        return f"{BOOK_TAG} {LEGACY_TAG}" if legacy else BOOK_TAG
     return HOMEBREW_TAG
 
 

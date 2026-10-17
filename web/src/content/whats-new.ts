@@ -134,7 +134,7 @@ export const held: Held[] = [
   {
     date: "2026-10-16",
     title: "Add homebrew from a link",
-    what: "In Settings, then Homebrew, press Add from a link and paste the address of a published homebrew page. DMbot reads that one page, shows it to you, and saves it only when you press Save. The first time for a site, you say you have the right to use it; after that it asks nothing. You can also say who made a file you load.",
+    what: "In Settings, then Homebrew, press Add from a link and paste the address of a published homebrew page. DMbot reads that one page, shows it to you, and saves it only when you press Save. The first time for a site, you say you have the right to use it; after that it asks nothing. You can also say who made a file you load. Approved sites, in the same place, shows each site you said yes to and lets you take one back.",
     reason:
       "Held until dev1 has tried one real published page from the server: the site may block server traffic (#1634).",
   },
@@ -206,6 +206,20 @@ export const held: Held[] = [
     what: "If a player says a name you've marked secret, it ends up in the transcript, which anyone in your server can read. After the session DMbot asks you privately, one name at a time (up to five), whether it should stay secret from players or be opened up. Only you can answer, and DMbot never decides for you.",
     reason:
       "Held until it has been seen working on the test server (#1407).",
+  },
+  {
+    date: "2026-10-16",
+    title: "Secrets only some people know",
+    what: "Mark a clue or secret as something only some characters know, and list who. After a session, DMbot tells you, privately, if someone who isn't on the list spoke of it. You decide whether they really learned it. DMbot never decides, and players never see the list.",
+    reason:
+      "It needs the story extractor, which stays off until its prompt passes the measurement (#1282); held until it has been seen working on the test server (#1649).",
+  },
+  {
+    date: "2026-10-17",
+    title: "How NPCs feel about the party",
+    what: "On an NPC's, group's or place's name card, press Standing to see how it feels about each player character and the party: Hostile, Unfriendly, Wary, Friendly or Devoted, with the reasons. You can set it too. It only reminds you; you decide how they act. Players never see it.",
+    reason:
+      "Held until it has been seen working on the test server (#1655).",
   },
 ];
 

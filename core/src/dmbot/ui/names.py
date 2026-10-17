@@ -61,6 +61,8 @@ KINDS: dict[str, str] = {
     "item": "An item",
     "deity": "A god or other power",
     "event": "Something that happened (event)",
+    "clue": "A clue or secret",
+    "people": "A whole people or kind (tabaxi, elves)",
     "concept": "Something else",
 }
 KIND_SHORT: dict[str, str] = {
@@ -74,6 +76,8 @@ KIND_SHORT: dict[str, str] = {
     "deity": "god",
     "spell": "spell",
     "event": "event",
+    "clue": "clue",
+    "people": "people",
     "concept": "other",
     "person": "player or DM",
 }
@@ -331,7 +335,9 @@ async def show_home(interaction: discord.Interaction, campaign_id: str) -> None:
     if campaign is None:
         return
     try:
-        names = await cache.get(campaign.guild_id, campaign.id)
+        names = (await cache.get(campaign.guild_id, campaign.id)).for_viewer(
+            sees_secrets(campaign, interaction.user.id)
+        )
     except Exception:
         log.exception("Couldn't load the campaign's names")
         await _tell(interaction, "DMbot couldn't load the names just now. Try again in a moment.")

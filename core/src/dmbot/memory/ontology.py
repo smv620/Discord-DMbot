@@ -142,6 +142,18 @@ CORE_TYPES: tuple[TypeTerm, ...] = (
         "player or DM",
         "A real person at the table: a player or the DM. Not part of the story.",
     ),
+    # A piece of information that can be learned (#1649): its own entry, so "who knows it" is an
+    # ordinary `knows` fact. A subtype of `concept`, so every range that takes an idea takes it.
+    _t(
+        "clue",
+        "clue or secret",
+        "A piece of information that can be learned: a rumour, a secret.",
+        "concept",
+    ),
+    # A whole people or kind: the tabaxi, elves, outsiders (#1655). Its own entry, so a group or
+    # place can have an attitude toward it. The DM says who is of it; it is never copied from a
+    # character's species link.
+    _t("people", "people", "A whole people or kind: the tabaxi, the elves, outsiders.", "concept"),
     _old("player_character", "player character", "character"),
     _old("npc", "NPC", "character"),
     _old("deity", "god", "character"),
@@ -273,6 +285,22 @@ CORE_PREDICATES: tuple[PredicateTerm, ...] = (
         examples=("Cerric is a member of the Harpers.", "Snot is a member of the Red Fang."),
         inverse_label="has as a member",
         synonyms=("belongs_to", "part_of", "in_group"),
+    ),
+    PredicateTerm(
+        "of_people",
+        "is one of",
+        "Belongs to a whole people or kind, as the DM says: a tabaxi, an elf, an outsider. "
+        "The DM's word; it is not read from the character's species.",
+        ("character",),
+        ("people",),
+        covers=("a character who is a tabaxi, a dwarf or an outsider",),
+        not_this=(
+            ("belonging to a guild or an army", "member_of"),
+            ("living in a town", "located_in"),
+        ),
+        examples=("Kesh is one of the tabaxi.",),
+        inverse_label="has among them",
+        synonyms=("is_a", "race_of", "belongs_to_people"),
     ),
     PredicateTerm(
         "ally_of",

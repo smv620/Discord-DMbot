@@ -683,6 +683,21 @@ or servers; only the campaign's DMs change anything (the store checks in the sam
     (`shared_confirmations`, purpose `rulebook`) and loads it with `from_book` set (migration 0099): that
     text can never go into a shared pack. An entry whose name the campaign has (any case) is updated
     (version + 1); a file that would take the campaign over 200 entries loads nothing and says the count.
+    An entry from a shared rulebook carries the players' card tags in the file (2026-10-16, #1584): a line
+    `[Shared book]` under its heading, and `[Shared book] [Legacy 2014]` when its book is for the 2014
+    rules and the campaign plays newer ones (the same `book_tag` the card uses). Loading a file reads
+    that line and ignores it: only "I have the right" ever marks an entry as from a book. The website's
+    download writes the same file for the entries it shows, with the same tags (2026-10-16, #1593): its
+    door returns `fromBook` and `legacy` for each entry (`legacy` is `book_is_legacy`'s test, worked out in
+    the database against the campaign's own ruleset), and `homebrew_file.write` takes that answer per entry,
+    so the two files are byte-equal for the same entries.
+  - **On the website** (#1525, #1545, migration 0100; tags 2026-10-16, #1579, migration 0107): the signed-in
+    Homebrew page shows a campaign's entries to anyone in the server, with a text-file download that is
+    byte-equal to the bot's file. Since part 2 (#1650) it shows every entry, an entry that is off muted and
+    marked "(off)", and where each came from (#1657: "from dndbeyond.com", "by Sam"). Entries loaded from a
+    shared book are tagged like the Discord players' card: "From a shared book", and "[Legacy 2014]" for a
+    2014 book while the campaign plays newer rules (legacy content is tagged wherever it appears). Still
+    never: who added an entry (a Discord id), its id, a page's address or the book's name.
 - Sharing as a pack (part 2) is built: see "Shared rulesets" (#1527).
 
 **Homebrew (part 2): links, sources and on/off (owner, 2026-10-16).** This changes part 1. Where the two
@@ -707,7 +722,7 @@ differ, this wins.
   the right-to-use warning ("DMbot doesn't check this…") and confirms once. That approval sticks: every
   later link from the same site in that campaign needs no new confirmation. Who confirmed and when is kept
   (table of approved sites per campaign). A campaign that has not approved a site cannot use content from
-  it, whether imported there or reached through a pack.
+  it, whether imported there or reached through a pack. **Seen and taken back (#1652):** ⚙️ Settings → 📚 Homebrew → 🌐 Approved sites lists each approved site with who approved it and when, and a DM can take one back after one plain question ("Take back dndbeyond.com? DMbot will stop using the N entries from it until a DM says yes again. Nothing is deleted."). The entries stay saved and the list marks them "(waiting for the site)"; adding from that site again asks the right-to-use question again. A follower's approvals are its own list.
 - **🔄 Update from the link (#1645).** On a link entry, a DM can fetch its one page again: same guards,
   same one-at-a-time and hourly limits, and the site's approval checked again. DMbot shows the new words
   and what changed ("Nothing changed on the page." when so); only **Save** replaces the kept copy, and
@@ -732,6 +747,11 @@ differ, this wins.
   reference, never as copies. A campaign that follows a pack must have approved each site the pack's
   entries come from, once per site, before those entries are used. Entries from a shared rulebook
   (`from_book`) still never go into a pack.
+- **The homebrew menu shows kinds first (owner, 2026-10-17).** A full list gets huge, so ⚙️ Settings → 📚 Homebrew
+  opens with one button per kind, each with how many are on out of how many there are: **[Spells 10/12]**
+  (10 on, 12 in all). A kind's button opens that kind's list. Kinds with no entries show no button. #1665.
+- **Kinds** (owner's live check, 2026-10-17): species, subclass and background join spell, monster, item, feat,
+  condition and other (#1663).
 - **Build order:** #1628 (rules out, PR #1630) → #1629 (on/off replaces hidden) → sources and site approvals
   (schema) → import by link → packs with imported entries → the website.
 
@@ -1113,6 +1133,23 @@ be no Undo to show (nor in a stopped session still finishing its last lines).
 Continuity warnings (Phase 5a) and rules alerts must pick a kind
 when they land.
 
+**The DM Bot channel (owner, 2026-10-17).** The DM screen was getting cluttered by settings and options, so
+they move to a channel of their own, **DM Bot** (`dmb-dm-bot-<short name>`, one per campaign like the other
+sub-channels), and the DM screen keeps only what the game needs while it is played: rules alerts, the
+sidebar, the clock, cards and the after-session notes for the DM.
+- **Everyone in the server can see it; only DMbot posts in it.** It holds one control panel message, kept up
+  to date. Every press answers **privately**, and what a person is offered depends on their role in that
+  campaign, checked again on every press: a **game master** gets every button (⚙️ Settings and all it holds:
+  homebrew, house rules, game masters, transcripts, the clock's settings, delete campaign for the plan
+  holder); a **player** gets their own things (their ⚙️ Menu: consent, Stop recording me, Delete my
+  transcripts; 📖 Look up a rule; where to read transcripts); anyone else in the server gets what any member
+  may do (rule lookups, transcripts). A button nobody in a role may use is not shown to them.
+- **Nothing secret is ever posted there:** it is a public channel, so DM-screen content never goes into the
+  panel; it only appears in a game master's private answer.
+- **The DM screen** loses the Settings card and the option buttons; a one-line pointer ("Settings and
+  options are in #dmb-dm-bot-…") replaces them. `/dmbot settings` still works and answers privately.
+- Built in #1666 (CloudDev); Help follows (WebDev).
+
 **Channel structure (decided 2026-10-04, #85).** Every channel DMbot creates starts with
 `dmb-`, so its channels group together in the sidebar and are clearly bot-managed.
 
@@ -1123,6 +1160,7 @@ so the docs always show names the way Discord does. For the campaign
 | Channel | Name in Discord | Built in |
 |---|---|---|
 | DM screen | `dmb-dm-screen-rime-of-the-frostmaiden` | Phase 1.5 (now) |
+| DM Bot (settings and options, everyone; owner, 2026-10-17) | `dmb-dm-bot-rmfthfrstmdn` | #1666 |
 | Live transcript (cleaned lines, view only) | `dmb-transcript-rmfthfrstmdn` | Phase 1 (#124, built 2026-10-06; misheard names fixed since 2026-10-07, #127) |
 | Rules archive (house rules, overrides, rulings) | `dmb-rules-rmfthfrstmdn` | Phase 3 |
 | Game time (the players' clock; owner, 2026-10-13) | `dmb-gametime-rmfthfrstmdn` | Phase 4 |
@@ -2790,7 +2828,7 @@ answer **where the whole table can read it**, so nobody waits while someone look
   transcript or the live transcript channel.
 - **Consent:** the consent message adds that questions typed in `dmb-chat` are read, so the consent terms
   version goes up (everyone is asked again once).
-- **Not built yet:** #1187 (CloudDev). The site's help and privacy pages follow (WebDev, with #1155).
+- **Built** (#1187, CloudDev; the site's help and privacy pages with #1155, WebDev).
 
 **Who pays for AI and speech (decided 2026-10-04, replaced 2026-10-07).** Bring-your-own
 keys is dropped: it asked ordinary DMs to open developer accounts, fund them and paste
