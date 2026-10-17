@@ -3886,9 +3886,11 @@ class DMBot(commands.AutoShardedBot):
             names_said = len(named)
         else:
             names_said = 0
-        if text:
+        if text and not self._topic_holds(table, cleaned or text, names_said):
             # After cleaning, so a line is never evidence about itself; even when the names
-            # couldn't be loaded, a word said in lower case is a real word next time.
+            # couldn't be loaded, a word said in lower case is a real word next time. A line
+            # waiting for the off-topic filter adds its words only once labelled game talk
+            # (`_label_topics`, `put_back`): talk not about the game never feeds them (#1748).
             table.vocabulary.note(utterance.user_id, text)
         if text:
             self._act_on_line(table, utterance.user_id, str(cleaned or text))
@@ -4719,13 +4721,20 @@ class DMBot(commands.AutoShardedBot):
                         self._warm_rules(table.rules_rulesets, table)
         return campaign
 
+    def _topic_holds(self, table: Table, text: str, named: int) -> bool:
+        """Would the off-topic filter hold this line for a label? One rule for the line's
+        hold, the names scan and the word list, so they can't disagree (#1748). No AI key, a
+        session finishing, a resting filter and a line plainly about the game are never held
+        (when unsure, keep)."""
+        if self.topic_ai is None or self.tables.get(table.guild_id) is not table:
+            return False
+        return not (time.monotonic() < table.topic_paused_until or obviously_game(text, named))
+
     def _topic_pending(self, table: Table, utterance: Utterance, text: str, named: int) -> bool:
         """The off-topic filter (#52): a line not plainly about the game waits for the
         AI, a window at a time; True if it's waiting. No AI key, or a session still
         finishing: no filter, nothing is hidden."""
-        if self.topic_ai is None or self.tables.get(table.guild_id) is not table:
-            return False
-        if time.monotonic() < table.topic_paused_until or obviously_game(text, named):
+        if not self._topic_holds(table, text, named):
             return False
         key = (utterance.user_id, utterance.start_ms)
         table.held[key] = text
@@ -4813,6 +4822,10 @@ class DMBot(commands.AutoShardedBot):
                 continue  # stopped meanwhile: nothing about their words
             if topic != OFF_TOPIC and said is not None and len(table.heard) < HEARD_MAX:
                 table.heard.append((waiting.speaker, said))
+            if topic != OFF_TOPIC and said is not None:
+                # Game talk: its words count now. A window the filter couldn't judge (a slow
+                # or failed call, a resting filter) arrives here as game talk, as everywhere.
+                table.vocabulary.note(waiting.speaker, said)
             if topic != GAME:
                 await self._save_topic(table, waiting, topic)
             if topic == OFF_TOPIC:
@@ -5723,8 +5736,10 @@ class DMBot(commands.AutoShardedBot):
         # What the names scan would have had (#52), now: before the channel's awaits, so
         # a /dmbot stop meanwhile still scans them (it reads these at the end).
         for line in run.lines:
+            now_said = self._words_now(table, line)
             if len(table.heard) < HEARD_MAX:
-                table.heard.append((line.speaker, self._words_now(table, line)))
+                table.heard.append((line.speaker, now_said))
+            table.vocabulary.note(line.speaker, now_said)  # and its words count now (#1748)
         name = self.name_of(guild_id, run.speaker)
         who = "Someone" if name.startswith("<@") else discord.utils.escape_markdown(name)
         if self.tables.get(guild_id) is not table or table.fix_ended:

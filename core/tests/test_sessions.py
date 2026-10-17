@@ -1537,6 +1537,56 @@ class SaveAndResume(SessionTests):
         self.assertEqual(topics["we sneak past the guards"], "game")
         self.assertEqual((table.topic_calls, table.topic_tokens), (1, [50, 6]))
 
+    async def test_off_topic_words_never_reach_the_name_fixers_word_list(self) -> None:
+        """#1748: a held line adds its words only once labelled game talk."""
+        table = await self.filtered("1 other\n2 game")
+        self.said(table, "my boss called about the quarterly spreadsheet")
+        self.said(table, "we sneak past the guards", at_ms=5_000)
+        for word in ("spreadsheet", "sneak"):  # both still waiting for their label
+            self.assertFalse(table.vocabulary.is_word(word), word)
+        await self.settle()
+        self.assertFalse(table.vocabulary.is_word("spreadsheet"))  # off-topic: never
+        self.assertTrue(table.vocabulary.is_word("sneak"))  # game talk: now
+
+    async def test_a_window_the_filter_could_not_judge_counts_as_game_talk_for_the_words(
+        self,
+    ) -> None:
+        table = await self.filtered(RuntimeError("the helper is down"))
+        self.said(table, "my boss called about the quarterly spreadsheet")
+        self.said(table, "we sneak past the guards", at_ms=5_000)
+        await self.settle()
+        self.assertTrue(table.vocabulary.is_word("spreadsheet"))  # when unsure, keep
+        self.assertTrue(table.vocabulary.is_word("sneak"))
+
+    async def test_a_line_plainly_about_the_game_adds_its_words_at_once(self) -> None:
+        table = await self.filtered("1 other\n2 game")
+        self.said(table, "I roll a d20 for initiative")  # never held for a label
+        self.assertTrue(table.vocabulary.is_word("initiative"))
+
+    async def test_without_the_filter_every_line_adds_its_words_at_once(self) -> None:
+        table = await self.filtered("1 other\n2 game")
+        self.bot.topic_ai = None
+        self.said(table, "my boss called about the quarterly spreadsheet")
+        self.assertTrue(table.vocabulary.is_word("spreadsheet"))
+
+    async def test_putting_a_line_back_adds_its_words(self) -> None:
+        table, _, _ = await self.left_out_line()
+        self.assertFalse(table.vocabulary.is_word("boss"))  # left out: not a word of the game
+        (run,) = table.left_out.runs
+        await self.bot.put_back(GUILD, run.id, DM)
+        self.assertTrue(table.vocabulary.is_word("boss"))  # the DM said it is game talk
+
+    async def test_a_speaker_who_stopped_is_forgotten_and_their_held_words_never_arrive(
+        self,
+    ) -> None:
+        table = await self.filtered("1 game\n2 game")
+        self.said(table, "my boss called about the quarterly spreadsheet")
+        self.consent.stop_now(GUILD, PLAYER)  # a stop reaches the cache before the label
+        self.said(table, "we sneak past the guards", user=DM, at_ms=5_000)
+        await self.settle()
+        self.assertFalse(table.vocabulary.is_word("spreadsheet"))
+        self.assertTrue(table.vocabulary.is_word("sneak"))
+
     async def speaking(
         self, answer: str | Exception, now: Any = None, *, hold: asyncio.Event | None = None
     ) -> Any:
