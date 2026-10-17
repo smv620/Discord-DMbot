@@ -41,7 +41,7 @@ export const entries: Entry[] = [
   {
     date: "2026-10-16",
     title: "Which rules is a book for?",
-    what: "When you load a homebrew file from a book, DMbot asks which rules the book is written for. It uses the answer to tell older entries from newer ones when anyone looks up a rule.",
+    what: "When you load a homebrew file from a book, DMbot asks if the book is for older rules or the rules your table plays. Entries from an older-rules book are tagged [Legacy 2014] when someone looks up a rule.",
   },
   {
     date: "2026-10-16",
@@ -116,7 +116,7 @@ export const entries: Entry[] = [
   {
     date: "2026-10-15",
     title: "Check what DMbot noticed",
-    what: "If something doesn't add up, like a one-of-a-kind item that two people have, DMbot says so and asks you about it after the session. It only points it out, and you decide.",
+    what: "If something doesn't add up, like a one-of-a-kind item that two people carry, DMbot asks you about it after the session. It only points it out, and you decide.",
   },
   {
     date: "2026-10-15",
@@ -161,7 +161,7 @@ export const entries: Entry[] = [
   {
     date: "2026-10-13",
     title: "Link your character sheet",
-    what: "Press My character sheet to link your public online sheet to your character, or to type your character in. Your game master sees it on your character's card.",
+    what: "Press My character sheet to link your public sheet, or to type your character in. Your game master sees it on your character's card.",
   },
   {
     date: "2026-10-13",
