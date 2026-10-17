@@ -719,6 +719,9 @@ export const initiativeStyleSteps: Step[] = [
   {
     text: "The DM screen's combat line shows \"Initiative, as heard: ...\". If it's wrong, the game master just says so out loud, like \"we use side initiative\". There is no button. This only changes when FightBot speaks, never your fight.",
   },
+  {
+    text: "FightBot remembers the style between sessions. The combat line says \"as heard last time\" until FightBot hears it again, and you can correct it the same way.",
+  },
 ];
 
 export const playerSteps: Step[] = [
