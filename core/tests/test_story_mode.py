@@ -221,6 +221,7 @@ def press(user: int, guild: int = GUILD_A) -> Any:
     it.user = member
     it.response.send_message = send_message
     it.response.edit_message = edit_message
+    it.response.is_done = lambda: False  # (a press that was not deferred)
     it.response.defer = defer
     it.edit_original_response = edit_message  # (after a defer, the card is changed in place)
     it.sent = sent
