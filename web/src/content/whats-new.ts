@@ -228,6 +228,13 @@ export const held: Held[] = [
     reason:
       "Held until it has been seen working on the test server (#1662).",
   },
+  {
+    date: "2026-10-17",
+    title: "A DMbot channel for buttons",
+    what: "Each campaign now gets a channel called dmb-dm-bot with one message of buttons. Press My buttons to see the ones for your part at the table; only you see the answer. A DM's buttons include Settings, and a player's include the menu to stop being recorded.",
+    reason:
+      "Held until it has been seen working on the test server (#1666).",
+  },
 ];
 
 const months = [
