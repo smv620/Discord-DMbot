@@ -153,6 +153,7 @@ class Tiers(unittest.TestCase):
                 Feature.RECAP: AIModelTier.FAST,  # the cinematic recap (#1382), off by default
                 Feature.RECAP_RETRY: AIModelTier.CAREFUL,
                 Feature.PLAN_READER: AIModelTier.CAREFUL,
+                Feature.TIME_SUGGEST: AIModelTier.FAST,  # a time jump suggested (#1758)
                 Feature.SUPPORT: AIModelTier.DEEP,
             },
         )

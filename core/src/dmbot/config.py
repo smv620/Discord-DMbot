@@ -76,6 +76,9 @@ class Settings:
     # off nothing calls the AI and the after-session step has nothing to ask.
     story_extractor_on: bool = False
     recaps_on: bool = False  # cinematic recaps (#1382): off until dev1's quality check
+    # A time jump suggested from vague narration (#1758): the DM screen only, never automatic.
+    # Off until dev1 has run a live check.
+    time_suggestions: bool = False
     # The recap's narration and music (#1383): made only when recaps are on, a key and a voice
     # are set and the campaign's plan includes spoken recaps. No key: text-only, nothing fails.
     elevenlabs_key: str = field(default="", repr=False)
@@ -209,6 +212,11 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
             + '".'
         )
 
+    suggestions_raw = (get("DMBOT_TIME_SUGGESTIONS") or "0").lower()
+    if suggestions_raw not in ("0", "1", "true", "on", "false", "off"):
+        raise ConfigError(
+            'DMBOT_TIME_SUGGESTIONS must be 1 (on) or 0 (off), got "' + suggestions_raw + '".'
+        )
     extractor_raw = (get("DMBOT_STORY_EXTRACTOR") or "0").lower()
     if extractor_raw not in ("0", "1", "true", "on", "false", "off"):
         raise ConfigError(
@@ -311,6 +319,7 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
         sidebar_on=sidebar_raw in ("1", "true", "on"),
         story_extractor_on=extractor_raw in ("1", "true", "on"),
         recaps_on=recaps_raw in ("1", "true", "on"),
+        time_suggestions=suggestions_raw in ("1", "true", "on"),
         elevenlabs_key=get("ELEVENLABS_API_KEY"),
         elevenlabs_voice_id=voice_id,
         elevenlabs_speech_model=speech_model,

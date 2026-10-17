@@ -301,6 +301,13 @@ export const held: Held[] = [
   },
   {
     date: "2026-10-17",
+    title: "A time suggestion from your narration",
+    what: "When you narrate that time passes without saying how much (\"you walk for a while\"), DMbot can suggest it on your DM screen with a button such as +2 hours. Nothing moves unless you press it, and you can press Not now.",
+    reason:
+      "Held until dev1 has run a live check and the switch is turned on (DMBOT_TIME_SUGGESTIONS, #1758).",
+  },
+  {
+    date: "2026-10-17",
     title: "Manage your plan without Discord",
     what: "If you can't sign in with Discord, use the email on your receipts. Stripe sends you a code, and you can cancel, update your card or get invoices.",
     reason:

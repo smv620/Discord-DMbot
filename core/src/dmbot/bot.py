@@ -100,6 +100,7 @@ from dmbot.dm_screen import effects as timer_screen
 from dmbot.dm_screen import house_voice as house_voice_screen
 from dmbot.dm_screen import levels as screen_levels
 from dmbot.dm_screen import messages as screen_messages
+from dmbot.dm_screen import time_suggest as time_suggest_screen
 from dmbot.dm_screen.adventure_card import AddButton as AdventureAddButton
 from dmbot.dm_screen.adventure_card import (
     AdventureButton,
@@ -251,8 +252,10 @@ from dmbot.test_recording import files as test_files
 from dmbot.test_recording import library as test_library
 from dmbot.test_recording.session import TestSession
 from dmbot.test_recording.store import TestVoiceStore
+from dmbot.timebot import clock as clock_game
 from dmbot.timebot import combat_phrases, durations, where_are_we
 from dmbot.timebot import phrases as clock_phrases
+from dmbot.timebot import suggest as time_suggest
 from dmbot.timebot.effects import EffectsSection, EffectStore
 from dmbot.timebot.store import ClockSection, ClockStore
 from dmbot.transcript import fix_notes, left_out, lookback, refix, speaker_ai
@@ -651,6 +654,8 @@ class Table:
     topic_tasks: set[asyncio.Task[None]] = field(default_factory=set)  # awaited at the end
     topic_timers: set[asyncio.Task[None]] = field(default_factory=set)  # cancelled then
     topic_failures: int = 0  # in a row: after a few, the filter rests a while
+    # A time jump suggested from vague narration (#1758): what this session remembers about it.
+    time_suggest: time_suggest.State = field(default_factory=time_suggest.State)
     topic_paused_until: float = 0.0  # monotonic seconds
     hidden: set[tuple[int, int]] = field(default_factory=set)  # lines shown as a marker
     # Who the DM was speaking as (#53): the DM's lines waiting for the AI, a window at a
@@ -1005,6 +1010,11 @@ class DMBot(commands.AutoShardedBot):
             if self.ai_client
             else None
         )
+        self.time_ai = (  # a time jump suggested from vague narration (#1758)
+            self.ai_client.tier(FEATURE_TIERS[Feature.TIME_SUGGEST], Feature.TIME_SUGGEST)
+            if self.ai_client
+            else None
+        )
         self.audio_ai = (
             self.ai_client.tier(FEATURE_TIERS[Feature.AUDIO_CHECK], Feature.AUDIO_CHECK)
             if self.ai_client
@@ -1158,6 +1168,7 @@ class DMBot(commands.AutoShardedBot):
             clock_screen.ClockButton, clock_screen.ClockUndoButton, clock_screen.SuggestionButton
         )
         self.add_dynamic_items(clock_screen.CombatUndoButton)  # #1127
+        self.add_dynamic_items(time_suggest_screen.TimeJumpButton)  # #1758
         self.add_dynamic_items(clock_screen.ClockPicker, clock_screen.SplitUndoButton)  # #1607
         self.add_dynamic_items(delete_campaign.DeleteButton)  # #1608
         self.add_dynamic_items(fightbot.FightButton)  # #1129
@@ -2276,6 +2287,13 @@ class DMBot(commands.AutoShardedBot):
                         "Speaker labels: %d calls, %d tokens in, %d out",
                         table.speaker_calls,
                         *table.speaker_tokens,
+                    )
+                if table.time_suggest.calls:  # counts only, never words (#1758)
+                    log.info(
+                        "Time suggestions: %d calls, %d tokens in, %d out",
+                        table.time_suggest.calls,
+                        table.time_suggest.tokens_in,
+                        table.time_suggest.tokens_out,
                     )
                 if table.topic_calls:  # for cost per session hour (#52)
                     log.info(
@@ -4230,6 +4248,7 @@ class DMBot(commands.AutoShardedBot):
             return
         said = clock_phrases.find_clock(line)
         if said is None:
+            await self._maybe_suggest_time(table, user_id, line)  # (#1758) a suggestion at most
             return
         now = time.monotonic()
         last = table.clock_said.get(said.key)
@@ -4246,6 +4265,73 @@ class DMBot(commands.AutoShardedBot):
             if not moved:
                 for key in marked:
                     table.clock_said.pop(key, None)
+
+    async def _maybe_suggest_time(self, table: Table, user_id: int, line: str) -> None:
+        """Vague narration that probably passes game time ("you walk for a while"), which the
+        strict phrases don't move the clock for (#1758): at most a suggestion on the DM screen
+        with one button, never a change of the clock. Only a DM's line, only while the switch is
+        on, the clock is set and not in a fight, the party is not split, and the owner's plan
+        allows the AI (closed when it can't be checked). One AI call for the one line and the
+        game time, nothing else. Consent and the session are checked again after every wait."""
+        if (
+            not self.settings.time_suggestions
+            or self.time_ai is None
+            or self.clocks is None
+            or table.campaign_id is None
+        ):
+            return
+        cue = time_suggest.cue_of(line)
+        state = table.time_suggest
+        now = time.monotonic()
+        if cue is None or not state.allows(cue, now):
+            return
+        gid, cid = table.guild_id, table.campaign_id
+        campaign = await self.campaigns.get(gid, cid)
+        if campaign is None or user_id not in campaign.dm_user_ids:
+            return
+        stored = await self.clocks.get(gid, cid)
+        if stored is None or stored.split or clock_game.in_combat(stored.clock):
+            return
+        if not await self.plan_allows("ai", gid, campaign, fail_open=False):
+            return
+        if not self._still_listening(table, user_id) or not state.allows(cue, now):
+            return
+        state.asked(cue, now)  # counted before the wait: a slow answer can't be asked twice
+        try:
+            reply = await asyncio.wait_for(
+                self.time_ai.complete(
+                    time_suggest.SYSTEM,
+                    time_suggest.prompt(line, clock_game.label(stored.clock.minute)),
+                    max_tokens=time_suggest.ANSWER_TOKENS,
+                ),
+                time_suggest.TIMEOUT_S,
+            )
+        except Exception as exc:
+            state.failed(now)
+            log.info("Time suggestion: couldn't ask (%s)", type(exc).__name__)
+            return
+        state.answered(reply.input_tokens, reply.output_tokens)
+        suggestion = time_suggest.read_answer(reply.text)
+        if suggestion is None or campaign.dm_screen_channel_id is None:
+            return
+        # Again after the wait: the same person, the session, the clock as it is now.
+        if not self._still_listening(table, user_id):
+            return
+        again = await self.clocks.get(gid, cid)
+        if again is None or again.split or clock_game.in_combat(again.clock):
+            return
+        await self.post_message(
+            campaign.dm_screen_channel_id,
+            time_suggest_screen.suggestion_text(line, suggestion.minutes),
+            time_suggest_screen.suggestion_view(cid, suggestion.minutes),
+        )
+
+    def _still_listening(self, table: Table, user_id: int) -> bool:
+        return (
+            self.tables.get(table.guild_id) is table
+            and table.listening
+            and self.consent.has_consent(table.guild_id, user_id)
+        )
 
     async def _clock_phrase_moves(
         self,
