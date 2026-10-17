@@ -103,7 +103,9 @@ from dmbot.dm_screen import messages as screen_messages
 from dmbot.dm_screen.adventure_card import AddButton as AdventureAddButton
 from dmbot.dm_screen.adventure_card import (
     AdventureButton,
+    finished_text,
 )
+from dmbot.dm_screen.adventure_card import BackToFilesButton as BackToAdventureButton
 from dmbot.dm_screen.adventure_card import MatchButton as MatchAdventureButton
 from dmbot.dm_screen.adventure_card import ReadButton as ReadAdventureButton
 from dmbot.dm_screen.adventure_card import ReadNoButton as ReadAdventureNoButton
@@ -207,7 +209,7 @@ from dmbot.memory.sheet_refresh import refresh as refresh_sheets
 from dmbot.memory.sheet_store import CharacterSheet, SheetStore
 from dmbot.memory.sheet_watch import SheetWatch
 from dmbot.memory.store import MemoryStore
-from dmbot.memory.story_plan import PlanStore
+from dmbot.memory.story_plan import PlanStore, SpendSection
 from dmbot.memory.story_watch import StoryWatch
 from dmbot.memory.table_names import NameThenAnswer
 from dmbot.recaps import allowance as recap_allowance
@@ -809,6 +811,7 @@ class DMBot(commands.AutoShardedBot):
         # Reads going now, by (server, document): kept so the card can say "reading" and a second
         # press can't start another, and so the tasks aren't garbage collected mid-read.
         self.plan_reads: dict[tuple[int, str], asyncio.Task[None]] = {}
+        self.plan_waiting: set[tuple[int, str]] = set()  # asked for, waiting for one of the slots
         self._plan_slots = asyncio.Semaphore(PLAN_READS_AT_ONCE)
         # "Did they mean…?" questions left unanswered at a session's end (#1572).
         self.heard_questions = heard_questions
@@ -1169,7 +1172,8 @@ class DMBot(commands.AutoShardedBot):
             AdventureButton, AdventureAddButton, RemoveAdventureButton,
             RemoveAdventureYesButton, RemoveAdventureNoButton,
             ReadAdventureButton, ReadAdventureYesButton, ReadAdventureNoButton,
-            RefreshAdventureButton, SeeAdventureButton, MatchAdventureButton,
+            RefreshAdventureButton, SeeAdventureButton, BackToAdventureButton,
+            MatchAdventureButton,
         )  # fmt: skip
         self.add_dynamic_items(pack_update.PackUpdateButton)  # a followed pack changed (#1527)
         self.add_dynamic_items(pack_suggestion.PackSuggestionButton)  # an entry suggested (#1537)
@@ -6623,9 +6627,12 @@ class DMBot(commands.AutoShardedBot):
                 "adventure", guild_id, campaign, fail_open=False
             )
 
+        key = (guild_id, document_id)
         with log_context(guild_id=guild_id, campaign_id=campaign_id):
             try:
+                self.plan_waiting.add(key)
                 async with self._plan_slots:
+                    self.plan_waiting.discard(key)
                     report = await plan_reader.run(
                         ai,
                         plan,
@@ -6641,6 +6648,7 @@ class DMBot(commands.AutoShardedBot):
                     await plan.finish(guild_id, campaign_id, document_id, "stopped", report.stopped)
                 else:
                     await plan.finish(guild_id, campaign_id, document_id, "done")
+                await self._plan_read_notice(guild_id, campaign_id, document_id)
             except asyncio.CancelledError:
                 raise  # a restart: the state stays 'reading' and a press carries on
             except Exception:
@@ -6649,6 +6657,32 @@ class DMBot(commands.AutoShardedBot):
                     await plan.finish(
                         guild_id, campaign_id, document_id, "stopped", plan_reader.STOP_ERROR
                     )
+                    await self._plan_read_notice(guild_id, campaign_id, document_id)
+            finally:
+                self.plan_waiting.discard(key)
+
+    async def _plan_read_notice(self, guild_id: int, campaign_id: str, document_id: str) -> None:
+        """One line on the DM screen when a read ends, done or stopped (#1723): the DM is not
+        left pressing Refresh. Never raises: a missing channel or a failed post is only logged."""
+        try:
+            if self.plan is None or self.adventure is None:
+                return
+            campaign = await self.campaigns.get(guild_id, campaign_id)
+            if campaign is None or campaign.dm_screen_channel_id is None:
+                return
+            state = (await self.plan.states(guild_id, campaign_id)).get(document_id)
+            docs = await self.adventure.documents(guild_id, campaign_id)
+            doc = next((d for d in docs if d.id == document_id), None)
+            if state is None or doc is None:
+                return
+            counts = (await self.plan.counts(guild_id, campaign_id)).get(document_id)
+            await self.post(
+                campaign.dm_screen_channel_id, finished_text(doc.file_name, state, counts)
+            )
+        except Exception as exc:
+            log.warning(
+                "Story-plan reader: couldn't post the finish notice (%s)", type(exc).__name__
+            )
 
     async def extract_claims(self, table: Table, ended_at: int) -> None:
         """After a session, only with DMBOT_STORY_EXTRACTOR on (it is off until #1282 passes): read
@@ -8373,6 +8407,7 @@ async def run(settings: Settings) -> None:
         campaigns.register_section(HouseRulesSection())  # and so do house rules (#865)
         campaigns.register_section(HomebrewSection())  # and its own homebrew (#1520)
         campaigns.register_section(AdventureSection())  # and its adventure text (#1698)
+        campaigns.register_section(SpendSection())  # and what reading it cost, amounts only (#1723)
         campaigns.register_section(SiteApprovalsSection())  # the sites it approved (#1633)
         campaigns.register_section(FollowedSetsSection())  # and the sets it follows (#1260)
         campaigns.register_section(ClockSection())  # and the game clock (#965)

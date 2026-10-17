@@ -28,6 +28,8 @@ from datetime import UTC, datetime
 from typing import Any
 
 from dmbot.ai import DEFAULT_PRICE, PRICE_PER_MILLION
+from dmbot.campaigns.models import CampaignError
+from dmbot.campaigns.store import DAMAGED
 from dmbot.db import Conn, Database
 from dmbot.memory.adventure import AdventureError, AdventureStore
 from dmbot.memory.claims import reads_like_instruction
@@ -57,9 +59,32 @@ def micro_usd(
     return -(-(weighted_in * price_in) // 4) + output_tokens * price_out
 
 
-def estimate_micro(model: str, chars: int, max_output_tokens: int) -> int:
-    """The most a call could cost: its text at `CHARS_PER_TOKEN`, and the longest answer."""
-    return micro_usd(model, int(chars / CHARS_PER_TOKEN) + 1, max_output_tokens)
+def dearer(model: str, than: str) -> bool:
+    """Does `model` cost more per token than `than` (a model nobody priced counts as dear)?"""
+    a, b = PRICE_PER_MILLION.get(model, DEFAULT_PRICE), PRICE_PER_MILLION.get(than, DEFAULT_PRICE)
+    return a[0] > b[0] or a[1] > b[1]  # input and output each, so a swap of the two still counts
+
+
+def tokens_in(text: str) -> int:
+    """A cautious count of the tokens in a text: ASCII characters at `CHARS_PER_TOKEN` each,
+    anything else (Chinese, Japanese, accents, symbols, emoji) at one token a character, which
+    is nearer the truth for them and never under it."""
+    plain = sum(1 for c in text if c.isascii())
+    return int(plain / CHARS_PER_TOKEN) + (len(text) - plain) + 1
+
+
+def estimate_micro(model: str, text: str, max_output_tokens: int) -> int:
+    """The most a call could cost: its text, counted as above, and the longest answer."""
+    return micro_usd(model, tokens_in(text), max_output_tokens)
+
+
+def worst_micro(text: str, max_output_tokens: int) -> int:
+    """The most a call could cost whichever model answers: the dearest input price and the
+    dearest output price known (an unpriced fallback counts at `DEFAULT_PRICE`), so a reservation
+    made with this can't be overrun by a fallback and the caps hold."""
+    price_in = max([DEFAULT_PRICE[0], *(p[0] for p in PRICE_PER_MILLION.values())])
+    price_out = max([DEFAULT_PRICE[1], *(p[1] for p in PRICE_PER_MILLION.values())])
+    return tokens_in(text) * price_in + max_output_tokens * price_out
 
 
 def month_of(now: float) -> str:
@@ -210,9 +235,9 @@ def _evidence(
 
 
 def _words_in(name: str, text: str) -> bool:
-    """Does every word of the name (of three letters or more) appear in the text? A book may say
+    """Does every word of the name appear in the text? A book may say
     "Varn" where the AI wrote "Captain Varn"; a name of words the book never uses is made up."""
-    return all(word in text for word in re.findall(r"\w{3,}", squash(name)))
+    return all(word in text for word in re.findall(r"\w+", squash(name)))
 
 
 def parse_answer(text: str, batch: Sequence[ChunkRow]) -> Parsed:
@@ -293,6 +318,10 @@ DOCUMENT_FULL = "DMbot stopped reading this file because it reached its limit fo
 NOT_READABLE = "DMbot has no text for that file. Give DMbot the file again, then press Read it now."
 ALREADY_READ = "DMbot has already read that file."
 GONE = "That document is already gone."
+_HEX64 = re.compile(r"[0-9a-f]{64}")
+_MONTH = re.compile(r"[0-9]{4}-(0[1-9]|1[0-2])")
+SPEND_ROWS_MAX = 20 * 120  # twenty files over ten years of months
+SPEND_MAX_MICRO = 10**10  # $10,000 in one row: far past any cap, a bound against nonsense
 
 
 class CapError(AdventureError):
@@ -684,11 +713,22 @@ class PlanStore:
                 if cur.rowcount:
                     linked += 1
                     links_held += 1
+            # Counted once per batch even if this write is tried again after it already went
+            # through: only a batch that moves the read on adds to the skipped parts.
             await conn.execute(
-                "UPDATE adventure_reads SET next_chunk = %s, updated_at = %s,"
-                " skipped_parts = skipped_parts + %s WHERE guild_id = %s AND campaign_id = %s"
+                "UPDATE adventure_reads SET skipped_parts = skipped_parts"
+                " + CASE WHEN next_chunk < %s THEN %s ELSE 0 END, next_chunk = GREATEST(next_chunk,"
+                " %s), updated_at = %s WHERE guild_id = %s AND campaign_id = %s"
                 " AND document_id = %s",
-                (next_chunk, now, 1 if skipped else 0, guild_id, campaign_id, document_id),
+                (
+                    next_chunk,
+                    1 if skipped else 0,
+                    next_chunk,
+                    now,
+                    guild_id,
+                    campaign_id,
+                    document_id,
+                ),
             )
             return Stored(added, linked, full, unknown)
 
@@ -769,7 +809,7 @@ class PlanStore:
                 "SELECT kind, name, summary, quote FROM plan_nodes WHERE guild_id = %s"
                 " AND campaign_id = %s AND document_id = %s ORDER BY"
                 " CASE kind WHEN 'chapter' THEN 0 WHEN 'place' THEN 1 ELSE 2 END,"
-                " position, created_at, name_key, id LIMIT %s OFFSET %s",
+                " document_id, position, created_at, name_key, id LIMIT %s OFFSET %s",
                 (guild_id, campaign_id, document_id, limit, offset),
             )
             return [
@@ -797,7 +837,7 @@ class PlanStore:
                     "SELECT kind, name, summary, quote FROM plan_nodes WHERE guild_id = %s"
                     " AND campaign_id = %s ORDER BY"
                     " CASE kind WHEN 'chapter' THEN 0 WHEN 'place' THEN 1 ELSE 2 END,"
-                    " created_at, position, name_key, id LIMIT %s OFFSET %s",
+                    " document_id, position, created_at, name_key, id LIMIT %s OFFSET %s",
                     (guild_id, campaign_id, limit, offset),
                 )
                 out = [
@@ -832,6 +872,67 @@ class PlanStore:
             return await self._spent(conn, guild_id, campaign_id, doc["fingerprint"], self._clock())
 
 
+# ---- the ledger across a restore -------------------------------------------------------------
+
+
+class SpendSection:
+    """The money ledger in campaign backups (an `ExportSection`), amounts only and by file
+    fingerprint (#1723): a restore must not give a file a fresh $3 and a campaign a fresh $10. Not
+    the plan, not the text, no names: a fingerprint, a month and a sum. Loading adds only what the
+    campaign's own ledger lacks for that file and month (so restoring an old backup over a campaign
+    never lowers what it has spent), and `clear` leaves the ledger alone for the same reason."""
+
+    name = "plan_spend"
+
+    async def dump(self, conn: Conn, guild_id: int, campaign_id: str) -> list[Any]:
+        cur = await conn.execute(
+            "SELECT fingerprint, month, sum(micro_usd) AS micro FROM plan_spend"
+            " WHERE guild_id = %s AND campaign_id = %s GROUP BY fingerprint, month"
+            " ORDER BY month, fingerprint",
+            (guild_id, campaign_id),
+        )
+        return [
+            {"fingerprint": r["fingerprint"], "month": r["month"], "micro_usd": int(r["micro"])}
+            for r in await cur.fetchall()
+        ]
+
+    async def load(self, conn: Conn, guild_id: int, campaign_id: str, rows: list[Any]) -> None:
+        if not isinstance(rows, list) or len(rows) > SPEND_ROWS_MAX:
+            raise CampaignError(DAMAGED)
+        seen: set[tuple[str, str]] = set()
+        for row in rows:
+            if not (
+                isinstance(row, dict)
+                and set(row) == {"fingerprint", "month", "micro_usd"}
+                and isinstance(row["fingerprint"], str)
+                and _HEX64.fullmatch(row["fingerprint"])
+                and isinstance(row["month"], str)
+                and _MONTH.fullmatch(row["month"])
+                and type(row["micro_usd"]) is int
+                and 0 <= row["micro_usd"] <= SPEND_MAX_MICRO
+                and (row["fingerprint"], row["month"]) not in seen
+            ):
+                raise CampaignError(DAMAGED)
+            seen.add((row["fingerprint"], row["month"]))
+        now = int(time.time())
+        for row in rows:
+            cur = await conn.execute(
+                "SELECT COALESCE(sum(micro_usd), 0) AS held FROM plan_spend WHERE guild_id = %s"
+                " AND campaign_id = %s AND fingerprint = %s AND month = %s",
+                (guild_id, campaign_id, row["fingerprint"], row["month"]),
+            )
+            held = await cur.fetchone()
+            missing = row["micro_usd"] - int(held["held"] if held else 0)
+            if missing > 0:
+                await PlanStore._ledger(
+                    conn, guild_id, campaign_id, uuid.uuid4().hex, row["fingerprint"],
+                    missing, 0, 0, now,
+                )  # fmt: skip
+
+    async def clear(self, conn: Conn, guild_id: int, campaign_id: str) -> None:
+        return None  # kept: a replace must not give the money back
+
+
 __all__ = [
     "CapError",
     "Counts",
@@ -843,10 +944,13 @@ __all__ = [
     "PlanStore",
     "ReadState",
     "Reservation",
+    "SpendSection",
     "Spent",
     "Stored",
     "batches_of",
+    "dearer",
     "estimate_micro",
     "micro_usd",
     "parse_answer",
+    "worst_micro",
 ]

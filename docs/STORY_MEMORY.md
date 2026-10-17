@@ -769,8 +769,11 @@ Each step is useful on its own and ships behind the existing phases.
    **A stopped or restarted read carries on** from the first batch not stored (the batches before it
    are kept), when the DM presses Read it now again; a read the bot's restart cut shows as "stopped".
    **Not in backups, like the text:** the plan is deleted with its file and with the campaign, and
-   after a restore it is rebuilt by giving the file again and reading again. Divergence and
-   suggestions are the later slices.
+   after a restore it is rebuilt by giving the file again and reading again. The one exception is
+   the money ledger, in a backup as amounts only by file fingerprint and month (#1723), so a restore
+   does not reset the caps; a replace never lowers what a campaign has spent. When a read ends the
+   DM screen gets one line ("DMbot finished reading <file>: 3 chapters, 41 places…", or why it
+   stopped), and a read waiting for one of the two bot-wide slots says "waiting for a turn" on the card. No divergence, no
    **Phase 5d slice 4 is built (#1715): the book and the table.** "The book's Captain Varn" and "our
    Captain Varn" are joined only by the DM's word and stay two things (migration 0124, `plan_same_as`:
    a book entry, a table entry, **same** or **not the same**, who and when). **No AI:** a book person
