@@ -262,7 +262,7 @@ class StyleState:
         was = getattr(self, dimension)
         setattr(self, dimension, value)
         self.set_by[dimension] = by
-        return was != value
+        return bool(was != value)
 
     @property
     def known(self) -> bool:
