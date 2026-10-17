@@ -99,8 +99,14 @@ class FightState:
     declare_heard: bool = False
     due: dict[int, Due] = field(default_factory=dict)
     seq: int = 0
+    saved: str | None = None  # the style the campaign keeps, as of now (#1784)
     last_called: tuple[str, int | str] | None = None
     last_due_seq: dict[int, int] = field(default_factory=dict)  # per player, the last one acted on
+
+    @classmethod
+    def starting_from(cls, saved: str | None) -> FightState:
+        """A new session's state, starting from the style the campaign kept last time."""
+        return cls(style=fight_style.StyleState.from_saved(saved), saved=saved)
 
     def new_due(self, kind: str) -> Due:
         self.seq += 1
