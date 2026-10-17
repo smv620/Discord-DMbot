@@ -24,6 +24,7 @@ import {
   type Person,
   type RecordingEntry,
 } from "./api";
+import { Improvement } from "./Improvement";
 import { isSafeRedirect } from "./redirect";
 import { MyQuestions } from "./MyQuestions";
 import { PublicQuestions, Support } from "./Support";
@@ -486,6 +487,7 @@ function SignedIn({
       {api.homebrewCampaigns && <HomebrewSection />}
       {api.transcriptCampaigns && <TranscriptsSection />}
       <ServersSection me={me} />
+      <Improvement api={api} />
       <CharactersSection />
       <RecordingSection entries={me.recording ?? []} />
       <ExportSection />
