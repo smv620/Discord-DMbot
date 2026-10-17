@@ -7,7 +7,7 @@ from __future__ import annotations
 import asyncio
 import unittest
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, cast
 from unittest.mock import AsyncMock
 
 from dmbot import retention_channels as rc
@@ -162,8 +162,10 @@ class Deleting(DatabaseTest):
         it = self.interaction()
         it.response, it.followup = line.response, line.followup
         real_get = self.client.campaigns.get
-        self.client.campaigns = SimpleNamespace(
-            get=line.slow("get", await real_get(GUILD, self.campaign.id))
+        # (a stand-in with only the read the button makes; the cast is for mypy alone)
+        self.client.campaigns = cast(
+            CampaignStore,
+            SimpleNamespace(get=line.slow("get", await real_get(GUILD, self.campaign.id))),
         )
         await dc.DeleteButton(self.campaign.id).callback(it)
         line.assert_answered_first()
