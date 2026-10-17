@@ -451,7 +451,8 @@ async def show_card(
             mine = await book_links.linked(memory, campaign.guild_id, campaign.id, entity_id)
             if mine:
                 book_line = "📖 **In your adventure:** " + "; ".join(
-                    _md(m.name) + (f" ({_md(m.chapter)})" if m.chapter else "") for m in mine
+                    _md(m.name[:60]) + (f" ({_md(m.chapter[:60])})" if m.chapter else "")
+                    for m in mine[:3]
                 )
     text = card_text(
         names,

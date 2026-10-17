@@ -55,6 +55,7 @@ UNDONE = "Undone."
 LABEL_MAX = 100  # a menu option's label
 
 
+TEXT_MAX = 1990  # a message holds 2000
 LABEL_SHOWN = 25  # a phone shows about this much of a menu option's label
 
 
@@ -69,16 +70,23 @@ def pair_description(pair: links.Pair) -> str:
     return text[:LABEL_MAX]
 
 
+NAME_SHOWN = 40  # characters of a name on a line of the message: ten lines must fit one message
+
+
+def _short(name: str) -> str:
+    return _md(name if len(name) <= NAME_SHOWN else name[: NAME_SHOWN - 1] + "…")
+
+
 def match_text(pairs: list[links.Pair], note: str = "") -> str:
     lines = [note] if note else []
     lines.append(HEAD)
     for n, pair in enumerate(pairs, 1):
         lines.append(
-            f"{n}. In your adventure: **{_md(pair.plan_name)}** ↔ "
-            f"DMbot remembers: **{_md(pair.entity_name)}**"
+            f"{n}. In your adventure: **{_short(pair.plan_name)}** ↔ "
+            f"DMbot remembers: **{_short(pair.entity_name)}**"
         )
     lines.append(HOW)
-    return "\n".join(lines)
+    return "\n".join(lines)[:TEXT_MAX]
 
 
 async def _dm(interaction: discord.Interaction, campaign_id: str) -> tuple[Any, Any] | None:
@@ -219,8 +227,8 @@ def pick_text(entity_name: str, current: list[links.Linked], total: int, note: s
     lines = [note] if note else []
     lines.append(f"📖 **{_md(entity_name)}**: which entry in your adventure is this?")
     for n, link in enumerate(current[:3], 1):
-        where = f" ({_md(link.chapter)})" if link.chapter else ""
-        lines.append(f"{n}. In your adventure: **{_md(link.name)}**{where}")
+        where = f" ({_short(link.chapter)})" if link.chapter else ""
+        lines.append(f"{n}. In your adventure: **{_short(link.name)}**{where}")
     if not total:
         lines.append(
             "Nothing in your adventure to link this to. Give DMbot your adventure on the Shared "

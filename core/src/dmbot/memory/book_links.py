@@ -33,17 +33,19 @@ PERSON_KINDS = ("character", "faction")
 PLACE_KINDS = ("place",)
 
 ONLY_DM = "Only the DM can do that."
-GONE = "That isn't in the book any more, or on the table."
+GONE = "That isn't in your adventure any more, or DMbot no longer remembers it."
+TWICE = "Two of those would link the same name twice. Pick only one of them."
 NOT_MATCHING = (
-    "A person in the book can only be the same as a person or group at the table, and a place "
-    "as a place."
+    "A person in your adventure can only be the same as a person or group DMbot remembers, and "
+    "a place as a place."
 )
 TAKEN_BOOK = (
-    "That book entry is already the same as another name at the table. Take that one off first."
+    "That name in your adventure is already linked to another name DMbot remembers. Take that "
+    "one off first."
 )
 TAKEN_TABLE = (
-    "That name at the table is already the same as another entry in this file. Take that one "
-    "off first."
+    "That name DMbot remembers is already linked to another name in this file of your adventure. "
+    "Take that one off first."
 )
 
 
@@ -138,8 +140,9 @@ async def suggestions(
         decided = await cur.fetchall()
     asked = {(d["plan_id"], d["entity_id"]) for d in decided}
     held = {(d["entity_id"], d["document_id"]) for d in decided if d["status"] == SAME}
-    out: list[Pair] = []
+    candidates: list[Pair] = []
     seen: set[tuple[str, str]] = set()
+    documents = {n["id"]: n["document_id"] for n in nodes}
     for entry in sorted(entries, key=lambda e: (name_key(e["name"]), e["id"])):
         for node in wanted.get(entry["key"], ()):
             kinds = kinds_for(node["kind"])
@@ -152,8 +155,22 @@ async def suggestions(
             ):
                 continue
             seen.add(pair)
-            out.append(Pair(node["id"], node["name"], node["kind"], entry["id"], entry["name"]))
-    out.sort(key=lambda p: (p.plan_kind, name_key(p.plan_name), p.plan_id, p.entity_id))
+            candidates.append(
+                Pair(node["id"], node["name"], node["kind"], entry["id"], entry["name"])
+            )
+    candidates.sort(key=lambda p: (p.plan_kind, name_key(p.plan_name), p.plan_id, p.entity_id))
+    # No two on one page may use the same book entry, or the same table entry in one file: the
+    # DM could tick both, and only one can be the same. The other comes on a later page.
+    out: list[Pair] = []
+    used_nodes: set[str] = set()
+    used_entries: set[tuple[str, str]] = set()
+    for cand in candidates:
+        taken = (cand.entity_id, documents[cand.plan_id])
+        if cand.plan_id in used_nodes or taken in used_entries:
+            continue
+        used_nodes.add(cand.plan_id)
+        used_entries.add(taken)
+        out.append(cand)
     return out[:limit]
 
 
@@ -172,6 +189,7 @@ async def decide(
         return Written(0, None)
     async with memory._write(guild_id, campaign_id, DM) as w:
         done = 0
+        said_for: set[tuple[str, str]] = set()
         for plan_id, entity_id, status in decisions:
             if status not in (SAME, NOT_SAME):
                 raise MemoryRuleError(GONE)
@@ -182,6 +200,11 @@ async def decide(
             onto = await memory.ontology(guild_id, campaign_id)
             if not any(onto.is_a(entity["type"], k) for k in kinds_for(node["kind"])):
                 raise MemoryRuleError(NOT_MATCHING)
+            if status == SAME:
+                for mark in (("book", plan_id), ("table", f"{entity_id}/{node['document_id']}")):
+                    if mark in said_for:
+                        raise MemoryRuleError(TWICE)
+                    said_for.add(mark)
             existing = await w.select(
                 PLAN_SAME_AS, " AND plan_id = %s AND entity_id = %s", [plan_id, entity_id]
             )

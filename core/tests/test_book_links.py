@@ -188,9 +188,11 @@ class Deciding(Setup):
     async def test_one_for_one_and_one_per_file(self) -> None:
         ids, varn, ilse = await self.setUpBook()
         await self.say(ids["Captain Varn"], varn, links.SAME)
-        with self.assertRaisesRegex(MemoryRuleError, "already the same as another name"):
+        with self.assertRaisesRegex(
+            MemoryRuleError, "already linked to another name DMbot remembers"
+        ):
             await self.say(ids["Captain Varn"], ilse, links.SAME)
-        with self.assertRaisesRegex(MemoryRuleError, "already the same as another entry"):
+        with self.assertRaisesRegex(MemoryRuleError, "linked to another name in this"):
             await self.say(ids["Mother Ilse"], varn, links.SAME)
         # In another file the same table entry may have its own book entry.
         _, more = await self.book([("person", "Varn of the Second Book", 1)])
@@ -213,11 +215,11 @@ class Deciding(Setup):
     async def test_a_person_cannot_be_the_same_as_a_place(self) -> None:
         ids, varn, _ = await self.setUpBook()
         _, more = await self.book([("place", "Saltmere", 1)])
-        with self.assertRaisesRegex(MemoryRuleError, "person in the book"):
+        with self.assertRaisesRegex(MemoryRuleError, "person in your adventure"):
             await links.decide(
                 self.memory, GUILD_A, self.c, [(more["Saltmere"], varn, links.SAME)], DM
             )
-        with self.assertRaisesRegex(MemoryRuleError, "isn't in the book"):
+        with self.assertRaisesRegex(MemoryRuleError, "isn't in your adventure"):
             await links.decide(self.memory, GUILD_A, self.c, [("0" * 32, varn, links.SAME)], DM)
         with self.assertRaises(MemoryRuleError):
             await links.decide(
@@ -314,6 +316,103 @@ class Private(Setup):
             GUILD_A, self.c, entity_id=varn, include_secret=True
         )
         self.assertEqual(relations, [])  # the link is not a connection between table entries
+
+
+class Mess(Setup):
+    """What the reviewers found: merging, undoing into a conflict, long names, colliding pairs."""
+
+    async def test_merging_two_table_entries_moves_the_link_and_undo_splits_them(self) -> None:
+        _, ids = await self.book([("person", "Captain Varn", 1)])
+        keep = await self.add("Varn", type="npc")
+        gone = await self.add("Captain Varn", type="npc")
+        await self.say(ids["Captain Varn"], gone)
+        before = await self.snapshot()
+        merged = await self.memory.merge(
+            GUILD_A, self.c, keep, gone, source="dm", dm_said_same=True
+        )
+        (link,) = await links.linked(self.memory, GUILD_A, self.c, keep)
+        self.assertEqual(link.name, "Captain Varn")
+        self.assertEqual(await links.linked(self.memory, GUILD_A, self.c, gone), [])
+        assert merged.batch is not None
+        await self.memory.undo(GUILD_A, self.c, merged.batch)
+        self.assertEqual(await self.snapshot(), before)
+
+    async def test_a_merge_keeps_the_kept_entrys_own_answer(self) -> None:
+        _, ids = await self.book([("person", "Captain Varn", 1), ("person", "Varn", 1)])
+        keep = await self.add("Varn the Bold", type="npc")
+        gone = await self.add("Captain Varn", type="npc")
+        await self.say(ids["Varn"], keep)  # the kept entry is already linked in this file
+        await self.say(ids["Captain Varn"], gone)
+        await self.memory.merge(GUILD_A, self.c, keep, gone, source="dm", dm_said_same=True)
+        (link,) = await links.linked(self.memory, GUILD_A, self.c, keep)
+        self.assertEqual(link.name, "Varn")
+        self.assertEqual(await self.count("plan_same_as"), 1)
+        # The book entry the merged one had is free again.
+        options, _ = await links.options_for(self.memory, GUILD_A, self.c, keep)
+        self.assertEqual(options, [])  # (keep is linked in the only file, so it needs no more)
+
+    async def test_undo_into_a_conflict_is_a_plain_refusal_not_a_crash(self) -> None:
+        _, ids = await self.book([("person", "Captain Varn", 1)])
+        first = await self.add("Captain Varn", type="npc")
+        second = await self.add("Varn", type="npc")
+        await self.say(ids["Captain Varn"], first)
+        off = await links.unlink(self.memory, GUILD_A, self.c, ids["Captain Varn"], first)
+        await self.say(ids["Captain Varn"], second)  # the book entry is taken again
+        assert off.batch is not None
+        with self.assertRaisesRegex(MemoryRuleError, "changed again since"):
+            await self.memory.undo(GUILD_A, self.c, off.batch)
+        self.assertEqual(len(await links.linked(self.memory, GUILD_A, self.c, second)), 1)
+
+    async def test_undo_after_the_file_is_gone_is_a_plain_refusal(self) -> None:
+        _, ids = await self.book([("person", "Captain Varn", 1)])
+        who = await self.add("Captain Varn", type="npc")
+        await self.say(ids["Captain Varn"], who)
+        off = await links.unlink(self.memory, GUILD_A, self.c, ids["Captain Varn"], who)
+        async with self.db.guild(GUILD_A) as conn:
+            await conn.execute("DELETE FROM adventure_documents")
+        assert off.batch is not None
+        with self.assertRaises(MemoryRuleError):
+            await self.memory.undo(GUILD_A, self.c, off.batch)
+
+    async def test_not_the_same_then_same_by_hand_and_undo_goes_back_to_not_the_same(self) -> None:
+        _, ids = await self.book([("person", "Captain Varn", 1)])
+        who = await self.add("Captain Varn", type="npc")
+        await self.say(ids["Captain Varn"], who, links.NOT_SAME)
+        again = await self.say(ids["Captain Varn"], who, links.SAME)
+        self.assertEqual(len(await links.linked(self.memory, GUILD_A, self.c, who)), 1)
+        assert again.batch is not None
+        await self.memory.undo(GUILD_A, self.c, again.batch)
+        self.assertEqual(await links.linked(self.memory, GUILD_A, self.c, who), [])
+        self.assertEqual(await links.suggestions(self.memory, GUILD_A, self.c), [])  # still asked
+
+    async def test_two_pairs_on_one_page_never_share_a_book_or_table_entry(self) -> None:
+        _, ids = await self.book([("person", "Captain Varn", 1), ("person", "Varn", 1)])
+        both = await self.add("Captain Varn", type="npc")
+        await self.memory.add_alias(
+            GUILD_A, self.c, both, "Varn", kind="short", source="dm", status="confirmed"
+        )
+        page = await links.suggestions(self.memory, GUILD_A, self.c)
+        self.assertEqual(len(page), 1)  # the other waits until this one is answered
+        await self.say(page[0].plan_id, page[0].entity_id)
+        self.assertEqual(await links.suggestions(self.memory, GUILD_A, self.c), [])
+        with self.assertRaisesRegex(MemoryRuleError, "link the same name twice"):
+            await links.decide(
+                self.memory, GUILD_A, self.c,
+                [(ids["Captain Varn"], both, links.SAME), (ids["Varn"], both, links.SAME)],
+                DM,
+            )  # fmt: skip
+
+    async def test_ten_pairs_with_the_longest_names_still_fit_one_message(self) -> None:
+        long = "Z" * 120
+        pairs = [
+            links.Pair(f"{n:032x}", long, "person", f"{n + 99:032x}", "Y" * 100) for n in range(10)
+        ]
+        text = ui.match_text(pairs, "✅ Linked 10 to your adventure.")
+        self.assertLessEqual(len(text), ui.TEXT_MAX)
+        self.assertIn("…", text)
+        option = ui.pair_label(1, pairs[0])
+        self.assertLessEqual(len(option), ui.LABEL_SHOWN)
+        self.assertLessEqual(len(ui.pair_description(pairs[0])), ui.LABEL_MAX)
 
 
 class Screens(Setup):

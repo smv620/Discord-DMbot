@@ -21,7 +21,7 @@ from collections.abc import AsyncGenerator, AsyncIterator, Callable, Collection,
 from contextlib import asynccontextmanager
 from typing import Any
 
-from psycopg import sql
+from psycopg import errors, sql
 
 from dmbot.db import Database, row_int
 from dmbot.memory import notify, standing, states
@@ -37,6 +37,7 @@ from dmbot.memory._changes import (
     IMPRESSIONS,
     MENTIONS,
     NOT_FOUND,
+    PLAN_SAME_AS,
     PREDICATES,
     RELATIONS,
     RULE_LINKS,
@@ -2003,6 +2004,7 @@ class MemoryStore:
                 if merged != {k: kept[k] for k in merged}:
                     await w.update(ENTITIES, keep_id, merged)
             await _move_rule_links(w, keep_id, gone_id)
+            await _move_plan_links(w, keep_id, gone_id)
             await states.move_states(w, onto, keep_id, kept["type"], gone_id)
             if confirm_keys and source != DM:
                 raise ValueError("Only the DM confirms names")
@@ -3089,6 +3091,10 @@ class MemoryStore:
                 return Written(None, w.batch)
         except TooLateToUndo:
             raise TooLateToUndo(self._too_late()) from None
+        except (errors.UniqueViolation, errors.ForeignKeyViolation):
+            # What the undo would put back clashes with something done since (a book entry taken
+            # by another name), or what it points to is gone: not a crash, "changed since".
+            raise MemoryRuleError(CHANGED_SINCE) from None
 
     async def undo_connection(
         self, guild_id: int, campaign_id: str, batch: int, *, within: int, secrets: bool
@@ -3220,6 +3226,30 @@ async def _move_rule_links(w: Changes, keep_id: str, gone_id: str) -> None:
         if link["kind"] in (SPECIES, CREATURE_TYPE):
             has_one.add(link["kind"])
         has_same.add((link["kind"], link["rules_source"], link["name"]))
+
+
+async def _move_plan_links(w: Changes, keep_id: str, gone_id: str) -> None:
+    """The DM's word that a merged entry is a book entry (#1715) goes with it, unless the kept
+    entry is already linked in that file (then it stays behind, unseen) or already has an answer for
+    that book entry (a Same beats a Not the same). Logged, so Undo of the merge restores it."""
+    for link in await w.select(PLAN_SAME_AS, " AND entity_id = %s", [gone_id]):
+        linked_docs = {
+            r["document_id"]
+            for r in await w.select(
+                PLAN_SAME_AS, " AND entity_id = %s AND status = 'same'", [keep_id]
+            )
+        }
+        have = await w.select(
+            PLAN_SAME_AS, " AND entity_id = %s AND plan_id = %s", [keep_id, link["plan_id"]]
+        )
+        if link["status"] == "same" and link["document_id"] in linked_docs:
+            await w.delete(PLAN_SAME_AS, link["id"])
+        elif have:
+            await w.delete(PLAN_SAME_AS, link["id"])
+            if link["status"] == "same" and have[0]["status"] != "same":
+                await w.update(PLAN_SAME_AS, have[0]["id"], {"status": "same"})
+        else:
+            await w.update(PLAN_SAME_AS, link["id"], {"entity_id": keep_id})
 
 
 async def _on_person(w: Changes, alias: dict[str, Any]) -> bool:
