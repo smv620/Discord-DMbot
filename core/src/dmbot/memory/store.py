@@ -44,6 +44,7 @@ from dmbot.memory._changes import (
     undo_batch,
 )
 from dmbot.memory.checks import HELD_TWICE, Ended, check_relation, duplicate_of, ordered
+from dmbot.memory.clues import CLUE, KNOWS, NEEDS_SOMEONE, ONLY_CHARACTERS, ONLY_CLUES
 from dmbot.memory.lookup import LookupData
 from dmbot.memory.models import (
     ALIAS_KINDS,
@@ -91,6 +92,7 @@ from dmbot.memory.models import (
     days,
     is_id,
     lookup_key,
+    name_key,
     new_id,
     spelling_key,
 )
@@ -153,6 +155,7 @@ def _entity(r: dict[str, Any]) -> Entity:
     return Entity(
         r["id"], r["type"], r["name"], r["description"], r["status"], r["merged_into"],
         r["source"], r["created_at"], r["played_by"], r["role"], r["needs_look"], r["unique_item"],
+        r["audience_limited"],
     )  # fmt: skip
 
 
@@ -698,6 +701,95 @@ class MemoryStore:
                             if made is not None:
                                 flags.append(_flag(made))
             return Written((_entity(row), flags), w.batch)
+
+    # ---- a clue only some people know (#1649) ----
+
+    async def clue_audience(self, guild_id: int, campaign_id: str, clue_id: str) -> list[Entity]:
+        """Who knows this clue: the characters with a confirmed `knows` fact to it that is still
+        true, by name. A missing fact means DMbot doesn't know, never that they don't."""
+        async with self._read(guild_id, campaign_id, snapshot=True) as scope:
+            return await _audience(scope, clue_id)
+
+    async def set_audience_limited(
+        self, guild_id: int, campaign_id: str, clue_id: str, limited: bool, *, source: str
+    ) -> Written[Entity]:
+        """The DM's switch "Only some people know this". Turned on only with at least one
+        person listed, because a limited clue nobody is listed for would warn about everyone."""
+        if source != DM:
+            raise MemoryRuleError("Only the DM can say that.")
+        async with self._write(guild_id, campaign_id, source) as w:
+            current = await _entity_row(w, clue_id)
+            if current["type"] != CLUE:
+                raise MemoryRuleError(ONLY_CLUES)
+            if limited and not await _audience(w, clue_id):
+                raise MemoryRuleError(NEEDS_SOMEONE)
+            row = await w.update(ENTITIES, clue_id, {"audience_limited": limited})
+            return Written(_entity(row), w.batch)
+
+    async def add_knower(
+        self,
+        guild_id: int,
+        campaign_id: str,
+        clue_id: str,
+        character_id: str,
+        *,
+        source: str,
+        from_session_at: int | None = None,
+    ) -> Written[Relation]:
+        """The DM says a character knows this clue: a confirmed, dated `knows` fact. It works
+        for any clue; the switch decides whether anyone is warned."""
+        if source != DM:
+            raise MemoryRuleError("Only the DM can say that.")
+        async with self._write(guild_id, campaign_id, source) as w:
+            return Written(
+                await self.add_knower_in(w, clue_id, character_id, from_session_at),
+                w.batch,
+            )
+
+    async def add_knower_in(
+        self, w: Changes, clue_id: str, character_id: str, from_session_at: int | None
+    ) -> Relation:
+        """`add_knower` inside a write that is already open (a continuity answer's, #1649)."""
+        clue = await _entity_row(w, clue_id)
+        who = await _entity_row(w, character_id)
+        if clue["type"] != CLUE:
+            raise MemoryRuleError(ONLY_CLUES)
+        if who["type"] != "character":
+            raise MemoryRuleError(ONLY_CHARACTERS)
+        fact, _flags = await self.add_relation_in(
+            w, character_id, KNOWS, clue_id, confidence=1.0, status=CONFIRMED,
+            from_session_at=from_session_at,
+        )  # fmt: skip
+        if fact.to_session_at is not None:  # they knew once and it was ended: they know it now
+            row = await w.update(RELATIONS, fact.id, {"to_session_at": None})
+            return _relation(row)
+        return fact
+
+    async def remove_knower(
+        self, guild_id: int, campaign_id: str, clue_id: str, character_id: str, *, source: str
+    ) -> Written[tuple[Entity, bool]]:
+        """Take a character off a clue's list (their `knows` fact is removed, like any
+        connection, and Undo works). Returns the clue and whether the switch turned itself off
+        because nobody is left."""
+        if source != DM:
+            raise MemoryRuleError("Only the DM can say that.")
+        async with self._write(guild_id, campaign_id, source) as w:
+            clue = await _entity_row(w, clue_id)
+            facts = await w.select(
+                RELATIONS,
+                " AND subject_id = %s AND predicate = %s AND object_id = %s"
+                " AND status <> 'rejected'",
+                [character_id, KNOWS, clue_id],
+            )
+            if not facts:
+                raise MemoryRuleError(NOT_FOUND)
+            for fact in facts:
+                await w.update(RELATIONS, fact["id"], {"status": REJECTED})
+            turned_off = False
+            if clue["audience_limited"] and not await _audience(w, clue_id):
+                clue = await w.update(ENTITIES, clue_id, {"audience_limited": False})
+                turned_off = True
+            return Written((_entity(clue), turned_off), w.batch)
 
     async def resolve(self, guild_id: int, campaign_id: str, entity_id: str) -> Entity | None:
         """The entity an ID stands for now, following merges."""
@@ -1453,6 +1545,8 @@ class MemoryStore:
                         if kept["unique_item"] is not None
                         else gone["unique_item"]
                     ),
+                    # A clue only some people know stays so if either was (#1649).
+                    "audience_limited": kept["audience_limited"] or gone["audience_limited"],
                 }
                 if merged != {k: kept[k] for k in merged}:
                     await w.update(ENTITIES, keep_id, merged)
@@ -2889,6 +2983,22 @@ async def _entity_row(w: Scope, entity_id: str, *, allow_rejected: bool = False)
     if row is None or row["status"] not in allowed:
         raise MemoryRuleError(NOT_FOUND)
     return row
+
+
+async def _audience(scope: Scope, clue_id: str) -> list[Entity]:
+    """The live characters with a confirmed, still-true `knows` fact to the clue, by name."""
+    rows = await scope.select(
+        RELATIONS,
+        " AND object_id = %s AND predicate = %s AND status = 'confirmed' AND to_session_at IS NULL",
+        [clue_id, KNOWS],
+    )
+    ids = sorted({r["subject_id"] for r in rows})
+    if not ids:
+        return []
+    entities = await scope.select(
+        ENTITIES, " AND id = ANY(%s) AND status IN ('proposed', 'confirmed')", [ids]
+    )
+    return sorted((_entity(e) for e in entities), key=lambda e: (name_key(e.name), e.id))
 
 
 async def _load_ontology(scope: Scope) -> Ontology:

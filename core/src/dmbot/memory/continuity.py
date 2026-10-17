@@ -44,6 +44,7 @@ from dmbot.memory.claims import (
     names_of,
     place_relationship,
 )
+from dmbot.memory.clues import KNOWS, outside_audience, says_they_acted_on_it
 from dmbot.memory.models import (
     ALIVE,
     CLAIM_PROPOSED,
@@ -75,6 +76,10 @@ LIKELY, PROBABLE, POSSIBLE = "likely", "probable", "possible"
 # `checks.py` rules; BACK_FROM_THE_END is a claim that a dead or destroyed entry is something
 # else again, which only the DM can say (`states.py`).
 BACK_FROM_THE_END = "back_from_the_end"
+# A character outside a limited clue's list speaks of or uses the clue (#1649). Its number is
+# per claim: possible by default, likely when the claim says they told it or used it.
+KNOWS_A_SECRET = "knows_a_secret"
+KNOWS_A_SECRET_DEFAULT, KNOWS_A_SECRET_ACTED = 0.40, 0.85
 
 # How sure each rule is, set here and not guessed by an AI: a direct contradiction of a
 # confirmed fact is likely; a dead or destroyed entry acting later is probable (it may be a
@@ -142,6 +147,8 @@ class World:
     nesting: Nesting
     states: Mapping[str, State]  # current conditions
     said: Mapping[str, Said] = field(default_factory=dict)  # fact or state id -> where from
+    # Each clue only some people know -> who the DM listed as knowing it (#1649)
+    limited: Mapping[str, frozenset[str]] = field(default_factory=dict)
 
 
 @dataclass(frozen=True, slots=True)
@@ -158,6 +165,9 @@ class Conflict:
     clash_ids: tuple[str, ...]  # the earlier facts a "that changed" answer ends
     revive_id: str | None  # the dead or destroyed entry a "that changed" answer brings back
     condition: str | None  # the condition the claim itself says, for a state claim
+    # For KNOWS_A_SECRET (#1649): the character who is outside the list, and who is on it.
+    learner_id: str | None = None
+    learner_name: str | None = None
 
     @property
     def pair(self) -> tuple[str, str]:
@@ -224,6 +234,9 @@ def conflicts_in(claims: Sequence[Claim], world: World, levels: Levels) -> list[
         subject_id, object_id = (other[0], who[0]) if from_object else (who[0], other[0])
         if subject_id == object_id:
             continue
+        outsider = _outside_a_limited_clue(world, levels, claim, who[0], other[0])
+        if outsider is not None:
+            found.append(outsider)
         s, o = ordered(term, subject_id, object_id)
         candidate = Relation(
             id=new_id(), subject_id=s, predicate=term.key, object_id=o, detail="", confidence=1.0,
@@ -264,6 +277,47 @@ def conflicts_in(claims: Sequence[Claim], world: World, levels: Levels) -> list[
         key=lambda c: (_ORDER[c.level], -c.probability, name_key(c.entity_name), c.claim.id)
     )
     return unique
+
+
+def _outside_a_limited_clue(
+    world: World, levels: Levels, claim: Claim, one: str, other: str
+) -> Conflict | None:
+    """A claim that ties a confirmed character to a clue only some people know, when the DM did
+    not list that character (#1649). Possible by default; likely when the claim says they told
+    it or used it. Nothing for a clue with the switch off, for a name still waiting to be
+    confirmed, or for a character who is listed."""
+    for character_id, clue_id in ((one, other), (other, one)):
+        audience = world.limited.get(clue_id)
+        character = world.entities.get(character_id)
+        clue = world.entities.get(clue_id)
+        if audience is None or character is None or clue is None:
+            continue
+        if character.type != "character" or character.status != CONFIRMED:
+            continue
+        if not outside_audience(character_id, audience):
+            continue
+        probability = (
+            KNOWS_A_SECRET_ACTED
+            if says_they_acted_on_it(claim.relationship)
+            else KNOWS_A_SECRET_DEFAULT
+        )
+        level = levels.level_of(probability)
+        if level is None:
+            return None
+        return Conflict(
+            claim=claim, kind=KNOWS_A_SECRET, probability=probability, level=level,
+            entity_id=clue_id, entity_name=clue.name, ended_condition=None,
+            earlier_words=_names(world, audience), earlier=None, clash_ids=(),
+            revive_id=None, condition=None, learner_id=character_id,
+            learner_name=character.name,
+        )  # fmt: skip
+    return None
+
+
+def _names(world: World, ids: frozenset[str]) -> str:
+    """The people the DM listed, by name: "Belleros, Cerric"."""
+    named = sorted((world.entities[i].name for i in ids if i in world.entities), key=name_key)
+    return ", ".join(named)
 
 
 def _make(
@@ -394,6 +448,15 @@ class ContinuityStore:
             claim_rows = await scope.select(
                 CLAIMS, " AND status = 'confirmed' AND fact_id IS NOT NULL"
             )
+            # Who the DM listed for each clue only some people know (#1649). Read apart from
+            # the facts above: a listed fact the DM marked secret still counts as listed.
+            knows_rows = await scope.select(
+                RELATIONS,
+                " AND predicate = %s AND status = 'confirmed' AND to_session_at IS NULL"
+                " AND object_id IN (SELECT id FROM memory_entities WHERE audience_limited"
+                " AND guild_id = %s AND campaign_id = %s)",
+                [KNOWS, *scope.ids],
+            )
         entities = {e.id: e for e in (_entity(r) for r in entity_rows)}
         relations = [
             _relation(r)
@@ -412,6 +475,15 @@ class ContinuityStore:
         unique = frozenset(
             e.id for e in entities.values() if onto.is_a(e.type, "item") and e.is_unique
         )
+        limited: dict[str, set[str]] = {
+            e.id: set() for e in entities.values() if e.audience_limited
+        }
+        for row in knows_rows:
+            if row["object_id"] in limited:
+                limited[row["object_id"]].add(row["subject_id"])
+        # A switch on with nobody left on the list (the connection was removed elsewhere) means
+        # DMbot doesn't know who knows it, so it says nothing: an empty list is never "nobody".
+        limited = {clue: who for clue, who in limited.items() if who}
         return World(
             onto,
             names_of(entity_rows, alias_rows),
@@ -421,6 +493,7 @@ class ContinuityStore:
             nesting,
             states,
             said,
+            {clue: frozenset(who) for clue, who in limited.items()},
         )
 
     async def answer(
@@ -452,6 +525,8 @@ class ContinuityStore:
         mine = [c for c in conflicts_in([claim], world, levels) if c.claim.id == claim_id]
         clash_ids = tuple(dict.fromkeys(i for c in mine for i in c.clash_ids))
         revive = {c.revive_id: c.ended_condition for c in mine if c.revive_id is not None}
+        # "They learned it" (#1649): the character joins the clue's list, dated to the session.
+        learners = {(c.entity_id, c.learner_id) for c in mine if c.learner_id is not None}
 
         async def before(w: Changes) -> None:
             # Everything an answer changes is checked again here, under the campaign's lock,
@@ -465,6 +540,13 @@ class ContinuityStore:
                     await self._memory.set_condition_in(
                         w, entity_id, back, claim.session_started_at
                     )
+            for clue_id, character_id in sorted(learners):
+                try:
+                    await self._memory.add_knower_in(
+                        w, clue_id, character_id, claim.session_started_at
+                    )
+                except MemoryRuleError:
+                    continue  # the clue or the character changed meanwhile; the claim still counts
             for fact_id in clash_ids:  # the earlier fact ends where the new one starts
                 row = await w.get(RELATIONS, fact_id)
                 if row is not None and row["to_session_at"] is None and claim.session_started_at:

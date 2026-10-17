@@ -87,6 +87,8 @@ KIND_WORDS: dict[str, str] = {
     "spell": "spell",  # refused: a spell is not kept in campaign memory (SPELL_NOT_KEPT)
     "magic": "spell",
     "event": "event",
+    "clue": "clue",
+    "secret": "clue",
     "idea": "concept",
     "other": "concept",
     "thing": "concept",
@@ -104,6 +106,7 @@ KIND_OUT: dict[str, str] = {
     "spell": "spell",
     "event": "event",
     "concept": "other",
+    "clue": "clue",
     "person": "player",
 }
 

@@ -175,8 +175,8 @@ async def settle_kind(
 ) -> None:
     """After ANY write that gives entries a new kind: a condition the new kind can't have is
     closed (an item made a character is no longer `intact`; the history stays) and
-    `unique_item` is cleared unless the new kind is an item. Without it a backup of the
-    campaign would be refused as damaged when restored."""
+    `unique_item` is cleared unless the new kind is an item, and `audience_limited` unless it is
+    a clue. Without it a backup of the campaign would be refused as damaged when restored."""
     ids = sorted(set(entity_ids))
     if not ids:
         return
@@ -187,6 +187,9 @@ async def settle_kind(
     if not onto.is_a(type_key, "item"):
         flagged = await w.select(ENTITIES, " AND unique_item IS NOT NULL AND id = ANY(%s)", [ids])
         await w.update_rows(ENTITIES, {r["id"]: {"unique_item": None} for r in flagged})
+    if type_key != "clue":  # only a clue has an audience (#1649)
+        limited = await w.select(ENTITIES, " AND audience_limited AND id = ANY(%s)", [ids])
+        await w.update_rows(ENTITIES, {r["id"]: {"audience_limited": False} for r in limited})
 
 
 async def move_states(

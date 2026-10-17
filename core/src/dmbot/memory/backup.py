@@ -170,7 +170,14 @@ def _valid(column: str, value: object) -> bool:
                 isinstance(v, int) and not isinstance(v, bool) and 0 < v <= INT64_MAX for v in value
             )
         )
-    if column in ("secret", "is_symmetric", "needs_look", "known", "unique_item"):
+    if column in (
+        "secret",
+        "is_symmetric",
+        "needs_look",
+        "known",
+        "unique_item",
+        "audience_limited",
+    ):
         return isinstance(value, bool)
     if column == "confidence":
         return isinstance(value, (int, float)) and not isinstance(value, bool) and 0 <= value <= 1
@@ -331,7 +338,8 @@ def _with_definition_fields(rows: list[Any]) -> list[Any]:
     out: list[Any] = []
     for raw in rows:
         if isinstance(raw, dict) and raw.get("table") == "entity":
-            raw = {"unique_item": None, **raw}  # from before one-of-a-kind items (#1267)
+            # from before one-of-a-kind items (#1267) and before a clue's audience (#1649)
+            raw = {"unique_item": None, "audience_limited": False, **raw}
         elif isinstance(raw, dict) and raw.get("table") == "alias":
             raw = {"said_as": None, **raw}  # from before the narrator's spelling (#1419)
         elif isinstance(raw, dict) and raw.get("table") == "predicate":
@@ -539,6 +547,8 @@ def _check_states(onto: Ontology, by_tag: dict[str, list[dict[str, Any]]]) -> No
         r["unique_item"] is not None and not onto.is_a(r["type"], "item") for r in by_tag["entity"]
     ):
         raise CampaignError(DAMAGED)
+    if any(r["audience_limited"] and r["type"] != "clue" for r in by_tag["entity"]):
+        raise CampaignError(DAMAGED)  # only a clue has an audience (#1649)
     open_for: set[str] = set()
     for r in by_tag["state"]:
         if r["entity_id"] not in kinds:
