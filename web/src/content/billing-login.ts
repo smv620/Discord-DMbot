@@ -25,7 +25,7 @@ export const portalWords = {
   refunds: "Can't sign in with Discord? Manage your plan with the email on your receipts:",
   /** The link text on Refunds and in Help. */
   linkText: "Manage your plan with your email",
-  help: "Can't sign in with Discord? You can still cancel, update your card or get invoices with the email on your receipts. Stripe, the company that takes our payments, sends you a code.",
+  help: "Can't sign in with Discord? Use the email on your receipts. Stripe, who handle our payments, will send you a code. There you can cancel, update your card or get invoices.",
   /** My Account, next to the plan buttons. */
   account: "No Discord? Use your email",
 };
