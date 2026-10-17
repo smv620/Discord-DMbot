@@ -202,7 +202,9 @@ from dmbot.rules import index as rules_index
 from dmbot.rules.book_rank import book_is_legacy, book_wins
 from dmbot.rules.followed import followed_rules, own_first
 from dmbot.rules.homebrew import Homebrew, HomebrewSection, HomebrewStore
+from dmbot.rules.homebrew_import import HomebrewImporter
 from dmbot.rules.homebrew_packs import HomebrewPackStore, HomebrewReader
+from dmbot.rules.homebrew_sources import SiteApprovalsSection, SourceStore
 from dmbot.rules.homebrew_spotter import HomebrewMention, HomebrewSpotter
 from dmbot.rules.house import HouseRule, HouseRulesSection, HouseRuleStore
 from dmbot.rules.house_file_link import HouseFileLinkStore
@@ -238,6 +240,7 @@ from dmbot.transcript.cleaner import (
     safe_answer,
     with_ending,
 )
+from dmbot.transcript.close_calls import CloseCalls
 from dmbot.transcript.export import clock
 from dmbot.transcript.improvement import OptOutStore
 from dmbot.transcript.keep import KeepJob
@@ -485,6 +488,8 @@ class Table:
     # "Did they mean…?" for the DM (#296): one open at a time, each word once a session.
     questions: name_questions.QuestionBook = field(default_factory=name_questions.QuestionBook)
     question_message: discord.Message | None = None
+    # How often a line landed near one of the Cleaner's likeness thresholds (#1577): counts only.
+    close_calls: CloseCalls = field(default_factory=CloseCalls)
     # Questions that closed with no answer (expired, or the session ended), for the after-session
     # check (#1572): kept in memory, at most MAX_PER_SESSION, oldest dropped first.
     unanswered: list[name_questions.Asked] = field(default_factory=list)
@@ -694,6 +699,8 @@ class DMBot(commands.AutoShardedBot):
         homebrew: HomebrewStore | None = None,
         heard_questions: WaitingQuestionStore | None = None,
         improvement: OptOutStore | None = None,
+        sources: SourceStore | None = None,
+        importer: HomebrewImporter | None = None,
     ) -> None:
         intents = discord.Intents.none()
         intents.guilds = True
@@ -741,6 +748,8 @@ class DMBot(commands.AutoShardedBot):
         self.recaps = recaps  # the cinematic recap of each session (#1382)
         self.suggestions = suggestions  # players' suggested line fixes (#1491)
         self.homebrew = homebrew  # a campaign's own homebrew entries (#1520)
+        self.sources = sources  # which sites a campaign approved, imported pages (#1633)
+        self.importer = importer  # adds homebrew from a published page's link (#1634)
         # "Did they mean…?" questions left unanswered at a session's end (#1572).
         self.heard_questions = heard_questions
         # The last entries a DM removed, per campaign, so the list can put them back (memory only).
@@ -1065,6 +1074,7 @@ class DMBot(commands.AutoShardedBot):
             clock_screen.ClockButton, clock_screen.ClockUndoButton, clock_screen.SuggestionButton
         )
         self.add_dynamic_items(clock_screen.CombatUndoButton)  # #1127
+        self.add_dynamic_items(clock_screen.ClockPicker, clock_screen.SplitUndoButton)  # #1607
         self.add_dynamic_items(delete_campaign.DeleteButton)  # #1608
         self.add_dynamic_items(fightbot.FightButton)  # #1129
         self.add_dynamic_items(timer_screen.EffectButton)  # timed effects (#998)
@@ -2173,6 +2183,7 @@ class DMBot(commands.AutoShardedBot):
             ("summary", lambda: self.post_session_summary(table, ended_at, caught_up, sent)),
             ("names heard", lambda: self.keep_heard_names(table)),
             ("name scan", lambda: self.suggest_names(table)),
+            ("close calls", lambda: self.log_close_calls(table)),
             ("who is who", lambda: self.learn_people(table)),
             ("unanswered questions", lambda: self.save_unanswered(table)),
             ("people check", lambda: self.check_people(table)),
@@ -2605,8 +2616,8 @@ class DMBot(commands.AutoShardedBot):
             return await self.all_house_rules(campaign.guild_id, campaign.id)
 
         async def brews(campaign: Campaign) -> Sequence[Homebrew]:
-            # All of the campaign's own entries: the sidebar engine keeps the hidden ones out of
-            # every prompt and answer (#1520), but needs them to know a name is overridden.
+            # The campaign's own entries that are on (the reader leaves out those the DM turned
+            # off, #1629), and the followed packs' (#1520).
             if self.homebrew_reader is None:
                 return []
             return await self.homebrew_reader.list(campaign.guild_id, campaign.id)
@@ -3721,7 +3732,7 @@ class DMBot(commands.AutoShardedBot):
             noted = self.tables.get(table.guild_id) is table and screen_levels.allows(
                 table.screen_level, screen_levels.FIX_NOTE
             )
-            result = self._clean(table, text, unsure=noted)
+            result = self._clean(table, text, unsure=noted, count=True)
             cleaned = result.text
             table.names_fixed += len(result.fixes)
             seam = self._look_back(table, utterance, text, result)
@@ -4002,7 +4013,7 @@ class DMBot(commands.AutoShardedBot):
         own = table.homebrew_spotter.find(line) if table.homebrew_spotter is not None else []
         if own and table.homebrew_spotter is not None:
             # The campaign's own homebrew comes before the book, and a homebrew name shadows the
-            # book's (hidden or not: the card is for the DM screen only). A shared book's entry
+            # book's (the card is for the DM screen only). A shared book's entry
             # ranks in its edition's place, so one that comes after the free rules' entry of the
             # same name steps aside and the free rules' card stands (#1569).
             target, fallback = table.rules_rulesets
@@ -4088,6 +4099,8 @@ class DMBot(commands.AutoShardedBot):
             or not self.consent.has_consent(table.guild_id, user_id)
         ):
             return False
+        if await self._split_holds_phrase(campaign):
+            return False  # (#1607) the party is split: nothing moves, the DM was told once
         table.clock_said[said.key] = now  # (the amount a rest covered may have changed the key)
         marked.append(said.key)
         try:
@@ -4098,6 +4111,7 @@ class DMBot(commands.AutoShardedBot):
                 user_id,
                 said.action,
                 minutes=said.minutes,
+                refuse_if_split=True,  # (#1607) checked again under the lock, not only above
             )
         except Exception:
             log.exception("The game clock couldn't take what was said at the table")
@@ -4183,10 +4197,18 @@ class DMBot(commands.AutoShardedBot):
             or not self.consent.has_consent(table.guild_id, user_id)
         ):
             return False
+        if await self._split_holds_phrase(campaign):
+            return False  # (#1607) the party is split: which group's fight? The buttons say
         action = {"start": "cstart", "next": "cnext", "round": "cround", "end": "cend"}[fight.kind]
         try:
             result = await clock_screen.press(
-                self, campaign.guild_id, campaign.id, user_id, action, set_to=fight.number
+                self,
+                campaign.guild_id,
+                campaign.id,
+                user_id,
+                action,
+                set_to=fight.number,
+                refuse_if_split=True,
             )
         except CampaignError:
             return False  # no longer a DM: said quietly, not an error
@@ -4211,6 +4233,23 @@ class DMBot(commands.AutoShardedBot):
             ],
             combat_undo=clock_screen.combat_undo_id(result.before, result.after),
         )
+        return True
+
+    async def _split_holds_phrase(self, campaign: Campaign) -> bool:
+        """True while the party is split (#1607): a spoken rest, time or round moves nothing,
+        because DMbot can't know which group the DM meant. The DM screen says so once per
+        split. A clock that can't be read counts as not split (nothing is held back)."""
+        if self.clocks is None:
+            return False
+        try:
+            stored = await self.clocks.get(campaign.guild_id, campaign.id)
+            if stored is None or not stored.split:
+                return False
+            if await self.clocks.claim_phrase_notice(campaign.guild_id, campaign.id):
+                await clock_screen.say(self, campaign, [clock_screen.SPLIT_PHRASE])
+        except Exception:
+            log.exception("Couldn't check whether the party is split")
+            return False
         return True
 
     async def _less_what_a_rest_covers(
@@ -4408,7 +4447,7 @@ class DMBot(commands.AutoShardedBot):
         if self.homebrew is None:
             return None
         packs = self.rule_sets if isinstance(self.rule_sets, HomebrewPackStore) else None
-        return HomebrewReader(self.homebrew, packs)
+        return HomebrewReader(self.homebrew, packs, self.sources)
 
     def homebrew_changed(self, guild_id: int, campaign_id: str) -> None:
         """A DM added, changed, removed or loaded homebrew (#1524): a session running for that
@@ -5019,11 +5058,11 @@ class DMBot(commands.AutoShardedBot):
                         EDIT_TIMEOUT_S,
                     )
 
-    def _clean(self, table: Table, heard: str, *, unsure: bool) -> Cleaned:
+    def _clean(self, table: Table, heard: str, *, unsure: bool, count: bool = False) -> Cleaned:
         """The line with misheard names fixed (#127), from the campaign's names as last
         loaded; as heard if cleaning fails. `unsure`: also fixes from names DMbot only
-        suggested and close look-alikes (shown with Undo). No await: the consent check just
-        made still holds."""
+        suggested and close look-alikes (shown with Undo). `count`: table speech, whose close calls
+        are counted for the session (#1577). No await: the consent check just made still holds."""
         assert table.name_lookup is not None
         try:
             result = clean(
@@ -5033,6 +5072,7 @@ class DMBot(commands.AutoShardedBot):
                 people=table.people,
                 scene=table.scene.scene(time.monotonic()).keys(),
                 unsure=unsure,
+                close_calls=table.close_calls if count else None,
             )
         except Exception:
             now = time.monotonic()
@@ -6233,6 +6273,15 @@ class DMBot(commands.AutoShardedBot):
         # (an unknown member comes back as a mention, which is not a name: the DM still counts)
         table.name_answers.set_dms({u: "" if n.startswith("<@") else n for u, n in dms.items()})
         table.name_answers.feed(user_id, at_ms, text, consented=True)
+
+    async def log_close_calls(self, table: Table) -> None:
+        """One INFO line at the session's end for dev1 (#1577): how many lines landed near the
+        Cleaner's likeness thresholds. Counts only (no words, names or speakers); nothing goes to
+        the DM screen or to players. Said once: the counter is emptied as it is read."""
+        calls, table.close_calls = table.close_calls, CloseCalls()
+        if calls.lines:
+            with log_context(guild_id=table.guild_id, campaign_id=table.campaign_id):
+                log.info("%s", calls.report())
 
     def _keep_unanswered(self, table: Table, asked: name_questions.Asked) -> None:
         """A "Did they mean…?" nobody answered goes to the after-session check (#1572), in memory
@@ -8010,9 +8059,11 @@ async def run(settings: Settings) -> None:
             if settings.enforce_plans
             else CampaignStore(db)
         )
+        homebrew_store, sources = HomebrewStore(db), SourceStore(db)
         campaigns.register_section(MemorySection())  # campaign memory goes in backups
         campaigns.register_section(HouseRulesSection())  # and so do house rules (#865)
         campaigns.register_section(HomebrewSection())  # and its own homebrew (#1520)
+        campaigns.register_section(SiteApprovalsSection())  # the sites it approved (#1633)
         campaigns.register_section(FollowedSetsSection())  # and the sets it follows (#1260)
         campaigns.register_section(ClockSection())  # and the game clock (#965)
         campaigns.register_section(EffectsSection())  # and its timed effects (#998)
@@ -8039,9 +8090,11 @@ async def run(settings: Settings) -> None:
             PackSuggestionStore(db),  # shared sets and homebrew packs (#1190, #1527, #1537)
             RecapStore(db),
             SuggestionStore(db),
-            HomebrewStore(db),
+            homebrew_store,
             WaitingQuestionStore(db),
             OptOutStore(db),
+            sources,
+            HomebrewImporter(homebrew_store, sources),
         )
         _close_on_sigterm(bot)
         async with bot:

@@ -2,15 +2,15 @@
 Pure: no Discord, no database.
 
 One entry per block. A block starts with `## Name (kind)` on its own line; then, optionally and
-in this order, `Summary: …` and `Players may know: yes` (or `no`); then a blank line; then the
-words, which may run over many lines:
+in this order, `Summary: …` and `Off: yes` (an entry the DM turned off; #1629); then a blank
+line; then the words, which may run over many lines:
 
     Homebrew: Frostmaiden
     # Lines starting with one # before the first entry are notes and are ignored.
 
     ## Hollow King (monster)
     Summary: A crowned skeleton.
-    Players may know: yes
+    Off: yes
 
     A skeleton in a rusted crown. It cannot be touched while it wears the crown.
 
@@ -52,14 +52,14 @@ HELP = (
     "# Each entry starts with: ## Name (kind)\n"
     f"# Kinds: {', '.join(KINDS)}\n"
     "# Under the heading you can add:  Summary: one short line\n"
-    "#                                 Players may know: yes   (or no)\n"
+    "#                                 Off: yes   (DMbot ignores the entry until you turn it on)\n"
     "# Then a blank line, then the words.\n"
     "# Lines starting with a single # before the first entry are notes and are ignored."
 )
 EXAMPLE = (
     "## Hollow King (monster)\n"
     "Summary: A crowned skeleton.\n"
-    "Players may know: no\n"
+    "Off: no\n"
     "\n"
     "Write what it does here, in your own words."
 )
@@ -76,7 +76,7 @@ NAME_TOO_LONG = f"the name is over {NAME_MAX} characters"
 NO_TEXT = "add the words after a blank line under the heading"
 TEXT_TOO_LONG = f"the words are over {TEXT_MAX} characters"
 SUMMARY_TOO_LONG = f"the summary is over {SUMMARY_MAX} characters"
-BAD_PLAYERS = "write Players may know: yes  or  Players may know: no"
+BAD_OFF = "write Off: yes  or  Off: no (or leave the line out)"
 TWICE = "another entry already has this name, so this one was skipped"
 TOO_MANY = f"more than {HOMEBREW_MAX} entries; the rest are left out"
 LINE_TOO_LONG = f"a line is over {MAX_LINE} characters. Split it into shorter lines"
@@ -118,7 +118,8 @@ def write(campaign_name: str, entries: Sequence[Homebrew]) -> str:
         out += ["", f"## {entry.name} ({entry.kind})"]
         if entry.summary:
             out.append(f"Summary: {entry.summary}")
-        out.append(f"Players may know: {'yes' if entry.players_may_know else 'no'}")
+        if not entry.enabled:  # (on is the default and is not written)
+            out.append("Off: yes")
         out.append("")
         out += [_escape(line) for line in entry.text.split("\n")]
     return "\n".join(out) + "\n"
@@ -202,19 +203,23 @@ def _entry(
         return None
     # The lines up to the first blank one are the optional Summary and Players lines.
     summary: str | None = None
-    players: bool | None = None
+    switch: bool | None = None  # (None: the file doesn't say)
     i = 0
     while i < len(lines) and lines[i].strip():
         label, colon, value = lines[i].partition(":")
         key = label.strip().lower()
         if colon and key == "summary":
             summary = value.strip()
-        elif colon and key == "players may know":
+        elif colon and key == "off":
             answer = value.strip().lower()
             if answer not in ("yes", "no"):
-                bad(BAD_PLAYERS)
+                bad(BAD_OFF)
                 return None
-            players = answer == "yes"
+            switch = answer == "no"  # (the entry is on)
+        elif colon and key == "players may know":
+            # An older file's line: nothing is hidden from players any more (part 2). Whatever it
+            # says is ignored, so an old file never stops on a setting that no longer exists.
+            pass
         else:
             break  # words with no blank line before them: they are the words
         i += 1
@@ -226,7 +231,7 @@ def _entry(
     except HomebrewError as exc:
         bad(_why(str(exc)))
         return None
-    return FileEntry(kind, clean_name_, text, shortened, players)
+    return FileEntry(kind, clean_name_, text, shortened, switch)
 
 
 def _heading(line: str) -> tuple[str, str | None]:

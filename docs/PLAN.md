@@ -387,11 +387,10 @@ never cut, with a **Read the rest** button. No match: "couldn't find that in the
 (SRD)", up to five close names as buttons, nothing picked for the DM. Two decisions:
 **anyone in the server may look a rule up with `/dmbot rule`** (Supervisor, 2026-10-16, #1562; it
 was the campaign's DMs only from 2026-10-09). The answer is private, never in a channel or a
-transcript. A player gets the same card as the DM but with house rules and only the homebrew the
-DM let players know (a hidden entry, from the campaign or a followed pack, is never named, not
-even as a close name, and a from-book entry follows the same flag): no DM-screen content, no
+transcript. A player gets the same card as the DM but with house rules and the campaign's homebrew
+that is on (an entry turned off is not found, "Homebrew (part 2)"): no DM-screen content, no
 secret names, no rulings, no AI and no cost; the card ends with "Your DM decides what applies at
-your table."; one lookup per person every 3 seconds ("Try again in a few seconds."); a player's card has no "you decide" line of the DM's and a player searching a hidden name gets the same "couldn't find" as for a name that does not exist;
+your table."; one lookup per person every 3 seconds ("Try again in a few seconds."); a player's card has no "you decide" line of the DM's;
 the 📖 Look up a rule button stays on the DM's Settings card. A person who runs a campaign looks
 in the campaigns they run, as before; anyone else in the campaigns of the server. And
 **precedence is shown, not decided**: a house rule of that campaign (and no other's) that
@@ -643,36 +642,40 @@ characters) and any past a campaign's 200 house rules stay as homebrew of the ki
 suggestions of a rule were dropped, and a linked house-rules file is not rewritten. Never a published book's text: the form says "Your own creations only. For a published
 book, use Share a rulebook." An entry has a name (1 to 80 characters, unique in the campaign, any case),
 its words (1 to 2,000, plain text) and an optional one-line summary (160, shown in alerts). **An entry is
-DM-screen content until the DM presses 👀 ("players may know")**: a homebrew monster is a spoiler. At most
+on or off** (part 2: the 🙈/👀 "players may know" switch is gone, nothing is hidden from players; see the
+on/off line below). At most
 200 per campaign; table `homebrew_entries` with the campaign scope and forced row-level security; in backups
 (a `homebrew` section, validated field by field) and deleted with the campaign; never read across campaigns
 or servers; only the campaign's DMs change anything (the store checks in the same transaction).
+- **Turn an entry on or off, instead of hiding it** (owner, 2026-10-16, #1629, migration 0112, which also drops
+  `players_may_know`: every entry is on, a hidden one included): each entry has **Turn off / Turn on** (no confirmation) and shows "(off)" in the list. Off means kept but used nowhere at the table: no lookups or alerts, no sidebar answers, no players' card or table questions, no homebrew spotter (one `usable` read filter). The file writes an `Off: yes` line and reads it back, and the backup carries it (an old backup loads with every entry on); a published pack leaves off entries out; a follower's copy can be turned off on its own and a pack update never turns it back on. The web doors show every entry with `enabled`.
+- **Where an entry came from** (owner, 2026-10-16, #1633, migration 0113; no user-visible change yet): every entry records its source: **typed** (the DM who typed it), **upload** (a file; the uploader by default, or a credit: a website, whose domain needs the same approval as a link's, or a typed name) or **link** (a published page). Entries from before are typed by the DM who made them. A link entry's words and summary are read from its page, so they are not on the entry's row. `homebrew_pages` keeps **one copy per address**, with no campaign scope and no row-level security: the second exception to campaign isolation, next to shared rulesets; it holds nothing about who imported it, and the website's role has no grant on it. `site_approvals` is per campaign (isolated, deleted with the campaign, in its backups): who approved a site and when, once per site. One rule, in the store's read (`_USABLE`), decides what DMbot may use: the entry is on and, if it has a site, that site is approved in this campaign. A backup writes a link entry with its page's content (restore re-points to the page already here, else recreates it) and its sites' approvals. A link entry's words cannot be edited, and it, or an upload credited to a website, is never copied into a pack as words (packs carry them by reference later). Words in a backup file never become a page other campaigns rely on: a page recreated from a backup is `restored` (no fetch time) and is skipped by `page_for` until a fetch replaces it. A backup brings a campaign's site approvals back as they were (decided with the issue). Known costs of one copy per address: the table can tell that some campaign imported an address, and roughly when, never who or where; pages no entry points to are not yet cleaned up (a follow-up).
+- **Who made a loaded file** (owner, 2026-10-16, #1633): at the Load step, after "is any of this from a published book?" answered No, the DM picks **Who made this?**: **Me** (the default), **A website** (the site's domain; the right-to-use warning appears once per site in this campaign, and its approval is kept, then an entry credited to that site can be used) or **Someone else** (a typed name, up to 80 characters). The credit is kept with each new entry of the file; an entry already in the campaign keeps its own.
+- **Add from a link** (owner, 2026-10-16, #1634): ⚙️ Settings → 📚 Homebrew has **🔗 Add from a link** beside ➕ Add and 📥 Load file. The DM pastes the address of ONE published page; only `dndbeyond.com` (and its `www.`) for now, kept as one constant (`rules/dndbeyond.py`); anything else gets "DMbot can only add homebrew from D&D Beyond for now…". The first link from a site in a campaign shows the right-to-use warning once ("I have the right" records the site's approval); after that nothing is asked. The page is read once, when the DM asks, and shown with Save / Cancel before anything is saved: name from the page's heading, kind from the first part of the address's path (magic-items → item, spells → spell, monsters → monster, feats → feat, else other), words as plain text up to 2,000 characters (it says if the end was cut). An address already kept in `homebrew_pages` is re-used, never fetched again. The fetch (`rules/page_fetch.py`, on `dmbot.fetch`'s guards): https on port 443 only; every address the host resolves to must be public (private, loopback and link-local refused, and the connection goes to the addresses checked); redirects only within the allowed site, at most 3; no cookies, no sign-in; a plain user agent naming DMbot; 10 seconds and 2 MB; one page at a time per campaign and six in ten minutes. A 404 or a not-found page says "That page isn't public. Publish your homebrew on D&D Beyond first…"; a block or any other failure says "D&D Beyond didn't answer. Try again in a minute." and is logged without the page or its address. **The terms risk is accepted by the owner:** D&D Beyond's terms limit automated access; the owner reads them as aimed at scraping, which this is not (one page, when one user asks). Revisit if D&D Beyond objects or blocks it. Whether D&D Beyond answers server traffic at all is checked live by dev1.
 - **Where the DM manages it:** ⚙️ Settings → 📚 **Homebrew** (or `/dmbot homebrew`), DM only, checked on every
-  press: the list (🙈 only the DM, 👀 players may know), ➕ Add (pick the kind, then a form), and on an entry
-  Edit, 👀/🙈, its kind, 🗑 Remove. **Undo** a removal is kept in memory (the last five per campaign, gone at a
+  press: the list ("(off)" marks an entry that is off), ➕ Add (pick the kind, then a form), and on an entry
+  Edit, Turn off / Turn on, its kind, 🗑 Remove. **Undo** a removal is kept in memory (the last five per campaign, gone at a
   restart), nothing stored.
 - **Where it is read:** the precedence is house rules → homebrew → target → fallback, and **a homebrew name
-  shadows the book's, hidden or not** (the book is never used for a name the campaign has overridden).
-  - `/dmbot rule` (the DM's private answer) shows the campaign's entry with the same name, tagged
-    `[Homebrew]` with the source "<campaign>'s homebrew: <name>", even when players may not know it.
-  - The DM sidebar and table questions use **only entries marked 👀 players may know**: a sidebar reply
-    reaches the raw transcript, which the whole server may read (#933, #1378). Up to 3 entries, each cut to 600
+  shadows the book's** (the book is never used for a name the campaign has overridden).
+  - `/dmbot rule` shows the campaign's entry with the same name, tagged `[Homebrew]` with the source
+    "<campaign>'s homebrew: <name>", to a player and to the DM alike.
+  - The DM sidebar and table questions use every entry that is on. Up to 3 entries, each cut to 600
     characters, go to the AI after the house rules and before the free rules, with the tag and the source.
-    A question about a hidden entry is not answered by the AI at all: the table gets "That's one for your DM."
-    (and the DM's own table question is answered to them privately), the DM's sidebar gets "That's in your
-    homebrew. Use /dmbot rule <name>."
-  - The entry form says so: "Hidden entries are for you only; DMbot's sidebar and table answers don't use them."
+  - An entry that is off is read by none of these (one `usable_only` filter in the store's read, used by the
+    reader). An own entry that is off stops shadowing a followed pack's entry of the same name: the pack's
+    answers then (owner, 2026-10-16).
 - **Part 1b (#1524):**
   - **Live rules cards** (`rules/homebrew_spotter.py`): when the table names one of the campaign's homebrew
     entries (whole name, longest first, a plural counts; an everyday word like Light only with its lead-in,
-    and a homebrew creature with an everyday name never), a short card goes on the DM screen only, **hidden
-    or not**, tagged `[Homebrew]` with the source "<campaign>'s homebrew: <name>", after any house rule that
+    and a homebrew creature with an everyday name never), a short card goes on the DM screen only, tagged `[Homebrew]` with the source "<campaign>'s homebrew: <name>", after any house rule that
     names it and before the book; a homebrew name shadows the book's card; once per entry per session and
     within the cards' one-a-minute limit; the buttons are the book cards' (**Read it all** shows the entry).
     The names are read when a session starts and again after any change.
   - **A file** (`rules/homebrew_file.py`): ⚙️ Settings → 📚 Homebrew has 📤 **Download file** and 📥 **Load
-    file** (DM only). One entry per block, `## Name (kind)`, optional `Summary:` and `Players may know: yes`
-    lines, a blank line, then the words; read and written both ways without loss; a block that is not an
+    file** (DM only). One entry per block, `## Name (kind)`, optional `Summary:` and `Off: yes` (an
+    entry that is off; an older file's `Players may know:` line is accepted and ignored) lines, a blank line,
+    then the words; read and written both ways without loss; a block that is not an
     entry is reported, never guessed. Loading shows what it would do (new, changed, the same, and what
     could not be used), then asks **"Is any of this from a published book?"**: **No** loads it as the DM's
     own; **Yes** shows the right-to-use warning ("DMbot doesn't check this. It is kept only in this
@@ -705,6 +708,12 @@ differ, this wins.
   later link from the same site in that campaign needs no new confirmation. Who confirmed and when is kept
   (table of approved sites per campaign). A campaign that has not approved a site cannot use content from
   it, whether imported there or reached through a pack.
+- **🔄 Update from the link (#1645).** On a link entry, a DM can fetch its one page again: same guards,
+  same one-at-a-time and hourly limits, and the site's approval checked again. DMbot shows the new words
+  and what changed ("Nothing changed on the page." when so); only **Save** replaces the kept copy, and
+  because there is one copy per address, every campaign pointing at it gets the new words (the button says
+  so). A page that has gone private or been removed is marked stale and its words are kept. A restored
+  page becomes trusted once a fetch replaces it. Nothing refreshes by itself: only a DM's press fetches.
 - **Every entry records its source.** The database keeps, for every entry:
   - **Link:** the address it came from and its site (the domain), plus who added it.
   - **Typed:** the Discord user who typed it.
@@ -745,9 +754,19 @@ never does.
   with a name. Within the server, other DMs pick it from a list; for another server, the publishing DM gets a
   **share code** to hand out (it can be turned off, which stops new followers only). Try It campaigns can
   follow but not publish (they have no backups either).
-- **What a set may hold:** only content the campaign's DMs wrote themselves. **Never** anything from a shared
+- **What a set may hold** (updated 2026-10-16, #1635, "Homebrew (part 2)"): a homebrew pack holds the campaign's
+  homebrew: anything but an entry from a shared rulebook or adventure. **Never** anything from a shared
   rulebook or adventure (the right to use it was confirmed for one campaign only, CLAUDE.md, IP), checked by
   where each entry came from; never story memory, names, transcripts, DM notes or character sheets.
+  **Imported entries travel by reference:** an entry imported from a published page is a pointer in the pack
+  (the page's address and site, no words and no summary), because the page is kept once in `homebrew_pages`.
+  An upload credited to a website carries its words and names the site. **A follower must approve each site
+  once per campaign** before its entries are used (the same right-to-use step as importing): the Homebrew
+  packs card says how many entries from which site are waiting and has a button for each (**Use dndbeyond.com**),
+  the follow step and an update's DM-screen note say so too, and approving turns the entries on with no other
+  step. A new site in an update waits the same way; a site already approved asks nothing. A pointer whose page
+  isn't kept here (or was only recreated from a backup) is skipped, not shown. A declined change that holds a
+  pointer lands in the campaign's own homebrew as the same page.
 - **One writer.** Only the publishing campaign's DMs change a set; every change is logged with who, which
   campaign and when. *(Supervisor, 2026-10-14, #1256: no separate co-editor list. To let another DM edit the
   set, make them a DM of the publishing campaign. Publishing a version can be undone: Undo publishes the earlier
@@ -821,8 +840,7 @@ never does.
   campaign publishes one pack and follows up to five, in the DM's order; its backup carries each followed
   copy, never the code. Readers (`/dmbot rule`, rules cards and alerts, the sidebar, table questions) read the
   campaign's own homebrew first, then its followed packs in order (a name is taken once, by the first that has
-  it), cited "<pack> homebrew, vN" and tagged `[Homebrew]`; an entry the publisher keeps hidden stays hidden
-  at the follower's table. Part B built (⚙️ Settings → 📚 Shared rules → 📦 Homebrew packs): Share (paid plans; names the
+  it), cited "<pack> homebrew, vN" and tagged `[Homebrew]`; a pack's entries are all on. Part B built (⚙️ Settings → 📚 Shared rules → 📦 Homebrew packs): Share (paid plans; names the
   entries a book keeps at home), Follow (pick from this server or a code), order with Earlier/Later, Stop
   following with Undo; a running session reads the new names at once. Part C built: at a session's start DMbot takes a
   followed pack's newer version (Follow, credited to DMbot) and posts one DM-screen note with See changes /
@@ -1961,6 +1979,14 @@ reads the campaign memory and never changes it.
   it (never queued, never in Redis, never logged, never stored). **Consent is re-checked
   right before every re-listen request**, and the audio is dropped at once on revoke.
   Re-listen is added after the first version, once close calls can be measured.
+  **Built, close calls are counted (2026-10-16, #1577):** the Cleaner counts, per session and in
+  memory, the candidates whose spelling-likeness lands within 0.05 of a threshold (fixed just
+  above, left just below, one word or more, people apart), counts only (no words, names or
+  speakers). One INFO log line at the session's end, "Cleaner close calls: fixed-near 3,
+  left-near 7, one-word 2 of 412 lines", is where dev1 reads it; nothing goes to the DM screen
+  or to players. `python -m dmbot.devtools.cleaner_close_calls --names FILE SOURCE` runs the
+  Cleaner offline over a kept session or a transcript file and also lists the ten nearest misses
+  as words, for dev1 on the owner's recordings (never in GitHub).
 - **Test recordings (owner, 2026-10-10; #1019, built): the one place audio is kept.** On a
   test server only (`DMBOT_TEST_RECORDING_GUILDS`, empty by default), and only for people who
   pressed a second, separate button, **Save my voice for tests**, in their consent message
@@ -2361,7 +2387,7 @@ the clock and the rest record. Only a DM's line that opens the scene and is foll
 narration's subject or ends the sentence; never "in three days", "for three days", "three days
 ago", a question, a wish, a condition, quoted speech, more than 30 days, or a player's line; the
 same skip twice in five minutes is one. A rested skip leaves no "24 hours without a long rest" note;
-one without rest over 24 hours says it once. Not built yet: split-party clocks, periodic notes.
+one without rest over 24 hours says it once. Split-party clocks are built (below). Not built yet: periodic notes.
 
 *Built, part 2: timed effects the DM starts (2026-10-10, #998):* `game_effects` (migration 0042): per
 campaign, own server scope, deleted with the campaign, in backups (`EffectsSection`, validated),
@@ -2375,8 +2401,34 @@ index). Concentration shows as 🧠. The clock message lists the soonest five, o
 button or rest passes an effect's end, the DM screen says once "⏳ Bless on Mira has likely
 ended (1 minute)" with **Ended** and **Still going +10 min** (ten more game minutes from where the
 clock is, then said again); nothing ends silently or by itself. Only the campaign's DMs, checked in
-the transaction. Effects live on the game clock, so a restart keeps them. **Still going** is shown in the next "has likely ended" line as the total with "extended by the DM" (`game_effects.extended`, migration 0049, in backups; #1112), and the press says so on the DM screen only. Not built: split-party
-clocks, reading time from narration, AI.
+the transaction. Effects live on the game clock, so a restart keeps them. **Still going** is shown in the next "has likely ended" line as the total with "extended by the DM" (`game_effects.extended`, migration 0049, in backups; #1112), and the press says so on the DM screen only. Not built: reading time from narration, AI.
+*Split-party clocks (Supervisor, 2026-10-16, #1607; migration 0109):* when the party splits, one clock
+is wrong for half the table, so the DM can split it.
+- **Split:** **Rests & time…** holds **✂️ Split the party** (DMs only, checked on every press). The DM
+  names two or three groups (short names, like "Tower" and "Camp"; not during combat). Each group starts with the
+  current time and last long rest. The pinned message shows one line for the group times ("Tower: Day 4,
+  14:30 · Camp: Day 4, 16:10") and a group picker; the existing buttons, rests, combat and Undo act on the
+  picked group. The pick is remembered per campaign across restarts. The players' game-time channel shows
+  one line per group in the same words (the day and a rough time, never the exact time).
+- **Spoken phrases move nothing while split** (a rest, a time or a round said aloud), because DMbot can't
+  know which group the DM meant. The DM screen says once per split: "The party is split, so I didn't move
+  the clock. Use the buttons for each group."
+- **Notes** (dawn, noon, dusk, the 24-hour line, a timer that ended) are said per group, prefixed with the
+  group's name. When one group's clock is more than 8 game hours ahead of another's the DM screen says so
+  once per split ("Tower is 9 hours ahead of Camp."): a reminder, never a block.
+- **Rejoin:** **🤝 Rejoin the party** asks which time to keep, offering each group's time, the latest first.
+  It keeps that group's time and sets the last long rest to the latest any group had (never later than the
+  kept time). Then it is one clock again. **Undo** works for the split (while no group has moved) and for the
+  rejoin (while the clock is where the rejoin left it); a rest's Undo acts on the group that rested.
+- **Timers** stay campaign-wide on the one clock when not split. Split, a timer counts on the group picked
+  when it was started (one started before the split counts on the first group), is shown with its group's
+  name and is judged on that group's time. On rejoin a group's timers move with its time to the kept time
+  (the same time left).
+- **Data:** `game_clock_groups` (campaign scope, isolated like `game_clocks`: position, name, minute,
+  last_long_rest, tired_told_for, combat round) holds the groups while split; `game_clocks` keeps the clock
+  from before the split and gets `picked_group`, two once-per-split flags and `split_undo` (what the last
+  Undo needs); `game_effects.group_position` says which group a timer counts on. Backups carry the groups
+  (`ClockSection`, validated) and each timer's group. Deleting the campaign deletes them.
 *The game-time channel (owner, 2026-10-13, after Test F):*
 - **Players see the clock in its own channel.** The players see the clock in a game-time channel,
   `dmb-gametime-<slug>`, without needing the DM screen. Like the transcript channel, everyone
@@ -2610,7 +2662,7 @@ voice). `bot.sidebar_answers.answer(campaign, question, asker_id=..., scene=...)
   reach the raw transcript, #933), the caller's last few minutes of scene (cut to 1,500
   characters, fenced as the players' words, which are information and never instructions) and,
   only for questions about DMbot or Discord, the reviewed digest `sidebar/about_dmbot.md`.
-  Only matching entries are sent, each cut to 1,200 characters. A campaign's homebrew entries that players may know are sent (#1520); content a DM shared counts only with its right-to-use confirmation and none is
+  Only matching entries are sent, each cut to 1,200 characters. A campaign's homebrew entries that are on are sent (#1520); content a DM shared counts only with its right-to-use confirmation and none is
   stored as text yet, so none is sent.
 - **Sources are DMbot's, not the model's.** The shown source is taken from what the model was
   given: an SRD answer cites the entry's own page and carries `[Legacy 2014]` when it is a 2014

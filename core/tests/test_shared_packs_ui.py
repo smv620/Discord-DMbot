@@ -20,7 +20,7 @@ from tests.test_shared_rules_ui import campaign, interaction
 def entry(name: str, *, book: bool = False) -> Homebrew:
     return Homebrew(
         id=1, campaign_id="c1", kind="monster", name=name, text="t", summary=None,
-        players_may_know=False, created_by=7, created_at=1, updated_at=1, from_book=book,
+        created_by=7, created_at=1, updated_at=1, from_book=book,
     )  # fmt: skip
 
 
@@ -127,7 +127,7 @@ class Following(unittest.IsolatedAsyncioTestCase):
         await shared_packs.look_up(it, campaign(), "code")
         text, view = it.sent[0]
         self.assertIn("2 entries (update 2)", text)
-        self.assertIn("1 of them is hidden from players", text)
+        self.assertNotIn("hidden", text)  # (nothing is hidden from players any more)
         self.assertIn("Your own homebrew wins", text)
         st.follow_pack.assert_not_called()
         self.assertIsInstance(view, shared_packs.ConfirmFollow)
@@ -267,7 +267,8 @@ class CardWords(unittest.IsolatedAsyncioTestCase):
     def test_the_intro_and_the_two_bold_labels(self) -> None:
         from dmbot.ui import shared_packs as sp
 
-        self.assertIn("A Homebrew pack is a named bundle of your own homebrew", sp.INTRO)
+        self.assertIn("A Homebrew pack is a named bundle of your homebrew", sp.INTRO)
+        self.assertNotIn("you made", sp.INTRO)
         self.assertIn("⚙️ Settings → 📚 Homebrew", sp.INTRO)
         self.assertIn(
             "Only homebrew is shared in a pack, never your story, names or notes.", sp.INTRO
@@ -289,3 +290,80 @@ class CardWords(unittest.IsolatedAsyncioTestCase):
         text, _ = await shared_packs._menu(it, campaign(), st)
         self.assertIn("• **Following:** the top one wins if two packs use the same name.", text)
         self.assertIn("1. **Frost** from Red Table", text)
+
+
+class WaitingSites(unittest.IsolatedAsyncioTestCase):
+    """Entries a followed pack holds from a site wait for the campaign's say-so (#1635)."""
+
+    def bot(self, waiting: dict[str, int], approved: bool = False) -> Any:
+        st = store()
+        st.published_pack = AsyncMock(return_value=None)
+        st.followed_packs = AsyncMock(return_value=[follow()])
+        bot = bot_with(st)
+        bot.homebrew_reader = SimpleNamespace(waiting=AsyncMock(return_value=waiting))
+        bot.sources = SimpleNamespace(
+            approved=AsyncMock(return_value=approved), approve=AsyncMock()
+        )
+        return bot
+
+    async def test_the_card_says_what_waits_and_why_and_has_one_button_a_site(self) -> None:
+        bot = self.bot({"dndbeyond.com": 2, "example.org": 1})
+        it = interaction(7, bot)
+        text, view = await shared_packs._menu(it, campaign(), bot.rule_sets)
+        self.assertIn(
+            "**Waiting for you:** 2 entries from dndbeyond.com, 1 entry from example.org", text
+        )
+        self.assertIn("right to use that site's homebrew", text)
+        labels = [str(getattr(c, "label", "")) for c in view.children]
+        self.assertIn("Use dndbeyond.com", labels)
+        self.assertIn("Use example.org", labels)
+
+    async def test_nothing_waiting_adds_nothing(self) -> None:
+        bot = self.bot({})
+        text, view = await shared_packs._menu(interaction(7, bot), campaign(), bot.rule_sets)
+        self.assertNotIn("Waiting for you", text)
+        self.assertFalse(
+            [c for c in view.children if str(getattr(c, "label", "")).startswith("Use ")]
+        )
+
+    async def test_the_warning_comes_first_and_only_the_confirmation_approves(self) -> None:
+        bot = self.bot({"dndbeyond.com": 2})
+        it = interaction(7, bot)
+        _text, view = await shared_packs._menu(it, campaign(), bot.rule_sets)
+        button = next(c for c in view.children if getattr(c, "label", "") == "Use dndbeyond.com")
+        await button.callback(it)
+        shown, step = it.sent[-1]
+        self.assertIn("right to use homebrew from dndbeyond.com", shown)
+        bot.sources.approve.assert_not_called()
+        self.assertEqual(
+            [getattr(c, "label", "") for c in step.children], ["Cancel", "I have the right"]
+        )
+        yes = next(c for c in step.children if getattr(c, "label", "") == "I have the right")
+        await yes.callback(interaction(99, bot))  # a player's press approves nothing
+        bot.sources.approve.assert_not_called()
+        done = interaction(7, bot)
+        await yes.callback(done)
+        bot.sources.approve.assert_awaited_once()
+        self.assertEqual(bot.sources.approve.await_args.args[-1], "dndbeyond.com")
+        bot.homebrew_changed.assert_called_once()
+
+    async def test_following_a_pack_says_which_sites_will_wait(self) -> None:
+        bot = self.bot({})
+        content = {
+            "entries": [
+                {
+                    "name": "Charm",
+                    "kind": "item",
+                    "text": None,
+                    "page": "https://www.dndbeyond.com/a",
+                    "domain": "dndbeyond.com",
+                },
+                {"name": "Lamp", "kind": "item", "text": "x"},
+            ]
+        }
+        note = await shared_packs._sites_note(interaction(7, bot), campaign(), content)
+        self.assertIn("1 entry from dndbeyond.com", note)
+        bot.sources.approved = AsyncMock(return_value=True)
+        self.assertEqual(
+            await shared_packs._sites_note(interaction(7, bot), campaign(), content), ""
+        )

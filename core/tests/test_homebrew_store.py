@@ -60,23 +60,17 @@ class HomebrewTest(DatabaseTest):
 
 
 class Writing(HomebrewTest):
-    async def test_an_entry_is_kept_as_the_dm_wrote_it_and_is_hidden_from_players_by_default(
-        self,
-    ) -> None:
+    async def test_an_entry_is_kept_as_the_dm_wrote_it_and_is_on(self) -> None:
         saved = await self.add(
             "  Hollow   King ", "Line one.\n\n\n\nLine two.", summary="  A crowned skeleton ."
         )
         self.assertEqual(saved.name, "Hollow King")  # spacing cleaned
         self.assertEqual(saved.text, "Line one.\n\nLine two.")  # breaks kept, blank lines squeezed
         self.assertEqual(saved.summary, "A crowned skeleton .")
-        self.assertFalse(saved.players_may_know)  # a monster is a spoiler until the DM says so
+        self.assertTrue(saved.enabled)  # on until the DM turns it off (part 2: nothing is hidden)
         self.assertEqual((saved.created_by, saved.version), (DM, 1))
         self.assertEqual(await self.store.get(GUILD_A, self.campaign.id, saved.id), saved)
         self.assertEqual(await self.store.list(GUILD_A, self.campaign.id), [saved])
-
-    async def test_the_dm_can_say_players_may_know(self) -> None:
-        saved = await self.add("Moonblade", "A silver sword.", kind="item", players_may_know=True)
-        self.assertTrue(saved.players_may_know)
 
     async def test_the_line_shown_is_the_summary_or_the_start_of_the_text(self) -> None:
         a = await self.add("A", "word " * 100, summary="Short.")
@@ -113,8 +107,8 @@ class Writing(HomebrewTest):
         async with self.db.guild(GUILD_A) as conn:
             await conn.execute(
                 "INSERT INTO homebrew_entries (guild_id, campaign_id, kind, name, name_key, text,"
-                " created_by, created_at, updated_at)"
-                " SELECT %s, %s, 'feat', 'R' || n, 'r' || n, 'x', 7, 1, 1"
+                " created_by, added_by, created_at, updated_at)"
+                " SELECT %s, %s, 'feat', 'R' || n, 'r' || n, 'x', 7, 7, 1, 1"
                 " FROM generate_series(1, %s) AS n",
                 (GUILD_A, self.campaign.id, HOMEBREW_MAX),
             )
@@ -132,10 +126,8 @@ class Writing(HomebrewTest):
             kind="item",
             name="Hollow Crown",
             text="Now a crown.",
-            players_may_know=True,
         )
         self.assertEqual((edited.kind, edited.name, edited.version), ("item", "Hollow Crown", 2))
-        self.assertTrue(edited.players_may_know)
         self.assertGreater(edited.updated_at, saved.updated_at)
         self.assertEqual(edited.created_at, saved.created_at)
 
@@ -180,7 +172,7 @@ class Writing(HomebrewTest):
         self.assertEqual(now.text, "v2")
 
     async def test_remove_returns_the_entry_and_put_back_restores_it(self) -> None:
-        saved = await self.add("Hollow King", players_may_know=True, summary="Crowned.")
+        saved = await self.add("Hollow King", summary="Crowned.")
         gone = await self.store.remove(GUILD_A, self.campaign.id, DM, saved.id)
         self.assertEqual(gone.name, "Hollow King")
         self.assertEqual(await self.names(), [])
@@ -188,7 +180,7 @@ class Writing(HomebrewTest):
             await self.store.remove(GUILD_A, self.campaign.id, DM, saved.id)
         back = await self.store.put_back(GUILD_A, self.campaign.id, DM, gone)
         self.assertEqual(
-            (back.name, back.text, back.summary, back.players_may_know, back.created_at),
+            (back.name, back.text, back.summary, back.enabled, back.created_at),
             (gone.name, gone.text, gone.summary, True, gone.created_at),
         )
         # Putting it back again, or over a new entry with the name, is refused like an add.
@@ -268,7 +260,8 @@ class Isolation(HomebrewTest):
 class Backups(HomebrewTest):
     async def test_entries_go_into_a_backup_and_come_back_exactly(self) -> None:
         a = await self.add("Hollow King", "Line one.\nLine two.", summary="Crowned.")
-        b = await self.add("Moonblade", "A sword.", kind="item", players_may_know=True)
+        b = await self.add("Moonblade", "A sword.", kind="item")
+        await self.store.set_enabled(GUILD_A, self.campaign.id, DM, b.id, False)
         backup = await self.campaigns.export(GUILD_A, self.campaign.id)
         rows = backup["sections"]["homebrew"]
         self.assertEqual([r["name"] for r in rows], ["Hollow King", "Moonblade"])
@@ -279,8 +272,8 @@ class Backups(HomebrewTest):
         back = {e.name: e for e in await self.store.list(GUILD_B, restored.id)}
         self.assertEqual(back["Hollow King"].text, a.text)
         self.assertEqual(back["Hollow King"].summary, "Crowned.")
-        self.assertFalse(back["Hollow King"].players_may_know)
-        self.assertTrue(back["Moonblade"].players_may_know)
+        self.assertTrue(back["Hollow King"].enabled)
+        self.assertFalse(back["Moonblade"].enabled)  # (off travels in a backup)
         self.assertEqual(
             (back["Moonblade"].created_at, back["Moonblade"].kind), (b.created_at, "item")
         )
@@ -294,6 +287,17 @@ class Backups(HomebrewTest):
         await self.add("Theirs", campaign=other)
         mine = await self.campaigns.export(GUILD_A, self.campaign.id)
         self.assertEqual([r["name"] for r in mine["sections"]["homebrew"]], ["Mine"])
+
+    async def test_a_backup_from_before_on_off_loads_with_every_entry_on(self) -> None:
+        await self.add("Hollow King")
+        good = await self.campaigns.export(GUILD_A, self.campaign.id)
+        row = {**good["sections"]["homebrew"][0], "players_may_know": False}  # (the old key)
+        old = {**good, "sections": {**good["sections"], "homebrew": [row]}}
+        restored = await self.campaigns.import_backup(GUILD_B, old, PLAYER)
+        (back,) = await self.store.list(GUILD_B, restored.id)
+        self.assertTrue(back.enabled)  # (a hidden entry is on: nothing is hidden any more)
+        again = await self.campaigns.export(GUILD_B, restored.id)
+        self.assertNotIn("players_may_know", again["sections"]["homebrew"][0])
 
     async def test_a_damaged_file_is_refused_before_anything_is_written(self) -> None:
         await self.add("Hollow King")
@@ -330,7 +334,7 @@ class LoadingAFile(HomebrewTest):
     def file(self, *rows: tuple[str, str, str]) -> list[FileEntry]:
         return [FileEntry(kind, name, text) for kind, name, text in rows]
 
-    async def test_new_entries_are_added_hidden_and_the_same_again_changes_nothing(self) -> None:
+    async def test_new_entries_are_added_on_and_the_same_again_changes_nothing(self) -> None:
         rows = self.file(
             ("monster", "Hollow King", "A skeleton."), ("item", "Moonblade", "A sword.")
         )
@@ -338,13 +342,14 @@ class LoadingAFile(HomebrewTest):
         self.assertEqual((done.added, done.updated, done.same), (2, 0, 0))
         listed = await self.store.list(GUILD_A, self.campaign.id)
         self.assertEqual(sorted(e.name for e in listed), ["Hollow King", "Moonblade"])
-        self.assertFalse(any(e.players_may_know or e.from_book for e in listed))
+        self.assertTrue(all(e.enabled and not e.from_book for e in listed))
         again = await self.store.load_file(GUILD_A, self.campaign.id, DM, rows)
         self.assertEqual((again.added, again.updated, again.same), (0, 0, 2))
         self.assertEqual({e.version for e in await self.store.list(GUILD_A, self.campaign.id)}, {1})
 
     async def test_a_name_the_campaign_has_is_updated_by_name_in_any_case(self) -> None:
-        old = await self.add("Hollow King", "Old words.", players_may_know=True)
+        old = await self.add("Hollow King", "Old words.")
+        await self.store.set_enabled(GUILD_A, self.campaign.id, DM, old.id, False)
         self.clock.now += 60
         done = await self.store.load_file(
             GUILD_A,
@@ -355,22 +360,22 @@ class LoadingAFile(HomebrewTest):
         self.assertEqual((done.added, done.updated), (0, 1))
         (now,) = await self.store.list(GUILD_A, self.campaign.id)
         self.assertEqual(
-            (now.id, now.text, now.summary, now.version), (old.id, "New words.", "Short.", 2)
+            (now.id, now.text, now.summary, now.version), (old.id, "New words.", "Short.", 3)
         )
         self.assertEqual(now.name, "HOLLOW KING")
-        self.assertTrue(now.players_may_know)  # the file said nothing: the old setting stays
+        self.assertFalse(now.enabled)  # the file said nothing: the old setting (off) stays
         self.assertGreater(now.updated_at, old.updated_at)
 
-    async def test_the_file_can_say_who_may_know(self) -> None:
+    async def test_the_file_can_say_off_and_on(self) -> None:
         await self.add("Hollow King", "Words.")
         await self.store.load_file(
             GUILD_A,
             self.campaign.id,
             DM,
-            [FileEntry("monster", "Hollow King", "Words.", None, True)],
+            [FileEntry("monster", "Hollow King", "Words.", None, False)],
         )
         (now,) = await self.store.list(GUILD_A, self.campaign.id)
-        self.assertTrue(now.players_may_know)
+        self.assertFalse(now.enabled)
 
     async def test_over_the_limit_nothing_is_loaded_and_the_count_is_said(self) -> None:
         for n in range(HOMEBREW_MAX - 1):

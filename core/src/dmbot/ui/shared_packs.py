@@ -10,6 +10,7 @@ and a running session is told (`homebrew_changed`) so its rules cards read the n
 from __future__ import annotations
 
 import logging
+from functools import partial
 from typing import Any
 
 import discord
@@ -38,11 +39,12 @@ from dmbot.ui.shared_rules import (
 log = logging.getLogger(__name__)
 
 INTRO = (
-    "📦 **Homebrew packs**\nA Homebrew pack is a named bundle of your own homebrew: the spells, "
-    "monsters, items and other game content you made in ⚙️ Settings → 📚 Homebrew. Share your "
+    "📦 **Homebrew packs**\nA Homebrew pack is a named bundle of your homebrew: the spells, "
+    "monsters, items and other game content in ⚙️ Settings → 📚 Homebrew. Share your "
     "pack with another table, or follow someone else's. Only homebrew is shared in a pack, "
     "never your story, names or notes."
 )
+SITE_MAX = 3  # sites with entries waiting that get a button on the card (a card holds 25)
 SHARE_LABEL = "📤 Share my homebrew"
 PUBLISH_LABEL = "🔄 Publish my changes"
 CODE_LABEL = "🔑 New share code"
@@ -55,8 +57,8 @@ LATER_LABEL = "▼ Later"
 UNFOLLOW_LABEL = "Stop following"
 UNDO_LABEL = "↩️ Undo"
 CODE_NOTE = (
-    "Any DM in this server, and anyone who has this code, can read ALL the shared entries, "
-    "including the ones hidden from players. Old codes still work until you press Stop sharing."
+    "Any DM in this server, and anyone who has this code, can read all the shared entries. "
+    "Old codes still work until you press Stop sharing."
 )
 NAMES_SHOWN = 5  # names quoted for entries that stay, so a long list stays short
 NOT_A_PACK_CODE = "That code is for house rules. Use 📚 Shared rules → Use shared rules."
@@ -80,18 +82,15 @@ def stays_home(left_out: list[str] | tuple[str, ...]) -> str:
     if not left_out:
         return ""
     return (
-        f"Not shared: {_names(list(left_out))}. They come from a book, and book text stays in "
-        "this campaign."
+        f"Not shared: {_names(list(left_out))}. They come from a book or a website, and that "
+        "text stays in this campaign."
     )
 
 
-def _count(content: dict[str, Any]) -> tuple[int, int]:
-    """(all entries, those hidden from players) in a pack's content; `known` is "players may
-    know it"."""
+def _count(content: dict[str, Any]) -> int:
+    """How many entries a pack's content holds."""
     entries = content.get("entries")
-    if not isinstance(entries, list):
-        return 0, 0
-    return len(entries), sum(1 for e in entries if isinstance(e, dict) and not e.get("known"))
+    return len(entries) if isinstance(entries, list) else 0
 
 
 def _store(interaction: discord.Interaction) -> Any:
@@ -167,6 +166,7 @@ async def _menu(
         _, left_out = pack_content.content_of(await _own_entries(interaction, current))
         if left_out:
             lines.append(f"• {stays_home(left_out)}")
+    waiting = await _waiting(interaction, current)
     if follows:
         lines.append("• **Following:** the top one wins if two packs use the same name.")
         for i, f in enumerate(follows, start=1):
@@ -175,8 +175,42 @@ async def _menu(
         lines.append("Your own homebrew always wins.")
     else:
         lines.append("• **Following:** Not following any pack.")
+    if waiting:
+        lines.append(waiting_text(waiting))
     return "\n".join(lines), SharedPacksMenu(
-        current, sharing=sharing, follows=follows, last_name=mine.name if mine else ""
+        current,
+        sharing=sharing,
+        follows=follows,
+        last_name=mine.name if mine else "",
+        waiting=waiting,
+    )
+
+
+async def _waiting(interaction: discord.Interaction, current: Campaign) -> dict[str, int]:
+    """The followed packs' entries that wait for a site's approval, by site (#1635)."""
+    reader = getattr(_bot(interaction), "homebrew_reader", None)
+    return await reader.waiting(current.guild_id, current.id) if reader is not None else {}
+
+
+def site_label(site: str) -> str:
+    """The button for a site: "Use dndbeyond.com", cut to fit a phone (25 characters)."""
+    label = f"Use {site.removeprefix('www.')}"
+    return label if len(label) <= 25 else label[:24] + "…"
+
+
+def waiting_text(waiting: dict[str, int]) -> str:
+    """One plain line: how many entries wait, from which site, what to press, and why."""
+    shown = sorted(waiting.items())[:SITE_MAX]  # (the buttons are capped the same)
+    parts = ", ".join(f"{_entries(n)} from {_escape(site)}" for site, n in shown)
+    more = " and more" if len(waiting) > len(shown) else ""
+    press = (
+        f"**{site_label(shown[0][0])}**"
+        if len(waiting) == 1
+        else "the **Use** button for each site"
+    )
+    return (
+        f"• **Waiting for you:** {parts}{more}. Press {press} to say you have the right to use "
+        "that site's homebrew. Until then DMbot skips them."
     )
 
 
@@ -227,12 +261,9 @@ async def share(interaction: discord.Interaction, campaign: Campaign, name: str)
     )
     code = await store.make_pack_code(current.guild_id, current.id, interaction.user.id)
     shared = [e for e in entries if not e.from_book and e.source is None]
-    hidden = sum(1 for e in shared if not e.players_may_know)  # hidden from players
     lines = [f"✅ Sharing **{_escape(done.pack.name)}**: {_entries(len(shared))}."]
     if done.left_out:
         lines.append(stays_home(done.left_out))
-    if hidden:
-        lines.append(f"{hidden} of them are hidden from players. Other DMs can read them too.")
     lines += [CODE_NOTE, f"`{code}`"]  # the code last, so it is easy to copy on a phone
     await _tell(interaction, "\n".join(lines))
 
@@ -303,7 +334,7 @@ async def _offer(
     if offer.kind != packs.HOMEBREW:
         await _tell(interaction, NOT_A_PACK_CODE)
         return
-    total, hidden = _count(offer.content)
+    total = _count(offer.content)
     listed = offer.content.get("entries")
     names = [
         str(e["name"])
@@ -315,15 +346,36 @@ async def _offer(
         f"**{_escape(offer.name)}** from {_escape(offer.publisher)}: {_entries(total)} "
         f"(update {offer.version}).\n"
         + (f"> {_names(names)}\n" if names else "")
-        + (
-            f"{hidden} of them {'is' if hidden == 1 else 'are'} hidden from players, and "
-            "stay hidden at your table.\n"
-            if hidden
-            else ""
-        )
+        + await _sites_note(interaction, current, offer.content)
         + "If you follow it, DMbot will use these when it looks things up. Your own homebrew wins "
         "if a name matches. You can stop any time.",
         ConfirmFollow(current, offer),
+    )
+
+
+async def _sites_note(
+    interaction: discord.Interaction, current: Campaign, content: dict[str, Any]
+) -> str:
+    """Before following: the sites the pack's entries come from that this campaign hasn't
+    approved, so the DM knows what will wait (#1635)."""
+    listed = content.get("entries")
+    counts: dict[str, int] = {}
+    for e in listed if isinstance(listed, list) else []:
+        if isinstance(e, dict) and isinstance(e.get("domain"), str):
+            counts[e["domain"]] = counts.get(e["domain"], 0) + 1
+    sources = getattr(_bot(interaction), "sources", None)
+    if sources is not None:
+        for site in list(counts):
+            if await sources.approved(current.guild_id, current.id, site):
+                del counts[site]
+    if not counts:
+        return ""
+    parts = ", ".join(
+        f"{_entries(n)} from {_escape(s)}" for s, n in sorted(counts.items())[:SITE_MAX]
+    )
+    return (
+        f"**{parts} will wait.** After you follow, press the **Use** button for each site to "
+        "turn them on.\n"
     )
 
 
@@ -346,14 +398,60 @@ class ConfirmFollow(_Menu):
         )
         self.stop()  # one press only
         _changed(interaction, current)
+        waiting = await _waiting(interaction, current)
         await _tell(
             interaction,
-            f"✅ Now following **{_escape(follow.name)}**. DMbot reads it after your own homebrew.",
+            f"✅ Now following **{_escape(follow.name)}**. DMbot reads it after your own homebrew."
+            + (f"\n{waiting_text(waiting)}" if waiting else ""),
         )
 
     async def _no(self, interaction: discord.Interaction) -> None:
         self.stop()
         await _tell(interaction, "Okay, nothing changed.")
+
+
+class RightToUsePack(_Menu):
+    """The right-to-use step for a site whose entries a followed pack waits with (#1635): the
+    approval is kept for the site in this campaign (who and when), and its entries turn on."""
+
+    def __init__(self, campaign: Campaign, site: str) -> None:
+        super().__init__()
+        self.campaign, self.site = campaign, site
+        self.add_item(_Button(self._no, label=CANCEL_LABEL))  # first: the safe one
+        self.add_item(
+            _Button(self._yes, label="I have the right", style=discord.ButtonStyle.danger)
+        )
+
+    used = False
+
+    async def _no(self, interaction: discord.Interaction) -> None:
+        self.stop()
+        await _tell(interaction, "Okay, nothing changed.")
+
+    @_guarded
+    async def _yes(self, interaction: discord.Interaction) -> None:
+        ready = await _ready(interaction, self.campaign)  # still a DM, still here
+        if ready is None or self.used:
+            return
+        current, _ = ready
+        sources = getattr(_bot(interaction), "sources", None)
+        if sources is None:
+            await _tell(interaction, NOT_READY)
+            return
+        self.used = True  # a double press records the confirmation once
+        try:
+            await sources.approve(current.guild_id, current.id, interaction.user.id, self.site)
+        except Exception:
+            self.used = False  # nothing was recorded: the button works again
+            raise
+        self.stop()
+        _changed(interaction, current)
+        log.info(
+            "Site approved for a followed pack: user=%s campaign=%s",
+            interaction.user.id,
+            current.id,
+        )
+        await _tell(interaction, f"✅ DMbot will use the entries from {_escape(self.site)} now.")
 
 
 class ConfirmStop(_Menu):
@@ -497,6 +595,7 @@ class SharedPacksMenu(_Menu):
         sharing: bool,
         follows: list[rule_sets.Follow],
         last_name: str = "",
+        waiting: dict[str, int] | None = None,
     ) -> None:
         super().__init__()
         self.campaign = campaign
@@ -512,6 +611,8 @@ class SharedPacksMenu(_Menu):
             )
         if len(follows) < pack_content.PACKS_MAX:
             self.add_item(_Button(self._follow, label=FOLLOW_LABEL))
+        for site in sorted(waiting or {})[:SITE_MAX]:  # one button a site, to say it once
+            self.add_item(_Button(partial(self._site, site), label=site_label(site), row=2))
         self.pick: _Select | None = None
         if follows:
             self.pick = _Select(
@@ -523,6 +624,16 @@ class SharedPacksMenu(_Menu):
                 ],
             )
             self.add_item(self.pick)
+
+    async def _site(self, site: str, interaction: discord.Interaction) -> None:
+        from dmbot.ui.homebrew import SITE_WARNING  # (the one wording of the right-to-use step)
+
+        if interaction.user.id not in self.campaign.dm_user_ids:
+            await _tell(interaction, ONLY_DMS)
+            return
+        await _send(
+            interaction, SITE_WARNING.format(site=site), RightToUsePack(self.campaign, site)
+        )
 
     async def _share(self, interaction: discord.Interaction) -> None:
         # Ask about the plan before the form, so nobody types a name only to be refused. A modal
