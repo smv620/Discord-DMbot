@@ -114,7 +114,7 @@ export const text = {
       "Your plan has changed since this page opened, so we've updated it. If nothing looks different, write to us for help.",
   } as Record<string, string>,
   install: {
-    done: "Done! DMbot is in your server. In Discord, type /dmbot start and wait for the list, then pick it, to begin.",
+    done: "Done! DMbot is in your server. In Discord, type /dmbot start and pick it from the list.",
     failed: "DMbot wasn't added. Tap Add DMbot to try again.",
     slow: "Too many tries. Wait about 10 minutes, then tap Add DMbot again.",
     not_allowed: "You can only add DMbot to a server you run. Ask its owner to add DMbot.",
