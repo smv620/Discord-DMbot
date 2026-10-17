@@ -315,11 +315,11 @@ export const deedSteps: Step[] = [
       { name: "Hurt them", file: "memory/standing.py" },
       { name: "✅ Record it", file: "ui/deeds.py" },
       { name: "No, cancel", file: "ui/deeds.py" },
-      { name: "↩ Undo that", file: "ui/deeds.py" },
     ],
   },
   {
     text: "DMbot records only what you type. It never listens for deeds. A deed shows on the Standing screen as a reason, like \"(session 4, helped)\". It counts for less after ten sessions, and a feeling you set yourself always wins. ↩ Undo that works for a short while after you record. DMbot only reminds you; you decide how they act. Players never see deeds, and they are never in a transcript.",
+    names: [{ name: "↩ Undo that", file: "ui/deeds.py" }],
   },
 ];
 
