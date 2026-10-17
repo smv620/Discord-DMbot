@@ -154,7 +154,7 @@ async def _live_ids(scope: Scope, among: Collection[str] | None = None) -> set[s
 
 PARTY_NAME = "The party"
 LED_TO_KINDS = "A clue, an event or a thread can lead to a thread or an event."
-LED_TO_CONFIRM = "Confirm both names first, then link them."
+LED_TO_CONFIRM = "One of them isn't confirmed yet. Confirm it, then try again."
 LED_TO_LOOP = "That would make a loop: the other one already led here."
 DUE_MAX = 120  # letters in a promise's due note
 THREAD_KINDS_ONLY = "A thread is a quest, a mystery, a hook, a goal or a promise."
