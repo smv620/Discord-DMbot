@@ -121,10 +121,12 @@ STOPPED_WORDS = {
     "plan": "This campaign's plan doesn't include reading adventures.",
     "error": "Something went wrong. Press Read it now to try again.",
     "price": (
-        "DMbot's AI changed and costs more now. It stopped to be safe."
-        " Press **Read it now** later to carry on."
+        "DMbot stopped because the AI's price went up. Press **Read it now** later to carry on."
     ),
-    "gone": "The file was removed while DMbot was reading it.",
+    "gone": (
+        "That file was removed while DMbot was reading it."
+        " Give it again, then press **Read it now**."
+    ),
 }
 CARRY_ON = "Press Read it now to carry on."
 
