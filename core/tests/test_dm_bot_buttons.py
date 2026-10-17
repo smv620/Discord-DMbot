@@ -4,6 +4,7 @@ another server's campaign. The real campaign and memory stores, against the data
 
 from __future__ import annotations
 
+import unittest.mock
 from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
@@ -22,6 +23,11 @@ from tests.pg import DatabaseTest
 GUILD, OTHER_GUILD = 111, 222
 DM, PLAYER, MEMBER, GUEST, MANAGER = 7, 8, 9, 10, 11
 CHANNEL, MESSAGE = 680000000000000081, 680000000000000082
+OPEN_TO_ALL = [
+    "❓ Help",
+    "📖 Look up a rule",
+    "📜 Transcripts",
+]  # every role's first buttons (#1691)
 
 
 class Fake:
@@ -139,11 +145,11 @@ class Cards(PanelTest):
     async def test_the_card_holds_only_the_buttons_of_that_role(self) -> None:
         await self.make_player()
         expected = {
-            DM: ["❓ Help", "Menu", "📜 My character sheet", "Settings"],
-            PLAYER: ["❓ Help", "Menu", "📜 My character sheet"],
-            MEMBER: ["❓ Help", "Menu"],
-            GUEST: ["❓ Help"],
-            MANAGER: ["❓ Help"],
+            DM: [*OPEN_TO_ALL, "Menu", "📜 My character sheet", "Settings"],
+            PLAYER: [*OPEN_TO_ALL, "Menu", "📜 My character sheet"],
+            MEMBER: [*OPEN_TO_ALL, "Menu"],
+            GUEST: OPEN_TO_ALL,
+            MANAGER: OPEN_TO_ALL,
         }
         for user, want in expected.items():
             it = self.press(user)
@@ -163,6 +169,56 @@ class Cards(PanelTest):
         await buttons.HelpButton(self.campaign.id).callback(it)
         self.assertTrue(it.sent["ephemeral"])
         self.assertTrue(it.sent["text"])
+
+    async def test_the_transcripts_button_is_a_link_to_the_websites_page(self) -> None:
+        it = self.press(GUEST)
+        await buttons.OpenButton(self.campaign.id).callback(it)
+        (link,) = [
+            c for c in it.sent["view"].children if getattr(c, "label", "") == "📜 Transcripts"
+        ]
+        self.assertEqual(link.url, panel.TRANSCRIPTS_URL)
+        self.assertEqual(link.style, discord.ButtonStyle.link)
+        self.assertEqual(
+            panel.transcripts_url("https://site.example.org/"),
+            "https://site.example.org/account/transcripts",
+        )
+        self.assertEqual(panel.transcripts_url("http://plain.example.org"), panel.TRANSCRIPTS_URL)
+
+    async def test_the_rule_button_opens_the_lookup_form_for_a_guest_and_a_dm(self) -> None:
+        for user in (GUEST, DM):
+            it = self.press(user)
+            it.response.send_modal = AsyncMock()
+            await buttons.RuleButton(self.campaign.id).callback(it)
+            (form,) = it.response.send_modal.await_args.args
+            self.assertEqual(form.campaign.id, self.campaign.id, user)
+
+    async def test_the_rule_button_from_another_server_is_refused(self) -> None:
+        it = self.press(DM, guild=OTHER_GUILD)
+        it.response.send_modal = AsyncMock()
+        await buttons.RuleButton(self.campaign.id).callback(it)
+        it.response.send_modal.assert_not_awaited()
+        self.assertEqual(it.sent["text"], buttons.GONE)
+
+    async def test_a_players_answer_ends_with_the_dm_decides_line(self) -> None:
+        from dmbot.ui import rule_lookup
+
+        sent: list[str] = []
+
+        async def capture(interaction: Any, text: str, view: Any = None) -> None:
+            sent.append(text)
+
+        it = self.press(GUEST)
+        it.guild_id = GUILD
+        it.client = self.bot
+        self.bot.all_house_rules = AsyncMock(return_value=[])
+        self.bot.homebrew_reader = None
+        with (
+            unittest.mock.patch.object(rule_lookup, "_send", capture),
+            unittest.mock.patch.object(rule_lookup, "_answer_first", AsyncMock()),
+        ):
+            await rule_lookup.look_up(it, self.campaign.id, "Fireball", guild_id=GUILD, paced=False)
+        self.assertTrue(sent)
+        self.assertIn("Your DM decides what applies at your table.", sent[-1])
 
     async def test_a_player_pressing_the_settings_button_is_refused(self) -> None:
         from dmbot.dm_screen.settings import SettingsButton
@@ -289,7 +345,11 @@ class Keeping(PanelTest):
 
 class RoundTrip(PanelTest):
     async def test_the_buttons_come_back_from_their_ids_after_a_restart(self) -> None:
-        for cls, action in ((buttons.OpenButton, "open"), (buttons.HelpButton, "help")):
+        for cls, action in (
+            (buttons.OpenButton, "open"),
+            (buttons.HelpButton, "help"),
+            (buttons.RuleButton, "rule"),
+        ):
             custom_id = f"dmbot:panel:{action}:{self.campaign.id}"
             match = cls.__discord_ui_compiled_template__.fullmatch(custom_id)
             assert match is not None

@@ -36,13 +36,19 @@ WENT_WRONG = "Something went wrong. Please press it again."
 CARD_TEXT = {
     Role.GAME_MASTER: (
         "You are a DM here. ⚙️ Menu is about you (stop recording, delete your transcripts). "
-        "⚙️ Settings is for the whole game."
+        "⚙️ Settings is for the whole game. 📖 looks up a rule; 📜 opens the transcripts."
     ),
-    Role.PLAYER: "You play here. Press ⚙️ Menu to stop being recorded or delete your transcripts.",
-    Role.MEMBER: "You agreed to be recorded in this server. Press ⚙️ Menu to stop.",
+    Role.PLAYER: (
+        "You play here. Press ⚙️ Menu to stop being recorded or delete your transcripts. "
+        "📖 looks up a rule; 📜 opens the transcripts."
+    ),
+    Role.MEMBER: (
+        "You agreed to be recorded in this server. Press ⚙️ Menu to stop. "
+        "📖 looks up a rule; 📜 opens the transcripts."
+    ),
     Role.GUEST: (
         "DMbot is not recording you. To play, join the voice channel: DMbot will message you "
-        "to ask. ❓ Help explains DMbot."
+        "to ask. ❓ Help explains DMbot. 📖 looks up a rule; 📜 opens the transcripts."
     ),
 }
 
@@ -77,12 +83,24 @@ async def standing_of(client: Any, campaign: Campaign, user_id: int) -> Standing
     )
 
 
-def role_view(role: Role, campaign: Campaign, *, sheets: bool) -> discord.ui.View:
+def role_view(
+    role: Role, campaign: Campaign, *, sheets: bool, site_url: str = ""
+) -> discord.ui.View:
     """The buttons that role gets, built from `buttons_for` and nothing else."""
     view = discord.ui.View(timeout=None)
     for button in panel.buttons_for(role):
         if button is Button.HELP:
             view.add_item(HelpButton(campaign.id))
+        elif button is Button.RULE:
+            view.add_item(RuleButton(campaign.id))
+        elif button is Button.TRANSCRIPTS:  # a link: opens the website, nothing to check here
+            view.add_item(
+                discord.ui.Button(
+                    label=panel.LABELS[Button.TRANSCRIPTS],
+                    style=discord.ButtonStyle.link,
+                    url=panel.transcripts_url(site_url),
+                )
+            )
         elif button is Button.MY_MENU:
             view.add_item(consent_dm.MenuButton(campaign.guild_id, campaign.id))
         elif button is Button.MY_CHARACTER and sheets:
@@ -139,9 +157,10 @@ class OpenButton(
         who = await standing_of(interaction.client, campaign, interaction.user.id)
         role = panel.role_of(who)
         sheets = getattr(interaction.client, "sheets", None) is not None
+        site = str(getattr(getattr(interaction.client, "settings", None), "site_url", "") or "")
         await interaction.response.send_message(
             CARD_TEXT[role],
-            view=role_view(role, campaign, sheets=sheets),
+            view=role_view(role, campaign, sheets=sheets, site_url=site),
             ephemeral=True,
             allowed_mentions=NO_PINGS,
         )
@@ -179,6 +198,41 @@ class HelpButton(
         await interaction.response.send_message(
             logic.HELP_TEXT, ephemeral=True, allowed_mentions=NO_PINGS
         )
+
+
+class RuleButton(
+    discord.ui.DynamicItem[discord.ui.Button[discord.ui.View]],
+    template=rf"dmbot:panel:rule:{_ID}",
+):
+    """📖 Look up a rule: the same form and private answer as `/dmbot rule`, for anyone in the
+    server (#1691). Not `RuleLookupButton`, whose check is the DMs only: the answer itself
+    (`rule_lookup.look_up`) decides what a DM and what everyone else sees, and ends a player's
+    card with "Your DM decides what applies at your table."."""
+
+    def __init__(self, campaign_id: str) -> None:
+        super().__init__(
+            discord.ui.Button(
+                label=panel.LABELS[Button.RULE],
+                style=discord.ButtonStyle.secondary,
+                custom_id=f"dmbot:panel:rule:{campaign_id}",
+            )
+        )
+        self.campaign_id = campaign_id
+
+    @classmethod
+    async def from_custom_id(
+        cls, interaction: discord.Interaction, item: discord.ui.Item[Any], match: re.Match[str]
+    ) -> RuleButton:
+        return cls(match["campaign"])
+
+    async def callback(self, interaction: discord.Interaction) -> Any:
+        from dmbot.ui.rule_lookup import LookupForm  # (ui imports the dm_screen package)
+
+        campaign = await _campaign_here(interaction, self.campaign_id)
+        if campaign is None:
+            await interaction.response.send_message(GONE, ephemeral=True)
+            return
+        await interaction.response.send_modal(LookupForm(campaign))
 
 
 def panel_view(campaign_id: str) -> discord.ui.View:
