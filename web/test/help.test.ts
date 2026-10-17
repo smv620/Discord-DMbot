@@ -283,8 +283,10 @@ describe("Help: the website's read-only pages (#1588)", () => {
     expect(shown.includes("DMbot may suggest a jump on your DM screen")).toBe(TIME_SUGGESTIONS_LIVE);
     const words = timeSuggestionSteps.map((x) => x.text).join(" ");
     expect(words).toContain("Nothing moves unless a DM presses the button");
-    expect(words).toContain("never players or off-topic chat");
-    expect(words).toContain("reads that one sentence and the game time");
+    expect(words).toContain("only reads game talk from a DM who said yes to recording");
+    expect(words).toContain("This is off unless the person who runs your DMbot turns it on.");
+    expect(words).toContain("stay quiet for 10 minutes afterwards");
+    expect(words).toContain("reads that one line and the game time");
     expect(words).toContain("Players never see it.");
   });
 

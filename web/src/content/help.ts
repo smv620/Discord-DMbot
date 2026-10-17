@@ -362,7 +362,7 @@ export const TIME_SUGGESTIONS_LIVE = false;
 
 export const timeSuggestionSteps: Step[] = [
   {
-    text: "If you describe time passing without saying how long, like \"you walk for a while\", DMbot may suggest a jump on your DM screen, like \"about 2 hours?\", with a button such as +2 hours and a Not now button. Nothing moves unless a DM presses the button, and the clock's Undo works as usual. It only looks at what the game master says in game talk, never players or off-topic chat. DMbot's AI reads that one sentence and the game time, nothing else from your campaign. It stays quiet during a fight, with a split party, or before you set the game clock. Players never see it.",
+    text: "If you describe time passing without saying how long, like \"you walk for a while\", DMbot may suggest a jump on your DM screen, like \"about 2 hours?\", with a button such as +2 hours and a Not now button. Nothing moves unless a DM presses the button. After it moves, a note on the DM screen has Undo. It only reads game talk from a DM who said yes to recording, spoken or typed in the chats DMbot reads, and only lines with time words like \"a while\", \"hours\" or \"travel\", so it will miss some. DMbot's AI reads that one line and the game time, nothing else from your campaign. It asks at most once a minute, and the same words stay quiet for 10 minutes afterwards, whether you press anything or not. It stays quiet during a fight, with a split party, or before you set the game clock. If a fight starts or the party splits first, pressing does nothing and tells you so. Players never see it. This is off unless the person who runs your DMbot turns it on.",
     names: [{ name: "Not now", file: "dm_screen/time_suggest.py" }],
   },
 ];
