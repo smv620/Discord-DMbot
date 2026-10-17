@@ -95,6 +95,7 @@ KIND_WORDS: dict[str, str] = {
     "mystery": "mystery",
     "hook": "hook",
     "goal": "goal",
+    "promise": "promise",
     "thread": "thread",
     "story thread": "thread",
     "idea": "concept",
@@ -121,6 +122,7 @@ KIND_OUT: dict[str, str] = {
     "mystery": "mystery",
     "hook": "hook",
     "goal": "goal",
+    "promise": "promise",
     "person": "player",
 }
 

@@ -674,6 +674,33 @@ Each step is useful on its own and ships behind the existing phases.
    named `in_thread` because `involved_in` is already a synonym of `appears_in`. Backups,
    isolation and deletion are those of every memory entry; `memory_heard` is not in a backup, so
    a restored campaign shows no thread as stalled until new sessions are heard.
+   **Phase 5c slice 2 is built (#1674): promises the DM keeps** (no AI; the DM writes them).
+   `promise` is a fifth kind under `thread`, beside quest, mystery, hook and goal, so it reuses the
+   thread states, the stalled rule and the after-session question exactly: no new condition and no
+   migration. It shows its own words for the same states: made in passing, open, due soon, kept,
+   broken or let go. Two connections, the DM's word and both set from the promise's card:
+   `promised_by` (character or group → promise) and `promised_to` (character, group or place →
+   promise); a promise may name more than one of each. An optional due note is free text kept in the
+   entry's description and never read as a date. The card says "**Kael** promised **Dunhollow**:
+   bring the healer back", then the state and "Due: …". The after-session line says "promise" where
+   all the quiet ones are promises. Privacy and isolation are those of threads: DM only, hidden from
+   lookup and from the players' recall, in backups, deleted with the campaign.
+   **Phase 5c slice 3 is built (#1675): quiet threads in the pre-session note.** When a session
+   starts, the note on the DM screen gains one line, only when a thread is stalled (by the rule above,
+   promises included): "🧵 Quiet threads: <name>, <name>, <name> (+N more)", the longest quiet first.
+   A **🧵 Threads** button on the note opens the DM's private list of every live thread, those in
+   play first, the quiet ones marked ⏳, with Still going, Finished/Dropped (Kept/Broken for a
+   promise) on each. The line is in-game content: it stays on the DM screen, never in the DM Bot
+   channel, a transcript or the players' recall. A campaign with no live thread skips the read (a
+   one-row look at `memory_states`); otherwise it is the one `threads()` read.
+   **Phase 5c slice 4 is built (#1679): `led_to`.** A core connection, the DM's word only: a clue,
+   an event or a thread led to a thread or an event (no AI, no migration). It is set from a card's
+   **➡ Led to…** button, which picks from the campaign's threads and events. A link to itself, or
+   one that would close a loop or run past ten steps, is refused (not flagged). The fact is stored
+   secret, so it is the DM's alone wherever facts are shown, and a link into a thread is hidden
+   with the thread. A thread's card shows "Came from" and "Led to", at most five names each then
+   "+N more", from the one thread read; a clue's or event's card shows the same from a single read
+   of its own links. A link is not the thread moving, so it does not reset its quiet count.
 3. **Phase 5c: PlotBot:** threads, promises, clues, `led_to`, stalled-thread nudges,
    summaries, the pre-session note, the AI recap.
 4. **Phase 5d: Shared story:** the story plan, `same_as` links, divergence ("Watch

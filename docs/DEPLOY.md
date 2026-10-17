@@ -51,6 +51,11 @@ scripts/set-key                    # pick from a list of keys and tokens
 scripts/set-key DEEPGRAM_API_KEY   # or name the one you want
 ```
 
+Every other ordinary setting (the sender addresses, a model name, a limit) works the same
+way with `scripts/set-variables`, which is for settings that are not secrets: it lists them
+with (set) or (empty), shows the value that is there now, and pressing Enter alone leaves it
+as it is. Type `-` to empty one. It keeps a private copy of the old `.env` before changing it.
+
 Paste the key when asked. You won't see it as you paste; that's normal. Paste once, then
 press Enter. The helper shows back only the key's length and last 4 characters, and
 keeps `.env` at `chmod 600`. If DMbot is running it offers to restart it, which drops the
@@ -166,6 +171,7 @@ in a volume, so restarts are fast.
 | Status | `docker compose ps` |
 | Update `.env` after an update changes `.env.example` | `scripts/update-env` (add `--check` to only look) |
 | Add or change a key | `scripts/set-key` |
+| Change any other setting (an address, a model, a limit) | `scripts/set-variables` |
 | Set the admin page's password (#772) | `scripts/set-admin-password` |
 | Put the admin API online (#836) | see "Put the admin API online" below |
 
