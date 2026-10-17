@@ -1230,7 +1230,7 @@ so the docs always show names the way Discord does. For the campaign
   visibility, DMs or peekers is applied to it; a peek and a hide open and close both channels, and
   the peek warning names both. It shows one message per saved house rule ("🏠 House rule N": the
   words, what it replaces, where it came from: your DM, said at the table, or a followed set's
-  copy) and one "Following <set>" line per followed house-rules set. Nothing proposed or waiting,
+  copy) and one "📚 This campaign follows the house-rule set **<set>**" line per followed house-rules set. Nothing proposed or waiting,
   no DM-screen content and no rulebook text goes there, and a rule's "what happened" note stays
   out. Messages are edited in place when a rule is edited and deleted when it is removed; they
   are found again by their first words, so nothing about them is stored and a restart rebuilds the

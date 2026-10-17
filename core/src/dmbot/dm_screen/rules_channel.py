@@ -38,6 +38,7 @@ from dmbot.dm_screen.channel import (
     _pin,
     campaign_lock,
     current_overwrites,
+    fresh_screen,
     held_permissions,
 )
 from dmbot.dm_screen.names import PREFIX, sub_channel_name
@@ -68,6 +69,16 @@ RULE_TITLE = "🏠 **House rule "
 FOLLOW_TITLE = "📚 This campaign follows the house-rule set "
 CARD_TITLE = "📖 **What's this channel?**"
 NO_PINGS = discord.AllowedMentions.none()
+
+
+_SYNC_LOCKS: dict[str, asyncio.Lock] = {}
+
+
+def sync_lock(campaign_id: str) -> asyncio.Lock:
+    """One message-posting pass at a time for a campaign. Not `campaign_lock`: that one guards
+    permission changes (a Peek or Hide press waits on it and must answer at once), while a pass
+    posts and edits for many seconds."""
+    return _SYNC_LOCKS.setdefault(campaign_id, asyncio.Lock())
 
 
 class RulesChannelError(Exception):
@@ -128,7 +139,7 @@ def rule_text(rule: HouseRule) -> str:
         came = "Added by the DM"
     lines = [f"{RULE_TITLE}{rule.number}**", rule.rule]
     if rule.supersedes:
-        lines.append(f"Replaces: {rule.supersedes}")
+        lines.append(f"Instead of: {rule.supersedes}")
     lines.append(f"_{came}_")
     return "\n".join(lines)[:MESSAGE_MAX]  # (a rule, what it replaces and a set name fit; belt)
 
@@ -297,9 +308,13 @@ async def setup_rules_channel(
             topic = messages.RULES_TOPIC
             reason = f"DMbot: house rules for {campaign.name}"
             channel = await _fresh(guild, campaign)
-            # The peekers are the DM screen's. With no screen to ask, keep this channel's own, so
-            # a repair never shuts out someone who is peeking.
-            peekers = screen_peekers(screen if screen is not None else channel)
+            # The peekers are the DM screen's: asked of the campaign's own screen when the caller
+            # has none to hand. If it can't be found, nobody is let in as a peeker (this channel's
+            # own read-only members can't be told from a removed DM), and a player peeks again.
+            if screen is None:
+                with contextlib.suppress(DMScreenError, discord.HTTPException):
+                    screen = await fresh_screen(guild, campaign)
+            peekers = screen_peekers(screen)
             plan = rules_plan(
                 campaign.dm_screen_visibility,
                 guild_id=guild.id,
@@ -386,7 +401,7 @@ async def sync_campaign(
     again). Raises on a Discord or database failure: the caller logs it."""
     # One pass at a time per campaign: a start and a change at once must not both see "no
     # message yet" and both post it.
-    async with campaign_lock(campaign.id):
+    async with sync_lock(campaign.id):
         channel = await _fresh(guild, campaign)
         me = guild.me
         if channel is None or me is None:

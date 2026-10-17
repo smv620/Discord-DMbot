@@ -8091,7 +8091,9 @@ class DMBot(commands.AutoShardedBot):
                 if campaign.rules_channel_id is None or self.house_rules is None:
                     continue
                 try:
-                    await sync_campaign(guild, campaign, self.house_rules, self.rule_sets)
+                    done = await sync_campaign(guild, campaign, self.house_rules, self.rule_sets)
+                    if done is not None and done.left_for_next_time:
+                        self._rules_archive_changed(guild.id, campaign.id)  # finish it, paced
                 except Exception:
                     log.warning("Couldn't update a rules channel", exc_info=True)
                 await asyncio.sleep(RULES_ARCHIVE_PACE_S)

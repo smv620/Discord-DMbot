@@ -110,7 +110,7 @@ class Showing(unittest.IsolatedAsyncioTestCase):
         self.assertEqual((done.sent, done.edited), (0, 1))
         self.assertIs(chan.messages[0], before)
         self.assertIn("Crits triple the dice", before.content)
-        self.assertIn("Replaces: Crits double", before.content)
+        self.assertIn("Instead of: Crits double", before.content)
 
     async def test_a_removed_rule_is_deleted(self) -> None:
         chan = Chan()
@@ -445,6 +445,107 @@ class Peeking(Fake):
         self.screen.set_permissions.assert_awaited_once()
         self.new.set_permissions.assert_awaited_once()
         self.assertIsNone(self.new.set_permissions.call_args.kwargs["overwrite"])
+
+
+class Locks(Peeking):
+    """A long message-posting pass must not hold up a Peek or a Hide, and a failed hide is the
+    DM's to hear about, not the players'."""
+
+    async def test_a_failed_hide_in_the_rules_channel_tells_the_dm_screen_only(self) -> None:
+        overwrite = discord.PermissionOverwrite(view_channel=True, send_messages=False)
+        self.screen.overwrites = {self.member: overwrite}
+        self.new.set_permissions = AsyncMock(
+            side_effect=discord.HTTPException(MagicMock(status=500), "down")
+        )
+        await HideButton(self.campaign.id).callback(self.interaction)
+        self.new.send.assert_not_awaited()  # nothing in the players' channel
+        said = [c.args[0] for c in self.screen.send.await_args_list]
+        self.assertTrue(
+            any("DMbot" in t or "Manage" in t or "permission" in t.lower() for t in said)
+        )
+
+    async def test_a_peek_completes_while_a_sync_is_posting(self) -> None:
+        import asyncio
+
+        await self.houses.add(GUILD, self.campaign.id, DM, "Crits double the dice")
+        stuck = asyncio.Event()
+        release = asyncio.Event()
+        shown = text_channel(NEW, "dmb-rules-rmfthfrstmdn", self.guild)
+        chan = Chan()
+        shown.history = chan.history
+
+        async def slow_send(content: str, **kw: Any) -> Msg:
+            stuck.set()
+            await release.wait()  # Discord is slow
+            return await chan.send(content, **kw)
+
+        shown.send = slow_send
+        self.guild.fetch_channel = AsyncMock(
+            side_effect=lambda cid: {NEW: shown, SCREEN: self.screen}[cid]
+        )
+        campaign = await self.store.get(GUILD, self.campaign.id)
+        assert campaign is not None
+        syncing = asyncio.ensure_future(rc.sync_campaign(self.guild, campaign, self.houses, None))
+        await asyncio.wait_for(stuck.wait(), 5)
+        view = ConfirmPeek(self.campaign.id, self.interaction)
+        await asyncio.wait_for(view.yes.callback(self.interaction), 5)  # not held up
+        self.screen.set_permissions.assert_awaited_once()
+        release.set()
+        await asyncio.wait_for(syncing, 5)
+
+    async def test_two_passes_for_one_campaign_still_take_turns(self) -> None:
+        import asyncio
+
+        self.assertIs(rc.sync_lock("a" * 32), rc.sync_lock("a" * 32))
+        self.assertIsNot(rc.sync_lock("a" * 32), rc.sync_lock("b" * 32))
+        async with rc.sync_lock("a" * 32):
+            waiting = asyncio.ensure_future(rc.sync_lock("a" * 32).acquire())
+            await asyncio.sleep(0)
+            self.assertFalse(waiting.done())
+        await asyncio.wait_for(waiting, 1)
+        rc.sync_lock("a" * 32).release()
+
+    async def test_with_no_screen_to_hand_the_campaigns_own_screen_gives_the_peekers(self) -> None:
+        await self.store.set_rules_channel(GUILD, self.campaign.id, None)
+        peeker = MagicMock(spec=discord.Member, id=PLAYER)
+        self.screen.overwrites = {
+            peeker: discord.PermissionOverwrite(view_channel=True, send_messages=False)
+        }
+        await rc.setup_rules_channel(self.guild, self.campaign.id, self.store)  # no screen=
+        seen = next(ow for key, ow in self.created().items() if key.id == PLAYER)
+        self.assertTrue(seen.view_channel)
+
+    async def test_with_no_screen_at_all_nobody_is_let_in_as_a_peeker(self) -> None:
+        await self.store.set_dm_screen(GUILD, self.campaign.id, None)
+        await self.store.set_rules_channel(GUILD, self.campaign.id, None)
+        await rc.setup_rules_channel(self.guild, self.campaign.id, self.store)
+        members = [key.id for key in self.created() if getattr(key, "id", None) == PLAYER]
+        self.assertEqual(members, [])
+
+
+class Sweep(unittest.IsolatedAsyncioTestCase):
+    async def test_a_campaign_left_unfinished_at_start_is_finished_later(self) -> None:
+        from types import SimpleNamespace
+
+        from dmbot import bot as bot_module
+        from dmbot.bot import DMBot
+
+        campaign = SimpleNamespace(id="c" * 32, rules_channel_id=5)
+        done = SimpleNamespace(left_for_next_time=3)
+        told: list[tuple[int, str]] = []
+        fake: Any = SimpleNamespace(
+            guilds=[SimpleNamespace(id=GUILD)],
+            campaigns=SimpleNamespace(list_campaigns=AsyncMock(return_value=[campaign])),
+            house_rules=object(),
+            rule_sets=None,
+            _rules_archive_changed=lambda g, c: told.append((g, c)),
+        )
+        with (
+            mock.patch.object(bot_module, "sync_campaign", AsyncMock(return_value=done)),
+            mock.patch.object(bot_module, "RULES_ARCHIVE_PACE_S", 0.0),
+        ):
+            await DMBot._rebuild_rules_archives(fake)
+        self.assertEqual(told, [(GUILD, "c" * 32)])
 
 
 class Migration0127(DatabaseTest):
