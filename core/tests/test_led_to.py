@@ -106,6 +106,29 @@ class Chain(ConfirmedMemoryTest):
             await self.link(person, self.heir)
         self.assertEqual(str(kinds.exception), LED_TO_KINDS)
 
+    async def test_each_refusal_has_its_own_words_on_both_paths(self) -> None:
+        """The three messages (#1701): a wrong kind (the button refuses; the generic path flags
+        a wrong range instead, by design), an unconfirmed end, and a loop (both refuse)."""
+        from dmbot.memory.store import LED_TO_CONFIRM, LED_TO_KINDS, LED_TO_LOOP
+
+        person = await self.add("Mira", type="character", role="npc")
+        with self.assertRaises(MemoryRuleError) as kinds:
+            await self.link(person, self.heir)
+        self.assertEqual(str(kinds.exception), LED_TO_KINDS)
+        written = await self.memory.add_relation(  # the generic path: kept, with a flag
+            GUILD_A, self.c, person, "led_to", self.heir, confidence=0.5, source="dm"
+        )
+        self.assertTrue(written.value[1])  # (flags)
+        await self.link(self.heir, self.tower)
+        with self.assertRaises(MemoryRuleError) as button:
+            await self.link(self.tower, self.heir)
+        with self.assertRaises(MemoryRuleError) as connect:
+            await self.memory.add_relation(
+                GUILD_A, self.c, self.tower, "led_to", self.heir, confidence=0.5, source="dm"
+            )
+        self.assertEqual((str(button.exception), str(connect.exception)), (LED_TO_LOOP,) * 2)
+        self.assertNotEqual(LED_TO_CONFIRM, LED_TO_LOOP)
+
     async def test_a_link_to_itself_or_a_loop_is_refused(self) -> None:
         with self.assertRaises(MemoryRuleError):
             await self.link(self.heir, self.heir)

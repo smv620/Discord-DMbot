@@ -42,7 +42,6 @@ from dmbot.ui.names import GONE, _campaign_for, _md, _memory, changed, sees_secr
 
 log = logging.getLogger(__name__)
 
-NEW_BUTTON = "➕ New thread"
 NEW_PROMISE_BUTTON = "🤝 Add a promise"
 STATE_BUTTON = "🧵 Change state"
 INVOLVE_BUTTON = "👥 Add who's involved"
