@@ -95,6 +95,7 @@ FILE_MAX_BYTES = 4 * homebrew_file.MAX_FILE_CHARS  # UTF-8 is up to 4 bytes a ch
 DOWNLOAD_LABEL = "📤 Download file"
 LOAD_LABEL = "📥 Load file"
 LINK_LABEL = "🔗 Add from a link"
+SITES_LABEL = "🌐 Approved sites"
 PREVIEW_SHOWN = 700  # characters of the page's words shown before saving
 DOWNLOAD_NOTE = (
     "**Your homebrew file.** Only you can see this message. Open it in any text editor, change "
@@ -152,7 +153,16 @@ def _store(interaction: discord.Interaction) -> HomebrewStore | None:
     return _bot(interaction).homebrew
 
 
-def list_text(campaign: Campaign, entries: list[Homebrew], page: int, note: str = "") -> str:
+WAITING_FOR_SITE = " (waiting for the site)"
+
+
+def list_text(
+    campaign: Campaign,
+    entries: list[Homebrew],
+    page: int,
+    note: str = "",
+    approved: set[str] | None = None,
+) -> str:
     lines = [_fit(note, 200)] if note else []
     lines.append(f"📚 **Homebrew: {_fit(_md(campaign.name), 100)}**")
     lines.append(INTRO if not entries else SHORT_INTRO)
@@ -161,6 +171,8 @@ def list_text(campaign: Campaign, entries: list[Homebrew], page: int, note: str 
     shown = entries[page * PAGE_ENTRIES : (page + 1) * PAGE_ENTRIES]
     for entry in shown:
         off = "" if entry.enabled else " (off)"
+        if approved is not None and entry.credit_domain and entry.credit_domain not in approved:
+            off += WAITING_FOR_SITE  # its site was taken back (or never approved here)
         lines.append(
             _fit(f"{KIND_LABELS[entry.kind]} **{_md(entry.name)}**{off}: ", 400)
             + _fit(_md(entry.shown()), 120)
@@ -170,6 +182,12 @@ def list_text(campaign: Campaign, entries: list[Homebrew], page: int, note: str 
         lines.append(f"_Page {page + 1} of {pages}._")
     if any(not e.enabled for e in entries):
         lines.append("_(off) means DMbot ignores it until you turn it on._")
+    if approved is not None and any(
+        e.credit_domain and e.credit_domain not in approved for e in shown
+    ):
+        lines.append(
+            "_(waiting for the site) means DMbot skips it until you approve that site again._"
+        )
     return _fit("\n".join(lines), 1900)
 
 
@@ -215,9 +233,15 @@ async def show_list(
         await _tell(interaction, NOT_READY)
         return
     entries = await store.list(campaign.guild_id, campaign.id)
+    sources = _bot(interaction).sources
+    approved = (
+        {a.domain for a in await sources.approvals(campaign.guild_id, campaign.id)}
+        if sources is not None
+        else None
+    )
     page = min(max(page, 0), max(0, (len(entries) - 1) // PAGE_ENTRIES))
     menu = ListMenu(campaign, entries, page, _removed(interaction, campaign))
-    text = list_text(campaign, entries, page, note)
+    text = list_text(campaign, entries, page, note, approved)
     if first:
         await _send(interaction, text, menu)
     else:
@@ -271,6 +295,7 @@ class ListMenu(_Menu):
             self.add_item(_Button(partial(self._undo, gone), label="↩️ Undo last remove"))
         self.add_item(_Button(self._download, label=DOWNLOAD_LABEL, row=2))
         self.add_item(_Button(self._load, label=LOAD_LABEL, row=2))
+        self.add_item(_Button(self._sites, label=SITES_LABEL, row=2))
         shown = entries[page * PAGE_ENTRIES : (page + 1) * PAGE_ENTRIES]
         if shown:
             self.pick = _Select(
@@ -329,6 +354,15 @@ class ListMenu(_Menu):
             await _tell(interaction, ONLY_DMS)
             return
         await interaction.response.send_modal(LoadForm(self.campaign, self.page))
+
+    async def _sites(self, interaction: discord.Interaction) -> None:
+        from dmbot.ui.approved_sites import show_sites
+
+        if not await _is_dm(interaction, self.campaign):
+            await _tell(interaction, ONLY_DMS)
+            return
+        await _answer_first(interaction, in_place=True)
+        await show_sites(interaction, self.campaign)
 
     async def _newer(self, interaction: discord.Interaction) -> None:
         await _redraw(interaction, self.campaign, page=self.page - 1)

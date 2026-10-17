@@ -134,7 +134,7 @@ export const held: Held[] = [
   {
     date: "2026-10-16",
     title: "Add homebrew from a link",
-    what: "In Settings, then Homebrew, press Add from a link and paste the address of a published homebrew page. DMbot reads that one page, shows it to you, and saves it only when you press Save. The first time for a site, you say you have the right to use it; after that it asks nothing. You can also say who made a file you load.",
+    what: "In Settings, then Homebrew, press Add from a link and paste the address of a published homebrew page. DMbot reads that one page, shows it to you, and saves it only when you press Save. The first time for a site, you say you have the right to use it; after that it asks nothing. You can also say who made a file you load. Approved sites, in the same place, shows each site you said yes to and lets you take one back.",
     reason:
       "Held until dev1 has tried one real published page from the server: the site may block server traffic (#1634).",
   },
