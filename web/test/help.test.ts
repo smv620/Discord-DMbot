@@ -232,16 +232,16 @@ describe("Help: the website's read-only pages (#1588)", () => {
     const shown = dmSteps.map((x) => x.text).join(" ");
     expect(shown.includes("🧭 Shared story")).toBe(SHARED_STORY_LIVE);
     const words = sharedStorySteps.map((x) => x.text).join(" ");
-    expect(words).toContain("Not working yet: for now DMbot can keep and read your adventure, but nothing uses what it read, so you get no alerts.");
+    expect(words).toContain("Guide me is not working yet: when you ask, it will say what the book has next, with the page.");
     // Read it now (#1725) goes live with the same held entry, since that entry already describes the reading.
     expect(words).toContain("press 📖 Read it now on its card, then Yes, read it");
-    expect(words).toContain("press 🔄 Refresh to check");
-    expect(words).toContain("Players never see the list. DMbot doesn't use it yet, so your alerts don't change.");
+    expect(words).toContain("When it's done, DMbot posts a line on the DM screen.");
+    expect(words).toContain("which players never see");
     expect(words).toContain("not its text or what DMbot read");
     expect(words).not.toMatch(/\$|token|\d+ (pages|files)/i);
-    expect(words).toContain("with Off, DMbot remembers your table's story only.");
-    expect(words).toContain("With Watch the story, it will also tell you when your table and the book no longer fit.");
-    expect(words).toContain("With Guide me, when you ask, it will say what the book has next, with the page.");
+    expect(words).toContain("Off means DMbot remembers your table's story only.");
+    expect(words).toContain("Watch the story works: it also tells you when your table and the book no longer fit.");
+    
     expect(words).toContain("Only give DMbot material you have the right to use. DMbot doesn't check this.");
     expect(words).toContain("DMbot keeps the text, not the file, for this campaign only. Players can't open it.");
     expect(words).toContain('"Not now" to leave it off');
@@ -250,6 +250,10 @@ describe("Help: the website's read-only pages (#1588)", () => {
     expect(held.map((h) => h.title).includes("Link names to your adventure")).toBe(!SHARED_STORY_LIVE);
     expect(words).toContain("press 📖 In my adventure…, then pick them from the list");
     expect(words).toContain("DMbot never links names by itself");
+    // Watch the story (#1735) works in the code and is held with its own What's new line.
+    expect(held.map((h) => h.title).includes("Watch the story")).toBe(!SHARED_STORY_LIVE);
+    expect(words).toContain("With Watch the story on, DMbot tells you, privately on the DM screen");
+    expect(words).toContain("It never tells you what to do; that is your call.");
     expect(words).toContain("then Take off. Made a mistake? Press Undo that.");
   });
 
