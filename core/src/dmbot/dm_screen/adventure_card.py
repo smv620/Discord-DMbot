@@ -81,6 +81,7 @@ FULL_LINES = 8  # up to this many documents get who and when; more get the short
 READ_LABEL = "Read it now"
 REFRESH_LABEL = "Refresh"
 SEE_LABEL = "See what was read"
+MATCH_LABEL = "Match names"
 PAGE_ENTRIES = 6  # lines of the list on one page
 NEEDS_REPLY = (
     "DMbot's AI isn't set up here, so it can't read your adventure. Ask whoever runs DMbot to "
@@ -207,6 +208,7 @@ def card_view(
     can_read: bool = False,
     running: frozenset[str] = frozenset(),
     has_plan: bool = False,
+    can_match: bool = False,
 ) -> discord.ui.View:
     """Remove on each file (rows 0 to 3, up to twenty), and the other buttons on the last row:
     Give a file, Read it now (only when the AI is set up and a file waits), Refresh (while a read
@@ -223,6 +225,8 @@ def card_view(
         view.add_item(RefreshButton(campaign.id, row=4))
     if has_plan:
         view.add_item(SeeButton(campaign.id, 0, row=4))
+    if can_match:
+        view.add_item(MatchButton(campaign.id, row=4))
     return view
 
 
@@ -284,6 +288,7 @@ async def _card(
             can_read=can_read,
             running=running,
             has_plan=any(c.chapters + c.places + c.people for c in counts.values()),
+            can_match=any(c.places + c.people for c in counts.values()),
         ),
     )
 
@@ -736,6 +741,40 @@ class RefreshButton(
         await interaction.response.edit_message(content=text, view=view)
 
 
+class MatchButton(
+    discord.ui.DynamicItem[discord.ui.Button[discord.ui.View]],
+    template=rf"dmbot:advmatch:{_ID}",
+):
+    """🔗 Match names: which of the book's people and places are the same as the table's (#1715)."""
+
+    def __init__(self, campaign_id: str, *, row: int | None = None) -> None:
+        super().__init__(
+            discord.ui.Button(
+                label=MATCH_LABEL,
+                emoji="🔗",
+                style=discord.ButtonStyle.secondary,
+                row=row,
+                custom_id=f"dmbot:advmatch:{campaign_id}",
+            )
+        )
+        self.campaign_id = campaign_id
+
+    @classmethod
+    async def from_custom_id(
+        cls, interaction: discord.Interaction, item: discord.ui.Item[Any], match: re.Match[str]
+    ) -> MatchButton:
+        return cls(match["campaign"])
+
+    async def callback(self, interaction: discord.Interaction) -> Any:
+        from dmbot.ui.book_link import show_matches
+
+        set_log_context(guild_id=interaction.guild_id)
+        campaign = await _allowed(interaction, self.campaign_id)
+        if campaign is None:
+            return
+        await show_matches(interaction, campaign.id)
+
+
 ICONS = {"chapter": "📖", "place": "📍", "person": "🧑", "link": "🔗"}
 LINE_SUMMARY = 110  # characters of a line's summary on the list
 LINE_QUOTE = 90
@@ -830,4 +869,5 @@ ADVENTURE_BUTTONS = (
     ReadNoButton,
     RefreshButton,
     SeeButton,
+    MatchButton,
 )

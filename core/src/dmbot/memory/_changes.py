@@ -155,8 +155,14 @@ ATTITUDES = Table(
     ("id", "holder_id", "toward_id", "score", "weight", "source", "from_session_at",
      "created_at", "closed_at"),
 )  # fmt: skip
+# The DM's word that a book entry and a table entry are one, or are not (#1715).
+PLAN_SAME_AS = Table(
+    "plan_same_as",
+    "id",
+    ("id", "plan_id", "document_id", "entity_id", "status", "decided_by", "created_at"),
+)
 ALL = (TYPES, PREDICATES, ENTITIES, ALIASES, MENTIONS, RELATIONS, CORRECTIONS, FLAGS, RULE_LINKS,
-       STATES, CLAIMS, IMPRESSIONS, ATTITUDES)  # fmt: skip
+       STATES, CLAIMS, IMPRESSIONS, ATTITUDES, PLAN_SAME_AS)  # fmt: skip
 BY_NAME = {t.name: t for t in ALL}
 
 # What links to a row (table, column, is the column a list), checked before deleting it,
@@ -189,6 +195,7 @@ DEPENDENTS: dict[str, tuple[tuple[str, str, bool], ...]] = {
         ("memory_impressions", "subject_id", False),
         ("memory_attitudes", "holder_id", False),
         ("memory_attitudes", "toward_id", False),
+        ("plan_same_as", "entity_id", False),
     ),
     "memory_mentions": (("memory_relations", "mention_ids", True),),
     "memory_relations": (
