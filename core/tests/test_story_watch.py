@@ -10,7 +10,7 @@ from typing import Any
 
 from dmbot.campaigns.models import STORY_OFF, STORY_WATCH
 from dmbot.memory import book_links as links
-from dmbot.memory.story_watch import StoryWatch, clashes
+from dmbot.memory.story_watch import Clash, Found, StoryWatch, clashes
 from dmbot.ui import story_watch as ui
 from tests import test_book_links as base
 from tests.test_adventure import press
@@ -222,6 +222,62 @@ class Watching(Setup):
         self.assertNotIn("Session", ui.message_text(found, {}))
 
 
+class MoreCases(Setup):
+    async def test_found_against_lost_through_the_database(self) -> None:
+        doc, ids = await self.book([("chapter", "Chapter 2", 1), ("place", "The Vault", 2)])
+        vault = await self.add("The Vault", type="place")
+        await self.say(ids["The Vault"], vault)
+        await self.link(doc, ids, "Chapter 2", "The Vault", "found")
+        await self.memory.set_condition(GUILD_A, self.c, vault, "intact", source="dm")
+        self.assertEqual((await self.watch.check(GUILD_A, self.c)).shown, ())
+        self.now += 5
+        await self.memory.set_condition(GUILD_A, self.c, vault, "destroyed", source="dm")
+        (one,) = (await self.watch.check(GUILD_A, self.c)).shown
+        self.assertEqual((one.need, one.condition), ("found", "destroyed"))
+
+    async def test_an_entry_merged_away_never_counts_and_a_told_clash_goes_gone(self) -> None:
+        entity, _, _ = await self.varn()
+        keeper = await self.add("The Captain", type="npc")
+        await self.set(entity, "dead")
+        await self.watch.check(GUILD_A, self.c)
+        async with self.db.guild(GUILD_A) as conn:
+            await conn.execute(
+                "UPDATE memory_entities SET status = 'merged', merged_into = %s WHERE id = %s",
+                (keeper, entity),
+            )
+        self.assertEqual((await self.watch.check(GUILD_A, self.c)).shown, ())
+        self.assertEqual(await self.watch.count(GUILD_A, self.c, "gone"), 1)
+
+    async def test_five_longest_names_still_fit_in_one_message(self) -> None:
+        long = "N" * 120
+        found = Found(
+            tuple(Clash(f"{n:032x}", long, long, long, long, "dead", 1) for n in range(5)),
+            3,
+        )
+        self.assertLessEqual(len(ui.message_text(found, {1: 4})), 2000)
+
+    async def test_a_clash_that_could_not_be_posted_is_told_again(self) -> None:
+        entity, _, _ = await self.varn()
+        await self.set(entity, "dead")
+        found = await self.watch.check(GUILD_A, self.c)
+        await self.watch.retract(GUILD_A, self.c, [c.id for c in found.shown])
+        self.assertEqual(len((await self.watch.check(GUILD_A, self.c)).shown), 1)
+
+    async def test_gone_only_touches_this_campaigns_rows_and_a_delete_cascades(self) -> None:
+        entity, link_id, _ = await self.varn()
+        await self.set(entity, "dead")
+        await self.watch.check(GUILD_A, self.c)
+        other = (await self.campaigns.create(GUILD_A, "Other table", DM)).id
+        await self.campaigns.set_story_mode(GUILD_A, other, STORY_WATCH, confirmed_by=DM)
+        async with self.db.guild(GUILD_A) as conn:
+            await conn.execute("DELETE FROM plan_same_as")  # would make it gone in this campaign
+        await self.watch.check(GUILD_A, other)  # another campaign's check
+        self.assertEqual(await self.watch.count(GUILD_A, self.c, "open"), 1)
+        async with self.db.guild(GUILD_A) as conn:
+            await conn.execute("DELETE FROM plan_links WHERE id = %s", (link_id,))
+        self.assertEqual(await self.watch.count(GUILD_A, self.c, "open"), 0)
+
+
 class Isolation(Setup):
     async def test_another_campaign_or_server_sees_none_of_it(self) -> None:
         entity, _, _ = await self.varn()
@@ -244,7 +300,13 @@ class Isolation(Setup):
 class Buttons(Setup):
     def pressing(self, user: int) -> Any:
         it = press(user, GUILD_A)
-        it.client = SimpleNamespace(campaigns=self.campaigns, watch=self.watch)
+
+        async def plan_allows(*args: Any, **kw: Any) -> bool:
+            return True
+
+        it.client = SimpleNamespace(
+            campaigns=self.campaigns, watch=self.watch, plan_allows=plan_allows
+        )
         it.type = None
 
         async def followup(content: str = "", **kw: Any) -> None:
@@ -274,5 +336,5 @@ class Buttons(Setup):
         await self.set(entity, "dead")
         found = await self.watch.check(GUILD_A, self.c)
         view = ui.watch_view(self.c, found)
-        labels = [getattr(c, "label", "") for c in view.children]
+        labels = [getattr(getattr(c, "item", c), "label", "") for c in view.children]
         self.assertEqual(labels, [ui.KNOW_LABEL, ui.WORDS_LABEL])

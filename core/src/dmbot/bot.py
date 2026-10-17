@@ -7258,9 +7258,11 @@ class DMBot(commands.AutoShardedBot):
             if self.transcripts is not None:
                 sessions = await self.transcripts.sessions(guild_id, campaign_id, limit=1000)
                 numbers = {x.started_at: x.number for x in sessions}
-            await self.post(
+            posted = await self.post(
                 channel_id, message_text(found, numbers), view=watch_view(campaign_id, found)
             )
+            if not posted:  # Discord was down: let the next check tell them rather than lose them
+                await self.watch.retract(guild_id, campaign_id, [c.id for c in found.shown])
 
     async def warn_about_threads(self, table: Table) -> None:
         """After a session (#1662): if story threads the DM keeps haven't moved for a few

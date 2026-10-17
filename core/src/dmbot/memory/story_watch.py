@@ -103,7 +103,10 @@ _CANDIDATES = """
 _GONE = """
     UPDATE plan_divergences d SET status = 'gone'
     WHERE d.guild_id = %s AND d.campaign_id = %s AND d.status = 'open'
-      AND (NOT EXISTS (SELECT 1 FROM memory_states s WHERE s.guild_id = d.guild_id
+      AND (NOT EXISTS (SELECT 1 FROM memory_entities e WHERE e.guild_id = d.guild_id
+               AND e.campaign_id = d.campaign_id AND e.id = d.entity_id
+               AND e.status IN ('proposed', 'confirmed'))
+           OR NOT EXISTS (SELECT 1 FROM memory_states s WHERE s.guild_id = d.guild_id
                AND s.campaign_id = d.campaign_id AND s.id = d.state_id AND s.closed_at IS NULL)
            OR NOT EXISTS (SELECT 1 FROM plan_links l JOIN plan_same_as sa
                ON sa.guild_id = l.guild_id AND sa.campaign_id = l.campaign_id
@@ -147,6 +150,8 @@ class StoryWatch:
                 await AdventureStore.require_on(conn, guild_id, campaign_id)
             except AdventureError:
                 return NONE
+            # One check at a time for a campaign, so two at once can't split the clashes.
+            await conn.execute("SELECT pg_advisory_xact_lock(hashtext(%s))", (campaign_id,))
             await conn.execute(_GONE, (guild_id, campaign_id))
             cur = await conn.execute(_CANDIDATES.format(extra=extra), args)
             due = [
@@ -179,6 +184,16 @@ class StoryWatch:
                 (guild_id, campaign_id, divergence_id),
             )
             return await cur.fetchone() is not None
+
+    async def retract(self, guild_id: int, campaign_id: str, divergence_ids: list[str]) -> None:
+        """Forget clashes that could not be posted (Discord was down), so the next check tells
+        them again instead of losing them. Only ones still unanswered."""
+        async with self._db.guild(guild_id) as conn:
+            await conn.execute(
+                "DELETE FROM plan_divergences WHERE guild_id = %s AND campaign_id = %s"
+                " AND status = 'open' AND id = ANY(%s)",
+                (guild_id, campaign_id, divergence_ids),
+            )
 
     async def words(self, guild_id: int, campaign_id: str, divergence_id: str) -> str | None:
         """The book's words behind a clash, for the DM only: None when it is gone."""

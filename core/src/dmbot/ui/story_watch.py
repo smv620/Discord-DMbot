@@ -30,13 +30,21 @@ KNOW_LABEL = "👍 I know"
 WORDS_LABEL = "📋 Book's words"  # short: the number after it must fit on a phone
 
 
+NAME_SHOWN = 40  # characters of a name: five long lines still fit in Discord's 2000
+
+
+def _name(text: str) -> str:
+    return _md(text if len(text) <= NAME_SHOWN else text[: NAME_SHOWN - 1] + "…")
+
+
 def line_text(clash: Clash, numbers: Mapping[int, int]) -> str:
     """One clash in plain words: what the adventure needs and what the table says."""
     number = numbers.get(clash.session_started_at) if clash.session_started_at is not None else None
     when = f" (Session {number})" if number is not None else ""
     return (
-        f"📖 Your adventure: **{_md(clash.book_name)}** needs **{_md(clash.book_needs)}** "
-        f"{_md(clash.need)}. At your table **{_md(clash.table_name)}** is {clash.condition}{when}."
+        f"📖 Your adventure: **{_name(clash.book_name)}** needs **{_name(clash.book_needs)}** "
+        f"{_name(clash.need)}. At your table **{_name(clash.table_name)}** is "
+        f"{clash.condition}{when}."
     )
 
 
@@ -103,7 +111,7 @@ class WordsButton(
         return cls(match["campaign"], match["id"])
 
     async def callback(self, interaction: discord.Interaction) -> Any:
-        got = await _dm_and_watch(interaction, self.campaign_id)
+        got = await _dm_and_watch(interaction, self.campaign_id, needs_plan=True)
         if got is None:
             return
         campaign, watch = got
@@ -111,7 +119,9 @@ class WordsButton(
         await _tell(interaction, GONE if words is None else f"📖 “{_md(words)}”")
 
 
-async def _dm_and_watch(interaction: discord.Interaction, campaign_id: str) -> Any:
+async def _dm_and_watch(
+    interaction: discord.Interaction, campaign_id: str, *, needs_plan: bool = False
+) -> Any:
     """The campaign and the watch, only for a DM of that campaign (asked again every press)."""
     guild = interaction.guild
     watch = getattr(_bot(interaction), "watch", None)
@@ -121,6 +131,11 @@ async def _dm_and_watch(interaction: discord.Interaction, campaign_id: str) -> A
     campaign = await _bot(interaction).campaigns.get(guild.id, campaign_id)
     if campaign is None or not sees_secrets(campaign, interaction.user.id):
         await _tell(interaction, ONLY_DM)
+        return None
+    if needs_plan and not await _bot(interaction).plan_allows(
+        "adventure", guild.id, campaign, fail_open=False
+    ):
+        await _tell(interaction, BROKEN)  # the owner's plan no longer covers the adventure
         return None
     return campaign, watch
 

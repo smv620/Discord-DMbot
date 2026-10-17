@@ -6,6 +6,7 @@ never in a transcript and never shown to players. Grouped by who they are about,
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import re
 from collections.abc import Mapping
@@ -69,6 +70,7 @@ def page_text(page: list[Claim], total: int, answered: Mapping[str, str] | None 
 
 
 log = logging.getLogger(__name__)
+_WATCHES: set[asyncio.Task[None]] = set()  # kept so a task isn't dropped while it runs
 
 
 async def _watch_story(
@@ -76,12 +78,20 @@ async def _watch_story(
 ) -> None:
     """A condition the DM just confirmed may have left their adventure behind (#1729): the check
     for that one condition. It never makes the answer fail."""
-    try:
-        await _bot(interaction).watch_story(
-            campaign.guild_id, campaign.id, campaign.dm_screen_channel_id, state_id=fact_id
-        )
-    except Exception:
-        log.exception("Story watch after a confirmed fact failed")
+    bot = _bot(interaction)
+
+    async def run() -> None:
+        try:
+            await bot.watch_story(
+                campaign.guild_id, campaign.id, campaign.dm_screen_channel_id, state_id=fact_id
+            )
+        except Exception:
+            log.exception("Story watch after a confirmed fact failed")
+
+    # In the background: the DM's answer must not wait on it (Discord gives three seconds).
+    task = asyncio.create_task(run())
+    _WATCHES.add(task)
+    task.add_done_callback(_WATCHES.discard)
 
 
 class ClaimsReviewButton(
