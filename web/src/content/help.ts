@@ -49,6 +49,31 @@ export const homebrewLinkSteps: Step[] = [
       { name: "I have the right", file: "ui/shared_packs.py" },
     ],
   },
+  {
+    text: "To see which sites your campaign said it may use homebrew from, press ⚙️ Settings, then 📚 Homebrew, then 🌐 Approved sites. Each site shows who said yes and when. To take one back, pick it from the Take back a site list, then press Take it back. DMbot keeps the entries but stops using them until a game master says yes again. Nothing is deleted.",
+    names: [
+      { name: "🌐 Approved sites", file: "ui/homebrew.py" },
+      { name: "Take back a site", file: "ui/approved_sites.py" },
+      { name: "Take it back", file: "ui/approved_sites.py" },
+    ],
+  },
+];
+
+// Secrets only some people know (#1649) need the story extractor, which stays off until its
+// prompt passes the measurement (#1282), so the step is held with the What's new entry "Secrets
+// only some people know". Set this to true in the same change that moves that entry out of `held`.
+export const SECRET_CLUES_LIVE = false;
+
+export const secretClueSteps: Step[] = [
+  {
+    text: "To say that only some characters know a secret or clue, open the secret's card and press 🔒 Only some know this. Press ➕ Add who knows to list them, then press 🔒 Only some know to switch it on. After a session, DMbot tells you, privately, if someone who isn't listed spoke of it. DMbot never decides who learned it. You do. Press 🔓 Let anyone know to stop tracking it.",
+    names: [
+      { name: "🔒 Only some know this", file: "ui/name_card.py" },
+      { name: "➕ Add who knows", file: "ui/clue_audience.py" },
+      { name: "🔒 Only some know", file: "ui/clue_audience.py" },
+      { name: "🔓 Let anyone know", file: "ui/clue_audience.py" },
+    ],
+  },
 ];
 
 export const dmSteps: Step[] = [
@@ -70,6 +95,9 @@ export const dmSteps: Step[] = [
     names: [{ name: "Settings", file: "dm_screen/settings.py" }],
   },
   {
+    text: "Can't find ⚙️ Settings? Type /dmbot settings in your server and it opens for you, privately. It is also on the voice-channel step after /dmbot start. Only the campaign's game masters can use it.",
+  },
+  {
     text: "To let DMbot read what people type, press ⚙️ Settings, then Table chat. It reads the voice channel's chat and one more channel you pick, only from people who said yes.",
     names: [{ name: "Table chat", file: "dm_screen/table_chat_panel.py" }],
   },
@@ -88,6 +116,14 @@ export const dmSteps: Step[] = [
   {
     text: "The clock also moves when you, the game master, clearly say it at the start of a line, like \"we take a long rest\", \"an hour later\", \"the next morning\" or \"three days later\". DMbot moves the clock and adds a one-line note with an Undo button. A question, a \"maybe\", or a player saying it never moves the clock. Days passing count as a rest unless you say \"without rest\".",
     names: [{ name: "Undo", file: "dm_screen/clock.py" }],
+  },
+  {
+    text: "If your party splits up, press ⚙️ Settings, then Game clock, then Rests & time…, then ✂️ Split the party, and name two or three groups. Each group gets its own clock, and the buttons act on the group you pick. Players can see the group names. While the party is split, DMbot won't move a clock from what it hears. To bring everyone back, press 🤝 Rejoin the party and pick the time to keep. Undo puts it back.",
+    names: [
+      { name: "Split the party", file: "dm_screen/clock.py" },
+      { name: "Rejoin the party", file: "dm_screen/clock.py" },
+      { name: "Undo", file: "dm_screen/clock.py" },
+    ],
   },
   {
     text: "The clock tells you on your DM screen when dawn, noon and dusk go by. It also says so once when 24 game hours pass without a long rest (an optional rule). It only tells you. You decide what it means for the story.",
@@ -234,7 +270,7 @@ export const dmSteps: Step[] = [
     names: [{ name: "Transcripts", file: "dm_screen/transcript_keep.py" }],
   },
   {
-    text: "To add homebrew (your own spells, monsters, items and other game content), press ⚙️ Settings, then 📚 Homebrew. Press ➕ Add to type an entry in, or 📥 Load file to bring in a text file. When you load a file, DMbot asks Who made these? Pick Me, A website or Someone else, and the name stays with the entries. It also asks whether it is from a book. Made-up rules go in House rules, not here.",
+    text: "To add homebrew (your own spells, monsters, items and other game content), press ⚙️ Settings, then 📚 Homebrew. Press ➕ Add to type an entry in, or 📥 Load file to bring in a text file (see keeping homebrew in a text file). When you load a file, DMbot asks Who made these? Pick Me, A website or Someone else, and the name stays with the entries. It also asks whether it is from a book. Made-up rules go in House rules, not here.",
     names: [
       { name: "➕ Add", file: "ui/homebrew.py" },
       { name: "📥 Load file", file: "ui/homebrew.py" },
@@ -251,6 +287,7 @@ export const dmSteps: Step[] = [
     ],
   },
   ...(HOMEBREW_LINKS_LIVE ? homebrewLinkSteps : []),
+  ...(SECRET_CLUES_LIVE ? secretClueSteps : []),
   {
     text: "To share your homebrew with another table, press ⚙️ Settings, then 📚 Shared rules, then 📦 Homebrew packs, then 📤 Share my homebrew (paid campaigns only). DMbot gives you a share code. Any game master in your server can read everything you share, and so can anyone you give the code to. That includes entries you hide from players. Only share what you are happy for them to see. Followers get a new version only when you press 🔄 Publish my changes. Only homebrew is shared, never your story, names or notes.",
     names: [
@@ -284,6 +321,14 @@ export const dmSteps: Step[] = [
       { name: "💡 Suggest to the pack", file: "ui/homebrew.py" },
       { name: "Add to pack", file: "dm_screen/pack_suggestion.py" },
       { name: "No thanks", file: "dm_screen/pack_suggestion.py" },
+    ],
+  },
+  {
+    text: "Only the game master whose plan a campaign uses can delete it, and not while it is being played. Press ⚙️ Settings, then 🗑 Delete this campaign. DMbot lists what will be lost: story memory, notes, recaps, house rules, homebrew and transcripts. To keep a copy first, press 💾 Back up first. Then press Delete it and type the campaign's name. It can't be undone. Copies people already downloaded stay, and the transcript and chat channels stay until a server admin removes them.",
+    names: [
+      { name: "Delete this campaign", file: "dm_screen/delete_campaign.py" },
+      { name: "Back up first", file: "dm_screen/delete_campaign.py" },
+      { name: "Delete it", file: "dm_screen/delete_campaign.py" },
     ],
   },
   {
