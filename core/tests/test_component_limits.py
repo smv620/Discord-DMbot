@@ -42,10 +42,7 @@ CAMPAIGN_ARGS = (0, None, "2024", "2014", True, frozenset({7}), None, None, "pee
 
 
 def campaigns(count: int = 30) -> list[Campaign]:
-    return [
-        Campaign(f"{i:032x}", 1, f"{LONG}{i}", *CAMPAIGN_ARGS)  # type: ignore[arg-type]
-        for i in range(count)
-    ]
+    return [Campaign(f"{i:032x}", 1, f"{LONG}{i}", *CAMPAIGN_ARGS) for i in range(count)]
 
 
 def options(count: int, label: str = "x") -> list[dict[str, Any]]:
