@@ -10,7 +10,7 @@ import { beforeAll, describe, expect, it } from "vitest";
 import { parsePage } from "./dom";
 
 import { entries, held } from "../src/content/whats-new";
-import { STANDING_LIVE, standingSteps, HOMEBREW_KINDS_LIVE, homebrewKindSteps, STORY_THREADS_LIVE, storyThreadSteps, DM_BOT_CHANNEL_LIVE, dmBotChannelSteps, settingsOnDmScreenSteps, HOMEBREW_LINKS_LIVE, SECRET_CLUES_LIVE, accountSteps, dmSteps, homebrewLinkSteps, secretClueSteps, emailSteps, recapSteps, quickAnswers, quickAnswersHeading, gettingHelp, playerSteps } from "../src/content/help";
+import { SHARED_STORY_LIVE, sharedStorySteps, STANDING_LIVE, standingSteps, HOMEBREW_KINDS_LIVE, homebrewKindSteps, STORY_THREADS_LIVE, storyThreadSteps, DM_BOT_CHANNEL_LIVE, dmBotChannelSteps, settingsOnDmScreenSteps, HOMEBREW_LINKS_LIVE, SECRET_CLUES_LIVE, accountSteps, dmSteps, homebrewLinkSteps, secretClueSteps, emailSteps, recapSteps, quickAnswers, quickAnswersHeading, gettingHelp, playerSteps } from "../src/content/help";
 import Help from "../src/pages/help.astro";
 
 const botDir = fileURLToPath(new URL("../../core/src/dmbot/", import.meta.url));
@@ -55,7 +55,7 @@ describe("Help", () => {
   });
 
   it("names only buttons and commands that are in the bot's code", () => {
-    for (const step of [...dmSteps, ...dmBotChannelSteps, ...settingsOnDmScreenSteps, ...storyThreadSteps, ...standingSteps, ...homebrewKindSteps, ...homebrewLinkSteps, ...secretClueSteps, ...recapSteps, ...quickAnswers, ...playerSteps, ...accountSteps, ...emailSteps]) {
+    for (const step of [...dmSteps, ...dmBotChannelSteps, ...settingsOnDmScreenSteps, ...storyThreadSteps, ...sharedStorySteps, ...standingSteps, ...homebrewKindSteps, ...homebrewLinkSteps, ...secretClueSteps, ...recapSteps, ...quickAnswers, ...playerSteps, ...accountSteps, ...emailSteps]) {
       for (const { name, file } of step.names ?? []) {
         expect(step.text, `${name} is in its step`).toContain(name);
         const source = readFileSync(join(botDir, file), "utf8");
@@ -225,6 +225,21 @@ describe("Help: the website's read-only pages (#1588)", () => {
     expect(standingSteps.map((x) => x.text).join(" ")).toContain("Players never see it.");
     expect(homebrewKindSteps.map((x) => x.text).join(" ")).toContain("Spells 10/12, which means 10 of 12 spells are on.");
     expect(secretClueSteps.map((x) => x.text).join(" ")).toContain("If a player asks DMbot about it, DMbot won't show a clue that only some people know.");
+  });
+
+  it("holds the Shared story steps with the held What's new entry, and flips them together (#1720)", () => {
+    expect(held.map((h) => h.title).includes("A Shared story switch")).toBe(!SHARED_STORY_LIVE);
+    const shown = dmSteps.map((x) => x.text).join(" ");
+    expect(shown.includes("🧭 Shared story")).toBe(SHARED_STORY_LIVE);
+    const words = sharedStorySteps.map((x) => x.text).join(" ");
+    expect(words).toContain("Not working yet: for now DMbot can keep your adventure, but nothing reads it, so you get no alerts.");
+    expect(words).toContain("with Off, DMbot remembers your table's story only.");
+    expect(words).toContain("With Watch the story, it will also tell you when your table and the book no longer fit.");
+    expect(words).toContain("With Guide me, when you ask, it will say what the book has next, with the page.");
+    expect(words).toContain("Only give DMbot material you have the right to use. DMbot doesn't check this.");
+    expect(words).toContain("DMbot keeps the text, not the file, for this campaign only. Players can't open it.");
+    expect(words).toContain('"Not now" to leave it off');
+    expect(words).toContain("keeps only your adventure's name, not its text");
   });
 
   it("finds Settings, splits the party and deletes a campaign in plain words (#1659)", () => {
