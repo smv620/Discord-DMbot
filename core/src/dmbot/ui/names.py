@@ -67,6 +67,7 @@ KINDS: dict[str, str] = {
     "mystery": "A mystery",
     "hook": "A hook (a lead)",
     "goal": "A goal",
+    "promise": "A promise",
     "concept": "Something else",
 }
 KIND_SHORT: dict[str, str] = {
@@ -87,6 +88,7 @@ KIND_SHORT: dict[str, str] = {
     "mystery": "mystery",
     "hook": "hook",
     "goal": "goal",
+    "promise": "promise",
     "concept": "other",
     "person": "player or DM",
 }
@@ -267,6 +269,7 @@ class NamesHome(_Menu):
         self.add_item(_Button(self._add_many, label="📥 Add many", style=grey, row=1))
         self.add_item(_Button(self._download, label="📤 Download all", style=grey, row=1))
         self.add_item(_Button(self._new_thread, label="🧵 New thread", style=grey, row=3))
+        self.add_item(_Button(self._new_promise, label="🤝 Add a promise", style=grey, row=3))
         # Players' D&D Beyond sheets (#723): read again now, not only at /dmbot start.
         self.add_item(_Button(self._sheets, label="📜 Refresh sheets", style=grey, row=3))
         if shown:
@@ -293,6 +296,17 @@ class NamesHome(_Menu):
             await _tell(interaction, "Only the DM can start a story thread.")
             return
         await interaction.response.send_modal(NewThreadForm(self.campaign_id))
+
+    async def _new_promise(self, interaction: discord.Interaction) -> None:
+        from dmbot.ui.threads import NewPromiseForm
+
+        campaign = await _campaign_for(interaction, self.campaign_id)
+        if campaign is None:
+            return
+        if not sees_secrets(campaign, interaction.user.id):
+            await _tell(interaction, "Only the DM can add a promise.")
+            return
+        await interaction.response.send_modal(NewPromiseForm(self.campaign_id))
 
     async def _find(self, interaction: discord.Interaction) -> None:
         from dmbot.ui.name_card import FindForm

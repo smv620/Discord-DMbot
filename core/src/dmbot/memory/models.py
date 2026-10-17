@@ -83,7 +83,7 @@ HINTED, OPEN, GOING, RESOLVED, ABANDONED = "hinted", "open", "active", "resolved
 THREAD_STATES = (HINTED, OPEN, GOING, RESOLVED, ABANDONED)
 # The core kinds of story thread. Threads are the DM's plot notes (CLAUDE.md: DM-screen content),
 # so lookup and recall keep them from anyone who may not see secrets.
-THREAD_TYPES = ("thread", "quest", "mystery", "hook", "goal")
+THREAD_TYPES = ("thread", "quest", "mystery", "hook", "goal", "promise")
 BEING_CONDITIONS = (ALIVE, DEAD, MISSING, CAPTURED, TRANSFORMED, UNKNOWN)
 THING_CONDITIONS = (INTACT, DESTROYED, LOST, UNKNOWN)
 CONDITIONS = (*BEING_CONDITIONS, INTACT, DESTROYED, LOST)

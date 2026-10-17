@@ -82,6 +82,7 @@ describe("What's new", () => {
       "How NPCs feel about the party", // until it has been seen on the test server (#1655)
       "Story threads you keep", // until it has been seen on the test server (#1662)
       "Species, subclasses and backgrounds in homebrew", // until seen on the test server (#1663)
+      "Keep track of promises made at the table", // until seen on the test server (#1674)
       "A DMbot channel for buttons", // until seen on the test server (#1666)
       "Homebrew menu by kind", // until seen on the test server (#1665)
     ]);

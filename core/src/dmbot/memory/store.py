@@ -153,7 +153,10 @@ async def _live_ids(scope: Scope, among: Collection[str] | None = None) -> set[s
 
 
 PARTY_NAME = "The party"
-THREAD_KINDS_ONLY = "A thread is a quest, a mystery, a hook or a goal."
+LED_TO_KINDS = "A clue, an event or a thread can lead to a thread or an event."
+LED_TO_LOOP = "That would make a loop: the other one already led here."
+DUE_MAX = 120  # letters in a promise's due note
+THREAD_KINDS_ONLY = "A thread is a quest, a mystery, a hook, a goal or a promise."
 STANDING_VIEWERS = ("character", "faction", "place")
 STANDING_SUBJECTS = ("character", "faction", "people")
 STANDING_BETWEEN = (
@@ -755,7 +758,7 @@ class MemoryStore:
         from_session_at: int | None = None,
     ) -> Written[Entity]:
         """The DM starts a story thread: its name, what kind of thread (quest, mystery, hook,
-        goal) and where it is now, made in one change."""
+        goal, promise) and where it is now, made in one change."""
         if source != DM:
             raise MemoryRuleError("Only the DM can do that.")
         check_named(subtype, name)
@@ -818,6 +821,127 @@ class MemoryStore:
                 detail=clean_text(role), from_session_at=from_session_at,
             )  # fmt: skip
             return Written(fact, w.batch)
+
+    async def promise_party(
+        self,
+        guild_id: int,
+        campaign_id: str,
+        promise_id: str,
+        who_id: str,
+        *,
+        to: bool,
+        source: str,
+        from_session_at: int | None = None,
+    ) -> Written[Relation]:
+        """The DM says who made a promise (`to` False) or who it was made to (`to` True): their
+        word, one fact each (#1674). More than one may be named."""
+        if source != DM:
+            raise MemoryRuleError("Only the DM can do that.")
+        async with self._write(guild_id, campaign_id, source) as w:
+            entity = await _entity_row(w, promise_id)
+            if entity["type"] != threads_mod.PROMISE:
+                raise MemoryRuleError("That is not a promise.")
+            onto = await _load_ontology(w)
+            who = await _entity_row(w, who_id)
+            allowed = ("character", "faction", "place") if to else ("character", "faction")
+            if not any(onto.is_a(who["type"], kind) for kind in allowed):
+                # (a wrong kind would only be flagged; this is the DM's own tap, so refuse it)
+                raise MemoryRuleError(
+                    "Pick a character, a group or a place."
+                    if to
+                    else "Pick a character or a group."
+                )
+            fact, _flags = await self.add_relation_in(
+                w, who_id, "promised_to" if to else "promised_by", promise_id, confidence=1.0,
+                status=CONFIRMED, from_session_at=from_session_at,
+            )  # fmt: skip
+            return Written(fact, w.batch)
+
+    async def led_to(
+        self,
+        guild_id: int,
+        campaign_id: str,
+        from_id: str,
+        to_id: str,
+        *,
+        source: str,
+        from_session_at: int | None = None,
+    ) -> Written[Relation]:
+        """The DM says one thing led to another (#1679): a clue, event or thread led to a thread
+        or event. Their word only. A link to itself or one that would close a loop (or run more
+        than `CHAIN_DEPTH` steps) is refused, not flagged. The fact is kept secret, so it is
+        the DM's alone wherever facts are shown."""
+        if source != DM:
+            raise MemoryRuleError("Only the DM can do that.")
+        async with self._write(guild_id, campaign_id, source) as w:
+            onto = await _load_ontology(w)
+            a, b = await _entity_row(w, from_id), await _entity_row(w, to_id)
+            if a["status"] != CONFIRMED or b["status"] != CONFIRMED:
+                raise MemoryRuleError(LED_TO_KINDS)
+            if not any(onto.is_a(a["type"], k) for k in ("clue", "event", "thread")) or not any(
+                onto.is_a(b["type"], k) for k in ("thread", "event")
+            ):
+                raise MemoryRuleError(LED_TO_KINDS)
+            fact, _flags = await self.add_relation_in(
+                w, from_id, "led_to", to_id, confidence=1.0, status=CONFIRMED, secret=True,
+                from_session_at=from_session_at,
+            )  # fmt: skip
+            return Written(fact, w.batch)
+
+    async def chain(
+        self, guild_id: int, campaign_id: str, entity_id: str
+    ) -> tuple[list[Entity], list[Entity]]:
+        """(what led to this, what this led to) for one entry: its live "led to" links, both
+        ends confirmed, names by A to Z. One read (#1679). For a thread's own card the thread
+        read carries the same; this is for clues and events."""
+        async with self._read(guild_id, campaign_id) as scope:
+            rows = await scope.select(
+                RELATIONS,
+                " AND predicate = 'led_to' AND status = 'confirmed' AND to_session_at IS NULL"
+                " AND (subject_id = %s OR object_id = %s)",
+                [entity_id, entity_id],
+            )
+            ends = sorted(
+                {r["subject_id"] if r["object_id"] == entity_id else r["object_id"] for r in rows}
+            )
+            found = {
+                r["id"]: _entity(r)
+                for r in await scope.select(
+                    ENTITIES, " AND id = ANY(%s) AND status = 'confirmed'", [ends]
+                )
+            }
+        came = [
+            found[r["subject_id"]]
+            for r in rows
+            if r["object_id"] == entity_id and r["subject_id"] in found
+        ]
+        went = [
+            found[r["object_id"]]
+            for r in rows
+            if r["subject_id"] == entity_id and r["object_id"] in found
+        ]
+
+        def key(e: Entity) -> tuple[str, str]:
+            return (name_key(e.name), e.id)
+
+        return sorted(came, key=key), sorted(went, key=key)
+
+    async def set_due(
+        self, guild_id: int, campaign_id: str, promise_id: str, due: str, *, source: str
+    ) -> Written[Entity]:
+        """The DM's free-text note on when a promise is due ("by the full moon"), kept as the
+        entry's description and never parsed into a date. Empty clears it (#1674)."""
+        if source != DM:
+            raise MemoryRuleError("Only the DM can do that.")
+        text = " ".join(due.split())
+        if len(text) > DUE_MAX:
+            raise MemoryRuleError(f"Keep it to {DUE_MAX} letters or fewer.")
+        async with self._write(guild_id, campaign_id, source) as w:
+            entity = await _entity_row(w, promise_id)
+            if entity["type"] != threads_mod.PROMISE:
+                raise MemoryRuleError("That is not a promise.")
+            row = await w.update(ENTITIES, promise_id, {"description": text})
+            return Written(_entity(row), w.batch)
 
     async def link_event(
         self,
@@ -2517,6 +2641,19 @@ class MemoryStore:
         if pred.key == PLAYS:
             # Who plays a character is set on the character, then kept here (#1188).
             raise MemoryRuleError("Say who plays a character on the character itself.")
+        if pred.key == threads_mod.LED_TO:
+            # Whatever the path (extractor, "Connect to…"), a "led to" link is the DM's secret
+            # and may not close a loop (#1679).
+            secret = True
+            live = await w.select(
+                RELATIONS,
+                " AND predicate = 'led_to' AND status = 'confirmed' AND to_session_at IS NULL",
+                [],
+            )
+            if threads_mod.would_loop(
+                [(r["subject_id"], r["object_id"]) for r in live], subject_id, object_id
+            ):
+                raise MemoryRuleError(LED_TO_LOOP)
         types = {
             subject_id: (await _entity_row(w, subject_id))["type"],
             object_id: (await _entity_row(w, object_id))["type"],
@@ -2566,6 +2703,8 @@ class MemoryStore:
                 check_status_change(current["status"], status, source)
                 changes["status"] = status
             if secret is not None:
+                if current["predicate"] == threads_mod.LED_TO and not secret:
+                    raise MemoryRuleError("A “led to” link stays the DM's alone.")
                 if current["secret"] and not secret and source != DM:
                     raise MemoryRuleError("Only the DM can stop keeping that secret.")
                 changes["secret"] = secret
@@ -3313,16 +3452,17 @@ async def _threads(scope: Scope, stalled_after: int) -> list[threads_mod.ThreadI
         by_id[r["entity_id"]].append(states.state_of(r))
     facts = await scope.select(
         RELATIONS,
-        " AND object_id = ANY(%s) AND predicate = ANY(%s) AND status = 'confirmed'"
-        " AND to_session_at IS NULL ORDER BY created_at, id",
-        [ids, ["in_thread", "advances", "resolves"]],
+        " AND ((object_id = ANY(%s) AND predicate = ANY(%s))"
+        "   OR (predicate = 'led_to' AND (object_id = ANY(%s) OR subject_id = ANY(%s))))"
+        " AND status = 'confirmed' AND to_session_at IS NULL ORDER BY created_at, id",
+        [ids, ["in_thread", "advances", "resolves", "promised_by", "promised_to"], ids, ids],
     )
     others = {
         r["id"]: _entity(r)
         for r in await scope.select(
             ENTITIES,
             " AND id = ANY(%s) AND status = 'confirmed'",
-            [sorted({f["subject_id"] for f in facts})],
+            [sorted({f["subject_id"] for f in facts} | {f["object_id"] for f in facts})],
         )
     }
     cur = await scope.conn.execute(
@@ -3340,7 +3480,27 @@ async def _threads(scope: Scope, stalled_after: int) -> list[threads_mod.ThreadI
     out: list[threads_mod.ThreadInfo] = []
     for r in sorted(rows, key=lambda e: (name_key(e["name"]), e["id"])):
         history = tuple(by_id[r["id"]])
-        mine = [f for f in facts if f["object_id"] == r["id"] and f["subject_id"] in others]
+        mine = [
+            f
+            for f in facts
+            if f["object_id"] == r["id"]
+            and f["subject_id"] in others
+            and f["predicate"] != "led_to"  # a link in a chain is not the thread moving
+        ]
+        came = tuple(
+            others[f["subject_id"]]
+            for f in facts
+            if f["predicate"] == "led_to"
+            and f["object_id"] == r["id"]
+            and f["subject_id"] in others
+        )
+        went = tuple(
+            others[f["object_id"]]
+            for f in facts
+            if f["predicate"] == "led_to"
+            and f["subject_id"] == r["id"]
+            and f["object_id"] in others
+        )
         involved = tuple(
             threads_mod.Involved(others[f["subject_id"]], f["detail"])
             for f in mine
@@ -3351,8 +3511,10 @@ async def _threads(scope: Scope, stalled_after: int) -> list[threads_mod.ThreadI
                 others[f["subject_id"]], f["predicate"] == "resolves", f["from_session_at"]
             )
             for f in mine
-            if f["predicate"] != "in_thread"
+            if f["predicate"] in ("advances", "resolves")
         )
+        by = tuple(others[f["subject_id"]] for f in mine if f["predicate"] == "promised_by")
+        to = tuple(others[f["subject_id"]] for f in mine if f["predicate"] == "promised_to")
         touch = threads_mod.last_touch(
             r["created_at"],
             history,
@@ -3367,6 +3529,8 @@ async def _threads(scope: Scope, stalled_after: int) -> list[threads_mod.ThreadI
             threads_mod.ThreadInfo(
                 _entity(r), state, history, involved, movers, touch, quiet,
                 threads_mod.is_stalled(now, quiet, stalled_after),
+                by, to, r["description"] if r["type"] == threads_mod.PROMISE else "",
+                came, went,
             )
         )  # fmt: skip
     out.sort(key=lambda t: (not t.stalled, name_key(t.thread.name), t.thread.id))
