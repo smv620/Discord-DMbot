@@ -6468,7 +6468,7 @@ MIGRATIONS: tuple[Migration, ...] = (
     ("0113_homebrew_sources", HOMEBREW_SOURCES),  # an entry's source, one page per address (#1633)
     ("0114_homebrew_pack_doors", HOMEBREW_PACK_DOORS),  # the site's doors read pointers (#1635)
     ("0115_clue_audience", CLUE_AUDIENCE),  # a clue only some people know (#1649)
-    ("0116_standing", STANDING),  # impressions, attitudes and the party (#1655)
+    ("0117_standing", STANDING),  # impressions, attitudes and the party (#1655)
 )
 
 # Tables that must have row-level security. A test checks every table in the schema
