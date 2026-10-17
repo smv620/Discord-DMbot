@@ -277,6 +277,13 @@ describe("Help: the website's read-only pages (#1588)", () => {
     expect(words).toContain("Each rule is shown in your own words.");
   });
 
+  it("says to pick /dmbot start from the list, with a tip for when no list pops up (#1770)", () => {
+    const words = dmSteps.map((x) => x.text).join(" ");
+    expect(words).toContain("pick it from the list that pops up, then press Enter");
+    expect(words).toContain("No list pops up?");
+    expect(words).toContain("If the words just appear as a chat message, DMbot didn't get them.");
+  });
+
   it("holds the time suggestion step with its held What's new entry (#1765)", () => {
     expect(held.map((h) => h.title).includes("A time suggestion from your narration")).toBe(!TIME_SUGGESTIONS_LIVE);
     const shown = dmSteps.map((x) => x.text).join(" ");

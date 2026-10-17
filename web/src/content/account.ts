@@ -114,7 +114,7 @@ export const text = {
       "Your plan has changed since this page opened, so we've updated it. If nothing looks different, write to us for help.",
   } as Record<string, string>,
   install: {
-    done: "Done! DMbot is in your server. In Discord, type /dmbot start to begin.",
+    done: "Done! DMbot is in your server. In Discord, type /dmbot start and pick it from the list to begin.",
     failed: "DMbot wasn't added. Tap Add DMbot to try again.",
     slow: "Too many tries. Wait about 10 minutes, then tap Add DMbot again.",
     not_allowed: "You can only add DMbot to a server you run. Ask its owner to add DMbot.",
@@ -179,7 +179,7 @@ export const text = {
       : "You're out of hours for now. Write to us if you need more.";
   },
   stopPaying: "Stop paying",
-  freeNext: "In Discord, type /dmbot start to play.",
+  freeNext: "In Discord, type /dmbot start and pick it from the list to play.",
   // Only without a paid plan: with one, the plan's own date is above, and what happens
   // after the grant ends depends on whether they stop paying.
   freeEnds: (iso: string): string => `After ${shortDate(iso)}, pick a plan to keep playing.`,
