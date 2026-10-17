@@ -618,25 +618,25 @@ class ReadButton(
 
     async def callback(self, interaction: discord.Interaction) -> Any:
         set_log_context(guild_id=interaction.guild_id)
+        # Answer Discord first (#1803): the permission check and the reads are several trips.
+        await interaction.response.defer()
         campaign = await _allowed(interaction, self.campaign_id)
         if campaign is None:
             return
         plan, bot = _plan(interaction), cast(Any, interaction.client)
         if plan is None or getattr(bot, "plan_ai", None) is None:
-            await interaction.response.send_message(NEEDS_REPLY, ephemeral=True)
+            await say(interaction, NEEDS_REPLY)
             return
         refusal = await bot.plan_gate("adventure", campaign.guild_id, campaign, interaction.user.id)
         if refusal:
-            await interaction.response.send_message(refusal, ephemeral=True)
+            await say(interaction, refusal)
             return
         docs = await _store(interaction).documents(campaign.guild_id, campaign.id)
         states = await plan.states(campaign.guild_id, campaign.id)
         running = _running(interaction, campaign.guild_id)
         doc = next_to_read(docs, states, running)
         if doc is None:
-            await interaction.response.send_message(
-                BUSY if running else NOTHING_TO_READ, ephemeral=True
-            )
+            await say(interaction, BUSY if running else NOTHING_TO_READ)
             return
         name = discord.utils.escape_markdown(doc.file_name[:NAME_SHOWN])
         others = any(
@@ -648,7 +648,7 @@ class ReadButton(
         view = discord.ui.View(timeout=None)
         view.add_item(ReadYesButton(campaign.id, doc.id))
         view.add_item(ReadNoButton(campaign.id))
-        await interaction.response.edit_message(
+        await interaction.edit_original_response(
             content=(
                 f"Read **{name}** now? DMbot sends its text to its AI, once, and lists the "
                 "chapters, places and people. It can take a few minutes, longer for a big book. "
@@ -846,6 +846,8 @@ class MatchButton(
         from dmbot.ui.book_link import show_matches
 
         set_log_context(guild_id=interaction.guild_id)
+        # Answer Discord first (#1803): the permission check and the reads are several trips.
+        await interaction.response.defer()
         campaign = await _allowed(interaction, self.campaign_id)
         if campaign is None:
             return
@@ -920,17 +922,19 @@ class SeeButton(
 
     async def callback(self, interaction: discord.Interaction) -> Any:
         set_log_context(guild_id=interaction.guild_id)
+        # Answer Discord first (#1803): the permission check and the reads are several trips.
+        await interaction.response.defer()
         campaign = await _allowed(interaction, self.campaign_id)
         if campaign is None:
             return
         plan = _plan(interaction)
         if plan is None:
-            await interaction.response.send_message(COULDNT, ephemeral=True)
+            await say(interaction, COULDNT)
             return
         items, total = await plan.listing(campaign.guild_id, campaign.id, self.offset, PAGE_ENTRIES)
         if not items:
             text, view = await _card(interaction, campaign)
-            await interaction.response.edit_message(content=f"{NOTHING_READ}\n\n{text}", view=view)
+            await interaction.edit_original_response(content=f"{NOTHING_READ}\n\n{text}", view=view)
             return
         view = discord.ui.View(timeout=None)
         if self.offset > 0:
@@ -940,11 +944,12 @@ class SeeButton(
         if self.offset + len(items) < total:
             view.add_item(SeeButton(campaign.id, self.offset + PAGE_ENTRIES, label="More ▶"))
         view.add_item(BackToFilesButton(campaign.id))
-        await interaction.response.edit_message(
+        await interaction.edit_original_response(
             content=listing_text(items, self.offset, total),
             view=view,
+            # (no suppress_embeds: an edit after a defer can't carry it. `listing_text` already
+            # breaks every web address, so nothing here can unfurl.)
             allowed_mentions=NO_MENTIONS,
-            suppress_embeds=True,
         )
 
 
