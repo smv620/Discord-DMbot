@@ -18,9 +18,10 @@ from dataclasses import dataclass
 from typing import Protocol
 
 from dmbot.memory.claims import ClaimStore
+from dmbot.memory.models import GOING
 from dmbot.memory.recall import DM_SCREEN, FACT, RecallService
 from dmbot.memory.store import MemoryStore
-from dmbot.memory.threads import GOING, LIVE_STATES, PROMISE
+from dmbot.memory.threads import LIVE_STATES, PROMISE
 
 log = logging.getLogger(__name__)
 
