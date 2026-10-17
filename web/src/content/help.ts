@@ -102,14 +102,14 @@ export const dmBotChannelSteps: Step[] = [
     ],
   },
   {
-    text: "Everyone also gets ❓ Help, 📖 Look up a rule and 📜 Transcripts. If you said yes to being recorded, you get ⚙️ Menu, where you can stop being recorded. Players also get 📜 My character sheet. Game masters get ⚙️ Settings too.",
+    text: "Everyone also gets 📖 Look up a rule and 📜 Transcripts. If you said yes to being recorded, you get ⚙️ Menu, where you can stop being recorded. Players also get 📜 My character sheet. Game masters get ⚙️ Settings too.",
     names: [
       { name: "⚙️ Menu", file: "consent_dm.py" },
       { name: "📜 My character sheet", file: "ui/sheets.py" },
     ],
   },
   {
-    text: "Press 📖 Look up a rule to check a rule. Only you see the answer. If you aren't a game master, it ends with \"Your DM decides what applies at your table.\" Press 📜 Transcripts to open this website's Transcripts page.",
+    text: "Press 📖 Look up a rule to check a rule. Only you see the answer. Players' answers end with \"Your DM decides what applies at your table.\" Press 📜 Transcripts to open the Transcripts page on the DMbot website.",
     names: [
       { name: "📖 Look up a rule", file: "dm_screen/dm_bot_panel.py" },
       { name: "📜 Transcripts", file: "dm_screen/dm_bot_panel.py" },
