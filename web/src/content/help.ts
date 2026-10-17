@@ -389,6 +389,28 @@ export const npcsChannelSteps: Step[] = [
   },
 ];
 
+// How the table runs initiative, heard by FightBot (#1788; #1771, merged in #1783). Off until dev1 has
+// live-checked it; flip it in the same change that moves "FightBot follows your turn order" out of
+// `held` in whats-new.ts, a test ties the two. There is no setting or button for it (the side-initiative
+// button went in #1774), so the steps name none.
+export const INITIATIVE_STYLE_LIVE = false;
+
+export const initiativeStyleSteps: Step[] = [
+  {
+    text: "FightBot listens for how your table runs initiative, and times your private reminder to just before you choose. Your game master's words decide. Players only count if two recorded players agree and the game master hasn't said.",
+  },
+];
+
+// The game master's side of it: players don't see the combat line unless they peek.
+export const initiativeStyleDmSteps: Step[] = [
+  {
+    text: "FightBot listens for how your table runs initiative: one at a time, by side, or rolled each round. Your words decide. Two agreeing players count only if you haven't said. Your DM screen's combat line shows \"Initiative, as heard: ...\".",
+  },
+  {
+    text: "To correct it, say it out loud, like \"we use side initiative\". There is no button. The line says \"as heard last time\" until FightBot hears it again.",
+  },
+];
+
 export const dmSteps: Step[] = [
   { text: "Add DMbot to your Discord server from the Add to Discord page." },
   {
@@ -447,6 +469,7 @@ export const dmSteps: Step[] = [
       { name: "Time it", file: "dm_screen/rules_cards.py" },
     ],
   },
+  ...(INITIATIVE_STYLE_LIVE ? initiativeStyleDmSteps : []),
   {
     text: "After a game, press 🧑 Check who is who. DMbot notices when someone answers to a name several times (\"Mike, what do you do?\" then \"I run with my sword\"). You see who it thinks plays whom and say yes or no. Nothing is used until you say yes.",
     names: [{ name: "Check who is who", file: "ui/people_review.py" }],
@@ -709,6 +732,7 @@ export const recapSteps: Step[] = [
     : []),
 ];
 
+
 export const playerSteps: Step[] = [
   {
     text: `DMbot sends you a private message. Press ${consent} to say yes.`,
@@ -771,6 +795,7 @@ export const playerSteps: Step[] = [
     text: "In a fight, DMbot's fight helper, FightBot, may send you a short private reminder of what your sheet says you still have, like a spell, a feature, or spell slots. It only reminds you. Your game master decides what happens. To switch it off, press 📜 My character sheet, then Turn FightBot off.",
     names: [{ name: "Turn FightBot off", file: "ui/sheets.py" }],
   },
+  ...(INITIATIVE_STYLE_LIVE ? initiativeStyleSteps : []),
   {
     text: "If your sheet is linked online, your spell slots show on your character card. About a minute after someone at the table says a slot was used, DMbot looks at your sheet again to keep up. It never changes your sheet.",
   },

@@ -16,6 +16,7 @@ from dmbot.transcript.store import TranscriptStore
 from dmbot.transcript.suggestions import SuggestionStore
 from dmbot.ui import line_fix
 from dmbot.ui.decision_lines import DecisionLines
+from tests.answer_first import Timeline
 from tests.pg import DatabaseTest
 from tests.test_transcript_cleaner import BELLEROS, alias
 from tests.test_transcript_cleaner import lookup as names_with
@@ -277,7 +278,14 @@ def press(act: str, user: int = DM, *, suggestion: Any = "default", consent: boo
         decision_lines=DecisionLines(),
     )
     message = copy_of_line(900)
-    response = SimpleNamespace(is_done=lambda: False, send_message=AsyncMock(), defer=AsyncMock())
+    done = {"yes": False}
+
+    async def defer(**kw: Any) -> None:
+        done["yes"] = True
+
+    response = SimpleNamespace(
+        is_done=lambda: done["yes"], send_message=AsyncMock(), defer=AsyncMock(side_effect=defer)
+    )
     interaction = SimpleNamespace(
         client=bot,
         guild=SimpleNamespace(id=GUILD),
@@ -303,6 +311,17 @@ class TheButtons(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(said(interaction), line_fix.NOT_YOURS)
             bot.suggestions.decide.assert_not_awaited()
             bot.apply_line_fix.assert_not_awaited()
+
+    async def test_the_button_answers_discord_before_the_database(self) -> None:
+        for act in ("yes", "no"):
+            line = Timeline()
+            button, bot, interaction = press(act)
+            interaction.response, interaction.followup = line.response, line.followup
+            bot.suggestions.get = line.slow("get", found())
+            bot.campaigns.get = line.slow("campaigns", bot.campaigns.get.return_value)
+            await button.callback(interaction)
+            line.assert_answered_first()
+            self.assertIn("slow:get", line.events)
 
     async def test_a_missing_or_answered_suggestion_changes_nothing(self) -> None:
         button, bot, interaction = press("yes", suggestion=None)
