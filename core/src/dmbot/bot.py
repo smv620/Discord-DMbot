@@ -48,7 +48,7 @@ from dmbot.ai_watch import AIWatch
 from dmbot.audio.segmenter import Segmenter, Utterance
 from dmbot.audio_check import AudioChecker, Verdict
 from dmbot.campaigns import Campaign, CampaignStore
-from dmbot.campaigns.models import DEFAULT_DM_SCREEN_LEVEL, CampaignError
+from dmbot.campaigns.models import DEFAULT_DM_SCREEN_LEVEL, STORY_GUIDE, CampaignError
 from dmbot.capture_log import FRAMES_PER_S, CaptureLog, Due, SessionTotals
 from dmbot.channel_access import (
     SAME_CHANNEL,
@@ -251,7 +251,7 @@ from dmbot.test_recording import files as test_files
 from dmbot.test_recording import library as test_library
 from dmbot.test_recording.session import TestSession
 from dmbot.test_recording.store import TestVoiceStore
-from dmbot.timebot import combat_phrases, durations
+from dmbot.timebot import combat_phrases, durations, where_are_we
 from dmbot.timebot import phrases as clock_phrases
 from dmbot.timebot.effects import EffectsSection, EffectStore
 from dmbot.timebot.store import ClockSection, ClockStore
@@ -309,6 +309,7 @@ from dmbot.ui.continuity import ContinuityButton, continuity_view
 from dmbot.ui.continuity import waiting_text as continuity_waiting_text
 from dmbot.ui.decision_lines import DecisionLines
 from dmbot.ui.dmbot_commands import _failed, dmbot_group
+from dmbot.ui.guide import GuideButton
 from dmbot.ui.heard_review import HeardReviewButton, heard_review_view
 from dmbot.ui.heard_review import waiting_text as heard_waiting_text
 from dmbot.ui.homebrew import dmbot_homebrew  # noqa: F401 (registers it)
@@ -514,6 +515,10 @@ class Table:
     # FightBot's memory for this session and its loop (#1129).
     fight: FightState = field(default_factory=FightState)
     fight_task: asyncio.Task[None] | None = None
+    where_task: asyncio.Task[None] | None = None  # the quiet "where are we" note (#1738)
+    # When the game clock was last shown or moved (monotonic seconds), starting at the session's
+    # start; kept in memory only (a restart just starts the wait again).
+    clock_shown_at: float = field(default_factory=time.monotonic)
     sheet_loads: int = 0  # each load of the names counts up; only the newest one is used
     # For the Transcript Cleaner (#127): what this session's lines say about words, and
     # the display names of people who agreed (never "fixed" into a name).
@@ -1146,6 +1151,7 @@ class DMBot(commands.AutoShardedBot):
         self.add_dynamic_items(SecretAloudButton)  # the secret-said-aloud question (#1407)
         self.add_dynamic_items(RecapButton)  # the recap on the DM screen (#1455)
         self.add_dynamic_items(KnowButton, WordsButton)  # Watch the story (#1729)
+        self.add_dynamic_items(GuideButton)  # Guide me (#1731)
         self.add_dynamic_items(LineFixButton, FixLineButton)  # a player's line fix (#1491)
         self.add_dynamic_items(  # #965, #1117
             clock_screen.ClockButton, clock_screen.ClockUndoButton, clock_screen.SuggestionButton
@@ -1966,6 +1972,9 @@ class DMBot(commands.AutoShardedBot):
         self._track(self._waiting_suggestions(table), "waiting-suggestions")  # #1504
         table.watch_task = self._track_loop(sheet_reread.run(self, table), "sheet-watch")  # #1128
         table.fight_task = self._track_loop(fightbot.run(self, table), "fightbot")  # #1129
+        if table.where_task is not None:  # started again for the same table: one loop only
+            table.where_task.cancel()
+        table.where_task = self._track_loop(where_are_we.run(self, table), "where-are-we")  # #1738
         return sent
 
     async def _pre_session_note(self, table: Table) -> None:
@@ -2008,10 +2017,28 @@ class DMBot(commands.AutoShardedBot):
                 if note.quiet:  # 🧵 Threads: the DM's list, in play first (#1675)
                     view = view or discord.ui.View(timeout=None)
                     view.add_item(ThreadListButton(cid))
+                if await self.guide_button_allowed(gid, campaign):  # 🧭 What's next? (#1731)
+                    view = view or discord.ui.View(timeout=None)
+                    view.add_item(GuideButton(cid))
                 await self.post(table.screen_channel_id, note.text, view=view)
                 log.info("Pre-session note: %d line(s)", len(note.lines))  # counts only
             except Exception:
                 log.exception("The pre-session note failed")
+
+    async def guide_button_allowed(self, guild_id: int, campaign: Campaign) -> bool:
+        """May the pre-session note carry 🧭 What's next? (#1731)? The same three checks a press
+        makes: the switch is on **Guide me**, a DM said here they have the right (a confirmation
+        from a backup is not one), and the owner's plan allows it (closed, like the reader)."""
+        if campaign.story_mode != STORY_GUIDE:
+            return False
+        try:
+            return bool(
+                await self.campaigns.story_confirmed(guild_id, campaign.id)
+                and await self.plan_allows("adventure", guild_id, campaign, fail_open=False)
+            )
+        except Exception:  # a read that failed costs the button, never the whole note
+            log.exception("Couldn't check the Guide me button")
+            return False
 
     async def _waiting_recaps(self, table: Table) -> None:
         """A session starts and a finished recap from before is still waiting for the DM (#1474):
@@ -2185,6 +2212,8 @@ class DMBot(commands.AutoShardedBot):
             table.watch_task.cancel()
         if table.fight_task is not None:  # nor reminding players (#1129)
             table.fight_task.cancel()
+        if table.where_task is not None:  # nor saying where the game is (#1738)
+            table.where_task.cancel()
         await self.ears.send(leave_command(guild_id))
         # Speech still being heard or written down is finished, not dropped (#109): the
         # session stays "ending" until the pipeline has caught up.

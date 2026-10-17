@@ -40,7 +40,7 @@ from typing import Any
 from dmbot.memory._changes import Scope
 from dmbot.memory.continuity import _predicate_words
 from dmbot.memory.kinds import KIND_LABELS
-from dmbot.memory.models import ROLE_LABELS, THREAD_TYPES, name_key
+from dmbot.memory.models import DM_ONLY_TYPES, ROLE_LABELS, name_key
 from dmbot.memory.ontology import Ontology
 from dmbot.memory.store import MemoryStore, _load_ontology
 
@@ -423,7 +423,7 @@ class RecallService:
         note = "description" if audience == DM_SCREEN else "'' AS description"
         # A clue only some people know (#1649) is the DM's alone: the players' audience gets
         # neither the clue nor, because a fact needs both ends, anyone's `knows` to it.
-        # Story threads (#1662) are the DM's plot notes: the same.
+        # Story threads (#1662) are the DM's plot notes, and so are deeds (#1732): the same.
         hide_clue = (
             " AND NOT audience_limited AND NOT type = ANY(%s)" if audience == PLAYERS else ""
         )
@@ -431,7 +431,7 @@ class RecallService:
             f"SELECT id, type, name, {note}, role FROM memory_entities"
             " WHERE guild_id = %s AND campaign_id = %s AND id = ANY(%s)"
             f" AND status = ANY(%s) AND type <> 'person'{hide_clue}",
-            (*scope.ids, list(ids), live, *([list(THREAD_TYPES)] if hide_clue else [])),
+            (*scope.ids, list(ids), live, *([list(DM_ONLY_TYPES)] if hide_clue else [])),
         )
         rows = {str(r["id"]): dict(r) for r in await cur.fetchall()}
         if audience == PLAYERS and rows:
@@ -477,7 +477,10 @@ class RecallService:
 
     async def _sources(self, scope: Scope, facts: Sequence[_Fact]) -> Sources:
         """For each fact, where it was said: (line reference, session, speakers who said it)
-        from its mentions and from the claim it was confirmed from."""
+        from its mentions and from the claim it was confirmed from.
+        Today the quoted lines come only from the claim (the extractor path, off until #1282):
+        nothing writes `memory_mentions` (#1740), so `mention_ids` are empty on a live table and
+        a fact the DM typed in by hand has no quoted lines until the extractor is on."""
         out: Sources = {}
         mention_ids = sorted({m for f in facts for m in f.mention_ids})
         by_mention: dict[str, tuple[str, int | None]] = {}

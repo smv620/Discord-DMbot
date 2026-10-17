@@ -36,6 +36,8 @@ RELEASED = {
     ("owns", 2): "c7a7b789cb942d9d",  # "carries" and "wields" moved to the new carries (#1267)
     ("carries", 1): "df898c860718ce82",
     ("knows", 1): "14954b5521977a9b",
+    ("did", 1): "234fbe8bbfd0c486",  # deeds (#1732)
+    ("affected", 1): "04e6e8435d6c2d2e",
     ("serves", 1): "66d4cd47531358b3",
     ("sworn_to", 1): "924d02543c8d4ae8",
     ("plays", 1): "8e243f3375034f3a",

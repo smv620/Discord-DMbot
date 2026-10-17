@@ -77,6 +77,7 @@ describe("What's new", () => {
       "When a player says a secret name",
       "Secrets only some people know", // until the extractor is on and it has been seen (#1649)
       "How NPCs feel about the party", // until it has been seen on the test server (#1655)
+      "Record what your players did", // until it has been seen on the test server (#1732)
       "Story threads you keep", // until it has been seen on the test server (#1662)
       "Species, subclasses and backgrounds in homebrew", // until seen on the test server (#1663)
       "Keep track of promises made at the table", // until seen on the test server (#1674)
@@ -84,6 +85,7 @@ describe("What's new", () => {
       "A Shared story switch", // until the story plan is used (#1692, #1714)
       "Homebrew menu by kind", // until seen on the test server (#1665)
       "Manage your plan without Discord", // until the billing login link is set in the build (#1711)
+      "A quiet reminder of the game time", // until seen on the test server (#1738)
     ]);
     for (const h of held) {
       expect(h.reason.length, h.title).toBeGreaterThan(20);
