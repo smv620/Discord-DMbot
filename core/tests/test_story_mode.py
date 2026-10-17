@@ -24,6 +24,7 @@ from dmbot.campaigns.models import (
 from dmbot.db import Database, drop_schema
 from dmbot.dm_screen import story_mode as ui
 from dmbot.schema import MIGRATIONS
+from tests.answer_first import Timeline
 from tests.pg import TEST_URL, DatabaseTest
 
 GUILD_A, GUILD_B = 111, 222
@@ -209,6 +210,9 @@ def press(user: int, guild: int = GUILD_A) -> Any:
     async def edit_message(**kw: Any) -> None:
         sent.update(edited=True, **kw)
 
+    async def defer(**kw: Any) -> None:
+        pass
+
     member = MagicMock(spec=discord.Member)
     member.id = user
     it = MagicMock()
@@ -217,6 +221,8 @@ def press(user: int, guild: int = GUILD_A) -> Any:
     it.user = member
     it.response.send_message = send_message
     it.response.edit_message = edit_message
+    it.response.defer = defer
+    it.edit_original_response = edit_message  # (after a defer, the card is changed in place)
     it.sent = sent
     return it
 
@@ -293,6 +299,15 @@ class Buttons(Setup):
         await ui.StoryYesButton(self.a.id, STORY_WATCH).callback(it)
         self.assertEqual(it.sent["content"], ui.COULDNT)
         self.assertEqual(self.labels(it), ["Off", "Watch the story", "Guide me"])
+
+    async def test_saving_answers_discord_before_the_database(self) -> None:
+        line = Timeline()
+        it = self.pressing(DM)
+        it.response, it.edit_original_response = line.response, line.edit_original_response
+        self.campaigns.set_story_mode = line.slow("set_story_mode", self.a)  # type: ignore[method-assign]
+        await ui.StoryYesButton(self.a.id, STORY_WATCH).callback(it)
+        line.assert_answered_first()
+        self.assertIn("slow:set_story_mode", line.events)
 
     async def test_the_settings_line_says_it_does_not_work_yet(self) -> None:
         from dataclasses import replace

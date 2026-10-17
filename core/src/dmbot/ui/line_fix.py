@@ -127,6 +127,9 @@ class LineFixButton(discord.ui.DynamicItem[discord.ui.Button[discord.ui.View]], 
         if guild is None or store is None:
             await _tell(interaction, GONE)
             return
+        # Answer Discord first (#1798): the checks below are several database trips, and a DM at a
+        # live table must not see "interaction failed". Every reply after this is a follow-up.
+        await interaction.response.defer(ephemeral=True, thinking=False)
         found = await store.get(guild.id, self.suggestion_id)
         campaign = (
             await bot.campaigns.get(guild.id, found.campaign_id) if found is not None else None
@@ -141,7 +144,6 @@ class LineFixButton(discord.ui.DynamicItem[discord.ui.Button[discord.ui.View]], 
             await _tell(interaction, DECIDED)
             return
         bot.decision_lines.remember_pressed(("fix", found.id), interaction)
-        await interaction.response.defer(ephemeral=True, thinking=False)
         if self.act == "no":
             if await store.decide(guild.id, found.id, suggestions.DECLINED, interaction.user.id):
                 await _finish(interaction, bot, found, LEFT, ANSWER_NO, KEPT)

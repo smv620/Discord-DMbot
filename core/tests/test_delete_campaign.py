@@ -15,6 +15,7 @@ from dmbot.campaigns import Campaign, CampaignError, CampaignStore
 from dmbot.dm_screen import delete_campaign as dc
 from dmbot.dm_screen.settings import settings_view
 from tests import test_retention_channels as rcs
+from tests.answer_first import Timeline
 from tests.pg import DatabaseTest
 
 GUILD, OTHER_GUILD = 111, 222
@@ -112,6 +113,11 @@ class Deleting(DatabaseTest):
         self.client = Fake(self.store)
 
     def interaction(self, user: int = OWNER, guild: int = GUILD) -> Any:
+        done = {"yes": False}
+
+        async def defer(**kw: Any) -> None:
+            done["yes"] = True
+
         return SimpleNamespace(
             guild=SimpleNamespace(id=guild),
             user=SimpleNamespace(id=user),
@@ -119,8 +125,8 @@ class Deleting(DatabaseTest):
             response=SimpleNamespace(
                 send_message=AsyncMock(),
                 send_modal=AsyncMock(),
-                defer=AsyncMock(),
-                is_done=lambda: False,
+                defer=AsyncMock(side_effect=defer),
+                is_done=lambda: done["yes"],
                 edit_message=AsyncMock(),
             ),
             followup=SimpleNamespace(send=AsyncMock()),
@@ -141,8 +147,8 @@ class Deleting(DatabaseTest):
 
     async def test_the_plan_holder_gets_the_warning_with_a_backup_button(self) -> None:
         it = await self.press()
-        kwargs = it.response.send_message.await_args.kwargs
-        text = it.response.send_message.await_args.args[0]
+        kwargs = it.followup.send.await_args.kwargs
+        text = it.followup.send.await_args.args[0]
         self.assertTrue(kwargs["ephemeral"])
         self.assertIn("deletes **Curse of Strahd** for everyone", text)
         self.assertIn("It can't be undone. Copies people already downloaded stay", text)
@@ -151,12 +157,24 @@ class Deleting(DatabaseTest):
         labels = [str(b.label) for b in kwargs["view"].children]
         self.assertEqual(labels, ["Delete it", "Back up first", "Keep it"])
 
+    async def test_the_warning_answers_discord_before_the_database(self) -> None:
+        line = Timeline()
+        it = self.interaction()
+        it.response, it.followup = line.response, line.followup
+        real_get = self.client.campaigns.get
+        self.client.campaigns = SimpleNamespace(
+            get=line.slow("get", await real_get(GUILD, self.campaign.id))
+        )
+        await dc.DeleteButton(self.campaign.id).callback(it)
+        line.assert_answered_first()
+        self.assertIn("slow:get", line.events)
+
     async def test_no_backup_button_where_there_are_no_copies(self) -> None:
         self.client.can_copy = False
         it = await self.press()
-        text = it.response.send_message.await_args.args[0]
+        text = it.followup.send.await_args.args[0]
         self.assertNotIn("Back up", text)
-        labels = [str(b.label) for b in it.response.send_message.await_args.kwargs["view"].children]
+        labels = [str(b.label) for b in it.followup.send.await_args.kwargs["view"].children]
         self.assertEqual(labels, ["Delete it", "Keep it"])
 
     async def test_another_game_master_is_told_whose_it_is(self) -> None:
@@ -231,7 +249,7 @@ class Deleting(DatabaseTest):
 
     async def test_the_delete_form_opens_the_name_box(self) -> None:
         it = await self.press()
-        view = it.response.send_message.await_args.kwargs["view"]
+        view = it.followup.send.await_args.kwargs["view"]
         pressed = self.interaction()
         await view.delete.callback(pressed)
         form = pressed.response.send_modal.await_args.args[0]

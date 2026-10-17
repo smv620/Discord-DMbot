@@ -121,6 +121,8 @@ class DeleteButton(
         guild = interaction.guild
         if guild is None:
             return
+        # Answer Discord first (#1798): the warning reads the campaign, its owner and the plan.
+        await interaction.response.defer(ephemeral=True)
         try:
             campaign = await client.campaigns.get(guild.id, self.campaign_id)
             refused = await refusal(client, campaign, interaction.user.id)
@@ -135,7 +137,7 @@ class DeleteButton(
             await _tell(interaction, FAILED)
             return
         text = WARNING.format(name=discord.utils.escape_markdown(campaign.name))
-        await interaction.response.send_message(
+        await interaction.followup.send(
             text + (WARNING_BACKUP if can_copy else "") + WARNING_END,
             view=DeleteWarning(campaign.id, campaign.name, can_copy=can_copy),
             ephemeral=True,
