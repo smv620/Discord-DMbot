@@ -48,7 +48,7 @@ from dmbot.ai_watch import AIWatch
 from dmbot.audio.segmenter import Segmenter, Utterance
 from dmbot.audio_check import AudioChecker, Verdict
 from dmbot.campaigns import Campaign, CampaignStore
-from dmbot.campaigns.models import DEFAULT_DM_SCREEN_LEVEL, CampaignError
+from dmbot.campaigns.models import DEFAULT_DM_SCREEN_LEVEL, STORY_GUIDE, CampaignError
 from dmbot.capture_log import FRAMES_PER_S, CaptureLog, Due, SessionTotals
 from dmbot.channel_access import (
     SAME_CHANNEL,
@@ -103,7 +103,9 @@ from dmbot.dm_screen import messages as screen_messages
 from dmbot.dm_screen.adventure_card import AddButton as AdventureAddButton
 from dmbot.dm_screen.adventure_card import (
     AdventureButton,
+    finished_text,
 )
+from dmbot.dm_screen.adventure_card import BackToFilesButton as BackToAdventureButton
 from dmbot.dm_screen.adventure_card import MatchButton as MatchAdventureButton
 from dmbot.dm_screen.adventure_card import ReadButton as ReadAdventureButton
 from dmbot.dm_screen.adventure_card import ReadNoButton as ReadAdventureNoButton
@@ -136,6 +138,12 @@ from dmbot.dm_screen.name_questions import (
 )
 from dmbot.dm_screen.pause import PauseButton
 from dmbot.dm_screen.recap_panel import PlanFacts, RecapsButton, audio_how
+from dmbot.dm_screen.rules_channel import (
+    RulesChannelError,
+    SyncResult,
+    setup_rules_channel,
+    sync_campaign,
+)
 from dmbot.dm_screen.settings import (
     HomebrewButton,
     HouseFileButton,
@@ -192,6 +200,7 @@ from dmbot.memory.adventure import AdventureSection, AdventureStore
 from dmbot.memory.backup import MemorySection
 from dmbot.memory.claims import ClaimStore
 from dmbot.memory.continuity import ContinuityStore
+from dmbot.memory.heard_backup import HeardSection
 from dmbot.memory.lookup import CampaignLookup, LookupCache
 from dmbot.memory.models import DM, FIX, KEEP, Heard, MemoryRuleError, name_key
 from dmbot.memory.ontology import Tally
@@ -207,7 +216,8 @@ from dmbot.memory.sheet_refresh import refresh as refresh_sheets
 from dmbot.memory.sheet_store import CharacterSheet, SheetStore
 from dmbot.memory.sheet_watch import SheetWatch
 from dmbot.memory.store import MemoryStore
-from dmbot.memory.story_plan import PlanStore
+from dmbot.memory.story_plan import PlanStore, SpendSection
+from dmbot.memory.story_watch import StoryWatch
 from dmbot.memory.table_names import NameThenAnswer
 from dmbot.recaps import allowance as recap_allowance
 from dmbot.recaps import post as recap_post
@@ -247,7 +257,7 @@ from dmbot.test_recording import files as test_files
 from dmbot.test_recording import library as test_library
 from dmbot.test_recording.session import TestSession
 from dmbot.test_recording.store import TestVoiceStore
-from dmbot.timebot import combat_phrases, durations
+from dmbot.timebot import combat_phrases, durations, where_are_we
 from dmbot.timebot import phrases as clock_phrases
 from dmbot.timebot.effects import EffectsSection, EffectStore
 from dmbot.timebot.store import ClockSection, ClockStore
@@ -297,6 +307,7 @@ from dmbot.transcription.base import (
 )
 from dmbot.transcription.factory import build_transcriber
 from dmbot.transcription.pipeline import TranscriptionPipeline, clip_budget_s, speech_sent_line
+from dmbot.ui import guide as guide_screen
 from dmbot.ui import logic as ui_logic
 from dmbot.ui import rule_card
 from dmbot.ui.claims_review import ClaimsReviewButton, claims_review_view
@@ -305,6 +316,7 @@ from dmbot.ui.continuity import ContinuityButton, continuity_view
 from dmbot.ui.continuity import waiting_text as continuity_waiting_text
 from dmbot.ui.decision_lines import DecisionLines
 from dmbot.ui.dmbot_commands import _failed, dmbot_group
+from dmbot.ui.guide import GuideButton
 from dmbot.ui.heard_review import HeardReviewButton, heard_review_view
 from dmbot.ui.heard_review import waiting_text as heard_waiting_text
 from dmbot.ui.homebrew import dmbot_homebrew  # noqa: F401 (registers it)
@@ -333,6 +345,7 @@ from dmbot.ui.secret_aloud import (
     secret_aloud_view,
 )
 from dmbot.ui.sheets import MySheetButton, OpenCardButton
+from dmbot.ui.story_watch import KnowButton, WordsButton, message_text, watch_view
 from dmbot.ui.threads import ThreadListButton, ThreadsButton, threads_view
 from dmbot.ui.threads import waiting_text as threads_waiting_text
 from dmbot.ui.transcripts import (
@@ -357,6 +370,13 @@ PIECE_WORDS_MAX = 3000  # pieces whose words the helpers' copies can be brought 
 HEARD_MAX = 20_000  # lines kept for the after-session name scan
 HINTS_FAIL_LOG_S = 60.0
 HINTS_WAIT_S = 1.5  # the longest a clip waits for the campaign's names to load
+# The rules channel (#1752): changes are gathered for this long, and each campaign's channel is
+# looked at this far apart when the bot starts (Discord's rate limits).
+RULES_ARCHIVE_DELAY_S = 3.0
+RULES_ARCHIVE_PACE_S = 2.0
+RULES_ARCHIVE_RETRY_S = 10.0  # when a pass was cut short by the caps
+RULES_ARCHIVE_PASSES = 60  # (200 rules at 25 a pass is far fewer)
+
 # The off-topic filter (#52): one call may take this long, or the window is kept as game
 # talk; after this many failures in a row it rests this long.
 TOPIC_CALL_TIMEOUT_S = 8.0
@@ -509,6 +529,10 @@ class Table:
     # FightBot's memory for this session and its loop (#1129).
     fight: FightState = field(default_factory=FightState)
     fight_task: asyncio.Task[None] | None = None
+    where_task: asyncio.Task[None] | None = None  # the quiet "where are we" note (#1738)
+    # When the game clock was last shown or moved (monotonic seconds), starting at the session's
+    # start; kept in memory only (a restart just starts the wait again).
+    clock_shown_at: float = field(default_factory=time.monotonic)
     sheet_loads: int = 0  # each load of the names counts up; only the newest one is used
     # For the Transcript Cleaner (#127): what this session's lines say about words, and
     # the display names of people who agreed (never "fixed" into a name).
@@ -802,9 +826,12 @@ class DMBot(commands.AutoShardedBot):
         self.importer = importer  # adds homebrew from a published page's link (#1634)
         self.adventure = adventure  # the DM's adventure text, per campaign (#1698)
         self.plan = plan  # the story plan read from it (#1714)
+        # The check of the table against that plan (#1729): reads only, no AI.
+        self.watch = StoryWatch(plan.db) if plan is not None else None
         # Reads going now, by (server, document): kept so the card can say "reading" and a second
         # press can't start another, and so the tasks aren't garbage collected mid-read.
         self.plan_reads: dict[tuple[int, str], asyncio.Task[None]] = {}
+        self.plan_waiting: set[tuple[int, str]] = set()  # asked for, waiting for one of the slots
         self._plan_slots = asyncio.Semaphore(PLAN_READS_AT_ONCE)
         # "Did they mean…?" questions left unanswered at a session's end (#1572).
         self.heard_questions = heard_questions
@@ -812,6 +839,13 @@ class DMBot(commands.AutoShardedBot):
         self.homebrew_removed: dict[tuple[int, str], list[Any]] = {}
         self.decision_lines = DecisionLines()  # DM-screen lines to clear once decided (#1509)
         self.house_syncs = house_sync.Pendings()
+        # The rules archive channel (#1752) hears about every change to a campaign's house rules
+        # and followed sets; a burst of changes (a file import) becomes one pass, a few seconds on.
+        self._rules_sync: dict[tuple[int, str], asyncio.Task[None]] = {}
+        self._rules_dirty: set[tuple[int, str]] = set()
+        for store in (house_rules, rule_sets):
+            if store is not None:
+                store.on_change = self._rules_archive_changed
         # Timed effects on that clock (#998); None without a database.
         self.effects = effects
         # The hours meter (#437 part 2): listening minutes are written here; None records
@@ -1137,6 +1171,8 @@ class DMBot(commands.AutoShardedBot):
         self.add_dynamic_items(HeardReviewButton)  # unanswered "Did they mean…?" (#1572)
         self.add_dynamic_items(SecretAloudButton)  # the secret-said-aloud question (#1407)
         self.add_dynamic_items(RecapButton)  # the recap on the DM screen (#1455)
+        self.add_dynamic_items(KnowButton, WordsButton)  # Watch the story (#1729)
+        self.add_dynamic_items(GuideButton)  # Guide me (#1731)
         self.add_dynamic_items(LineFixButton, FixLineButton)  # a player's line fix (#1491)
         self.add_dynamic_items(  # #965, #1117
             clock_screen.ClockButton, clock_screen.ClockUndoButton, clock_screen.SuggestionButton
@@ -1164,7 +1200,8 @@ class DMBot(commands.AutoShardedBot):
             AdventureButton, AdventureAddButton, RemoveAdventureButton,
             RemoveAdventureYesButton, RemoveAdventureNoButton,
             ReadAdventureButton, ReadAdventureYesButton, ReadAdventureNoButton,
-            RefreshAdventureButton, SeeAdventureButton, MatchAdventureButton,
+            RefreshAdventureButton, SeeAdventureButton, BackToAdventureButton,
+            MatchAdventureButton,
         )  # fmt: skip
         self.add_dynamic_items(pack_update.PackUpdateButton)  # a followed pack changed (#1527)
         self.add_dynamic_items(pack_suggestion.PackSuggestionButton)  # an entry suggested (#1537)
@@ -1956,6 +1993,9 @@ class DMBot(commands.AutoShardedBot):
         self._track(self._waiting_suggestions(table), "waiting-suggestions")  # #1504
         table.watch_task = self._track_loop(sheet_reread.run(self, table), "sheet-watch")  # #1128
         table.fight_task = self._track_loop(fightbot.run(self, table), "fightbot")  # #1129
+        if table.where_task is not None:  # started again for the same table: one loop only
+            table.where_task.cancel()
+        table.where_task = self._track_loop(where_are_we.run(self, table), "where-are-we")  # #1738
         return sent
 
     async def _pre_session_note(self, table: Table) -> None:
@@ -1998,10 +2038,28 @@ class DMBot(commands.AutoShardedBot):
                 if note.quiet:  # 🧵 Threads: the DM's list, in play first (#1675)
                     view = view or discord.ui.View(timeout=None)
                     view.add_item(ThreadListButton(cid))
+                if await self.guide_button_allowed(gid, campaign):  # 🧭 What's next? (#1731)
+                    view = view or discord.ui.View(timeout=None)
+                    view.add_item(GuideButton(cid))
                 await self.post(table.screen_channel_id, note.text, view=view)
                 log.info("Pre-session note: %d line(s)", len(note.lines))  # counts only
             except Exception:
                 log.exception("The pre-session note failed")
+
+    async def guide_button_allowed(self, guild_id: int, campaign: Campaign) -> bool:
+        """May the pre-session note carry 🧭 What's next? (#1731)? The same three checks a press
+        makes: the switch is on **Guide me**, a DM said here they have the right (a confirmation
+        from a backup is not one), and the owner's plan allows it (closed, like the reader)."""
+        if campaign.story_mode != STORY_GUIDE:
+            return False
+        try:
+            return bool(
+                await self.campaigns.story_confirmed(guild_id, campaign.id)
+                and await self.plan_allows("adventure", guild_id, campaign, fail_open=False)
+            )
+        except Exception:  # a read that failed costs the button, never the whole note
+            log.exception("Couldn't check the Guide me button")
+            return False
 
     async def _waiting_recaps(self, table: Table) -> None:
         """A session starts and a finished recap from before is still waiting for the DM (#1474):
@@ -2175,6 +2233,8 @@ class DMBot(commands.AutoShardedBot):
             table.watch_task.cancel()
         if table.fight_task is not None:  # nor reminding players (#1129)
             table.fight_task.cancel()
+        if table.where_task is not None:  # nor saying where the game is (#1738)
+            table.where_task.cancel()
         await self.ears.send(leave_command(guild_id))
         # Speech still being heard or written down is finished, not dropped (#109): the
         # session stays "ending" until the pipeline has caught up.
@@ -2298,6 +2358,12 @@ class DMBot(commands.AutoShardedBot):
             ("secrets said aloud", lambda: self.ask_about_secrets(table)),
             ("heads-ups", lambda: self.warn_about_continuity(table)),
             ("quiet threads", lambda: self.warn_about_threads(table)),
+            (
+                "story watch",
+                lambda: self.watch_story(
+                    table.guild_id, table.campaign_id, table.screen_channel_id
+                ),
+            ),
             ("steward numbers", lambda: self.log_steward_tally(table)),
             ("memory health", lambda: self.log_memory_health(table, ended_at)),
         ]
@@ -2970,6 +3036,7 @@ class DMBot(commands.AutoShardedBot):
         gametime_problem = await self._gametime_channel(guild, campaign, screen)
         dmbchat_id, dmbchat_problem = await self._dmbchat_channel(guild, campaign, screen)
         dm_bot_problem = await self._dm_bot_channel(guild, campaign, screen)
+        rules_problem = await self._rules_channel(guild, campaign, screen)
 
         campaign = await self.campaigns.record_start(guild.id, campaign.id, screen_id, voice.id)
         started_at = int(time.time())
@@ -3027,6 +3094,8 @@ class DMBot(commands.AutoShardedBot):
             await self.post(screen_id, dmbchat_problem)
         if dm_bot_problem:
             await self.post(screen_id, dm_bot_problem)
+        if rules_problem:
+            await self.post(screen_id, rules_problem)
         self._check_house_file(campaign, screen_id)
         self._track(update_notes.check_all(self, campaign, screen_id), "shared-rules-update")
         trial_line = ""
@@ -3194,6 +3263,9 @@ class DMBot(commands.AutoShardedBot):
                 if gaps:
                     log.warning("Missing permissions here: %s", ", ".join(gaps))
         self._background.append(asyncio.create_task(self._resume_with_retries(), name="resume"))
+        self._background.append(
+            asyncio.create_task(self._rebuild_rules_archives(), name="rules-archives")
+        )
 
     async def _resume_with_retries(self) -> None:
         """Resume saved sessions, retrying servers that failed (database or Discord not
@@ -3790,6 +3862,22 @@ class DMBot(commands.AutoShardedBot):
             return "failed"
         return "sent"
 
+    async def sidebar_guide(self, table: Table, user_id: int) -> str | None:
+        """Guide me's answer for the DM sidebar's "what's next?" (#1739): the same text as the
+        🧭 button, or None when the campaign's switch isn't on Guide me, no DM's own confirmation
+        stands, or the owner's plan doesn't allow it (so the sidebar answers as it always did)."""
+        if table.campaign_id is None:
+            return None
+        campaign = await self.campaigns.get(table.guild_id, table.campaign_id)
+        if campaign is None or user_id not in campaign.dm_user_ids:
+            return None
+        if not await self.guide_button_allowed(table.guild_id, campaign):
+            return None
+        # In a fight "what's next?" means whose turn it is: the usual answer, not the book.
+        if self.clocks is not None and await self.clocks.in_combat(table.guild_id, campaign.id):
+            return None
+        return await guide_screen.answer_text(self, campaign)
+
     async def sidebar_tell_screen(self, table: Table, text: str) -> None:
         await self.post(table.screen_channel_id, text)
 
@@ -3862,9 +3950,11 @@ class DMBot(commands.AutoShardedBot):
             names_said = len(named)
         else:
             names_said = 0
-        if text:
+        if text and not self._topic_holds(table, cleaned or text, names_said):
             # After cleaning, so a line is never evidence about itself; even when the names
-            # couldn't be loaded, a word said in lower case is a real word next time.
+            # couldn't be loaded, a word said in lower case is a real word next time. A line
+            # waiting for the off-topic filter adds its words only once labelled game talk
+            # (`_label_topics`, `put_back`): talk not about the game never feeds them (#1748).
             table.vocabulary.note(utterance.user_id, text)
         if text:
             self._act_on_line(table, utterance.user_id, str(cleaned or text))
@@ -4695,13 +4785,23 @@ class DMBot(commands.AutoShardedBot):
                         self._warm_rules(table.rules_rulesets, table)
         return campaign
 
+    def _topic_holds(self, table: Table, text: str, named: int) -> bool:
+        """Would the off-topic filter hold this line for a label? One rule for the line's
+        hold, the names scan and the word list, so they can't disagree (#1748). No AI key, a
+        session finishing, a resting filter and a line plainly about the game are never held
+        (when unsure, keep). The cost of holding the words with the line: a held line's words
+        reach the word list when its window is labelled, up to a window later. And it is the
+        cleaned line's words (a name fix included) that count, as for the names scan. The
+        two callers run in one synchronous stretch (no await between), so they agree."""
+        if self.topic_ai is None or self.tables.get(table.guild_id) is not table:
+            return False
+        return not (time.monotonic() < table.topic_paused_until or obviously_game(text, named))
+
     def _topic_pending(self, table: Table, utterance: Utterance, text: str, named: int) -> bool:
         """The off-topic filter (#52): a line not plainly about the game waits for the
         AI, a window at a time; True if it's waiting. No AI key, or a session still
         finishing: no filter, nothing is hidden."""
-        if self.topic_ai is None or self.tables.get(table.guild_id) is not table:
-            return False
-        if time.monotonic() < table.topic_paused_until or obviously_game(text, named):
+        if not self._topic_holds(table, text, named):
             return False
         key = (utterance.user_id, utterance.start_ms)
         table.held[key] = text
@@ -4737,6 +4837,7 @@ class DMBot(commands.AutoShardedBot):
         if lines and not self._closing:
             await self._label_topics(table, lines)
         for waiting in lines if self._closing else []:
+            # (shutdown: no vocabulary note; it lives in memory and is going away)
             said = table.held.pop((waiting.speaker, waiting.started_ms), None)
             recorded = self.consent.has_consent(table.guild_id, waiting.speaker)
             if said is not None and recorded and len(table.heard) < HEARD_MAX:
@@ -4789,6 +4890,10 @@ class DMBot(commands.AutoShardedBot):
                 continue  # stopped meanwhile: nothing about their words
             if topic != OFF_TOPIC and said is not None and len(table.heard) < HEARD_MAX:
                 table.heard.append((waiting.speaker, said))
+            if topic != OFF_TOPIC and said is not None:
+                # Game talk: its words count now. A window the filter couldn't judge (a slow
+                # or failed call, a resting filter) arrives here as game talk, as everywhere.
+                table.vocabulary.note(waiting.speaker, said)
             if topic != GAME:
                 await self._save_topic(table, waiting, topic)
             if topic == OFF_TOPIC:
@@ -5699,8 +5804,10 @@ class DMBot(commands.AutoShardedBot):
         # What the names scan would have had (#52), now: before the channel's awaits, so
         # a /dmbot stop meanwhile still scans them (it reads these at the end).
         for line in run.lines:
+            now_said = self._words_now(table, line)
             if len(table.heard) < HEARD_MAX:
-                table.heard.append((line.speaker, self._words_now(table, line)))
+                table.heard.append((line.speaker, now_said))
+            table.vocabulary.note(line.speaker, now_said)  # and its words count now (#1748)
         name = self.name_of(guild_id, run.speaker)
         who = "Someone" if name.startswith("<@") else discord.utils.escape_markdown(name)
         if self.tables.get(guild_id) is not table or table.fix_ended:
@@ -6612,9 +6719,12 @@ class DMBot(commands.AutoShardedBot):
                 "adventure", guild_id, campaign, fail_open=False
             )
 
+        key = (guild_id, document_id)
         with log_context(guild_id=guild_id, campaign_id=campaign_id):
             try:
+                self.plan_waiting.add(key)
                 async with self._plan_slots:
+                    self.plan_waiting.discard(key)
                     report = await plan_reader.run(
                         ai,
                         plan,
@@ -6630,6 +6740,7 @@ class DMBot(commands.AutoShardedBot):
                     await plan.finish(guild_id, campaign_id, document_id, "stopped", report.stopped)
                 else:
                     await plan.finish(guild_id, campaign_id, document_id, "done")
+                await self._plan_read_notice(guild_id, campaign_id, document_id)
             except asyncio.CancelledError:
                 raise  # a restart: the state stays 'reading' and a press carries on
             except Exception:
@@ -6638,6 +6749,32 @@ class DMBot(commands.AutoShardedBot):
                     await plan.finish(
                         guild_id, campaign_id, document_id, "stopped", plan_reader.STOP_ERROR
                     )
+                    await self._plan_read_notice(guild_id, campaign_id, document_id)
+            finally:
+                self.plan_waiting.discard(key)
+
+    async def _plan_read_notice(self, guild_id: int, campaign_id: str, document_id: str) -> None:
+        """One line on the DM screen when a read ends, done or stopped (#1723): the DM is not
+        left pressing Refresh. Never raises: a missing channel or a failed post is only logged."""
+        try:
+            if self.plan is None or self.adventure is None:
+                return
+            campaign = await self.campaigns.get(guild_id, campaign_id)
+            if campaign is None or campaign.dm_screen_channel_id is None:
+                return
+            state = (await self.plan.states(guild_id, campaign_id)).get(document_id)
+            docs = await self.adventure.documents(guild_id, campaign_id)
+            doc = next((d for d in docs if d.id == document_id), None)
+            if state is None or doc is None:
+                return
+            counts = (await self.plan.counts(guild_id, campaign_id)).get(document_id)
+            await self.post(
+                campaign.dm_screen_channel_id, finished_text(doc.file_name, state, counts)
+            )
+        except Exception as exc:
+            log.warning(
+                "Story-plan reader: couldn't post the finish notice (%s)", type(exc).__name__
+            )
 
     async def extract_claims(self, table: Table, ended_at: int) -> None:
         """After a session, only with DMBOT_STORY_EXTRACTOR on (it is off until #1282 passes): read
@@ -7215,6 +7352,43 @@ class DMBot(commands.AutoShardedBot):
                     continuity_waiting_text(len(report.conflicts)),
                     view=continuity_view(cid),
                 )
+
+    async def watch_story(
+        self,
+        guild_id: int,
+        campaign_id: str | None,
+        channel_id: int | None,
+        *,
+        entity_id: str | None = None,
+        state_id: str | None = None,
+    ) -> None:
+        """After a session, or when the DM sets a condition (#1729): if the table has left what
+        the DM's adventure needs (a person it needs alive is dead), the DM screen says so, once.
+        Only while Shared story is on with a DM's confirmation (the store asks) and the owner's
+        plan allows it (asked here, closed). No AI call; DMbot points and never says what to do."""
+        if self.watch is None or campaign_id is None or channel_id is None:
+            return
+        with log_context(guild_id=guild_id, campaign_id=campaign_id):
+            campaign = await self.campaigns.get(guild_id, campaign_id)
+            if campaign is None or not await self.plan_allows(
+                "adventure", guild_id, campaign, fail_open=False
+            ):
+                return
+            found = await self.watch.check(
+                guild_id, campaign_id, entity_id=entity_id, state_id=state_id
+            )
+            log.info("Story watch: %d told, %d waiting", len(found.shown), found.more)
+            if not found.shown:
+                return
+            numbers: dict[int, int] = {}
+            if self.transcripts is not None:
+                sessions = await self.transcripts.sessions(guild_id, campaign_id, limit=100)
+                numbers = {x.started_at: x.number for x in sessions}  # (the recent ones)
+            posted = await self.post(
+                channel_id, message_text(found, numbers), view=watch_view(campaign_id, found)
+            )
+            if not posted:  # Discord was down: let the next check tell them rather than lose them
+                await self.watch.retract(guild_id, campaign_id, [c.id for c in found.shown])
 
     async def warn_about_threads(self, table: Table) -> None:
         """After a session (#1662): if story threads the DM keeps haven't moved for a few
@@ -7874,6 +8048,93 @@ class DMBot(commands.AutoShardedBot):
             return screen_messages.dm_bot_failed(screen_messages.TRANSCRIPT_NO_ANSWER)
         return None
 
+    async def _rules_channel(
+        self, guild: discord.Guild, campaign: Campaign, screen: object
+    ) -> str | None:
+        """The rules archive channel (#1752), made or repaired at every start and brought up to
+        date from the saved house rules. A note for the DM if it couldn't be set up; a failure
+        here never stops a session."""
+        category = getattr(screen, "category", None)
+        try:
+            await setup_rules_channel(
+                guild,
+                campaign.id,
+                self.campaigns,
+                category=category if isinstance(category, discord.CategoryChannel) else None,
+                screen=screen if isinstance(screen, discord.TextChannel) else None,
+            )
+            fresh = await self.campaigns.get(guild.id, campaign.id)
+            if fresh is not None and self.house_rules is not None:
+                await sync_campaign(guild, fresh, self.house_rules, self.rule_sets)
+        except RulesChannelError as exc:
+            return screen_messages.rules_failed(str(exc))
+        except Exception:
+            log.exception("Couldn't set up the rules channel")
+            return screen_messages.rules_failed(screen_messages.TRANSCRIPT_NO_ANSWER)
+        return None
+
+    def _rules_archive_changed(self, guild_id: int, campaign_id: str) -> None:
+        """A campaign's house rules or followed sets changed: bring its rules channel up to date
+        soon. Quick and never raises (it only schedules)."""
+        key = (guild_id, campaign_id)
+        running = self._rules_sync.get(key)
+        if running is not None and not running.done():
+            self._rules_dirty.add(key)  # it will look again when it has finished
+            return
+        task = self._track(self._rules_archive_run(key), "rules-archive")
+        if task is not None:
+            self._rules_sync[key] = task
+
+    async def _rules_archive_run(self, key: tuple[int, str]) -> None:
+        try:
+            delay = RULES_ARCHIVE_DELAY_S
+            for _ in range(RULES_ARCHIVE_PASSES):
+                await asyncio.sleep(delay)
+                self._rules_dirty.discard(key)
+                try:
+                    done = await self._sync_rules_archive(*key)
+                    # Over the edit caps, or a message Discord refused: look again after a pause.
+                    more = done is not None and done.left_for_next_time > 0
+                except Exception:
+                    log.warning("Couldn't update a rules channel; will try again", exc_info=True)
+                    more = True
+                if key not in self._rules_dirty and not more:
+                    return
+                delay = RULES_ARCHIVE_RETRY_S if more else RULES_ARCHIVE_DELAY_S
+        finally:
+            self._rules_sync.pop(key, None)
+            self._rules_dirty.discard(key)
+
+    async def _sync_rules_archive(self, guild_id: int, campaign_id: str) -> SyncResult | None:
+        guild = self.get_guild(guild_id)
+        if guild is None or self.house_rules is None:
+            return None
+        campaign = await self.campaigns.get(guild_id, campaign_id)
+        if campaign is None:
+            return None
+        return await sync_campaign(guild, campaign, self.house_rules, self.rule_sets)
+
+    async def _rebuild_rules_archives(self) -> None:
+        """At bot start: every campaign's rules channel is brought up to date once, a few
+        edits at a time (Discord's rate limits), so a restart or a missed change never leaves it
+        stale. A campaign whose channel was deleted by hand gets a new one at its next start."""
+        for guild in list(self.guilds):
+            try:
+                found = await self.campaigns.list_campaigns(guild.id)
+            except Exception:
+                log.exception("Couldn't list campaigns for the rules channels")
+                continue
+            for campaign in found:
+                if campaign.rules_channel_id is None or self.house_rules is None:
+                    continue
+                try:
+                    done = await sync_campaign(guild, campaign, self.house_rules, self.rule_sets)
+                    if done is not None and done.left_for_next_time:
+                        self._rules_archive_changed(guild.id, campaign.id)  # finish it, paced
+                except Exception:
+                    log.warning("Couldn't update a rules channel", exc_info=True)
+                await asyncio.sleep(RULES_ARCHIVE_PACE_S)
+
     async def _dmbchat_channel(
         self, guild: discord.Guild, campaign: Campaign, screen: object
     ) -> tuple[int | None, str | None]:
@@ -8325,6 +8586,7 @@ async def run(settings: Settings) -> None:
         campaigns.register_section(HouseRulesSection())  # and so do house rules (#865)
         campaigns.register_section(HomebrewSection())  # and its own homebrew (#1520)
         campaigns.register_section(AdventureSection())  # and its adventure text (#1698)
+        campaigns.register_section(SpendSection())  # and what reading it cost, amounts only (#1723)
         campaigns.register_section(SiteApprovalsSection())  # the sites it approved (#1633)
         campaigns.register_section(FollowedSetsSection())  # and the sets it follows (#1260)
         campaigns.register_section(ClockSection())  # and the game clock (#965)
@@ -8334,6 +8596,8 @@ async def run(settings: Settings) -> None:
         campaigns.register_section(RecapSection(forget_audio=recap_audio_forgetter))
         # DMBot sets this too; passing it here means the store never starts out wrong.
         consent = ConsentStore(db, outside=settings.transcription.outside_engine)
+        # And how often names were said, kept only for who is recorded now (#1747).
+        campaigns.register_section(HeardSection(consent.consenting))
         bot = DMBot(
             settings,
             consent,

@@ -26,16 +26,21 @@ from collections.abc import Sequence
 from pathlib import Path
 
 from dmbot.ai import DEFAULT_MODELS, AIError, AIModelTier, AIOutOfFunds, AnthropicClient, Feature
+from dmbot.devtools.plan_measure.golden import golden_text, obeyed
 from dmbot.memory.adventure import FILE_MAX_BYTES, adventure_text, chunks_of
 from dmbot.memory.plan_reader import MAX_TOKENS, SYSTEM, Client, book_text, unusable
 from dmbot.memory.story_plan import (
     CHARS_PER_TOKEN,
     DOCUMENT_CAP_MICRO,
     ChunkRow,
+    Node,
     batches_of,
     estimate_micro,
     micro_usd,
     parse_answer,
+)
+from dmbot.memory.story_plan import (
+    tokens_in as tokens_of,
 )
 
 ANSWER_SHARE = 0.2  # a structured answer is about a fifth of what it reads (the cost decision)
@@ -49,7 +54,7 @@ def estimate(text: str, model: str) -> dict[str, float]:
     """Counts and dollars for reading `text`, without a call."""
     batches = batches_of(rows_of(text))
     sent = [book_text([(n, r.heading, r.text) for n, r in enumerate(b, 1)], []) for b in batches]
-    tokens_in = sum(int((len(SYSTEM) + len(t)) / CHARS_PER_TOKEN) + 1 for t in sent)
+    tokens_in = sum(tokens_of(SYSTEM + t) for t in sent)
     tokens_out = int(sum(len(t) for t in sent) / CHARS_PER_TOKEN * ANSWER_SHARE)
     return {
         "characters": len(text),
@@ -57,7 +62,7 @@ def estimate(text: str, model: str) -> dict[str, float]:
         "tokens_in": tokens_in,
         "tokens_out": tokens_out,
         "dollars": micro_usd(model, tokens_in, tokens_out) / 1_000_000,
-        "dollars_worst": sum(estimate_micro(model, len(t) + len(SYSTEM), MAX_TOKENS) for t in sent)
+        "dollars_worst": sum(estimate_micro(model, SYSTEM + t, MAX_TOKENS) for t in sent)
         / 1_000_000,
     }
 
@@ -65,10 +70,11 @@ def estimate(text: str, model: str) -> dict[str, float]:
 async def measure(client: Client, text: str, model: str, max_micro: int) -> dict[str, float]:
     """Read `text` with the real prompt and checks, in memory; stops before the cap."""
     spent = calls = tokens_in = tokens_out = entries = links = unreadable = dropped = 0
+    kept: list[Node] = []
     for batch in batches_of(rows_of(text)):
         numbered = [(n, r.heading, r.text) for n, r in enumerate(batch, 1)]
         body = book_text(numbered, [])
-        if spent + estimate_micro(model, len(SYSTEM) + len(body), MAX_TOKENS) > max_micro:
+        if spent + estimate_micro(model, SYSTEM + body, MAX_TOKENS) > max_micro:
             break
         reply = await client.complete(SYSTEM, body, max_tokens=MAX_TOKENS)
         calls += 1
@@ -77,6 +83,7 @@ async def measure(client: Client, text: str, model: str, max_micro: int) -> dict
         spent += micro_usd(reply.model or model, reply.input_tokens, reply.output_tokens)
         parsed = parse_answer(reply.text, batch)
         entries += len(parsed.nodes)
+        kept.extend(parsed.nodes)
         links += len(parsed.needs)
         dropped += sum(parsed.dropped.values())
         unreadable += 1 if unusable(reply, parsed) else 0
@@ -89,6 +96,8 @@ async def measure(client: Client, text: str, model: str, max_micro: int) -> dict
         "links": links,
         "dropped": dropped,
         "unreadable": unreadable,
+        "obeyed": len(obeyed(kept)),
+        "obeyed_uncaught": sum(1 for i in obeyed(kept) if not i.caught_by_code),
     }
 
 
@@ -104,22 +113,32 @@ def _dollars(value: str) -> float:
 
 def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="python -m dmbot.devtools.plan_measure")
-    parser.add_argument("path", type=Path, help="an open-licence text, .txt .md .docx or .pdf")
+    parser.add_argument(
+        "path", type=Path, nargs="?", help="an open-licence text, .txt .md .docx or .pdf"
+    )
+    parser.add_argument(
+        "--golden", action="store_true", help="read the invented book with injection lines in it"
+    )
     parser.add_argument("--reader", choices=("anthropic",), help="make paid calls")
     parser.add_argument(
         "--max-usd", type=_dollars, default=DOCUMENT_CAP_MICRO / 1_000_000, help="the most to spend"
     )
     args = parser.parse_args(argv)
     model = DEFAULT_MODELS.careful
-    try:
-        raw = args.path.read_bytes()
-        if len(raw) > FILE_MAX_BYTES:
-            print("That file is over 10 MB, the most the bot reads.", file=sys.stderr)
+    if args.golden == (args.path is not None):
+        parser.error("give a file to read, or --golden for the invented book, not both")
+    if args.golden:
+        text = golden_text()
+    else:
+        try:
+            raw = args.path.read_bytes()
+            if len(raw) > FILE_MAX_BYTES:
+                print("That file is over 10 MB, the most the bot reads.", file=sys.stderr)
+                return 2
+            text = adventure_text(args.path.name, raw)
+        except Exception as exc:
+            print(f"Couldn't read that file ({type(exc).__name__}).", file=sys.stderr)
             return 2
-        text = adventure_text(args.path.name, raw)
-    except Exception as exc:
-        print(f"Couldn't read that file ({type(exc).__name__}).", file=sys.stderr)
-        return 2
     got = estimate(text, model)
     print(
         f"{got['characters']:.0f} characters in {got['batches']:.0f} batches "
@@ -158,6 +177,11 @@ def main(argv: Sequence[str] | None = None) -> int:
         f"{done['links']:.0f} link(s) kept, {done['dropped']:.0f} dropped by the checks, "
         f"{done['unreadable']:.0f} unreadable answer(s)"
     )
+    if args.golden:
+        print(
+            f"injection lines obeyed (should be 0): {done['obeyed']:.0f}, of which "
+            f"{done['obeyed_uncaught']:.0f} not caught by code (only the prompt kept them out)"
+        )
     return 0
 
 

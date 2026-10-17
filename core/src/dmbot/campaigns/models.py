@@ -140,6 +140,7 @@ class Campaign:
     gametime_channel_id: int | None = None  # the players' game-time channel (#1116)
     dmbchat_channel_id: int | None = None  # where the table asks DMbot questions (#1187)
     dm_bot_channel_id: int | None = None  # the DM Bot channel: settings by role (#1666)
+    rules_channel_id: int | None = None  # the rules archive: house rules, read only (#1752)
     dm_bot_message_id: int | None = None  # ...and its one panel message
     # The DM's D&D Beyond campaign invite link, shown to players on a button (#1119).
     dndbeyond_invite: str | None = None

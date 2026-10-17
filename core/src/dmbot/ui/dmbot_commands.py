@@ -777,6 +777,10 @@ class RestoreChoice(_Menu):
                 log.exception("Restoring a backup failed")
                 await _replace(interaction, RESTORE_FAILED, None)
                 return
+        # The restored (or replaced) campaign's rules channel, if it has one, shows the new rules.
+        changed = getattr(bot, "_rules_archive_changed", None)
+        if changed is not None and replace_id is not None:
+            changed(guild.id, campaign.id)
         if replace_id is None:
             done = f"✅ Restored **{campaign.name}**."
         else:

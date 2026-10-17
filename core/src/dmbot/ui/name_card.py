@@ -93,6 +93,7 @@ PROMISE_BY_BUTTON = "🤝 Who promised"  # a promise's buttons (#1674)
 PROMISE_TO_BUTTON = "🤝 Promised to"
 PROMISE_DUE_BUTTON = "📅 Due"
 BOOK_BUTTON = "📖 In my adventure…"  # the DM says who in the adventure this is (#1715)
+DEED_BUTTON = "⚔️ Record a deed"  # a player character or the party did something (#1732)
 STANDING_BUTTON = "🤝 Standing"  # how an NPC, group or place feels about the party (#1655)
 CLUE_BUTTON = "🔒 Only some know this"  # a clue's list of who knows it (#1649)
 ALSO_CALLED = "🏷️ Also called…"  # adds another name; its own icon, not Add a name's (#393)
@@ -512,6 +513,10 @@ async def show_card(
             and not entity.party
             and sees_secrets(campaign, interaction.user.id)
         ),
+        deed=(
+            (entity.is_player_character or entity.party)
+            and sees_secrets(campaign, interaction.user.id)
+        ),
         undo_connection=undo_connection,
     )
     if replace:
@@ -643,6 +648,7 @@ class NameCard(_Menu):
         unique: bool = False,
         clue: bool = False,
         standing: bool = False,
+        deed: bool = False,
         thread: bool = False,
         promise: bool = False,
         led: bool = False,
@@ -695,6 +701,8 @@ class NameCard(_Menu):
             self.add_item(_Button(self._thread_link, label=THREAD_LINK_BUTTON, style=grey, row=3))
         if standing:  # an NPC, group or place: how it feels about the party (#1655)
             self.add_item(_Button(self._standing, label=STANDING_BUTTON, style=grey, row=3))
+        if deed:  # a player character or the party: a deed the DM records (#1732)
+            self.add_item(_Button(self._deed, label=DEED_BUTTON, style=grey, row=3))
         if clue:  # a clue or secret: who knows it (#1649); an item has the row-3 button instead
             self.add_item(_Button(self._who_knows, label=CLUE_BUTTON, style=grey, row=3))
         if cut:
@@ -778,6 +786,11 @@ class NameCard(_Menu):
             await _tell(interaction, "Only the DM can change a story thread.")
             return
         await interaction.response.send_modal(LinkForm(self.campaign_id, self.entity_id))
+
+    async def _deed(self, interaction: discord.Interaction) -> None:
+        from dmbot.ui.deeds import start
+
+        await start(interaction, self.campaign_id, self.entity_id)
 
     async def _standing(self, interaction: discord.Interaction) -> None:
         from dmbot.ui.standing import show_standing

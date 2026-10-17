@@ -271,6 +271,10 @@ class ContinuityReview(_Menu):
             action = ""
         if action == IGNORE:
             self.ignored.add(claim_id)
+        elif action == CHANGED:  # the answer may set a condition: Watch the story looks (#1729)
+            from dmbot.ui.claims_review import _watch_story
+
+            await _watch_story(interaction, campaign, None)
         log.info("Continuity heads-up answered: %s", action or "gone")  # a count, never words
         # The whole list is read again after every answer, with consent asked again: a line that
         # someone who has stopped being recorded said must leave the screen now, not when the

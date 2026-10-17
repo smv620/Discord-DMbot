@@ -161,8 +161,12 @@ PLAN_SAME_AS = Table(
     "id",
     ("id", "plan_id", "document_id", "entity_id", "status", "decided_by", "created_at"),
 )
+# The chapter the DM says the table is in, for each adventure file (#1731).
+PLAN_POSITION = Table(
+    "plan_position", "id", ("id", "document_id", "chapter_id", "set_by", "created_at")
+)
 ALL = (TYPES, PREDICATES, ENTITIES, ALIASES, MENTIONS, RELATIONS, CORRECTIONS, FLAGS, RULE_LINKS,
-       STATES, CLAIMS, IMPRESSIONS, ATTITUDES, PLAN_SAME_AS)  # fmt: skip
+       STATES, CLAIMS, IMPRESSIONS, ATTITUDES, PLAN_SAME_AS, PLAN_POSITION)  # fmt: skip
 BY_NAME = {t.name: t for t in ALL}
 
 # What links to a row (table, column, is the column a list), checked before deleting it,
@@ -196,6 +200,8 @@ DEPENDENTS: dict[str, tuple[tuple[str, str, bool], ...]] = {
         ("memory_attitudes", "holder_id", False),
         ("memory_attitudes", "toward_id", False),
         ("plan_same_as", "entity_id", False),
+        # (`plan_divergences` is not listed on purpose: it is derived from the plan and the table
+        # and unlogged, so it simply goes with the entry and is worked out again when needed.)
     ),
     "memory_mentions": (("memory_relations", "mention_ids", True),),
     "memory_relations": (
