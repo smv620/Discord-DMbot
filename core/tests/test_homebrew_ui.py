@@ -77,7 +77,9 @@ class HomebrewUiTest(DatabaseTest):
     def view_of(self, it: Any) -> Any:
         if it.edit_original_response.await_args is not None:
             return it.edit_original_response.await_args.kwargs["view"]
-        return it.response.edited[-1][1]
+        if it.response.edited:
+            return it.response.edited[-1][1]
+        return it.response.sent[-1][1]["view"]
 
 
 class TheList(HomebrewUiTest):
@@ -92,11 +94,14 @@ class TheList(HomebrewUiTest):
         lamp = await self.add("Moonblade", kind="item")
         await self.store.set_enabled(GUILD, self.campaign.id, DM, lamp.id, False)
         it = self.press()
-        await ui.show_list(it, self.campaign, first=True)
+        await ui.show_list(it, self.campaign, first=True, kind="monster")
+        self.assertIn("👹 Monster **Hollow King**:", self.said(it))
+        it = self.press()
+        await ui.show_list(it, self.campaign, first=True, kind="item")
         text = self.said(it)
-        self.assertIn("👹 Monster **Hollow King**:", text)
         self.assertIn("🗡 Item **Moonblade** (off):", text)
         self.assertIn("(off) means DMbot ignores it until you turn it on.", text)
+        self.assertNotIn("Hollow King", text)  # only this kind
         self.assertNotIn("🙈", text)
         self.assertNotIn("👀", text)
 
@@ -113,6 +118,65 @@ class TheList(HomebrewUiTest):
         it = self.press(PLAYER)
         await cast(Any, ui.dmbot_homebrew).callback(it)
         self.assertEqual(self.said(it), ui.NOT_YOUR_CAMPAIGN)
+
+
+def labels(view: Any) -> list[str]:
+    return [str(getattr(c, "label", "")) for c in view.children if hasattr(c, "label")]
+
+
+class KindsMenu(HomebrewUiTest):
+    async def test_one_button_for_each_kind_with_entries_and_how_many_are_on(self) -> None:
+        for n in range(3):
+            await self.add(f"Bolt {n}", kind="spell")
+        (bolt,) = (await self.store.list(GUILD, self.campaign.id))[:1]
+        await self.store.set_enabled(GUILD, self.campaign.id, DM, bolt.id, False)
+        await self.add("Moonfolk", kind="species")
+        it = self.press()
+        await ui.show_list(it, self.campaign, first=True)
+        shown = labels(self.view_of(it))
+        self.assertEqual(shown[:2], ["Spells 2/3", "Species 1/1"])  # the kinds, in KINDS order
+        self.assertNotIn("Monsters", " ".join(shown))  # no entries, no button
+        for action in ("➕ Add", ui.LINK_LABEL, ui.LOAD_LABEL, ui.DOWNLOAD_LABEL, ui.SITES_LABEL):
+            self.assertIn(action, shown)
+        self.assertIn(ui.PACKS_LABEL, shown)
+        self.assertNotIn("Bolt 0", self.said(it))  # the long list is not drawn
+
+    async def test_a_kind_opens_its_list_and_all_kinds_goes_back(self) -> None:
+        await self.add("Frost Lance", kind="spell")
+        await self.add("Hollow King")
+        menu = ui.ListMenu(self.campaign, await self.store.list(GUILD, self.campaign.id), 0, [])
+        it = self.press()
+        await menu._open_kind("spell", it)
+        self.assertIn("Frost Lance", self.said(it))
+        self.assertNotIn("Hollow King", self.said(it))
+        inner = self.view_of(it)
+        self.assertIn(ui.ALL_KINDS_LABEL, labels(inner))
+        back = self.press()
+        await inner._all_kinds(back)
+        self.assertEqual(labels(self.view_of(back))[:2], ["Spells 1/1", "Monsters 1/1"])
+
+    async def test_no_homebrew_shows_no_kind_buttons(self) -> None:
+        it = self.press()
+        await ui.show_list(it, self.campaign, first=True)
+        self.assertFalse([b for b in labels(self.view_of(it)) if "/" in b])
+
+    async def test_the_last_entry_of_a_kind_removed_goes_back_to_the_menu(self) -> None:
+        await self.add("Frost Lance", kind="spell")
+        await self.add("Hollow King")
+        spell = next(e for e in await self.store.list(GUILD, self.campaign.id) if e.kind == "spell")
+        await self.store.remove(
+            GUILD, self.campaign.id, DM, spell.id, unchanged_since=spell.version
+        )
+        it = self.press()
+        await ui._redraw(it, self.campaign, kind="spell")
+        self.assertEqual(labels(self.view_of(it))[0], "Monsters 1/1")
+
+    async def test_a_players_press_on_a_kind_does_nothing(self) -> None:
+        await self.add("Frost Lance", kind="spell")
+        menu = ui.ListMenu(self.campaign, await self.store.list(GUILD, self.campaign.id), 0, [])
+        it = self.press(PLAYER)
+        await menu._open_kind("spell", it)
+        self.assertEqual(self.said(it), ui.ONLY_DMS)
 
 
 class Adding(HomebrewUiTest):

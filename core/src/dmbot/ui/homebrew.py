@@ -58,6 +58,7 @@ from dmbot.ui.dmbot_commands import (
 
 log = logging.getLogger(__name__)
 
+PACKS_LABEL = "📦 Homebrew packs"
 PAGE_ENTRIES = 25  # a menu holds 25 choices
 UNDO_KEPT = 5  # removed entries that can be put back, per campaign
 UNDO_SHOWN = 1  # ...and the newest is the one button on the list
@@ -140,6 +141,22 @@ KIND_LABELS = {
 }
 
 
+# Plural words for the kind buttons ("Spells 10/12"); one for each kind in KINDS.
+KIND_PLURALS = {
+    "spell": "Spells",
+    "monster": "Monsters",
+    "item": "Items",
+    "feat": "Feats",
+    "condition": "Conditions",
+    "species": "Species",
+    "subclass": "Subclasses",
+    "background": "Backgrounds",
+    "other": "Other",
+}
+ALL_KINDS_LABEL = "↩ All kinds"
+PICK_A_KIND = "Pick a kind to see its entries. The numbers are on / how many."
+
+
 def _md(text: str) -> str:
     return discord.utils.escape_markdown(text)
 
@@ -166,12 +183,22 @@ def list_text(
     page: int,
     note: str = "",
     approved: set[str] | None = None,
+    kind: str | None = None,
 ) -> str:
+    """The kinds menu (`kind` None: the intro and how many of each, on the buttons) or one
+    kind's list."""
     lines = [_fit(note, 200)] if note else []
     lines.append(f"📚 **Homebrew: {_fit(_md(campaign.name), 100)}**")
     lines.append(INTRO if not entries else SHORT_INTRO)
     if not entries:
         lines.append(NONE_YET)
+    if kind is None:
+        if entries:
+            lines.append(PICK_A_KIND)
+        if any(not e.enabled for e in entries):
+            lines.append("_(off) means DMbot ignores it until you turn it on._")
+        return _fit("\n".join(lines), 1900)
+    entries = [e for e in entries if e.kind == kind]
     shown = entries[page * PAGE_ENTRIES : (page + 1) * PAGE_ENTRIES]
     for entry in shown:
         off = "" if entry.enabled else " (off)"
@@ -232,8 +259,10 @@ async def show_list(
     page: int = 0,
     note: str = "",
     first: bool = False,
+    kind: str | None = None,
 ) -> None:
-    """Draw the list: as a new private message (`first`), or in place of this one."""
+    """Draw the kinds menu, or one kind's list (`kind`): as a new private message (`first`), or
+    in place of this one."""
     store = _store(interaction)
     if store is None:
         await _tell(interaction, NOT_READY)
@@ -245,9 +274,12 @@ async def show_list(
         if sources is not None
         else None
     )
-    page = min(max(page, 0), max(0, (len(entries) - 1) // PAGE_ENTRIES))
-    menu = ListMenu(campaign, entries, page, _removed(interaction, campaign))
-    text = list_text(campaign, entries, page, note, approved)
+    if kind is not None and not any(e.kind == kind for e in entries):
+        kind = None  # the last one of its kind was removed: back to the menu
+    mine = entries if kind is None else [e for e in entries if e.kind == kind]
+    page = min(max(page, 0), max(0, (len(mine) - 1) // PAGE_ENTRIES))
+    menu = ListMenu(campaign, entries, page, _removed(interaction, campaign), kind)
+    text = list_text(campaign, entries, page, note, approved, kind)
     if first:
         await _send(interaction, text, menu)
     else:
@@ -263,7 +295,12 @@ async def _show(interaction: discord.Interaction, text: str, view: _Menu | None)
 
 
 async def _redraw(
-    interaction: discord.Interaction, campaign: Campaign, *, note: str = "", page: int = 0
+    interaction: discord.Interaction,
+    campaign: Campaign,
+    *,
+    note: str = "",
+    page: int = 0,
+    kind: str | None = None,
 ) -> None:
     await _answer_first(interaction, in_place=True)
     current = await _bot(interaction).campaigns.get(campaign.guild_id, campaign.id)
@@ -273,7 +310,7 @@ async def _redraw(
     if interaction.user.id not in current.dm_user_ids:  # on every press, reads included
         await _tell(interaction, ONLY_DMS)
         return
-    await show_list(interaction, current, page=page, note=note)
+    await show_list(interaction, current, page=page, note=note, kind=kind)
 
 
 async def open_menu(interaction: discord.Interaction, campaign: Campaign) -> None:
@@ -287,12 +324,23 @@ class ListMenu(_Menu):
     entries removed."""
 
     def __init__(
-        self, campaign: Campaign, entries: list[Homebrew], page: int, removed: list[Homebrew]
+        self,
+        campaign: Campaign,
+        entries: list[Homebrew],
+        page: int,
+        removed: list[Homebrew],
+        kind: str | None = None,
     ) -> None:
         super().__init__()
-        self.campaign, self.entries, self.page = campaign, entries, page
+        self.campaign, self.page, self.kind = campaign, page, kind
+        if kind is None:
+            self._menu(entries, removed)
+            return
+        self.entries = [e for e in entries if e.kind == kind]
+        entries = self.entries
         self.add_item(_Button(self._add, label="➕ Add", style=discord.ButtonStyle.primary))
         self.add_item(_Button(self._link, label=LINK_LABEL))
+        self.add_item(_Button(self._all_kinds, label=ALL_KINDS_LABEL))
         if page > 0:
             self.add_item(_Button(self._newer, label="◀ Newer"))
         if (page + 1) * PAGE_ENTRIES < len(entries):
@@ -321,6 +369,47 @@ class ListMenu(_Menu):
                 ],
             )
             self.add_item(self.pick)
+
+    def _menu(self, entries: list[Homebrew], removed: list[Homebrew]) -> None:
+        """The kinds menu: a button for each kind that has entries, then the actions. The kind
+        list is fixed (nine today), so the buttons never need paging: Discord allows 25."""
+        self.entries = entries
+        total: dict[str, int] = {}
+        on: dict[str, int] = {}
+        for e in entries:
+            total[e.kind] = total.get(e.kind, 0) + 1
+            on[e.kind] = on.get(e.kind, 0) + (1 if e.enabled else 0)
+        shown = [k for k in KINDS if total.get(k)]
+        for n, k in enumerate(shown):
+            label = f"{KIND_PLURALS[k]} {on[k]}/{total[k]}"
+            self.add_item(_Button(partial(self._open_kind, k), label=label, row=n // 5))
+        row = (len(shown) + 4) // 5  # the actions start on the row after the kinds
+        self.add_item(
+            _Button(self._add, label="➕ Add", style=discord.ButtonStyle.primary, row=row)
+        )
+        self.add_item(_Button(self._link, label=LINK_LABEL, row=row))
+        self.add_item(_Button(self._load, label=LOAD_LABEL, row=row))
+        self.add_item(_Button(self._download, label=DOWNLOAD_LABEL, row=row))
+        self.add_item(_Button(self._sites, label=SITES_LABEL, row=row))
+        self.add_item(_Button(self._packs, label=PACKS_LABEL, row=row + 1))
+        for gone in removed[-UNDO_SHOWN:]:  # the newest removal (the note says which)
+            self.add_item(
+                _Button(partial(self._undo, gone), label="↩️ Undo last remove", row=row + 1)
+            )
+
+    async def _open_kind(self, kind: str, interaction: discord.Interaction) -> None:
+        await _redraw(interaction, self.campaign, kind=kind)
+
+    async def _all_kinds(self, interaction: discord.Interaction) -> None:
+        await _redraw(interaction, self.campaign)
+
+    async def _packs(self, interaction: discord.Interaction) -> None:
+        from dmbot.ui import shared_packs
+
+        if not await _is_dm(interaction, self.campaign):
+            await _tell(interaction, ONLY_DMS)
+            return
+        await shared_packs.open_menu(interaction, self.campaign)
 
     async def _add(self, interaction: discord.Interaction) -> None:
         if not await _is_dm(interaction, self.campaign):
@@ -373,10 +462,10 @@ class ListMenu(_Menu):
         await show_sites(interaction, self.campaign)
 
     async def _newer(self, interaction: discord.Interaction) -> None:
-        await _redraw(interaction, self.campaign, page=self.page - 1)
+        await _redraw(interaction, self.campaign, page=self.page - 1, kind=self.kind)
 
     async def _older(self, interaction: discord.Interaction) -> None:
-        await _redraw(interaction, self.campaign, page=self.page + 1)
+        await _redraw(interaction, self.campaign, page=self.page + 1, kind=self.kind)
 
     async def _picked(self, interaction: discord.Interaction) -> None:
         if not await _is_dm(interaction, self.campaign):
@@ -385,7 +474,9 @@ class ListMenu(_Menu):
         wanted = int(self.pick.values[0])
         entry = next((e for e in self.entries if e.id == wanted), None)
         if entry is None:
-            await _redraw(interaction, self.campaign, note=ENTRY_GONE, page=self.page)
+            await _redraw(
+                interaction, self.campaign, note=ENTRY_GONE, page=self.page, kind=self.kind
+            )
             return
         packs = await _packs_followed(interaction, self.campaign)
         await _show(
@@ -400,7 +491,7 @@ class ListMenu(_Menu):
             return
         kept = _removed(interaction, self.campaign)
         if gone not in kept:  # put back already (another press, or another DM)
-            await _redraw(interaction, self.campaign, page=self.page)
+            await _redraw(interaction, self.campaign, page=self.page, kind=self.kind)
             return
         c = self.campaign
         try:
@@ -408,11 +499,17 @@ class ListMenu(_Menu):
         except HomebrewError as exc:
             if str(exc) == NO_CAMPAIGN:  # the campaign is gone: its removed entries go too
                 _bot(interaction).homebrew_removed.pop((c.guild_id, c.id), None)
-            await _redraw(interaction, c, note=str(exc), page=self.page)
+            await _redraw(interaction, c, note=str(exc), page=self.page, kind=self.kind)
             return
         kept.remove(gone)
         _changed(interaction, c)
-        await _redraw(interaction, c, note=f"↩️ Put back **{_md(gone.name)}**.", page=self.page)
+        await _redraw(
+            interaction,
+            c,
+            note=f"↩️ Put back **{_md(gone.name)}**.",
+            page=self.page,
+            kind=gone.kind,
+        )
 
 
 class KindPick(_Menu):
@@ -524,7 +621,7 @@ class EntryMenu(_Menu):
                 **values,  # type: ignore[arg-type]
             )
         except HomebrewError as exc:
-            await _redraw(interaction, c, note=str(exc), page=self.page)
+            await _redraw(interaction, c, note=str(exc), page=self.page, kind=self.entry.kind)
             return
         _changed(interaction, c)
         packs = await _packs_followed(interaction, c)
@@ -557,7 +654,7 @@ class EntryMenu(_Menu):
                 unchanged_since=e.version,
             )
         except HomebrewError as exc:
-            await _redraw(interaction, c, note=str(exc), page=self.page)
+            await _redraw(interaction, c, note=str(exc), page=self.page, kind=self.entry.kind)
             return
         _changed(interaction, c)
         packs = await _packs_followed(interaction, c)
@@ -618,7 +715,7 @@ class EntryMenu(_Menu):
         )
 
     async def _back(self, interaction: discord.Interaction) -> None:
-        await _redraw(interaction, self.campaign, page=self.page)
+        await _redraw(interaction, self.campaign, page=self.page, kind=self.entry.kind)
 
 
 UPDATE_LABEL = "🔄 Update from the link"
@@ -675,7 +772,7 @@ class PickPack(_Menu):
         )
 
     async def _keep(self, interaction: discord.Interaction) -> None:
-        await _redraw(interaction, self.campaign, page=self.page)
+        await _redraw(interaction, self.campaign, page=self.page, kind=self.entry.kind)
 
 
 class ConfirmSuggest(_Menu):
@@ -706,7 +803,7 @@ class ConfirmSuggest(_Menu):
                 self.pack[0],
             )  # the version the DM was shown: what goes out is what they confirmed
         except CampaignError as exc:  # (HouseRuleError and HomebrewError are both of these)
-            await _redraw(interaction, c, note=str(exc), page=self.page)
+            await _redraw(interaction, c, note=str(exc), page=self.page, kind=self.entry.kind)
             return
         self.stop()
         pack_suggestion.send_note(bot, pub_guild, pub_campaign, sid, pack_name)
@@ -718,7 +815,7 @@ class ConfirmSuggest(_Menu):
         )
 
     async def _keep(self, interaction: discord.Interaction) -> None:
-        await _redraw(interaction, self.campaign, page=self.page)
+        await _redraw(interaction, self.campaign, page=self.page, kind=self.entry.kind)
 
 
 class ConfirmRemove(_Menu):
@@ -743,18 +840,22 @@ class ConfirmRemove(_Menu):
                 unchanged_since=self.entry.version,
             )
         except HomebrewError as exc:
-            await _redraw(interaction, c, note=str(exc), page=self.page)
+            await _redraw(interaction, c, note=str(exc), page=self.page, kind=self.entry.kind)
             return
         kept = _bot(interaction).homebrew_removed.setdefault((c.guild_id, c.id), [])
         kept.append(gone)
         del kept[:-UNDO_KEPT]
         _changed(interaction, c)
         await _redraw(
-            interaction, c, note=f"🗑 Removed **{_md(gone.name)}**. {CHANGED_MIND}", page=self.page
+            interaction,
+            c,
+            note=f"🗑 Removed **{_md(gone.name)}**. {CHANGED_MIND}",
+            page=self.page,
+            kind=self.entry.kind,
         )
 
     async def _keep(self, interaction: discord.Interaction) -> None:
-        await _redraw(interaction, self.campaign, page=self.page)
+        await _redraw(interaction, self.campaign, page=self.page, kind=self.entry.kind)
 
 
 class _EntryForm(discord.ui.Modal):
