@@ -91,11 +91,16 @@ def kinds_for(plan_kind: str) -> tuple[str, ...]:
 
 # The chapter a book entry was found in: the nearest chapter at or before it in the same file
 # (an entry's `position` is where in the text its batch ended).
-_CHAPTER = (
-    "(SELECT c.name FROM plan_nodes c WHERE c.guild_id = n.guild_id AND c.campaign_id ="
-    " n.campaign_id AND c.document_id = n.document_id AND c.kind = 'chapter'"
-    " AND c.position <= n.position ORDER BY c.position DESC, c.created_at DESC LIMIT 1)"
-)
+def chapter_of(alias: str) -> str:
+    """SQL for the chapter of the plan entry `alias`: the nearest one at or before it."""
+    return (
+        f"(SELECT c.name FROM plan_nodes c WHERE c.guild_id = {alias}.guild_id AND c.campaign_id ="
+        f" {alias}.campaign_id AND c.document_id = {alias}.document_id AND c.kind = 'chapter'"
+        f" AND c.position <= {alias}.position ORDER BY c.position DESC, c.created_at DESC LIMIT 1)"
+    )
+
+
+_CHAPTER = chapter_of("n")
 
 
 async def has_plan(memory: MemoryStore, guild_id: int, campaign_id: str) -> bool:

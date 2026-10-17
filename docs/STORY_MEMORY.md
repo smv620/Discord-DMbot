@@ -803,11 +803,16 @@ Each step is useful on its own and ships behind the existing phases.
    seen (`open`, `known` after **👍 I know**, `gone` when an Undo, a later change or a taken-off link means
    the clash no longer stands), forced RLS, not in backups, deleted with the plan link or the table entry.
    The message has at most five lines and "+N more" (those come with the next check), each
-   "📖 Your adventure: Chapter 3 needs Captain Varn alive. At your table Captain Varn is dead (Session 4).",
-   with **👍 I know** and **📋 Show the book's words** (the plan link's quote, at most 200 characters, only to
+   "📖 Your adventure: Mother Ilse needs Captain Varn alive (Chapter 3: The Circle). At your table Captain
+   Varn is dead (Session 4).", the chapter being the nearest one at or before the book's entry (the rule
+   `book_links` uses; left out when the entry is itself a chapter),
+   with **👍 I know** and **📋 Book's words** (the plan link's quote, at most 200 characters, only to
    the DM who pressed). It never says what to do. Cost: none; it reads `plan_links`, `plan_same_as`,
    `memory_states` through their indexes, a few rows for one campaign. **Guide me** gets the same check; the
-   rest of it is the next slice.
+   rest of it is the next slice. After an Undo of the condition, or a name merged or rejected, a clash
+   already told goes `gone` at the next check and its buttons stop answering; a deleted or merged name that
+   comes back by Undo may tell a clash the DM already answered again (`plan_divergences` is derived and not
+   in the memory change log's dependents).
 
    **Phase 5d slice 6 is built (#1731): Guide me, no AI.** With Shared story on **Guide me**, **🧭 What's
    next?** (on the Shared story card, and on the pre-session note) answers the DM who pressed, privately:
