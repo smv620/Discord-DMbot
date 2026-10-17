@@ -155,6 +155,24 @@ class KindsMenu(HomebrewUiTest):
         await inner._all_kinds(back)
         self.assertEqual(labels(self.view_of(back))[:2], ["Spells 1/1", "Monsters 1/1"])
 
+    async def test_a_kind_on_a_later_page_with_an_undo_still_builds(self) -> None:
+        for n in range(27):
+            await self.add(f"Bolt {n:02}", kind="spell")
+        gone = (await self.store.list(GUILD, self.campaign.id))[0]
+        entries = await self.store.list(GUILD, self.campaign.id)
+        view = ui.ListMenu(self.campaign, entries, 1, [gone], "spell")  # (no ValueError)
+        self.assertEqual(
+            [str(c.label) for c in view.children if hasattr(c, "label") and c.row == 2],
+            ["◀ Newer", "↩️ Put back Bolt 00"],
+        )
+
+    async def test_a_player_cannot_use_the_packs_button(self) -> None:
+        await self.add("Frost Lance", kind="spell")
+        menu = ui.ListMenu(self.campaign, await self.store.list(GUILD, self.campaign.id), 0, [])
+        it = self.press(PLAYER)
+        await menu._packs(it)
+        self.assertEqual(self.said(it), ui.ONLY_DMS)
+
     async def test_no_homebrew_shows_no_kind_buttons(self) -> None:
         it = self.press()
         await ui.show_list(it, self.campaign, first=True)
@@ -273,7 +291,7 @@ class AnEntry(HomebrewUiTest):
         self.assertIn("Removed **Hollow King**", self.said(it))
         removed = self.bot.homebrew_removed[(GUILD, self.campaign.id)]
         menu = ui.ListMenu(self.campaign, [], 0, removed)
-        undo = [c for c in menu.children if "Undo" in str(getattr(c, "label", ""))]
+        undo = [c for c in menu.children if "Put back" in str(getattr(c, "label", ""))]
         self.assertEqual(len(undo), 1)
         await undo[0].callback(self.press())
         (back,) = await self.store.list(GUILD, self.campaign.id)

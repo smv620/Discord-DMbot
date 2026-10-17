@@ -88,7 +88,7 @@ INTRO = (
     "Your own spells, monsters, items and more. DMbot uses each entry that is on and skips the "
     "ones you turn off. For a published book, use **Share a rulebook**."
 )
-SHORT_INTRO = "Your own creations only. Turn an entry off and DMbot ignores it."
+SHORT_INTRO = "Your own creations only. For a published book, use **Share a rulebook**."
 NONE_YET = "No homebrew yet. Press **➕ Add** to write the first one, or **📥 Load file**."
 KIND_ASK = "What are you adding? Pick one and a form opens."
 CHANGED_MIND = "Press ↩️ **Undo** to bring it back."
@@ -154,7 +154,15 @@ KIND_PLURALS = {
     "other": "Other",
 }
 ALL_KINDS_LABEL = "↩ All kinds"
-PICK_A_KIND = "Pick a kind to see its entries. The numbers are on / how many."
+PICK_A_KIND = (
+    "Pick a kind. **Spells 10/12** means 10 of your 12 spells are on. DMbot uses the ones that "
+    "are on."
+)
+
+
+def _undo_label(gone: Homebrew) -> str:
+    """Says which entry Undo puts back, since the note naming it goes with the next redraw."""
+    return "↩️ Put back " + logic.shorten(gone.name, 12)
 
 
 def _md(text: str) -> str:
@@ -195,10 +203,9 @@ def list_text(
     if kind is None:
         if entries:
             lines.append(PICK_A_KIND)
-        if any(not e.enabled for e in entries):
-            lines.append("_(off) means DMbot ignores it until you turn it on._")
         return _fit("\n".join(lines), 1900)
     entries = [e for e in entries if e.kind == kind]
+    lines.append(f"**{KIND_PLURALS.get(kind, kind)}**")
     shown = entries[page * PAGE_ENTRIES : (page + 1) * PAGE_ENTRIES]
     for entry in shown:
         off = "" if entry.enabled else " (off)"
@@ -338,18 +345,20 @@ class ListMenu(_Menu):
             return
         self.entries = [e for e in entries if e.kind == kind]
         entries = self.entries
-        self.add_item(_Button(self._add, label="➕ Add", style=discord.ButtonStyle.primary))
-        self.add_item(_Button(self._link, label=LINK_LABEL))
-        self.add_item(_Button(self._all_kinds, label=ALL_KINDS_LABEL))
+        # Explicit rows, so Newer, Older and Undo together never push a button into the select's
+        # row: 0 Add/Link/All kinds, 1 the pick list, 2 paging and Undo, 3 the file and sites.
+        self.add_item(_Button(self._add, label="➕ Add", style=discord.ButtonStyle.primary, row=0))
+        self.add_item(_Button(self._link, label=LINK_LABEL, row=0))
+        self.add_item(_Button(self._all_kinds, label=ALL_KINDS_LABEL, row=0))
         if page > 0:
-            self.add_item(_Button(self._newer, label="◀ Newer"))
+            self.add_item(_Button(self._newer, label="◀ Newer", row=2))
         if (page + 1) * PAGE_ENTRIES < len(entries):
-            self.add_item(_Button(self._older, label="Older ▶"))
+            self.add_item(_Button(self._older, label="Older ▶", row=2))
         for gone in removed[-UNDO_SHOWN:]:  # the newest removal (the note says which)
-            self.add_item(_Button(partial(self._undo, gone), label="↩️ Undo last remove"))
-        self.add_item(_Button(self._download, label=DOWNLOAD_LABEL, row=2))
-        self.add_item(_Button(self._load, label=LOAD_LABEL, row=2))
-        self.add_item(_Button(self._sites, label=SITES_LABEL, row=2))
+            self.add_item(_Button(partial(self._undo, gone), label=_undo_label(gone), row=2))
+        self.add_item(_Button(self._download, label=DOWNLOAD_LABEL, row=3))
+        self.add_item(_Button(self._load, label=LOAD_LABEL, row=3))
+        self.add_item(_Button(self._sites, label=SITES_LABEL, row=3))
         shown = entries[page * PAGE_ENTRIES : (page + 1) * PAGE_ENTRIES]
         if shown:
             self.pick = _Select(
@@ -393,9 +402,7 @@ class ListMenu(_Menu):
         self.add_item(_Button(self._sites, label=SITES_LABEL, row=row))
         self.add_item(_Button(self._packs, label=PACKS_LABEL, row=row + 1))
         for gone in removed[-UNDO_SHOWN:]:  # the newest removal (the note says which)
-            self.add_item(
-                _Button(partial(self._undo, gone), label="↩️ Undo last remove", row=row + 1)
-            )
+            self.add_item(_Button(partial(self._undo, gone), label=_undo_label(gone), row=row + 1))
 
     async def _open_kind(self, kind: str, interaction: discord.Interaction) -> None:
         await _redraw(interaction, self.campaign, kind=kind)
@@ -414,6 +421,9 @@ class ListMenu(_Menu):
     async def _add(self, interaction: discord.Interaction) -> None:
         if not await _is_dm(interaction, self.campaign):
             await _tell(interaction, ONLY_DMS)
+            return
+        if self.kind is not None:  # already inside a kind: no need to ask which one
+            await interaction.response.send_modal(AddForm(self.campaign, self.kind))
             return
         await _show(interaction, KIND_ASK, KindPick(self.campaign, self.page))
 
@@ -883,6 +893,7 @@ class _EntryForm(discord.ui.Modal):
         super().__init__(timeout=VIEW_TIMEOUT_S)
         self.campaign = campaign
         self.page = 0
+        self.return_kind: str | None = None  # the kind's list to land on after a save
 
     async def interaction_check(self, interaction: discord.Interaction) -> bool:
         set_log_context(guild_id=interaction.guild_id)
@@ -907,14 +918,14 @@ class _EntryForm(discord.ui.Modal):
                 f"\nYour words, to copy:\n```\n{self.text.value.replace('```', '` ``')[:1200]}\n```"
             )
             await _tell(interaction, f"Not saved. {exc}{typed}")
-            await _redraw(interaction, self.campaign, page=self.page)
+            await _redraw(interaction, self.campaign, page=self.page, kind=self.return_kind)
             return
         _changed(interaction, self.campaign)
         await self.finish(interaction, note)
 
     async def finish(self, interaction: discord.Interaction, note: str) -> None:
         """After a save: back to the list (a form opened from a card shows the card instead)."""
-        await _redraw(interaction, self.campaign, note=note, page=self.page)
+        await _redraw(interaction, self.campaign, note=note, page=self.page, kind=self.return_kind)
 
     async def save(self, store: HomebrewStore, user_id: int) -> str:
         raise NotImplementedError
@@ -923,7 +934,7 @@ class _EntryForm(discord.ui.Modal):
 class AddForm(_EntryForm, title="Add homebrew"):
     def __init__(self, campaign: Campaign, kind: str) -> None:
         super().__init__(campaign)
-        self.kind = kind
+        self.kind = self.return_kind = kind  # (after adding, the list of that kind)
 
     async def save(self, store: HomebrewStore, user_id: int) -> str:
         c = self.campaign
@@ -946,6 +957,7 @@ class EditForm(_EntryForm, title="Edit homebrew"):
     def __init__(self, campaign: Campaign, entry: Homebrew, page: int) -> None:
         super().__init__(campaign)
         self.entry, self.page = entry, page
+        self.return_kind = entry.kind
         self.saved: Homebrew | None = None
         self.name.default = entry.name
         self.text.default = entry.text
