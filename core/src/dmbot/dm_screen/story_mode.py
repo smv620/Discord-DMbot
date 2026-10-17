@@ -146,17 +146,19 @@ async def _dm_campaign(interaction: discord.Interaction, campaign_id: str) -> Ca
 async def _save(
     interaction: discord.Interaction, campaign: Campaign, mode: str, *, who: int | None
 ) -> None:
+    # Answer Discord first (#1798): saving is a database write and the card is read back after.
+    await interaction.response.defer()
     store = interaction.client.campaigns  # type: ignore[attr-defined]
     try:
         saved = await store.set_story_mode(campaign.guild_id, campaign.id, mode, confirmed_by=who)
     except CampaignError as exc:
-        await interaction.response.edit_message(content=str(exc), view=panel_view(campaign))
+        await interaction.edit_original_response(content=str(exc), view=panel_view(campaign))
         return
     except Exception:
         log.exception("Couldn't save the Shared story setting")
-        await interaction.response.edit_message(content=COULDNT, view=panel_view(campaign))
+        await interaction.edit_original_response(content=COULDNT, view=panel_view(campaign))
         return
-    await interaction.response.edit_message(
+    await interaction.edit_original_response(
         content=f"Saved.\n\n{panel_text(saved)}", view=await _view(interaction, saved)
     )
 

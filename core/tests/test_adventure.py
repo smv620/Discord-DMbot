@@ -480,7 +480,7 @@ class Card(Setup):
 
     async def test_the_card_buttons_answer_discord_before_the_database(self) -> None:
         await self.campaigns.set_story_mode(GUILD_A, self.a.id, STORY_WATCH, confirmed_by=DM)
-        doc = await self.store.add(GUILD_A, self.a.id, DM, "a.txt", "text/plain", "x" * 20)
+        doc = await self.store.add(GUILD_A, self.a.id, DM, "a.txt", STORY)
         for button in (
             ui.RemoveButton(self.a.id, doc.id),
             ui.RemoveYesButton(self.a.id, doc.id),
