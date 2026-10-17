@@ -144,7 +144,7 @@ describe("Help: the website's read-only pages (#1588)", () => {
 
   it("adds homebrew by typing or a file, and says what off means (#1653)", () => {
     const steps = dmSteps.map((x) => x.text);
-    const adding = steps.find((t) => t.includes("📥 Load file")) ?? "";
+    const adding = steps.find((t) => t.includes("Who made these?")) ?? "";
     expect(adding).toContain("➕ Add");
     expect(adding).toContain("Who made these?");
     expect(adding).toContain("House rules");
