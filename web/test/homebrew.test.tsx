@@ -233,6 +233,35 @@ describe("a campaign's entries", () => {
     ).toEqual(["Other", "vehicle"]);
   });
 
+  it("says where an entry came from, and nothing for the DM's own", async () => {
+    const mock = mockApi("table");
+    const api = {
+      ...mock,
+      homebrew: async (ref: string) => {
+        const found = await mock.homebrew!(ref);
+        return {
+          ...found,
+          entries: [
+            { kind: "item", name: "Linked", summary: null, text: "A.", source: "from dndbeyond.com" },
+            { kind: "item", name: "Filed", summary: null, text: "B.", source: "credited to dndbeyond.com" },
+            { kind: "item", name: "Named", summary: null, text: "C.", source: "by Sam" },
+            { kind: "item", name: "Own", summary: null, text: "D.", source: null },
+            { kind: "item", name: "Old", summary: null, text: "E." },
+          ],
+        };
+      },
+    } as AccountApi;
+    page(api, `/account/homebrew/${REF}`);
+    const line = async (name: string) =>
+      (await screen.findByText(name)).closest("li")!.textContent ?? "";
+    expect(await line("Linked")).toContain("from dndbeyond.com");
+    expect(await line("Filed")).toContain("credited to dndbeyond.com");
+    expect(await line("Named")).toContain("by Sam");
+    for (const own of ["Own", "Old"]) {
+      expect(await line(own)).not.toMatch(/from |credited to|by /);
+    }
+  });
+
   it("marks a turned-off entry (off), muted, and keeps it in the list", async () => {
     const mock = mockApi("table");
     const api = {

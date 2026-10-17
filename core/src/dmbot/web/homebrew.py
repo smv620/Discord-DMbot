@@ -18,7 +18,13 @@ The page also shows the homebrew packs the campaign follows (#1527, #1586), ever
 pack, as a player's `/dmbot rule` answers from them. The download stays the
 campaign's own shown entries (what the bot's file holds): a followed pack's are not in it.
 
-Never shown: who wrote an entry, its id, or the book's name (it is never kept). A campaign is
+Each entry says where it came from (#1653), in the words of the bot's card: "from dndbeyond.com"
+(read from a published page), "credited to dndbeyond.com" (a file credited to a site) or "by Sam"
+(a file credited to a name the DM typed); nothing for the DM's own or an uploader's. The door sends
+the credit's kind and words only.
+
+Never shown: who added an entry (a Discord id), its id, the page's address, or the book's name (it
+is never kept). A campaign is
 named by `<server>.<campaign>`, as for the house-rules page.
 """
 
@@ -29,7 +35,7 @@ from typing import Any
 from dmbot.db import Database
 from dmbot.recaps.notify import parse_ref
 from dmbot.rules import homebrew_file
-from dmbot.rules.homebrew import KINDS, Homebrew
+from dmbot.rules.homebrew import KINDS, Homebrew, credit_label
 from dmbot.web.me import MAX_GUILDS
 from dmbot.web.recaps import RecapError, _guild_of, _scoped
 from dmbot.web.sessions import Session
@@ -80,6 +86,24 @@ async def _read(db: Database, session: Session, ref: str) -> tuple[str, dict[str
     return campaign_id, found
 
 
+NAME_SHOWN = 80  # a credited name is short (`clean_name`); a cap here keeps any page tidy
+
+
+def source(e: dict[str, Any]) -> str | None:
+    """Where an entry came from, as words for the page: the bot's own `credit_label` ("from" a page,
+    "credited to" a site, "by <name>"), so the two cannot drift. None when it is the DM's own or
+    credited to the person who loaded it (a Discord user, who is never named here)."""
+    text = e.get("creditText")
+    entry = Homebrew(
+        id=0, campaign_id="", kind="", name="", text="", summary=None, created_by=0, created_at=0,
+        updated_at=0, version=1, source_kind=str(e.get("sourceKind") or "typed"),
+        credit_kind=e.get("creditKind"),
+        credit_text=str(text)[:NAME_SHOWN] if text else None,
+        credit_domain=e.get("creditDomain"),
+    )  # fmt: skip
+    return credit_label(entry) or None
+
+
 def _kind_order(entry: dict[str, Any]) -> int:
     return KINDS.index(entry["kind"]) if entry["kind"] in KINDS else len(KINDS)
 
@@ -121,6 +145,7 @@ async def read_homebrew(db: Database, session: Session, ref: str) -> dict[str, A
                 "legacy": bool(e.get("legacy", False)),
                 # Turned off by the DM (#1629): kept, but DMbot ignores it at the table.
                 "enabled": bool(e.get("enabled", True)),
+                "source": source(e),  # (#1653) never who added it
             }
             for e in entries
         ],

@@ -25,6 +25,7 @@ from psycopg import sql
 
 from dmbot.db import Database, row_int
 from dmbot.memory import notify, standing, states
+from dmbot.memory import threads as threads_mod
 from dmbot.memory._changes import (
     ALIASES,
     ATTITUDES,
@@ -152,6 +153,7 @@ async def _live_ids(scope: Scope, among: Collection[str] | None = None) -> set[s
 
 
 PARTY_NAME = "The party"
+THREAD_KINDS_ONLY = "A thread is a quest, a mystery, a hook or a goal."
 STANDING_VIEWERS = ("character", "faction", "place")
 STANDING_SUBJECTS = ("character", "faction", "people")
 STANDING_BETWEEN = (
@@ -712,6 +714,115 @@ class MemoryStore:
                             if made is not None:
                                 flags.append(_flag(made))
             return Written((_entity(row), flags), w.batch)
+
+    # ---- story threads the DM keeps (#1662) ----
+
+    async def threads(
+        self, guild_id: int, campaign_id: str, *, stalled_after: int = threads_mod.STALLED_AFTER
+    ) -> list[threads_mod.ThreadInfo]:
+        """Every confirmed story thread with its state and history, who is involved, what moved it
+        and whether it is stalled (worked out here, never stored), read at one moment. Stalled
+        threads first, then by name."""
+        async with self._read(guild_id, campaign_id, snapshot=True) as scope:
+            return await _threads(scope, stalled_after)
+
+    async def new_thread(
+        self,
+        guild_id: int,
+        campaign_id: str,
+        name: str,
+        subtype: str,
+        state: str,
+        *,
+        source: str,
+        from_session_at: int | None = None,
+    ) -> Written[Entity]:
+        """The DM starts a story thread: its name, what kind of thread (quest, mystery, hook,
+        goal) and where it is now, made in one change."""
+        if source != DM:
+            raise MemoryRuleError("Only the DM can do that.")
+        check_named(subtype, name)
+        name = clean_text(name)
+        async with self._write(guild_id, campaign_id, source) as w:
+            onto = await _load_ontology(w)
+            if subtype not in onto.types or not onto.is_a(subtype, "thread"):
+                raise MemoryRuleError(THREAD_KINDS_ONLY)
+            onto.active_type(subtype)
+            row = await w.insert(
+                ENTITIES,
+                {
+                    "id": new_id(), "type": subtype, "name": name, "description": "",
+                    "status": CONFIRMED, "merged_into": None, "source": source,
+                    "created_at": w.now, "played_by": None, "role": None, "needs_look": False,
+                    "unique_item": None, "audience_limited": False, "party": False,
+                },
+            )  # fmt: skip
+            await w.insert(ALIASES, _new_alias(w, row["id"], name, "full", CONFIRMED, False, None))
+            await states.set_condition(w, onto, row, state, from_session_at=from_session_at)
+            return Written(_entity(row), w.batch)
+
+    async def check_thread(
+        self,
+        guild_id: int,
+        campaign_id: str,
+        thread_id: str,
+        *,
+        source: str,
+        from_session_at: int | None = None,
+    ) -> Written[State]:
+        """The DM looked at a thread and it is still going: the same state written again, dated
+        (it counts as touched; the history says "checked, still going")."""
+        if source != DM:
+            raise MemoryRuleError("Only the DM can do that.")
+        async with self._write(guild_id, campaign_id, source) as w:
+            onto = await _load_ontology(w)
+            entity = await _entity_row(w, thread_id)
+            made = await states.touch_thread(w, onto, entity, from_session_at=from_session_at)
+            return Written(made, w.batch)
+
+    async def involve(
+        self,
+        guild_id: int,
+        campaign_id: str,
+        thread_id: str,
+        who_id: str,
+        role: str,
+        *,
+        source: str,
+        from_session_at: int | None = None,
+    ) -> Written[Relation]:
+        """The DM says who or what has a part in a thread, and the part (quest giver, target,
+        villain, victim, reward, or their own words)."""
+        if source != DM:
+            raise MemoryRuleError("Only the DM can do that.")
+        async with self._write(guild_id, campaign_id, source) as w:
+            fact, _flags = await self.add_relation_in(
+                w, who_id, "in_thread", thread_id, confidence=1.0, status=CONFIRMED,
+                detail=clean_text(role), from_session_at=from_session_at,
+            )  # fmt: skip
+            return Written(fact, w.batch)
+
+    async def link_event(
+        self,
+        guild_id: int,
+        campaign_id: str,
+        thread_id: str,
+        event_id: str,
+        *,
+        ends_it: bool,
+        source: str,
+        from_session_at: int | None = None,
+    ) -> Written[Relation]:
+        """An event moved a thread along (advances) or ended it (resolves). The state does not
+        change by itself: the DM says so."""
+        if source != DM:
+            raise MemoryRuleError("Only the DM can do that.")
+        async with self._write(guild_id, campaign_id, source) as w:
+            fact, _flags = await self.add_relation_in(
+                w, event_id, "resolves" if ends_it else "advances", thread_id, confidence=1.0,
+                status=CONFIRMED, from_session_at=from_session_at,
+            )  # fmt: skip
+            return Written(fact, w.batch)
 
     # ---- standing the DM sets (#1655) ----
 
@@ -3165,6 +3276,84 @@ async def _entity_row(w: Scope, entity_id: str, *, allow_rejected: bool = False)
     if row is None or row["status"] not in allowed:
         raise MemoryRuleError(NOT_FOUND)
     return row
+
+
+async def _threads(scope: Scope, stalled_after: int) -> list[threads_mod.ThreadInfo]:
+    """The read model of every confirmed thread, from a handful of reads (not one per thread)."""
+    onto = await _load_ontology(scope)
+    kinds = sorted(k for k in onto.types if onto.is_a(k, "thread"))
+    rows = await scope.select(ENTITIES, " AND type = ANY(%s) AND status = 'confirmed'", [kinds])
+    if not rows:
+        return []
+    ids = [r["id"] for r in rows]
+    by_id: dict[str, list[State]] = {i: [] for i in ids}
+    for r in await scope.select(
+        STATES,
+        " AND entity_id = ANY(%s)"
+        " ORDER BY created_at, COALESCE(closed_at, 9223372036854775807), id",
+        [ids],
+    ):
+        by_id[r["entity_id"]].append(states.state_of(r))
+    facts = await scope.select(
+        RELATIONS,
+        " AND object_id = ANY(%s) AND predicate = ANY(%s) AND status = 'confirmed'"
+        " AND to_session_at IS NULL ORDER BY created_at, id",
+        [ids, ["in_thread", "advances", "resolves"]],
+    )
+    others = {
+        r["id"]: _entity(r)
+        for r in await scope.select(
+            ENTITIES,
+            " AND id = ANY(%s) AND status = 'confirmed'",
+            [sorted({f["subject_id"] for f in facts})],
+        )
+    }
+    cur = await scope.conn.execute(
+        "SELECT entity_id, session_started_at FROM memory_heard"
+        " WHERE guild_id = %s AND campaign_id = %s",
+        scope.ids,
+    )
+    heard: dict[str, set[int]] = {}
+    sessions: set[int] = set()
+    for h in await cur.fetchall():
+        sessions.add(int(h["session_started_at"]))
+        if h["entity_id"] in by_id:
+            heard.setdefault(h["entity_id"], set()).add(int(h["session_started_at"]))
+    known = sorted(sessions)
+    out: list[threads_mod.ThreadInfo] = []
+    for r in sorted(rows, key=lambda e: (name_key(e["name"]), e["id"])):
+        history = tuple(by_id[r["id"]])
+        mine = [f for f in facts if f["object_id"] == r["id"] and f["subject_id"] in others]
+        involved = tuple(
+            threads_mod.Involved(others[f["subject_id"]], f["detail"])
+            for f in mine
+            if f["predicate"] == "in_thread"
+        )
+        movers = tuple(
+            threads_mod.Mover(
+                others[f["subject_id"]], f["predicate"] == "resolves", f["from_session_at"]
+            )
+            for f in mine
+            if f["predicate"] != "in_thread"
+        )
+        touch = threads_mod.last_touch(
+            r["created_at"],
+            history,
+            [f["from_session_at"] for f in mine],
+            [f["created_at"] for f in mine],
+            heard.get(r["id"], ()),
+        )
+        quiet = threads_mod.sessions_since(touch, known)
+        state = next((s for s in reversed(history) if s.closed_at is None), None)
+        now = state.condition if state is not None else None
+        out.append(
+            threads_mod.ThreadInfo(
+                _entity(r), state, history, involved, movers, touch, quiet,
+                threads_mod.is_stalled(now, quiet, stalled_after),
+            )
+        )  # fmt: skip
+    out.sort(key=lambda t: (not t.stalled, name_key(t.thread.name), t.thread.id))
+    return out
 
 
 async def _move_standing(w: Changes, keep_id: str, gone_id: str) -> None:

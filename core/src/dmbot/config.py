@@ -97,6 +97,8 @@ class Settings:
     # Continuity warnings (#1320): where each level starts and how much confirmed story a
     # campaign needs first. Backend settings, tuned on the golden set; no switch shown to anyone.
     continuity: Levels = field(default_factory=Levels)
+    # A story thread (#1662) is stalled when this many sessions have started since it last moved.
+    thread_stalled_sessions: int = 3
     # The most characters of story the recall service hands one helper (#1350).
     recall_budget: int = DEFAULT_BUDGET
     # The DM sidebar answers from recall (#1370): on by default; off is exactly the old prompt.
@@ -179,6 +181,11 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
         )
 
     continuity = _continuity_levels(get)
+    stalled_raw = get("DMBOT_THREAD_STALLED_SESSIONS") or "3"
+    if not (stalled_raw.isascii() and stalled_raw.isdigit() and int(stalled_raw) >= 1):
+        raise ConfigError(
+            f'DMBOT_THREAD_STALLED_SESSIONS must be a whole number from 1 up, got "{stalled_raw}".'
+        )
     recall_budget = _recall_budget(get)
     sidebar_recall_raw = (get("DMBOT_SIDEBAR_RECALL") or "1").lower()
     if sidebar_recall_raw not in ("0", "1", "true", "false", "on", "off"):
@@ -314,6 +321,7 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
         story_extractor_max_calls=int(extractor_calls_raw),
         story_extractor_max_calls_day=int(extractor_day_raw),
         continuity=continuity,
+        thread_stalled_sessions=int(stalled_raw),
         recall_budget=recall_budget,
         sidebar_recall=sidebar_recall_raw in ("1", "true", "on"),
         presession_note=presession_raw in ("1", "true", "on"),
