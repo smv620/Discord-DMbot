@@ -125,7 +125,13 @@ class Promises(ConfirmedMemoryTest):
 
     async def test_the_card_asks_for_who_when_nobody_is_named(self) -> None:
         lines = ui.thread_lines(await self.info(), {})
-        self.assertEqual(lines[0], "🤝 **Someone** promised **someone**: Bring the healer back")
+        self.assertEqual(lines[0], "🤝 **Promise:** Bring the healer back")
+        self.assertIn("not set yet", lines[1])
+        await self.memory.promise_party(
+            GUILD_A, self.c, self.promise, self.kael, to=False, source="dm"
+        )
+        half = ui.thread_lines(await self.info(), {})
+        self.assertIn("**Promised by:** Kael. **To:** not set yet.", half)
 
     async def test_only_the_dm_names_the_parties_and_only_for_a_promise(self) -> None:
         with self.assertRaises(MemoryRuleError):
@@ -143,6 +149,34 @@ class Promises(ConfirmedMemoryTest):
             await self.memory.promise_party(
                 GUILD_A, self.c, self.promise, self.village, to=False, source="dm"
             )
+
+    async def test_a_wrong_kind_of_party_is_refused_both_ways(self) -> None:
+        item = await self.add("The Moonblade", type="item")
+        event = await self.add("The ambush", type="event")
+        for who in (item, event):
+            for to in (False, True):
+                with self.assertRaises(MemoryRuleError):
+                    await self.memory.promise_party(
+                        GUILD_A, self.c, self.promise, who, to=to, source="dm"
+                    )
+
+    async def test_naming_the_same_party_twice_shows_it_once(self) -> None:
+        for _ in range(2):
+            await self.memory.promise_party(
+                GUILD_A, self.c, self.promise, self.kael, to=False, source="dm"
+            )
+        self.assertEqual([e.name for e in (await self.info()).promised_by], ["Kael"])
+
+    async def test_a_party_and_a_due_note_can_each_be_undone(self) -> None:
+        fact = await self.memory.promise_party(
+            GUILD_A, self.c, self.promise, self.kael, to=False, source="dm"
+        )
+        due = await self.memory.set_due(GUILD_A, self.c, self.promise, "soon", source="dm")
+        assert fact.batch is not None and due.batch is not None
+        await self.memory.undo(GUILD_A, self.c, due.batch)
+        await self.memory.undo(GUILD_A, self.c, fact.batch)
+        got = await self.info()
+        self.assertEqual((got.promised_by, got.due), ((), ""))
 
     async def test_the_due_note_is_free_text_and_clears(self) -> None:
         await self.memory.set_due(
@@ -245,21 +279,41 @@ class Screens(ConfirmedMemoryTest):
         return it
 
     async def test_the_review_buttons_say_kept_and_broken_for_a_promise(self) -> None:
-        await self.memory.new_thread(
-            GUILD_A, self.c, "Bring it back", "promise", GOING, source="dm"
-        )
-        for s in (S1, S2, S3, S4):
-            await self.memory.add_session_heard(
-                GUILD_A, self.c, s, [Heard(await self.add("Kael", type="character"), 7, 1)]
+        promise = (
+            await self.memory.new_thread(
+                GUILD_A, self.c, "Bring it back", "promise", GOING, source="dm", from_session_at=S1
             )
+        ).value.id
+        kael = await self.add("Kael", type="character")
+        for s in (S2, S3, S4):
+            await self.memory.add_session_heard(GUILD_A, self.c, s, [Heard(kael, 7, 1)])
         review = ui.ThreadsReview(self.c)
-        self.now = S4 + 10  # nothing has touched it since it was made, before every session
         text = await review.current_text(self.interaction())
-        if text is not None:  # (stalled depends on the clock the store uses)
-            self.assertEqual(
-                [getattr(b, "label", "") for b in review.children],
-                ["1 · Still going", "1 · Kept", "1 · Broken"],
-            )
+        assert text is not None  # three sessions went by without it moving
+        self.assertIn("Bring it back", text)
+        self.assertEqual(
+            [getattr(b, "label", "") for b in review.children],
+            ["1 · Still going", "1 · Kept", "1 · Broken"],
+        )
+        self.assertTrue(promise)
+
+    async def test_only_the_dm_gets_the_promise_buttons_to_work(self) -> None:
+        from dmbot.ui.name_card import NameCard
+
+        promise = (
+            await self.memory.new_thread(GUILD_A, self.c, "A promise", "promise", OPEN, source="dm")
+        ).value.id
+        view = NameCard(self.c, promise, thread=True, promise=True)
+        labels = [
+            str(getattr(b, "label", "")) for b in view.children if getattr(b, "row", None) == 3
+        ]
+        self.assertEqual(
+            labels,
+            ["🧵 Change state", "🤝 Who promised", "🤝 Promised to", "📅 Due", "📌 Link an event"],
+        )
+        it = self.interaction(99)
+        await view._promise_by(it)  # a player: nothing opens
+        it.response.send_modal.assert_not_called()
 
     async def test_add_a_promise_makes_an_open_promise_with_its_due_note(self) -> None:
         form = ui.NewPromiseForm(self.c)

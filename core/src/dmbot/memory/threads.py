@@ -23,7 +23,9 @@ STATE_WORDS = {
     RESOLVED: "Finished",
     ABANDONED: "Dropped",
 }
-# A promise says the same five states in its own words (#1674): the states stored are the same.
+# A promise says the same five states in its own words (#1674): the states stored are the same,
+# and "Due soon" is the DM's own state (the due note is never read as a date). The words are the
+# ones Supervisor specified on the issue.
 PROMISE_WORDS = {
     HINTED: "Made in passing",
     OPEN: "Open",

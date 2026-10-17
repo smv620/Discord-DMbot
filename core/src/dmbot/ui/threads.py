@@ -82,9 +82,18 @@ def thread_lines(info: model.ThreadInfo, numbers: dict[int, int]) -> list[str]:
         quiet = f" — quiet for {n} {'session' if n == 1 else 'sessions'}"
     lines = []
     if kind == model.PROMISE:  # "Kael promised the village: bring the healer back"
-        by = ", ".join(_md(e.name) for e in info.promised_by) or "Someone"
-        to = ", ".join(_md(e.name) for e in info.promised_to) or "someone"
-        lines.append(f"🤝 **{by}** promised **{to}**: {_md(info.thread.name)}")
+        by = ", ".join(_md(e.name) for e in info.promised_by)
+        to = ", ".join(_md(e.name) for e in info.promised_to)
+        if by and to:
+            lines.append(f"🤝 **{by}** promised **{to}**: {_md(info.thread.name)}")
+        else:  # until the DM says who: a plain title, not a half sentence
+            lines.append(f"🤝 **Promise:** {_md(info.thread.name)}")
+            if by or to:
+                lines.append(
+                    f"**Promised by:** {by or 'not set yet'}. **To:** {to or 'not set yet'}."
+                )
+            else:
+                lines.append("Who promised and to whom: not set yet.")
     lines.append(f"🧵 **{word}**{quiet}")
     if info.due:
         lines.append(f"**Due:** {_md(info.due)}")
@@ -572,7 +581,7 @@ class NewPromiseForm(discord.ui.Modal, title="Add a promise"):
             interaction,
             campaign.id,
             made.value.id,
-            note="✅ Added. Use the buttons to say who promised and to whom.",
+            note="✅ Added. Tap Who promised and Promised to to fill in the rest.",
         )
 
 
@@ -746,7 +755,8 @@ async def start_review(interaction: discord.Interaction, campaign_id: str) -> No
 
 
 class ThreadsReview(_Menu):
-    """The stalled threads, each with Still going, Resolved and Dropped."""
+    """The stalled threads, each with Still going and the two ends (Finished and Dropped, or
+    Kept and Broken for a promise)."""
 
     def __init__(self, campaign_id: str) -> None:
         super().__init__()

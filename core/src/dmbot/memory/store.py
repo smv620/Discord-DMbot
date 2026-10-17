@@ -739,7 +739,7 @@ class MemoryStore:
         from_session_at: int | None = None,
     ) -> Written[Entity]:
         """The DM starts a story thread: its name, what kind of thread (quest, mystery, hook,
-        goal) and where it is now, made in one change."""
+        goal, promise) and where it is now, made in one change."""
         if source != DM:
             raise MemoryRuleError("Only the DM can do that.")
         check_named(subtype, name)
