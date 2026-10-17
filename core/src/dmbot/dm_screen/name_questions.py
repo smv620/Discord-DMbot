@@ -23,12 +23,12 @@ from typing import Any
 import discord
 
 from dmbot.memory.models import MemoryRuleError, TooLateToUndo
+from dmbot.mentions import NO_PINGS
 from dmbot.transcript import fix_notes, questions
 from dmbot.transcript.cleaner import MAX_OPTIONS
 
 log = logging.getLogger(__name__)
 
-NO_PINGS = discord.AllowedMentions.none()
 FAILED = "Something went wrong. Try again in a moment."
 
 

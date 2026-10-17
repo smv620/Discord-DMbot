@@ -20,11 +20,11 @@ import discord
 from dmbot.campaigns import Campaign
 from dmbot.dm_screen import messages
 from dmbot.logs import set_log_context
+from dmbot.mentions import NO_PINGS
 
 log = logging.getLogger(__name__)
 
 _ID = r"(?P<campaign>[0-9a-f]{32})"
-NO_PINGS = discord.AllowedMentions.none()
 ONLY_DM = "Only the DM can change recaps. Ask them to use ⚙️ Settings."
 FAILED = "Sorry, that didn't save. Please try again."
 NOT_IN_PLAN = "📜 Recaps aren't part of this campaign's plan. Plans and prices are on the website."
