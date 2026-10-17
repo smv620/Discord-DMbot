@@ -769,7 +769,7 @@ Each step is useful on its own and ships behind the existing phases.
    **A stopped or restarted read carries on** from the first batch not stored (the batches before it
    are kept), when the DM presses Read it now again; a read the bot's restart cut shows as "stopped".
    **Not in backups, like the text:** the plan is deleted with its file and with the campaign, and
-   after a restore it is rebuilt by giving the file again and reading again. No divergence, no
+   after a restore it is rebuilt by giving the file again and reading again. Divergence and
    suggestions are the later slices.
    **Phase 5d slice 4 is built (#1715): the book and the table.** "The book's Captain Varn" and "our
    Captain Varn" are joined only by the DM's word and stay two things (migration 0124, `plan_same_as`:

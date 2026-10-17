@@ -20,7 +20,15 @@ from typing import Any
 from psycopg import errors
 
 from dmbot.memory._changes import PLAN_SAME_AS
-from dmbot.memory.models import CONFIRMED, DM, MemoryRuleError, Written, name_key, new_id
+from dmbot.memory.models import (
+    CONFIRMED,
+    DM,
+    PLAYER_CHARACTER,
+    MemoryRuleError,
+    Written,
+    name_key,
+    new_id,
+)
 from dmbot.memory.store import MemoryStore
 
 SAME = "same"
@@ -34,6 +42,7 @@ PLACE_KINDS = ("place",)
 
 ONLY_DM = "Only the DM can do that."
 GONE = "That isn't in your adventure any more, or DMbot no longer remembers it."
+CLASH = "That link clashes with another one just made. Look again and try once more."
 TWICE = "Two of those would link the same name twice. Pick only one of them."
 NOT_MATCHING = (
     "A person in your adventure can only be the same as a person or group DMbot remembers, and "
@@ -128,8 +137,8 @@ async def suggestions(
             " = (a.guild_id, a.campaign_id, a.entity_id)"
             " WHERE a.guild_id = %s AND a.campaign_id = %s AND a.key = ANY(%s)"
             " AND a.status = %s AND e.status = %s AND e.merged_into IS NULL"
-            " AND NOT e.audience_limited",
-            (*scope.ids, list(wanted), CONFIRMED, CONFIRMED),
+            " AND NOT e.audience_limited AND NOT e.party AND e.role IS DISTINCT FROM %s",
+            (*scope.ids, list(wanted), CONFIRMED, CONFIRMED, PLAYER_CHARACTER),
         )
         entries = await cur.fetchall()
         cur = await scope.conn.execute(
@@ -205,6 +214,21 @@ async def decide(
                     if mark in said_for:
                         raise MemoryRuleError(TWICE)
                     said_for.add(mark)
+            if status == SAME:  # which side is taken, said plainly (before the index could say)
+                held_book = await w.select(
+                    PLAN_SAME_AS,
+                    " AND plan_id = %s AND status = %s AND entity_id <> %s",
+                    [plan_id, SAME, entity_id],
+                )
+                if held_book:
+                    raise MemoryRuleError(TAKEN_BOOK)
+                held_table = await w.select(
+                    PLAN_SAME_AS,
+                    " AND entity_id = %s AND document_id = %s AND status = %s AND plan_id <> %s",
+                    [entity_id, node["document_id"], SAME, plan_id],
+                )
+                if held_table:
+                    raise MemoryRuleError(TAKEN_TABLE)
             existing = await w.select(
                 PLAN_SAME_AS, " AND plan_id = %s AND entity_id = %s", [plan_id, entity_id]
             )
@@ -224,9 +248,8 @@ async def decide(
                             "created_at": w.now,
                         },
                     )
-            except errors.UniqueViolation as exc:
-                name = exc.diag.constraint_name or ""
-                raise MemoryRuleError(TAKEN_BOOK if "book" in name else TAKEN_TABLE) from None
+            except errors.UniqueViolation:  # a race the checks above did not see
+                raise MemoryRuleError(CLASH) from None
             done += 1
         return Written(done, w.batch)
 
@@ -259,8 +282,9 @@ async def _node(w: Any, plan_id: str) -> dict[str, Any] | None:
 async def _entity(w: Any, entity_id: str) -> dict[str, Any] | None:
     cur = await w.conn.execute(
         "SELECT id, type, name FROM memory_entities WHERE guild_id = %s AND campaign_id = %s"
-        " AND id = %s AND status = %s AND merged_into IS NULL",
-        (*w.ids, entity_id, CONFIRMED),
+        " AND id = %s AND status = %s AND merged_into IS NULL AND NOT party"
+        " AND role IS DISTINCT FROM %s",
+        (*w.ids, entity_id, CONFIRMED, PLAYER_CHARACTER),
     )
     row = await cur.fetchone()
     return None if row is None else dict(row)
@@ -294,8 +318,9 @@ async def options_for(
     async with memory._read(guild_id, campaign_id) as scope:
         cur = await scope.conn.execute(
             "SELECT type, name FROM memory_entities WHERE guild_id = %s AND campaign_id = %s"
-            " AND id = %s AND status = %s AND merged_into IS NULL",
-            (*scope.ids, entity_id, CONFIRMED),
+            " AND id = %s AND status = %s AND merged_into IS NULL AND NOT party"
+            " AND role IS DISTINCT FROM %s",
+            (*scope.ids, entity_id, CONFIRMED, PLAYER_CHARACTER),
         )
         entity = await cur.fetchone()
         if entity is None:

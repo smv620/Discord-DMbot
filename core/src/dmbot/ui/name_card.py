@@ -360,6 +360,10 @@ async def _names(interaction: discord.Interaction, campaign: Campaign) -> Campai
         return None
 
 
+def _a_person_or_place(onto: Any, type_key: str) -> bool:
+    return any(onto.is_a(type_key, kind) for kind in ("character", "faction", "place"))
+
+
 async def show_card(
     interaction: discord.Interaction,
     campaign_id: str,
@@ -440,9 +444,10 @@ async def show_card(
     if (
         entity is not None
         and secrets
-        and entity.type in ("character", "faction", "place")
+        and campaign.story_mode != "off"
         and not entity.is_player_character
         and not entity.party
+        and _a_person_or_place(await memory.ontology(campaign.guild_id, campaign.id), entity.type)
     ):
         from dmbot.memory import book_links
 

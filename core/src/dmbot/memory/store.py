@@ -1784,6 +1784,12 @@ class MemoryStore:
             current = await _entity_row(w, entity_id, allow_rejected=True)
             check_status_change(current["status"], status, source)
             row = await w.update(ENTITIES, entity_id, {"status": status})
+            if status == REJECTED:
+                # A rejected entry is not a name at the table any more, so the DM's word that it is
+                # a book entry (#1715) goes, freeing that book entry for the right one; Undo of
+                # this change brings it back.
+                for link in await w.select(PLAN_SAME_AS, " AND entity_id = %s", [entity_id]):
+                    await w.delete(PLAN_SAME_AS, link["id"])
             if current["role"] == PLAYER_CHARACTER:
                 await _sync_plays(w, entity_id)  # a rejected character has no player
             return Written(_entity(row), w.batch)
@@ -3229,9 +3235,10 @@ async def _move_rule_links(w: Changes, keep_id: str, gone_id: str) -> None:
 
 
 async def _move_plan_links(w: Changes, keep_id: str, gone_id: str) -> None:
-    """The DM's word that a merged entry is a book entry (#1715) goes with it, unless the kept
-    entry is already linked in that file (then it stays behind, unseen) or already has an answer for
-    that book entry (a Same beats a Not the same). Logged, so Undo of the merge restores it."""
+    """The DM's word that a merged entry is a book entry (#1715) goes with it. If the kept entry is
+    already linked in that file, or already has an answer for that book entry, the merged entry's
+    link is deleted instead (a Same beats a Not the same). Logged, so Undo of the merge restores
+    it."""
     for link in await w.select(PLAN_SAME_AS, " AND entity_id = %s", [gone_id]):
         linked_docs = {
             r["document_id"]

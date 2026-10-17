@@ -19,6 +19,7 @@ from typing import Any
 
 import discord
 
+from dmbot.campaigns.models import STORY_OFF
 from dmbot.memory import book_links as links
 from dmbot.memory.models import MemoryRuleError, TooLateToUndo
 from dmbot.ui.dmbot_commands import (
@@ -33,9 +34,10 @@ from dmbot.ui.names import GONE, _campaign_for, _md, _memory, changed, sees_secr
 
 log = logging.getLogger(__name__)
 
-BUTTON = "📖 In my adventure…"  # on a name card
-MATCH_LABEL = "Match names"  # on the Shared story card
 ONLY_DM = links.ONLY_DM
+NOT_ON = (
+    "Not now. In Settings, turn on Shared story and say you have the right to use the material."
+)
 NOTHING_TO_MATCH = (
     "Nothing to match. No name in your adventure is also one DMbot remembers. Open a name's card "
     "and press **📖 In my adventure…** to link one yourself."
@@ -55,6 +57,7 @@ UNDONE = "Undone."
 LABEL_MAX = 100  # a menu option's label
 
 
+SHOWN_LINKS = 5  # links listed (and with a Take off) on the picker
 TEXT_MAX = 1990  # a message holds 2000
 LABEL_SHOWN = 25  # a phone shows about this much of a menu option's label
 
@@ -97,6 +100,14 @@ async def _dm(interaction: discord.Interaction, campaign_id: str) -> tuple[Any, 
         return None
     if not sees_secrets(campaign, interaction.user.id):
         await _tell(interaction, ONLY_DM)
+        return None
+    # The switch may have been turned off since this screen was opened (CLAUDE.md: re-check).
+    campaigns: Any = interaction.client.campaigns  # type: ignore[attr-defined]
+    said = campaign.story_mode != STORY_OFF and await campaigns.story_confirmed(
+        campaign.guild_id, campaign.id
+    )
+    if not said:
+        await _tell(interaction, NOT_ON)
         return None
     return campaign, memory
 
@@ -226,9 +237,11 @@ async def _undo(memory: Any, campaign: Any, batch: int) -> str:
 def pick_text(entity_name: str, current: list[links.Linked], total: int, note: str = "") -> str:
     lines = [note] if note else []
     lines.append(f"📖 **{_md(entity_name)}**: which entry in your adventure is this?")
-    for n, link in enumerate(current[:3], 1):
+    for n, link in enumerate(current[:SHOWN_LINKS], 1):
         where = f" ({_short(link.chapter)})" if link.chapter else ""
         lines.append(f"{n}. In your adventure: **{_short(link.name)}**{where}")
+    if len(current) > SHOWN_LINKS:
+        lines.append(f"…and {len(current) - SHOWN_LINKS} more.")
     if not total:
         lines.append(
             "Nothing in your adventure to link this to. Give DMbot your adventure on the Shared "
@@ -304,7 +317,7 @@ class PickMenu(_Menu):
             )
         if offset + len(options) < total:
             self.add_item(_Button(self._more, label="More ▶", row=1))
-        for n, link in enumerate(current[:3], 1):  # (one for each file it is linked in)
+        for n, link in enumerate(current[:SHOWN_LINKS], 1):  # (one for each file it is linked in)
             self.add_item(
                 _Button(
                     partial(self._off, link.plan_id),

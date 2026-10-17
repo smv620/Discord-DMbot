@@ -11,6 +11,7 @@ from typing import Any
 
 import discord
 
+from dmbot.campaigns.models import STORY_OFF, STORY_WATCH
 from dmbot.dm_screen import adventure_card as adventure_ui
 from dmbot.memory import book_links as links
 from dmbot.memory.lookup import CampaignLookup
@@ -319,6 +320,36 @@ class Private(Setup):
 
 
 class Mess(Setup):
+    async def test_rejecting_an_entry_frees_its_book_entry_and_undo_brings_it_back(
+        self,
+    ) -> None:
+        _, ids = await self.book([("person", "Captain Varn", 1)])
+        wrong = await self.add("Varn the Wrong", type="npc")
+        right = await self.add("Captain Varn", type="npc")
+        await self.say(ids["Captain Varn"], wrong)
+        rejected = await self.memory.set_entity_status(
+            GUILD_A, self.c, wrong, "rejected", source="dm"
+        )
+        self.assertEqual(await self.count("plan_same_as"), 0)
+        await self.say(ids["Captain Varn"], right)  # the right one can have it now
+        self.assertEqual(len(await links.linked(self.memory, GUILD_A, self.c, right)), 1)
+        assert rejected.batch is not None
+        with self.assertRaisesRegex(MemoryRuleError, "changed again since"):
+            await self.memory.undo(GUILD_A, self.c, rejected.batch)  # the book entry was taken
+        off = await links.unlink(self.memory, GUILD_A, self.c, ids["Captain Varn"], right)
+        self.assertTrue(off.value)
+        await self.memory.undo(GUILD_A, self.c, rejected.batch)  # free again: the link is back
+        (back,) = await links.linked(self.memory, GUILD_A, self.c, wrong)
+        self.assertEqual(back.name, "Captain Varn")
+
+    async def test_a_players_character_and_the_party_are_never_offered(self) -> None:
+        _, ids = await self.book([("person", "Captain Varn", 1)])
+        pc = await self.add("Captain Varn", type="character", role="player_character")
+        self.assertEqual(await self.pairs(), [])
+        with self.assertRaises(MemoryRuleError):
+            await self.say(ids["Captain Varn"], pc)
+        self.assertEqual(await links.options_for(self.memory, GUILD_A, self.c, pc), ([], 0))
+
     """What the reviewers found: merging, undoing into a conflict, long names, colliding pairs."""
 
     async def test_merging_two_table_entries_moves_the_link_and_undo_splits_them(self) -> None:
@@ -417,6 +448,10 @@ class Mess(Setup):
 
 class Screens(Setup):
     """The DM's two screens, with a fake Discord."""
+
+    async def asyncSetUp(self) -> None:
+        await super().asyncSetUp()
+        await self.campaigns.set_story_mode(GUILD_A, self.c, STORY_WATCH, confirmed_by=DM)
 
     def pressing(self, user: int = DM) -> Any:
         it = press(user, GUILD_A)
@@ -541,3 +576,21 @@ class Screens(Setup):
         without = [getattr(c, "label", "") for c in NameCard(self.c, who).children]
         self.assertIn(BOOK_BUTTON, with_button)
         self.assertNotIn(BOOK_BUTTON, without)
+
+    async def test_the_screens_refuse_once_shared_story_is_turned_off(self) -> None:
+        _, ids = await self.book([("person", "Captain Varn", 1)])
+        who = await self.add("Captain Varn", type="npc")
+        await self.campaigns.set_story_mode(GUILD_A, self.c, STORY_OFF)
+        for show in (ui.show_matches, lambda it, c: ui.show_picker(it, c, who)):
+            it = self.pressing()
+            await show(it, self.c)
+            self.assertEqual(it.sent["content"], ui.NOT_ON)
+        self.assertEqual(await self.count("plan_same_as"), 0)
+        self.assertIsNotNone(ids)
+
+    async def test_the_picker_says_how_many_more_links_there_are(self) -> None:
+        many = [links.Linked(f"{n:032x}", f"Varn {n}", "person", "") for n in range(7)]
+        text = ui.pick_text("Captain Varn", many, 3)
+        self.assertIn("5. In your adventure: **Varn 4**", text)
+        self.assertNotIn("Varn 5", text)
+        self.assertIn("…and 2 more.", text)
