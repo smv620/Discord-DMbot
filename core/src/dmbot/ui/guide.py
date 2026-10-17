@@ -45,7 +45,9 @@ NOT_GUIDE = (
     "What's next? is off. To turn it on: open Settings, set Shared story to **Guide me**, then "
     "confirm you have the right to use the book."
 )
-NO_PLAN = "Can't check your plan right now. Try again in a moment."
+NO_PLAN = (
+    "Your plan doesn't include this, or DMbot can't check it right now. Try again in a moment."
+)
 NOT_READ = (
     "DMbot hasn't read your book yet. Press **Read it now** on the Shared story card, "
     "then try again."
@@ -158,7 +160,7 @@ async def start(interaction: discord.Interaction, campaign_id: str) -> None:
         )
         return
     if len(files) == 1:
-        await show(interaction, campaign_id, files[0].id)
+        await _show(interaction, found, files, files[0].id)
         return
     await _replace(interaction, "🧭 Which book file?", FileMenu(campaign.id, files))
 
@@ -178,10 +180,27 @@ async def show(
     undo: int | None = None,
     start: int | None = None,
 ) -> None:
+    """The answer for one file, after checking (once) that this person may have it."""
     await _answer_first(interaction, in_place=True)
     found = await _checked(interaction, campaign_id)
     if found is None:
         return
+    await _show(interaction, found, None, document_id, note=note, undo=undo, start=start)
+
+
+async def _show(
+    interaction: discord.Interaction,
+    found: tuple[Any, Any],
+    files: list[Any] | None,
+    document_id: str,
+    *,
+    note: str = "",
+    undo: int | None = None,
+    start: int | None = None,
+) -> None:
+    """The answer, for a person `_checked` already passed in this same interaction: no second
+    check. About nine calls in all: the checks (campaign, confirmation, plan), the files (2), and
+    the guide's own three reads (nodes with the pick, linked entries, clashes)."""
     campaign, memory = found
     nodes, pick = await model.read(memory, campaign.guild_id, campaign.id, document_id)
     guide = model.build(nodes, pick)
@@ -190,11 +209,12 @@ async def show(
         return
     watch = getattr(_bot(interaction), "watch", None)
     clashes = (
-        await watch.open_for(campaign.guild_id, campaign.id, guide.in_chapter)
+        await watch.open_for(campaign.guild_id, campaign.id, guide.in_chapter, verified=True)
         if watch is not None
         else []
     )
-    files = await _files(interaction, campaign)
+    if files is None:
+        files = await _files(interaction, campaign)
     name = next((d.file_name for d in files if d.id == document_id), "")
     await _replace(
         interaction,
@@ -289,11 +309,11 @@ class GuideMenu(_Menu):
         except MemoryRuleError as exc:
             log.info("Guide me pick refused: %s", exc)
             self.stop()
-            await show(interaction, self.campaign_id, self.document_id, note=CANT_SAVE)
+            await _show(interaction, found, None, self.document_id, note=CANT_SAVE)
             return
         changed(interaction, campaign)
         self.stop()
-        await show(interaction, self.campaign_id, self.document_id, undo=batch)
+        await _show(interaction, found, None, self.document_id, undo=batch)
 
     async def _move(self, step: int, interaction: discord.Interaction) -> None:
         self.stop()
@@ -310,7 +330,7 @@ class GuideMenu(_Menu):
         batch = await model.clear(memory, campaign.guild_id, campaign.id, self.document_id)
         changed(interaction, campaign)
         self.stop()
-        await show(interaction, self.campaign_id, self.document_id, undo=batch)
+        await _show(interaction, found, None, self.document_id, undo=batch)
 
     async def _undo(self, interaction: discord.Interaction) -> None:
         await _answer_first(interaction, in_place=True)
@@ -327,7 +347,7 @@ class GuideMenu(_Menu):
             note = "Not undone. Something changed since. Pick your chapter again if you need to."
         changed(interaction, campaign)
         self.stop()
-        await show(interaction, self.campaign_id, self.document_id, note=note)
+        await _show(interaction, found, None, self.document_id, note=note)
 
 
 class GuideButton(

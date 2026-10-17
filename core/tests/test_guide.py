@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import unittest
 import uuid
+from dataclasses import replace
 from types import SimpleNamespace
 from typing import Any
 
@@ -14,7 +15,7 @@ from dmbot.campaigns.models import STORY_OFF, STORY_WATCH
 from dmbot.memory import book_links as links
 from dmbot.memory import guide as model
 from dmbot.memory.adventure import AdventureStore
-from dmbot.memory.guide import Node, build, chapter_at, guess
+from dmbot.memory.guide import Node, build, guess
 from dmbot.memory.models import MemoryRuleError
 from dmbot.memory.story_plan import PlanStore
 from dmbot.memory.story_watch import StoryWatch
@@ -29,47 +30,49 @@ def node(kind: str, name: str, position: int, **kw: Any) -> Node:
                 kw.pop("created_at", 1), **kw)  # fmt: skip
 
 
-BOOK = [
-    node("chapter", "Chapter 1", 1, summary="The harbour."),
-    node("place", "Saltmere", 2),
-    node("person", "Captain Varn", 3, table_name="Varn", heard=True),
-    node("person", "Mother Ilse", 3, table_name="Ilse", heard=False),
-    node("chapter", "Chapter 2", 5, summary="x" * 400),
-    node("place", "The Vault", 6),
-    node("person", "Bryn", 7, table_name="Bryn", heard=True),
-    node("person", "Pell", 8, table_name="Pell", heard=True),
-    node("person", "Orla", 8),
-]
+def book_of(nodes: list[Node]) -> list[Node]:
+    """A test fixture: each entry's chapter id as the SQL rule gives it (the nearest chapter at or
+    before it, the later when two share a place). The database test below proves they agree."""
+    chapters = sorted(
+        (n for n in nodes if n.kind == "chapter"), key=lambda c: (c.position, c.created_at)
+    )
+    out = []
+    for n in nodes:
+        home = [c for c in chapters if c.position <= n.position]
+        out.append(replace(n, chapter_id=home[-1].id if home else None))
+    return out
+
+
+BOOK = book_of(
+    [
+        node("chapter", "Chapter 1", 1, summary="The harbour."),
+        node("place", "Saltmere", 2),
+        node("person", "Captain Varn", 3, table_name="Varn", heard=True),
+        node("person", "Mother Ilse", 3, table_name="Ilse", heard=False),
+        node("chapter", "Chapter 2", 5, summary="x" * 400),
+        node("place", "The Vault", 6),
+        node("person", "Bryn", 7, table_name="Bryn", heard=True),
+        node("person", "Pell", 8, table_name="Pell", heard=True),
+        node("person", "Orla", 8),
+    ]
+)
 
 
 class Rules(unittest.TestCase):
-    def test_the_chapter_is_the_nearest_one_at_or_before(self) -> None:
-        chapters = [n for n in BOOK if n.kind == "chapter"]
-        self.assertIsNone(chapter_at(0, chapters))
-        self.assertEqual(chapter_at(1, chapters).name, "Chapter 1")  # type: ignore[union-attr]
-        self.assertEqual(chapter_at(4, chapters).name, "Chapter 1")  # type: ignore[union-attr]
-        self.assertEqual(chapter_at(5, chapters).name, "Chapter 2")  # type: ignore[union-attr]
-        self.assertEqual(chapter_at(99, chapters).name, "Chapter 2")  # type: ignore[union-attr]
-
-    def test_two_chapters_in_one_place_the_later_one_wins(self) -> None:
-        chapters = [
-            node("chapter", "First", 4, created_at=1),
-            node("chapter", "Second", 4, created_at=2),
-        ]
-        self.assertEqual(chapter_at(4, chapters).name, "Second")  # type: ignore[union-attr]
-
     def test_the_guess_is_the_chapter_with_most_linked_names_heard_lately(self) -> None:
         self.assertEqual(guess(BOOK).name, "Chapter 2")  # type: ignore[union-attr]
         one = [n for n in BOOK if n.name not in ("Bryn", "Pell")]
         self.assertEqual(guess(one).name, "Chapter 1")  # type: ignore[union-attr]
 
     def test_a_tie_goes_to_the_later_chapter(self) -> None:
-        tied = [
-            node("chapter", "A", 1),
-            node("person", "x", 2, table_name="X", heard=True),
-            node("chapter", "B", 5),
-            node("person", "y", 6, table_name="Y", heard=True),
-        ]
+        tied = book_of(
+            [
+                node("chapter", "A", 1),
+                node("person", "x", 2, table_name="X", heard=True),
+                node("chapter", "B", 5),
+                node("person", "y", 6, table_name="Y", heard=True),
+            ]
+        )
         self.assertEqual(guess(tied).name, "B")  # type: ignore[union-attr]
 
     def test_no_linked_heard_name_is_no_guess(self) -> None:
@@ -89,7 +92,7 @@ class Rules(unittest.TestCase):
         self.assertEqual(guide.evidence, ("Varn", "Ilse"))  # the pick: all linked ones in it
         guess_ = build(BOOK, None)  # Chapter 2
         self.assertEqual((guess_.ahead, guess_.evidence), (("The Vault", "Orla"), ("Bryn", "Pell")))
-        many = [node("chapter", "C", 1)] + [node("place", f"P{n}", 2) for n in range(9)]
+        many = book_of([node("chapter", "C", 1)] + [node("place", f"P{n}", 2) for n in range(9)])
         guide = build(many, "c")
         self.assertEqual((len(guide.ahead), guide.ahead_more), (6, 3))
 
@@ -100,11 +103,13 @@ class Rules(unittest.TestCase):
         self.assertIn(ui.LAST, text)
 
     def test_the_text_is_at_most_ten_lines_and_names_are_escaped(self) -> None:
-        bad = [
-            node("chapter", "**Chapter** @everyone " + "z" * 100, 1, summary="`code` <@123>"),
-            node("chapter", "Next @here", 5, summary="*bold* " + "y" * 300),
-            node("person", "_Varn_ @everyone", 2),
-        ]
+        bad = book_of(
+            [
+                node("chapter", "**Chapter** @everyone " + "z" * 100, 1, summary="`code` <@123>"),
+                node("chapter", "Next @here", 5, summary="*bold* " + "y" * 300),
+                node("person", "_Varn_ @everyone", 2),
+            ]
+        )
         guide = build(bad, bad[0].id)
         text = ui.guide_text(guide, [])
         self.assertLessEqual(len(text.splitlines()), 10)
@@ -135,23 +140,18 @@ class Menus(unittest.TestCase):
         from dmbot.memory.story_watch import Clash
 
         long = "N" * 120
-        guide = build(
+        nodes = book_of(
             [
                 node("chapter", long, 1, summary="s" * 400),
                 node("chapter", long + "2", 5, summary="t" * 400),
                 *[node("person", long + str(n), 2) for n in range(9)],
-            ],
-            long.lower().replace(" ", "-"),
+            ]
         )
+        guide = build(nodes, nodes[0].id)
         clashes = [Clash(f"{n:032x}", long, long, long, long, long, "dead", 1) for n in range(5)]
         text = ui.guide_text(guide, clashes, file_name=long, note="x" * 200)
         self.assertLessEqual(len(text), 1990)
         self.assertEqual(text.count("**") % 2, 0)
-
-    def test_the_chapter_rule_with_no_chapters_or_on_a_chapters_own_place(self) -> None:
-        self.assertIsNone(chapter_at(5, []))
-        chapters = [node("chapter", "A", 5)]
-        self.assertEqual(chapter_at(5, chapters).name, "A")  # type: ignore[union-attr]
 
 
 class Setup(base.Setup):
@@ -211,9 +211,18 @@ class Reading(Setup):
         entity = await self.linked(ids, "Bryn", 100)
         (link,) = await links.linked(self.memory, GUILD_A, self.c, entity)
         nodes, _ = await model.read(self.memory, GUILD_A, self.c, doc)
-        chapters = [n for n in nodes if n.kind == "chapter"]
         bryn = next(n for n in nodes if n.name == "Bryn")
-        self.assertEqual(chapter_at(bryn.position, chapters).name, link.chapter)  # type: ignore[union-attr]
+        names = {n.id: n.name for n in nodes if n.kind == "chapter"}
+        self.assertEqual(names[bryn.chapter_id or ""], link.chapter)
+        # ...and the fixture the pure tests use gives the same answer as the database does.
+        fixture = {
+            n.id: n.chapter_id for n in book_of([replace(n, chapter_id=None) for n in nodes])
+        }
+        self.assertEqual(
+            fixture,
+            {n.id: n.chapter_id for n in nodes if n.kind != "chapter"}
+            | {n.id: n.chapter_id for n in nodes if n.kind == "chapter"},
+        )
 
     async def test_the_dms_pick_beats_the_guess_and_undo_gives_the_guess_back(self) -> None:
         doc, ids = await self.chapters()
@@ -379,6 +388,59 @@ class Pressing(Setup):
         again = self.pressing()
         await menu._picked(again)
         self.assertIn(ui.CANT_SAVE, again.sent["content"])
+
+    async def test_with_several_files_it_asks_which_first_and_then_answers(self) -> None:
+        doc, ids = await self.chapters()
+        await self.linked(ids, "Captain Varn", 100)
+        two, ids2 = await self.book([("chapter", "Other 1", 1), ("person", "Nell", 2)])
+        it = self.pressing()
+        await ui.GuideButton(self.c).callback(it)
+        menu = it.sent["view"]
+        self.assertIsInstance(menu, ui.FileMenu)
+        self.assertEqual({o.value for o in menu.select.options}, {doc, two})
+        menu.select._values = [two]
+        again = self.pressing()
+        await menu._picked(again)
+        self.assertIn("keep.txt", again.sent["content"])  # which file, when there are several
+        shown = again.sent["view"].select.options
+        self.assertEqual([o.label for o in shown], ["Other 1"])  # that file's chapters only
+        self.assertTrue(ids2)
+
+    async def test_the_answer_never_pings(self) -> None:
+        doc, ids = await self.chapters()
+        async with self.db.guild(GUILD_A) as conn:
+            await conn.execute(
+                "UPDATE plan_nodes SET name = '@everyone <@123>' WHERE id = %s", (ids["Saltmere"],)
+            )
+        it = self.pressing()
+        await ui.show(it, self.c, doc)
+        self.assertEqual(it.sent["allowed_mentions"].to_dict(), {"parse": []})
+
+    async def test_the_note_and_the_card_both_ask_the_same_three_things(self) -> None:
+        from dmbot.bot import DMBot
+
+        await self.chapters()
+        fake: Any = SimpleNamespace(campaigns=self.campaigns, plan_allows=self.plan_allows)
+        for mode, want in (("guide", True), ("watch", False), ("off", False)):
+            if mode == "off":
+                await self.campaigns.set_story_mode(GUILD_A, self.c, STORY_OFF)
+            else:
+                await self.campaigns.set_story_mode(GUILD_A, self.c, mode, confirmed_by=DM)
+            campaign = await self.campaigns.get(GUILD_A, self.c)
+            assert campaign is not None
+            self.assertEqual(await DMBot.guide_button_allowed(fake, GUILD_A, campaign), want, mode)
+        await self.campaigns.set_story_mode(GUILD_A, self.c, "guide", confirmed_by=DM)
+        campaign = await self.campaigns.get(GUILD_A, self.c)
+        assert campaign is not None
+        self.allowed = False  # the plan says no
+        self.assertFalse(await DMBot.guide_button_allowed(fake, GUILD_A, campaign))
+        self.allowed = True
+        async with self.db.guild(GUILD_A) as conn:
+            await conn.execute("UPDATE shared_confirmations SET restored = true")
+        self.assertFalse(await DMBot.guide_button_allowed(fake, GUILD_A, campaign))
+
+    async def plan_allows(self, *args: Any, **kw: Any) -> bool:
+        return self.allowed
 
     async def test_only_a_dm_can_press(self) -> None:
         await self.chapters()

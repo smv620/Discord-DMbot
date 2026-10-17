@@ -14,11 +14,11 @@ later chapter.
 
 from __future__ import annotations
 
-from bisect import bisect_right
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 
 from dmbot.memory._changes import PLAN_POSITION
+from dmbot.memory.book_links import chapter_id_of
 from dmbot.memory.models import DM, MemoryRuleError, new_id
 from dmbot.memory.store import MemoryStore
 
@@ -30,6 +30,7 @@ GONE = "That chapter isn't in your adventure any more."
 
 NODES = """
     SELECT n.id, n.kind, n.name, n.summary, n.position, n.created_at,
+           {chapter_id} AS chapter_id,
            (SELECT p.chapter_id FROM plan_position p WHERE p.guild_id = n.guild_id
                AND p.campaign_id = n.campaign_id AND p.document_id = n.document_id) AS pick
     FROM plan_nodes n
@@ -68,6 +69,7 @@ class Node:
     created_at: int
     table_name: str | None = None  # the linked table entry, if the DM said it is the same
     heard: bool = False  # ...and it was heard in one of the last sessions
+    chapter_id: str | None = None  # the chapter it is in, by the one rule (`book_links`)
 
 
 @dataclass(frozen=True, slots=True)
@@ -88,40 +90,14 @@ def _order(node: Node) -> tuple[int, int, str]:
     return (node.position, node.created_at, node.id)
 
 
-def chapter_at(position: int, chapters: Sequence[Node]) -> Node | None:
-    """The nearest chapter at or before `position` (the later one when two share a place), the
-    rule `book_links` uses in SQL for its "(Chapter …)" text."""
-    best = None
-    for chapter in sorted(chapters, key=_order):
-        if chapter.position <= position:
-            best = chapter
-    return best
-
-
-class _Chapters:
-    """The chapters of a file sorted once, so each entry's chapter is a binary search."""
-
-    def __init__(self, nodes: Sequence[Node]) -> None:
-        self.list = sorted((n for n in nodes if n.kind == "chapter"), key=_order)
-        self._positions = [c.position for c in self.list]
-
-    def at(self, position: int) -> Node | None:
-        """Same rule as `chapter_at` (a later chapter wins when two share a place)."""
-        index = bisect_right(self._positions, position) - 1
-        return self.list[index] if index >= 0 else None
-
-
 def guess(nodes: Sequence[Node]) -> Node | None:
     """The chapter with the most linked entries heard lately; a tie goes to the later chapter;
     None when nothing is linked and heard."""
-    found = _Chapters(nodes)
-    chapters = found.list
+    chapters = sorted((n for n in nodes if n.kind == "chapter"), key=_order)
     counts: dict[str, int] = {}
     for n in nodes:
-        if n.kind != "chapter" and n.heard:
-            home = found.at(n.position)
-            if home is not None:
-                counts[home.id] = counts.get(home.id, 0) + 1
+        if n.kind != "chapter" and n.heard and n.chapter_id is not None:
+            counts[n.chapter_id] = counts.get(n.chapter_id, 0) + 1
     best: Node | None = None
     for chapter in chapters:  # in order, so `>=` lets a later chapter win a tie
         if counts.get(chapter.id, 0) and (
@@ -133,8 +109,7 @@ def guess(nodes: Sequence[Node]) -> Node | None:
 
 def build(nodes: Sequence[Node], pick_id: str | None) -> Guide:
     """What to show, for one file: the DM's pick if there is one, else the guess."""
-    found = _Chapters(nodes)
-    chapters = tuple(found.list)
+    chapters = tuple(sorted((n for n in nodes if n.kind == "chapter"), key=_order))
     by_id = {c.id: c for c in chapters}
     chapter = by_id.get(pick_id) if pick_id else None
     picked = chapter is not None
@@ -145,7 +120,7 @@ def build(nodes: Sequence[Node], pick_id: str | None) -> Guide:
     inside = [
         n
         for n in nodes  # (already in book order: `NODES` sorts them)
-        if n.kind != "chapter" and found.at(n.position) == chapter
+        if n.kind != "chapter" and n.chapter_id == chapter.id
     ]
     linked = [n for n in inside if n.table_name and (picked or n.heard)]
     unmet = [n.name for n in inside if not n.table_name]
@@ -171,7 +146,9 @@ async def read(
     """The nodes of one file with their links, and the DM's pick for it: two reads, so with the
     clashes (`StoryWatch.open_for`) a press makes three."""
     async with memory._read(guild_id, campaign_id) as scope:
-        cur = await scope.conn.execute(NODES, (guild_id, campaign_id, document_id))
+        cur = await scope.conn.execute(
+            NODES.format(chapter_id=chapter_id_of("n")), (guild_id, campaign_id, document_id)
+        )
         rows = await cur.fetchall()
         pick = str(rows[0]["pick"]) if rows and rows[0]["pick"] else None
         cur = await scope.conn.execute(
@@ -182,11 +159,12 @@ async def read(
             Node(
                 r["id"],
                 r["kind"],
-                r["name"],
-                r["summary"],
+                " ".join(str(r["name"]).split()),
+                " ".join(str(r["summary"]).split()),
                 int(r["position"]),
                 int(r["created_at"]),
                 *table.get(r["id"], (None, False)),
+                r["chapter_id"],
             )
             for r in rows
         ]
@@ -240,6 +218,10 @@ async def clear(
 ) -> int | None:
     """Back to DMbot's guess. Returns the batch to undo (None when there was no pick)."""
     async with memory._write(guild_id, campaign_id, DM) as w:
+        await w.conn.execute(  # the same lock as `pick`, so the two never interleave
+            "SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))",
+            (f"dmbot.plan_position:{campaign_id}:{document_id}",),
+        )
         for row in await w.select(PLAN_POSITION, " AND document_id = %s", [document_id]):
             await w.delete(PLAN_POSITION, row["id"])
         return w.batch
@@ -251,5 +233,5 @@ def summary_of(node: Node) -> str:
 
 
 __all__ = [
-    "Guide", "Node", "build", "chapter_at", "clear", "guess", "pick", "read", "summary_of",
+    "Guide", "Node", "build", "clear", "guess", "pick", "read", "summary_of",
 ]  # fmt: skip

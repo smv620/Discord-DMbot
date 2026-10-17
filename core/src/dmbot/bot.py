@@ -2005,13 +2005,23 @@ class DMBot(commands.AutoShardedBot):
                 if note.quiet:  # 🧵 Threads: the DM's list, in play first (#1675)
                     view = view or discord.ui.View(timeout=None)
                     view.add_item(ThreadListButton(cid))
-                if campaign.story_mode == STORY_GUIDE:  # 🧭 What's next? (#1731); re-checked
+                if await self.guide_button_allowed(gid, campaign):  # 🧭 What's next? (#1731)
                     view = view or discord.ui.View(timeout=None)
                     view.add_item(GuideButton(cid))
                 await self.post(table.screen_channel_id, note.text, view=view)
                 log.info("Pre-session note: %d line(s)", len(note.lines))  # counts only
             except Exception:
                 log.exception("The pre-session note failed")
+
+    async def guide_button_allowed(self, guild_id: int, campaign: Campaign) -> bool:
+        """May the pre-session note carry 🧭 What's next? (#1731)? The same three checks a press
+        makes: the switch is on **Guide me**, a DM said here they have the right (a confirmation
+        from a backup is not one), and the owner's plan allows it (closed, like the reader)."""
+        return (
+            campaign.story_mode == STORY_GUIDE
+            and await self.campaigns.story_confirmed(guild_id, campaign.id)
+            and await self.plan_allows("adventure", guild_id, campaign, fail_open=False)
+        )
 
     async def _waiting_recaps(self, table: Table) -> None:
         """A session starts and a finished recap from before is still waiting for the DM (#1474):
