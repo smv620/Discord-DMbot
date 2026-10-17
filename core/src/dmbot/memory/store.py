@@ -355,7 +355,8 @@ class MemoryStore:
                     (changes.version, guild_id, campaign_id),
                 )
                 names_changed = bool(changes.tables & notify.LOOKUP_TABLES)
-                await notify.send(conn, campaign_id, changes.version, names_changed)
+                kinds_changed = bool(changes.tables & notify.KIND_TABLES)
+                await notify.send(conn, campaign_id, changes.version, names_changed, kinds_changed)
 
     @asynccontextmanager
     async def _read(

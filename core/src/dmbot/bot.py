@@ -145,6 +145,8 @@ from dmbot.dm_screen.npcs_channel import (
     setup_npcs_channel,
 )
 from dmbot.dm_screen.npcs_channel import SyncResult as NpcsSyncResult
+from dmbot.dm_screen.npcs_channel import forget_campaign as npcs_forget_campaign
+from dmbot.dm_screen.npcs_channel import prune_locks as npcs_prune_locks
 from dmbot.dm_screen.npcs_channel import sync_campaign as sync_npcs
 from dmbot.dm_screen.pause import PauseButton
 from dmbot.dm_screen.recap_panel import PlanFacts, RecapsButton, audio_how
@@ -154,6 +156,8 @@ from dmbot.dm_screen.rules_channel import (
     setup_rules_channel,
     sync_campaign,
 )
+from dmbot.dm_screen.rules_channel import forget_campaign as rules_forget_campaign
+from dmbot.dm_screen.rules_channel import prune_locks as rules_prune_locks
 from dmbot.dm_screen.settings import (
     HomebrewButton,
     HouseFileButton,
@@ -8476,8 +8480,8 @@ class DMBot(commands.AutoShardedBot):
                     failures = 0
                     async for raw in stream:
                         event = memory_notify.parse(raw)
-                        if event is not None and event.names_changed:
-                            # (only entries, names and facts show on the list)
+                        if event is not None and (event.names_changed or event.kinds_changed):
+                            # (entries, names, facts, and the labels of kinds show on the list)
                             self._npcs_changed(event.campaign_id)
             except asyncio.CancelledError:
                 raise
@@ -8492,12 +8496,20 @@ class DMBot(commands.AutoShardedBot):
         stale. A campaign whose channel was deleted by hand gets a new one at its next start."""
         if self.memory is None or self._npcs_messages is None:
             return
+        alive: set[str] = set()
+        complete = True  # every server's campaigns were listed: only then is anything pruned
         for guild in list(self.guilds):
             try:
                 found = await self.campaigns.list_campaigns(guild.id)
             except Exception:
                 log.exception("Couldn't list campaigns for the NPC lists")
+                complete = False
                 continue
+            alive.update(c.id for c in found)
+            for gone in [
+                c for c, g in self._npcs_guilds.items() if g == guild.id and c not in alive
+            ]:
+                self._forget_campaign(gone)
             for campaign in found:
                 if campaign.npcs_channel_id is None:
                     continue
@@ -8521,6 +8533,26 @@ class DMBot(commands.AutoShardedBot):
                 except Exception:
                     log.warning("Couldn't update an NPC list", exc_info=True)
                 await asyncio.sleep(RULES_ARCHIVE_PACE_S)
+        if complete:  # (a lock for a campaign that is gone, or one a pass holds, is left)
+            npcs_prune_locks(alive)
+            rules_prune_locks(alive)
+
+    def _forget_campaign(self, campaign_id: str) -> None:
+        """A campaign is gone: drop what the NPC list and the rules channel kept for it in
+        memory (#1792). A pass that is running is left to finish and clean up after itself."""
+        self._npcs_guilds.pop(campaign_id, None)
+        self._npcs_last.pop(campaign_id, None)
+        self._npcs_reorder.discard(campaign_id)
+        running = self._npcs_sync.get(campaign_id)
+        if running is None or running.done():
+            self._npcs_sync.pop(campaign_id, None)
+            self._npcs_dirty.discard(campaign_id)
+        for key in [k for k in self._rules_sync if k[1] == campaign_id]:
+            if self._rules_sync[key].done():
+                del self._rules_sync[key]
+                self._rules_dirty.discard(key)
+        npcs_forget_campaign(campaign_id)
+        rules_forget_campaign(campaign_id)
 
     async def _dmbchat_channel(
         self, guild: discord.Guild, campaign: Campaign, screen: object
@@ -8642,6 +8674,7 @@ class DMBot(commands.AutoShardedBot):
         """Retention (or the plan holder, `by_hand`, #1608) deleted this campaign: delete its DM
         screen and game-time channels and close its transcript and dmb-chat channels (#1598).
         Only the channels recorded on it."""
+        self._forget_campaign(campaign.id)
         me = self.user
         guild = self.get_guild(campaign.guild_id)
         if me is None:

@@ -85,6 +85,19 @@ def sync_lock(campaign_id: str) -> asyncio.Lock:
     return _SYNC_LOCKS.setdefault(campaign_id, asyncio.Lock())
 
 
+def forget_campaign(campaign_id: str) -> None:
+    """Drop a campaign's lock when the campaign is gone, unless a pass holds it right now."""
+    lock = _SYNC_LOCKS.get(campaign_id)
+    if lock is not None and not lock.locked():
+        del _SYNC_LOCKS[campaign_id]
+
+
+def prune_locks(alive: set[str]) -> None:
+    """Drop the locks of campaigns that no longer exist (the start-up sweep)."""
+    for campaign_id in [c for c in _SYNC_LOCKS if c not in alive]:
+        forget_campaign(campaign_id)
+
+
 class NpcsChannelError(Exception):
     """Why the NPC channel couldn't be set up, as a plain cause for the DM."""
 
