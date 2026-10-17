@@ -58,9 +58,10 @@ class Roles(unittest.TestCase):
                     button in panel.buttons_for(role), panel.may_press(role, button), (role, button)
                 )
 
-    def test_a_guest_gets_help_and_nothing_about_the_campaign(self) -> None:
-        self.assertEqual(panel.buttons_for(Role.GUEST), (Button.HELP,))
-        self.assertEqual(panel.buttons_for(Role.MEMBER), (Button.HELP, Button.MY_MENU))
+    def test_a_guest_gets_help_rules_and_transcripts_and_nothing_about_the_campaign(self) -> None:
+        everyone = (Button.HELP, Button.RULE, Button.TRANSCRIPTS)  # drawn first, in this order
+        self.assertEqual(panel.buttons_for(Role.GUEST), everyone)
+        self.assertEqual(panel.buttons_for(Role.MEMBER), (*everyone, Button.MY_MENU))
 
     def test_the_shared_message_holds_only_what_every_role_may_press(self) -> None:
         for button in panel.shared_panel():

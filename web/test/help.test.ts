@@ -9,7 +9,7 @@ import { beforeAll, describe, expect, it } from "vitest";
 
 import { parsePage } from "./dom";
 
-import { HOMEBREW_LINKS_LIVE, SECRET_CLUES_LIVE, accountSteps, dmSteps, homebrewLinkSteps, secretClueSteps, emailSteps, recapSteps, quickAnswers, quickAnswersHeading, gettingHelp, playerSteps } from "../src/content/help";
+import { STORY_THREADS_LIVE, storyThreadSteps, DM_BOT_CHANNEL_LIVE, dmBotChannelSteps, settingsOnDmScreenSteps, HOMEBREW_LINKS_LIVE, SECRET_CLUES_LIVE, accountSteps, dmSteps, homebrewLinkSteps, secretClueSteps, emailSteps, recapSteps, quickAnswers, quickAnswersHeading, gettingHelp, playerSteps } from "../src/content/help";
 import { held } from "../src/content/whats-new";
 import Help from "../src/pages/help.astro";
 
@@ -55,7 +55,7 @@ describe("Help", () => {
   });
 
   it("names only buttons and commands that are in the bot's code", () => {
-    for (const step of [...dmSteps, ...homebrewLinkSteps, ...secretClueSteps, ...recapSteps, ...quickAnswers, ...playerSteps, ...accountSteps, ...emailSteps]) {
+    for (const step of [...dmSteps, ...dmBotChannelSteps, ...settingsOnDmScreenSteps, ...storyThreadSteps, ...homebrewLinkSteps, ...secretClueSteps, ...recapSteps, ...quickAnswers, ...playerSteps, ...accountSteps, ...emailSteps]) {
       for (const { name, file } of step.names ?? []) {
         expect(step.text, `${name} is in its step`).toContain(name);
         const source = readFileSync(join(botDir, file), "utf8");
@@ -172,11 +172,50 @@ describe("Help: the website's read-only pages (#1588)", () => {
     expect(words).toContain("Use example.com");
   });
 
+  it("holds the DMbot channel steps with the held What's new entry, and flips them together (#1676)", () => {
+    expect(held.map((h) => h.title).includes("A DMbot channel for buttons")).toBe(!DM_BOT_CHANNEL_LIVE);
+    const shown = dmSteps.map((x) => x.text).join(" ");
+    expect(shown.includes("dmb-dm-bot")).toBe(DM_BOT_CHANNEL_LIVE);
+    expect(shown.includes("On your DM screen, press ⚙️ Settings")).toBe(!DM_BOT_CHANNEL_LIVE);
+    // Mirrors who gets which button in core/src/dmbot/dm_screen/dm_bot_panel.py (_BUTTONS).
+    const words = dmBotChannelSteps.map((x) => x.text).join(" ");
+    expect(words).toContain("👤 My buttons");
+    expect(words).toContain("Everyone also gets ❓ Help.");
+    expect(words).toContain("you get ⚙️ Menu, where you can stop being recorded.");
+    expect(words).toContain("Players also get 📜 My character sheet.");
+    expect(words).toContain("Game masters get ⚙️ Settings too.");
+    expect(words).toContain("/dmbot settings");
+    expect(words).toContain("Your DM screen is quieter now");
+    // Switch off: nothing shown points to the channel. Switch on: nothing shown says Settings is
+    // on the DM screen or the pinned card.
+    if (DM_BOT_CHANNEL_LIVE) {
+      expect(shown).not.toMatch(/(?:on|from) (?:your|the) DM screen, press ⚙️ Settings|⚙️ Settings[^.]*on (?:your|the) DM screen|pinned card/);
+    } else {
+      for (const phrase of ["dmb-dm-bot", "DMbot channel", "My buttons"]) expect(shown).not.toContain(phrase);
+    }
+  });
+
+  it("holds the story-thread steps with the held What's new entries, and flips them together (#1694)", () => {
+    const heldTitles = held.map((h) => h.title);
+    for (const title of ["Story threads you keep", "Keep track of promises made at the table"]) {
+      expect(heldTitles.includes(title), title).toBe(!STORY_THREADS_LIVE);
+    }
+    const shown = dmSteps.map((x) => x.text).join(" ");
+    expect(shown.includes("🧵 New thread")).toBe(STORY_THREADS_LIVE);
+    const words = storyThreadSteps.map((x) => x.text).join(" ");
+    for (const label of ["🧵 Change state", "👥 Who's involved", "📌 Link an event", "🧵 Check the threads", "🧵 Threads", "🤝 Add a promise", "🤝 Who promised", "🤝 Promised to", "📅 Due", "➡ Led to…"]) {
+      expect(words, label).toContain(label);
+    }
+    expect(words).toContain("DMbot only reminds you. You decide.");
+    expect(words).toContain("DMbot never sends your threads, promises or these links to players.");
+  });
+
   it("finds Settings, splits the party and deletes a campaign in plain words (#1659)", () => {
     const steps = dmSteps.map((x) => x.text);
     const find = steps.find((t) => t.includes("Can't find ⚙️ Settings?")) ?? "";
     expect(find).toContain("/dmbot settings");
-    expect(find).toContain("/dmbot start");
+    // The voice-channel clause belongs to the DM-screen wording; the DMbot channel replaces it (#1676).
+    if (!DM_BOT_CHANNEL_LIVE) expect(find).toContain("/dmbot start");
     const split = steps.find((t) => t.includes("✂️ Split the party")) ?? "";
     expect(split).toContain("two or three groups");
     expect(split).toContain("🤝 Rejoin the party");
