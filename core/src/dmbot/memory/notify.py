@@ -22,15 +22,24 @@ LOOKUP_TABLES = frozenset(
 )
 
 
+# The campaign's own kinds (a label such as "Guild" for "group"): the NPC list shows them (#1792).
+KIND_TABLES = frozenset({"memory_types"})
+
+
 @dataclass(frozen=True, slots=True)
 class MemoryChanged:
     campaign_id: str
     version: int
     names_changed: bool
+    kinds_changed: bool = False
 
 
-def payload(campaign_id: str, version: int, names_changed: bool) -> str:
-    return f"{campaign_id}:{version}:{int(names_changed)}"
+def payload(
+    campaign_id: str, version: int, names_changed: bool, kinds_changed: bool = False
+) -> str:
+    """The flag is a small number: 1 names changed, 2 kinds changed, 3 both. A sender that
+    doesn't know about kinds (an older one) sends 0 or 1, which still reads right."""
+    return f"{campaign_id}:{version}:{int(names_changed) + 2 * int(kinds_changed)}"
 
 
 def parse(raw: str) -> MemoryChanged | None:
@@ -40,14 +49,22 @@ def parse(raw: str) -> MemoryChanged | None:
         len(parts) != 3
         or not is_id(parts[0])
         or not (parts[1].isascii() and parts[1].isdigit())
-        or parts[2] not in ("0", "1")
+        or parts[2] not in ("0", "1", "2", "3")
     ):
         return None
-    return MemoryChanged(parts[0], int(parts[1]), parts[2] == "1")
+    flag = int(parts[2])
+    return MemoryChanged(parts[0], int(parts[1]), bool(flag & 1), bool(flag & 2))
 
 
-async def send(conn: Conn, campaign_id: str, version: int, names_changed: bool) -> None:
+async def send(
+    conn: Conn,
+    campaign_id: str,
+    version: int,
+    names_changed: bool,
+    kinds_changed: bool = False,
+) -> None:
     """Queue the notification; Postgres delivers it when the transaction commits."""
     await conn.execute(
-        "SELECT pg_notify(%s, %s)", (CHANNEL, payload(campaign_id, version, names_changed))
+        "SELECT pg_notify(%s, %s)",
+        (CHANNEL, payload(campaign_id, version, names_changed, kinds_changed)),
     )
