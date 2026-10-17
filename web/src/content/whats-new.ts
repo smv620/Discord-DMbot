@@ -295,7 +295,7 @@ export const held: Held[] = [
   {
     date: "2026-10-17",
     title: "Guide me: what's next in your adventure",
-    what: "With Guide me on, press What's next? and DMbot tells you privately which chapter your table is probably in, what else the book has there, and what comes next. Pick my chapter lets you say where you are. It only says what your book says, and never decides for you.",
+    what: "With Guide me on, press What's next? and DMbot tells you privately which chapter your table is probably in (a guess from names heard lately), what else the book has there, and the next chapter. Pick my chapter overrides the guess. It only repeats what your book says and never decides for you.",
     reason:
       "Merged (#1734); held until dev1 deploys 0126 and the owner's live check is recorded (#1731).",
   },

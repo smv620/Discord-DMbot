@@ -278,10 +278,13 @@ export const sharedStorySteps: Step[] = [
     ],
   },
   {
-    text: "With Guide me on, press 🧭 What's next? on the Shared story card, or on the note before a session. DMbot shows you privately which chapter your table is probably in, what else the book has in that chapter, and the book's next chapter, or says This is the book's last chapter. It guesses from the names you linked to your adventure that were heard in the last two sessions. Not right? Press Pick my chapter… and DMbot uses yours. Use DMbot's guess goes back, and ↩ Undo that undoes your pick. Only the DM can use it. It uses no AI and only says what your book says. It never decides what happens.",
+    text: "With Guide me on, press 🧭 What's next? on the Shared story card, or on the note before a session. If DMbot says it hasn't read your book, press Read it now first. DMbot shows you privately which chapter your table is probably in, what else the book has in that chapter, and the book's next chapter, or says This is the book's last chapter. It guesses from the people and places your table named in the last two sessions that you matched to your adventure. If none are matched yet, it says it has no guess. Not right? Use the Pick my chapter… menu under the answer, and DMbot uses yours. A long book has ◀ Earlier chapters and Later chapters ▶, and with several files DMbot asks which one first. Use DMbot's guess goes back, and ↩ Undo that undoes your pick. Only the DM can use it; everyone else is told so. It uses no AI and only says what your book says. It never decides what happens.",
     names: [
       { name: "What's next?", file: "ui/guide.py" },
+      { name: "Read it now", file: "dm_screen/adventure_card.py" },
       { name: "Pick my chapter…", file: "ui/guide.py" },
+      { name: "Earlier chapters", file: "ui/guide.py" },
+      { name: "Later chapters", file: "ui/guide.py" },
       { name: "Use DMbot's guess", file: "ui/guide.py" },
       { name: "Undo that", file: "ui/guide.py" },
       { name: "This is the book's last chapter.", file: "ui/guide.py" },
