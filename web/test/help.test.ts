@@ -9,8 +9,8 @@ import { beforeAll, describe, expect, it } from "vitest";
 
 import { parsePage } from "./dom";
 
+import { entries, held } from "../src/content/whats-new";
 import { SHARED_STORY_LIVE, sharedStorySteps, STANDING_LIVE, standingSteps, HOMEBREW_KINDS_LIVE, homebrewKindSteps, STORY_THREADS_LIVE, storyThreadSteps, DM_BOT_CHANNEL_LIVE, dmBotChannelSteps, settingsOnDmScreenSteps, HOMEBREW_LINKS_LIVE, SECRET_CLUES_LIVE, accountSteps, dmSteps, homebrewLinkSteps, secretClueSteps, emailSteps, recapSteps, quickAnswers, quickAnswersHeading, gettingHelp, playerSteps } from "../src/content/help";
-import { held } from "../src/content/whats-new";
 import Help from "../src/pages/help.astro";
 
 const botDir = fileURLToPath(new URL("../../core/src/dmbot/", import.meta.url));
@@ -160,8 +160,10 @@ describe("Help: the website's read-only pages (#1588)", () => {
       "Share imported homebrew in a pack",
       "See the sites you approved",
     ];
+    const liveTitles = entries.map((e) => e.title);
     for (const title of linkTitles) {
       expect(heldTitles.includes(title), title).toBe(!HOMEBREW_LINKS_LIVE);
+      expect(liveTitles.includes(title), title).toBe(HOMEBREW_LINKS_LIVE);
     }
     const shown = dmSteps.map((x) => x.text).join(" ");
     expect(shown.includes("🔗 Add from a link")).toBe(HOMEBREW_LINKS_LIVE);

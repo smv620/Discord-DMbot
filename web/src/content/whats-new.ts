@@ -19,6 +19,21 @@ export const whatsNewIntro =
 
 export const entries: Entry[] = [
   {
+    date: "2026-10-17",
+    title: "Add homebrew from a link",
+    what: "In Settings, then Homebrew, press Add from a link and paste the address of a published homebrew page. DMbot shows you what it read and saves it only when you press Save; the first time for a site, you say you have the right to use it.",
+  },
+  {
+    date: "2026-10-17",
+    title: "Share imported homebrew in a pack",
+    what: "A pack can now include homebrew you added from a link. It travels as a pointer to the page, not a copy, and a table that follows the pack says once, for each site, that it has the right to use it before those entries are used.",
+  },
+  {
+    date: "2026-10-17",
+    title: "See the sites you approved",
+    what: "In Settings, then Homebrew, press Approved sites to see each site you said you may use, who said yes and when. You can take one back, and nothing is deleted.",
+  },
+  {
     date: "2026-10-16",
     title: "Homebrew for your campaign",
     what: "Open Settings, then Homebrew, to keep your own spells, monsters and items, and turn an entry on or off for your table. On a paid plan you can also share a pack with other tables and follow theirs (Settings, Shared rules).",
@@ -153,27 +168,6 @@ export const held: Held[] = [
       "Merged (#1600, #1603); held until the owner's live check is recorded in docs/testing-history.log.",
   },
   {
-    date: "2026-10-17",
-    title: "See the sites you approved",
-    what: "In Settings, then Homebrew, press Approved sites to see each site you said you may use, who said yes and when. You can take one back, and nothing is deleted.",
-    reason:
-      "Goes with adding homebrew from a link, which waits for dev1's try on a real page (#1634, #1652).",
-  },
-  {
-    date: "2026-10-16",
-    title: "Share imported homebrew in a pack",
-    what: "A pack can now include homebrew you added from a link. It travels as a pointer to the page, not a copy, and a table that follows the pack says once, for each site, that it has the right to use it before those entries are used.",
-    reason:
-      "Goes with adding homebrew from a link, which waits for dev1's try on a real page (#1634, #1635).",
-  },
-  {
-    date: "2026-10-16",
-    title: "Add homebrew from a link",
-    what: "In Settings, then Homebrew, press Add from a link and paste the address of a published homebrew page. DMbot reads that one page, shows it to you, and saves it only when you press Save. The first time for a site, you say you have the right to use it; after that it asks nothing. You can also say who made a file you load. Approved sites, in the same place, shows each site you said yes to and lets you take one back.",
-    reason:
-      "Held until dev1 has tried one real published page from the server: the site may block server traffic (#1634).",
-  },
-  {
     date: "2026-10-16",
     title: "Fix a line",
     what: "If DMbot wrote one of your lines down wrong, type /dmbot fix, or press Fix one of my lines after a session, then pick the line and type what it should say. Your DM says yes or no on the DM screen, and nothing changes unless they say yes. DMs can fix any line themselves: type /dmbot fix or press Fix a line on the DM screen. It changes right away, and you can Undo it while the session runs.",
@@ -287,9 +281,9 @@ export const held: Held[] = [
   {
     date: "2026-10-17",
     title: "A Shared story switch",
-    what: "In Settings, press Shared story to choose Off, Watch the story or Guide me. The first time you turn it on, DMbot reminds you to only give it material you have the right to use, and keeps a note that you said so. Then you can give DMbot your adventure as a PDF, Word or text file; it keeps the text, not the file, for that campaign only, and not in its backup, so after a restore you give the file again. Remove it any time and DMbot forgets it. For now nothing reads it: that comes next.",
+    what: "In Settings, press Shared story to choose Off, Watch the story or Guide me. The first time you turn it on, DMbot reminds you to only give it material you have the right to use, and keeps a note that you said so. Then you can give DMbot your adventure as a PDF, Word or text file; it keeps the text, not the file, for that campaign only, and not in its backup, so after a restore you give the file again. Press Read it now and DMbot's AI reads the file once and lists its chapters, places and people; that list is not in the backup either, and players never see it. Remove a file any time and DMbot forgets it and what it read. For now nothing uses the list: that comes next.",
     reason:
-      "Held until DMbot can read an adventure (#1692): a switch that does nothing yet is not news.",
+      "Held until DMbot uses what it read (#1692, #1714): a switch whose list nothing uses yet is not news.",
   },
   {
     date: "2026-10-17",

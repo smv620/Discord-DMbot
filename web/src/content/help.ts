@@ -24,11 +24,11 @@ export const helpIntro =
 
 const consent = `I'm ${minimumAge} or older, record me`;
 
-// Adding homebrew from a link (#1634, #1635, #1645) waits for dev1 to try one real published page
-// from the server, so its Help steps are held with the What's new entries "Add homebrew from a
-// link" and "Share imported homebrew in a pack" (whats-new.ts, `held`). When those move to
-// `entries`, set this to true in the same change; a test keeps the two in step.
-export const HOMEBREW_LINKS_LIVE = false;
+// Adding homebrew from a link (#1634, #1635, #1645, #1652) went live on 2026-10-17, after the
+// owner tried it (#1664). Its Help steps go with the What's new entries "Add homebrew from a link",
+// "Share imported homebrew in a pack" and "See the sites you approved" (whats-new.ts); a test
+// keeps the switch and those entries in step.
+export const HOMEBREW_LINKS_LIVE = true;
 
 export const homebrewLinkSteps: Step[] = [
   {

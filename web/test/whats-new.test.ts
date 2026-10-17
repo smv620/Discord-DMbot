@@ -65,9 +65,6 @@ describe("What's new", () => {
       "Split the party", // until the owner's live check (#1607)
       "Delete a whole campaign", // until the owner's live check (#1608)
       "Add or remove game masters", // until the owner's live check (#1600)
-      "See the sites you approved", // with the link import (#1652)
-      "Share imported homebrew in a pack", // until the link import is tried (#1635)
-      "Add homebrew from a link", // until dev1 has tried one real published page (#1634)
       "Fix a line", // until it has been seen working on the test server (#1491, #1499)
       "Recaps for your table", // until dev1 has checked a real recap (#1382, #1384)
       "Narrated recaps with music", // until narration is on (RECAP_AUDIO_LIVE, #1385)
@@ -84,7 +81,7 @@ describe("What's new", () => {
       "Species, subclasses and backgrounds in homebrew", // until seen on the test server (#1663)
       "Keep track of promises made at the table", // until seen on the test server (#1674)
       "A DMbot channel for buttons", // until seen on the test server (#1666)
-      "A Shared story switch", // until the adventure reader exists (#1692)
+      "A Shared story switch", // until the story plan is used (#1692, #1714)
       "Homebrew menu by kind", // until seen on the test server (#1665)
       "Manage your plan without Discord", // until the billing login link is set in the build (#1711)
     ]);

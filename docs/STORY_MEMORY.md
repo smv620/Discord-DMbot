@@ -745,6 +745,32 @@ Each step is useful on its own and ships behind the existing phases.
    DMbot this file again to use it", and giving the same file fills it in (the fingerprint
    matches). A restore adds no confirmation (#1692), so a restored campaign gets no button until
    a DM turns the switch on again and says they have the right. A 300-page test PDF reads in about 2 seconds and stores in under 1.
+   **Phase 5d slice 3 is built (#1714): the story-plan reader.** On the same card **📖 Read it now**
+   (after one yes, naming the file) has the AI read a file **once**, never by itself, and keep what the
+   book expects as the **story plan**, a layer of its own that is never table facts and never shown
+   to players: chapters, places and people (`plan_nodes`, each with the chunks it came from and a
+   quote of at most 200 characters) and "depends on" links between two of them (`plan_links`, with
+   what is needed, "alive", and its own quote). Migration 0123. The card shows "reading… 40%" with
+   **🔄 Refresh**, and when done "read: 3 chapters, 41 places, 57 people, 12 depends-on links"; **📋
+   See what was read** scrolls the list. **The text goes to the AI as quoted data** (brackets
+   neutralised so nothing can close the quote) with the names found so far, and the answer is read as
+   data: an entry stays only if its quote (at least 12 characters) really is in the text it cites,
+   every word of its name is in the text (the plan never makes up what the book says), and nothing in it
+   reads like an instruction to DMbot; the rest are dropped and counted. A name seen again keeps its first entry; a link to a name nobody found is let go. **The
+   switch and a non-restored confirmation are checked before every batch and again before its answer
+   is stored**, and so is the owner's plan. **Money** (docs/costs.md): the CAREFUL tier, about $0.70 for
+   300 pages, at most **$3 a file and $10 a campaign a month**; before each call the reader works out the
+   most it could cost and stops, saying so, when that would cross a cap. What each call cost goes to a
+   ledger, first as a reservation of the call's worst case (made while the campaign row is locked, so two
+   reads can't spend the same money) and then settled to the real cost; a failed call keeps its input cost,
+   and the ledger is kept by the file's fingerprint when the file is removed, so removing and re-adding
+   can't get round the caps. An answer cut short is read again in halves; a failed call is tried again
+   after a wait, at most three times in a row and six in a read.
+   **A stopped or restarted read carries on** from the first batch not stored (the batches before it
+   are kept), when the DM presses Read it now again; a read the bot's restart cut shows as "stopped".
+   **Not in backups, like the text:** the plan is deleted with its file and with the campaign, and
+   after a restore it is rebuilt by giving the file again and reading again. No divergence, no
+   suggestions and no `same_as` yet: those are the next slices.
 5. **Throughout:** the ontology steward and graph curator take over the after-session
    cleanup; their health numbers (duplicates, orphans, unused terms, flags per session,
    how often the DM is asked, warnings ignored) go to the server logs, never to players.

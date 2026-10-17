@@ -5,9 +5,12 @@ and the card lists what it holds with a 🗑 Remove on each (one confirmation).
 Only when the Shared story switch is on and a DM said here that they have the right to use the
 material (#1692, CLAUDE.md IP rule): the button is not drawn otherwise, and every press checks it
 again, so an old card can't be used after the switch went off. Only the campaign's DMs, checked
-on every press. Nothing reads the text yet and no AI is called: the file is read by the same
-process-with-a-time-limit the names screen uses (`memory.document_reader`), and nothing but its
-words is kept.
+on every press. The file is read by the same process-with-a-time-limit the names screen uses
+(`memory.document_reader`), and nothing but its words is kept.
+
+**📖 Read it now** (#1714) is the one place the AI reads the text: once per file, only when a DM
+presses it and says yes, into the story plan (`memory.story_plan`). The card shows how far a read
+is, **🔄 Refresh** updates it, and **📋 See what was read** scrolls through what was found.
 """
 
 from __future__ import annotations
@@ -35,6 +38,7 @@ from dmbot.memory.adventure import (
 )
 from dmbot.memory.document_reader import READING, read_document
 from dmbot.memory.name_documents import DocumentError, kind_of_file
+from dmbot.memory.story_plan import Counts, Listed, ReadState
 
 log = logging.getLogger(__name__)
 
@@ -43,9 +47,12 @@ _DOC = r"(?P<doc>[0-9a-f]{32})"
 NO_MENTIONS = discord.AllowedMentions.none()
 INTRO = "📖 **Your adventure**"
 NOTE = (
-    "Nothing reads this yet, so it changes no alerts. DMbot keeps the text of your files, not the "
-    "files, for this campaign only. It is NOT in this campaign's backup, so after a restore you "
-    "give the files again. Remove one and DMbot forgets it."
+    "DMbot keeps the text of your files, not the files, for this campaign only.\n"
+    "Press **Read it now** and DMbot's AI reads a file once and lists its chapters, places and "
+    "people. The list isn't used for anything yet, so your alerts don't change, and players "
+    "never see it.\n"
+    "None of this is in the campaign's backup: if you restore a backup, give the files again.\n"
+    "Remove a file and DMbot forgets it and what it read."
 )
 EMPTY = "Nothing yet. Press Give a file to add one."
 NOT_ON = (
@@ -71,17 +78,98 @@ def _pages(characters: int) -> str:
 NAME_SHOWN = 30  # characters of a file name on the card: twenty lines must fit one message
 FULL_LINES = 8  # up to this many documents get who and when; more get the short line
 
+READ_LABEL = "Read it now"
+REFRESH_LABEL = "Refresh"
+SEE_LABEL = "See what was read"
+PAGE_ENTRIES = 6  # lines of the list on one page
+NEEDS_REPLY = (
+    "DMbot's AI isn't set up here, so it can't read your adventure. Ask whoever runs DMbot to "
+    "set it up."
+)
+BUSY = "DMbot is already reading that file. Press Refresh to see how far it is."
+NOTHING_TO_READ = (
+    'Every file DMbot can read has been read. A file that says "give it again" needs its '
+    "file given again first."
+)
+NOTHING_READ = "Nothing was read yet. Press Read it now first."
 
-def card_text(documents: list[Document]) -> str:
+
+def _plural(n: int, one: str, many: str) -> str:
+    return f"{n} {one if n == 1 else many}"
+
+
+def found_line(counts: Counts) -> str:
+    return ", ".join(
+        (
+            _plural(counts.chapters, "chapter", "chapters"),
+            _plural(counts.places, "place", "places"),
+            _plural(counts.people, "person", "people"),
+            _plural(counts.links, '"this needs that" note', '"this needs that" notes'),
+        )
+    )
+
+
+STOPPED_WORDS = {
+    "file_cap": (
+        "This file is longer than DMbot can read in full. What it read is under See what was read."
+    ),
+    "month_cap": "DMbot has used up its reading for this month. It can carry on next month.",
+    "unreachable": "DMbot's AI could not be reached. Press Read it now to try again.",
+    "funds": "DMbot can't read right now. Try again later.",
+    "time": "It took too long. Press Read it now to try again.",
+    "off": "Shared story was turned off. Turn it on again, then press Read it now.",
+    "plan": "This campaign's plan doesn't include reading adventures.",
+    "error": "Something went wrong. Press Read it now to try again.",
+}
+CARRY_ON = "Press Read it now to carry on."
+
+
+def read_line(
+    state: ReadState | None, counts: Counts | None, running: bool, *, short: bool = False
+) -> str:
+    """Where a file's reading stands, in plain words ("" when it has not been read). A stopped
+    read says what to do next, which depends on why it stopped."""
+    if state is None:
+        return "" if short else "not read yet"
+    if state.status == "done":
+        found = found_line(counts or Counts())
+        skipped = (
+            f", {_plural(state.skipped_parts, 'part', 'parts')} couldn't be read"
+            if state.skipped_parts
+            else ""
+        )
+        return "read" if short else f"read: {found}{skipped}"
+    if running:
+        return f"reading {state.percent}%" if short else f"reading… {state.percent}%"
+    stopped = f"stopped at {state.percent}%"
+    if short:
+        return stopped
+    if state.status == "reading":  # nothing is running: DMbot restarted
+        return f"{stopped} because DMbot restarted. {CARRY_ON}"
+    return f"{stopped}. {STOPPED_WORDS.get(state.stop_reason, CARRY_ON)}"
+
+
+def card_text(
+    documents: list[Document],
+    states: dict[str, ReadState] | None = None,
+    counts: dict[str, Counts] | None = None,
+    running: frozenset[str] = frozenset(),
+) -> str:
+    states, counts = states or {}, counts or {}
     lines = [INTRO, NOTE]
     if not documents:
         lines.append(EMPTY)
     for n, d in enumerate(documents, 1):
         name = discord.utils.escape_markdown(d.file_name[:NAME_SHOWN])
         size = f"about {pages_of(d.characters)} {_pages(d.characters)}"
+        short = len(documents) > FULL_LINES
         if not d.has_text:
-            size += ", give DMbot this file again to use it"
-        if len(documents) <= FULL_LINES:
+            size += ", give DMbot this file again to use it" if not short else ", give it again"
+        else:
+            status = read_line(states.get(d.id), counts.get(d.id), d.id in running, short=short)
+            if status:
+                size += f", {status}"
+        if not short:
             lines.append(
                 f"{n}. **{name}** ({size}), added by <@{d.added_by}> on <t:{d.added_at}:d>"
             )
@@ -94,12 +182,47 @@ def card_text(documents: list[Document]) -> str:
     return "\n".join(lines)
 
 
-def card_view(campaign: Campaign, documents: list[Document]) -> discord.ui.View:
+def next_to_read(
+    documents: list[Document], states: dict[str, ReadState], running: frozenset[str]
+) -> Document | None:
+    """The first file (in the card's order) that has its text and is not read or being read."""
+    for d in documents:
+        state = states.get(d.id)
+        stuck = state is not None and state.stop_reason == "file_cap"  # it can't go further
+        if (
+            d.has_text
+            and d.id not in running
+            and not stuck
+            and (state is None or state.status != "done")
+        ):
+            return d
+    return None
+
+
+def card_view(
+    campaign: Campaign,
+    documents: list[Document],
+    states: dict[str, ReadState] | None = None,
+    *,
+    can_read: bool = False,
+    running: frozenset[str] = frozenset(),
+    has_plan: bool = False,
+) -> discord.ui.View:
+    """Remove on each file (rows 0 to 3, up to twenty), and the other buttons on the last row:
+    Give a file, Read it now (only when the AI is set up and a file waits), Refresh (while a read
+    is going or stopped) and See what was read (once something was read)."""
+    states = states or {}
     view = discord.ui.View(timeout=None)
     for n, d in enumerate(documents[:DOCUMENTS_MAX], 1):
         view.add_item(RemoveButton(campaign.id, d.id, n))
     if len(documents) < DOCUMENTS_MAX:
         view.add_item(AddButton(campaign.id, row=4))
+    if can_read and next_to_read(documents, states, running) is not None:
+        view.add_item(ReadButton(campaign.id, row=4))
+    if running or any(s.status != "done" for s in states.values()):
+        view.add_item(RefreshButton(campaign.id, row=4))
+    if has_plan:
+        view.add_item(SeeButton(campaign.id, 0, row=4))
     return view
 
 
@@ -128,11 +251,41 @@ def _store(interaction: discord.Interaction) -> Any:
     return getattr(interaction.client, "adventure", None)
 
 
+def _plan(interaction: discord.Interaction) -> Any:
+    return getattr(interaction.client, "plan", None)
+
+
+def _running(interaction: discord.Interaction, guild_id: int) -> frozenset[str]:
+    reads = getattr(interaction.client, "plan_reads", None) or {}
+    return frozenset(doc for guild, doc in reads if guild == guild_id)
+
+
 async def _card(
     interaction: discord.Interaction, campaign: Campaign
 ) -> tuple[str, discord.ui.View]:
     docs = await _store(interaction).documents(campaign.guild_id, campaign.id)
-    return card_text(docs), card_view(campaign, docs)
+    plan = _plan(interaction)
+    states: dict[str, ReadState] = {}
+    counts: dict[str, Counts] = {}
+    if plan is not None:
+        try:
+            states = await plan.states(campaign.guild_id, campaign.id)
+            counts = await plan.counts(campaign.guild_id, campaign.id)
+        except Exception:
+            log.exception("Couldn't read the story plan's state")  # the card still shows the files
+    running = _running(interaction, campaign.guild_id)
+    can_read = plan is not None and getattr(interaction.client, "plan_ai", None) is not None
+    return (
+        card_text(docs, states, counts, running),
+        card_view(
+            campaign,
+            docs,
+            states,
+            can_read=can_read,
+            running=running,
+            has_plan=any(c.chapters + c.places + c.people for c in counts.values()),
+        ),
+    )
 
 
 class AdventureButton(
@@ -308,9 +461,9 @@ class RemoveButton(
         docs = await _store(interaction).documents(campaign.guild_id, campaign.id)
         doc = next((d for d in docs if d.id == self.document_id), None)
         if doc is None:
+            text, card = await _card(interaction, campaign)
             await interaction.response.edit_message(
-                content=f"Already removed.\n\n{card_text(docs)}",
-                view=card_view(campaign, docs),
+                content=f"Already removed.\n\n{text}", view=card
             )
             return
         view = discord.ui.View(timeout=None)
@@ -395,10 +548,286 @@ class RemoveNoButton(
         await interaction.response.edit_message(content=text, view=view)
 
 
+class ReadButton(
+    discord.ui.DynamicItem[discord.ui.Button[discord.ui.View]],
+    template=rf"dmbot:advread:{_ID}",
+):
+    """📖 Read it now: asks once, naming the file, then the AI reads it (once, ever)."""
+
+    def __init__(self, campaign_id: str, *, row: int | None = None) -> None:
+        super().__init__(
+            discord.ui.Button(
+                label=READ_LABEL,
+                emoji="📖",
+                style=discord.ButtonStyle.primary,
+                row=row,
+                custom_id=f"dmbot:advread:{campaign_id}",
+            )
+        )
+        self.campaign_id = campaign_id
+
+    @classmethod
+    async def from_custom_id(
+        cls, interaction: discord.Interaction, item: discord.ui.Item[Any], match: re.Match[str]
+    ) -> ReadButton:
+        return cls(match["campaign"])
+
+    async def callback(self, interaction: discord.Interaction) -> Any:
+        set_log_context(guild_id=interaction.guild_id)
+        campaign = await _allowed(interaction, self.campaign_id)
+        if campaign is None:
+            return
+        plan, bot = _plan(interaction), cast(Any, interaction.client)
+        if plan is None or getattr(bot, "plan_ai", None) is None:
+            await interaction.response.send_message(NEEDS_REPLY, ephemeral=True)
+            return
+        refusal = await bot.plan_gate("adventure", campaign.guild_id, campaign, interaction.user.id)
+        if refusal:
+            await interaction.response.send_message(refusal, ephemeral=True)
+            return
+        docs = await _store(interaction).documents(campaign.guild_id, campaign.id)
+        states = await plan.states(campaign.guild_id, campaign.id)
+        running = _running(interaction, campaign.guild_id)
+        doc = next_to_read(docs, states, running)
+        if doc is None:
+            await interaction.response.send_message(
+                BUSY if running else NOTHING_TO_READ, ephemeral=True
+            )
+            return
+        name = discord.utils.escape_markdown(doc.file_name[:NAME_SHOWN])
+        others = any(
+            d.id != doc.id
+            and d.has_text
+            and (states.get(d.id) is None or states[d.id].status != "done")
+            for d in docs
+        )
+        view = discord.ui.View(timeout=None)
+        view.add_item(ReadYesButton(campaign.id, doc.id))
+        view.add_item(ReadNoButton(campaign.id))
+        await interaction.response.edit_message(
+            content=(
+                f"Read **{name}** now? DMbot sends its text to its AI, once, and lists the "
+                "chapters, places and people. It can take a few minutes, longer for a big book. "
+                "You can keep playing. It stops by itself at DMbot's reading limit.\n"
+                "Nothing pops up when it's done: press **Refresh** to see how far it is."
+                + (
+                    "\nOther files wait; press Read it now again afterwards for the next one."
+                    if others
+                    else ""
+                )
+            ),
+            view=view,
+        )
+
+
+class ReadYesButton(
+    discord.ui.DynamicItem[discord.ui.Button[discord.ui.View]],
+    template=rf"dmbot:advreadyes:{_ID}:{_DOC}",
+):
+    def __init__(self, campaign_id: str, document_id: str) -> None:
+        super().__init__(
+            discord.ui.Button(
+                label="Yes, read it",
+                style=discord.ButtonStyle.success,
+                custom_id=f"dmbot:advreadyes:{campaign_id}:{document_id}",
+            )
+        )
+        self.campaign_id, self.document_id = campaign_id, document_id
+
+    @classmethod
+    async def from_custom_id(
+        cls, interaction: discord.Interaction, item: discord.ui.Item[Any], match: re.Match[str]
+    ) -> ReadYesButton:
+        return cls(match["campaign"], match["doc"])
+
+    async def callback(self, interaction: discord.Interaction) -> Any:
+        set_log_context(guild_id=interaction.guild_id)
+        campaign = await _allowed(interaction, self.campaign_id)  # (checked again, now)
+        if campaign is None:
+            return
+        plan, bot = _plan(interaction), cast(Any, interaction.client)
+        if plan is None or getattr(bot, "plan_ai", None) is None:
+            await interaction.response.send_message(NEEDS_REPLY, ephemeral=True)
+            return
+        refusal = await bot.plan_gate("adventure", campaign.guild_id, campaign, interaction.user.id)
+        if refusal:
+            await interaction.response.send_message(refusal, ephemeral=True)
+            return
+        if (campaign.guild_id, self.document_id) in getattr(bot, "plan_reads", {}):
+            await interaction.response.send_message(BUSY, ephemeral=True)
+            return
+        note = (
+            "Reading started. Nothing pops up when it's done: press Refresh to see how far it is."
+        )
+        await interaction.response.defer()  # the checks below may take longer than Discord waits
+        try:
+            state = await plan.begin(
+                campaign.guild_id, campaign.id, interaction.user.id, self.document_id
+            )
+            bot.start_plan_read(campaign.guild_id, campaign.id, self.document_id, state.next_chunk)
+        except AdventureError as exc:
+            note = str(exc)
+        except Exception:
+            log.exception("Couldn't start reading an adventure")
+            note = COULDNT
+        text, view = await _card(interaction, campaign)
+        await interaction.edit_original_response(content=f"{note}\n\n{text}", view=view)
+
+
+class ReadNoButton(
+    discord.ui.DynamicItem[discord.ui.Button[discord.ui.View]],
+    template=rf"dmbot:advreadno:{_ID}",
+):
+    def __init__(self, campaign_id: str) -> None:
+        super().__init__(
+            discord.ui.Button(
+                label="Not now",
+                style=discord.ButtonStyle.secondary,
+                custom_id=f"dmbot:advreadno:{campaign_id}",
+            )
+        )
+        self.campaign_id = campaign_id
+
+    @classmethod
+    async def from_custom_id(
+        cls, interaction: discord.Interaction, item: discord.ui.Item[Any], match: re.Match[str]
+    ) -> ReadNoButton:
+        return cls(match["campaign"])
+
+    async def callback(self, interaction: discord.Interaction) -> Any:
+        set_log_context(guild_id=interaction.guild_id)
+        campaign = await _dm_campaign(interaction, self.campaign_id)
+        if campaign is None:
+            return
+        text, view = await _card(interaction, campaign)
+        await interaction.response.edit_message(content=text, view=view)
+
+
+class RefreshButton(
+    discord.ui.DynamicItem[discord.ui.Button[discord.ui.View]],
+    template=rf"dmbot:advrefresh:{_ID}",
+):
+    """🔄 Refresh: the card again, with how far each read has got."""
+
+    def __init__(self, campaign_id: str, *, row: int | None = None) -> None:
+        super().__init__(
+            discord.ui.Button(
+                label=REFRESH_LABEL,
+                emoji="🔄",
+                style=discord.ButtonStyle.secondary,
+                row=row,
+                custom_id=f"dmbot:advrefresh:{campaign_id}",
+            )
+        )
+        self.campaign_id = campaign_id
+
+    @classmethod
+    async def from_custom_id(
+        cls, interaction: discord.Interaction, item: discord.ui.Item[Any], match: re.Match[str]
+    ) -> RefreshButton:
+        return cls(match["campaign"])
+
+    async def callback(self, interaction: discord.Interaction) -> Any:
+        set_log_context(guild_id=interaction.guild_id)
+        campaign = await _allowed(interaction, self.campaign_id)
+        if campaign is None:
+            return
+        text, view = await _card(interaction, campaign)
+        await interaction.response.edit_message(content=text, view=view)
+
+
+ICONS = {"chapter": "📖", "place": "📍", "person": "🧑", "link": "🔗"}
+LINE_SUMMARY = 110  # characters of a line's summary on the list
+LINE_QUOTE = 90
+PAGE_CHARS = 1990  # a message holds 2000
+
+
+def listing_text(items: list[Listed], offset: int, total: int) -> str:
+    """One page of what was read. Everything in it came from the DM's own file, so it is data:
+    shown with no mentions and no links of its own."""
+    lines = [
+        f"📋 **What DMbot read** ({offset + 1} to {offset + len(items)} of {total}). "
+        "Everything here comes from your file. It is only a list: it changes nothing and players "
+        "never see it."
+    ]
+    for item in items:
+        title = discord.utils.escape_markdown(item.title[:120])
+        what = discord.utils.escape_markdown(item.summary[:LINE_SUMMARY])
+        if item.kind == "link":
+            what = f"this needs that ({what})" if what else "this needs that"
+        head = f"{ICONS.get(item.kind, '•')} **{title}**" + (f": {what}" if what else "")
+        quote = discord.utils.escape_markdown(item.quote[:LINE_QUOTE])
+        lines.append(f"{head}\n> “{quote}”" if quote else head)
+    # Escaping can double a line, and the book's own words fill it: the page is cut to what a
+    # message holds, and a web address in it is broken so it is not a link.
+    return "\n".join(lines).replace("://", ":\u200b//")[:PAGE_CHARS]
+
+
+class SeeButton(
+    discord.ui.DynamicItem[discord.ui.Button[discord.ui.View]],
+    template=rf"dmbot:advsee:{_ID}:(?P<offset>[0-9]{{1,6}})",
+):
+    """📋 See what was read (at offset 0), and the Back and More buttons of its pages."""
+
+    def __init__(
+        self, campaign_id: str, offset: int, *, row: int | None = None, label: str = SEE_LABEL
+    ) -> None:
+        super().__init__(
+            discord.ui.Button(
+                label=label,
+                emoji="📋" if offset == 0 and label == SEE_LABEL else None,
+                style=discord.ButtonStyle.secondary,
+                row=row,
+                custom_id=f"dmbot:advsee:{campaign_id}:{offset}",
+            )
+        )
+        self.campaign_id, self.offset = campaign_id, offset
+
+    @classmethod
+    async def from_custom_id(
+        cls, interaction: discord.Interaction, item: discord.ui.Item[Any], match: re.Match[str]
+    ) -> SeeButton:
+        return cls(match["campaign"], int(match["offset"]))
+
+    async def callback(self, interaction: discord.Interaction) -> Any:
+        set_log_context(guild_id=interaction.guild_id)
+        campaign = await _allowed(interaction, self.campaign_id)
+        if campaign is None:
+            return
+        plan = _plan(interaction)
+        if plan is None:
+            await interaction.response.send_message(COULDNT, ephemeral=True)
+            return
+        items, total = await plan.listing(campaign.guild_id, campaign.id, self.offset, PAGE_ENTRIES)
+        if not items:
+            text, view = await _card(interaction, campaign)
+            await interaction.response.edit_message(content=f"{NOTHING_READ}\n\n{text}", view=view)
+            return
+        view = discord.ui.View(timeout=None)
+        if self.offset > 0:
+            view.add_item(
+                SeeButton(campaign.id, max(0, self.offset - PAGE_ENTRIES), label="◀ Back")
+            )
+        if self.offset + len(items) < total:
+            view.add_item(SeeButton(campaign.id, self.offset + PAGE_ENTRIES, label="More ▶"))
+        view.add_item(ReadNoButton(campaign.id))  # "Not now" goes back to the card
+        await interaction.response.edit_message(
+            content=listing_text(items, self.offset, total),
+            view=view,
+            allowed_mentions=NO_MENTIONS,
+            suppress_embeds=True,
+        )
+
+
 ADVENTURE_BUTTONS = (
     AdventureButton,
     AddButton,
     RemoveButton,
     RemoveYesButton,
     RemoveNoButton,
+    ReadButton,
+    ReadYesButton,
+    ReadNoButton,
+    RefreshButton,
+    SeeButton,
 )

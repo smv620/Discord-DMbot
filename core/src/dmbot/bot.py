@@ -104,9 +104,14 @@ from dmbot.dm_screen.adventure_card import AddButton as AdventureAddButton
 from dmbot.dm_screen.adventure_card import (
     AdventureButton,
 )
+from dmbot.dm_screen.adventure_card import ReadButton as ReadAdventureButton
+from dmbot.dm_screen.adventure_card import ReadNoButton as ReadAdventureNoButton
+from dmbot.dm_screen.adventure_card import ReadYesButton as ReadAdventureYesButton
+from dmbot.dm_screen.adventure_card import RefreshButton as RefreshAdventureButton
 from dmbot.dm_screen.adventure_card import RemoveButton as RemoveAdventureButton
 from dmbot.dm_screen.adventure_card import RemoveNoButton as RemoveAdventureNoButton
 from dmbot.dm_screen.adventure_card import RemoveYesButton as RemoveAdventureYesButton
+from dmbot.dm_screen.adventure_card import SeeButton as SeeAdventureButton
 from dmbot.dm_screen.channel import update_help_card
 from dmbot.dm_screen.dm_bot_channel import DmBotChannelError, setup_dm_bot_channel
 from dmbot.dm_screen.dmbchat_channel import DmbchatChannelError, setup_dmbchat_channel
@@ -180,7 +185,7 @@ from dmbot.entitlements import RECAP_AUDIO_PLANS
 from dmbot.fightbot import FightState
 from dmbot.logs import log_context, set_log_context
 from dmbot.mail import Mailer
-from dmbot.memory import definitions, document_reader, extractor
+from dmbot.memory import definitions, document_reader, extractor, plan_reader
 from dmbot.memory import health as memory_health
 from dmbot.memory.adventure import AdventureSection, AdventureStore
 from dmbot.memory.backup import MemorySection
@@ -201,6 +206,7 @@ from dmbot.memory.sheet_refresh import refresh as refresh_sheets
 from dmbot.memory.sheet_store import CharacterSheet, SheetStore
 from dmbot.memory.sheet_watch import SheetWatch
 from dmbot.memory.store import MemoryStore
+from dmbot.memory.story_plan import PlanStore
 from dmbot.memory.table_names import NameThenAnswer
 from dmbot.recaps import allowance as recap_allowance
 from dmbot.recaps import post as recap_post
@@ -388,6 +394,7 @@ METER_FINAL_TRIES = 3  # at a stop: the last minutes are written nowhere else
 METER_FINAL_RETRY_S = 2
 RECALL_WAIT_S = 0.5  # and this long for the confirmed facts around them (#1370): optional context
 NAMES_WAIT_S = 1.0  # the sidebar waits this long for a campaign's names, then answers without
+PLAN_READS_AT_ONCE = 2  # adventures read at the same time, bot-wide: the AI and the bill are shared
 GATE_TIMEOUT_S = 2  # a button press must be answered within Discord's 3 s: fail open sooner
 CHAT_BLOCKED_TTL_S = 60  # how long the list of channels never read as chat is kept (#1118)
 CLOCK_PHRASE_GAP_S = 300  # the same rest said twice within this is counted once (#965)
@@ -742,6 +749,7 @@ class DMBot(commands.AutoShardedBot):
         sources: SourceStore | None = None,
         importer: HomebrewImporter | None = None,
         adventure: AdventureStore | None = None,
+        plan: PlanStore | None = None,
     ) -> None:
         intents = discord.Intents.none()
         intents.guilds = True
@@ -792,6 +800,11 @@ class DMBot(commands.AutoShardedBot):
         self.sources = sources  # which sites a campaign approved, imported pages (#1633)
         self.importer = importer  # adds homebrew from a published page's link (#1634)
         self.adventure = adventure  # the DM's adventure text, per campaign (#1698)
+        self.plan = plan  # the story plan read from it (#1714)
+        # Reads going now, by (server, document): kept so the card can say "reading" and a second
+        # press can't start another, and so the tasks aren't garbage collected mid-read.
+        self.plan_reads: dict[tuple[int, str], asyncio.Task[None]] = {}
+        self._plan_slots = asyncio.Semaphore(PLAN_READS_AT_ONCE)
         # "Did they mean…?" questions left unanswered at a session's end (#1572).
         self.heard_questions = heard_questions
         # The last entries a DM removed, per campaign, so the list can put them back (memory only).
@@ -894,6 +907,12 @@ class DMBot(commands.AutoShardedBot):
         # AI text calls (a document into a names list).
         self.ai = (
             self.ai_client.tier(FEATURE_TIERS[Feature.NAMES], Feature.NAMES)
+            if self.ai_client
+            else None
+        )
+        # The story-plan reader (#1714): the AI reads an adventure once, on a DM's press.
+        self.plan_ai = (
+            self.ai_client.tier(FEATURE_TIERS[Feature.PLAN_READER], Feature.PLAN_READER)
             if self.ai_client
             else None
         )
@@ -1143,6 +1162,8 @@ class DMBot(commands.AutoShardedBot):
         self.add_dynamic_items(
             AdventureButton, AdventureAddButton, RemoveAdventureButton,
             RemoveAdventureYesButton, RemoveAdventureNoButton,
+            ReadAdventureButton, ReadAdventureYesButton, ReadAdventureNoButton,
+            RefreshAdventureButton, SeeAdventureButton,
         )  # fmt: skip
         self.add_dynamic_items(pack_update.PackUpdateButton)  # a followed pack changed (#1527)
         self.add_dynamic_items(pack_suggestion.PackSuggestionButton)  # an entry suggested (#1537)
@@ -1208,6 +1229,8 @@ class DMBot(commands.AutoShardedBot):
         with contextlib.suppress(Exception):
             await asyncio.wait_for(self.ai_watch.wait(), 3)
         document_reader.shutdown()  # files being read: end them, don't wait out their limit
+        for reading in list(self.plan_reads.values()):
+            reading.cancel()  # a read in progress is stopped; it carries on when a DM presses again
         if self._eleven_http is not None:
             with contextlib.suppress(Exception):
                 await self._eleven_http.close()
@@ -6560,6 +6583,61 @@ class DMBot(commands.AutoShardedBot):
                     table.screen_channel_id, waiting_text(len(kept)), view=people_review_view(cid)
                 )
 
+    def start_plan_read(
+        self, guild_id: int, campaign_id: str, document_id: str, start: int
+    ) -> None:
+        """Begin reading an adventure into the story plan in the background (#1714). The store has
+        already checked the DM, the switch, the confirmation and the caps (`PlanStore.begin`)."""
+        key = (guild_id, document_id)
+        if key in self.plan_reads:
+            return
+        task = asyncio.create_task(self._read_plan(guild_id, campaign_id, document_id, start))
+        self.plan_reads[key] = task
+        task.add_done_callback(lambda _: self.plan_reads.pop(key, None))
+
+    async def _read_plan(
+        self, guild_id: int, campaign_id: str, document_id: str, start: int
+    ) -> None:
+        """One read, start to finish. It ends the document as done, or as stopped with the reason
+        (a stopped read carries on from where it got to). The log gets counts only."""
+        if self.plan is None or self.plan_ai is None:
+            return
+        plan, ai = self.plan, self.plan_ai
+
+        async def plan_allowed() -> bool:
+            campaign = await self.campaigns.get(guild_id, campaign_id)
+            # Closed, not open: a plan that can't be checked is not run (as for the extractor).
+            return campaign is not None and await self.plan_allows(
+                "adventure", guild_id, campaign, fail_open=False
+            )
+
+        with log_context(guild_id=guild_id, campaign_id=campaign_id):
+            try:
+                async with self._plan_slots:
+                    report = await plan_reader.run(
+                        ai,
+                        plan,
+                        guild_id=guild_id,
+                        campaign_id=campaign_id,
+                        document_id=document_id,
+                        start_chunk=start,
+                        model=lambda: ai.model,
+                        allowed=plan_allowed,
+                    )
+                log.info("%s", report.line())
+                if report.stopped:
+                    await plan.finish(guild_id, campaign_id, document_id, "stopped", report.stopped)
+                else:
+                    await plan.finish(guild_id, campaign_id, document_id, "done")
+            except asyncio.CancelledError:
+                raise  # a restart: the state stays 'reading' and a press carries on
+            except Exception:
+                log.exception("Story-plan reader failed")
+                with contextlib.suppress(Exception):
+                    await plan.finish(
+                        guild_id, campaign_id, document_id, "stopped", plan_reader.STOP_ERROR
+                    )
+
     async def extract_claims(self, table: Table, ended_at: int) -> None:
         """After a session, only with DMBOT_STORY_EXTRACTOR on (it is off until #1282 passes): read
         the stored transcript in short batches and store what the AI heard as proposals for the DM
@@ -8279,6 +8357,7 @@ async def run(settings: Settings) -> None:
             sources,
             HomebrewImporter(homebrew_store, sources),
             AdventureStore(db),
+            PlanStore(db),
         )
         _close_on_sigterm(bot)
         async with bot:

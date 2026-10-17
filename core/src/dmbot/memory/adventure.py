@@ -206,8 +206,8 @@ class AdventureStore:
         now = int(self._clock())
         doc_id = uuid.uuid4().hex
         async with self._db.guild(guild_id) as conn:
-            await self._require_dm(conn, guild_id, campaign_id, user_id)
-            await self._require_on(conn, guild_id, campaign_id)
+            await self.require_dm(conn, guild_id, campaign_id, user_id)
+            await self.require_on(conn, guild_id, campaign_id)
             cur = await conn.execute(
                 "SELECT count(*) AS n, COALESCE(sum(characters), 0) AS total,"
                 " bool_or(fingerprint = %s) AS same FROM adventure_documents"
@@ -319,7 +319,7 @@ class AdventureStore:
     async def remove(self, guild_id: int, campaign_id: str, user_id: int, document_id: str) -> None:
         """Remove a document; its chunks go with it. Only the campaign's DMs."""
         async with self._db.guild(guild_id) as conn:
-            await self._require_dm(conn, guild_id, campaign_id, user_id)
+            await self.require_dm(conn, guild_id, campaign_id, user_id)
             cur = await conn.execute(
                 "DELETE FROM adventure_documents WHERE guild_id = %s AND campaign_id = %s"
                 " AND id = %s",
@@ -329,7 +329,7 @@ class AdventureStore:
                 raise AdventureError(GONE_DOC)
 
     @staticmethod
-    async def _require_dm(conn: Conn, guild_id: int, campaign_id: str, user_id: int) -> None:
+    async def require_dm(conn: Conn, guild_id: int, campaign_id: str, user_id: int) -> None:
         cur = await conn.execute(
             "SELECT 1 AS ok FROM campaigns WHERE guild_id = %s AND id = %s FOR UPDATE",
             (guild_id, campaign_id),
@@ -345,7 +345,7 @@ class AdventureStore:
             raise AdventureError(NOT_DM)
 
     @staticmethod
-    async def _require_on(conn: Conn, guild_id: int, campaign_id: str) -> None:
+    async def require_on(conn: Conn, guild_id: int, campaign_id: str) -> None:
         """The switch is on and a DM said here that they have the right (a confirmation that came
         from a backup file is not one: CLAUDE.md, IP rule)."""
         cur = await conn.execute(
