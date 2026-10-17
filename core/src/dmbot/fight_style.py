@@ -62,8 +62,8 @@ _ROLL = re.compile(
 )
 _ROLL_START = re.compile(rf"{_LEAD}(?:roll|make) (?:for )?initiative[.!]?$", re.IGNORECASE)
 _SIDE_STYLE = re.compile(
-    rf"{_LEAD}(?:(?:we )?(?:use|do|run) )?(?:side|group)(?:[- ]based)? initiative"
-    r"|initiative by (?:side|group)s?[.!]?$",
+    rf"{_LEAD}(?:(?:(?:we )?(?:use|do|run) )?(?:side|group)(?:[- ]based)? initiative"
+    r"|initiative by (?:side|group)s?)[.!]?$",
     re.IGNORECASE,
 )
 _SIDE_ACTS = re.compile(
@@ -89,7 +89,9 @@ _CREATURE = re.compile(
     r"(?:,? (?:its|it'?s|his|her) turn|'s turn|,? it goes)[.!]?$",
     re.IGNORECASE,
 )
-_SAID_NUMBER = r"\d{1,2}|[a-z]+(?:[- ][a-z]+)?"  # "17", "seventeen", "twenty one"
+_TEENS = "ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen"
+_UNITS = "one|two|three|four|five|six|seven|eight|nine"
+_SAID_NUMBER = rf"\d{{1,2}}|{_TEENS}|(?:twenty|thirty|forty)(?:[- ](?:{_UNITS}))?|{_UNITS}"  # "17"
 _ROLLED = re.compile(
     rf"^(?:i (?:got|rolled|have) (?:a |an )?(?P<a>{_SAID_NUMBER})"
     rf"|(?P<b>{_SAID_NUMBER}) (?:for|on) initiative)[.!]?$",
@@ -105,6 +107,9 @@ def _number(word: str) -> int:
     return int(word) if word.isdigit() else _ONES[word.lower()]
 
 
+MAX_CHARS = 200  # a spoken order is short; long lines never reach the patterns
+
+
 def _guarded(text: str) -> bool:
     return (
         not text or "?" in text or len(text.split()) > MAX_WORDS or bool(_NOT_A_THING.search(text))
@@ -116,6 +121,8 @@ def hear(line: str, players: Mapping[str, int], *, round_number: int | None = No
     (a character's, or a person's name at the table) to that person's Discord id. `round_number`
     is the fight's round when known: "roll initiative" again at round 2 or later is a reroll."""
     text = normalise(line).strip()
+    if len(text) > MAX_CHARS:
+        return None
     plain = text.rstrip("?!. ")
     if _DECLARE.match(plain):  # a question on purpose: checked before the guard
         return Heard(declarations="yes", declare_call=True)
@@ -132,14 +139,20 @@ def hear(line: str, players: Mapping[str, int], *, round_number: int | None = No
     if found is not None:
         who = found.group("who").lower()
         return Heard(order="side", players_side=who in PLAYER_SIDE)
-    if _PLURAL_TURN.match(low):
-        who = _PLURAL_TURN.match(low).group("who")  # type: ignore[union-attr]
-        return Heard(order="side", players_side=who.strip() in PLAYER_SIDE)
+    plural = _PLURAL_TURN.match(low)
+    if plural is not None:
+        who = plural.group("who").strip()
+        user = players.get(who)  # "Chris' turn" is a person whose name ends in s
+        if user is not None:
+            return Heard(order="each", turn=(user,))
+        return Heard(order="side", players_side=who in PLAYER_SIDE)
     if _ROLLED.match(low):
         return Heard(rolled=True)
     found = _NEXT.match(low)
     if found is not None:
         user = players.get(found.group("name").lower())
+        if user is None and found.group("name").lower() in _NOT_NAMES:
+            return None
         return Heard(order="each", on_deck=() if user is None else (user,))
     found = _UP.match(low)
     if found is not None:
@@ -150,11 +163,11 @@ def hear(line: str, players: Mapping[str, int], *, round_number: int | None = No
     found = _CREATURE.match(low)
     if found is not None:
         mon = found.group("mon").lower().strip()
-        if mon in _NOT_NAMES or mon.endswith("s"):  # "the goblins" is a side, not one creature
-            return None
         user = players.get(mon)
         if user is not None:  # "Mira's turn"
             return Heard(order="each", turn=(user,))
+        if mon in _NOT_NAMES or mon.endswith("s"):  # "the goblins" is a side, not one creature
+            return None
         number = found.group("n")
         key = mon if number is None else f"{mon} {_number(number)}"
         return Heard(order="each", creature=key)

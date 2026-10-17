@@ -252,7 +252,7 @@ class Timed(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(table.fight.style.order, "each")
         await self.tick(bot, table)  # the player just placed is reminded; nobody else is due
         self.assertEqual(self.calls(bot), 1)
-        self.assertIn("Right now: It is your turn next", self.last_prompt(bot))
+        self.assertIn("Right now: The DM just called your name", self.last_prompt(bot))
         self.dm_says(table, "goblin two, its turn")
         self.assertEqual(table.fight.order_seen, [("m", "goblin 1"), ("p", 11), ("m", "goblin 2")])
         self.now += 130
@@ -266,7 +266,7 @@ class Timed(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(table.fight.due[11].kind, "next")
         await self.tick(bot, table)
         self.assertEqual(self.calls(bot), before + 1)
-        self.assertIn("It is your turn next", self.last_prompt(bot))
+        self.assertIn("The DM seems to be calling your turn next", self.last_prompt(bot))
 
     async def test_on_deck_reminds_that_player_then(self) -> None:
         table, bot = self.primed([11, 12])
@@ -310,7 +310,7 @@ class Timed(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(set(table.fight.due), set(users))
         await self.tick(bot, table)
         self.assertEqual(self.calls(bot), fightbot.MAX_CALLS_PER_TICK)
-        self.assertIn("Your side acts now", self.last_prompt(bot))
+        self.assertIn("The DM seems to be calling your side now", self.last_prompt(bot))
         await self.tick(bot, table)
         self.assertEqual(self.calls(bot), 2 * fightbot.MAX_CALLS_PER_TICK)
 
@@ -330,7 +330,9 @@ class Timed(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(table.fight.style.order, "reroll")
         await self.tick(bot, table)
         self.assertEqual(self.calls(bot), 2)
-        self.assertIn("A new round of initiative is starting", self.last_prompt(bot))
+        self.assertIn(
+            "The DM seems to be starting a new round of initiative", self.last_prompt(bot)
+        )
 
     async def test_a_call_for_declarations_reminds_everyone_and_the_cap_still_holds(self) -> None:
         table, bot = self.primed([11, 12])
@@ -338,7 +340,7 @@ class Timed(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(table.fight.style.declarations, "yes")
         await self.tick(bot, table)
         self.assertEqual(self.calls(bot), 2)
-        self.assertIn("The DM is asking what everyone will do this round", self.last_prompt(bot))
+        self.assertIn("The DM seems to be asking everyone what they will do", self.last_prompt(bot))
         self.now += 20  # asked again 20 seconds later: inside the two-minute gap
         players = {u: tf.FightPlayer(last_call_at=int(self.now) - 20) for u in (11, 12)}
         bot.sheets.fight_players = AsyncMock(side_effect=lambda g, c: dict(players))
@@ -387,7 +389,7 @@ class Timed(unittest.IsolatedAsyncioTestCase):
 
     async def test_a_line_with_a_secret_name_is_skipped(self) -> None:
         table, _bot = self.primed([11])
-        table.fight.secrets = ["Zargothrax"]
+        table.fight.secrets = ["zargothrax"]  # (kept lower-case)
         self.assertFalse(self.dm_says(table, "Zargothrax, you're up"))
         self.assertFalse(self.dm_says(table, "players go first, zargothrax"))
         self.assertEqual(table.fight.style.order, "unknown")
@@ -420,17 +422,154 @@ class Timed(unittest.IsolatedAsyncioTestCase):
         bot.fight_style_changed.assert_awaited_once()
 
 
+class Hardening(unittest.IsolatedAsyncioTestCase):
+    """Found in review: lag between the round moving and FightBot knowing, late reminders,
+    repeats, names that end in s, and lines that are not orders."""
+
+    setUp = tf.Runner.setUp
+    table = tf.Runner.table
+    bot = tf.Runner.bot
+    primed = Timed.primed
+    dm_says = Timed.dm_says
+    player_says = Timed.player_says
+    tick = Timed.tick
+    calls = Timed.calls
+
+    async def test_a_line_right_after_the_round_moves_is_counted_in_the_new_round(self) -> None:
+        table, _bot = self.primed([11], round_number=1)
+        client = SimpleNamespace(tables={table.guild_id: table})
+        campaign = SimpleNamespace(guild_id=table.guild_id, id=table.campaign_id)
+        clock_ui._note_round(client, campaign, Clock(0, 0, None, 2, 0))  # "next round" was said
+        self.assertEqual(table.fight.round, 2)
+        self.dm_says(table, "declare your actions")  # said before the next 30-second pass
+        self.assertEqual({d.round for d in table.fight.due.values()}, {2})
+        self.assertEqual(set(table.fight.due), {11})
+        clock_ui._note_round(client, campaign, Clock(0, 0))  # the fight ended
+        self.assertEqual((table.fight.round, table.fight.due), (None, {}))
+
+    async def test_a_moment_that_passed_while_the_answer_was_written_is_not_sent(self) -> None:
+        table, bot = self.primed([11])
+        self.dm_says(table, "Hero11, you're on deck")
+
+        async def slow(*_a: Any, **_k: Any) -> Any:
+            self.dm_says(table, "goblin one, its turn")  # the turn moved on during the call
+            return await original(*_a, **_k)
+
+        original = bot.fight_ai.complete
+        bot.fight_ai.complete = slow
+        await self.tick(bot, table)
+        bot.user.send.assert_not_awaited()
+
+    async def test_a_moment_expires_after_a_few_minutes(self) -> None:
+        table, bot = self.primed([11])
+        self.dm_says(table, "players go first")
+        self.now += fightbot.MOMENT_TTL_S + 1
+        players = {11: tf.FightPlayer()}
+        bot.sheets.fight_players = AsyncMock(side_effect=lambda g, c: dict(players))
+        await self.tick(bot, table)
+        self.assertEqual(self.calls(bot), 0)
+
+    async def test_the_last_creature_in_the_order_is_followed_by_the_first(self) -> None:
+        table, _bot = self.primed([11], round_number=2)
+        table.fight.style.vote("order", "each", DM, from_dm=True, consenting=YES)
+        table.fight.order_seen = [("p", 11), ("m", "goblin 1")]
+        self.dm_says(table, "goblin one, its turn")
+        self.assertEqual(table.fight.due[11].kind, "next")
+
+    async def test_the_same_turn_called_twice_is_one_turn(self) -> None:
+        table, _bot = self.primed([11])
+        self.dm_says(table, "goblin one, its turn")
+        self.dm_says(table, "goblin one, its turn")
+        self.assertEqual(table.fight.turn_no, 1)
+
+    async def test_players_remarks_outside_a_fight_set_nothing(self) -> None:
+        table, _bot = self.primed([11, 12])
+        table.fight.round = None
+        self.player_says(table, 11, "side initiative")
+        self.player_says(table, 12, "side initiative")
+        self.assertEqual(table.fight.style.order, "unknown")
+
+    async def test_a_name_nobody_has_is_a_style_only_from_a_dm(self) -> None:
+        table, _bot = self.primed([11, 12])
+        self.player_says(table, 11, "Bob, you're up")
+        self.player_says(table, 12, "Bob, you're up")
+        self.assertEqual(table.fight.style.order, "unknown")
+        self.dm_says(table, "Bob, you're up")
+        self.assertEqual(table.fight.style.order, "each")
+
+    async def test_the_dm_is_never_a_player_to_remind_or_a_name_to_call(self) -> None:
+        table, bot = self.primed([11])
+        members = [SimpleNamespace(id=DM, bot=False, display_name="Dave")]
+        bot.get_guild = lambda gid: SimpleNamespace(
+            get_channel=lambda cid: SimpleNamespace(members=members)
+        )
+        self.assertNotIn("dave", fightbot._names(bot, table, []))
+        self.dm_says(table, "players go first")
+        self.assertNotIn(DM, table.fight.due)
+
+    async def test_the_dm_line_only_refreshes_when_its_words_change(self) -> None:
+        table, _bot = self.primed([11])
+        self.assertTrue(self.dm_says(table, "players go first"))
+        self.assertFalse(self.dm_says(table, "the party acts"))  # still "by side"
+        self.assertFalse(fightbot.observe(table.fight, 1, {11}, YES))  # nothing new to show
+        table.fight.style.infer_no_declarations()  # "no" is never on the DM's line
+        self.assertEqual(table.fight.style.dm_phrase(), "Initiative, as heard: by side")
+
+
+class MoreNearMisses(unittest.TestCase):
+    def heard(self, line: str) -> Any:
+        return hear(line, {**NAMES, "chris": 9}, round_number=2)
+
+    def test_trailing_words_make_it_a_remark_not_an_order(self) -> None:
+        for line in (
+            "side initiative is stupid",
+            "group initiative sucks",
+            "We use side initiative for the boss",
+        ):
+            self.assertIsNone(self.heard(line), line)
+        self.assertEqual(self.heard("we use side initiative").order, "side")
+        self.assertEqual(self.heard("initiative by side").order, "side")
+
+    def test_a_name_ending_in_s_is_a_person_not_a_side(self) -> None:
+        for line in ("Chris' turn", "Chris's turn"):
+            got = self.heard(line)
+            self.assertEqual((got.order, got.turn), ("each", (9,)), line)
+        self.assertEqual(self.heard("the goblins' turn").order, "side")
+
+    def test_filler_words_are_not_names(self) -> None:
+        self.assertIsNone(self.heard("okay, you're next"))
+        self.assertIsNone(self.heard("it's your turn"))
+
+    def test_only_a_real_number_is_a_roll(self) -> None:
+        self.assertTrue(self.heard("I got a 17").rolled)
+        self.assertTrue(self.heard("twenty one for initiative").rolled)
+        self.assertIsNone(self.heard("I got it"))
+        self.assertIsNone(self.heard("I have dinner"))
+
+    def test_a_huge_line_is_ignored_quickly(self) -> None:
+        import time
+
+        start = time.perf_counter()
+        self.assertIsNone(self.heard("x" * 100_000 + " you're up"))
+        self.assertIsNone(self.heard("a" * 100_000))
+        self.assertLess(time.perf_counter() - start, 0.5)
+
+
 class Prompt(unittest.TestCase):
     def test_the_moment_is_one_fixed_line_and_nothing_else_changes(self) -> None:
+        line = "The DM seems to be calling your turn next"
         plain = fight_prompt.build(base(), 2, ["Mira: hi"])
-        timed = fight_prompt.build(base(), 2, ["Mira: hi"], moment="It is your turn next")
-        self.assertEqual(timed, plain.replace("\n", "\nRight now: It is your turn next\n", 1))
-        self.assertTrue(set(fightbot.MOMENT_LINES.values()) <= {
-            "It is your turn next",
-            "Your side acts now",
-            "A new round of initiative is starting",
-            "The DM is asking what everyone will do this round",
-        })  # fmt: skip
+        timed = fight_prompt.build(base(), 2, ["Mira: hi"], moment=line)
+        self.assertEqual(timed, plain.replace("\n", f"\nRight now: {line}\n", 1))
+
+    def test_the_moment_lines_are_hedged_and_name_the_dm(self) -> None:
+        self.assertEqual(set(fightbot.MOMENT_LINES), {"turn", "next", "side", "reroll", "declare"})
+        for text in fightbot.MOMENT_LINES.values():
+            self.assertTrue(text.startswith("The DM "), text)
+
+    def test_the_prompt_says_the_line_may_be_wrong_and_never_to_say_whose_turn(self) -> None:
+        self.assertIn("context only and may be wrong", fight_prompt.PROMPT)
+        self.assertIn("never say whose turn it is", fight_prompt.PROMPT)
 
 
 class TheBotsEar(unittest.TestCase):

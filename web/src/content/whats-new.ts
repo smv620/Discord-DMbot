@@ -336,8 +336,8 @@ export const held: Held[] = [
   },
   {
     date: "2026-10-17",
-    title: "FightBot notices how you run initiative",
-    what: "FightBot now notices how your table does initiative and reminds each player just before they choose. It listens for things like \"Mira, you're up\", \"players go first\" or \"declare your actions\". Your DM screen shows what it heard, and saying it differently changes it. It never changes the fight or the round.",
+    title: "FightBot follows your turn order",
+    what: "FightBot listens to the people who agreed to be recorded. When it hears things like \"Mira, you're up\", \"players go first\" or \"declare your actions\", it guesses how your table takes turns. Your DM screen shows the guess, and you can change it just by saying it differently. FightBot then sends each player a short reminder just before their turn. It only guesses: you decide the order, and it never changes your fight.",
     reason:
       "Held until dev1 has live-checked it on the test server (#1771).",
   },

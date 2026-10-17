@@ -89,7 +89,7 @@ describe("What's new", () => {
       "Homebrew menu by kind", // until seen on the test server (#1665)
       "A channel for your house rules", // until seen on the test server (#1752)
       "A time suggestion from your narration", // until the switch is on and seen live (#1758)
-      "FightBot notices how you run initiative", // until dev1 has live-checked it (#1771)
+      "FightBot follows your turn order", // until dev1 has live-checked it (#1771)
       "Manage your plan without Discord", // until the billing login link is set in the build (#1711)
       "A quiet reminder of the game time", // until seen on the test server (#1738)
     ]);

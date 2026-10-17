@@ -131,6 +131,15 @@ def clock_text(
     return "\n".join([head, *([fight] if fight else []), *heard, *(effect_lines or [])])
 
 
+def _note_round(client: Any, campaign: Campaign, clock: Clock) -> None:
+    """The fight's round just changed: tell FightBot at once (#1771), so a line the DM says right
+    after "next round" is counted in that round and not the one before."""
+    table = getattr(client, "tables", {}).get(campaign.guild_id)
+    fight = getattr(table, "fight", None)
+    if fight is not None and table.campaign_id == campaign.id:
+        fight.moved_to(clock.combat_round)
+
+
 def _style_line(client: Any, campaign: Campaign) -> str | None:
     """How the running session's table does initiative, as FightBot heard it (#1771)."""
     table = getattr(client, "tables", {}).get(campaign.guild_id)
@@ -335,6 +344,7 @@ async def show(client: Any, campaign: Campaign, stored: Stored) -> discord.Messa
     """Edit the pinned clock message in place with the clock now; post (and pin) a new one if
     there isn't one or it is gone. Returns the message, or None if nothing could be shown."""
     where_are_we.shown(client, campaign)  # (the quiet "where are we" note waits again)
+    _note_round(client, campaign, stored.clock)
     text = await render(client, campaign, stored.clock, stored)
     view = clock_view(campaign.id, stored.clock, stored)
     channel = client.get_channel(stored.channel_id) if stored.channel_id else None
