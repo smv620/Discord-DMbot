@@ -5,11 +5,13 @@ AI is called here.
 
 The text stays in that one campaign: row-level security is forced, it is never in a transcript,
 a shared ruleset, a pack, another campaign or another server, and never shown to players. It is
-in that campaign's backup (a backup is complete) and goes when the campaign is deleted. A DM can
-remove a document, which removes its chunks.
+NOT in the campaign's backup (Supervisor, 2026-10-17: anyone in the server may download a paid
+campaign's backup); the backup keeps only the document list, and a restored document has no
+chunks until the DM gives the same file again. The text goes when the campaign is deleted. A DM
+can remove a document, which removes its chunks.
 
 The story-plan reader that comes next must check the switch and a non-restored confirmation
-again before it uses any of this text: a restored campaign holds its text but not the right.
+again before it uses any of this text: a restored campaign has no text and not the right.
 
 Giving a file needs the Shared story switch on and the DM's confirmation of the right to use the
 material on record (#1692): checked here, not only by the button.
