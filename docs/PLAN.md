@@ -683,6 +683,12 @@ or servers; only the campaign's DMs change anything (the store checks in the sam
     (`shared_confirmations`, purpose `rulebook`) and loads it with `from_book` set (migration 0099): that
     text can never go into a shared pack. An entry whose name the campaign has (any case) is updated
     (version + 1); a file that would take the campaign over 200 entries loads nothing and says the count.
+    An entry from a shared rulebook carries the players' card tags in the file (2026-10-16, #1584): a line
+    `[Shared book]` under its heading, and `[Shared book] [Legacy 2014]` when its book is for the 2014
+    rules and the campaign plays newer ones (the same `book_tag` the card uses). Loading a file reads
+    that line and ignores it: only "I have the right" ever marks an entry as from a book. The website's
+    download writes the same file for the entries it shows, but its door does not tell it which come
+    from a book, so those carry no tag there until the door is changed (a decision for Supervisor).
 - Sharing as a pack (part 2) is built: see "Shared rulesets" (#1527).
 
 **Homebrew (part 2): links, sources and on/off (owner, 2026-10-16).** This changes part 1. Where the two

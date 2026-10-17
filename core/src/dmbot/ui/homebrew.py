@@ -316,7 +316,9 @@ class ListMenu(_Menu):
             entries = await store.list(self.campaign.guild_id, self.campaign.id) if store else None
             if entries is None:
                 raise RuntimeError("no store")
-            data = homebrew_file.write(self.campaign.name, entries).encode()
+            data = homebrew_file.write(
+                self.campaign.name, entries, self.campaign.target_ruleset
+            ).encode()
             file = discord.File(
                 io.BytesIO(data), filename=homebrew_file.filename(self.campaign.name)
             )

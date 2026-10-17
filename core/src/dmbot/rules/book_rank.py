@@ -13,6 +13,8 @@ from dmbot.rules.homebrew import Homebrew
 from dmbot.rules.index import Hit
 
 TARGET, BETWEEN, FALLBACK = 0, 1, 2  # nearer the target ruleset ranks first
+BOOK_TAG = "[Shared book]"  # on a card, and in the homebrew file (#1584)
+LEGACY_TAG = "[Legacy 2014]"  # CLAUDE.md: legacy content is tagged wherever it appears
 
 
 def book_place(entry: Homebrew, target: str, fallback: str) -> int:
@@ -38,3 +40,12 @@ def book_wins(entry: Homebrew, hit: Hit | None, target: str, fallback: str) -> b
 def book_is_legacy(entry: Homebrew, target: str) -> bool:
     """Tag it `[Legacy 2014]` like a fallback hit: a 2014 book while the target is newer."""
     return entry.from_book and entry.book_edition == "2014" and target != "2014"
+
+
+def book_tag(entry: Homebrew, target: str) -> str | None:
+    """The tag a shared book's entry carries wherever it is shown: `[Shared book]`, with
+    `[Legacy 2014]` when it is for the older rules and the campaign plays the newer. None for an
+    entry that is not from a book."""
+    if not entry.from_book:
+        return None
+    return f"{BOOK_TAG} {LEGACY_TAG}" if book_is_legacy(entry, target) else BOOK_TAG

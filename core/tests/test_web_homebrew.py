@@ -6,6 +6,7 @@ download is the bot's own file for those entries, byte for byte."""
 from __future__ import annotations
 
 import json
+from dataclasses import replace
 from typing import Any
 
 import httpx
@@ -232,7 +233,8 @@ class BookTags(HomebrewBase):
             await pages.read_homebrew(self.web, elsewhere, self.cref)
         _name, text = await pages.render(self.web, self.carol, self.cref)
         shown = await self.store_b.list(THURSDAY.id, self.one.id)
-        self.assertEqual(text.encode(), homebrew_file.write("One", shown).encode())
+        untagged = [replace(e, from_book=False, book_edition=None) for e in shown]  # (tags ignored)
+        self.assertEqual(text.encode(), homebrew_file.write("One", untagged, "2024").encode())
 
 
 PUBLISHER = "Publisher Campaign Name"
@@ -339,7 +341,7 @@ class FollowedPacks(HomebrewBase):
             await pages.read_homebrew(self.web, elsewhere, self.cref)
         _name, text = await pages.render(self.web, self.carol, self.cref)
         shown = await self.store_b.list(THURSDAY.id, self.one.id)
-        self.assertEqual(text.encode(), homebrew_file.write("One", shown).encode())
+        self.assertEqual(text.encode(), homebrew_file.write("One", shown, "2024").encode())
         self.assertNotIn("Ice Lance", text)
 
 
@@ -408,9 +410,11 @@ class TheFile(HomebrewBase):
         name, text = await pages.render(self.web, self.carol, self.cref)
         shown = await self.shown_entries()
         self.assertEqual(len(shown), 4)
-        self.assertEqual(text.encode(), homebrew_file.write("One", shown).encode())
+        self.assertEqual(text.encode(), homebrew_file.write("One", shown, "2024").encode())
         self.assertEqual(name, homebrew_file.filename("One"))
         self.assertIn("## The Lich (monster)\nSummary: Foe\nOff: yes\n", text)  # (off is kept)
+        # (the help text mentions the tag, but no entry carries one: the door never says it)
+        self.assertNotIn("[Shared book]", text.replace(homebrew_file.HELP, ""))
 
     async def test_a_campaign_with_no_entry_has_no_file(self) -> None:
         empty = await self.campaigns.create(THURSDAY.id, "Empty", ALICE.id)
@@ -491,7 +495,7 @@ class TheRoutes(HomebrewBase):
             file.headers["content-disposition"], 'attachment; filename="homebrew-one.txt"'
         )
         self.assertEqual(
-            file.content, homebrew_file.write("One", await self.shown_entries()).encode()
+            file.content, homebrew_file.write("One", await self.shown_entries(), "2024").encode()
         )
 
     async def test_someone_outside_the_server_gets_404_and_the_list_is_empty(self) -> None:
