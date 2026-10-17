@@ -77,6 +77,7 @@ from dmbot.consent_dm import (
 )
 from dmbot.consent_site import SiteStops
 from dmbot.db import Database
+from dmbot.discord_limits import tree_problems
 from dmbot.dm_screen import (
     DMScreenError,
     HideButton,
@@ -1162,9 +1163,7 @@ class DMBot(commands.AutoShardedBot):
         await asyncio.to_thread(rules_index.srd)
         # DMbot's knowledge of itself (#1195): read its documents now, not on the first question.
         await asyncio.to_thread(knowledge.load)
-        self.tree.add_command(dmbot_group)
-        self.tree.add_command(consent_group)
-        self.tree.add_command(transcript_command)
+        register_commands(self.tree)
         # DM-screen buttons keep working after a restart.
         self.add_dynamic_items(PeekButton, HideButton, VisibilityButton, StopListeningButton)
         self.add_dynamic_items(
@@ -3369,11 +3368,20 @@ class DMBot(commands.AutoShardedBot):
             # Registered once for the whole bot, not per shard: only the pod serving shard 0
             # does it, so many pods don't all sync at startup.
             registered: int | None = None
+            for problem in tree_problems([c.to_dict(self.tree) for c in self.tree.get_commands()]):
+                log.error("Slash command over a Discord limit: %s", problem)
             try:
                 registered = len(await self.tree.sync() or [])
-            except discord.HTTPException:
-                # (a rate limit must not stop the bot starting, or the dev server's copy)
-                log.warning("Couldn't register the global slash commands", exc_info=True)
+            except discord.HTTPException as exc:
+                # (a rate limit must not stop the bot starting, or the dev server's copy.) Every
+                # server would have no /dmbot, so say what Discord refused: its status, its code
+                # and its text, which names the field ("In 0.options.2.description: ...").
+                log.error(
+                    "Couldn't register the global slash commands: HTTP %s, Discord error %s: %s",
+                    exc.status,
+                    exc.code,
+                    exc.text,
+                )
         if self.settings.dev_guild_id and 0 in self.settings.shards.ids:
             guild = discord.Object(id=self.settings.dev_guild_id)
             self.tree.copy_global_to(guild=guild)
@@ -8892,6 +8900,14 @@ def _free_bytes(root: Path) -> int:
 
 def _bot(interaction: discord.Interaction) -> DMBot:
     return cast(DMBot, interaction.client)
+
+
+def register_commands(tree: app_commands.CommandTree[Any]) -> None:
+    """Add DMbot's slash commands to the tree. The one place both the bot's start-up and the
+    check against Discord's limits (tests/test_command_limits.py) build the tree from."""
+    tree.add_command(dmbot_group)
+    tree.add_command(consent_group)
+    tree.add_command(transcript_command)
 
 
 consent_group = app_commands.Group(
