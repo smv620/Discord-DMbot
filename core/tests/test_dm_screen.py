@@ -133,8 +133,10 @@ def test_help_card_explains_who_can_see_and_how_to_start() -> None:
     assert "Frostmaiden" in peek and "peek" in peek and "/dmbot start" in peek
     assert "never makes rulings or story" in peek
     assert m.HIDE_LABEL in peek
-    assert "change who can see this" in peek
-    assert "⚙️ **Settings** for how much DMbot says" in peek  # #515
+    assert "who can see this" in peek and "⚙️ **Settings**" in peek
+    assert "/dmbot settings" in peek  # no DM Bot channel yet (#1666)
+    assert "<#680000000000000099>" in m.help_card("Frostmaiden", "peek", 680000000000000099)
+    assert "/dmbot settings" not in m.help_card("Frostmaiden", "peek", 680000000000000099)
     assert "admins can always see" in m.help_card("Frostmaiden", "private")
     assert "admins" not in m.help_card("Frostmaiden", "open")
 
@@ -328,14 +330,12 @@ def test_visibility_button_custom_ids_round_trip() -> None:
 
 
 class CardViewTests(DatabaseTest):
-    async def test_card_view_marks_current_setting_and_adds_hide_only_for_peek(self) -> None:
+    async def test_card_view_holds_only_hide_and_only_for_peek(self) -> None:
         store = CampaignStore(self.db)
         campaign = await store.create(GUILD, "Frostmaiden", DM)  # default: peek
         view = card_view(campaign)
-        buttons = [i for i in view.children if isinstance(i, VisibilityButton)]
-        assert [b.visibility for b in buttons] == ["private", "peek", "open"]
-        assert [b.item.disabled for b in buttons] == [False, True, False]
-        assert any(isinstance(i, HideButton) for i in view.children)
+        # Settings and who-can-see moved to the DM Bot channel (#1666).
+        assert [type(i) for i in view.children] == [HideButton]
         private = await store.set_dm_screen_visibility(GUILD, campaign.id, "private")
         assert not any(isinstance(i, HideButton) for i in card_view(private).children)
 

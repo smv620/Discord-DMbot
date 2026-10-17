@@ -208,7 +208,7 @@ async def _failed(
 
 
 NOT_IN_SERVER = "Use this in a server."
-SETTINGS_HINT = "Settings: press ⚙️ Settings here or on the card in #dm-screen."
+SETTINGS_HINT = "Settings: press ⚙️ Settings here, or use the DM Bot channel."
 
 
 # ---- /dmbot start: welcome, then which campaign? ---------------------------------------

@@ -717,6 +717,23 @@ class MemoryStore:
 
     # ---- story threads the DM keeps (#1662) ----
 
+    async def is_player_here(self, guild_id: int, campaign_id: str, user_id: int) -> bool:
+        """Whether this person is tied to this campaign (#1666): the player of a confirmed
+        character in it, or heard saying a known name in one of its sessions. A merged or
+        proposed character does not count, nor does the person's own entry that DMbot makes when a
+        character is linked. Nothing about what was said, only that they were here."""
+        async with self._read(guild_id, campaign_id) as scope:
+            cur = await scope.conn.execute(
+                "SELECT EXISTS (SELECT 1 FROM memory_entities WHERE guild_id = %s"
+                " AND campaign_id = %s AND played_by = %s AND type = 'character'"
+                " AND status = 'confirmed')"
+                " OR EXISTS (SELECT 1 FROM memory_heard WHERE guild_id = %s"
+                " AND campaign_id = %s AND speaker_id = %s) AS here",
+                (*scope.ids, user_id, *scope.ids, user_id),
+            )
+            row = await cur.fetchone()
+            return bool(row and row["here"])
+
     async def threads(
         self, guild_id: int, campaign_id: str, *, stalled_after: int = threads_mod.STALLED_AFTER
     ) -> list[threads_mod.ThreadInfo]:

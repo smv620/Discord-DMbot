@@ -28,6 +28,7 @@ def campaign(**ids: int | None) -> Any:
         "gametime_channel_id": GAMETIME,
         "transcript_channel_id": TRANSCRIPT,
         "dmbchat_channel_id": CHAT,
+        "dm_bot_channel_id": None,
     }
     return SimpleNamespace(**{**base, **ids})
 
@@ -189,6 +190,24 @@ class Retire(unittest.IsolatedAsyncioTestCase):
         self.assertEqual((got.deleted, got.closed, got.skipped), (1, 2, 1))
         chans[SCREEN].delete.assert_not_awaited()
         chans[SCREEN].send.assert_not_awaited()
+
+    async def test_the_dm_bot_channel_is_deleted_only_while_it_is_still_named_so(self) -> None:
+        bot_channel = 105
+        chans = {
+            **self.all_four(),
+            bot_channel: channel(bot_channel, name="dmb-dm-bot-frostmaiden"),
+        }
+        got = await rc.retire_channels(
+            guild_with(chans), campaign(dm_bot_channel_id=bot_channel), ME, NOW
+        )
+        self.assertEqual((got.deleted, got.closed), (3, 2))
+        chans[bot_channel].delete.assert_awaited_once()
+        renamed = {**self.all_four(), bot_channel: channel(bot_channel, name="rules-talk")}
+        got = await rc.retire_channels(
+            guild_with(renamed), campaign(dm_bot_channel_id=bot_channel), ME, NOW
+        )
+        self.assertEqual((got.deleted, got.skipped), (2, 1))
+        renamed[bot_channel].delete.assert_not_awaited()
 
     async def test_a_renamed_game_time_channel_is_never_deleted(self) -> None:
         chans = self.all_four()

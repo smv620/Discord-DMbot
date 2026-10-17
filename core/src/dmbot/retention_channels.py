@@ -29,6 +29,7 @@ from typing import Any
 import discord
 
 from dmbot.campaigns import Campaign
+from dmbot.dm_screen.dm_bot_channel import is_dm_bot_name
 from dmbot.dm_screen.gametime_channel import is_gametime_name
 from dmbot.dm_screen.names import is_screen_name
 
@@ -80,6 +81,7 @@ async def retire_channels(
     plan: tuple[tuple[int | None, bool, Callable[[str], bool]], ...] = (
         (campaign.dm_screen_channel_id, True, is_screen_name),
         (campaign.gametime_channel_id, True, is_gametime_name),
+        (campaign.dm_bot_channel_id, True, is_dm_bot_name),
         (campaign.transcript_channel_id, False, _any_name),
         (campaign.dmbchat_channel_id, False, _any_name),
     )

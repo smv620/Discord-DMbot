@@ -349,15 +349,10 @@ def hide_view(campaign_id: str) -> discord.ui.View:
 
 
 def card_view(campaign: Campaign) -> discord.ui.View:
-    """The help card's buttons: who can see the screen and ⚙️ Settings (for the DM), and
-    Hide (peekers)."""
-    from dmbot.dm_screen.settings import SettingsButton  # settings imports this module
-
+    """The help card's buttons: only Hide, for peekers. Who can see the screen and ⚙️ Settings
+    moved to the DM Bot channel (#1666), so the DM screen holds only in-game things. (Cards posted
+    before that keep working: their buttons are still registered.)"""
     view = discord.ui.View(timeout=None)
-    for visibility in messages.VISIBILITY_BUTTONS:
-        current = visibility == campaign.dm_screen_visibility
-        view.add_item(VisibilityButton(campaign.id, visibility, current=current))
-    view.add_item(SettingsButton(campaign.id))  # there between sessions too (#515)
     if campaign.dm_screen_visibility == "peek":
         view.add_item(HideButton(campaign.id))
     return view

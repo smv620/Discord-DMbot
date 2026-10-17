@@ -275,6 +275,21 @@ class SettingsButton(
             ephemeral=True,
             allowed_mentions=NO_PINGS,
         )
+        # A campaign made before the DM Bot channel (#1666) gets one now, and is told where.
+        upgrade = getattr(interaction.client, "upgrade_dm_bot_channel", None)
+        if callable(upgrade):
+            try:
+                made = await upgrade(campaign)
+            except Exception:
+                log.exception("Couldn't make the DM Bot channel on a Settings press")
+                made = None
+            if made is not None:
+                with contextlib.suppress(discord.HTTPException):  # (the owner check follows)
+                    await interaction.followup.send(
+                        f"Settings and options now also live in <#{made}>.",
+                        ephemeral=True,
+                        allowed_mentions=NO_PINGS,
+                    )
         # Then, without making the card wait, see whether the owner is still in the server
         # (#1214); if not, the DMs are told and the card's Take it on appears next time.
         check = getattr(interaction.client, "check_owner_present", None)
