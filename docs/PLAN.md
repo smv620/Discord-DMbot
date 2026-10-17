@@ -683,6 +683,14 @@ or servers; only the campaign's DMs change anything (the store checks in the sam
     (`shared_confirmations`, purpose `rulebook`) and loads it with `from_book` set (migration 0099): that
     text can never go into a shared pack. An entry whose name the campaign has (any case) is updated
     (version + 1); a file that would take the campaign over 200 entries loads nothing and says the count.
+    An entry from a shared rulebook carries the players' card tags in the file (2026-10-16, #1584): a line
+    `[Shared book]` under its heading, and `[Shared book] [Legacy 2014]` when its book is for the 2014
+    rules and the campaign plays newer ones (the same `book_tag` the card uses). Loading a file reads
+    that line and ignores it: only "I have the right" ever marks an entry as from a book. The website's
+    download writes the same file for the entries it shows, with the same tags (2026-10-16, #1593): its
+    door returns `fromBook` and `legacy` for each entry (`legacy` is `book_is_legacy`'s test, worked out in
+    the database against the campaign's own ruleset), and `homebrew_file.write` takes that answer per entry,
+    so the two files are byte-equal for the same entries.
 - Sharing as a pack (part 2) is built: see "Shared rulesets" (#1527).
 
 **Homebrew (part 2): links, sources and on/off (owner, 2026-10-16).** This changes part 1. Where the two
@@ -707,7 +715,7 @@ differ, this wins.
   the right-to-use warning ("DMbot doesn't check this…") and confirms once. That approval sticks: every
   later link from the same site in that campaign needs no new confirmation. Who confirmed and when is kept
   (table of approved sites per campaign). A campaign that has not approved a site cannot use content from
-  it, whether imported there or reached through a pack.
+  it, whether imported there or reached through a pack. **Seen and taken back (#1652):** ⚙️ Settings → 📚 Homebrew → 🌐 Approved sites lists each approved site with who approved it and when, and a DM can take one back after one plain question ("Take back dndbeyond.com? DMbot will stop using the N entries from it until a DM says yes again. Nothing is deleted."). The entries stay saved and the list marks them "(waiting for the site)"; adding from that site again asks the right-to-use question again. A follower's approvals are its own list.
 - **🔄 Update from the link (#1645).** On a link entry, a DM can fetch its one page again: same guards,
   same one-at-a-time and hourly limits, and the site's approval checked again. DMbot shows the new words
   and what changed ("Nothing changed on the page." when so); only **Save** replaces the kept copy, and

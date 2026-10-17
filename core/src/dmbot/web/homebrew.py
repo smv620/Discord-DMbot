@@ -10,6 +10,9 @@ The page groups entries by kind, in the bot's order of kinds (`KINDS`), each by 
 lists them. The download is `homebrew_file.write` over those entries and `homebrew_file.filename`,
 so it is byte-equal to the file the bot would write for them: its own pick of the entries, as the
 bot's Download button sends every entry, the ones that are off included, to the DM only.
+Entries from a shared book carry `[Shared book]`, and `[Legacy 2014]` when the door says so (it
+judges with `book_is_legacy`'s test, in the database, because the page has no ruleset), like the
+bot's file.
 
 The page also shows the homebrew packs the campaign follows (#1527, #1586), every entry of each
 pack, as a player's `/dmbot rule` answers from them. The download stays the
@@ -156,7 +159,7 @@ async def render(db: Database, session: Session, ref: str) -> tuple[str, str]:
         raise RecapError("not_found")
     entries = [
         Homebrew(
-            id=0,
+            id=i,
             campaign_id=campaign_id,
             kind=e["kind"],
             name=e["name"],
@@ -166,8 +169,16 @@ async def render(db: Database, session: Session, ref: str) -> tuple[str, str]:
             created_at=0,
             updated_at=int(e["updatedAt"]),
             version=int(e["version"]),
+            # Which come from a shared book, and whether the door judged one legacy: the same
+            # tags as the bot's file (#1593). Absent flags (an older door) mean neither.
+            from_book=bool(e.get("fromBook", False)),
             enabled=bool(e.get("enabled", True)),  # (#1629: the file says `off` like the bot's)
         )
-        for e in found["entries"]
+        for i, e in enumerate(found["entries"], start=1)
     ]
-    return homebrew_file.filename(found["name"]), homebrew_file.write(found["name"], entries)
+    legacy_ids = {
+        i for i, e in enumerate(found["entries"], start=1) if bool(e.get("legacy", False))
+    }
+    return homebrew_file.filename(found["name"]), homebrew_file.write(
+        found["name"], entries, "", legacy=lambda entry: entry.id in legacy_ids
+    )

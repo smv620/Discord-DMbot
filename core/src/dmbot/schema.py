@@ -6274,6 +6274,14 @@ HOMEBREW_PACK_DOORS = """
     REVOKE ALL ON FUNCTION dmbot_web_homebrew_campaigns(BIGINT) FROM PUBLIC;
 """
 
+CLUE_AUDIENCE = """
+    -- A clue only some people know (#1649; docs/STORY_MEMORY.md, section 2): the DM's switch
+    -- on a `clue` entry. Who knows it is its confirmed `knows` facts, so nothing else is
+    -- stored. The `clue` kind itself is core (in code), not a row. Off for every existing
+    -- entry, so this migration changes no row's meaning.
+    ALTER TABLE memory_entities ADD COLUMN audience_limited BOOLEAN NOT NULL DEFAULT false;
+"""
+
 HOMEBREW_SOURCE_DOOR = """
     -- The website's homebrew door adds where each entry came from (#1653): how it was added and the
     -- credit as the DM chose it. `added_by` and the page's address are not sent. Replacing a door
@@ -6479,6 +6487,7 @@ MIGRATIONS: tuple[Migration, ...] = (
     ("0112_homebrew_enabled", HOMEBREW_ENABLED),  # each entry on or off for the table (#1629)
     ("0113_homebrew_sources", HOMEBREW_SOURCES),  # an entry's source, one page per address (#1633)
     ("0114_homebrew_pack_doors", HOMEBREW_PACK_DOORS),  # the site's doors read pointers (#1635)
+    ("0115_clue_audience", CLUE_AUDIENCE),  # a clue only some people know (#1649)
     (
         "0116_web_homebrew_source",
         HOMEBREW_SOURCE_DOOR,
