@@ -342,6 +342,8 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
   let me = scenarioMe(scenario);
   // The questions sent in this visit (#1373): the pretend API starts with none, as a new account has.
   let questions: SupportQuestion[] = [];
+  // "Use what I say and type to improve DMbot" (#1610): on until the person turns it off.
+  let improve = true;
   const calls: string[] = [];
   const reachable = async (): Promise<void> => {
     if (scenario === "down") throw new ApiError("network");
@@ -504,6 +506,19 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
         ],
         { type: "text/plain" },
       );
+    },
+    async improvement() {
+      calls.push("improvement");
+      await reachable();
+      signedIn();
+      return improve;
+    },
+    async setImprovement(on) {
+      calls.push(`setImprovement:${on}`);
+      await reachable();
+      signedIn();
+      improve = on;
+      return improve;
     },
     async homebrewCampaigns() {
       calls.push("homebrewCampaigns");

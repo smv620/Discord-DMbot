@@ -262,6 +262,19 @@ Discord sign-in isn't set, because the API won't start without it):**
    it empty: if Cloudflare rejects it, stop and tell dev1. Cloudflare adds the DNS record
    itself: don't add one by hand.
 
+   **Stripe and the signed-in website (#1096; Supervisor's decision, 2026-10-17).** Stripe
+   delivers its payment events to `https://api.getdmbot.com/webhooks/stripe`, and the signed-in
+   site (sign-in, the account page, checkout, the billing portal) calls the paths below, so the
+   tunnel needs **one more route**, added the same way as the one above (Subdomain `api`,
+   Domain `getdmbot.com`, Service type HTTP, URL `web-api:8080`) with this Path, copied exactly:
+
+       ^/(webhooks/stripe$|auth/|me(/|$)|billing/)
+
+   Everything else stays closed until the website goes live (#498). Check it from outside with
+   an unsigned empty POST, which must be refused but not with a 404:
+   `curl -s -o /dev/null -w '%{http_code}\n' -X POST https://api.getdmbot.com/webhooks/stripe -d '{}'`
+   (400 or 401, not 404), and `https://api.getdmbot.com/health` must still answer 404.
+
    **Support mail by email (#1431).** For people's emailed replies to reach their support
    question, the mail service's inbound webhook must POST to `https://api.getdmbot.com/mail/inbound`,
    so the tunnel needs one more route like the one above with the Path `^/mail/inbound$` (same
@@ -270,6 +283,22 @@ Discord sign-in isn't set, because the API won't start without it):**
    senders are `MAIL_SUPPORT_FROM` (info@) and `MAIL_ALERTS_FROM` (jarvis@); the helper needs
    `ANTHROPIC_API_KEY` too. Until all of it is set, tickets are still kept and the team still
    replies from the admin page.
+
+   **Replies go to a subdomain (#1717).** The main domain's mail (info@, support@, jarvis@ and the
+   rest) goes to the team's inboxes through Cloudflare Email Routing, so the mail service must
+   not take it over. People's replies go to `reply.getdmbot.com`, which only the mail service
+   receives:
+   1. Open https://resend.com/domains, add `reply.getdmbot.com` (or turn on receiving for it) and
+      add the MX record Resend shows on the name `reply` in Cloudflare DNS
+      (https://dash.cloudflare.com, then the domain, then DNS). Leave the main domain's Email
+      Routing records alone.
+   2. Open https://resend.com/webhooks and add the endpoint
+      `https://api.getdmbot.com/mail/inbound` for the received-email event. Its signing secret
+      (it starts with `whsec_`) goes into `MAIL_INBOUND_SECRET` with `scripts/set-key`.
+   3. dev1 sets `MAIL_REPLY_DOMAIN=reply.getdmbot.com` with `scripts/set-variables`, adds the
+      tunnel route `^/mail/inbound$` (as above, only now, not before) and restarts the web API.
+   An older email's reply address (on the main domain) still reads, if it ever arrives: the
+   token proves the ticket, not the domain.
 
 **You (the owner), on the server, once dev1 says the update is in:**
 

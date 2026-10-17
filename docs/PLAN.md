@@ -3740,7 +3740,11 @@ months.
   (`SUPPORT_AI_MODEL` empty means the tier default), with fixed on-topic instructions; it says
   it is a program, not a person. It answers at most 5 times per ticket. Replies by email come
   back through the mail service's inbound webhook (`POST /mail/inbound`, signed with
-  `MAIL_INBOUND_SECRET`; 404 while unset) to `info+ticket-<id>-<token>@`.
+  `MAIL_INBOUND_SECRET`; 404 while unset) to `info+ticket-<id>-<token>@`. **Replies go to a
+  subdomain** (Supervisor, 2026-10-17, #1717): the bare domain's mail goes to the team's inboxes
+  through Cloudflare Email Routing, so the mail service receives only `reply.getdmbot.com`
+  (`MAIL_REPLY_DOMAIN`; empty keeps the sender's own domain). The token proves the ticket, not the
+  domain, so either domain reads.
 - **Escalate** to a person when the helper's sentiment check says the person is unhappy, they
   ask for a person (every helper answer ends "Want to talk to a person instead? Reply with just the word PERSON
   and someone on the DMbot team will write back to you."; the whole word *person* or *human*, any case, hands over as
