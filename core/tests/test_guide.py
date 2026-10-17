@@ -446,7 +446,7 @@ class Pressing(Setup):
 
         host: Any = SimpleNamespace(
             campaigns=self.campaigns, plan_allows=self.plan_allows, memory=self.memory,
-            adventure=self.store, plan=self.plan, watch=StoryWatch(self.db),
+            adventure=self.store, plan=self.plan, watch=StoryWatch(self.db), clocks=None,
         )  # fmt: skip
         host.guide_button_allowed = lambda g, c: DMBot.guide_button_allowed(host, g, c)
         return host

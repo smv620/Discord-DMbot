@@ -1373,6 +1373,13 @@ class GuidePhrases(unittest.TestCase):
             "where are we in the adventure?",
             "hey dm bot where are we in the book please",
             "what's next, DMbot?",
+            "ok so tell me what's next now",
+            "um what's next in the story",
+            "Hey DMbot, can you tell me what comes next?",
+            "what's coming up",
+            "what chapter are we in",
+            "dmbot where are we in the story please",
+            "whats up next",
         ):
             self.assertTrue(is_whats_next(yes), yes)
         for no in (
@@ -1386,5 +1393,10 @@ class GuidePhrases(unittest.TestCase):
             "",
             "where are we",
             "what's next on the menu",
+            "what happens next if the fireball hits",
+            "what's next on the clock",
+            "where are we in the round",
+            "what's up",
+            "what's next in the round",
         ):
             self.assertFalse(is_whats_next(no), no)

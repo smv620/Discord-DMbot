@@ -21,10 +21,33 @@ _PHRASES = frozenset(
         "what does the adventure have next",
         "where are we in the adventure",
         "where are we in the book",
+        "where are we in the story",
+        "where are we in the module",
+        # "next in" only with a story word: "what's next in initiative" stays out.
+        *(
+            f"{lead} in the {noun}"
+            for lead in ("what's next", "what is next", "what happens next", "what comes next")
+            for noun in ("story", "adventure", "book", "module")
+        ),
+        "what comes next",
+        "what's coming up",
+        "what is coming up",
+        "what's up next",
+        "what's the next scene",
+        "what's the next part",
+        "what chapter are we in",
+        "what chapter are we on",
+        "what part of the book are we in",
+        "what part of the adventure are we in",
+        "what does the book say happens next",
+        "what does the book say next",
     }
 )
-_LEAD = re.compile(r"^(?:(?:hey|hi|okay|ok)\s+)?(?:d\.?\s?m\.?[\s-]?bot\s+)?")
-_TAIL = re.compile(r"\s+(?:please|dmbot|dm bot)$")
+_FILLER = r"(?:(?:so|um+|uh+|and|alright|all right|okay|ok)\s+)"
+_ASKING = r"(?:(?:can|could) you (?:tell|say) me|can you say|tell me)\s+"
+_NAME = r"(?:(?:hey|hi|okay|ok)\s+)?(?:d\.?\s?m\.?[\s-]?bot|d m bot|deem bot|dee em bot)\s+"
+_LEAD = re.compile(rf"^{_FILLER}*(?:{_NAME})?{_FILLER}*(?:{_ASKING})?")
+_TAIL = re.compile(r"\s+(?:please|dmbot|dm bot|now|right now)$")
 
 
 def normal(text: str) -> str:
@@ -38,7 +61,7 @@ def normal(text: str) -> str:
 def is_whats_next(question: str) -> bool:
     """Is the whole question one of the phrases (after the wake phrase and politeness)?"""
     text = normal(question)
-    for _ in range(2):  # "hey dmbot please what's next" and "what's next dmbot please"
+    for _ in range(3):  # "hey dmbot please what's next" and "what's next now dmbot please"
         text = _LEAD.sub("", text, count=1).strip()
         text = re.sub(r"^please\s+", "", text)
         text = _TAIL.sub("", text).strip()

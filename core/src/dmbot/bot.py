@@ -3837,6 +3837,9 @@ class DMBot(commands.AutoShardedBot):
             return None
         if not await self.guide_button_allowed(table.guild_id, campaign):
             return None
+        # In a fight "what's next?" means whose turn it is: the usual answer, not the book.
+        if self.clocks is not None and await self.clocks.in_combat(table.guild_id, campaign.id):
+            return None
         return await guide_screen.answer_text(self, campaign)
 
     async def sidebar_tell_screen(self, table: Table, text: str) -> None:
