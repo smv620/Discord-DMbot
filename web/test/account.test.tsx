@@ -1210,6 +1210,12 @@ describe("free access (#806)", () => {
 });
 
 describe("sign in by email, DMbot ID, experience points and move code (#1231)", () => {
+  it("the email field has a grey hint and keeps its real label (#1778)", async () => {
+    render(<Account api={mockApi("signed-out")} go={vi.fn()} />);
+    const field = (await screen.findByLabelText(text.emailLabel)) as HTMLInputElement;
+    expect(field.placeholder).toBe("your@email.here");
+  });
+
   it("signed out: an email form that always answers in the same words", async () => {
     const api = mockApi("signed-out");
     render(<Account api={api} go={vi.fn()} />);

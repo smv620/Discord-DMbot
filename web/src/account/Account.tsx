@@ -373,6 +373,7 @@ function EmailSignIn() {
         type="email"
         name="email"
         autocomplete="email"
+        placeholder="your@email.here"
         value={email}
         onInput={(e) => setEmail((e.target as HTMLInputElement).value)}
       />
