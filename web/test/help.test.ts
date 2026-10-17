@@ -9,7 +9,7 @@ import { beforeAll, describe, expect, it } from "vitest";
 
 import { parsePage } from "./dom";
 
-import { HOMEBREW_LINKS_LIVE, SECRET_CLUES_LIVE, accountSteps, dmSteps, homebrewLinkSteps, secretClueSteps, emailSteps, recapSteps, quickAnswers, quickAnswersHeading, gettingHelp, playerSteps } from "../src/content/help";
+import { DM_BOT_CHANNEL_LIVE, dmBotChannelSteps, HOMEBREW_LINKS_LIVE, SECRET_CLUES_LIVE, accountSteps, dmSteps, homebrewLinkSteps, secretClueSteps, emailSteps, recapSteps, quickAnswers, quickAnswersHeading, gettingHelp, playerSteps } from "../src/content/help";
 import { held } from "../src/content/whats-new";
 import Help from "../src/pages/help.astro";
 
@@ -170,6 +170,24 @@ describe("Help: the website's read-only pages (#1588)", () => {
     expect(words).toContain("never asks again for that site");
     expect(words).toContain("Every table that uses that page gets the update");
     expect(words).toContain("Use example.com");
+  });
+
+  it("holds the DMbot channel steps with the held What's new entry, and flips them together (#1676)", () => {
+    expect(held.map((h) => h.title).includes("A DMbot channel for buttons")).toBe(!DM_BOT_CHANNEL_LIVE);
+    const shown = dmSteps.map((x) => x.text).join(" ");
+    expect(shown.includes("dmb-dm-bot")).toBe(DM_BOT_CHANNEL_LIVE);
+    expect(shown.includes("On your DM screen, press ⚙️ Settings")).toBe(!DM_BOT_CHANNEL_LIVE);
+    const words = dmBotChannelSteps.map((x) => x.text).join(" ");
+    expect(words).toContain("👤 My buttons");
+    expect(words).toContain("A game master gets ⚙️ Menu, 📜 My character sheet and ⚙️ Settings.");
+    expect(words).toContain("A player gets ⚙️ Menu and 📜 My character sheet.");
+    expect(words).toContain("Someone who said yes to being recorded gets ⚙️ Menu.");
+    expect(words).toContain("Anyone else gets Help.");
+    expect(words).toContain("/dmbot settings");
+    expect(words).toContain("notes, alerts and ⏹ Stop listening");
+    // Whichever way the switch is set, no step says Settings is on the DM screen or pinned card.
+    const live = DM_BOT_CHANNEL_LIVE ? shown : words;
+    expect(live).not.toMatch(/(?:on|from) (?:your|the) DM screen, press ⚙️ Settings|pinned card/);
   });
 
   it("finds Settings, splits the party and deletes a campaign in plain words (#1659)", () => {

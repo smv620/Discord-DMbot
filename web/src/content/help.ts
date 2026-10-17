@@ -76,6 +76,51 @@ export const secretClueSteps: Step[] = [
   },
 ];
 
+// The DMbot channel (#1666, #1676) moves the buttons off the DM screen, so every Help line that
+// sent people to ⚙️ Settings "on the DM screen" changes with it. It is held with the What's new
+// entry "A DMbot channel for buttons" (whats-new.ts, `held`) until it has been seen on the test
+// server. Set this to true in the same change that moves that entry out of `held`; a test keeps
+// the two in step and checks that no line points both ways.
+export const DM_BOT_CHANNEL_LIVE = false;
+
+export const settingsOnDmScreenSteps: Step[] = [
+  {
+    text: "On your DM screen, press ⚙️ Settings to change the game clock, house rules, or who can peek behind the DM screen.",
+    names: [{ name: "Settings", file: "dm_screen/settings.py" }],
+  },
+  {
+    text: "Can't find ⚙️ Settings? Type /dmbot settings in your server and it opens for you, privately. It is also on the voice-channel step after /dmbot start. Only the campaign's game masters can use it.",
+  },
+];
+
+export const dmBotChannelSteps: Step[] = [
+  {
+    text: "Each campaign has a channel called dmb-dm-bot. Everyone can read it, and only DMbot posts there. It holds one message with two buttons. Press 👤 My buttons to see the buttons for your part at the table. Only you see them. Press ❓ Help to read about DMbot.",
+    names: [
+      { name: "👤 My buttons", file: "dm_screen/dm_bot_panel.py" },
+      { name: "❓ Help", file: "dm_screen/dm_bot_panel.py" },
+    ],
+  },
+  {
+    text: "A game master gets ⚙️ Menu, 📜 My character sheet and ⚙️ Settings. A player gets ⚙️ Menu and 📜 My character sheet. Someone who said yes to being recorded gets ⚙️ Menu. Anyone else gets Help.",
+    names: [
+      { name: "⚙️ Menu", file: "consent_dm.py" },
+      { name: "📜 My character sheet", file: "ui/sheets.py" },
+    ],
+  },
+  {
+    text: "To change the game clock, house rules, or who can see the DM screen, press ⚙️ Settings in the DMbot channel. Press 👤 My buttons first if you don't see it. Only the campaign's game masters get it.",
+    names: [{ name: "Settings", file: "dm_screen/settings.py" }],
+  },
+  {
+    text: "Can't find ⚙️ Settings? Type /dmbot settings in your server and it opens for you, privately. Only the campaign's game masters can use it.",
+  },
+  {
+    text: "Your DM screen now holds only things from the game: notes, alerts and ⏹ Stop listening. The buttons moved to the DMbot channel, so the DM screen has less on it.",
+    names: [{ name: "Stop listening", file: "dm_screen/messages.py" }],
+  },
+];
+
 export const dmSteps: Step[] = [
   { text: "Add DMbot to your Discord server from the Add to Discord page." },
   {
@@ -90,13 +135,7 @@ export const dmSteps: Step[] = [
     text: "Pick your table's voice channel, then press ▶ Start listening. Each player gets a private message asking if they say yes. Only people who say yes are recorded.",
     names: [{ name: "▶ Start listening", file: "ui/dmbot_commands.py" }],
   },
-  {
-    text: "On your DM screen, press ⚙️ Settings to change the game clock, house rules, or who can peek behind the DM screen.",
-    names: [{ name: "Settings", file: "dm_screen/settings.py" }],
-  },
-  {
-    text: "Can't find ⚙️ Settings? Type /dmbot settings in your server and it opens for you, privately. It is also on the voice-channel step after /dmbot start. Only the campaign's game masters can use it.",
-  },
+  ...(DM_BOT_CHANNEL_LIVE ? dmBotChannelSteps : settingsOnDmScreenSteps),
   {
     text: "To let DMbot read what people type, press ⚙️ Settings, then Table chat. It reads the voice channel's chat and one more channel you pick, only from people who said yes.",
     names: [{ name: "Table chat", file: "dm_screen/table_chat_panel.py" }],
