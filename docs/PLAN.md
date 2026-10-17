@@ -3555,9 +3555,8 @@ once. The new-campaign form's link is saved in the same step as the campaign.
       most one DMbot private message per two minutes during combat**, counting everything DMbot
       sends them. In practice that is FightBot's own gap, because the sheet questions and cards
       of #1128 are held until the fight ends. Later features keep to this rule.
-    - **Spell slots:** the sheet snapshot (D1) does not keep slot counts, so a reminder can name
-      spells and features but not how many slots are left. Adding slots to the sheet is a
-      follow-up.
+    - **Spell slots** (built, #1176): the sheet keeps slot counts, and FightBot is given only
+      the levels with slots left ("2 level 1 slots"), so a reminder can say how many remain.
   - **Initiative style, heard** (owner, 2026-10-17, #1771): FightBot listens to the DM and the
     players and works out how the table runs initiative: **one at a time** (each creature on its
     own turn), **by side** (each side acts together) or **rolled each round**, and whether
