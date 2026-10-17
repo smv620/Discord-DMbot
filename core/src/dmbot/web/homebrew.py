@@ -32,7 +32,7 @@ from typing import Any
 from dmbot.db import Database
 from dmbot.recaps.notify import parse_ref
 from dmbot.rules import homebrew_file
-from dmbot.rules.homebrew import KINDS, Homebrew
+from dmbot.rules.homebrew import KINDS, Homebrew, credit_label
 from dmbot.web.me import MAX_GUILDS
 from dmbot.web.recaps import RecapError, _guild_of, _scoped
 from dmbot.web.sessions import Session
@@ -87,17 +87,18 @@ NAME_SHOWN = 80  # a credited name is short (`clean_name`); a cap here keeps any
 
 
 def source(e: dict[str, Any]) -> str | None:
-    """Where an entry came from, as words for the page: the same "from" and "credited to" the
-    bot's card uses (`rule_card.homebrew_citation`), or "by <name>"; None when it is the DM's own
-    or credited to the person who loaded it (a Discord user, who is never named here)."""
-    domain = e.get("creditDomain")
-    if domain:
-        verb = "from" if e.get("sourceKind") == "link" else "credited to"
-        return f"{verb} {domain}"
+    """Where an entry came from, as words for the page: the bot's own `credit_label` ("from" a page,
+    "credited to" a site, "by <name>"), so the two cannot drift. None when it is the DM's own or
+    credited to the person who loaded it (a Discord user, who is never named here)."""
     text = e.get("creditText")
-    if e.get("creditKind") == "name" and text:
-        return f"by {str(text)[:NAME_SHOWN]}"
-    return None
+    entry = Homebrew(
+        id=0, campaign_id="", kind="", name="", text="", summary=None, created_by=0, created_at=0,
+        updated_at=0, version=1, source_kind=str(e.get("sourceKind") or "typed"),
+        credit_kind=e.get("creditKind"),
+        credit_text=str(text)[:NAME_SHOWN] if text else None,
+        credit_domain=e.get("creditDomain"),
+    )  # fmt: skip
+    return credit_label(entry) or None
 
 
 def _kind_order(entry: dict[str, Any]) -> int:
