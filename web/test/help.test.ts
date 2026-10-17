@@ -10,7 +10,7 @@ import { beforeAll, describe, expect, it } from "vitest";
 import { parsePage } from "./dom";
 
 import { entries, held } from "../src/content/whats-new";
-import { TIME_SUGGESTIONS_LIVE, timeSuggestionSteps, RULES_CHANNEL_LIVE, rulesChannelSteps, INITIATIVE_STYLE_LIVE, initiativeStyleSteps, initiativeStyleDmSteps, NPCS_CHANNEL_LIVE, npcsChannelSteps, DEEDS_LIVE, deedSteps, WHERE_ARE_WE_LIVE, whereAreWeSteps, SHARED_STORY_LIVE, sharedStorySteps, STANDING_LIVE, standingSteps, HOMEBREW_KINDS_LIVE, homebrewKindSteps, STORY_THREADS_LIVE, storyThreadSteps, DM_BOT_CHANNEL_LIVE, dmBotChannelSteps, settingsOnDmScreenSteps, HOMEBREW_LINKS_LIVE, SECRET_CLUES_LIVE, accountSteps, dmSteps, homebrewLinkSteps, secretClueSteps, emailSteps, recapSteps, quickAnswers, quickAnswersHeading, gettingHelp, playerSteps, snags, snagsHeading } from "../src/content/help";
+import { TIME_SUGGESTIONS_LIVE, timeSuggestionSteps, RULES_CHANNEL_LIVE, rulesChannelSteps, INITIATIVE_STYLE_LIVE, initiativeStyleSteps, initiativeStyleDmSteps, NPCS_CHANNEL_LIVE, npcsChannelSteps, DEEDS_LIVE, deedSteps, WHERE_ARE_WE_LIVE, whereAreWeSteps, SHARED_STORY_LIVE, sharedStorySteps, STANDING_LIVE, standingSteps, HOMEBREW_KINDS_LIVE, homebrewKindSteps, STORY_THREADS_LIVE, storyThreadSteps, DM_BOT_CHANNEL_LIVE, dmBotChannelSteps, settingsOnDmScreenSteps, HOMEBREW_LINKS_LIVE, SECRET_CLUES_LIVE, accountSteps, dmSteps, homebrewLinkSteps, secretClueSteps, emailSteps, recapSteps, quickAnswers, quickAnswersHeading, gettingHelp, playerSteps, snags, snagsHeading, onThisPage, onThisPageHeading, backToTop } from "../src/content/help";
 import Help from "../src/pages/help.astro";
 
 const botDir = fileURLToPath(new URL("../../core/src/dmbot/", import.meta.url));
@@ -76,6 +76,42 @@ describe("Help", () => {
     expect(hrefs).toEqual(["#dm-heading", "#getting-help"]);
     const order = [...help.querySelectorAll("h2")].map((h) => h.id);
     expect(order.indexOf("snags-heading")).toBe(order.indexOf("getting-help-heading") - 1);
+  });
+
+  it("has an On this page list whose links all point to ids on the page (#1811)", () => {
+    const nav = help.querySelector("#contents-heading")?.closest("nav");
+    expect(nav?.getAttribute("aria-labelledby")).toBe("contents-heading");
+    expect(help.querySelector("#contents-heading")?.textContent).toBe(onThisPageHeading);
+    const links = [...(nav?.querySelectorAll("a") ?? [])];
+    expect(links.length).toBeGreaterThanOrEqual(6);
+    const headingIds: string[] = [];
+    for (const a of links) {
+      const id = a.getAttribute("href")?.slice(1) ?? "";
+      const target = help.getElementById(id);
+      expect(target, `#${id} exists`).not.toBeNull();
+      // A link may point at a section or at its heading; either way it says the heading's words.
+      const heading = target?.tagName === "SECTION" ? target.querySelector("h2") : target;
+      expect(heading?.textContent?.trim(), id).toBe(a.textContent?.trim());
+      headingIds.push(heading?.id ?? "");
+    }
+    // In page order, and every h2 (besides this list's own) is listed.
+    const order = [...help.querySelectorAll("h2")].map((h) => h.id).filter((id) => id !== "contents-heading");
+    expect(order.every((id) => headingIds.includes(id))).toBe(true);
+    expect(headingIds.filter((id) => order.includes(id))).toEqual(order);
+  });
+
+  it("lists the recaps heading only while recaps are on (#1811)", () => {
+    expect(onThisPage(false, "Recaps").map((c) => c.id)).not.toContain("recaps-heading");
+    expect(onThisPage(true, "Recaps").map((c) => c.id)).toContain("recaps-heading");
+  });
+
+  it("has Back to top links that point at the top of the page (#1811)", () => {
+    const backs = [...help.querySelectorAll("a.back, .back a")];
+    expect(backs.length).toBeGreaterThan(0);
+    for (const a of backs) {
+      expect(a.textContent?.trim()).toBe(backToTop);
+      expect(help.getElementById(a.getAttribute("href")?.slice(1) ?? "")?.tagName).toBe("H1");
+    }
   });
 
   it("says what each email is, and that a move code is only for you (#1283)", () => {
