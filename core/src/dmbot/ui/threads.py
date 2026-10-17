@@ -733,50 +733,88 @@ class ThreadsButton(
         await start_review(interaction, self.campaign_id)
 
 
+class ThreadListButton(
+    discord.ui.DynamicItem[discord.ui.Button[discord.ui.View]],
+    template=r"dmbot:threads:list:(?P<campaign>[0-9a-f]{32})",
+):
+    """🧵 Threads, on the pre-session note (#1675): the DM's thread list, in play first."""
+
+    def __init__(self, campaign_id: str) -> None:
+        super().__init__(
+            discord.ui.Button(
+                label="🧵 Threads",
+                style=discord.ButtonStyle.secondary,
+                custom_id=f"dmbot:threads:list:{campaign_id}",
+            )
+        )
+        self.campaign_id = campaign_id
+
+    @classmethod
+    async def from_custom_id(
+        cls, interaction: discord.Interaction, item: discord.ui.Item[Any], match: re.Match[str]
+    ) -> ThreadListButton:
+        return cls(match["campaign"])
+
+    async def callback(self, interaction: discord.Interaction) -> Any:
+        await start_review(interaction, self.campaign_id, all_live=True)
+
+
 def threads_view(campaign_id: str) -> discord.ui.View:
     view = discord.ui.View(timeout=None)
     view.add_item(ThreadsButton(campaign_id))
     return view
 
 
+NO_LIVE_THREADS = "No live threads right now. Add one under New thread."
 NOTHING_LEFT = "✅ No threads need a check right now. DMbot looks again after your next session."
 
 
-async def start_review(interaction: discord.Interaction, campaign_id: str) -> None:
-    got = await _dm_and_memory(interaction, campaign_id)
-    if got is None:
+async def start_review(
+    interaction: discord.Interaction, campaign_id: str, *, all_live: bool = False
+) -> None:
+    if await _dm_and_memory(interaction, campaign_id) is None:
         return
-    review = ThreadsReview(campaign_id)
+    await _answer_first(interaction)  # the read below can be slow: answer within Discord's 3 s
+    review = ThreadsReview(campaign_id, all_live=all_live)
     text = await review.current_text(interaction)
     if text is None:
-        await _tell(interaction, NOTHING_LEFT)
+        await _tell(interaction, NO_LIVE_THREADS if all_live else NOTHING_LEFT)
         return
     await _send(interaction, text, review)
 
 
 class ThreadsReview(_Menu):
-    """The stalled threads, each with Still going and the two ends (Finished and Dropped, or
-    Kept and Broken for a promise)."""
+    """The threads that need a word, each with Still going and the two ends. By default only the
+    quiet ones (after a session); `all_live` lists every thread that is still going, the ones in
+    play first, with the quiet ones marked (the 🧵 Threads button on the pre-session note)."""
 
-    def __init__(self, campaign_id: str) -> None:
+    PAGE_ALL = 4  # four threads and a row of paging
+
+    def __init__(self, campaign_id: str, *, all_live: bool = False) -> None:
         super().__init__()
-        self.campaign_id = campaign_id
+        self.campaign_id, self.all_live = campaign_id, all_live
         self.page: list[model.ThreadInfo] = []
         self.total = 0
+        self.offset = 0
 
     async def current_text(self, interaction: discord.Interaction) -> str | None:
         memory = _memory(interaction)
         campaign = await _campaign_for(interaction, self.campaign_id)
         if memory is None or campaign is None:
             return None
-        stalled = [
-            t
-            for t in await memory.threads(
-                campaign.guild_id, campaign.id, stalled_after=_stalled_after(interaction)
+        found = await memory.threads(
+            campaign.guild_id, campaign.id, stalled_after=_stalled_after(interaction)
+        )
+        if self.all_live:
+            chosen = model.in_play_first(
+                t for t in found if t.state is not None and t.state.condition in model.LIVE_STATES
             )
-            if t.stalled
-        ]
-        self.page, self.total = stalled[:PAGE], len(stalled)
+            size = self.PAGE_ALL
+            self.offset = min(self.offset, max(0, (len(chosen) - 1) // size * size))
+        else:
+            chosen = [t for t in found if t.stalled]
+            size = PAGE
+        self.page, self.total = chosen[self.offset : self.offset + size], len(chosen)
         self.clear_items()
         if not self.page:
             return None
@@ -794,20 +832,50 @@ class ThreadsReview(_Menu):
                         row=row,
                     )
                 )
-        lines = [
-            "**Threads that haven't moved.** Tap what is true in your story."
-            " You can change it later on the thread's card."
-        ]
+        if self.all_live and self.total > size:
+            if self.offset > 0:
+                self.add_item(_Button(self._back, label="◀ Back", row=4))
+            if self.offset + size < self.total:
+                self.add_item(_Button(self._next, label="Next ▶", row=4))
+        head = (
+            "**Your threads.** ⏳ means it has gone quiet. Tap what is true in your story."
+            if self.all_live
+            else "**Threads that haven't moved.** Tap what is true in your story."
+        )
+        lines = [head + " You can change it later on the thread's card."]
         for n, info in enumerate(self.page, 1):
-            lines.append(
-                f"{n}. **{_md(info.thread.name)}**: quiet for {info.quiet_sessions} "
-                f"{'session' if info.quiet_sessions == 1 else 'sessions'}."
-            )
-        if self.total > len(self.page):
+            words = model.words_for(info.thread.type)
+            state = info.state.condition if info.state is not None else ""
+            if info.stalled:
+                s = info.quiet_sessions
+                where = f"quiet for {s} {'session' if s == 1 else 'sessions'}"
+                mark = "⏳ " if self.all_live else ""
+            else:
+                where, mark = words.get(state, ""), ""
+            lines.append(f"{n}. {mark}**{_md(info.thread.name)}**: {where}.")
+        if not self.all_live and self.total > len(self.page):
             lines.append(
                 f"\n_{self.total - len(self.page)} more waiting. They show when these are done._"
             )
         return "\n".join(lines)
+
+    async def _back(self, interaction: discord.Interaction) -> None:
+        await self._turn(interaction, -self.PAGE_ALL)
+
+    async def _next(self, interaction: discord.Interaction) -> None:
+        await self._turn(interaction, self.PAGE_ALL)
+
+    async def _turn(self, interaction: discord.Interaction, by: int) -> None:
+        await _answer_first(interaction, in_place=True)
+        if await _dm_and_memory(interaction, self.campaign_id) is None:
+            return
+        self.offset = max(0, self.offset + by)
+        text = await self.current_text(interaction)
+        if text is None:
+            self.stop()
+            await _replace(interaction, NOTHING_LEFT, None)
+            return
+        await _replace(interaction, text, self)
 
     async def _answer(self, thread_id: str, key: str, interaction: discord.Interaction) -> None:
         await _answer_first(interaction, in_place=True)
@@ -847,6 +915,7 @@ __all__ = [
     "NewPromiseForm",
     "NewThreadForm",
     "PartyForm",
+    "ThreadListButton",
     "ThreadsButton",
     "ThreadsReview",
     "threads_view",
