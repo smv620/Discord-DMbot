@@ -839,6 +839,16 @@ Each step is useful on its own and ships behind the existing phases.
    plan), the files (2), and the guide's own three reads (nodes with the pick, linked entries, clashes);
    the reads took about 17 ms on a plan of 440 entries and 20 links. **Help and the website** are WebDev's
    later.
+   **Ask it aloud (#1739):** "Hey DMbot, what's next?" from a DM gets the same answer, privately, in the
+   DM's own chat with DMbot (said at the table, or typed or sent as a voice message in that chat; never
+   in the table's DMbot chat, and never for a player). The phrase list is strict and pure
+   (`sidebar/guide_phrase.py`): "what's next", "what happens next (in the adventure or the book)", "what
+   does the book have next", "where are we in the adventure", with or without "DMbot" and "please" ("what's
+   next in initiative", "what time is it" and "if they go north, what's next" are not it). No AI decides.
+   It answers only when the three conditions hold; otherwise the sidebar answers as it always did. **The
+   reply is DM-screen content and is never written to a transcript:** the question is logged as any
+   sidebar question, and the reply as "(answered privately: Guide me)". The text is made by the same
+   function as the button's (`ui/guide.compose`), so the two cannot differ.
 
 5. **Throughout:** the ontology steward and graph curator take over the after-session
    cleanup; their health numbers (duplicates, orphans, unused terms, flags per session,
