@@ -63,11 +63,17 @@ TOLERANCE_SECONDS = 300
 # (an account's default version can change under us in the dashboard). The webhook endpoint
 # must be created on this same version: an endpoint has its own, and it decides the shape of
 # the events. Checkout Sessions with Managed Payments are supported from this release.
-API_VERSION = "2026-04-22.dahlia"
+# Moved from 2026-04-22.dahlia to 2026-09-30.endive (#1703) because Stripe's dashboard stopped
+# offering dahlia when the owner created the test-mode webhook endpoint, so events arrive in
+# endive's shape. The fields this adapter reads were checked against the stripe-python 15.x and
+# 16.0.0 changelogs and none of them changed between the two (see the PR); the sandbox run
+# (#1096) is what proves it end to end.
+API_VERSION = "2026-09-30.endive"
 # The owner's Checkout Studio parameters (#1446), sent with every Checkout Session. `ui_mode`
-# is `hosted_page` on this API version (older versions called it `hosted`); the owner's
-# values are fixed, so a change is a decision, not a tweak. `payment_method_collection` is added
-# only to subscriptions (see `_checkout`). Listed in STRIPE_INTEGRATION_TODO.md.
+# is `hosted_page` on this API version and the one before it (older versions called it
+# `hosted`); the owner's values are fixed, so a change is a decision, not a tweak.
+# `payment_method_collection` is added only to subscriptions (see `_checkout`). Listed in
+# STRIPE_INTEGRATION_TODO.md.
 CHECKOUT_STUDIO: dict[str, str] = {
     "ui_mode": "hosted_page",
     "billing_address_collection": "auto",
