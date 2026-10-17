@@ -92,6 +92,7 @@ LED_TO_BUTTON = "➡ Led to…"  # a clue, event or thread led to another (#1679
 PROMISE_BY_BUTTON = "🤝 Who promised"  # a promise's buttons (#1674)
 PROMISE_TO_BUTTON = "🤝 Promised to"
 PROMISE_DUE_BUTTON = "📅 Due"
+BOOK_BUTTON = "📖 In my adventure…"  # the DM says who in the adventure this is (#1715)
 STANDING_BUTTON = "🤝 Standing"  # how an NPC, group or place feels about the party (#1655)
 CLUE_BUTTON = "🔒 Only some know this"  # a clue's list of who knows it (#1649)
 ALSO_CALLED = "🏷️ Also called…"  # adds another name; its own icon, not Add a name's (#393)
@@ -282,6 +283,7 @@ def card_text(
     limit: int = CARD_MAX,
     item: bool | None = None,
     thread_lines: list[str] | None = None,
+    book_line: str | None = None,
 ) -> str | None:
     """The card for one name, or None if it's gone. `player`: who plays it (a player's
     character); `sheet`: its D&D Beyond sheet line (#723). `item`: it is an item, of the core
@@ -311,6 +313,8 @@ def card_text(
         lines.append(ONLY_ONE if entity.unique_item else ONLY_ONE_GUESS)
     if thread_lines:  # a story thread (#1662): its state, who is involved, what moved it
         lines.extend(thread_lines)
+    if book_line and secrets:  # who this is in the DM's adventure: the DM's alone (#1715)
+        lines.append(book_line)
     if entity.audience_limited:
         knowers = sorted(
             (
@@ -354,6 +358,10 @@ async def _names(interaction: discord.Interaction, campaign: Campaign) -> Campai
         log.exception("Couldn't load the campaign's names")
         await _tell(interaction, "DMbot couldn't load the names just now. Try again in a moment.")
         return None
+
+
+def _a_person_or_place(onto: Any, type_key: str) -> bool:
+    return any(onto.is_a(type_key, kind) for kind in ("character", "faction", "place"))
 
 
 async def show_card(
@@ -432,6 +440,25 @@ async def show_card(
             )
             if line
         ] or None
+    book_line, book_ok = None, False
+    if (
+        entity is not None
+        and secrets
+        and campaign.story_mode != "off"
+        and not entity.is_player_character
+        and not entity.party
+        and _a_person_or_place(await memory.ontology(campaign.guild_id, campaign.id), entity.type)
+    ):
+        from dmbot.memory import book_links
+
+        if await book_links.has_plan(memory, campaign.guild_id, campaign.id):
+            book_ok = True
+            mine = await book_links.linked(memory, campaign.guild_id, campaign.id, entity_id)
+            if mine:
+                book_line = "📖 **In your adventure:** " + "; ".join(
+                    _md(m.name[:60]) + (f" ({_md(m.chapter[:60])})" if m.chapter else "")
+                    for m in mine[:3]
+                )
     text = card_text(
         names,
         entity_id,
@@ -442,6 +469,7 @@ async def show_card(
         limit=limit,
         item=is_item,
         thread_lines=lines_of_thread,
+        book_line=book_line,
     )
     if text is None or entity is None:
         if replace:  # never leave the message pressed on a step that's over
@@ -452,7 +480,7 @@ async def show_card(
     cuts = cut_sections(names, entity_id, connections, secrets=secrets)
     if not cuts and text != card_text(
         names, entity_id, connections, secrets=secrets, player=player, sheet=sheet,
-        limit=10**6, item=is_item, thread_lines=lines_of_thread,
+        limit=10**6, item=is_item, thread_lines=lines_of_thread, book_line=book_line,
     ):  # fmt: skip
         # Every section is short, but the whole card still didn't fit one message (a long note,
         # a sheet line, many groups): offer every section that has anything in it.
@@ -477,6 +505,7 @@ async def show_card(
         thread=is_thread and secrets,
         promise=entity.type == "promise" and secrets,
         led=secrets and (is_thread or entity.type in ("clue", "event")),
+        book=book_ok,
         standing=(
             entity.type in ("character", "faction", "place")
             and not entity.is_player_character
@@ -617,6 +646,7 @@ class NameCard(_Menu):
         thread: bool = False,
         promise: bool = False,
         led: bool = False,
+        book: bool = False,
         undo_connection: int | None = None,
     ) -> None:
         super().__init__()
@@ -641,6 +671,8 @@ class NameCard(_Menu):
         self.add_item(_Button(self._connect, label="🧭 Connect to…", style=grey, row=2))
         if led:  # the DM's word that this led to a thread or an event (#1679)
             self.add_item(_Button(self._led_to, label=LED_TO_BUTTON, style=grey, row=2))
+        if book:  # the DM's word that this is an entry in their adventure (#1715)
+            self.add_item(_Button(self._book, label=BOOK_BUTTON, style=grey, row=2))
         if sheet:
             self.add_item(_Button(self._unlink_sheet, label="📜 Forget sheet", style=grey, row=2))
         if item:
@@ -674,6 +706,13 @@ class NameCard(_Menu):
                 row=4,
             )
             self.add_item(self.show_all)
+
+    async def _book(self, interaction: discord.Interaction) -> None:
+        from dmbot.ui.book_link import show_picker
+
+        await _answer_first(interaction, in_place=True)
+        self.stop()
+        await show_picker(interaction, self.campaign_id, self.entity_id)
 
     async def _thread_state(self, interaction: discord.Interaction) -> None:
         from dmbot.ui.threads import open_change_state
