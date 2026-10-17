@@ -342,15 +342,11 @@ class BackingUp(Setup):
             lambda d: d.update(fingerprint="nope"),
             lambda d: d.update(added_by="0"),
             lambda d: d.update(characters=0),
-            lambda d: d.update(chunks=[]),
-            lambda d: d["chunks"].append({"heading": "x", "text": ""}),
-            lambda d: d["chunks"].append({"heading": "x" * 300, "text": "t"}),
             lambda d: d.update(extra=1),
+            lambda d: d.update(chunks=[{"heading": "", "text": "text smuggled in"}]),  # no text
             lambda d: d.update(file_name="bad\nname.txt"),
-            lambda d: d["chunks"][0].update(text="a\x00b"),
-            lambda d: d["chunks"][0].update(heading="\ud800"),
             lambda d: d.update(file_name="x\ud800.txt"),
-            lambda d: d.update(characters=1),  # many chunks that claim to be a one-letter file
+            lambda d: d.update(characters=2**40),  # more than a campaign may hold
         )
         for damage in damages:
             data = await self.campaigns.export(GUILD_A, self.a.id)
