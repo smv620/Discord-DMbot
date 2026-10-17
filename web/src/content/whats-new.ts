@@ -252,6 +252,13 @@ export const held: Held[] = [
   },
   {
     date: "2026-10-17",
+    title: "Record what your players did",
+    what: "On a player character's or the party's name card, press Record a deed. Say what happened, pick up to five characters, groups or places it mattered to, and how it landed: helped them, pleased them, annoyed them or hurt them. DMbot then shows it as a reason on their Standing, and it fades after ten sessions. You can undo it, and your own Standing words still win. Players never see it.",
+    reason:
+      "Held until it has been seen working on the test server (#1732).",
+  },
+  {
+    date: "2026-10-17",
     title: "Story threads you keep",
     what: "On the Names list, press New thread to keep a quest, mystery, hook or goal, and say how far along it is. Its card shows who is involved, what moved it, and its history. Say Still going when you check on it. After a session, DMbot tells you which threads haven't moved for a few sessions, so you can say Still going, Resolved or Dropped. When a session starts, the note before it names the quiet ones, with a Threads button for your list. On a clue, event or thread, press Led to to say what it led to, and the cards show where each came from. It only reminds you; you decide. Players never see your threads.",
     reason:

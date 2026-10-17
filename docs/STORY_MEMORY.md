@@ -655,6 +655,24 @@ Each step is useful on its own and ships behind the existing phases.
    place has **🤝 Standing** (DM only) with the reasons, **Set standing…** and, on a group or place,
    **Set attitude…**; a line says it only reminds the DM. Recall does not read these tables, and
    the players' audience and transcripts never get them. 30 pairs take well under 5 ms.
+   **Slice 4b is built (#1732): deeds the DM confirms move standing** (no AI, no extractor, nothing
+   reads speech). On a player character's or the party's name card, **⚔️ Record a deed** (DM only):
+   what happened (up to 200 characters), who it mattered to (up to five NPCs, groups or places), how it
+   landed (**Helped them** +20, **Pleased them** +10, **Annoyed them** −10, **Hurt them** −20), one
+   confirmation, then **↩ Undo that**. No new table: core gains the kind `deed` (under `event`) and the
+   connections `did` (doer → deed) and `affected` (deed → whom, the effect as the detail); the words
+   are the deed's description. All of it is one change in the memory change log (one Undo), in
+   backups, and deleted with the campaign. A deed is the DM's own note: recall's players audience, the
+   players' lookup and name cards, and transcripts never get it. **Standing:** each deed is evidence
+   of weight 20 (score from how it landed) from each one it mattered to toward the doer, climbing the
+   same ladders as an impression (so a deed by the party reaches each player character). A deed older
+   than ten sessions counts at half weight (old news fades; the DM can always set it); the sessions
+   counted are the ones names were heard in and the ones deeds were recorded for. The DM's own word
+   on the exact pair still decides outright, and the deed shows only as a reason. **🤝 Standing**
+   lists it: "⚔️ Saved the mill (session 4, Helped them)". Because Helped them (+20) is exactly the
+   Friendly line, deeds alone take "No opinion yet" to Friendly at once, and mixed with a Wary word
+   they move it only as far as the mean goes. A later slice may propose deeds from claims for the DM
+   to confirm.
    **Phase 5c slice 1 is built (#1662): story threads the DM keeps** (no AI; the DM writes
    them). Core gains `thread` with the kinds `quest`, `mystery`, `hook` and `goal` under it (as
    `clue` sits under `concept`), and the connections `in_thread` (who, with their role in the

@@ -51,11 +51,14 @@ from dmbot.memory.checks import HELD_TWICE, Ended, check_relation, duplicate_of,
 from dmbot.memory.clues import CLUE, KNOWS, NEEDS_SOMEONE, ONLY_CHARACTERS, ONLY_CLUES
 from dmbot.memory.lookup import LookupData
 from dmbot.memory.models import (
+    AFFECTED,
     ALIAS_KINDS,
     CONFIRMED,
     CREATURE_TYPE,
+    DEED,
     DESCRIPTION_MAX,
     DETAIL_MAX,
+    DID,
     DM,
     ENDED,
     FACT_STATUSES,
@@ -987,12 +990,17 @@ class MemoryStore:
 
     # ---- standing the DM sets (#1655) ----
 
-    async def standing_index(self, guild_id: int, campaign_id: str) -> standing.Index:
+    async def standing_index(
+        self,
+        guild_id: int,
+        campaign_id: str,
+        session_numbers: Mapping[int, int] | None = None,
+    ) -> standing.Index:
         """One in-memory copy to work standing out from, read at one moment: the confirmed
         entries, the connections the ladders climb and the current impressions and attitudes. A
         later `Index.standing(a, b)` asks the database nothing."""
         async with self._read(guild_id, campaign_id, snapshot=True) as scope:
-            return await _standing_index(scope)
+            return await _standing_index(scope, session_numbers)
 
     async def party(self, guild_id: int, campaign_id: str) -> Entity | None:
         async with self._read(guild_id, campaign_id) as scope:
@@ -1024,6 +1032,75 @@ class MemoryStore:
                 ALIASES, _new_alias(w, row["id"], PARTY_NAME, "full", CONFIRMED, False, None)
             )
             return _entity(row)
+
+    async def add_deed(
+        self,
+        guild_id: int,
+        campaign_id: str,
+        doer_id: str,
+        text: str,
+        viewer_ids: Sequence[str],
+        effect: str,
+        *,
+        source: str,
+        from_session_at: int | None = None,
+    ) -> Written[Entity]:
+        """The DM records a deed (#1732): something a player character or the party did that
+        mattered to up to five NPCs, groups or places, and how it landed (`DEED_EFFECTS`). One
+        change, so one Undo takes all of it back. The deed is an entry of its own (the words are
+        its description), joined to the doer by `did` and to each one it mattered to by `affected`
+        with the effect as the detail. Only the DM, and nothing here reads speech."""
+        if source != DM:
+            raise MemoryRuleError("Only the DM can record a deed.")
+        words = clean_text(text)
+        if not words or len(words) > DEED_TEXT_MAX:
+            raise MemoryRuleError(f"Say what happened in at most {DEED_TEXT_MAX} characters.")
+        if effect not in standing.DEED_SCORE:
+            raise MemoryRuleError("Pick how it landed.")
+        wanted = list(dict.fromkeys(viewer_ids))
+        if not wanted or len(wanted) > DEED_VIEWERS_MAX:
+            raise MemoryRuleError(f"Pick one to {DEED_VIEWERS_MAX} it mattered to.")
+        _check_span(from_session_at, None)
+        async with self._write(guild_id, campaign_id, source) as w:
+            doer = await _entity_row(w, doer_id)
+            if doer["status"] != CONFIRMED or not (
+                doer["party"] or doer["role"] == PLAYER_CHARACTER
+            ):
+                raise MemoryRuleError(ONLY_PLAYERS_DO)
+            for viewer_id in wanted:
+                viewer = await _entity_row(w, viewer_id)
+                npc = viewer["type"] == "character" and viewer["role"] != PLAYER_CHARACTER
+                if (
+                    viewer["status"] != CONFIRMED
+                    or viewer_id == doer_id
+                    or viewer["party"]
+                    or not (npc or viewer["type"] in ("faction", "place"))
+                ):
+                    raise MemoryRuleError(ONLY_THESE_MATTER)
+            row = await w.insert(
+                ENTITIES,
+                {
+                    "id": new_id(), "type": DEED, "name": words[:DEED_NAME_MAX],
+                    "description": words, "status": CONFIRMED, "merged_into": None,
+                    "source": source, "created_at": w.now, "played_by": None, "role": None,
+                    "needs_look": False, "unique_item": None, "audience_limited": False,
+                    "party": False,
+                },
+            )  # fmt: skip
+            await w.insert(
+                ALIASES,
+                _new_alias(w, row["id"], words[:DEED_NAME_MAX], "full", CONFIRMED, False, None),
+            )
+            await self.add_relation_in(
+                w, doer_id, DID, row["id"], confidence=1.0, status=CONFIRMED,
+                from_session_at=from_session_at,
+            )  # fmt: skip
+            for viewer_id in wanted:
+                await self.add_relation_in(
+                    w, row["id"], AFFECTED, viewer_id, confidence=1.0, status=CONFIRMED,
+                    detail=effect, from_session_at=from_session_at,
+                )  # fmt: skip
+            return Written(_entity(row), w.batch)
 
     async def set_impression(
         self,
@@ -3626,7 +3703,16 @@ async def _move_standing(w: Changes, keep_id: str, gone_id: str) -> None:
                 await w.update(table, r["id"], {held: a, aimed: b})
 
 
-async def _standing_index(scope: Scope) -> standing.Index:
+DEED_TEXT_MAX = 200  # what the DM types for a deed
+DEED_NAME_MAX = 100  # an entry's name is at most this; the full words are its description
+DEED_VIEWERS_MAX = 5
+ONLY_PLAYERS_DO = "Only a player character or the party does a deed."
+ONLY_THESE_MATTER = "A deed can matter to an NPC, a group or a place, not to the doer."
+
+
+async def _standing_index(
+    scope: Scope, session_numbers: Mapping[int, int] | None = None
+) -> standing.Index:
     """The confirmed entries, the three connections the ladders climb and the current impressions
     and attitudes, as `standing.Index` wants them."""
     entities = await scope.select(ENTITIES, " AND status = 'confirmed' AND type <> 'person'")
@@ -3637,6 +3723,7 @@ async def _standing_index(scope: Scope) -> standing.Index:
     )
     impressions = await scope.select(IMPRESSIONS, " AND closed_at IS NULL")
     attitudes = await scope.select(ATTITUDES, " AND closed_at IS NULL")
+    deeds = await _deed_rows(scope, {e["id"]: e for e in entities})
     return standing.Index(
         (
             standing.Node(
@@ -3656,8 +3743,54 @@ async def _standing_index(scope: Scope) -> standing.Index:
                 )
                 for r in attitudes
             ),
+            *deeds,
         ),
+        session_numbers,
     )
+
+
+async def _deed_rows(scope: Scope, entities: dict[str, dict[str, Any]]) -> list[standing.Row]:
+    """The deeds the DM recorded (#1732) as evidence: for each person, group or place a deed
+    mattered to, one row toward the one who did it. A deed older than `DEED_FADES_AFTER` sessions
+    counts at half weight; the sessions counted are the ones names were heard in and the ones
+    deeds were recorded for."""
+    rows = await scope.select(
+        RELATIONS,
+        " AND status = 'confirmed' AND to_session_at IS NULL AND predicate = ANY(%s)",
+        [[DID, AFFECTED]],
+    )
+    doer = {r["object_id"]: r["subject_id"] for r in rows if r["predicate"] == DID}
+    affected = [r for r in rows if r["predicate"] == AFFECTED and r["subject_id"] in doer]
+    if not affected:
+        return []
+    cur = await scope.conn.execute(
+        "SELECT DISTINCT session_started_at FROM memory_mentions WHERE guild_id = %s"
+        " AND campaign_id = %s AND session_started_at IS NOT NULL"
+        " ORDER BY session_started_at DESC LIMIT %s",
+        (*scope.ids, standing.DEED_FADES_AFTER),
+    )
+    sessions = {int(r["session_started_at"]) for r in await cur.fetchall()}
+    sessions |= {int(r["from_session_at"]) for r in affected if r["from_session_at"] is not None}
+    newest = sorted(sessions, reverse=True)
+    cutoff = (
+        newest[standing.DEED_FADES_AFTER - 1] if len(newest) >= standing.DEED_FADES_AFTER else 0
+    )
+    out = []
+    for r in affected:
+        deed = entities.get(r["subject_id"])
+        score = standing.DEED_SCORE.get(r["detail"])
+        if deed is None or score is None or r["object_id"] not in entities:
+            continue
+        old = r["from_session_at"] is not None and int(r["from_session_at"]) < cutoff
+        out.append(
+            standing.Row(
+                r["object_id"], doer[r["subject_id"]], score,
+                standing.DEED_WEIGHT // 2 if old else standing.DEED_WEIGHT,
+                standing.STORY_SOURCE, False, deed["description"] or deed["name"], r["detail"],
+                None if r["from_session_at"] is None else int(r["from_session_at"]),
+            )
+        )  # fmt: skip
+    return out
 
 
 def _opinion(r: dict[str, Any], attitude: bool) -> Opinion:

@@ -84,6 +84,12 @@ THREAD_STATES = (HINTED, OPEN, GOING, RESOLVED, ABANDONED)
 # The core kinds of story thread. Threads are the DM's plot notes (CLAUDE.md: DM-screen content),
 # so lookup and recall keep them from anyone who may not see secrets.
 THREAD_TYPES = ("thread", "quest", "mystery", "hook", "goal", "promise")
+# A deed the DM recorded (#1732): something a player character or the party did that mattered to
+# someone. A kind under `event`. Like a thread it is the DM's own note, so lookup and recall keep it
+# from anyone who may not see secrets.
+DEED = "deed"
+DID, AFFECTED = "did", "affected"  # who did it (doer → deed); who it mattered to (deed → them)
+DM_ONLY_TYPES = (*THREAD_TYPES, DEED)
 BEING_CONDITIONS = (ALIVE, DEAD, MISSING, CAPTURED, TRANSFORMED, UNKNOWN)
 THING_CONDITIONS = (INTACT, DESTROYED, LOST, UNKNOWN)
 CONDITIONS = (*BEING_CONDITIONS, INTACT, DESTROYED, LOST)

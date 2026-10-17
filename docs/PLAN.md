@@ -2376,6 +2376,9 @@ Full design and rationale: docs/STORY_MEMORY.md. In short:
   by the town's view of the party, of the character's people and its general mood;
   direct experience gradually outweighs that. Only existing impressions and attitudes
   are stored, so it scales. The DM can set standing at any rung.
+  Built (#1732): **⚔️ Record a deed** on a player character's or the party's card (what happened, whom it
+  mattered to, how it landed, one confirmation, Undo); a deed counts as evidence of weight 20, half after
+  ten sessions, and the DM's own word still wins. Nothing is read from speech.
 - **Plots:** story threads (hinted, open, active, stalled, resolved, abandoned),
   promises with due dates, clues, and cause and effect; a pre-session note of what's
   open and what could clash tonight.

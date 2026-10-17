@@ -35,6 +35,21 @@ DM_WEIGHT = 100  # a standing the DM set: the DM always wins at that rung
 MAX_RUNGS = 2
 HALF = 0.5
 
+# A deed the DM recorded (#1732) moves how those it mattered to feel about the doer: how it landed,
+# in the DM's words, and the score each stands for. A deed is evidence of weight `DEED_WEIGHT`
+# (the DM's own word on a pair is `DM_WEIGHT` and always wins), halved once it is older than
+# `DEED_FADES_AFTER` sessions: old news fades, but the DM can always set it.
+DEED_EFFECTS = (
+    ("Helped them", 20),
+    ("Pleased them", 10),
+    ("Annoyed them", -10),
+    ("Hurt them", -20),
+)
+DEED_SCORE = dict(DEED_EFFECTS)
+DEED_WEIGHT = 20
+DEED_FADES_AFTER = 10
+STORY_SOURCE = "story"
+
 DM_SOURCE = "dm"
 MEMBER_OF, LOCATED_IN, OF_PEOPLE = "member_of", "located_in", "of_people"
 
@@ -69,6 +84,9 @@ class Row:
     weight: int
     source: str
     attitude: bool = False
+    deed: str = ""  # a deed's words (#1732): this row is evidence from it, not a feeling the DM set
+    effect: str = ""  # ...and how it landed ("Helped them")
+    session: int | None = None  # ...and when it was, for "session 4"
 
 
 @dataclass(frozen=True, slots=True)
@@ -97,7 +115,14 @@ class Standing:
 class Index:
     """The copy standing is worked out from: built once, asked many times."""
 
-    def __init__(self, nodes: Iterable[Node], links: Iterable[Link], rows: Iterable[Row]) -> None:
+    def __init__(
+        self,
+        nodes: Iterable[Node],
+        links: Iterable[Link],
+        rows: Iterable[Row],
+        session_numbers: Mapping[int, int] | None = None,
+    ) -> None:
+        self.session_numbers: Mapping[int, int] = session_numbers or {}
         self.nodes: dict[str, Node] = {n.id: n for n in nodes}
         self.party: str | None = next((n.id for n in self.nodes.values() if n.party), None)
         self.up: dict[str, list[str]] = defaultdict(list)  # a judge climbs member_of + located_in
@@ -111,8 +136,14 @@ class Index:
                 self.of[link.subject].append(link.object)
         self.impressions: dict[tuple[str, str], Row] = {}
         self.attitudes: dict[tuple[str, str], Row] = {}
+        self.deeds: dict[tuple[str, str], list[Row]] = defaultdict(list)
         for row in rows:
-            (self.attitudes if row.attitude else self.impressions)[(row.holder, row.target)] = row
+            if row.deed:
+                self.deeds[(row.holder, row.target)].append(row)
+            else:
+                (self.attitudes if row.attitude else self.impressions)[(row.holder, row.target)] = (
+                    row
+                )
 
     # ---- the ladders ----
 
@@ -159,6 +190,8 @@ class Index:
                         for row in (self.impressions.get((v, s)), self.attitudes.get((v, s))):
                             if row is not None:  # a group can hold both for the same pair
                                 found.append((i, j, row))
+                        for row in self.deeds.get((v, s), ()):
+                            found.append((i, j, row))  # never decisive: the DM's word still wins
         if not found:
             return Standing(viewer, subject, None, None, ())
         found.sort(key=lambda f: (f[0] + f[1], f[0], f[2].holder, f[2].target))
@@ -180,6 +213,10 @@ class Index:
         return Standing(viewer, subject, score, step_of(score), reasons)
 
     def _reason(self, row: Row, viewer: str, subject: str) -> str:
+        if row.deed:
+            number = self.session_numbers.get(row.session) if row.session is not None else None
+            when = f"session {number}, " if number is not None else ""
+            return f"⚔️ {row.deed} ({when}{row.effect})"
         who = "you set it" if row.source == DM_SOURCE else "from the story"
         if row.holder == viewer and row.target == subject:
             return f"{who.capitalize()}."  # the step above already says what
@@ -190,6 +227,10 @@ class Index:
 
 __all__ = [
     "CUTS",
+    "DEED_EFFECTS",
+    "DEED_FADES_AFTER",
+    "DEED_SCORE",
+    "DEED_WEIGHT",
     "DEVOTED",
     "DM_SOURCE",
     "DM_WEIGHT",
