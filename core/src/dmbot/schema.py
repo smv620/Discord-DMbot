@@ -6438,6 +6438,25 @@ STORY_THREADS = """
          'hinted', 'open', 'active', 'resolved', 'abandoned'));
 """
 
+# Homebrew gains the species, subclass and background kinds (#1663): D&D Beyond's homebrew has
+# them and the owner's live check found no way to pick them. Only the kind checks widen, no row
+# changes, so no migration policy is needed.
+MORE_HOMEBREW_KINDS = """
+    ALTER TABLE homebrew_entries DROP CONSTRAINT homebrew_entries_kind_check;
+    ALTER TABLE homebrew_entries ADD CONSTRAINT homebrew_entries_kind_check
+        CHECK (kind IN ('spell', 'monster', 'item', 'feat', 'condition', 'other',
+                        'species', 'subclass', 'background'));
+    ALTER TABLE homebrew_pages DROP CONSTRAINT homebrew_pages_kind_check;
+    ALTER TABLE homebrew_pages ADD CONSTRAINT homebrew_pages_kind_check
+        CHECK (kind IN ('spell', 'monster', 'item', 'feat', 'condition', 'other',
+                        'species', 'subclass', 'background'));
+    ALTER TABLE pack_suggestions DROP CONSTRAINT pack_suggestions_kind_check;
+    ALTER TABLE pack_suggestions ADD CONSTRAINT pack_suggestions_kind_check
+        CHECK (kind IN ('spell', 'monster', 'item', 'feat', 'condition', 'rule', 'other',
+                        'species', 'subclass', 'background'));
+"""
+
+
 MIGRATIONS: tuple[Migration, ...] = (
     ("0001_initial", INITIAL),
     ("0002_active_sessions", ACTIVE_SESSIONS),
@@ -6566,6 +6585,7 @@ MIGRATIONS: tuple[Migration, ...] = (
     ("0116_web_homebrew_source", HOMEBREW_SOURCE_DOOR),  # the page says where it came from (#1653)
     ("0117_standing", STANDING),  # impressions, attitudes and the party (#1655)
     ("0118_story_threads", STORY_THREADS),  # a thread's states beside the conditions (#1662)
+    ("0119_homebrew_more_kinds", MORE_HOMEBREW_KINDS),  # species, subclass, background (#1663)
 )
 
 # Tables that must have row-level security. A test checks every table in the schema
