@@ -1211,14 +1211,7 @@ class DMBot(commands.AutoShardedBot):
         self.add_dynamic_items(house_voice_screen.HouseVoiceButton)  # house rules said aloud (#953)
         # A player's 📜 My character sheet, in their private messages (#723).
         self.add_dynamic_items(MySheetButton, OpenCardButton)  # #723, #1119
-        if self.settings.dev_guild_id:
-            guild = discord.Object(id=self.settings.dev_guild_id)
-            self.tree.copy_global_to(guild=guild)
-            await self.tree.sync(guild=guild)
-        elif 0 in self.settings.shards.ids:
-            # Commands are registered once for the whole bot, not per shard: only the
-            # pod serving shard 0 does it, so many pods don't all sync at startup.
-            await self.tree.sync()
+        await self._sync_commands()
         await self.ears.start()
         self._background = [
             self._watched(self.pipeline.run(), "transcribe"),
@@ -3309,6 +3302,24 @@ class DMBot(commands.AutoShardedBot):
         if resumed:
             log.info("Resumed %d session(s)", resumed)
         return failed
+
+    async def _sync_commands(self) -> None:
+        """Register the slash commands (#1767). Always globally, so every server that adds DMbot
+        has `/dmbot`: a customer's server is never the dev server. When `DISCORD_DEV_GUILD_ID` is
+        set the commands are also copied to that server, because a guild's commands update at
+        once while global ones can take a while to show up, which is what a developer wants."""
+        if 0 in self.settings.shards.ids:
+            # Registered once for the whole bot, not per shard: only the pod serving shard 0
+            # does it, so many pods don't all sync at startup.
+            try:
+                await self.tree.sync()
+            except discord.HTTPException:
+                # (a rate limit must not stop the bot starting, or the dev server's copy)
+                log.warning("Couldn't register the global slash commands", exc_info=True)
+        if self.settings.dev_guild_id and 0 in self.settings.shards.ids:
+            guild = discord.Object(id=self.settings.dev_guild_id)
+            self.tree.copy_global_to(guild=guild)
+            await self.tree.sync(guild=guild)
 
     async def on_guild_join(self, guild: discord.Guild) -> None:
         """DMbot was just added to a server: say hello, or say what it still needs."""

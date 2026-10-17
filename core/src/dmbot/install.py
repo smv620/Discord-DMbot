@@ -112,7 +112,10 @@ WELCOME_INTRO = (
     "for the DM. It never invents story or makes rulings: the DM decides everything. "
     "Players are only heard after they say yes."
 )
-HOW_TO_START = "**To start:** the DM joins a voice channel and runs `/dmbot start`."
+HOW_TO_START = (
+    "**To start:** the DM joins a voice channel and runs `/dmbot start`. "
+    "If `/dmbot` doesn't show up yet, wait a minute and try again."
+)
 
 
 def welcome() -> str:
