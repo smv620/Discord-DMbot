@@ -271,6 +271,22 @@ Discord sign-in isn't set, because the API won't start without it):**
    `ANTHROPIC_API_KEY` too. Until all of it is set, tickets are still kept and the team still
    replies from the admin page.
 
+   **Replies go to a subdomain (#1717).** The main domain's mail (info@, support@, jarvis@ and the
+   rest) goes to the team's inboxes through Cloudflare Email Routing, so the mail service must
+   not take it over. People's replies go to `reply.getdmbot.com`, which only the mail service
+   receives:
+   1. Open https://resend.com/domains, add `reply.getdmbot.com` (or turn on receiving for it) and
+      add the MX record Resend shows on the name `reply` in Cloudflare DNS
+      (https://dash.cloudflare.com, then the domain, then DNS). Leave the main domain's Email
+      Routing records alone.
+   2. Open https://resend.com/webhooks and add the endpoint
+      `https://api.getdmbot.com/mail/inbound` for the received-email event. Its signing secret
+      (it starts with `whsec_`) goes into `MAIL_INBOUND_SECRET` with `scripts/set-key`.
+   3. dev1 sets `MAIL_REPLY_DOMAIN=reply.getdmbot.com` with `scripts/set-variables`, adds the
+      tunnel route `^/mail/inbound$` (as above, only now, not before) and restarts the web API.
+   An older email's reply address (on the main domain) still reads, if it ever arrives: the
+   token proves the ticket, not the domain.
+
 **You (the owner), on the server, once dev1 says the update is in:**
 
 4. Copy the token again from the tunnel's page in Cloudflare (open
