@@ -7,12 +7,12 @@ import { INITIATIVE_STYLE_LIVE, NPCS_CHANNEL_LIVE } from "./help";
 export const peopleListLine = {
   live: NPCS_CHANNEL_LIVE,
   lead: "The people list.",
-  text: "DMbot can keep a read-only channel that lists the people and groups your game master confirmed, with their other names, the groups they are in and who they are connected to. It never shows secrets, notes, or what has happened to someone. Who can read it follows the same setting as the DM screen: only game masters, players who peek, or everyone in the server.",
+  text: "DMbot can keep a read-only channel that lists only the people and groups your game master confirmed, with their other names, the groups they are in and who they are connected to. It never shows secrets, notes, or whether someone is dead or missing. Who can read it follows your game master's DM screen setting: only the game masters, players who choose to peek, or everyone in the server.",
 };
 
 /** In "What we keep": the initiative style FightBot hears (#1783) and keeps per campaign (#1790). */
 export const initiativeLine = {
   live: INITIATIVE_STYLE_LIVE,
   lead: "How your table runs initiative.",
-  text: "FightBot listens for how your table takes turns: one at a time, by side, or rolled each round. It hears only people who said yes, and uses no AI for this. It keeps one short word with the campaign, the last style your game master's words set. A backup holds it.",
+  text: "FightBot listens to the table (only people who said yes) for how you take turns: one at a time, by side, or rolled each round. It uses no AI for this. DMbot keeps the last style your game master's words set, as one short label on the campaign, not tied to any person. A backup holds it, and deleting the campaign deletes it.",
 };

@@ -499,6 +499,7 @@ describe("privacy lines for new features (#1810)", () => {
   it("say what they hear and keep, in plain words, with no AI claim for initiative", () => {
     expect(initiativeLine.text).toContain("uses no AI");
     expect(initiativeLine.text).toContain("only people who said yes");
+    expect(initiativeLine.text).toContain("not tied to any person");
     expect(peopleListLine.text).toContain("never shows secrets, notes");
     for (const line of [initiativeLine, peopleListLine]) expect(line.text).not.toMatch(/\bNPC\b|\bAPI\b|database/i);
   });
