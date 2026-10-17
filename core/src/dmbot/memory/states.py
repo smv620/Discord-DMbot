@@ -187,6 +187,9 @@ async def settle_kind(
     if not onto.is_a(type_key, "item"):
         flagged = await w.select(ENTITIES, " AND unique_item IS NOT NULL AND id = ANY(%s)", [ids])
         await w.update_rows(ENTITIES, {r["id"]: {"unique_item": None} for r in flagged})
+    if type_key != "faction":  # only a group can be the party (#1655)
+        parties = await w.select(ENTITIES, " AND party AND id = ANY(%s)", [ids])
+        await w.update_rows(ENTITIES, {r["id"]: {"party": False} for r in parties})
     if type_key != "clue":  # only a clue has an audience (#1649)
         limited = await w.select(ENTITIES, " AND audience_limited AND id = ANY(%s)", [ids])
         await w.update_rows(ENTITIES, {r["id"]: {"audience_limited": False} for r in limited})

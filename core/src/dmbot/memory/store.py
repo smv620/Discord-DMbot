@@ -24,14 +24,16 @@ from typing import Any
 from psycopg import sql
 
 from dmbot.db import Database, row_int
-from dmbot.memory import notify, states
+from dmbot.memory import notify, standing, states
 from dmbot.memory._changes import (
     ALIASES,
+    ATTITUDES,
     CHANGED_SINCE,
     CORRECTIONS,
     DEPENDENTS,
     ENTITIES,
     FLAGS,
+    IMPRESSIONS,
     MENTIONS,
     NOT_FOUND,
     PREDICATES,
@@ -81,6 +83,7 @@ from dmbot.memory.models import (
     MemoryRuleError,
     MoreNames,
     NewName,
+    Opinion,
     PeopleSuggestion,
     Relation,
     RuleLink,
@@ -148,6 +151,14 @@ async def _live_ids(scope: Scope, among: Collection[str] | None = None) -> set[s
     return {str(r["id"]) for r in await cur.fetchall()}
 
 
+PARTY_NAME = "The party"
+STANDING_VIEWERS = ("character", "faction", "place")
+STANDING_SUBJECTS = ("character", "faction", "people")
+STANDING_BETWEEN = (
+    "Standing is between a character, a group or a place and a character, a group or a people."
+)
+ATTITUDE_BETWEEN = "An attitude is a group's or a place's feeling toward a whole people."
+
 # ---- conversions ---------------------------------------------------------------------
 
 
@@ -155,7 +166,7 @@ def _entity(r: dict[str, Any]) -> Entity:
     return Entity(
         r["id"], r["type"], r["name"], r["description"], r["status"], r["merged_into"],
         r["source"], r["created_at"], r["played_by"], r["role"], r["needs_look"], r["unique_item"],
-        r["audience_limited"],
+        r["audience_limited"], r["party"],
     )  # fmt: skip
 
 
@@ -701,6 +712,158 @@ class MemoryStore:
                             if made is not None:
                                 flags.append(_flag(made))
             return Written((_entity(row), flags), w.batch)
+
+    # ---- standing the DM sets (#1655) ----
+
+    async def standing_index(self, guild_id: int, campaign_id: str) -> standing.Index:
+        """One in-memory copy to work standing out from, read at one moment: the confirmed
+        entries, the connections the ladders climb and the current impressions and attitudes. A
+        later `Index.standing(a, b)` asks the database nothing."""
+        async with self._read(guild_id, campaign_id, snapshot=True) as scope:
+            return await _standing_index(scope)
+
+    async def party(self, guild_id: int, campaign_id: str) -> Entity | None:
+        async with self._read(guild_id, campaign_id) as scope:
+            rows = await scope.select(ENTITIES, " AND party AND status = 'confirmed'")
+        return _entity(rows[0]) if rows else None
+
+    async def ensure_party(self, guild_id: int, campaign_id: str, *, source: str) -> Entity:
+        """The campaign's party, made the first time it is needed: a group named "The party"
+        (the DM can rename it) whose members are its confirmed player characters."""
+        if source != DM:
+            raise MemoryRuleError("Only the DM can do that.")
+        async with self._write(guild_id, campaign_id, source) as w:
+            found = await w.select(ENTITIES, " AND party AND status = 'confirmed'")
+            if found:
+                return _entity(found[0])
+            row = await w.insert(
+                ENTITIES,
+                {
+                    "id": new_id(), "type": "faction", "name": PARTY_NAME, "description": "",
+                    "status": CONFIRMED, "merged_into": None, "source": source,
+                    "created_at": w.now, "played_by": None, "role": None, "needs_look": False,
+                    "unique_item": None, "audience_limited": False, "party": True,
+                },
+            )  # fmt: skip
+            await w.insert(
+                ALIASES, _new_alias(w, row["id"], PARTY_NAME, "full", CONFIRMED, False, None)
+            )
+            return _entity(row)
+
+    async def set_impression(
+        self,
+        guild_id: int,
+        campaign_id: str,
+        viewer_id: str,
+        subject_id: str,
+        step: str,
+        *,
+        source: str,
+        from_session_at: int | None = None,
+    ) -> Written[Opinion]:
+        """The DM says how a viewer (an NPC, a group or a place) feels about a subject (a
+        character, the party, a group or a people): one of the five steps, saved as a dated
+        impression. The one before it for the pair is closed, not changed, so the history stays."""
+        return await self._set_opinion(
+            guild_id, campaign_id, viewer_id, subject_id, step, source, from_session_at, False
+        )
+
+    async def set_attitude(
+        self,
+        guild_id: int,
+        campaign_id: str,
+        holder_id: str,
+        people_id: str,
+        step: str,
+        *,
+        source: str,
+        from_session_at: int | None = None,
+    ) -> Written[Opinion]:
+        """The DM says how a group or place feels about a whole people (Bryn Shander distrusts
+        tabaxi): dated, with the history kept."""
+        return await self._set_opinion(
+            guild_id, campaign_id, holder_id, people_id, step, source, from_session_at, True
+        )
+
+    async def _set_opinion(
+        self,
+        guild_id: int,
+        campaign_id: str,
+        holder_id: str,
+        target_id: str,
+        step: str,
+        source: str,
+        from_session_at: int | None,
+        attitude: bool,
+    ) -> Written[Opinion]:
+        if source != DM:
+            raise MemoryRuleError("Only the DM can set that.")
+        if step not in standing.SCORE_OF:
+            raise MemoryRuleError("Pick one of the five: " + ", ".join(standing.STEPS) + ".")
+        if holder_id == target_id:
+            raise MemoryRuleError("That needs two different names.")
+        table = ATTITUDES if attitude else IMPRESSIONS
+        held, aimed = ("holder_id", "toward_id") if attitude else ("viewer_id", "subject_id")
+        async with self._write(guild_id, campaign_id, source) as w:
+            a = await _entity_row(w, holder_id)
+            b = await _entity_row(w, target_id)
+            kinds = (a["type"], b["type"])
+            if attitude:
+                if a["type"] not in ("faction", "place") or b["type"] != "people":
+                    raise MemoryRuleError(ATTITUDE_BETWEEN)
+            elif a["type"] not in STANDING_VIEWERS or b["type"] not in STANDING_SUBJECTS:
+                raise MemoryRuleError(STANDING_BETWEEN)
+            if "person" in kinds:
+                raise MemoryRuleError(STANDING_BETWEEN)
+            score = standing.SCORE_OF[step]
+            old = await w.select(
+                table, f" AND {held} = %s AND {aimed} = %s AND closed_at IS NULL",
+                [holder_id, target_id],
+            )  # fmt: skip
+            if old and old[0]["score"] == score and old[0]["weight"] == standing.DM_WEIGHT:
+                return Written(_opinion(old[0], attitude), w.batch)  # already so
+            for row in old:
+                await w.update(table, row["id"], {"closed_at": w.now})
+            made = await w.insert(
+                table,
+                {
+                    "id": new_id(), held: holder_id, aimed: target_id, "score": score,
+                    "weight": standing.DM_WEIGHT, "source": source,
+                    "from_session_at": from_session_at, "created_at": w.now, "closed_at": None,
+                },
+            )  # fmt: skip
+            return Written(_opinion(made, attitude), w.batch)
+
+    async def opinion_history(
+        self, guild_id: int, campaign_id: str, holder_id: str, target_id: str, *, attitude: bool
+    ) -> list[Opinion]:
+        """Every impression (or attitude) for a pair, oldest first, the current one last."""
+        table = ATTITUDES if attitude else IMPRESSIONS
+        held, aimed = ("holder_id", "toward_id") if attitude else ("viewer_id", "subject_id")
+        async with self._read(guild_id, campaign_id) as scope:
+            rows = await scope.select(
+                table,
+                f" AND {held} = %s AND {aimed} = %s"
+                " ORDER BY created_at, (closed_at IS NULL), id",
+                [holder_id, target_id],
+            )  # fmt: skip
+        return [_opinion(r, attitude) for r in rows]
+
+    async def find_or_add_people(
+        self, guild_id: int, campaign_id: str, name: str, *, source: str
+    ) -> Entity:
+        """The `people` entry called this, made on the spot if there is none (Set attitude…)."""
+        if source != DM:
+            raise MemoryRuleError("Only the DM can do that.")
+        key = name_key(name)
+        for e in await self.entities(guild_id, campaign_id):
+            if e.type == "people" and e.status == CONFIRMED and name_key(e.name) == key:
+                return e
+        return (
+            await self.add_entity(
+                guild_id, campaign_id, type="people", name=name, source=source, status=CONFIRMED
+            )
+        ).value
 
     # ---- a clue only some people know (#1649) ----
 
@@ -1591,6 +1754,7 @@ class MemoryStore:
                 # must never be.
                 raise MemoryRuleError("A secret name can't be the main name.")
             await _move_relations(w, keep_id, gone_id)
+            await _move_standing(w, keep_id, gone_id)
             for table in (MENTIONS, CORRECTIONS):  # one statement each (#164)
                 await w.update_where(
                     table, {"entity_id": keep_id}, " AND entity_id = %s", [gone_id]
@@ -2983,6 +3147,78 @@ async def _entity_row(w: Scope, entity_id: str, *, allow_rejected: bool = False)
     if row is None or row["status"] not in allowed:
         raise MemoryRuleError(NOT_FOUND)
     return row
+
+
+async def _move_standing(w: Changes, keep_id: str, gone_id: str) -> None:
+    """A merged entry's standing goes with it (#1655): its current impressions and attitudes
+    move onto the kept entry unless the kept one already has its own for that pair (then the
+    kept one wins and the other is closed), and the party flag moves if the kept entry is a
+    group. Closed rows are history and stay as they are."""
+    gone = await w.get(ENTITIES, gone_id)
+    kept = await w.get(ENTITIES, keep_id)
+    if gone is not None and kept is not None and gone["party"]:
+        await w.update(ENTITIES, gone_id, {"party": False})
+        if kept["type"] == "faction" and not kept["party"]:
+            await w.update(ENTITIES, keep_id, {"party": True})
+    for table, held, aimed in (
+        (IMPRESSIONS, "viewer_id", "subject_id"),
+        (ATTITUDES, "holder_id", "toward_id"),
+    ):
+        rows = await w.select(
+            table, f" AND closed_at IS NULL AND ({held} = %s OR {aimed} = %s)", [gone_id, gone_id]
+        )
+        for r in rows:
+            a = keep_id if r[held] == gone_id else r[held]
+            b = keep_id if r[aimed] == gone_id else r[aimed]
+            taken = await w.select(
+                table, f" AND closed_at IS NULL AND {held} = %s AND {aimed} = %s", [a, b]
+            )
+            if a == b or taken:
+                await w.update(table, r["id"], {"closed_at": w.now})
+            else:
+                await w.update(table, r["id"], {held: a, aimed: b})
+
+
+async def _standing_index(scope: Scope) -> standing.Index:
+    """The confirmed entries, the three connections the ladders climb and the current impressions
+    and attitudes, as `standing.Index` wants them."""
+    entities = await scope.select(ENTITIES, " AND status = 'confirmed' AND type <> 'person'")
+    links = await scope.select(
+        RELATIONS,
+        " AND status = 'confirmed' AND to_session_at IS NULL AND predicate = ANY(%s)",
+        [[standing.MEMBER_OF, standing.LOCATED_IN, standing.OF_PEOPLE]],
+    )
+    impressions = await scope.select(IMPRESSIONS, " AND closed_at IS NULL")
+    attitudes = await scope.select(ATTITUDES, " AND closed_at IS NULL")
+    return standing.Index(
+        (
+            standing.Node(
+                e["id"], e["name"], e["type"], bool(e["party"]), e["role"] == PLAYER_CHARACTER
+            )
+            for e in entities
+        ),
+        (standing.Link(r["subject_id"], r["predicate"], r["object_id"]) for r in links),
+        (
+            *(
+                standing.Row(r["viewer_id"], r["subject_id"], r["score"], r["weight"], r["source"])
+                for r in impressions
+            ),
+            *(
+                standing.Row(
+                    r["holder_id"], r["toward_id"], r["score"], r["weight"], r["source"], True
+                )
+                for r in attitudes
+            ),
+        ),
+    )
+
+
+def _opinion(r: dict[str, Any], attitude: bool) -> Opinion:
+    holder, target = ("holder_id", "toward_id") if attitude else ("viewer_id", "subject_id")
+    return Opinion(
+        r["id"], r[holder], r[target], r["score"], r["weight"], r["source"],
+        r["from_session_at"], r["created_at"], r["closed_at"],
+    )  # fmt: skip
 
 
 async def _audience(scope: Scope, clue_id: str) -> list[Entity]:

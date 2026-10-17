@@ -214,6 +214,13 @@ export const held: Held[] = [
     reason:
       "It needs the story extractor, which stays off until its prompt passes the measurement (#1282); held until it has been seen working on the test server (#1649).",
   },
+  {
+    date: "2026-10-17",
+    title: "How characters feel about you",
+    what: "On an NPC's, group's or place's name card, the game master can press Standing to see how it feels about each player character and the party, in five steps with the reasons, and set it. It only reminds you. You decide how they act, and players never see it.",
+    reason:
+      "Held until it has been seen working on the test server (#1655).",
+  },
 ];
 
 const months = [

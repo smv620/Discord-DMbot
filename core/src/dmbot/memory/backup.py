@@ -21,10 +21,12 @@ from dmbot.db import Conn
 from dmbot.memory import notify, sheets
 from dmbot.memory._changes import (
     ALIASES,
+    ATTITUDES,
     CLAIMS,
     CORRECTIONS,
     ENTITIES,
     FLAGS,
+    IMPRESSIONS,
     PREDICATES,
     RELATIONS,
     RULE_LINKS,
@@ -84,6 +86,8 @@ _TAGS: dict[str, Table] = {
     "claim": CLAIMS,
     "alias": ALIASES,
     "relation": RELATIONS,
+    "impression": IMPRESSIONS,
+    "attitude": ATTITUDES,
     "correction": CORRECTIONS,
     "flag": FLAGS,
     "sheet": SHEETS,
@@ -125,7 +129,7 @@ _CHOICES: dict[str, Sequence[str]] = {
     "source": SOURCES,
 }
 _IDS = {"id", "entity_id", "fact_id", "merged_into", "used_by", "subject_id", "object_id",
-        "relation_id", "other_id", "from_set"}  # fmt: skip
+        "relation_id", "other_id", "from_set", "viewer_id", "holder_id", "toward_id"}  # fmt: skip
 _INTS = {"played_by", "speaker_id", "session_started_at", "decided_at", "created_at",
          "from_session_at", "to_session_at", "from_game_time", "to_game_time",
          "max_per_subject", "closed_at"}  # fmt: skip
@@ -177,8 +181,13 @@ def _valid(column: str, value: object) -> bool:
         "known",
         "unique_item",
         "audience_limited",
+        "party",
     ):
         return isinstance(value, bool)
+    if column == "score":  # an impression's or attitude's feeling (#1655)
+        return isinstance(value, int) and not isinstance(value, bool) and -100 <= value <= 100
+    if column == "weight":  # how much evidence is behind it
+        return isinstance(value, int) and not isinstance(value, bool) and 1 <= value <= 100
     if column == "confidence":
         return isinstance(value, (int, float)) and not isinstance(value, bool) and 0 <= value <= 1
     if column in _CHOICES:
@@ -339,7 +348,7 @@ def _with_definition_fields(rows: list[Any]) -> list[Any]:
     for raw in rows:
         if isinstance(raw, dict) and raw.get("table") == "entity":
             # from before one-of-a-kind items (#1267) and before a clue's audience (#1649)
-            raw = {"unique_item": None, "audience_limited": False, **raw}
+            raw = {"unique_item": None, "audience_limited": False, "party": False, **raw}
         elif isinstance(raw, dict) and raw.get("table") == "alias":
             raw = {"said_as": None, **raw}  # from before the narrator's spelling (#1419)
         elif isinstance(raw, dict) and raw.get("table") == "predicate":
@@ -538,6 +547,29 @@ def _check_claim(row: Mapping[str, Any]) -> None:
         raise CampaignError(DAMAGED)
 
 
+def _check_standing(by_tag: dict[str, list[dict[str, Any]]]) -> None:
+    """Impressions and attitudes link entries in the file, between the kinds the screen allows,
+    and only one of a pair is current (the database enforces the last; a damaged file must not
+    reach it). Dates are checked by `_valid`."""
+    kinds = {r["id"]: r["type"] for r in by_tag["entity"]}
+    open_pairs: set[tuple[str, str, str]] = set()
+    for tag, held, aimed in (
+        ("impression", "viewer_id", "subject_id"),
+        ("attitude", "holder_id", "toward_id"),
+    ):
+        for r in by_tag[tag]:
+            a, b = kinds.get(r[held]), kinds.get(r[aimed])
+            if a is None or b is None or r[held] == r[aimed] or "person" in (a, b):
+                raise CampaignError(DAMAGED)
+            if tag == "attitude" and (a not in ("faction", "place") or b != "people"):
+                raise CampaignError(DAMAGED)
+            if r["closed_at"] is None:
+                key = (tag, r[held], r[aimed])
+                if key in open_pairs:
+                    raise CampaignError(DAMAGED)
+                open_pairs.add(key)
+
+
 def _check_states(onto: Ontology, by_tag: dict[str, list[dict[str, Any]]]) -> None:
     """A condition belongs to an entry in the file, one its kind can have, one current at a
     time (the database enforces the last; a damaged file must not reach it); only an item is
@@ -549,6 +581,10 @@ def _check_states(onto: Ontology, by_tag: dict[str, list[dict[str, Any]]]) -> No
         raise CampaignError(DAMAGED)
     if any(r["audience_limited"] and r["type"] != "clue" for r in by_tag["entity"]):
         raise CampaignError(DAMAGED)  # only a clue has an audience (#1649)
+    parties = [r for r in by_tag["entity"] if r["party"]]
+    if len(parties) > 1 or any(r["type"] != "faction" for r in parties):
+        raise CampaignError(DAMAGED)  # at most one party, and it is a group (#1655)
+    _check_standing(by_tag)
     open_for: set[str] = set()
     for r in by_tag["state"]:
         if r["entity_id"] not in kinds:
