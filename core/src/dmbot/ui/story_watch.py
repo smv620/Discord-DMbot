@@ -22,11 +22,12 @@ from dmbot.ui.names import _md, sees_secrets
 
 log = logging.getLogger(__name__)
 
-ONLY_DM = "Only the DM can do that."
-KNOWN = "👍 Okay. DMbot won't mention that one again."
-GONE = "That one has gone: the story moved on."
+ONLY_DM = "Only this campaign's DM can use this button."
+KNOWN = "👍 Got it. DMbot won't mention this one again."
+GONE = "That one is already cleared."
+BROKEN = "DMbot can't check this right now. Try again in a moment."
 KNOW_LABEL = "👍 I know"
-WORDS_LABEL = "📋 Show the book's words"
+WORDS_LABEL = "📋 Book's words"  # short: the number after it must fit on a phone
 
 
 def line_text(clash: Clash, numbers: Mapping[int, int]) -> str:
@@ -115,7 +116,7 @@ async def _dm_and_watch(interaction: discord.Interaction, campaign_id: str) -> A
     guild = interaction.guild
     watch = getattr(_bot(interaction), "watch", None)
     if guild is None or watch is None:
-        await _tell(interaction, GONE)
+        await _tell(interaction, BROKEN)
         return None
     campaign = await _bot(interaction).campaigns.get(guild.id, campaign_id)
     if campaign is None or not sees_secrets(campaign, interaction.user.id):
