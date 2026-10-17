@@ -261,6 +261,12 @@ describe("Help: the website's read-only pages (#1588)", () => {
     expect(words).toContain("then Take off. Made a mistake? Press Undo that.");
   });
 
+  it("says a backup keeps how often names were said, only for people still recorded (#1754)", () => {
+    const step = dmSteps.map((x) => x.text).find((t) => t.includes("/dmbot backup (paid campaigns only)")) ?? "";
+    expect(step).toContain("how often names were said and by whom");
+    expect(step).toContain("only for people who are still recorded");
+  });
+
   it("holds the deeds and where-are-we steps with their held What's new entries (#1754)", () => {
     const heldTitles = held.map((h) => h.title);
     expect(heldTitles.includes("Record what your players did")).toBe(!DEEDS_LIVE);
