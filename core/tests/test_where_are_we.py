@@ -5,8 +5,10 @@ note in combat, on Quiet, or without a clock. No database: the clock store is a 
 from __future__ import annotations
 
 import unittest
+from dataclasses import fields
 from types import SimpleNamespace
 from typing import Any
+from unittest.mock import AsyncMock, patch
 
 from dmbot.dm_screen import clock as clock_screen
 from dmbot.dm_screen import levels
@@ -61,6 +63,30 @@ class Words(unittest.TestCase):
         self.assertFalse(w.in_combat(stored(at(1, 9))))
 
 
+class Names(unittest.TestCase):
+    def test_a_name_that_starts_with_the_is_not_given_a_second_one(self) -> None:
+        groups = (
+            Group(1, "The Cellar", Clock(at(2, 23, 10), 0)),
+            Group(2, "tower", Clock(at(3, 5, 40), 0)),
+        )
+        text = w.line(Stored(groups[0].clock, None, None, groups=groups, picked=1))
+        self.assertIn("The Cellar group, night", text)
+        self.assertIn("the tower group, dawn", text)
+        self.assertNotIn("the The", text)
+
+    def test_a_very_long_line_is_cut_to_fit_a_message(self) -> None:
+        groups = tuple(Group(n, "x" * 700, Clock(at(1, 8), 0)) for n in (1, 2, 3))
+        text = w.line(Stored(groups[0].clock, None, None, groups=groups, picked=1))
+        self.assertLessEqual(len(text), w.LINE_MAX)
+
+    def test_the_table_has_the_field_and_it_starts_at_the_sessions_start(self) -> None:
+        from dmbot.bot import Table
+
+        (field,) = [f for f in fields(Table) if f.name == "clock_shown_at"]
+        self.assertIsNotNone(field.default_factory)
+        self.assertIn("where_task", {f.name for f in fields(Table)})
+
+
 class Levels(unittest.TestCase):
     def test_quiet_none_normal_half_hour_chatty_quarter_hour(self) -> None:
         self.assertIsNone(levels.reminder_gap_s("quiet"))
@@ -69,6 +95,14 @@ class Levels(unittest.TestCase):
         self.assertEqual(levels.reminder_gap_s("surprise"), 1800.0)  # unknown counts as Normal
         self.assertFalse(levels.allows("quiet", levels.REMINDER))
         self.assertTrue(levels.allows("normal", levels.REMINDER))
+
+    def test_allows_and_the_gap_agree_for_every_level(self) -> None:
+        for level in ("quiet", "normal", "chatty", "unheard-of"):
+            self.assertEqual(
+                levels.allows(level, levels.REMINDER),
+                levels.reminder_gap_s(level) is not None,
+                level,
+            )
 
     def test_due(self) -> None:
         self.assertFalse(w.due("normal", START, START + GAP - 1))
@@ -192,3 +226,43 @@ class Rule(unittest.IsolatedAsyncioTestCase):
     async def test_only_the_dm_screen_hears_it(self) -> None:
         await self.tick(START + GAP)
         self.assertEqual([c for c, _ in self.bot.posted], [10])
+
+    async def test_a_button_that_redraws_the_clock_in_place_counts_as_shown(self) -> None:
+        campaign = campaign_of(self.table)
+        message = SimpleNamespace(id=5, edit=AsyncMock(), content="🕰️")
+        interaction = SimpleNamespace(message=message)
+        shown_clock = SimpleNamespace(
+            message_id=5, clock=Clock(at(1, 9), 0), groups=(), split=False, picked=None
+        )
+        with patch.object(clock_screen, "render", AsyncMock(return_value="🕰️ Day 1")):
+            await clock_screen._show_here(interaction, self.bot, campaign, shown_clock)  # type: ignore[arg-type]
+        self.assertGreater(self.table.clock_shown_at, START)
+        message.edit.assert_awaited()
+
+    async def test_if_the_clock_is_shown_while_it_reads_nothing_is_posted(self) -> None:
+        async def get(guild: int, campaign: str) -> Stored:
+            self.table.clock_shown_at = START + GAP  # a button was pressed meanwhile
+            return stored(at(4, 14))
+
+        self.bot.clocks = SimpleNamespace(get=get)
+        self.assertFalse(await self.tick(START + GAP))
+        self.assertEqual(self.bot.posted, [])
+
+    async def test_if_the_session_ends_while_it_reads_nothing_is_posted(self) -> None:
+        async def get(guild: int, campaign: str) -> Stored:
+            self.bot.tables.pop(1)  # the session ended
+            return stored(at(4, 14))
+
+        self.bot.clocks = SimpleNamespace(get=get)
+        self.assertFalse(await self.tick(START + GAP))
+        self.assertEqual(self.bot.posted, [])
+
+    async def test_a_line_that_never_arrived_does_not_restart_the_wait_from_the_say(self) -> None:
+        async def nothing(channel_id: int, text: str, view: Any = None) -> None:
+            return None
+
+        self.bot.post_message = nothing  # type: ignore[method-assign]
+        campaign = campaign_of(self.table)
+        self.table.clock_shown_at = START
+        await clock_screen.say(self.bot, campaign, ["🌅 Dawn."])
+        self.assertEqual(self.table.clock_shown_at, START)

@@ -1964,6 +1964,8 @@ class DMBot(commands.AutoShardedBot):
         self._track(self._waiting_suggestions(table), "waiting-suggestions")  # #1504
         table.watch_task = self._track_loop(sheet_reread.run(self, table), "sheet-watch")  # #1128
         table.fight_task = self._track_loop(fightbot.run(self, table), "fightbot")  # #1129
+        if table.where_task is not None:  # started again for the same table: one loop only
+            table.where_task.cancel()
         table.where_task = self._track_loop(where_are_we.run(self, table), "where-are-we")  # #1738
         return sent
 

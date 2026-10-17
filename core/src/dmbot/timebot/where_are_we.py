@@ -29,6 +29,7 @@ from dmbot.timebot.store import Stored
 log = logging.getLogger(__name__)
 
 TICK_S = 60  # how often the loop looks; the gap itself is the level's
+LINE_MAX = 1900  # a message holds 2000; a split party has at most a few short names
 
 
 def when(minute: int) -> str:
@@ -37,13 +38,15 @@ def when(minute: int) -> str:
 
 
 def _group(group: Group) -> str:
-    return f"the {group.name} group, {when(group.clock.minute)}"
+    name = group.name
+    words = name if name.casefold().startswith("the ") else f"the {name}"
+    return f"{words} group, {when(group.clock.minute)}"
 
 
 def line(stored: Stored) -> str:
     """The note: one time, or one for each group while the party is split."""
     if stored.split:
-        return "🕰️ Where we are: " + "; ".join(_group(g) for g in stored.groups) + "."
+        return ("🕰️ Where we are: " + "; ".join(_group(g) for g in stored.groups) + ".")[:LINE_MAX]
     return f"🕰️ Where we are: {when(stored.clock.minute)}."
 
 
@@ -70,9 +73,7 @@ def shown(client: Any, campaign: Any) -> None:
 async def tick(bot: Any, table: Any, now: float | None = None) -> bool:
     """One look: say where we are if it is time. True when a line was posted."""
     now = time.monotonic() if now is None else now
-    if not table.listening or table.campaign_id is None or bot.clocks is None:
-        return False
-    if not due(table.screen_level, table.clock_shown_at, now):
+    if not _still_due(bot, table, now):
         return False
     stored = await bot.clocks.get(table.guild_id, table.campaign_id)
     if stored is None or in_combat(stored):
@@ -80,10 +81,26 @@ async def tick(bot: Any, table: Any, now: float | None = None) -> bool:
     campaign = await bot.campaigns.get(table.guild_id, table.campaign_id)
     if campaign is None or campaign.dm_screen_channel_id is None:
         return False
+    # The session may have ended, or a button shown the clock, while those reads ran: look again,
+    # and take the turn before the post so a second pass can't say it twice.
+    if not _still_due(bot, table, now):
+        return False
+    table.clock_shown_at = now
+    # (imported here: dm_screen.clock imports this module for `shown`)
     from dmbot.dm_screen import clock as clock_screen
 
-    await clock_screen.say(bot, campaign, [line(stored)])  # (saying it counts as shown)
+    await clock_screen.say(bot, campaign, [line(stored)])
     return True
+
+
+def _still_due(bot: Any, table: Any, now: float) -> bool:
+    return (
+        bot.tables.get(table.guild_id) is table
+        and table.listening
+        and table.campaign_id is not None
+        and bot.clocks is not None
+        and due(table.screen_level, table.clock_shown_at, now)
+    )
 
 
 async def run(bot: Any, table: Any) -> None:

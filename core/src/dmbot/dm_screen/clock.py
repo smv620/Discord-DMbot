@@ -470,7 +470,6 @@ async def say(
     `split_undo` is (kind, token): the Undo under a split or a rejoin (#1607)."""
     if campaign.dm_screen_channel_id is None or not lines:
         return
-    where_are_we.shown(client, campaign)
     view = None
     if split_undo:
         view = discord.ui.View(timeout=None)
@@ -481,7 +480,9 @@ async def say(
     elif combat_undo:
         view = discord.ui.View(timeout=None)
         view.add_item(CombatUndoButton(campaign.id, combat_undo))
-    await client.post_message(campaign.dm_screen_channel_id, "\n".join(lines), view)
+    posted = await client.post_message(campaign.dm_screen_channel_id, "\n".join(lines), view)
+    if posted is not None:  # (a line that never arrived shows nothing, so the wait goes on)
+        where_are_we.shown(client, campaign)
 
 
 def parse_time(day: str, hour: str) -> int | None:
@@ -641,6 +642,7 @@ async def _show_here(
 ) -> discord.Message | None:
     """Redraw the clock in the message that was pressed; if the press came from somewhere
     else (the form opened from ⚙️ Settings), show it the usual way."""
+    where_are_we.shown(client, campaign)  # the clock is redrawn right here: shown, and moved
     message = interaction.message
     if message is not None and message.id == stored.message_id:
         text, view = (
