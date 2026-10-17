@@ -747,6 +747,11 @@ differ, this wins.
   reference, never as copies. A campaign that follows a pack must have approved each site the pack's
   entries come from, once per site, before those entries are used. Entries from a shared rulebook
   (`from_book`) still never go into a pack.
+- **The homebrew menu shows kinds first (owner, 2026-10-17).** A full list gets huge, so ⚙️ Settings → 📚 Homebrew
+  opens with one button per kind, each with how many are on out of how many there are: **[Spells 10/12]**
+  (10 on, 12 in all). A kind's button opens that kind's list. Kinds with no entries show no button. #1665.
+- **Kinds** (owner's live check, 2026-10-17): species, subclass and background join spell, monster, item, feat,
+  condition and other (#1663).
 - **Build order:** #1628 (rules out, PR #1630) → #1629 (on/off replaces hidden) → sources and site approvals
   (schema) → import by link → packs with imported entries → the website.
 
@@ -1128,6 +1133,23 @@ be no Undo to show (nor in a stopped session still finishing its last lines).
 Continuity warnings (Phase 5a) and rules alerts must pick a kind
 when they land.
 
+**The DM Bot channel (owner, 2026-10-17).** The DM screen was getting cluttered by settings and options, so
+they move to a channel of their own, **DM Bot** (`dmb-dm-bot-<short name>`, one per campaign like the other
+sub-channels), and the DM screen keeps only what the game needs while it is played: rules alerts, the
+sidebar, the clock, cards and the after-session notes for the DM.
+- **Everyone in the server can see it; only DMbot posts in it.** It holds one control panel message, kept up
+  to date. Every press answers **privately**, and what a person is offered depends on their role in that
+  campaign, checked again on every press: a **game master** gets every button (⚙️ Settings and all it holds:
+  homebrew, house rules, game masters, transcripts, the clock's settings, delete campaign for the plan
+  holder); a **player** gets their own things (their ⚙️ Menu: consent, Stop recording me, Delete my
+  transcripts; 📖 Look up a rule; where to read transcripts); anyone else in the server gets what any member
+  may do (rule lookups, transcripts). A button nobody in a role may use is not shown to them.
+- **Nothing secret is ever posted there:** it is a public channel, so DM-screen content never goes into the
+  panel; it only appears in a game master's private answer.
+- **The DM screen** loses the Settings card and the option buttons; a one-line pointer ("Settings and
+  options are in #dmb-dm-bot-…") replaces them. `/dmbot settings` still works and answers privately.
+- Built in #1666 (CloudDev); Help follows (WebDev).
+
 **Channel structure (decided 2026-10-04, #85).** Every channel DMbot creates starts with
 `dmb-`, so its channels group together in the sidebar and are clearly bot-managed.
 
@@ -1138,6 +1160,7 @@ so the docs always show names the way Discord does. For the campaign
 | Channel | Name in Discord | Built in |
 |---|---|---|
 | DM screen | `dmb-dm-screen-rime-of-the-frostmaiden` | Phase 1.5 (now) |
+| DM Bot (settings and options, everyone; owner, 2026-10-17) | `dmb-dm-bot-rmfthfrstmdn` | #1666 |
 | Live transcript (cleaned lines, view only) | `dmb-transcript-rmfthfrstmdn` | Phase 1 (#124, built 2026-10-06; misheard names fixed since 2026-10-07, #127) |
 | Rules archive (house rules, overrides, rulings) | `dmb-rules-rmfthfrstmdn` | Phase 3 |
 | Game time (the players' clock; owner, 2026-10-13) | `dmb-gametime-rmfthfrstmdn` | Phase 4 |
