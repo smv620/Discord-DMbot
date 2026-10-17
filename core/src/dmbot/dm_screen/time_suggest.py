@@ -21,17 +21,23 @@ import discord
 from dmbot.campaigns import CampaignError
 from dmbot.dm_screen import clock as clock_screen
 from dmbot.dm_screen import effects as timer_screen
+from dmbot.timebot import clock as game
 from dmbot.timebot import suggest
 
 log = logging.getLogger(__name__)
 
 NO_PINGS = discord.AllowedMentions.none()
+# Suggestion messages whose "+N" is being applied right now: a second press (the same DM twice,
+# or two DMs) of one suggestion must not move the clock twice. In memory is enough: the buttons
+# come off once it is done.
+_BEING_APPLIED: set[int] = set()
 _ID = r"(?P<campaign>[0-9a-f]{32})"
 QUOTE_MAX = 70
 NOT_A_DM = "Only a DM of this campaign can press this. Ask your DM."
 GONE = "I can't find that campaign any more."
 FAILED = "Something went wrong, and nothing moved. Use the clock's buttons."
 STILL = "The clock didn't move. Use the clock's buttons."
+FIGHT = "A fight is on, so I didn't move the clock. Use the clock's buttons."
 SPLIT = "The party is split, so I didn't move the clock. Use the clock's own buttons."
 NO_CLOCK = "There's no game clock yet. Set one up: Settings, then Game clock."
 BAD = "That button is out of date. Use the clock's buttons."
@@ -96,9 +102,18 @@ class TimeJumpButton(
                 await _reply(interaction, BAD)
                 return
             await interaction.response.defer()
-            moved = await self._move(interaction, client, campaign, minutes)
-            if moved is not None:
-                await self._close(interaction, moved, answered=True)
+            key = interaction.message.id if interaction.message is not None else None
+            if key is not None:
+                if key in _BEING_APPLIED:
+                    return  # already on its way: the other press will close the buttons
+                _BEING_APPLIED.add(key)
+            try:
+                moved = await self._move(interaction, client, campaign, minutes)
+                if moved is not None:
+                    await self._close(interaction, moved, answered=True)
+            finally:
+                if key is not None:
+                    _BEING_APPLIED.discard(key)
         except Exception:
             log.exception("The time-jump suggestion's button failed")
             await _reply(interaction, FAILED)
@@ -124,6 +139,10 @@ class TimeJumpButton(
         change, the clock redrawn, the players' clock, any timers due, and one DM-screen note
         with Undo. The note to put on the suggestion, or None if nothing moved (the presser has
         been told why)."""
+        before = await client.clocks.get(campaign.guild_id, campaign.id)
+        if before is not None and game.in_combat(before.clock):
+            await _reply(interaction, FIGHT)  # the suggestion is older than the fight
+            return None
         try:
             result = await clock_screen.press(
                 client,
@@ -144,17 +163,22 @@ class TimeJumpButton(
             held = await client.clocks.get(campaign.guild_id, campaign.id)
             await _reply(interaction, SPLIT if held is not None and held.split else STILL)
             return None
-        stored = await client.clocks.get(campaign.guild_id, campaign.id)
-        if stored is not None:
-            await clock_screen.show(client, campaign, stored)
-            await clock_screen.update_players(client, campaign, "advance", result)
-            await timer_screen.announce_due(client, campaign, stored.clock.minute)
-        await clock_screen.say(
-            client,
-            campaign,
-            [clock_screen.rest_note("advance", result.after, minutes), *result.lines],
-            clock_screen.undo_id(result.before, result.after),
-        )
+        # The clock has moved. What follows only shows it: a failure there is logged, never a
+        # reason to leave the buttons on (a second press would move the clock again).
+        try:
+            stored = await client.clocks.get(campaign.guild_id, campaign.id)
+            if stored is not None:
+                await clock_screen.show(client, campaign, stored)
+                await clock_screen.update_players(client, campaign, "advance", result)
+                await timer_screen.announce_due(client, campaign, stored.clock.minute)
+            await clock_screen.say(
+                client,
+                campaign,
+                [clock_screen.rest_note("advance", result.after, minutes), *result.lines],
+                clock_screen.undo_id(result.before, result.after),
+            )
+        except Exception:
+            log.exception("The clock moved, but showing it failed")
         return f"Clock moved forward {suggest.hours_label(minutes)[1:]}."
 
 

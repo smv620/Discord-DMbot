@@ -7,9 +7,11 @@ AI call: which lines are candidates (a time cue word, and none of the strict lis
 question sent to the AI and how its answer is read, the tidy rounding, and the limits (one a
 minute, the same cue quiet for ten minutes, 20 calls a session, a rest after three failures).
 
-Only the DM's one line goes to the AI, with the current game time: no campaign, names or story.
-The line is quoted data, never instructions, and the answer is read as data too: anything that
-isn't exactly the JSON shape asked for is dropped.
+Only the DM's one line goes to the AI, with the current game time: nothing else from the campaign
+(no names list, no story so far, nothing of other lines). The line is the DM's own narration, so
+it is story text, sent as the other jobs send theirs. The line is quoted data, never
+instructions, and the answer is read as data too: anything that isn't exactly the JSON shape
+asked for is dropped.
 """
 
 from __future__ import annotations
@@ -80,6 +82,8 @@ def prompt(line: str, game_time: str) -> str:
 @dataclass(frozen=True, slots=True)
 class Suggestion:
     minutes: int  # already tidy
+    # Asked for so the model commits to a reason; read and cleaned but not shown (the DM screen
+    # line stays as short as the issue says).
     why: str
 
 

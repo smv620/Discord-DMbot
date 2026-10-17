@@ -77,7 +77,7 @@ Per call: 700 tokens in at $1.0 per million is $0.0007, and 60 tokens out at $5.
 
 Off by default (`DMBOT_TIME_SUGGESTIONS`). When on, one FAST-tier call for a DM's line that holds a time cue and that the strict phrases did not match: at most one a minute, 20 a session for a campaign, none on an unpaid plan, none in a fight or while the party is split.
 
-Per call: the instructions (about 150 tokens), the one line (at most 300 characters, about 90 tokens) and the game time (about 15) is about 260 tokens in at $1.0 per million, and a small JSON answer of about 25 tokens out at $5.0 per million: about $0.0004 a call. **At the cap, 20 calls cost about $0.008 a session** for a campaign; a typical table that says a few vague things gets a handful of calls, under a cent. Tokens are estimates (about 3.5 characters each); the log line "Time suggestions: N calls, … tokens in, … out" at the session's end gives the real ones. Counted in the AI cost like every other job.
+Per call: the instructions (about 150 tokens), the one line (at most 300 characters, about 90 tokens) and the game time (about 15) is about 260 tokens in at $1.0 per million, and a small JSON answer of about 25 tokens out at $5.0 per million: about $0.0004 a call. **At the cap, 20 calls cost about $0.008 a session** for a campaign (counted in memory with the running session, so a restart in the middle starts the count again); a typical table that says a few vague things gets a handful of calls, under a cent. Tokens are estimates (about 3.5 characters each); the log line "Time suggestions: N calls, … tokens in, … out" at the session's end gives the real ones. Counted in the AI cost like every other job.
 
 ## Story memory (5a extractor)
 

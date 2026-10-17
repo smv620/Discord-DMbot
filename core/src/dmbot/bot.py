@@ -654,9 +654,9 @@ class Table:
     topic_tasks: set[asyncio.Task[None]] = field(default_factory=set)  # awaited at the end
     topic_timers: set[asyncio.Task[None]] = field(default_factory=set)  # cancelled then
     topic_failures: int = 0  # in a row: after a few, the filter rests a while
+    topic_paused_until: float = 0.0  # monotonic seconds
     # A time jump suggested from vague narration (#1758): what this session remembers about it.
     time_suggest: time_suggest.State = field(default_factory=time_suggest.State)
-    topic_paused_until: float = 0.0  # monotonic seconds
     hidden: set[tuple[int, int]] = field(default_factory=set)  # lines shown as a marker
     # Who the DM was speaking as (#53): the DM's lines waiting for the AI, a window at a
     # time, and the same bookkeeping as the off-topic filter.
@@ -4283,7 +4283,8 @@ class DMBot(commands.AutoShardedBot):
         cue = time_suggest.cue_of(line)
         state = table.time_suggest
         now = time.monotonic()
-        if cue is None or not state.allows(cue, now):
+        # (the in-memory DM set first: a player's line costs no database read at all)
+        if cue is None or user_id not in table.dm_user_ids or not state.allows(cue, now):
             return
         gid, cid = table.guild_id, table.campaign_id
         campaign = await self.campaigns.get(gid, cid)
@@ -4314,17 +4315,21 @@ class DMBot(commands.AutoShardedBot):
         suggestion = time_suggest.read_answer(reply.text)
         if suggestion is None or campaign.dm_screen_channel_id is None:
             return
-        # Again after the wait: the same person, the session, the clock as it is now.
-        if not self._still_listening(table, user_id):
-            return
+        # Again after the wait: the clock as it is now, then (last, right before posting) the
+        # person, who must still be one of the DMs, and the session.
         again = await self.clocks.get(gid, cid)
         if again is None or again.split or clock_game.in_combat(again.clock):
             return
-        await self.post_message(
-            campaign.dm_screen_channel_id,
-            time_suggest_screen.suggestion_text(line, suggestion.minutes),
-            time_suggest_screen.suggestion_view(cid, suggestion.minutes),
-        )
+        if not self._still_listening(table, user_id) or user_id not in table.dm_user_ids:
+            return
+        try:
+            await self.post_message(
+                campaign.dm_screen_channel_id,
+                time_suggest_screen.suggestion_text(line, suggestion.minutes),
+                time_suggest_screen.suggestion_view(cid, suggestion.minutes),
+            )
+        except Exception:
+            log.warning("Time suggestion: couldn't post it", exc_info=True)  # (never the line)
 
     def _still_listening(self, table: Table, user_id: int) -> bool:
         return (

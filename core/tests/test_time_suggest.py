@@ -4,6 +4,7 @@ usual note and Undo). The AI is a stand-in; the button tests need the test datab
 
 from __future__ import annotations
 
+import itertools
 import time
 import unittest
 from types import SimpleNamespace
@@ -107,6 +108,28 @@ class Pure(unittest.TestCase):
         self.assertTrue(state.allows("hours", 161.0))
         self.assertTrue(state.allows("a while", 100.0 + sg.QUIET_S + 1))
 
+    def test_a_good_answer_clears_the_failure_count_and_the_rest_ends(self) -> None:
+        state = sg.State()
+        state.failed(1.0)
+        state.failed(2.0)
+        state.answered(1, 1)
+        state.failed(3.0)
+        state.failed(4.0)
+        self.assertTrue(state.allows("x", 100.0))  # 2 + 2 is not three in a row
+        for n in range(3):
+            state.failed(200.0 + n)
+        self.assertFalse(state.allows("x", 300.0))
+        self.assertTrue(state.allows("x", 202.0 + sg.REST_S + 1))  # calls resume after ten minutes
+
+    def test_the_setting_is_off_by_default_and_a_bad_value_is_refused(self) -> None:
+        from dmbot.config import ConfigError, load_settings
+
+        base = {"DISCORD_TOKEN": "t", "EARS_SHARED_SECRET": "s", "DATABASE_URL": "postgresql://x"}
+        self.assertFalse(load_settings(base).time_suggestions)
+        self.assertTrue(load_settings({**base, "DMBOT_TIME_SUGGESTIONS": "1"}).time_suggestions)
+        with self.assertRaises(ConfigError):
+            load_settings({**base, "DMBOT_TIME_SUGGESTIONS": "maybe"})
+
     def test_the_session_cap(self) -> None:
         state = sg.State()
         for n in range(sg.MAX_CALLS):
@@ -153,8 +176,9 @@ class Fake:
         self.clocks = SimpleNamespace(get=self._clock)
         self.campaigns = SimpleNamespace(get=AsyncMock(side_effect=self._campaign))
         self.table = SimpleNamespace(
-            guild_id=GUILD, campaign_id="c" * 32, listening=True, time_suggest=sg.State()
-        )
+            guild_id=GUILD, campaign_id="c" * 32, listening=True, time_suggest=sg.State(),
+            dm_user_ids=frozenset({DM}),
+        )  # fmt: skip
         self.tables = {GUILD: self.table}
         self.agreed = {(GUILD, DM)}
         self.consent = SimpleNamespace(has_consent=lambda g, u: (g, u) in self.agreed)
@@ -204,6 +228,42 @@ class Asking(unittest.IsolatedAsyncioTestCase):
         bot.agreed.add((GUILD, PLAYER))
         await self.go(bot, user=PLAYER)
         self.assertEqual((bot.asked, bot.post_message.await_count), ([], 0))
+
+    async def test_a_players_cue_lines_cost_no_database_read_at_all(self) -> None:
+        bot = Fake()
+        for n in range(50):
+            await self.go(bot, f"The journey goes on {n}", user=PLAYER)
+        self.assertEqual(bot.campaigns.get.await_count, 0)
+        self.assertEqual(bot.asked, [])
+
+    async def test_many_lines_at_once_make_exactly_one_call_and_one_post(self) -> None:
+        import asyncio
+
+        bot = Fake()
+        inner = bot.time_ai.complete
+
+        async def slow(system: str, text: str, *, max_tokens: int = 0) -> Reply:
+            await asyncio.sleep(0.01)
+            return cast(Reply, await inner(system, text, max_tokens=max_tokens))
+
+        bot.time_ai = SimpleNamespace(complete=slow)
+        lines = ["You walk for a while.", "Hours pass.", "The journey is long.", "You make camp."]
+        await asyncio.gather(*(self.go(bot, line) for line in lines * 2))
+        self.assertEqual(len(bot.asked), 1)
+        self.assertEqual(bot.post_message.await_count, 1)
+
+    async def test_a_failed_post_is_logged_not_raised_and_the_call_stays_counted(self) -> None:
+        bot = Fake()
+        bot.post_message = AsyncMock(side_effect=RuntimeError("Discord is down"))
+        await self.go(bot)  # (no exception)
+        self.assertEqual(bot.table.time_suggest.calls, 1)
+
+    async def test_a_campaign_with_no_screen_channel_posts_nothing_but_was_counted(self) -> None:
+        bot = Fake()
+        bot.campaign.dm_screen_channel_id = None
+        await self.go(bot)
+        self.assertEqual(bot.post_message.await_count, 0)
+        self.assertEqual(bot.table.time_suggest.calls, 1)
 
     async def test_it_is_off_until_the_switch_is_on(self) -> None:
         bot = Fake()
@@ -383,6 +443,7 @@ class Routing(unittest.IsolatedAsyncioTestCase):
 class Buttons(DatabaseTest):
     async def asyncSetUp(self) -> None:
         await super().asyncSetUp()
+        self.ids = itertools.count(1000)
         self.campaigns = CampaignStore(self.db)
         self.campaigns.register_section(ClockSection())
         self.clocks = ClockStore(self.db)
@@ -393,7 +454,7 @@ class Buttons(DatabaseTest):
         self.discord.channel(SCREEN)
         await clock_screen.press(self.discord, GUILD, self.a.id, DM, "set", set_to=NOON4)
 
-    def interaction(self, user: int = DM, guild: int = GUILD) -> Any:
+    def interaction(self, user: int = DM, guild: int = GUILD, message_id: int | None = None) -> Any:
         it = MagicMock()
         it.user = SimpleNamespace(id=user)
         it.guild = SimpleNamespace(id=guild)
@@ -403,7 +464,9 @@ class Buttons(DatabaseTest):
         it.response.edit_message = AsyncMock()
         it.response.is_done = lambda: False
         it.followup.send = AsyncMock()
-        it.message = SimpleNamespace(content="⏳ “x”: about 2 hours?", edit=AsyncMock())
+        it.message = SimpleNamespace(
+            id=message_id or next(self.ids), content="⏳ “x”: about 2 hours?", edit=AsyncMock()
+        )
         return it
 
     async def minute(self) -> int:
@@ -442,6 +505,40 @@ class Buttons(DatabaseTest):
         it = self.interaction(DM, OTHER_GUILD)
         await screen.TimeJumpButton(self.a.id, "120").callback(it)
         self.assertEqual(await self.minute(), NOON4)
+
+    async def test_two_presses_of_one_suggestion_move_the_clock_once(self) -> None:
+        import asyncio
+
+        first, second = self.interaction(message_id=77), self.interaction(message_id=77)
+        await asyncio.gather(
+            screen.TimeJumpButton(self.a.id, "120").callback(first),
+            screen.TimeJumpButton(self.a.id, "120").callback(second),
+        )
+        self.assertEqual(await self.minute(), NOON4 + 120)
+
+    async def test_a_suggestion_older_than_a_fight_does_not_move_the_clock(self) -> None:
+        await clock_screen.press(self.discord, GUILD, self.a.id, DM, "cstart")
+        it = self.interaction()
+        await screen.TimeJumpButton(self.a.id, "120").callback(it)
+        self.assertEqual(await self.minute(), NOON4)
+        self.assertEqual(it.response.send_message.call_args.args[0], screen.FIGHT)
+
+    async def test_a_failure_in_showing_the_clock_still_closes_the_buttons(self) -> None:
+        self.discord.post_message = AsyncMock(  # type: ignore[method-assign]
+            side_effect=RuntimeError("Discord is down")
+        )
+        it = self.interaction()
+        await screen.TimeJumpButton(self.a.id, "120").callback(it)
+        self.assertEqual(await self.minute(), NOON4 + 120)  # it moved, once
+        self.assertIn("Clock moved forward 2 hours.", it.message.edit.call_args.kwargs["content"])
+        self.assertIsNone(it.message.edit.call_args.kwargs["view"])  # so no second press
+
+    async def test_a_press_after_the_clock_was_taken_away_says_so(self) -> None:
+        async with self.db.guild(GUILD) as conn:
+            await conn.execute("DELETE FROM game_clocks WHERE campaign_id = %s", (self.a.id,))
+        it = self.interaction()
+        await screen.TimeJumpButton(self.a.id, "120").callback(it)
+        self.assertEqual(it.response.send_message.call_args.args[0], screen.NO_CLOCK)
 
     async def test_a_split_party_is_not_moved_by_it(self) -> None:
         await self.clocks.split(GUILD, self.a.id, DM, ["Cellar", "Tower"])
