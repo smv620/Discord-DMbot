@@ -3493,8 +3493,10 @@ once. The new-campaign form's link is saved in the same step as the campaign.
   - DMbot knows whether the table is **in combat** and which **round** it is.
   - From what the DM says ("roll initiative", "round three", "the fight's over") and from DM-screen
     buttons (**Start combat**, **Next round**, **End combat**) that correct it.
-  - It tracks rounds only, never turn order. (The campaign field `side_initiative` of #1127 is
-    kept, unused, for a later turn-order feature; its Settings button was removed, #1769.)
+  - It tracks rounds only, never turn order. (The old campaign field `side_initiative` of #1127
+    had its Settings button removed, #1769; migration 0130 folds it into the kept initiative style
+    as "side", #1791, and a backup with the old switch on restores the same way. The column stays,
+    unread, so an older DMbot can still read a new backup.)
   - Combat state goes on the DM screen. Players see "⚔️ Combat, round 3" in the game-time channel.
   - **How it runs (built in #1127):**
     - **Kept with the game clock** (`combat_round`, plus the seconds already spent toward the
@@ -3555,9 +3557,8 @@ once. The new-campaign form's link is saved in the same step as the campaign.
       most one DMbot private message per two minutes during combat**, counting everything DMbot
       sends them. In practice that is FightBot's own gap, because the sheet questions and cards
       of #1128 are held until the fight ends. Later features keep to this rule.
-    - **Spell slots:** the sheet snapshot (D1) does not keep slot counts, so a reminder can name
-      spells and features but not how many slots are left. Adding slots to the sheet is a
-      follow-up.
+    - **Spell slots** (built, #1176): the sheet keeps slot counts, and FightBot is given only
+      the levels with slots left ("2 level 1 slots"), so a reminder can say how many remain.
   - **Initiative style, heard** (owner, 2026-10-17, #1771): FightBot listens to the DM and the
     players and works out how the table runs initiative: **one at a time** (each creature on its
     own turn), **by side** (each side acts together) or **rolled each round**, and whether

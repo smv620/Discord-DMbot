@@ -1932,6 +1932,10 @@ def _validate_backup(
         not isinstance(initiative_style, str) or initiative_style not in fight_style.SAVED_STYLES
     ):
         raise CampaignError(DAMAGED)
+    # A backup from before the style was kept, with the old switch on, said the table plays by
+    # side: it restores as that style (#1791). A style the backup does keep wins.
+    if initiative_style is None and side_initiative:
+        initiative_style = "side"
 
     # Backups made before the Shared story switch existed have it off. (Whether a mode other
     # than off is kept depends on who restores the file: `import_backup`, #1692.)
