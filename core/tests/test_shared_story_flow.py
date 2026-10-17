@@ -22,6 +22,7 @@ from dmbot.bot import DMBot
 from dmbot.campaigns.models import STORY_GUIDE
 from dmbot.campaigns.store import decode_backup, encode_backup
 from dmbot.memory import book_links as links
+from dmbot.memory import guide
 from dmbot.memory import plan_reader as reader
 from dmbot.memory import story_plan as sp
 from dmbot.memory.adventure import AdventureSection, AdventureStore
@@ -176,6 +177,7 @@ class Flow(ConfirmedMemoryTest):
         bot = self.bot()
         await DMBot.watch_story(bot, GUILD_A, self.c, 4242)
         (told,) = self.posts
+        self.assertEqual(told[0], 4242)  # advice goes to the DM's channel only
         self.assertIn("Chapter 2: The Cellar", told[1])
         self.assertIn("needs **Captain Varn** alive", told[1])
         self.assertIn("is dead", told[1])
@@ -205,15 +207,32 @@ class Flow(ConfirmedMemoryTest):
         raw = encode_backup(await self.campaigns.export(GUILD_A, self.c))
         restored = await self.campaigns.import_backup(GUILD_B, decode_backup(raw), DM)
         self.assertEqual(await self.rows_in("adventure_documents", GUILD_B, restored.id), 1)
-        for table_name in ("plan_nodes", "plan_links", "plan_divergences", "plan_position"):
+        for table_name in (
+            "plan_nodes",
+            "plan_links",
+            "plan_divergences",
+            "plan_position",
+            "plan_same_as",
+        ):
             self.assertEqual(await self.rows_in(table_name, GUILD_B, restored.id), 0, table_name)
         theirs = await self.campaigns.get(GUILD_B, restored.id)
         assert theirs is not None
         self.assertFalse(await DMBot.guide_button_allowed(self.bot(), GUILD_B, theirs))
+        # The spend ledger does travel (amounts only, so a restore can't give a file fresh money).
+        self.assertEqual(await self.rows_in("plan_spend", GUILD_B, restored.id), 1)
+        text = raw if isinstance(raw, str) else raw.decode("utf8", "ignore")
+        for name in ("plan_nodes", "plan_links", "plan_same_as", "plan_divergences"):
+            self.assertNotIn(name, text)
         refused = self.pressing(guild=GUILD_B)
         await guide_ui.GuideButton(restored.id).callback(refused)
         self.assertIn(guide_ui.NOT_GUIDE, refused.sent["content"])
         self.assertNotIn("Chapter 2", refused.sent["content"])
+        # A DM who confirms again gets the button back (a restore is not locked out for good).
+        await self.campaigns.set_story_mode(GUILD_B, restored.id, STORY_GUIDE, confirmed_by=DM)
+        self.assertTrue(await DMBot.guide_button_allowed(self.bot(), GUILD_B, theirs))
+        again = self.pressing(guild=GUILD_B)
+        await guide_ui.GuideButton(restored.id).callback(again)
+        self.assertIn(guide_ui.NOT_READ, again.sent["content"])  # no plan came with the backup
         # 9. Another campaign in this server, and one in another server, see none of it.
         other = (await self.campaigns.create(GUILD_A, "Other table", DM)).id
         await self.turn_on_and_give_the_book(GUILD_A, other)
@@ -232,7 +251,7 @@ class Flow(ConfirmedMemoryTest):
         self.assertLess(took, 10.0)
 
     async def _chapter_ids(self) -> list[str]:
-        nodes, _ = await __import__("dmbot.memory.guide", fromlist=["read"]).read(
+        nodes, _ = await guide.read(
             self.memory, GUILD_A, self.c, (await self.store.documents(GUILD_A, self.c))[0].id
         )
         return [n.id for n in nodes]
