@@ -121,6 +121,51 @@ export const dmBotChannelSteps: Step[] = [
   },
 ];
 
+// Story threads, quiet threads, promises and Led to (#1662, #1674, #1675, #1679) went live on
+// 2026-10-17, but their What's new lines stay held until they have been seen on the test server, so
+// Help follows the same way (#1694). Set this to true in the same change that moves "Story threads
+// you keep" and "Keep track of promises made at the table" out of `held`; a test ties the two.
+export const STORY_THREADS_LIVE = false;
+
+export const storyThreadSteps: Step[] = [
+  {
+    text: "To keep track of a quest, mystery, hook or goal, open the Names list and press 🧵 New thread. On its card, 🧵 Change state says how far along it is. 👥 Who's involved adds people or places. 📌 Link an event adds what moved it.",
+    names: [
+      { name: "🧵 New thread", file: "ui/names.py" },
+      { name: "🧵 Change state", file: "ui/name_card.py" },
+      { name: "👥 Who's involved", file: "ui/name_card.py" },
+      { name: "📌 Link an event", file: "ui/name_card.py" },
+    ],
+  },
+  {
+    text: "After a session, DMbot names threads that haven't moved for a few sessions and shows a 🧵 Check the threads button. The note before your next session has a 🧵 Threads button. Either one opens your list, where you can say Still going, Resolved or Dropped. DMbot only reminds you. You decide.",
+    names: [
+      { name: "🧵 Check the threads", file: "ui/threads.py" },
+      { name: "🧵 Threads", file: "ui/threads.py" },
+    ],
+  },
+  {
+    text: "To note something someone swore to do, open the Names list and press 🤝 Add a promise. Then press 🤝 Who promised, 🤝 Promised to and 📅 Due. A promise shows as kept, broken or open. Pick Due soon under 🧵 Change state to have it named in the note before your next session.",
+    names: [
+      { name: "🤝 Add a promise", file: "ui/names.py" },
+      { name: "🤝 Who promised", file: "ui/name_card.py" },
+      { name: "🤝 Promised to", file: "ui/name_card.py" },
+      { name: "📅 Due", file: "ui/name_card.py" },
+      { name: "Due soon", file: "memory/threads.py" },
+    ],
+  },
+  {
+    text: "On a clue, an event or a thread, press ➡ Led to… to say what it led to. Cards then show Came from and Led to lines.",
+    names: [
+      { name: "➡ Led to…", file: "ui/name_card.py" },
+      { name: "Came from", file: "ui/name_card.py" },
+    ],
+  },
+  {
+    text: "DMbot never sends your threads, promises or these links to players.",
+  },
+];
+
 export const dmSteps: Step[] = [
   { text: "Add DMbot to your Discord server from the Add to Discord page." },
   {
@@ -326,6 +371,7 @@ export const dmSteps: Step[] = [
     ],
   },
   ...(HOMEBREW_LINKS_LIVE ? homebrewLinkSteps : []),
+  ...(STORY_THREADS_LIVE ? storyThreadSteps : []),
   ...(SECRET_CLUES_LIVE ? secretClueSteps : []),
   {
     text: "To share your homebrew with another table, press ⚙️ Settings, then 📚 Shared rules, then 📦 Homebrew packs, then 📤 Share my homebrew (paid campaigns only). DMbot gives you a share code. Any game master in your server can read everything you share, and so can anyone you give the code to. That includes entries you hide from players. Only share what you are happy for them to see. Followers get a new version only when you press 🔄 Publish my changes. Only homebrew is shared, never your story, names or notes.",
