@@ -422,7 +422,7 @@ class Buttons(DatabaseTest):
         await button.callback(self.interaction())
         self.assertEqual(await self.minute(), NOON4)  # Undo restores it
         edited = it.message.edit.call_args.kwargs["content"]
-        self.assertIn("Moved the clock on 2 hours.", edited)
+        self.assertIn("Clock moved forward 2 hours.", edited)
 
     async def test_not_now_changes_nothing_and_takes_the_buttons_away(self) -> None:
         it = self.interaction()

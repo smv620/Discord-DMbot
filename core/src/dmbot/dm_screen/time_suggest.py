@@ -28,12 +28,13 @@ log = logging.getLogger(__name__)
 NO_PINGS = discord.AllowedMentions.none()
 _ID = r"(?P<campaign>[0-9a-f]{32})"
 QUOTE_MAX = 70
-NOT_A_DM = "Only this campaign's DMs can use this."
+NOT_A_DM = "Only a DM of this campaign can press this. Ask your DM."
 GONE = "I can't find that campaign any more."
-FAILED = "That didn't work. Try the clock's own buttons."
-SPLIT = "The party is split, so nothing moves by itself. Use the clock's buttons."
-NO_CLOCK = "Set the game clock first (Settings, then Game clock)."
-BAD = "That button is out of date."
+FAILED = "Something went wrong, and nothing moved. Use the clock's buttons."
+STILL = "The clock didn't move. Use the clock's buttons."
+SPLIT = "The party is split, so I didn't move the clock. Use the clock's own buttons."
+NO_CLOCK = "There's no game clock yet. Set one up: Settings, then Game clock."
+BAD = "That button is out of date. Use the clock's buttons."
 
 
 def suggestion_text(line: str, minutes: int) -> str:
@@ -141,7 +142,7 @@ class TimeJumpButton(
             return None
         if result.after.minute == result.before.minute:
             held = await client.clocks.get(campaign.guild_id, campaign.id)
-            await _reply(interaction, SPLIT if held is not None and held.split else FAILED)
+            await _reply(interaction, SPLIT if held is not None and held.split else STILL)
             return None
         stored = await client.clocks.get(campaign.guild_id, campaign.id)
         if stored is not None:
@@ -154,7 +155,7 @@ class TimeJumpButton(
             [clock_screen.rest_note("advance", result.after, minutes), *result.lines],
             clock_screen.undo_id(result.before, result.after),
         )
-        return f"Moved the clock on {suggest.hours_label(minutes)[1:]}."
+        return f"Clock moved forward {suggest.hours_label(minutes)[1:]}."
 
 
 async def _reply(interaction: discord.Interaction, text: str) -> None:

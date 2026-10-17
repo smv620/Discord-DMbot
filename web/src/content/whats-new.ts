@@ -302,9 +302,9 @@ export const held: Held[] = [
   {
     date: "2026-10-17",
     title: "A time suggestion from your narration",
-    what: "When you narrate that time passes without saying how much (\"you walk for a while\"), DMbot can suggest it on your DM screen with a button such as +2 hours. Nothing moves unless you press it, and you can press Not now.",
+    what: "When you narrate time passing without saying how long (\"you walk for a while\"), DMbot can suggest a time jump on your DM screen, such as +2 hours. Nothing changes unless you press the button. Press Not now to skip it.",
     reason:
-      "Held until dev1 has run a live check and the switch is turned on (DMBOT_TIME_SUGGESTIONS, #1758).",
+      "Held until it has been seen working on the test server (#1758).",
   },
   {
     date: "2026-10-17",
