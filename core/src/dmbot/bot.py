@@ -210,6 +210,7 @@ from dmbot.memory.sheet_store import CharacterSheet, SheetStore
 from dmbot.memory.sheet_watch import SheetWatch
 from dmbot.memory.store import MemoryStore
 from dmbot.memory.story_plan import PlanStore, SpendSection
+from dmbot.memory.story_watch import StoryWatch
 from dmbot.memory.table_names import NameThenAnswer
 from dmbot.recaps import allowance as recap_allowance
 from dmbot.recaps import post as recap_post
@@ -335,6 +336,7 @@ from dmbot.ui.secret_aloud import (
     secret_aloud_view,
 )
 from dmbot.ui.sheets import MySheetButton, OpenCardButton
+from dmbot.ui.story_watch import KnowButton, WordsButton, message_text, watch_view
 from dmbot.ui.threads import ThreadListButton, ThreadsButton, threads_view
 from dmbot.ui.threads import waiting_text as threads_waiting_text
 from dmbot.ui.transcripts import (
@@ -804,6 +806,8 @@ class DMBot(commands.AutoShardedBot):
         self.importer = importer  # adds homebrew from a published page's link (#1634)
         self.adventure = adventure  # the DM's adventure text, per campaign (#1698)
         self.plan = plan  # the story plan read from it (#1714)
+        # The check of the table against that plan (#1729): reads only, no AI.
+        self.watch = StoryWatch(plan.db) if plan is not None else None
         # Reads going now, by (server, document): kept so the card can say "reading" and a second
         # press can't start another, and so the tasks aren't garbage collected mid-read.
         self.plan_reads: dict[tuple[int, str], asyncio.Task[None]] = {}
@@ -1140,6 +1144,7 @@ class DMBot(commands.AutoShardedBot):
         self.add_dynamic_items(HeardReviewButton)  # unanswered "Did they mean…?" (#1572)
         self.add_dynamic_items(SecretAloudButton)  # the secret-said-aloud question (#1407)
         self.add_dynamic_items(RecapButton)  # the recap on the DM screen (#1455)
+        self.add_dynamic_items(KnowButton, WordsButton)  # Watch the story (#1729)
         self.add_dynamic_items(LineFixButton, FixLineButton)  # a player's line fix (#1491)
         self.add_dynamic_items(  # #965, #1117
             clock_screen.ClockButton, clock_screen.ClockUndoButton, clock_screen.SuggestionButton
@@ -2302,6 +2307,12 @@ class DMBot(commands.AutoShardedBot):
             ("secrets said aloud", lambda: self.ask_about_secrets(table)),
             ("heads-ups", lambda: self.warn_about_continuity(table)),
             ("quiet threads", lambda: self.warn_about_threads(table)),
+            (
+                "story watch",
+                lambda: self.watch_story(
+                    table.guild_id, table.campaign_id, table.screen_channel_id
+                ),
+            ),
             ("steward numbers", lambda: self.log_steward_tally(table)),
             ("memory health", lambda: self.log_memory_health(table, ended_at)),
         ]
@@ -7249,6 +7260,43 @@ class DMBot(commands.AutoShardedBot):
                     continuity_waiting_text(len(report.conflicts)),
                     view=continuity_view(cid),
                 )
+
+    async def watch_story(
+        self,
+        guild_id: int,
+        campaign_id: str | None,
+        channel_id: int | None,
+        *,
+        entity_id: str | None = None,
+        state_id: str | None = None,
+    ) -> None:
+        """After a session, or when the DM sets a condition (#1729): if the table has left what
+        the DM's adventure needs (a person it needs alive is dead), the DM screen says so, once.
+        Only while Shared story is on with a DM's confirmation (the store asks) and the owner's
+        plan allows it (asked here, closed). No AI call; DMbot points and never says what to do."""
+        if self.watch is None or campaign_id is None or channel_id is None:
+            return
+        with log_context(guild_id=guild_id, campaign_id=campaign_id):
+            campaign = await self.campaigns.get(guild_id, campaign_id)
+            if campaign is None or not await self.plan_allows(
+                "adventure", guild_id, campaign, fail_open=False
+            ):
+                return
+            found = await self.watch.check(
+                guild_id, campaign_id, entity_id=entity_id, state_id=state_id
+            )
+            log.info("Story watch: %d told, %d waiting", len(found.shown), found.more)
+            if not found.shown:
+                return
+            numbers: dict[int, int] = {}
+            if self.transcripts is not None:
+                sessions = await self.transcripts.sessions(guild_id, campaign_id, limit=100)
+                numbers = {x.started_at: x.number for x in sessions}  # (the recent ones)
+            posted = await self.post(
+                channel_id, message_text(found, numbers), view=watch_view(campaign_id, found)
+            )
+            if not posted:  # Discord was down: let the next check tell them rather than lose them
+                await self.watch.retract(guild_id, campaign_id, [c.id for c in found.shown])
 
     async def warn_about_threads(self, table: Table) -> None:
         """After a session (#1662): if story threads the DM keeps haven't moved for a few

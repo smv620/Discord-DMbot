@@ -791,6 +791,31 @@ Each step is useful on its own and ships behind the existing phases.
    (the chapter is the nearest one at or before the entry in the file). The link is the DM's alone:
    recall, the players' views and transcripts never read it; it goes with the book entry (its file, or
    the campaign) and with the table entry, and is not in backups, like the plan.
+
+   **Phase 5d slice 5 is built (#1729): watch the story, the first check, no AI.** The book says "Chapter 3
+   needs Captain Varn alive", the DM said the book's Varn is the table's Varn, and the table says he is
+   dead: DMbot tells the DM, once, on the DM screen only. A clash is a plan link whose `need` and the table
+   entry's current condition cannot both be true, through a `same` link (a pure table in
+   `memory/story_watch.py`): alive or present against dead, missing, captured or transformed; found against
+   lost or destroyed; and "dead" in the book against "alive" the table said after the plan was read. Any
+   other `need` text is ignored, and so is `unknown`. A name the DM rejected or merged away never counts.
+   **When:** only with Shared story on (Watch the story or Guide me), a DM's own confirmation (not one that
+   came back in a backup) and the owner's plan allowing it, all asked again every time; once after each
+   session, and when the DM confirms a fact that is a condition on the claims review (for that one
+   condition). **Once only:** migration 0125 `plan_divergences`, one row for each plan link and condition
+   seen (`open`, `known` after **👍 I know**, `gone` when an Undo, a later change or a taken-off link means
+   the clash no longer stands), forced RLS, not in backups, deleted with the plan link or the table entry.
+   The message has at most five lines and "+N more" (those come with the next check), each
+   "📖 Your adventure: Mother Ilse needs Captain Varn alive (Chapter 3: The Circle). At your table Captain
+   Varn is dead (Session 4).", the chapter being the nearest one at or before the book's entry (the rule
+   `book_links` uses; left out when the entry is itself a chapter),
+   with **👍 I know** and **📋 Book's words** (the plan link's quote, at most 200 characters, only to
+   the DM who pressed). It never says what to do. Cost: none; it reads `plan_links`, `plan_same_as`,
+   `memory_states` through their indexes, a few rows for one campaign. **Guide me** gets the same check; the
+   rest of it is the next slice. After an Undo of the condition, or a name merged or rejected, a clash
+   already told goes `gone` at the next check and its buttons stop answering; a deleted or merged name that
+   comes back by Undo may tell a clash the DM already answered again (`plan_divergences` is derived and not
+   in the memory change log's dependents).
 5. **Throughout:** the ontology steward and graph curator take over the after-session
    cleanup; their health numbers (duplicates, orphans, unused terms, flags per session,
    how often the DM is asked, warnings ignored) go to the server logs, never to players.

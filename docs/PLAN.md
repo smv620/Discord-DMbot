@@ -2382,7 +2382,8 @@ Full design and rationale: docs/STORY_MEMORY.md. In short:
   promises with due dates, clues, and cause and effect; a pre-session note of what's
   open and what could clash tonight.
 - **Shared story switch** per campaign: **Off** (default; never suggests story),
-  **Watch the story** (warns when the table breaks something the adventure still needs),
+  **Watch the story** (warns when the table breaks something the adventure still needs: built
+  for a person the adventure needs alive or a thing it needs found, #1729; DM screen only, once, no AI),
   **Guide me** (says what the story has next, with the section). For any written
   adventure: published, homebrew or fan fiction. Turning it on warns: "Only give DMbot
   material you have the right to use. DMbot doesn't check this." The story plan comes

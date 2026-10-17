@@ -400,6 +400,10 @@ class PlanStore:
         self._db = db
         self._clock = clock or time.time
 
+    @property
+    def db(self) -> Database:
+        return self._db
+
     # -- starting and checking ---------------------------------------------------------------
 
     async def begin(
