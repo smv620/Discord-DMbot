@@ -40,6 +40,11 @@ export const entries: Entry[] = [
   },
   {
     date: "2026-10-16",
+    title: "Which rules is a book for?",
+    what: "When you load a homebrew file from a book, DMbot asks which rules the book is written for. It uses the answer to tell older entries from newer ones when anyone looks up a rule.",
+  },
+  {
+    date: "2026-10-16",
     title: "Check names after a session",
     what: "If DMbot isn't sure it heard a name right, it asks the game master \"Did they mean…?\". Questions nobody answered wait for you: after the session, press Check names on your DM screen and pick a name for each.",
   },
@@ -110,6 +115,11 @@ export const entries: Entry[] = [
   },
   {
     date: "2026-10-15",
+    title: "Check what DMbot noticed",
+    what: "If something doesn't add up, like a one-of-a-kind item that two people have, DMbot says so and asks you about it after the session. It only points it out, and you decide.",
+  },
+  {
+    date: "2026-10-15",
     title: "Fight reminders for players",
     what: "In a fight, FightBot may send you a short private reminder of what your sheet says you still have, like a spell or spell slots. It only reminds you, and your game master decides; you can switch it off under My character sheet.",
   },
@@ -147,6 +157,11 @@ export const entries: Entry[] = [
     date: "2026-10-15",
     title: "Ask DMbot by typing",
     what: "Anyone who said yes can type a quick rules question in the table's dmb-chat channel. The short answer is posted there for everyone, with its source, and the game master has the final say.",
+  },
+  {
+    date: "2026-10-13",
+    title: "Link your character sheet",
+    what: "Press My character sheet to link your public online sheet to your character, or to type your character in. Your game master sees it on your character's card.",
   },
   {
     date: "2026-10-13",
