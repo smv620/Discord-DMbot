@@ -329,6 +329,13 @@ export const held: Held[] = [
   },
   {
     date: "2026-10-17",
+    title: "A time suggestion from your narration",
+    what: "When you narrate time passing without saying how long (\"you walk for a while\"), DMbot can suggest a time jump on your DM screen, such as +2 hours. Nothing changes unless you press the button. Press Not now to skip it.",
+    reason:
+      "Held until it has been seen working on the test server (#1758).",
+  },
+  {
+    date: "2026-10-17",
     title: "Manage your plan without Discord",
     what: "If you can't sign in with Discord, use the email on your receipts. Stripe sends you a code, and you can cancel, update your card or get invoices.",
     reason:
