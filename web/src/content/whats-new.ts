@@ -253,9 +253,51 @@ export const held: Held[] = [
   {
     date: "2026-10-17",
     title: "Story threads you keep",
-    what: "On the Names list, press New thread to keep a quest, mystery, hook or goal, and say how far along it is. Its card shows who is involved, what moved it, and its history. Say Still going when you check on it. After a session, DMbot tells you which threads haven't moved for a few sessions, so you can say Still going, Resolved or Dropped. It only reminds you; you decide. Players never see your threads.",
+    what: "On the Names list, press New thread to keep a quest, mystery, hook or goal, and say how far along it is. Its card shows who is involved, what moved it, and its history. Say Still going when you check on it. After a session, DMbot tells you which threads haven't moved for a few sessions, so you can say Still going, Resolved or Dropped. When a session starts, the note before it names the quiet ones, with a Threads button for your list. On a clue, event or thread, press Led to to say what it led to, and the cards show where each came from. It only reminds you; you decide. Players never see your threads.",
     reason:
       "Held until it has been seen working on the test server (#1662).",
+  },
+  {
+    date: "2026-10-17",
+    title: "Species, subclasses and backgrounds in homebrew",
+    what: "When you add homebrew, you can now pick Species, Subclass or Background as the kind. Pages you add from a link are sorted into the right kind too.",
+    reason:
+      "Held until it has been seen working on the test server (#1663).",
+  },
+  {
+    date: "2026-10-17",
+    title: "Keep track of promises made at the table",
+    what: "On the Names list, press Add a promise to note something someone swore to do, then say who promised it and who it was promised to. It shows as kept, broken or open, and after a session DMbot tells you which promises haven't moved for a few sessions. Promises you mark Due soon also show in the note before a session. It only reminds you; you decide. Players never see your promises.",
+    reason:
+      "Held until it has been seen working on the test server (#1674).",
+  },
+  {
+    date: "2026-10-17",
+    title: "A DMbot channel for buttons",
+    what: "Each campaign now has a channel called dmb-dm-bot. Press 👤 My buttons there to see the buttons for your part; only you can see them. Anyone can press 📖 Look up a rule or 📜 Transcripts. Your DM screen now holds only notes, alerts and Stop listening.",
+    reason:
+      "Held until it has been seen working on the test server (#1666).",
+  },
+  {
+    date: "2026-10-17",
+    title: "A Shared story switch",
+    what: "In Settings, press Shared story to choose Off, Watch the story or Guide me. The first time you turn it on, DMbot reminds you to only give it material you have the right to use, and keeps a note that you said so. For now the switch only remembers your choice and does nothing else; reading your adventure comes next.",
+    reason:
+      "Held until DMbot can read an adventure (#1692): a switch that does nothing yet is not news.",
+  },
+  {
+    date: "2026-10-17",
+    title: "Homebrew menu by kind",
+    what: "In Settings, then Homebrew, you now see one button for each kind, like Spells 10/12, which means 10 are on out of 12. Press one to see only those entries; ↩ All kinds takes you back.",
+    reason:
+      "Held until it has been seen working on the test server (#1665).",
+  },
+  {
+    date: "2026-10-17",
+    title: "Manage your plan without Discord",
+    what: "If you can't sign in with Discord, use the email on your receipts. Stripe sends you a code, and you can cancel, update your card or get invoices.",
+    reason:
+      "Held until the billing login link is set in the website's build (PUBLIC_STRIPE_PORTAL_LOGIN_URL, #1711); move it to the news when the link shows.",
   },
 ];
 

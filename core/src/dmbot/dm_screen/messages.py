@@ -133,7 +133,7 @@ def topic(campaign_name: str, visibility: str) -> str:
     return f"DM screen for {campaign_name}. {who}"
 
 
-def help_card(campaign_name: str, visibility: str) -> str:
+def help_card(campaign_name: str, visibility: str, dm_bot_channel_id: int | None = None) -> str:
     lines = [
         f"{HELP_CARD_TITLE}{campaign_name}**",
         "DMbot writes notes for the DM here. It never makes rulings or story. "
@@ -144,9 +144,10 @@ def help_card(campaign_name: str, visibility: str) -> str:
     ]
     if visibility != "open":
         lines.append("Server owners and admins can always see every channel.")
+    # Settings and options live in the DM Bot channel (#1666); /dmbot settings still works.
+    where = f"in <#{dm_bot_channel_id}>" if dm_bot_channel_id else "with `/dmbot settings`"
     lines.append(
-        "**DM:** press a button below to change who can see this, or ⚙️ **Settings** for "
-        "how much DMbot says."
+        f"**DM:** who can see this and how much DMbot says are in ⚙️ **Settings**, {where}."
     )
     if visibility == "peek":
         lines.append(f"**Peeking?** Press 🙈 **{HIDE_LABEL}** below to stop.")
@@ -469,6 +470,22 @@ def gametime_failed(cause: str) -> str:
 
 def gametime_topic(campaign_name: str) -> str:
     return f"{campaign_name}: the day and a rough time of day. Posted by DMbot, view only."
+
+
+# ---- the DM Bot channel (#1666) ---------------------------------------------------------
+
+DM_BOT_FAILED = (
+    "⚠️ **Couldn't make the DM Bot channel** ({cause}). The game goes on. For settings, type "
+    "`/dmbot settings`. To retry: fix that, then run `/dmbot start`."
+)
+
+
+def dm_bot_failed(cause: str) -> str:
+    return DM_BOT_FAILED.format(cause=cause)
+
+
+def dm_bot_topic(campaign_name: str) -> str:
+    return f"{campaign_name}: your buttons for settings and help. Only you see the answers."
 
 
 # ---- the table's DMbot chat channel (#1187) -------------------------------------------

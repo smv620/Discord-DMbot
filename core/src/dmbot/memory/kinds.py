@@ -38,6 +38,7 @@ KIND_LABELS = {
     "mystery": "mystery",
     "hook": "hook",
     "goal": "goal",
+    "promise": "promise",
     "person": "player or DM",
 }
 # The older kinds, in the words people used for them.

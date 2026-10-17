@@ -42,7 +42,7 @@ from dmbot.ui.names import GONE, _campaign_for, _md, _memory, changed, sees_secr
 
 log = logging.getLogger(__name__)
 
-NEW_BUTTON = "➕ New thread"
+NEW_PROMISE_BUTTON = "🤝 Add a promise"
 STATE_BUTTON = "🧵 Change state"
 INVOLVE_BUTTON = "👥 Add who's involved"
 LINK_BUTTON = "📌 Link an event"
@@ -61,10 +61,10 @@ def _stalled_after(interaction: discord.Interaction) -> int:
     return int(getattr(settings, "thread_stalled_sessions", model.STALLED_AFTER))
 
 
-def waiting_text(count: int, quiet: int) -> str:
+def waiting_text(count: int, quiet: int, promises: int = 0) -> str:
     """For the DM screen after a session: how many, and for how long, never which."""
     return (
-        f"🧵 **{model.stalled_line(count, quiet)}** Tap to check them. "
+        f"🧵 **{model.stalled_line(count, quiet, promises)}** Tap to check them. "
         "Nothing changes until you say."
     )
 
@@ -73,12 +73,35 @@ def thread_lines(info: model.ThreadInfo, numbers: dict[int, int]) -> list[str]:
     """What a thread's card adds: its state (and that it has gone quiet), who is involved and in
     what part, the events that moved it, and the history of its state."""
     state = info.state.condition if info.state is not None else None
-    word = model.STATE_WORDS.get(state or "", "No state yet")
+    kind = info.thread.type
+    word = model.words_for(kind).get(state or "", "No state yet")
     quiet = ""
     if info.stalled:
         n = info.quiet_sessions
         quiet = f" — quiet for {n} {'session' if n == 1 else 'sessions'}"
-    lines = [f"🧵 **{word}**{quiet}"]
+    lines = []
+    if kind == model.PROMISE:  # "Kael promised the village: bring the healer back"
+        by = ", ".join(_md(e.name) for e in info.promised_by)
+        to = ", ".join(_md(e.name) for e in info.promised_to)
+        if by and to:
+            lines.append(f"🤝 **{by}** promised **{to}**: {_md(info.thread.name)}")
+        else:  # until the DM says who: a plain title, not a half sentence
+            lines.append(f"🤝 **Promise:** {_md(info.thread.name)}")
+            if by or to:
+                lines.append(
+                    f"**Promised by:** {by or 'not set yet'}. **To:** {to or 'not set yet'}."
+                )
+            else:
+                lines.append("Who promised and to whom: not set yet.")
+    lines.append(f"🧵 **{word}**{quiet}")
+    if info.due:
+        lines.append(f"**Due:** {_md(info.due)}")
+    for line in (
+        model.names_line("Came from", [_md(e.name) for e in info.came_from]),
+        model.names_line("Led to", [_md(e.name) for e in info.led_to]),
+    ):
+        if line:
+            lines.append(line)
     if info.involved:
         parts = [
             f"{_md(i.who.name)}" + (f" ({_md(i.role)})" if i.role else "") for i in info.involved
@@ -88,7 +111,7 @@ def thread_lines(info: model.ThreadInfo, numbers: dict[int, int]) -> list[str]:
         parts = [f"{_md(m.event.name)}" + (" (ended it)" if m.ends_it else "") for m in info.movers]
         lines.append("**Moved by:** " + ", ".join(parts))
     if len(info.history) > 1:
-        lines.append("**So far:** " + "; ".join(model.history_lines(info.history, numbers)))
+        lines.append("**So far:** " + "; ".join(model.history_lines(info.history, numbers, kind)))
     return lines
 
 
@@ -219,14 +242,17 @@ async def _dm_and_memory(interaction: discord.Interaction, campaign_id: str) -> 
 class ChangeState(_Menu):
     """The five states, one tap each; "Checked, still going" when it is."""
 
-    def __init__(self, campaign_id: str, thread_id: str, now: str | None) -> None:
+    def __init__(
+        self, campaign_id: str, thread_id: str, now: str | None, kind: str = "thread"
+    ) -> None:
         super().__init__()
-        self.campaign_id, self.thread_id = campaign_id, thread_id
+        self.campaign_id, self.thread_id, self.kind = campaign_id, thread_id, kind
+        words = model.words_for(kind)
         for state in model.ALL_STATES:
             self.add_item(
                 _Button(
                     partial(self._set, state),
-                    label=model.STATE_WORDS[state],
+                    label=words[state],
                     style=discord.ButtonStyle.primary
                     if state == now
                     else discord.ButtonStyle.secondary,
@@ -258,7 +284,7 @@ class ChangeState(_Menu):
             interaction,
             self.campaign_id,
             self.thread_id,
-            note=f"✅ Marked: {model.STATE_WORDS[state]}.",
+            note=f"✅ Marked: {model.words_for(self.kind)[state]}.",
         )
 
     async def _still(self, interaction: discord.Interaction) -> None:
@@ -301,7 +327,7 @@ async def open_change_state(
     await _replace(
         interaction,
         f"**{_md(infos[0].thread.name)}**: where is it now?",
-        ChangeState(campaign_id, thread_id, now),
+        ChangeState(campaign_id, thread_id, now, infos[0].thread.type),
     )
 
 
@@ -346,6 +372,7 @@ async def link_by_name(
     kinds: tuple[str, ...] | None,
     then: Any,
     make: str | None = None,
+    threads_too: bool = False,
 ) -> None:
     """Find the one entry the DM means by name (the same search as Find a name), and hand it to
     `then`. Several: a pick list. None: nothing, or the entry made on the spot when `make` names
@@ -362,7 +389,7 @@ async def link_by_name(
         if names.entities[m.entity_id].status == CONFIRMED
         and names.entities[m.entity_id].type != "person"
         and m.entity_id != thread_id
-        and names.entities[m.entity_id].type not in THREAD_TYPES
+        and (threads_too or names.entities[m.entity_id].type not in THREAD_TYPES)
         and (kinds is None or names.entities[m.entity_id].type in kinds)
     ][:MAX_RESULTS]
     if len(found) == 1:
@@ -426,6 +453,194 @@ async def _save_involved(
         return
     changed(interaction, campaign)
     await show_thread(interaction, campaign_id, thread_id, note="✅ Added.")
+
+
+class PartyForm(discord.ui.Modal):
+    """Who made a promise, or who it was made to: a name, found like the other links."""
+
+    who: discord.ui.TextInput[PartyForm] = discord.ui.TextInput(
+        label="A name", placeholder="A character or a group", max_length=100
+    )
+
+    def __init__(self, campaign_id: str, promise_id: str, *, to: bool) -> None:
+        super().__init__(
+            title="Who was it promised to?" if to else "Who promised?", timeout=VIEW_TIMEOUT_S
+        )
+        self.campaign_id, self.promise_id, self.to = campaign_id, promise_id, to
+        if to:
+            self.who.placeholder = "A character, a group or a place"
+
+    async def on_error(  # type: ignore[override]  # a form's has no item (discord.py)
+        self, interaction: discord.Interaction, error: Exception
+    ) -> None:
+        await _failed(interaction, error)
+
+    async def on_submit(self, interaction: discord.Interaction) -> None:
+        await _answer_first(interaction, in_place=True)
+        await link_by_name(
+            interaction,
+            self.campaign_id,
+            self.promise_id,
+            self.who.value,
+            kinds=("character", "faction", "place") if self.to else ("character", "faction"),
+            then=partial(_save_party, to=self.to),
+        )
+
+
+async def _save_party(
+    interaction: discord.Interaction, campaign_id: str, promise_id: str, who_id: str, *, to: bool
+) -> None:
+    got = await _dm_and_memory(interaction, campaign_id)
+    if got is None:
+        return
+    campaign, memory = got
+    try:
+        await memory.promise_party(
+            campaign.guild_id, campaign.id, promise_id, who_id, to=to, source=DM
+        )
+    except MemoryRuleError as exc:
+        await show_thread(interaction, campaign_id, promise_id, note=f"⚠️ {exc}")
+        return
+    changed(interaction, campaign)
+    await show_thread(interaction, campaign_id, promise_id, note="✅ Added.")
+
+
+class DueForm(discord.ui.Modal, title="When is it due?"):
+    due: discord.ui.TextInput[DueForm] = discord.ui.TextInput(
+        label="Your note (empty clears it)",
+        placeholder="By the full moon",
+        required=False,
+        max_length=120,
+    )
+
+    def __init__(self, campaign_id: str, promise_id: str) -> None:
+        super().__init__(timeout=VIEW_TIMEOUT_S)
+        self.campaign_id, self.promise_id = campaign_id, promise_id
+
+    async def on_error(  # type: ignore[override]  # a form's has no item (discord.py)
+        self, interaction: discord.Interaction, error: Exception
+    ) -> None:
+        await _failed(interaction, error)
+
+    async def on_submit(self, interaction: discord.Interaction) -> None:
+        await _answer_first(interaction, in_place=True)
+        got = await _dm_and_memory(interaction, self.campaign_id)
+        if got is None:
+            return
+        campaign, memory = got
+        try:
+            await memory.set_due(
+                campaign.guild_id, campaign.id, self.promise_id, self.due.value, source=DM
+            )
+        except MemoryRuleError as exc:
+            await show_thread(interaction, self.campaign_id, self.promise_id, note=f"⚠️ {exc}")
+            return
+        changed(interaction, campaign)
+        await show_thread(interaction, self.campaign_id, self.promise_id, note="✅ Saved.")
+
+
+class NewPromiseForm(discord.ui.Modal, title="Add a promise"):
+    what: discord.ui.TextInput[NewPromiseForm] = discord.ui.TextInput(
+        label="What was promised",
+        placeholder="Bring the healer back",
+        max_length=100,
+    )
+    due: discord.ui.TextInput[NewPromiseForm] = discord.ui.TextInput(
+        label="When is it due? (optional)",
+        placeholder="By the full moon",
+        required=False,
+        max_length=120,
+    )
+
+    def __init__(self, campaign_id: str) -> None:
+        super().__init__(timeout=VIEW_TIMEOUT_S)
+        self.campaign_id = campaign_id
+
+    async def on_error(  # type: ignore[override]  # a form's has no item (discord.py)
+        self, interaction: discord.Interaction, error: Exception
+    ) -> None:
+        await _failed(interaction, error)
+
+    async def on_submit(self, interaction: discord.Interaction) -> None:
+        await _answer_first(interaction, in_place=True)
+        got = await _dm_and_memory(interaction, self.campaign_id)
+        if got is None:
+            return
+        campaign, memory = got
+        what = " ".join(self.what.value.split())
+        if not what:
+            await _tell(interaction, "Type what was promised.")
+            return
+        try:
+            made = await memory.new_thread(
+                campaign.guild_id, campaign.id, what, model.PROMISE, OPEN, source=DM
+            )
+            if self.due.value.strip():
+                await memory.set_due(
+                    campaign.guild_id, campaign.id, made.value.id, self.due.value, source=DM
+                )
+        except MemoryRuleError as exc:
+            await _tell(interaction, f"⚠️ {exc}")
+            return
+        changed(interaction, campaign)
+        await show_thread(
+            interaction,
+            campaign.id,
+            made.value.id,
+            note="✅ Added. Tap Who promised and Promised to to fill in the rest.",
+        )
+
+
+class LedToForm(discord.ui.Modal, title="Led to…"):
+    """From a clue, an event or a thread: what it led to, a thread or an event of this campaign."""
+
+    target: discord.ui.TextInput[LedToForm] = discord.ui.TextInput(
+        label="What it led to", placeholder="A thread or an event", max_length=100
+    )
+
+    def __init__(self, campaign_id: str, from_id: str) -> None:
+        super().__init__(timeout=VIEW_TIMEOUT_S)
+        self.campaign_id, self.from_id = campaign_id, from_id
+
+    async def on_error(  # type: ignore[override]  # a form's has no item (discord.py)
+        self, interaction: discord.Interaction, error: Exception
+    ) -> None:
+        await _failed(interaction, error)
+
+    async def on_submit(self, interaction: discord.Interaction) -> None:
+        await _answer_first(interaction, in_place=True)
+        memory = _memory(interaction)
+        kinds: tuple[str, ...] | None = None
+        if memory is not None and interaction.guild is not None:
+            ontology = await memory.ontology(interaction.guild.id, self.campaign_id)
+            kinds = tuple(
+                k for k in ontology.types if ontology.is_a(k, "event") or ontology.is_a(k, "thread")
+            )
+        await link_by_name(
+            interaction,
+            self.campaign_id,
+            self.from_id,
+            self.target.value,
+            kinds=kinds,
+            then=_save_led_to,
+            threads_too=True,
+        )
+
+
+async def _save_led_to(
+    interaction: discord.Interaction, campaign_id: str, from_id: str, to_id: str
+) -> None:
+    got = await _dm_and_memory(interaction, campaign_id)
+    if got is None:
+        return
+    campaign, memory = got
+    try:
+        await memory.led_to(campaign.guild_id, campaign.id, from_id, to_id, source=DM)
+    except MemoryRuleError as exc:
+        await show_thread(interaction, campaign_id, from_id, note=f"⚠️ {exc}")
+        return
+    changed(interaction, campaign)
+    await show_thread(interaction, campaign_id, from_id, note="✅ Linked.")
 
 
 class LinkForm(discord.ui.Modal, title="Link an event"):
@@ -576,57 +791,97 @@ class ThreadsButton(
         await start_review(interaction, self.campaign_id)
 
 
+class ThreadListButton(
+    discord.ui.DynamicItem[discord.ui.Button[discord.ui.View]],
+    template=r"dmbot:threads:list:(?P<campaign>[0-9a-f]{32})",
+):
+    """🧵 Threads, on the pre-session note (#1675): the DM's thread list, in play first."""
+
+    def __init__(self, campaign_id: str) -> None:
+        super().__init__(
+            discord.ui.Button(
+                label="🧵 Threads",
+                style=discord.ButtonStyle.secondary,
+                custom_id=f"dmbot:threads:list:{campaign_id}",
+            )
+        )
+        self.campaign_id = campaign_id
+
+    @classmethod
+    async def from_custom_id(
+        cls, interaction: discord.Interaction, item: discord.ui.Item[Any], match: re.Match[str]
+    ) -> ThreadListButton:
+        return cls(match["campaign"])
+
+    async def callback(self, interaction: discord.Interaction) -> Any:
+        await start_review(interaction, self.campaign_id, all_live=True)
+
+
 def threads_view(campaign_id: str) -> discord.ui.View:
     view = discord.ui.View(timeout=None)
     view.add_item(ThreadsButton(campaign_id))
     return view
 
 
+NO_LIVE_THREADS = "No live threads right now. Add one under New thread."
 NOTHING_LEFT = "✅ No threads need a check right now. DMbot looks again after your next session."
 
 
-async def start_review(interaction: discord.Interaction, campaign_id: str) -> None:
-    got = await _dm_and_memory(interaction, campaign_id)
-    if got is None:
+async def start_review(
+    interaction: discord.Interaction, campaign_id: str, *, all_live: bool = False
+) -> None:
+    if await _dm_and_memory(interaction, campaign_id) is None:
         return
-    review = ThreadsReview(campaign_id)
+    await _answer_first(interaction)  # the read below can be slow: answer within Discord's 3 s
+    review = ThreadsReview(campaign_id, all_live=all_live)
     text = await review.current_text(interaction)
     if text is None:
-        await _tell(interaction, NOTHING_LEFT)
+        await _tell(interaction, NO_LIVE_THREADS if all_live else NOTHING_LEFT)
         return
     await _send(interaction, text, review)
 
 
 class ThreadsReview(_Menu):
-    """The stalled threads, each with Still going, Resolved and Dropped."""
+    """The threads that need a word, each with Still going and the two ends. By default only the
+    quiet ones (after a session); `all_live` lists every thread that is still going, the ones in
+    play first, with the quiet ones marked (the 🧵 Threads button on the pre-session note)."""
 
-    def __init__(self, campaign_id: str) -> None:
+    PAGE_ALL = 4  # four threads and a row of paging
+
+    def __init__(self, campaign_id: str, *, all_live: bool = False) -> None:
         super().__init__()
-        self.campaign_id = campaign_id
+        self.campaign_id, self.all_live = campaign_id, all_live
         self.page: list[model.ThreadInfo] = []
         self.total = 0
+        self.offset = 0
 
     async def current_text(self, interaction: discord.Interaction) -> str | None:
         memory = _memory(interaction)
         campaign = await _campaign_for(interaction, self.campaign_id)
         if memory is None or campaign is None:
             return None
-        stalled = [
-            t
-            for t in await memory.threads(
-                campaign.guild_id, campaign.id, stalled_after=_stalled_after(interaction)
+        found = await memory.threads(
+            campaign.guild_id, campaign.id, stalled_after=_stalled_after(interaction)
+        )
+        if self.all_live:
+            chosen = model.in_play_first(
+                t for t in found if t.state is not None and t.state.condition in model.LIVE_STATES
             )
-            if t.stalled
-        ]
-        self.page, self.total = stalled[:PAGE], len(stalled)
+            size = self.PAGE_ALL
+            self.offset = min(self.offset, max(0, (len(chosen) - 1) // size * size))
+        else:
+            chosen = [t for t in found if t.stalled]
+            size = PAGE
+        self.page, self.total = chosen[self.offset : self.offset + size], len(chosen)
         self.clear_items()
         if not self.page:
             return None
         for row, info in enumerate(self.page):
+            promise = info.thread.type == model.PROMISE
             for key, label in (
                 ("still", "Still going"),
-                ("resolved", "Finished"),
-                ("dropped", "Dropped"),
+                ("resolved", "Kept" if promise else "Finished"),
+                ("dropped", "Broken" if promise else "Dropped"),
             ):
                 self.add_item(
                     _Button(
@@ -635,20 +890,50 @@ class ThreadsReview(_Menu):
                         row=row,
                     )
                 )
-        lines = [
-            "**Threads that haven't moved.** Tap what is true in your story."
-            " You can change it later on the thread's card."
-        ]
+        if self.all_live and self.total > size:
+            if self.offset > 0:
+                self.add_item(_Button(self._back, label="◀ Back", row=4))
+            if self.offset + size < self.total:
+                self.add_item(_Button(self._next, label="Next ▶", row=4))
+        head = (
+            "**Your threads.** ⏳ means it has gone quiet. Tap what is true in your story."
+            if self.all_live
+            else "**Threads that haven't moved.** Tap what is true in your story."
+        )
+        lines = [head + " You can change it later on the thread's card."]
         for n, info in enumerate(self.page, 1):
-            lines.append(
-                f"{n}. **{_md(info.thread.name)}**: quiet for {info.quiet_sessions} "
-                f"{'session' if info.quiet_sessions == 1 else 'sessions'}."
-            )
-        if self.total > len(self.page):
+            words = model.words_for(info.thread.type)
+            state = info.state.condition if info.state is not None else ""
+            if info.stalled:
+                s = info.quiet_sessions
+                where = f"quiet for {s} {'session' if s == 1 else 'sessions'}"
+                mark = "⏳ " if self.all_live else ""
+            else:
+                where, mark = words.get(state, ""), ""
+            lines.append(f"{n}. {mark}**{_md(info.thread.name)}**: {where}.")
+        if not self.all_live and self.total > len(self.page):
             lines.append(
                 f"\n_{self.total - len(self.page)} more waiting. They show when these are done._"
             )
         return "\n".join(lines)
+
+    async def _back(self, interaction: discord.Interaction) -> None:
+        await self._turn(interaction, -self.PAGE_ALL)
+
+    async def _next(self, interaction: discord.Interaction) -> None:
+        await self._turn(interaction, self.PAGE_ALL)
+
+    async def _turn(self, interaction: discord.Interaction, by: int) -> None:
+        await _answer_first(interaction, in_place=True)
+        if await _dm_and_memory(interaction, self.campaign_id) is None:
+            return
+        self.offset = max(0, self.offset + by)
+        text = await self.current_text(interaction)
+        if text is None:
+            self.stop()
+            await _replace(interaction, NOTHING_LEFT, None)
+            return
+        await _replace(interaction, text, self)
 
     async def _answer(self, thread_id: str, key: str, interaction: discord.Interaction) -> None:
         await _answer_first(interaction, in_place=True)
@@ -682,9 +967,14 @@ class ThreadsReview(_Menu):
 
 __all__ = [
     "ChangeState",
+    "DueForm",
     "InvolveForm",
+    "LedToForm",
     "LinkForm",
+    "NewPromiseForm",
     "NewThreadForm",
+    "PartyForm",
+    "ThreadListButton",
     "ThreadsButton",
     "ThreadsReview",
     "threads_view",

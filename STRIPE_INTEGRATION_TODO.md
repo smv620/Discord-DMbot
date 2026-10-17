@@ -59,9 +59,11 @@ Kept as they were (real values, not part of Checkout Studio): `mode`, `success_u
 (https://docs.stripe.com/api/checkout/sessions/create, read 2026-10-16.)
 
 1. **`ui_mode`**: the API version DMbot sends is pinned in the code (`API_VERSION`, now
-   `2026-04-22.dahlia`), and on it the values are `hosted_page`, `embedded_page`, `form` and
+   `2026-09-30.endive`), and on it the values are `hosted_page`, `embedded_page`, `form` and
    `elements`; `hosted_page` is the default. Older API versions call it `hosted`. If
-   `API_VERSION` is ever moved back to an older one, change `ui_mode` with it.
+   `API_VERSION` is ever moved back to an older one, change `ui_mode` with it. (Moved to endive on
+   2026-10-17, #1703: the stripe-python 16.0.0 changelog lists no change to `ui_mode`; the sandbox run
+   (#1096) confirms it.)
 2. **`integration_identifier`** (a string) and **`origin_context`** (an enum, `web` among its
    values) are both listed as Checkout Session create parameters on this version, so they are sent.
 3. **`automatic_tax[enabled]=true`** needs **Stripe Tax turned on in the Dashboard** (Settings,

@@ -48,6 +48,20 @@ NAMES_LIST, SHARED_STORY, RULEBOOK = "names_list", "shared_story", "rulebook"
 CONFIRMATION_PURPOSES = (NAMES_LIST, SHARED_STORY, RULEBOOK)
 
 
+# The Shared story switch (#1692; docs/STORY_MEMORY.md, section 6). Nothing reads it yet: the
+# story-plan reader, the divergence warnings ("Watch the story") and "Guide me" are the later
+# slices of Phase 5d. The database checks the same list (schema.STORY_MODE).
+STORY_OFF, STORY_WATCH, STORY_GUIDE = "off", "watch", "guide"
+STORY_MODES = (STORY_OFF, STORY_WATCH, STORY_GUIDE)
+DEFAULT_STORY_MODE = STORY_OFF
+# What the DM is shown before the first time it is turned on (docs/PLAN.md, "Shared story
+# switch"; CLAUDE.md, IP rule). The confirmation records its fingerprint, not the words.
+STORY_RIGHT_WARNING = (
+    "Only give DMbot material you have the right to use. DMbot doesn't check this."
+)
+STORY_NEEDS_CONFIRM = "Confirm that you have the right to use the material first."
+
+
 def fingerprint(text: str) -> str:
     """Tells shared documents apart without keeping them: SHA-256 of the text."""
     return hashlib.sha256(text.encode()).hexdigest()
@@ -125,6 +139,8 @@ class Campaign:
     transcript_channel_id: int | None = None
     gametime_channel_id: int | None = None  # the players' game-time channel (#1116)
     dmbchat_channel_id: int | None = None  # where the table asks DMbot questions (#1187)
+    dm_bot_channel_id: int | None = None  # the DM Bot channel: settings by role (#1666)
+    dm_bot_message_id: int | None = None  # ...and its one panel message
     # The DM's D&D Beyond campaign invite link, shown to players on a button (#1119).
     dndbeyond_invite: str | None = None
     # Typed chat at the table (#1118): whether DMbot reads it, and the one extra text channel
@@ -148,6 +164,8 @@ class Campaign:
     recaps_text: bool = True
     recaps_audio: bool = True
     recaps_email: bool = True
+    # The Shared story switch (#1692): "off", "watch" or "guide". Nothing reads it yet.
+    story_mode: str = DEFAULT_STORY_MODE
     # Paused by its owner, or by DMbot when the owner's plan shrank (#957): it keeps all its
     # data and downloads, can't start, and doesn't count toward the owner's campaign cap.
     paused: bool = False

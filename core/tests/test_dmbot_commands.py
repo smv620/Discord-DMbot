@@ -601,7 +601,7 @@ class SettingsWhereTheDmLooks(CommandTests):
         await cmds.choose_campaign(it, campaign.id)
         text, kw = it.response.sent[0]
         self.assertEqual(len(self.settings_buttons(kw["view"])), 1)
-        self.assertIn("Settings: press ⚙️ Settings here or on the card in #dm-screen.", text)
+        self.assertIn(cmds.SETTINGS_HINT, text)
 
     async def test_a_player_never_reaches_the_step_so_never_gets_the_button(self) -> None:
         campaign = await self.campaigns.create(GUILD, "Frostmaiden", DM)

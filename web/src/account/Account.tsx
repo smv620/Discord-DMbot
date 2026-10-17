@@ -13,6 +13,7 @@ import { text as transcriptText } from "../content/transcripts";
 import { RECAP_AUDIO_LIVE } from "../content/recap-words";
 import { accountWords as audioWords, price as audioPrice } from "../content/recap-audio";
 import { hoursLeftLine, hoursUsedLine, planName, text } from "../content/account";
+import { portalLoginUrl, portalWords } from "../content/billing-login";
 import { formatPrice, plans as paidPlans, type PlanId } from "../content/pricing";
 import {
   ApiError,
@@ -24,6 +25,7 @@ import {
   type Person,
   type RecordingEntry,
 } from "./api";
+import { Improvement } from "./Improvement";
 import { isSafeRedirect } from "./redirect";
 import { MyQuestions } from "./MyQuestions";
 import { PublicQuestions, Support } from "./Support";
@@ -486,6 +488,7 @@ function SignedIn({
       {api.homebrewCampaigns && <HomebrewSection />}
       {api.transcriptCampaigns && <TranscriptsSection />}
       <ServersSection me={me} />
+      <Improvement api={api} />
       <CharactersSection />
       <RecordingSection entries={me.recording ?? []} />
       <ExportSection />
@@ -548,6 +551,7 @@ function PlanSection({ me }: { me: Me }) {
         return null;
       },
     );
+  const portalUrl = portalLoginUrl();
   const portal = (): void =>
     void run(
       async () => go(await api.billingPortalUrl()),
@@ -620,6 +624,11 @@ function PlanSection({ me }: { me: Me }) {
             <ActionButton busy={busy} kind="secondary" onClick={portal}>
               {text.stopPaying}
             </ActionButton>
+            {portalUrl && (
+              <p class="muted small">
+                <a href={portalUrl} rel="noopener noreferrer">{portalWords.account}</a>
+              </p>
+            )}
           </>
         )}
       </section>
@@ -719,6 +728,11 @@ function PlanSection({ me }: { me: Me }) {
             </>
           )}
         </>
+      )}
+      {portalUrl && (
+        <p class="muted small">
+          <a href={portalUrl} rel="noopener noreferrer">{portalWords.account}</a>
+        </p>
       )}
     </section>
   );

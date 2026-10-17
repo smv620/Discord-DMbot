@@ -84,6 +84,7 @@ from dmbot.dm_screen import (
     StopListeningButton,
     VisibilityButton,
     delete_campaign,
+    dm_bot_buttons,
     ensure_dm_screen,
     house_sync,
     pack_suggestion,
@@ -99,6 +100,8 @@ from dmbot.dm_screen import effects as timer_screen
 from dmbot.dm_screen import house_voice as house_voice_screen
 from dmbot.dm_screen import levels as screen_levels
 from dmbot.dm_screen import messages as screen_messages
+from dmbot.dm_screen.channel import update_help_card
+from dmbot.dm_screen.dm_bot_channel import DmBotChannelError, setup_dm_bot_channel
 from dmbot.dm_screen.dmbchat_channel import DmbchatChannelError, setup_dmbchat_channel
 from dmbot.dm_screen.game_masters import GameMastersButton
 from dmbot.dm_screen.gametime_channel import GametimeChannelError, setup_gametime_channel
@@ -135,6 +138,12 @@ from dmbot.dm_screen.settings import (
 from dmbot.dm_screen.site_offers import SiteOffers
 from dmbot.dm_screen.speaker_question import SpeakerQuestionButton
 from dmbot.dm_screen.speaker_question import question_view as speaker_question_view
+from dmbot.dm_screen.story_mode import (
+    StoryButton,
+    StoryChoiceButton,
+    StoryNoButton,
+    StoryYesButton,
+)
 from dmbot.dm_screen.table_chat_panel import TableChatButton
 from dmbot.dm_screen.transcript_channel import (
     TranscriptChannelError,
@@ -165,6 +174,7 @@ from dmbot.fightbot import FightState
 from dmbot.logs import log_context, set_log_context
 from dmbot.mail import Mailer
 from dmbot.memory import definitions, document_reader, extractor
+from dmbot.memory import health as memory_health
 from dmbot.memory.backup import MemorySection
 from dmbot.memory.claims import ClaimStore
 from dmbot.memory.continuity import ContinuityStore
@@ -308,7 +318,7 @@ from dmbot.ui.secret_aloud import (
     secret_aloud_view,
 )
 from dmbot.ui.sheets import MySheetButton, OpenCardButton
-from dmbot.ui.threads import ThreadsButton, threads_view
+from dmbot.ui.threads import ThreadListButton, ThreadsButton, threads_view
 from dmbot.ui.threads import waiting_text as threads_waiting_text
 from dmbot.ui.transcripts import (
     DownloadButton,
@@ -642,6 +652,26 @@ class Table:
 
     def is_dm(self, user_id: int) -> bool:
         return user_id == self.dm_user_id or user_id in self.dm_user_ids
+
+
+def _ms(seconds: float) -> int:
+    """Whole milliseconds, never negative."""
+    return max(0, int(seconds * 1000))
+
+
+def consent_timing_line(
+    people: int, reminders: int, status_ms: int, send_ms: list[int], since_start_ms: int | None
+) -> str:
+    """One INFO line per consent ask (#1706): how many people, how long the consent look-up and
+    the private messages took, and how long after the session began. Numbers only: no name, no
+    id, no words. A slow button for a player can then be placed (a late ask, a slow look-up, or
+    Discord taking long to open the DM)."""
+    since = "unknown" if since_start_ms is None else f"{since_start_ms}ms"
+    slowest = max(send_ms, default=0)
+    return (
+        f"Consent asked: {people} people ({reminders} reminders), status {status_ms}ms, "
+        f"sent {sum(send_ms)}ms in total (slowest {slowest}ms), since the session start {since}"
+    )
 
 
 class DMBotTree(app_commands.CommandTree["DMBot"]):
@@ -1038,6 +1068,9 @@ class DMBot(commands.AutoShardedBot):
         # DM-screen buttons keep working after a restart.
         self.add_dynamic_items(PeekButton, HideButton, VisibilityButton, StopListeningButton)
         self.add_dynamic_items(
+            dm_bot_buttons.OpenButton, dm_bot_buttons.HelpButton, dm_bot_buttons.RuleButton
+        )  # #1666, #1691
+        self.add_dynamic_items(
             SettingsButton,
             LevelButton,
             SettingsVisibilityButton,
@@ -1068,7 +1101,9 @@ class DMBot(commands.AutoShardedBot):
         self.add_dynamic_items(
             ReviewButton, PeopleReviewButton, ClaimsReviewButton, ContinuityButton
         )
-        self.add_dynamic_items(ThreadsButton)  # the quiet story threads (#1662)
+        self.add_dynamic_items(
+            ThreadsButton, ThreadListButton
+        )  # the quiet story threads (#1662, #1675)
         self.add_dynamic_items(HeardReviewButton)  # unanswered "Did they mean…?" (#1572)
         self.add_dynamic_items(SecretAloudButton)  # the secret-said-aloud question (#1407)
         self.add_dynamic_items(RecapButton)  # the recap on the DM screen (#1455)
@@ -1092,6 +1127,8 @@ class DMBot(commands.AutoShardedBot):
         self.add_dynamic_items(set_update.SetUpdateButton)  # shared rules changed (#1191)
         # how long transcripts are kept (#1533); named one by one so the registration test sees them
         self.add_dynamic_items(TranscriptsButton, KeepChoiceButton, KeepYesButton, KeepNoButton)
+        # the Shared story switch (#1692), named one by one so the registration test sees them
+        self.add_dynamic_items(StoryButton, StoryChoiceButton, StoryYesButton, StoryNoButton)
         self.add_dynamic_items(pack_update.PackUpdateButton)  # a followed pack changed (#1527)
         self.add_dynamic_items(pack_suggestion.PackSuggestionButton)  # an entry suggested (#1537)
         self.add_dynamic_items(set_suggestion.SuggestionButton)  # a table's suggestion (#1259)
@@ -1697,6 +1734,7 @@ class DMBot(commands.AutoShardedBot):
         if not people:
             return
         table.asked.update(m.id for m in people)  # before any await: nobody asked twice
+        began = time.monotonic()  # for the timing line (#1706): numbers only
         with log_context(guild_id=gid, campaign_id=table.campaign_id):
             try:
                 status = await self.consent.status(gid, [m.id for m in people])
@@ -1704,6 +1742,7 @@ class DMBot(commands.AutoShardedBot):
                 log.exception("Couldn't look up consent; they'll be asked when they rejoin")
                 table.asked.difference_update(m.id for m in people)
                 return
+            status_ms = _ms(time.monotonic() - began)
             times, renew = status.granted, status.ask_again
             if only_renewals:
                 table.asked.difference_update(m.id for m in people if m.id not in renew)
@@ -1717,6 +1756,8 @@ class DMBot(commands.AutoShardedBot):
             company = self.company
             dms_off: list[str] = []
             failed: list[str] = []
+            send_ms: list[int] = []  # how long each private message took to go
+            reminders = 0
             for member in people:
                 if self.tables.get(gid) is not table:
                     return  # the session ended: say nothing more
@@ -1733,6 +1774,7 @@ class DMBot(commands.AutoShardedBot):
                         sheets=self.sheets is not None,
                     )
                     view = menu_view(gid, table.campaign_id, invite=table.dndbeyond_invite)
+                    reminders += 1
                 else:
                     text = request_text(
                         server,
@@ -1751,10 +1793,21 @@ class DMBot(commands.AutoShardedBot):
                         test_voice=self.test_voice_listed(gid),
                         invite=table.dndbeyond_invite,
                     )
+                sending = time.monotonic()
                 result = await send_prompt(member, text, view)
+                send_ms.append(_ms(time.monotonic() - sending))
                 if result != "sent":
                     table.asked.discard(member.id)  # try again if they rejoin
                     (dms_off if result == "dms_off" else failed).append(member.display_name)
+            log.info(
+                consent_timing_line(
+                    len(people),
+                    reminders,
+                    status_ms,
+                    send_ms,
+                    _ms(time.time() - table.started_at) if table.started_at else None,
+                )
+            )
             renewed = [m.display_name for m in people if m.id in renew]
             notes = [n for n in (renewed_text(renewed), unreachable_text(dms_off, failed)) if n]
             if notes and self.tables.get(gid) is table:
@@ -1765,9 +1818,8 @@ class DMBot(commands.AutoShardedBot):
         button comes off when the session ends, so old messages can't be pressed."""
         view = None
         if table.campaign_id:
-            # ⚙️ Settings first (#515): the common tap isn't next to Stop's edge.
+            # (Settings moved to the DM Bot channel, #1666: only the in-game control stays.)
             view = discord.ui.View(timeout=None)
-            view.add_item(SettingsButton(table.campaign_id))
             view.add_item(StopListeningButton(table.campaign_id))
         message = await self.post_message(table.screen_channel_id, text, view)
         if message is None:
@@ -1894,14 +1946,20 @@ class DMBot(commands.AutoShardedBot):
                     self.memory, RecallService(self.memory), ClaimStore(self.memory), self.recaps
                 )
                 async with asyncio.timeout(PRESESSION_NOTE_WAIT_S):  # never a stuck connection
-                    note = await presession.note(gid, cid, now=int(time.time()), opted_in=agreed)
+                    note = await presession.note(
+                        gid,
+                        cid,
+                        now=int(time.time()),
+                        opted_in=agreed,
+                        stalled_after=self.settings.thread_stalled_sessions,
+                    )
                 if note is None or self.tables.get(gid) is not table:
                     return  # nothing confirmed, or the session ended meanwhile
-                await self.post(
-                    table.screen_channel_id,
-                    note.text,
-                    view=claims_review_view(cid) if note.waiting else None,
-                )
+                view = claims_review_view(cid) if note.waiting else None
+                if note.quiet:  # 🧵 Threads: the DM's list, in play first (#1675)
+                    view = view or discord.ui.View(timeout=None)
+                    view.add_item(ThreadListButton(cid))
+                await self.post(table.screen_channel_id, note.text, view=view)
                 log.info("Pre-session note: %d line(s)", len(note.lines))  # counts only
             except Exception:
                 log.exception("The pre-session note failed")
@@ -2202,6 +2260,7 @@ class DMBot(commands.AutoShardedBot):
             ("heads-ups", lambda: self.warn_about_continuity(table)),
             ("quiet threads", lambda: self.warn_about_threads(table)),
             ("steward numbers", lambda: self.log_steward_tally(table)),
+            ("memory health", lambda: self.log_memory_health(table, ended_at)),
         ]
         for name, step in steps:
             try:
@@ -2871,6 +2930,7 @@ class DMBot(commands.AutoShardedBot):
         transcript_id, transcript_problem = await self._transcript_channel(guild, campaign, screen)
         gametime_problem = await self._gametime_channel(guild, campaign, screen)
         dmbchat_id, dmbchat_problem = await self._dmbchat_channel(guild, campaign, screen)
+        dm_bot_problem = await self._dm_bot_channel(guild, campaign, screen)
 
         campaign = await self.campaigns.record_start(guild.id, campaign.id, screen_id, voice.id)
         started_at = int(time.time())
@@ -2926,6 +2986,8 @@ class DMBot(commands.AutoShardedBot):
             await self.post(screen_id, gametime_problem)
         if dmbchat_problem:
             await self.post(screen_id, dmbchat_problem)
+        if dm_bot_problem:
+            await self.post(screen_id, dm_bot_problem)
         self._check_house_file(campaign, screen_id)
         self._track(update_notes.check_all(self, campaign, screen_id), "shared-rules-update")
         trial_line = ""
@@ -6957,6 +7019,27 @@ class DMBot(commands.AutoShardedBot):
         if tally.refused or tally.reused or tally.accepted:
             tally.write_to_log()
 
+    async def log_memory_health(self, table: Table, ended_at: int) -> None:
+        """After the session's other work: one line in the server log with the story graph's
+        health numbers for this campaign (#1699), counts only. Never shown to a player or a DM.
+        A failed read is a warning and nothing else: it never stops the steps after it."""
+        if self.memory is None or table.campaign_id is None:
+            return
+        gid, cid = table.guild_id, table.campaign_id
+        with log_context(guild_id=gid, campaign_id=cid):
+            try:
+                numbers = await memory_health.read(
+                    self.memory,
+                    gid,
+                    cid,
+                    since=table.started_at or ended_at,
+                    names_asked=len(table.questions.closed_why),
+                )
+            except Exception:
+                log.warning("Couldn't read the memory health numbers", exc_info=True)
+                return
+            log.info(numbers.line())
+
     async def ask_about_secrets(self, table: Table) -> None:
         """After a session: a name the DM keeps secret was said by a player, so it is now in the
         transcript everyone may read (#1407). The DM screen asks, privately, once for each such
@@ -7055,7 +7138,11 @@ class DMBot(commands.AutoShardedBot):
             if quiet:
                 await self.post(
                     table.screen_channel_id,
-                    threads_waiting_text(len(quiet), min(t.quiet_sessions for t in quiet)),
+                    threads_waiting_text(
+                        len(quiet),
+                        min(t.quiet_sessions for t in quiet),
+                        sum(1 for t in quiet if t.thread.type == "promise"),
+                    ),
                     view=threads_view(cid),
                 )
 
@@ -7640,6 +7727,57 @@ class DMBot(commands.AutoShardedBot):
                 await clock_screen.show(self, fresh, stored)
         except Exception:
             log.exception("Couldn't put the players' clock in the game-time channel")
+        return None
+
+    async def upgrade_dm_bot_channel(self, campaign: Campaign) -> int | None:
+        """A campaign made before the DM Bot channel (#1666) gets one when its ⚙️ Settings is
+        pressed, not only at the next session start. Returns the new channel's id, or None
+        (it already had one, or it couldn't be made: the start-time note says why). The
+        campaign is read again first, so two quick presses make one channel."""
+        guild = self.get_guild(campaign.guild_id)
+        if guild is None:
+            return None
+        current = await self.campaigns.get(guild.id, campaign.id)
+        if current is None or current.dm_bot_channel_id is not None:
+            return None
+        screen = (
+            guild.get_channel(current.dm_screen_channel_id)
+            if current.dm_screen_channel_id
+            else None
+        )
+        await self._dm_bot_channel(guild, current, screen)  # (a failed make leaves no id)
+        fresh = await self.campaigns.get(guild.id, campaign.id)
+        return fresh.dm_bot_channel_id if fresh is not None else None
+
+    async def _dm_bot_channel(
+        self, guild: discord.Guild, campaign: Campaign, screen: object
+    ) -> str | None:
+        """The DM Bot channel (#1666), made or repaired at every start. A note for the DM if it
+        couldn't be set up; a failure here never stops a session."""
+        category = getattr(screen, "category", None)
+        try:
+            await setup_dm_bot_channel(
+                guild,
+                campaign.id,
+                self.campaigns,
+                category=category if isinstance(category, discord.CategoryChannel) else None,
+            )
+            fresh = await self.campaigns.get(guild.id, campaign.id)
+            if fresh is not None:
+                await dm_bot_buttons.ensure_panel(self, fresh)  # (a failure there is logged)
+                if fresh.dm_bot_channel_id != campaign.dm_bot_channel_id and isinstance(
+                    screen, discord.TextChannel
+                ):  # a new channel: the DM screen's help card points to it now, not next start
+                    try:
+                        await update_help_card(screen, fresh, guild.me)
+                    except Exception:  # the channel exists: never report it as failed
+                        log.warning("Couldn't refresh the help card for the DM Bot channel",
+                                    exc_info=True)  # fmt: skip
+        except DmBotChannelError as exc:
+            return screen_messages.dm_bot_failed(str(exc))
+        except Exception:
+            log.exception("Couldn't set up the DM Bot channel")
+            return screen_messages.dm_bot_failed(screen_messages.TRANSCRIPT_NO_ANSWER)
         return None
 
     async def _dmbchat_channel(

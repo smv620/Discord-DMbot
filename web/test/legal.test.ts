@@ -419,35 +419,58 @@ describe("generated content belongs to the campaign (#1388)", () => {
     for (const page of [privacy(), terms()]) {
       expect(page).toContain("What DMbot makes from a session belongs to the campaign");
       expect(page).toContain("a recap, story facts, notes for the game master, and anything else DMbot writes from what was said");
-      expect(page).toMatch(/campaign belongs to its game master/);
+      expect(page).toMatch(/deleted only with the campaign/);
     }
   });
 
   it("says stopping or deleting your own data does not remove it, on both pages", () => {
     const privacyPage = privacy();
     expect(privacyPage).toContain(
-      "What DMbot already made from sessions you took part in, such as a recap or the story facts your game master kept, stays with the campaign. Your voice was never kept.",
+      "What DMbot already made from sessions you took part in, such as a recap or the story facts your game master kept, stays with the campaign. Your voice was not kept.",
     );
     expect(privacyPage).toContain("What DMbot made from those sessions stays with the campaign too: deleting your account does not remove it.");
     const termsPage = terms();
     expect(termsPage).toContain("If you stop being recorded, take back your yes or delete your account");
-    expect(termsPage).toContain("What it already made from sessions you took part in stays with the campaign.");
+    expect(termsPage).toContain("What DMbot already made from sessions you took part in stays with the campaign, and so do copies other people downloaded.");
     // The terms point to the privacy page for what is removed, rather than repeating it.
     const link = doc("terms").querySelector('main a[href="/legal/privacy"]');
     expect(text(link)).toBe("Privacy page");
   });
 
-  it("says only deleting the campaign removes it, and only its game master can", () => {
+  it("says only deleting the campaign removes it, and only the game master whose plan it uses can (#1610)", () => {
     expect(privacy()).toContain(
-      "Only the campaign's game master can. Deleting it is the only thing that removes what DMbot made for it, such as its recaps, story facts and notes. A player who wants something removed can ask their game master.",
+      "Only the game master whose plan the campaign uses can (for a free campaign, the one who started it). Deleting it is the only thing that removes what DMbot made for it, such as its recaps, story facts and notes. A player who wants something removed can ask their game master.",
     );
-    expect(terms()).toContain("Only deleting the campaign removes it, and only the campaign's game master can delete a campaign.");
+    expect(terms()).toContain(
+      "Only deleting the campaign removes what DMbot made, and only the game master whose plan the campaign uses can delete it.",
+    );
   });
 
-  it("says who owns the campaign and who runs it, so the table and the game master do not disagree", () => {
-    expect(terms()).toContain(
-      "Your campaign, notes and what your table says belong to you and your table, not to us. You let us store and process them only to run DMbot for you. Within the table, the campaign is the game master's: they run it, and only they can delete it.",
+  it("says who owns the campaign, the licence DMbot gets, and who runs and deletes it (#1610)", () => {
+    const page = terms();
+    expect(page).toContain(
+      "You keep what you and your table make. Your campaign, notes and what your table says belong to you and your table, not to us. You give DMbot a worldwide, royalty-free licence to store, process and show them, to run DMbot and to improve it (you can turn the improving off in My Account).",
     );
+    expect(page).toContain(
+      "Within the table, the game masters run the campaign. Only the game master whose plan it uses can delete it (for a free campaign, the one who started it).",
+    );
+    expect(page).not.toContain("only to run DMbot for you");
+  });
+
+  it("says the improvement choice on the privacy page: where it is, and that it is not recording (#1610)", () => {
+    const page = privacy();
+    expect(page).toContain("DMbot uses transcripts and what people type in the table's chat to get better.");
+    expect(page).toContain("You can turn this off in My Account. It covers every server.");
+    expect(page).toContain("Account details (Discord account numbers, emails and payment records) are never published.");
+    expect(page).toContain('unless you give a separate yes to "Save my voice for tests"');
+    const link = doc("privacy").querySelector('main a[href="/account"]');
+    expect(link).toBeTruthy();
+  });
+
+  it("says deletion is separable on the terms page (#1610)", () => {
+    const page = terms();
+    expect(page).toContain("as far as they can be separated from the rest");
+    expect(page).toContain("If we can't delete something, it stays, and everything else you asked for still happens.");
   });
 
   it("keeps the retention and 120-day wording as it was", () => {

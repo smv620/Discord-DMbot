@@ -156,6 +156,12 @@ CORE_TYPES: tuple[TypeTerm, ...] = (
     _t("mystery", "mystery", "Something the table is trying to find out.", "thread"),
     _t("hook", "hook", "A lead that could become a quest if the table follows it.", "thread"),
     _t("goal", "goal", "Something a character or the party wants to achieve.", "thread"),
+    _t(
+        "promise",
+        "promise",
+        "Something someone swore or agreed to do for someone else, kept or broken later.",
+        "thread",
+    ),
     # A piece of information that can be learned (#1649): its own entry, so "who knows it" is an
     # ordinary `knows` fact. A subtype of `concept`, so every range that takes an idea takes it.
     _t(
@@ -303,6 +309,30 @@ CORE_PREDICATES: tuple[PredicateTerm, ...] = (
         synonyms=("belongs_to", "part_of", "in_group"),
     ),
     PredicateTerm(
+        "promised_by",
+        "was promised by",
+        "Who made a promise: the character or group that swore or agreed to do it. The DM's word.",
+        ("character", "faction"),
+        ("promise",),
+        covers=("the character or group who swore, vowed or agreed to do something",),
+        not_this=(("a character who takes part in a thread", "in_thread"),),
+        examples=("The promise to bring the healer back was made by Kael.",),
+        inverse_label="made the promise",
+        synonyms=("vowed", "swore_to", "pledged_by"),
+    ),
+    PredicateTerm(
+        "promised_to",
+        "was promised to",
+        "Who a promise was made to: the character, group or place it was sworn to. The DM's word.",
+        ("character", "faction", "place"),
+        ("promise",),
+        covers=("the character, group or place a promise was made to",),
+        not_this=(("who made the promise", "promised_by"),),
+        examples=("The promise to bring the healer back was made to the village of Dunhollow.",),
+        inverse_label="was promised",
+        synonyms=("owed_to",),
+    ),
+    PredicateTerm(
         "in_thread",
         "is involved in",
         "Has a part in a story thread, and the part is the detail: the quest giver, the target, "
@@ -344,6 +374,22 @@ CORE_PREDICATES: tuple[PredicateTerm, ...] = (
         examples=("The Heir Found ends the Missing Heir.",),
         inverse_label="was ended by",
         synonyms=("concludes", "completes"),
+    ),
+    PredicateTerm(
+        "led_to",
+        "led to",
+        "One thing led to another, as the DM says: a clue led to a quest, an event led to a "
+        "mystery. The DM's word, never guessed.",
+        ("clue", "event", "thread"),
+        ("thread", "event"),
+        covers=("a clue that sent the party to a place or into a quest",),
+        not_this=(
+            ("an event that moves a thread along", "advances"),
+            ("an event that ends a thread", "resolves"),
+        ),
+        examples=("The torn map led to the Missing Heir.",),
+        inverse_label="came from",
+        synonyms=("sparked", "set_off"),
     ),
     PredicateTerm(
         "of_people",

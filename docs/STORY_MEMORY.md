@@ -674,13 +674,73 @@ Each step is useful on its own and ships behind the existing phases.
    named `in_thread` because `involved_in` is already a synonym of `appears_in`. Backups,
    isolation and deletion are those of every memory entry; `memory_heard` is not in a backup, so
    a restored campaign shows no thread as stalled until new sessions are heard.
+   **Phase 5c slice 2 is built (#1674): promises the DM keeps** (no AI; the DM writes them).
+   `promise` is a fifth kind under `thread`, beside quest, mystery, hook and goal, so it reuses the
+   thread states, the stalled rule and the after-session question exactly: no new condition and no
+   migration. It shows its own words for the same states: made in passing, open, due soon, kept,
+   broken or let go. Two connections, the DM's word and both set from the promise's card:
+   `promised_by` (character or group → promise) and `promised_to` (character, group or place →
+   promise); a promise may name more than one of each. An optional due note is free text kept in the
+   entry's description and never read as a date. The card says "**Kael** promised **Dunhollow**:
+   bring the healer back", then the state and "Due: …". The after-session line says "promise" where
+   all the quiet ones are promises. Privacy and isolation are those of threads: DM only, hidden from
+   lookup and from the players' recall, in backups, deleted with the campaign.
+   **Phase 5c slice 3 is built (#1675): quiet threads in the pre-session note.** When a session
+   starts, the note on the DM screen gains one line, only when a thread is stalled (by the rule above,
+   promises included): "🧵 Quiet threads: <name>, <name>, <name> (+N more)", the longest quiet first.
+   A **🧵 Threads** button on the note opens the DM's private list of every live thread, those in
+   play first, the quiet ones marked ⏳, with Still going, Finished/Dropped (Kept/Broken for a
+   promise) on each. The line is in-game content: it stays on the DM screen, never in the DM Bot
+   channel, a transcript or the players' recall. A campaign with no live thread skips the read (a
+   one-row look at `memory_states`); otherwise it is the one `threads()` read.
+   **Phase 5c slice 4 is built (#1679): `led_to`.** A core connection, the DM's word only: a clue,
+   an event or a thread led to a thread or an event (no AI, no migration). It is set from a card's
+   **➡ Led to…** button, which picks from the campaign's threads and events. A link to itself, or
+   one that would close a loop or run past ten steps, is refused (not flagged). The fact is stored
+   secret, so it is the DM's alone wherever facts are shown, and a link into a thread is hidden
+   with the thread. A thread's card shows "Came from" and "Led to", at most five names each then
+   "+N more", from the one thread read; a clue's or event's card shows the same from a single read
+   of its own links. A link is not the thread moving, so it does not reset its quiet count.
+   **Promises due soon (#1680):** the pre-session note gains up to two lines, "🤝 Due soon: <who> →
+   <whom>: <what> (due: <note>)", for the promises the DM put in **Due soon**, the quietest first, then
+   "🤝 +N more promises due soon". A promise without both parties reads "🤝 Due soon: <what>". The claims
+   line sits above the thread lines, so a full note cuts those, never it. The due note is shown
+   as the DM wrote it, never parsed into a date. They come from the same `threads()` read as the quiet
+   line (no new query), and the 🧵 Threads button covers them. DM screen only, like threads.
 3. **Phase 5c: PlotBot:** threads, promises, clues, `led_to`, stalled-thread nudges,
    summaries, the pre-session note, the AI recap.
 4. **Phase 5d: Shared story:** the story plan, `same_as` links, divergence ("Watch
    the story"), then "Guide me".
+   **Phase 5d slice 1 is built (#1692): the Shared story switch.** Only the switch and the DM's
+   confirmation (no AI, no adventure reading). A campaign setting `story_mode` — `off` (the
+   default), `watch` or `guide` — set from ⚙️ Settings → 🧭 Shared story, DMs only, with each
+   mode's one-line meaning. The first time it is turned on the DM sees the warning from the IP
+   rule ("Only give DMbot material you have the right to use. DMbot doesn't check this.") and the
+   mode is saved only by **I have the right**, which records who and when (purpose
+   `shared_story` in `shared_confirmations`, a fingerprint of the words, not the words). Without
+   that press it stays Off; Off keeps the record, so turning it on again does not ask again. It is
+   in backups, but a record that came from a backup file never counts as a press here: the mode
+   comes back on only for the person whose confirmation is in the file (the same DM restoring
+   their own backup), anyone else restoring it starts with the switch Off and confirms for
+   themselves. **Nothing reads the mode yet**: the story-plan reader, the divergence
+   warnings and Guide me are the next slices, and the card says "Not working yet. Soon you will be
+   able to give DMbot your adventure." Each of those must ask for the right to use the material
+   it is given, not rely on this switch alone. Offered on every plan (PLAN names no plan rule for it).
 5. **Throughout:** the ontology steward and graph curator take over the after-session
    cleanup; their health numbers (duplicates, orphans, unused terms, flags per session,
    how often the DM is asked, warnings ignored) go to the server logs, never to players.
+   **The graph's health numbers are built (#1699).** After each session's other after-session work
+   there is one line per campaign in the server log, counts only, never a name or any text, and
+   never shown to a player or a DM: `memory health: entities=N confirmed=N proposed=N duplicates=N
+   orphans=N unused_terms=N flags_this_session=N asked_dm=N`. *entities* is the live entities
+   (confirmed + proposed); *duplicates* is pairs of confirmed entities of one kind (people
+   excepted) that share a name or an alias key and are not joined by a live `same_as` link;
+   *orphans* is confirmed entities (people excepted) with no live relation that were not heard in
+   the last three sessions; *unused_terms* is the campaign's own relationship terms that no live
+   relation uses; *flags_this_session* is the continuity and rule-check flags raised since the
+   session began; *asked_dm* is the claims waiting for the DM from that session plus the "Did they
+   mean…?" questions put to the DM. One read per campaign, counted in SQL; a failed read is a
+   warning and never stops the other after-session steps (`dmbot.memory.health`).
 
 TimeBot (Phase 4) makes game-time checks exact; until then facts are ordered by session,
 as today.

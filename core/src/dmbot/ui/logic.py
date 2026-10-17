@@ -148,7 +148,7 @@ def settings_summary(
         f"• **{level.capitalize()}**{RECOMMENDED if level == DEFAULT_DM_SCREEN_LEVEL else ''}"
         f" — how much DMbot says, in the DM screen only: {DM_SCREEN_LEVELS.get(level, level)}."
         " Warnings (like DMbot no longer hearing the table) always show. Change it any time:"
-        " press ⚙️ Settings on the pinned card in your DM screen.",
+        " press ⚙️ Settings in the DM Bot channel, or type `/dmbot settings`.",
     ]
 
 
