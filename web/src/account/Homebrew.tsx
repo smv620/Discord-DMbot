@@ -194,6 +194,7 @@ function EntryGroups({
                         </>
                       )}
                     </span>
+                    {e.source && <span class="small muted">{e.source}</span>}
                     {e.summary && <span class="small muted">{e.summary}</span>}
                     <span class="homebrew-text">{e.text}</span>
                   </li>

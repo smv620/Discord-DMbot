@@ -12,7 +12,8 @@ import httpx
 import psycopg
 
 from dmbot.rules import homebrew_file
-from dmbot.rules.homebrew import HomebrewStore
+from dmbot.rules.homebrew import Homebrew, HomebrewStore
+from dmbot.rules.homebrew_sources import SourceStore
 from dmbot.web import homebrew as pages
 from dmbot.web import sessions
 from dmbot.web.app import create_app
@@ -141,7 +142,7 @@ class ThePage(HomebrewBase):
         self.assertEqual(set(got), {"name", "fileName", "entries", "packs"})
         self.assertEqual(
             set(got["entries"][0]),
-            {"kind", "name", "summary", "text", "fromBook", "legacy", "enabled"},
+            {"kind", "name", "summary", "text", "fromBook", "legacy", "enabled", "source"},
         )
         self.assertEqual(got["fileName"], homebrew_file.filename("One"))
         self.assertNotIn(str(ALICE.id), json.dumps(got))
@@ -462,6 +463,78 @@ class TheFile(HomebrewBase):
         with self.assertRaises(RecapError) as caught:
             await pages.render(self.web, self.carol, f"{THURSDAY.id}.{empty.id}")
         self.assertEqual(caught.exception.code, "not_found")
+
+
+class WhereItCameFrom(HomebrewBase):
+    """Each entry says where it came from, in the bot's words (#1653), and never who added it."""
+
+    URL = "https://www.dndbeyond.com/magic-items/2302039-amulet-of-trueshot"
+
+    async def asyncSetUp(self) -> None:
+        await super().asyncSetUp()
+        g, c = THURSDAY.id, self.one.id
+        page = await SourceStore(self.db).save_page(
+            self.URL, name="Amulet", kind="item", text="Aim better.", summary="A charm."
+        )
+        await self.store_b.add_link(
+            g, c, ALICE.id, page_id=page.id, kind=page.kind, name=page.name, domain=page.domain
+        )
+        for name, credit in (
+            ("Site Spell", ("website", None, "dndbeyond.com")),
+            ("Named Spell", ("name", "Sam", None)),
+            ("Mine Spell", ("user", None, None)),
+        ):
+            file_text = homebrew_file.write(
+                "x",
+                [
+                    Homebrew(
+                        id=0, campaign_id=c, kind="spell", name=name, text="Words.", summary=None,
+                        created_by=0, created_at=0, updated_at=0, version=1,
+                    )
+                ],
+                "2024",
+            )  # fmt: skip
+            await self.store_b.load_file(
+                g, c, ALICE.id, homebrew_file.parse(file_text).entries, credit=credit
+            )
+
+    async def entries(self) -> dict[str, dict[str, Any]]:
+        got = await pages.read_homebrew(self.web, self.carol, self.cref)
+        return {e["name"]: e for e in got["entries"]}
+
+    async def test_a_page_a_site_and_a_name_are_said_in_the_bots_words(self) -> None:
+        by = await self.entries()
+        self.assertEqual(by["Amulet"]["source"], "from dndbeyond.com")
+        self.assertEqual(by["Site Spell"]["source"], "credited to dndbeyond.com")
+        self.assertEqual(by["Named Spell"]["source"], "by Sam")
+
+    async def test_the_dms_own_and_a_loaders_entries_say_nothing(self) -> None:
+        by = await self.entries()
+        for name in ("Zap", "Moon Lamp", "Mine Spell"):
+            self.assertIsNone(by[name]["source"], name)
+
+    async def test_who_added_an_entry_never_reaches_the_answer(self) -> None:
+        got = await pages.read_homebrew(self.web, self.carol, self.cref)
+        text = json.dumps(got)
+        for key in ("added_by", "addedBy", "page_url", "pageUrl", "creditKind", "sourceKind"):
+            self.assertNotIn(key, text)
+        self.assertNotIn(str(ALICE.id), text)  # the DM's Discord id
+        async with self.web.user(CAROL.id, session=self.carol.id_hash) as conn:
+            await conn.execute("SELECT set_config('dmbot.guild_id', %s, true)", (str(THURSDAY.id),))
+            cur = await conn.execute(
+                "SELECT dmbot_web_homebrew(%s, %s) AS r", (THURSDAY.id, self.one.id)
+            )
+            row = await cur.fetchone()
+        assert row is not None
+        door = json.dumps(row["r"])
+        for key in ("added_by", "addedBy", "pageUrl", "page_url", "url"):
+            self.assertNotIn(key, door)  # the door itself does not hand them over
+
+    async def test_a_credited_name_is_cut_short_on_the_page(self) -> None:
+        long = {"creditKind": "name", "creditText": "x" * 500, "sourceKind": "upload"}
+        self.assertEqual(len(pages.source(long) or ""), len("by ") + pages.NAME_SHOWN)
+        self.assertIsNone(pages.source({"creditKind": "user"}))
+        self.assertIsNone(pages.source({}))
 
 
 class TheDoorsAndRole(HomebrewBase):
