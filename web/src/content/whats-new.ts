@@ -21,7 +21,7 @@ export const entries: Entry[] = [
   {
     date: "2026-10-17",
     title: "DMbot works on any new server",
-    what: "Add DMbot to a new server and /dmbot start is there right away. If no list pops up when you type it, wait a minute and try again.",
+    what: "Add DMbot to a new server and /dmbot start is ready to use. If no list pops up when you type it, wait a minute and try again.",
   },
   {
     date: "2026-10-17",
