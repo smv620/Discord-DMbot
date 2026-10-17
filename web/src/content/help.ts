@@ -354,6 +354,19 @@ export const rulesChannelSteps: Step[] = [
 ];
 
 
+// Time suggestions (#1758, #1765) are built but off on the server until dev1's live check
+// (DMBOT_TIME_SUGGESTIONS), so their What's new entry ("A time suggestion from your narration") is
+// held and Help follows. Set this to true in the same change that moves that entry out of `held`; a
+// test ties the two.
+export const TIME_SUGGESTIONS_LIVE = false;
+
+export const timeSuggestionSteps: Step[] = [
+  {
+    text: "If you describe time passing without saying how long, like \"you walk for a while\", DMbot may suggest a jump on your DM screen, like \"about 2 hours?\", with a button such as +2 hours and a Not now button. Nothing moves unless a DM presses the button, and the clock's Undo works as usual. It only looks at what the game master says in game talk, never players or off-topic chat. DMbot's AI reads that one sentence and the game time, nothing else from your campaign. It stays quiet during a fight, with a split party, or before you set the game clock. Players never see it.",
+    names: [{ name: "Not now", file: "dm_screen/time_suggest.py" }],
+  },
+];
+
 export const dmSteps: Step[] = [
   { text: "Add DMbot to your Discord server from the Add to Discord page." },
   {
@@ -400,6 +413,7 @@ export const dmSteps: Step[] = [
   {
     text: "The clock tells you on your DM screen when dawn, noon and dusk go by. It also says so once when 24 game hours pass without a long rest (an optional rule). It only tells you. You decide what it means for the story.",
   },
+  ...(TIME_SUGGESTIONS_LIVE ? timeSuggestionSteps : []),
   ...(WHERE_ARE_WE_LIVE ? whereAreWeSteps : []),
   {
     text: "To time a spell or effect, press Start a timer on the clock message, or press Time it on a spell's rules card. The clock lists up to five timers, soonest first, and tells you once when one has probably ended. DMbot never starts a timer by itself.",
