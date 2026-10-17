@@ -32,6 +32,7 @@ import discord
 
 from dmbot.campaigns import Campaign, CampaignStore
 from dmbot.db import Database
+from dmbot.discord_limits import fit_message
 from dmbot.dm_screen import messages
 from dmbot.dm_screen.channel import (
     CACHE_WAIT_S,
@@ -49,7 +50,6 @@ from dmbot.dm_screen.rules_channel import (
     CARD_TITLE,
     HISTORY_SCAN,
     MAX_SENDS,
-    MESSAGE_MAX,
     NO_PINGS,
     RECENT_SCAN,
     rules_plan,
@@ -141,7 +141,7 @@ def entry_text(entry: RosterEntry) -> str:
         lines.append(f"In: {_more(entry.groups, entry.groups_more)}")
     if entry.ties:
         lines.append(f"Connected to: {_more(entry.ties, entry.ties_more)}")
-    return "\n".join(lines)[:MESSAGE_MAX]  # (belt: names are capped already)
+    return fit_message("\n".join(lines))  # (belt: names are capped already)
 
 
 def more_text(count: int) -> str:

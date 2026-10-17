@@ -31,6 +31,7 @@ import discord
 
 from dmbot.ai import AIError
 from dmbot.audio.segmenter import Utterance
+from dmbot.discord_limits import MESSAGE_MAX
 from dmbot.rules import house_voice
 from dmbot.sidebar import guide_phrase, memo, table_links
 from dmbot.sidebar.ask import AskLimiter, Request, request_in, voiced_by_npc
@@ -64,7 +65,7 @@ MIN_WORDS = 2  # "ok" or "thanks" is not a question
 READ_TIMEOUT_S = 30.0
 NOTE_KEEP = 1_000
 DECODE_AT_ONCE = 2
-MESSAGE_LIMIT = 2_000  # Discord's
+MESSAGE_LIMIT = MESSAGE_MAX
 NOTE_EVERY_S = 30.0  # the same kind of note to the same person, at most this often
 ASK_PER_PERSON_PER_MINUTE = 2  # so one player can't use up the table's questions (#1187)
 ASK_PER_PERSON_PER_SESSION = 30  # (and not the whole session's 120 either)

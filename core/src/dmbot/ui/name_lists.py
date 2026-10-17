@@ -23,6 +23,7 @@ from dmbot import fetch
 from dmbot.ai import AIError, Reply, TierClient
 from dmbot.campaigns import Campaign
 from dmbot.campaigns.models import NAMES_LIST, CampaignError, fingerprint
+from dmbot.discord_limits import fit_message
 from dmbot.memory.document_reader import READING, read_document
 from dmbot.memory.lookup import CampaignLookup, NameEntry
 from dmbot.memory.models import (
@@ -797,7 +798,7 @@ async def show_ai_list(
     )
     view = AIPreview(campaign.id, listed, count)
     await interaction.edit_original_response(
-        content=text[:2000],
+        content=fit_message(text),
         attachments=[_file(body, f"names-from-{_slug(upload.label)}.txt")],
         view=view,
         allowed_mentions=NO_PINGS,

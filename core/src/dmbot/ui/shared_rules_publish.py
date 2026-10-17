@@ -12,6 +12,7 @@ from typing import Any
 import discord
 
 from dmbot.campaigns import Campaign
+from dmbot.discord_limits import MESSAGE_MAX, fit_message
 from dmbot.memory import set_definitions as sd
 from dmbot.memory.definition_content import MAX_DEFINITIONS
 from dmbot.rules import rule_sets, set_diff
@@ -26,7 +27,8 @@ from dmbot.ui.shared_rules import (
 )
 
 SHOWN_CHANGES = 12  # the lines of a diff quoted on the screen; the rest are counted
-BODY_MAX = 1400  # the diff's characters: the whole message stays under Discord's 2000
+# The diff's characters: the words around it in the message need about 600 of MESSAGE_MAX.
+BODY_MAX = MESSAGE_MAX - 600
 YOUR_RULES_CHANGED = (
     "Your house rules changed while you were looking. Press 🔄 Publish my changes again to "
     "see the new changes."
@@ -53,7 +55,7 @@ def changes_text(changes: list[set_diff.Change]) -> str:
         lines.append(f"…and {more} more.")
     text = "\n".join(_escape(line) for line in lines)
     if len(text) > BODY_MAX:
-        text = text[:BODY_MAX].rsplit("\n", 1)[0] + "\n…and more."
+        text = fit_message(text, limit=BODY_MAX - len("\n…and more."))[:-1] + "\n…and more."
     return text
 
 
