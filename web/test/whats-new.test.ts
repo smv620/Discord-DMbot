@@ -86,6 +86,7 @@ describe("What's new", () => {
       "Watch the story", // until 0125 is deployed and seen live (#1729, #1735)
       "Link names to your adventure", // until 0124 is deployed and seen live (#1715, #1726)
       "Homebrew menu by kind", // until seen on the test server (#1665)
+      "A channel for your house rules", // until seen on the test server (#1752)
       "Manage your plan without Discord", // until the billing login link is set in the build (#1711)
       "A quiet reminder of the game time", // until seen on the test server (#1738)
     ]);

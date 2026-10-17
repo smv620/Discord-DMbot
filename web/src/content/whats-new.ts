@@ -288,7 +288,7 @@ export const held: Held[] = [
   {
     date: "2026-10-17",
     title: "A Shared story switch",
-    what: "In Settings, press Shared story to choose Off, Watch the story or Guide me. The first time you turn it on, DMbot reminds you to only give it material you have the right to use, and keeps a note that you said so. Then you can give DMbot your adventure as a PDF, Word or text file; it keeps the text, not the file, for that campaign only, and not in its backup, so after a restore you give the file again. Press Read it now and DMbot's AI reads the file once and lists its chapters, places and people; that list is not in the backup either, and players never see it. Remove a file any time and DMbot forgets it and what it read. Say which names in your adventure are the same as ones in your game, and with Watch the story on, DMbot tells you privately, once, when your table has gone against something your adventure needs, for example a person it needs to be there who has died. It never says what to do. On Guide me, a What's next? button shows, privately, which chapter your table seems to be in and what your adventure has next; you can say you are in another chapter.",
+    what: "In Settings, press Shared story to choose Off, Watch the story or Guide me. The first time you turn it on, DMbot reminds you to only give it material you have the right to use, and keeps a note that you said so. Then you can give DMbot your adventure as a PDF, Word or text file; it keeps the text, not the file, for that campaign only, and not in its backup, so after a restore you give the file again. Press Read it now and DMbot's AI reads the file once and lists its chapters, places and people; that list is not in the backup either, and players never see it. Remove a file any time and DMbot forgets it and what it read. Say which names in your adventure are the same as ones in your game, and with Watch the story on, DMbot tells you privately, once, when your table has gone against something your adventure needs, for example a person it needs to be there who has died. It never says what to do. On Guide me, a What's next? button shows, privately, which chapter your table seems to be in and what your adventure has next; you can say you are in another chapter. You can also just ask, \"Hey DMbot, what's next?\", and the answer comes to you privately.",
     reason:
       "Held until seen working live (#1692, #1714, #1729): the owner has not yet checked it at a table.",
   },
@@ -315,6 +315,13 @@ export const held: Held[] = [
   },
   {
     date: "2026-10-17",
+    title: "A channel for your house rules",
+    what: "DMbot makes a channel for your campaign's house rules, with one message for each rule you have saved and a note for each rule set you follow. Players can read it but not post, and who can see it matches your DM screen setting (private, peek or open).",
+    reason:
+      "Held until seen working live (#1752): the owner has not yet checked it on the test server.",
+  },
+  {
+    date: "2026-10-17",
     title: "Manage your plan without Discord",
     what: "If you can't sign in with Discord, use the email on your receipts. Stripe sends you a code, and you can cancel, update your card or get invoices.",
     reason:
@@ -323,7 +330,7 @@ export const held: Held[] = [
   {
     date: "2026-10-17",
     title: "A quiet reminder of the game time",
-    what: "During a session, if nobody has looked at the game clock for half an hour, DMbot says where the game is on the DM screen: \"Where we are: afternoon of Day 4 (14:30)\". With a split party it lists each group. It stays quiet during a fight and when the DM screen is set to Quiet. Players never see it.",
+    what: "If the game clock hasn't come up for a while during a session, DMbot drops one quiet line on the DM screen: \"Where we are: Day 4, afternoon (14:30)\". With a split party it lists each group. It stays quiet during a fight and when the DM screen is set to Quiet. Players never see it.",
     reason:
       "Held until it has been seen working on the test server (#1738).",
   },

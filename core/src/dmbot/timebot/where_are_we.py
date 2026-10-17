@@ -33,8 +33,9 @@ LINE_MAX = 1900  # a message holds 2000; a split party has at most a few short n
 
 
 def when(minute: int) -> str:
-    """ "afternoon of Day 4 (14:30)": the clock's own words for the time of day."""
-    return f"{game.day_part(minute)} of Day {game.day_of(minute)} ({game.clock_time(minute)})"
+    """ "Day 4, afternoon (14:30)": the clock's own words, day first as on the players' clock
+    ("Day 5, morning"), with the exact time as on the DM's."""
+    return f"Day {game.day_of(minute)}, {game.day_part(minute)} ({game.clock_time(minute)})"
 
 
 def _group(group: Group) -> str:
@@ -44,10 +45,21 @@ def _group(group: Group) -> str:
 
 
 def line(stored: Stored) -> str:
-    """The note: one time, or one for each group while the party is split."""
-    if stored.split:
-        return ("🕰️ Where we are: " + "; ".join(_group(g) for g in stored.groups) + ".")[:LINE_MAX]
-    return f"🕰️ Where we are: {when(stored.clock.minute)}."
+    """The note: one time, or one for each group while the party is split. A line too long for
+    one message is cut between groups and ends "+N more", never in the middle of a word."""
+    head = "🕰️ Where we are: "
+    if not stored.split:
+        return f"{head}{when(stored.clock.minute)}."
+    parts = [_group(g) for g in stored.groups]
+    text = head + "; ".join(parts) + "."
+    if len(text) <= LINE_MAX:
+        return text
+    for kept in range(len(parts) - 1, 0, -1):
+        more = f"; +{len(parts) - kept} more."
+        text = head + "; ".join(parts[:kept]) + more
+        if len(text) <= LINE_MAX:
+            return text
+    return head + f"+{len(parts)} more."
 
 
 def in_combat(stored: Stored) -> bool:

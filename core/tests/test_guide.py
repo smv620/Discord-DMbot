@@ -7,6 +7,7 @@ import unittest
 from dataclasses import replace
 from types import SimpleNamespace
 from typing import Any
+from unittest.mock import AsyncMock
 
 import discord
 
@@ -437,8 +438,100 @@ class Pressing(Setup):
             await conn.execute("UPDATE shared_confirmations SET restored = true")
         self.assertFalse(await DMBot.guide_button_allowed(fake, GUILD_A, campaign))
 
+    async def test_a_read_that_fails_costs_only_the_button(self) -> None:
+        from dmbot.bot import DMBot
+
+        await self.chapters()
+        await self.campaigns.set_story_mode(GUILD_A, self.c, "guide", confirmed_by=DM)
+        campaign = await self.campaigns.get(GUILD_A, self.c)
+        assert campaign is not None
+
+        async def broken(*a: Any, **kw: Any) -> Any:
+            raise RuntimeError("the database is down")
+
+        fake: Any = SimpleNamespace(
+            campaigns=SimpleNamespace(story_confirmed=broken), plan_allows=self.plan_allows
+        )
+        self.assertFalse(await DMBot.guide_button_allowed(fake, GUILD_A, campaign))
+        fake.campaigns = self.campaigns
+        fake.plan_allows = broken  # the plan check failing is closed too
+        self.assertFalse(await DMBot.guide_button_allowed(fake, GUILD_A, campaign))
+
+    async def test_the_sidebar_leaves_a_fight_to_the_usual_answer(self) -> None:
+        from dmbot.bot import DMBot
+
+        _, ids = await self.chapters()
+        await self.linked(ids, "Captain Varn", 100)
+        host = self.sidebar_host()
+        table: Any = SimpleNamespace(guild_id=GUILD_A, campaign_id=self.c)
+        self.assertIsNotNone(await DMBot.sidebar_guide(host, table, DM))
+        host.clocks = SimpleNamespace(in_combat=AsyncMock(return_value=True))
+        self.assertIsNone(await DMBot.sidebar_guide(host, table, DM))  # whose turn it is, then
+        host.clocks = SimpleNamespace(in_combat=AsyncMock(return_value=False))
+        self.assertIsNotNone(await DMBot.sidebar_guide(host, table, DM))
+
+    async def test_several_files_give_one_block_each_and_only_the_first_few(self) -> None:
+        for n in range(4):
+            await self.book(
+                [("chapter", f"Book {n} chapter 1", 1), ("chapter", f"Book {n} chapter 2", 5)],
+                text=f"book {n}",
+            )
+        host = self.sidebar_host()
+        campaign = await self.campaigns.get(GUILD_A, self.c)
+        assert campaign is not None
+        text = await ui.answer_text(host, campaign)
+        assert text is not None
+        self.assertEqual(text.count("🧭"), ui.SPOKEN_FILES)  # three of the four, whole blocks
+        self.assertLessEqual(len(text), ui.TEXT_MAX)
+        self.assertEqual(text.count("\n\n"), ui.SPOKEN_FILES - 1)
+
     async def plan_allows(self, *args: Any, **kw: Any) -> bool:
         return self.allowed
+
+    def sidebar_host(self) -> Any:
+        """A stand-in for the bot with the pieces `DMBot.sidebar_guide` uses."""
+        from dmbot.bot import DMBot
+
+        host: Any = SimpleNamespace(
+            campaigns=self.campaigns, plan_allows=self.plan_allows, memory=self.memory,
+            adventure=self.store, plan=self.plan, watch=StoryWatch(self.db), clocks=None,
+        )  # fmt: skip
+        host.guide_button_allowed = lambda g, c: DMBot.guide_button_allowed(host, g, c)
+        return host
+
+    async def test_the_sidebars_answer_is_the_buttons_text(self) -> None:
+        from dmbot.bot import DMBot
+
+        _, ids = await self.chapters()
+        await self.linked(ids, "Captain Varn", 100)
+        it = self.pressing()
+        await ui.GuideButton(self.c).callback(it)
+        host = self.sidebar_host()
+        table: Any = SimpleNamespace(guild_id=GUILD_A, campaign_id=self.c)
+        text = await DMBot.sidebar_guide(host, table, DM)
+        self.assertEqual(text, it.sent["content"])
+
+    async def test_the_sidebar_gives_it_only_to_a_dm_with_all_three_conditions(self) -> None:
+        from dmbot.bot import DMBot
+
+        _, ids = await self.chapters()
+        await self.linked(ids, "Captain Varn", 100)
+        host = self.sidebar_host()
+        table: Any = SimpleNamespace(guild_id=GUILD_A, campaign_id=self.c)
+        self.assertIsNone(await DMBot.sidebar_guide(host, table, 999))  # not a DM
+        self.allowed = False
+        self.assertIsNone(await DMBot.sidebar_guide(host, table, DM))  # the plan says no
+        self.allowed = True
+        for mode in ("watch", "off"):
+            if mode == "off":
+                await self.campaigns.set_story_mode(GUILD_A, self.c, STORY_OFF)
+            else:
+                await self.campaigns.set_story_mode(GUILD_A, self.c, mode, confirmed_by=DM)
+            self.assertIsNone(await DMBot.sidebar_guide(host, table, DM), mode)
+        await self.campaigns.set_story_mode(GUILD_A, self.c, "guide", confirmed_by=DM)
+        async with self.db.guild(GUILD_A) as conn:
+            await conn.execute("UPDATE shared_confirmations SET restored = true")
+        self.assertIsNone(await DMBot.sidebar_guide(host, table, DM))  # restored confirmation
 
     async def test_only_a_dm_can_press(self) -> None:
         await self.chapters()

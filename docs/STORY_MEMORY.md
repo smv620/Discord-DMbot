@@ -697,8 +697,9 @@ Each step is useful on its own and ships behind the existing phases.
    thread is the DM's plot note: lookup (`hidden`, so a server manager who is not a DM never finds
    it) and the players' recall leave it, and every fact that points to it, out. The connection is
    named `in_thread` because `involved_in` is already a synonym of `appears_in`. Backups,
-   isolation and deletion are those of every memory entry; `memory_heard` is not in a backup, so
-   a restored campaign shows no thread as stalled until new sessions are heard.
+   isolation and deletion are those of every memory entry; `memory_heard` is in a backup as counts only (#1747),
+   kept at restore for people recorded now in the restoring server and for entries the campaign
+   has, so a restored campaign shows the same stalled threads.
    **Phase 5c slice 2 is built (#1674): promises the DM keeps** (no AI; the DM writes them).
    `promise` is a fifth kind under `thread`, beside quest, mystery, hook and goal, so it reuses the
    thread states, the stalled rule and the after-session question exactly: no new condition and no
@@ -864,6 +865,16 @@ Each step is useful on its own and ships behind the existing phases.
    plan), the files (2), and the guide's own three reads (nodes with the pick, linked entries, clashes);
    the reads took about 17 ms on a plan of 440 entries and 20 links. **Help and the website** are WebDev's
    later.
+   **Ask it aloud (#1739):** "Hey DMbot, what's next?" from a DM gets the same answer, privately, in the
+   DM's own chat with DMbot (said at the table, or typed or sent as a voice message in that chat; never
+   in the table's DMbot chat, and never for a player). The phrase list is strict and pure
+   (`sidebar/guide_phrase.py`): "what's next", "what happens next (in the adventure or the book)", "what
+   does the book have next", "where are we in the adventure", with or without "DMbot" and "please" ("what's
+   next in initiative", "what time is it" and "if they go north, what's next" are not it). No AI decides.
+   It answers only when the three conditions hold; otherwise the sidebar answers as it always did. **The
+   reply is DM-screen content and is never written to a transcript:** the question is logged as any
+   sidebar question, and the reply as "(answered privately: Guide me)". The text is made by the same
+   function as the button's (`ui/guide.compose`), so the two cannot differ.
 
 5. **Throughout:** the ontology steward and graph curator take over the after-session
    cleanup; their health numbers (duplicates, orphans, unused terms, flags per session,
