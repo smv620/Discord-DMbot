@@ -56,6 +56,9 @@ from dmbot.memory.models import (
     CONFIRMED,
     CREATURE_TYPE,
     DEED,
+    DEED_NAME_MAX,
+    DEED_TEXT_MAX,
+    DEED_VIEWERS_MAX,
     DESCRIPTION_MAX,
     DETAIL_MAX,
     DID,
@@ -1052,9 +1055,12 @@ class MemoryStore:
         with the effect as the detail. Only the DM, and nothing here reads speech."""
         if source != DM:
             raise MemoryRuleError("Only the DM can record a deed.")
-        words = clean_text(text)
-        if not words or len(words) > DEED_TEXT_MAX:
-            raise MemoryRuleError(f"Say what happened in at most {DEED_TEXT_MAX} characters.")
+        try:
+            words = clean_text(text, DEED_TEXT_MAX)
+        except MemoryRuleError:
+            raise MemoryRuleError(
+                f"Say what happened in at most {DEED_TEXT_MAX} characters."
+            ) from None
         if effect not in standing.DEED_SCORE:
             raise MemoryRuleError("Pick how it landed.")
         wanted = list(dict.fromkeys(viewer_ids))
@@ -1091,14 +1097,27 @@ class MemoryStore:
                 ALIASES,
                 _new_alias(w, row["id"], words[:DEED_NAME_MAX], "full", CONFIRMED, False, None),
             )
+            if from_session_at is None:
+                # No session running: the newest one names were heard in, so a deed recorded
+                # between sessions still fades like the rest.
+                cur = await w.conn.execute(
+                    "SELECT max(session_started_at) AS at FROM memory_mentions"
+                    " WHERE guild_id = %s AND campaign_id = %s",
+                    w.ids,
+                )
+                newest = await cur.fetchone()
+                from_session_at = (
+                    None if newest is None or newest["at"] is None else int(newest["at"])
+                )
+            # Both connections are secret (the DM's alone), on top of the deed being hidden.
             await self.add_relation_in(
-                w, doer_id, DID, row["id"], confidence=1.0, status=CONFIRMED,
+                w, doer_id, DID, row["id"], confidence=1.0, status=CONFIRMED, secret=True,
                 from_session_at=from_session_at,
             )  # fmt: skip
             for viewer_id in wanted:
                 await self.add_relation_in(
                     w, row["id"], AFFECTED, viewer_id, confidence=1.0, status=CONFIRMED,
-                    detail=effect, from_session_at=from_session_at,
+                    detail=effect, from_session_at=from_session_at, secret=True,
                 )  # fmt: skip
             return Written(_entity(row), w.batch)
 
@@ -3703,9 +3722,6 @@ async def _move_standing(w: Changes, keep_id: str, gone_id: str) -> None:
                 await w.update(table, r["id"], {held: a, aimed: b})
 
 
-DEED_TEXT_MAX = 200  # what the DM types for a deed
-DEED_NAME_MAX = 100  # an entry's name is at most this; the full words are its description
-DEED_VIEWERS_MAX = 5
 ONLY_PLAYERS_DO = "Only a player character or the party does a deed."
 ONLY_THESE_MATTER = "A deed can matter to an NPC, a group or a place, not to the doer."
 

@@ -46,6 +46,12 @@ DEED_EFFECTS = (
     ("Hurt them", -20),
 )
 DEED_SCORE = dict(DEED_EFFECTS)
+DEED_VERB = {
+    "Helped them": "helped",
+    "Pleased them": "pleased",
+    "Annoyed them": "annoyed",
+    "Hurt them": "hurt",
+}
 DEED_WEIGHT = 20
 DEED_FADES_AFTER = 10
 STORY_SOURCE = "story"
@@ -216,7 +222,7 @@ class Index:
         if row.deed:
             number = self.session_numbers.get(row.session) if row.session is not None else None
             when = f"session {number}, " if number is not None else ""
-            return f"⚔️ {row.deed} ({when}{row.effect})"
+            return f"⚔️ {row.deed} ({when}{DEED_VERB.get(row.effect, row.effect)})"
         who = "you set it" if row.source == DM_SOURCE else "from the story"
         if row.holder == viewer and row.target == subject:
             return f"{who.capitalize()}."  # the step above already says what
@@ -230,6 +236,7 @@ __all__ = [
     "DEED_EFFECTS",
     "DEED_FADES_AFTER",
     "DEED_SCORE",
+    "DEED_VERB",
     "DEED_WEIGHT",
     "DEVOTED",
     "DM_SOURCE",

@@ -15,8 +15,15 @@ from typing import Any
 import discord
 
 from dmbot.memory import standing
-from dmbot.memory.models import CONFIRMED, DM, Entity, MemoryRuleError, TooLateToUndo
-from dmbot.memory.store import DEED_TEXT_MAX, DEED_VIEWERS_MAX
+from dmbot.memory.models import (
+    CONFIRMED,
+    DEED_TEXT_MAX,
+    DEED_VIEWERS_MAX,
+    DM,
+    Entity,
+    MemoryRuleError,
+    TooLateToUndo,
+)
 from dmbot.ui import logic
 from dmbot.ui.dmbot_commands import (
     VIEW_TIMEOUT_S,
@@ -35,7 +42,7 @@ log = logging.getLogger(__name__)
 
 BUTTON = "⚔️ Record a deed"  # on the name card
 ONLY_DM = "Only the DM can record a deed."
-NOBODY = "No NPC, group or place to pick yet. Add one under Names, then try again."
+NOBODY = "No one to pick yet. Add an NPC, group or place under Names, then record the deed again."
 UNDONE = "↩ Undone."
 PAGE = logic.SELECT_OPTIONS_MAX
 
@@ -61,6 +68,9 @@ async def start(interaction: discord.Interaction, campaign_id: str, doer_id: str
     doer = await memory.entity(campaign.guild_id, campaign.id, doer_id)
     if doer is None or doer.status != CONFIRMED:
         await _tell(interaction, GONE)
+        return
+    if not await _can_matter(memory, campaign, doer.id):  # before they type, not after
+        await _tell(interaction, NOBODY)
         return
     await interaction.response.send_modal(DeedForm(campaign_id, doer))
 
@@ -90,7 +100,7 @@ class DeedForm(discord.ui.Modal, title="Record a deed"):
         campaign, memory = found
         words = " ".join(self.text.value.split())
         if not words:
-            await _tell(interaction, "Nothing entered.")
+            await _tell(interaction, "You didn't type anything. Tap Record a deed to try again.")
             return
         mattering = await _can_matter(memory, campaign, self.doer.id)
         if not mattering:
@@ -120,7 +130,10 @@ async def _can_matter(memory: Any, campaign: Any, doer_id: str) -> list[Entity]:
 
 
 def who_text(doer: Entity, words: str, chosen: list[Entity]) -> str:
-    lines = [f"⚔️ **{_md(doer.name)}**: “{_md(words)}”", "Who did it matter to?"]
+    lines = [
+        f"⚔️ **{_md(doer.name)}**: “{_md(words)}”",
+        f"Who did it matter to? (up to {DEED_VIEWERS_MAX})",
+    ]
     if chosen:
         lines.append("Picked: " + ", ".join(f"**{_md(e.name)}**" for e in chosen))
     return "\n".join(lines)
@@ -136,14 +149,21 @@ class WhoMenu(_Menu):
         super().__init__()
         self.campaign_id, self.doer, self.words, self.pool = campaign_id, doer, words, pool
         self.page = max(0, min(page, (len(pool) - 1) // PAGE))
-        self.chosen: dict[str, Entity] = chosen or {}
+        self.chosen: dict[str, Entity] = chosen if chosen is not None else {}
         here = pool[self.page * PAGE : (self.page + 1) * PAGE]
         self.here = {e.id for e in here}
         self.select = _Select(
             self._picked,
-            placeholder="Pick who it mattered to…",
+            placeholder=f"Pick up to {DEED_VIEWERS_MAX} names…",
             min_values=0,
-            max_values=min(DEED_VIEWERS_MAX, len(here)),
+            # (what is picked on other pages already counts toward the five)
+            max_values=max(
+                1,
+                min(
+                    len(here),
+                    DEED_VIEWERS_MAX - len([k for k in self.chosen if k not in self.here]),
+                ),
+            ),
             options=[
                 discord.SelectOption(
                     label=logic.shorten(e.name, logic.OPTION_LABEL_MAX),
@@ -161,7 +181,7 @@ class WhoMenu(_Menu):
         if self.chosen:
             self.add_item(
                 _Button(
-                    self._on, label="How did it land? ▶", style=discord.ButtonStyle.primary, row=2
+                    self._on, label="Next: how it went ▶", style=discord.ButtonStyle.primary, row=2
                 )
             )
 
@@ -183,7 +203,7 @@ class WhoMenu(_Menu):
         if len(self.chosen) > DEED_VIEWERS_MAX:
             for key in list(self.chosen)[DEED_VIEWERS_MAX:]:
                 del self.chosen[key]
-            note = f"⚠️ At most {DEED_VIEWERS_MAX}."
+            note = f"⚠️ Kept the first {DEED_VIEWERS_MAX}."
         self.stop()
         text, menu = self._again(self.page, note)
         await _replace(interaction, text, menu)
@@ -204,7 +224,10 @@ class WhoMenu(_Menu):
         people = list(self.chosen.values())
         await _replace(
             interaction,
-            who_text(self.doer, self.words, people) + "\nHow did it land?",
+            f"⚔️ **{_md(self.doer.name)}**: “{_md(self.words)}”\n"
+            f"How did **{_md(self.doer.name)}** treat "
+            + ", ".join(f"**{_md(e.name)}**" for e in people)
+            + "?",
             HowMenu(self.campaign_id, self.doer, self.words, people),
         )
 
@@ -227,7 +250,7 @@ class HowMenu(_Menu):
         await _replace(
             interaction,
             f"⚔️ **{_md(self.doer.name)}**: “{_md(self.words)}”\n"
-            f"{effect}: {names}\nRecord this deed?",
+            f"**{_md(self.doer.name)}** {standing.DEED_VERB[effect]} {names}.\nRecord this deed?",
             ConfirmMenu(self.campaign_id, self.doer, self.words, self.people, effect),
         )
 
@@ -242,7 +265,7 @@ class ConfirmMenu(_Menu):
         self.campaign_id, self.doer, self.words = campaign_id, doer, words
         self.people, self.effect = people, effect
         self.add_item(_Button(self._yes, label="✅ Record it", style=discord.ButtonStyle.primary))
-        self.add_item(_Button(self._no, label="No, leave it"))
+        self.add_item(_Button(self._no, label="No, cancel"))
 
     async def _yes(self, interaction: discord.Interaction) -> None:
         await _answer_first(interaction, in_place=True)
@@ -270,14 +293,16 @@ class ConfirmMenu(_Menu):
         self.stop()
         await _replace(
             interaction,
-            f"✅ Recorded. {self.effect}: " + ", ".join(f"**{_md(e.name)}**" for e in self.people),
+            f"✅ Recorded: **{_md(self.doer.name)}** {standing.DEED_VERB[self.effect]} "
+            + ", ".join(f"**{_md(e.name)}**" for e in self.people)
+            + f". {standing.REMINDER}",
             DoneMenu(self.campaign_id, self.doer.id, written.batch),
         )
 
     async def _no(self, interaction: discord.Interaction) -> None:
         await _answer_first(interaction, in_place=True)
         self.stop()
-        await _replace(interaction, "Left as it was.", None)
+        await _replace(interaction, "Not recorded.", None)
 
 
 class DoneMenu(_Menu):
@@ -298,10 +323,10 @@ class DoneMenu(_Menu):
         text = UNDONE
         try:
             await memory.undo(campaign.guild_id, campaign.id, self.batch)
+            changed(interaction, campaign)
         except TooLateToUndo:
-            text = "Can't undo that any more."
+            text = "Too late to undo. Open Standing to see it."
         except MemoryRuleError:
-            text = "Not undone. Something changed since."
-        changed(interaction, campaign)
+            text = "Not undone, because something changed. Check Standing, then try again."
         self.stop()
         await _replace(interaction, text, None)

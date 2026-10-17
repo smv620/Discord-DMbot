@@ -6,6 +6,7 @@ and who can do a deed and who it can matter to. Needs the test database for the 
 from __future__ import annotations
 
 import unittest
+from functools import partial
 from types import SimpleNamespace
 from typing import Any
 
@@ -73,9 +74,9 @@ class Rule(unittest.TestCase):
         got = world(deed_row("Helped them", session=700), numbers={700: 4}).standing(
             "guard", "kesh"
         )
-        self.assertEqual(got.reasons, ("⚔️ Saved the mill (session 4, Helped them)",))
+        self.assertEqual(got.reasons, ("⚔️ Saved the mill (session 4, helped)",))
         plain = world(deed_row("Hurt them")).standing("guard", "kesh")
-        self.assertEqual(plain.reasons, ("⚔️ Saved the mill (Hurt them)",))
+        self.assertEqual(plain.reasons, ("⚔️ Saved the mill (hurt)",))
 
     def test_deeds_come_from_the_doers_ladders_too(self) -> None:
         index = Index(
@@ -116,7 +117,7 @@ class Stored(ConfirmedMemoryTest):
         self.assertEqual(written.value.type, "deed")
         got = await self.standing()
         self.assertEqual(got.step, "Friendly")
-        self.assertEqual(got.reasons, ("⚔️ Saved the mill from the fire (session 4, Helped them)",))
+        self.assertEqual(got.reasons, ("⚔️ Saved the mill from the fire (session 4, helped)",))
         await self.memory.undo(GUILD_A, self.c, written.batch)
         self.assertEqual((await self.standing()).shown, "No opinion yet")
         names = [e.name for e in await self.memory.entities(GUILD_A, self.c)]
@@ -147,6 +148,51 @@ class Stored(ConfirmedMemoryTest):
         for bad in (sam, item, self.party, self.kesh):
             with self.assertRaises(MemoryRuleError):
                 await self.deed(who=[bad])
+
+    async def test_a_long_deed_is_kept_whole_with_a_shorter_name(self) -> None:
+        for size in (150, 200):
+            words = ("w" * (size - 1) + ".")[:size]
+            written = await self.memory.add_deed(
+                GUILD_A, self.c, self.kesh, words, [self.guard], "Helped them", source="dm"
+            )
+            got = await self.memory.entity(GUILD_A, self.c, written.value.id)
+            assert got is not None
+            self.assertEqual((got.description, len(got.name)), (words, min(size, 100)))
+
+    async def test_a_deed_recorded_between_sessions_takes_the_newest_session(self) -> None:
+        await self.heard(self.guard, 5000)
+        await self.memory.add_deed(
+            GUILD_A, self.c, self.kesh, "Between sessions", [self.guard], "Helped them", source="dm"
+        )
+        index = await self.memory.standing_index(GUILD_A, self.c)
+        (row,) = index.deeds[(self.guard, self.kesh)]
+        self.assertEqual(row.session, 5000)
+
+    async def test_the_connections_are_secret_too(self) -> None:
+        await self.deed()
+        for r in await self.memory.relations(
+            GUILD_A, self.c, entity_id=self.kesh, include_secret=True
+        ):
+            if r.predicate in ("did", "affected"):
+                self.assertTrue(r.secret)
+        shown = await self.memory.relations(
+            GUILD_A, self.c, entity_id=self.kesh, include_secret=False
+        )
+        self.assertFalse([r for r in shown if r.predicate in ("did", "affected")])
+
+    async def test_the_cleaner_never_gets_a_deeds_name_to_write_into_a_transcript(self) -> None:
+        await self.deed()
+        lookup = CampaignLookup.build(await self.memory.lookup_data(GUILD_A, self.c))
+        deed_names = [e for e in lookup.names if "mill from the fire" in e.text]
+        self.assertTrue(deed_names)
+        self.assertTrue(all(e.secret for e in deed_names))
+
+    async def test_merging_the_npc_keeps_the_deed_and_the_standing(self) -> None:
+        await self.deed()
+        twin = await self.add("The guard at the gate", type="character", role="npc")
+        await self.memory.merge(GUILD_A, self.c, self.guard, twin, source="dm", dm_said_same=True)
+        index = await self.memory.standing_index(GUILD_A, self.c)
+        self.assertEqual(index.standing(self.guard, self.kesh).step, "Friendly")
 
     async def test_the_words_and_the_effect_are_checked_and_only_the_dm_may(self) -> None:
         for text in ("", "x" * 201):
@@ -297,3 +343,78 @@ class Screens(Stored):
         await confirm._yes(it)
         self.assertIn(ui.ONLY_DM, it.sent["content"])
         self.assertEqual((await self.standing()).shown, "No opinion yet")
+
+
+class Scale(Stored):
+    async def test_exactly_ten_sessions_do_not_fade_and_eleven_do(self) -> None:
+        for n in range(10):
+            await self.heard(self.guard, 2000 + n)
+        await self.memory.add_deed(
+            GUILD_A, self.c, self.kesh, "Oldest of ten", [self.guard], "Helped them",
+            source="dm", from_session_at=2000,
+        )  # fmt: skip
+        index = await self.memory.standing_index(GUILD_A, self.c)
+        self.assertEqual(index.deeds[(self.guard, self.kesh)][0].weight, st.DEED_WEIGHT)
+        await self.heard(self.guard, 2010)  # an eleventh session
+        index = await self.memory.standing_index(GUILD_A, self.c)
+        self.assertEqual(index.deeds[(self.guard, self.kesh)][0].weight, st.DEED_WEIGHT // 2)
+
+    async def test_three_hundred_deeds_still_work_out_fast(self) -> None:
+        import time
+
+        npcs = [await self.add(f"Folk {n}", type="character", role="npc") for n in range(10)]
+        for n in range(60):
+            await self.memory.add_deed(
+                GUILD_A, self.c, self.kesh if n % 2 else self.party, f"Deed number {n}",
+                npcs[n % 10 : n % 10 + 2], "Helped them", source="dm", from_session_at=100 + n,
+            )  # fmt: skip
+        began = time.perf_counter()
+        index = await self.memory.standing_index(GUILD_A, self.c)
+        read = time.perf_counter() - began
+        began = time.perf_counter()
+        for _ in range(30):
+            index.standing(npcs[0], self.kesh)
+        asked = (time.perf_counter() - began) / 30
+        print(f"\n60 deeds: read {read * 1000:.1f} ms, one standing {asked * 1000:.2f} ms")
+        self.assertLess(read, 1.0)
+        self.assertLess(asked, 0.05)
+
+
+class Steps(Screens):
+    async def test_every_step_asks_again_who_is_pressing(self) -> None:
+        doer = await self.memory.entity(GUILD_A, self.c, self.kesh)
+        guard = await self.memory.entity(GUILD_A, self.c, self.guard)
+        assert doer is not None and guard is not None
+        pool = [guard]
+        who = ui.WhoMenu(self.c, doer, "Burned the mill", pool)
+        who.select._values = [guard.id]
+        how = ui.HowMenu(self.c, doer, "Burned the mill", [guard])
+        confirm = ui.ConfirmMenu(self.c, doer, "Burned the mill", [guard], "Hurt them")
+        done = ui.DoneMenu(self.c, self.kesh, 1)
+        for press_it in (
+            who._picked,
+            who._on,
+            partial(how._landed, "Hurt them"),
+            confirm._yes,
+            done._undo,
+        ):  # fmt: skip
+            it = self.pressing(999)
+            await press_it(it)
+            self.assertIn(ui.ONLY_DM, it.sent["content"])
+        self.assertEqual((await self.standing()).shown, "No opinion yet")
+
+    async def test_the_picker_counts_what_was_picked_on_other_pages(self) -> None:
+        doer = await self.memory.entity(GUILD_A, self.c, self.kesh)
+        assert doer is not None
+        pool = [
+            await self.memory.entity(
+                GUILD_A, self.c, await self.add(f"Folk {n:02d}", type="character", role="npc")
+            )
+            for n in range(30)
+        ]
+        everyone = [e for e in pool if e is not None]
+        chosen = {e.id: e for e in everyone[:3]}  # three picked on page one
+        page_two = ui.WhoMenu(self.c, doer, "x", everyone, 1, chosen)
+        self.assertEqual(page_two.select.max_values, 2)
+        full = {e.id: e for e in everyone[:5]}
+        self.assertEqual(ui.WhoMenu(self.c, doer, "x", everyone, 1, full).select.max_values, 1)
