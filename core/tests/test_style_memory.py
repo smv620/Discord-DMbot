@@ -195,6 +195,30 @@ class Stored(DatabaseTest):
         older = await self.campaigns.import_backup(GUILD_B, data, 7)
         self.assertIsNone(older.initiative_style)
 
+    async def test_an_old_backup_with_the_old_switch_on_restores_as_side(self) -> None:
+        data = await self.campaigns.export(GUILD_A, self.a.id)
+        del data["campaign"]["initiative_style"]  # made before the style was kept
+        data["campaign"]["side_initiative"] = True
+        seeded = await self.campaigns.import_backup(GUILD_B, data, 7)
+        self.assertEqual(seeded.initiative_style, "side")
+        data["campaign"]["side_initiative"] = False
+        plain = await self.campaigns.import_backup(GUILD_B, data, 7)
+        self.assertIsNone(plain.initiative_style)
+
+    async def test_a_backup_that_keeps_a_style_keeps_it_whatever_the_old_switch_says(self) -> None:
+        data = await self.campaigns.export(GUILD_A, self.a.id)
+        data["campaign"]["side_initiative"] = True
+        data["campaign"]["initiative_style"] = "each"
+        kept = await self.campaigns.import_backup(GUILD_B, data, 7)
+        self.assertEqual(kept.initiative_style, "each")
+
+    async def test_the_old_switch_is_still_written_to_a_backup_beside_the_style(self) -> None:
+        await self.campaigns.set_side_initiative(GUILD_A, self.a.id, True)
+        await self.campaigns.set_initiative_style(GUILD_A, self.a.id, "side")
+        data = await self.campaigns.export(GUILD_A, self.a.id)
+        self.assertIs(data["campaign"]["side_initiative"], True)
+        self.assertEqual(data["campaign"]["initiative_style"], "side")
+
     async def test_a_replaced_campaign_takes_the_backups_style(self) -> None:
         await self.campaigns.set_initiative_style(GUILD_A, self.a.id, "each")
         data = await self.campaigns.export(GUILD_A, self.a.id)
@@ -209,6 +233,48 @@ class Stored(DatabaseTest):
             data["campaign"]["initiative_style"] = damaged
             with self.assertRaises(CampaignError, msg=repr(damaged)):
                 await self.campaigns.import_backup(GUILD_B, data, 7)
+
+
+class Backfill(DatabaseTest):
+    """Migrations run with no server set; 0130 must reach every row, and only the right ones."""
+
+    async def test_the_old_switch_seeds_the_style_and_nothing_else_changes(self) -> None:
+        from dmbot.db import Database
+        from dmbot.schema import MIGRATIONS
+        from tests.pg import TEST_URL, drop_schema
+
+        before = [m for m in MIGRATIONS if m[0] < "0130"]
+        await self.db.close()  # start again from a schema as it was before 0130
+        await drop_schema(TEST_URL, self.schema)
+        self.db = await Database.open(TEST_URL, schema=self.schema, migrations=before)
+        store = CampaignStore(self.db)
+        on = await store.create(GUILD_A, "Switch on", 7)
+        kept = await store.create(GUILD_A, "Switch on, style kept", 7)
+        off = await store.create(GUILD_A, "Switch off", 7)
+        far = await store.create(GUILD_B, "Other server", 7)
+        await store.set_side_initiative(GUILD_A, on.id, True)
+        await store.set_side_initiative(GUILD_A, kept.id, True)
+        await store.set_initiative_style(GUILD_A, kept.id, "each+declare")
+        await store.set_side_initiative(GUILD_B, far.id, True)
+        await self.db.migrate()
+        self.assertEqual(await self.style(store, GUILD_A, on.id), "side")
+        self.assertEqual(await self.style(store, GUILD_A, kept.id), "each+declare")  # left alone
+        self.assertIsNone(await self.style(store, GUILD_A, off.id))
+        self.assertEqual(await self.style(store, GUILD_B, far.id), "side")  # every server
+        async with self.db.unscoped() as conn:  # the opening is gone again
+            cur = await conn.execute(
+                "SELECT count(*) AS n FROM pg_policies WHERE policyname = 'migrate_backfill'"
+                " AND tablename = 'campaigns'"
+            )
+            self.assertEqual((await cur.fetchone() or {})["n"], 0)
+        again = await store.get(GUILD_A, on.id)
+        assert again is not None
+        self.assertTrue(again.side_initiative)  # the column stays
+
+    async def style(self, store: CampaignStore, guild: int, campaign: str) -> str | None:
+        found = await store.get(guild, campaign)
+        assert found is not None
+        return found.initiative_style
 
 
 if __name__ == "__main__":
