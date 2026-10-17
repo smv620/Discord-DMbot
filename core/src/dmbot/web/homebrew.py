@@ -15,7 +15,13 @@ The page also shows the homebrew packs the campaign follows (#1527, #1586), ever
 pack, as a player's `/dmbot rule` answers from them. The download stays the
 campaign's own shown entries (what the bot's file holds): a followed pack's are not in it.
 
-Never shown: who wrote an entry, its id, or the book's name (it is never kept). A campaign is
+Each entry says where it came from (#1653), in the words of the bot's card: "from dndbeyond.com"
+(read from a published page), "credited to dndbeyond.com" (a file credited to a site) or "by Sam"
+(a file credited to a name the DM typed); nothing for the DM's own or an uploader's. The door sends
+the credit's kind and words only.
+
+Never shown: who added an entry (a Discord id), its id, the page's address, or the book's name (it
+is never kept). A campaign is
 named by `<server>.<campaign>`, as for the house-rules page.
 """
 
@@ -77,6 +83,23 @@ async def _read(db: Database, session: Session, ref: str) -> tuple[str, dict[str
     return campaign_id, found
 
 
+NAME_SHOWN = 80  # a credited name is short (`clean_name`); a cap here keeps any page tidy
+
+
+def source(e: dict[str, Any]) -> str | None:
+    """Where an entry came from, as words for the page: the same "from" and "credited to" the
+    bot's card uses (`rule_card.homebrew_citation`), or "by <name>"; None when it is the DM's own
+    or credited to the person who loaded it (a Discord user, who is never named here)."""
+    domain = e.get("creditDomain")
+    if domain:
+        verb = "from" if e.get("sourceKind") == "link" else "credited to"
+        return f"{verb} {domain}"
+    text = e.get("creditText")
+    if e.get("creditKind") == "name" and text:
+        return f"by {str(text)[:NAME_SHOWN]}"
+    return None
+
+
 def _kind_order(entry: dict[str, Any]) -> int:
     return KINDS.index(entry["kind"]) if entry["kind"] in KINDS else len(KINDS)
 
@@ -118,6 +141,7 @@ async def read_homebrew(db: Database, session: Session, ref: str) -> dict[str, A
                 "legacy": bool(e.get("legacy", False)),
                 # Turned off by the DM (#1629): kept, but DMbot ignores it at the table.
                 "enabled": bool(e.get("enabled", True)),
+                "source": source(e),  # (#1653) never who added it
             }
             for e in entries
         ],
