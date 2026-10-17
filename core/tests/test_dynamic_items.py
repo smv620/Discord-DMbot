@@ -50,7 +50,10 @@ def registered_items(source: str | None = None) -> set[type]:
     looked up in `bot.py`'s own namespace, so `*CONSENT_BUTTONS` and `clock_screen.X` resolve)."""
     tree = ast.parse(source if source is not None else inspect.getsource(bot_module))
     found: set[type] = set()
-    for node in ast.walk(tree):
+    # Only `setup_hook` registers (a call anywhere else would not run at start-up); a test's
+    # tiny source has a function of another name, so it is read whole.
+    hooks = [n for n in ast.walk(tree) if getattr(n, "name", "") == "setup_hook"]
+    for node in ast.walk(ast.Module(body=hooks, type_ignores=[]) if hooks else tree):
         if isinstance(node, ast.Call) and getattr(node.func, "attr", "") == "add_dynamic_items":
             for arg in node.args:
                 starred = isinstance(arg, ast.Starred)
@@ -88,7 +91,7 @@ def too_long(items: set[type]) -> list[str]:
 class RegisteredTest(unittest.TestCase):
     def test_every_dynamic_item_is_registered(self) -> None:
         items = all_dynamic_items()
-        self.assertGreater(len(items), 50)  # (the walk found them)
+        self.assertGreater(len(items), 50)  # (the walk really found the many buttons: 101 today)
         self.assertEqual(
             unregistered(items, registered_items()),
             [],
@@ -107,7 +110,7 @@ class RegisteredTest(unittest.TestCase):
 
     def test_registrations_are_read_from_the_source(self) -> None:
         source = (
-            "class B:\n    def f(self):\n"
+            "class B:\n    def setup_hook(self):\n"
             "        self.add_dynamic_items(PeekButton, *CONSENT_BUTTONS)\n"
         )
         found = registered_items(source)
