@@ -3468,7 +3468,8 @@ once. The new-campaign form's link is saved in the same step as the campaign.
   - DMbot knows whether the table is **in combat** and which **round** it is.
   - From what the DM says ("roll initiative", "round three", "the fight's over") and from DM-screen
     buttons (**Start combat**, **Next round**, **End combat**) that correct it.
-  - With **side-based initiative** (a campaign setting) it tracks rounds only, not turn order.
+  - It tracks rounds only, never turn order. (The campaign field `side_initiative` of #1127 is
+    kept, unused, for a later turn-order feature; its Settings button was removed, #1769.)
   - Combat state goes on the DM screen. Players see "⚔️ Combat, round 3" in the game-time channel.
   - **How it runs (built in #1127):**
     - **Kept with the game clock** (`combat_round`, plus the seconds already spent toward the
