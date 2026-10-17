@@ -72,7 +72,7 @@ describe("Help", () => {
     expect(section?.querySelector("h2")?.textContent).toBe(snagsHeading);
     expect(section?.querySelectorAll("li").length).toBe(snags.length);
     // The section sits before "Getting help" and links to the steps and the support route on this page.
-    const hrefs = [...(section?.querySelectorAll("a") ?? [])].map((a) => a.getAttribute("href"));
+    const hrefs = [...(section?.querySelectorAll("li a") ?? [])].map((a) => a.getAttribute("href"));
     expect(hrefs).toEqual(["#dm-heading", "#getting-help"]);
     const order = [...help.querySelectorAll("h2")].map((h) => h.id);
     expect(order.indexOf("snags-heading")).toBe(order.indexOf("getting-help-heading") - 1);
