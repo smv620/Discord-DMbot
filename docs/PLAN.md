@@ -1170,7 +1170,7 @@ so the docs always show names the way Discord does. For the campaign
 | DM screen | `dmb-dm-screen-rime-of-the-frostmaiden` | Phase 1.5 (now) |
 | DM Bot (settings and options, everyone; owner, 2026-10-17) | `dmb-dm-bot-rmfthfrstmdn` | #1666 |
 | Live transcript (cleaned lines, view only) | `dmb-transcript-rmfthfrstmdn` | Phase 1 (#124, built 2026-10-06; misheard names fixed since 2026-10-07, #127) |
-| Rules archive (house rules, overrides, rulings) | `dmb-rules-rmfthfrstmdn` | Phase 3 |
+| Rules archive (house rules, overrides, rulings) | `dmb-rules-rmfthfrstmdn` | House rules: #1752 (overrides and rulings: Phase 3, with the AI rules alerts) |
 | Game time (the players' clock; owner, 2026-10-13) | `dmb-gametime-rmfthfrstmdn` | Phase 4 |
 | DMbot chat (table questions and their answers; owner, 2026-10-14) | `dmb-chat-rmfthfrstmdn` | Phase 4 |
 | NPCs (roster, relationships, factions) | `dmb-npcs-rmfthfrstmdn` | Phase 5 |
@@ -1223,6 +1223,20 @@ so the docs always show names the way Discord does. For the campaign
   Peeking opens all controlled channels for that player; hiding closes them all. Once
   there's more than one controlled channel, the peek warning must name every channel a
   peek opens (rules, NPCs, plot), so players know exactly what they're agreeing to see.
+- **The rules archive is built (2026-10-17, #1752), house rules only.** `dmb-rules-<short name>`
+  is made and repaired at every `/dmbot start`, in the DM screen's category, with a topic and a
+  pinned "What's this channel?" card. It is controlled: its overwrites are the DM screen's, the
+  peekers included, except that nobody posts there, the DM too. Every change to the screen's
+  visibility, DMs or peekers is applied to it; a peek and a hide open and close both channels, and
+  the peek warning names both. It shows one message per saved house rule ("🏠 House rule N": the
+  words, what it replaces, where it came from: your DM, said at the table, or a followed set's
+  copy) and one "📚 This campaign follows the house-rule set **<set>**" line per followed house-rules set. Nothing proposed or waiting,
+  no DM-screen content and no rulebook text goes there, and a rule's "what happened" note stays
+  out. Messages are edited in place when a rule is edited and deleted when it is removed; they
+  are found again by their first words, so nothing about them is stored and a restart rebuilds the
+  same list, at most 5 edits or deletes a run (the rest next time). A change reaches the channel a
+  few seconds later; the bot also brings every campaign's channel up to date once at start. A
+  channel deleted by hand is made again at the next `/dmbot start`. Its id is not in a backup.
 - Server owners and admins always see every channel (see above).
 
 *Modes.*
@@ -2341,8 +2355,13 @@ transcript, clearly unrelated talk shows as `[1m 22s of off-topic chat skipped]`
   ends. Each line also keeps how long it was said (`duration_ms`). Every AI call has an
   8 s limit (a slow answer keeps the window as game talk, and never holds up the end of a
   session); after 3 failures in a row the filter rests 5 minutes. Consent is checked again
-  right before a window is sent. Lines of two words or fewer are never sent. Not yet held
-  back: the name fixer's word list (lower-case words from every line). The log line
+  right before a window is sent. Lines of two words or fewer are never sent. The name fixer's
+  word list (lower-case words, #1748) follows the same rule: a held line adds its words only
+  once its window is labelled game talk, an off-topic line never does, and a window the filter
+  couldn't judge counts as game talk, as above. A line the DM puts back adds its words then. The trade-off: a held line's words reach
+  the list when its window is labelled, up to one window later, and it is the cleaned words.
+  The list lives in the running session's table (one campaign, one server) and is never saved.
+  The log line
   "Off-topic filter: N calls, … tokens" gives the cost. Replay case:
   docs/test-scripts/off-topic.md.
 - **Put it back (decided 2026-10-08, Supervisor, #677; why: the DM decides).** A game line
@@ -2443,7 +2462,7 @@ the clock and the rest record. Only a DM's line that opens the scene and is foll
 narration's subject or ends the sentence; never "in three days", "for three days", "three days
 ago", a question, a wish, a condition, quoted speech, more than 30 days, or a player's line; the
 same skip twice in five minutes is one. A rested skip leaves no "24 hours without a long rest" note;
-one without rest over 24 hours says it once. Split-party clocks are built (below). **The periodic "where are we" note is built (#1738):** during a session, for a campaign whose clock is set, never in combat, one line on the DM screen ("🕰️ Where we are: afternoon of Day 4 (14:30).", or each group's time while the party is split) when the clock has not been shown or moved for half an hour of real time. A dawn, noon or dusk line, an effect line, a rest, a button or a skip count as shown, so it never repeats what the DM just saw. The DM screen's level governs it (it is a reminder, not a warning): none on Quiet, every 30 minutes on Normal, every 15 on Chatty. The last time is kept in memory per session (a restart just starts the wait again) and players never see it.
+one without rest over 24 hours says it once. Split-party clocks are built (below). **The periodic "where are we" note is built (#1738):** during a session, for a campaign whose clock is set, never in combat, one line on the DM screen ("🕰️ Where we are: Day 4, afternoon (14:30).", day first as on the players' clock, or each group's time while the party is split: "the cellar group, Day 2, night (23:10); the tower group, Day 3, dawn (05:40)." A line too long for one message is cut between groups and ends "+N more") when the clock has not been shown or moved for half an hour of real time. A dawn, noon or dusk line, an effect line (and a timer that ended), a rest, a button or a skip count as shown, so it never repeats what the DM just saw. The DM screen's level governs it (it is a reminder, not a warning): none on Quiet, every 30 minutes on Normal, every 15 on Chatty. The last time is kept in memory per session (a restart just starts the wait again) and players never see it.
 
 *Built, part 2: timed effects the DM starts (2026-10-10, #998):* `game_effects` (migration 0042): per
 campaign, own server scope, deleted with the campaign, in backups (`EffectsSection`, validated),

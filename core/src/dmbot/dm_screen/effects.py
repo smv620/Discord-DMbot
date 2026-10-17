@@ -19,7 +19,7 @@ import discord
 from dmbot.campaigns import Campaign
 from dmbot.campaigns.models import CampaignError
 from dmbot.rules import index
-from dmbot.timebot import durations
+from dmbot.timebot import durations, where_are_we
 from dmbot.timebot.effects import EXTRA_MINUTES, Effect
 
 log = logging.getLogger(__name__)
@@ -173,6 +173,8 @@ async def announce_due(client: Any, campaign: Campaign, minute: int) -> None:
         if posted is None:  # it was not said: say it next time rather than lose it
             with contextlib.suppress(Exception):
                 await store.untell(campaign.guild_id, campaign.id, effect.number)
+        else:  # a line about the clock on the DM screen: no "where are we" right after it (#1738)
+            where_are_we.shown(client, campaign)
 
 
 class EffectButton(
