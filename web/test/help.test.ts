@@ -10,7 +10,7 @@ import { beforeAll, describe, expect, it } from "vitest";
 import { parsePage } from "./dom";
 
 import { entries, held } from "../src/content/whats-new";
-import { SHARED_STORY_LIVE, sharedStorySteps, STANDING_LIVE, standingSteps, HOMEBREW_KINDS_LIVE, homebrewKindSteps, STORY_THREADS_LIVE, storyThreadSteps, DM_BOT_CHANNEL_LIVE, dmBotChannelSteps, settingsOnDmScreenSteps, HOMEBREW_LINKS_LIVE, SECRET_CLUES_LIVE, accountSteps, dmSteps, homebrewLinkSteps, secretClueSteps, emailSteps, recapSteps, quickAnswers, quickAnswersHeading, gettingHelp, playerSteps } from "../src/content/help";
+import { DEEDS_LIVE, deedSteps, WHERE_ARE_WE_LIVE, whereAreWeSteps, SHARED_STORY_LIVE, sharedStorySteps, STANDING_LIVE, standingSteps, HOMEBREW_KINDS_LIVE, homebrewKindSteps, STORY_THREADS_LIVE, storyThreadSteps, DM_BOT_CHANNEL_LIVE, dmBotChannelSteps, settingsOnDmScreenSteps, HOMEBREW_LINKS_LIVE, SECRET_CLUES_LIVE, accountSteps, dmSteps, homebrewLinkSteps, secretClueSteps, emailSteps, recapSteps, quickAnswers, quickAnswersHeading, gettingHelp, playerSteps } from "../src/content/help";
 import Help from "../src/pages/help.astro";
 
 const botDir = fileURLToPath(new URL("../../core/src/dmbot/", import.meta.url));
@@ -259,6 +259,26 @@ describe("Help: the website's read-only pages (#1588)", () => {
     expect(words).toContain("With Guide me on, press 🧭 What's next?");
     expect(words).toContain("It never decides what happens.");
     expect(words).toContain("then Take off. Made a mistake? Press Undo that.");
+  });
+
+  it("holds the deeds and where-are-we steps with their held What's new entries (#1754)", () => {
+    const heldTitles = held.map((h) => h.title);
+    expect(heldTitles.includes("Record what your players did")).toBe(!DEEDS_LIVE);
+    expect(heldTitles.includes("A quiet reminder of the game time")).toBe(!WHERE_ARE_WE_LIVE);
+    const shown = dmSteps.map((x) => x.text).join(" ");
+    expect(shown.includes("⚔️ Record a deed")).toBe(DEEDS_LIVE);
+    expect(shown.includes("looked at the game clock for half an hour")).toBe(WHERE_ARE_WE_LIVE);
+    const deeds = deedSteps.map((x) => x.text).join(" ");
+    expect(deeds).toContain("Your own Standing words always win. Players never see deeds.");
+    expect(deeds).toContain("counts for less after ten sessions");
+    const clock = whereAreWeSteps.map((x) => x.text).join(" ");
+    expect(clock).toContain("Players never see it.");
+    expect(clock).toContain("never on Quiet");
+    // The note's exact line is not quoted: its wording is still being settled (#1745).
+    expect(clock).not.toContain("Where we are");
+    const guide = sharedStorySteps.map((x) => x.text).join(" ");
+    expect(guide).toContain("Hey DMbot, what's next?");
+    expect(guide).toContain("never written into a transcript");
   });
 
   it("finds Settings, splits the party and deletes a campaign in plain words (#1659)", () => {

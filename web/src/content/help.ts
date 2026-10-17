@@ -278,7 +278,7 @@ export const sharedStorySteps: Step[] = [
     ],
   },
   {
-    text: "With Guide me on, press 🧭 What's next? on the Shared story card, or on the note before a session. If DMbot says it hasn't read your book, press Read it now first. DMbot shows you privately which chapter your table is probably in, what else the book has in that chapter, and the book's next chapter, or says This is the book's last chapter. It guesses from the people and places your table named in the last two sessions that you matched to your adventure. If none are matched yet, it says it has no guess. Not right? Use the Pick my chapter… menu under the answer, and DMbot uses yours. A long book has ◀ Earlier chapters and Later chapters ▶, and with several files DMbot asks which one first. Use DMbot's guess goes back, and ↩ Undo that undoes your pick. Only the DM can use it; everyone else is told so. It uses no AI and only says what your book says. It never decides what happens.",
+    text: "With Guide me on, press 🧭 What's next? on the Shared story card, or on the note before a session. If DMbot says it hasn't read your book, press Read it now first. DMbot shows you privately which chapter your table is probably in, what else the book has in that chapter, and the book's next chapter, or says This is the book's last chapter. It guesses from the people and places your table named in the last two sessions that you matched to your adventure. If none are matched yet, it says it has no guess. Not right? Use the Pick my chapter… menu under the answer, and DMbot uses yours. A long book has ◀ Earlier chapters and Later chapters ▶, and with several files DMbot asks which one first. Use DMbot's guess goes back, and ↩ Undo that undoes your pick. You can also ask out loud or by typing in your private chat with DMbot: \"Hey DMbot, what's next?\". The answer comes to you alone and is never written into a transcript. Only the DM can use it; everyone else is told so. It uses no AI and only says what your book says. It never decides what happens.",
     names: [
       { name: "What's next?", file: "ui/guide.py" },
       { name: "Read it now", file: "dm_screen/adventure_card.py" },
@@ -292,6 +292,36 @@ export const sharedStorySteps: Step[] = [
   },
   {
     text: "A backup of the campaign keeps only your adventure's name, not its text or what DMbot read, because anyone in your server can download a backup. After you restore, give DMbot the file again.",
+  },
+];
+
+// Deeds (#1732, #1754) and the "where are we" note (#1738, #1754) are built, but each stays out of
+// Help until its held What's new entry ("Record what your players did", "A quiet reminder of the
+// game time") has been seen working on the test server. Set a switch to true in the same change that
+// moves its entry out of `held`; a test ties each to it.
+export const DEEDS_LIVE = false;
+
+export const deedSteps: Step[] = [
+  {
+    text: "To note something the party did, open a player character's or the party's name card and press ⚔️ Record a deed (only you, the game master, can). Say what happened, pick up to five characters, groups or places it mattered to, then say how it landed: Helped them, Pleased them, Annoyed them or Hurt them. Press ✅ Record it, or No, cancel. ↩ Undo that takes it back. The deed shows on the Standing screen as a reason, like \"(session 4, helped)\", and counts for less after ten sessions. Your own Standing words always win. Players never see deeds.",
+    names: [
+      { name: "⚔️ Record a deed", file: "ui/deeds.py" },
+      { name: "Helped them", file: "memory/standing.py" },
+      { name: "Pleased them", file: "memory/standing.py" },
+      { name: "Annoyed them", file: "memory/standing.py" },
+      { name: "Hurt them", file: "memory/standing.py" },
+      { name: "✅ Record it", file: "ui/deeds.py" },
+      { name: "No, cancel", file: "ui/deeds.py" },
+      { name: "↩ Undo that", file: "ui/deeds.py" },
+    ],
+  },
+];
+
+export const WHERE_ARE_WE_LIVE = false;
+
+export const whereAreWeSteps: Step[] = [
+  {
+    text: "If nobody has looked at the game clock for half an hour during a session, DMbot posts a quiet line on your DM screen saying where the game is. It does this after 15 minutes if your DM screen is on Chatty, and never on Quiet. It stays silent during a fight, and with a split party it names each group. Players never see it.",
   },
 ];
 
@@ -341,6 +371,7 @@ export const dmSteps: Step[] = [
   {
     text: "The clock tells you on your DM screen when dawn, noon and dusk go by. It also says so once when 24 game hours pass without a long rest (an optional rule). It only tells you. You decide what it means for the story.",
   },
+  ...(WHERE_ARE_WE_LIVE ? whereAreWeSteps : []),
   {
     text: "To time a spell or effect, press Start a timer on the clock message, or press Time it on a spell's rules card. The clock lists up to five timers, soonest first, and tells you once when one has probably ended. DMbot never starts a timer by itself.",
     names: [
@@ -503,6 +534,7 @@ export const dmSteps: Step[] = [
   ...(STORY_THREADS_LIVE ? storyThreadSteps : []),
   ...(SHARED_STORY_LIVE ? sharedStorySteps : []),
   ...(STANDING_LIVE ? standingSteps : []),
+  ...(DEEDS_LIVE ? deedSteps : []),
   ...(HOMEBREW_KINDS_LIVE ? homebrewKindSteps : []),
   ...(SECRET_CLUES_LIVE ? secretClueSteps : []),
   {
