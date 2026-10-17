@@ -26,6 +26,10 @@ from dmbot.transcription.config import (
 SIDEBAR_RECALL_BUDGET = 1000
 
 
+DEFAULT_POOL_MAX = 10  # today's value: nothing changes for a deployment that sets nothing
+MAX_POOL_MAX = 100  # a typo like 1000 would eat Postgres' connection limit
+
+
 class ConfigError(ValueError):
     pass
 
@@ -41,6 +45,9 @@ class Settings:
     ears_port: int = 8765
     dev_guild_id: int | None = None
     database_url: str = field(default="", repr=False)  # contains the password
+    # The most connections this process holds open to Postgres (#77). Ten is what DMbot always
+    # used; with many shard pods, about 4 each keeps them under Postgres' own limit.
+    database_pool_max: int = 10
     data_dir: Path = Path("data")
     transcription: TranscriptionSettings = field(default_factory=TranscriptionSettings)
     shards: ShardSettings = field(default_factory=ShardSettings)
@@ -122,6 +129,10 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
             f"Missing required settings: {', '.join(missing)}. "
             "Copy .env.example to .env and fill them in."
         )
+
+    pool_raw = get("DATABASE_POOL_MAX") or str(DEFAULT_POOL_MAX)
+    if not (pool_raw.isascii() and pool_raw.isdigit()) or not 1 <= int(pool_raw) <= MAX_POOL_MAX:
+        raise ConfigError(f"DATABASE_POOL_MAX must be a number from 1 to {MAX_POOL_MAX}.")
 
     port_raw = get("EARS_WS_PORT") or "8765"
     if not port_raw.isdigit():
@@ -275,6 +286,7 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
         ears_port=int(port_raw),
         dev_guild_id=int(guild_raw) if guild_raw else None,
         database_url=get("DATABASE_URL"),
+        database_pool_max=int(pool_raw),
         data_dir=Path(get("DMBOT_DATA_DIR") or "data"),
         transcription=transcription,
         shards=shards,
