@@ -12,4 +12,5 @@ export const publicPaths = [
   "/legal/terms",
   "/legal/privacy",
   "/legal/refunds",
+  "/credits",
 ] as const;
