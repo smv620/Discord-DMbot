@@ -7,7 +7,7 @@ import { fileURLToPath } from "node:url";
 
 import { describe, expect, it } from "vitest";
 
-import { buttonPhrases, discordControls, hiddenBotLabels, labelProblems, labelsInPython, siteButtons } from "../scripts/labels.mjs";
+import { buttonPhrases, discordControls, hiddenBotLabels, labelProblems, labelsInPython, siteButtons, unmark } from "../scripts/labels.mjs";
 
 const botDir = fileURLToPath(new URL("../../core/src/dmbot/", import.meta.url));
 const contentDir = fileURLToPath(new URL("../src/content/", import.meta.url));
@@ -29,6 +29,8 @@ describe("button labels on the site", () => {
     expect(labels.size).toBeGreaterThan(200);
     expect(labels).toContain("Yes, stop recording me");
     expect(labels).toContain("Stop recording me");
+    // An f-string label, worked out from MIN_AGE in the same file.
+    expect(labels).toContain("I'm 16 or older, record me");
   });
 
   it("every label in the hidden list is still in the file it names", () => {
@@ -48,6 +50,22 @@ describe("button labels on the site", () => {
       expect(problems).toEqual([]);
     });
   }
+
+  // The owner's checks name buttons in bold and in prose; marks are stripped, then the same reader runs.
+  it("docs/OWNER_CHECKS.md presses only real buttons", () => {
+    const text = unmark(readFileSync(fileURLToPath(new URL("../../docs/OWNER_CHECKS.md", import.meta.url)), "utf8"));
+    const problems = labelProblems(buttonPhrases(text), labels, allowed).map(
+      (p) => `OWNER_CHECKS.md: "${p.phrase}" is not a DMbot button${p.closest ? `; the closest real one is "${p.closest}"` : ""}`,
+    );
+    expect(problems).toEqual([]);
+    expect(buttonPhrases(text).length).toBeGreaterThan(40);
+  });
+
+  it("sees a bold button that does not exist, as #1905's first head had", () => {
+    const old = "in the private message DMbot sends you, press **Yes**, then press **Helped**.";
+    expect(labelProblems(buttonPhrases(unmark(old)), labels, allowed).map((p) => p.phrase)).toEqual(["Yes", "Helped"]);
+    expect(labelsInPython('MIN_AGE = 16  # why\nCONSENT_LABEL = f"I\'m {MIN_AGE} or older"')).toEqual(["I'm 16 or older"]);
+  });
 
   it("names the page, the phrase and the closest real label for the old 'then Yes' wording", () => {
     const old = "press ⚙️ Menu in the private message, then Stop recording me, then Yes.";

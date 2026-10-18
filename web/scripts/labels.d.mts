@@ -4,6 +4,7 @@ export interface Phrase {
 }
 export function labelsInPython(text: string): string[];
 export function plain(s: string): string;
+export function unmark(text: string): string;
 export function buttonPhrases(text: string): Phrase[];
 export function closestLabel(phrase: string, labels: Iterable<string>): string;
 export function labelProblems(items: Phrase[], labels: Iterable<string>, allowed?: string[]): (Phrase & { closest: string })[];
