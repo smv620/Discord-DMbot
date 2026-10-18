@@ -900,8 +900,9 @@ export const snagsHeading = "If something doesn't work";
 
 const whatsOnSnag: Snag = {
   question: "Something on What's new isn't there for me.",
-  text: "Press ℹ️ What's switched on in ⚙️ Settings to see what is on. A new thing can be announced before it is switched on. Whoever runs your DMbot turns it on.",
+  text: "Press ℹ️ What's switched on in ⚙️ Settings to see what is on for your table. If something you read about is still missing a day later, ask us in Support.",
   names: [{ name: "What's switched on", file: "features.py" }],
+  link: { text: "Getting help", href: "#getting-help" },
 };
 
 export const snags: Snag[] = [
