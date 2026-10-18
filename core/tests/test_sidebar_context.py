@@ -443,6 +443,33 @@ class HouseRulesChosen(unittest.TestCase):
         self.assertEqual(len(context.relevant_house_rules(rules, "fireball", hits)), 5)
 
 
+class Shortening(unittest.TestCase):
+    """A long rules entry is cut at a sentence end and says so (#1910)."""
+
+    def test_a_text_that_fits_is_kept_whole(self) -> None:
+        self.assertEqual(context.shorten("One.  Two.", 50), "One. Two.")
+
+    def test_a_long_text_is_cut_at_the_end_of_a_sentence_and_marked(self) -> None:
+        text = "First sentence here. " + "Second sentence goes on and on. " * 10
+        cut = context.shorten(text, 120)
+        self.assertLessEqual(len(cut), 120)
+        self.assertTrue(cut.endswith("sentence goes on and on." + context.CUT_MARK), cut)
+
+    def test_a_text_with_no_sentence_end_in_its_last_half_is_cut_at_the_limit(self) -> None:
+        cut = context.shorten("Short. " + "word " * 100, 60)
+        self.assertEqual(len(cut), 60)
+        self.assertTrue(cut.endswith(context.CUT_MARK))
+
+    def test_every_class_feature_but_a_few_fits_whole(self) -> None:
+        features = [e for e in srd().entries if e.kind == "feature"]
+        long = [
+            e.name for e in features if len(" ".join(e.text.split())) > context.FEATURE_TEXT_MAX
+        ]
+        self.assertLess(
+            len(long), 40, long
+        )  # a table or list that grows past this should be looked at
+
+
 class TheScene(unittest.TestCase):
     def test_only_the_tail_is_sent(self) -> None:
         built = context.build(
