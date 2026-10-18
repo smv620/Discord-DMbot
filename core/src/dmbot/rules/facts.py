@@ -71,7 +71,8 @@ def weapon_line(entry: Entry) -> str:
     parts = [str(d.get("category", "")), f"{d.get('damage', '')} {d.get('damage_type', '')}"]
     if d.get("properties"):
         parts.append(str(d["properties"]))
-    parts.append(f"mastery {d.get('mastery', '')}")
+    if d.get("mastery"):  # (the SRD 5.1 has none)
+        parts.append(f"mastery {d['mastery']}")
     return ", ".join(p.strip() for p in parts if p.strip())
 
 

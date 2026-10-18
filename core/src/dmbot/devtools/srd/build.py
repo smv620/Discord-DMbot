@@ -29,6 +29,7 @@ from dmbot.devtools.srd import (
     classes,
     classes51,
     equipment,
+    equipment51,
     gear,
     items,
     items51,
@@ -68,6 +69,13 @@ BACKGROUNDS_HEADING_51 = "Backgrounds"
 BACKGROUND_51 = "Acolyte"  # the one background the SRD 5.1 has
 AFTER_BACKGROUND_HEADING_51 = "Suggested Characteristics"
 FEAT_51 = "Grappler"  # the one feat the SRD 5.1 has
+BACKGROUND_PAGES_51 = 60  # the Backgrounds section, before the Equipment chapter
+EQUIPMENT_HEADING_51 = "Equipment"  # the chapter's first page; it ends on the page with Trade Goods
+TRADE_GOODS_HEADING_51 = "Trade Goods"
+MOUNTS_TITLE_51 = "Mounts and Vehicles"
+HALF = 300.0  # x: the right-hand column of a page starts beyond this
+# y: under this, the gear table's page has the Container Capacity table (left out)
+CONTAINERS_BELOW = 185.0
 ITEMS_HEADING_51 = "Magic Items"
 AFTER_ITEMS_HEADING_51 = (
     "Monsters"  # only bounds the pages read; the list itself ends at the next line
@@ -351,7 +359,9 @@ def equipment_lines(
 def tool_entry(tool: gear.Tool) -> dict[str, Any]:
     """A tool as the equipment file holds it: its fields, and its Utilize, Craft and Variants
     lines as printed (the ability, weight and cost are in the fields)."""
-    lines = [f"Utilize: {tool.utilize}"]
+    lines = [tool.text] if tool.text else []
+    if tool.utilize:
+        lines.append(f"Utilize: {tool.utilize}")
     if tool.craft:
         lines.append(f"Craft: {tool.craft}")
     if tool.variants:
@@ -364,7 +374,8 @@ def gear_entry(entry: gear.Gear) -> dict[str, Any]:
     out as words (it has none of its own); a gear entry has its printed words."""
     fields = dict(entry.extra)
     if entry.group == "Mount":
-        text = f"Carrying capacity {fields['capacity']}"
+        speed = f"Speed {fields['speed'].removesuffix('.')}. " if "speed" in fields else ""
+        text = f"{speed}Carrying capacity {fields['capacity']}"
     elif entry.group == "Vehicle" and "speed" in fields:
         text = _ship_words(fields)
     elif entry.group == "Vehicle":
@@ -378,6 +389,8 @@ def gear_entry(entry: gear.Gear) -> dict[str, Any]:
 def _ship_words(fields: dict[str, str]) -> str:
     """A ship's row as words; a cell with a dash (it has none) is left out."""
     parts = [f"Speed {fields['speed']}."]
+    if "ac" not in fields:  # the SRD 5.1 gives a ship its speed and price only
+        return parts[0]
     for key, label in (("crew", "Crew"), ("passengers", "Passengers")):
         if fields[key] != "—":
             parts.append(f"{label} {fields[key]}.")
@@ -396,15 +409,19 @@ def _weight_and_cost(entry: Any) -> str:
     return ", ".join(p for p in parts if p) + "."
 
 
-def equipment_entry(kind: str, entry: Any) -> dict[str, Any]:
+def equipment_entry(kind: str, entry: Any, note: str = "") -> dict[str, Any]:
     """A weapon, an armor or a weapon property as the equipment file holds it: its kind, name and
-    the fields of its table row, then the row read out as words, and its page."""
+    the fields of its table row, then the row read out as words (and the `note` the SRD 5.1 has on
+    the Lance and the Net), and its page. The SRD 5.1 has no weapon mastery, so it says none."""
     if kind == "weapon":  # the number a DM wants first; the heading already says the category
-        parts = [f"{entry.damage} {entry.damage_type}."]
+        parts = [f"{entry.damage} {entry.damage_type}."] if entry.damage else []
         if entry.properties:
             parts.append(f"Properties: {entry.properties}.")
-        parts.append(f"Mastery: {entry.mastery}.")
+        if entry.mastery:
+            parts.append(f"Mastery: {entry.mastery}.")
         parts.append(_weight_and_cost(entry))
+        if note:
+            parts.append(note)
         return {"kind": kind, **asdict(entry), "text": " ".join(parts)}
     if kind == "armor":
         parts = [f"AC {entry.ac}."]
@@ -413,7 +430,7 @@ def equipment_entry(kind: str, entry: Any) -> dict[str, Any]:
         if entry.stealth != "—":
             parts.append(f"{entry.stealth} on Stealth.")
         parts.append(_weight_and_cost(entry))
-        if entry.category == "Shield":
+        if entry.category == "Shield" and entry.don_doff.startswith("Utilize"):
             parts.append("Use the Utilize action to don or doff.")
         else:
             parts.append(f"Takes {entry.don_doff.lower()}.")
@@ -544,6 +561,70 @@ def origin_files_51(
     }
 
 
+def equipment_files_51(
+    pages: Sequence[Sequence[Line]], header: Any, vocab: parse51.Vocabulary
+) -> dict[str, dict[str, Any]]:
+    """The 5.1's Equipment chapter as `equipment.json`, in the 5.2.1 file's kinds and shapes. The
+    tables are read by page (their right-hand cells come after the page's left column in reading
+    order), the paragraphs by the titles around them."""
+    first = first_page_of(pages, EQUIPMENT_HEADING_51, after=BACKGROUND_PAGES_51)
+    last = page_with_title(pages, TRADE_GOODS_HEADING_51, after=first)
+    lines = lines_between(pages, first, last + 1)
+
+    def at(title: str, start: int = 0) -> int:
+        return title_position(lines, title, start)
+
+    def table(number: int, keep: Any = None) -> list[Line]:
+        return [
+            ln
+            for ln in pages[number - 1]
+            if ln.first_font.startswith("Calibri") and (keep is None or keep(ln))
+        ]
+
+    def page(title: str) -> int:
+        return page_with_title(pages, title, after=first - 1)
+
+    armor_at, props_at = page("Light Armor"), page("Weapon Properties")
+    packs_at, mounts_at = page("Equipment Packs"), page(MOUNTS_TITLE_51)
+    special_at = at("Special Weapons")
+    properties = equipment51.parse_properties(
+        lines[at("Weapon Properties") : at("Improvised Weapons")], vocab
+    )
+    notes = equipment51.parse_special_weapons(
+        lines[special_at : at("Adventuring Gear", special_at)], vocab
+    )
+    weapons = equipment51.parse_weapons(
+        equipment51.rows_of(table(props_at + 1) + table(props_at + 2))
+    )
+    armors = equipment51.parse_armor(equipment51.rows_of(table(armor_at) + table(armor_at + 1)))
+    gear_rows = equipment51.rows_of(
+        table(packs_at - 1, lambda ln: not (ln.x >= HALF and ln.y <= CONTAINERS_BELOW)),
+        columns=True,
+    )
+    gear_words = lines[at("Adventuring Gear", special_at) : at("Equipment Packs")]
+    gear = equipment51.parse_gear(
+        gear_rows, [ln for ln in gear_words if not ln.first_font.startswith("Calibri")], vocab
+    )
+    tool_rows = equipment51.rows_of(table(packs_at, lambda ln: ln.x >= HALF), columns=True)
+    tools = equipment51.parse_tools(
+        [r for r in tool_rows if not r.text.startswith("*")],
+        lines[at("Tools", at("Equipment Packs")) : at(MOUNTS_TITLE_51)],
+        vocab,
+    )
+    mount_rows = equipment51.rows_of(
+        table(mounts_at) + table(mounts_at + 1, lambda ln: ln.x < HALF), columns=True
+    )
+    mounts = equipment51.parse_mounts(mount_rows)
+    entries = [
+        *(equipment_entry("weapon", w, notes.get(w.name, "")) for w in weapons),
+        *(equipment_entry("armor", a) for a in armors),
+        *(equipment_entry("rule", p) for p in properties),
+        *(tool_entry(t) for t in tools),
+        *(gear_entry(g) for g in (*gear, *mounts)),
+    ]
+    return {"equipment.json": {**header("equipment", EQUIPMENT_SECTION), "entries": entries}}
+
+
 def race_entry(race: origins51.Race) -> dict[str, Any]:
     """A race as the origins file holds it: a `species`, in the 5.2.1's shape (the SRD 5.1 does
     not say a race's creature type, so that is empty)."""
@@ -624,6 +705,7 @@ def build_files_51(
         }
     if origins_pages:
         files.update(origin_files_51(pages, header, vocab))
+        files.update(equipment_files_51(pages, header, vocab))
     if monster_input is not None:
         monster_document, monster_known, monster_pairs = monster_input
         everything = [line for page in pages for line in page]

@@ -123,6 +123,16 @@ def gear_keys(name: str) -> list[str]:
     return [k for k in dict.fromkeys(normalize(n) for n in found) if k and k != own]
 
 
+def equipment_keys(entry: Entry) -> list[str]:
+    """The other names a weapon, an armor, a piece of gear or a tool is found by (#1931): see
+    `gear_keys`; an armor is also found with "armor" after its name, because the SRD 5.1 calls it
+    "Plate" and the 5.2.1 "Plate Armor"."""
+    keys = gear_keys(entry.name)
+    if entry.kind == ARMOR and "armor" not in entry.name.lower() and entry.name != "Shield":
+        keys.append(normalize(f"{entry.name} armor"))
+    return [k for k in dict.fromkeys(keys) if k != normalize(entry.name)]
+
+
 def item_keys(name: str) -> list[str]:
     """The other names a magic item is found by: without its bracket ("Stone of Good Luck"), the
     bracket's own word ("Luckstone"), for a name that gives its bonuses ("Wand of the War Mage,
@@ -235,8 +245,8 @@ class Index:
             elif entry.kind == ITEM:
                 for key in item_keys(entry.name):
                     self._add(entry.edition, key, entry)
-            elif entry.kind in (GEAR, TOOL):
-                for key in gear_keys(entry.name):
+            elif entry.kind in (GEAR, TOOL, WEAPON, ARMOR):
+                for key in equipment_keys(entry):
                     self._add(entry.edition, key, entry)
         for older, current in alias_pairs:
             found = self._by_edition.get(alias_edition, {}).get(normalize(current))

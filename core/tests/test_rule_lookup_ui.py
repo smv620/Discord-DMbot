@@ -881,6 +881,24 @@ class FeatureLookup(LookupTest):
         self.assertNotIn("(feat: )", grappler)
         self.assertIn("Strength 13 or higher", grappler)
 
+    async def test_2014_equipment_is_found_tagged_and_a_2014_card_has_no_mastery(self) -> None:
+        net = self.sent(await self.command("Net"))[0]
+        self.assertIn("📖 **Net** (weapon: Martial Ranged)", net)
+        self.assertIn("SRD 5.1, Equipment, p. 66 [Legacy 2014]", net)
+        self.assertIn("restrained", net)
+        abacus = self.sent(await self.command("Abacus"))[0]
+        self.assertIn("(gear: 2 GP)", abacus)
+        self.assertIn("[Legacy 2014]", abacus)
+        sword = self.sent(await self.command("Longsword"))[0]
+        self.assertIn("SRD 5.2.1", sword)  # a 2024 campaign: the 2024 weapon alone
+        self.campaigns[C1] = campaign(target="2014", fallback="2024")
+        old = self.sent(await self.command("Longsword"))[0]
+        self.assertIn("SRD 5.1, Equipment, p. 66 [Legacy 2014]", old)
+        self.assertNotIn("Mastery", old)
+        plate = self.sent(await self.command("plate armor"))[0]
+        self.assertIn("**Plate** (armor: Heavy)", plate)
+        self.assertIn("AC 18. Needs Strength 15.", plate)
+
     async def test_an_item_is_found_by_its_other_name_and_a_spell_of_the_same_name_wins(
         self,
     ) -> None:
