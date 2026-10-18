@@ -60,9 +60,9 @@ from dmbot.memory.name_list import (
     template,
 )
 from dmbot.memory.store import placeholder_name
+from dmbot.mentions import NO_PINGS
 from dmbot.ui import logic
 from dmbot.ui.dmbot_commands import (
-    NO_PINGS,
     _answer_first,
     _bot,
     _Button,

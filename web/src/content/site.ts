@@ -6,6 +6,7 @@ export const publicPaths = [
   "/pricing",
   "/install",
   "/help",
+  "/players",
   "/whats-new",
   "/hello",
   "/legal/terms",

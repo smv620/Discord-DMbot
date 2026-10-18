@@ -31,7 +31,6 @@ from dmbot.campaigns.models import HANDOVER_DAYS, HandoverOffer
 from dmbot.dm_screen.handover import (
     ACCEPTED,
     DECLINED,
-    NO_PINGS,
     OFFER_EXPIRED,
     SCREEN_ACCEPTED,
     TOLD_ACCEPTED,
@@ -43,6 +42,7 @@ from dmbot.dm_screen.handover import (
     md,
 )
 from dmbot.logs import log_context
+from dmbot.mentions import NO_PINGS
 
 log = logging.getLogger(__name__)
 

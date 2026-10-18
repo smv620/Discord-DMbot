@@ -27,6 +27,7 @@ from dmbot.dm_screen.handover import (
     TakeOnButton,
     WithdrawOfferButton,
 )
+from dmbot.mentions import NO_PINGS
 from dmbot.ui.dmbot_commands import VoicePicker
 
 GUILD, OTHER_GUILD, OWNER, BUYER, OTHER = 111, 222, 7, 9, 8
@@ -222,7 +223,7 @@ class Offering(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(
             [type(i) for i in sent.kwargs["view"].children], [AcceptOfferButton, DeclineOfferButton]
         )
-        self.assertEqual(sent.kwargs["allowed_mentions"], handover.NO_PINGS)
+        self.assertEqual(sent.kwargs["allowed_mentions"], NO_PINGS)
         done = it.edit_original_response.await_args.kwargs  # the picker itself becomes this
         self.assertTrue(done["content"].startswith("Offer sent to **Mirelle**."))
         self.assertIsNone(done["view"])
@@ -302,7 +303,7 @@ class Offering(unittest.IsolatedAsyncioTestCase):
         picker.message = MagicMock(edit=AsyncMock())
         await picker.on_timeout()
         picker.message.edit.assert_awaited_once_with(
-            content=handover.MENU_TIMED_OUT, view=None, allowed_mentions=handover.NO_PINGS
+            content=handover.MENU_TIMED_OUT, view=None, allowed_mentions=NO_PINGS
         )
 
     async def test_a_message_that_cant_be_edited_is_said_anew(self) -> None:
