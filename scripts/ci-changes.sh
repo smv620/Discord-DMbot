@@ -31,6 +31,8 @@ ears=false
 web=false
 while IFS= read -r f; do
   case "$f" in
+    # the website's button check reads the bot's labels from core's Python (web/test/button-labels.test.ts)
+    core/src/dmbot/*.py) core=true web=true ;;
     core/*) core=true ;;
     # core's tests read the plans the website shows (core/tests/test_plans.py)
     web/src/content/plans.json) core=true web=true ;;
