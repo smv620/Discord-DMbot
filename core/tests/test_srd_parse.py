@@ -485,7 +485,34 @@ class Building(unittest.TestCase):
             say("Level 1: Rage", TITLE, 20),
             say("You can enter a Rage.", BODY, 20),
         ]
-        origins = [say("Character Origins", TITLE, 21)]
+        origins = [
+            say("Character Origins", TITLE, 21),
+            say("Sage", TITLE, 21),
+            say("Ability Scores: Constitution, Intelligence, Wisdom", TITLE, 21),
+            say("Feat: Alert (see “Feats”)", TITLE, 21),
+            say("Skill Proficiencies: Arcana and History", TITLE, 21),
+            say("Tool Proficiency: Calligrapher’s Supplies", TITLE, 21),
+            say("Equipment: Choose A or B: (A) Robe; or (B) 50 GP", TITLE, 21),
+            say("Goliath", TITLE, 21),
+            say("Creature Type: Humanoid", TITLE, 21),
+            say("Size: Medium (about 7–8 feet tall)", TITLE, 21),
+            say("Speed: 35 feet", TITLE, 21),
+            say("As a Goliath, you have these special traits.", BODY, 21),
+            # the three tables the chapter's species have (named in origins.SPECIES_TABLES)
+            *[
+                line
+                for table in ("Draconic Ancestors", "Elven Lineages", "Fiendish Legacies")
+                for line in (say(table, TITLE, 21), say("Some cells", "GillSans", 21))
+            ],
+        ]
+        feats = [
+            say("Feats", TITLE, 21),
+            say("Origin Feats", TITLE, 21),
+            say("Alert", TITLE, 21),
+            say("Origin Feat", ITALIC, 21),
+            say("You gain the following benefits.", BODY, 21),
+        ]
+        equipment = [say("Equipment", TITLE, 21)]
         items = [
             say("Magic Items A–Z", TITLE, 22),
             say("Bag of Holding", TITLE, 22),
@@ -495,8 +522,8 @@ class Building(unittest.TestCase):
         monsters = [say("Monsters", TITLE, 23)]
         creatures = [say("Monsters A–Z", TITLE, 24), *goblin()]
         return [
-            contents, *[[]] * 9, spells, glossary, toolbox, classes, origins, items, monsters,
-            creatures,
+            contents, *[[]] * 9, spells, glossary, toolbox, classes, origins, feats, equipment,
+            items, monsters, creatures,
         ]  # fmt: skip
 
     def document(self) -> dict[str, Any]:
@@ -511,6 +538,8 @@ class Building(unittest.TestCase):
                 "conditions.json",
                 "rules.json",
                 "features.json",
+                "feats.json",
+                "origins.json",
                 "items.json",
                 "monsters.json",
             },
@@ -545,6 +574,27 @@ class Building(unittest.TestCase):
                 }
             ],
         )
+        feats = files["feats.json"]
+        self.assertEqual((feats["kind"], feats["section"]), ("feat", "Feats"))
+        self.assertEqual(
+            feats["entries"],
+            [
+                {
+                    "name": "Alert",
+                    "category": "Origin",
+                    "prerequisite": "",
+                    "text": "You gain the following benefits.",
+                    "page": 21,
+                }
+            ],
+        )
+        entries = files["origins.json"]["entries"]  # two kinds in one file
+        self.assertEqual(
+            [(e["kind"], e["name"]) for e in entries],
+            [("species", "Goliath"), ("background", "Sage")],
+        )
+        self.assertEqual(entries[0]["speed"], "35 feet")
+        self.assertEqual(entries[1]["feat"], "Alert")
         magic = files["items.json"]
         self.assertEqual((magic["kind"], magic["section"]), ("item", "Magic Items"))
         self.assertEqual(

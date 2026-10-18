@@ -19,13 +19,14 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
+import re
 import time
 from functools import partial
 
 import discord
 from discord import app_commands
 
-from dmbot.campaigns import Campaign
+from dmbot.campaigns import FALLBACK_NONE, Campaign
 from dmbot.campaigns.models import DEFAULT_FALLBACK, DEFAULT_TARGET
 from dmbot.logs import set_log_context
 from dmbot.rules import index
@@ -128,18 +129,41 @@ async def _homebrew(
         return None
 
 
+_KIND_SUFFIX = re.compile(r"^(?P<name>.+) \((?P<kind>feat|species|background|creature)\)$")
+_SUFFIX_KINDS = {"creature": "monster"}  # how the list says a kind, where it differs
+
+
+def _named_kind(srd: index.Index, typed: str, campaign: Campaign) -> index.Hit | None:
+    """ "Acolyte (background)" or "Acolyte (creature)", as the name list words a name that a
+    creature shares with a feat, species or background: the one it says, not the other."""
+    match = _KIND_SUFFIX.match(typed)
+    if match is None:
+        return None
+    return srd.lookup(
+        match["name"],
+        campaign.target_ruleset,
+        campaign.fallback_ruleset,
+        kind=_SUFFIX_KINDS.get(match["kind"], match["kind"]),
+    )
+
+
 def _asked_for(srd: index.Index, typed: str, target: str, fallback: str) -> index.Hit | None:
-    """The glossary entry, else the class feature, else the magic item, with this name. A
-    feature several classes share ("evasion") gives the first class's; typing the class first
-    ("rogue evasion") picks that class, and a level after it ("barbarian improved brutal strike
-    17") picks the one of that level: which is how the name list words them."""
+    """The glossary entry, else the class feature, the magic item, the feat, the species or the
+    background, with this name. A feature several classes share ("evasion") gives the first
+    class's; typing the class first ("rogue evasion") picks that class, and a level after it
+    ("barbarian improved brutal strike 17") picks the one of that level: which is how the name
+    list words them."""
     hit = srd.lookup(typed, target, fallback, kind=index.RULE)
     if hit is not None:
         return hit
     found = _features(srd, typed, target, fallback)
     if found:
         return found[0]
-    return srd.lookup(typed, target, fallback, kind=index.ITEM)
+    for kind in (index.ITEM, *index.ORIGIN_KINDS):
+        hit = srd.lookup(typed, target, fallback, kind=kind)
+        if hit is not None:
+            return hit
+    return None
 
 
 def _features(srd: index.Index, typed: str, target: str, fallback: str) -> list[index.Hit]:
@@ -194,7 +218,18 @@ async def look_up(
             return
     rules = await _house_rules(interaction, campaign)
     srd = index.srd()
-    hit = srd.lookup(typed, campaign.target_ruleset, campaign.fallback_ruleset, kind=kind)
+    hit = _named_kind(srd, typed, campaign) if kind is None else None
+    other = ""  # the card's note about the older creature a newer species or background replaced
+    if hit is None:
+        hit = srd.lookup(typed, campaign.target_ruleset, campaign.fallback_ruleset, kind=kind)
+        if hit is not None and hit.entry.kind == "monster" and hit.from_fallback and kind is None:
+            # Typed by hand, the target's own feat, species or background beats an older creature
+            # of the same name that is only a fallback ("Orc"); the creature stays reachable as
+            # "Orc (creature)", and the card says so (#1913).
+            newer = _asked_for(srd, typed, campaign.target_ruleset, FALLBACK_NONE)
+            if newer is not None and newer.entry.kind in index.ORIGIN_KINDS:
+                other = f"{hit.entry.name} (creature) {hit.tag}".strip()
+                hit = newer
     if hit is None and kind is None:
         # Not a spell, a condition or a creature: it may be a Rules Glossary entry ("cover",
         # "long rest", #1891), a class feature ("rage", "rogue evasion", #1900) or a magic item
@@ -242,7 +277,7 @@ async def look_up(
             if h.entry.details.get("class") != hit.entry.details.get("class")
         ]
     parts = rule_card.card_parts(
-        hit, typed, rules, player=not is_dm, also=list(dict.fromkeys(also))
+        hit, typed, rules, player=not is_dm, also=list(dict.fromkeys(also)), older=other
     )
     if not is_dm:
         parts = rule_card.for_player(parts)
@@ -444,9 +479,17 @@ async def _typeahead(
             current,
             target,
             fallback,
-            kinds=(index.RULE, index.FEATURE, index.ITEM),
+            kinds=(index.RULE, index.FEATURE, index.ITEM, *index.ORIGIN_KINDS),
             limit=NAMES_MORE,
         )
+    # A feat, species or background that is also a creature's name ("Acolyte", "Orc") is offered
+    # beside the creature, so it can be picked (#1913).
+    key = index.normalize(current)
+    if found and key and len(found) < NAMES_MORE:
+        same = srd.asked_names(
+            current, target, fallback, kinds=index.ORIGIN_KINDS, limit=NAMES_MORE
+        )
+        found = [*found, *(e for e in same if index.normalize(e.name) == key and e not in found)]
     return [
         app_commands.Choice(name=rule_card.choice_label(e), value=_choice_value(srd, e))
         for e in found
@@ -457,6 +500,14 @@ def _choice_value(srd: index.Index, entry: index.Entry) -> str:
     """What is typed into the box when a name is picked. A feature several classes share is
     picked with its class in front ("Rogue Evasion"); one a class has at two levels ("Improved
     Brutal Strike") with its level after, which `_features` reads back."""
+    if entry.kind in index.ORIGIN_KINDS and srd.lookup(entry.name, entry.edition) is not None:
+        return f"{entry.name} ({entry.kind})"[:BOX_MAX]  # also a creature's name: say which
+    if entry.kind == "monster" and any(
+        srd.lookup(entry.name, edition, kind=kind) is not None
+        for edition in ("2024", "2014")
+        for kind in index.ORIGIN_KINDS
+    ):
+        return f"{entry.name} (creature)"[:BOX_MAX]  # the species or background has the name too
     if entry.kind != index.FEATURE:
         return entry.name[:BOX_MAX]
     klass = str(entry.details.get("class", ""))

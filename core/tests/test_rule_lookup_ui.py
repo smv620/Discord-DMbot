@@ -260,8 +260,8 @@ class Command(LookupTest):
         self.assertIn("📖 **Goblin** (creature)", text)  # the 2014 creature, not the Warrior
         self.assertIn("[Legacy 2014]", text)
         self.campaigns[C1] = campaign(target="2024", fallback="none")
-        it = await self.command("Orc")
-        self.assertIn("couldn't find **Orc**", self.sent(it)[0])  # no fallback to read
+        it = await self.command("Duergar")
+        self.assertIn("couldn't find **Duergar**", self.sent(it)[0])  # no fallback to read
 
     async def test_an_older_name_says_what_it_is_now(self) -> None:
         it = await self.command("Goblin")
@@ -687,6 +687,69 @@ class FeatureLookup(LookupTest):
             ammo.name, "Ammunition, +1, +2, or +3 (item: Weapon, uncommon to very rare)"
         )
 
+    async def test_feats_species_and_backgrounds_are_found_and_the_list_says_which(self) -> None:
+        it = self.it(kind=discord.InteractionType.autocomplete)
+        labels = {
+            typed: [c.name for c in await ui._typeahead(it, typed)]
+            for typed in ("alert", "goliath", "sage")
+        }
+        self.assertEqual(labels["alert"][0], "Alert (feat: Origin)")  # and the Rod of Alertness
+        self.assertEqual(labels["goliath"], ["Goliath (species)"])
+        self.assertEqual(labels["sage"], ["Sage (background)"])
+        feat = self.sent(await self.command("alert"))[0]
+        self.assertIn("📖 **Alert** (feat: Origin)", feat)
+        self.assertIn("SRD 5.2.1, Feats, p. 87", feat)
+        goliath = self.sent(await self.command("goliath"))[0]
+        self.assertIn("Speed: 35 feet", goliath)
+        grappler = self.sent(await self.command("grappler"))[0]
+        self.assertIn("Prerequisite: Level 4+, Strength or Dexterity 13+", grappler)
+        sage = self.sent(await self.command("sage"))[0]
+        self.assertIn("Feat: Magic Initiate (Wizard)", sage)
+
+    async def test_a_background_that_is_also_a_creature_can_be_picked_and_is_found(self) -> None:
+        it = self.it(kind=discord.InteractionType.autocomplete)
+        choices = await ui._typeahead(it, "acolyte")
+        by_label = {c.name: c.value for c in choices}
+        self.assertIn("Acolyte (background)", by_label)
+        self.assertEqual(by_label["Acolyte (background)"], "Acolyte (background)")
+        text = self.sent(await self.command(by_label["Acolyte (background)"]))[0]
+        self.assertIn("📖 **Acolyte** (background)", text)
+        self.assertIn("Feat: Magic Initiate (Cleric)", text)
+
+    async def test_every_choice_for_a_shared_name_opens_what_it_says(self) -> None:
+        # In a 2024 campaign "Orc" is a species and a [Legacy 2014] creature, "Acolyte" a
+        # background and (as Priest Acolyte) a creature: a choice must open what it names.
+        self.campaigns[C1] = campaign(target="2024", fallback="2014")
+        it = self.it(kind=discord.InteractionType.autocomplete)
+        for typed in ("orc", "acolyte"):
+            choices = await ui._typeahead(it, typed)
+            kinds = {c.name.split("(")[1].split(")")[0].split(":")[0] for c in choices}
+            self.assertGreaterEqual(len(kinds), 2, (typed, [c.name for c in choices]))
+            for choice in choices:
+                with self.subTest(choice.name):
+                    ui._last_lookup.clear()
+                    text = self.sent(await self.command(choice.value))[0]
+                    word = choice.name.split("(")[1].split(")")[0].split(":")[0]
+                    shown = {"creature": "creature"}.get(word, word)
+                    self.assertIn(f"({shown}", text.splitlines()[0])
+
+    async def test_the_older_creature_is_named_on_the_card_that_replaced_it(self) -> None:
+        self.campaigns[C1] = campaign(target="2024", fallback="2014")
+        text = self.sent(await self.command("Orc"))[0]
+        self.assertIn("📖 **Orc** (species)", text)
+        self.assertIn("The older Orc (creature) [Legacy 2014] has the same name", text)
+        creature = self.sent(await self.command("Orc (creature)"))[0]
+        self.assertIn("📖 **Orc** (creature)", creature)
+        self.assertIn("[Legacy 2014]", creature)
+
+    async def test_the_newer_species_beats_an_older_creature_of_the_same_name(self) -> None:
+        self.campaigns[C1] = campaign(target="2024", fallback="2014")
+        text = self.sent(await self.command("Orc"))[0]
+        self.assertIn("📖 **Orc** (species)", text)  # not the 2014 creature, [Legacy 2014]
+        self.assertNotIn(
+            "[Legacy 2014]", text.replace("The older Orc (creature) [Legacy 2014]", "")
+        )
+
     async def test_an_item_is_found_by_its_other_name_and_a_spell_of_the_same_name_wins(
         self,
     ) -> None:
@@ -878,18 +941,18 @@ class SharedBooks(LookupTest):
             self.assertIn("📖 **Fireball** (spell)", text)  # the free rules answer
 
     async def test_a_2014_book_answers_and_is_tagged_when_only_the_fallback_has_it(self) -> None:
-        text = await self.shown("Orc", "2014")
+        text = await self.shown("Duergar", "2014")
         self.assertIn("The book's words.", text)
         self.assertIn("[Shared book] [Legacy 2014]", text)
-        self.assertIn("Frostmaiden's shared book (2014): Orc", text)
+        self.assertIn("Frostmaiden's shared book (2014): Duergar", text)
         self.assertNotIn("SRD", text)
 
     async def test_other_and_unasked_books_beat_the_fallback_but_not_the_target(self) -> None:
         for edition in ("other", None, "2024"):
-            text = await self.shown("Orc", edition)
+            text = await self.shown("Duergar", edition)
             self.assertIn("The book's words.", text, edition)
             self.assertNotIn("[Legacy 2014]", text)
-        self.assertIn("shared book:", await self.shown("Orc", "other"))  # no edition to name
+        self.assertIn("shared book:", await self.shown("Duergar", "other"))  # no edition to name
 
     async def test_with_no_free_rules_entry_any_book_answers(self) -> None:
         for edition in ("2024", "2014", "other", None):

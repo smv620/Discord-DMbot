@@ -47,6 +47,9 @@ KIND_WORDS = {
     "rule": "rule",
     "feature": "feature",
     "item": "item",
+    "feat": "feat",
+    "species": "species",
+    "background": "background",
 }
 
 
@@ -204,6 +207,7 @@ def header(
     house_max: int = HOUSE_LINE_MAX,
     player: bool = False,
     also: Sequence[str] = (),
+    older: str = "",
 ) -> str:
     """Everything above the text: house rules first, the name and facts, where it comes
     from, and any note about how it was found."""
@@ -221,6 +225,8 @@ def header(
         kind = f"{kind}: {_md(feature_place(entry))}"
     elif entry.kind == index.ITEM:  # "(item: Wondrous Item, uncommon)"
         kind = f"{kind}: {_md(item_place(entry))}"
+    elif entry.kind == index.FEAT:  # "(feat: Origin)"
+        kind = f"{kind}: {_md(str(entry.details.get('category', '')))}"
     lines.append(f"📖 **{called}** ({kind})")
     line = facts(entry)
     if line:
@@ -228,6 +234,9 @@ def header(
     lines.append(f"_Source: {_md(source(hit))}_")
     if also:  # a feature other classes have too: the card shows one, and says so
         lines.append(f"_Other classes with this: {_md(', '.join(also))}._")
+    if older:  # a newer species or background took the name of an older creature
+        name = older.split(" (creature)")[0]
+        lines.append(f"_The older {_md(older)} has the same name: type “{_md(name)} (creature)”._")
     asked = _fit(_md(" ".join(typed.split())), NAME_MAX)
     if hit.renamed and asked:
         lines.append(f"_{asked} is now called {called} in the newer rules._")
@@ -279,13 +288,14 @@ def card_parts(
     *,
     player: bool = False,
     also: Sequence[str] = (),
+    older: str = "",
 ) -> list[str]:
     """The card as messages, each short enough for Discord: the first has the heading and
     as much of the text as fits; the others carry on with the text. Many long house rules
     are cut shorter, then only counted, so the heading never fills a message."""
     head = ""
     for house_max in (HOUSE_LINE_MAX, 120, 60, 0):
-        head = header(hit, typed, rules, house_max=house_max, player=player, also=also)
+        head = header(hit, typed, rules, house_max=house_max, player=player, also=also, older=older)
         if len(head) <= PART_MAX - MIN_TEXT_ROOM:
             break
     text = _md(hit.entry.text)
@@ -455,6 +465,8 @@ def choice_label(entry: Entry) -> str:
         kind = f"{kind}: {entry.details.get('class', '')} {entry.details.get('level', '')}".rstrip()
     if entry.kind == index.ITEM:  # "Bag of Holding (item: Wondrous Item, uncommon)"
         kind = f"{kind}: {item_place(entry)}"
+    elif entry.kind == index.FEAT:  # "Alert (feat: Origin)"
+        kind = f"{kind}: {entry.details.get('category', '')}"
     older = f" [Legacy {entry.edition}]" if entry.edition == index.LEGACY else ""
     label = f"{entry.name} ({kind}){older}"
     return label if len(label) <= NAME_MAX else label[: NAME_MAX - 1] + "…"

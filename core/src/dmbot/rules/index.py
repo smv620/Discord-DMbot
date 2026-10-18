@@ -63,10 +63,14 @@ FEATURE = (
     "feature"  # a class or subclass feature ("Rage", "Evasion"); the same name can be in several
 )
 ITEM = "item"  # a magic item ("Bag of Holding", "Cloak of Protection")
-# All three are found only when asked for: their names are everyday words ("Action", "Damage",
-# "Rope of Climbing") or shared by classes ("Extra Attack"), so the name pool the live cards, the
-# list and "did you mean" read from leaves them out.
-ASKED_FOR = frozenset({RULE, FEATURE, ITEM})
+FEAT = "feat"  # a feat ("Alert", "Lucky")
+SPECIES = "species"  # a character species ("Goliath")
+BACKGROUND = "background"  # a character background ("Sage")
+# All six are found only when asked for: their names are everyday words ("Action", "Damage",
+# "Rope of Climbing", "Alert", "Sage") or shared by classes ("Extra Attack"), so the name pool the
+# live cards, the list and "did you mean" read from leaves them out.
+ASKED_FOR = frozenset({RULE, FEATURE, ITEM, FEAT, SPECIES, BACKGROUND})
+ORIGIN_KINDS = (FEAT, SPECIES, BACKGROUND)  # looked up after the features and the items
 # The SRD 5.2.1's twelve classes: a class in a question picks that class's feature (#1900).
 CLASS_NAMES = (
     *("Barbarian", "Bard", "Cleric", "Druid", "Fighter", "Monk"),
@@ -443,13 +447,20 @@ def load_folder(folder: Path) -> list[Entry]:
     for path in sorted(folder.glob("*.json")):
         data = json.loads(path.read_text(encoding="utf-8"))
         for raw in data["entries"]:
-            details = {k: v for k, v in raw.items() if k not in ("name", "text", "page", "section")}
+            skipped = (
+                "name",
+                "text",
+                "page",
+                "section",
+                "kind",
+            )  # (a file may say a kind per entry)
+            details = {k: v for k, v in raw.items() if k not in skipped}
             for listed in ("classes", "see_also"):  # shared, so read only: a tuple
                 if listed in details:
                     details[listed] = tuple(details[listed])
             entries.append(
                 Entry(
-                    data["kind"],
+                    raw.get("kind", data["kind"]),
                     raw["name"],
                     data["edition"],
                     data["source"],
@@ -471,6 +482,9 @@ def srd() -> Index:
         (RULE, "Rules Glossary"),
         (FEATURE, "class features"),
         (ITEM, "magic items"),
+        (FEAT, "feats"),
+        (SPECIES, "species"),
+        (BACKGROUND, "backgrounds"),
     ):
         if not any(e.kind == kind for e in entries):  # an older build of the data: carry on
             log.warning("The %s are not in the data; the DM sidebar will not cite them", what)

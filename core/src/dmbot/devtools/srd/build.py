@@ -25,7 +25,16 @@ from dataclasses import asdict
 from pathlib import Path
 from typing import Any
 
-from dmbot.devtools.srd import classes, classes51, items, monsters, monsters51, parse, parse51
+from dmbot.devtools.srd import (
+    classes,
+    classes51,
+    items,
+    monsters,
+    monsters51,
+    origins,
+    parse,
+    parse51,
+)
 from dmbot.devtools.srd.pdf import Line, read_pages
 
 SOURCE = "SRD 5.2.1"
@@ -75,6 +84,9 @@ GLOSSARY_HEADING = "Rules Glossary"
 AFTER_GLOSSARY_HEADING = "Gameplay Toolbox"
 CLASSES_HEADING = "Classes"
 AFTER_CLASSES_HEADING = "Character Origins"
+FEATS_HEADING = "Feats"
+AFTER_FEATS_HEADING = "Equipment"
+ORIGINS_SECTION = "Character Origins"
 ITEMS_HEADING = "Magic Items A–Z"
 AFTER_ITEMS_HEADING = "Monsters"
 ITEMS_SECTION = "Magic Items"
@@ -200,6 +212,12 @@ def build_files(
     origins_at = first_page_of(pages, AFTER_CLASSES_HEADING, after=classes_at)
     features = classes.parse_features(lines_between(pages, classes_at, origins_at))
 
+    feats_at = first_page_of(pages, FEATS_HEADING, after=origins_at)
+    equipment_at = first_page_of(pages, AFTER_FEATS_HEADING, after=feats_at)
+    origin_lines = lines_between(pages, origins_at, feats_at)
+    species = origins.parse_species(origin_lines)
+    backgrounds = origins.parse_backgrounds(origin_lines)
+    feats = origins.parse_feats(lines_between(pages, feats_at, equipment_at))
     items_at = first_page_of(pages, ITEMS_HEADING, after=CONTENTS_PAGES)
     after_items_at = first_page_of(pages, AFTER_ITEMS_HEADING, after=items_at)
     magic_items = items.parse_items(lines_between(pages, items_at, after_items_at))
@@ -233,6 +251,19 @@ def build_files(
         "features.json": {
             **header("feature", CLASSES_HEADING),
             "entries": [feature_entry(f) for f in features],
+        },
+        "feats.json": {
+            **header("feat", FEATS_HEADING),
+            "entries": [asdict(f) for f in feats],
+        },
+        # Two kinds in one file (the species and the backgrounds of the chapter): each entry
+        # says its own.
+        "origins.json": {
+            **header("origin", ORIGINS_SECTION),
+            "entries": [
+                *({"kind": "species", **asdict(s)} for s in species),
+                *({"kind": "background", **asdict(b)} for b in backgrounds),
+            ],
         },
         "items.json": {
             **header("item", ITEMS_SECTION),

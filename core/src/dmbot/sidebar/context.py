@@ -37,10 +37,14 @@ from dmbot.rules.homebrew import Homebrew
 from dmbot.rules.house import HouseRule
 from dmbot.rules.index import (
     ASKED_FOR,
+    BACKGROUND,
     CLASS_WORDS,
+    FEAT,
     FEATURE,
     ITEM,
+    ORIGIN_KINDS,
     RULE,
+    SPECIES,
     Hit,
     Index,
     edition_tag,
@@ -213,10 +217,11 @@ def mentioned_rules(
     # The Rules Glossary (#1884), the class features (#1900) and the magic items (#1912) answer
     # only a question that names no spell, condition or creature. Their names are everyday words
     # ("Line", "Damage", "Cover", "Rope of Climbing") or shared by classes ("Extra Attack"):
-    # beside a named entry they would be noise in
-    # the prompt, so they never crowd out what the DM actually named. A class named in the
+    # beside a named entry they would be noise in the prompt, so they never crowd out what the DM
+    # actually named. The feats, species and backgrounds (#1913) join them. A class named in the
     # question ("rogue evasion") picks that class's feature; otherwise every class that has it.
     klass = next((w for w in words if w.lower() in CLASS_WORDS), "")
+    cued = any(w.lower() in ORIGIN_CUES for w in words)
     asked: list[tuple[int, list[Hit]]] = []
     for size in range(ITEM_WINDOW, 0, -1) if not found else ():
         for start in range(len(words) - size + 1):
@@ -235,6 +240,8 @@ def mentioned_rules(
             if not hits:
                 item = index.lookup(name, target, fallback, kind=ITEM)
                 hits = [item] if item is not None else []
+            if not hits and size <= WINDOW:
+                hits = origin_hits(index, name, target, fallback, cued=cued)
             if hits:
                 for k in range(start, start + size):
                     used[k] = True
@@ -245,6 +252,8 @@ def mentioned_rules(
         for start, hits in asked:
             if depth < len(hits) and len(found) < ENTRIES_MAX:
                 found.append((start, hits[depth]))
+    if cued and found:  # "the acolyte background": the creature of that name gives way (#1913)
+        found = _cued_origins(found, words, index, target, fallback)
     found.sort(key=lambda pair: pair[0])
     unique: list[Hit] = []
     for _, hit in found:
@@ -256,6 +265,51 @@ def mentioned_rules(
         unique += [h for h in extra if all(h.entry is not o.entry for o in unique)]
         unique = unique[: ENTRIES_MAX + 1]  # one more than usual, never a long list
     return unique
+
+
+ORIGIN_CUES = frozenset({"feat", "feats", "species", "race", "races", "background", "backgrounds"})
+SPECIES_NOT_EVERYDAY = frozenset({"dragonborn", "goliath"})  # "dwarf", "elf" and "human" are not
+
+
+def _cued_origins(
+    found: list[tuple[int, Hit]], words: list[str], index: Index, target: str, fallback: str
+) -> list[tuple[int, Hit]]:
+    """A question that says "feat", "species", "race" or "background" and names a creature that
+    is also a background or species ("Acolyte", "Orc") means the background or species. Only a
+    creature's hit gives way; a named spell or condition keeps its place."""
+    out = list(found)
+    for start, hit in found:
+        if hit.entry.kind != "monster":
+            continue
+        size = len(hit.found_as.split())
+        window = " ".join(words[start : start + size])
+        picked = origin_hits(index, window, target, fallback, cued=True)
+        if picked:
+            out = [pair for pair in out if pair[1] is not hit]
+            out += [(start, p) for p in picked]
+    return out
+
+
+def origin_hits(index: Index, name: str, target: str, fallback: str, *, cued: bool) -> list[Hit]:
+    """The feat, species or background with this name (#1913). A one-word feat or background is
+    an everyday word ("Alert", "Sage"), and so are most species ("Dwarf", "Elf", "Human"): they
+    count only when the question also says "feat", "species", "race" or "background". Only
+    "Dragonborn" and "Goliath" need nothing. A background comes with the feat it gives, which is
+    cited as the feat itself."""
+    single = len(name.split()) == 1  # (see ORIGIN_CUES and SPECIES_NOT_EVERYDAY)
+    for kind in ORIGIN_KINDS:
+        hit = index.lookup(name, target, fallback, kind=kind)
+        if hit is None:
+            continue
+        everyday = kind != SPECIES or normalize(hit.entry.name) not in SPECIES_NOT_EVERYDAY
+        if single and everyday and not cued:
+            return []
+        if kind != BACKGROUND:
+            return [hit]
+        granted = str(hit.entry.details.get("feat", ""))  # lookup drops a bracket
+        feat = index.lookup(granted, target, fallback, kind=FEAT) if granted else None
+        return [hit] + ([feat] if feat is not None else [])
+    return []
 
 
 def relevant_house_rules(

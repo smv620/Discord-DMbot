@@ -396,6 +396,70 @@ class MagicItems(unittest.TestCase):
             [h.entry.name for h in self.hits("what do sending stones do")], ["Sending"]
         )
 
+    def test_a_feat_species_or_background_is_cited_when_the_question_says_what_it_is(self) -> None:
+        self.assertEqual(
+            [(h.entry.kind, h.entry.name) for h in self.hits("what does the alert feat do")],
+            [("feat", "Alert")],
+        )
+        built = self.build("what does the alert feat do")
+        self.assertIn("- Alert (feat) [SRD 5.2.1 p. 87]: FACTS: Origin feat.", built.prompt)
+        self.assertIn("SRD 5.2.1 p. 87", built.sources)
+
+    def test_an_everyday_word_alone_is_not_a_feat_or_a_background(self) -> None:
+        for question in ("the guards are alert", "a sage walks in", "the lucky sage"):
+            self.assertEqual(self.hits(question), [], question)
+
+    def test_a_species_name_is_enough_but_human_needs_the_word_species(self) -> None:
+        names = [h.entry.name for h in self.hits("what is a goliath's speed")]
+        self.assertIn("Goliath", names)  # (and the glossary's Speed)
+        self.assertEqual(self.hits("a human walks in"), [])
+        self.assertEqual(
+            [h.entry.name for h in self.hits("can the human species see in the dark")], ["Human"]
+        )
+        self.assertIn("Speed: 35 feet", self.build("what is a goliath's speed").prompt)
+
+    def test_a_background_comes_with_the_feat_it_gives_cited_as_the_feat(self) -> None:
+        got = [
+            (h.entry.kind, h.entry.name) for h in self.hits("what does the sage background give")
+        ]
+        self.assertEqual(got, [("background", "Sage"), ("feat", "Magic Initiate")])
+
+    def test_most_species_names_are_everyday_words_and_need_the_cue(self) -> None:
+        for question in ("the dwarf bartender", "a dwarf walks in", "help, a gnome", "the elf"):
+            self.assertEqual([h for h in self.hits(question) if h.entry.kind == "species"], [])
+        self.assertEqual(
+            [
+                h.entry.name
+                for h in self.hits("the dwarf species speed")
+                if h.entry.kind == "species"
+            ],
+            ["Dwarf"],
+        )
+        self.assertEqual(
+            [h.entry.name for h in self.hits("a dragonborn walks in")], ["Dragonborn"]
+        )  # not an everyday word
+
+    def test_the_cue_makes_a_background_or_species_win_over_a_creature_of_the_same_name(
+        self,
+    ) -> None:
+        got = [
+            (h.entry.kind, h.entry.name) for h in self.hits("what does the acolyte background give")
+        ]
+        self.assertEqual(got, [("background", "Acolyte"), ("feat", "Magic Initiate")])
+        orc = [(h.entry.kind, h.entry.name) for h in self.hits("an orc species speed")]
+        self.assertIn(("species", "Orc"), orc)
+        self.assertEqual([h.entry.kind for h in self.hits("what does an acolyte do")], ["monster"])
+
+    def test_a_named_spell_still_keeps_the_places_with_the_cue_word(self) -> None:
+        got = [(h.entry.kind, h.entry.name) for h in self.hits("fireball and the sage background")]
+        self.assertEqual(got, [("spell", "Fireball")])
+
+    def test_a_long_feat_name_needs_no_extra_word(self) -> None:
+        self.assertEqual(
+            [h.entry.name for h in self.hits("how does great weapon fighting work")],
+            ["Great Weapon Fighting"],
+        )
+
     def test_an_item_is_no_rules_question(self) -> None:
         prompt = self.build("can you track a bag of holding?").prompt
         self.assertIn("ABOUT DMBOT", prompt)
