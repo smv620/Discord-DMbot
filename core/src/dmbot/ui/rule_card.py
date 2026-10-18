@@ -39,6 +39,7 @@ NOT_A_RULING = (
 OLDER_NOTE = "_From the older 2014 rules (the newer free rules don't have it)._"
 TAG_WORDS = {"[2024]": "[Newer 2024 rules]"}  # a tag as the DM reads it
 ONLY_FREE_RULES = "_Only the free rules are in DMbot so far, not your own books._"
+SEE_ALSO_MAX = 3  # a longer list would push a card into one more message
 KIND_WORDS = {"spell": "spell", "condition": "condition", "monster": "creature", "rule": "rule"}
 
 
@@ -202,8 +203,11 @@ def header(
     lines = house_lines(house_matches(rules, names_for(entry, typed)), house_max)
     kind = KIND_WORDS.get(entry.kind, entry.kind)
     called = _fit(_md(entry.name), NAME_MAX)
-    glossary_tag = f" [{_md(str(entry.details['tag']))}]" if entry.details.get("tag") else ""
-    lines.append(f"📖 **{called}** ({kind}){glossary_tag}")
+    if entry.details.get(
+        "tag"
+    ):  # a glossary entry's own tag, inside the brackets: "(rule: Action)"
+        kind = f"{kind}: {_md(str(entry.details['tag']))}"
+    lines.append(f"📖 **{called}** ({kind})")
     line = facts(entry)
     if line:
         lines.append(line)
@@ -266,7 +270,9 @@ def card_parts(
     text = _md(hit.entry.text)
     see_also = hit.entry.details.get("see_also")
     if see_also:  # a glossary entry points to others by name (plain words, no links)
-        text += "\n\nSee also: " + ", ".join(_md(str(name)) for name in see_also)
+        text += "\n\nSee also: " + ", ".join(
+            _md(str(name)) for name in list(see_also)[:SEE_ALSO_MAX]
+        )
     room = PART_MAX - len(head) - 1
     rest = PART_MAX - CONTINUED_MAX
     if room < MIN_TEXT_ROOM:

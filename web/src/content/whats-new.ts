@@ -186,10 +186,10 @@ export interface Held extends Entry {
 export const held: Held[] = [
   {
     date: "2026-10-18",
-    title: "Look up game words",
-    what: "Type /dmbot rule and a word like cover, dash or long rest to read what the free rules say about it. Spells, conditions and creatures still come first, and any house rule you wrote about it shows above.",
+    title: "Look up any rule",
+    what: "Type /dmbot rule and a word like cover, dash or long rest to read what the free rules say. If a spell, condition or creature has the same name, you get that first. Your table's house rule on it shows above.",
     reason:
-      "Merged (#1890, #1891) once they are; held until dev1 deploys it and the owner's live check is recorded in docs/testing-history.log.",
+      "Merged (#1890, #1891); held until dev1 deploys it and the owner's live check is recorded in docs/testing-history.log.",
   },
   {
     date: "2026-10-17",

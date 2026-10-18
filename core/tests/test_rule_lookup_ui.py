@@ -858,8 +858,13 @@ class GlossaryLookup(LookupTest):
 
     async def test_a_tagged_entry_shows_its_tag_and_a_see_also_line_in_plain_words(self) -> None:
         text = self.sent(await self.command("dash"))[0]
-        self.assertIn("📖 **Dash** (rule) [Action]", text)
+        self.assertIn("📖 **Dash** (rule: Action)", text)
         self.assertIn("See also: Speed", text)
+        hit = index.srd().lookup("Stat Block", "2024", "2014", kind="rule")
+        assert hit is not None
+        every_part = "".join(rule_card.card_parts(hit, "stat block", []))
+        self.assertIn("See also: Size, Creature Type, Alignment", every_part)
+        self.assertNotIn("Burrow Speed", every_part.split("See also:")[1])  # at most three names
         self.assertNotIn("http", text)
 
     async def test_a_spell_still_gives_the_spell(self) -> None:
