@@ -488,6 +488,24 @@ class ClassFeatures(unittest.TestCase):
             get("Spell Scroll", "gear").details["cost"], "Cantrip, 30 GP; Level 1, 50 GP"
         )
 
+    def test_a_fact_line_with_a_weight_does_not_double_its_full_stop(self) -> None:
+        from dmbot.rules import facts
+
+        kit = index.srd().lookup("Healer’s Kit", "2024", "2014", kind="gear")
+        assert kit is not None
+        text = facts.full_text(kit.entry)
+        self.assertTrue(text.startswith("Adventuring Gear, 5 GP, 3 lb. A Healer’s Kit"), text)
+        self.assertNotIn("..", text)
+        focus = index.srd().lookup("Arcane Focus", "2024", "2014", kind="gear")
+        assert focus is not None
+        self.assertEqual(facts.gear_line(focus.entry, card=True), "weight varies")
+        cart = index.srd().lookup("Cart", "2024", "2014", kind="gear")
+        assert cart is not None
+        self.assertEqual(facts.gear_line(cart.entry, card=True), "")  # its text says the weight
+        thieves = index.srd().lookup("Thieves’ Tools", "2024", "2014", kind="tool")
+        assert thieves is not None
+        self.assertEqual(facts.tool_line(thieves.entry, card=True), "25 GP, 1 lb.")
+
     def test_gear_is_found_by_its_other_names(self) -> None:
         self.assertEqual(index.gear_keys("Horse, Riding"), ["riding horse"])
         self.assertEqual(index.gear_keys("Healer’s Kit"), ["healer kit"])

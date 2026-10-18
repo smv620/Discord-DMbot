@@ -466,6 +466,10 @@ def equipment_place(entry: Entry) -> str:
         return str(d.get("ability", ""))
     group = str(d.get("group", ""))
     cost = str(d.get("cost", ""))
+    if cost == "Varies":
+        cost = "price varies"
+    elif ";" in cost and (first := re.search(r"[\d,]+ [GSC]P", cost)):
+        cost = f"from {first.group()}"  # the Spell Scroll's two prices; the card's text has both
     return cost if group == "Adventuring Gear" else f"{group}, {cost}"
 
 

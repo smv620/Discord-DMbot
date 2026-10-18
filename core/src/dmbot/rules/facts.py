@@ -15,6 +15,8 @@ import re
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
+    from collections.abc import Mapping
+
     from dmbot.rules.index import Entry
 
 _ORDINALS = {1: "1st", 2: "2nd", 3: "3rd"}
@@ -85,28 +87,33 @@ def armor_line(entry: Entry) -> str:
     return ", ".join(parts)
 
 
-def gear_line(entry: Entry, *, card: bool) -> str:
-    """ "Adventuring Gear, 5 GP, 3 lb." for the AI; on the card the heading has the price, so
-    only the weight is left ("3 lb."). A mount's or vehicle's words (its capacity, its speed) are
-    the entry's text, which the card shows."""
-    d = entry.details
+def _weight_words(d: Mapping[str, object]) -> str:
+    """ "3 lb.", or "weight varies"; nothing for a dash (it has none to say)."""
     weight = str(d.get("weight", ""))
-    weight = "" if weight in ("", "—") else weight
+    return "weight varies" if weight == "Varies" else "" if weight in ("", "—") else weight
+
+
+def gear_line(entry: Entry, *, card: bool) -> str:
+    """ "Adventuring Gear, 5 GP, 3 lb." for the AI. On the card the heading has the price, so only
+    the weight is left ("3 lb."); a mount's or a vehicle's words (its capacity, its weight, its
+    speed) are the entry's text, which the card shows, so it has no line."""
+    d = entry.details
+    weight = _weight_words(d)
     if card:
-        return weight
+        return weight if d.get("group") == "Adventuring Gear" else ""
     cost = str(d.get("cost", ""))
     return ", ".join(p for p in (str(d.get("group", "")), cost, weight) if p)
 
 
 def tool_line(entry: Entry, *, card: bool) -> str:
-    """ "Artisan's Tools, Intelligence, 50 GP, 8 lb." for the AI; "Intelligence, 8 lb." on the
-    card, whose heading has the ability."""
+    """ "Other Tools, Dexterity, 25 GP, 1 lb." for the AI; "25 GP, 1 lb." on the card, whose
+    heading has the ability."""
     d = entry.details
-    weight = str(d.get("weight", ""))
-    weight = "" if weight in ("", "—") else weight
-    parts = [] if card else [str(d.get("group", ""))]
-    parts += [] if card else [str(d.get("ability", "")), str(d.get("cost", ""))]
-    parts += [weight]
+    cost = str(d.get("cost", ""))
+    cost = "price varies" if cost == "Varies" else cost
+    parts = [cost, _weight_words(d)]
+    if not card:
+        parts = [str(d.get("group", "")), str(d.get("ability", "")), *parts]
     return ", ".join(p for p in parts if p)
 
 
@@ -215,7 +222,7 @@ def full_text(entry: Entry) -> str:
     """The facts and then the text: everything DMbot knows about the entry, to search, quote or
     check an answer against."""
     header = line(entry)
-    return f"{header}. {entry.text}" if header else entry.text
+    return f"{header.rstrip('.')}. {entry.text}" if header else entry.text
 
 
 def asked_field(entry: Entry, question: str) -> str | None:

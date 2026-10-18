@@ -786,6 +786,10 @@ class FeatureLookup(LookupTest):
         tools = self.sent(await self.command("thieves’ tools"))[0]
         self.assertIn("📖 **Thieves’ Tools** (tool: Dexterity)", tools)
         self.assertIn("Utilize: Pick a lock (DC 15)", tools)
+        self.assertIn("25 GP, 1 lb.", tools)  # the heading has the ability, the line the price
+        focus = self.sent(await self.command("arcane focus"))[0]
+        self.assertIn("(gear: price varies)", focus)
+        self.assertNotIn("(gear: Varies)", focus)
 
     async def test_the_gear_and_the_magic_item_of_one_name_can_both_be_picked(self) -> None:
         it = self.it(kind=discord.InteractionType.autocomplete)
@@ -794,7 +798,7 @@ class FeatureLookup(LookupTest):
         item = [v for n, v in values.items() if "(item" in n]
         self.assertEqual((gear, item), (["Spell Scroll (gear)"], ["Spell Scroll (item)"]))
         text = self.sent(await self.command("Spell Scroll (gear)"))[0]
-        self.assertIn("(gear: Cantrip, 30 GP; Level 1, 50 GP)", text.splitlines()[0])
+        self.assertIn("(gear: from 30 GP)", text.splitlines()[0])
         text = self.sent(await self.command("Spell Scroll (item)"))[0]
         self.assertIn("(item:", text.splitlines()[0])
 
