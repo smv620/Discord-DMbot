@@ -101,9 +101,9 @@ class WaitingReviews(unittest.TestCase):
 
     def test_each_kind_shows_with_its_count(self) -> None:
         line = review_line(Reviews(heard=1, people=2, claims=3)) or ""
-        self.assertIn("1 word to check", line)
+        self.assertIn("1 name to double-check", line)
         self.assertIn("2 questions about who is who", line)
-        self.assertIn("3 things said at the table", line)
+        self.assertIn("3 things said to check", line)
 
     def test_only_what_waits_is_named(self) -> None:
         line = review_line(Reviews(people=1)) or ""
@@ -118,6 +118,10 @@ class WaitingReviews(unittest.TestCase):
         self.assertIn("❓ Check names (2)", labels)
         self.assertIn("🗣️ Check what was said (4)", labels)
         self.assertFalse([x for x in labels if "who is who" in x])
+
+    def test_a_huge_count_keeps_the_label_short(self) -> None:
+        labels = _labels(NamesHome(CAMPAIGN, 0, None, Reviews(claims=1234)))
+        self.assertIn("🗣️ Check what was said (99+)", labels)
 
     def test_the_home_card_stays_within_discords_limits(self) -> None:
         view = NamesHome(

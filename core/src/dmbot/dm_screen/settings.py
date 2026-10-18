@@ -175,7 +175,7 @@ def settings_view(campaign: Campaign, offer: HandoverOffer | None, viewer: int) 
         view.add_item(SharedRulesButton(campaign.id))  # shared house rules (#1190)
         view.add_item(HomebrewButton(campaign.id))  # the campaign's own homebrew (#1520)
         view.add_item(TranscriptsButton(campaign.id))  # how long transcripts are kept (#1533)
-        view.add_item(NamesButton(campaign.id, row=4))  # names home (#1986); row 4 has room
+        view.add_item(NamesButton(campaign.id, row=4))  # names home (#1986); row 4 is now full
         view.add_item(FeaturesButton(campaign.id, row=1))  # what is switched on (#1831)
         view.add_item(GameMastersButton(campaign.id, row=2))  # who the DMs are (#1600)
         view.add_item(DeleteButton(campaign.id))  # delete the campaign, plan holder only (#1608)

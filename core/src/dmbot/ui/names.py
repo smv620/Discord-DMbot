@@ -187,14 +187,12 @@ class Reviews:
 def review_line(reviews: Reviews) -> str | None:
     """One plain line for the waiting reviews, or None when nothing waits."""
     parts = [
-        f"{reviews.heard} {'word' if reviews.heard == 1 else 'words'} to check"
-        if reviews.heard
-        else "",
+        f"{_plural(reviews.heard, 'name')} to double-check" if reviews.heard else "",
         f"{_plural(reviews.people, 'question')} about who is who" if reviews.people else "",
-        f"{_plural(reviews.claims, 'thing')} said at the table" if reviews.claims else "",
+        f"{_plural(reviews.claims, 'thing')} said to check" if reviews.claims else "",
     ]
     parts = [p for p in parts if p]
-    return f"⏳ **Also waiting for you:** {', '.join(parts)}." if parts else None
+    return f"⏳ **Waiting for you:** {', '.join(parts)}." if parts else None
 
 
 def home_text(
@@ -314,7 +312,10 @@ class NamesHome(_Menu):
                 (reviews.claims, "🗣️ Check what was said", self._check_claims),
             ):
                 if count:
-                    self.add_item(_Button(handler, label=f"{label} ({count})", style=grey, row=4))
+                    shown_count = str(count) if count < 100 else "99+"  # keeps the label short
+                    self.add_item(
+                        _Button(handler, label=f"{label} ({shown_count})", style=grey, row=4)
+                    )
         if shown:
             self.open = _Select(
                 self._open,
@@ -439,7 +440,9 @@ async def waiting_reviews(interaction: discord.Interaction, campaign: Campaign) 
             from dmbot.memory.claims import ClaimStore
 
             agreed = await bot.consent.consenting(guild_id)
-            claims = len(await ClaimStore(memory).waiting(guild_id, campaign.id, opted_in=agreed))
+            claims = await ClaimStore(memory).waiting_for_check(
+                guild_id, campaign.id, opted_in=agreed
+            )
     except Exception:
         log.exception("Couldn't count the things said at the table")
     return Reviews(heard=heard, people=people, claims=claims)
