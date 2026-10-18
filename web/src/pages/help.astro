@@ -16,6 +16,15 @@ import { accountHeading, backToTop, dmHeading, emailsHeading, onThisPage, onThis
     <a href={`#${gettingHelp.id}`}>getting help</a>.
   </p>
 
+  <!-- The search box needs JavaScript, so it stays hidden until the script below shows it: without
+       JavaScript the page is exactly the long page it was (#1939). -->
+  <form class="search" role="search" data-help-search hidden>
+    <label for="help-search">Search help</label>
+    <input id="help-search" type="search" autocomplete="off" />
+    <p id="help-search-status" role="status" aria-live="polite" class="muted"></p>
+    <button type="button" class="button" data-help-search-clear hidden>See all steps</button>
+  </form>
+
   <nav aria-labelledby="contents-heading">
     <h2 id="contents-heading">{onThisPageHeading}</h2>
     <ul>
@@ -171,6 +180,15 @@ import { accountHeading, backToTop, dmHeading, emailsHeading, onThisPage, onThis
   </p>
 </Base>
 
+<script>
+  // Nothing typed here leaves the page: no request, no storage, no address change (#1939).
+  import { wire } from "../../scripts/helpsearch.mjs";
+
+  const form = document.querySelector<HTMLFormElement>("[data-help-search]");
+  const page = document.querySelector("main");
+  if (form && page) wire(form, page);
+</script>
+
 <style>
   ol {
     max-width: var(--text-width);
@@ -202,5 +220,43 @@ import { accountHeading, backToTop, dmHeading, emailsHeading, onThisPage, onThis
 
   .back {
     margin-top: var(--space-4);
+  }
+
+  .search {
+    display: grid;
+    gap: var(--space-2);
+    max-width: var(--text-width);
+    margin: var(--space-6) 0;
+  }
+
+  /* The grid and the button's own display would otherwise win over the hidden attribute. */
+  .search[hidden],
+  .search [hidden] {
+    display: none;
+  }
+
+  .search label {
+    font-weight: 600;
+  }
+
+  .search input {
+    width: 100%;
+    box-sizing: border-box;
+    min-height: var(--tap);
+    padding: var(--space-2) var(--space-3);
+    border: 1px solid var(--control-edge);
+    border-radius: var(--radius);
+    background: var(--bg);
+    color: var(--text);
+    font: inherit;
+  }
+
+  .search p {
+    margin: 0;
+    min-height: 1.5em; /* the page doesn't jump when the count appears */
+  }
+
+  .search .button {
+    justify-self: start;
   }
 </style>
