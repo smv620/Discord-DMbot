@@ -381,7 +381,7 @@ describe("Help: the website's read-only pages (#1588)", () => {
     expect(shown.includes("Wondering if something new is on yet?")).toBe(WHATS_ON_LIVE);
     expect(snags.some((x) => x.text.includes("What's switched on"))).toBe(WHATS_ON_LIVE);
     const words = whatsOnSteps.map((x) => x.text).join(" ");
-    expect(words).toContain("Only you see the answer.");
+    expect(words).toContain("Only you see the answer");
     for (const step of whatsOnSteps) expect(step.text.split(" ").length).toBeLessThanOrEqual(40);
   });
 

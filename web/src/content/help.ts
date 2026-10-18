@@ -420,7 +420,7 @@ export const WHATS_ON_LIVE = false;
 
 export const whatsOnSteps: Step[] = [
   {
-    text: "Wondering if something new is on yet? Press ⚙️ Settings, then ℹ️ What's switched on. Only you see the answer.",
+    text: "Wondering if something new is on yet? Press ⚙️ Settings, then ℹ️ What's switched on. Only you see the answer, and only game masters can press it.",
     names: [{ name: "What's switched on", file: "features.py" }],
   },
 ];
@@ -900,7 +900,7 @@ export const snagsHeading = "If something doesn't work";
 
 const whatsOnSnag: Snag = {
   question: "Something on What's new isn't there for me.",
-  text: "Press ℹ️ What's switched on in ⚙️ Settings. Some new things are turned on a little later than they are announced.",
+  text: "Press ℹ️ What's switched on in ⚙️ Settings to see what is on. A new thing can be announced before it is switched on. Whoever runs your DMbot turns it on.",
   names: [{ name: "What's switched on", file: "features.py" }],
 };
 
