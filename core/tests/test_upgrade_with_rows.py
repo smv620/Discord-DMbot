@@ -18,8 +18,8 @@ narrows a CHECK on an optional column is not exercised by these rows. Rows are w
 superuser, so row-level security hides nothing from the planting. The before/after comparison
 catches an upgrade that changes or doubles a value it should not; it cannot see a backfill that
 silently matches nothing. That is caught only where `reads_through_the_stores` reads the result
-through the app's own role (today 0130's `initiative_style`), so a new row-changing migration needs
-its own check there.
+through the app's own role (nothing today: 0130's `initiative_style`, the last one, is live), so a
+new row-changing migration needs its own check there.
 When `LIVE` moves forward, drop the store checks for migrations that are then live.
 
 **Keep `LIVE` current:** move it forward in the PR that records a deploy (or in dev1's handover),
@@ -38,15 +38,14 @@ from typing import Any
 import psycopg
 from psycopg import sql
 
-from dmbot.campaigns import CampaignStore
 from dmbot.db import Database, drop_schema
 from dmbot.schema import MIGRATIONS
 from tests.pg import REQUIRE_DB, SUPERUSER_URL, TEST_URL, DatabaseTest
 
-# The last migration that is live. Deploy 174c35ec (2026-10-17 17:00 UTC) ended at 0127: found with
-# `git show 174c35ec:core/src/dmbot/schema.py`, whose MIGRATIONS list ends with
-# ("0127_rules_channel", RULES_CHANNEL). Updated with `docs/testing-status.log`, "LIVE NOW".
-LIVE = "0127_rules_channel"
+# The last migration that is live. Deploy 86976110 (2026-10-18 01:40 UTC) ended at 0130: its
+# migrations are 0128_npcs_channel, 0129_initiative_style and 0130_initiative_style_backfill, per
+# `docs/testing-status.log`, "LIVE NOW". Before it, deploy 174c35ec ended at 0127_rules_channel.
+LIVE = "0130_initiative_style_backfill"
 
 GUILD, OTHER_GUILD = (
     1,
@@ -338,8 +337,7 @@ def snapshot(schema: str) -> dict[str, list[dict[str, Any]]]:
 
 
 # Columns an upgrade is meant to change in rows that were already there: table → column names.
-# None today: 0128-0130 only add columns, and 0130 fills the new one. A backfill that rewrites an
-# old column goes here, with why.
+# None today. A backfill that rewrites an old column goes here, with why.
 EXPECTED_CHANGES: dict[str, set[str]] = {}
 
 
@@ -391,8 +389,11 @@ class UpgradeWithRows(DatabaseTest):
                 [],
                 "an upgrade changed a value that was already there (EXPECTED_CHANGES)",
             )
-            self.assertTrue(applied, "LIVE is the head: nothing was upgraded")
-            await self.reads_through_the_stores(schema)
+            # With LIVE at the head (right after a deploy) there is nothing to upgrade, and the
+            # checks above still prove the planted rows and the sample lists are sound. Once a
+            # migration lands after LIVE, `reads_through_the_stores` is where it is read back.
+            if applied:
+                await self.reads_through_the_stores(schema)
         finally:
             await self.db.close()
             await drop_schema(TEST_URL, schema)
@@ -429,21 +430,10 @@ class UpgradeWithRows(DatabaseTest):
             await drop_schema(TEST_URL, schema)
 
     async def reads_through_the_stores(self, schema: str) -> None:
-        """What the migrations after LIVE added, read the way the bot reads it."""
+        """What the migrations after LIVE added, read the way the bot reads it.
 
-        def campaign_ids() -> list[tuple[int, str, bool]]:
-            with connect(schema) as conn:
-                rows = conn.execute(
-                    "SELECT guild_id, id, side_initiative FROM campaigns ORDER BY guild_id"
-                )
-                return [(g, i, bool(on)) for g, i, on in rows]
-
-        campaigns = CampaignStore(self.db)
-        planted = await asyncio.to_thread(campaign_ids)
-        self.assertEqual([g for g, _, _ in planted], [GUILD, OTHER_GUILD])
-        for guild, campaign_id, folded in planted:
-            campaign = await campaigns.get(guild, campaign_id)
-            assert campaign is not None, "a campaign planted before the upgrade can't be read"
-            self.assertIsNone(campaign.npcs_channel_id)  # 0128: a new nullable column
-            # 0129 added the column, 0130 folded the retired side-initiative switch into it.
-            self.assertEqual(campaign.initiative_style, "side" if folded else None)
+        Nothing today: 0128-0130, whose read-backs lived here, are live (deploy 86976110). A
+        migration that changes rows, or adds a column the bot reads, adds its check here in the
+        PR that adds the migration: read the planted rows through the store (`CampaignStore` and
+        the like, on `self.db`), as the bot would, and assert the result. It is called only when
+        there are migrations to apply."""

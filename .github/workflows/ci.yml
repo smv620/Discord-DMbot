@@ -94,6 +94,7 @@ jobs:
       - run: npm test
       - run: npm run build
       - run: npm run check:links
+      - run: npm run check:golive  # the *_LIVE switches and docs/GO_LIVE.md match (#1881)
       - run: npm run check:csp
       - run: npm run check:transitions  # page-change budget, less motion, plain legal pages (#1311)
       - run: npm run check:a11y  # real browser: contrast, focus ring, 320 px, reduced motion (#1224)

@@ -836,7 +836,9 @@ class DMBot(commands.AutoShardedBot):
         # Campaign memory (#126): names the DM gives, suggestions after each session, and
         # an in-memory copy of each campaign's names, kept up to date by notifications.
         self.memory = memory
-        self.lookup = LookupCache(memory) if memory is not None else None
+        self.lookup = (
+            LookupCache(memory, in_use=self._campaign_has_a_table) if memory is not None else None
+        )
         # Players' D&D Beyond sheets, per campaign (#723).
         self.sheets = sheets
         # A campaign's house rules, for `/dmbot houserules` (#865); None without a database.
@@ -2481,6 +2483,12 @@ class DMBot(commands.AutoShardedBot):
         await self.post(table.screen_channel_id, text)
 
     # ---- sessions (used by /dmbot start · stop · help) ---------------------
+
+    def _campaign_has_a_table(self, guild_id: int, campaign_id: str) -> bool:
+        """Is a table of this campaign running here, or still finishing? The names cache keeps
+        such a copy however long it has sat unused (#1883): the next clip asks for it at once."""
+        tables = [self.tables.get(guild_id), *self._ending.get(guild_id, [])]
+        return any(t is not None and t.campaign_id == campaign_id for t in tables)
 
     def active_campaign_id(self, guild_id: int) -> str | None:
         table = self.tables.get(guild_id)
