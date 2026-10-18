@@ -701,8 +701,8 @@ class ClassFeatures(unittest.TestCase):
         )
         # a rule only the 5.1 has is found, tagged, in a 2024 campaign
         self.assertEqual(
-            found("Two-Weapon Fighting", "2024", "2014"),
-            ("Two-Weapon Fighting", "2014", "[Legacy 2014]"),
+            found("Underwater Combat", "2024", "2014"),
+            ("Underwater Combat", "2014", "[Legacy 2014]"),
         )
         grappling = srd.lookup("grappling", "2014", "2024", kind="rule")
         assert grappling is not None
@@ -716,6 +716,36 @@ class ClassFeatures(unittest.TestCase):
             self.assertEqual([(e.name, e.edition) for e in offered], [("Grappling", edition)])
             offered = srd.asked_names("suffocat", target, fallback, kinds=(index.RULE,))
             self.assertEqual(len(offered), 1, (target, [e.name for e in offered]))
+
+    def test_a_2014_rule_never_hides_the_targets_own_entry_of_another_kind(self) -> None:
+        srd = index.srd()
+        feat = srd.lookup("Two-Weapon Fighting", "2024", "2014", kind="feat")
+        assert feat is not None
+        self.assertTrue(srd.has_asked_for("Two-Weapon Fighting", "2024"))
+        self.assertFalse(srd.has_asked_for("Underwater Combat", "2024"))
+        from dmbot.ui import rule_lookup
+
+        found = rule_lookup._asked_for(srd, "Two-Weapon Fighting", "2024", "2014")
+        assert found is not None
+        self.assertEqual((found.entry.kind, found.entry.edition), ("feat", "2024"))
+        # in a 2014 campaign the 2014 rule is its own
+        own = rule_lookup._asked_for(srd, "Two-Weapon Fighting", "2014", "2024")
+        assert own is not None
+        self.assertEqual((own.entry.kind, own.entry.edition), ("rule", "2014"))
+
+    def test_the_5_2_1s_spelling_finds_the_5_1_rule_in_a_2014_campaign(self) -> None:
+        srd = index.srd()
+        for typed, name in (("stable", "Stabilizing a Creature"), ("reaction", "Reactions"),
+                            ("cantrip", "Cantrips"), ("attack roll", "Attack Rolls")):  # fmt: skip
+            hit = srd.lookup(typed, "2014", "2024", kind="rule")
+            assert hit is not None, typed
+            self.assertEqual((hit.entry.name, hit.entry.edition), (name, "2014"), typed)
+        # a plural is a spelling, not a rename: no "is now called" note
+        plural = srd.lookup("cantrips", "2024", "2014", kind="rule")
+        rename = srd.lookup("suffocating", "2024", "2014", kind="rule")
+        assert plural is not None and rename is not None
+        self.assertFalse(plural.renamed)
+        self.assertTrue(rename.renamed)
 
     def test_every_rule_alias_points_at_a_glossary_rule_and_a_5_1_title(self) -> None:
         from dmbot.rules import aliases

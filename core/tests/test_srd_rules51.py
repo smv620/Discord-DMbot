@@ -6,6 +6,7 @@ from __future__ import annotations
 import json
 import unittest
 from pathlib import Path
+from typing import Any
 from unittest.mock import patch
 
 from dmbot.devtools.srd import build, rules51
@@ -94,6 +95,7 @@ def chapters() -> list[Line]:
         at(LEFT, 474, "• Insight", BULLET, 77),
         at(LEFT, 472, "Charisma", TITLE, 77),
         at(LEFT, 471, "• Persuasion", BULLET, 77),
+        at(LEFT, 468, "Sometimes the GM asks for a skill by name.", BODY, 77),
         at(LEFT, 470, "Short Rest", TITLE, 87),
         at(LEFT, 458, "A short rest is a period of downtime, at least 1 hour long.", BODY, 87),
         at(
@@ -166,6 +168,7 @@ class Reading(unittest.TestCase):
                 "Intelligence: Arcana",
                 "Wisdom: Insight",
                 "Charisma: Persuasion",
+                "Sometimes the GM asks for a skill by name.",
             ],
         )
         self.assertNotIn("Strength (Skills)", rules)
@@ -258,6 +261,10 @@ class Building(unittest.TestCase):
 
 
 class TheData(unittest.TestCase):
+    text: str
+    data: dict[str, Any]
+    by_name: dict[str, dict[str, Any]]
+
     @classmethod
     def setUpClass(cls) -> None:
         cls.text = (DATA / "rules.json").read_text(encoding="utf-8")
@@ -266,6 +273,21 @@ class TheData(unittest.TestCase):
 
     def test_the_file_is_what_the_tool_writes(self) -> None:
         self.assertEqual(build.dump(self.data), self.text)
+
+    def test_words_the_repair_could_have_glued_or_split_are_right(self) -> None:
+        self.assertIn(
+            "During a round, each participant", self.by_name["The Order of Combat"]["text"]
+        )
+        skills = self.by_name["Skills"]["text"].splitlines()
+        self.assertEqual(skills[-3].split(":")[0], "Charisma")
+        self.assertTrue(skills[-2].startswith("Sometimes, the GM might ask for an ability check"))
+        self.assertTrue(skills[-1].startswith("For example, if a character attempts to climb"))
+        self.assertNotIn(".,", self.by_name["Skills"]["text"])
+        for e in self.data["entries"]:
+            self.assertNotRegex(e["text"], r"— \w", e["name"])  # a dash at a line's end
+            self.assertNotRegex(e["text"], r"(?m)^\d\.[A-Z]", e["name"])  # "1.Choose"
+        self.assertIn("1. Choose a target.", self.by_name["Making an Attack"]["text"])
+        self.assertIn("ranging from −5", self.by_name["Ability Scores and Modifiers"]["text"])
 
     def test_it_is_the_5_1s_rules_section(self) -> None:
         self.assertEqual(

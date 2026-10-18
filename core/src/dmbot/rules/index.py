@@ -233,6 +233,7 @@ class Index:
         alias_pairs: Sequence[tuple[str, str]] = (),
         alias_edition: str = aliases.EDITION,
         soft_alias_pairs: Sequence[tuple[str, str]] = (),
+        spelling_pairs: Sequence[tuple[str, str]] = (),
     ) -> None:
         self.entries: tuple[Entry, ...] = tuple(entries)
         self._by_edition: dict[str, dict[str, list[Entry]]] = {}
@@ -258,13 +259,21 @@ class Index:
             self._alias_keys.add((alias_edition, normalize(older)))
             for entry in list(found):
                 self._add(alias_edition, normalize(older), entry)
-        for (
-            older,
-            current,
-        ) in soft_alias_pairs:  # (skipped where the file they point into is missing)
-            for entry in list(self._by_edition.get(alias_edition, {}).get(normalize(current), [])):
-                self._alias_keys.add((alias_edition, normalize(older)))
-                self._add(alias_edition, normalize(older), entry)
+        # The 5.1's rule titles that the 5.2.1's glossary spells another way (#1943): renames, which
+        # the card says so about, and plain spellings (plurals). Skipped where the file they point
+        # into is missing, and found the other way round too: the 5.2.1's word finds the 5.1 rule
+        # in a 2014 campaign.
+        for pairs, renamed in ((soft_alias_pairs, True), (spelling_pairs, False)):
+            for older, current in pairs:
+                for entry in list(
+                    self._by_edition.get(alias_edition, {}).get(normalize(current), [])
+                ):
+                    if renamed:
+                        self._alias_keys.add((alias_edition, normalize(older)))
+                    self._add(alias_edition, normalize(older), entry)
+                for entry in list(self._by_edition.get(LEGACY, {}).get(normalize(older), [])):
+                    if entry.kind == RULE:
+                        self._add(LEGACY, normalize(current), entry)
 
     def _add(self, edition: str, key: str, entry: Entry) -> None:
         bucket = self._by_edition.setdefault(edition, {}).setdefault(key, [])
@@ -406,6 +415,12 @@ class Index:
             hits = wanted or hits
         return hits
 
+    def has_asked_for(self, name: str, edition: str) -> bool:
+        """Does this edition have an entry of a kind found only when asked for, other than a
+        glossary rule, under this name (the 2024 feat "Two-Weapon Fighting")?"""
+        found = self._by_edition.get(edition, {}).get(normalize(name), [])
+        return any(e.kind in ASKED_FOR and e.kind != RULE for e in found)
+
     def asked_names(
         self,
         typed: str,
@@ -546,4 +561,9 @@ def srd() -> Index:
     ):
         if not any(e.kind == kind for e in entries):  # an older build of the data: carry on
             log.warning("The %s are not in the data; the DM sidebar will not cite them", what)
-    return Index(entries, aliases.ALL, soft_alias_pairs=aliases.RULE_ALIASES)
+    return Index(
+        entries,
+        aliases.ALL,
+        soft_alias_pairs=aliases.RULE_RENAMES,
+        spelling_pairs=aliases.RULE_SPELLINGS,
+    )

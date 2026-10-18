@@ -24,7 +24,7 @@ from dmbot.devtools.srd.pdf import Line, Piece
 SECTION = "Rules"
 # A title that ends on one of these carries on in the line below ("Advantage and" / "Disadvantage",
 # "Using Ability" / "Scores", the chapter's own title).
-CARRIES_ON = ("and", "Ability")
+CARRIES_ON = ("Using Ability", "Advantage and", "Damage Resistance and")
 MINUS_ABOVE = 14.0  # a minus sign this far (points) above its line belongs in it
 SAME_HEADING = 35.0  # title lines this close (points) with nothing between are one heading
 # The four tables, by their captions: their cells are left out (they do not read as sentences).
@@ -184,7 +184,7 @@ def _sections(lines: Sequence[Line]) -> list[tuple[str, int, list[Line]]]:
         j = i + 1
         while (
             j < len(lines)
-            and title.split()[-1] in CARRIES_ON
+            and title in CARRIES_ON
             and is_title(lines[j])
             and abs(lines[j].x - line.x) <= EDGE_SLACK
             and 0 < lines[j - 1].y - lines[j].y <= SAME_HEADING
@@ -236,19 +236,26 @@ def parse_rules(lines: Sequence[Line], vocab: Vocabulary) -> list[Rule]:
         if not text:
             raise SrdError(f"Rule {name!r} on page {page}: no description")
         if name in SKILL_LISTS:
-            skills = ", ".join(row.removeprefix("• ") for row in text.splitlines())
-            target = next((r for r in rules if r.name == SKILL_LISTS[name]), None)
-            if target is None:
+            # The list's bullets are the skills; the last list is followed by two paragraphs
+            # of the Skills rule, which stay paragraphs.
+            rows = text.splitlines()
+            skills = [row.removeprefix("• ") for row in rows if row.startswith("• ")]
+            after = [row for row in rows if not row.startswith("• ")]
+            if not skills:
+                raise SrdError(f"{name!r} on page {page}: no skills in its list")
+            at = next((i for i, r in enumerate(rules) if r.name == SKILL_LISTS[name]), None)
+            if at is None:
                 raise SrdError(f"{name!r} on page {page}: no {SKILL_LISTS[name]!r} before it")
-            rules[rules.index(target)] = Rule(
-                target.name, "", f"{target.text}\n{title}: {skills}", target.page, ()
-            )
+            words = "\n".join([rules[at].text, f"{title}: {', '.join(skills)}", *after])
+            rules[at] = Rule(rules[at].name, "", words, rules[at].page, ())
             continue
         if name in seen:
             raise SrdError(f"Rule {name!r} comes twice (page {page})")
         seen.add(name)
         text = re.sub(r"\n(?=[a-z])", " ", text)
         text = re.sub(r"− (?=\d)", "−", text)  # (the minus sign is drawn apart from its number)
+        text = re.sub(r"— (?=\w)", "—", text)  # (a dash at a line's end gets a space after it)
+        text = re.sub(r"(?m)^(\d)\.(?=[A-Z])", r"\1. ", text)  # ("1.Choose a target.")
         rules.append(Rule(name, "", text, page, ()))
     return rules
 

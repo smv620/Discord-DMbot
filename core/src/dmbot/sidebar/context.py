@@ -256,6 +256,16 @@ def mentioned_rules(
                     and is_everyday_property(glossary.entry)
                 ):
                     glossary = None  # "Light", "Slow": a property only when weapons are meant
+                # A 2014 rule found because the target has none of that name (#1943): not for an
+                # everyday word ("Time", "Water", "Wisdom", "Food"), and not when the target has
+                # another kind of entry by the name (the 2024 feat "Two-Weapon Fighting" beats the
+                # 2014 rule).
+                if (
+                    glossary is not None
+                    and glossary.from_fallback
+                    and ((size == 1 and not props) or index.has_asked_for(name, target))
+                ):
+                    glossary = None
                 hits = [glossary] if glossary is not None else []
             if not hits:
                 item = index.lookup(name, target, fallback, kind=ITEM)
