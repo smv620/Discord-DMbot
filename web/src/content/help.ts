@@ -556,7 +556,7 @@ export const dmSteps: Step[] = [
     ],
   },
   {
-    text: "To suggest one of your own house rules to the game master whose rules you use, type /dmbot houserules, press 💡 Suggest next to your rule, then press Yes, send it. It goes exactly as written, with no name on it, so check that the rule names no one. Your own rules stay as they are.",
+    text: "To suggest one of your own house rules to the game master whose rules you use, type /dmbot houserules, press 💡 Suggest on your rule, then press Yes, send it. It goes exactly as written, with no name on it, so check that the rule names no one. Your own rules stay as they are.",
     names: [
       { name: "/dmbot houserules", file: "ui/house_rules.py" },
       { name: "💡 Suggest", file: "ui/house_rules.py" },
@@ -674,7 +674,7 @@ export const dmSteps: Step[] = [
     ],
   },
   {
-    text: "To see or change who your game masters are, press ⚙️ Settings, then 👑 Game masters. To add one, press ➕ Add a game master and pick someone from your server (people only, not bots). A campaign can have up to 5. They get a private message, and right away they can see the DM screen and change settings. To remove one, press ➖ Remove a game master, pick them, then press Remove once to confirm. They lose access right away, even in the middle of a game. You can remove yourself too. You can't remove the last game master, or the one whose plan the campaign uses; hand the campaign over first (⚙️ Settings, then Hand over). Being made a game master doesn't record anyone. Being recorded is still each person's own yes.",
+    text: "To see or change who your game masters are, press ⚙️ Settings, then 👑 Game masters. To add one, press ➕ Add a game master and pick someone from your server (people only, not bots). A campaign can have up to 5. They get a private message, and right away they can see the DM screen and change settings. To remove one, press ➖ Remove a game master, pick them, then press Remove to confirm. They lose access right away, even in the middle of a game. You can remove yourself too. You can't remove the last game master, or the one whose plan the campaign uses; hand the campaign over first (⚙️ Settings, then Hand over). Being made a game master doesn't record anyone. Being recorded is still each person's own yes.",
     names: [
       { name: "Game masters", file: "dm_screen/game_masters.py" },
       { name: "Add a game master", file: "dm_screen/game_masters.py" },

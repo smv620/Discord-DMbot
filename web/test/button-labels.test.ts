@@ -33,7 +33,9 @@ describe("button labels on the site", () => {
 
   it("every label in the hidden list is still in the file it names", () => {
     for (const { label, file } of hiddenBotLabels) {
-      expect(readFileSync(join(botDir, file), "utf8"), `${label} in ${file}`).toContain(label);
+      // As a whole quoted string (an emoji may come first), so a short word elsewhere can't satisfy it.
+      const quoted = new RegExp(`"(?:[^\\p{L}\\p{N}"]*\\s)?${label.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}"`, "u");
+      expect(readFileSync(join(botDir, file), "utf8"), `${label} in ${file}`).toMatch(quoted);
     }
   });
 
@@ -52,6 +54,8 @@ describe("button labels on the site", () => {
     const problems = labelProblems(buttonPhrases(old), labels, allowed);
     expect(problems.map((p) => p.phrase)).toEqual(["Yes"]);
     expect(problems[0].closest).toBe("Yes, stop recording me");
+    // A real label with more words after it is not that label.
+    expect(labelProblems(buttonPhrases("press Menu button."), labels, allowed).map((p) => p.phrase)).toEqual(["Menu button"]);
     // The right wording passes.
     const fixed = "press ⚙️ Menu in the private message, then Stop recording me, then Yes, stop recording me.";
     expect(labelProblems(buttonPhrases(fixed), labels, allowed)).toEqual([]);

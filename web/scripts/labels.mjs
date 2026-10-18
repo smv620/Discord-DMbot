@@ -1,5 +1,5 @@
 // Which buttons the site tells people to press, and whether the bot really has them (#1893).
-// Pure functions, so the vitest and the CI step share one reader; no file access here.
+// Pure functions, so the vitest reads it; no file access here.
 
 const unescape = (s) => s.replace(/\\(["'\\])/g, "$1");
 
@@ -62,11 +62,17 @@ export function closestLabel(phrase, labels) {
  * with a comma or an "and" in them ("Yes, stop recording me") through whole.
  */
 export function labelProblems(items, labels, allowed = []) {
-  const real = [...labels].map(plain);
+  // Emoji-only and one-letter labels collapse to nothing useful and must never match a phrase.
+  // A trailing "?" or "…" is how the button looks, not part of its name in a sentence.
+  const real = [...labels].map((l) => plain(l).replace(/[?!]+$/u, "")).filter((l) => l.length >= 2);
   const ok = [...real, ...allowed.map(plain)];
-  const begins = (rest) =>
-    ok.some((label) => rest === label || (rest.startsWith(label) && !/^[\p{L}\p{N}]/u.test(rest.slice(label.length))));
-  return items.filter(({ phrase, rest }) => phrase && !begins(rest)).map((i) => ({ ...i, closest: closestLabel(i.phrase, real) }));
+  const same = (a, b) => a.toLowerCase() === b.toLowerCase();
+  // The words up to the clause end are the label, or the text starts with a label that holds a
+  // comma ("Yes, stop recording me") and then ends the clause or goes on with a joining word. A
+  // label followed by more nouns ("Save changes" for "Save") is not a match.
+  const begins = ({ phrase, rest }) =>
+    ok.some((label) => same(phrase, label) || (rest.startsWith(label) && /^(?:$|[,.;:!?)]|\s*\(|\s+(?:and|to|in|on|so|if|when|for|then|again|at|before|after|until|or|under|only|first|there|here|any time)\b)/u.test(rest.slice(label.length))));
+  return items.filter((i) => i.phrase && !begins(i)).map((i) => ({ ...i, closest: closestLabel(i.phrase, real) }));
 }
 
 /**
@@ -93,6 +99,7 @@ export const hiddenBotLabels = [
   { label: "Turn FightBot off", file: "ui/sheets.py" },
   { label: "Off", file: "dm_screen/story_mode.py" },
   { label: "Secret: no", file: "ui/name_card.py" },
+  { label: "Due soon", file: "memory/threads.py" },
   { label: "Post to the table", file: "ui/recap_dm.py" },
 ];
 
