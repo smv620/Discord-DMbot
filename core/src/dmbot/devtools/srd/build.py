@@ -28,6 +28,7 @@ from typing import Any
 from dmbot.devtools.srd import (
     classes,
     classes51,
+    equipment,
     items,
     monsters,
     monsters51,
@@ -86,6 +87,10 @@ CLASSES_HEADING = "Classes"
 AFTER_CLASSES_HEADING = "Character Origins"
 FEATS_HEADING = "Feats"
 AFTER_FEATS_HEADING = "Equipment"
+WEAPONS_HEADING = "Weapons"
+ARMOR_HEADING = "Armor"
+AFTER_ARMOR_HEADING = "Tools"
+EQUIPMENT_SECTION = "Equipment"
 ORIGINS_SECTION = "Character Origins"
 ITEMS_HEADING = "Magic Items A–Z"
 AFTER_ITEMS_HEADING = "Monsters"
@@ -218,6 +223,12 @@ def build_files(
     species = origins.parse_species(origin_lines)
     backgrounds = origins.parse_backgrounds(origin_lines)
     feats = origins.parse_feats(lines_between(pages, feats_at, equipment_at))
+    weapons_at = first_page_of(pages, WEAPONS_HEADING, after=equipment_at)
+    armor_at = first_page_of(pages, ARMOR_HEADING, after=weapons_at)
+    tools_at = first_page_of(pages, AFTER_ARMOR_HEADING, after=armor_at)
+    properties = equipment.parse_properties(lines_between(pages, equipment_at, weapons_at))
+    weapons = equipment.parse_weapons(lines_between(pages, weapons_at, armor_at))
+    armors = equipment.parse_armor(lines_between(pages, armor_at, tools_at))
     items_at = first_page_of(pages, ITEMS_HEADING, after=CONTENTS_PAGES)
     after_items_at = first_page_of(pages, AFTER_ITEMS_HEADING, after=items_at)
     magic_items = items.parse_items(lines_between(pages, items_at, after_items_at))
@@ -265,6 +276,15 @@ def build_files(
                 *({"kind": "background", **asdict(b)} for b in backgrounds),
             ],
         },
+        # Three kinds in one file: each entry says its own (and the properties their section).
+        "equipment.json": {
+            **header("equipment", EQUIPMENT_SECTION),
+            "entries": [
+                *(equipment_entry("weapon", w) for w in weapons),
+                *(equipment_entry("armor", a) for a in armors),
+                *(equipment_entry("rule", p) for p in properties),
+            ],
+        },
         "items.json": {
             **header("item", ITEMS_SECTION),
             "entries": [item_entry(i) for i in magic_items],
@@ -273,6 +293,45 @@ def build_files(
             **header("monster", None),
             "entries": [monster_entry(m, EDITION) for m in creatures],
         },
+    }
+
+
+def _weight_and_cost(entry: Any) -> str:
+    """ "3 lb., 15 GP." (a weight of "—" is left out: there is none to say)."""
+    parts = [entry.weight if entry.weight != "—" else "", entry.cost]
+    return ", ".join(p for p in parts if p) + "."
+
+
+def equipment_entry(kind: str, entry: Any) -> dict[str, Any]:
+    """A weapon, an armor or a weapon property as the equipment file holds it: its kind, name and
+    the fields of its table row, then the row read out as words, and its page."""
+    if kind == "weapon":  # the number a DM wants first; the heading already says the category
+        parts = [f"{entry.damage} {entry.damage_type}."]
+        if entry.properties:
+            parts.append(f"Properties: {entry.properties}.")
+        parts.append(f"Mastery: {entry.mastery}.")
+        parts.append(_weight_and_cost(entry))
+        return {"kind": kind, **asdict(entry), "text": " ".join(parts)}
+    if kind == "armor":
+        parts = [f"AC {entry.ac}."]
+        if entry.strength != "—":
+            parts.append(f"Needs {entry.strength.replace('Str ', 'Strength ')}.")
+        if entry.stealth != "—":
+            parts.append(f"{entry.stealth} on Stealth.")
+        parts.append(_weight_and_cost(entry))
+        if entry.category == "Shield":
+            parts.append("Use the Utilize action to don or doff.")
+        else:
+            parts.append(f"Takes {entry.don_doff.lower()}.")
+        return {"kind": kind, **asdict(entry), "text": " ".join(parts)}
+    return {
+        "kind": "rule",
+        "section": EQUIPMENT_SECTION,
+        "name": entry.name,
+        "tag": entry.tag,
+        "text": entry.text,
+        "page": entry.page,
+        "see_also": [],
     }
 
 

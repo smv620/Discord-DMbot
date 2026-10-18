@@ -30,6 +30,7 @@ FILES = ("ATTRIBUTION.md", "conditions.json", "features.json", "monsters.json", 
 FILES_52 = (
     "ATTRIBUTION.md",
     "conditions.json",
+    "equipment.json",
     "feats.json",
     "features.json",
     "items.json",
@@ -208,7 +209,9 @@ class TheRulesGlossary(unittest.TestCase):
         self.assertIn("cover", index.names_pool("2024"))
 
     def test_the_shipped_glossary_is_cited_and_read_only(self) -> None:
-        rules = [e for e in index.srd().entries if e.kind == "rule"]
+        rules = [
+            e for e in index.srd().entries if e.kind == "rule" and e.section == "Rules Glossary"
+        ]  # (the weapon properties are rules of the "Equipment" section, #1919)
         self.assertEqual(len(rules), 140)
         self.assertTrue(all(e.edition == "2024" and e.section == "Rules Glossary" for e in rules))
         self.assertFalse([e.name for e in rules if not e.text or e.page < 176 or e.page > 191])
@@ -378,6 +381,59 @@ class ClassFeatures(unittest.TestCase):
         for background in (e for e in index.srd().entries if e.kind == "background"):
             feat = index.srd().lookup(background.details["feat"], "2024", "2014", kind="feat")
             self.assertIsNotNone(feat, background.name)  # the feat each background gives exists
+
+    def test_the_shipped_equipment_is_complete_and_found_only_when_asked_for(self) -> None:
+        srd = index.srd()
+
+        def of(kind: str, section: str | None = None) -> list[Entry]:
+            return [
+                e
+                for e in srd.entries
+                if e.kind == kind and (section is None or e.section == section)
+            ]
+
+        self.assertEqual((len(of("weapon")), len(of("armor"))), (38, 13))
+        self.assertEqual(len(of("rule", "Equipment")), 18)
+        self.assertEqual(len(of("rule", "Rules Glossary")), 140)  # the glossary is untouched
+        names = [e.name for e in of("rule")]
+        self.assertEqual(len(names), len(set(names)))  # no property shadows a glossary entry
+        pool = srd.names_pool("2024", "2014").values()
+        self.assertFalse(any(e.kind in ("weapon", "armor") for e in pool))
+        self.assertIsNone(srd.lookup("Longsword", "2024", "2014"))
+        shield = srd.lookup("Shield", "2024", "2014")
+        assert shield is not None
+        self.assertEqual(shield.entry.kind, "spell")  # the spell still answers a bare "Shield"
+
+    def test_golden_weapons_and_armor(self) -> None:
+        def get(name: str, kind: str) -> Entry:
+            hit = index.srd().lookup(name, "2024", "2014", kind=kind)
+            assert hit is not None, name
+            return hit.entry
+
+        from dmbot.rules import facts
+
+        longsword = get("Longsword", "weapon")
+        self.assertEqual(
+            facts.weapon_line(longsword),
+            "Martial Melee, 1d8 Slashing, Versatile (1d10), mastery Sap",
+        )
+        dagger = get("Dagger", "weapon")
+        self.assertEqual(
+            (dagger.details["properties"], dagger.details["mastery"]),
+            ("Finesse, Light, Thrown (Range 20/60)", "Nick"),
+        )
+        plate = get("Plate Armor", "armor")
+        self.assertEqual(
+            (plate.details["ac"], plate.details["strength"], plate.details["stealth"]),
+            ("18", "Str 15", "Disadvantage"),
+        )
+        self.assertEqual(
+            facts.armor_line(plate),
+            "Heavy armor, AC 18, needs Strength 15, Disadvantage on Stealth",
+        )
+        self.assertEqual(get("Shield", "armor").details["ac"], "+2")
+        self.assertEqual(get("Topple", "rule").details["tag"], "Mastery Property")
+        self.assertEqual(get("Finesse", "rule").citation, "SRD 5.2.1, Equipment, p. 89")
 
     def test_every_shipped_rarity_is_one_the_srd_prints(self) -> None:
         from dmbot.devtools.srd import items as reader
