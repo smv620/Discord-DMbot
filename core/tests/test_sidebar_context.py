@@ -13,7 +13,7 @@ from dmbot.memory.lookup import CampaignLookup
 from dmbot.memory.models import Relation
 from dmbot.rules import facts as rule_facts
 from dmbot.rules.house import HouseRuleStore
-from dmbot.rules.index import srd
+from dmbot.rules.index import Hit, srd
 from dmbot.sidebar import context
 from dmbot.sidebar.answer import Sidebar
 from tests.pg import DatabaseTest
@@ -101,6 +101,81 @@ class MentionedRules(unittest.TestCase):
             scene="",
         ).prompt
         self.assertIn("Goblin", prompt)
+
+
+class TheRulesGlossary(unittest.TestCase):
+    """The SRD's Rules Glossary (#1884): cited when the question names nothing else."""
+
+    def hits(self, question: str) -> list[Hit]:
+        return context.mentioned_rules(question, INDEX, "2024", "2014")
+
+    def test_a_question_about_a_game_term_gets_the_glossary_entry_and_its_citation(self) -> None:
+        (hit,) = self.hits("how does long rest work")
+        self.assertEqual((hit.entry.kind, hit.entry.name), ("rule", "Long Rest"))
+        prompt = context.build(
+            "how does long rest work",
+            target="2024",
+            fallback="2014",
+            index=INDEX,
+            house_rules=[],
+            lookup=None,
+            scene="",
+        )
+        self.assertIn("- Long Rest (rule) [SRD 5.2.1 p. 185]:", prompt.prompt)
+        self.assertIn("SRD 5.2.1 p. 185", prompt.sources)
+
+    def test_a_tagged_entry_is_found_by_its_plain_name(self) -> None:
+        found = {
+            h.entry.name: h.entry.details["tag"] for h in self.hits("what does the dash action")
+        }
+        self.assertEqual(found.get("Dash"), "Action")
+
+    def test_a_named_spell_condition_or_creature_keeps_the_places_to_itself(self) -> None:
+        # "line" is a glossary entry (an area of effect): beside a spell it would be noise.
+        self.assertEqual(
+            [h.entry.name for h in self.hits("line of sight for fireball")], ["Fireball"]
+        )
+        self.assertEqual(
+            [h.entry.kind for h in self.hits("can a grappled goblin dash")],
+            ["condition", "monster"],
+        )
+
+    def test_the_glossary_has_no_spell_condition_or_creature_of_the_same_kind(self) -> None:
+        kinds = {h.entry.kind for h in self.hits("what is cover and half cover")}
+        self.assertEqual(kinds, {"rule"})
+
+    def test_a_house_rule_on_the_same_term_comes_before_the_glossary_entry(self) -> None:
+        prompt = context.build(
+            "how does cover work",
+            target="2024",
+            fallback="2014",
+            index=INDEX,
+            house_rules=[house(3, "Half cover gives +3 to AC at our table.")],
+            lookup=None,
+            scene="",
+        ).prompt
+        self.assertIn("HOUSE RULES (they come first):", prompt)
+        self.assertIn("House rule 3: Half cover gives +3 to AC", prompt)
+        self.assertLess(prompt.index("HOUSE RULES"), prompt.index("RULES ENTRIES"))
+        self.assertIn("- Cover (rule) [SRD 5.2.1 p. 179]:", prompt)
+
+    def test_a_glossary_word_does_not_make_a_dmbot_question_a_rules_question(self) -> None:
+        prompt = context.build(
+            "can you track initiative?",
+            target="2024",
+            fallback="2014",
+            index=INDEX,
+            house_rules=[],
+            lookup=None,
+            scene="",
+        ).prompt
+        self.assertIn("ABOUT DMBOT", prompt)
+
+    def test_the_glossary_adds_at_most_three_entries(self) -> None:
+        found = self.hits("explain cover, dash, long rest and short rest")
+        self.assertEqual(
+            [h.entry.name for h in found], ["Cover", "Long Rest", "Short Rest"]
+        )  # longest names first
 
 
 class MentionedNames(unittest.TestCase):

@@ -423,11 +423,22 @@ class Names(unittest.TestCase):
         self.assertEqual((goblin.renamed, deep.renamed, plain.renamed), (True, False, False))
 
     def test_no_name_belongs_to_two_kinds(self) -> None:
-        # so a lookup without `kind` can't answer with the wrong sort of entry
+        # so a lookup without `kind` can't answer with the wrong sort of entry. The Rules
+        # Glossary (#1884) is the exception on purpose: its entries share names with spells
+        # ("Darkness"), and a lookup without a kind never returns them.
         for edition, names in index.srd()._by_edition.items():
             for key, entries in names.items():
                 with self.subTest(edition=edition, key=key):
-                    self.assertEqual(len({e.kind for e in entries}), 1)
+                    self.assertLessEqual(len({e.kind for e in entries if e.kind != "rule"}), 1)
+
+    def test_a_glossary_entry_never_answers_a_lookup_without_a_kind(self) -> None:
+        srd = index.srd()
+        spell = srd.lookup("Darkness", "2024", "2014")
+        assert spell is not None
+        self.assertEqual(spell.entry.kind, "spell")
+        rule = srd.lookup("Darkness", "2024", "2014", kind="rule")
+        assert rule is not None
+        self.assertEqual(rule.entry.kind, "rule")
 
     def test_the_bracket_rule_holds_for_spells_too(self) -> None:
         hit = index.srd().lookup("Fireball (Legacy)", "2024", "2014", kind="spell")

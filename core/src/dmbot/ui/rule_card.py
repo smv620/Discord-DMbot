@@ -39,7 +39,7 @@ NOT_A_RULING = (
 OLDER_NOTE = "_From the older 2014 rules (the newer free rules don't have it)._"
 TAG_WORDS = {"[2024]": "[Newer 2024 rules]"}  # a tag as the DM reads it
 ONLY_FREE_RULES = "_Only the free rules are in DMbot so far, not your own books._"
-KIND_WORDS = {"spell": "spell", "condition": "condition", "monster": "creature"}
+KIND_WORDS = {"spell": "spell", "condition": "condition", "monster": "creature", "rule": "rule"}
 
 
 def _md(text: str) -> str:
