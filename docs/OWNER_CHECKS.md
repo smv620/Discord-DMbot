@@ -9,10 +9,14 @@ steps, look for the sign it worked, then tell dev1.
 **Names in the examples are made up. Use made-up names too.** Buttons are named as the Help page names
 them. If a button is not where a check says, that is a mistake in this file: tell dev1 and WebDev will fix it.
 
-**Before you start (once):** open your test server, type `/dmbot start`, press ＋ New campaign (or ▶ Continue last campaign), pick your
-voice channel and press ▶ Start listening. You are the game master. The steps are on the Help page:
-https://getdmbot.com/help. You must have said yes to being recorded on the test server (the private message DMbot sent you), or checks 2, 16, 17 and 18 hear nothing. Keep this open on your phone and work down the list. Checks 1 and 2 come first
-because they unlock the latest deploy.
+**Before you start (once):**
+1. Open your test server and type `/dmbot start`.
+2. Press ＋ New campaign, or ▶ Continue last campaign if you already have one (do not make a duplicate).
+3. Pick your voice channel and press ▶ Start listening. You are the game master.
+4. Say yes to being recorded in the private message DMbot sends you (the one with the **Yes** button). Without it, checks 2, 16, 17 and 18 hear nothing.
+
+The steps are on the Help page: https://getdmbot.com/help. Keep this open on your phone and work down the
+list. Checks 1 and 2 come first because they are the newest features. Check 19 waits for the next deploy.
 
 **When you finish a check, tell dev1 in one line:** "Check N: worked" or "Check N: didn't (what you saw)".
 dev1 writes it in `docs/testing-history.log`, and WebDev then switches the matching Help, News and home page
@@ -154,52 +158,58 @@ Unlocks: #1431, #1452
 
 ## Group E. Settings, fixes and the next deploy
 
+Do 16, 17 and 18 before 15. Check 15 deletes a campaign.
+
 ### 12. Finding Settings
 **You'll do:**
 1. Type `/dmbot settings` anywhere in your test server.
-2. Then type `/dmbot start`, press ＋ New campaign (or ▶ Continue last campaign) and look at the step where you pick the voice channel.
+2. Type `/dmbot start`, press ＋ New campaign (or ▶ Continue last campaign if one exists) and look at the step where you pick the voice channel. You do not need to press ▶ Start listening.
 
-**It worked if:** Settings opens for you alone from the command, and ⚙️ Settings is on the voice-channel step too.
+**It worked if:** Settings opens from the command and says only you can see it, and ⚙️ Settings is on the voice-channel step too.
 
 Unlocks: #1619
 
 ### 13. Game masters
 **You'll do:**
 1. Press ⚙️ Settings, then 👑 Game masters.
-2. Press ➕ Add a game master and pick a second made-up test account, or a friend you trust.
-3. Press ➖ Remove a game master and take them off again.
+2. Press ➕ Add a game master and pick a second test account of yours that is already in the server.
+3. On that account, press ⚙️ Settings or type `/dmbot settings`.
+4. Back on your account, press ➖ Remove a game master and take them off again. Try step 3 again.
 
-**It worked if:** the person you added can open the DM screen's Settings straight away, and cannot once you take them off.
+**It worked if:** Settings opens for the second account after you add them, and does not once you take them off.
 
 Unlocks: #1600, #1603
 
 ### 14. Splitting the party
 **You'll do:**
-1. On the clock message, press Rests & time…, then ✂️ Split the party.
-2. Name two groups, for example "Tower" and "Camp".
-3. Press 🤝 Rejoin the party, then Undo.
+1. Set the game clock first: press ⚙️ Settings, then Game clock, and give any day and hour. You do not need to wait for it.
+2. Press Rests & time…, then ✂️ Split the party.
+3. Name two groups, for example "Tower" and "Camp".
+4. Press 🤝 Rejoin the party, pick a time to keep, then press Undo.
 
-**It worked if:** each group gets its own clock after the split, the clocks come back together when you press Rejoin the party, and Undo puts the split back.
+**It worked if:** each group gets its own clock after the split, the clocks come back together when you rejoin, and Undo puts the split back.
 
 Unlocks: #1607
 
 ### 15. Deleting a whole campaign
-**Use a throwaway campaign you do not mind losing.**
+**Do this last, on a throwaway campaign.** Make a second campaign first (`/dmbot start`, ＋ New campaign) and delete only that one. Read the name on the warning before you type it. Never do this on a campaign you play.
 
 **You'll do:**
-1. Press ⚙️ Settings and press Delete this campaign.
-2. Read the warning. Press 💾 Back up first and let it finish.
-3. Type the campaign's name when it asks.
+1. On the throwaway campaign, press ⏹ Stop listening if it is on. It cannot be deleted while it is being played. Only the game master whose plan it uses can delete it, which should be you.
+2. Press ⚙️ Settings, then 🗑 Delete this campaign.
+3. Read what will be lost. Press 💾 Back up first and wait for the file.
+4. Press Delete it, then type the campaign's name.
 
-**It worked if:** the warning shows before anything is deleted, the backup arrives first, and the campaign and its channels are gone after you type the name.
+**It worked if:** the warning showed before anything was deleted, the backup file arrived first, and the campaign no longer shows when you type `/dmbot start`. The transcript and chat channels may stay until a server admin removes them. That is expected.
 
 Unlocks: #1608
 
 ### 16. Fixing a line DMbot heard wrong
 **You'll do:**
-1. Say a short sentence while listening, then stop.
-2. Type `/dmbot fix`, or press ✏️ Fix a line on the DM screen, pick the line, and type what it should say.
-3. Press Undo while the session is still running.
+1. Press ▶ Start listening and say one short sentence. Do not stop yet.
+2. Wait a minute, then type `/dmbot fix`, or press ✏️ Fix a line on the DM screen.
+3. Pick your sentence from the list of recent lines and type what it should say.
+4. Press Undo, then stop listening.
 
 **It worked if:** as game master the line changes at once, and Undo puts the old words back.
 
@@ -207,8 +217,8 @@ Unlocks: #1491, #1499
 
 ### 17. The note before tonight's session
 **You'll do:**
-1. Run a short session on the test server and confirm at least one name when DMbot asks, then stop.
-2. Start listening again the next day, or after a pause, and look at the DM screen.
+1. Run a short session. Say a made-up name out loud, for example "Captain Rook". When DMbot asks "Did they mean…?" or lists names to confirm, confirm one. Stop listening.
+2. Start listening again and look at the DM screen.
 
 **It worked if:** a short note appears on the DM screen, for you only, with last time's recap and what you confirmed. Players do not see it.
 
@@ -216,11 +226,11 @@ Unlocks: #1403
 
 ### 18. A player says a secret name
 **You'll do:**
-1. Mark one made-up name secret, for example "Lady Vesper".
-2. Have a test player say that name out loud while recording.
-3. After the session, look at your private messages.
+1. Open the name's card (`/dmbot names`) and mark one made-up name secret, for example "Lady Vesper". The Help page's steps for secret names show how.
+2. Start listening. Have a test player, who has also said yes to being recorded, say that name out loud.
+3. Press ⏹ Stop listening and look at your private messages.
 
-**It worked if:** DMbot asks you privately, one name at a time, whether it should stay secret or be opened up. Only you can answer.
+**It worked if:** after you stop, DMbot asks you privately, one name at a time, whether it should stay secret or be opened up. Only you can answer.
 
 Unlocks: #1407
 
