@@ -630,6 +630,46 @@ class Words(unittest.TestCase):
             self.assertIsNotNone(hit, example)  # each example is something DMbot has
 
 
+class FeatureLookup(LookupTest):
+    """Class features on /dmbot rule (#1900), after the glossary's names."""
+
+    async def test_a_feature_gives_its_card_with_class_and_level(self) -> None:
+        text = self.sent(await self.command("rage"))[0]
+        self.assertIn("📖 **Rage** (feature: Barbarian 1)", text)
+        self.assertIn("Source: SRD 5.2.1, Classes, p. 28", text)
+
+    async def test_a_subclass_feature_names_its_subclass(self) -> None:
+        text = self.sent(await self.command("frenzy"))[0]
+        self.assertIn("(feature: Barbarian 3, Path of the Berserker)", text)
+
+    async def test_a_class_in_front_picks_that_classs_feature(self) -> None:
+        self.assertIn("(feature: Rogue 7)", self.sent(await self.command("rogue evasion"))[0])
+        self.assertIn("(feature: Monk 7)", self.sent(await self.command("monk evasion"))[0])
+        self.assertIn("(feature: Monk 7)", self.sent(await self.command("evasion"))[0])  # first
+
+    async def test_a_spell_or_a_glossary_entry_of_the_name_still_wins(self) -> None:
+        self.assertIn("(spell)", self.sent(await self.command("fireball"))[0])
+        self.assertIn("(rule)", self.sent(await self.command("cover"))[0])
+
+    async def test_the_list_names_each_class_and_picking_one_finds_it(self) -> None:
+        it = self.it(kind=discord.InteractionType.autocomplete)
+        choices = await ui._typeahead(it, "evasi")
+        self.assertEqual(
+            [(c.name, c.value) for c in choices],
+            [
+                ("Evasion (feature: Monk 7)", "Monk Evasion"),
+                ("Evasion (feature: Rogue 7)", "Rogue Evasion"),
+            ],
+        )
+        picked = self.sent(await self.command(choices[1].value))[0]
+        self.assertIn("(feature: Rogue 7)", picked)
+
+    async def test_a_house_rule_on_the_feature_is_shown_first(self) -> None:
+        self.store.rules[C1] = [house(5, "Rage lasts a minute at our table", C1)]
+        text = self.sent(await self.command("rage"))[0]
+        self.assertTrue(text.startswith("🏠 **House rule 5:**"))
+
+
 if __name__ == "__main__":
     unittest.main()
 

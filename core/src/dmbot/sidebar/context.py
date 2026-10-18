@@ -35,12 +35,17 @@ from dmbot.rules.book_rank import book_is_legacy, book_wins
 from dmbot.rules.followed import FollowedRule
 from dmbot.rules.homebrew import Homebrew
 from dmbot.rules.house import HouseRule
-from dmbot.rules.index import RULE, Hit, Index, edition_tag, normalize
+from dmbot.rules.index import ASKED_FOR, FEATURE, RULE, Hit, Index, edition_tag, normalize
 from dmbot.sidebar import knowledge
 
 LEGACY_TAG = "[Legacy 2014]"  # the owner's rule: the older ruleset is always tagged
 ENTRY_TEXT_MAX = 1200  # characters of one rules entry sent to the AI
 ENTRIES_MAX = 3
+# The twelve classes of the SRD 5.2.1: a class in the question picks that class's feature (#1900).
+CLASS_NAMES = frozenset(
+    {"barbarian", "bard", "cleric", "druid", "fighter", "monk"}
+    | {"paladin", "ranger", "rogue", "sorcerer", "warlock", "wizard"}
+)
 HOUSE_RULES_MAX = 5
 HOUSE_RULE_MAX = 300
 HOMEBREW_MAX = 3  # the campaign's own entries sent for one question
@@ -180,9 +185,12 @@ def mentioned_rules(
                 for k in range(start, start + size):
                     used[k] = True
                 found.append((start, hit))
-    # The Rules Glossary (#1884) answers only a question that names no spell, condition or
-    # creature. Its names are everyday words ("Line", "Damage", "Cover"): beside a named entry
-    # they would be noise in the prompt, so they never crowd out what the DM actually named.
+    # The Rules Glossary (#1884) and the class features (#1900) answer only a question that
+    # names no spell, condition or creature. Their names are everyday words ("Line", "Damage",
+    # "Cover") or shared by classes ("Extra Attack"): beside a named entry they would be noise in
+    # the prompt, so they never crowd out what the DM actually named. A class named in the
+    # question ("rogue evasion") picks that class's feature; otherwise every class that has it.
+    klass = next((w for w in words if w.lower() in CLASS_NAMES), "")
     spare = 0 if found else ENTRIES_MAX
     for size in range(WINDOW, 0, -1) if spare > 0 else ():
         for start in range(len(words) - size + 1):
@@ -191,12 +199,16 @@ def mentioned_rules(
             window = words[start : start + size]
             if size == 1 and (window[0].lower() in _STOP or len(window[0]) < 3):
                 continue
-            hit = index.lookup(" ".join(window), target, fallback, kind=RULE)
-            if hit is not None:
+            name = " ".join(window)
+            hits = index.lookup_all(name, target, fallback, kind=FEATURE, prefer=klass)
+            if not hits:
+                glossary = index.lookup(name, target, fallback, kind=RULE)
+                hits = [glossary] if glossary is not None else []
+            if hits:
                 for k in range(start, start + size):
                     used[k] = True
-                found.append((start, hit))
-                spare -= 1
+                found.extend((start, hit) for hit in hits[:spare])
+                spare -= len(hits)
     found.sort(key=lambda pair: pair[0])
     unique: list[Hit] = []
     for _, hit in found:
@@ -455,7 +467,7 @@ def build(
     # A question naming a spell, condition or creature is a rules question. A glossary word
     # ("Initiative", "Spell") does not make it one: "can you track initiative?" is still a
     # question about DMbot (#1884).
-    rules_named = any(h.entry.kind != RULE for h in hits)
+    rules_named = any(h.entry.kind not in ASKED_FOR for h in hits)
     docs = knowledge.retrieve(question, rules_named=rules_named)
     about_link = None
     if docs or knowledge.opens_gate(question, rules_named=rules_named):

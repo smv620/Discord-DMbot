@@ -59,6 +59,13 @@ _COUNTS = frozenset(
     + [str(n) for n in range(1, 100)]
 )
 RULE = "rule"  # the kind of a Rules Glossary entry
+FEATURE = (
+    "feature"  # a class or subclass feature ("Rage", "Evasion"); the same name can be in several
+)
+# Both are found only when asked for: their names are everyday words ("Action", "Damage") or
+# shared by classes ("Extra Attack"), so the name pool the live cards, the list and "did you
+# mean" read from leaves them out.
+ASKED_FOR = frozenset({RULE, FEATURE})
 PEOPLES = ("elf", "gnome", "dwarf", "halfling", "human", "orc")  # "Elf, Drow": say "Drow"
 
 
@@ -206,8 +213,8 @@ class Index:
                 continue
             for found_as in keys:
                 for entry in self._by_edition.get(edition, {}).get(found_as, []):
-                    # A glossary entry is found only by asking for its kind (see `_pool`).
-                    if entry.kind == kind or (kind is None and entry.kind != RULE):
+                    # Glossary entries and features are found only by asking (see `_pool`).
+                    if entry.kind == kind or (kind is None and entry.kind not in ASKED_FOR):
                         tag = edition_tag(edition, from_fallback=from_fallback)
                         via_alias = (edition, found_as) in self._alias_keys
                         return Hit(entry, tag, found_as, via_alias, from_fallback)
@@ -226,7 +233,7 @@ class Index:
                     # A glossary entry's name is an everyday word ("Action", "Damage"): it is
                     # found only when asked for (kind="rule"), never offered as a name to spot
                     # in the table's talk, to complete or to suggest.
-                    named = next((e for e in entries if e.kind != RULE), None)
+                    named = next((e for e in entries if e.kind not in ASKED_FOR), None)
                     if named is not None:
                         pool.setdefault(key, named)
             cached = (pool, sorted(pool))
@@ -288,12 +295,50 @@ class Index:
         found.sort(key=lambda e: e.edition != target)  # stable: the target's names first
         return found[:limit]
 
-    def rule_names(
-        self, typed: str, target: str, fallback: str = FALLBACK_NONE, *, limit: int = 25
+    def lookup_all(
+        self,
+        name: str,
+        target: str,
+        fallback: str = FALLBACK_NONE,
+        *,
+        kind: str,
+        prefer: str = "",
+    ) -> list[Hit]:
+        """Every entry of `kind` with this name in the first ruleset that has one (the target's,
+        else the fallback's, tagged): a feature name like "Evasion" belongs to several classes.
+        With `prefer` (a class: "rogue") only that class's entries, if it has one."""
+        key = normalize(name)
+        if not key:
+            return []
+        for edition, from_fallback in ((target, False), (fallback, True)):
+            if edition == FALLBACK_NONE or (from_fallback and edition == target):
+                continue
+            found = [e for e in self._by_edition.get(edition, {}).get(key, []) if e.kind == kind]
+            if prefer:
+                wanted = [
+                    e
+                    for e in found
+                    if normalize(str(e.details.get("class", ""))) == normalize(prefer)
+                ]
+                found = wanted or found
+            if found:
+                tag = edition_tag(edition, from_fallback=from_fallback)
+                return [Hit(e, tag, key, False, from_fallback) for e in found]
+        return []
+
+    def asked_names(
+        self,
+        typed: str,
+        target: str,
+        fallback: str = FALLBACK_NONE,
+        *,
+        kinds: Sequence[str],
+        limit: int = 25,
     ) -> list[Entry]:
-        """Glossary entries (kind "rule") for a name being typed, the target ruleset's first:
-        names that begin with it, then names with a word that begins with it. They are kept out
-        of `typeahead` and `suggest` (see `_pool`), so the list asks for them itself."""
+        """Entries of the kinds found only when asked for (glossary entries, features) for a
+        name being typed, the target ruleset's first: names that begin with it, then names with
+        a word that begins with it. They are kept out of `typeahead` and `suggest` (see
+        `_pool`), so the list asks for them itself."""
         key = normalize(typed)
         if not key:
             return []
@@ -304,7 +349,7 @@ class Index:
                 continue
             for name, entries in self._by_edition.get(edition, {}).items():
                 for entry in entries:
-                    if entry.kind != RULE or id(entry) in seen:
+                    if entry.kind not in kinds or id(entry) in seen:
                         continue
                     if name.startswith(key):
                         order = 0
@@ -379,6 +424,7 @@ def srd() -> Index:
     """The index of what DMbot ships: the SRD 5.2.1 and, as legacy, the SRD 5.1, with the
     renamed spells' older names."""
     entries = load_folder(DATA / "srd52") + load_folder(DATA / "srd51")
-    if not any(e.kind == RULE for e in entries):  # an older build of the data: carry on without
-        log.warning("The Rules Glossary is not in the data; the DM sidebar will not cite it")
+    for kind, what in ((RULE, "Rules Glossary"), (FEATURE, "class features")):
+        if not any(e.kind == kind for e in entries):  # an older build of the data: carry on
+            log.warning("The %s are not in the data; the DM sidebar will not cite them", what)
     return Index(entries, aliases.ALL)

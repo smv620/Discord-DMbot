@@ -6,7 +6,7 @@ This work includes material from the System Reference Document 5.2.1 (“SRD 5.2
 
 ## What is here
 
-`spells.json`, `conditions.json`, `rules.json` and `monsters.json` hold every spell, every condition, every other entry of the Rules Glossary (its Rules Definitions: Cover, the Dash action, Long Rest, ...) and every creature (the Monsters A–Z and Animals sections) of the SRD 5.2.1, and nothing from any other book. Each file says where it came from: the SRD 5.2.1 PDF that Wizards of the Coast publishes at the address in the file, with that PDF's SHA-256, so anyone can check it.
+`spells.json`, `conditions.json`, `rules.json`, `features.json` and `monsters.json` hold every spell, every condition, every other entry of the Rules Glossary (its Rules Definitions: Cover, the Dash action, Long Rest, ...), every class and subclass feature of the Classes chapter (Rage, Evasion, ...) and every creature (the Monsters A–Z and Animals sections) of the SRD 5.2.1, and nothing from any other book. Each file says where it came from: the SRD 5.2.1 PDF that Wizards of the Coast publishes at the address in the file, with that PDF's SHA-256, so anyone can check it.
 
 ## Changes made (CC BY 4.0 asks us to say so)
 
@@ -19,6 +19,7 @@ The words are the SRD's. DMbot's own tool (`python -m dmbot.devtools.srd`) took 
 - read each creature's stat block into fields: size, type and alignment from the italic line, armor class and initiative, hit points and their dice, speed, the six ability scores (the table's modifiers and saves are read too; only the saving throws that differ from the modifier are kept, as “Dex +5, Wis +3”, the way the 5.1 prints them), skills, gear, resistances, vulnerabilities, immunities (damage and conditions together, as printed), senses, languages, challenge rating, XP and proficiency bonus; and kept the traits and actions as one paragraph each under their headings (Traits, Actions, Bonus Actions, Reactions, Legendary Actions), with a spell list line by line;
 - left out of each Rules Glossary entry its tables (their cells do not read as sentences) and its “See also” line, which is kept apart as a list of the entries it points to;
 - read the PDF's text with pypdfium2 (#1892), which keeps all of it (pypdf and pdfminer.six leave parts out: the ability table's Dex, Con, Wis and Cha labels, some numbers, an equals sign), and put back the space the PDF draws as a gap (before a number, between pieces, and the indent that starts a paragraph);
+- split the Classes chapter into its features (each `Level N: Name` with its description, filed under its class and, for a subclass's, its subclass) and left out of it the class tables, the spell lists, the option lists (Metamagic, Eldritch Invocations, Beast Shapes) and each subclass's introduction, because their cells and lists do not read as one feature's sentences;
 - closed the gap the PDF leaves before a comma after a number (“+7 , reach” is “+7, reach”, “7 ,200” is “7,200”).
 
 Tables and stat blocks inside a spell are kept as plain lines of text: one line for each row of a table (with a space between its columns) and one for each entry of a stat block, however many lines the print wraps it over.

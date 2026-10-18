@@ -72,6 +72,10 @@ WHICH_CAMPAIGN = "**Which campaign is this for?** Pick one and DMbot looks it up
 EMPTY = "Type a spell, a condition, a creature or a rule, then try again."
 TOO_LONG = f"That's too long for a name. Use at most {BOX_MAX} characters."
 NAMES_MORE = 25  # most choices Discord shows as a person types
+CLASS_WORDS = frozenset(
+    {"barbarian", "bard", "cleric", "druid", "fighter", "monk"}
+    | {"paladin", "ranger", "rogue", "sorcerer", "warlock", "wizard"}
+)
 GLOSSARY_FROM = 3  # letters typed before the list offers Rules Glossary names (#1891)
 TYPEAHEAD_WAIT_S = 1.0  # the longest the list waits for the database
 SUGGESTION_MAX = 80  # a button's label may hold 80 characters
@@ -128,6 +132,24 @@ async def _homebrew(
         return None
 
 
+def _asked_for(srd: index.Index, typed: str, target: str, fallback: str) -> index.Hit | None:
+    """The glossary entry, else the class feature, with this name. A feature several classes
+    share ("evasion") gives the first class's; typing the class first ("rogue evasion") picks
+    that class, which is also how the name list words them."""
+    hit = srd.lookup(typed, target, fallback, kind=index.RULE)
+    if hit is not None:
+        return hit
+    first, _, rest = typed.partition(" ")
+    attempts = [(typed, "")]
+    if rest and first.lower() in CLASS_WORDS:
+        attempts.insert(0, (rest, first))
+    for name, klass in attempts:
+        found = srd.lookup_all(name, target, fallback, kind=index.FEATURE, prefer=klass)
+        if found:
+            return found[0]
+    return None
+
+
 async def look_up(
     interaction: discord.Interaction,
     campaign_id: str,
@@ -166,8 +188,9 @@ async def look_up(
     hit = srd.lookup(typed, campaign.target_ruleset, campaign.fallback_ruleset, kind=kind)
     if hit is None and kind is None:
         # Not a spell, a condition or a creature: it may be a Rules Glossary entry ("cover",
-        # "long rest"). Those are asked for last so a spell of the same name always wins (#1891).
-        hit = srd.lookup(typed, campaign.target_ruleset, campaign.fallback_ruleset, kind=index.RULE)
+        # "long rest", #1891) or a class feature ("rage", "rogue evasion", #1900). Those are
+        # asked for last so a spell of the same name always wins.
+        hit = _asked_for(srd, typed, campaign.target_ruleset, campaign.fallback_ruleset)
     # The campaign's own homebrew sits between its house rules and the book (PLAN, rules
     # precedence), and a homebrew name shadows the book's: the book's card for the same name is not
     # shown. An entry the DM turned off is not read at all (#1629).
@@ -392,10 +415,20 @@ async def _typeahead(
     # three letters and only when no spell, condition or creature starts the same way: a short
     # word never floods the list with them (#1891).
     if not found and len(index.normalize(current)) >= GLOSSARY_FROM:
-        found = srd.rule_names(current, target, fallback, limit=NAMES_MORE)
+        found = srd.asked_names(
+            current, target, fallback, kinds=(index.RULE, index.FEATURE), limit=NAMES_MORE
+        )
     return [
-        app_commands.Choice(name=rule_card.choice_label(e), value=e.name[:BOX_MAX]) for e in found
+        app_commands.Choice(name=rule_card.choice_label(e), value=_choice_value(e)) for e in found
     ]
+
+
+def _choice_value(entry: index.Entry) -> str:
+    """What is typed into the box when a name is picked. A feature several classes share is
+    picked with its class in front ("Rogue Evasion"), which `_asked_for` reads back."""
+    if entry.kind == index.FEATURE:
+        return f"{entry.details.get('class', '')} {entry.name}"[:BOX_MAX]
+    return entry.name[:BOX_MAX]
 
 
 async def _rulesets(interaction: discord.Interaction) -> tuple[str, str]:

@@ -171,6 +171,54 @@ class TheRulesGlossary(unittest.TestCase):
         ).prompt
         self.assertIn("ABOUT DMBOT", prompt)
 
+    def test_a_class_feature_is_cited_with_its_source(self) -> None:
+        prompt = context.build(
+            "how does rage work",
+            target="2024",
+            fallback="2014",
+            index=INDEX,
+            house_rules=[],
+            lookup=None,
+            scene="",
+        )
+        self.assertIn("- Rage (feature) [SRD 5.2.1 p. 28]:", prompt.prompt)
+        self.assertIn("SRD 5.2.1 p. 28", prompt.sources)
+
+    def test_a_named_class_picks_its_feature_and_otherwise_every_class_has_its_say(self) -> None:
+        only = [h.entry.details["class"] for h in self.hits("what does rogue evasion do")]
+        self.assertEqual(only, ["Rogue"])
+        every = [h.entry.details["class"] for h in self.hits("what does evasion do")]
+        self.assertEqual(sorted(every), ["Monk", "Rogue"])
+
+    def test_a_named_spell_keeps_the_places_to_itself_and_a_feature_is_no_rules_question(
+        self,
+    ) -> None:
+        self.assertEqual(
+            [h.entry.name for h in self.hits("can fireball and rage stack")], ["Fireball"]
+        )
+        prompt = context.build(
+            "can you track extra attack?",
+            target="2024",
+            fallback="2014",
+            index=INDEX,
+            house_rules=[],
+            lookup=None,
+            scene="",
+        ).prompt
+        self.assertIn("ABOUT DMBOT", prompt)
+
+    def test_a_house_rule_on_a_feature_comes_first(self) -> None:
+        prompt = context.build(
+            "how does rage work",
+            target="2024",
+            fallback="2014",
+            index=INDEX,
+            house_rules=[house(2, "Rage ends if you cast a spell.")],
+            lookup=None,
+            scene="",
+        ).prompt
+        self.assertLess(prompt.index("HOUSE RULES"), prompt.index("RULES ENTRIES"))
+
     def test_the_glossary_adds_at_most_three_entries(self) -> None:
         found = self.hits("explain cover, dash, long rest and short rest")
         self.assertEqual(
