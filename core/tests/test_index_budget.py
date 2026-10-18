@@ -61,5 +61,10 @@ class BuiltOnce(unittest.TestCase):
         ]
         self.assertEqual(offenders, [])
 
+    def test_the_names_are_counted_for_both_editions(self) -> None:
+        counts = index.srd().key_counts()
+        self.assertEqual(sorted(counts), ["2014", "2024"])
+        self.assertTrue(all(n > 0 for n in counts.values()))
+
     def test_the_measuring_script_builds_its_own_copy_each_time(self) -> None:
         self.assertIsNot(index.build_srd(), index.srd())

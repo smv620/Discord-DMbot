@@ -43,13 +43,17 @@ def build_seconds(runs: int = 5) -> float:
 
 def peak_megabytes() -> float:
     """Python's peak allocation, in megabytes, while building the index once (tracemalloc)."""
-    tracemalloc.start()
+    already = tracemalloc.is_tracing()  # (under -X tracemalloc, leave the caller's trace running)
+    if not already:
+        tracemalloc.start()
     try:
+        tracemalloc.reset_peak()
         built = index.build_srd()
         _, peak = tracemalloc.get_traced_memory()
+        del built
     finally:
-        tracemalloc.stop()
-    assert built.entries  # (keeps the index alive until the peak was read)
+        if not already:
+            tracemalloc.stop()
     return peak / 1_000_000
 
 
@@ -65,6 +69,8 @@ def questions() -> list[tuple[str, str, str]]:
 def milliseconds_per_question(rules: index.Index, count: int = 1000) -> float:
     """The mean milliseconds of `mentioned_rules` over `count` calls, cycling the questions."""
     asked = questions()
+    if not asked:
+        raise ValueError("no questions to ask")
     start = time.perf_counter()
     for i in range(count):
         question, target, fallback = asked[i % len(asked)]
@@ -87,9 +93,10 @@ def main() -> None:
     print(f"peak memory while building: {peak_megabytes():.1f} MB")
     print(f"sidebar question: {milliseconds_per_question(rules, args.questions):.3f} ms each")
     keys = rules.key_counts()
+    per_kind = counts(rules)
     for edition in sorted(keys):
         print(f"edition {edition}: {keys[edition]} names and spellings")
-        for (found, kind), n in sorted(counts(rules).items()):
+        for (found, kind), n in sorted(per_kind.items()):
             if found == edition:
                 print(f"  {kind}: {n}")
 
