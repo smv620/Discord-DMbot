@@ -821,11 +821,24 @@ class FeatureLookup(LookupTest):
     async def a_player_asks(self) -> None:
         for name in ("hidden pit", "purple worm poison", "demonic possession", "extreme cold"):
             text = self.sent(await self.command(name, PLAYER))[0]
-            self.assertNotIn("DC 1", text, name)
-            self.assertNotIn("Trigger", text, name)
-            self.assertNotIn("📖", text, name)
-            self.assertIn("couldn", text.lower(), name)
+            self.assertEqual(text, ui.DM_ONLY, name)
         self.assertIn("📖 **Cover**", self.sent(await self.command("cover", PLAYER))[0])
+
+    async def test_the_name_list_holds_the_dms_chapter_for_a_dm_and_not_for_a_player(self) -> None:
+        for typed, label in (
+            ("hidden pi", "Hidden Pit (trap)"),
+            ("purple worm poi", "Purple Worm Poison (poison: Injury)"),
+            ("demonic", "Demonic Possession (curse)"),
+            ("extreme c", "Extreme Cold (rule)"),
+        ):
+            as_dm = self.it(DM, kind=discord.InteractionType.autocomplete)
+            as_player = self.it(PLAYER, kind=discord.InteractionType.autocomplete)
+            self.assertIn(label, [c.name for c in await ui._typeahead(as_dm, typed)], typed)
+            self.assertEqual(
+                [c.name for c in await ui._typeahead(as_player, typed) if "Gameplay" in c.name],
+                [],
+            )
+            self.assertNotIn(label, [c.name for c in await ui._typeahead(as_player, typed)], typed)
 
     async def test_a_toolbox_rule_that_shares_a_spells_name_can_be_picked_by_its_kind(self) -> None:
         it = self.it(kind=discord.InteractionType.autocomplete)
