@@ -144,9 +144,26 @@ class TheRulesGlossary(unittest.TestCase):
         kinds = {h.entry.kind for h in self.hits("what is cover and half cover")}
         self.assertEqual(kinds, {"rule"})
 
+    def test_a_house_rule_on_the_same_term_comes_before_the_glossary_entry(self) -> None:
+        prompt = context.build(
+            "how does cover work",
+            target="2024",
+            fallback="2014",
+            index=INDEX,
+            house_rules=[house(3, "Half cover gives +3 to AC at our table.")],
+            lookup=None,
+            scene="",
+        ).prompt
+        self.assertIn("HOUSE RULES (they come first):", prompt)
+        self.assertIn("House rule 3: Half cover gives +3 to AC", prompt)
+        self.assertLess(prompt.index("HOUSE RULES"), prompt.index("RULES ENTRIES"))
+        self.assertIn("- Cover (rule) [SRD 5.2.1 p. 179]:", prompt)
+
     def test_the_glossary_adds_at_most_three_entries(self) -> None:
         found = self.hits("explain cover, dash, long rest and short rest")
-        self.assertEqual([h.entry.name for h in found], ["Cover", "Long Rest", "Short Rest"]  # longest names first, never more than three)
+        self.assertEqual(
+            [h.entry.name for h in found], ["Cover", "Long Rest", "Short Rest"]
+        )  # longest names first
 
 
 class MentionedNames(unittest.TestCase):
