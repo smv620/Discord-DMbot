@@ -68,7 +68,7 @@ export function applySearch(root, query) {
     for (const child of section.children) {
       if (child.hidden) continue;
       const tag = child.tagName;
-      if (tag === "H2") continue;
+      if (tag === "H2" || child.classList.contains("copy-link")) continue;
       if (tag === "UL" || tag === "OL") {
         if (child.querySelector("li:not([hidden])") === null) hide(child);
       } else if (tag === "H3") {
@@ -112,7 +112,14 @@ export function wire(form, page, wait = 300) {
     else timer = setTimeout(say, wait);
   };
   form.hidden = false;
-  input.addEventListener("input", () => run());
+  // A section or step reached by its link is highlighted; typing in the box clears that, and a new
+  // link brings it back.
+  const view = page.ownerDocument?.defaultView;
+  view?.addEventListener("hashchange", () => page.removeAttribute("data-quiet"));
+  input.addEventListener("input", () => {
+    page.setAttribute("data-quiet", "");
+    run();
+  });
   form.addEventListener("submit", (e) => e.preventDefault());
   input.addEventListener("keydown", (e) => {
     if (e.key === "Escape" && input.value !== "") {
