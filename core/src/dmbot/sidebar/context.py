@@ -43,10 +43,12 @@ from dmbot.rules.index import (
     EQUIPMENT_KINDS,
     FEAT,
     FEATURE,
+    HAZARD_KINDS,
     ITEM,
     ORIGIN_KINDS,
     RULE,
     SPECIES,
+    TRAP,
     WEAPON,
     Entry,
     Hit,
@@ -60,7 +62,7 @@ LEGACY_TAG = "[Legacy 2014]"  # the owner's rule: the older ruleset is always ta
 ENTRY_TEXT_MAX = 1200  # characters of one rules entry sent to the AI
 # A class feature is long prose (Spellcasting, Wild Shape) and the part that answers may be at
 # its end; 2,000 holds all but about 30 of the 399, and at most 3 entries are sent (#1910).
-FEATURE_TEXT_MAX = 2000
+FEATURE_TEXT_MAX = 2000  # (the Gameplay Toolbox's entries too: the longest is 1,691)
 SPECIES_TEXT_MAX = 3200  # a 2014 race is 1,500 to 3,000 characters, its subrace at the end (#1928)
 CUT_MARK = " (cut)"
 ENTRIES_MAX = 3
@@ -151,9 +153,12 @@ PEOPLE_MAX = 12  # a table is small; a long list is never sent
 PEOPLE_LINE_MAX = 160
 
 
-def _text_max(kind: str) -> int:
-    """How much of an entry of this kind is sent: a class feature and a species are long."""
-    return {FEATURE: FEATURE_TEXT_MAX, SPECIES: SPECIES_TEXT_MAX}.get(kind, ENTRY_TEXT_MAX)
+def _text_max(entry: Entry) -> int:
+    """How much of an entry is sent: a class feature, a species and an entry of the DM's chapter
+    (a trap, a poison) are long."""
+    if entry.dm_side:
+        return FEATURE_TEXT_MAX
+    return {FEATURE: FEATURE_TEXT_MAX, SPECIES: SPECIES_TEXT_MAX}.get(entry.kind, ENTRY_TEXT_MAX)
 
 
 def shorten(text: str, limit: int) -> str:
@@ -205,7 +210,13 @@ def other_edition(hit: Hit, index: Index, target: str, fallback: str) -> Hit | N
 
 
 def mentioned_rules(
-    question: str, index: Index, target: str, fallback: str, *, both: bool = False
+    question: str,
+    index: Index,
+    target: str,
+    fallback: str,
+    *,
+    both: bool = False,
+    table: bool = False,
 ) -> list[Hit]:
     """The rules entries the question names: longest names first, no word used twice, at most
     `ENTRIES_MAX`. A single common word (`_STOP`) is never looked up on its own."""
@@ -220,6 +231,15 @@ def mentioned_rules(
             if size == 1 and (window[0].lower() in _STOP or len(window[0]) < 3):
                 continue
             hit = index.lookup(" ".join(window), target, fallback)
+            if hit is None and size > 1:
+                # A poison, trap or curse of the Gameplay Toolbox with a longer name ("Purple Worm
+                # Poison", "Hidden Pit") beats the creature or spell named inside it.
+                picked = hazard_hits(index, " ".join(window), target, fallback, cued=True)
+                if picked:
+                    for k in range(start, start + size):
+                        used[k] = True
+                    found.extend((start, h) for h in picked)
+                    continue
             if hit is not None:
                 for k in range(start, start + size):
                     used[k] = True
@@ -235,6 +255,7 @@ def mentioned_rules(
     gear = any(w.lower() in EQUIPMENT_CUES for w in words)
     props = any(w.lower() in PROPERTY_CUES for w in words)
     shop = any(w.lower() in GEAR_CUES for w in words)
+    hazard = any(w.lower() in HAZARD_CUES for w in words)
     asked: list[tuple[int, list[Hit]]] = []
     for size in range(ITEM_WINDOW, 0, -1) if not found else ():
         for start in range(len(words) - size + 1):
@@ -264,6 +285,8 @@ def mentioned_rules(
                 hits = origin_hits(index, name, target, fallback, cued=cued)
             if not hits and size <= WINDOW:
                 hits = equipment_hits(index, name, target, fallback, cued=gear, shop=shop)
+            if not hits and size <= WINDOW:
+                hits = hazard_hits(index, name, target, fallback, cued=hazard)
             if hits:
                 for k in range(start, start + size):
                     used[k] = True
@@ -296,6 +319,8 @@ def mentioned_rules(
     for _, hit in found:
         if all(hit.entry is not other.entry for other in unique):
             unique.append(hit)
+    if table:  # the DM's chapter is not for the table (#1935); dropped before the cap, not after
+        unique = [h for h in unique if not h.entry.dm_side]
     unique = unique[:ENTRIES_MAX]
     if both:  # the other edition's entry beside each, so a comparison can be answered
         extra = [h for h in (other_edition(hit, index, target, fallback) for hit in unique) if h]
@@ -395,6 +420,26 @@ def equipment_hits(
         hit = index.lookup(name, target, fallback, kind=kind)
         if hit is not None:
             return [hit]
+    return []
+
+
+# Words that make a one-word poison, trap or curse name count (#1935): "Malice" and "Torpor" are
+# everyday words, "Purple Worm Poison" and "Hidden Pit" are not.
+HAZARD_CUES = frozenset(
+    {"poison", "poisons", "trap", "traps", "curse", "curses", "hazard", "hazards", "dc"}
+)
+
+
+def hazard_hits(index: Index, name: str, target: str, fallback: str, *, cued: bool) -> list[Hit]:
+    """The poison, trap or curse with this name (#1935). A one-word name counts only with a cue
+    word in the question. A name that fits several traps ("pit trap": the Hidden Pit and the
+    Spiked Pit) gives them all."""
+    if len(name.split()) == 1 and not cued:
+        return []
+    for kind in HAZARD_KINDS:
+        hits = index.lookup_all(name, target, fallback, kind=kind)
+        if hits:
+            return hits if kind == TRAP else hits[:1]
     return []
 
 
@@ -660,7 +705,9 @@ def build(
     """The AI's message for one question about one campaign. `house_rules` and `lookup`
     must already be this campaign's; nothing else is read here."""
     question = " ".join(question.split())[:QUESTION_MAX]
-    hits = mentioned_rules(question, index, target, fallback, both=wants_both_editions(question))
+    hits = mentioned_rules(
+        question, index, target, fallback, both=wants_both_editions(question), table=table
+    )
     known = relevant_homebrew(homebrew, question)
     # A shared book's entry ranks in its edition's place (#1569): one that would come after the
     # free rules' entry of the same name is left out, and the free rules answer.
@@ -704,7 +751,7 @@ def build(
         sections.append("RULES ENTRIES (the free rules, word for word):")
         for hit in hits:
             entry = hit.entry
-            text = shorten(entry.text, _text_max(entry.kind))
+            text = shorten(entry.text, _text_max(entry))
             tag = f" {hit.tag}" if hit.tag else ""
             facts = entry.facts
             facts = f" FACTS: {facts}. TEXT:" if facts else ""
