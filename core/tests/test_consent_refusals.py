@@ -267,3 +267,41 @@ class NameQuestions(Refusals):
             changed = await self.bot._fix_earlier_lines(table, asked, "Maren", None)
         self.assertEqual(changed, 0)
         rewrite.assert_not_awaited()
+
+
+class HidingLines(Refusals):
+    """`_hide_lines`: a line becomes an off-topic marker, and is listed on the DM screen, only for
+    a speaker who is still recorded."""
+
+    async def table_with_a_line(self) -> tuple[Any, Waiting]:
+        table = await self.filtered("1 game\n2 game")
+        self.said(table, "we sneak past the guards")
+        await self.settle()
+        return table, Waiting(PLAYER, 0, "we sneak past the guards", 1.0)
+
+    async def test_a_stopped_speakers_line_is_not_listed_or_marked(self) -> None:
+        table, waiting = await self.table_with_a_line()
+        self.stop(PLAYER)
+        with patch.object(self.bot, "_redraw_left_out") as redraw:
+            await self.bot._hide_lines(table, [waiting])
+        redraw.assert_not_called()
+        self.assertFalse(table.left_out.runs)
+        self.assertFalse(table.hidden)
+
+    async def test_the_same_line_for_someone_recorded_is_listed(self) -> None:
+        table, waiting = await self.table_with_a_line()
+        with patch.object(self.bot, "_redraw_left_out") as redraw:
+            await self.bot._hide_lines(table, [waiting])
+        redraw.assert_called_once()
+        self.assertTrue(table.left_out.runs)
+
+
+class SidebarConsent(Refusals):
+    """`sidebar_has_consent`: the DM sidebar asks core, which answers from the live store."""
+
+    async def test_it_follows_a_stop_at_once(self) -> None:
+        await self.consent.grant(GUILD, PLAYER)
+        self.assertTrue(self.bot.sidebar_has_consent(GUILD, PLAYER))
+        self.stop(PLAYER)
+        self.assertFalse(self.bot.sidebar_has_consent(GUILD, PLAYER))
+        self.assertFalse(self.bot.sidebar_has_consent(GUILD, 424242))  # never agreed
