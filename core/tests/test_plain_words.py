@@ -8,47 +8,31 @@ someone ran it. This reads every string literal in the files that build what peo
 on a banned word, with the file and line.
 
 What is read: all string literals (and the fixed parts of f-strings) in `ui/`, `dm_screen/`,
-`consent_dm.py` and `features.py` (when it exists), except docstrings, log calls, exception
-messages that are never shown, dictionary keys, `template=` / `custom_id=` and the AI's own
-instructions (a `*_PROMPT` or `SYSTEM` constant: those are for the model, not a person). Text built
-elsewhere (the sidebar, recaps, the website) is out of scope for now.
+`consent_dm.py` and `features.py` (when it exists) (#1850), and in the other modules that write to
+people: `sidebar/`, `recaps/`, `transcript/`, `rules/`, `timebot/`, `fightbot.py`, `bot.py`,
+`retention_channels.py` and the consent and table-chat helpers (#1854). Skipped: docstrings, log
+calls, exception messages that are never shown, dictionary keys, `template=` / `custom_id=`, SQL
+(a string that starts with `SELECT`, `INSERT`, ... or is passed to `execute`, `fetch*` or
+`sql.SQL`), patterns given to `re`, and the AI's own instructions (a `*_PROMPT` or `*_SYSTEM`
+constant: those are for the model, not a person). The website has the same check in
+`web/test/plain-words.test.ts`, from the same word list.
 """
 
 from __future__ import annotations
 
 import ast
+import json
 import re
 import unittest
 from pathlib import Path
 
 SRC = Path(__file__).resolve().parents[1] / "src" / "dmbot"
 
-# Whole words, any case, each with why a DM would be puzzled by it. Short and real: add a word only
-# if it would actually confuse someone at the table.
-BANNED: dict[str, str] = {
-    "api": "a programmer's word for how programs talk to each other",
-    "database": 'say where it is kept in plain words ("saved", "remembered")',
-    "token": 'a programmer\'s word for a secret code (say "code" or "link")',
-    "tokens": "a programmer's word for pieces of text",
-    "error code": "say what went wrong and what to do",
-    "exception": "a programmer's word for a failure",
-    "json": "a file format name",
-    "null": 'a programmer\'s word for "nothing"',
-    "payload": "a programmer's word for what a message carries",
-    "endpoint": "a programmer's word for an address a program calls",
-    "cache": "a programmer's word for a quick copy",
-    "regex": "a programmer's word for a pattern",
-    "webhook": "a programmer's word for a message another program sends",
-    "oauth": 'the name of a sign-in method; say "sign in with Discord" or "Google"',
-    "schema": "a programmer's word for how data is laid out",
-    "migration": "a programmer's word for a data update",
-    "embedding": "an AI term",
-    "embeddings": "an AI term",
-    "llm": 'an AI term; say "the AI"',
-    "prompt": 'an AI term (say "question" or "instructions")',
-    "model": 'an AI term (say "the AI")',
-    "knowledge graph": 'the example in CLAUDE.md: say "remembers your NPCs between sessions"',
-}
+# Whole words, any case, each with why a DM would be puzzled by it: one list for the bot and the
+# website (docs/plain-words.json), so the two tests cannot drift apart.
+BANNED: dict[str, str] = json.loads(
+    (Path(__file__).resolve().parents[2] / "docs" / "plain-words.json").read_text()
+)["banned"]
 WORDS = re.compile(
     r"\b(" + "|".join(re.escape(w) for w in sorted(BANNED, key=len, reverse=True)) + r")\b",
     re.IGNORECASE,
@@ -63,15 +47,80 @@ ALLOWED: list[tuple[str, str, str]] = [
         "the file name of a backup the DM downloads and uploads again (.dmbot.json.gz): a name to "
         "match, not a sentence to understand",
     ),
+    (
+        "recaps/audio/eleven.py",
+        "api",
+        "the speech company's web address, sent by the bot, never shown",
+    ),
+    ("recaps/audio/eleven.py", "json", "an HTTP header value, sent by the bot, never shown"),
+    (
+        "recaps/draft.py",
+        "prompt",
+        "the problems listed back to the AI so it can redo a draft ('give one music prompt for "
+        "each section'): words for the model, not for a person",
+    ),
+    (
+        "recaps/pipeline.py",
+        "json",
+        "a problem listed back to the AI so it can answer again: for the model, not a person",
+    ),
+    (
+        "transcript/export.py",
+        "model",
+        "the data lineage tag on the DM Sidebar's lines in the raw transcript (model=, prompt=): "
+        "the owner's decision #933, for the people improving DMbot from it",
+    ),
+    (
+        "transcript/export.py",
+        "prompt",
+        "the data lineage tag on the DM Sidebar lines in the raw transcript (owner, #933)",
+    ),
+    (
+        "rules/homebrew.py",
+        "null",
+        "a piece of a database question (SQL) that does not begin with a SQL word, never shown",
+    ),
+    ("rules/index.py", "json", "a file pattern the bot searches for, never shown"),
+    (
+        "timebot/store.py",
+        "token",
+        "the name of a field kept in the clock's undo record, never shown",
+    ),
 ]
 
 LOG_METHODS = {"debug", "info", "warning", "error", "exception", "critical", "log"}
 HIDDEN_KEYWORDS = {"template", "custom_id"}  # ids Discord keeps, never shown
 
 
+SCOPE_DIRS = ("ui", "dm_screen", "sidebar", "recaps", "transcript", "rules", "timebot")
+SCOPE_FILES = (
+    "consent_dm.py",
+    "features.py",  # (only once it exists)
+    "fightbot.py",
+    "bot.py",
+    "retention_channels.py",
+    "retention.py",
+    "consent_notify.py",
+    "consent_site.py",
+    "consent_words.py",
+    "table_chat.py",
+    "hours.py",
+    "fight_style.py",
+    "owner_presence.py",
+    "sheet_reread.py",
+    "campaign_cap.py",
+    "mail.py",
+)
+SQL_START = re.compile(r"^\s*(SELECT|INSERT|UPDATE|DELETE|WITH|CREATE|ALTER|DROP|BEGIN)\b", re.I)
+SQL_CALLS = {"execute", "executemany", "fetch", "fetchone", "fetchall", "fetchval", "SQL"}
+REGEX_CALLS = {"compile", "search", "match", "fullmatch", "sub", "subn", "split", "findall"}
+
+
 def scoped_files() -> list[Path]:
-    found = sorted((SRC / "ui").glob("*.py")) + sorted((SRC / "dm_screen").glob("*.py"))
-    found += [SRC / name for name in ("consent_dm.py", "features.py") if (SRC / name).exists()]
+    found: list[Path] = []
+    for name in SCOPE_DIRS:
+        found += sorted((SRC / name).rglob("*.py"))
+    found += [SRC / name for name in SCOPE_FILES if (SRC / name).exists()]
     return found
 
 
@@ -81,6 +130,11 @@ def is_hidden_call(call: ast.Call) -> bool:
     func = call.func
     if isinstance(func, ast.Attribute) and func.attr in LOG_METHODS:
         return True
+    called = func.id if isinstance(func, ast.Name) else getattr(func, "attr", "")
+    if called in SQL_CALLS:
+        return True  # SQL
+    if called in REGEX_CALLS and isinstance(func, ast.Attribute):
+        return True  # a pattern given to `re` (a method `.sub` on a string is not caught here)
     name = func.id if isinstance(func, ast.Name) else getattr(func, "attr", "")
     return name.endswith(("Error", "Exception")) and name != "CampaignError"
 
@@ -107,17 +161,24 @@ def user_strings(source: str) -> list[tuple[int, str]]:
             for keyword in node.keywords:
                 if keyword.arg in HIDDEN_KEYWORDS:
                     skip.update(id(n) for n in ast.walk(keyword.value))
+        if isinstance(node, ast.Dict):
+            for key in node.keys:
+                if key is not None:
+                    skip.update(id(n) for n in ast.walk(key))  # a dictionary key
         if isinstance(node, ast.Subscript):
             skip.update(id(n) for n in ast.walk(node.slice))  # a dictionary key
         if isinstance(node, ast.Assign | ast.AnnAssign):
             targets = node.targets if isinstance(node, ast.Assign) else [node.target]
             names = [t.id for t in targets if isinstance(t, ast.Name)]
-            if any(n.endswith("PROMPT") or n == "SYSTEM" for n in names) and node.value:
+            if any(n.endswith(("PROMPT", "SYSTEM")) for n in names) and node.value:
                 skip.update(id(n) for n in ast.walk(node.value))  # the AI's instructions
     return [
         (n.lineno, n.value)
         for n in ast.walk(tree)
-        if isinstance(n, ast.Constant) and isinstance(n.value, str) and id(n) not in skip
+        if isinstance(n, ast.Constant)
+        and isinstance(n.value, str)
+        and id(n) not in skip
+        and not SQL_START.match(n.value)
     ]
 
 
