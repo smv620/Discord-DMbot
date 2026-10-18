@@ -21,6 +21,7 @@ from typing import Any
 import discord
 
 from dmbot.campaigns.models import STORY_GUIDE
+from dmbot.discord_limits import MESSAGE_MAX, fit_message
 from dmbot.memory import guide as model
 from dmbot.memory.models import MemoryRuleError, TooLateToUndo
 from dmbot.memory.story_watch import Clash
@@ -56,7 +57,7 @@ NO_CHAPTERS = "DMbot didn't find chapters in this file. Try another file."
 LAST = "This is the book's last chapter."
 UNDONE = "↩ Undone."
 CANT_SAVE = "⚠️ Couldn't save that. Try again."
-TEXT_MAX = 1990
+TEXT_MAX = MESSAGE_MAX - 10  # a little under a whole message
 NAME_SHOWN = 40  # characters of a name on a line, so a full message stays under 2000
 LABEL_SHOWN = 25
 MENU_MAX = 25  # options in a Discord menu
@@ -71,7 +72,7 @@ def _fit(lines: list[str]) -> str:
     (an open ** would turn the rest of the message bold)."""
     while len("\n".join(lines)) > TEXT_MAX and len(lines) > 1:
         lines.pop()
-    return "\n".join(lines)[:TEXT_MAX]
+    return fit_message("\n".join(lines), limit=TEXT_MAX)
 
 
 def guide_text(
@@ -273,7 +274,7 @@ def _fit_blocks(blocks: list[str]) -> str:
     """Whole blocks joined by a blank line, the last ones dropped until it fits one message."""
     while len("\n\n".join(blocks)) > TEXT_MAX and len(blocks) > 1:
         blocks.pop()
-    return "\n\n".join(blocks)[:TEXT_MAX]
+    return fit_message("\n\n".join(blocks), limit=TEXT_MAX)
 
 
 class FileMenu(_Menu):

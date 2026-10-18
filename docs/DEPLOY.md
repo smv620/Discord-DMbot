@@ -87,6 +87,12 @@ command twice (expected); to stop that, unset `DISCORD_DEV_GUILD_ID` and list th
 `DISCORD_CLEAR_GUILD_COMMANDS` for one restart. With the variable set, the dev
 server lists each command twice (the global one and the copy); that is expected.
 
+After every restart, read the `Features:` line in the log (`docker compose logs dmbot | grep
+Features:`). It lists each switch with `on` or `off` (names only, never a value or a key), for
+example `Features: time suggestions off, recaps on, recap audio off, ...`. If a feature you
+meant to turn on says `off`, fix `.env` and restart before the live check, not at the table.
+DMs can see the same list, in plain words, from Settings, **What's switched on**.
+
 If you use `TRANSCRIBER=deepgram`, `cloud` or `none`, also add `CORE_EXTRAS=dev` to
 `.env` for a much smaller image.
 

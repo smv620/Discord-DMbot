@@ -16,6 +16,7 @@ from typing import Any
 
 import discord
 
+from dmbot.discord_limits import fit_message
 from dmbot.memory.story_watch import Clash, Found
 from dmbot.ui.dmbot_commands import _bot, _tell
 from dmbot.ui.names import _md, sees_secrets
@@ -57,7 +58,7 @@ def message_text(found: Found, numbers: Mapping[int, int]) -> str:
     ]
     if found.more:
         lines.append(f"+{found.more} more")
-    return "\n".join(lines)
+    return fit_message("\n".join(lines))
 
 
 class KnowButton(
