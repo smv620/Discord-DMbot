@@ -314,8 +314,11 @@ class ClassFeatures(unittest.TestCase):
             if e.kind != "feature":
                 continue
             with self.subTest(e.name, klass=e.details["class"]):
-                # (A 2014 spellcasting feature may end on its formula, "... your Wisdom modifier".)
-                self.assertRegex(e.text, r"[.)\":!?”]\s*$|\byour \w+ modifier\s*$")
+                ends = r"[.)\":!?”]\s*$"
+                if e.edition == "2014" and e.name.endswith("Spellcasting"):
+                    # the 5.1 spellcasting features end on their formula: "... your Wisdom modifier"
+                    ends += r"|\byour \w+ modifier\s*$"
+                self.assertRegex(e.text, ends)
                 self.assertNotEqual(e.name, f"{e.details['class']} Subclass")
         sneak = index.srd().lookup_all("Sneak Attack", "2024", kind="feature")[0].entry
         self.assertIn("Advantage", sneak.text)  # the part after the table
@@ -361,6 +364,47 @@ class ClassFeatures(unittest.TestCase):
             [(e.details["class"], e.edition) for e in listed],
             [("Paladin", "2024"), ("Cleric", "2014")],
         )
+
+    def test_a_2014_campaign_finds_its_own_features_and_the_newer_ones_only_for_a_class_it_lacks(
+        self,
+    ) -> None:
+        def feature(edition: str, klass: str) -> Entry:
+            return Entry(
+                "feature", "Aura", edition, "SRD", "Classes", 1, f"{klass} {edition}",
+                {"class": klass, "level": 1},
+            )  # fmt: skip
+
+        srd = Index(
+            [feature("2024", "Paladin"), feature("2014", "Paladin"), feature("2024", "Cleric")]
+        )
+        hits = srd.lookup_all("Aura", "2014", "2024", kind="feature")
+        self.assertEqual(
+            [(h.entry.details["class"], h.entry.edition, h.from_fallback) for h in hits],
+            [("Paladin", "2014", False), ("Cleric", "2024", True)],
+        )
+
+    def test_the_levels_of_the_2014_features_match_the_published_class_tables(self) -> None:
+        # Read by hand from the SRD 5.1 class tables; these are the ones the table's wrapped and
+        # split rows made hardest (the Monk's table is printed in two pieces).
+        golden = {
+            ("Monk", "Ki"): 2,
+            ("Monk", "Unarmored Movement"): 2,
+            ("Monk", "Evasion"): 7,
+            ("Monk", "Stillness of Mind"): 7,
+            ("Warlock", "Mystic Arcanum"): 11,
+            ("Paladin", "Aura of Protection"): 6,
+            ("Rogue", "Thieves’ Cant"): 1,
+            ("Ranger", "Land’s Stride"): 8,
+            ("Barbarian", "Brutal Critical"): 9,
+        }
+        found = {
+            (str(e.details["class"]), e.name): e.details["level"]
+            for e in index.srd().entries
+            if e.kind == "feature" and e.edition == "2014" and not e.details.get("subclass")
+        }
+        for key, level in golden.items():
+            with self.subTest(key):
+                self.assertEqual(found.get(key), level)
 
     def test_the_name_list_does_not_offer_the_older_version_of_what_the_target_has(self) -> None:
         names = index.srd().asked_names("evasion", "2024", "2014", kinds=("feature",), limit=25)

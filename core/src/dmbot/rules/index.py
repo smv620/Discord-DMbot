@@ -312,7 +312,8 @@ class Index:
     ) -> list[Hit]:
         """Every entry of `kind` with this name: the target ruleset's, and the fallback's (tagged)
         for a class the target has none for, because a feature name like "Evasion" belongs to
-        several classes and the older rules are used only where no newer one exists. With `prefer`
+        several classes and the fallback is used only where the target has nothing. (A class is
+        the only thing compared: a subclass's feature counts as its class's.) With `prefer`
         (a class: "rogue") only that class's entries, if it has one."""
         key = normalize(name)
         if not key:
@@ -359,7 +360,7 @@ class Index:
                 for entry in entries:
                     if entry.kind not in kinds or id(entry) in seen:
                         continue
-                    # The older rules' version of what the target also has is not offered.
+                    # The fallback's version of what the target also has is not offered.
                     if rank and (entry.kind, name, _class_of(entry)) in newer:
                         continue
                     if name.startswith(key):

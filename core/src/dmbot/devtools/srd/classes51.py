@@ -67,6 +67,18 @@ TRAILING = frozenset([
     "Sacred Plants and Wood", "Druids and the Gods", "Breaking Your Oath", "Your Pact Boon",
     "Your Spellbook",
 ])  # fmt: skip
+# Headings in a subclass's section that are not features and are left out, with the text under
+# them: the list of the subclass's spells and the tenets of the oath. Any other heading there with
+# no level in its first sentence stops the tool, so a feature is never dropped without a word.
+SUBCLASS_INTROS = frozenset(["Tenets of Devotion", "Oath Spells", "Expanded Spell List"])
+# What the class table puts in its Features cell that is not a feature of its own: a slot for the
+# subclass's ("Path feature"), a note that an earlier feature gets better ("Wild Shape
+# improvement") or the ordinal's last letters, which the Warlock's table sets apart.
+NOT_A_FEATURE = re.compile(r"(?:\bfeature|\bimprovements?|^(?:st|nd|rd|th))$")
+MOST_WORDS = 6  # a table "item" longer than this is the prose of another table's page
+# A row's cells wrap over at most this many lines (the longest is 4); the last row would otherwise
+# take in the plain-font text that follows the table on the Wizard's page.
+MOST_LINES = 5
 ROW = re.compile(r"^(?P<level>\d{1,2})(?:st|nd|rd|th)\b")
 _BRACKETS = re.compile(r"\([^)]*\)")
 _NUMBERS = re.compile(r"\b\d+d\d+\b|(?<![A-Za-z])[+\-−]?\d[\d/]*(?![A-Za-z])|\bft\.?")
@@ -132,6 +144,7 @@ class _Row:
     page: int
     y: float
     text: list[str] = field(default_factory=list)
+    lines: int = 0
 
     @property
     def items(self) -> list[list[str]]:
@@ -166,8 +179,9 @@ def table_levels(lines: Sequence[Line]) -> list[_Row]:
             aligned = [r for r in rows if r.page == line.page and abs(r.y - line.y) <= SAME_ROW]
             if len(aligned) == 1 and line.x > COLUMN_SPLIT_51:
                 current = aligned[0]
-        if current is not None:
+        if current is not None and current.lines < MOST_LINES:
             current.text.append(text)
+            current.lines += 1
     return rows
 
 
@@ -268,26 +282,60 @@ def parse_features51(lines: Sequence[Line], vocab: Vocabulary) -> list[Feature]:
 
 def parse_class(lines: Sequence[Line], klass: str, vocab: Vocabulary) -> list[Feature]:
     """The features of one class, from its lines (its title first)."""
-    return _class_features(_blocks(lines, klass), klass, vocab)
+    rows = table_levels(lines)
+    check_table(rows, klass)
+    return _class_features(_blocks(lines, klass), rows, klass, vocab)
 
 
-def _class_features(blocks: Sequence[_Block], klass: str, vocab: Vocabulary) -> list[Feature]:
+def check_table(rows: Sequence[_Row], klass: str) -> None:
+    """The class table has its 20 levels, in order, first (what comes after is another table)."""
+    if [r.level for r in rows[:LEVELS]] != list(range(1, LEVELS + 1)):
+        raise SrdError(f"{klass}: the class table does not start with levels 1 to {LEVELS}")
+
+
+def unmatched_items(rows: Sequence[_Row], names: Sequence[str]) -> list[str]:
+    """The names in the table's Features cells that no feature was found for (not counting the
+    cells that are not features). A feature that is in the table but whose heading was not read
+    would otherwise be lost without a word."""
+    found = [[w.lower() for w in WORDS.findall(_apostrophes(n))] for n in names]
+    missing: list[str] = []
+    for row in rows[:LEVELS]:
+        for item in row.items:
+            text = " ".join(item)
+            if not item or len(item) > MOST_WORDS or NOT_A_FEATURE.search(text):
+                continue
+            if not any(item[:1] == f[:1] and _in_order(f, item) for f in found if f):
+                missing.append(f"{text} (level {row.level})")
+    return missing
+
+
+def _class_features(
+    blocks: Sequence[_Block], rows: Sequence[_Row], klass: str, vocab: Vocabulary
+) -> list[Feature]:
     """The features of one class: a heading with a level is one, any other heading is folded
-    into the feature above it (and dropped if that is an option list or the section is flavour)."""
+    into the feature above it. What is left out is left out on purpose and by name (an option
+    list, an introduction, flavour text); anything else that would be lost stops the tool."""
     kept: list[_Block] = []
     seen_subclass = False
     listing = False  # in a list of options set apart after the class's last feature
     for block in blocks:
+        where = f"{klass}: {block.name!r} on page {block.page}"
         if block.name == "":  # the subclass's heading
+            if seen_subclass:
+                raise SrdError(f"{klass}: the subclass heading comes twice (page {block.page})")
             seen_subclass, listing = True, False
             continue
         if block.subclass and block.level is None:
             block.level = stated_level(block.lines)
+        if block.level is not None and not block.subclass and listing:
+            raise SrdError(f"{where} is a feature of the class, after a section left out")
         if listing:
             continue
         if block.level is not None and any(
             k.name == block.name and k.subclass == block.subclass for k in kept
         ):
+            if block.name not in OPTION_LISTS:
+                raise SrdError(f"{where} comes twice")
             listing = True  # the Warlock's invocations, headed again after the last feature
             continue
         if block.level is not None:
@@ -297,18 +345,26 @@ def _class_features(blocks: Sequence[_Block], klass: str, vocab: Vocabulary) -> 
             listing = True
             continue
         if not kept:
-            raise SrdError(f"{klass}: heading {block.name!r} on page {block.page} comes first")
+            raise SrdError(f"{where} comes before any feature")
         parent = kept[-1]
-        # A subclass's own introduction and spell list come before its first feature: no parent.
-        if parent.name in OPTION_LISTS or parent.subclass != block.subclass:
+        # Inside the subclass's section a heading with no level is its introduction or spell list
+        # (named in SUBCLASS_INTROS) before its first feature, or a part of the feature above it.
+        if block.subclass and parent.subclass != block.subclass:
+            if block.name not in SUBCLASS_INTROS:
+                raise SrdError(f"{where} is in the subclass but says no level")
+            continue
+        if parent.name in OPTION_LISTS:
             continue
         parent.lines.append(_title_line(block))
         parent.lines.extend(block.lines)
     if not seen_subclass:
         raise SrdError(f"{klass}: its subclass {SUBCLASSES[klass]!r} was not found")
-    own = [b.level or 0 for b in kept if not b.subclass]
-    if own != sorted(own):
-        raise SrdError(f"{klass}: the levels of its features are not in order: {own}")
+    for subclass in (False, True):
+        levels = [b.level or 0 for b in kept if bool(b.subclass) == subclass]
+        if levels != sorted(levels):
+            raise SrdError(f"{klass}: the levels of its features are not in order: {levels}")
+    if missing := unmatched_items(rows, [b.name for b in kept if not b.subclass]):
+        raise SrdError(f"{klass}: in the class table but no feature was read: {missing}")
     out = []
     for block in kept:
         words = _paragraphs(block.lines, vocab)

@@ -28,6 +28,17 @@ def vocab() -> parse51.Vocabulary:
     return parse51.Vocabulary(WORDS, [])
 
 
+def ordinal(n: int) -> str:
+    return f"{n}{'th' if 10 <= n % 100 <= 20 else {1: 'st', 2: 'nd', 3: 'rd'}.get(n % 10, 'th')}"
+
+
+def rows(first: int, last: int, page: int = 8, item: str = "Rage") -> list[Line]:
+    """Plain table rows for levels first..last, so a class table has its 20 levels."""
+    return [
+        at(61.1, 260 - n, f"{ordinal(n)} +3 {item} 3", TABLE, page) for n in range(first, last + 1)
+    ]
+
+
 def barbarian() -> list[Line]:
     """One class as the PDF has it: the title, the intro blocks set around the table, the
     table (a feature's name split by another column's numbers, the last one across columns),
@@ -55,6 +66,7 @@ def barbarian() -> list[Line]:
         at(61.1, 320, "4th +2 Ability Score 3", TABLE),
         at(141.1, 309, "Improvement", TABLE),
         at(61.1, 290, "5th +3 Aura of Protection 3", TABLE),
+        *rows(6, 19),
         at(61.1, 270, "20th +6 Primal Unlimited", TABLE),
         at(411.8, 700, "Champion", TABLE, 9),
         at(RIGHT, 650, "Rage", TITLE, 9),
@@ -67,14 +79,18 @@ def barbarian() -> list[Line]:
         at(RIGHT, 538, "You gain a +2 bonus to attack rolls."),
         at(RIGHT, 510, "Reckless Attack", TITLE, 9),
         at(RIGHT, 498, "Starting at 2nd level, you can throw aside all concern."),
+        at(RIGHT, 484, "Danger Sense", TITLE, 9),
+        at(RIGHT, 476, "At 2nd level, you notice danger."),
         at(RIGHT, 470, "Primal Path", TITLE, 9),
         at(RIGHT, 458, "At 3rd level, you choose a path."),
         at(RIGHT, 440, "Cantrips", TITLE, 9),  # a sub-heading: part of Primal Path
         at(RIGHT, 428, "You know two cantrips of your choice."),
         at(RIGHT, 400, "Ability Score Improvement", TITLE, 9),
         at(RIGHT, 388, "When you reach 4th level, you can increase one score."),
-        at(RIGHT, 360, "Protection", TITLE, 9),  # a sub-heading, not "Aura of Protection"
-        at(RIGHT, 348, "You can use your reaction to impose disadvantage."),
+        at(RIGHT, 366, "Aura of Protection", TITLE, 9),
+        at(RIGHT, 354, "Starting at 5th level, you can protect your friends."),
+        at(RIGHT, 340, "Protection", TITLE, 9),  # a sub-heading, not a feature of its own
+        at(RIGHT, 328, "You can use your reaction to impose disadvantage."),
         at(RIGHT, 320, "Primal Champion", TITLE, 9),
         at(RIGHT, 308, "You embody the power of the wilds."),
         at(LEFT, 700, "Martial Archetypes", TITLE, 10),  # an introduction: left out
@@ -103,8 +119,10 @@ class ClassFeatures(unittest.TestCase):
                 ("Rage", 1),
                 ("Fighting Style", 1),
                 ("Reckless Attack", 2),
+                ("Danger Sense", 2),
                 ("Primal Path", 3),
                 ("Ability Score Improvement", 4),
+                ("Aura of Protection", 5),
                 ("Primal Champion", 20),
             ],
         )
@@ -118,7 +136,6 @@ class ClassFeatures(unittest.TestCase):
             "Primal Champion", names
         )  # "Primal Unlimited" then "Champion", in the next column
         self.assertNotIn("Protection", names)  # only "Aura of Protection" is in the table
-        self.assertNotIn("Aura of Protection", names)  # in the table, but no heading
 
     def test_the_proficiencies_and_the_equipment_are_left_out(self) -> None:
         text = " ".join(f.text for f in features())
@@ -195,6 +212,61 @@ class ClassFeatures(unittest.TestCase):
         with self.assertRaises(SrdError):
             classes51.parse_class(lines, "Barbarian", vocab())
 
+    def test_a_subclass_heading_with_no_level_that_is_not_a_known_introduction_stops_the_tool(
+        self,
+    ) -> None:
+        lines = barbarian()
+        lines += [
+            at(LEFT, 520, "Mystery Section", TITLE, 10),
+            at(LEFT, 508, "Nobody knows what this is.", BODY, 10),
+        ]
+        # inserted before the subclass's first feature, so it would be lost without a word
+        at_subclass = next(i for i, ln in enumerate(lines) if ln.text == "Path of the Berserker")
+        lines.insert(at_subclass + 1, lines.pop())
+        lines.insert(at_subclass + 1, lines.pop())
+        with self.assertRaises(SrdError) as raised:
+            classes51.parse_class(lines, "Barbarian", vocab())
+        self.assertIn("Mystery Section", str(raised.exception))
+
+    def test_a_name_in_the_table_with_no_heading_stops_the_tool(self) -> None:
+        lines = [ln for ln in barbarian() if ln.text != "Danger Sense" or ln.first_font != TITLE]
+        with self.assertRaises(SrdError) as raised:
+            classes51.parse_class(lines, "Barbarian", vocab())
+        self.assertIn("danger sense", str(raised.exception))
+
+    def test_a_heading_that_comes_twice_stops_the_tool(self) -> None:
+        lines = barbarian()
+        lines += [
+            at(RIGHT, 300, "Rage", TITLE, 9),
+            at(RIGHT, 288, "A second Rage, which is a mistake."),
+        ]
+        at_subclass = next(i for i, ln in enumerate(lines) if ln.text == "Martial Archetypes")
+        lines[at_subclass:at_subclass] = lines[-2:]
+        with self.assertRaises(SrdError):
+            classes51.parse_class(lines[:-2], "Barbarian", vocab())
+
+    def test_a_table_that_does_not_start_with_the_20_levels_stops_the_tool(self) -> None:
+        lines = [ln for ln in barbarian() if not ln.text.startswith("5th")]
+        with self.assertRaises(SrdError):
+            classes51.parse_class(lines, "Barbarian", vocab())
+
+    def test_the_subclass_heading_twice_stops_the_tool(self) -> None:
+        lines = barbarian()
+        lines += [at(LEFT, 300, "Path of the Berserker", TITLE, 10)]
+        with self.assertRaises(SrdError):
+            classes51.parse_class(lines, "Barbarian", vocab())
+
+    def test_a_list_of_options_after_the_last_feature_is_left_out_by_name(self) -> None:
+        lines = barbarian()
+        lines += [
+            at(RIGHT, 300, "Fighting Style", TITLE, 9),
+            at(RIGHT, 288, "A second listing of the options."),
+        ]
+        at_subclass = next(i for i, ln in enumerate(lines) if ln.text == "Martial Archetypes")
+        lines[at_subclass:at_subclass] = lines[-2:]
+        text = " ".join(f.text for f in classes51.parse_class(lines[:-2], "Barbarian", vocab()))
+        self.assertNotIn("second listing", text)
+
 
 class TheTable(unittest.TestCase):
     def test_a_wide_table_printed_in_two_pieces_joins_each_row_to_the_cell_at_its_height(
@@ -239,6 +311,7 @@ class TheWholeChapter(unittest.TestCase):
                 at(LEFT, 700, klass, TITLE, page),
                 at(LEFT, 440, f"The {klass}", TABLE_BOLD, page),
                 at(61.7, 400, "1st +2 Core Feature", TABLE, page),
+                *rows(2, 20, page, "Core Feature"),
                 at(RIGHT, 650, "Core Feature", TITLE, page),
                 at(RIGHT, 630, "You can do the core thing.", BODY, page),
                 at(LEFT, 600, subclass, TITLE, page + 1),

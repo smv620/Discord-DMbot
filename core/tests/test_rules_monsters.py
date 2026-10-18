@@ -304,7 +304,9 @@ class CutWordsOfEither(unittest.TestCase):
             {
                 ("any", "one"), ("hand", "bell"), ("sea", "horse"), ("a", "mount"),
                 ("up", "on"), ("has", "ten"),
-                ("are", "a"),  # "if you are a 3rd-level cleric", in the class features
+                # "if you are a 3rd-level cleric": 2014 Cleric, Druid and Paladin Spellcasting
+                # and Druid Natural Recovery
+                ("are", "a"),
             },
         )  # fmt: skip
 
