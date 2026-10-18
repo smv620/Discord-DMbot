@@ -184,7 +184,7 @@ def pairs(entry: Entry, *, card: bool = False) -> list[tuple[str, str]]:
             return []
         found = [("", item_line(entry))]
     elif entry.kind == "feat":  # the card's heading already says "(feat: Origin)"
-        found = [] if card else [("", f"{d.get('category', '')} feat")]
+        found = [] if card else [("", f"{d['category']} feat" if has("category") else "Feat")]
         found.append(("Prerequisite", str(d.get("prerequisite", ""))))
     elif entry.kind == "weapon":  # the card shows the whole row as its text
         found = [] if card else [("", weapon_line(entry))]
