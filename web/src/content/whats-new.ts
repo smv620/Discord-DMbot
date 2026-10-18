@@ -185,6 +185,13 @@ export interface Held extends Entry {
 
 export const held: Held[] = [
   {
+    date: "2026-10-18",
+    title: "Look up game words",
+    what: "Type /dmbot rule and a word like cover, dash or long rest to read what the free rules say about it. Spells, conditions and creatures still come first, and any house rule you wrote about it shows above.",
+    reason:
+      "Merged (#1890, #1891) once they are; held until dev1 deploys it and the owner's live check is recorded in docs/testing-history.log.",
+  },
+  {
     date: "2026-10-17",
     title: "See what's switched on",
     what: "In Settings, press What's switched on to see which of DMbot's extras are turned on for your table. Only the game masters see it.",

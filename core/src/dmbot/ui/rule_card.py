@@ -202,7 +202,8 @@ def header(
     lines = house_lines(house_matches(rules, names_for(entry, typed)), house_max)
     kind = KIND_WORDS.get(entry.kind, entry.kind)
     called = _fit(_md(entry.name), NAME_MAX)
-    lines.append(f"📖 **{called}** ({kind})")
+    glossary_tag = f" [{_md(str(entry.details['tag']))}]" if entry.details.get("tag") else ""
+    lines.append(f"📖 **{called}** ({kind}){glossary_tag}")
     line = facts(entry)
     if line:
         lines.append(line)
@@ -263,6 +264,9 @@ def card_parts(
         if len(head) <= PART_MAX - MIN_TEXT_ROOM:
             break
     text = _md(hit.entry.text)
+    see_also = hit.entry.details.get("see_also")
+    if see_also:  # a glossary entry points to others by name (plain words, no links)
+        text += "\n\nSee also: " + ", ".join(_md(str(name)) for name in see_also)
     room = PART_MAX - len(head) - 1
     rest = PART_MAX - CONTINUED_MAX
     if room < MIN_TEXT_ROOM:
