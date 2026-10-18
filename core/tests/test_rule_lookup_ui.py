@@ -678,6 +678,13 @@ class FeatureLookup(LookupTest):
         self.assertNotIn("Other classes", text)
         self.assertNotIn("[Legacy", text)
 
+    async def test_an_item_only_the_2014_rules_have_is_tagged_legacy(self) -> None:
+        text = self.sent(await self.command("arrow of slaying"))[0]
+        self.assertIn("📖 **Arrow of Slaying** (item: Weapon, very rare)", text)
+        self.assertIn("SRD 5.1, Magic Items, p. 209 [Legacy 2014]", text)
+        bag = self.sent(await self.command("bag of holding"))[0]
+        self.assertNotIn("Legacy", bag)  # the 2024 campaign has its own
+
     async def test_an_item_with_no_single_rarity_has_a_short_heading(self) -> None:
         it = self.it(kind=discord.InteractionType.autocomplete)
         (potions,) = await ui._typeahead(it, "potions of heal")
