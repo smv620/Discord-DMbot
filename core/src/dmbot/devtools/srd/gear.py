@@ -19,7 +19,7 @@ from dataclasses import dataclass
 
 from dmbot.devtools.srd.equipment import SAME_ROW
 from dmbot.devtools.srd.items import SAME_HEADING, _at_an_edge
-from dmbot.devtools.srd.parse import Mender, SrdError, _clean, _paragraphs, is_title
+from dmbot.devtools.srd.parse import COLUMN_EDGES, Mender, SrdError, _clean, _paragraphs, is_title
 from dmbot.devtools.srd.pdf import Line
 
 CONTINUED = (4.0, 14.0)  # a wrapped line of a tool is set in from the column's edge by about this
@@ -28,6 +28,9 @@ GROUP_TITLES = ("Artisan’s Tools", "Other Tools")  # tool groups: their words 
 # The price after a name: "(25 GP)", "(Varies)", and the Spell Scroll's two prices in one bracket.
 TITLE = re.compile(r"^(?P<name>[A-Z][^()]*?) \((?P<cost>Varies|[\d,]+ [GSC]P)\)$")
 WRAPPED_TITLE = re.compile(r"^(?P<name>[A-Z][^()]*?) \((?P<cost>[^()]+; [^()]+)\)$")
+# The PDF prints one and a half in a sentence as "11/2" ("holds up to 11/2 pints"); its tables
+# print "1½". No other number in the gear text reads that way.
+_FRACTION = re.compile(r"(?<![\d/.,])11/2\b")
 ABILITY_LINE = re.compile(
     r"^Ability: (?P<ability>Strength|Dexterity|Constitution|Intelligence|Wisdom|Charisma) "
     r"Weight: (?P<weight>Varies|—|\d+ lb\.)$"
@@ -149,7 +152,7 @@ def _tool(
     label = ""
     for ln in block:
         text = _clean(ln.text)
-        edge = min((63.0, 313.5), key=lambda e: abs(e - ln.x))
+        edge = min(COLUMN_EDGES, key=lambda e: abs(e - ln.x))  # the two columns
         wrapped = CONTINUED[0] < ln.x - edge < CONTINUED[1]
         if wrapped:
             if not label:
@@ -199,12 +202,13 @@ def parse_gear(lines: Sequence[Line]) -> list[Gear]:
             continue
         text, j = _heading(stream, i)
         match = TITLE.match(text) or WRAPPED_TITLE.match(text)
-        assert match is not None
+        if match is None:  # (_starts_entry said it was one)
+            raise SrdError(f"Gear: a heading it can't read on page {stream[i].page}: {text!r}")
         name, cost = match["name"], match["cost"]
         end = j
         while end < len(stream) and not _starts_entry(stream, end):
             end += 1
-        words = _paragraphs(stream[j:end], mender)
+        words = _FRACTION.sub("1½", _paragraphs(stream[j:end], mender))
         if not words:
             raise SrdError(f"Gear {name!r} on page {stream[i].page}: no description")
         if name in seen:
@@ -243,7 +247,9 @@ def _weights(lines: Sequence[Line]) -> dict[str, tuple[str, str]]:
 def _from_table(name: str, table: dict[str, tuple[str, str]], page: int) -> tuple[str, str]:
     if name in table:
         return table[name]
-    if name == "Spell Scroll":  # one entry, two rows (a cantrip's and a level 1's)
+    # One entry, two rows (a cantrip's and a level 1's). Neither row has a weight (a dash), which
+    # is why the entry says none instead of reading one from a row.
+    if name == "Spell Scroll":
         return "—", "Cantrip, 30 GP; Level 1, 50 GP"
     raise SrdError(f"Gear {name!r} on page {page} has no row in the Adventuring Gear table")
 
@@ -264,9 +270,10 @@ def parse_mounts(lines: Sequence[Line]) -> list[Gear]:
     for i, ln in enumerate(lines):
         text = _clean(ln.text)
         if is_title(ln) and _at_an_edge(ln):
-            if (
-                text in ("Mounts and Other Animals", "Tack, Harness, and Drawn Vehicles")
-                or text == "Airborne and Waterborne Vehicles"
+            if text in (
+                "Mounts and Other Animals",
+                "Tack, Harness, and Drawn Vehicles",
+                "Airborne and Waterborne Vehicles",
             ):
                 section = text
             elif not text.startswith(("Item ", "Ship ")):  # (a table's header row)

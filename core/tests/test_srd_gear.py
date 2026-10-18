@@ -198,6 +198,16 @@ class Gear(unittest.TestCase):
         self.assertEqual(stuff()["Waterskin"].weight, "5 lb. (full)")
         self.assertEqual(stuff()["Arcane Focus"].weight, "Varies")
 
+    def test_one_and_a_half_printed_as_11_2_is_read_as_one_and_a_half(self) -> None:
+        lines = [
+            ln
+            if ln.text != "A Waterskin holds up to 4 pints."
+            else at(RIGHT, 417, "It holds 11/2 pints.")
+            for ln in gear_lines()
+        ]
+        waterskin = {g.name: g for g in gear.parse_gear(lines)}["Waterskin"]
+        self.assertEqual(waterskin.text, "It holds 1½ pints.")
+
     def test_a_small_table_inside_an_entry_stays_as_its_lines(self) -> None:
         self.assertEqual(
             stuff()["Arcane Focus"].text,
