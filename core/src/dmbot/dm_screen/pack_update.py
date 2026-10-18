@@ -28,7 +28,7 @@ from typing import Any
 import discord
 
 from dmbot.campaigns import Campaign
-from dmbot.discord_limits import MESSAGE_MAX
+from dmbot.discord_limits import MESSAGE_MAX, fit_message
 from dmbot.dm_screen import pack_suggestion, shared_update
 from dmbot.rules import pack_diff
 from dmbot.rules.homebrew import name_key
@@ -40,6 +40,7 @@ log = logging.getLogger(__name__)
 
 PAGE = 25  # a Discord menu holds 25 choices
 TEXT_MAX = MESSAGE_MAX - 100  # margin kept from before: room for the words a sender adds around it
+MORE_ROOM = 80  # "…and N more. Use Pick changes to go through all of them." and a line break
 ONLY_DMS = "Only this campaign's DMs can do that."
 GONE = "That campaign isn't here any more."
 NEWER = (
@@ -221,7 +222,8 @@ def changes_text(name: str, version: int, changes: Sequence[pack_diff.Change]) -
     lines = [pack_diff.describe(c) for c in changes]
     text = "\n".join(lines) or "Only the version number changed. No entry is different."
     if len(text) > TEXT_MAX:
-        kept = text[:TEXT_MAX].rsplit("\n", 1)[0]
+        # Room for the line below, so the whole text still fits one message.
+        kept = fit_message(text, limit=TEXT_MAX - MORE_ROOM)[:-1].rstrip()
         left = len(lines) - kept.count("\n") - 1
         text = kept + f"\n…and {left} more. Use Pick changes to go through all of them."
     return f"**{_md(name)}** v{version}:\n{text}"

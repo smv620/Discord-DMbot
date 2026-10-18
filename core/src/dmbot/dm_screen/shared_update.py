@@ -17,7 +17,7 @@ from typing import Any
 
 import discord
 
-from dmbot.discord_limits import MESSAGE_MAX
+from dmbot.discord_limits import MESSAGE_MAX, fit_message
 
 log = logging.getLogger(__name__)
 
@@ -76,7 +76,7 @@ def combined_text(collected: Collected) -> str:
         at = lines.index(f"{number}. {update.line}") + 1
         lines[at:at] = extras
         size += cost
-    return "\n".join(lines)[:TEXT_MAX]
+    return fit_message("\n".join(lines), limit=TEXT_MAX)
 
 
 def combined_view(collected: Collected) -> discord.ui.View:
