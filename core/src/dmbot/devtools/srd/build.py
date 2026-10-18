@@ -33,6 +33,7 @@ from dmbot.devtools.srd import (
     monsters,
     monsters51,
     origins,
+    origins51,
     parse,
     parse51,
 )
@@ -59,6 +60,12 @@ CONDITIONS_51 = (
 )  # fmt: skip
 
 MONSTERS_HEADING = "Monsters A–Z"
+RACES_HEADING_51 = "Races"  # the chapter starts on page 3, with the contents before it
+AFTER_RACES_HEADING_51 = "Barbarian"
+BACKGROUNDS_HEADING_51 = "Backgrounds"
+BACKGROUND_51 = "Acolyte"  # the one background the SRD 5.1 has
+AFTER_BACKGROUND_HEADING_51 = "Suggested Characteristics"
+FEAT_51 = "Grappler"  # the one feat the SRD 5.1 has
 ITEMS_HEADING_51 = "Magic Items"
 AFTER_ITEMS_HEADING_51 = (
     "Monsters"  # only bounds the pages read; the list itself ends at the next line
@@ -345,6 +352,73 @@ def item_lines_51(lines: Sequence[Line]) -> list[Line]:
     raise parse.SrdError(f"Can't find the heading {SENTIENT_HEADING_51!r} after the items.")
 
 
+def title_position(lines: Sequence[Line], title: str, start: int = 0) -> int:
+    """The index of the first title line with exactly these words, at or after `start`."""
+    for i in range(start, len(lines)):
+        if parse.is_title(lines[i]) and parse51.clean(lines[i].text) == title:
+            return i
+    raise parse.SrdError(f"Can't find the heading {title!r}: is this the SRD it should be?")
+
+
+def page_with_title(pages: Sequence[Sequence[Line]], title: str, after: int = 0) -> int:
+    """The number of the first page, after page `after`, with a title of exactly these words
+    anywhere on it (a chapter can start in the middle of a page)."""
+    for number, lines in enumerate(pages, 1):
+        if number > after and any(
+            parse.is_title(ln) and parse51.clean(ln.text) == title for ln in lines
+        ):
+            return number
+    raise parse.SrdError(f"Can't find the heading {title!r}: is this the SRD it should be?")
+
+
+def origin_files_51(
+    pages: Sequence[Sequence[Line]], header: Any, vocab: parse51.Vocabulary
+) -> dict[str, dict[str, Any]]:
+    """The 5.1's races, its Acolyte background and its Grappler feat as `origins.json` and
+    `feats.json`, in the shapes of the 5.2.1's."""
+    races_at = page_with_title(pages, RACES_HEADING_51)
+    after_races_at = first_page_of(pages, AFTER_RACES_HEADING_51, after=races_at)
+    races = origins51.parse_races(lines_between(pages, races_at, after_races_at), vocab)
+    backgrounds_at = page_with_title(pages, BACKGROUNDS_HEADING_51, after=after_races_at)
+    lines = lines_between(pages, backgrounds_at, backgrounds_at + 2)
+    start = title_position(lines, BACKGROUND_51)
+    background = origins51.parse_background(
+        lines[start : title_position(lines, AFTER_BACKGROUND_HEADING_51, start)], vocab
+    )
+    feat_at = page_with_title(pages, FEAT_51, after=backgrounds_at)
+    lines = lines_between(pages, feat_at, feat_at + 1)
+    feat = origins51.parse_feat(lines[title_position(lines, FEAT_51) :], vocab)
+    return {
+        "origins.json": {
+            **header("origin", "Races and Backgrounds"),
+            "entries": [
+                *(race_entry(r) for r in races),
+                {"kind": "background", "section": "Backgrounds", **asdict(background)}
+                | {"ability_scores": "", "feat": "", "tool": ""},
+            ],
+        },
+        "feats.json": {
+            **header("feat", "Feats"),
+            "entries": [{"category": "", **asdict(feat)}],
+        },
+    }
+
+
+def race_entry(race: origins51.Race) -> dict[str, Any]:
+    """A race as the origins file holds it: a `species`, in the 5.2.1's shape (the SRD 5.1 does
+    not say a race's creature type, so that is empty)."""
+    return {
+        "kind": "species",
+        "section": "Races",
+        "name": race.name,
+        "creature_type": "",
+        "size": race.size,
+        "speed": race.speed,
+        "text": race.text,
+        "page": race.page,
+    }
+
+
 def build_files_51(
     pages: Sequence[Sequence[Line]],
     document: dict[str, Any],
@@ -354,9 +428,11 @@ def build_files_51(
     *,
     classes: bool = True,
     items_pages: bool = True,
+    origins_pages: bool = True,
 ) -> dict[str, dict[str, Any]]:
-    """The 2014 SRD 5.1's files from pages already read. `classes=False` and `items_pages=False`
-    leave out the class features and the magic items, for tests whose pages hold no such chapter."""
+    """The 2014 SRD 5.1's files from pages already read. `classes=False`, `items_pages=False` and
+    `origins_pages=False` leave out the class features, the magic items and the races, background
+    and feat, for tests whose pages hold no such chapter."""
     spells_at = first_page_of(pages, SPELLS_HEADING_51, after=CONTENTS_PAGES)
     traps_at = first_page_of(pages, AFTER_SPELLS_HEADING_51, after=spells_at)
     conditions_at = first_page_of(pages, CONDITIONS_HEADING_51, after=traps_at)
@@ -406,6 +482,8 @@ def build_files_51(
                 )
             ],
         }
+    if origins_pages:
+        files.update(origin_files_51(pages, header, vocab))
     if monster_input is not None:
         monster_document, monster_known, monster_pairs = monster_input
         everything = [line for page in pages for line in page]

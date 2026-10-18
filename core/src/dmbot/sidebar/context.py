@@ -254,6 +254,7 @@ def mentioned_rules(
                 found.append((start, hits[depth]))
     if cued and found:  # "the acolyte background": the creature of that name gives way (#1913)
         found = _cued_origins(found, words, index, target, fallback)
+    found = _widened_origins(found, words, index, target, fallback)
     found.sort(key=lambda pair: pair[0])
     unique: list[Hit] = []
     for _, hit in found:
@@ -269,6 +270,30 @@ def mentioned_rules(
 
 ORIGIN_CUES = frozenset({"feat", "feats", "species", "race", "races", "background", "backgrounds"})
 SPECIES_NOT_EVERYDAY = frozenset({"dragonborn", "goliath"})  # "dwarf", "elf" and "human" are not
+
+
+def _widened_origins(
+    found: list[tuple[int, Hit]], words: list[str], index: Index, target: str, fallback: str
+) -> list[tuple[int, Hit]]:
+    """A creature whose name is the end or the start of a longer species name ("Orc" in "half-orc
+    traits") gives way to that species: "Half-Orc" is a two-word name and needs no cue word, but
+    the creature of the shorter name was found first (#1928)."""
+    out = list(found)
+    for start, hit in found:
+        if hit.entry.kind != "monster":
+            continue
+        size = len(hit.found_as.split())
+        for begin in (start - 1, start):
+            if begin < 0 or begin + size + 1 > len(words):
+                continue
+            picked = origin_hits(
+                index, " ".join(words[begin : begin + size + 1]), target, fallback, cued=False
+            )
+            if picked:
+                out = [pair for pair in out if pair[1] is not hit]
+                out += [(begin, p) for p in picked]
+                break
+    return out
 
 
 def _cued_origins(

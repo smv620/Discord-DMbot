@@ -225,8 +225,8 @@ def header(
         kind = f"{kind}: {_md(feature_place(entry))}"
     elif entry.kind == index.ITEM:  # "(item: Wondrous Item, uncommon)"
         kind = f"{kind}: {_md(item_place(entry))}"
-    elif entry.kind == index.FEAT:  # "(feat: Origin)"
-        kind = f"{kind}: {_md(str(entry.details.get('category', '')))}"
+    elif entry.kind == index.FEAT and entry.details.get("category"):  # "(feat: Origin)"
+        kind = f"{kind}: {_md(str(entry.details['category']))}"  # (the 2014 Grappler has none)
     lines.append(f"📖 **{called}** ({kind})")
     line = facts(entry)
     if line:
@@ -465,8 +465,8 @@ def choice_label(entry: Entry) -> str:
         kind = f"{kind}: {entry.details.get('class', '')} {entry.details.get('level', '')}".rstrip()
     if entry.kind == index.ITEM:  # "Bag of Holding (item: Wondrous Item, uncommon)"
         kind = f"{kind}: {item_place(entry)}"
-    elif entry.kind == index.FEAT:  # "Alert (feat: Origin)"
-        kind = f"{kind}: {entry.details.get('category', '')}"
+    elif entry.kind == index.FEAT and entry.details.get("category"):  # "Alert (feat: Origin)"
+        kind = f"{kind}: {entry.details['category']}"
     older = f" [Legacy {entry.edition}]" if entry.edition == index.LEGACY else ""
     label = f"{entry.name} ({kind}){older}"
     return label if len(label) <= NAME_MAX else label[: NAME_MAX - 1] + "…"
