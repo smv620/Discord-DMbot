@@ -784,6 +784,29 @@ class FeatureLookup(LookupTest):
                     word = choice.name.split("(")[1].split(")")[0].split(":")[0]
                     self.assertIn(f"({word}", text.splitlines()[0])
 
+    async def test_a_name_a_rule_shares_with_a_spell_can_be_picked_from_the_list(self) -> None:
+        it = self.it(kind=discord.InteractionType.autocomplete)
+        values = {c.name: c.value for c in await ui._typeahead(it, "darkness")}
+        self.assertEqual(values.get("Darkness (rule)"), "Darkness (rule)")
+        text = self.sent(await self.command("Darkness (rule)"))[0]
+        self.assertIn("(rule)", text.splitlines()[0])
+
+    async def test_the_feat_and_the_class_feature_of_one_name_can_both_be_picked(self) -> None:
+        it = self.it(kind=discord.InteractionType.autocomplete)
+        values = {c.name: c.value for c in await ui._typeahead(it, "ability score impr")}
+        self.assertEqual(
+            values.get("Ability Score Improvement (feat: General)"),
+            "Ability Score Improvement (feat)",
+        )
+        text = self.sent(await self.command("Ability Score Improvement (feat)"))[0]
+        self.assertIn("(feat: General)", text.splitlines()[0])
+
+    async def test_the_shield_armor_is_not_labelled_with_its_own_name(self) -> None:
+        it = self.it(kind=discord.InteractionType.autocomplete)
+        labels = [c.name for c in await ui._typeahead(it, "shield")]
+        self.assertIn("Shield (armor)", labels)
+        self.assertIn("Shield (spell)", labels)
+
     async def test_the_weapon_reach_property_does_not_shadow_the_glossarys_reach(self) -> None:
         glossary = self.sent(await self.command("reach"))[0]
         self.assertIn("A creature has a reach of 5 feet", glossary)

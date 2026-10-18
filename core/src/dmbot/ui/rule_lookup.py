@@ -506,7 +506,13 @@ def _choice_value(srd: index.Index, entry: index.Entry) -> str:
     """What is typed into the box when a name is picked. A feature several classes share is
     picked with its class in front ("Rogue Evasion"); one a class has at two levels ("Improved
     Brutal Strike") with its level after, which `_features` reads back."""
-    if entry.kind in index.NAMED_KINDS and srd.lookup(entry.name, entry.edition) is not None:
+    if entry.kind in index.NAMED_KINDS and (
+        srd.lookup(entry.name, entry.edition) is not None
+        or (
+            entry.kind != index.RULE  # a feat shares its name with a class feature
+            and srd.lookup_all(entry.name, entry.edition, kind=index.FEATURE)
+        )
+    ):
         return f"{entry.name} ({entry.kind})"[:BOX_MAX]  # also a creature's name: say which
     if entry.kind == "monster" and any(
         srd.lookup(entry.name, edition, kind=kind) is not None

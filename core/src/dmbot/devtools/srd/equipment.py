@@ -94,6 +94,7 @@ def _rows(lines: Sequence[Line], left: tuple[float, float]) -> list[tuple[Line, 
         if not text or text.startswith("Name "):
             continue
         rows.append((main, text))
+    _no_stray_lines(lines, rows)
     out: list[tuple[Line, str]] = []
     for i, (main, text) in enumerate(rows):
         below = [
@@ -117,6 +118,26 @@ def _rows(lines: Sequence[Line], left: tuple[float, float]) -> list[tuple[Line, 
         )
         out.append((main, joined))
     return out
+
+
+def _no_stray_lines(lines: Sequence[Line], rows: Sequence[tuple[Line, str]]) -> None:
+    """Every line of the table's name columns is a row, a heading, the column heads, the
+    continuation of a row or something printed further right on a row's line; anything else
+    would be glued to the wrong row or lost."""
+    mains = {id(main) for main, _ in rows}
+    for ln in lines:
+        text = _clean(ln.text)
+        if not text or id(ln) in mains:
+            continue
+        if ln.first_font.endswith("Italic") or text.startswith(("Name ", "Armor Armor ")):
+            continue  # a heading, or the column heads
+        if ln.x >= 300:
+            continue  # printed further right: joined to the row at its height, if any
+        if TAIL_FROM <= ln.x < 300 and any(0 < main.y - ln.y <= CONTINUES for main, _ in rows):
+            continue  # the continuation of a row
+        if is_title(ln) and ln.x < ROW_LEFT:
+            continue  # the table's own title
+        raise SrdError(f"Equipment table: a line that is no row: {text!r}")
 
 
 def parse_weapons(lines: Sequence[Line]) -> list[Weapon]:

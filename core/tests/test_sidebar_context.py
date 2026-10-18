@@ -493,6 +493,21 @@ class MagicItems(unittest.TestCase):
             [(h.entry.kind) for h in self.hits("what is the AC of a shield")], ["armor"]
         )
 
+    def test_a_cue_word_does_not_take_the_place_of_a_spell_the_question_calls_a_spell(self) -> None:
+        for question in (
+            "does the shield spell stop damage",
+            "the wizard casts shield and I roll damage",
+            "can I cast the Light spell on a weapon",
+        ):
+            kinds = [h.entry.kind for h in self.hits(question)]
+            self.assertIn("spell", kinds, question)
+            self.assertNotIn("armor", kinds, question)
+
+    def test_a_cue_word_brings_the_other_gear_in_the_question_too(self) -> None:
+        got = [(h.entry.kind, h.entry.name) for h in self.hits("slow mastery for a whip")]
+        self.assertIn(("rule", "Slow"), got)
+        self.assertIn(("weapon", "Whip"), got)
+
     def test_an_item_is_no_rules_question(self) -> None:
         prompt = self.build("can you track a bag of holding?").prompt
         self.assertIn("ABOUT DMBOT", prompt)

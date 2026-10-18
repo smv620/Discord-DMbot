@@ -125,10 +125,55 @@ class Weapons(unittest.TestCase):
         with self.assertRaisesRegex(SrdError, "can't read"):
             equipment.parse_weapons(lines)
 
+    def test_a_line_that_is_no_row_stops_the_tool(self) -> None:
+        lines = [*weapon_page(), at(120.0, 300.0, "A stray note in the table")]
+        with self.assertRaisesRegex(SrdError, "no row"):
+            equipment.parse_weapons(lines)
+
     def test_a_weapon_twice_stops_the_tool(self) -> None:
         lines = [*weapon_page(), at(61.4, 300.0, "Club 1d4 Bludgeoning Light Slow 2 lb. 1 SP")]
         with self.assertRaisesRegex(SrdError, "comes twice"):
             equipment.parse_weapons(lines)
+
+
+class TheCards(unittest.TestCase):
+    """The words a weapon's or armor's row is written out as (build.equipment_entry)."""
+
+    def card(self, row: object, kind: str) -> str:
+        from dmbot.devtools.srd import build
+
+        return str(build.equipment_entry(kind, row)["text"])
+
+    def test_a_weapon_leads_with_its_damage_and_leaves_out_what_it_has_not(self) -> None:
+        by_name = {w.name: w for w in equipment.parse_weapons(weapon_page())}
+        self.assertEqual(
+            self.card(by_name["Longsword"], "weapon"),
+            "1d8 Slashing. Properties: Versatile (1d10). Mastery: Sap. 3 lb., 15 GP.",
+        )
+        self.assertEqual(
+            self.card(by_name["Mace"], "weapon"), "1d6 Bludgeoning. Mastery: Sap. 4 lb., 5 GP."
+        )
+        self.assertEqual(
+            self.card(by_name["Sling"], "weapon"),
+            "1d4 Bludgeoning. Properties: Ammunition (Range 30/120; Bullet). Mastery: Slow. 1 SP.",
+        )
+
+    def test_an_armor_leads_with_its_class_and_says_only_what_applies(self) -> None:
+        by_name = {a.name: a for a in equipment.parse_armor(armor_page())}
+        self.assertEqual(
+            self.card(by_name["Chain Mail"], "armor"),
+            "AC 16. Needs Strength 13. Disadvantage on Stealth. 55 lb., 75 GP. "
+            "Takes 10 minutes to don and 5 minutes to doff.",
+        )
+        self.assertEqual(
+            self.card(by_name["Shield"], "armor"),
+            "AC +2. 6 lb., 10 GP. Use the Utilize action to don or doff.",
+        )
+        self.assertEqual(
+            self.card(by_name["Padded Armor"], "armor"),
+            "AC 11 + Dex modifier. Disadvantage on Stealth. 8 lb., 5 GP. "
+            "Takes 1 minute to don or doff.",
+        )
 
 
 class Armors(unittest.TestCase):
