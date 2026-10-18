@@ -425,13 +425,17 @@ class Names(unittest.TestCase):
         self.assertEqual((goblin.renamed, deep.renamed, plain.renamed), (True, False, False))
 
     def test_no_name_belongs_to_two_kinds(self) -> None:
-        # so a lookup without `kind` can't answer with the wrong sort of entry. The Rules
-        # Glossary (#1884) is the exception on purpose: its entries share names with spells
-        # ("Darkness"), and a lookup without a kind never returns them.
+        # so a lookup without `kind` can't answer with the wrong sort of entry. The kinds found
+        # only when asked for (the Rules Glossary, features, items, feats, species and
+        # backgrounds) are the exception on purpose: they share names with spells ("Darkness"),
+        # creatures ("Acolyte") and each other ("Ability Score Improvement"), and a lookup
+        # without a kind never returns them.
         for edition, names in index.srd()._by_edition.items():
             for key, entries in names.items():
                 with self.subTest(edition=edition, key=key):
-                    self.assertLessEqual(len({e.kind for e in entries if e.kind != "rule"}), 1)
+                    self.assertLessEqual(
+                        len({e.kind for e in entries if e.kind not in index.ASKED_FOR}), 1
+                    )
 
     def test_a_glossary_entry_never_answers_a_lookup_without_a_kind(self) -> None:
         srd = index.srd()
