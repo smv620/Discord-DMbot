@@ -1443,6 +1443,11 @@ class Lists(MemoryTest):
 
         async def explained(conn: Any, query: Any, params: Any = None, **kw: Any) -> Any:
             if str(query).startswith("SELECT") and "memory_" in str(query):
+                # The planner picks from table statistics, and on a few rows in a schema earlier
+                # tests reused it can rightly choose a sequential scan (#1860). Told not to, a
+                # plan that still reads the whole table means no index can serve the look-up,
+                # which is what this test guards against. SET LOCAL ends with the transaction.
+                await real(conn, "SET LOCAL enable_seqscan = off")
                 cur = await real(conn, "EXPLAIN " + str(query), params)
                 plans.append("\n".join(str(next(iter(r.values()))) for r in await cur.fetchall()))
             return await real(conn, query, params, **kw)

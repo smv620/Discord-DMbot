@@ -18,9 +18,6 @@ import re
 from collections.abc import Mapping, Sequence
 from typing import Any
 
-# (private, but the only way to measure a pattern; Python 3.11+. Loaded by name: it has no stubs.)
-_regex_parser: Any = importlib.import_module("re._parser")
-
 MAX_CHAT_COMMANDS = 100  # top-level slash commands for one app (and 5 each for user/message menus)
 MAX_MENU_COMMANDS = 5
 NAME_MAX = 32
@@ -169,6 +166,10 @@ def longest_custom_id(pattern: str) -> int:
     """How many characters the longest custom_id matching `pattern` can have. A number
     (`\\d+`, `\\d*`) counts as `DIGITS_MAX` digits; any other unbounded part raises `UnboundedId`,
     because then no id length can be promised."""
+    # Private, but the only way to measure a pattern (Python 3.11+); loaded by name because it has
+    # no stubs, and here rather than when the module is imported, so starting the bot never
+    # depends on it (#1830).
+    _regex_parser: Any = importlib.import_module("re._parser")
     bounded = re.sub(
         r"\\d([+*])", lambda m: f"\\d{{{1 if m[1] == '+' else 0},{DIGITS_MAX}}}", pattern
     )
@@ -231,3 +232,41 @@ def modal_problems(title: str, rows: Sequence[Mapping[str, Any]]) -> list[str]:
     if len(rows) > MODAL_INPUTS_MAX:
         out.append(f"form {title[:30]!r}: {len(rows)} boxes, at most {MODAL_INPUTS_MAX}")
     return out + component_problems(rows, where=f"form {title[:30]!r}")
+
+
+MESSAGE_MAX = (
+    2000  # characters in one message's text; Discord refuses the whole send above it (#1835)
+)
+ELLIPSIS = "…"
+
+
+def _formatting_open(line: str) -> bool:
+    """True when a line leaves bold or a backtick open: cutting there would break the rest."""
+    return line.count("**") % 2 == 1 or line.count("`") % 2 == 1
+
+
+def fit_message(text: str, *, limit: int = MESSAGE_MAX) -> str:
+    """The text unchanged if it fits, else cut at a line break (or a space) and ended with "…".
+
+    A cut at a fixed character can land inside a word or a `**`, which breaks the formatting of
+    everything after it, so the cut backs up to a line or a word, and a last line that would
+    leave bold or a backtick open is dropped. The result is never over `limit` (counted in
+    characters). Only `**` and backticks are watched; an escaped one counts like any other.
+    """
+    if len(text) <= limit:
+        return text
+    if limit < 2:
+        return ELLIPSIS[:limit]
+    room = text[: limit - 1]
+    cut = room.rfind("\n")
+    if cut <= 0:
+        cut = room.rfind(" ")
+    head = room[:cut] if cut > 0 else room  # one long word: nothing better than a hard cut
+    last = head.rsplit("\n", 1)
+    while len(last) == 2 and _formatting_open(last[1]):
+        head = last[0]
+        last = head.rsplit("\n", 1)
+    while len(last) == 1 and _formatting_open(head):  # one line left: drop its last marker
+        i = max(head.rfind("**"), head.rfind("`"))
+        head = head[:i] + head[i + (2 if head.startswith("**", i) else 1) :]
+    return head.rstrip() + ELLIPSIS
