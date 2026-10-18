@@ -48,6 +48,31 @@ describe("what a page loads", () => {
     expect([...r.files.keys()].sort()).toEqual(["_astro/a.js", "_astro/b.js"]);
   });
 
+  it("follows the minified imports a build writes, with no space before the quote", () => {
+    expect(
+      localReferences(`import{r as e}from"./a.js";import{b}from"./b.js";export{x}from"./c.js";import"./d.js";const f=()=>import("/_astro/e.js")`, "js").sort(),
+    ).toEqual(["./a.js", "./b.js", "./c.js", "./d.js", "/_astro/e.js"]);
+    expect(localReferences(`import x from"https://other.example/a.js"`, "js")).toEqual([]);
+    const dist = build({
+      "p.html": `<astro-island component-url="/_astro/Island.js"></astro-island>`,
+      "_astro/Island.js": `import{r as e}from"./preact.js";export default()=>e`,
+      "_astro/preact.js": 11 * KB,
+    });
+    const r = weighPage(dist, "p.html");
+    expect([...r.files.keys()].sort()).toEqual(["_astro/Island.js", "_astro/preact.js"]);
+    expect(r.totalBytes).toBeGreaterThan(11 * KB);
+  });
+
+  it("reads a stylesheet's @import", () => {
+    expect(localReferences(`@import "/_astro/other.css"; a{color:red}`, "css")).toEqual(["/_astro/other.css"]);
+  });
+
+  it("never counts a file outside the build folder", () => {
+    const dist = build({ "site/p.html": `<script src="/../outside.js"></script><script src="../../outside.js"></script>`, "outside.js": 5 * KB });
+    const r = weighPage(join(dist, "site"), "p.html");
+    expect([...r.files.keys()]).toEqual([]);
+  });
+
   it("counts each file once, however many times it is named", () => {
     const dist = build({ "p.html": `<link rel="stylesheet" href="/a.css"><link rel="stylesheet" href="/a.css">`, "a.css": 5000 });
     expect(weighPage(dist, "p.html").files.size).toBe(1);

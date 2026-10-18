@@ -16,7 +16,9 @@ export function filesUnder(dir) {
   );
 }
 
-/** The addresses a piece of HTML, CSS or JS refers to that are files of this site, not other sites. */
+/**
+ * (Known gaps: an unquoted attribute in HTML, a CSS `image-set()`, and addresses a script builds at run
+ * time are not followed.) The addresses a piece of HTML, CSS or JS refers to that are files of this site, not other sites. */
 export function localReferences(text, kind) {
   const found = new Set();
   const add = (raw) => {
@@ -44,10 +46,14 @@ export function localReferences(text, kind) {
     for (const m of text.matchAll(/url\(\s*["']?([^"')]+)["']?\s*\)/gi)) add(m[1]); // inline <style>
   } else if (kind === "css") {
     for (const m of text.matchAll(/url\(\s*["']?([^"')]+)["']?\s*\)/gi)) add(m[1]);
+    for (const m of text.matchAll(/@import\s+["']([^"']+)["']/gi)) add(m[1]);
   } else if (kind === "js") {
-    // Other chunks it imports, by a relative path ("./preact.module.js").
-    for (const m of text.matchAll(/(?:import|export)\s*(?:[^"'()]*?\sfrom\s*)?["'](\.{1,2}\/[^"']+)["']/g)) add(m[1]);
-    for (const m of text.matchAll(/import\(\s*["'](\.{1,2}\/[^"']+)["']\s*\)/g)) add(m[1]);
+    // Other chunks it imports, by a path ("./preact.module.js" or "/_astro/x.js"). The build's output
+    // is minified (`import{r as e}from"./a.js"`), so there may be no space before the quote.
+    const path = String.raw`["']((?:\.{1,2}\/|\/)[^"']+)["']`;
+    for (const m of text.matchAll(new RegExp(String.raw`\bfrom\s*` + path, "g"))) add(m[1]);
+    for (const m of text.matchAll(new RegExp(String.raw`\bimport\s*` + path, "g"))) add(m[1]);
+    for (const m of text.matchAll(new RegExp(String.raw`\bimport\(\s*` + path + String.raw`\s*\)`, "g"))) add(m[1]);
   }
   return [...found];
 }
@@ -73,13 +79,17 @@ export function weighPage(distDir, page) {
     seen.set(file, statSync(join(dist, file)).size);
     const kind = file.endsWith(".css") ? "css" : /\.m?js$/.test(file) ? "js" : undefined;
     if (kind === "css") {
-      // A stylesheet's background pictures are alternatives (portrait or landscape, light or dark):
-      // only one is fetched, so the largest counts and the others are listed but not added.
+      // A stylesheet's background pictures are taken as alternatives (portrait or landscape, light or
+      // dark): only one is fetched, so the largest counts and the others are listed, not added. (If a
+      // stylesheet ever loads two pictures at once, say so here and count them both.)
       const refs = localReferences(readFileSync(join(dist, file), "utf8"), "css");
-      const pictures = refs.map((r) => ({ r, f: resolveInDist(dist, file, r) })).filter((x) => x.f !== undefined && imageExt.test(x.f));
-      const biggest = pictures.reduce((a, b) => (statSync(join(dist, b.f)).size > (a ? statSync(join(dist, a.f)).size : -1) ? b : a), undefined);
-      for (const { r, f } of pictures) if (f !== biggest?.f) alternatives.add(f);
-      for (const r of refs) if (!pictures.some((x) => x.r === r) || r === biggest?.r) queue.push({ from: file, ref: r });
+      const pictures = refs
+        .map((ref) => ({ ref, path: resolveInDist(dist, file, ref) }))
+        .filter((x) => x.path !== undefined && imageExt.test(x.path))
+        .map((x) => ({ ...x, bytes: statSync(join(dist, x.path)).size }));
+      const biggest = pictures.reduce((a, b) => (a === undefined || b.bytes > a.bytes ? b : a), undefined);
+      for (const x of pictures) if (x !== biggest) alternatives.add(x.path);
+      for (const ref of refs) if (!pictures.some((x) => x.ref === ref) || ref === biggest?.ref) queue.push({ from: file, ref });
     } else if (kind === "js") {
       for (const next of localReferences(readFileSync(join(dist, file), "utf8"), kind)) queue.push({ from: file, ref: next });
     }

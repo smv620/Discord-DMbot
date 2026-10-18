@@ -12,11 +12,12 @@ import { fileURLToPath } from "node:url";
 
 import { checkBuild, table } from "./weight.mjs";
 
-// Measured on 2026-10-18 (#1947): the largest HTML is help.html at 39.5 KB, and the largest page in
-// all is /account at 94.5 KB (its script islands). Each plus 20%, rounded up to the next 5 KB.
+// Measured on 2026-10-18 (#1947), following the scripts a page loads: the largest HTML is help.html at
+// 39.5 KB, and the largest page in all is /account at 142.6 KB (its script islands and what they
+// import). Each plus 20%, rounded up to the next 5 KB.
 export const budgets = {
   htmlKB: 50,
-  totalKB: 115,
+  totalKB: 175,
   imageKB: 150, // no picture bigger than this: resize or recompress it, don't drop it
 };
 
