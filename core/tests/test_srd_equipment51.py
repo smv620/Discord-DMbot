@@ -6,7 +6,9 @@ from __future__ import annotations
 import unittest
 
 from dmbot.devtools.srd import build, equipment51
+from dmbot.devtools.srd.equipment import Armor, Weapon
 from dmbot.devtools.srd.equipment51 import Row
+from dmbot.devtools.srd.gear import Gear
 from dmbot.devtools.srd.parse import SrdError
 from dmbot.devtools.srd.parse51 import Vocabulary
 from dmbot.devtools.srd.pdf import Line, Piece
@@ -50,7 +52,7 @@ def weapon_lines() -> list[Line]:
     ]
 
 
-def weapons() -> dict[str, equipment51.Weapon]:
+def weapons() -> dict[str, Weapon]:
     rows = equipment51.rows_of(weapon_lines())
     return {w.name: w for w in equipment51.parse_weapons(rows)}
 
@@ -125,7 +127,7 @@ def armor_lines() -> list[Line]:
 
 
 class Armor(unittest.TestCase):
-    def read(self, lines: list[Line]) -> dict[str, equipment51.Armor]:
+    def read(self, lines: list[Line]) -> dict[str, Armor]:
         return {a.name: a for a in equipment51.parse_armor(equipment51.rows_of(lines))}
 
     def test_rows_are_joined_across_pieces_and_far_right_cells(self) -> None:
@@ -365,7 +367,7 @@ def mount_rows() -> list[Row]:
 
 
 class Mounts(unittest.TestCase):
-    def read(self, rows: list[Row] | None = None) -> dict[str, equipment51.Gear]:
+    def read(self, rows: list[Row] | None = None) -> dict[str, Gear]:
         return {g.name: g for g in equipment51.parse_mounts(rows or mount_rows())}
 
     def test_mounts_drawn_vehicles_and_ships_are_found_and_tack_is_left_out(self) -> None:
