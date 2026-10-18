@@ -659,10 +659,34 @@ class FeatureLookup(LookupTest):
             [
                 ("Evasion (feature: Monk 7)", "Monk Evasion"),
                 ("Evasion (feature: Rogue 7)", "Rogue Evasion"),
+                ("Ring of Evasion (item: Ring, rare)", "Ring of Evasion"),  # (#1912)
             ],
         )
         picked = self.sent(await self.command(choices[1].value))[0]
         self.assertIn("(feature: Rogue 7)", picked)
+
+    async def test_a_magic_item_is_found_by_name_and_the_list_says_what_it_is(self) -> None:
+        it = self.it(kind=discord.InteractionType.autocomplete)
+        choices = await ui._typeahead(it, "bag of hold")
+        self.assertEqual(
+            [(c.name, c.value) for c in choices],
+            [("Bag of Holding (item: Wondrous Item, uncommon)", "Bag of Holding")],
+        )
+        text = self.sent(await self.command("bag of holding"))[0]
+        self.assertIn("📖 **Bag of Holding** (item: Wondrous Item, uncommon)", text)
+        self.assertIn("SRD 5.2.1, Magic Items, p. 212", text)
+        self.assertNotIn("Other classes", text)
+        self.assertNotIn("[Legacy", text)
+
+    async def test_an_item_is_found_by_its_other_name_and_a_spell_of_the_same_name_wins(
+        self,
+    ) -> None:
+        luckstone = self.sent(await self.command("luckstone"))[0]
+        self.assertIn("**Stone of Good Luck (Luckstone)**", luckstone)
+        self.assertIn("(you typed luckstone)", luckstone)
+        # "Fireball" is a spell; the Necklace of Fireballs is only found by its own name
+        spell = self.sent(await self.command("fireball"))[0]
+        self.assertIn("(spell)", spell)
 
     async def test_the_card_names_the_other_classes_that_have_the_feature(self) -> None:
         text = self.sent(await self.command("evasion"))[0]

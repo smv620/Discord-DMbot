@@ -334,6 +334,63 @@ class SecretIdentities(unittest.TestCase):
         self.assertEqual(hidden, "Belleros (NPC)")
 
 
+class MagicItems(unittest.TestCase):
+    """The SRD's magic items (#1912): cited like the class features, when the question names no
+    spell, condition or creature."""
+
+    def hits(self, question: str) -> list[Hit]:
+        return context.mentioned_rules(question, INDEX, "2024", "2014")
+
+    def build(self, question: str) -> context.Context:
+        return context.build(
+            question,
+            target="2024",
+            fallback="2014",
+            index=INDEX,
+            house_rules=[],
+            lookup=None,
+            scene="",
+        )
+
+    def test_a_question_naming_an_item_cites_it(self) -> None:
+        built = self.build("what does a bag of holding do")
+        self.assertIn(
+            "- Bag of Holding (item) [SRD 5.2.1 p. 212]: FACTS: Wondrous Item, uncommon.",
+            built.prompt,
+        )
+        self.assertIn("SRD 5.2.1 p. 212", built.sources)
+
+    def test_an_item_that_needs_attunement_says_so_and_for_whom(self) -> None:
+        self.assertIn(
+            "uncommon, needs attunement. ", self.build("is a cloak of protection ok").prompt
+        )
+        hat = self.build("how does the hat of many spells work").prompt
+        self.assertIn("needs attunement by a Wizard", hat)
+
+    def test_a_name_longer_than_four_words_is_found(self) -> None:
+        (hit,) = self.hits("does an amulet of proof against detection and location protect me")
+        self.assertEqual(hit.entry.name, "Amulet of Proof against Detection and Location")
+
+    def test_the_other_name_of_an_item_finds_it(self) -> None:
+        self.assertEqual(
+            [h.entry.name for h in self.hits("what does a luckstone do")],
+            ["Stone of Good Luck (Luckstone)"],
+        )
+
+    def test_a_word_in_an_item_name_alone_finds_nothing_and_a_named_spell_keeps_the_places(
+        self,
+    ) -> None:
+        self.assertEqual(self.hits("does the bag hold it"), [])
+        self.assertEqual(self.hits("how does rope work"), [])
+        self.assertEqual(
+            [h.entry.name for h in self.hits("can a bag of holding take a fireball")], ["Fireball"]
+        )
+
+    def test_an_item_is_no_rules_question(self) -> None:
+        prompt = self.build("can you track a bag of holding?").prompt
+        self.assertIn("ABOUT DMBOT", prompt)
+
+
 class AboutDMbot(unittest.TestCase):
     def test_the_digest_is_sent_for_questions_about_dmbot_not_for_game_ones(self) -> None:
         for question in (

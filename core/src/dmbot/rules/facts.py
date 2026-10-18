@@ -35,6 +35,20 @@ ASKED_FIELDS: tuple[tuple[str, tuple[str, ...]], ...] = (
 _WORDS = re.compile(r"[a-z']+")
 
 
+def item_line(entry: Entry) -> str:
+    """ "Wondrous Item, uncommon, needs attunement by a Wizard": what the line under an item's
+    name says, in plain words."""
+    d = entry.details
+    kind = str(d.get("category", ""))
+    if d.get("subtype"):
+        kind += f" ({d['subtype']})"
+    parts = [kind, str(d.get("rarity", "")).lower()]
+    if d.get("attunement"):
+        by = str(d.get("attunement_by", ""))
+        parts.append(f"needs attunement by {by}" if by else "needs attunement")
+    return ", ".join(p for p in parts if p)
+
+
 def level_words(entry: Entry) -> str:
     """ "3rd-level Evocation", "Evocation cantrip", "1st-level Divination (ritual)"."""
     level, school = int(entry.details.get("level", 0)), str(entry.details.get("school", ""))
@@ -97,6 +111,10 @@ def pairs(entry: Entry, *, card: bool = False) -> list[tuple[str, str]]:
             return []
         who = f"{d.get('class', '')} level {d.get('level', '')}".strip()
         found = [("", f"Class feature, {who}" + (f", {d['subclass']}" if has("subclass") else ""))]
+    elif entry.kind == "item":
+        if card:  # the card's heading already says "(item: Wondrous Item, uncommon)"
+            return []
+        found = [("", item_line(entry))]
     else:
         return []
     return [(label, value) for label, value in found if value]

@@ -31,6 +31,7 @@ FILES_52 = (
     "ATTRIBUTION.md",
     "conditions.json",
     "features.json",
+    "items.json",
     "monsters.json",
     "rules.json",
     "spells.json",
@@ -299,6 +300,52 @@ class ClassFeatures(unittest.TestCase):
         self.assertEqual(len(features), 220)
         self.assertEqual(len(by_class), 12)
         self.assertEqual(by_class["Barbarian"], 23)  # 19 class features and 4 of the Berserker
+
+    def test_the_shipped_magic_items_are_complete_and_found_only_when_asked_for(self) -> None:
+        srd = index.srd()
+        items = [e for e in srd.entries if e.kind == "item"]
+        self.assertEqual(len(items), 258)
+        self.assertEqual({e.edition for e in items}, {"2024"})
+        self.assertEqual(len({e.name for e in items}), len(items))
+        for e in items:
+            with self.subTest(e.name):
+                self.assertTrue(e.text and 209 <= e.page <= 253)
+                self.assertTrue(e.details["category"] and e.details["rarity"])
+        # never offered as a name to spot in talk, to suggest or to complete: "Bag" is a word
+        self.assertFalse(any(e.kind == "item" for e in srd.names_pool("2024", "2014").values()))
+        self.assertIsNone(srd.lookup("Bag of Holding", "2024", "2014"))
+        self.assertEqual([e for e in srd.typeahead("bag", "2024", "2014") if e.kind == "item"], [])
+        close = srd.suggest("bag of hold", "2024", "2014")
+        self.assertEqual([e for e in close if e.kind == "item"], [])
+        found = srd.lookup("bag of holding", "2024", "2014", kind="item")
+        assert found is not None
+        self.assertEqual(found.entry.citation, "SRD 5.2.1, Magic Items, p. 212")
+
+    def test_golden_items(self) -> None:
+        def item(name: str) -> Entry:
+            hit = index.srd().lookup(name, "2024", "2014", kind="item")
+            assert hit is not None, name
+            return hit.entry
+
+        bag, cloak = item("Bag of Holding"), item("Cloak of Protection")
+        hat = item("Hat of Many Spells")
+        self.assertEqual((bag.details["rarity"], bag.details["attunement"]), ("Uncommon", False))
+        self.assertEqual((cloak.details["rarity"], cloak.details["attunement"]), ("Uncommon", True))
+        self.assertEqual(
+            (hat.details["attunement"], hat.details["attunement_by"]), (True, "a Wizard")
+        )
+        armor = item("Armor, +1, +2, or +3")
+        self.assertEqual(armor.details["rarity"], "Rare (+1), Very Rare (+2), or Legendary (+3)")
+
+    def test_an_item_has_its_other_names(self) -> None:
+        self.assertEqual(
+            index.item_keys("Stone of Good Luck (Luckstone)"), ["stone of good luck", "luckstone"]
+        )
+        self.assertEqual(
+            index.item_keys("Wand of the War Mage, +1, +2, or +3"), ["wand of the war mage"]
+        )
+        self.assertEqual(index.item_keys("Weapon, +1, +2, or +3"), [])  # "weapon": everyday word
+        self.assertEqual(index.item_keys("Bag of Holding"), [])
 
     def test_no_feature_is_cut_short_and_no_placeholder_is_kept(self) -> None:
         # Sneak Attack, Spellcasting and Eldritch Invocations were cut where a table sits in

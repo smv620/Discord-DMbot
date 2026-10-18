@@ -62,10 +62,11 @@ RULE = "rule"  # the kind of a Rules Glossary entry
 FEATURE = (
     "feature"  # a class or subclass feature ("Rage", "Evasion"); the same name can be in several
 )
-# Both are found only when asked for: their names are everyday words ("Action", "Damage") or
-# shared by classes ("Extra Attack"), so the name pool the live cards, the list and "did you
-# mean" read from leaves them out.
-ASKED_FOR = frozenset({RULE, FEATURE})
+ITEM = "item"  # a magic item ("Bag of Holding", "Cloak of Protection")
+# All three are found only when asked for: their names are everyday words ("Action", "Damage",
+# "Rope of Climbing") or shared by classes ("Extra Attack"), so the name pool the live cards, the
+# list and "did you mean" read from leaves them out.
+ASKED_FOR = frozenset({RULE, FEATURE, ITEM})
 # The SRD 5.2.1's twelve classes: a class in a question picks that class's feature (#1900).
 CLASS_NAMES = (
     *("Barbarian", "Bard", "Cleric", "Druid", "Fighter", "Monk"),
@@ -91,6 +92,23 @@ def monster_keys(name: str) -> list[str]:
         found.append(tail)  # "Elf, Drow" is also just "Drow"
     if "/" in plain:  # "Succubus/Incubus" is also each of the two
         found.extend(plain.split("/"))
+    own = normalize(name)
+    return [k for k in dict.fromkeys(normalize(n) for n in found) if k and k != own]
+
+
+def item_keys(name: str) -> list[str]:
+    """The other names a magic item is found by: without its bracket ("Stone of Good Luck"), the
+    bracket's own word ("Luckstone") and, for a name that gives its bonuses ("Wand of the War
+    Mage, +1, +2, or +3"), the name before them. The bare "Armor", "Weapon" and "Shield" of
+    the "+1, +2, or +3" items are not offered: they are everyday words."""
+    plain = _SUFFIX.sub("", name)
+    found = [plain]
+    inner = re.search(r"\(([^)]*)\)\s*$", name)
+    if inner:
+        found.append(inner.group(1))
+    head, plus, _ = plain.partition(", +")
+    if plus and len(head.split()) > 1:
+        found.append(head)
     own = normalize(name)
     return [k for k in dict.fromkeys(normalize(n) for n in found) if k and k != own]
 
@@ -183,6 +201,9 @@ class Index:
             self._add(entry.edition, normalize(entry.name), entry)
             if entry.kind == "monster":
                 for key in monster_keys(entry.name):
+                    self._add(entry.edition, key, entry)
+            elif entry.kind == ITEM:
+                for key in item_keys(entry.name):
                     self._add(entry.edition, key, entry)
         for older, current in alias_pairs:
             found = self._by_edition.get(alias_edition, {}).get(normalize(current))
@@ -430,7 +451,11 @@ def srd() -> Index:
     """The index of what DMbot ships: the SRD 5.2.1 and, as legacy, the SRD 5.1, with the
     renamed spells' older names."""
     entries = load_folder(DATA / "srd52") + load_folder(DATA / "srd51")
-    for kind, what in ((RULE, "Rules Glossary"), (FEATURE, "class features")):
+    for kind, what in (
+        (RULE, "Rules Glossary"),
+        (FEATURE, "class features"),
+        (ITEM, "magic items"),
+    ):
         if not any(e.kind == kind for e in entries):  # an older build of the data: carry on
             log.warning("The %s are not in the data; the DM sidebar will not cite them", what)
     return Index(entries, aliases.ALL)

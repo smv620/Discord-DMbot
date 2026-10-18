@@ -39,6 +39,7 @@ from dmbot.rules.index import (
     ASKED_FOR,
     CLASS_WORDS,
     FEATURE,
+    ITEM,
     RULE,
     Hit,
     Index,
@@ -58,6 +59,9 @@ NAMES_MAX = 5
 SCENE_MAX = 1500  # the last characters of the scene
 QUESTION_MAX = 500
 WINDOW = 4  # longest name looked for, in words
+ITEM_WINDOW = (
+    9  # a magic item's name can be longer ("Amulet of Proof against Detection and Location")
+)
 
 _STOP = frozenset(
     {
@@ -189,14 +193,15 @@ def mentioned_rules(
                 for k in range(start, start + size):
                     used[k] = True
                 found.append((start, hit))
-    # The Rules Glossary (#1884) and the class features (#1900) answer only a question that
-    # names no spell, condition or creature. Their names are everyday words ("Line", "Damage",
-    # "Cover") or shared by classes ("Extra Attack"): beside a named entry they would be noise in
+    # The Rules Glossary (#1884), the class features (#1900) and the magic items (#1912) answer
+    # only a question that names no spell, condition or creature. Their names are everyday words
+    # ("Line", "Damage", "Cover", "Rope of Climbing") or shared by classes ("Extra Attack"):
+    # beside a named entry they would be noise in
     # the prompt, so they never crowd out what the DM actually named. A class named in the
     # question ("rogue evasion") picks that class's feature; otherwise every class that has it.
     klass = next((w for w in words if w.lower() in CLASS_WORDS), "")
     asked: list[tuple[int, list[Hit]]] = []
-    for size in range(WINDOW, 0, -1) if not found else ():
+    for size in range(ITEM_WINDOW, 0, -1) if not found else ():
         for start in range(len(words) - size + 1):
             if len(asked) >= ENTRIES_MAX or any(used[start : start + size]):
                 continue
@@ -204,10 +209,15 @@ def mentioned_rules(
             if size == 1 and (window[0].lower() in _STOP or len(window[0]) < 3):
                 continue
             name = " ".join(window)
-            hits = index.lookup_all(name, target, fallback, kind=FEATURE, prefer=klass)
-            if not hits:
+            hits = []
+            if size <= WINDOW:  # features and glossary words are short
+                hits = index.lookup_all(name, target, fallback, kind=FEATURE, prefer=klass)
+            if not hits and size <= WINDOW:
                 glossary = index.lookup(name, target, fallback, kind=RULE)
                 hits = [glossary] if glossary is not None else []
+            if not hits:
+                item = index.lookup(name, target, fallback, kind=ITEM)
+                hits = [item] if item is not None else []
             if hits:
                 for k in range(start, start + size):
                     used[k] = True
