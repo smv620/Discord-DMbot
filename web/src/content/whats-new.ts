@@ -21,12 +21,12 @@ export const entries: Entry[] = [
   {
     date: "2026-10-18",
     title: "A channel for people and groups",
-    what: "DMbot keeps a channel that lists the people and groups you confirmed, with their other names, their groups and who they are connected to. Players can read it but not post, it follows your DM screen setting, and it never shows secrets or plot notes.",
+    what: "DMbot keeps a read-only channel listing the people and groups you confirmed, with their other names and who they are connected to. Only people who may look behind your DM screen can see it, and it never shows secrets or plot notes.",
   },
   {
     date: "2026-10-18",
     title: "FightBot follows your turn order",
-    what: "FightBot listens to the people who agreed to be recorded and guesses how your table takes turns, like \"Mira, you're up\" or \"players go first\". Your DM screen shows the guess and you can change it by saying it differently, each player gets a short reminder before their turn, and you still decide the order.",
+    what: "FightBot listens to the people who agreed to be recorded and guesses how your table takes turns, and your DM screen shows the guess for you to correct. Each player gets a private reminder of their own options before their turn, and you still decide the order.",
   },
   {
     date: "2026-10-17",
