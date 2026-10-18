@@ -25,6 +25,7 @@ from dmbot import consent_dm
 from dmbot.campaigns import Campaign
 from dmbot.dm_screen import dm_bot_panel as panel
 from dmbot.dm_screen.dm_bot_panel import Button, Role, Standing
+from dmbot.dm_screen.names_button import NamesButton
 from dmbot.dm_screen.settings import SettingsButton
 from dmbot.mentions import NO_PINGS
 
@@ -106,6 +107,8 @@ def role_view(
             view.add_item(consent_dm.sheet_button(campaign.guild_id, campaign.id))
         elif button is Button.SETTINGS:
             view.add_item(SettingsButton(campaign.id))
+        elif button is Button.NAMES:
+            view.add_item(NamesButton(campaign.id))
     return view
 
 

@@ -42,6 +42,7 @@ class Button(StrEnum):
     MY_MENU = "my_menu"  # ⚙️ Menu: Stop recording me, Delete my transcripts (about the person)
     MY_CHARACTER = "my_character"  # the player's character link in this campaign
     SETTINGS = "settings"  # the campaign's Settings card, game masters only
+    NAMES = "names"  # 📇 Names: the names home card, game masters only (#1986)
 
 
 # Each role's buttons, in the order they are drawn. A role never gets more than the one below it
@@ -51,7 +52,13 @@ _BUTTONS: dict[Role, tuple[Button, ...]] = {
     Role.GUEST: _EVERYONE,
     Role.MEMBER: (*_EVERYONE, Button.MY_MENU),
     Role.PLAYER: (*_EVERYONE, Button.MY_MENU, Button.MY_CHARACTER),
-    Role.GAME_MASTER: (*_EVERYONE, Button.MY_MENU, Button.MY_CHARACTER, Button.SETTINGS),
+    Role.GAME_MASTER: (
+        *_EVERYONE,
+        Button.MY_MENU,
+        Button.MY_CHARACTER,
+        Button.SETTINGS,
+        Button.NAMES,
+    ),
 }
 
 # Only the shared panel's own buttons are labelled here; the card's buttons are DMbot's existing

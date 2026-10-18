@@ -1157,6 +1157,10 @@ sidebar, the clock, cards and the after-session notes for the DM.
   panel; it only appears in a game master's private answer.
 - **The DM screen** loses the Settings card and the option buttons; a one-line pointer ("Settings and
   options are in #dmb-dm-bot-…") replaces them. `/dmbot settings` still works and answers privately.
+- **📇 Names (owner, 2026-10-18, #1986):** a game master's card and ⚙️ Settings each have a 📇 Names
+  button that opens the same private names home as `/dmbot names` (list, search, fix, add). The home
+  also shows, only while something waits, one line and a button for each review the after-session posts
+  open (❓ Check names, 🧑 Check who is who, 🗣️ Check what was said), so a missed post is never lost.
 - Built in #1666 (CloudDev); Help follows (WebDev).
 
 **Channel structure (decided 2026-10-04, #85).** Every channel DMbot creates starts with
