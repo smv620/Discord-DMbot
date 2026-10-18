@@ -196,6 +196,15 @@ def pairs(entry: Entry, *, card: bool = False) -> list[tuple[str, str]]:
         found = [("", gear_line(entry, card=card))]
     elif entry.kind == "tool":
         found = [("", tool_line(entry, card=card))]
+    elif entry.kind == "poison":  # the card's heading already says "(poison: Injury)"
+        found = [] if card else [("", f"{d.get('type', '')} poison")]
+        found.append(("Price", f"{d.get('price', '')} a dose" if has("price") else ""))
+    elif entry.kind == "trap":
+        found = [
+            ("", str(d.get("severity", "")).replace(" Trap", "")),  # (the heading says "trap")
+            ("Trigger", str(d.get("trigger", ""))),
+            ("Duration", str(d.get("duration", ""))),
+        ]
     elif entry.kind == "species":
         found = [("", f"Size: {d.get('size', '')}"), ("", f"Speed: {d.get('speed', '')}")]
     else:
@@ -217,7 +226,9 @@ def card_parts(entry: Entry) -> list[str]:
     ]
 
 
-_CARD_COLONS = frozenset({"Casting time", "Range", "Components", "Duration", "Prerequisite"})
+_CARD_COLONS = frozenset(
+    {"Casting time", "Range", "Components", "Duration", "Prerequisite", "Trigger", "Price"}
+)
 
 
 def full_text(entry: Entry) -> str:
