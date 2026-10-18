@@ -7,6 +7,7 @@ import unittest
 from typing import Any
 
 from dmbot.devtools.srd import build, parse
+from dmbot.devtools.srd import equipment as equipment_reader
 from dmbot.devtools.srd.pdf import COLUMN_SPLIT, FOOTER_Y, Line, Piece, lines_of
 from tests.monster_fixtures import goblin
 
@@ -532,7 +533,61 @@ class Building(unittest.TestCase):
             say("Origin Feat", ITALIC, 21),
             say("You gain the following benefits.", BODY, 21),
         ]
-        equipment = [say("Equipment", TITLE, 21)]
+        equipment = [say("Equipment", TITLE, 21), say("Properties", TITLE, 21)] + [
+            line
+            for name in (*equipment_reader.PROPERTIES, *equipment_reader.MASTERIES)
+            for line in (say(name, TITLE, 21), say(f"What {name} does.", BODY, 21))
+        ]
+        weapons = [
+            Line(49.9, 751.0, [piece("Weapons", TITLE, 49.9, 751.0)], 21),
+            Line(53.4, 721.0, [piece("Simple Melee Weapons", "GillSans-Italic", 53.4, 721.0)], 21),
+            Line(
+                61.4,
+                706.0,
+                [piece("Club 1d4 Bludgeoning Light Slow 2 lb. 1 SP", "GillSans", 61.4, 706.0)],
+                21,
+            ),
+        ]
+        armor = [
+            say("Armor", TITLE, 21),
+            Line(
+                67.0,
+                438.0,
+                [piece("Armor Armor Class (AC) Strength Stealth Weight Cost", TITLE, 67.0, 438.0)],
+                21,
+            ),
+            Line(
+                66.6,
+                423.0,
+                [piece("Shield (Utilize Action to Don or Doff)", "GillSans-Italic", 66.6, 423.0)],
+                21,
+            ),
+            Line(74.6, 408.0, [piece("Shield +2 — — 6 lb. 10 GP", "GillSans", 74.6, 408.0)], 21),
+        ]
+        tools = [
+            say("Tools", TITLE, 24),
+            say("Artisan’s Tools", TITLE, 24),
+            say("Alchemist’s Supplies (50 GP)", TITLE, 24),
+            say("Ability: Intelligence Weight: 8 lb.", TITLE, 24),
+            say("Utilize: Identify a substance (DC 15)", TITLE, 24),
+            say("Adventuring Gear", TITLE, 24),
+            say("Backpack (2 GP)", TITLE, 24),
+            say("A Backpack holds up to 30 pounds.", BODY, 24),
+        ]
+        gear_table = [  # a page of its own: the weights
+            say("Adventuring Gear", TITLE, 25),
+            say("Item Weight Cost", TITLE, 25),
+            say("Backpack 5 lb. 2 GP", "GillSans", 25),
+        ]
+        mounts = [
+            say("Mounts and Vehicles", TITLE, 26),
+            say("Mounts and Other Animals", TITLE, 26),
+            say("Item Carrying Capacity Cost", TITLE, 26),
+            say("Horse, Riding 480 lb. 75 GP", "GillSans", 26),
+            say("Tack, Harness, and Drawn Vehicles", TITLE, 26),
+            say("Cart 200 lb. 15 GP", "GillSans", 26),
+            say("Lifestyle Expenses", TITLE, 26),
+        ]
         items = [
             say("Magic Items A–Z", TITLE, 22),
             say("Bag of Holding", TITLE, 22),
@@ -543,7 +598,7 @@ class Building(unittest.TestCase):
         creatures = [say("Monsters A–Z", TITLE, 24), *goblin()]
         return [
             contents, *[[]] * 9, spells, glossary, toolbox, classes, origins, feats, equipment,
-            items, monsters, creatures,
+            weapons, armor, tools, gear_table, mounts, items, monsters, creatures,
         ]  # fmt: skip
 
     def document(self) -> dict[str, Any]:
@@ -559,6 +614,7 @@ class Building(unittest.TestCase):
                 "rules.json",
                 "features.json",
                 "feats.json",
+                "equipment.json",
                 "origins.json",
                 "items.json",
                 "monsters.json",
@@ -615,6 +671,24 @@ class Building(unittest.TestCase):
         )
         self.assertEqual(entries[0]["speed"], "35 feet")
         self.assertEqual(entries[1]["feat"], "Alert")
+        gear = files["equipment.json"]["entries"]
+        self.assertEqual(
+            [(e["kind"], e["name"]) for e in gear if e["kind"] != "rule"],
+            [
+                ("weapon", "Club"),
+                ("armor", "Shield"),
+                ("tool", "Alchemist’s Supplies"),
+                ("gear", "Backpack"),
+                ("gear", "Horse, Riding"),
+                ("gear", "Cart"),
+            ],
+        )
+        self.assertEqual(sum(e["kind"] == "rule" for e in gear), 18)
+        club = gear[0]
+        self.assertEqual(
+            (club["category"], club["damage"], club["mastery"], club["cost"]),
+            ("Simple Melee", "1d4", "Slow", "1 SP"),
+        )
         magic = files["items.json"]
         self.assertEqual((magic["kind"], magic["section"]), ("item", "Magic Items"))
         self.assertEqual(
