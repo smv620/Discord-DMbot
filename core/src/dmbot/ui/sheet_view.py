@@ -26,9 +26,9 @@ import discord
 from dmbot.discord_limits import MESSAGE_MAX, fit_message
 from dmbot.memory import sheet_view
 from dmbot.memory.sheet_store import CharacterSheet, PlayerCharacter, SheetRefused
+from dmbot.mentions import NO_PINGS
 from dmbot.ui import sheets as ui
 from dmbot.ui.dmbot_commands import (
-    NO_PINGS,
     VIEW_TIMEOUT_S,
     _answer_first,
     _Button,

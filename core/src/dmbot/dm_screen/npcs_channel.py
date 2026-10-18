@@ -50,13 +50,13 @@ from dmbot.dm_screen.rules_channel import (
     CARD_TITLE,
     HISTORY_SCAN,
     MAX_SENDS,
-    NO_PINGS,
     RECENT_SCAN,
     rules_plan,
     screen_peekers,
 )
 from dmbot.dm_screen.transcript_channel import _repair
 from dmbot.memory.recall import RecallService, RosterEntry
+from dmbot.mentions import NO_PINGS
 
 log = logging.getLogger(__name__)
 

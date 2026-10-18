@@ -19,10 +19,10 @@ from typing import Any
 import discord
 
 from dmbot.discord_limits import MESSAGE_MAX, fit_message
+from dmbot.mentions import NO_PINGS
 
 log = logging.getLogger(__name__)
 
-NO_PINGS = discord.AllowedMentions.none()
 KEYS_KEPT = 300  # items remembered; the oldest go first, so the memory stays small
 COPIES = 4  # messages kept per item
 
