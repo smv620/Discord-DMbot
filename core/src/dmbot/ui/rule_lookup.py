@@ -52,7 +52,7 @@ log = logging.getLogger(__name__)
 
 FORM_TITLE = "Look up a rule"
 BOX_LABEL = "Spell, condition, creature or rule"
-BOX_PLACEHOLDER = "For example: Fireball, Grappled or Goblin"
+BOX_PLACEHOLDER = "For example: Fireball, Grappled, Goblin or Cover"
 BOX_MAX = 100
 READ_REST_LABEL = "Read the rest"
 MAKE_MINE_LABEL = "✏️ Make it my own"
@@ -69,7 +69,7 @@ FULL_COPY = (
 )
 CAMPAIGN_GONE = "That campaign isn't here any more. Use `/dmbot rule` again."
 WHICH_CAMPAIGN = "**Which campaign is this for?** Pick one and DMbot looks it up."
-EMPTY = "Type a spell, a condition or a creature, then try again."
+EMPTY = "Type a spell, a condition, a creature or a rule, then try again."
 TOO_LONG = f"That's too long for a name. Use at most {BOX_MAX} characters."
 NAMES_MORE = 25  # most choices Discord shows as a person types
 GLOSSARY_FROM = 3  # letters typed before the list offers Rules Glossary names (#1891)
