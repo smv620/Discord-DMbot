@@ -13,11 +13,13 @@ Built on the session harness in `test_sessions.py` (a real DMBot, a real consent
 from __future__ import annotations
 
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import tests.test_sessions as ts
 from dmbot.transcript import left_out, speaker_ai
+from dmbot.transcript import questions as name_questions
+from dmbot.transcript import speaker_question as speaker_q
 from dmbot.transcript.topics import Waiting
 
 GUILD, DM, PLAYER = ts.GUILD, ts.DM, ts.PLAYER
@@ -34,14 +36,14 @@ for _name in dir(ts.SessionTests):
 
 class Refusals(Harness):
     # The session harness's helpers, borrowed (not inherited: that class holds thousands of tests).
-    said = ts.SaveAndResume.said
-    settle = ts.SaveAndResume.settle
-    filtered = ts.SaveAndResume.filtered
-    speaking = ts.SaveAndResume.speaking
-    joined_with_transcript = ts.SaveAndResume.joined_with_transcript
-    left_out_line = ts.SaveAndResume.left_out_line
-    asked_about_marin = ts.SaveAndResume.asked_about_marin
-    two_alike = ts.SaveAndResume.two_alike
+    said: Any = ts.SaveAndResume.said
+    settle: Any = ts.SaveAndResume.settle
+    filtered: Any = ts.SaveAndResume.filtered
+    speaking: Any = ts.SaveAndResume.speaking
+    joined_with_transcript: Any = ts.SaveAndResume.joined_with_transcript
+    left_out_line: Any = ts.SaveAndResume.left_out_line
+    asked_about_marin: Any = ts.SaveAndResume.asked_about_marin
+    two_alike: Any = ts.SaveAndResume.two_alike
 
     def stop(self, user: int) -> None:
         """The person presses Stop recording me: the cache changes at once."""
@@ -102,14 +104,14 @@ class SpeakerQuestions(Refusals):
         table, asked = await self.question_for_the_player()
         self.stop(PLAYER)
         await self.bot._ask_speaker(table, asked)
-        self.bot.post_message.assert_not_awaited()
+        cast(AsyncMock, self.bot.post_message).assert_not_awaited()
         self.assertIsNone(table.speaker_questions.open)  # closed: their words are not on the screen
 
     async def test_an_answer_about_a_stopped_speaker_saves_nothing(self) -> None:
         table, asked = await self.question_for_the_player()
         self.stop(PLAYER)
         text, done = await self.bot.answer_speaker_question(GUILD, asked.id, "0", DM)
-        self.assertEqual((text, done), (ts.speaker_q.GONE, True))
+        self.assertEqual((text, done), (speaker_q.GONE, True))
         self.assertTrue(all(line.entity == "" for line in table.unsaved._waiting))
 
     async def test_a_stop_while_the_names_are_checked_saves_nothing(self) -> None:
@@ -121,11 +123,11 @@ class SpeakerQuestions(Refusals):
             self.stop(PLAYER)  # they press Stop while the DM's answer is being checked
             return got
 
-        self.bot._current_names = names_then_stop  # type: ignore[method-assign]
+        self.bot._current_names = names_then_stop  # type: ignore[method-assign,assignment]
         saved = AsyncMock()
         self.bot._save_entity = saved  # type: ignore[method-assign]
         text, done = await self.bot.answer_speaker_question(GUILD, asked.id, "0", DM)
-        self.assertEqual((text, done), (ts.speaker_q.GONE, True))
+        self.assertEqual((text, done), (speaker_q.GONE, True))
         saved.assert_not_awaited()
 
 
@@ -177,7 +179,7 @@ class NameQuestions(Refusals):
         self.assertEqual(self.bot.can_type_answer(GUILD, asked.id, DM), (None, asked.heard))
         self.stop(PLAYER)
         self.assertEqual(
-            self.bot.can_type_answer(GUILD, asked.id, DM), (ts.name_questions.GONE, "")
+            self.bot.can_type_answer(GUILD, asked.id, DM), (name_questions.GONE, "")
         )  # their words are not shown again
 
     async def test_the_unanswered_line_shows_no_words_of_a_stopped_speaker(self) -> None:
@@ -186,13 +188,13 @@ class NameQuestions(Refusals):
         assert asked is not None
         self.assertIn(asked.heard, self.bot._not_answered(table, asked))
         self.stop(PLAYER)
-        self.assertEqual(self.bot._not_answered(table, asked), ts.name_questions.GONE)
+        self.assertEqual(self.bot._not_answered(table, asked), name_questions.GONE)
 
     async def test_a_question_is_not_posted_after_its_speaker_stops(self) -> None:
         table, _, posted, _ = await self.asked_about_marin()
         asked = table.questions.open
         assert asked is not None
-        table.questions.close(ts.name_questions.EXPIRED, 0.0)
+        table.questions.close(name_questions.EXPIRED, 0.0)
         posted.reset_mock()
         self.stop(PLAYER)
         table.questions.open = asked  # as if it were still waiting to be posted
@@ -206,7 +208,7 @@ class NameQuestions(Refusals):
         assert asked is not None
         self.stop(PLAYER)
         text, done, undo = await self.bot.answer_name_question(GUILD, asked.id, "0", DM)
-        self.assertEqual((text, done, undo), (ts.name_questions.GONE, True, None))
+        self.assertEqual((text, done, undo), (name_questions.GONE, True, None))
         memory.add_correction.assert_not_awaited()
 
     async def test_a_stop_while_the_answer_is_saved_fixes_no_line(self) -> None:
@@ -222,7 +224,7 @@ class NameQuestions(Refusals):
         fixed = AsyncMock()
         self.bot._fix_asked_line = fixed  # type: ignore[method-assign]
         text, done, _ = await self.bot.answer_name_question(GUILD, asked.id, "0", DM)
-        self.assertEqual((text, done), (ts.name_questions.GONE, True))
+        self.assertEqual((text, done), (name_questions.GONE, True))
         fixed.assert_not_awaited()  # their line is not rewritten
 
     async def test_the_same_answer_for_someone_recorded_fixes_the_line(self) -> None:
