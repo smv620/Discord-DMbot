@@ -798,6 +798,63 @@ class FeatureLookup(LookupTest):
         self.assertIn("(gear: price varies)", focus)
         self.assertNotIn("(gear: Varies)", focus)
 
+    async def test_poisons_traps_and_curses_are_found_and_the_list_says_which(self) -> None:
+        it = self.it(kind=discord.InteractionType.autocomplete)
+        labels = {
+            typed: [c.name for c in await ui._typeahead(it, typed)]
+            for typed in ("purple worm poison", "hidden pit", "demonic")
+        }
+        self.assertIn("Purple Worm Poison (poison: Injury)", labels["purple worm poison"])
+        self.assertEqual(labels["hidden pit"], ["Hidden Pit (trap)"])
+        self.assertEqual(labels["demonic"], ["Demonic Possession (curse)"])
+        poison = self.sent(await self.command("purple worm poison"))[0]
+        self.assertIn("📖 **Purple Worm Poison** (poison: Injury)", poison)
+        self.assertIn("Price: 2,000 GP a dose", poison)
+        self.assertIn("DC 21 Constitution saving throw", poison)
+        self.assertIn("SRD 5.2.1, Gameplay Toolbox, p. 198", poison)
+        trap = self.sent(await self.command("hidden pit"))[0]
+        self.assertIn("📖 **Hidden Pit** (trap)", trap)
+        self.assertIn("Nuisance (Levels 1–4)", trap)
+        self.assertIn("Trigger: A creature moves onto the pit’s lid", trap)
+        self.assertIn("DC 15 Intelligence (Investigation) check", trap)
+        curse = self.sent(await self.command("demonic possession"))[0]
+        self.assertIn("📖 **Demonic Possession** (curse)", curse)
+        self.assertIn("DC 15 Charisma saving throw", curse)
+
+    async def test_a_player_is_told_nothing_of_the_dms_chapter(self) -> None:
+        with unittest.mock.patch.object(ui, "_too_soon", return_value=False):
+            await self.a_player_asks()
+
+    async def a_player_asks(self) -> None:
+        for name in ("hidden pit", "purple worm poison", "demonic possession", "extreme cold"):
+            text = self.sent(await self.command(name, PLAYER))[0]
+            self.assertEqual(text, ui.DM_ONLY, name)
+        self.assertIn("📖 **Cover**", self.sent(await self.command("cover", PLAYER))[0])
+
+    async def test_the_name_list_holds_the_dms_chapter_for_a_dm_and_not_for_a_player(self) -> None:
+        for typed, label in (
+            ("hidden pi", "Hidden Pit (trap)"),
+            ("purple worm poi", "Purple Worm Poison (poison: Injury)"),
+            ("demonic", "Demonic Possession (curse)"),
+            ("extreme c", "Extreme Cold (rule)"),
+        ):
+            as_dm = self.it(DM, kind=discord.InteractionType.autocomplete)
+            as_player = self.it(PLAYER, kind=discord.InteractionType.autocomplete)
+            self.assertIn(label, [c.name for c in await ui._typeahead(as_dm, typed)], typed)
+            self.assertEqual(
+                [c.name for c in await ui._typeahead(as_player, typed) if "Gameplay" in c.name],
+                [],
+            )
+            self.assertNotIn(label, [c.name for c in await ui._typeahead(as_player, typed)], typed)
+
+    async def test_a_toolbox_rule_that_shares_a_spells_name_can_be_picked_by_its_kind(self) -> None:
+        it = self.it(kind=discord.InteractionType.autocomplete)
+        values = {c.name: c.value for c in await ui._typeahead(it, "bestow curse")}
+        self.assertEqual(values["Bestow Curse (rule)"], "Bestow Curse (rule)")
+        text = self.sent(await self.command("Bestow Curse (rule)"))[0]
+        self.assertIn("📖 **Bestow Curse** (rule)", text)
+        self.assertIn("level 3 spell", text)
+
     async def test_the_gear_and_the_magic_item_of_one_name_can_both_be_picked(self) -> None:
         it = self.it(kind=discord.InteractionType.autocomplete)
         values = {c.name: c.value for c in await ui._typeahead(it, "spell scroll")}
