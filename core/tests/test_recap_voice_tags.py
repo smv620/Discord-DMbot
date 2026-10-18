@@ -105,3 +105,21 @@ class NothingWrittenBecomesATag(unittest.TestCase):
         words = [*music.STYLES, *music.SYNONYMS, "whisper", "sigh", "nonsense", "[urgently]"]
         summary = "\n\n".join(f"《{w}》 Words here." for w in words)
         self.assertLessEqual(set(tags_of(summary)), ALLOWED)
+
+
+class TheEdges(unittest.TestCase):
+    def test_a_cue_alone_in_a_paragraph_does_not_use_up_its_mood(self) -> None:
+        self.assertEqual(tags_of("《Tense》\n\n《Tense》 The door opened."), ["[urgently]"])
+
+    def test_a_mood_cue_at_the_end_of_a_paragraph_sends_no_tag_and_keeps_the_mood_open(
+        self,
+    ) -> None:
+        built = script.build("The Gate", None, "He fell. 《Somber》\n\n《Somber》 Nobody spoke.")
+        self.assertEqual(built.paragraphs[1].tagged, "He fell.")  # no tag with nothing after it
+        self.assertEqual(built.paragraphs[2].tagged, "[sadly] Nobody spoke.")
+        (trailing,) = built.paragraphs[1].cues
+        self.assertEqual((trailing.name, trailing.tag), ("somber", ""))
+
+    def test_a_calm_between_two_tense_runs_lets_the_second_send_its_tag_again(self) -> None:
+        summary = "《Tense》 One.\n\n《Calm》 Two.\n\n《Tense》 Three."
+        self.assertEqual(tags_of(summary), ["[urgently]", "[urgently]"])

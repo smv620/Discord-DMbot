@@ -138,6 +138,7 @@ def _walk(
     spoken = ""
     tagged = ""
     cues: list[list[object]] = []
+    before = mood  # the mood before the latest cue, to undo a tag with nothing after it
     pos = 0
     pattern = re.compile(f"{CUE.pattern}|{PERFORMANCE.pattern}")
     for match in [*pattern.finditer(block), None]:
@@ -158,6 +159,7 @@ def _walk(
         raw = match.group(0)
         if raw.startswith("《"):
             kind, name = EMOTION, raw[1:-1].strip().lower()
+            before = mood
             tag, mood = _mood_tag(name, mood, emotion_tags)
         else:
             kind, name = PERFORMANCE_KIND, raw[2:-2].strip().lower()
@@ -166,6 +168,14 @@ def _walk(
         if tag:
             tagged += tag + " "
         pos = match.end()
+    if cues and cues[-1][2] == EMOTION and cues[-1][4] in EMOTION_VOICE.values():
+        tail = str(cues[-1][4])
+        if tagged.endswith(tail + " "):
+            # A mood tag with no words after it would be read to nothing, and would count as sent:
+            # leave it out and leave the mood as it was, so the next cue of that mood sends it.
+            tagged = tagged[: -len(tail) - 1]
+            cues[-1][4] = ""
+            mood = before
     spoken, tagged = spoken.strip(), tagged.strip()
     return (  # a cue at the very end sits at the end of the trimmed text, not past it
         spoken,
@@ -272,9 +282,10 @@ def build(
     for block, scene_break in _blocks(summary):
         parts = _chunks(block, room)
         for i, part in enumerate(parts):
-            spoken, tagged, cues, mood = _walk(part, mood, emotion_tags)
+            spoken, tagged, cues, after = _walk(part, mood, emotion_tags)
             if not spoken.strip():
-                continue
+                continue  # (a cue alone in a paragraph says nothing: its mood is not taken)
+            mood = after
             if i == len(parts) - 1 and scene_break:
                 tagged = f"{tagged} {SCENE_BREAK_TAG}"
             pieces.append((spoken, tagged, cues))
