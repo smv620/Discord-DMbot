@@ -8,8 +8,7 @@ import { beforeAll, describe, expect, it } from "vitest";
 import { applySearch, matches, normalize, nothingFound, statusText, wire } from "../scripts/helpsearch.mjs";
 import { afterEach, vi } from "vitest";
 import help from "../src/pages/help.astro";
-import { sidebarSourceSteps } from "../src/content/help";
-import { accountSteps, dmSteps, playerSteps } from "../src/content/help";
+import { sidebarSourceSteps, accountSteps, dmSteps, playerSteps } from "../src/content/help";
 import { parsePage } from "./dom";
 
 describe("matcher", () => {
@@ -230,6 +229,8 @@ describe("the box, wired up", () => {
 
 describe("Help search finds the sources step (#1958)", () => {
   it("matches the three ways a game master would ask", () => {
+    // Wording only: the step is held, so this does not look at the rendered page.
+    expect(sidebarSourceSteps.length).toBeGreaterThan(0);
     const text = sidebarSourceSteps.map((s) => s.text).join(" ");
     for (const query of ["where did that come from", "source", "page number"]) {
       expect(matches(query, text), query).toBe(true);

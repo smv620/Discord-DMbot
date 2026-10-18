@@ -702,13 +702,6 @@ export const dmSteps: Step[] = [
   },
 ];
 
-/**
- * What a quick question to DMbot can use (#1379), under the game master's steps. Each sentence is
- * what the code does after #1377 and #1380: sidebar/context.py (the material a question is given:
- * rules, house rules, names, the scene; recall for the players' audience, never secrets or entry
- * notes), sidebar/answer.py (NO_INFO_ANSWER, and the rule "use only the material given") and
- * sidebar/service.py (the question and the in-game answer are saved in the raw transcript).
- */
 // The "What I looked at" button under a rules answer (#1957) is not deployed yet, so its What's new
 // entry is held and this Help step follows. Set this to true in the same change that moves that
 // entry out of `held`; a test ties the two.
@@ -716,10 +709,17 @@ export const SIDEBAR_SOURCES_LIVE = false;
 
 export const sidebarSourceSteps: Step[] = [
   {
-    text: "Where did that come from? Press 📖 What I looked at under a rules answer to see the source: the rules DMbot read, with the book and page number. Press one to open it.",
+    text: "Where did that come from? Under a rules answer, press 📖 What I looked at. You get the source of each rule it used, with the book and page number. Press a rule to open it. Only you see it.",
   },
 ];
 
+/**
+ * What a quick question to DMbot can use (#1379), under the game master's steps. Each sentence is
+ * what the code does after #1377 and #1380: sidebar/context.py (the material a question is given:
+ * rules, house rules, names, the scene; recall for the players' audience, never secrets or entry
+ * notes), sidebar/answer.py (NO_INFO_ANSWER, and the rule "use only the material given") and
+ * sidebar/service.py (the question and the in-game answer are saved in the raw transcript).
+ */
 export const quickAnswersHeading = "What DMbot knows when you ask it";
 export const quickAnswers: Step[] = [
   {

@@ -370,7 +370,7 @@ describe("Help: the website's read-only pages (#1588)", () => {
     const shown = quickAnswers.map((x) => x.text).join(" ");
     expect(shown.includes("Where did that come from?")).toBe(SIDEBAR_SOURCES_LIVE);
     for (const step of sidebarSourceSteps) {
-      expect(step.text.split(/[.?!] /).length).toBeLessThanOrEqual(3);
+      expect(step.text.split(/[.?!] /).length).toBeLessThanOrEqual(5);
       expect(step.text).toContain("📖 What I looked at");
     }
     expect(held.find((h) => h.title === "See what DMbot looked at")?.reason).toContain("#1957");

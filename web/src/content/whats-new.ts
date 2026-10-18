@@ -192,7 +192,7 @@ export const held: Held[] = [
   {
     date: "2026-10-18",
     title: "See what DMbot looked at",
-    what: "Under a rules answer on your DM screen, press 📖 What I looked at to see the rules DMbot read, with the book and page number. Press one to open it. Only you see it.",
+    what: "Under a rules answer on your DM screen, press 📖 What I looked at to see the rules it used, with the book and page number. Press a rule to open it. Only you see it.",
     reason: "Waits for #1957 to deploy.",
   },
   {
