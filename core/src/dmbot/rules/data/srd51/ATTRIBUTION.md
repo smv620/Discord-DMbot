@@ -28,7 +28,6 @@ Tables inside a spell or condition are kept as plain lines of text, one line for
 The PDF's text layer has lost a few words and letters altogether, and two defects are left in the files, neither corrected by hand (the files hold what the PDF holds):
 
 - Animal Friendship's “At Higher Levels” line reads “one additional beast t level above 1st”, a word lost for good;
-- Find Traps reads “specific ally” for “specifically”: the PDF has the word too rarely for the tool to be sure it is a cut one.
 
 Where a spell's or creature's wording matters, check it against the SRD 5.1 itself. A few plain words (“attacked”, “defends”, “dread”, “dimly”, “lit”, “bed”, “linen”, “strip”, “ideas”) are listed in the tool as known words, because neither the 5.2.1 data nor this PDF spells them out often enough for the cut-word reading to know them.
 
