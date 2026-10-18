@@ -32,6 +32,8 @@ web=false
 while IFS= read -r f; do
   case "$f" in
     core/*) core=true ;;
+    # the website's owner-check test reads this doc against the held What's new entries
+    docs/OWNER_CHECKS.md) web=true ;;
     # core's tests read the plans the website shows (core/tests/test_plans.py)
     web/src/content/plans.json) core=true web=true ;;
     # core's test_consent_promises.py reads the consent promises the pages show (#1882)

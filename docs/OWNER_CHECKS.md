@@ -9,10 +9,14 @@ steps, look for the sign it worked, then tell dev1.
 **Names in the examples are made up. Use made-up names too.** Buttons are named as the Help page names
 them. If a button is not where a check says, that is a mistake in this file: tell dev1 and WebDev will fix it.
 
-**Before you start (once):** open your test server, type `/dmbot start`, press ＋ New campaign (or ▶ Continue last campaign), pick your
-voice channel and press ▶ Start listening. You are the game master. The steps are on the Help page:
-https://getdmbot.com/help. Keep this open on your phone and work down the list. Checks 1 and 2 come first
-because they unlock the latest deploy.
+**Before you start (once):**
+1. Open your test server and type `/dmbot start`.
+2. Press ＋ New campaign, or ▶ Continue last campaign if you already have one (do not make a duplicate).
+3. Pick your voice channel and press ▶ Start listening. You are the game master.
+4. Say yes to being recorded: in the private message DMbot sends you, press **I'm 16 or older, record me**. Without it, checks 2, 16, 17 and 18 hear nothing.
+
+The steps are on the Help page: https://getdmbot.com/help. Keep this open on your phone and work down the
+list. Checks 1 and 2 come first because they are the newest features. Check 19 waits for the next deploy.
 
 **When you finish a check, tell dev1 in one line:** "Check N: worked" or "Check N: didn't (what you saw)".
 dev1 writes it in `docs/testing-history.log`, and WebDev then switches the matching Help, News and home page
@@ -31,6 +35,8 @@ lines on. A check that didn't work is just as useful: say what you saw.
 **It worked if:** the channel is there, Captain Rook is listed with the other names and groups you gave them,
 and you cannot type in the channel.
 
+Unlocks: #1761
+
 ### 2. Initiative: FightBot hears how your table runs it
 **You'll do:**
 1. Start a fight the way you normally do on the test server.
@@ -41,6 +47,8 @@ and you cannot type in the channel.
 on purpose. You correct it by saying it differently.) If you are not sure how to start a fight on the test
 server, ask dev1.
 
+Unlocks: #1771
+
 ### 3. The DMbot channel with the buttons
 **You'll do:**
 1. Look for the channel **dmb-dm-bot**. Press 👤 My buttons.
@@ -50,6 +58,8 @@ server, ask dev1.
 **It worked if:** the channel is there, only you see your buttons, the rule answer is private, and your DM
 screen shows only notes, alerts and ⏹ Stop listening.
 
+Unlocks: #1666
+
 ### 4. The house rules channel
 **You'll do:**
 1. Press ⚙️ Settings and add one made-up house rule, for example "Rope takes a full turn to tie".
@@ -57,6 +67,8 @@ screen shows only notes, alerts and ⏹ Stop listening.
 
 **It worked if:** the channel is there, your rule appears as its own message, and you cannot type in the
 channel.
+
+Unlocks: #1752
 
 ---
 
@@ -74,12 +86,16 @@ a feeling.
 **It worked if:** Standing shows Hostile, Unfriendly, Wary, Friendly or Devoted with the reason, and only you
 can see it.
 
+Unlocks: #1655
+
 ### 6. Recording a deed
 **You'll do:** open a player character's name card, press ⚔️ Record a deed, type what happened, pick Captain
 Rook and **Helped**, and press ✅ Record it.
 
 **It worked if:** Standing now shows the deed as a reason, for example "(session 1, helped)", and ↩ Undo that
 works for a short while.
+
+Unlocks: #1732
 
 ### 7. Story threads and promises
 **You'll do:**
@@ -89,11 +105,15 @@ works for a short while.
 **It worked if:** both show on their cards with how far along they are, and nothing about them goes to
 players.
 
+Unlocks: #1662, #1674
+
 ### 8. Homebrew by kind
 **You'll do:** press ⚙️ Settings, then 📚 Homebrew. Press a kind, then ↩ All kinds. Then press ➕ Add and pick
 🧝 Species (or Subclass, or Background) as the kind, and add one made-up entry.
 
 **It worked if:** you see one button for each kind with a count on it, and the new kinds are on the list.
+
+Unlocks: #1663, #1665
 
 ---
 
@@ -106,6 +126,8 @@ clock for half an hour. It posts nothing when your DM screen is on Quiet, so kee
 **It worked if:** one short line appears on your DM screen saying where the game is, and nothing is posted to
 players.
 
+Unlocks: #1738
+
 ### 10. Shared story: watching your adventure
 **You'll do:**
 1. Press ⚙️ Settings, then 🧭 Shared story, and choose **Watch the story**. Read the warning and press "I have the
@@ -116,6 +138,8 @@ players.
 
 **It worked if:** DMbot posts a line on the DM screen when your table no longer fits the adventure, and only
 you see it. Use a made-up adventure, never a book you do not own.
+
+Unlocks: #1692, #1714, #1724, #1726, #1729, #1730, #1731, #1734
 
 ---
 
@@ -128,14 +152,106 @@ question.
 **It worked if:** you get a thank-you email at once, then an answer from DMbot's helper, and your account page
 shows who answered.
 
+Unlocks: #1431, #1452
+
+---
+
+## Group E. Settings, fixes and the next deploy
+
+Do 16, 17 and 18 before 15. Check 15 deletes a campaign.
+
+### 12. Finding Settings
+**You'll do:**
+1. Type `/dmbot settings` anywhere in your test server.
+2. Type `/dmbot start`, press ＋ New campaign (or ▶ Continue last campaign if one exists) and look at the step where you pick the voice channel. You do not need to press ▶ Start listening.
+
+**It worked if:** Settings opens from the command and says only you can see it, and ⚙️ Settings is on the voice-channel step too.
+
+Unlocks: #1619
+
+### 13. Game masters
+**You'll do:**
+1. Press ⚙️ Settings, then 👑 Game masters.
+2. Press ➕ Add a game master and pick a second test account of yours that is already in the server.
+3. On that account, press ⚙️ Settings or type `/dmbot settings`.
+4. Back on your account, press ➖ Remove a game master and take them off again. Try step 3 again.
+
+**It worked if:** Settings opens for the second account after you add them, and does not once you take them off.
+
+Unlocks: #1600, #1603
+
+### 14. Splitting the party
+**You'll do:**
+1. Set the game clock first: press ⚙️ Settings, then Game clock, and give any day and hour. You do not need to wait for it.
+2. Press Rests & time…, then ✂️ Split the party.
+3. Name two groups, for example "Tower" and "Camp".
+4. Press 🤝 Rejoin the party, pick a time to keep, then press Undo.
+
+**It worked if:** each group gets its own clock after the split, the clocks come back together when you rejoin, and Undo puts the split back.
+
+Unlocks: #1607
+
+### 15. Deleting a whole campaign
+**Do this last, on a throwaway campaign.** Make a second campaign first (`/dmbot start`, ＋ New campaign) and delete only that one. Read the name on the warning before you type it. Never do this on a campaign you play.
+
+**You'll do:**
+1. On the throwaway campaign, press ⏹ Stop listening if it is on. It cannot be deleted while it is being played. Only the game master whose plan it uses can delete it, which should be you.
+2. Press ⚙️ Settings, then 🗑 Delete this campaign.
+3. Read what will be lost. Press 💾 Back up first and wait for the file.
+4. Press Delete it, then type the campaign's name.
+
+**It worked if:** the warning showed before anything was deleted, the backup file arrived first, and the campaign no longer shows when you type `/dmbot start`. The transcript and chat channels may stay until a server admin removes them. That is expected.
+
+Unlocks: #1608
+
+### 16. Fixing a line DMbot heard wrong
+**You'll do:**
+1. Press ▶ Start listening and say one short sentence. Do not stop yet.
+2. Wait a minute, then type `/dmbot fix`, or press ✏️ Fix a line on the DM screen.
+3. Pick your sentence from the list of recent lines and type what it should say.
+4. Press Undo, then stop listening.
+
+**It worked if:** as game master the line changes at once, and Undo puts the old words back.
+
+Unlocks: #1491, #1499
+
+### 17. The note before tonight's session
+**You'll do:**
+1. Run a short session. Say a made-up name out loud, for example "Captain Rook". When DMbot asks "Did they mean…?" or lists names to confirm, confirm one. Stop listening.
+2. Start listening again and look at the DM screen.
+
+**It worked if:** a short note appears on the DM screen, for you only, with last time's recap and what you confirmed. Players do not see it.
+
+Unlocks: #1403
+
+### 18. A player says a secret name
+**You'll do:**
+1. Open the name's card (`/dmbot names`) and mark one made-up name secret, for example "Lady Vesper". The Help page's steps for secret names show how.
+2. Start listening. Have a test player, who has also pressed **I'm 16 or older, record me** in their own private message, say that name out loud.
+3. Press ⏹ Stop listening and look at your private messages.
+
+**It worked if:** after you stop, DMbot asks you privately, one name at a time, whether it should stay secret or be opened up. Only you can answer.
+
+Unlocks: #1407
+
+### 19. What's switched on (after the next deploy)
+This button is merged but not on the server yet. Do this check after dev1 deploys it.
+
+**You'll do:**
+1. Press ⚙️ Settings, then ℹ️ What's switched on.
+
+**It worked if:** only you see the answer, and it lists what is on for your table.
+
+Unlocks: #1831
+
 ---
 
 ## Not on this list (and why)
 
-- **Time suggestions:** deployed, but switched off on the server until `DMBOT_TIME_SUGGESTIONS=1` is set, so
+- **Time suggestions (#1758):** deployed, but switched off on the server until `DMBOT_TIME_SUGGESTIONS=1` is set, so
   there is nothing to check yet.
-- **Secret clues:** need the story extractor, which stays off until its test passes.
-- **Recaps and narrated recaps:** need `DMBOT_RECAPS=1`, and narration needs your ElevenLabs go-ahead.
-- **QAbot:** needs the steps on #1341.
+- **Secret clues (#1649):** need the story extractor, which stays off until its test passes.
+- **Recaps and narrated recaps (#1382, #1385):** need `DMBOT_RECAPS=1`, and narration needs your ElevenLabs go-ahead.
+- **QAbot (#1341):** needs the steps on #1341.
 
 The reasons are in `docs/GO_LIVE.md`.
