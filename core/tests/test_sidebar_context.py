@@ -570,6 +570,65 @@ class MagicItems(unittest.TestCase):
         self.assertIn(("gear", "Healer’s Kit"), got)
         self.assertEqual([h.entry.kind for h in self.hits("cast shield")], ["spell"])
 
+    def test_a_race_only_the_2014_rules_have_is_cited_with_the_legacy_tag(self) -> None:
+        built = self.build("what are the half-orc traits")
+        self.assertIn("- Half-Orc (species) [SRD 5.1 p. 7 [Legacy 2014]]", built.prompt)
+        self.assertIn("Relentless Endurance", built.prompt)
+        got = [(h.entry.kind, h.entry.name) for h in self.hits("does a half elf see in the dark")]
+        self.assertNotIn(("monster", "Elf"), got)
+
+    def test_the_creature_of_the_shorter_name_gives_way_only_to_a_longer_species_name(self) -> None:
+        self.assertEqual(
+            [(h.entry.kind, h.entry.name) for h in self.hits("the half orc swings")],
+            [("species", "Half-Orc")],
+        )
+        self.assertEqual([h.entry.kind for h in self.hits("the orc swings")], ["monster"])
+
+    def test_a_2014_race_is_sent_whole_with_its_subrace(self) -> None:
+        built = context.build(
+            "a dwarf species hit points",
+            target="2014",
+            fallback="2024",
+            index=INDEX,
+            house_rules=[],
+            lookup=None,
+            scene="",
+        )
+        self.assertIn("Subrace: Hill Dwarf", built.prompt)
+        self.assertIn("Dwarven Toughness. Your hit point maximum increases by 1", built.prompt)
+        self.assertNotIn("(cut)", built.prompt)
+
+    def test_a_dwarf_in_a_2024_campaign_is_the_2024_species_alone(self) -> None:
+        got = [(h.entry.edition, h.entry.name) for h in self.hits("a dwarf species speed")]
+        self.assertIn(("2024", "Dwarf"), got)
+        self.assertNotIn(("2014", "Dwarf"), got)
+
+    def test_a_2014_weapon_has_no_mastery_and_a_2014_only_piece_is_cited_with_the_tag(self) -> None:
+        old = context.build(
+            "what's the damage of a longsword",
+            target="2014",
+            fallback="2024",
+            index=INDEX,
+            house_rules=[],
+            lookup=None,
+            scene="",
+        )
+        self.assertIn("- Longsword (weapon) [SRD 5.1 p. 66 [Legacy 2014]]", old.prompt)
+        self.assertIn("FACTS: Martial Melee, 1d8 Slashing, Versatile (1d10).", old.prompt)
+        self.assertNotIn("mastery", old.prompt)
+        new = self.build("what's the damage of a longsword")
+        self.assertIn("SRD 5.2.1 p. 91", new.prompt)
+        self.assertNotIn("SRD 5.1", new.prompt)  # the 2024 weapon alone
+        net = self.build("what damage does a net do")
+        self.assertIn("(weapon) [SRD 5.1 p. 66 [Legacy 2014]]", net.prompt)
+
+    def test_a_piece_of_gear_only_the_2014_book_has_needs_its_cue_word(self) -> None:
+        self.assertEqual(
+            [(h.entry.name, h.entry.edition) for h in self.hits("how much does an abacus cost")],
+            [("Abacus", "2014")],
+        )
+        self.assertEqual(self.hits("he counts on an abacus"), [])
+
     def test_an_item_is_no_rules_question(self) -> None:
         prompt = self.build("can you track a bag of holding?").prompt
         self.assertIn("ABOUT DMBOT", prompt)

@@ -71,7 +71,8 @@ def weapon_line(entry: Entry) -> str:
     parts = [str(d.get("category", "")), f"{d.get('damage', '')} {d.get('damage_type', '')}"]
     if d.get("properties"):
         parts.append(str(d["properties"]))
-    parts.append(f"mastery {d.get('mastery', '')}")
+    if d.get("mastery"):  # (the SRD 5.1 has none)
+        parts.append(f"mastery {d['mastery']}")
     return ", ".join(p.strip() for p in parts if p.strip())
 
 
@@ -111,9 +112,10 @@ def tool_line(entry: Entry, *, card: bool) -> str:
     d = entry.details
     cost = str(d.get("cost", ""))
     cost = "price varies" if cost == "Varies" else cost
-    parts = [cost, _weight_words(d)]
-    if not card:
-        parts = [str(d.get("group", "")), str(d.get("ability", "")), *parts]
+    if card:  # the heading has the ability, or (when there is none) the price
+        parts = [_weight_words(d)] if not d.get("ability") else [cost, _weight_words(d)]
+    else:
+        parts = [str(d.get("group", "")), str(d.get("ability", "")), cost, _weight_words(d)]
     return ", ".join(p for p in parts if p)
 
 
@@ -184,7 +186,7 @@ def pairs(entry: Entry, *, card: bool = False) -> list[tuple[str, str]]:
             return []
         found = [("", item_line(entry))]
     elif entry.kind == "feat":  # the card's heading already says "(feat: Origin)"
-        found = [] if card else [("", f"{d.get('category', '')} feat")]
+        found = [] if card else [("", f"{d['category']} feat" if has("category") else "Feat")]
         found.append(("Prerequisite", str(d.get("prerequisite", ""))))
     elif entry.kind == "weapon":  # the card shows the whole row as its text
         found = [] if card else [("", weapon_line(entry))]

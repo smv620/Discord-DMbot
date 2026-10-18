@@ -63,6 +63,7 @@ ENTRY_TEXT_MAX = 1200  # characters of one rules entry sent to the AI
 # A class feature is long prose (Spellcasting, Wild Shape) and the part that answers may be at
 # its end; 2,000 holds all but about 30 of the 399, and at most 3 entries are sent (#1910).
 FEATURE_TEXT_MAX = 2000  # (the Gameplay Toolbox's entries too: the longest is 1,691)
+SPECIES_TEXT_MAX = 3200  # a 2014 race is 1,500 to 3,000 characters, its subrace at the end (#1928)
 CUT_MARK = " (cut)"
 ENTRIES_MAX = 3
 HOUSE_RULES_MAX = 5
@@ -150,6 +151,14 @@ _POSSESSIVE = re.compile(r"['’]s$", re.IGNORECASE)
 
 PEOPLE_MAX = 12  # a table is small; a long list is never sent
 PEOPLE_LINE_MAX = 160
+
+
+def _text_max(entry: Entry) -> int:
+    """How much of an entry is sent: a class feature, a species and an entry of the DM's chapter
+    (a trap, a poison) are long."""
+    if entry.dm_side:
+        return FEATURE_TEXT_MAX
+    return {FEATURE: FEATURE_TEXT_MAX, SPECIES: SPECIES_TEXT_MAX}.get(entry.kind, ENTRY_TEXT_MAX)
 
 
 def shorten(text: str, limit: int) -> str:
@@ -304,6 +313,7 @@ def mentioned_rules(
             for start, h in found
             if not (h.entry.kind == RULE and normalize(h.entry.name) in EQUIPMENT_CUES)
         ]
+    found = _widened_origins(found, words, index, target, fallback)
     found.sort(key=lambda pair: pair[0])
     unique: list[Hit] = []
     for _, hit in found:
@@ -321,6 +331,30 @@ def mentioned_rules(
 
 ORIGIN_CUES = frozenset({"feat", "feats", "species", "race", "races", "background", "backgrounds"})
 SPECIES_NOT_EVERYDAY = frozenset({"dragonborn", "goliath"})  # "dwarf", "elf" and "human" are not
+
+
+def _widened_origins(
+    found: list[tuple[int, Hit]], words: list[str], index: Index, target: str, fallback: str
+) -> list[tuple[int, Hit]]:
+    """A creature whose name is the end or the start of a longer species name ("Orc" in "half-orc
+    traits") gives way to that species: "Half-Orc" is a two-word name and needs no cue word, but
+    the creature of the shorter name was found first (#1928)."""
+    out = list(found)
+    for start, hit in found:
+        if hit.entry.kind != "monster":
+            continue
+        size = len(hit.found_as.split())
+        for begin in (start - 1, start):
+            if begin < 0 or begin + size + 1 > len(words):
+                continue
+            picked = origin_hits(
+                index, " ".join(words[begin : begin + size + 1]), target, fallback, cued=False
+            )
+            if picked and picked[0].entry.kind == SPECIES:  # (only a species name is two words)
+                out = [pair for pair in out if pair[1] is not hit]
+                out += [(begin, p) for p in picked]
+                break
+    return out
 
 
 def _cued_origins(
@@ -717,8 +751,7 @@ def build(
         sections.append("RULES ENTRIES (the free rules, word for word):")
         for hit in hits:
             entry = hit.entry
-            long = entry.kind == FEATURE or entry.dm_side
-            text = shorten(entry.text, FEATURE_TEXT_MAX if long else ENTRY_TEXT_MAX)
+            text = shorten(entry.text, _text_max(entry))
             tag = f" {hit.tag}" if hit.tag else ""
             facts = entry.facts
             facts = f" FACTS: {facts}. TEXT:" if facts else ""

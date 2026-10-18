@@ -62,6 +62,7 @@ class Tool:
     craft: str  # "" if the tool crafts nothing
     variants: str  # "" if it has none
     page: int
+    text: str = ""  # the SRD 5.1's words about the tool (it has no Utilize or Craft lines)
 
 
 @dataclass(frozen=True, slots=True)
