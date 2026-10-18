@@ -787,12 +787,11 @@ export const fightBotStep: Step = {
 // glossary rules, class features, magic items, feats, species and backgrounds. It is held with the
 // What's new entry "Look up any rule" until dev1 deploys it (#1890, #1891, #1912, #1913). Set this
 // to true in the same change that moves that entry out of `held`; a test keeps the two in step.
-// Weapons and armor (#1921) are not named here until they have merged.
 export const RULE_KINDS_LIVE = false;
 
 export const ruleKindSteps: Step[] = [
   {
-    text: "/dmbot rule also finds rules like cover or long rest, class features like rage, magic items like Bag of Holding, and feats, species and backgrounds like Alert, Goliath or Sage. If a spell or condition has the same name, you get that first.",
+    text: "/dmbot rule also finds rules like cover or long rest, class features like rage, magic items like Bag of Holding, weapons and armor like longsword or plate armor, and feats, species and backgrounds like Alert, Goliath or Sage. If a spell or condition has the same name, you get that first.",
   },
   {
     text: "Some classes share a feature. Type the class first, like rogue evasion, to get that class's. If two things share a name, the list marks them, like Orc (creature). Pick the one you mean.",

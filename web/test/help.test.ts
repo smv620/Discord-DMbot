@@ -431,10 +431,10 @@ describe("Help: the website's read-only pages (#1588)", () => {
     for (const example of ["cover", "rage", "Bag of Holding", "Alert", "Goliath", "rogue evasion", "Orc (creature)"]) {
       expect(words, example).toContain(example);
     }
-    expect(words).not.toMatch(/longsword|armor|weapon/i); // not until #1921 has merged
+    expect(words).toContain("longsword"); // weapons and armor merged with #1921
     // The same kinds as the entry: the Help step names what the entry names.
     const entry = held.find((h) => h.title === "Look up any rule")?.what ?? "";
-    for (const example of ["cover", "rage", "Bag of Holding", "Alert", "Goliath"]) {
+    for (const example of ["cover", "rage", "Bag of Holding", "longsword", "Alert", "Goliath"]) {
       expect(entry, example).toContain(example);
     }
   });

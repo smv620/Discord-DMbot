@@ -187,7 +187,7 @@ export const held: Held[] = [
   {
     date: "2026-10-18",
     title: "Look up any rule",
-    what: "Type /dmbot rule and a word like cover, dash or long rest, a class feature like rage, a magic item like Bag of Holding, or a feat, species or background like Alert, Goliath or Sage, or a weapon or armor like Longsword or Plate Armor to read what the free rules say. If a spell, condition or creature has the same name, you get that first. Your table's house rule on it shows above.",
+    what: "Type /dmbot rule and a word like cover, dash or long rest, a class feature like rage, a magic item like Bag of Holding, a weapon like longsword, or a feat, species or background like Alert, Goliath or Sage, or a weapon or armor like Longsword or Plate Armor to read what the free rules say. If a spell, condition or creature has the same name, you get that first. Your table's house rule on it shows above.",
     reason:
       "Merged (#1890, #1891, #1912, #1913, #1919); held until dev1 deploys it.",
   },
