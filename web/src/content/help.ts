@@ -433,13 +433,13 @@ export const RULE_KINDS_LIVE = false;
 
 export const ruleKindSteps: Step[] = [
   {
-    text: "/dmbot rule also finds rules like cover or long rest, class features like rage, magic items like Bag of Holding, weapons and armor like longsword or plate armor, tools and gear like Thieves' Tools or a Healer's Kit, and feats, species and backgrounds like Alert, Goliath or Sage. If a spell or condition has the same name, you get that first. If the newer rules have nothing by that name, you get the older 2014 one, marked [Legacy 2014], the same mark a shared book of older rules gets.",
+    text: "/dmbot rule also finds rules like cover or long rest, class features like rage, magic items like Bag of Holding, weapons and armor like longsword or plate armor, tools and gear like Thieves' Tools or a Healer's Kit, and feats, species and backgrounds like Alert, Goliath or Sage. If a spell or condition has the same name, you get that first. If the newer rules have nothing by that name, you get the older 2014 one, marked [Legacy 2014].",
   },
   {
     text: "Some classes share a feature. Type the class first, like rogue evasion, to get that class's. If two things share a name, the list marks them, like Orc (creature). Pick the one you mean.",
   },
   {
-    text: "Traps, poisons and other things for the game master are not listed for players. Ask for one and you get: That's one for your DM.",
+    text: "Things for the DM, like traps, poisons, curses and diseases, are not for players. If you ask for one, DMbot says \"That's one for your DM.\"",
   },
 ];
 
@@ -447,7 +447,7 @@ export const ruleKindSteps: Step[] = [
 // typeahead filter). Held with RULE_KINDS_LIVE: it deploys with the same rules data.
 export const ruleKindDmSteps: Step[] = [
   {
-    text: "You can also look up traps, poisons, curses and diseases with /dmbot rule. Only you see them.",
+    text: "/dmbot rule also finds things for you alone, like traps, poisons, curses and diseases. Only you see the answer.",
   },
 ];
 

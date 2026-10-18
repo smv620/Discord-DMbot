@@ -444,14 +444,14 @@ describe("Help: the website's read-only pages (#1588)", () => {
   it("explains the 2014 mark and the game master's own entries, only while the rule kinds are live (#1961)", () => {
     const player = playerSteps.map((x) => x.text).join(" ");
     const dm = dmSteps.map((x) => x.text).join(" ");
-    expect(player.includes("marked [Legacy 2014], the same mark a shared book")).toBe(RULE_KINDS_LIVE);
+    expect(player.includes("marked [Legacy 2014].")).toBe(RULE_KINDS_LIVE);
     expect(player.includes("That's one for your DM.")).toBe(RULE_KINDS_LIVE);
-    expect(dm.includes("traps, poisons, curses and diseases")).toBe(RULE_KINDS_LIVE);
+    expect(dm.includes("things for you alone, like traps, poisons, curses and diseases")).toBe(RULE_KINDS_LIVE);
     const words = [...ruleKindSteps, ...ruleKindDmSteps].map((x) => x.text).join(" ");
     expect(words).not.toMatch(/fallback|index|SRD 5\.1/i); // the source line on each answer names the book
     // The entry says the same three things, so the held entry and the steps flip together.
     const entry = held.find((h) => h.title === "Look up any rule")?.what ?? "";
-    for (const part of ["[Legacy 2014]", "traps, poisons, curses and diseases", "That's one for your DM"]) {
+    for (const part of ["[Legacy 2014]", "like traps, poisons, curses and diseases", "That's one for your DM"]) {
       expect(entry, part).toContain(part);
     }
   });
