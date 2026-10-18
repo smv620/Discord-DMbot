@@ -17,7 +17,7 @@ from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import tests.test_sessions as ts
-from dmbot.transcript import left_out, speaker_ai
+from dmbot.transcript import fix_notes, left_out, speaker_ai
 from dmbot.transcript import questions as name_questions
 from dmbot.transcript import speaker_question as speaker_q
 from dmbot.transcript.topics import Waiting
@@ -307,3 +307,30 @@ class SidebarConsent(Refusals):
         self.stop(PLAYER)
         self.assertFalse(self.bot.sidebar_has_consent(GUILD, PLAYER))
         self.assertFalse(self.bot.sidebar_has_consent(GUILD, 424242))  # never agreed
+
+
+class UndoingAFix(Refusals):
+    """`undo_fix` (#296): Undo for a name fix does nothing for a speaker who has since stopped
+    (the mid-flow stops are in `test_sessions.py`)."""
+
+    fixed_from_a_suggestion: Any = ts.SaveAndResume.fixed_from_a_suggestion
+
+    async def test_undo_after_a_stop_writes_and_changes_nothing(self) -> None:
+        table, _, memory = await self.fixed_from_a_suggestion()
+        (note,) = table.fix_notes.notes
+        self.stop(PLAYER)
+        answer, allow = await self.bot.undo_fix(GUILD, note.id, DM)
+        self.assertEqual(answer, fix_notes.STOPPED)
+        self.assertIsNone(allow)
+        memory.add_correction.assert_not_awaited()  # no "keep as heard" rule for them
+        self.assertFalse(note.undone)
+        (line,) = list(table.unsaved._waiting)
+        self.assertEqual(line.text, "then Hrothgar roars")  # their words were not put back
+
+    async def test_the_same_undo_for_someone_recorded_works(self) -> None:
+        table, _, memory = await self.fixed_from_a_suggestion()
+        (note,) = table.fix_notes.notes
+        answer, allow = await self.bot.undo_fix(GUILD, note.id, DM)
+        self.assertNotEqual(answer, fix_notes.STOPPED)
+        memory.add_correction.assert_awaited_once()
+        self.assertIsNotNone(allow)
