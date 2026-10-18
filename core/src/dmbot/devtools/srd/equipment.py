@@ -152,18 +152,18 @@ def parse_weapons(lines: Sequence[Line]) -> list[Weapon]:
     }
     rows = _rows([ln for ln in lines if ln.x >= 50], (60.0, 64.0))
     ordered = sorted(
-        [*((main.y, "row", (main, joined)) for main, joined in rows),
-         *((y, "heading", text) for y, text in headings.items())],
+        [*((main.y, (main, joined), "") for main, joined in rows),
+         *((y, None, text) for y, text in headings.items())],
         key=lambda item: -item[0],
     )  # fmt: skip
-    for _, kind, payload in ordered:
-        if kind == "heading":
-            match = WEAPON_CATEGORY.match(str(payload))
+    for _, row_lines, heading in ordered:
+        if row_lines is None:
+            match = WEAPON_CATEGORY.match(heading)
             if match is None:
-                raise SrdError(f"Weapons table: a heading it can't read: {payload!r}")
+                raise SrdError(f"Weapons table: a heading it can't read: {heading!r}")
             category = match["category"]
             continue
-        main, joined = payload  # type: ignore[misc]
+        main, joined = row_lines
         weapons.append(_weapon(joined, category, main.page, seen))
     if not weapons:
         raise SrdError("Weapons table: no weapons found")
@@ -212,19 +212,19 @@ def parse_armor(lines: Sequence[Line]) -> list[Armor]:
     }
     rows = _rows([ln for ln in lines if ln.x >= 60], (70.0, 80.0))
     ordered = sorted(
-        [*((main.y, "row", (main, joined)) for main, joined in rows),
-         *((y, "heading", text) for y, text in headings.items())],
+        [*((main.y, (main, joined), "") for main, joined in rows),
+         *((y, None, text) for y, text in headings.items())],
         key=lambda item: -item[0],
     )  # fmt: skip
     category = don = ""
-    for _, kind, payload in ordered:
-        if kind == "heading":
-            match = ARMOR_CATEGORY.match(str(payload))
+    for _, row_lines, heading in ordered:
+        if row_lines is None:
+            match = ARMOR_CATEGORY.match(heading)
             if match is None:
-                raise SrdError(f"Armor table: a heading it can't read: {payload!r}")
+                raise SrdError(f"Armor table: a heading it can't read: {heading!r}")
             category, don = match["category"], match["don"]
             continue
-        main, joined = payload  # type: ignore[misc]
+        main, joined = row_lines
         row = ARMOR_ROW.match(joined)
         if row is None or not category:
             raise SrdError(f"Armor table: a row it can't read: {joined!r}")

@@ -468,6 +468,26 @@ class RulesGlossary(unittest.TestCase):
             parse.parse_rules([say("Rules Definitions", TITLE), at(63, "Cover")])
 
 
+class MendingACutAfterANumber(unittest.TestCase):
+    """A line that ends "10-" and goes on "foot" is "10-foot", not "10foot" (#1914)."""
+
+    def test_the_hyphen_after_a_number_stays(self) -> None:
+        mender = parse.Mender([])
+        self.assertEqual(mender.join("in a 10-", "foot Emanation"), "in a 10-foot Emanation")
+        self.assertEqual(mender.join("a 100 -", "foot high"), "a 100-foot high")
+
+    def test_a_word_cut_in_two_is_still_one_word(self) -> None:
+        mender = parse.Mender([say("The spell ignites.")])
+        self.assertEqual(mender.join("It ig-", "nites"), "It ignites")
+
+    def test_no_shipped_text_has_a_number_glued_to_foot(self) -> None:
+        from dmbot.rules import index
+
+        for entry in index.srd().entries:
+            with self.subTest(entry.name):
+                self.assertNotRegex(entry.text, r"\d(?:foot|feet)\b")
+
+
 class Building(unittest.TestCase):
     def pages(self) -> list[list[Line]]:
         contents = [say("Spell Descriptions", "Cambria")]  # the contents page: not a heading

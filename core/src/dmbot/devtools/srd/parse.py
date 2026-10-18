@@ -125,6 +125,10 @@ class Mender:
         lead = WORD.findall(right)[:1] or [""]
         whole = (tail[0] + lead[0]).lower()
         hyphenated = f"{tail[0]}-{lead[0]}".lower()
+        if (
+            head[-1:].isdigit() and right[:1].isalpha()
+        ):  # "10-" / "foot": the hyphen is real (#1914)
+            return f"{head}-{right}"
         if right[:1].isdigit():  # "10-foot-by-" / "10-foot": a number goes with the hyphen
             return f"{head}-{right}"
         if hyphenated in self.hyphenated and whole not in self.whole:
