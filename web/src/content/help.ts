@@ -338,9 +338,9 @@ export const whereAreWeSteps: Step[] = [
 export const RULES_CHANNEL_LIVE = false;
 
 // The NPC list channel (#1781; #1761, merged in #1779). Off until the owner has seen the channel on the
-// test server; flip it in the same change that moves "A channel listing the people and groups" out of
+// test server; flip it in the same change that moves "A channel for people and groups" out of
 // `held` in whats-new.ts, a test ties the two. It also carries the sentence that a peek opens this channel.
-export const NPCS_CHANNEL_LIVE = false;
+export const NPCS_CHANNEL_LIVE = true;
 
 export const rulesChannelSteps: Step[] = [
   {
@@ -393,7 +393,7 @@ export const npcsChannelSteps: Step[] = [
 // live-checked it; flip it in the same change that moves "FightBot follows your turn order" out of
 // `held` in whats-new.ts, a test ties the two. There is no setting or button for it (the side-initiative
 // button went in #1774), so the steps name none.
-export const INITIATIVE_STYLE_LIVE = false;
+export const INITIATIVE_STYLE_LIVE = true;
 
 export const initiativeStyleSteps: Step[] = [
   {

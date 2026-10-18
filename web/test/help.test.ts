@@ -336,7 +336,7 @@ describe("Help: the website's read-only pages (#1588)", () => {
   });
 
   it("holds the NPC list channel steps with their held What's new entry (#1781)", () => {
-    expect(held.map((h) => h.title).includes("A channel listing the people and groups")).toBe(!NPCS_CHANNEL_LIVE);
+    expect(held.map((h) => h.title).includes("A channel for people and groups")).toBe(!NPCS_CHANNEL_LIVE);
     const shown = dmSteps.map((x) => x.text).join(" ");
     expect(shown.includes("a channel called dmb-npcs")).toBe(NPCS_CHANNEL_LIVE);
     const words = npcsChannelSteps.map((x) => x.text).join(" ");
