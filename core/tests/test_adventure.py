@@ -31,6 +31,7 @@ from dmbot.memory.adventure import AdventureError, AdventureSection, AdventureSt
 from dmbot.memory.document_reader import read_document
 from dmbot.memory.name_documents import DocumentError
 from dmbot.schema import MIGRATIONS
+from tests.answer_first import Timeline
 from tests.pg import TEST_URL, DatabaseTest
 
 GUILD_A, GUILD_B = 111, 222
@@ -452,7 +453,17 @@ def press(user: int, guild: int = GUILD_A) -> Any:
     it.response.send_message = send_message
     it.response.edit_message = edit_message
     it.response.send_modal = AsyncMock()
-    it.response.defer = AsyncMock()
+    done = {"yes": False}
+
+    async def defer(**kw: Any) -> None:
+        done["yes"] = True
+
+    async def follow(content: str = "", **kw: Any) -> None:
+        sent.update(content=content, **kw)
+
+    it.response.defer = defer
+    it.response.is_done = lambda: done["yes"]
+    it.followup.send = follow  # (a refusal after a defer arrives as a follow-up)
     it.edit_original_response = edit_original_response
     it.sent = sent
     return it
@@ -466,6 +477,74 @@ class Card(Setup):
 
     def labels(self, it: Any) -> list[str]:
         return [str(getattr(getattr(c, "item", c), "label", "")) for c in it.sent["view"].children]
+
+    async def test_the_card_buttons_answer_discord_before_the_database(self) -> None:
+        await self.campaigns.set_story_mode(GUILD_A, self.a.id, STORY_WATCH, confirmed_by=DM)
+        doc = await self.store.add(GUILD_A, self.a.id, DM, "a.txt", STORY)
+        for button in (
+            ui.RemoveButton(self.a.id, doc.id),
+            ui.RemoveYesButton(self.a.id, doc.id),
+            ui.RemoveNoButton(self.a.id),
+            ui.BackToFilesButton(self.a.id),
+            ui.RefreshButton(self.a.id),
+            ui.ReadNoButton(self.a.id),
+        ):
+            line = Timeline()
+            it = self.pressing(DM)
+            it.response, it.edit_original_response = line.response, line.edit_original_response
+            it.followup = line.followup
+            real = self.campaigns
+            it.client = SimpleNamespace(
+                campaigns=SimpleNamespace(
+                    get=line.slow("campaign", await real.get(GUILD_A, self.a.id)),
+                    story_confirmed=line.slow("confirmed", True),
+                ),
+                adventure=self.store,
+            )
+            await button.callback(it)
+            line.assert_answered_first()
+            self.assertIn("slow:campaign", line.events, type(button).__name__)
+
+    async def test_read_see_and_match_answer_discord_before_the_database(self) -> None:
+        await self.campaigns.set_story_mode(GUILD_A, self.a.id, STORY_WATCH, confirmed_by=DM)
+        for button in (
+            ui.ReadButton(self.a.id),
+            ui.SeeButton(self.a.id, 0),
+            ui.MatchButton(self.a.id),
+        ):
+            line = Timeline()
+            it = self.pressing(DM)
+            it.response, it.edit_original_response = line.response, line.edit_original_response
+            it.followup = line.followup
+            it.client = SimpleNamespace(
+                campaigns=SimpleNamespace(
+                    get=line.slow("campaign", await self.campaigns.get(GUILD_A, self.a.id)),
+                    story_confirmed=line.slow("confirmed", True),
+                ),
+                adventure=self.store,
+                memory=None,
+            )
+            await button.callback(it)
+            line.assert_answered_first()
+            self.assertIn("slow:campaign", line.events, type(button).__name__)
+
+    async def test_a_refusal_after_the_answer_is_a_private_follow_up(self) -> None:
+        sent: list[str] = []
+        it = self.pressing(PLAYER)
+        await it.response.defer()
+
+        async def follow(text: str, **kw: Any) -> None:
+            sent.append(text)
+
+        it.followup.send = follow
+        await ui.RefreshButton(self.a.id).callback(it)
+        self.assertEqual(sent, [story_mode.ONLY_DMS])
+        it = self.pressing(DM)
+        await it.response.defer()
+        it.followup.send = follow
+        await self.campaigns.set_story_mode(GUILD_A, self.a.id, STORY_OFF, confirmed_by=None)
+        await ui.RefreshButton(self.a.id).callback(it)
+        self.assertEqual(sent[-1], ui.NOT_ON)
 
     async def test_no_button_with_the_switch_off_or_without_a_confirmation(self) -> None:
         it = self.pressing(DM)

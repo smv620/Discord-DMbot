@@ -36,6 +36,7 @@ import discord
 
 from dmbot.campaigns import Campaign
 from dmbot.campaigns.models import CampaignError
+from dmbot.mentions import NO_PINGS
 from dmbot.rules import optional
 from dmbot.timebot import clock as game
 from dmbot.timebot import durations, effects, split, where_are_we
@@ -44,7 +45,6 @@ from dmbot.timebot.store import MOVED_ON, ClockStore, Rejoined, Stored
 
 log = logging.getLogger(__name__)
 
-NO_PINGS = discord.AllowedMentions.none()
 _ID = r"(?P<campaign>[0-9a-f]{32})"
 NO_REST_RULE = "xge-no-long-rest"  # the optional rule the 24-hour line follows
 
@@ -1206,7 +1206,10 @@ def combat_undo_id(before: Clock, after: Clock, group: split.Group | None = None
 
 class CombatUndoButton(
     discord.ui.DynamicItem[discord.ui.Button[discord.ui.View]],
-    template=rf"dmbot:combatundo:{_ID}:(?P<spec>\d+:\d+:\d+:\d+:\d+:\d+(?::g[1-3])?)",
+    # minute, round (under 1000), seconds (under 60), twice: bounded so the id always fits the
+    # 100 characters Discord allows (#1818)
+    template=rf"dmbot:combatundo:{_ID}:(?P<spec>\d{{1,9}}:\d{{1,3}}:\d{{1,2}}:\d{{1,9}}:\d{{1,3}}:\d{{1,2}}"
+    r"(?::g[1-3])?)",
 ):
     """↩️ Undo on a combat change (#1127): back to the round and time before, if nothing has
     moved them since. Only a DM of the campaign (checked where the clock is changed)."""
@@ -1324,7 +1327,7 @@ class ClockUndoButton(
     discord.ui.DynamicItem[discord.ui.Button[discord.ui.View]],
     # (the round and seconds are optional: buttons made before #1173 carry only the first three)
     template=rf"dmbot:clockundo:{_ID}:(?P<before>\d+):(?P<rest>\d+):(?P<after>\d+)"
-    rf"(?::(?P<round>\d+):(?P<secs>\d+))?(?::g(?P<group>[1-3]))?",
+    rf"(?::(?P<round>\d{{1,3}}):(?P<secs>\d{{1,2}}))?(?::g(?P<group>[1-3]))?",
 ):
     """↩️ Undo on a rest said at the table: back to the time before, if nothing has moved
     the clock since."""

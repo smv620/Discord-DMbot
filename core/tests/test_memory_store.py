@@ -1449,9 +1449,12 @@ class Lists(MemoryTest):
 
         with patch.object(AsyncConnection, "execute", explained):
             self.assertEqual(await named("bell"), "Belleros")
-        by_key = [p for p in plans if "memory_aliases" in p]
+        # Only plans that scan the table itself: a `campaigns` row-level-security plan can name the
+        # memory tables inside a sub-plan, and which index it picks there depends on the
+        # statistics earlier tests left in a reused schema (not what this test is about).
+        by_key = [p for p in plans if "on memory_aliases" in p]
         self.assertTrue(by_key and all("memory_aliases_by_key" in p for p in by_key), plans)
-        by_id = [p for p in plans if "memory_entities" in p]
+        by_id = [p for p in plans if "on memory_entities" in p]
         self.assertTrue(by_id and all("Index Cond" in p and "id =" in p for p in by_id), plans)
 
     async def test_a_big_group_gets_its_kind_in_a_few_statements(self) -> None:

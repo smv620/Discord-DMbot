@@ -20,10 +20,11 @@ from typing import TYPE_CHECKING, Any
 
 import discord
 
+from dmbot.mentions import NO_PINGS
 from dmbot.transcript import export, suggestions
 from dmbot.transcript.cleaner import text_names_a_secret
 from dmbot.transcript.stream import escape
-from dmbot.ui.dmbot_commands import NO_PINGS, _bot, _Menu, _Select, _send, _tell, dmbot_group
+from dmbot.ui.dmbot_commands import _bot, _Menu, _Select, _send, _tell, dmbot_group
 
 if TYPE_CHECKING:
     from dmbot.bot import DMBot

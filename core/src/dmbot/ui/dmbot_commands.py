@@ -39,6 +39,7 @@ from dmbot.campaigns.store import (
 from dmbot.dm_screen import handover
 from dmbot.dm_screen.settings import SettingsButton
 from dmbot.logs import set_log_context
+from dmbot.mentions import NO_PINGS
 from dmbot.ui import logic
 
 if TYPE_CHECKING:
@@ -47,7 +48,6 @@ if TYPE_CHECKING:
 log = logging.getLogger(__name__)
 
 VIEW_TIMEOUT_S = 600  # under Discord's 15-minute limit for editing a reply
-NO_PINGS = discord.AllowedMentions.none()
 VOICE_TYPES = [discord.ChannelType.voice, discord.ChannelType.stage_voice]
 TIMED_OUT = "This menu timed out. Run the command again."
 

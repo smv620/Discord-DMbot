@@ -13,9 +13,13 @@ which field it refused.
 
 from __future__ import annotations
 
+import importlib
 import re
 from collections.abc import Mapping, Sequence
 from typing import Any
+
+# (private, but the only way to measure a pattern; Python 3.11+. Loaded by name: it has no stubs.)
+_regex_parser: Any = importlib.import_module("re._parser")
 
 MAX_CHAT_COMMANDS = 100  # top-level slash commands for one app (and 5 each for user/message menus)
 MAX_MENU_COMMANDS = 5
@@ -29,6 +33,25 @@ TOTAL_MAX = 4000  # name, description and every option's name, description and c
 # Lowercase letters, digits, "-" and "_" (Discord also allows some other scripts' letters; \w is
 # the closest plain pattern, and a capital is checked apart).
 NAME_PATTERN = re.compile(r"^[-_\w]{1,32}$")
+
+# Message components: what Discord refuses a whole message (or modal) for. Docs:
+# https://discord.com/developers/docs/components/reference
+BUTTON_LABEL_MAX = 80
+SELECT_OPTIONS_MAX = 25
+OPTION_LABEL_MAX = 100
+OPTION_DESCRIPTION_MAX = 100
+SELECT_PLACEHOLDER_MAX = 150
+ROWS_MAX = 5  # action rows in one message
+ROW_BUTTONS_MAX = 5
+MODAL_TITLE_MAX = 45
+MODAL_INPUTS_MAX = 5
+INPUT_LABEL_MAX = 45
+INPUT_PLACEHOLDER_MAX = 100
+INPUT_LENGTH_MAX = 4000  # a text input's max_length, and the longest value it can start with
+CUSTOM_ID_MAX = 100  # a button's or select's custom_id, in characters
+# A button id that carries a number (a game-clock minute, a round) has no length of its own; a
+# minute count under a billion is 1,900 years of play, so nine digits stand in for "any number".
+DIGITS_MAX = 9
 
 # Option types (the same numbers Discord uses).
 SUB_COMMAND, SUB_COMMAND_GROUP = 1, 2
@@ -136,3 +159,75 @@ def tree_problems(payloads: Sequence[Mapping[str, Any]]) -> list[str]:
     for payload in payloads:
         out.extend(command_problems(payload))
     return out
+
+
+class UnboundedId(ValueError):
+    """A custom_id pattern with a part that has no longest value (like `.+` or `[^:]+`)."""
+
+
+def longest_custom_id(pattern: str) -> int:
+    """How many characters the longest custom_id matching `pattern` can have. A number
+    (`\\d+`, `\\d*`) counts as `DIGITS_MAX` digits; any other unbounded part raises `UnboundedId`,
+    because then no id length can be promised."""
+    bounded = re.sub(
+        r"\\d([+*])", lambda m: f"\\d{{{1 if m[1] == '+' else 0},{DIGITS_MAX}}}", pattern
+    )
+    longest = _regex_parser.parse(bounded).getwidth()[1]
+    if longest >= _regex_parser.MAXREPEAT:
+        raise UnboundedId(pattern)
+    return int(longest)
+
+
+BUTTON, SELECT, TEXT_INPUT = 2, 3, 4  # component types (the same numbers Discord uses)
+
+
+def _over(where: str, what: str, value: object, limit: int) -> list[str]:
+    if isinstance(value, str) and len(value) > limit:
+        return [f"{where}: the {what} is {len(value)} characters, at most {limit}"]
+    return []
+
+
+def component_problems(rows: Sequence[Mapping[str, Any]], *, where: str = "view") -> list[str]:
+    """What Discord would refuse in a view's or a modal's components (`to_components()`), as lines
+    naming the part and the limit. Empty: fine."""
+    out: list[str] = []
+    if len(rows) > ROWS_MAX:
+        out.append(f"{where}: {len(rows)} rows, at most {ROWS_MAX}")
+    for number, row in enumerate(rows, 1):
+        children = row.get("components") or []
+        if sum(1 for c in children if c.get("type") == BUTTON) > ROW_BUTTONS_MAX:
+            out.append(f"{where} row {number}: more than {ROW_BUTTONS_MAX} buttons")
+        for child in children:
+            kind = child.get("type")
+            label = child.get("label")
+            if kind == BUTTON:
+                out += _over(f"{where} button {label!r}", "label", label, BUTTON_LABEL_MAX)
+            elif kind == SELECT:
+                spot = f"{where} menu {str(child.get('placeholder'))[:30]!r}"
+                out += _over(spot, "placeholder", child.get("placeholder"), SELECT_PLACEHOLDER_MAX)
+                options = child.get("options") or []
+                if len(options) > SELECT_OPTIONS_MAX:
+                    out.append(f"{spot}: {len(options)} choices, at most {SELECT_OPTIONS_MAX}")
+                for option in options:
+                    here = f"{spot} choice {str(option.get('label'))[:30]!r}"
+                    out += _over(here, "label", option.get("label"), OPTION_LABEL_MAX)
+                    out += _over(
+                        here, "description", option.get("description"), OPTION_DESCRIPTION_MAX
+                    )
+            elif kind == TEXT_INPUT:
+                here = f"{where} box {str(label)[:30]!r}"
+                out += _over(here, "label", label, INPUT_LABEL_MAX)
+                out += _over(here, "placeholder", child.get("placeholder"), INPUT_PLACEHOLDER_MAX)
+                if (child.get("max_length") or 0) > INPUT_LENGTH_MAX:
+                    out.append(f"{here}: max_length over {INPUT_LENGTH_MAX}")
+                limit = min(child.get("max_length") or INPUT_LENGTH_MAX, INPUT_LENGTH_MAX)
+                out += _over(here, "starting text", child.get("value"), limit)
+    return out
+
+
+def modal_problems(title: str, rows: Sequence[Mapping[str, Any]]) -> list[str]:
+    """`component_problems` for a modal, plus its title and its box count."""
+    out = _over(f"form {title[:30]!r}", "title", title, MODAL_TITLE_MAX)
+    if len(rows) > MODAL_INPUTS_MAX:
+        out.append(f"form {title[:30]!r}: {len(rows)} boxes, at most {MODAL_INPUTS_MAX}")
+    return out + component_problems(rows, where=f"form {title[:30]!r}")

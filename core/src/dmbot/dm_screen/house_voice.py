@@ -33,7 +33,6 @@ from dmbot.ui import rule_card
 
 log = logging.getLogger(__name__)
 
-NO_PINGS = discord.AllowedMentions.none()
 CLOSED = (
     "This offer has ended (the session is over, or DMbot restarted). To add the rule, press "
     "**Add a house rule** in `/dmbot houserules`."
