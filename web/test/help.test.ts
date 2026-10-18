@@ -10,7 +10,7 @@ import { beforeAll, describe, expect, it } from "vitest";
 import { parsePage } from "./dom";
 
 import { entries, held } from "../src/content/whats-new";
-import { WHATS_ON_LIVE, whatsOnSteps, TIME_SUGGESTIONS_LIVE, timeSuggestionSteps, RULES_CHANNEL_LIVE, rulesChannelSteps, INITIATIVE_STYLE_LIVE, initiativeStyleSteps, initiativeStyleDmSteps, NPCS_CHANNEL_LIVE, npcsChannelSteps, DEEDS_LIVE, deedSteps, WHERE_ARE_WE_LIVE, whereAreWeSteps, SHARED_STORY_LIVE, sharedStorySteps, STANDING_LIVE, standingSteps, HOMEBREW_KINDS_LIVE, homebrewKindSteps, STORY_THREADS_LIVE, storyThreadSteps, DM_BOT_CHANNEL_LIVE, dmBotChannelSteps, settingsOnDmScreenSteps, HOMEBREW_LINKS_LIVE, SECRET_CLUES_LIVE, accountSteps, dmSteps, homebrewLinkSteps, secretClueSteps, emailSteps, recapSteps, quickAnswers, quickAnswersHeading, gettingHelp, playerSteps, snags, snagsHeading, onThisPage, onThisPageHeading, backToTop } from "../src/content/help";
+import { WHATS_ON_LIVE, whatsOnSteps, TIME_SUGGESTIONS_LIVE, timeSuggestionSteps, RULES_CHANNEL_LIVE, rulesChannelSteps, INITIATIVE_STYLE_LIVE, initiativeStyleSteps, initiativeStyleDmSteps, NPCS_CHANNEL_LIVE, npcsChannelSteps, DEEDS_LIVE, deedSteps, WHERE_ARE_WE_LIVE, whereAreWeSteps, SHARED_STORY_LIVE, sharedStorySteps, STANDING_LIVE, standingSteps, HOMEBREW_KINDS_LIVE, homebrewKindSteps, STORY_THREADS_LIVE, storyThreadSteps, DM_BOT_CHANNEL_LIVE, dmBotChannelSteps, settingsOnDmScreenSteps, HOMEBREW_LINKS_LIVE, SECRET_CLUES_LIVE, STORY_STATES_LIVE, storyStateSteps, accountSteps, dmSteps, homebrewLinkSteps, secretClueSteps, emailSteps, recapSteps, quickAnswers, quickAnswersHeading, gettingHelp, playerSteps, snags, snagsHeading, onThisPage, onThisPageHeading, backToTop } from "../src/content/help";
 import Help from "../src/pages/help.astro";
 
 const botDir = fileURLToPath(new URL("../../core/src/dmbot/", import.meta.url));
@@ -420,6 +420,17 @@ describe("Help: the website's read-only pages (#1588)", () => {
     expect(del).toContain("It can't be undone.");
     expect(del).toContain("type the campaign's name");
     expect(del).toContain("💾 Back up first");
+  });
+
+  it("holds the alive-and-carries words with the held What's new entry and the privacy line (#1284)", () => {
+    const heldTitle = held.map((h) => h.title).includes("Who is alive, who carries what");
+    expect(heldTitle).toBe(!STORY_STATES_LIVE);
+    const shown = dmSteps.map((x) => x.text).join(" ");
+    expect(shown.includes("remembers who is alive or dead")).toBe(STORY_STATES_LIVE);
+    const words = storyStateSteps.map((x) => x.text).join(" ");
+    expect(words).toContain("You decide");
+    expect(words).toContain("never goes to players or into a transcript");
+    expect(words).not.toMatch(/state fact|ontology|knowledge graph|claim/i);
   });
 
   it("holds the secrets step with the held What's new entry, and flips them together (#1659)", () => {

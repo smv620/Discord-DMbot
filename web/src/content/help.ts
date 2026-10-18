@@ -80,6 +80,28 @@ export const secretClueSteps: Step[] = [
   },
 ];
 
+// Who is alive or dead and who carries the one-of-a-kind things (#1284; core memory/states.py,
+// ui/claims_review.py). The facts come from lines the game master says yes to after a session,
+// and those lines come from the story extractor, which stays off until its prompt passes the
+// measurement (#1282). So the steps are held with the What's new entry "Who is alive, who
+// carries what". Set this to true in the same change that moves that entry out of `held`; a
+// test keeps the two, the privacy line and these steps in step.
+export const STORY_STATES_LIVE = false;
+
+export const storyStateSteps: Step[] = [
+  {
+    text: "DMbot remembers who is alive or dead, what has been destroyed, and who carries the one-of-a-kind things. It learns this only from lines you say yes to after a session (press 🗣️ Check what was said) and from connections you make yourself. To say an item is the only one, open its card and press ☝️ Only one exists. A named item like a magic sword is taken as the only one until you say otherwise. If its card shows Allow more than one, press that to say there can be several.",
+    names: [
+      { name: "🗣️ Check what was said", file: "ui/claims_review.py" },
+      { name: "☝️ Only one exists", file: "ui/name_card.py" },
+      { name: "Allow more than one", file: "ui/name_card.py" },
+    ],
+  },
+  {
+    text: "When something doesn't fit, for example a character you marked dead who speaks again, or one sword in two hands, DMbot saves what you said yes to and asks you about it later. That is a quiet question for you alone. It never goes to players or into a transcript. DMbot only points it out. You decide: fix the fact or leave it.",
+  },
+];
+
 // The DMbot channel (#1666, #1676) moves the buttons off the DM screen, so every Help line that
 // sent people to ⚙️ Settings "on the DM screen" changes with it. It is held with the What's new
 // entry "A DMbot channel for buttons" (whats-new.ts, `held`) until it has been seen on the test
@@ -645,6 +667,7 @@ export const dmSteps: Step[] = [
   ...(NPCS_CHANNEL_LIVE ? npcsChannelSteps : []),
   ...(HOMEBREW_KINDS_LIVE ? homebrewKindSteps : []),
   ...(SECRET_CLUES_LIVE ? secretClueSteps : []),
+  ...(STORY_STATES_LIVE ? storyStateSteps : []),
   {
     text: "To share your homebrew with another table, press ⚙️ Settings, then 📚 Shared rules, then 📦 Homebrew packs, then 📤 Share my homebrew (paid campaigns only). DMbot gives you a share code. Any game master in your server can read everything you share, and so can anyone you give the code to. That includes entries you hide from players. Only share what you are happy for them to see. Followers get a new version only when you press 🔄 Publish my changes. Only homebrew is shared, never your story, names or notes.",
     names: [
