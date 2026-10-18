@@ -33,6 +33,8 @@ while IFS= read -r f; do
   case "$f" in
     # the website's button check reads the bot's labels from core's Python (web/test/button-labels.test.ts)
     core/src/dmbot/*.py) core=true web=true ;;
+    # the Credits page and its tests read the rules data and its ATTRIBUTION.md files (#1923, #1932)
+    core/src/dmbot/rules/data/*) core=true web=true ;;
     core/*) core=true ;;
     # the website's owner-check test reads this doc against the held What's new entries
     docs/OWNER_CHECKS.md) web=true ;;
