@@ -307,6 +307,8 @@ class CutWordsOfEither(unittest.TestCase):
                 # "if you are a 3rd-level cleric": 2014 Cleric, Druid and Paladin Spellcasting
                 # and Druid Natural Recovery
                 ("are", "a"),
+                # "Their properties are as follows:" (the Figurine of Wondrous Power, 2014 items)
+                ("are", "as"),
             },
         )  # fmt: skip
 
