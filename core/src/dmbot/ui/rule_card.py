@@ -463,10 +463,12 @@ def equipment_place(entry: Entry) -> str:
     """What a list or heading says after "gear:" or "tool:": a gear entry's price ("5 GP"; a
     mount or a vehicle says which, "Mount, 75 GP"), a tool's ability ("Dexterity")."""
     d = entry.details
-    if entry.kind == index.TOOL:
-        return str(d.get("ability", ""))
+    if entry.kind == index.TOOL and d.get("ability"):
+        return str(d["ability"])
     group = str(d.get("group", ""))
     cost = str(d.get("cost", ""))
+    if entry.kind == index.TOOL:  # (the SRD 5.1's tools have no ability: the price, and no group)
+        group = "Adventuring Gear"
     if cost == "Varies":
         cost = "price varies"
     elif ";" in cost and (first := re.search(r"[\d,]+ [GSC]P", cost)):
