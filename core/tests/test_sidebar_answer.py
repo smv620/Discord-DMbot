@@ -6,7 +6,6 @@ from __future__ import annotations
 
 import asyncio
 import re
-import time
 import unittest
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
@@ -456,36 +455,71 @@ class CarefulSecondTry(unittest.TestCase):
     def test_a_slow_careful_try_is_cut_off_inside_the_budget_and_the_quick_answer_stands(
         self,
     ) -> None:
+        # Proved by blocking on purpose, not by a clock (#1847): the careful try waits on an event
+        # that nothing sets, the budget is small, and the call is wrapped in `wait_for` so "it gave
+        # up" is shown without a tight wall-clock margin on a busy runner.
         class Slow(FakeAI):
+            started: asyncio.Event
+            release: asyncio.Event
+
             async def complete(self, system: str, text: str, *, max_tokens: int = 8000) -> Any:
-                await asyncio.sleep(10)
+                self.started.set()
+                await asyncio.wait_for(self.release.wait(), 30)  # a bug can't hang CI
                 return await super().complete(system, text, max_tokens=max_tokens)
 
-        slow = Slow([self.GOOD], model="fake-careful-model")
-        fast = FakeAI([self.BAD])
-        started = time.monotonic()
-        with (
-            patch.object(sidebar, "TOTAL_BUDGET_S", 2.0),
-            patch.object(sidebar, "SECOND_TRY_NEEDS_S", 0.1),
-        ):
-            got = run(engine(fast, second=slow).answer(campaign(), self.QUESTION))
-        self.assertLess(time.monotonic() - started, 2.0)  # the answer came back in time
+        async def attempt() -> tuple[Any, bool]:
+            # A first answer in a fresh process loads the rules data (seconds, not milliseconds):
+            # do it before the small budget starts, so the budget measures the stand-in alone.
+            await engine(FakeAI([self.GOOD])).answer(campaign(), self.QUESTION)
+            slow = Slow([self.GOOD], model="fake-careful-model")
+            slow.started, slow.release = asyncio.Event(), asyncio.Event()
+            fast = FakeAI([self.BAD])
+            try:
+                with (
+                    patch.object(sidebar, "TOTAL_BUDGET_S", 2.0),
+                    patch.object(sidebar, "SECOND_TRY_NEEDS_S", 0.1),
+                ):
+                    got = await asyncio.wait_for(
+                        engine(fast, second=slow).answer(campaign(), self.QUESTION), 5
+                    )
+            finally:
+                slow.release.set()
+            return got, slow.started.is_set()
+
+        got, tried = run(attempt())
+        self.assertTrue(tried, "the careful try never started, so nothing was cut off")
         self.assertEqual(got.model, "fake-fast-model")  # no TOO_SLOW error, no lost answer
         self.assertIn("not in DMbot's rules", got.text)
 
     def test_the_same_model_repeat_is_also_held_inside_the_budget(self) -> None:
         class Slow(FakeAI):
+            started: asyncio.Event
+            release: asyncio.Event
+
             async def complete(self, system: str, text: str, *, max_tokens: int = 8000) -> Any:
                 if self.prompts:  # the repeat is slow; the first call is quick
-                    await asyncio.sleep(10)
+                    self.started.set()
+                    await asyncio.wait_for(self.release.wait(), 30)
                 return await super().complete(system, text, max_tokens=max_tokens)
 
-        empty = reply("The rules don't say.", "none")
-        fast = Slow([empty, self.GOOD])
-        started = time.monotonic()
-        with patch.object(sidebar, "TOTAL_BUDGET_S", 2.5):
-            got = run(engine(fast).answer(campaign(), "how does fireball work"))
-        self.assertLess(time.monotonic() - started, 2.5)
+        async def attempt() -> tuple[Any, bool]:
+            await engine(FakeAI([self.GOOD])).answer(
+                campaign(), "how does fireball work"
+            )  # warm up
+            empty = reply("The rules don't say.", "none")
+            fast = Slow([empty, self.GOOD])
+            fast.started, fast.release = asyncio.Event(), asyncio.Event()
+            try:
+                with patch.object(sidebar, "TOTAL_BUDGET_S", 2.5):
+                    got = await asyncio.wait_for(
+                        engine(fast).answer(campaign(), "how does fireball work"), 5
+                    )
+            finally:
+                fast.release.set()
+            return got, fast.started.is_set()
+
+        got, tried = run(attempt())
+        self.assertTrue(tried, "the repeat never started, so nothing was held")
         self.assertTrue(got.text)  # an answer, not a TOO_SLOW error
 
     def test_an_empty_careful_answer_leaves_the_quick_answer_alone(self) -> None:
