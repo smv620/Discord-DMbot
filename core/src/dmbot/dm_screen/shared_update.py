@@ -17,6 +17,8 @@ from typing import Any
 
 import discord
 
+from dmbot.discord_limits import MESSAGE_MAX
+
 log = logging.getLogger(__name__)
 
 HEADER = (
@@ -24,7 +26,7 @@ HEADER = (
 )
 ROWS_MAX = 4  # updates that get their own buttons; the rest are named, then handled in Settings
 OVERFLOW = "{n} without buttons here: open ⚙️ Settings → 📚 Shared rules."
-TEXT_MAX = 1900  # a Discord message holds 2000
+TEXT_MAX = MESSAGE_MAX - 100  # margin kept from before: room for the words a sender adds around it
 
 
 def numbered(label: str, tag: str) -> str:
