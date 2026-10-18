@@ -239,9 +239,13 @@ MESSAGE_MAX = (
 ELLIPSIS = "…"
 
 
+_MARKERS = re.compile(r"(?<!\\)(\*\*|`)")  # bold or a backtick that is not escaped with a backslash
+
+
 def _formatting_open(line: str) -> bool:
     """True when a line leaves bold or a backtick open: cutting there would break the rest."""
-    return line.count("**") % 2 == 1 or line.count("`") % 2 == 1
+    found = [m.group(1) for m in _MARKERS.finditer(line)]
+    return found.count("**") % 2 == 1 or found.count("`") % 2 == 1
 
 
 def fit_message(text: str, *, limit: int = MESSAGE_MAX) -> str:
@@ -250,7 +254,7 @@ def fit_message(text: str, *, limit: int = MESSAGE_MAX) -> str:
     A cut at a fixed character can land inside a word or a `**`, which breaks the formatting of
     everything after it, so the cut backs up to a line or a word, and a last line that would
     leave bold or a backtick open is dropped. The result is never over `limit` (counted in
-    characters). Only `**` and backticks are watched; an escaped one counts like any other.
+    characters). Only `**` and backticks are watched; one escaped with a backslash is not a marker.
     """
     if len(text) <= limit:
         return text
@@ -266,6 +270,6 @@ def fit_message(text: str, *, limit: int = MESSAGE_MAX) -> str:
         head = last[0]
         last = head.rsplit("\n", 1)
     while len(last) == 1 and _formatting_open(head):  # one line left: drop its last marker
-        i = max(head.rfind("**"), head.rfind("`"))
-        head = head[:i] + head[i + (2 if head.startswith("**", i) else 1) :]
+        marker = list(_MARKERS.finditer(head))[-1]
+        head = head[: marker.start()] + head[marker.end() :]
     return head.rstrip() + ELLIPSIS

@@ -12,6 +12,7 @@ import logging
 import discord
 
 from dmbot.campaigns import RULESETS, Campaign, CampaignError
+from dmbot.discord_limits import MESSAGE_MAX
 from dmbot.rules import optional
 from dmbot.ui import logic
 from dmbot.ui.dmbot_commands import (
@@ -29,7 +30,7 @@ from dmbot.ui.dmbot_commands import (
 
 log = logging.getLogger(__name__)
 
-TEXT_MAX = 1900  # under Discord's 2,000 characters
+TEXT_MAX = MESSAGE_MAX - 100  # margin kept from before: room for the words a sender adds around it
 GONE = "That campaign isn't here any more. Use `/dmbot optionalrules` to see the list again."
 NO_SCREEN_NOTE = (
     "DMbot couldn't post this to your DM screen. Make sure DMbot can still see that "

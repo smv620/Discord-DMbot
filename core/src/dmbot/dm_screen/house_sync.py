@@ -30,6 +30,7 @@ import discord
 
 from dmbot import fetch
 from dmbot.campaigns import Campaign
+from dmbot.discord_limits import MESSAGE_MAX
 from dmbot.rules import house_file, house_file_sync
 from dmbot.rules.house_file_sync import Applied, Item
 
@@ -37,7 +38,7 @@ log = logging.getLogger(__name__)
 
 NO_PINGS = discord.AllowedMentions.none()
 MAX_PENDING = 20
-TEXT_MAX = 1900
+TEXT_MAX = MESSAGE_MAX - 100  # margin kept from before: room for the words a sender adds around it
 READ_MAX_BYTES = 4 * house_file.MAX_FILE_CHARS  # as bytes: UTF-8 is up to 4 per character
 
 CLOSED = (

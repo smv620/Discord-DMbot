@@ -19,6 +19,7 @@ import discord
 from discord import app_commands
 
 from dmbot.campaigns import Campaign
+from dmbot.discord_limits import MESSAGE_MAX, fit_message
 from dmbot.memory.lookup import CampaignLookup
 from dmbot.memory.models import CONFIRMED, DM, PROPOSED, REJECTED, Entity, MemoryRuleError, name_key
 from dmbot.memory.scan import Match, near_match_in, sound_keys
@@ -47,7 +48,7 @@ if TYPE_CHECKING:
 log = logging.getLogger(__name__)
 
 SHOWN_PER_SECTION = 10
-PANEL_MAX = 1900  # under Discord's 2,000 characters
+PANEL_MAX = MESSAGE_MAX - 100  # margin kept from before: room for the words a sender adds around it
 SAME_AS_CHOICES = 25  # Discord's limit for a menu
 PC = "player_character"
 
@@ -235,7 +236,7 @@ def home_text(
     if shown:  # the menu below lists them
         lines.append(EDIT_HINT)
     text = "\n".join(lines)
-    return (text if len(text) <= PANEL_MAX else text[: PANEL_MAX - 1] + "…"), shown
+    return fit_message(text, limit=PANEL_MAX), shown
 
 
 class NamesHome(_Menu):

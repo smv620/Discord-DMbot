@@ -21,6 +21,7 @@ import discord
 
 from dmbot.campaigns import Campaign, CampaignError
 from dmbot.campaigns.models import RULEBOOK, fingerprint
+from dmbot.discord_limits import MESSAGE_MAX, fit_message
 from dmbot.dm_screen import pack_suggestion
 from dmbot.logs import set_log_context
 from dmbot.rules import homebrew_file
@@ -60,6 +61,7 @@ log = logging.getLogger(__name__)
 
 PACKS_LABEL = "📦 Homebrew packs"
 PAGE_ENTRIES = 25  # a menu holds 25 choices
+HOMEBREW_MAX = MESSAGE_MAX - 100  # margin kept from before: room for the words a sender adds
 UNDO_KEPT = 5  # removed entries that can be put back, per campaign
 UNDO_SHOWN = 1  # ...and the newest is the one button on the list
 
@@ -170,10 +172,12 @@ def _md(text: str) -> str:
 
 
 def _fit(text: str, limit: int) -> str:
+    """`fit_message`, plus one thing it doesn't know: the text is already escaped for Discord, so a
+    cut must not leave a lone backslash in front of the "…" (it would escape it)."""
     if len(text) <= limit:
         return text
-    cut = text[: limit - 1].rstrip()
-    if (len(cut) - len(cut.rstrip("\\"))) % 2:  # a lone backslash would escape the "…"
+    cut = fit_message(text, limit=limit)[:-1]
+    if (len(cut) - len(cut.rstrip("\\"))) % 2:
         cut = cut[:-1]
     return cut + "…"
 
@@ -203,7 +207,7 @@ def list_text(
     if kind is None:
         if entries:
             lines.append(PICK_A_KIND)
-        return _fit("\n".join(lines), 1900)
+        return _fit("\n".join(lines), HOMEBREW_MAX)
     entries = [e for e in entries if e.kind == kind]
     lines.append(f"**{KIND_PLURALS.get(kind, kind)}**")
     shown = entries[page * PAGE_ENTRIES : (page + 1) * PAGE_ENTRIES]
@@ -226,7 +230,7 @@ def list_text(
         lines.append(
             "_(waiting for the site) means DMbot skips it until you approve that site again._"
         )
-    return _fit("\n".join(lines), 1900)
+    return _fit("\n".join(lines), HOMEBREW_MAX)
 
 
 def entry_text(entry: Homebrew, note: str = "") -> str:
@@ -234,9 +238,9 @@ def entry_text(entry: Homebrew, note: str = "") -> str:
     credit = credit_label(entry)
     by = f" _{_md(credit)}_" if credit else ""
     head = f"📚 **{_md(entry.name)}** ({entry.kind.capitalize()}).{by}{off}"
-    body = _fit(_md(entry.text), 1500)
+    body = _fit(_md(entry.text), HOMEBREW_MAX - 400)
     summary = f"\n_Shown in alerts as:_ {_md(entry.shown())}" if entry.summary else ""
-    return _fit((f"{note}\n" if note else "") + f"{head}\n{body}{summary}", 1900)
+    return _fit((f"{note}\n" if note else "") + f"{head}\n{body}{summary}", HOMEBREW_MAX)
 
 
 async def _is_dm(interaction: discord.Interaction, campaign: Campaign) -> bool:
@@ -743,7 +747,7 @@ def update_preview_text(fresh: Refresh) -> str:
         lines.append(_md(shown))
         if preview.truncated:
             lines.append("_The page was longer than DMbot keeps, so the end was cut._")
-    return _fit("\n".join(lines), 1900)
+    return _fit("\n".join(lines), HOMEBREW_MAX)
 
 
 def suggest_text(entry: Homebrew, pack_name: str) -> str:
@@ -1033,7 +1037,7 @@ def preview_text(
         if len(parsed.problems) > 5:
             lines.append("• …and more.")
     lines.append(FROM_BOOK_ASK)
-    return _fit("\n".join(lines), 1900)
+    return _fit("\n".join(lines), HOMEBREW_MAX)
 
 
 class LoadForm(discord.ui.Modal, title="Load homebrew"):
@@ -1269,7 +1273,7 @@ def link_preview_text(preview: Preview) -> str:
     if preview.truncated:
         lines.append("_The page was longer than DMbot keeps, so the end was cut._")
     lines.append("Not saved yet. Press **Save** to add it to your homebrew.")
-    return _fit("\n".join(lines), 1900)
+    return _fit("\n".join(lines), HOMEBREW_MAX)
 
 
 class RightToUseLink(_Menu):
