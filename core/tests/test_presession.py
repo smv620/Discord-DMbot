@@ -18,9 +18,10 @@ from dmbot.memory.claims import ClaimStore, Extracted
 from dmbot.memory.models import DEAD, Heard
 from dmbot.memory.presession import Due, Facts, Note, PreSession, compose
 from dmbot.memory.recall import RecallService
+from tests import test_recall
 from tests.test_config import BASE
 from tests.test_memory_store import GUILD_A, MemoryTest
-from tests.test_recall import AGREED, S1, S2, Speed
+from tests.test_recall import AGREED, S1, S2
 
 LATER = S2 + 10 * 86400
 
@@ -480,7 +481,9 @@ class Selecting(MemoryTest):
         assert got is not None
 
 
-class FastEnough(Speed):
+# (The module, not the class, is imported: a TestCase imported by name is collected here too,
+# and the recall's speed test would run twice in every job, #1897.)
+class FastEnough(test_recall.Speed):
     """The note on the recall test's big campaign (3,000 entries, 10,000 facts): under 100 ms
     on the best of seven in CI (the goal is 50 ms, measured on the server)."""
 
@@ -488,7 +491,7 @@ class FastEnough(Speed):
         self.skipTest("the recall's own speed test runs in test_recall")
 
     async def test_the_note_on_a_big_campaign_is_fast(self) -> None:
-        await Speed.build(self)
+        await test_recall.Speed.build(self)
         async with self.db.guild(GUILD_A) as conn:  # a last session to start from
             await conn.execute(
                 "INSERT INTO memory_heard (guild_id, campaign_id, entity_id, session_started_at,"

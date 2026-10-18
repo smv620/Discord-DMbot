@@ -11,7 +11,7 @@ from __future__ import annotations
 import unittest
 from types import SimpleNamespace
 from typing import Any, cast
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 from dmbot.audio.segmenter import _MAX_BYTES, Segmenter
 from dmbot.bot import DMBot
@@ -136,3 +136,60 @@ class AFixIsNotKeptForSomeoneWhoStopped(unittest.IsolatedAsyncioTestCase):
             cast(Any, self.interaction), GUILD, "c", "5", self.line, "Hello there"
         )
         self.stored.assert_called_once()
+
+
+class CombatSaidAloud(unittest.IsolatedAsyncioTestCase):
+    """`_combat_phrase_changes`: "next round" said by the DM moves the fight only while the DM is
+    still recorded and the session is still running, after the campaign look-up (an await)."""
+
+    DM = AGREED
+
+    def setup_bot(self, agreed: Agreed) -> tuple[Any, Any, Any]:
+        table = SimpleNamespace(guild_id=GUILD, campaign_id="c" * 32, listening=True)
+        campaign = SimpleNamespace(
+            guild_id=GUILD, id="c" * 32, dm_user_ids=frozenset({self.DM}), name="Alpha"
+        )
+        fake = SimpleNamespace(
+            tables={GUILD: table},
+            consent=agreed,
+            campaigns=SimpleNamespace(get=AsyncMock(return_value=campaign)),
+            _split_holds_phrase=AsyncMock(return_value=False),
+        )
+        return fake, table, campaign
+
+    async def changes(self, fake: Any, table: Any) -> tuple[bool, AsyncMock]:
+        from dmbot.timebot import combat_phrases
+
+        press = AsyncMock(side_effect=RuntimeError("stop here: the combat state was reached"))
+        with patch("dmbot.bot.clock_screen.press", press):
+            changed = await DMBot._combat_phrase_changes(
+                fake, table, self.DM, "next round", combat_phrases.CombatSaid("next"), 0.0
+            )
+        return changed, press
+
+    async def test_a_dm_who_stopped_does_not_move_the_fight(self) -> None:
+        fake, table, _ = self.setup_bot(Agreed())  # no one agreed (or the DM pressed Stop)
+        changed, press = await self.changes(fake, table)
+        self.assertFalse(changed)
+        press.assert_not_awaited()
+
+    async def test_a_session_that_ended_does_not_move_the_fight(self) -> None:
+        fake, table, _ = self.setup_bot(Agreed(self.DM))
+        fake.tables = {}
+        changed, press = await self.changes(fake, table)
+        self.assertFalse(changed)
+        press.assert_not_awaited()
+
+    async def test_a_paused_session_does_not_move_the_fight(self) -> None:
+        fake, table, _ = self.setup_bot(Agreed(self.DM))
+        table.listening = False
+        changed, press = await self.changes(fake, table)
+        self.assertFalse(changed)
+        press.assert_not_awaited()
+
+    async def test_the_same_phrase_from_a_recorded_dm_reaches_the_clock(self) -> None:
+        fake, table, _ = self.setup_bot(Agreed(self.DM))
+        with self.assertLogs("dmbot.bot", "ERROR"):
+            changed, press = await self.changes(fake, table)
+        self.assertFalse(changed)  # (the stand-in press fails: the point is that it was reached)
+        press.assert_awaited_once()
