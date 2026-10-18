@@ -264,10 +264,22 @@ Sleep = Callable[[float], Awaitable[None]]
 _LOADS_PER_ASK = 3
 _clock = time.monotonic  # tests move it on
 FAIL_LOG_S = 60.0  # a load that keeps failing (database away) is logged once a minute
+# A copy nobody has asked for in this long, for a campaign with no table running, is dropped
+# (#1883). 30 minutes: well past a break in a session or a DM tidying names between sessions (a
+# copy is rebuilt in well under a second for a normal campaign, so being dropped early costs a
+# little time, not correctness), yet short enough that a bot serving searches for hundreds of
+# campaigns keeps only the recently used ones.
+IDLE_EVICT_S = 30 * 60.0
+# How often the idle sweep may run. It walks every copy, so it is done at most once a minute.
+SWEEP_EVERY_S = 60.0
 
 
 class NamesKeepChanging(RuntimeError):
     """The names changed during every load: no copy known to be current."""
+
+
+def _never_in_use(guild_id: int, campaign_id: str) -> bool:
+    return False
 
 
 @dataclass(slots=True)
@@ -275,6 +287,8 @@ class _Slot:
     lookup: CampaignLookup | None = None
     stale: bool = True
     lock: asyncio.Lock = field(default_factory=asyncio.Lock)
+    # When this copy was last handed out (`_clock`), for the idle sweep (#1883).
+    used_at: float = field(default_factory=lambda: _clock())
 
     def current(self) -> CampaignLookup | None:
         """The copy if it's current, with no reload under way: while one is, the old copy
@@ -289,9 +303,19 @@ class LookupCache:
     changes.
     """
 
-    def __init__(self, source: LookupSource, *, sleep: Sleep = asyncio.sleep) -> None:
+    def __init__(
+        self,
+        source: LookupSource,
+        *,
+        sleep: Sleep = asyncio.sleep,
+        in_use: Callable[[int, str], bool] = _never_in_use,
+    ) -> None:
         self._source = source
         self._sleep = sleep
+        # True while the campaign has a table running (the bot passes it): such a copy is kept
+        # however long it has sat unused, because the next clip asks for it at once.
+        self._in_use = in_use
+        self._swept_at = _clock()
         self._slots: dict[tuple[int, str], _Slot] = {}
         # Loads that carry on after whoever asked stopped waiting (`get_within`).
         self._loading: dict[tuple[int, str], asyncio.Task[CampaignLookup]] = {}
@@ -299,7 +323,9 @@ class LookupCache:
 
     async def get(self, guild_id: int, campaign_id: str) -> CampaignLookup:
         """The campaign's lookup, loading it first if it's missing or out of date."""
+        self._sweep()
         slot = self._slots.setdefault((guild_id, campaign_id), _Slot())
+        slot.used_at = _clock()
         if (ready := slot.current()) is not None:
             return ready
         asked = time.perf_counter()
@@ -337,6 +363,7 @@ class LookupCache:
                 )
             if slot.lookup is None or slot.stale:
                 raise NamesKeepChanging(f"names changed during {_LOADS_PER_ASK} loads")
+            slot.used_at = _clock()
             return slot.lookup
 
     async def get_within(
@@ -346,9 +373,11 @@ class LookupCache:
         load failed: that's logged once, here). The load carries on either way, so the
         next ask finds it ready: for type-ahead, which must answer Discord within 3
         seconds and can't say "loading" (#581)."""
+        self._sweep()
         key = (guild_id, campaign_id)
         slot = self._slots.get(key)
         if slot is not None and (ready := slot.current()) is not None:
+            slot.used_at = _clock()
             return ready
         task = self._loading.get(key)
         if task is None:
@@ -369,7 +398,41 @@ class LookupCache:
         # From the slot, not the load's result: a change may have landed between the load
         # finishing and this waiter resuming (a name the DM just made secret).
         slot = self._slots.get(key)
-        return slot.current() if slot is not None else None
+        if slot is None:
+            return None
+        slot.used_at = _clock()
+        return slot.current()
+
+    def _sweep(self) -> None:
+        """Drop copies nobody has used for `IDLE_EVICT_S` whose campaign has no table running
+        (#1883). Run from `get` and `get_within`, at most once a `SWEEP_EVERY_S`, not from
+        `follow`: a copy only ever appears through those two, so sweeping where they are called
+        bounds the memory exactly as often as it can grow, needs no timer of its own, and works
+        in a cache nobody runs `follow` for. A copy being loaded or reloaded (its lock is held,
+        or a `get_within` load is still going) is never dropped. An evicted campaign is simply
+        loaded again on its next `get`, as on first use."""
+        now = _clock()
+        if now - self._swept_at < SWEEP_EVERY_S:
+            return
+        self._swept_at = now
+        for key, slot in list(self._slots.items()):
+            if (
+                now - slot.used_at >= IDLE_EVICT_S
+                and not slot.lock.locked()
+                and key not in self._loading
+                and not self._is_in_use(key)
+            ):
+                del self._slots[key]
+                self._failed_at.pop(key, None)  # as in `drop`: a later load starts afresh
+
+    def _is_in_use(self, key: tuple[int, str]) -> bool:
+        """Ask the bot whether the campaign has a table. If that raises, say it is in use: a
+        sweep must never break a names lookup, and keeping a copy is the safe answer."""
+        try:
+            return self._in_use(*key)
+        except Exception:
+            log.exception("Couldn't tell whether campaign %s is in use; keeping its names", key[1])
+            return True
 
     def _loaded(self, key: tuple[int, str], task: asyncio.Task[CampaignLookup]) -> None:
         if self._loading.get(key) is task:
