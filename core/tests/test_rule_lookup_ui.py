@@ -675,9 +675,14 @@ class FeatureLookup(LookupTest):
     async def test_every_name_in_the_list_leads_back_to_its_own_entry(self) -> None:
         srd = index.srd()
         it = self.it(kind=discord.InteractionType.autocomplete)
+        newer = {
+            e.details["class"] for e in srd.entries if e.kind == "feature" and e.edition == "2024"
+        }
         for e in srd.entries:
             if e.kind != "feature":
                 continue
+            if e.edition == "2014" and e.details["class"] in newer:
+                continue  # never offered while the newer version of that class is the target
             value = ui._choice_value(srd, e)
             found = ui._features(srd, value, "2024", "2014")
             with self.subTest(value=value):
