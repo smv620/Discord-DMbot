@@ -129,17 +129,22 @@ async def _homebrew(
 
 
 def _asked_for(srd: index.Index, typed: str, target: str, fallback: str) -> index.Hit | None:
-    """The glossary entry, else the class feature, else the magic item, with this name. A
-    feature several classes share ("evasion") gives the first class's; typing the class first
-    ("rogue evasion") picks that class, and a level after it ("barbarian improved brutal strike
-    17") picks the one of that level: which is how the name list words them."""
+    """The glossary entry, else the class feature, the magic item, the feat, the species or the
+    background, with this name. A feature several classes share ("evasion") gives the first
+    class's; typing the class first ("rogue evasion") picks that class, and a level after it
+    ("barbarian improved brutal strike 17") picks the one of that level: which is how the name
+    list words them."""
     hit = srd.lookup(typed, target, fallback, kind=index.RULE)
     if hit is not None:
         return hit
     found = _features(srd, typed, target, fallback)
     if found:
         return found[0]
-    return srd.lookup(typed, target, fallback, kind=index.ITEM)
+    for kind in (index.ITEM, *index.ORIGIN_KINDS):
+        hit = srd.lookup(typed, target, fallback, kind=kind)
+        if hit is not None:
+            return hit
+    return None
 
 
 def _features(srd: index.Index, typed: str, target: str, fallback: str) -> list[index.Hit]:
@@ -444,7 +449,7 @@ async def _typeahead(
             current,
             target,
             fallback,
-            kinds=(index.RULE, index.FEATURE, index.ITEM),
+            kinds=(index.RULE, index.FEATURE, index.ITEM, *index.ORIGIN_KINDS),
             limit=NAMES_MORE,
         )
     return [

@@ -30,9 +30,11 @@ FILES = ("ATTRIBUTION.md", "conditions.json", "features.json", "monsters.json", 
 FILES_52 = (
     "ATTRIBUTION.md",
     "conditions.json",
+    "feats.json",
     "features.json",
     "items.json",
     "monsters.json",
+    "origins.json",
     "rules.json",
     "spells.json",
 )
@@ -327,6 +329,40 @@ class ClassFeatures(unittest.TestCase):
         found = srd.lookup("bag of holding", "2024", "2014", kind="item")
         assert found is not None
         self.assertEqual(found.entry.citation, "SRD 5.2.1, Magic Items, p. 212")
+
+    def test_the_shipped_feats_species_and_backgrounds_are_complete(self) -> None:
+        def of(kind: str) -> list[Entry]:
+            return [e for e in index.srd().entries if e.kind == kind]
+
+        self.assertEqual((len(of("feat")), len(of("species")), len(of("background"))), (17, 9, 4))
+        for e in [*of("feat"), *of("species"), *of("background")]:
+            with self.subTest(e.name):
+                self.assertTrue(e.text and e.edition == "2024")
+        srd = index.srd()
+        # none of the three is a name to spot in talk, suggest or complete
+        pool = srd.names_pool("2024", "2014").values()
+        self.assertFalse(any(e.kind in ("feat", "species", "background") for e in pool))
+        self.assertIsNone(srd.lookup("Alert", "2024", "2014"))
+        self.assertEqual([e.name for e in srd.typeahead("aler", "2024", "2014")], [])
+
+    def test_golden_feats_species_and_backgrounds(self) -> None:
+        def get(name: str, kind: str) -> Entry:
+            hit = index.srd().lookup(name, "2024", "2014", kind=kind)
+            assert hit is not None, name
+            return hit.entry
+
+        self.assertEqual(get("Alert", "feat").details["category"], "Origin")
+        grappler = get("Grappler", "feat")
+        self.assertEqual(grappler.details["prerequisite"], "Level 4+, Strength or Dexterity 13+")
+        self.assertEqual(get("Goliath", "species").details["speed"], "35 feet")
+        sage = get("Sage", "background")
+        self.assertEqual(sage.details["feat"], "Magic Initiate (Wizard)")
+        self.assertEqual(sage.details["skills"], "Arcana and History")
+        self.assertEqual(sage.citation, "SRD 5.2.1, Character Origins, p. 83")
+        self.assertEqual(get("Alert", "feat").citation, "SRD 5.2.1, Feats, p. 87")
+        for background in (e for e in index.srd().entries if e.kind == "background"):
+            feat = index.srd().lookup(background.details["feat"], "2024", "2014", kind="feat")
+            self.assertIsNotNone(feat, background.name)  # the feat each background gives exists
 
     def test_every_shipped_rarity_is_one_the_srd_prints(self) -> None:
         from dmbot.devtools.srd import items as reader

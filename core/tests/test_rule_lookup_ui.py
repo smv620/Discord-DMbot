@@ -260,8 +260,8 @@ class Command(LookupTest):
         self.assertIn("📖 **Goblin** (creature)", text)  # the 2014 creature, not the Warrior
         self.assertIn("[Legacy 2014]", text)
         self.campaigns[C1] = campaign(target="2024", fallback="none")
-        it = await self.command("Orc")
-        self.assertIn("couldn't find **Orc**", self.sent(it)[0])  # no fallback to read
+        it = await self.command("Duergar")
+        self.assertIn("couldn't find **Duergar**", self.sent(it)[0])  # no fallback to read
 
     async def test_an_older_name_says_what_it_is_now(self) -> None:
         it = await self.command("Goblin")
@@ -686,6 +686,25 @@ class FeatureLookup(LookupTest):
         self.assertEqual(
             ammo.name, "Ammunition, +1, +2, or +3 (item: Weapon, uncommon to very rare)"
         )
+
+    async def test_feats_species_and_backgrounds_are_found_and_the_list_says_which(self) -> None:
+        it = self.it(kind=discord.InteractionType.autocomplete)
+        labels = {
+            typed: [c.name for c in await ui._typeahead(it, typed)]
+            for typed in ("alert", "goliath", "sage")
+        }
+        self.assertEqual(labels["alert"][0], "Alert (feat: Origin)")  # and the Rod of Alertness
+        self.assertEqual(labels["goliath"], ["Goliath (species)"])
+        self.assertEqual(labels["sage"], ["Sage (background)"])
+        feat = self.sent(await self.command("alert"))[0]
+        self.assertIn("📖 **Alert** (feat: Origin)", feat)
+        self.assertIn("SRD 5.2.1, Feats, p. 87", feat)
+        goliath = self.sent(await self.command("goliath"))[0]
+        self.assertIn("Speed: 35 feet", goliath)
+        grappler = self.sent(await self.command("grappler"))[0]
+        self.assertIn("Prerequisite: Level 4+, Strength or Dexterity 13+", grappler)
+        sage = self.sent(await self.command("sage"))[0]
+        self.assertIn("Feat: Magic Initiate (Wizard)", sage)
 
     async def test_an_item_is_found_by_its_other_name_and_a_spell_of_the_same_name_wins(
         self,

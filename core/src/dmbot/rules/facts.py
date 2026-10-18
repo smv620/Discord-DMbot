@@ -129,6 +129,11 @@ def pairs(entry: Entry, *, card: bool = False) -> list[tuple[str, str]]:
         if card:  # the card's heading already says "(item: Wondrous Item, uncommon)"
             return []
         found = [("", item_line(entry))]
+    elif entry.kind == "feat":  # the card's heading already says "(feat: Origin)"
+        found = [] if card else [("", f"{d.get('category', '')} feat")]
+        found.append(("Prerequisite", str(d.get("prerequisite", ""))))
+    elif entry.kind == "species":
+        found = [("", f"Size: {d.get('size', '')}"), ("", f"Speed: {d.get('speed', '')}")]
     else:
         return []
     return [(label, value) for label, value in found if value]
@@ -148,7 +153,7 @@ def card_parts(entry: Entry) -> list[str]:
     ]
 
 
-_CARD_COLONS = frozenset({"Casting time", "Range", "Components", "Duration"})
+_CARD_COLONS = frozenset({"Casting time", "Range", "Components", "Duration", "Prerequisite"})
 
 
 def full_text(entry: Entry) -> str:
