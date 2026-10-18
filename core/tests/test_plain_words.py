@@ -54,6 +54,12 @@ ALLOWED: list[tuple[str, str, str]] = [
     ),
     ("recaps/audio/eleven.py", "json", "an HTTP header value, sent by the bot, never shown"),
     (
+        "features.py",
+        "model",
+        'NOT_A_SWITCH\'s note on why a setting is not listed ("which voice model, a choice"): a '
+        "reason for the developer who reads that table, never put in a message to a person",
+    ),
+    (
         "recaps/draft.py",
         "prompt",
         "the problems listed back to the AI so it can redo a draft ('give one music prompt for "
