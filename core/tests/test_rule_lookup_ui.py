@@ -853,6 +853,34 @@ class FeatureLookup(LookupTest):
         prop = self.sent(await self.command("Reach (Weapon Property)"))[0]
         self.assertIn("A Reach weapon adds 5 feet", prop)
 
+    async def test_a_race_only_the_2014_rules_have_is_found_and_tagged(self) -> None:
+        text = self.sent(await self.command("Half-Orc"))[0]
+        self.assertIn("📖 **Half-Orc** (species)", text)
+        self.assertIn("SRD 5.1, Races, p. 7 [Legacy 2014]", text)
+        self.assertIn("Relentless Endurance.", text)
+        dwarf = self.sent(await self.command("Dwarf (species)"))[0]
+        self.assertIn("SRD 5.2.1", dwarf)  # a 2024 campaign: the 2024 species alone
+        self.assertNotIn("Hill Dwarf", dwarf)
+
+    async def test_a_2014_campaign_reads_its_own_race_background_and_feat_first(self) -> None:
+        self.campaigns[C1] = campaign(target="2014", fallback="2024")
+        dwarf = self.sent(await self.command("Dwarf (species)"))[0]
+        self.assertIn("SRD 5.1, Races, p. 3 [Legacy 2014]", dwarf)
+        it = self.it(kind=discord.InteractionType.autocomplete)
+        values = {c.name: c.value for c in await ui._typeahead(it, "acolyte")}
+        self.assertIn("Acolyte (background) [Legacy 2014]", values)  # the 2014 one first
+        self.assertIn("Acolyte (creature) [Legacy 2014]", values)
+        for label, kind in (
+            ("Acolyte (background) [Legacy 2014]", "(background"),
+            ("Acolyte (creature) [Legacy 2014]", "(creature"),
+        ):
+            text = self.sent(await self.command(values[label]))[0]
+            self.assertIn(kind, text.splitlines()[0], label)
+        grappler = self.sent(await self.command("Grappler"))[0]
+        self.assertIn("📖 **Grappler** (feat)", grappler)  # (no category to say)
+        self.assertNotIn("(feat: )", grappler)
+        self.assertIn("Strength 13 or higher", grappler)
+
     async def test_an_item_is_found_by_its_other_name_and_a_spell_of_the_same_name_wins(
         self,
     ) -> None:

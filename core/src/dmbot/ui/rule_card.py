@@ -233,6 +233,7 @@ def header(
         kind = f"{kind}: {_md(equipment_place(entry))}"
     elif (
         entry.kind in (index.FEAT, index.WEAPON, index.ARMOR)
+        and entry.details.get("category")  # (the 2014 Grappler has none)
         and entry.details.get("category") != entry.name
     ):  # "(feat: Origin)", "(weapon: Martial Melee)"
         kind = f"{kind}: {_md(str(entry.details.get('category', '')))}"
@@ -496,6 +497,7 @@ def choice_label(entry: Entry) -> str:
         kind = f"{kind}: {equipment_place(entry)}"
     elif (
         entry.kind in (index.FEAT, index.WEAPON, index.ARMOR)
+        and entry.details.get("category")  # (the 2014 Grappler has none)
         and entry.details.get("category") != entry.name  # (a Shield is not "armor: Shield")
     ):  # "Longsword (weapon: Martial Melee)"
         kind = f"{kind}: {entry.details.get('category', '')}"
