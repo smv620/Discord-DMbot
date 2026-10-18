@@ -21,7 +21,8 @@ DISCORD_MAX_BUTTONS = 25
 
 
 def _labels(view: discord.ui.View) -> list[str]:
-    return [str(getattr(i, "label", None) or getattr(i, "item", i).label) for i in view.children]
+    items: list[Any] = list(view.children)  # (a DynamicItem wraps its button in .item)
+    return [str(getattr(i, "label", None) or i.item.label) for i in items]
 
 
 def _has_names(view: discord.ui.View) -> bool:
