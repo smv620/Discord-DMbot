@@ -139,7 +139,9 @@ class Order(unittest.TestCase):
         self.assertEqual(hit.entry, self.new)  # not the 2014 entry of the same name
         self.assertEqual(hit.tag, "")
         self.assertTrue(hit.renamed)
-        self.assertFalse(self.index.lookup("Acid Arrow", "2024", "2014").renamed)
+        plain = self.index.lookup("Acid Arrow", "2024", "2014")
+        assert plain is not None
+        self.assertFalse(plain.renamed)
 
     def test_the_fallback_is_used_only_when_the_target_has_nothing_and_is_tagged(self) -> None:
         hit = self.index.lookup("Sleet Storm", "2024", "2014")
