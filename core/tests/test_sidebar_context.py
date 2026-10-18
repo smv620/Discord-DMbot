@@ -159,6 +159,18 @@ class TheRulesGlossary(unittest.TestCase):
         self.assertLess(prompt.index("HOUSE RULES"), prompt.index("RULES ENTRIES"))
         self.assertIn("- Cover (rule) [SRD 5.2.1 p. 179]:", prompt)
 
+    def test_a_glossary_word_does_not_make_a_dmbot_question_a_rules_question(self) -> None:
+        prompt = context.build(
+            "can you track initiative?",
+            target="2024",
+            fallback="2014",
+            index=INDEX,
+            house_rules=[],
+            lookup=None,
+            scene="",
+        ).prompt
+        self.assertIn("ABOUT DMBOT", prompt)
+
     def test_the_glossary_adds_at_most_three_entries(self) -> None:
         found = self.hits("explain cover, dash, long rest and short rest")
         self.assertEqual(

@@ -452,7 +452,10 @@ def build(
     # Ranked against DMbot's own documents for every question, not gated by a word pattern: a
     # question worded another way still finds its section, and a game question finds nothing
     # (#1195). The short digest always comes with it.
-    rules_named = bool(hits)  # a question naming a rules entry is a rules question
+    # A question naming a spell, condition or creature is a rules question. A glossary word
+    # ("Initiative", "Spell") does not make it one: "can you track initiative?" is still a
+    # question about DMbot (#1884).
+    rules_named = any(h.entry.kind != RULE for h in hits)
     docs = knowledge.retrieve(question, rules_named=rules_named)
     about_link = None
     if docs or knowledge.opens_gate(question, rules_named=rules_named):
