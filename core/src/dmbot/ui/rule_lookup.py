@@ -234,7 +234,7 @@ async def look_up(
             kind=index.FEATURE,
         )
         also = [
-            str(h.entry.details["class"])
+            f"{h.entry.details['class']}{' ' + h.tag if h.tag else ''}"  # an older one is tagged
             for h in same
             if h.entry.details.get("class") != hit.entry.details.get("class")
         ]
