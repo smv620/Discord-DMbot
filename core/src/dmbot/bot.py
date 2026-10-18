@@ -28,6 +28,7 @@ from discord import app_commands
 from discord.ext import commands
 
 from dmbot import (
+    alerts,
     campaign_cap,
     entitlements,
     features,
@@ -77,7 +78,7 @@ from dmbot.consent_dm import (
     warning_view,
 )
 from dmbot.consent_site import SiteStops
-from dmbot.db import Database
+from dmbot.db import Database, DatabaseError
 from dmbot.discord_limits import tree_problems
 from dmbot.dm_screen import (
     DMScreenError,
@@ -960,6 +961,9 @@ class DMBot(commands.AutoShardedBot):
             if user_id is not None and user_id not in admins.values():  # the same person twice
                 admins[role] = user_id
         self.ai_watch = AIWatch(admins=admins, state_dir=settings.data_dir, send=self._tell_admin)
+        # Owner alerts (#1907): email first; a private message is the way when mail is what broke.
+        if (alerter := alerts.current()) is not None:
+            alerter.set_tell_owner(self._tell_app_owner)
         # One AI client for every job (#1006); each job holds the client for its own tier
         # (dmbot.ai.FEATURE_TIERS), so no job names a model. None when no key is set.
         if settings.ai_model_notice:
@@ -2581,6 +2585,13 @@ class DMBot(commands.AutoShardedBot):
         the watch tries again later and doesn't count it as told."""
         user = self.get_user(user_id) or await self.fetch_user(user_id)
         await user.send(text, allowed_mentions=discord.AllowedMentions.none())
+
+    async def _tell_app_owner(self, text: str) -> None:
+        """A private message to whoever owns the Discord application (a team's owner for a
+        team app). Raises if it can't be sent; the alerter logs that."""
+        info = await self.application_info()
+        owner = info.team.owner if info.team is not None and info.team.owner else info.owner
+        await owner.send(text, allowed_mentions=discord.AllowedMentions.none())
 
     def session_lock(self, guild_id: int) -> asyncio.Lock:
         """Held while a session starts or stops, or a campaign is replaced, per server."""
@@ -9042,7 +9053,14 @@ def _attachable(
 
 async def run(settings: Settings) -> None:
     entitlements.configure_free_users(settings.free_users)  # #771
-    db = await Database.open(settings.database_url, max_size=settings.database_pool_max)
+    alerter = alerts.Alerter(settings.mail)
+    alerts.install(alerter)
+    alerter.say_if_off()
+    try:
+        db = await Database.open(settings.database_url, max_size=settings.database_pool_max)
+    except DatabaseError:
+        await alerter.alert(alerts.Problem.DATABASE_DOWN)  # before the exit, so it is sent
+        raise
     try:
         await definitions.seed(db)  # the official relationships, by version (#1189)
         transcriber = build_transcriber(settings.transcription)

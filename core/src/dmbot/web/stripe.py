@@ -48,6 +48,7 @@ from urllib.parse import urlencode, urlsplit
 
 import aiohttp
 
+from dmbot.alerts import Problem, raise_alert
 from dmbot.plans import Plan
 from dmbot.web.payments import EventKind, PaymentError, PaymentEvent
 
@@ -162,6 +163,8 @@ class HttpTransport:
                     parsed = await response.json(content_type=None)
                 except ValueError:
                     parsed = None
+                if response.status == 401:  # Stripe's answer to a key it doesn't accept
+                    raise_alert(Problem.STRIPE_KEY_REFUSED)
                 return response.status, parsed
         except (aiohttp.ClientError, TimeoutError) as exc:
             raise PaymentError(f"Couldn't reach Stripe ({type(exc).__name__})") from exc

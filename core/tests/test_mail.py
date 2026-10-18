@@ -149,7 +149,7 @@ class Sending(DatabaseTest):
         return int((row or {})["n"])
 
     async def test_the_daily_cap_stops_the_flood(self) -> None:
-        made, _ = self.mailer(MAIL_DAILY_CAP=2)
+        made, _ = self.mailer(MAIL_DAILY_CAP=7)  # 7 less the 5 kept for alerts: 2 for other mail
         results = [await self.send(made, f"k{i}") for i in range(3)]
         self.assertEqual(results, ["sent", "sent", "capped"])
         self.assertEqual(await self.count_today(), 2)
@@ -242,7 +242,7 @@ class Sending(DatabaseTest):
     async def test_offers_stop_at_three_quarters_of_the_cap_so_account_emails_have_room(
         self,
     ) -> None:
-        made, _ = self.mailer(MAIL_DAILY_CAP=4)  # offers stop at 3
+        made, _ = self.mailer(MAIL_DAILY_CAP=9)  # less the 5 kept for alerts: 4; offers stop at 3
         results = [await self.send(made, f"offer{i}", offer=True, user=USER + i) for i in range(4)]
         self.assertEqual(results, ["sent", "sent", "sent", "capped"])
         self.assertEqual(await self.send(made, "sign-in:1"), "sent")  # the 4th slot is theirs
