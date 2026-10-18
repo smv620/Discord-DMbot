@@ -35,6 +35,14 @@ BACKGROUND_LABELS = (
     "Tool Proficiency",
     "Equipment",
 )
+# The tables inside the species that are left out, by the species the trait text sends the reader
+# from, and the line each of those species ends with so the reader and the AI know (a lineage's
+# speed or spell is in its table). Another table in the chapter stops the tool: it would be lost.
+SPECIES_TABLES = {
+    "Dragonborn": "Draconic Ancestors",
+    "Elf": "Elven Lineages",
+    "Tiefling": "Fiendish Legacies",
+}
 SEE_FEATS = re.compile(r"\s*\(see “Feats”\)$")  # the pointer after a background's feat
 
 
@@ -110,6 +118,19 @@ def _starts(lines: Sequence[Line], i: int, labels: Sequence[str]) -> bool:
 SECTION_HEADINGS = ("Background Descriptions", "Species Descriptions")  # no text of their own
 
 
+def join_column_breaks(text: str) -> str:
+    """A paragraph that carries on at the top of the next column starts with an indent, which
+    reads as a new paragraph: join a line to the one before it when that one stops mid-sentence
+    (no closing punctuation) and this one starts in lower case."""
+    out: list[str] = []
+    for line in text.split("\n"):
+        if out and line[:1].islower() and not out[-1].endswith((".", "!", "?", ":", ")", "”", '"')):
+            out[-1] += " " + line
+        else:
+            out.append(line)
+    return "\n".join(out)
+
+
 def without_section_headings(lines: Sequence[Line]) -> list[Line]:
     """The lines without the two headings that only introduce the entries below them (they sit
     close enough above the first entry's name to be read as part of it)."""
@@ -163,6 +184,7 @@ def parse_species(lines: Sequence[Line]) -> list[Species]:
     i = 0
     while i < len(lines) and not _starts(lines, i, SPECIES_LABELS):
         i += 1  # the chapter's introduction, and the backgrounds
+    _only_the_known_tables(lines[i:])
     while i < len(lines):
         name, j = _name_of(lines, i, SPECIES_LABELS)
         parts, k = _labelled(lines, j, SPECIES_LABELS, f"Species {name!r}", mender)
@@ -172,9 +194,11 @@ def parse_species(lines: Sequence[Line]) -> list[Species]:
         end = _block_end(lines, k, SPECIES_LABELS)
         _no_lost_headings(lines[k:end], f"Species {name!r}")
         body = [ln for ln in lines[k:end] if ln.first_font.startswith("Cambria")]
-        text = _paragraphs(body, mender)
+        text = join_column_breaks(_paragraphs(body, mender))
         if not text:
             raise SrdError(f"Species {name!r} on page {lines[i].page}: no traits")
+        if name in SPECIES_TABLES:
+            text += f"\n(The {SPECIES_TABLES[name]} table is not included here.)"
         if name in seen:
             raise SrdError(f"Species {name!r} comes twice (page {lines[i].page})")
         seen.add(name)
@@ -186,6 +210,27 @@ def parse_species(lines: Sequence[Line]) -> list[Species]:
         )  # fmt: skip
         i = end
     return out
+
+
+def _only_the_known_tables(lines: Sequence[Line]) -> None:
+    """The captions of the tables in the species (a title with sans lines under it) must be
+    exactly the ones in SPECIES_TABLES: a table that isn't named there would be lost without a
+    word, and a named one that isn't found means the note above would be false."""
+    found: list[str] = []
+    for i, line in enumerate(lines):
+        if not (is_title(line) and _at_an_edge(line)) or _is_label(line, SPECIES_LABELS):
+            continue
+        if _starts(lines, i, SPECIES_LABELS):
+            continue
+        if i > 0 and is_title(lines[i - 1]) and 0 < lines[i - 1].y - line.y <= SAME_HEADING:
+            continue
+        _, j = _name_of(lines, i, SPECIES_LABELS)
+        if j < len(lines) and not lines[j].first_font.startswith("Cambria"):
+            found.append(_clean(line.text))
+    if sorted(found) != sorted(SPECIES_TABLES.values()):
+        raise SrdError(
+            f"The tables in the species are {sorted(found)}, not {sorted(SPECIES_TABLES.values())}"
+        )
 
 
 def _no_lost_headings(
@@ -279,7 +324,9 @@ def parse_feats(lines: Sequence[Line]) -> list[Feat]:
             _no_lost_headings(lines[end : end + 1], f"Feat {name!r}", lines, end)
             end += 1
         body = [ln for ln in lines[k:end] if ln.first_font.startswith("Cambria")]
-        words = _paragraphs(body, mender)
+        if len(body) != end - k:  # a feat has no tables: anything else would be lost
+            raise SrdError(f"Feat {name!r} on page {line.page} has lines that are not text")
+        words = join_column_breaks(_paragraphs(body, mender))
         if not words:
             raise SrdError(f"Feat {name!r} on page {line.page}: no description")
         if name in seen:

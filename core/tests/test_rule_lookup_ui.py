@@ -706,6 +706,22 @@ class FeatureLookup(LookupTest):
         sage = self.sent(await self.command("sage"))[0]
         self.assertIn("Feat: Magic Initiate (Wizard)", sage)
 
+    async def test_a_background_that_is_also_a_creature_can_be_picked_and_is_found(self) -> None:
+        it = self.it(kind=discord.InteractionType.autocomplete)
+        choices = await ui._typeahead(it, "acolyte")
+        by_label = {c.name: c.value for c in choices}
+        self.assertIn("Acolyte (background)", by_label)
+        self.assertEqual(by_label["Acolyte (background)"], "Acolyte (background)")
+        text = self.sent(await self.command(by_label["Acolyte (background)"]))[0]
+        self.assertIn("📖 **Acolyte** (background)", text)
+        self.assertIn("Feat: Magic Initiate (Cleric)", text)
+
+    async def test_the_newer_species_beats_an_older_creature_of_the_same_name(self) -> None:
+        self.campaigns[C1] = campaign(target="2024", fallback="2014")
+        text = self.sent(await self.command("Orc"))[0]
+        self.assertIn("📖 **Orc** (species)", text)  # not the 2014 creature, [Legacy 2014]
+        self.assertNotIn("[Legacy 2014]", text)
+
     async def test_an_item_is_found_by_its_other_name_and_a_spell_of_the_same_name_wins(
         self,
     ) -> None:
@@ -897,18 +913,18 @@ class SharedBooks(LookupTest):
             self.assertIn("📖 **Fireball** (spell)", text)  # the free rules answer
 
     async def test_a_2014_book_answers_and_is_tagged_when_only_the_fallback_has_it(self) -> None:
-        text = await self.shown("Orc", "2014")
+        text = await self.shown("Duergar", "2014")
         self.assertIn("The book's words.", text)
         self.assertIn("[Shared book] [Legacy 2014]", text)
-        self.assertIn("Frostmaiden's shared book (2014): Orc", text)
+        self.assertIn("Frostmaiden's shared book (2014): Duergar", text)
         self.assertNotIn("SRD", text)
 
     async def test_other_and_unasked_books_beat_the_fallback_but_not_the_target(self) -> None:
         for edition in ("other", None, "2024"):
-            text = await self.shown("Orc", edition)
+            text = await self.shown("Duergar", edition)
             self.assertIn("The book's words.", text, edition)
             self.assertNotIn("[Legacy 2014]", text)
-        self.assertIn("shared book:", await self.shown("Orc", "other"))  # no edition to name
+        self.assertIn("shared book:", await self.shown("Duergar", "other"))  # no edition to name
 
     async def test_with_no_free_rules_entry_any_book_answers(self) -> None:
         for edition in ("2024", "2014", "other", None):

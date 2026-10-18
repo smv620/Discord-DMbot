@@ -4,6 +4,7 @@ the real PDF has (no PDF is needed, and none is kept in the repository)."""
 from __future__ import annotations
 
 import unittest
+from unittest.mock import patch
 
 from dmbot.devtools.srd import origins
 from dmbot.devtools.srd.parse import SrdError
@@ -133,7 +134,15 @@ class Backgrounds(unittest.TestCase):
             origins.parse_backgrounds(lines)
 
 
+ONE_TABLE = {"Dragonborn": "Draconic Ancestors"}  # the made-up chapter has just this one
+
+
 class SpeciesReading(unittest.TestCase):
+    def setUp(self) -> None:
+        patcher = patch.dict(origins.SPECIES_TABLES, ONE_TABLE, clear=True)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
     def found(self) -> dict[str, origins.Species]:
         return {s.name: s for s in origins.parse_species([*background_lines(), *species_lines()])}
 
@@ -155,7 +164,33 @@ class SpeciesReading(unittest.TestCase):
         self.assertIn("Draconic Ancestry. Choose the kind of dragon.", text)
         self.assertIn("Breath Weapon. You exhale energy.", text)  # after the table
         self.assertNotIn("Acid", text)
-        self.assertNotIn("Draconic Ancestors", text)
+        self.assertNotIn("Dragon Damage", text)
+
+    def test_a_species_that_has_a_table_left_out_says_so_on_its_last_line(self) -> None:
+        text = self.found()["Dragonborn"].text
+        self.assertTrue(text.endswith("(The Draconic Ancestors table is not included here.)"))
+        self.assertNotIn("not included", self.found()["Human"].text)
+
+    def test_a_table_that_is_not_named_stops_the_tool(self) -> None:
+        lines = species_lines()
+        lines.insert(10, at(LEFT, 440, "Unexpected Table", TITLE, 84))
+        lines.insert(11, at(66.6, 428, "Some cells", SANS, 84))
+        with self.assertRaisesRegex(SrdError, "Unexpected Table"):
+            origins.parse_species(lines)
+
+    def test_a_named_table_that_is_missing_stops_the_tool(self) -> None:
+        lines = [ln for ln in species_lines() if ln.y < 400 or ln.y > 520 or ln.x != LEFT]
+        lines = [ln for ln in lines if ln.text not in ("Draconic Ancestors", "Dragon Damage Type")]
+        lines = [ln for ln in lines if ln.text != "Black Acid Gold Fire"]
+        with self.assertRaises(SrdError):
+            origins.parse_species(lines)
+
+    def test_a_paragraph_that_carries_on_in_the_next_column_is_one_paragraph(self) -> None:
+        lines = species_lines()
+        lines.insert(10, at(LEFT, 440, "Radiant Pulse. You gather energy that", LEAD, 84))
+        lines.insert(11, at(321.5, 700, "spreads out around you.", BODY, 84))  # next column's top
+        dragonborn = origins.parse_species(lines)[0]
+        self.assertIn("gather energy that spreads out around you.", dragonborn.text)
 
     def test_a_species_with_no_speed_stops_the_tool(self) -> None:
         lines = [ln for ln in species_lines() if ln.text != "Speed: 30 feet" or ln.x != LEFT]
@@ -217,6 +252,12 @@ class Feats(unittest.TestCase):
             at(LEFT, 376, "Words.", BODY, 87),
         ]
         with self.assertRaisesRegex(SrdError, "can't read"):
+            origins.parse_feats(lines)
+
+    def test_a_line_that_is_not_text_inside_a_feat_stops_the_tool(self) -> None:
+        lines = feat_lines()
+        lines.insert(7, at(66.6, 596, "A table row", SANS, 87))
+        with self.assertRaisesRegex(SrdError, "not text"):
             origins.parse_feats(lines)
 
     def test_a_feat_that_comes_twice_stops_the_tool(self) -> None:

@@ -19,13 +19,14 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
+import re
 import time
 from functools import partial
 
 import discord
 from discord import app_commands
 
-from dmbot.campaigns import Campaign
+from dmbot.campaigns import FALLBACK_NONE, Campaign
 from dmbot.campaigns.models import DEFAULT_FALLBACK, DEFAULT_TARGET
 from dmbot.logs import set_log_context
 from dmbot.rules import index
@@ -128,6 +129,23 @@ async def _homebrew(
         return None
 
 
+_KIND_SUFFIX = re.compile(r"^(?P<name>.+) \((?P<kind>feat|species|background)\)$")
+
+
+def _named_kind(srd: index.Index, typed: str, campaign: Campaign) -> index.Hit | None:
+    """ "Acolyte (background)", as the name list words a name that is also a creature's: the
+    background, not the creature."""
+    match = _KIND_SUFFIX.match(typed)
+    if match is None:
+        return None
+    return srd.lookup(
+        match["name"],
+        campaign.target_ruleset,
+        campaign.fallback_ruleset,
+        kind=match["kind"],
+    )
+
+
 def _asked_for(srd: index.Index, typed: str, target: str, fallback: str) -> index.Hit | None:
     """The glossary entry, else the class feature, the magic item, the feat, the species or the
     background, with this name. A feature several classes share ("evasion") gives the first
@@ -199,7 +217,14 @@ async def look_up(
             return
     rules = await _house_rules(interaction, campaign)
     srd = index.srd()
-    hit = srd.lookup(typed, campaign.target_ruleset, campaign.fallback_ruleset, kind=kind)
+    hit = _named_kind(srd, typed, campaign) if kind is None else None
+    if hit is None:
+        hit = srd.lookup(typed, campaign.target_ruleset, campaign.fallback_ruleset, kind=kind)
+    if hit is not None and hit.from_fallback and kind is None:
+        # The newest rules first: a species or background of the target's own rules beats an older
+        # creature of the same name ("Orc"), which is only a fallback (#1913).
+        newer = _asked_for(srd, typed, campaign.target_ruleset, FALLBACK_NONE)
+        hit = newer or hit
     if hit is None and kind is None:
         # Not a spell, a condition or a creature: it may be a Rules Glossary entry ("cover",
         # "long rest", #1891), a class feature ("rage", "rogue evasion", #1900) or a magic item
@@ -452,6 +477,14 @@ async def _typeahead(
             kinds=(index.RULE, index.FEATURE, index.ITEM, *index.ORIGIN_KINDS),
             limit=NAMES_MORE,
         )
+    # A feat, species or background that is also a creature's name ("Acolyte", "Orc") is offered
+    # beside the creature, so it can be picked (#1913).
+    key = index.normalize(current)
+    if found and key and len(found) < NAMES_MORE:
+        same = srd.asked_names(
+            current, target, fallback, kinds=index.ORIGIN_KINDS, limit=NAMES_MORE
+        )
+        found = [*found, *(e for e in same if index.normalize(e.name) == key and e not in found)]
     return [
         app_commands.Choice(name=rule_card.choice_label(e), value=_choice_value(srd, e))
         for e in found
@@ -462,6 +495,8 @@ def _choice_value(srd: index.Index, entry: index.Entry) -> str:
     """What is typed into the box when a name is picked. A feature several classes share is
     picked with its class in front ("Rogue Evasion"); one a class has at two levels ("Improved
     Brutal Strike") with its level after, which `_features` reads back."""
+    if entry.kind in index.ORIGIN_KINDS and srd.lookup(entry.name, entry.edition) is not None:
+        return f"{entry.name} ({entry.kind})"[:BOX_MAX]  # also a creature's name: say which
     if entry.kind != index.FEATURE:
         return entry.name[:BOX_MAX]
     klass = str(entry.details.get("class", ""))

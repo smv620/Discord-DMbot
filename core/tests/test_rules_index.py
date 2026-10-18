@@ -345,6 +345,21 @@ class ClassFeatures(unittest.TestCase):
         self.assertIsNone(srd.lookup("Alert", "2024", "2014"))
         self.assertEqual([e.name for e in srd.typeahead("aler", "2024", "2014")], [])
 
+    def test_a_species_paragraph_across_a_column_break_is_whole_and_a_dropped_table_is_said(
+        self,
+    ) -> None:
+        gnome = index.srd().lookup("Gnome", "2024", "2014", kind="species")
+        assert gnome is not None
+        self.assertIn("produces that effect whenever you or another creature", gnome.entry.text)
+        for name, table in (
+            ("Dragonborn", "Draconic Ancestors"),
+            ("Elf", "Elven Lineages"),
+            ("Tiefling", "Fiendish Legacies"),
+        ):
+            hit = index.srd().lookup(name, "2024", "2014", kind="species")
+            assert hit is not None
+            self.assertTrue(hit.entry.text.endswith(f"(The {table} table is not included here.)"))
+
     def test_golden_feats_species_and_backgrounds(self) -> None:
         def get(name: str, kind: str) -> Entry:
             hit = index.srd().lookup(name, "2024", "2014", kind=kind)

@@ -424,6 +424,36 @@ class MagicItems(unittest.TestCase):
         ]
         self.assertEqual(got, [("background", "Sage"), ("feat", "Magic Initiate")])
 
+    def test_most_species_names_are_everyday_words_and_need_the_cue(self) -> None:
+        for question in ("the dwarf bartender", "a dwarf walks in", "help, a gnome", "the elf"):
+            self.assertEqual([h for h in self.hits(question) if h.entry.kind == "species"], [])
+        self.assertEqual(
+            [
+                h.entry.name
+                for h in self.hits("the dwarf species speed")
+                if h.entry.kind == "species"
+            ],
+            ["Dwarf"],
+        )
+        self.assertEqual(
+            [h.entry.name for h in self.hits("a dragonborn walks in")], ["Dragonborn"]
+        )  # not an everyday word
+
+    def test_the_cue_makes_a_background_or_species_win_over_a_creature_of_the_same_name(
+        self,
+    ) -> None:
+        got = [
+            (h.entry.kind, h.entry.name) for h in self.hits("what does the acolyte background give")
+        ]
+        self.assertEqual(got, [("background", "Acolyte"), ("feat", "Magic Initiate")])
+        orc = [(h.entry.kind, h.entry.name) for h in self.hits("an orc species speed")]
+        self.assertIn(("species", "Orc"), orc)
+        self.assertEqual([h.entry.kind for h in self.hits("what does an acolyte do")], ["monster"])
+
+    def test_a_named_spell_still_keeps_the_places_with_the_cue_word(self) -> None:
+        got = [(h.entry.kind, h.entry.name) for h in self.hits("fireball and the sage background")]
+        self.assertEqual(got, [("spell", "Fireball")])
+
     def test_a_long_feat_name_needs_no_extra_word(self) -> None:
         self.assertEqual(
             [h.entry.name for h in self.hits("how does great weapon fighting work")],

@@ -235,6 +235,8 @@ def mentioned_rules(
         for start, hits in asked:
             if depth < len(hits) and len(found) < ENTRIES_MAX:
                 found.append((start, hits[depth]))
+    if cued and found:  # "the acolyte background": the creature of that name gives way (#1913)
+        found = _cued_origins(found, words, index, target, fallback)
     found.sort(key=lambda pair: pair[0])
     unique: list[Hit] = []
     for _, hit in found:
@@ -249,20 +251,40 @@ def mentioned_rules(
 
 
 ORIGIN_CUES = frozenset({"feat", "feats", "species", "race", "background"})
+SPECIES_NOT_EVERYDAY = frozenset({"dragonborn", "goliath"})  # "dwarf", "elf" and "human" are not
+
+
+def _cued_origins(
+    found: list[tuple[int, Hit]], words: list[str], index: Index, target: str, fallback: str
+) -> list[tuple[int, Hit]]:
+    """A question that says "feat", "species", "race" or "background" and names a creature that
+    is also a background or species ("Acolyte", "Orc") means the background or species. Only a
+    creature's hit gives way; a named spell or condition keeps its place."""
+    out = list(found)
+    for start, hit in found:
+        if hit.entry.kind != "monster":
+            continue
+        size = len(hit.found_as.split())
+        window = " ".join(words[start : start + size])
+        picked = origin_hits(index, window, target, fallback, cued=True)
+        if picked:
+            out = [pair for pair in out if pair[1] is not hit]
+            out += [(start, p) for p in picked]
+    return out
 
 
 def origin_hits(index: Index, name: str, target: str, fallback: str, *, cued: bool) -> list[Hit]:
     """The feat, species or background with this name (#1913). A one-word feat or background is
-    an everyday word ("Alert", "Sage"), and so is "Human": they count only when the question also
-    says "feat", "species", "race" or "background". The other species names ("Goliath") are
-    not everyday words. A background comes with the feat it gives, which is cited as the feat
-    itself."""
-    single = len(name.split()) == 1
+    an everyday word ("Alert", "Sage"), and so are most species ("Dwarf", "Elf", "Human"): they
+    count only when the question also says "feat", "species", "race" or "background". Only
+    "Dragonborn" and "Goliath" need nothing. A background comes with the feat it gives, which is
+    cited as the feat itself."""
+    single = len(name.split()) == 1  # (see ORIGIN_CUES and SPECIES_NOT_EVERYDAY)
     for kind in ORIGIN_KINDS:
         hit = index.lookup(name, target, fallback, kind=kind)
         if hit is None:
             continue
-        everyday = kind != SPECIES or normalize(hit.entry.name) == "human"
+        everyday = kind != SPECIES or normalize(hit.entry.name) not in SPECIES_NOT_EVERYDAY
         if single and everyday and not cued:
             return []
         if kind != BACKGROUND:
