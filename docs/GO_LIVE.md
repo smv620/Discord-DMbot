@@ -25,6 +25,8 @@ last migration 0127).
   lists what is on; until then the names below come from `core/src/dmbot/config.py`.
 - **owner step**: something only the owner can do (an account, a key, a legal go-ahead).
 
+The owner's checks for the rows marked **owner check** are in `docs/OWNER_CHECKS.md`, one sitting, in plain words.
+
 ## The table
 
 | Switch | Shows | Bot PRs, merged? | Server setting | Live today? | Goes live with |

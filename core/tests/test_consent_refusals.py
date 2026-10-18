@@ -334,3 +334,28 @@ class UndoingAFix(Refusals):
         self.assertNotEqual(answer, fix_notes.STOPPED)
         memory.add_correction.assert_awaited_once()
         self.assertIsNotNone(allow)
+
+
+class FinishingTopics(Refusals):
+    """`_finish_topics` at shutdown (#53): lines still waiting for a topic are kept as game talk
+    for the names scan only if their speaker is still recorded."""
+
+    async def table_with_a_waiting_line(self) -> Any:
+        table = await self.filtered("1 game\n2 game")
+        self.said(table, "we sneak past the guards")
+        await self.settle()
+        self.assertTrue(table.topics.lines)  # the setup left a line waiting for its topic
+        return table
+
+    async def test_a_stopped_speakers_waiting_line_is_not_kept_at_shutdown(self) -> None:
+        table = await self.table_with_a_waiting_line()
+        self.stop(PLAYER)
+        self.bot._closing = True
+        await self.bot._finish_topics(table)
+        self.assertEqual(table.heard, [])
+
+    async def test_the_same_shutdown_for_someone_recorded_keeps_it(self) -> None:
+        table = await self.table_with_a_waiting_line()
+        self.bot._closing = True
+        await self.bot._finish_topics(table)
+        self.assertEqual([text for _, text in table.heard], ["we sneak past the guards"])
