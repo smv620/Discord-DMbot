@@ -769,6 +769,39 @@ class FeatureLookup(LookupTest):
         self.assertIn("Disadvantage on Stealth.", armor)
         self.assertNotIn("—", armor)
 
+    async def test_gear_and_tools_are_found_and_the_list_says_which(self) -> None:
+        it = self.it(kind=discord.InteractionType.autocomplete)
+        labels = {
+            typed: [c.name for c in await ui._typeahead(it, typed)]
+            for typed in ("healer", "thieves", "horse, r")
+        }
+        self.assertIn("Healer’s Kit (gear: 5 GP)", labels["healer"])
+        self.assertIn("Thieves’ Tools (tool: Dexterity)", labels["thieves"])
+        self.assertEqual(labels["horse, r"], ["Horse, Riding (gear: Mount, 75 GP)"])
+        kit = self.sent(await self.command("healer’s kit"))[0]
+        self.assertIn("📖 **Healer’s Kit** (gear: 5 GP)", kit)
+        self.assertIn("3 lb.", kit)
+        self.assertIn("ten uses", kit)
+        self.assertIn("SRD 5.2.1, Equipment, p. 97", kit)
+        tools = self.sent(await self.command("thieves’ tools"))[0]
+        self.assertIn("📖 **Thieves’ Tools** (tool: Dexterity)", tools)
+        self.assertIn("Utilize: Pick a lock (DC 15)", tools)
+        self.assertIn("25 GP, 1 lb.", tools)  # the heading has the ability, the line the price
+        focus = self.sent(await self.command("arcane focus"))[0]
+        self.assertIn("(gear: price varies)", focus)
+        self.assertNotIn("(gear: Varies)", focus)
+
+    async def test_the_gear_and_the_magic_item_of_one_name_can_both_be_picked(self) -> None:
+        it = self.it(kind=discord.InteractionType.autocomplete)
+        values = {c.name: c.value for c in await ui._typeahead(it, "spell scroll")}
+        gear = [v for n, v in values.items() if "(gear" in n]
+        item = [v for n, v in values.items() if "(item" in n]
+        self.assertEqual((gear, item), (["Spell Scroll (gear)"], ["Spell Scroll (item)"]))
+        text = self.sent(await self.command("Spell Scroll (gear)"))[0]
+        self.assertIn("(gear: from 30 GP)", text.splitlines()[0])
+        text = self.sent(await self.command("Spell Scroll (item)"))[0]
+        self.assertIn("(item:", text.splitlines()[0])
+
     async def test_both_shields_and_both_lights_can_be_picked_from_the_list(self) -> None:
         it = self.it(kind=discord.InteractionType.autocomplete)
         for typed, kinds in (("shield", {"spell", "armor"}), ("light", {"spell", "rule"})):

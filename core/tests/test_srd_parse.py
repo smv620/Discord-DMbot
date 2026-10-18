@@ -564,7 +564,30 @@ class Building(unittest.TestCase):
             ),
             Line(74.6, 408.0, [piece("Shield +2 — — 6 lb. 10 GP", "GillSans", 74.6, 408.0)], 21),
         ]
-        tools = [say("Tools", TITLE, 21)]
+        tools = [
+            say("Tools", TITLE, 24),
+            say("Artisan’s Tools", TITLE, 24),
+            say("Alchemist’s Supplies (50 GP)", TITLE, 24),
+            say("Ability: Intelligence Weight: 8 lb.", TITLE, 24),
+            say("Utilize: Identify a substance (DC 15)", TITLE, 24),
+            say("Adventuring Gear", TITLE, 24),
+            say("Backpack (2 GP)", TITLE, 24),
+            say("A Backpack holds up to 30 pounds.", BODY, 24),
+        ]
+        gear_table = [  # a page of its own: the weights
+            say("Adventuring Gear", TITLE, 25),
+            say("Item Weight Cost", TITLE, 25),
+            say("Backpack 5 lb. 2 GP", "GillSans", 25),
+        ]
+        mounts = [
+            say("Mounts and Vehicles", TITLE, 26),
+            say("Mounts and Other Animals", TITLE, 26),
+            say("Item Carrying Capacity Cost", TITLE, 26),
+            say("Horse, Riding 480 lb. 75 GP", "GillSans", 26),
+            say("Tack, Harness, and Drawn Vehicles", TITLE, 26),
+            say("Cart 200 lb. 15 GP", "GillSans", 26),
+            say("Lifestyle Expenses", TITLE, 26),
+        ]
         items = [
             say("Magic Items A–Z", TITLE, 22),
             say("Bag of Holding", TITLE, 22),
@@ -575,7 +598,7 @@ class Building(unittest.TestCase):
         creatures = [say("Monsters A–Z", TITLE, 24), *goblin()]
         return [
             contents, *[[]] * 9, spells, glossary, toolbox, classes, origins, feats, equipment,
-            weapons, armor, tools, items, monsters, creatures,
+            weapons, armor, tools, gear_table, mounts, items, monsters, creatures,
         ]  # fmt: skip
 
     def document(self) -> dict[str, Any]:
@@ -651,7 +674,14 @@ class Building(unittest.TestCase):
         gear = files["equipment.json"]["entries"]
         self.assertEqual(
             [(e["kind"], e["name"]) for e in gear if e["kind"] != "rule"],
-            [("weapon", "Club"), ("armor", "Shield")],
+            [
+                ("weapon", "Club"),
+                ("armor", "Shield"),
+                ("tool", "Alchemist’s Supplies"),
+                ("gear", "Backpack"),
+                ("gear", "Horse, Riding"),
+                ("gear", "Cart"),
+            ],
         )
         self.assertEqual(sum(e["kind"] == "rule" for e in gear), 18)
         club = gear[0]
