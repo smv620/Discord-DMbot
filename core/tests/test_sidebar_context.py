@@ -460,6 +460,39 @@ class MagicItems(unittest.TestCase):
             ["Great Weapon Fighting"],
         )
 
+    def test_a_weapon_armor_or_mastery_is_cited_when_asked_about(self) -> None:
+        self.assertEqual(
+            [(h.entry.kind, h.entry.name) for h in self.hits("what's the damage of a longsword")],
+            [("weapon", "Longsword")],
+        )
+        self.assertEqual(
+            [(h.entry.kind, h.entry.name) for h in self.hits("what does topple do")],
+            [("rule", "Topple")],
+        )
+        built = self.build("what's the damage of a longsword")
+        self.assertIn(
+            "- Longsword (weapon) [SRD 5.2.1 p. 91]: FACTS: Martial Melee, 1d8 Slashing, "
+            "Versatile (1d10), mastery Sap.",
+            built.prompt,
+        )
+        self.assertIn("Stealth Disadvantage", self.build("how heavy is plate armor").prompt)
+
+    def test_an_everyday_weapon_or_property_word_alone_adds_nothing(self) -> None:
+        for question in ("the guard swings a club", "the light is dim", "a heavy door", "push it"):
+            gear = [h for h in self.hits(question) if h.entry.kind in ("weapon", "armor", "rule")]
+            self.assertEqual(gear, [], question)
+
+    def test_a_cue_word_brings_the_one_word_weapon_or_property(self) -> None:
+        self.assertEqual([h.entry.name for h in self.hits("what damage does a club do")], ["Club"])
+        props = [h.entry.name for h in self.hits("what does the light property do")]
+        self.assertEqual(props, ["Light"])
+
+    def test_the_shield_spell_and_the_shield_armor_are_told_apart_by_the_question(self) -> None:
+        self.assertEqual([(h.entry.kind) for h in self.hits("cast shield")], ["spell"])
+        self.assertEqual(
+            [(h.entry.kind) for h in self.hits("what is the AC of a shield")], ["armor"]
+        )
+
     def test_an_item_is_no_rules_question(self) -> None:
         prompt = self.build("can you track a bag of holding?").prompt
         self.assertIn("ABOUT DMBOT", prompt)

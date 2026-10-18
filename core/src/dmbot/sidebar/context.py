@@ -25,6 +25,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass, replace
 from functools import cache
 from pathlib import Path
+from typing import Any
 
 from dmbot.campaigns.models import FALLBACK_NONE
 from dmbot.memory.kinds import kind_phrase
@@ -39,6 +40,7 @@ from dmbot.rules.index import (
     ASKED_FOR,
     BACKGROUND,
     CLASS_WORDS,
+    EQUIPMENT_KINDS,
     FEAT,
     FEATURE,
     ITEM,
@@ -222,6 +224,8 @@ def mentioned_rules(
     # question ("rogue evasion") picks that class's feature; otherwise every class that has it.
     klass = next((w for w in words if w.lower() in CLASS_WORDS), "")
     cued = any(w.lower() in ORIGIN_CUES for w in words)
+    gear = any(w.lower() in EQUIPMENT_CUES for w in words)
+    props = any(w.lower() in PROPERTY_CUES for w in words)
     asked: list[tuple[int, list[Hit]]] = []
     for size in range(ITEM_WINDOW, 0, -1) if not found else ():
         for start in range(len(words) - size + 1):
@@ -236,12 +240,21 @@ def mentioned_rules(
                 hits = index.lookup_all(name, target, fallback, kind=FEATURE, prefer=klass)
             if not hits and size <= WINDOW:
                 glossary = index.lookup(name, target, fallback, kind=RULE)
+                if (
+                    glossary is not None
+                    and size == 1
+                    and not props
+                    and is_everyday_property(glossary.entry)
+                ):
+                    glossary = None  # "Light", "Slow": a property only when weapons are meant
                 hits = [glossary] if glossary is not None else []
             if not hits:
                 item = index.lookup(name, target, fallback, kind=ITEM)
                 hits = [item] if item is not None else []
             if not hits and size <= WINDOW:
                 hits = origin_hits(index, name, target, fallback, cued=cued)
+            if not hits and size <= WINDOW:
+                hits = equipment_hits(index, name, target, fallback, cued=gear)
             if hits:
                 for k in range(start, start + size):
                     used[k] = True
@@ -254,6 +267,14 @@ def mentioned_rules(
                 found.append((start, hits[depth]))
     if cued and found:  # "the acolyte background": the creature of that name gives way (#1913)
         found = _cued_origins(found, words, index, target, fallback)
+    if (gear or props) and found:  # "the AC of a shield": the spell of that name gives way (#1919)
+        found = _cued_equipment(found, words, index, target, fallback, props=props)
+    if any(h.entry.kind in EQUIPMENT_KINDS for _, h in found):  # "damage", "armor" are cue words
+        found = [
+            (start, h)
+            for start, h in found
+            if not (h.entry.kind == RULE and normalize(h.entry.name) in EQUIPMENT_CUES)
+        ]
     found.sort(key=lambda pair: pair[0])
     unique: list[Hit] = []
     for _, hit in found:
@@ -284,6 +305,67 @@ def _cued_origins(
         size = len(hit.found_as.split())
         window = " ".join(words[start : start + size])
         picked = origin_hits(index, window, target, fallback, cued=True)
+        if picked:
+            out = [pair for pair in out if pair[1] is not hit]
+            out += [(start, p) for p in picked]
+    return out
+
+
+EQUIPMENT_CUES = frozenset(
+    {"damage", "weapon", "weapons", "armor", "ac", "mastery", "masteries", "property", "properties"}
+)
+PROPERTY_CUES = frozenset({"weapon", "weapons", "property", "properties", "mastery", "masteries"})
+PROPERTY_TAGS = frozenset({"Weapon Property", "Mastery Property"})
+# The properties whose names are everyday words: they count only with a cue word (#1919).
+EVERYDAY_PROPERTIES = frozenset(
+    {"light", "heavy", "range", "loading", "thrown", "push", "slow", "sap", "nick", "ammunition"}
+)
+
+
+def is_everyday_property(entry: Any) -> bool:
+    return (
+        entry.details.get("tag") in PROPERTY_TAGS and normalize(entry.name) in EVERYDAY_PROPERTIES
+    )
+
+
+def equipment_hits(index: Index, name: str, target: str, fallback: str, *, cued: bool) -> list[Hit]:
+    """The weapon or armor with this name (#1919). A one-word name is an everyday word ("Club",
+    "Net", "Whip", "Shield"): it counts only when the question also says "damage", "weapon",
+    "armor", "AC", "mastery" or "property"."""
+    if len(name.split()) == 1 and not cued:
+        return []
+    for kind in EQUIPMENT_KINDS:
+        hit = index.lookup(name, target, fallback, kind=kind)
+        if hit is not None:
+            return [hit]
+    return []
+
+
+def _cued_equipment(
+    found: list[tuple[int, Hit]],
+    words: list[str],
+    index: Index,
+    target: str,
+    fallback: str,
+    *,
+    props: bool = False,
+) -> list[tuple[int, Hit]]:
+    """A question that says "armor", "AC", "weapon" or "damage" and names a spell or creature
+    that is also an armor or weapon ("Shield") means the armor or weapon."""
+    out = list(found)
+    for start, hit in found:
+        if hit.entry.kind in ASKED_FOR:
+            continue
+        size = len(hit.found_as.split())
+        window = " ".join(words[start : start + size])
+        picked = equipment_hits(index, window, target, fallback, cued=True)
+        if not picked and props:
+            rule = index.lookup(window, target, fallback, kind=RULE)
+            picked = (
+                [rule]
+                if rule is not None and rule.entry.details.get("tag") in PROPERTY_TAGS
+                else []
+            )
         if picked:
             out = [pair for pair in out if pair[1] is not hit]
             out += [(start, p) for p in picked]

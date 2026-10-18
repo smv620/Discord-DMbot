@@ -750,6 +750,45 @@ class FeatureLookup(LookupTest):
             "[Legacy 2014]", text.replace("The older Orc (creature) [Legacy 2014]", "")
         )
 
+    async def test_weapons_and_armor_are_found_and_the_list_says_which(self) -> None:
+        it = self.it(kind=discord.InteractionType.autocomplete)
+        labels = {
+            typed: [c.name for c in await ui._typeahead(it, typed)]
+            for typed in ("longsw", "plate arm", "topple")
+        }
+        self.assertEqual(labels["longsw"], ["Longsword (weapon: Martial Melee)"])
+        self.assertEqual(labels["plate arm"][0], "Plate Armor (armor: Heavy)")
+        self.assertIn("Topple (rule: Mastery Property)", labels["topple"])
+        weapon = self.sent(await self.command("longsword"))[0]
+        self.assertIn("📖 **Longsword** (weapon: Martial Melee)", weapon)
+        self.assertIn("Damage: 1d8 Slashing", weapon)
+        self.assertIn("Mastery: Sap", weapon)
+        self.assertIn("SRD 5.2.1, Equipment, p. 91", weapon)
+        armor = self.sent(await self.command("plate armor"))[0]
+        self.assertIn("Armor Class: 18", armor)
+        self.assertIn("Stealth: Disadvantage", armor)
+
+    async def test_both_shields_and_both_lights_can_be_picked_from_the_list(self) -> None:
+        it = self.it(kind=discord.InteractionType.autocomplete)
+        for typed, kinds in (("shield", {"spell", "armor"}), ("light", {"spell", "rule"})):
+            choices = await ui._typeahead(it, typed)
+            exact = [c for c in choices if c.name.lower().startswith(f"{typed} (")]
+            self.assertEqual(
+                {c.name.split("(")[1].split(")")[0].split(":")[0] for c in exact}, kinds
+            )
+            for choice in exact:
+                with self.subTest(choice.name):
+                    ui._last_lookup.clear()
+                    text = self.sent(await self.command(choice.value))[0]
+                    word = choice.name.split("(")[1].split(")")[0].split(":")[0]
+                    self.assertIn(f"({word}", text.splitlines()[0])
+
+    async def test_the_weapon_reach_property_does_not_shadow_the_glossarys_reach(self) -> None:
+        glossary = self.sent(await self.command("reach"))[0]
+        self.assertIn("A creature has a reach of 5 feet", glossary)
+        prop = self.sent(await self.command("Reach (Weapon Property)"))[0]
+        self.assertIn("A Reach weapon adds 5 feet", prop)
+
     async def test_an_item_is_found_by_its_other_name_and_a_spell_of_the_same_name_wins(
         self,
     ) -> None:

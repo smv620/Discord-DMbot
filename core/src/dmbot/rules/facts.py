@@ -63,6 +63,28 @@ def item_line(entry: Entry) -> str:
     return ", ".join(p for p in parts if p)
 
 
+def weapon_line(entry: Entry) -> str:
+    """ "Martial Melee, 1d8 Slashing, Versatile (1d10), mastery Sap": the Weapons table's row."""
+    d = entry.details
+    parts = [str(d.get("category", "")), f"{d.get('damage', '')} {d.get('damage_type', '')}"]
+    if d.get("properties"):
+        parts.append(str(d["properties"]))
+    parts.append(f"mastery {d.get('mastery', '')}")
+    return ", ".join(p.strip() for p in parts if p.strip())
+
+
+def armor_line(entry: Entry) -> str:
+    """ "Heavy armor, AC 18, Strength 15, Stealth Disadvantage": the row of the Armor table."""
+    d = entry.details
+    what = "Shield" if d.get("category") == "Shield" else f"{d.get('category', '')} armor"
+    parts = [what, f"AC {d.get('ac', '')}"]
+    if str(d.get("strength", "—")) != "—":
+        parts.append(f"Strength {str(d['strength']).removeprefix('Str ')}")
+    if str(d.get("stealth", "—")) != "—":
+        parts.append(f"Stealth {d['stealth']}")
+    return ", ".join(parts)
+
+
 def level_words(entry: Entry) -> str:
     """ "3rd-level Evocation", "Evocation cantrip", "1st-level Divination (ritual)"."""
     level, school = int(entry.details.get("level", 0)), str(entry.details.get("school", ""))
@@ -132,6 +154,10 @@ def pairs(entry: Entry, *, card: bool = False) -> list[tuple[str, str]]:
     elif entry.kind == "feat":  # the card's heading already says "(feat: Origin)"
         found = [] if card else [("", f"{d.get('category', '')} feat")]
         found.append(("Prerequisite", str(d.get("prerequisite", ""))))
+    elif entry.kind == "weapon":  # the card shows the whole row as its text
+        found = [] if card else [("", weapon_line(entry))]
+    elif entry.kind == "armor":
+        found = [] if card else [("", armor_line(entry))]
     elif entry.kind == "species":
         found = [("", f"Size: {d.get('size', '')}"), ("", f"Speed: {d.get('speed', '')}")]
     else:
