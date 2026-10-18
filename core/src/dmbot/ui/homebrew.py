@@ -24,6 +24,7 @@ from dmbot.campaigns.models import RULEBOOK, fingerprint
 from dmbot.discord_limits import MESSAGE_MAX, fit_message
 from dmbot.dm_screen import pack_suggestion
 from dmbot.logs import set_log_context
+from dmbot.mentions import NO_PINGS
 from dmbot.rules import homebrew_file
 from dmbot.rules.homebrew import (
     KINDS,
@@ -42,7 +43,6 @@ from dmbot.rules.homebrew_import import ImportRefused, Preview, Refresh
 from dmbot.rules.site_urls import normalise_domain, normalise_url
 from dmbot.ui import logic
 from dmbot.ui.dmbot_commands import (
-    NO_PINGS,
     NOT_IN_SERVER,
     VIEW_TIMEOUT_S,
     _answer_first,

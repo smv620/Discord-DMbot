@@ -26,10 +26,10 @@ from dmbot.campaigns import Campaign
 from dmbot.dm_screen import dm_bot_panel as panel
 from dmbot.dm_screen.dm_bot_panel import Button, Role, Standing
 from dmbot.dm_screen.settings import SettingsButton
+from dmbot.mentions import NO_PINGS
 
 log = logging.getLogger(__name__)
 
-NO_PINGS = discord.AllowedMentions.none()
 _ID = r"(?P<campaign>[0-9a-f]{32})"
 GONE = "DMbot can't find that campaign. Ask your DM."
 WENT_WRONG = "Something went wrong. Please press it again."

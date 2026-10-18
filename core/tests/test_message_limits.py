@@ -53,7 +53,7 @@ def _in_range(node: ast.AST | None) -> bool:
 
 
 def _numbers_in(node: ast.AST) -> list[int]:
-    return [n.lineno for n in ast.walk(node) if _in_range(n)]
+    return [n.lineno for n in ast.walk(node) if isinstance(n, ast.Constant) and _in_range(n)]
 
 
 def literals_of_2000(source: str) -> list[int]:

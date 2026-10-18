@@ -13,10 +13,10 @@ import discord
 
 from dmbot.campaigns import RULESETS, Campaign, CampaignError
 from dmbot.discord_limits import MESSAGE_MAX
+from dmbot.mentions import NO_PINGS
 from dmbot.rules import optional
 from dmbot.ui import logic
 from dmbot.ui.dmbot_commands import (
-    NO_PINGS,
     NOT_IN_SERVER,
     _bot,
     _is_manager,

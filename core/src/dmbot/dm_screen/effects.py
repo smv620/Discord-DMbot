@@ -18,13 +18,13 @@ import discord
 
 from dmbot.campaigns import Campaign
 from dmbot.campaigns.models import CampaignError
+from dmbot.mentions import NO_PINGS
 from dmbot.rules import index
 from dmbot.timebot import durations, where_are_we
 from dmbot.timebot.effects import EXTRA_MINUTES, Effect
 
 log = logging.getLogger(__name__)
 
-NO_PINGS = discord.AllowedMentions.none()
 _ID = r"(?P<campaign>[0-9a-f]{32})"
 FAILED = "Sorry, that didn't save. Please try again."
 NEED_LENGTH = "No length found for {name}. Type one, like 10 minutes or 1 hour. No timer started."
