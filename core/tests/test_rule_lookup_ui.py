@@ -615,6 +615,20 @@ class Words(unittest.TestCase):
         self.assertIn("free rules (SRD)", rule_card.NOT_A_RULING)
         self.assertEqual(rule_card.FREE_RULES, "the free rules (SRD)")
 
+    def test_the_empty_message_and_the_placeholder_name_every_kind(self) -> None:
+        # #1901: a DM is told they can type a rule ("cover") as well as a spell, a condition
+        # and a creature. The placeholder must fit Discord's 100 characters.
+        self.assertEqual(
+            ui.EMPTY, "Type a spell, a condition, a creature or a rule, then try again."
+        )
+        self.assertEqual(ui.BOX_PLACEHOLDER, "For example: Fireball, Grappled, Goblin or Cover")
+        self.assertLessEqual(len(ui.BOX_PLACEHOLDER), 100)
+        for example in ("Fireball", "Grappled", "Goblin", "Cover"):
+            hit = index.srd().lookup(example, "2024", "2014") or index.srd().lookup(
+                example, "2024", "2014", kind="rule"
+            )
+            self.assertIsNotNone(hit, example)  # each example is something DMbot has
+
 
 if __name__ == "__main__":
     unittest.main()
