@@ -1,0 +1,139 @@
+# The owner's checks: one sitting, finished features
+
+Last updated against `docs/GO_LIVE.md` at 2026-10-18.
+
+These features are finished and on the server, but the website hides them until someone has watched each
+one work once. You can clear most of them in one sitting on the test server. Each check is short: do the
+steps, look for the sign it worked, then tell dev1.
+
+**Names in the examples are made up. Use made-up names too.** Buttons are named as the Help page names
+them. If a button is not where a check says, that is a mistake in this file: tell dev1 and WebDev will fix it.
+
+**Before you start (once):** open your test server, type `/dmbot start`, pick your voice channel and press
+▶ Start listening. You are the game master. The steps are on the Help page:
+https://getdmbot.com/help. Keep this open on your phone and work down the list. Checks 1 and 2 come first
+because they unlock the latest deploy.
+
+**When you finish a check, tell dev1 in one line:** "Check N: worked" or "Check N: didn't (what you saw)".
+dev1 writes it in `docs/testing-history.log`, and WebDev then switches the matching Help, News and home page
+lines on. A check that didn't work is just as useful: say what you saw.
+
+---
+
+## Group A. Right after you start listening
+
+### 1. The people-and-groups channel
+**You'll do:**
+1. Look in your server's channel list for one called **dmb-npcs** (it has a short name after it).
+2. Open the Names list, press ➕ Add a name, and add one made-up person, for example "Captain Rook". Confirm them.
+3. Look at dmb-npcs again.
+
+**It worked if:** the channel is there, Captain Rook is listed with the other names and groups you gave them,
+and you cannot type in the channel.
+
+### 2. Initiative: FightBot hears how your table runs it
+**You'll do:**
+1. Start a fight the way you normally do on the test server.
+2. Say out loud: "we use side initiative".
+3. Look at your DM screen's combat line.
+
+**It worked if:** the line says **Initiative, as heard:** and names the side style. (There is no button for this
+on purpose. You correct it by saying it differently.) If you are not sure how to start a fight on the test
+server, ask dev1.
+
+### 3. The DMbot channel with the buttons
+**You'll do:**
+1. Look for the channel **dmb-dm-bot**. Press 👤 My buttons.
+2. Press 📖 Look up a rule and look up any rule.
+3. Press ⚙️ Settings, then back out.
+
+**It worked if:** the channel is there, only you see your buttons, the rule answer is private, and your DM
+screen shows only notes, alerts and ⏹ Stop listening.
+
+### 4. The house rules channel
+**You'll do:**
+1. Press ⚙️ Settings and add one made-up house rule, for example "Rope takes a full turn to tie".
+2. Look for the channel **dmb-rules**.
+
+**It worked if:** the channel is there, your rule appears as its own message, and you cannot type in the
+channel.
+
+---
+
+## Group B. Names and the story (needs a name card)
+
+Add one made-up person under Names first, for example "Captain Rook", if you haven't.
+
+### 5. How an NPC feels about the party (Standing)
+**You'll do:** open Captain Rook's name card and press 🤝 Standing. Then press **Toward a character…** and set
+a feeling.
+
+**It worked if:** Standing shows Hostile, Unfriendly, Wary, Friendly or Devoted with the reason, and only you
+can see it.
+
+### 6. Recording a deed
+**You'll do:** open a player character's name card, press ⚔️ Record a deed, type what happened, pick Captain
+Rook and "Helped them", and press ✅ Record it.
+
+**It worked if:** Standing now shows the deed as a reason, for example "(session 1, helped)", and ↩ Undo that
+works for a short while.
+
+### 7. Story threads and promises
+**You'll do:**
+1. On the Names list, press 🧵 New thread and make one, for example "Find the lost lantern".
+2. Press 🤝 Add a promise and make one, with who promised and who it was promised to.
+
+**It worked if:** both show on their cards with how far along they are, and nothing about them goes to
+players.
+
+### 8. Homebrew by kind
+**You'll do:** press ⚙️ Settings, then 📚 Homebrew. Press a kind, then ↩ All kinds. Then add one entry and pick
+**Species**, **Subclass** or **Background** as its kind.
+
+**It worked if:** you see one button for each kind with a count, like Spells 10/12, and the new kinds are on the
+list.
+
+---
+
+## Group C. Takes a little longer
+
+### 9. A quiet "where are we" line
+**You'll do:** set the game clock under ⚙️ Settings, then Game clock. Leave listening on and don't touch the
+clock for half an hour (15 minutes if your DM screen is on Chatty).
+
+**It worked if:** one short line appears on your DM screen saying where the game is, and nothing is posted to
+players.
+
+### 10. Shared story: watching your adventure
+**You'll do:**
+1. Press ⚙️ Settings, then 🧭 Shared story, and choose **Watch the story**. Read the warning and press "I have the
+   right".
+2. Press 📖 Give your adventure and give DMbot a short made-up adventure file you wrote yourself. Then press
+   📖 Read it now.
+3. Link one name to the adventure (open its card, press 📖 In my adventure…). Play a little.
+
+**It worked if:** DMbot posts a line on the DM screen when your table no longer fits the adventure, and only
+you see it. Use a made-up adventure, never a book you do not own.
+
+---
+
+## Group D. On the website
+
+### 11. The support helper
+**You'll do:** open your account on https://getdmbot.com/account, go to the Support form, and send one test
+question.
+
+**It worked if:** you get a thank-you email at once, then an answer from DMbot's helper, and your account page
+shows who answered.
+
+---
+
+## Not on this list (and why)
+
+- **Time suggestions:** deployed, but switched off on the server until `DMBOT_TIME_SUGGESTIONS=1` is set, so
+  there is nothing to check yet.
+- **Secret clues:** need the story extractor, which stays off until its test passes.
+- **Recaps and narrated recaps:** need `DMBOT_RECAPS=1`, and narration needs your ElevenLabs go-ahead.
+- **QAbot:** needs the steps on #1341.
+
+The reasons are in `docs/GO_LIVE.md`.
