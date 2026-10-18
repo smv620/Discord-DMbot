@@ -115,7 +115,7 @@ describe("without JavaScript", () => {
     const doc = parsePage(html);
     // Nothing is hidden until the script runs, except the box that needs the script.
     const hidden = [...doc.querySelectorAll("[hidden]")];
-    expect(hidden.map((e) => e.getAttribute("data-help-search") !== null || e.hasAttribute("data-help-search-clear"))).toEqual(hidden.map(() => true));
+    expect(hidden.map((e) => e.hasAttribute("data-help-search") || e.hasAttribute("data-help-search-clear") || e.hasAttribute("data-copy-link"))).toEqual(hidden.map(() => true));
     const text = doc.querySelector("main")!.textContent ?? "";
     for (const step of [...dmSteps, ...playerSteps, ...accountSteps]) {
       if (step.text.startsWith("Add DMbot") || step.text.startsWith("Forgot") || step.text.includes("your account page")) continue; // the page words these around a link
@@ -147,12 +147,12 @@ describe("on the Help page, more", () => {
     const list = quick.nextElementSibling!;
     const first = list.querySelector("li")!.textContent ?? "";
     // A word that is only in that quick answer, and nowhere in the steps before it.
-    const word = normalize(first).split(" ").find((w) => w.length > 6 && !(doc.querySelector("#dm-heading + ol")?.textContent ?? "").toLowerCase().includes(w));
+    const word = normalize(first).split(" ").find((w) => w.length > 6 && !(doc.querySelector("#dm-heading ~ ol")?.textContent ?? "").toLowerCase().includes(w));
     expect(word, "a word only the quick answer has").toBeTruthy();
     applySearch(main, word!);
     expect(quick.hasAttribute("hidden")).toBe(false);
     expect(list.hasAttribute("hidden")).toBe(false);
-    expect(doc.querySelector("#dm-heading + ol")?.hasAttribute("hidden")).toBe(true);
+    expect(doc.querySelector("#dm-heading ~ ol")?.hasAttribute("hidden")).toBe(true);
   });
 
   it("hides the contents links to sections it hides", () => {
