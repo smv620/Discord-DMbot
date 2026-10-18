@@ -66,7 +66,9 @@ class TheList(unittest.TestCase):
         self.assertRegex(armor.place, r"^SRD 5\.2\.1, p\. \d+$")
         (pit,) = listed("how do I disarm the hidden pit")
         self.assertEqual(pit.place, "DM only")
-        self.assertEqual(looked.text_of([pit]), f"{looked.HEADING}\nHidden Pit (trap) · DM only")
+        self.assertEqual(
+            looked.text_of([pit]), f"{looked.HEADING}\nHidden Pit (trap) · DM only\n{looked.HINT}"
+        )
 
     def test_the_value_opens_the_right_twin(self) -> None:
         shield, armor = listed("how much AC does shield give")
@@ -82,7 +84,7 @@ class TheList(unittest.TestCase):
             house_rules=[house(3)], lookup=None, scene="",
         )  # fmt: skip
         items = looked.of(ctx, INDEX)
-        self.assertEqual(items[0], looked.Looked("House rule 3", "your table's house rule"))
+        self.assertEqual(items[0], looked.Looked("House rule 3", "your table"))
         self.assertEqual(items[0].value, "")
         self.assertEqual(items[1].label, "Shield (spell)")
 
@@ -111,13 +113,28 @@ def press(user: int, client: Any) -> Any:
     return it
 
 
+class TheButtonLabels(unittest.TestCase):
+    def test_a_button_says_the_name_alone_cut_to_a_phone_and_the_kind_only_for_twins(self) -> None:
+        (bag,) = listed("what does a bag of holding do")
+        self.assertEqual(looked.button_labels([bag]), ["Bag of Holding"])  # not the long label
+        long = looked.Looked("A" * 40 + " (item: Wondrous Item)", "x", "v")
+        self.assertEqual(looked.button_labels([long]), ["A" * 24 + "…"])
+        twins = listed("how much AC does shield give")
+        self.assertEqual(looked.button_labels(twins), ["Shield (spell)", "Shield (armor)"])
+
+    def test_at_most_five_lines_get_a_button_and_the_text_keeps_them_all(self) -> None:
+        items = [looked.Looked(f"Thing {n} (rule)", "x", f"Thing {n}") for n in range(8)]
+        self.assertEqual(len(items), 8)
+        self.assertEqual(looked.text_of(items).count("\n"), 9)  # heading + 8 lines + hint
+
+
 class TheButtons(unittest.IsolatedAsyncioTestCase):
     def setUp(self) -> None:
         self.service = SidebarService(FakeHost())
         self.client = SimpleNamespace(sidebar=self.service)
         items = (
             *listed("how much AC does shield give"),
-            looked.Looked("House rule 3", "your table's house rule"),
+            looked.Looked("House rule 3", "your table"),
         )
         self.key = self.service.looked.remember(looked.Kept(OWNER, GUILD, "c1", items))
 
@@ -128,9 +145,10 @@ class TheButtons(unittest.IsolatedAsyncioTestCase):
         await looked_at.LookedButton(self.key).callback(it)
         self.assertTrue(it.sent["ephemeral"])
         self.assertIn("Shield (spell) · SRD 5.2.1, p.", it.sent["text"])
-        self.assertIn("House rule 3 · your table's house rule", it.sent["text"])
+        self.assertIn("House rule 3 · your table", it.sent["text"])
         labels = [c.item.label for c in it.sent["view"].children]
-        self.assertEqual(labels, ["Shield (spell)", "Shield (armor)"])  # not the house rule
+        self.assertEqual(labels, ["Shield (spell)", "Shield (armor)"])  # twins say their kind
+        self.assertIn(looked.HINT, it.sent["text"])
 
     async def test_nobody_else_gets_it_and_a_forgotten_list_is_said_plainly(self) -> None:
         it = press(OTHER, self.client)
@@ -158,7 +176,7 @@ class TheButtons(unittest.IsolatedAsyncioTestCase):
             await looked_at.OpenCard(self.key, 2).callback(rule)  # the house rule has no value
         look_up.assert_not_awaited()
         self.assertEqual(other.sent["text"], looked.NOT_YOURS)
-        self.assertEqual(rule.sent["text"], looked.GONE)
+        self.assertEqual(rule.sent["text"], looked.NO_CARD)
 
     async def test_the_buttons_come_back_from_their_ids_after_a_restart(self) -> None:
         for template, custom_id in (

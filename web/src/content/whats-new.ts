@@ -192,7 +192,7 @@ export const held: Held[] = [
   {
     date: "2026-10-18",
     title: "See what DMbot looked at",
-    what: "Under a rules answer in your private chat with DMbot, press What I looked at to see which rules and house rules it used. Press a line to read that card. Only the game master who asked can open it.",
+    what: "Under a rules answer in your private chat with DMbot, press What I looked at to see which rules and house rules it used. Tap a name to read its card. Only the DM who asked can open it.",
     reason: "Built (#1957); held until dev1 deploys it.",
   },
   {

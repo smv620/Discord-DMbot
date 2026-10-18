@@ -21,7 +21,6 @@ from dmbot.sidebar import looked
 log = logging.getLogger(__name__)
 
 _KEY = r"(?P<key>[0-9a-f]{12})"
-LINE_LABEL_MAX = 80  # Discord's limit for a button label
 
 
 def view(key: str) -> discord.ui.View:
@@ -36,11 +35,10 @@ def _kept(interaction: discord.Interaction, key: str) -> looked.Kept | str:
     sidebar = getattr(interaction.client, "sidebar", None)
     registry = getattr(sidebar, "looked", None)
     kept = registry.get(key) if registry is not None else None
-    if kept is None:
+    if not isinstance(kept, looked.Kept):
         return looked.GONE
     if interaction.user.id != kept.owner_id:
         return looked.NOT_YOURS
-    assert isinstance(kept, looked.Kept)
     return kept
 
 
@@ -53,8 +51,8 @@ class LookedButton(
     def __init__(self, key: str) -> None:
         super().__init__(
             discord.ui.Button(
-                label=looked.BUTTON_LABEL.removeprefix("📖 "),
-                emoji="📖",
+                label=looked.BUTTON_LABEL,
+                emoji=looked.BUTTON_EMOJI,
                 style=discord.ButtonStyle.secondary,
                 custom_id=f"dmbot:looked:{key}",
             )
@@ -73,9 +71,10 @@ class LookedButton(
             await interaction.response.send_message(kept, ephemeral=True, allowed_mentions=NO_PINGS)
             return
         lines = discord.ui.View(timeout=None)
-        for i, item in enumerate(kept.items):
-            if item.value:  # a house rule has no card to open
-                lines.add_item(OpenCard(self.key, i, item.label))
+        shown = looked.button_labels(kept.items)
+        buttons = [i for i, item in enumerate(kept.items) if item.value]  # a house rule has none
+        for i in buttons[: looked.BUTTONS_MAX]:
+            lines.add_item(OpenCard(self.key, i, shown[i]))
         await interaction.response.send_message(
             looked.text_of(kept.items),
             view=lines if lines.children else discord.utils.MISSING,
@@ -93,7 +92,7 @@ class OpenCard(
     def __init__(self, key: str, n: int, label: str = "Open") -> None:
         super().__init__(
             discord.ui.Button(
-                label=label[:LINE_LABEL_MAX],
+                label=label,
                 style=discord.ButtonStyle.secondary,
                 custom_id=f"dmbot:looked:open:{key}:{n}",
             )
@@ -116,7 +115,7 @@ class OpenCard(
             return
         if self.n >= len(kept.items) or not kept.items[self.n].value:
             await interaction.response.send_message(
-                looked.GONE, ephemeral=True, allowed_mentions=NO_PINGS
+                looked.NO_CARD, ephemeral=True, allowed_mentions=NO_PINGS
             )
             return
         # The card is read again and the person checked again, as for any press of a button.
