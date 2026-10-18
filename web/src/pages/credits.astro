@@ -80,12 +80,16 @@ const parts = (text: string): { text: string; href?: string }[] =>
   }
 
   .counts {
-    display: flex;
-    flex-wrap: wrap;
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(10.5rem, 1fr));
     gap: var(--space-1) var(--space-4);
     list-style: none;
     padding: 0;
     margin: var(--space-2) 0;
+  }
+
+  .counts li {
+    white-space: nowrap;
   }
 
   .source p {

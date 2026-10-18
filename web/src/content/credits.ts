@@ -36,4 +36,4 @@ export const whatDmbotDid =
 export const creditsNotAffiliated = notAffiliated;
 
 export const lookupHeading = "What DMbot can look up";
-export const lookupIntro = "How many entries of each kind are in the data DMbot uses. The numbers are counted from the files when this page is built.";
+export const lookupIntro = "Only what is in this free document, not the full books. These numbers are counted from the real data, not typed by hand.";

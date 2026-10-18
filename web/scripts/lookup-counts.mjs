@@ -9,7 +9,7 @@ export const kindNames = {
   spell: "Spells",
   condition: "Conditions",
   monster: "Creatures",
-  rule: "Rules terms",
+  rule: "Rules",
   feature: "Class features",
   item: "Magic items",
   feat: "Feats",
