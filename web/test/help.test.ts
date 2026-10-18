@@ -10,7 +10,7 @@ import { beforeAll, describe, expect, it } from "vitest";
 import { parsePage } from "./dom";
 
 import { entries, held } from "../src/content/whats-new";
-import { WHATS_ON_LIVE, whatsOnSteps, TIME_SUGGESTIONS_LIVE, timeSuggestionSteps, RULES_CHANNEL_LIVE, rulesChannelSteps, INITIATIVE_STYLE_LIVE, initiativeStyleSteps, initiativeStyleDmSteps, NPCS_CHANNEL_LIVE, npcsChannelSteps, DEEDS_LIVE, deedSteps, WHERE_ARE_WE_LIVE, whereAreWeSteps, SHARED_STORY_LIVE, sharedStorySteps, STANDING_LIVE, standingSteps, HOMEBREW_KINDS_LIVE, homebrewKindSteps, STORY_THREADS_LIVE, storyThreadSteps, DM_BOT_CHANNEL_LIVE, dmBotChannelSteps, settingsOnDmScreenSteps, HOMEBREW_LINKS_LIVE, SECRET_CLUES_LIVE, accountSteps, dmSteps, homebrewLinkSteps, secretClueSteps, emailSteps, recapSteps, quickAnswers, quickAnswersHeading, gettingHelp, playerSteps, snags, snagsHeading, onThisPage, onThisPageHeading, backToTop } from "../src/content/help";
+import { WHATS_ON_LIVE, whatsOnSteps, TIME_SUGGESTIONS_LIVE, timeSuggestionSteps, RULES_CHANNEL_LIVE, rulesChannelSteps, INITIATIVE_STYLE_LIVE, initiativeStyleSteps, initiativeStyleDmSteps, NPCS_CHANNEL_LIVE, npcsChannelSteps, DEEDS_LIVE, deedSteps, WHERE_ARE_WE_LIVE, whereAreWeSteps, SHARED_STORY_LIVE, sharedStorySteps, STANDING_LIVE, standingSteps, HOMEBREW_KINDS_LIVE, homebrewKindSteps, STORY_THREADS_LIVE, storyThreadSteps, DM_BOT_CHANNEL_LIVE, dmBotChannelSteps, settingsOnDmScreenSteps, HOMEBREW_LINKS_LIVE, SECRET_CLUES_LIVE, RULE_KINDS_LIVE, ruleKindSteps, accountSteps, dmSteps, homebrewLinkSteps, secretClueSteps, emailSteps, recapSteps, quickAnswers, quickAnswersHeading, gettingHelp, playerSteps, snags, snagsHeading, onThisPage, onThisPageHeading, backToTop } from "../src/content/help";
 import Help from "../src/pages/help.astro";
 
 const botDir = fileURLToPath(new URL("../../core/src/dmbot/", import.meta.url));
@@ -420,6 +420,23 @@ describe("Help: the website's read-only pages (#1588)", () => {
     expect(del).toContain("It can't be undone.");
     expect(del).toContain("type the campaign's name");
     expect(del).toContain("💾 Back up first");
+  });
+
+  it("holds the rule-kinds step with the held \"Look up any rule\" entry, and flips them together (#1924)", () => {
+    const heldTitle = held.map((h) => h.title).includes("Look up any rule");
+    expect(heldTitle).toBe(!RULE_KINDS_LIVE);
+    const shown = playerSteps.map((x) => x.text).join(" ");
+    expect(shown.includes("also finds rules like cover or long rest")).toBe(RULE_KINDS_LIVE);
+    const words = ruleKindSteps.map((x) => x.text).join(" ");
+    for (const example of ["cover", "rage", "Bag of Holding", "Alert", "Goliath", "rogue evasion", "Orc (creature)"]) {
+      expect(words, example).toContain(example);
+    }
+    expect(words).not.toMatch(/longsword|armor|weapon/i); // not until #1921 has merged
+    // The same kinds as the entry: the Help step names what the entry names.
+    const entry = held.find((h) => h.title === "Look up any rule")?.what ?? "";
+    for (const example of ["cover", "rage", "Bag of Holding", "Alert", "Goliath"]) {
+      expect(entry, example).toContain(example);
+    }
   });
 
   it("holds the secrets step with the held What's new entry, and flips them together (#1659)", () => {
