@@ -38,6 +38,7 @@ The `document` block of each file records the SHA-256 of the 5.2.1 data files wh
 
 Download the PDF into a folder of its own (it is not kept in this repository), then, from `core/`:
 
+    pip install -e ".[srd]"
     python -m dmbot.devtools.srd PATH/TO/SRD_CC_v5.1.pdf
 
 The same PDF always gives the same files, so running the tool on the PDF and seeing no change (`git diff`) is how to check them. The tool recognizes which of the two SRDs it was given, and stops with a message rather than guessing when the layout is not what it expects.

@@ -8,7 +8,10 @@ Pure apart from `read_pages`, which opens the file.
 
 from __future__ import annotations
 
+import re
+from collections.abc import Iterable
 from dataclasses import dataclass, field
+from typing import Any
 
 # Where the columns split on the SRD's pages (594 points wide), and where the running
 # header and footer ("System Reference Document 5.2.1", the page number) sit.
@@ -120,30 +123,141 @@ def lines_of(pieces: list[Piece], page: int = 0) -> list[Line]:
     return out
 
 
+@dataclass(frozen=True, slots=True)
+class Char:
+    """One character as the PDF reader reports it: its font ("" for a space the reader made up
+    between two pieces), where its baseline starts, and where its box begins and ends."""
+
+    text: str
+    font: str
+    x: float
+    y: float
+    left: float
+    right: float
+
+
+# The text columns' left edges on the SRD's pages, and how far a paragraph's first line is
+# indented from them (the PDF draws the indent as a gap, not as a character).
+COLUMN_EDGES = (63.0, 313.5)
+INDENT = 8.0
+INDENT_SLACK = 1.0
+SPACE_GAP = 1.5  # a gap this wide (points) between two pieces of one line is a space
+DIGIT_GAP = 0.3  # ...and this wide between a letter and a number ("Con" "22" in the ability table)
+LINE_END_HYPHEN = re.compile(r"([A-Za-z0-9])(-[\xad\u2010\u2011]*)$")
+SENTENCE_END = tuple('.:!?)”"')
+SOFT_HYPHEN = "\ufffe"  # what pdfium reports for the hyphen the typesetter added at a line's end
+
+
+def pieces_of(chars: Iterable[Char]) -> list[Piece]:
+    """The pieces of one page, from its characters in the order the PDF draws them. A piece is
+    a run in one font on one line, as the parsers expect (they were written for it). Two things
+    the PDF leaves out are put back: the space between pieces that sit apart, and the leading
+    space of a paragraph's first line (its indent), which the parsers use to find paragraphs."""
+    pieces: list[Piece] = []
+    current: list[Any] | None = None  # x, y, font, text, x of its last character
+    lead = ""  # an indent seen before the next piece's first character
+    at_line_start = True
+    in_lead_in = False  # the line at the column's edge began with a bold-italic lead-in
+    previous_right = 0.0
+
+    def close(ending: str = "") -> None:
+        nonlocal current
+        if current is not None:
+            body = current[3]
+            if ending:
+                # A hyphen that ends a line is drawn apart from its word, and the parsers read
+                # it as " -" (the 5.1 reader tells "long-dead" from "immedi-ately" by it).
+                body = LINE_END_HYPHEN.sub(r"\1 \2", body)
+            pieces.append(
+                Piece(round(current[0], 1), round(current[1], 1), current[2], body + ending)
+            )
+        current = None
+
+    for char in chars:
+        text = "-" if char.text == SOFT_HYPHEN else char.text
+        if text in ("\r", "\n"):
+            close("\n")
+            lead, at_line_start = "", True
+            continue
+        if not char.font:  # a space made up between two pieces
+            if current is not None:
+                current[3] += text
+            elif text == " ":
+                lead = " "
+            continue
+        if (
+            current is None
+            or char.font != current[2]
+            or abs(char.y - current[1]) > SAME_LINE / 2
+            or char.x < current[4] - 2
+        ):
+            close()
+            before = pieces[-1] if pieces else None
+            current = [char.x, char.y, char.font, lead, char.x]
+            lead = ""
+            if at_line_start:
+                at_edge = any(abs(char.left - edge) <= 1.5 for edge in COLUMN_EDGES)
+                if at_edge:
+                    in_lead_in = "BoldItalic" in char.font
+                elif (
+                    not in_lead_in
+                    and any(abs(char.left - edge - INDENT) <= INDENT_SLACK for edge in COLUMN_EDGES)
+                    and before is not None
+                    and (
+                        before.text.rstrip("\n").rstrip().endswith(SENTENCE_END)
+                        or "SemiBold" in before.font
+                        or "GillSans" in before.font
+                    )
+                ):
+                    current[3] = " "  # an indented first line starts a paragraph
+                at_line_start = False
+            if (
+                before is not None
+                and abs(before.y - char.y) <= SAME_LINE / 2
+                and not text.isspace()
+                and not before.text.endswith((" ", "\n"))
+                and (
+                    char.left - previous_right >= SPACE_GAP
+                    or (
+                        text.isdigit()
+                        and before.text[-1:].isalpha()
+                        and char.left - previous_right >= DIGIT_GAP
+                    )
+                )
+            ):
+                current[3] = " " + current[3]
+        current[3] += text
+        current[4] = char.x
+        previous_right = char.right
+    close()
+    return pieces
+
+
 def read_pages(path: str) -> list[list[Line]]:
-    """Every page of the PDF at `path`, as lines in reading order."""
-    from pypdf import PdfReader  # imported here: only this tool opens PDFs
+    """Every page of the PDF at `path`, as lines in reading order. Read with pypdfium2 (the
+    `srd` extra): pypdf, and pdfminer.six, each leave out parts of this PDF's text (the
+    ability table's Dex, Con, Wis and Cha labels, some numbers, an equals sign), the same
+    on every version tried (#1892)."""
+    import ctypes
 
-    reader = PdfReader(path)
+    import pypdfium2 as pdfium  # imported here: only this tool opens PDFs
+    import pypdfium2.raw as raw
+
+    document = pdfium.PdfDocument(path)
+    name = ctypes.create_string_buffer(256)
+    flags = ctypes.c_int()
+    origin_x, origin_y = ctypes.c_double(), ctypes.c_double()
     pages: list[list[Line]] = []
-    for number, page in enumerate(reader.pages, 1):
-        pieces: list[Piece] = []
-
-        def visit(
-            text: str,
-            cm: list[float],
-            tm: list[float],
-            font: dict[str, object] | None,
-            _size: float,
-            sink: list[Piece] = pieces,
-        ) -> None:
-            if not text.strip("\n"):
-                return
-            x = tm[4] * cm[0] + tm[5] * cm[2] + cm[4]
-            y = tm[4] * cm[1] + tm[5] * cm[3] + cm[5]
-            name = str((font or {}).get("/BaseFont", ""))
-            sink.append(Piece(round(x, 1), round(y, 1), name, text))
-
-        page.extract_text(visitor_text=visit)
-        pages.append(lines_of(pieces, number))
+    for number in range(len(document)):
+        textpage = document[number].get_textpage()
+        chars: list[Char] = []
+        for index, text in enumerate(textpage.get_text_range()):
+            raw.FPDFText_GetFontInfo(textpage, index, name, len(name), ctypes.byref(flags))
+            raw.FPDFText_GetCharOrigin(
+                textpage, index, ctypes.byref(origin_x), ctypes.byref(origin_y)
+            )
+            left, _bottom, right, _top = textpage.get_charbox(index)
+            font = name.value.decode("latin1") if text not in "\r\n" else ""
+            chars.append(Char(text, font, origin_x.value, origin_y.value, left, right))
+        pages.append(lines_of(pieces_of(chars), number + 1))
     return pages

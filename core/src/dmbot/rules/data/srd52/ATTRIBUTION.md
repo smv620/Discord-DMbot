@@ -17,6 +17,7 @@ The words are the SRD's. DMbot's own tool (`python -m dmbot.devtools.srd`) took 
 - recorded the page each entry is on, so DMbot can name it ("SRD 5.2.1, Spell Descriptions, p. 131");
 - read three oddities as they were meant: the title of Acid Splash and the ability names in the stat blocks inside spells are set in small capitals, which come out of the PDF in mixed case ("Acid SplASh", "dex", "WiS"), so the title is written in ordinary capitals and the ability names as Str, Dex, Con, Int, Wis and Cha; and Barkskin's line says "Component:" for "Components:";
 - read each creature's stat block into fields: size, type and alignment from the italic line, armor class and initiative, hit points and their dice, speed, the six ability scores (the table's modifiers and saves are read too; only the saving throws that differ from the modifier are kept, as “Dex +5, Wis +3”, the way the 5.1 prints them), skills, gear, resistances, vulnerabilities, immunities (damage and conditions together, as printed), senses, languages, challenge rating, XP and proficiency bonus; and kept the traits and actions as one paragraph each under their headings (Traits, Actions, Bonus Actions, Reactions, Legendary Actions), with a spell list line by line;
+- read the PDF's text with pypdfium2 (#1892), which keeps all of it (pypdf and pdfminer.six leave parts out: the ability table's Dex, Con, Wis and Cha labels, some numbers, an equals sign), and put back the space the PDF draws as a gap (before a number, between pieces, and the indent that starts a paragraph);
 - closed the gap the PDF leaves before a comma after a number (“+7 , reach” is “+7, reach”, “7 ,200” is “7,200”).
 
 Tables and stat blocks inside a spell are kept as plain lines of text: one line for each row of a table (with a space between its columns) and one for each entry of a stat block, however many lines the print wraps it over.
@@ -25,6 +26,7 @@ Tables and stat blocks inside a spell are kept as plain lines of text: one line 
 
 Download the PDF into a folder of its own (it is not kept in this repository), then, from `core/`:
 
+    pip install -e ".[srd]"
     python -m dmbot.devtools.srd PATH/TO/SRD_CC_v5.2.1.pdf
 
 The same PDF always gives the same files, so running the tool on the PDF and seeing no change (`git diff`) is how to check them. If Wizards of the Coast publishes a new version, the tool stops with a message rather than guessing when the layout is not what it expects.
