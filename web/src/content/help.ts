@@ -791,7 +791,7 @@ export const RULE_KINDS_LIVE = false;
 
 export const ruleKindSteps: Step[] = [
   {
-    text: "/dmbot rule also finds rules like cover or long rest, class features like rage, magic items like Bag of Holding, weapons and armor like longsword or plate armor, and feats, species and backgrounds like Alert, Goliath or Sage. If a spell or condition has the same name, you get that first.",
+    text: "/dmbot rule also finds rules like cover or long rest, class features like rage, magic items like Bag of Holding, weapons and armor like longsword or plate armor, tools and gear like Thieves' Tools or a Healer's Kit, and feats, species and backgrounds like Alert, Goliath or Sage. If a spell or condition has the same name, you get that first.",
   },
   {
     text: "Some classes share a feature. Type the class first, like rogue evasion, to get that class's. If two things share a name, the list marks them, like Orc (creature). Pick the one you mean.",

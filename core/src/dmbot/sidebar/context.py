@@ -36,6 +36,7 @@ from dmbot.rules.followed import FollowedRule
 from dmbot.rules.homebrew import Homebrew
 from dmbot.rules.house import HouseRule
 from dmbot.rules.index import (
+    ARMOR,
     ASKED_FOR,
     BACKGROUND,
     CLASS_WORDS,
@@ -46,6 +47,7 @@ from dmbot.rules.index import (
     ORIGIN_KINDS,
     RULE,
     SPECIES,
+    WEAPON,
     Entry,
     Hit,
     Index,
@@ -226,6 +228,7 @@ def mentioned_rules(
     cued = any(w.lower() in ORIGIN_CUES for w in words)
     gear = any(w.lower() in EQUIPMENT_CUES for w in words)
     props = any(w.lower() in PROPERTY_CUES for w in words)
+    shop = any(w.lower() in GEAR_CUES for w in words)
     asked: list[tuple[int, list[Hit]]] = []
     for size in range(ITEM_WINDOW, 0, -1) if not found else ():
         for start in range(len(words) - size + 1):
@@ -254,7 +257,7 @@ def mentioned_rules(
             if not hits and size <= WINDOW:
                 hits = origin_hits(index, name, target, fallback, cued=cued)
             if not hits and size <= WINDOW:
-                hits = equipment_hits(index, name, target, fallback, cued=gear)
+                hits = equipment_hits(index, name, target, fallback, cued=gear, shop=shop)
             if hits:
                 for k in range(start, start + size):
                     used[k] = True
@@ -267,9 +270,14 @@ def mentioned_rules(
                 found.append((start, hits[depth]))
     if cued and found:  # "the acolyte background": the creature of that name gives way (#1913)
         found = _cued_origins(found, words, index, target, fallback)
-    if (gear or props) and found:  # "the AC of a shield": the spell of that name gives way (#1919)
-        found = _cued_equipment(found, words, index, target, fallback, props=props)
-        found = _more_gear(found, words, used, index, target, fallback, props=props)
+    if (gear or props or shop) and found:  # "the AC of a shield": the spell gives way (#1919)
+        weapon_cue = gear or props
+        found = _cued_equipment(
+            found, words, index, target, fallback, props=props, cued=weapon_cue, shop=shop
+        )
+        found = _more_gear(
+            found, words, used, index, target, fallback, props=props, cued=weapon_cue, shop=shop
+        )
     if any(h.entry.kind in EQUIPMENT_KINDS for _, h in found):  # "damage", "armor" are cue words
         found = [
             (start, h)
@@ -312,13 +320,18 @@ def _cued_origins(
     return out
 
 
+# Words that make a one-word tool, gear or mount name count (#1927): "Rope", "Torch", "Oil" and
+# "Net" are everyday words, "Healer's Kit" and "Thieves' Tools" are not.
+GEAR_CUES = frozenset(
+    {"gear", "tool", "tools", "kit", "cost", "costs", "price", "weigh", "weighs", "weight", "buy"}
+)
 EQUIPMENT_CUES = frozenset(
     {"damage", "weapon", "weapons", "armor", "ac", "mastery", "masteries", "property", "properties"}
 )
 SPELL_WORDS = frozenset({"spell", "spells", "cast", "casts", "casting", "cantrip", "cantrips"})
 # Words only gear has: they may take the place of a spell of the same name ("AC", "damage" may not)
 ONLY_GEAR_CUES = frozenset(
-    {"weapon", "weapons", "armor", "mastery", "masteries", "property", "properties"}
+    {"weapon", "weapons", "armor", "mastery", "masteries", "property", "properties"} | GEAR_CUES
 )
 PROPERTY_CUES = frozenset({"weapon", "weapons", "property", "properties", "mastery", "masteries"})
 PROPERTY_TAGS = frozenset({"Weapon Property", "Mastery Property"})
@@ -335,13 +348,19 @@ def is_everyday_property(entry: Entry) -> bool:
     )
 
 
-def equipment_hits(index: Index, name: str, target: str, fallback: str, *, cued: bool) -> list[Hit]:
-    """The weapon or armor with this name (#1919). A one-word name is an everyday word ("Club",
-    "Net", "Whip", "Shield"): it counts only when the question also says "damage", "weapon",
-    "armor", "AC", "mastery" or "property"."""
-    if len(name.split()) == 1 and not cued:
+def equipment_hits(
+    index: Index, name: str, target: str, fallback: str, *, cued: bool, shop: bool = False
+) -> list[Hit]:
+    """The weapon, armor, gear or tool with this name (#1919, #1927). A one-word name is an
+    everyday word ("Club", "Net", "Whip", "Shield", "Rope", "Torch"): a weapon or armor counts
+    only when the question also says "damage", "weapon", "armor", "AC", "mastery" or "property",
+    gear or a tool only with "gear", "tool", "kit", "cost", "price", "weight" or "buy"."""
+    single = len(name.split()) == 1
+    if single and not (cued or shop):
         return []
     for kind in EQUIPMENT_KINDS:
+        if single and not (cued if kind in (WEAPON, ARMOR) else shop):
+            continue
         hit = index.lookup(name, target, fallback, kind=kind)
         if hit is not None:
             return [hit]
@@ -356,6 +375,8 @@ def _cued_equipment(
     fallback: str,
     *,
     props: bool = False,
+    cued: bool = True,
+    shop: bool = False,
 ) -> list[tuple[int, Hit]]:
     """A question that says "armor", "AC", "weapon" or "damage" and names a creature that is
     also an armor or weapon means the armor or weapon. A named spell that is also gear
@@ -370,7 +391,7 @@ def _cued_equipment(
             continue
         size = len(hit.found_as.split())
         window = " ".join(words[start : start + size])
-        picked = equipment_hits(index, window, target, fallback, cued=True)
+        picked = equipment_hits(index, window, target, fallback, cued=cued, shop=shop)
         if not picked and props:
             rule = index.lookup(window, target, fallback, kind=RULE)
             picked = (
@@ -394,6 +415,8 @@ def _more_gear(
     fallback: str,
     *,
     props: bool,
+    cued: bool = True,
+    shop: bool = False,
 ) -> list[tuple[int, Hit]]:
     """With a cue word in the question, the weapons, armor and properties named in its other
     words too ("slow mastery for a whip"), as far as there are places left."""
@@ -406,7 +429,7 @@ def _more_gear(
             window = " ".join(words[start : start + size])
             if size == 1 and (words[start].lower() in _STOP or len(words[start]) < 3):
                 continue
-            picked = equipment_hits(index, window, target, fallback, cued=True)
+            picked = equipment_hits(index, window, target, fallback, cued=cued, shop=shop)
             if not picked and props:
                 rule = index.lookup(window, target, fallback, kind=RULE)
                 if rule is not None and rule.entry.details.get("tag") in PROPERTY_TAGS:

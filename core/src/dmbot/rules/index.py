@@ -68,12 +68,14 @@ SPECIES = "species"  # a character species ("Goliath")
 BACKGROUND = "background"  # a character background ("Sage")
 WEAPON = "weapon"  # a weapon of the Weapons table ("Longsword")
 ARMOR = "armor"  # an armor of the Armor table, and the Shield ("Plate Armor")
-# All eight are found only when asked for: their names are everyday words ("Action", "Damage",
+GEAR = "gear"  # adventuring gear, a mount or a vehicle ("Healer's Kit", "Horse, Riding", "Rowboat")
+TOOL = "tool"  # a tool ("Thieves' Tools")
+# All ten are found only when asked for: their names are everyday words ("Action", "Damage",
 # "Rope of Climbing", "Alert", "Sage", "Club"), so the name pool the live cards, the list and "did
 # you mean" read from leaves them out.
-ASKED_FOR = frozenset({RULE, FEATURE, ITEM, FEAT, SPECIES, BACKGROUND, WEAPON, ARMOR})
+ASKED_FOR = frozenset({RULE, FEATURE, ITEM, FEAT, SPECIES, BACKGROUND, WEAPON, ARMOR, GEAR, TOOL})
 ORIGIN_KINDS = (FEAT, SPECIES, BACKGROUND)  # looked up after the features and the items
-EQUIPMENT_KINDS = (WEAPON, ARMOR)  # and then these (#1919)
+EQUIPMENT_KINDS = (WEAPON, ARMOR, GEAR, TOOL)  # and then these (#1919, #1927)
 # The kinds a list entry says in brackets when its name is also another's: "Shield (armor)"
 NAMED_KINDS = (RULE, ITEM, *ORIGIN_KINDS, *EQUIPMENT_KINDS)
 # The SRD 5.2.1's twelve classes: a class in a question picks that class's feature (#1900).
@@ -101,6 +103,22 @@ def monster_keys(name: str) -> list[str]:
         found.append(tail)  # "Elf, Drow" is also just "Drow"
     if "/" in plain:  # "Succubus/Incubus" is also each of the two
         found.extend(plain.split("/"))
+    own = normalize(name)
+    return [k for k in dict.fromkeys(normalize(n) for n in found) if k and k != own]
+
+
+_POSSESSIVE_S = re.compile(r"['’]s\b")
+
+
+def gear_keys(name: str) -> list[str]:
+    """The other names a piece of gear, a mount or a tool is found by: the comma turned round
+    ("Horse, Riding" is "Riding Horse"), and without the possessive's "s" ("Healer's Kit" is
+    "Healer Kit"), because a question is read with it taken off (`words_of`)."""
+    found = [name]
+    head, comma, tail = name.partition(", ")
+    if comma:
+        found.append(f"{tail} {head}")
+    found += [_POSSESSIVE_S.sub("", n) for n in found]
     own = normalize(name)
     return [k for k in dict.fromkeys(normalize(n) for n in found) if k and k != own]
 
@@ -216,6 +234,9 @@ class Index:
                     self._add(entry.edition, key, entry)
             elif entry.kind == ITEM:
                 for key in item_keys(entry.name):
+                    self._add(entry.edition, key, entry)
+            elif entry.kind in (GEAR, TOOL):
+                for key in gear_keys(entry.name):
                     self._add(entry.edition, key, entry)
         for older, current in alias_pairs:
             found = self._by_edition.get(alias_edition, {}).get(normalize(current))
@@ -492,6 +513,8 @@ def srd() -> Index:
         (BACKGROUND, "backgrounds"),
         (WEAPON, "weapons"),
         (ARMOR, "armor"),
+        (GEAR, "adventuring gear, mounts and vehicles"),
+        (TOOL, "tools"),
     ):
         if not any(e.kind == kind for e in entries):  # an older build of the data: carry on
             log.warning("The %s are not in the data; the DM sidebar will not cite them", what)
