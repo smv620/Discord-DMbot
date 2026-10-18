@@ -17,6 +17,7 @@ from dmbot.bot import DMBot, Table
 from dmbot.campaigns import CampaignStore
 from dmbot.config import Settings
 from dmbot.consent import ConsentStore
+from dmbot.discord_limits import MESSAGE_MAX
 from dmbot.memory.backup import MemorySection
 from dmbot.memory.models import CONFIRMED, PROPOSED, REJECTED, MemoryRuleError
 from dmbot.memory.models import DM as DM_SOURCE
@@ -154,6 +155,12 @@ class Panel(NamesTest):
         names = CampaignLookup.build(await self.memory.lookup_data(GUILD, self.campaign.id))
         waiting = len(await self.memory.entities(GUILD, self.campaign.id, statuses=[PROPOSED]))
         return ui.home_text(names, self.campaign, waiting)
+
+    async def test_the_overview_stays_inside_one_message(self) -> None:
+        for n in range(30):
+            await ui.save_name(self.memory, self.campaign, f"{n:02d}" + "N" * 98, "npc", [], [])
+        text, _ = await self.overview()
+        self.assertLessEqual(len(text), MESSAGE_MAX)
 
     async def test_the_overview_counts_kinds_and_never_shows_secrets(self) -> None:
         await ui.save_name(

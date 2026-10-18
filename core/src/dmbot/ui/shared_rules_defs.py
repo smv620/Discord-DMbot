@@ -11,6 +11,7 @@ from typing import Any
 import discord
 
 from dmbot.campaigns import Campaign
+from dmbot.discord_limits import MESSAGE_MAX
 from dmbot.memory import set_definitions as sd
 from dmbot.ui.dmbot_commands import _Button, _Menu, _Select
 
@@ -165,7 +166,7 @@ NEW_TEXT = (
     "You'll see the changes before anything is published."
 )
 
-TEXT_MAX = 1800  # under Discord's 2,000
+TEXT_MAX = MESSAGE_MAX - 200  # margin kept from before: room for the words a sender adds around it
 
 
 def tick_list_text(offered: Sequence[dict[str, Any]], head: str = CHOOSE_TEXT) -> str:

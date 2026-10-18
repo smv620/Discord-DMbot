@@ -28,12 +28,13 @@ import { accountHeading, backToTop, dmHeading, emailsHeading, onThisPage, onThis
       {
         dmSteps.map((s) => (
           <li>
-            {s.text}
-            {s.text.startsWith("Add DMbot") && (
+            {s.text.startsWith("Add DMbot") ? (
               <>
-                {" "}
-                <a href="/install">Add to Discord</a>
+                Add DMbot to your Discord server from the <a href="/install">Add to Discord</a> page. Send your
+                players to <a href="/players">getdmbot.com/players</a>.
               </>
+            ) : (
+              s.text
             )}
           </li>
         ))
