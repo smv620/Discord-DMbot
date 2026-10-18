@@ -192,9 +192,9 @@ export const held: Held[] = [
   {
     date: "2026-10-18",
     title: "Look up any rule",
-    what: "Type /dmbot rule and a word like cover, dash or long rest, a class feature like rage, a magic item like Bag of Holding, a weapon or armor like longsword or plate armor, a tool like Thieves' Tools, gear like a Healer's Kit, or a feat, species or background like Alert, Goliath or Sage to read what the free rules say. If a spell, condition or creature has the same name, you get that first. Your table's house rule on it shows above.",
+    what: "Type /dmbot rule and a word like cover, dash or long rest, a class feature like rage, a magic item like Bag of Holding, a weapon or armor like longsword or plate armor, a tool like Thieves' Tools, gear like a Healer's Kit, or a feat, species or background like Alert, Goliath or Sage to read what the free rules say. If a spell, condition or creature has the same name, you get that first. Your table's house rule on it shows above. Traps, poisons, curses and hazards are for the game master: if a player asks about one at the table, DMbot answers That's one for your DM.",
     reason:
-      "Merged (#1890, #1891, #1912, #1913, #1919); held until dev1 deploys it.",
+      "Merged (#1890, #1891, #1912, #1913, #1919); #1935 is in review; held until dev1 deploys it.",
   },
   {
     date: "2026-10-17",
@@ -299,6 +299,13 @@ export const held: Held[] = [
     what: "If a player says a name you've marked secret, it ends up in the transcript, which anyone in your server can read. After the session DMbot asks you privately, one name at a time (up to five), whether it should stay secret from players or be opened up. Only you can answer, and DMbot never decides for you.",
     reason:
       "Held until it has been seen working on the test server (#1407).",
+  },
+  {
+    date: "2026-10-18",
+    title: "Who is alive, who carries what",
+    what: "DMbot remembers who is alive or dead and who carries the one-of-a-kind things, from lines you say yes to. If something doesn't fit, such as a dead character speaking, it asks you privately after the session, and you decide.",
+    reason:
+      "It needs the story extractor, which stays off until its prompt passes the measurement (#1282); held until it has been seen working on the test server (#1284).",
   },
   {
     date: "2026-10-16",

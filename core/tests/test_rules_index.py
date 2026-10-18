@@ -49,6 +49,7 @@ FILES_52 = (
     "origins.json",
     "rules.json",
     "spells.json",
+    "toolbox.json",
 )
 
 
@@ -543,6 +544,28 @@ class ClassFeatures(unittest.TestCase):
         found = index.srd().lookup("riding horse", "2024", "2014", kind="gear")
         assert found is not None
         self.assertEqual(found.entry.name, "Horse, Riding")
+
+    def test_poisons_traps_and_curses_are_asked_for_and_found_by_their_other_names(self) -> None:
+        for kind in (index.POISON, index.TRAP, index.CURSE):
+            self.assertIn(kind, index.ASKED_FOR)  # (never in the pool the live cards read)
+            self.assertIn(kind, index.NAMED_KINDS)
+        self.assertEqual(index.hazard_keys("poison", "Assassin’s Blood"), ["assassin blood"])
+        self.assertEqual(index.hazard_keys("trap", "Hidden Pit"), ["hidden pit trap", "pit trap"])
+        self.assertEqual(index.hazard_keys("trap", "Falling Net"), ["falling net trap"])
+        self.assertEqual(index.hazard_keys("curse", "Demonic Possession"), [])
+        pits = index.srd().lookup_all("pit trap", "2024", "2014", kind="trap")
+        self.assertEqual([h.entry.name for h in pits], ["Hidden Pit", "Spiked Pit"])
+        for name in ("Malice", "Torpor", "Hidden Pit"):
+            self.assertIsNone(index.srd().lookup(name, "2024", "2014"))  # not without a kind
+
+    def test_the_toolbox_entries_are_the_dms_and_say_where_they_are(self) -> None:
+        worm = index.srd().lookup("Purple Worm Poison", "2024", "2014", kind="poison")
+        assert worm is not None
+        self.assertTrue(worm.entry.dm_side)
+        self.assertEqual(worm.entry.citation, "SRD 5.2.1, Gameplay Toolbox, p. 198")
+        cover = index.srd().lookup("Cover", "2024", "2014", kind="rule")
+        assert cover is not None
+        self.assertFalse(cover.entry.dm_side)
 
     def test_the_2014_races_background_and_feat_are_the_fallback_only_where_the_target_has_nothing(
         self,

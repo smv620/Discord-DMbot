@@ -39,7 +39,12 @@ PERMISSIONS: tuple[Needed, ...] = (
     Needed("speak", "Speak", "join voice (DMbot stays muted)"),
     Needed("manage_channels", "Manage Channels", "make its DM screen channels"),
     Needed("manage_roles", "Manage Roles", "set who can see each DM screen"),
-    Needed("pin_messages", "Pin Messages", "pin its help card", optional=True),
+    Needed(
+        "pin_messages",
+        "Pin Messages",
+        "pin its help card and the DM Bot channel's buttons",
+        optional=True,
+    ),
 )
 _BY_FLAG = {p.flag: p for p in PERMISSIONS}
 
@@ -136,7 +141,7 @@ def missing_note(missing_labels: list[str], link: str | None) -> str:
     if extra:
         asks.append(
             f"{'It' if needed else 'Everything works, but it'} would also like "
-            f"{human_list(extra)} (to pin its help card)."
+            f"{human_list(extra)} (to pin its help card and the DM Bot channel's buttons)."
         )
     return f"{WELCOME_INTRO}\n{' '.join(asks)} {fix_hint(link)}\n{HOW_TO_START}"
 

@@ -84,6 +84,7 @@ def may_look_up(campaign: Campaign, user_id: int) -> bool:
     return user_id in campaign.dm_user_ids
 
 
+DM_ONLY = "That's one for your DM."  # as a table question's answer (sidebar.answer.ONE_FOR_DM)
 _last_lookup: dict[tuple[int, int], float] = {}  # (server, person) → when, for the players' pace
 
 
@@ -131,7 +132,7 @@ async def _homebrew(
 
 _KIND_SUFFIX = re.compile(
     r"^(?P<name>.+) \((?P<kind>"
-    r"rule|item|feat|species|background|weapon|armor|gear|tool|creature"
+    r"rule|item|feat|species|background|weapon|armor|gear|tool|poison|trap|curse|creature"
     r")\)$"
 )
 _SUFFIX_KINDS = {"creature": "monster"}  # how the list says a kind, where it differs
@@ -163,7 +164,7 @@ def _asked_for(srd: index.Index, typed: str, target: str, fallback: str) -> inde
     found = _features(srd, typed, target, fallback)
     if found:
         return found[0]
-    for kind in (index.ITEM, *index.ORIGIN_KINDS, *index.EQUIPMENT_KINDS):
+    for kind in (index.ITEM, *index.ORIGIN_KINDS, *index.EQUIPMENT_KINDS, *index.HAZARD_KINDS):
         hit = srd.lookup(typed, target, fallback, kind=kind)
         if hit is not None:
             return hit
@@ -261,6 +262,11 @@ async def look_up(
         # DM's button, never a player's.
         copy = own if own.source and is_dm else None
         await _send(interaction, mine[0], Card(mine, 1, copy) if len(mine) > 1 or copy else None)
+        return
+    if hit is not None and hit.entry.dm_side and not is_dm:
+        # The Gameplay Toolbox is the DM's chapter (#1935): a player gets the table's line, the
+        # same as for a table question, and none of the chapter.
+        await _tell(interaction, DM_ONLY)
         return
     if hit is None:
         close = srd.suggest(typed, campaign.target_ruleset, campaign.fallback_ruleset)
@@ -475,6 +481,7 @@ async def _typeahead(
     target, fallback = await _rulesets(interaction)
     srd = index.srd()
     found = srd.typeahead(current, target, fallback, limit=NAMES_MORE)
+    dm = await _is_a_dm(interaction)
     # Glossary names are everyday words ("Action", "Damage"), so they are offered only after
     # three letters and only when no spell, condition or creature starts the same way: a short
     # word never floods the list with them (#1891).
@@ -489,6 +496,7 @@ async def _typeahead(
                 index.ITEM,
                 *index.ORIGIN_KINDS,
                 *index.EQUIPMENT_KINDS,
+                *index.HAZARD_KINDS,
             ),
             limit=NAMES_MORE,
         )
@@ -498,6 +506,8 @@ async def _typeahead(
     if found and key and len(found) < NAMES_MORE:
         same = srd.asked_names(current, target, fallback, kinds=index.NAMED_KINDS, limit=NAMES_MORE)
         found = [*found, *(e for e in same if index.normalize(e.name) == key and e not in found)]
+    if not dm:  # the list would tell a player what the DM's chapter holds (#1935)
+        found = [e for e in found if not e.dm_side]
     return [
         app_commands.Choice(name=rule_card.choice_label(e), value=_choice_value(srd, e))
         for e in found
@@ -524,7 +534,7 @@ def _choice_value(srd: index.Index, entry: index.Entry) -> str:
     if entry.kind == "monster" and any(
         srd.lookup(entry.name, edition, kind=kind) is not None
         for edition in ("2024", "2014")
-        for kind in (index.ITEM, *index.ORIGIN_KINDS, *index.EQUIPMENT_KINDS)
+        for kind in (index.ITEM, *index.ORIGIN_KINDS, *index.EQUIPMENT_KINDS, *index.HAZARD_KINDS)
     ):
         return f"{entry.name} (creature)"[:BOX_MAX]  # the species or background has the name too
     if entry.kind != index.FEATURE:
@@ -537,6 +547,23 @@ def _choice_value(srd: index.Index, entry: index.Entry) -> str:
     ]
     level = f" {entry.details.get('level')}" if len(same) > 1 else ""
     return f"{klass} {entry.name}{level}"[:BOX_MAX]
+
+
+async def _is_a_dm(interaction: discord.Interaction) -> bool:
+    """Does this person run a campaign in the server? Only the DM's list holds the DM's chapter.
+    Like `_rulesets` it gives the database a second and answers no if it cannot (the safe way)."""
+    if interaction.guild is None:
+        return False
+    try:
+        everyone = await asyncio.wait_for(
+            _bot(interaction).campaigns.list_campaigns(interaction.guild.id), TYPEAHEAD_WAIT_S
+        )
+    except Exception:
+        log.warning(
+            "Couldn't read the campaigns for the rule list; used the player's", exc_info=True
+        )
+        return False
+    return any(may_look_up(c, interaction.user.id) for c in everyone)
 
 
 async def _rulesets(interaction: discord.Interaction) -> tuple[str, str]:
