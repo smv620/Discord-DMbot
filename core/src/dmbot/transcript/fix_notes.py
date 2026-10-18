@@ -24,6 +24,7 @@ import secrets
 from collections.abc import Callable
 from dataclasses import dataclass, field, replace
 
+from dmbot.discord_limits import MESSAGE_MAX, fit_message
 from dmbot.memory.models import name_key
 from dmbot.transcript.cleaner import Fix
 
@@ -31,7 +32,6 @@ SHOWN = 10  # lines in the message (the newest); older ones are no longer undoab
 ANSWERS_KEPT = 20  # answers (a batch is one answer, with the earlier lines it wrote, #127) whose
 # lines can still be put back by their Undo
 NAME_MAX = 60
-MESSAGE_MAX = 2000  # Discord's limit for one message
 HEADER = (
     "✏️ **Name fixes to check**: DMbot changed these words in the transcript but isn't "
     "sure. Wrong? Press its Undo to put back what was heard."
@@ -269,4 +269,4 @@ def message_text(
     shown = notes[-kept:]
     # The cut below is only a safety net: one line is at most ~350 characters (names
     # are cut to NAME_MAX first), so whole lines always fit.
-    return "\n".join([HEADER, *lines[-kept:]])[:MESSAGE_MAX], shown
+    return fit_message("\n".join([HEADER, *lines[-kept:]])), shown

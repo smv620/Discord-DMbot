@@ -28,6 +28,7 @@ from dataclasses import dataclass
 import discord
 
 from dmbot.campaigns import Campaign, CampaignStore
+from dmbot.discord_limits import fit_message
 from dmbot.dm_screen import messages
 from dmbot.dm_screen.channel import (
     CACHE_WAIT_S,
@@ -64,7 +65,6 @@ RECENT_SCAN = 10  # an unpinned card is looked for among this many recent messag
 HISTORY_SCAN = 400  # DMbot's own messages are looked for among this many (far above the cap)
 MAX_EDITS = 5  # edits and deletes per run: Discord's rate limits; the rest is done next time
 MAX_SENDS = 25  # new messages per run, for the same reason
-MESSAGE_MAX = 2000  # Discord's limit for one message
 
 RULE_TITLE = "🏠 **House rule "
 FOLLOW_TITLE = "📚 This campaign follows the house-rule set "
@@ -154,7 +154,7 @@ def rule_text(rule: HouseRule) -> str:
     if rule.supersedes:
         lines.append(f"Instead of: {rule.supersedes}")
     lines.append(f"_{came}_")
-    return "\n".join(lines)[:MESSAGE_MAX]  # (a rule, what it replaces and a set name fit; belt)
+    return fit_message("\n".join(lines))  # (a rule, what it replaces and a set name fit; belt)
 
 
 def follow_text(set_name: str) -> str:
