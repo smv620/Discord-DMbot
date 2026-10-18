@@ -31,6 +31,7 @@ from dmbot.devtools.srd import (
     equipment,
     equipment51,
     gear,
+    gm51,
     items,
     items51,
     monsters,
@@ -529,6 +530,8 @@ def item_lines_51(lines: Sequence[Line]) -> list[Line]:
     raise parse.SrdError(f"Can't find the heading {SENTIENT_HEADING_51!r} after the items.")
 
 
+GM_HEADING_51 = "Traps"
+AFTER_GM_HEADING_51 = "Magic Items"
 RULES_HEADING_51 = "Using Ability"  # (the chapter's title wraps; its first line starts the page)
 AFTER_RULES_HEADING_51 = "Spell Lists"
 
@@ -601,6 +604,31 @@ def rules_files_51(
         "rules.json": {
             **header("rule", rules51.SECTION),
             "entries": [asdict(r) | {"see_also": []} for r in found],
+        }
+    }
+
+
+def gm_files_51(
+    pages: Sequence[Sequence[Line]], header: Any, vocab: parse51.Vocabulary
+) -> dict[str, dict[str, Any]]:
+    """The 5.1's game master chapters (Traps, Diseases, Madness, Objects, Poisons) as
+    `toolbox.json`, in the kinds and section of the 5.2.1's (#1944)."""
+    first = first_page_of(pages, GM_HEADING_51, after=CONTENTS_PAGES)
+    last = first_page_of(pages, AFTER_GM_HEADING_51, after=first)
+    lines = lines_between(pages, first, last)
+    found = gm51.parse_gm(lines, vocab)
+    dropped = gm51.left_out(lines)
+    if dropped != gm51.EXPECTED_LEFT_OUT:
+        raise parse.SrdError(f"The 5.1's game master chapters leave out something new: {dropped}")
+    return {
+        "toolbox.json": {
+            **header("toolbox", gm51.SECTION),
+            "entries": [
+                *({"kind": "rule", **asdict(r) | {"see_also": []}} for r in found.rules),
+                *({"kind": "trap", **asdict(t)} for t in found.traps),
+                *({"kind": "disease", **asdict(d)} for d in found.diseases),
+                *({"kind": "poison", **asdict(p)} for p in found.poisons),
+            ],
         }
     }
 
@@ -754,6 +782,7 @@ def build_files_51(
         files.update(equipment_files_51(pages, header, vocab))
     if rules_pages:
         files.update(rules_files_51(pages, header, vocab))
+        files.update(gm_files_51(pages, header, vocab))
     if monster_input is not None:
         monster_document, monster_known, monster_pairs = monster_input
         everything = [line for page in pages for line in page]

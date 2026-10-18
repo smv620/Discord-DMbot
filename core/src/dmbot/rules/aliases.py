@@ -98,6 +98,11 @@ RULE_RENAMES: tuple[tuple[str, str], ...] = (  # the card says "is now called"
     ("Creature Size", "Size"),
     ("Knocking a Creature Out", "Knocking Out a Creature"),
     ("Stabilizing a Creature", "Stable"),
+    # the 5.1's sample traps the 5.2.1 renamed
+    ("Poison Darts", "Poisoned Darts"),
+    ("Poison Needle", "Poisoned Needle"),
+    ("Rolling Sphere", "Rolling Stone"),
+    ("Fire-Breathing Statue", "Fire-Casting Statue"),
 )
 RULE_SPELLINGS: tuple[tuple[str, str], ...] = (  # only the plural: no note
     ("Attack Rolls", "Attack Roll"),
@@ -110,6 +115,7 @@ RULE_SPELLINGS: tuple[tuple[str, str], ...] = (  # only the plural: no note
     ("Reactions", "Reaction"),
     ("Bonus Actions", "Bonus Action"),
     ("Areas of Effect", "Area of Effect"),
+    ("Poisons", "Poison"),
 )
 RULE_ALIASES: tuple[tuple[str, str], ...] = RULE_RENAMES + RULE_SPELLINGS
 

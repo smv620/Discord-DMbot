@@ -19,6 +19,10 @@ export const kindNames = {
   armor: "Armor",
   tool: "Tools",
   gear: "Gear, mounts and vehicles",
+  poison: "Poisons",
+  trap: "Traps",
+  curse: "Curses",
+  disease: "Diseases",
 };
 
 /** Every data file of one SRD folder, parsed. */

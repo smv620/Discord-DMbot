@@ -437,6 +437,7 @@ def equipment_hits(
 # everyday words, "Purple Worm Poison" and "Hidden Pit" are not.
 HAZARD_CUES = frozenset(
     {"poison", "poisons", "trap", "traps", "curse", "curses", "hazard", "hazards", "dc"}
+    | {"disease", "diseases", "plague"}
 )
 
 
@@ -448,6 +449,8 @@ def hazard_hits(index: Index, name: str, target: str, fallback: str, *, cued: bo
         return []
     for kind in HAZARD_KINDS:
         hits = index.lookup_all(name, target, fallback, kind=kind)
+        if hits and hits[0].from_fallback and index.has_asked_for(name, target, rules=True):
+            continue  # the target has its own entry of the name (the 2024 contagion Cackle Fever)
         if hits:
             return hits if kind == TRAP else hits[:1]
     return []
