@@ -248,6 +248,20 @@ def panel_view(campaign_id: str) -> discord.ui.View:
 _PANEL_LOCKS: dict[str, asyncio.Lock] = {}
 
 
+async def _pin_panel(message: discord.Message) -> None:
+    """Keep the panel at the top of the channel (#1963). It needs Pin Messages, which DMbot asks
+    for but can work without (the install check names it), so a refusal or a full pin list is
+    only logged; the next start tries again. Already pinned: nothing to do."""
+    if getattr(message, "pinned", False) is True:
+        return
+    try:
+        await message.pin(reason="DMbot: the DM Bot channel's buttons")
+    except discord.Forbidden:
+        log.info("DMbot isn't allowed to pin the DM Bot panel (Pin Messages is off)")
+    except discord.HTTPException:
+        log.warning("Couldn't pin the DM Bot panel", exc_info=True)
+
+
 async def ensure_panel(client: Any, campaign: Campaign) -> discord.Message | None:
     """Edit the panel in place, or post it again if it was deleted. Returns the message, or
     None if nothing could be shown (a failure here never stops anything). One at a time for a
@@ -267,6 +281,7 @@ async def ensure_panel(client: Any, campaign: Campaign) -> discord.Message | Non
             try:
                 message = await channel.fetch_message(fresh.dm_bot_message_id)
                 await message.edit(content=panel.PANEL_TEXT, view=view, allowed_mentions=NO_PINGS)
+                await _pin_panel(message)  # (a panel posted before pinning, or unpinned by hand)
                 return message
             except discord.NotFound:
                 pass  # deleted: post a new one below
@@ -288,4 +303,5 @@ async def ensure_panel(client: Any, campaign: Campaign) -> discord.Message | Non
             with contextlib.suppress(discord.HTTPException):
                 await message.delete()
             return None
+        await _pin_panel(message)
         return message  # type: ignore[no-any-return]  # post_message is typed loosely in tests
