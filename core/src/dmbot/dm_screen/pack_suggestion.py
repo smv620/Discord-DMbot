@@ -22,7 +22,7 @@ from typing import Any
 import discord
 
 from dmbot.campaigns import Campaign
-from dmbot.discord_limits import MESSAGE_MAX
+from dmbot.discord_limits import MESSAGE_MAX, fit_message
 from dmbot.logs import set_log_context
 from dmbot.rules.house import HouseRuleError
 from dmbot.rules.pack_suggestions import PackSent, PackSuggestion, PackSuggestionStore
@@ -175,7 +175,7 @@ async def _see(interaction: discord.Interaction, campaign: Campaign, asked: Pack
         else "If you press Add to pack, this new entry goes into your homebrew and the pack:"
     )
     text = f"{head}\n**{_md(asked.name)}** ({asked.kind.capitalize()}): {_md(asked.text)}"
-    await _tell(interaction, text[:TEXT_MAX])
+    await _tell(interaction, fit_message(text, limit=TEXT_MAX))
 
 
 async def _accept(

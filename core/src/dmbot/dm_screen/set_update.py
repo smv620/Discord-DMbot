@@ -33,7 +33,7 @@ from typing import Any
 import discord
 
 from dmbot.campaigns import Campaign
-from dmbot.discord_limits import MESSAGE_MAX
+from dmbot.discord_limits import MESSAGE_MAX, fit_message
 from dmbot.dm_screen import set_suggestion, shared_update
 from dmbot.rules import rule_sets, set_diff, set_sync
 from dmbot.rules.house import HouseRule, HouseRuleError
@@ -43,6 +43,8 @@ log = logging.getLogger(__name__)
 
 PAGE = 25  # a Discord menu holds 25 choices
 TEXT_MAX = MESSAGE_MAX - 100  # margin kept from before: room for the words a sender adds around it
+MORE_ROOM = 80  # "…and N more. Use Pick changes to go through all of them." and a line break
+AND_MORE = "\n…and more."
 ONLY_DMS = "Only this campaign's DMs can do that."
 GONE = "That campaign isn't here any more."
 NEWER = (
@@ -103,10 +105,12 @@ def compare_text(name: str, pairs: Sequence[tuple[set_diff.Change, HouseRule]]) 
             f"Shared rule {change.number}\nBefore: {md(before)}\nNow: {md(now)}\n"
             f"Yours (still applies): {md(mine.rule)}"
         )
+    head = f"**{md(name)}**: {OVERRIDDEN}\n\n"
     text = "\n\n".join(blocks)
-    if len(text) > TEXT_MAX:
-        text = text[:TEXT_MAX].rsplit("\n", 1)[0] + "\n…and more."
-    return f"**{md(name)}**: {OVERRIDDEN}\n\n{text}"
+    room = TEXT_MAX - len(head)  # the heading is part of the one message, and not a short one
+    if len(text) > room:
+        text = fit_message(text, limit=room - len(AND_MORE))[:-1].rstrip() + AND_MORE
+    return head + text
 
 
 def rules_phrase(changes: int, link_changed: bool = False, relationships: int = 0) -> str:
@@ -325,7 +329,8 @@ def changes_text(
         lines.append("The rules document link changed.")
     text = "\n".join(lines) or "Only the version number changed. No rule is different."
     if len(text) > TEXT_MAX:
-        kept = text[:TEXT_MAX].rsplit("\n", 1)[0]
+        # Room for the line below, so the whole text still fits one message.
+        kept = fit_message(text, limit=TEXT_MAX - MORE_ROOM)[:-1].rstrip()
         left = len(lines) - kept.count("\n") - 1
         text = kept + f"\n…and {left} more. Use Pick changes to go through all of them."
     return f"**{discord.utils.escape_markdown(name)}** v{version}:\n{text}"
