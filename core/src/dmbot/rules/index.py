@@ -447,6 +447,10 @@ class Index:
             hits = wanted or hits
         return hits
 
+    def key_counts(self) -> dict[str, int]:
+        """How many names and spellings each edition can be looked up by (for `index_stats`)."""
+        return {edition: len(keys) for edition, keys in self._by_edition.items()}
+
     def has_asked_for(self, name: str, edition: str, *, rules: bool = False) -> bool:
         """Does this edition have an entry of a kind found only when asked for, other than a
         glossary rule (unless `rules`), under this name (the 2024 feat "Two-Weapon Fighting")?"""
@@ -576,8 +580,15 @@ def load_folder(folder: Path) -> list[Entry]:
 
 @functools.cache
 def srd() -> Index:
-    """The index of what DMbot ships: the SRD 5.2.1 and, as legacy, the SRD 5.1, with the
-    renamed spells' older names."""
+    """The index of what DMbot ships, built once per process: every caller (the sidebar, the
+    rule card, the typeahead) shares this one object (#1953)."""
+    return build_srd()
+
+
+def build_srd() -> Index:
+    """Builds the index of what DMbot ships, the SRD 5.2.1 and, as legacy, the SRD 5.1, with the
+    renamed spells' older names. Not cached: `srd()` is the one to use; this is for measuring
+    the build (`devtools/index_stats.py`)."""
     entries = load_folder(DATA / "srd52") + load_folder(DATA / "srd51")
     for kind, what in (
         (RULE, "Rules Glossary"),
