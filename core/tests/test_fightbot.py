@@ -442,6 +442,31 @@ class Runner(Harness):
             await fightbot.tick(bot, table)
             bot.user.send.assert_not_awaited()
 
+    async def test_consent_withdrawn_or_a_session_ended_while_the_plan_is_checked_sends_nothing(
+        self,
+    ) -> None:
+        # The re-check before the AI call (the plan look-up is an await); the test above covers
+        # the one after it.
+        for what in ("consent", "ended", "paused"):
+            table = self.table()
+            bot = self.bot(table)
+
+            async def during(
+                *_: Any, _w: str = what, _b: Any = bot, _t: Any = table, **__: Any
+            ) -> bool:
+                if _w == "consent":
+                    _b.consent = SimpleNamespace(has_consent=lambda g, u: False)
+                elif _w == "ended":
+                    _b.tables.clear()
+                else:
+                    _t.listening = False
+                return True
+
+            bot.plan_allows = during
+            await fightbot.tick(bot, table)
+            bot.fight_ai.complete.assert_not_awaited()
+            bot.user.send.assert_not_awaited()
+
     async def test_a_reply_that_names_nothing_on_the_sheet_or_gives_advice_is_not_sent(
         self,
     ) -> None:
