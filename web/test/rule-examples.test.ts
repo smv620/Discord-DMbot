@@ -36,7 +36,7 @@ function rows(): Row[] {
 
 // The bot's own key (core/src/dmbot/rules/index.py `normalize`): case, apostrophes (curly or
 // straight) and punctuation ignored, and a leading "a" or "an" dropped from what the DM typed.
-export const key = (name: string): string =>
+const key = (name: string): string =>
   name
     .normalize("NFKC")
     .toLowerCase()
@@ -56,9 +56,11 @@ const kindOf: Record<string, string[]> = {
   feat: ["feat"],
   species: ["species"],
   background: ["background"],
-  monster: ["monster", "creature"],
+  monster: ["monster"],
 };
 
+// The test checks the name and kind only, not the edition: "Orc (creature)" is in the 2014 data alone,
+// so the bot tags it [Legacy 2014]. That is fine for an example; the name just has to be real.
 const all = rows();
 
 /** The example's entry name: the typed words, minus a "(creature)" style bracket and a class prefix. */
@@ -67,7 +69,7 @@ function wanted(example: (typeof ruleExamples)[number]): string {
 }
 
 /** An example that is not in the data, or null: the closest real names of that kind for the message. */
-export function problem(example: (typeof ruleExamples)[number], data: Row[] = all): string | null {
+function problem(example: (typeof ruleExamples)[number], data: Row[] = all): string | null {
   const kinds = kindOf[example.kind] ?? [example.kind];
   const ofKind = data.filter((r) => kinds.includes(r.kind));
   const hit = ofKind.some(
