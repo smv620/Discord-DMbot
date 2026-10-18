@@ -2590,8 +2590,12 @@ class DMBot(commands.AutoShardedBot):
         """A private message to whoever owns the Discord application (a team's owner for a
         team app). Raises if it can't be sent; the alerter logs that."""
         info = await self.application_info()
-        owner = info.team.owner if info.team is not None and info.team.owner else info.owner
-        await owner.send(text, allowed_mentions=discord.AllowedMentions.none())
+        # By id, as a plain user: a team member can't be sent to directly.
+        owner_id = info.team.owner_id if info.team is not None and info.team.owner_id else None
+        user = self.get_user(owner_id or info.owner.id) or await self.fetch_user(
+            owner_id or info.owner.id
+        )
+        await user.send(text, allowed_mentions=discord.AllowedMentions.none())
 
     def session_lock(self, guild_id: int) -> asyncio.Lock:
         """Held while a session starts or stops, or a campaign is replaced, per server."""
