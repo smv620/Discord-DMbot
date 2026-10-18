@@ -182,35 +182,11 @@ import { accountHeading, backToTop, dmHeading, emailsHeading, onThisPage, onThis
 
 <script>
   // Nothing typed here leaves the page: no request, no storage, no address change (#1939).
-  import { applySearch, normalize, statusText } from "../../scripts/helpsearch.mjs";
+  import { wire } from "../../scripts/helpsearch.mjs";
 
   const form = document.querySelector<HTMLFormElement>("[data-help-search]");
-  const input = form?.querySelector<HTMLInputElement>("input");
-  const status = form?.querySelector<HTMLElement>("#help-search-status");
-  const clear = form?.querySelector<HTMLButtonElement>("[data-help-search-clear]");
   const page = document.querySelector("main");
-  if (form && input && status && clear && page) {
-    form.hidden = false;
-    const run = () => {
-      const found = applySearch(page, input.value);
-      status.textContent = statusText(input.value, found);
-      clear.hidden = !(normalize(input.value) !== "" && found === 0);
-    };
-    input.addEventListener("input", run);
-    form.addEventListener("submit", (e) => e.preventDefault()); // Enter must not reload the page
-    input.addEventListener("keydown", (e) => {
-      if (e.key === "Escape" && input.value !== "") {
-        e.preventDefault();
-        input.value = "";
-        run();
-      }
-    });
-    clear.addEventListener("click", () => {
-      input.value = "";
-      run();
-      input.focus();
-    });
-  }
+  if (form && page) wire(form, page);
 </script>
 
 <style>

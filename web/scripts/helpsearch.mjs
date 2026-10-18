@@ -3,13 +3,21 @@
 // show-and-hide are plain functions so the vitest can run them on a rendered page.
 
 // Emoji and joiners carry no word, so "stop recording" finds a step that says "⚙️ Menu … Stop recording me".
-const emoji = /[\p{Extended_Pictographic}️‍]/gu;
+// (Written as escapes so an editor can't strip the invisible ones. ©, ® and ™ count as emoji here too,
+// which is harmless: no step turns on them.)
+const emoji = /[\p{Extended_Pictographic}\uFE0F\u200D]/gu;
 
-/** Lower case, no emoji, only letters and numbers, one space between words. */
+/**
+ * Lower case, no emoji, no accents, only letters and numbers, one space between words. An apostrophe
+ * joins ("don't" is "dont", not "don" and "t", and "t" would match almost anything).
+ */
 export function normalize(text) {
   return text
+    .normalize("NFD")
+    .replace(/\p{M}/gu, "")
     .replace(emoji, " ")
     .toLowerCase()
+    .replace(/['\u2019]/g, "")
     .replace(/[^\p{L}\p{N}]+/gu, " ")
     .trim();
 }
@@ -50,6 +58,7 @@ export function applySearch(root, query) {
   }
   if (normalize(query) === "") return 0;
 
+  // (The consent promises count as steps too, so they can be found without their lead-in.)
   let found = 0;
   for (const section of root.querySelectorAll("section")) {
     for (const li of section.querySelectorAll("li")) {
@@ -71,5 +80,51 @@ export function applySearch(root, query) {
     }
     if (section.querySelector("li:not([hidden])") === null) hide(section);
   }
+  // A contents link to a section that is hidden would jump nowhere.
+  for (const a of root.querySelectorAll('nav a[href^="#"]')) {
+    const target = root.ownerDocument?.getElementById(a.getAttribute("href").slice(1)) ?? null;
+    if (target !== null && target.closest("[hidden]") !== null) {
+      const item = a.closest("li") ?? a;
+      hide(item);
+    }
+  }
   return found;
+}
+
+/**
+ * Connect the box to the page: typing filters at once, the count is spoken a moment after the last
+ * key (so fast typing isn't read out letter by letter), Esc and the button clear it, and Enter
+ * doesn't submit anything. Returns the function that runs a search, for the tests.
+ */
+export function wire(form, page, wait = 300) {
+  const input = form.querySelector("input");
+  const status = form.querySelector("#help-search-status");
+  const clear = form.querySelector("[data-help-search-clear]");
+  let timer;
+  const run = (now = false) => {
+    const found = applySearch(page, input.value);
+    clear.hidden = !(normalize(input.value) !== "" && found === 0);
+    const say = () => {
+      status.textContent = statusText(input.value, found);
+    };
+    clearTimeout(timer);
+    if (now || normalize(input.value) === "") say();
+    else timer = setTimeout(say, wait);
+  };
+  form.hidden = false;
+  input.addEventListener("input", () => run());
+  form.addEventListener("submit", (e) => e.preventDefault());
+  input.addEventListener("keydown", (e) => {
+    if (e.key === "Escape" && input.value !== "") {
+      e.preventDefault();
+      input.value = "";
+      run(true);
+    }
+  });
+  clear.addEventListener("click", () => {
+    input.value = "";
+    run(true);
+    input.focus();
+  });
+  return run;
 }

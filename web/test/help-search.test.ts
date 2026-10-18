@@ -5,7 +5,8 @@ import { experimental_AstroContainer as AstroContainer } from "astro/container";
 import { loadRenderers } from "astro:container";
 import { beforeAll, describe, expect, it } from "vitest";
 
-import { applySearch, matches, normalize, nothingFound, statusText } from "../scripts/helpsearch.mjs";
+import { applySearch, matches, normalize, nothingFound, statusText, wire } from "../scripts/helpsearch.mjs";
+import { afterEach, vi } from "vitest";
 import help from "../src/pages/help.astro";
 import { accountSteps, dmSteps, playerSteps } from "../src/content/help";
 import { parsePage } from "./dom";
@@ -20,6 +21,15 @@ describe("matcher", () => {
     expect(normalize("⚙️ Menu, then 🗑 Delete my transcripts!")).toBe("menu then delete my transcripts");
     expect(matches("menu delete", "press ⚙️ Menu, then 🗑 Delete my transcripts")).toBe(true);
     expect(matches("🗑", "anything")).toBe(true); // an emoji alone is no word
+  });
+
+  it("finds accented words without the accent, and keeps an apostrophe inside its word", () => {
+    expect(matches("cafe", "A caf\u00e9 near the table")).toBe(true);
+    expect(matches("cafe", "caf\u0065\u0301")).toBe(true); // the accent typed as a separate mark
+    expect(normalize("don't")).toBe("dont");
+    expect(normalize("don\u2019t")).toBe("dont");
+    expect(matches("dont", "Please don't stop")).toBe(true);
+    expect(matches("don't", "Please don\u2019t stop")).toBe(true);
   });
 
   it("finds a button name inside a step", () => {
@@ -125,5 +135,94 @@ describe("without JavaScript", () => {
     const form = doc.querySelector("[data-help-search]")!;
     expect(form.getAttribute("role")).toBe("search");
     expect(form.hasAttribute("action")).toBe(false);
+  });
+});
+
+describe("on the Help page, more", () => {
+  it("hides a list whose steps don't match but keeps the heading of the list that does", () => {
+    const doc = parsePage(html);
+    const main = doc.querySelector("main")!;
+    // Quick answers sit under their own heading inside the game master section.
+    const quick = doc.querySelector("#quick-heading")!;
+    const list = quick.nextElementSibling!;
+    const first = list.querySelector("li")!.textContent ?? "";
+    // A word that is only in that quick answer, and nowhere in the steps before it.
+    const word = normalize(first).split(" ").find((w) => w.length > 6 && !(doc.querySelector("#dm-heading + ol")?.textContent ?? "").toLowerCase().includes(w));
+    expect(word, "a word only the quick answer has").toBeTruthy();
+    applySearch(main, word!);
+    expect(quick.hasAttribute("hidden")).toBe(false);
+    expect(list.hasAttribute("hidden")).toBe(false);
+    expect(doc.querySelector("#dm-heading + ol")?.hasAttribute("hidden")).toBe(true);
+  });
+
+  it("hides the contents links to sections it hides", () => {
+    const doc = parsePage(html);
+    applySearch(doc.querySelector("main")!, "stop recording");
+    const links = [...doc.querySelectorAll('nav a[href^="#"]')];
+    const hiddenLinks = links.filter((a) => a.closest("li")?.hasAttribute("hidden"));
+    expect(hiddenLinks.length).toBeGreaterThan(0);
+    expect(hiddenLinks.length).toBeLessThan(links.length);
+    applySearch(doc.querySelector("main")!, "");
+    expect(doc.querySelectorAll("nav [hidden]")).toHaveLength(0);
+  });
+});
+
+describe("the box, wired up", () => {
+  afterEach(() => vi.useRealTimers());
+
+  function page() {
+    const doc = parsePage(html);
+    const form = doc.querySelector<HTMLFormElement>("[data-help-search]")!;
+    const main = doc.querySelector("main")!;
+    const input = form.querySelector("input")!;
+    const status = form.querySelector("#help-search-status")!;
+    const clear = form.querySelector<HTMLButtonElement>("[data-help-search-clear]")!;
+    return { doc, form, main, input, status, clear };
+  }
+  const type = (input: HTMLInputElement, value: string) => {
+    input.value = value;
+    input.dispatchEvent(new input.ownerDocument.defaultView!.Event("input", { bubbles: true }));
+  };
+
+  it("shows the box, filters as you type, and says the count a moment after the last key", () => {
+    vi.useFakeTimers();
+    const { form, main, input, status } = page();
+    wire(form, main);
+    expect(form.hidden).toBe(false);
+    type(input, "menu");
+    type(input, "menu delete");
+    expect(status.textContent).toBe(""); // not yet: it waits for a pause
+    vi.advanceTimersByTime(300);
+    expect(status.textContent).toMatch(/^\d+ steps? found$/);
+  });
+
+  it("says nothing was found, shows the button, and the button clears the box and puts focus back", () => {
+    vi.useFakeTimers();
+    const { doc, form, main, input, status, clear } = page();
+    wire(form, main);
+    type(input, "zzzqxy");
+    vi.advanceTimersByTime(300);
+    expect(status.textContent).toBe(nothingFound);
+    expect(clear.hidden).toBe(false);
+    clear.click();
+    expect(input.value).toBe("");
+    expect(status.textContent).toBe("");
+    expect(clear.hidden).toBe(true);
+    expect(doc.querySelectorAll("[data-search-hid]")).toHaveLength(0);
+  });
+
+  it("clears on Esc, and Enter submits nothing", () => {
+    vi.useFakeTimers();
+    const { doc, form, main, input, status } = page();
+    wire(form, main);
+    type(input, "menu");
+    const Window = doc.defaultView!;
+    input.dispatchEvent(new Window.KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+    expect(input.value).toBe("");
+    expect(status.textContent).toBe("");
+    expect(doc.querySelectorAll("[data-search-hid]")).toHaveLength(0);
+    const submit = new Window.Event("submit", { bubbles: true, cancelable: true });
+    form.dispatchEvent(submit);
+    expect(submit.defaultPrevented).toBe(true);
   });
 });

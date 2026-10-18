@@ -1,6 +1,6 @@
 // After `npm run build`: every inline script in dist/ must be allowed by its hash in
 // dist/_headers (or the browser blocks it and the page stops working), and only /account
-// /hello (its forms, #665), /admin (#772) and /pricing (a personal link's greeting, #1231) may have scripts at all. Usage: node scripts/check-csp.mjs [dist-dir]
+// /hello (its forms, #665), /help (its search box, #1939), /admin (#772) and /pricing (a personal link's greeting, #1231) may have scripts at all. Usage: node scripts/check-csp.mjs [dist-dir]
 import { readFileSync } from "node:fs";
 import { join, relative } from "node:path";
 
