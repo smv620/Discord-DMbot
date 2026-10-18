@@ -19,6 +19,8 @@ export function labelsInPython(text) {
 /** Drop leading emoji and symbols and fold spacing, so "⚙️ Menu" and "Menu" compare equal. */
 export function plain(s) {
   return s
+    // ℹ️ is a lowercase letter to Unicode, so emoji are stripped by their own class first.
+    .replace(/^[\p{Extended_Pictographic}\uFE0F\u200D\s]+/u, "")
     .replace(/^[^\p{L}\p{N}]+/u, "")
     .replace(/\s+/g, " ")
     .trim();
