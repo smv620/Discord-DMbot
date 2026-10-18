@@ -141,11 +141,15 @@ class Char:
 COLUMN_EDGES = (63.0, 313.5)
 INDENT = 8.0
 INDENT_SLACK = 1.0
+EDGE_SLACK = 1.5  # how near a column's edge a line must start to be at it
+# (all measured on the SRD 5.2.1 and 5.1 PDFs; another layout needs them looked at again)
 SPACE_GAP = 1.5  # a gap this wide (points) between two pieces of one line is a space
 DIGIT_GAP = 0.3  # ...and this wide between a letter and a number ("Con" "22" in the ability table)
 LINE_END_HYPHEN = re.compile(r"([A-Za-z0-9])(-[\xad\u2010\u2011]*)$")
 SENTENCE_END = tuple('.:!?)”"')
-SOFT_HYPHEN = "\ufffe"  # what pdfium reports for the hyphen the typesetter added at a line's end
+SOFT_HYPHEN = (
+    "\ufffe"  # a noncharacter pdfium reports for the hyphen the typesetter added at a line's end
+)
 
 
 def pieces_of(chars: Iterable[Char]) -> list[Piece]:
@@ -166,7 +170,8 @@ def pieces_of(chars: Iterable[Char]) -> list[Piece]:
             body = current[3]
             if ending:
                 # A hyphen that ends a line is drawn apart from its word, and the parsers read
-                # it as " -" (the 5.1 reader tells "long-dead" from "immedi-ately" by it).
+                # it as " -". Whether it is a real hyphen ("long-dead") or only the typesetter's
+                # ("immedi-ately") is for the parsers' word lists to decide, not for this reader.
                 body = LINE_END_HYPHEN.sub(r"\1 \2", body)
             pieces.append(
                 Piece(round(current[0], 1), round(current[1], 1), current[2], body + ending)
@@ -196,7 +201,7 @@ def pieces_of(chars: Iterable[Char]) -> list[Piece]:
             current = [char.x, char.y, char.font, lead, char.x]
             lead = ""
             if at_line_start:
-                at_edge = any(abs(char.left - edge) <= 1.5 for edge in COLUMN_EDGES)
+                at_edge = any(abs(char.left - edge) <= EDGE_SLACK for edge in COLUMN_EDGES)
                 if at_edge:
                     in_lead_in = "BoldItalic" in char.font
                 elif (
@@ -252,6 +257,9 @@ def read_pages(path: str) -> list[list[Line]]:
         textpage = document[number].get_textpage()
         chars: list[Char] = []
         for index, text in enumerate(textpage.get_text_range()):
+            # Zero the buffer first: pdfium writes nothing for a space it made up, and the
+            # previous character's font name would be left in it.
+            ctypes.memset(name, 0, len(name))
             raw.FPDFText_GetFontInfo(textpage, index, name, len(name), ctypes.byref(flags))
             raw.FPDFText_GetCharOrigin(
                 textpage, index, ctypes.byref(origin_x), ctypes.byref(origin_y)

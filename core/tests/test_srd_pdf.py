@@ -79,9 +79,17 @@ class AbilityTable(unittest.TestCase):
             for line in lines_of(pieces_of(chars), 1)
             for name, score, mod, save in monsters.ABILITY.findall(line.text)
         }
-        self.assertEqual({k: v[0] for k, v in found.items()}, {
-            "str": 21, "dex": 9, "con": 15, "int": 18, "wis": 15, "cha": 18,
-        })  # fmt: skip
+        self.assertEqual(
+            found,
+            {
+                "str": (21, "+5", "+5"),
+                "dex": (9, "−1", "+3"),
+                "con": (15, "+2", "+6"),
+                "int": (18, "+4", "+8"),
+                "wis": (15, "+2", "+6"),
+                "cha": (18, "+4", "+4"),
+            },
+        )
 
 
 class Spaces(unittest.TestCase):
@@ -98,8 +106,18 @@ class Spaces(unittest.TestCase):
         self.assertEqual(texts(chars), ["equals ten"])
 
     def test_letters_of_one_word_in_two_fonts_stay_one_word(self) -> None:
-        chars = [*run("Gameplay ", TITLE, 63, 700), *run("Toolbox", TITLE, 63 + 9 * WIDTH, 700)]
-        self.assertEqual(texts(chars), ["Gameplay Toolbox"])
+        chars = [
+            *run("Gameplay", TITLE, 63, 700),
+            *run("Toolbox", SANS, 63 + 8 * WIDTH + 0.4, 700, start=63 + 8 * WIDTH + 0.4),
+        ]
+        self.assertEqual(texts(chars), ["GameplayToolbox"])  # a gap under a point is no space
+
+    def test_a_letter_and_a_number_a_little_apart_get_no_space(self) -> None:
+        chars = [
+            *run("Con", LABEL, 470, 600),
+            *run("22", SANS, 490, 600, start=470 + 3 * WIDTH + 0.2),
+        ]
+        self.assertEqual(texts(chars), ["Con22"])
 
 
 class Paragraphs(unittest.TestCase):
