@@ -22,6 +22,7 @@ from __future__ import annotations
 import difflib
 import functools
 import json
+import logging
 import re
 import unicodedata
 from collections.abc import Iterable, Mapping, Sequence
@@ -33,6 +34,7 @@ from typing import Any
 from dmbot.campaigns.models import FALLBACK_NONE
 from dmbot.rules import aliases
 
+log = logging.getLogger(__name__)
 DATA = Path(__file__).resolve().parent / "data"
 SUGGEST_CUTOFF = 0.7  # how alike two names must be to be offered as "did you mean"
 LEGACY = "2014"  # the edition whose content is always tagged legacy; update when a newer
@@ -56,6 +58,7 @@ _COUNTS = frozenset(
     + ["two", "three", "four", "five", "six", "seven", "eight", "nine", "ten"]
     + [str(n) for n in range(1, 100)]
 )
+RULE = "rule"  # the kind of a Rules Glossary entry
 PEOPLES = ("elf", "gnome", "dwarf", "halfling", "human", "orc")  # "Elf, Drow": say "Drow"
 
 
@@ -92,7 +95,7 @@ def edition_tag(edition: str, *, from_fallback: bool) -> str:
 class Entry:
     """One rule in the index."""
 
-    kind: str  # "spell", "condition" or "monster"
+    kind: str  # "spell", "condition", "monster" or "rule" (a Rules Glossary entry, #1884)
     name: str
     edition: str  # "2024", "2014"
     source: str  # "SRD 5.2.1"
@@ -187,7 +190,8 @@ class Index:
         self, name: str, target: str, fallback: str = FALLBACK_NONE, *, kind: str | None = None
     ) -> Hit | None:
         """The entry for `name` in the target ruleset, else in the fallback ruleset
-        (tagged), else None. `kind` limits it to spells, conditions or monsters; without it, a
+        (tagged), else None. `kind` limits it to spells, conditions, monsters or rules (glossary
+        entries, found only when asked for); without it, a
         name that is more than one (the SRD has none: a test pins that) gives the one loaded
         first."""
         key = normalize(name)
@@ -202,7 +206,8 @@ class Index:
                 continue
             for found_as in keys:
                 for entry in self._by_edition.get(edition, {}).get(found_as, []):
-                    if kind is None or entry.kind == kind:
+                    # A glossary entry is found only by asking for its kind (see `_pool`).
+                    if entry.kind == kind or (kind is None and entry.kind != RULE):
                         tag = edition_tag(edition, from_fallback=from_fallback)
                         via_alias = (edition, found_as) in self._alias_keys
                         return Hit(entry, tag, found_as, via_alias, from_fallback)
@@ -218,7 +223,12 @@ class Index:
                 if edition == FALLBACK_NONE:
                     continue
                 for key, entries in self._by_edition.get(edition, {}).items():
-                    pool.setdefault(key, entries[0])
+                    # A glossary entry's name is an everyday word ("Action", "Damage"): it is
+                    # found only when asked for (kind="rule"), never offered as a name to spot
+                    # in the table's talk, to complete or to suggest.
+                    named = next((e for e in entries if e.kind != RULE), None)
+                    if named is not None:
+                        pool.setdefault(key, named)
             cached = (pool, sorted(pool))
             self._pools[(target, fallback)] = cached
         return cached[0]
@@ -278,6 +288,35 @@ class Index:
         found.sort(key=lambda e: e.edition != target)  # stable: the target's names first
         return found[:limit]
 
+    def rule_names(
+        self, typed: str, target: str, fallback: str = FALLBACK_NONE, *, limit: int = 25
+    ) -> list[Entry]:
+        """Glossary entries (kind "rule") for a name being typed, the target ruleset's first:
+        names that begin with it, then names with a word that begins with it. They are kept out
+        of `typeahead` and `suggest` (see `_pool`), so the list asks for them itself."""
+        key = normalize(typed)
+        if not key:
+            return []
+        found: list[tuple[int, str, Entry]] = []
+        seen: set[int] = set()
+        for rank, edition in enumerate((target, fallback)):
+            if edition == FALLBACK_NONE or (rank and edition == target):
+                continue
+            for name, entries in self._by_edition.get(edition, {}).items():
+                for entry in entries:
+                    if entry.kind != RULE or id(entry) in seen:
+                        continue
+                    if name.startswith(key):
+                        order = 0
+                    elif f" {key}" in f" {name}":
+                        order = 1
+                    else:
+                        continue
+                    seen.add(id(entry))
+                    found.append((rank * 2 + order, name, entry))
+        found.sort(key=lambda item: item[:2])
+        return [entry for _, _, entry in found[:limit]]
+
     def is_monster(self, name: str) -> bool:
         """Is `name` a kind of monster the rules have, in any edition: by its name, its
         other names, its plural ("goblins") or with a count or article in front ("three
@@ -317,8 +356,9 @@ def load_folder(folder: Path) -> list[Entry]:
         data = json.loads(path.read_text(encoding="utf-8"))
         for raw in data["entries"]:
             details = {k: v for k, v in raw.items() if k not in ("name", "text", "page", "section")}
-            if "classes" in details:
-                details["classes"] = tuple(details["classes"])
+            for listed in ("classes", "see_also"):  # shared, so read only: a tuple
+                if listed in details:
+                    details[listed] = tuple(details[listed])
             entries.append(
                 Entry(
                     data["kind"],
@@ -339,4 +379,6 @@ def srd() -> Index:
     """The index of what DMbot ships: the SRD 5.2.1 and, as legacy, the SRD 5.1, with the
     renamed spells' older names."""
     entries = load_folder(DATA / "srd52") + load_folder(DATA / "srd51")
+    if not any(e.kind == RULE for e in entries):  # an older build of the data: carry on without
+        log.warning("The Rules Glossary is not in the data; the DM sidebar will not cite it")
     return Index(entries, aliases.ALL)

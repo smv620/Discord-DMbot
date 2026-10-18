@@ -380,6 +380,93 @@ class Reading(unittest.TestCase):
         )
 
 
+def at(x: float, text: str, font: str = TITLE, page: int = 180) -> Line:
+    return line(piece(text, font, x=x), page=page)
+
+
+class RulesGlossary(unittest.TestCase):
+    """The Rules Definitions (#1884): which title lines start an entry, and what is kept."""
+
+    def test_a_title_at_a_column_edge_starts_an_entry_in_either_column(self) -> None:
+        lines = [
+            say("Rules Definitions", TITLE),
+            at(63, "Cover"),
+            at(63, "Cover protects.", BODY),
+            at(314, "Darkness"),
+            at(314, "It is dark.", BODY),
+        ]
+        self.assertEqual(
+            [(r.name, r.text) for r in parse.parse_rules(lines)],
+            [("Cover", "Cover protects."), ("Darkness", "It is dark.")],
+        )
+
+    def test_a_tag_is_split_from_the_name_and_a_condition_is_left_to_conditions(self) -> None:
+        lines = [
+            say("Rules Definitions", TITLE),
+            at(63, "Dash [Action]"),
+            at(63, "You gain movement.", BODY),
+            at(63, "Blinded [Condition]"),
+            at(63, "You can’t see.", BODY),
+        ]
+        (dash,) = parse.parse_rules(lines)
+        self.assertEqual((dash.name, dash.tag, dash.page), ("Dash", "Action", 180))
+
+    def test_a_table_caption_is_not_an_entry_and_ends_the_text(self) -> None:
+        lines = [
+            say("Rules Definitions", TITLE),
+            at(63, "Carrying Capacity"),
+            at(63, "You can carry a lot.", BODY),
+            at(63, "Carrying Capacity"),  # the table's caption: a title at the edge...
+            at(67, "Creature Size"),  # ...whose column heads sit a few points in
+            at(67, "Tiny 30 lb.", BODY),
+            at(63, "Cover"),
+            at(63, "Cover protects.", BODY),
+        ]
+        rules = parse.parse_rules(lines)
+        self.assertEqual([r.name for r in rules], ["Carrying Capacity", "Cover"])
+        self.assertEqual(rules[0].text, "You can carry a lot.")
+
+    def test_table_rows_in_the_sans_font_go_but_a_bullet_and_its_wrapped_line_stay(self) -> None:
+        row = line(
+            piece("Attack", "GillSans", x=314.0), piece("Dodge", "GillSans", x=372.0), page=180
+        )
+        bullet = line(piece("• Furniture of your size or", "GillSans", x=314.0), page=180)
+        lines = [
+            say("Rules Definitions", TITLE),
+            at(314, "Difficult Terrain"),
+            at(314, "It counts if it has:", BODY),
+            bullet,
+            at(314, "larger", "GillSans"),
+            row,
+        ]
+        (rule,) = parse.parse_rules(lines)
+        self.assertEqual(rule.text, "It counts if it has:\n• Furniture of your size or larger")
+
+    def test_the_see_also_line_is_kept_apart_as_names(self) -> None:
+        lines = [
+            say("Rules Definitions", TITLE),
+            at(63, "Dash [Action]"),
+            at(63, "You gain movement. See also “Speed.”", BODY),
+            at(63, "Expertise"),
+            at(63, "Double it. See also “Playing the Game” (“Proficiency”).", BODY),
+        ]
+        dash, expertise = parse.parse_rules(lines)
+        self.assertEqual((dash.text, dash.see_also), ("You gain movement.", ("Speed",)))
+        self.assertEqual(expertise.see_also, ("Playing the Game", "Proficiency"))
+        twice = [
+            say("Rules Definitions", TITLE),
+            at(63, "Hit"),
+            at(63, "See also “Hit.” See also “Hit.”", BODY),
+        ]
+        self.assertEqual(parse.parse_rules(twice)[0].see_also, ("Hit",))
+
+    def test_a_pdf_without_the_heading_or_an_entry_without_words_stops_the_tool(self) -> None:
+        with self.assertRaisesRegex(parse.SrdError, "Rules Definitions"):
+            parse.parse_rules([at(63, "Cover")])
+        with self.assertRaisesRegex(parse.SrdError, "Cover"):
+            parse.parse_rules([say("Rules Definitions", TITLE), at(63, "Cover")])
+
+
 class Building(unittest.TestCase):
     def pages(self) -> list[list[Line]]:
         contents = [say("Spell Descriptions", "Cambria")]  # the contents page: not a heading
@@ -388,8 +475,9 @@ class Building(unittest.TestCase):
             *header("Fireball")[:6],
             say("Boom.", BODY, 11),
         ]
-        glossary = [say("Rules Glossary", TITLE, 12), say("Blinded [Condition]", TITLE, 12),
-                    say("You can’t see.", BODY, 12)]  # fmt: skip
+        glossary = [say("Rules Glossary", TITLE, 12), say("Rules Definitions", TITLE, 12),
+                    say("Blinded [Condition]", TITLE, 12), say("You can’t see.", BODY, 12),
+                    say("Cover", TITLE, 12), say("Cover protects a target.", BODY, 12)]  # fmt: skip
         toolbox = [say("Gameplay Toolbox", TITLE, 13)]
         creatures = [say("Monsters A–Z", TITLE, 14), *goblin()]
         return [contents, *[[]] * 9, spells, glossary, toolbox, creatures]
@@ -399,7 +487,9 @@ class Building(unittest.TestCase):
 
     def test_the_files_are_made_from_the_sections(self) -> None:
         files = build.build_files(self.pages(), self.document())
-        self.assertEqual(set(files), {"spells.json", "conditions.json", "monsters.json"})
+        self.assertEqual(
+            set(files), {"spells.json", "conditions.json", "rules.json", "monsters.json"}
+        )
         creatures = files["monsters.json"]
         self.assertEqual([e["name"] for e in creatures["entries"]], ["Goblin Warrior"])
         self.assertNotIn("section", creatures)  # each creature names its own
@@ -415,6 +505,10 @@ class Building(unittest.TestCase):
         self.assertEqual((spells["kind"], spells["section"]), ("spell", "Spell Descriptions"))
         self.assertEqual([e["name"] for e in conditions["entries"]], ["Blinded"])
         self.assertEqual(conditions["entries"][0]["page"], 12)
+        rules = files["rules.json"]
+        self.assertEqual((rules["kind"], rules["section"]), ("rule", "Rules Glossary"))
+        self.assertEqual([e["name"] for e in rules["entries"]], ["Cover"])  # not the condition
+        self.assertEqual(rules["entries"][0]["see_also"], [])
 
     def test_a_different_document_stops_the_tool(self) -> None:
         pages = self.pages()

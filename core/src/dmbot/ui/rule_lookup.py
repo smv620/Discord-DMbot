@@ -51,8 +51,8 @@ from dmbot.ui.dmbot_commands import (
 log = logging.getLogger(__name__)
 
 FORM_TITLE = "Look up a rule"
-BOX_LABEL = "Spell, condition or creature"
-BOX_PLACEHOLDER = "For example: Fireball, Grappled or Goblin"
+BOX_LABEL = "Spell, condition, creature or rule"
+BOX_PLACEHOLDER = "For example: Fireball, Grappled, Goblin or Cover"
 BOX_MAX = 100
 READ_REST_LABEL = "Read the rest"
 MAKE_MINE_LABEL = "✏️ Make it my own"
@@ -69,9 +69,10 @@ FULL_COPY = (
 )
 CAMPAIGN_GONE = "That campaign isn't here any more. Use `/dmbot rule` again."
 WHICH_CAMPAIGN = "**Which campaign is this for?** Pick one and DMbot looks it up."
-EMPTY = "Type a spell, a condition or a creature, then try again."
+EMPTY = "Type a spell, a condition, a creature or a rule, then try again."
 TOO_LONG = f"That's too long for a name. Use at most {BOX_MAX} characters."
 NAMES_MORE = 25  # most choices Discord shows as a person types
+GLOSSARY_FROM = 3  # letters typed before the list offers Rules Glossary names (#1891)
 TYPEAHEAD_WAIT_S = 1.0  # the longest the list waits for the database
 SUGGESTION_MAX = 80  # a button's label may hold 80 characters
 
@@ -163,6 +164,10 @@ async def look_up(
     rules = await _house_rules(interaction, campaign)
     srd = index.srd()
     hit = srd.lookup(typed, campaign.target_ruleset, campaign.fallback_ruleset, kind=kind)
+    if hit is None and kind is None:
+        # Not a spell, a condition or a creature: it may be a Rules Glossary entry ("cover",
+        # "long rest"). Those are asked for last so a spell of the same name always wins (#1891).
+        hit = srd.lookup(typed, campaign.target_ruleset, campaign.fallback_ruleset, kind=index.RULE)
     # The campaign's own homebrew sits between its house rules and the book (PLAN, rules
     # precedence), and a homebrew name shadows the book's: the book's card for the same name is not
     # shown. An entry the DM turned off is not read at all (#1629).
@@ -381,7 +386,13 @@ async def _typeahead(
 ) -> list[app_commands.Choice[str]]:
     """Names that begin as the DM types, newest rules first (at most 25)."""
     target, fallback = await _rulesets(interaction)
-    found = index.srd().typeahead(current, target, fallback, limit=NAMES_MORE)
+    srd = index.srd()
+    found = srd.typeahead(current, target, fallback, limit=NAMES_MORE)
+    # Glossary names are everyday words ("Action", "Damage"), so they are offered only after
+    # three letters and only when no spell, condition or creature starts the same way: a short
+    # word never floods the list with them (#1891).
+    if not found and len(index.normalize(current)) >= GLOSSARY_FROM:
+        found = srd.rule_names(current, target, fallback, limit=NAMES_MORE)
     return [
         app_commands.Choice(name=rule_card.choice_label(e), value=e.name[:BOX_MAX]) for e in found
     ]
@@ -414,9 +425,9 @@ async def _rulesets(interaction: discord.Interaction) -> tuple[str, str]:
 
 @dmbot_group.command(
     name="rule",
-    description="Look up a spell, condition or creature in the free rules",
+    description="Look up a spell, condition, creature or rule in the free rules",
 )
-@app_commands.describe(name="A spell, a condition or a creature: start typing and pick one")
+@app_commands.describe(name="A spell, condition, creature or rule: start typing and pick one")
 @app_commands.autocomplete(name=_typeahead)
 async def dmbot_rule(interaction: discord.Interaction, name: str) -> None:
     guild = interaction.guild

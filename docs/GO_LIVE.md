@@ -25,6 +25,8 @@ last migration 0127).
   lists what is on; until then the names below come from `core/src/dmbot/config.py`.
 - **owner step**: something only the owner can do (an account, a key, a legal go-ahead).
 
+The owner's checks for the rows marked **owner check** are in `docs/OWNER_CHECKS.md`, one sitting, in plain words.
+
 ## The table
 
 | Switch | Shows | Bot PRs, merged? | Server setting | Live today? | Goes live with |
@@ -45,6 +47,7 @@ last migration 0127).
 | `RECAP_AUDIO_LIVE` (recap-words.ts) | Narrated recaps in pricing, My Account, privacy; What's new "Narrated recaps with music" | #1383 deployed (0080–0082), `ELEVENLABS_API_KEY` and `ELEVENLABS_VOICE_ID` are set on the server | `DMBOT_RECAPS=1` first; `DMBOT_RECAP_AUDIO_MAX_CREDITS`, `DMBOT_RECAP_AUDIO_PER_MONTH` | No | **owner step** (#1385): the go-ahead to name ElevenLabs, ElevenLabs in "Companies that help us" with its country, the add-on's price, a What's new entry. Can only be true with `RECAPS_LIVE` |
 | `QABOT_LIVE` (qabot.ts) | Public Q&A section, two privacy lines, What's new "Ask a question in public" | the workflow and key are the owner's steps on #1341; GitHub refused the workflow PR (the server's login has no workflow scope, #516) | the key is a GitHub Actions secret, not `.env` | No | **owner step**, then QAbot answers a real post |
 | `SUPPORT_AI_LIVE` (support-words.ts) | Privacy page and Support form describe the AI helper; What's new "DMbot's helper answers questions" | #1431 deployed (0086 `5c59f459`) | no `DMBOT_…` switch: the helper runs whenever the web API has the AI key (`ANTHROPIC_API_KEY`), see `core/src/dmbot/web/__main__.py` (`if settings.ai_key:`). dev1 confirms the key is set on the web API | Deployed; no real question recorded | **owner check**: send one test question from the website's Support form, see the helper's answer, and dev1 records it |
+| `WHATS_ON_LIVE` (help.ts) | Help step for the ℹ️ What's switched on button, and its snag line; What's new "See what's switched on" | #1831/#1833 (the button) and #1866 (the Help step) merged; not in deploy 86976110 | none | Not deployed yet: merged after 86976110 | **next deploy**, then **owner check 19** in `docs/OWNER_CHECKS.md` (the button needs a deploy before anyone can press it) |
 
 `HOMEBREW_LINKS_LIVE` is already `true` (went live 2026-10-17, #1664) and is not in the table.
 
