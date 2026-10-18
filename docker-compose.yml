@@ -138,6 +138,8 @@ services:
       # and the secret that proves an emailed reply came from the mail service.
       MAIL_SUPPORT_FROM: ${MAIL_SUPPORT_FROM:-}
       MAIL_ALERTS_FROM: ${MAIL_ALERTS_FROM:-}
+      OWNER_ALERT_EMAIL: ${OWNER_ALERT_EMAIL:-}
+      MAIL_ALERTS_REPLY_TO: ${MAIL_ALERTS_REPLY_TO:-}
       MAIL_INBOUND_SECRET: ${MAIL_INBOUND_SECRET:-}
       MAIL_REPLY_DOMAIN: ${MAIL_REPLY_DOMAIN:-}
       SUPPORT_AI_MODEL: ${SUPPORT_AI_MODEL:-}
