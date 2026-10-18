@@ -1,6 +1,7 @@
 ---
 import Base from "../layouts/Base.astro";
 import { RECAPS_LIVE, recapsHeading } from "../content/recap-words";
+import { consentPromises, consentPromisesLead } from "../content/consent-promises";
 import { accountHeading, backToTop, dmHeading, emailsHeading, onThisPage, onThisPageHeading, playerHeading, recapSteps, accountSteps, dmSteps, quickAnswers, quickAnswersHeading, snags, snagsHeading, emailNote, emailSteps, gettingHelp, helpHeading, helpIntro, playerNote, playerSteps } from "../content/help";
 ---
 
@@ -61,6 +62,10 @@ import { accountHeading, backToTop, dmHeading, emailsHeading, onThisPage, onThis
 
   <section aria-labelledby="player-heading">
     <h2 id="player-heading">{playerHeading}</h2>
+    <p>{consentPromisesLead}</p>
+    <ul>
+      {consentPromises.map((p) => <li>{p.text}</li>)}
+    </ul>
     <ol>
       {
         playerSteps.map((s) => (

@@ -9,7 +9,7 @@ cd "$tmp" || exit 1
 git init -q -b development .
 git config user.email t@example.com
 git config user.name t
-for f in core/a.py ears/a.ts web/a.tsx web/src/content/plans.json protocol/fixtures.json \
+for f in core/a.py ears/a.ts web/a.tsx web/src/content/plans.json web/src/content/consent-promises.ts protocol/fixtures.json \
   docs/PLAN.md docs/DEPLOY.md docs/LIVE_TEST.md docs/next-test-step.md docs/testing-status.log docs/testing-history.log LICENSE \
   docs/ci/supervisor-review.yml CLAUDE.md docs/test-scripts/s.md scripts/x.sh README.md; do
   mkdir -p "$(dirname "$f")"
@@ -54,6 +54,7 @@ check "a deleted core file counts" "DELETE:core/a.py" "true false false"
 check "core only" "core/a.py" "true false false"
 check "ears only" "ears/a.ts" "false true false"
 check "plans.json is read by core" "web/src/content/plans.json" "true false true"
+check "the consent promises are read by core" "web/src/content/consent-promises.ts" "true false true"
 check "protocol is read by both" "protocol/fixtures.json" "true true false"
 check "test scripts are read by core" "docs/test-scripts/s.md" "true false false"
 check "a workflow runs everything" ".github/workflows/ci.yml" "true true true"

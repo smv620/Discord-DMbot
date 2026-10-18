@@ -31,10 +31,10 @@ beforeAll(async () => {
 });
 
 describe("the players page", () => {
-  it("has one heading, and a short page of two sections", () => {
+  it("has one heading, and a short page of three sections", () => {
     expect(page.querySelectorAll("h1").length).toBe(1);
     expect(page.querySelector("h1")?.textContent).toBe(playersHeading);
-    expect([...page.querySelectorAll("main h2")].map((h) => h.textContent)).toEqual(["Saying yes", "What you might see"]);
+    expect([...page.querySelectorAll("main h2")].map((h) => h.textContent)).toEqual(["What you agree to", "Saying yes", "What you might see"]);
     expect(main.split(" ").length).toBeLessThan(400); // about one phone screen of steps
   });
 
