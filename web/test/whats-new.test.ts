@@ -78,6 +78,7 @@ describe("What's new", () => {
       "New names from what was said",
       "A note before tonight's session",
       "When a player says a secret name",
+      "Who is alive, who carries what", // until the extractor is on and it has been seen (#1284)
       "Secrets only some people know", // until the extractor is on and it has been seen (#1649)
       "How NPCs feel about the party", // until it has been seen on the test server (#1655)
       "Record what your players did", // until it has been seen on the test server (#1732)
@@ -144,9 +145,14 @@ describe("What's new", () => {
 
   it("claims nothing that isn't live, and uses no hard-rule banned term", () => {
     const all = [...entries, ...held].map((e) => `${e.title} ${e.what}`).join(" ");
-    // Alive-or-dead is stored but nothing records it yet, and who-carries-what is merged but not
-    // deployed (#1319; docs/STORY_MEMORY.md, 5a): they wait for their own entries.
-    expect(all).not.toMatch(/alive|\bdead\b|destroyed|carries|carried/i);
+    // Alive-or-dead is stored but nothing records it until the extractor is on (#1284), and
+    // who-carries-what likewise (#1319; docs/STORY_MEMORY.md, 5a): they wait for their own entry,
+    // which stays held (help.test.ts ties it to STORY_STATES_LIVE), so nothing else may say them.
+    const others = [...entries, ...held]
+      .filter((e) => e.title !== "Who is alive, who carries what")
+      .map((e) => `${e.title} ${e.what}`)
+      .join(" ");
+    expect(others).not.toMatch(/alive|\bdead\b|destroyed|carries|carried/i);
     expect(all).not.toMatch(/knowledge graph|ontology|claims|extractor/i);
     expect(all).not.toMatch(/D&D|Dungeons|Wizards|Beyond/);
     expect(all).not.toMatch(/database|API|LLM|transcription/i);
