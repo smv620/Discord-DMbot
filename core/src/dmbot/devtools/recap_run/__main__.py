@@ -272,8 +272,11 @@ def report(out: Outcome, prices: dict[str, tuple[float, float]], *, show: bool =
 def _copy_out(source: Path, into: Path) -> None:
     """The mp3s, copied to a folder only this user can open (the owner's recap is private)."""
     into.mkdir(parents=True, exist_ok=True, mode=0o700)
+    into.chmod(0o700)  # (mkdir's mode is narrowed by the umask and ignored for an existing folder)
     for path in sorted(source.iterdir()):
-        shutil.copy2(path, into / path.name)
+        target = into / path.name
+        shutil.copyfile(path, target)
+        target.chmod(0o600)
 
 
 async def run_audio(
@@ -306,14 +309,18 @@ async def run_audio(
         spelled = nm.rules(names)
         if spelled:  # secret names never get a rule: `rules` leaves them and what holds them out
             dictionary = await provider.dictionary("recap-run", spelled)  # type: ignore[attr-defined]
-        made = await renderer.render(
-            guild_id,
-            campaign_id,
-            script,
-            into=folder / "out",
-            seed=job.session_at,
-            dictionary=dictionary,
-        )
+        try:
+            made = await renderer.render(
+                guild_id,
+                campaign_id,
+                script,
+                into=folder / "out",
+                seed=job.session_at,
+                dictionary=dictionary,
+            )
+        finally:
+            if dictionary is not None:  # a test run leaves nothing at the company, even on failure
+                await provider.forget_dictionary(dictionary.dictionary_id)  # type: ignore[attr-defined]
         sizes = {p.name: p.stat().st_size for p in (folder / "out").iterdir()}
         kept: list[str] = []
         if keep_in is not None:
@@ -588,9 +595,9 @@ def read_transcript_inputs(
 ) -> tuple[pl.Inputs, tf.Transcript, list[SpokenName]]:
     """The file, the DM and the names as the recap worker's inputs. Raises `tf.TranscriptError`
     (and `OSError` for a file that can't be read) with plain words and never a line of the file."""
-    transcript = tf.parse(Path(args.transcript).read_text(encoding="utf-8"))
+    transcript = tf.parse(Path(args.transcript).read_text(encoding="utf-8-sig"))
     dm = tf.dm_id(transcript, args.dm)
-    names = tf.parse_names(Path(args.names).read_text(encoding="utf-8")) if args.names else []
+    names = tf.parse_names(Path(args.names).read_text(encoding="utf-8-sig")) if args.names else []
     allowed = [n.text for n in names if not n.secret] + list(transcript.characters)
     secret = [n.text for n in names if n.secret]
     secret_keys = {s.casefold() for s in secret}
@@ -633,7 +640,11 @@ async def _transcript(
         return 0
     # An uploaded file has no consent records. This is asked once, before any paid call, and
     # --yes never answers it (CLAUDE.md: never process words from people who have not agreed).
-    if not tf.consent_given(ask(tf.CONSENT_QUESTION)):
+    try:
+        answer = ask(tf.CONSENT_QUESTION)
+    except EOFError:  # nobody is there to answer (a pipe, a scheduled run): that is a no
+        answer = ""
+    if not tf.consent_given(answer):
         print("recap_run: stopped. Nothing was sent to any service.")
         return 4
     out = await run_text(inputs, fast, careful, session_at=1, models=models)
@@ -643,7 +654,7 @@ async def _transcript(
         return 3
     print("\n".join(lines))  # the paid text report first: nothing below can lose it
     if out.job.state == "ready":
-        print("\n".join(await _cue_lines(out)))
+        print("\n".join(_cue_lines(out)))
         if args.audio:
             try:
                 keep_in = Path(args.out) if args.out else None
@@ -653,7 +664,7 @@ async def _transcript(
     return 0 if out.job.state == "ready" else 1
 
 
-async def _cue_lines(out: Outcome) -> list[str]:
+def _cue_lines(out: Outcome) -> list[str]:
     from dmbot.recaps.audio import script as sc
 
     try:

@@ -40,6 +40,7 @@ _CLOCK = r"(?:(\d+):)?(\d{1,2}):(\d{2})"
 _DMBOT_HEAD = re.compile(r"^DMbot transcript:")
 _DMBOT_LINE = re.compile(
     r"^\[(?P<at>\d+:\d{2}:\d{2})\] \((?P<who>[^()]+)\)"
+    r"(?P<tag> \[(?:DM Sidebar|Table Q)[^\]]*\])?"
     r"(?: \{(?P<char>[^{}]+)\})?(?P<typed> \(typed\))?: (?P<text>.+)$"
 )
 _DMBOT_OTHER = re.compile(r"^\[\d+:\d{2}:\d{2}\] \(")  # sidebar, skipped-note and DMbot lines
@@ -47,7 +48,7 @@ _PLAIN = re.compile(
     rf"^(?:\[(?P<at>{_CLOCK})\]\s*)?(?P<who>[^\s:\[\]{{}}()<>][^:\[\]{{}}()<>]{{0,59}}):\s+(?P<text>\S.*)$"
 )
 _TIMING = re.compile(r"^(?P<h>\d+:)?(?P<m>\d{1,2}):(?P<s>\d{2})[.,](?P<ms>\d{3})\s+-->\s+")
-_CUE_SPEAKER = re.compile(r"^(?P<who>[^:\[\]{}()<>]{1,60}):\s*(?P<text>\S.*)$", re.S)
+_CUE_SPEAKER = re.compile(r"^(?P<who>[^:\[\]{}()<>]{1,60}):\s+(?P<text>\S.*)$", re.S)
 
 
 class TranscriptError(ValueError):
@@ -86,12 +87,12 @@ def _clock_ms(clock: str) -> int:
 
 def detect(text: str) -> str:
     """Which format the text is, by its content. Raises `TranscriptError` naming the formats."""
-    lines = [line.strip() for line in text.splitlines() if line.strip()]
+    lines = [line.strip() for line in text.lstrip("\ufeff").splitlines() if line.strip()]
     if not lines:
         raise TranscriptError("the file is empty")
     if _DMBOT_HEAD.match(lines[0]):
         return DMBOT
-    if lines[0].lstrip("\ufeff").startswith("WEBVTT"):
+    if lines[0].startswith("WEBVTT"):
         return VTT
     if any(_TIMING.match(line) for line in lines[:6]) and lines[0].isdigit():
         return SRT
@@ -110,7 +111,7 @@ def _dmbot(text: str) -> Transcript:
         if found is None:
             continue  # the header, a skipped-chat note, a blank line
         who = found["who"].strip()
-        if who == "DMbot" or "[DM Sidebar" in line[:60] or "[Table Q" in line[:60]:
+        if who == "DMbot" or found["tag"]:
             continue  # DMbot's own words and the DM's questions to it are not the table's
         char = (found["char"] or "").strip()
         if char and char.lower() not in TAGS:
@@ -123,13 +124,13 @@ def _dmbot(text: str) -> Transcript:
 
 def _plain(text: str) -> Transcript:
     out: list[Utterance] = []
-    for raw in text.splitlines():
+    for number, raw in enumerate(text.splitlines(), start=1):
         line = raw.strip()
         if not line:
             continue
         found = _PLAIN.match(line)
         if found is None:
-            raise TranscriptError("a line has no 'Name: words' form (the first is not named here)")
+            raise TranscriptError(f"line {number} has no 'Name: words' form")
         # A line with no time follows the one before it, so a mixed file keeps its order.
         after = out[-1].at_ms + LINE_MS if out else 0
         at = _clock_ms(found["at"]) if found["at"] else after
@@ -154,8 +155,9 @@ def _cues(text: str, kind: str) -> Transcript:
         out.append(Utterance(said["who"].strip(), start, said["text"].strip()))
         block = []
 
-    for raw in text.lstrip("\ufeff").splitlines():
-        line = raw.strip()
+    rows = [raw.strip() for raw in text.splitlines()]
+    skipping = False  # inside a NOTE or STYLE block, which runs to the next blank line
+    for i, line in enumerate(rows):
         timing = _TIMING.match(line)
         if timing is not None:
             close()
@@ -166,8 +168,11 @@ def _cues(text: str, kind: str) -> Transcript:
             continue
         if not line:
             close()
-        elif line.startswith(("WEBVTT", "NOTE", "STYLE")) or (line.isdigit() and not block):
-            continue  # the header, a note, an SRT's cue number
+            skipping = False
+        elif skipping or line.startswith(("WEBVTT", "NOTE", "STYLE")):
+            skipping = not line.startswith("WEBVTT")  # (WEBVTT's own line ends the header)
+        elif i + 1 < len(rows) and _TIMING.match(rows[i + 1]):
+            continue  # a cue's number (SRT) or identifier (WebVTT), on the line before its timing
         elif count:
             block.append(re.sub(r"</?[a-z][^>]*>", "", line))  # <i>, <b>: styling, not words
     close()
@@ -178,6 +183,7 @@ def _cues(text: str, kind: str) -> Transcript:
 
 def parse(text: str) -> Transcript:
     """The transcript in this text, whichever of the four formats it is."""
+    text = text.lstrip("\ufeff")  # a byte-order mark some tools write first
     kind = detect(text)
     if kind == DMBOT:
         return _dmbot(text)
@@ -258,7 +264,8 @@ def cue_map(summary: str, script: Script) -> list[str]:
 
 
 CONSENT_QUESTION = (
-    "Did everyone whose words are in this file agree to be recorded and to this test? (yes/no) "
+    "Did everyone whose words are in this file agree to be recorded, to this test, and to their "
+    "words being sent to an AI service? (yes/no) "
 )
 
 

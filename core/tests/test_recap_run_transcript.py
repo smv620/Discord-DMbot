@@ -7,7 +7,6 @@ from __future__ import annotations
 
 import contextlib
 import io
-import json
 import stat
 import tempfile
 import unittest
@@ -93,6 +92,55 @@ class TheFormats(unittest.TestCase):
         self.assertEqual(srt.format, tf.SRT)
         self.assertEqual(srt.utterances[1].at_ms, 65500)
         self.assertEqual(srt.utterances[1].text, "Mira steps inside.")  # the styling is not words
+
+    def test_a_byte_order_mark_does_not_change_any_format(self) -> None:
+        for text, kind in (
+            (DMBOT_FILE, tf.DMBOT), (PLAIN_FILE, tf.PLAIN), (VTT_FILE, tf.VTT), (SRT_FILE, tf.SRT),
+        ):  # fmt: skip
+            got = tf.parse("\ufeff" + text)
+            self.assertEqual(got.format, kind)
+            self.assertEqual(got.speakers[0], "Sam")  # not "\ufeffSam"
+
+    def test_windows_line_endings_work_in_every_format(self) -> None:
+        for text in (DMBOT_FILE, PLAIN_FILE, VTT_FILE, SRT_FILE):
+            self.assertEqual(tf.parse(text.replace("\n", "\r\n")), tf.parse(text))
+
+    def test_a_clock_time_inside_a_cue_is_words_not_a_speaker(self) -> None:
+        got = tf.parse("WEBVTT\n\n00:00:01.000 --> 00:00:02.000\nSam: It was 10:30 by then.\n")
+        self.assertEqual(
+            (got.utterances[0].speaker, got.utterances[0].text), ("Sam", "It was 10:30 by then.")
+        )
+        with self.assertRaises(tf.TranscriptError):  # no name: refused, not a speaker "It was 10"
+            tf.parse("WEBVTT\n\n00:00:01.000 --> 00:00:02.000\nIt was 10:30 by then.\n")
+
+    def test_webvtt_identifiers_and_multi_line_notes_are_not_words(self) -> None:
+        got = tf.parse(
+            "WEBVTT\n\nNOTE a note\nthat runs on\n\nc1\n00:00:01.000 --> 00:00:02.000\n"
+            "Sam: First.\n\nc2\n00:00:03.000 --> 00:00:04.000\nMia: Second.\n"
+        )
+        self.assertEqual(
+            [(u.speaker, u.text) for u in got.utterances], [("Sam", "First."), ("Mia", "Second.")]
+        )
+
+    def test_a_line_that_names_nobody_is_refused_by_its_number_not_its_words(self) -> None:
+        lines = [f"Sam: line {n}" for n in range(9)] + ["no name on this one"]
+        with self.assertRaises(tf.TranscriptError) as caught:
+            tf.parse("\n".join(lines))
+        self.assertIn("line 10", str(caught.exception))
+        self.assertNotIn("no name on this", str(caught.exception))
+
+    def test_the_sidebar_tag_is_read_where_it_stands_and_not_found_in_a_players_words(self) -> None:
+        text = (
+            DMBOT_FILE
+            + "[0:02:00] (A Very Long Name That Goes On And On For Quite A While Indeed) "
+            "[DM Sidebar id=x1]: a question\n"
+            "[0:02:05] (Ben): She said [DM Sidebar] out loud.\n"
+        )
+        got = tf.parse(text)
+        self.assertEqual(got.utterances[-1].text, "She said [DM Sidebar] out loud.")
+        self.assertNotIn(
+            "A Very Long Name That Goes On And On For Quite A While Indeed", got.speakers
+        )
 
     def test_a_cue_with_no_name_is_refused_without_quoting_it(self) -> None:
         with self.assertRaises(tf.TranscriptError) as caught:
@@ -200,6 +248,9 @@ class TheRefusals(unittest.TestCase):
             (args.transcript, args.dm, args.names, args.out), ("f.txt", "Sam", "n.txt", "d")
         )
 
+    def test_the_consent_question_says_the_words_go_to_an_ai_service(self) -> None:
+        self.assertIn("AI service", tf.CONSENT_QUESTION)
+
     def test_only_the_word_yes_is_consent(self) -> None:
         self.assertTrue(tf.consent_given(" Yes "))
         for answer in ("", "y", "no", "yes please", "ok"):
@@ -259,6 +310,39 @@ class TheRun(unittest.IsolatedAsyncioTestCase):
         self.assertIn("《Tense》 -> music only", text)
         for _, said in fx.LINES:
             self.assertNotIn(said, text)  # the report never holds the transcript itself
+
+    async def test_no_one_to_answer_is_a_no(self) -> None:
+        story = self.file("story.txt", self.story())
+        args = run.parse_args(["--transcript", story, "--dm", "Sam", "--yes"])
+        fast = fx.Canned()
+
+        def nobody(question: str) -> str:
+            raise EOFError
+
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            code = await run._transcript(args, fast, fx.Canned(), ("a", "b"), {}, ask=nobody)
+        self.assertEqual((code, fast.sent), (4, []))
+
+    async def test_a_character_the_names_file_keeps_secret_is_not_offered_as_a_name(self) -> None:
+        text = DMBOT_FILE
+        story = self.file("dm.txt", text)
+        names = self.file("names.txt", "secret: Oskar\n")
+        args = run.parse_args(["--transcript", story, "--dm", "Sam", "--names", names, "--yes"])
+        inputs, _, _ = run.read_transcript_inputs(args)
+        self.assertIn("Mira", inputs.allowed_names)
+        self.assertNotIn("Oskar", inputs.allowed_names)
+        self.assertEqual(inputs.secret_names, ["Oskar"])
+
+    async def test_the_names_file_may_start_with_a_byte_order_mark(self) -> None:
+        story = self.file("story.txt", self.story())
+        names = self.dir / "names.txt"
+        names.write_bytes(b"\xef\xbb\xbfOskar = Oss-kar\n")
+        args = run.parse_args(
+            ["--transcript", story, "--dm", "Sam", "--names", str(names), "--yes"]
+        )
+        _, _, spoken = run.read_transcript_inputs(args)
+        self.assertEqual(spoken, [SpokenName("Oskar", "Oss-kar")])
 
     async def test_nothing_is_asked_or_run_without_yes(self) -> None:
         story = self.file("story.txt", self.story())
@@ -321,6 +405,17 @@ class TheRun(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("Vaelith", "\n".join(lines))
 
 
+def open_up(folder: Path) -> None:
+    folder.chmod(0o755)
+
+
+def modes_in(folder: Path) -> tuple[int, set[int]]:
+    """The folder's mode and the modes of what is in it."""
+    return stat.S_IMODE(folder.stat().st_mode), {
+        stat.S_IMODE(p.stat().st_mode) for p in folder.iterdir()
+    }
+
+
 class TheAudio(unittest.IsolatedAsyncioTestCase):
     async def test_names_with_a_spelling_make_the_dictionary_and_a_secret_is_never_sent(
         self,
@@ -357,5 +452,30 @@ class TheAudio(unittest.IsolatedAsyncioTestCase):
         self.assertIn("Oss-kar", sent)
         self.assertNotIn("Vaelith", sent)
         self.assertNotIn("Vay-lith", sent)
-        self.assertEqual(len(fake.paths("pronunciation-dictionaries")), 1)
-        json.dumps(sent)  # (a plain string: nothing to decode)
+        self.assertEqual(len(fake.paths("add-from-rules")), 1)
+        deletes = [c for c in fake.calls if c[0] == "DELETE"]
+        self.assertEqual(
+            [c[1] for c in deletes], ["/v1/pronunciation-dictionaries/dict1"]
+        )  # nothing left
+
+    async def test_the_kept_folder_is_made_private_even_if_it_already_exists(self) -> None:
+        out = await run.run_text(
+            pl.Inputs(
+                lines=fx.lines(),
+                dm_ids={fx.DM},
+                allowed_names=list(fx.NAMES),
+                secret_names=[],
+                previous="",
+                day=4,
+            ),
+            fx.Canned(fx.BEATS_ANSWER, fx.PROSE_ANSWER, fx.GRADE_ANSWER, fx.FINISH_ANSWER),
+            fx.Canned(),
+        )
+        with tempfile.TemporaryDirectory() as tmp, tempfile.TemporaryDirectory() as keep:
+            kept = Path(keep)
+            open_up(kept)
+            await run.run_audio(
+                out.job, out.inputs, ElevenLabs(Fake(), voice_id="v"), AudioFiles(Path(tmp)),
+                runner=Mixer(), keep_in=kept,
+            )  # fmt: skip
+            self.assertEqual(modes_in(kept), (0o700, {0o600}))
