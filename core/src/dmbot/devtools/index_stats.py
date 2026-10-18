@@ -21,7 +21,7 @@ from pathlib import Path
 from dmbot.rules import index
 from dmbot.sidebar import context
 
-GOLDEN = Path(__file__).resolve().parents[3] / "tests" / "data" / "rules_golden.json"
+GOLDEN = Path(__file__).resolve().parents[3] / "tests" / "golden" / "rules.json"
 # Used when the golden file isn't there (an installed package): a spread of kinds, both editions.
 FALLBACK_QUESTIONS = (
     ("how much AC does shield give", "2024", "2014"),

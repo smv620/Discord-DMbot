@@ -2,7 +2,7 @@
 editions, for the table and for the DM. Every cue list, everyday-word guard and per-name fallback
 shares one index, so a change to one can quietly change what another question cites; this pins the
 whole set. Pure: the real SRD index, no AI and no database. How to add a case: see the readme at
-the top of tests/data/rules_golden.json."""
+the top of tests/golden/rules.json."""
 
 from __future__ import annotations
 
@@ -13,7 +13,7 @@ from pathlib import Path
 from dmbot.rules.index import srd
 from dmbot.sidebar import context
 
-CASES = json.loads((Path(__file__).parent / "data" / "rules_golden.json").read_text("utf-8"))[
+CASES = json.loads((Path(__file__).parent / "golden" / "rules.json").read_text("utf-8"))[
     "cases"
 ]
 MIN_CASES = 120  # (the suite is meant to be broad; shrinking it should be deliberate)
