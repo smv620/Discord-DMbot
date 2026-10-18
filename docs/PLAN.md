@@ -371,6 +371,8 @@ The 5.1 PDF's text layer is rougher (cut words, a few lost words): the tool repa
 words only with words the SRD itself uses, never edits by hand, and `ATTRIBUTION.md` says
 that one lost word (a stray letter in Animal Friendship, named there) remains.
 
+*Built, the Rules Glossary in the index (2026-10-18, #1884):* the SRD 5.2.1's Rules Definitions (`rules.json`, kind `"rule"`, section "Rules Glossary", 140 entries: Cover, the Dash action, Long Rest, ...; the 15 conditions stay kind `condition`) are in the index, and the DM sidebar cites them like any other entry ("SRD 5.2.1, Rules Glossary, p. 180"). A glossary entry is found only when its kind is asked for: its names are everyday words ("Action", "Damage"), so the live rules cards, the `/rule` name list and "did you mean" never see them. The sidebar adds them last, only into the places a spell, condition or creature left free of its three. The `/rule` card does not find them yet (a follow-up). Class features, species and the rest of the SRD are a later issue.
+
 Creatures are in the index too (#900): the 330 stat blocks of the 5.2.1's Monsters A-Z and
 Animals sections and the 317 of the 5.1's Monsters pages and its two creature appendices,
 as `monsters.json` next to the spells, each with its size, type, alignment, armor class, hit

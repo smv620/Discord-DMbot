@@ -35,7 +35,7 @@ from dmbot.rules.book_rank import book_is_legacy, book_wins
 from dmbot.rules.followed import FollowedRule
 from dmbot.rules.homebrew import Homebrew
 from dmbot.rules.house import HouseRule
-from dmbot.rules.index import Hit, Index, edition_tag, normalize
+from dmbot.rules.index import RULE, Hit, Index, edition_tag, normalize
 from dmbot.sidebar import knowledge
 
 LEGACY_TAG = "[Legacy 2014]"  # the owner's rule: the older ruleset is always tagged
@@ -180,6 +180,23 @@ def mentioned_rules(
                 for k in range(start, start + size):
                     used[k] = True
                 found.append((start, hit))
+    # The Rules Glossary (#1884) answers only a question that names no spell, condition or
+    # creature. Its names are everyday words ("Line", "Damage", "Cover"): beside a named entry
+    # they would be noise in the prompt, so they never crowd out what the DM actually named.
+    spare = 0 if found else ENTRIES_MAX
+    for size in range(WINDOW, 0, -1) if spare > 0 else ():
+        for start in range(len(words) - size + 1):
+            if spare <= 0 or any(used[start : start + size]):
+                continue
+            window = words[start : start + size]
+            if size == 1 and (window[0].lower() in _STOP or len(window[0]) < 3):
+                continue
+            hit = index.lookup(" ".join(window), target, fallback, kind=RULE)
+            if hit is not None:
+                for k in range(start, start + size):
+                    used[k] = True
+                found.append((start, hit))
+                spare -= 1
     found.sort(key=lambda pair: pair[0])
     unique: list[Hit] = []
     for _, hit in found:
