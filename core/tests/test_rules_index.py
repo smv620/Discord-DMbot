@@ -35,6 +35,7 @@ FILES = (
     "items.json",
     "monsters.json",
     "origins.json",
+    "rules.json",
     "spells.json",
 )
 FILES_52 = (
@@ -680,6 +681,49 @@ class ClassFeatures(unittest.TestCase):
         for edition, other in (("2024", "2014"), ("2014", "2024")):
             names = [n for n, _ in listed("hor", edition, other)]
             self.assertEqual(len(names), len(set(index.normalize(n) for n in names)))
+
+    def test_the_5_1_core_rules_are_the_2014_text_and_the_2024_glossary_wins_in_2024(self) -> None:
+        srd = index.srd()
+
+        def found(name: str, target: str, fallback: str) -> tuple[str, str, str]:
+            hit = srd.lookup(name, target, fallback, kind="rule")
+            assert hit is not None, name
+            return hit.entry.name, hit.entry.edition, hit.tag
+
+        for name in ("Grappling", "Cover", "Short Rest", "Dash", "Concentration", "Falling"):
+            self.assertEqual(found(name, "2024", "2014"), (name, "2024", ""), name)
+            self.assertEqual(found(name, "2014", "2024"), (name, "2014", "[Legacy 2014]"), name)
+        # a 5.1 title the glossary spells another way is the 2024 entry in a 2024 campaign
+        self.assertEqual(found("suffocating", "2024", "2014"), ("Suffocation", "2024", ""))
+        self.assertEqual(found("use an object", "2024", "2014"), ("Utilize", "2024", ""))
+        self.assertEqual(
+            found("suffocating", "2014", "2024"), ("Suffocating", "2014", "[Legacy 2014]")
+        )
+        # a rule only the 5.1 has is found, tagged, in a 2024 campaign
+        self.assertEqual(
+            found("Two-Weapon Fighting", "2024", "2014"),
+            ("Two-Weapon Fighting", "2014", "[Legacy 2014]"),
+        )
+        grappling = srd.lookup("grappling", "2014", "2024", kind="rule")
+        assert grappling is not None
+        self.assertIn("no more than one size larger", grappling.entry.text)
+        self.assertEqual(grappling.entry.citation, "SRD 5.1, Rules, p. 95")
+
+    def test_the_name_list_never_offers_both_editions_of_a_core_rule(self) -> None:
+        srd = index.srd()
+        for target, fallback, edition in (("2024", "2014", "2024"), ("2014", "2024", "2014")):
+            offered = srd.asked_names("grappl", target, fallback, kinds=(index.RULE,))
+            self.assertEqual([(e.name, e.edition) for e in offered], [("Grappling", edition)])
+            offered = srd.asked_names("suffocat", target, fallback, kinds=(index.RULE,))
+            self.assertEqual(len(offered), 1, (target, [e.name for e in offered]))
+
+    def test_every_rule_alias_points_at_a_glossary_rule_and_a_5_1_title(self) -> None:
+        from dmbot.rules import aliases
+
+        srd = index.srd()
+        for older, current in aliases.RULE_ALIASES:
+            self.assertIsNotNone(srd.lookup(current, "2024", kind="rule"), current)
+            self.assertIsNotNone(srd.lookup(older, "2014", kind="rule"), older)
 
     def test_a_2014_tool_label_says_its_price_not_its_group(self) -> None:
         from dmbot.ui import rule_card

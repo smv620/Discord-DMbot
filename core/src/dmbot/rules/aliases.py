@@ -85,4 +85,28 @@ MONSTER_ALIASES: tuple[tuple[str, str], ...] = (
     ("Veteran", "Warrior Veteran"),  # renamed
 )
 
+# The SRD 5.1's core rules whose title the 5.2.1's glossary spells another way (#1943): the 2024
+# entry is found by the 5.1's title, so a 2024 campaign never gets the 2014 rule over it. Not in
+# `ALL`: the glossary is a file the index can carry on without (a missing one is only logged), and
+# these are skipped then, where a spell or creature alias that points at nothing is a bug.
+RULE_ALIASES: tuple[tuple[str, str], ...] = (
+    ("Suffocating", "Suffocation"),
+    ("Use an Object", "Utilize"),
+    ("Cast a Spell", "Magic"),
+    ("Attack Rolls", "Attack Roll"),
+    ("Damage Rolls", "Damage Roll"),
+    ("Critical Hits", "Critical Hit"),
+    ("Saving Throws", "Saving Throw"),
+    ("Death Saving Throws", "Death Saving Throw"),
+    ("Cantrips", "Cantrip"),
+    ("Rituals", "Ritual"),
+    ("Reactions", "Reaction"),
+    ("Bonus Actions", "Bonus Action"),
+    ("Areas of Effect", "Area of Effect"),
+    ("Proficiency Bonus", "Proficiency"),
+    ("Creature Size", "Size"),
+    ("Knocking a Creature Out", "Knocking Out a Creature"),
+    ("Stabilizing a Creature", "Stable"),
+)
+
 ALL: tuple[tuple[str, str], ...] = SPELL_ALIASES + MONSTER_ALIASES

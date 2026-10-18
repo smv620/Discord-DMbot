@@ -232,6 +232,7 @@ class Index:
         entries: Iterable[Entry],
         alias_pairs: Sequence[tuple[str, str]] = (),
         alias_edition: str = aliases.EDITION,
+        soft_alias_pairs: Sequence[tuple[str, str]] = (),
     ) -> None:
         self.entries: tuple[Entry, ...] = tuple(entries)
         self._by_edition: dict[str, dict[str, list[Entry]]] = {}
@@ -256,6 +257,13 @@ class Index:
                 )
             self._alias_keys.add((alias_edition, normalize(older)))
             for entry in list(found):
+                self._add(alias_edition, normalize(older), entry)
+        for (
+            older,
+            current,
+        ) in soft_alias_pairs:  # (skipped where the file they point into is missing)
+            for entry in list(self._by_edition.get(alias_edition, {}).get(normalize(current), [])):
+                self._alias_keys.add((alias_edition, normalize(older)))
                 self._add(alias_edition, normalize(older), entry)
 
     def _add(self, edition: str, key: str, entry: Entry) -> None:
@@ -538,4 +546,4 @@ def srd() -> Index:
     ):
         if not any(e.kind == kind for e in entries):  # an older build of the data: carry on
             log.warning("The %s are not in the data; the DM sidebar will not cite them", what)
-    return Index(entries, aliases.ALL)
+    return Index(entries, aliases.ALL, soft_alias_pairs=aliases.RULE_ALIASES)
