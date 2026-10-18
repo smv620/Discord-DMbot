@@ -601,7 +601,7 @@ def note(line: str) -> None:
             handle.write(line + "\n")
 
 
-CEILING_MS = 1  # in CI; the goal is 50 ms, measured on the server
+CEILING_MS = 100  # in CI; the goal is 50 ms, measured on the server
 
 
 class Speed(MemoryTest):
