@@ -12,7 +12,7 @@ from __future__ import annotations
 import os
 import zlib
 
-ENV = "DMBOT_TEST_SHARD"  # "2/3": the second of three parts; unset means the whole run
+ENV = "DMBOT_TEST_SHARD"  # "2/3": the second of four parts; unset means the whole run
 
 
 def parse(value: str | None) -> tuple[int, int] | None:

@@ -33,10 +33,10 @@ class SplitTest(unittest.TestCase):
             self.assertEqual(sum(len(p) for p in parts), len(files))
             self.assertEqual(set().union(*parts), set(files))
 
-    def test_three_parts_are_each_a_fair_share(self) -> None:
+    def test_four_parts_are_each_a_fair_share(self) -> None:
         files = [p.name for p in TESTS.glob("test_*.py")]
-        sizes = [sum(shard.part_of(f, 3) == n for f in files) for n in (1, 2, 3)]
-        self.assertGreater(min(sizes), len(files) // 5)
+        sizes = [sum(shard.part_of(f, 4) == n for f in files) for n in (1, 2, 3, 4)]
+        self.assertGreater(min(sizes), len(files) // 8)
 
     def test_the_answer_does_not_depend_on_the_path_style(self) -> None:
         self.assertEqual(shard.part_of("a\\b.py", 3), shard.part_of("a/b.py", 3))

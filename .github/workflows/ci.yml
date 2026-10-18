@@ -126,20 +126,20 @@ jobs:
         timeout-minutes: 5
 
   # The core tests ran as one 15-minute job on a 4-core runner (#1984; `-n auto` finds the same 4
-  # cores, so more workers would not help). They now run as three parts side by side, each on its
+  # cores, so more workers would not help). They now run as four parts side by side (three finished in 8.2 minutes, the slowest part 6:40 of tests, so a fourth brings the whole job under 8), each on its
   # own runner and database, split by test file (core/tests/shard.py; a test in the wrong place
   # can't be skipped, the parts add up to the whole run, proven in tests/test_shard.py).
   # The job named "core (Python)" below is the one result to watch (and to require): it passes only
   # when every part did, so the name branch rules see has not changed.
   core-tests:
-    name: core tests (part ${{ matrix.part }} of 3)
+    name: core tests (part ${{ matrix.part }} of 4)
     needs: changes
     if: ${{ always() && needs.changes.outputs.done != 'true' && (needs.changes.result != 'success' || needs.changes.outputs.core != 'false') }}
     runs-on: ubuntu-22.04  # 24.04 runners were queueing for hours (2026-10-05); see #29
     strategy:
       fail-fast: false  # a red part must not hide what the others found
       matrix:
-        part: [1, 2, 3]
+        part: [1, 2, 3, 4]
     defaults:
       run:
         working-directory: core
@@ -156,7 +156,7 @@ jobs:
       DMBOT_TEST_DATABASE_URL: postgresql://dmbot:dmbot@localhost:5432/dmbot_test
       DMBOT_TEST_SUPERUSER_URL: postgresql://postgres:postgres@localhost:5432/dmbot_test
       DMBOT_REQUIRE_DB_TESTS: "1"
-      DMBOT_TEST_SHARD: ${{ matrix.part }}/3
+      DMBOT_TEST_SHARD: ${{ matrix.part }}/4
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-python@v6
