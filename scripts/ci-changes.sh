@@ -49,6 +49,8 @@ while IFS= read -r f; do
     # skips core.
     docs/DEPLOY.md | docs/LIVE_TEST.md | docs/next-test-step.md | LICENSE) ;;
     docs/testing-status.log | docs/testing-history.log) ;;
+    # the web check:golive step compares docs/GO_LIVE.md with the site's switches (#1881)
+    docs/GO_LIVE.md) core=true web=true ;;
     docs/* | CLAUDE.md) core=true ;;
     *) everything ;; # workflows, scripts/, compose files, .env.example, README.md, anything new
   esac
