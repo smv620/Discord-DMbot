@@ -25,6 +25,7 @@ import discord
 
 from dmbot.campaigns import Campaign
 from dmbot.campaigns.models import STORY_GUIDE, STORY_OFF
+from dmbot.discord_limits import MESSAGE_MAX
 from dmbot.dm_screen.story_mode import COULDNT, _dm_campaign, say
 from dmbot.logs import set_log_context
 from dmbot.memory.adventure import (
@@ -870,7 +871,7 @@ def finished_text(file_name: str, state: ReadState, counts: Counts | None) -> st
 ICONS = {"chapter": "📖", "place": "📍", "person": "🧑", "link": "🔗"}
 LINE_SUMMARY = 110  # characters of a line's summary on the list
 LINE_QUOTE = 90
-PAGE_CHARS = 1990  # a message holds 2000
+PAGE_CHARS = MESSAGE_MAX - 10  # a little under a whole message
 
 
 def listing_text(items: list[Listed], offset: int, total: int) -> str:

@@ -33,6 +33,7 @@ from typing import Any
 import discord
 
 from dmbot.campaigns import Campaign
+from dmbot.discord_limits import MESSAGE_MAX
 from dmbot.dm_screen import set_suggestion, shared_update
 from dmbot.rules import rule_sets, set_diff, set_sync
 from dmbot.rules.house import HouseRule, HouseRuleError
@@ -41,7 +42,7 @@ from dmbot.ui.dmbot_commands import _answer_first, _bot, _Button, _Menu, _Select
 log = logging.getLogger(__name__)
 
 PAGE = 25  # a Discord menu holds 25 choices
-TEXT_MAX = 1900
+TEXT_MAX = MESSAGE_MAX - 100  # margin kept from before: room for the words a sender adds around it
 ONLY_DMS = "Only this campaign's DMs can do that."
 GONE = "That campaign isn't here any more."
 NEWER = (

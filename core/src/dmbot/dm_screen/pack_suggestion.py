@@ -22,6 +22,7 @@ from typing import Any
 import discord
 
 from dmbot.campaigns import Campaign
+from dmbot.discord_limits import MESSAGE_MAX
 from dmbot.logs import set_log_context
 from dmbot.rules.house import HouseRuleError
 from dmbot.rules.pack_suggestions import PackSent, PackSuggestion, PackSuggestionStore
@@ -35,7 +36,7 @@ COULDNT = "That didn't work, and nothing changed. Press the button again in a mo
 ANSWERED = "Someone already answered this suggestion."
 EXPIRED = "That suggestion is too old to add. Its sender can send it again."
 SHOWN_MAX = 120  # an entry quoted in a one-line message
-TEXT_MAX = 1800
+TEXT_MAX = MESSAGE_MAX - 200  # margin kept from before: room for the words a sender adds around it
 
 _LABELS = {
     "see": ("See", discord.ButtonStyle.secondary),
