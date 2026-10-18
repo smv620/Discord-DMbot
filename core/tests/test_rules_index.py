@@ -428,7 +428,8 @@ class ClassFeatures(unittest.TestCase):
             ("18", "Str 15", "Disadvantage"),
         )
         self.assertEqual(
-            facts.armor_line(plate), "Heavy armor, AC 18, Strength 15, Stealth Disadvantage"
+            facts.armor_line(plate),
+            "Heavy armor, AC 18, needs Strength 15, Disadvantage on Stealth",
         )
         self.assertEqual(get("Shield", "armor").details["ac"], "+2")
         self.assertEqual(get("Topple", "rule").details["tag"], "Mastery Property")

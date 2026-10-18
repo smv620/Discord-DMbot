@@ -296,24 +296,34 @@ def build_files(
     }
 
 
+def _weight_and_cost(entry: Any) -> str:
+    """ "3 lb., 15 GP." (a weight of "—" is left out: there is none to say)."""
+    parts = [entry.weight if entry.weight != "—" else "", entry.cost]
+    return ", ".join(p for p in parts if p) + "."
+
+
 def equipment_entry(kind: str, entry: Any) -> dict[str, Any]:
     """A weapon, an armor or a weapon property as the equipment file holds it: its kind, name and
     the fields of its table row, then the row read out as words, and its page."""
-    if kind == "weapon":
-        properties = entry.properties or "—"
-        text = (
-            f"{entry.category} Weapon. Damage: {entry.damage} {entry.damage_type}. "
-            f"Properties: {properties}. Mastery: {entry.mastery}. "
-            f"Weight: {entry.weight} Cost: {entry.cost}."
-        )
-        return {"kind": kind, **asdict(entry), "text": text}
+    if kind == "weapon":  # the number a DM wants first; the heading already says the category
+        parts = [f"{entry.damage} {entry.damage_type}."]
+        if entry.properties:
+            parts.append(f"Properties: {entry.properties}.")
+        parts.append(f"Mastery: {entry.mastery}.")
+        parts.append(_weight_and_cost(entry))
+        return {"kind": kind, **asdict(entry), "text": " ".join(parts)}
     if kind == "armor":
-        what = "Shield" if entry.category == "Shield" else f"{entry.category} Armor"
-        text = (
-            f"{what} ({entry.don_doff}). Armor Class: {entry.ac}. Strength: {entry.strength}. "
-            f"Stealth: {entry.stealth}. Weight: {entry.weight} Cost: {entry.cost}."
-        )
-        return {"kind": kind, **asdict(entry), "text": text}
+        parts = [f"AC {entry.ac}."]
+        if entry.strength != "—":
+            parts.append(f"Needs {entry.strength.replace('Str ', 'Strength ')}.")
+        if entry.stealth != "—":
+            parts.append(f"{entry.stealth} on Stealth.")
+        parts.append(_weight_and_cost(entry))
+        if entry.category == "Shield":
+            parts.append("Use the Utilize action to don or doff.")
+        else:
+            parts.append(f"Takes {entry.don_doff.lower()}.")
+        return {"kind": kind, **asdict(entry), "text": " ".join(parts)}
     return {
         "kind": "rule",
         "section": EQUIPMENT_SECTION,

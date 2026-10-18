@@ -475,7 +475,7 @@ class MagicItems(unittest.TestCase):
             "Versatile (1d10), mastery Sap.",
             built.prompt,
         )
-        self.assertIn("Stealth Disadvantage", self.build("how heavy is plate armor").prompt)
+        self.assertIn("Disadvantage on Stealth", self.build("how heavy is plate armor").prompt)
 
     def test_an_everyday_weapon_or_property_word_alone_adds_nothing(self) -> None:
         for question in ("the guard swings a club", "the light is dim", "a heavy door", "push it"):

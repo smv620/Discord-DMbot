@@ -761,12 +761,13 @@ class FeatureLookup(LookupTest):
         self.assertIn("Topple (rule: Mastery Property)", labels["topple"])
         weapon = self.sent(await self.command("longsword"))[0]
         self.assertIn("📖 **Longsword** (weapon: Martial Melee)", weapon)
-        self.assertIn("Damage: 1d8 Slashing", weapon)
+        self.assertIn("1d8 Slashing. Properties: Versatile (1d10).", weapon)
         self.assertIn("Mastery: Sap", weapon)
         self.assertIn("SRD 5.2.1, Equipment, p. 91", weapon)
         armor = self.sent(await self.command("plate armor"))[0]
-        self.assertIn("Armor Class: 18", armor)
-        self.assertIn("Stealth: Disadvantage", armor)
+        self.assertIn("AC 18. Needs Strength 15.", armor)
+        self.assertIn("Disadvantage on Stealth.", armor)
+        self.assertNotIn("—", armor)
 
     async def test_both_shields_and_both_lights_can_be_picked_from_the_list(self) -> None:
         it = self.it(kind=discord.InteractionType.autocomplete)

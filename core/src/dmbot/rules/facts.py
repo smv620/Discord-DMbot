@@ -74,14 +74,14 @@ def weapon_line(entry: Entry) -> str:
 
 
 def armor_line(entry: Entry) -> str:
-    """ "Heavy armor, AC 18, Strength 15, Stealth Disadvantage": the row of the Armor table."""
+    """ "Heavy armor, AC 18, needs Strength 15, Disadvantage on Stealth": the Armor table's row."""
     d = entry.details
     what = "Shield" if d.get("category") == "Shield" else f"{d.get('category', '')} armor"
     parts = [what, f"AC {d.get('ac', '')}"]
     if str(d.get("strength", "—")) != "—":
-        parts.append(f"Strength {str(d['strength']).removeprefix('Str ')}")
+        parts.append(f"needs Strength {str(d['strength']).removeprefix('Str ')}")
     if str(d.get("stealth", "—")) != "—":
-        parts.append(f"Stealth {d['stealth']}")
+        parts.append(f"{d['stealth']} on Stealth")
     return ", ".join(parts)
 
 
