@@ -18,11 +18,11 @@ import discord
 from dmbot.campaigns import Campaign
 from dmbot.dm_screen import messages
 from dmbot.logs import set_log_context
+from dmbot.mentions import NO_PINGS
 
 log = logging.getLogger(__name__)
 
 _ID = r"(?P<campaign>[0-9a-f]{32})"
-NO_PINGS = discord.AllowedMentions.none()
 ONLY_DM = (
     "Only this campaign's DM (or a server manager) can change table chat. "
     "Ask them to open ⚙️ Settings."

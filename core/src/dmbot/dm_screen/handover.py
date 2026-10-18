@@ -38,10 +38,10 @@ from dmbot.campaigns.models import HANDOVER_DAYS, HandoverOffer
 from dmbot.campaigns.store import NO_OWNER_YET, NOT_THE_OWNER
 from dmbot.dm_screen.messages import DM_CAMPAIGN_GONE, LOAD_FAILED
 from dmbot.logs import log_context
+from dmbot.mentions import NO_PINGS
 
 log = logging.getLogger(__name__)
 
-NO_PINGS = discord.AllowedMentions.none()
 _CAMPAIGN = r"(?P<campaign>[0-9a-f]{32})"
 _GUILD = r"(?P<guild>[0-9]{1,20})"
 _OFFER = r"(?P<offer>[0-9]{1,19})"

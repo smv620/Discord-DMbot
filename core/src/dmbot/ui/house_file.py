@@ -19,8 +19,9 @@ from typing import Any, cast
 import discord
 
 from dmbot.campaigns import Campaign
+from dmbot.mentions import NO_PINGS
 from dmbot.rules import house_file
-from dmbot.ui.dmbot_commands import NO_PINGS, _answer_first, _bot, _Button, _Menu, _send, _tell
+from dmbot.ui.dmbot_commands import _answer_first, _bot, _Button, _Menu, _send, _tell
 
 log = logging.getLogger(__name__)
 
