@@ -7,7 +7,7 @@ import { notAffiliated } from "./legal";
 export const creditsHeading = "Credits";
 
 export const creditsIntro =
-  "DMbot shows rules text from two free rules documents. This is where it comes from, and under which licence.";
+  "DMbot uses rules text from two free documents. Here is where each one comes from and the licence it is shared under.";
 
 const repo = "https://github.com/smv620/Discord-DMbot/blob/main/core/src/dmbot/rules/data";
 
@@ -29,6 +29,6 @@ export const sources = [
 ];
 
 export const whatDmbotDid =
-  "DMbot took the text out of the PDFs, mended the words the PDF had cut, and split it into entries. The changes are listed in the files linked below.";
+  "DMbot took the text out of the PDFs, fixed words the PDF had split, and cut it into entries.";
 
 export const creditsNotAffiliated = notAffiliated;

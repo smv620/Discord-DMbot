@@ -22,6 +22,7 @@ const parts = (text: string): { text: string; href?: string }[] =>
 >
   <h1>{creditsHeading}</h1>
   <p class="lead muted">{creditsIntro}</p>
+  <p>{whatDmbotDid}</p>
 
   {
     sources.map((s) => (
@@ -33,13 +34,12 @@ const parts = (text: string): { text: string; href?: string }[] =>
           )}
         </p>
         <p class="muted">
-          The changes DMbot made are listed in <a href={s.file}>{s.path}</a>.
+          The changes DMbot made are listed in <a href={s.file}>the attribution file on GitHub</a>.
         </p>
       </section>
     ))
   }
 
-  <p>{whatDmbotDid}</p>
   <p class="muted">{creditsNotAffiliated}</p>
 </Base>
 

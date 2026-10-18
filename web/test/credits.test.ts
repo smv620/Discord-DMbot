@@ -42,7 +42,6 @@ describe("Credits page", () => {
 
   it("says what DMbot did, and that Wizards of the Coast does not endorse it", () => {
     expect(whatDmbotDid).toContain("took the text out of the PDFs");
-    expect(whatDmbotDid).toContain("changes are listed in the files linked below");
     expect(creditsNotAffiliated).toMatch(/not affiliated with or endorsed by Wizards of the Coast/);
   });
 
