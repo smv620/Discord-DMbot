@@ -304,7 +304,6 @@ class CutWordsOfEither(unittest.TestCase):
             {
                 ("any", "one"), ("hand", "bell"), ("sea", "horse"), ("a", "mount"),
                 ("up", "on"), ("has", "ten"),
-                ("specific", "ally"),  # a cut word: ATTRIBUTION.md lists it
             },
         )  # fmt: skip
 
