@@ -85,6 +85,31 @@ def armor_line(entry: Entry) -> str:
     return ", ".join(parts)
 
 
+def gear_line(entry: Entry, *, card: bool) -> str:
+    """ "Adventuring Gear, 5 GP, 3 lb." for the AI; on the card the heading has the price, so
+    only the weight is left ("3 lb."). A mount's or vehicle's words (its capacity, its speed) are
+    the entry's text, which the card shows."""
+    d = entry.details
+    weight = str(d.get("weight", ""))
+    weight = "" if weight in ("", "—") else weight
+    if card:
+        return weight
+    cost = str(d.get("cost", ""))
+    return ", ".join(p for p in (str(d.get("group", "")), cost, weight) if p)
+
+
+def tool_line(entry: Entry, *, card: bool) -> str:
+    """ "Artisan's Tools, Intelligence, 50 GP, 8 lb." for the AI; "Intelligence, 8 lb." on the
+    card, whose heading has the ability."""
+    d = entry.details
+    weight = str(d.get("weight", ""))
+    weight = "" if weight in ("", "—") else weight
+    parts = [] if card else [str(d.get("group", ""))]
+    parts += [] if card else [str(d.get("ability", "")), str(d.get("cost", ""))]
+    parts += [weight]
+    return ", ".join(p for p in parts if p)
+
+
 def level_words(entry: Entry) -> str:
     """ "3rd-level Evocation", "Evocation cantrip", "1st-level Divination (ritual)"."""
     level, school = int(entry.details.get("level", 0)), str(entry.details.get("school", ""))
@@ -158,6 +183,10 @@ def pairs(entry: Entry, *, card: bool = False) -> list[tuple[str, str]]:
         found = [] if card else [("", weapon_line(entry))]
     elif entry.kind == "armor":
         found = [] if card else [("", armor_line(entry))]
+    elif entry.kind == "gear":
+        found = [("", gear_line(entry, card=card))]
+    elif entry.kind == "tool":
+        found = [("", tool_line(entry, card=card))]
     elif entry.kind == "species":
         found = [("", f"Size: {d.get('size', '')}"), ("", f"Speed: {d.get('speed', '')}")]
     else:

@@ -130,7 +130,9 @@ async def _homebrew(
 
 
 _KIND_SUFFIX = re.compile(
-    r"^(?P<name>.+) \((?P<kind>rule|item|feat|species|background|weapon|armor|creature)\)$"
+    r"^(?P<name>.+) \((?P<kind>"
+    r"rule|item|feat|species|background|weapon|armor|gear|tool|creature"
+    r")\)$"
 )
 _SUFFIX_KINDS = {"creature": "monster"}  # how the list says a kind, where it differs
 
