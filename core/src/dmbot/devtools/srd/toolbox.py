@@ -101,6 +101,21 @@ LEFT_OUT = {
     "Sample Poisons": "only introduces the poisons below it",
     "Example Traps": "a heading with the traps under it",
 }
+# How many lines of the real chapter each left-out title has: a new paragraph under one of them
+# would be lost silently, so the build stops when this changes (ATTRIBUTION.md names the titles).
+EXPECTED_LEFT_OUT = {
+    "Creating a Background": 10,
+    "1: Choose Abilities": 11,
+    "2: Choose a Feat": 2,
+    "3: Choose Skill Proficiencies": 4,
+    "4: Choose a Tool Proficiency": 2,
+    "5: Choose Equipment": 4,
+    "Curses": 2,
+    "Example Contagions": 4,
+    "Environmental Effects": 0,
+    "Sample Poisons": 5,
+    "Example Traps": 1,
+}
 # A table's caption: its rows are put in the text of the entry above it.
 FOLDED = frozenset({"Sample Fear DCs", "Sample Mental Stress Effects"})
 POISON_TITLE = re.compile(r"^(?P<name>.+) \((?P<price>\d[\d,]* GP)\)$")

@@ -22,6 +22,21 @@ TERRAINS = (
 )
 
 
+FIXTURE_LEFT_OUT = {
+    "Creating a Background": 1,
+    "1: Choose Abilities": 1,
+    "2: Choose a Feat": 0,
+    "3: Choose Skill Proficiencies": 0,
+    "4: Choose a Tool Proficiency": 0,
+    "5: Choose Equipment": 0,
+    "Curses": 1,
+    "Example Contagions": 1,
+    "Environmental Effects": 0,
+    "Sample Poisons": 1,
+    "Example Traps": 1,
+}
+
+
 def at(x: float, y: float, text: str, font: str = BODY, page: int = 192) -> Line:
     return Line(x, y, [Piece(x, y, f"ABCDEF+{font}", text)], page)
 
@@ -270,19 +285,7 @@ class Rules(unittest.TestCase):
     def test_the_left_out_titles_are_named_with_their_lines(self) -> None:
         self.assertEqual(
             toolbox.left_out(chapter()),
-            {
-                "Creating a Background": 1,
-                "1: Choose Abilities": 1,
-                "2: Choose a Feat": 0,
-                "3: Choose Skill Proficiencies": 0,
-                "4: Choose a Tool Proficiency": 0,
-                "5: Choose Equipment": 0,
-                "Curses": 1,
-                "Example Contagions": 1,
-                "Environmental Effects": 0,
-                "Sample Poisons": 1,
-                "Example Traps": 1,
-            },
+            FIXTURE_LEFT_OUT,
         )
 
 
@@ -396,6 +399,14 @@ class Stops(unittest.TestCase):
     def test_a_formula_that_is_only_an_equals_sign(self) -> None:
         with self.assertRaisesRegex(SrdError, "a formula with nothing on either side"):
             toolbox.parse_toolbox(self.without("Slow pace"))
+
+
+class TheRealChapterCounts(unittest.TestCase):
+    def test_the_expected_left_out_counts_are_the_ones_attribution_names(self) -> None:
+        attribution = (DATA / "ATTRIBUTION.md").read_text(encoding="utf-8")
+        for title in toolbox.EXPECTED_LEFT_OUT:
+            self.assertIn(title, attribution)
+        self.assertEqual(set(toolbox.EXPECTED_LEFT_OUT), set(toolbox.LEFT_OUT))
 
 
 class TheData(unittest.TestCase):

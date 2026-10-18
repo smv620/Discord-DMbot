@@ -62,7 +62,7 @@ LEGACY_TAG = "[Legacy 2014]"  # the owner's rule: the older ruleset is always ta
 ENTRY_TEXT_MAX = 1200  # characters of one rules entry sent to the AI
 # A class feature is long prose (Spellcasting, Wild Shape) and the part that answers may be at
 # its end; 2,000 holds all but about 30 of the 399, and at most 3 entries are sent (#1910).
-FEATURE_TEXT_MAX = 2000  # (a Gameplay Toolbox trap is as long: the longest is 1,900)
+FEATURE_TEXT_MAX = 2000  # (the Gameplay Toolbox's entries too: the longest is 1,691)
 CUT_MARK = " (cut)"
 ENTRIES_MAX = 3
 HOUSE_RULES_MAX = 5
@@ -201,7 +201,13 @@ def other_edition(hit: Hit, index: Index, target: str, fallback: str) -> Hit | N
 
 
 def mentioned_rules(
-    question: str, index: Index, target: str, fallback: str, *, both: bool = False
+    question: str,
+    index: Index,
+    target: str,
+    fallback: str,
+    *,
+    both: bool = False,
+    table: bool = False,
 ) -> list[Hit]:
     """The rules entries the question names: longest names first, no word used twice, at most
     `ENTRIES_MAX`. A single common word (`_STOP`) is never looked up on its own."""
@@ -303,6 +309,8 @@ def mentioned_rules(
     for _, hit in found:
         if all(hit.entry is not other.entry for other in unique):
             unique.append(hit)
+    if table:  # the DM's chapter is not for the table (#1935); dropped before the cap, not after
+        unique = [h for h in unique if not h.entry.dm_side]
     unique = unique[:ENTRIES_MAX]
     if both:  # the other edition's entry beside each, so a comparison can be answered
         extra = [h for h in (other_edition(hit, index, target, fallback) for hit in unique) if h]
@@ -663,9 +671,9 @@ def build(
     """The AI's message for one question about one campaign. `house_rules` and `lookup`
     must already be this campaign's; nothing else is read here."""
     question = " ".join(question.split())[:QUESTION_MAX]
-    hits = mentioned_rules(question, index, target, fallback, both=wants_both_editions(question))
-    if table:  # the DM's chapter (traps, poisons, hazards) is not for the table (#1935)
-        hits = [h for h in hits if not h.entry.dm_side]
+    hits = mentioned_rules(
+        question, index, target, fallback, both=wants_both_editions(question), table=table
+    )
     known = relevant_homebrew(homebrew, question)
     # A shared book's entry ranks in its edition's place (#1569): one that would come after the
     # free rules' entry of the same name is left out, and the free rules answer.
@@ -709,7 +717,7 @@ def build(
         sections.append("RULES ENTRIES (the free rules, word for word):")
         for hit in hits:
             entry = hit.entry
-            long = entry.kind == FEATURE or entry.kind in HAZARD_KINDS
+            long = entry.kind == FEATURE or entry.dm_side
             text = shorten(entry.text, FEATURE_TEXT_MAX if long else ENTRY_TEXT_MAX)
             tag = f" {hit.tag}" if hit.tag else ""
             facts = entry.facts

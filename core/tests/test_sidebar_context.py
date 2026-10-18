@@ -623,7 +623,7 @@ class GameplayToolbox(unittest.TestCase):
     def test_a_trap_or_poison_is_sent_with_its_facts_and_the_whole_text(self) -> None:
         trap = self.build("how do I disarm the spiked pit").prompt
         self.assertIn(
-            "- Spiked Pit (trap) [SRD 5.2.1 p. 201]: FACTS: Deadly Trap (Levels 1–4); "
+            "- Spiked Pit (trap) [SRD 5.2.1 p. 201]: FACTS: Deadly (Levels 1–4); "
             "Trigger A creature moves onto the pit’s lid; Duration Instantaneous. TEXT:",
             trap,
         )

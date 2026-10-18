@@ -5,11 +5,13 @@ from __future__ import annotations
 
 import unittest
 from typing import Any
+from unittest.mock import patch
 
-from dmbot.devtools.srd import build, parse
+from dmbot.devtools.srd import build, parse, toolbox
 from dmbot.devtools.srd import equipment as equipment_reader
 from dmbot.devtools.srd.pdf import COLUMN_SPLIT, FOOTER_Y, Line, Piece, lines_of
 from tests.monster_fixtures import goblin
+from tests.test_srd_toolbox import FIXTURE_LEFT_OUT
 from tests.test_srd_toolbox import chapter as toolbox_chapter
 
 TITLE, ITALIC, BODY = "GillSans-SemiBold", "Cambria-Italic", "Cambria"
@@ -490,6 +492,12 @@ class MendingACutAfterANumber(unittest.TestCase):
 
 
 class Building(unittest.TestCase):
+    def setUp(self) -> None:
+        # the made-up Gameplay Toolbox has its own left-out counts, not the real chapter's
+        patcher = patch.dict(toolbox.EXPECTED_LEFT_OUT, FIXTURE_LEFT_OUT, clear=True)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
     def pages(self) -> list[list[Line]]:
         contents = [say("Spell Descriptions", "Cambria")]  # the contents page: not a heading
         spells = [

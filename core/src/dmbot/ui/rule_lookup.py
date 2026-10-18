@@ -262,6 +262,10 @@ async def look_up(
         copy = own if own.source and is_dm else None
         await _send(interaction, mine[0], Card(mine, 1, copy) if len(mine) > 1 or copy else None)
         return
+    if hit is not None and hit.entry.dm_side and not is_dm:
+        hit = (
+            None  # the Gameplay Toolbox is the DM's chapter (#1935): a player is told nothing of it
+        )
     if hit is None:
         close = srd.suggest(typed, campaign.target_ruleset, campaign.fallback_ruleset)
         text = rule_card.no_match_text(typed, rules, bool(close), player=not is_dm)

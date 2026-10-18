@@ -199,7 +199,7 @@ def pairs(entry: Entry, *, card: bool = False) -> list[tuple[str, str]]:
         found.append(("Price", f"{d.get('price', '')} a dose" if has("price") else ""))
     elif entry.kind == "trap":
         found = [
-            ("", str(d.get("severity", ""))),
+            ("", str(d.get("severity", "")).replace(" Trap", "")),  # (the heading says "trap")
             ("Trigger", str(d.get("trigger", ""))),
             ("Duration", str(d.get("duration", ""))),
         ]

@@ -85,8 +85,8 @@ HAZARD_KINDS = (POISON, TRAP, CURSE)  # and the Gameplay Toolbox's own kinds (#1
 # The kinds a list entry says in brackets when its name is also another's: "Shield (armor)"
 NAMED_KINDS = (RULE, ITEM, *ORIGIN_KINDS, *EQUIPMENT_KINDS, *HAZARD_KINDS)
 # The Gameplay Toolbox is the DM's chapter (poisons, traps, curses, hazards and travel): what a
-# player's trap detection DC would spoil. Its entries go to the DM's sidebar and `/dmbot rule`,
-# never to a table question (#1935).
+# player's trap detection DC would spoil. Its entries go to the DM's sidebar and the DM's
+# `/dmbot rule`, never to a table question or a player's card (#1935).
 DM_SECTION = "Gameplay Toolbox"
 # The SRD 5.2.1's twelve classes: a class in a question picks that class's feature (#1900).
 CLASS_NAMES = (

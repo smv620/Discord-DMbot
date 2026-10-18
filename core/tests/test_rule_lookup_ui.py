@@ -807,12 +807,25 @@ class FeatureLookup(LookupTest):
         self.assertIn("SRD 5.2.1, Gameplay Toolbox, p. 198", poison)
         trap = self.sent(await self.command("hidden pit"))[0]
         self.assertIn("📖 **Hidden Pit** (trap)", trap)
-        self.assertIn("Nuisance Trap (Levels 1–4)", trap)
+        self.assertIn("Nuisance (Levels 1–4)", trap)
         self.assertIn("Trigger: A creature moves onto the pit’s lid", trap)
         self.assertIn("DC 15 Intelligence (Investigation) check", trap)
         curse = self.sent(await self.command("demonic possession"))[0]
         self.assertIn("📖 **Demonic Possession** (curse)", curse)
         self.assertIn("DC 15 Charisma saving throw", curse)
+
+    async def test_a_player_is_told_nothing_of_the_dms_chapter(self) -> None:
+        with unittest.mock.patch.object(ui, "_too_soon", return_value=False):
+            await self.a_player_asks()
+
+    async def a_player_asks(self) -> None:
+        for name in ("hidden pit", "purple worm poison", "demonic possession", "extreme cold"):
+            text = self.sent(await self.command(name, PLAYER))[0]
+            self.assertNotIn("DC 1", text, name)
+            self.assertNotIn("Trigger", text, name)
+            self.assertNotIn("📖", text, name)
+            self.assertIn("couldn", text.lower(), name)
+        self.assertIn("📖 **Cover**", self.sent(await self.command("cover", PLAYER))[0])
 
     async def test_a_toolbox_rule_that_shares_a_spells_name_can_be_picked_by_its_kind(self) -> None:
         it = self.it(kind=discord.InteractionType.autocomplete)

@@ -187,7 +187,7 @@ export const held: Held[] = [
   {
     date: "2026-10-18",
     title: "Look up any rule",
-    what: "Type /dmbot rule and a word like cover, dash or long rest, a class feature like rage, a magic item like Bag of Holding, a tool like Thieves' Tools, gear like a Healer's Kit, or a feat, species or background like Alert, Goliath or Sage, or a weapon or armor like Longsword or Plate Armor, or a poison, trap or curse like Purple Worm Poison, Hidden Pit or Demonic Possession, to read what the free rules say. If a spell, condition or creature has the same name, you get that first. Your table's house rule on it shows above. Traps, poisons, curses and hazards are for the game master: players do not get them from a table question.",
+    what: "Type /dmbot rule and a word to read what the free rules say. Try cover, dash, long rest, rage, Bag of Holding, Thieves' Tools, Alert, Longsword, Purple Worm Poison, Hidden Pit or Demonic Possession. If a spell, condition or creature has the same name, you get that first. Your table's house rule on it shows above. Traps, poisons, curses and hazards are for the game master: if a player asks about one at the table, DMbot answers That's one for your DM.",
     reason:
       "Merged (#1890, #1891, #1912, #1913, #1919); #1935 is in review; held until dev1 deploys it.",
   },

@@ -221,7 +221,11 @@ def build_files(
     conditions = parse.parse_conditions(glossary)
     rules = parse.parse_rules(glossary)
     after_toolbox_at = first_page_of(pages, AFTER_TOOLBOX_HEADING, after=toolbox_at)
-    gameplay = toolbox.parse_toolbox(lines_between(pages, toolbox_at, after_toolbox_at))
+    toolbox_lines = lines_between(pages, toolbox_at, after_toolbox_at)
+    gameplay = toolbox.parse_toolbox(toolbox_lines)
+    dropped = toolbox.left_out(toolbox_lines)
+    if dropped != toolbox.EXPECTED_LEFT_OUT:
+        raise parse.SrdError(f"The Gameplay Toolbox's left-out sections changed: {dropped}")
     classes_at = first_page_of(pages, CLASSES_HEADING, after=CONTENTS_PAGES)
     origins_at = first_page_of(pages, AFTER_CLASSES_HEADING, after=classes_at)
     features = classes.parse_features(lines_between(pages, classes_at, origins_at))
