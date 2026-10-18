@@ -23,7 +23,7 @@ from dmbot.dm_screen import (
     set_update,
     shared_update,
 )
-from dmbot.rules import pack_diff, set_diff
+from dmbot.rules import pack_diff, rule_sets, set_diff
 
 BOLD = re.compile(r"(?<!\\)\*\*")  # a bold marker the writer did not escape
 RULE = "**Flanking:** " + "an attacker with an ally on the far side gets advantage, " * 3
@@ -109,8 +109,8 @@ class SharedMessageCuts(unittest.IsolatedAsyncioTestCase):
         with (
             patch.object(set_suggestion, "_tell", tell),
             patch.object(set_suggestion, "_bot", lambda _i: bot),
-            patch.object(set_suggestion.rule_sets, "suggested_content", lambda *a: {}),
-            patch.object(set_suggestion.set_diff, "diff", lambda *a: set_changes()),
+            patch.object(rule_sets, "suggested_content", lambda *a: {}),
+            patch.object(set_diff, "diff", lambda *a: set_changes()),
         ):
             await set_suggestion._see(cast(Any, interaction), cast(Any, campaign), cast(Any, asked))
         self.assertTrue(sent)
