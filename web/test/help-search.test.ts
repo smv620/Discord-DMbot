@@ -8,7 +8,7 @@ import { beforeAll, describe, expect, it } from "vitest";
 import { applySearch, matches, normalize, nothingFound, statusText, wire } from "../scripts/helpsearch.mjs";
 import { afterEach, vi } from "vitest";
 import help from "../src/pages/help.astro";
-import { accountSteps, dmSteps, playerSteps } from "../src/content/help";
+import { ruleKindSteps, ruleKindDmSteps, accountSteps, dmSteps, playerSteps } from "../src/content/help";
 import { parsePage } from "./dom";
 
 describe("matcher", () => {
@@ -224,5 +224,14 @@ describe("the box, wired up", () => {
     const submit = new Window.Event("submit", { bubbles: true, cancelable: true });
     form.dispatchEvent(submit);
     expect(submit.defaultPrevented).toBe(true);
+  });
+});
+
+describe("Help search finds the 2014 mark and the game master's entries (#1961)", () => {
+  it("matches legacy, 2014, trap and poison", () => {
+    const text = [...ruleKindSteps, ...ruleKindDmSteps].map((s) => s.text).join(" ");
+    for (const query of ["legacy", "2014", "trap", "poison"]) {
+      expect(matches(query, text), query).toBe(true);
+    }
   });
 });
