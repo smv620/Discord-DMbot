@@ -716,11 +716,39 @@ class FeatureLookup(LookupTest):
         self.assertIn("📖 **Acolyte** (background)", text)
         self.assertIn("Feat: Magic Initiate (Cleric)", text)
 
+    async def test_every_choice_for_a_shared_name_opens_what_it_says(self) -> None:
+        # In a 2024 campaign "Orc" is a species and a [Legacy 2014] creature, "Acolyte" a
+        # background and (as Priest Acolyte) a creature: a choice must open what it names.
+        self.campaigns[C1] = campaign(target="2024", fallback="2014")
+        it = self.it(kind=discord.InteractionType.autocomplete)
+        for typed in ("orc", "acolyte"):
+            choices = await ui._typeahead(it, typed)
+            kinds = {c.name.split("(")[1].split(")")[0].split(":")[0] for c in choices}
+            self.assertGreaterEqual(len(kinds), 2, (typed, [c.name for c in choices]))
+            for choice in choices:
+                with self.subTest(choice.name):
+                    ui._last_lookup.clear()
+                    text = self.sent(await self.command(choice.value))[0]
+                    word = choice.name.split("(")[1].split(")")[0].split(":")[0]
+                    shown = {"creature": "creature"}.get(word, word)
+                    self.assertIn(f"({shown}", text.splitlines()[0])
+
+    async def test_the_older_creature_is_named_on_the_card_that_replaced_it(self) -> None:
+        self.campaigns[C1] = campaign(target="2024", fallback="2014")
+        text = self.sent(await self.command("Orc"))[0]
+        self.assertIn("📖 **Orc** (species)", text)
+        self.assertIn("The older Orc (creature) [Legacy 2014] has the same name", text)
+        creature = self.sent(await self.command("Orc (creature)"))[0]
+        self.assertIn("📖 **Orc** (creature)", creature)
+        self.assertIn("[Legacy 2014]", creature)
+
     async def test_the_newer_species_beats_an_older_creature_of_the_same_name(self) -> None:
         self.campaigns[C1] = campaign(target="2024", fallback="2014")
         text = self.sent(await self.command("Orc"))[0]
         self.assertIn("📖 **Orc** (species)", text)  # not the 2014 creature, [Legacy 2014]
-        self.assertNotIn("[Legacy 2014]", text)
+        self.assertNotIn(
+            "[Legacy 2014]", text.replace("The older Orc (creature) [Legacy 2014]", "")
+        )
 
     async def test_an_item_is_found_by_its_other_name_and_a_spell_of_the_same_name_wins(
         self,

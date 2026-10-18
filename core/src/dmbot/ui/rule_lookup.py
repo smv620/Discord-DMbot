@@ -129,12 +129,13 @@ async def _homebrew(
         return None
 
 
-_KIND_SUFFIX = re.compile(r"^(?P<name>.+) \((?P<kind>feat|species|background)\)$")
+_KIND_SUFFIX = re.compile(r"^(?P<name>.+) \((?P<kind>feat|species|background|creature)\)$")
+_SUFFIX_KINDS = {"creature": "monster"}  # how the list says a kind, where it differs
 
 
 def _named_kind(srd: index.Index, typed: str, campaign: Campaign) -> index.Hit | None:
-    """ "Acolyte (background)", as the name list words a name that is also a creature's: the
-    background, not the creature."""
+    """ "Acolyte (background)" or "Acolyte (creature)", as the name list words a name that a
+    creature shares with a feat, species or background: the one it says, not the other."""
     match = _KIND_SUFFIX.match(typed)
     if match is None:
         return None
@@ -142,7 +143,7 @@ def _named_kind(srd: index.Index, typed: str, campaign: Campaign) -> index.Hit |
         match["name"],
         campaign.target_ruleset,
         campaign.fallback_ruleset,
-        kind=match["kind"],
+        kind=_SUFFIX_KINDS.get(match["kind"], match["kind"]),
     )
 
 
@@ -218,13 +219,17 @@ async def look_up(
     rules = await _house_rules(interaction, campaign)
     srd = index.srd()
     hit = _named_kind(srd, typed, campaign) if kind is None else None
+    other = ""  # the card's note about the older creature a newer species or background replaced
     if hit is None:
         hit = srd.lookup(typed, campaign.target_ruleset, campaign.fallback_ruleset, kind=kind)
-    if hit is not None and hit.from_fallback and kind is None:
-        # The newest rules first: a species or background of the target's own rules beats an older
-        # creature of the same name ("Orc"), which is only a fallback (#1913).
-        newer = _asked_for(srd, typed, campaign.target_ruleset, FALLBACK_NONE)
-        hit = newer or hit
+        if hit is not None and hit.entry.kind == "monster" and hit.from_fallback and kind is None:
+            # Typed by hand, the target's own feat, species or background beats an older creature
+            # of the same name that is only a fallback ("Orc"); the creature stays reachable as
+            # "Orc (creature)", and the card says so (#1913).
+            newer = _asked_for(srd, typed, campaign.target_ruleset, FALLBACK_NONE)
+            if newer is not None and newer.entry.kind in index.ORIGIN_KINDS:
+                other = f"{hit.entry.name} (creature) {hit.tag}".strip()
+                hit = newer
     if hit is None and kind is None:
         # Not a spell, a condition or a creature: it may be a Rules Glossary entry ("cover",
         # "long rest", #1891), a class feature ("rage", "rogue evasion", #1900) or a magic item
@@ -272,7 +277,7 @@ async def look_up(
             if h.entry.details.get("class") != hit.entry.details.get("class")
         ]
     parts = rule_card.card_parts(
-        hit, typed, rules, player=not is_dm, also=list(dict.fromkeys(also))
+        hit, typed, rules, player=not is_dm, also=list(dict.fromkeys(also)), older=other
     )
     if not is_dm:
         parts = rule_card.for_player(parts)
@@ -497,6 +502,12 @@ def _choice_value(srd: index.Index, entry: index.Entry) -> str:
     Brutal Strike") with its level after, which `_features` reads back."""
     if entry.kind in index.ORIGIN_KINDS and srd.lookup(entry.name, entry.edition) is not None:
         return f"{entry.name} ({entry.kind})"[:BOX_MAX]  # also a creature's name: say which
+    if entry.kind == "monster" and any(
+        srd.lookup(entry.name, edition, kind=kind) is not None
+        for edition in ("2024", "2014")
+        for kind in index.ORIGIN_KINDS
+    ):
+        return f"{entry.name} (creature)"[:BOX_MAX]  # the species or background has the name too
     if entry.kind != index.FEATURE:
         return entry.name[:BOX_MAX]
     klass = str(entry.details.get("class", ""))

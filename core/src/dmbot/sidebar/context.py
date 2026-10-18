@@ -250,7 +250,7 @@ def mentioned_rules(
     return unique
 
 
-ORIGIN_CUES = frozenset({"feat", "feats", "species", "race", "background"})
+ORIGIN_CUES = frozenset({"feat", "feats", "species", "race", "races", "background", "backgrounds"})
 SPECIES_NOT_EVERYDAY = frozenset({"dragonborn", "goliath"})  # "dwarf", "elf" and "human" are not
 
 
