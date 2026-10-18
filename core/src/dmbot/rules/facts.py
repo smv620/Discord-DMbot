@@ -35,6 +35,20 @@ ASKED_FIELDS: tuple[tuple[str, tuple[str, ...]], ...] = (
 _WORDS = re.compile(r"[a-z']+")
 
 
+_RARITIES = re.compile(r"Very Rare|Uncommon|Common|Rare|Legendary|Artifact")
+
+
+def short_rarity(rarity: str) -> str:
+    """The rarity as a short heading word: "uncommon", or "uncommon to very rare" for an item
+    that comes in several ("Uncommon (+1), Rare (+2), or Very Rare (+3)"), and nothing for
+    "Rarity Varies", which is no rarity."""
+    found = _RARITIES.findall(rarity)
+    if not found:
+        return ""
+    low, high = found[0].lower(), found[-1].lower()
+    return low if low == high else f"{low} to {high}"
+
+
 def item_line(entry: Entry) -> str:
     """ "Wondrous Item, uncommon, needs attunement by a Wizard": what the line under an item's
     name says, in plain words."""

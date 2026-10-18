@@ -337,6 +337,17 @@ class ClassFeatures(unittest.TestCase):
         armor = item("Armor, +1, +2, or +3")
         self.assertEqual(armor.details["rarity"], "Rare (+1), Very Rare (+2), or Legendary (+3)")
 
+    def test_a_rarity_in_a_heading_is_one_short_phrase(self) -> None:
+        from dmbot.rules import facts
+
+        self.assertEqual(facts.short_rarity("Uncommon"), "uncommon")
+        self.assertEqual(facts.short_rarity("Very Rare"), "very rare")
+        self.assertEqual(
+            facts.short_rarity("Uncommon (+1), Rare (+2), or Very Rare (+3)"),
+            "uncommon to very rare",
+        )
+        self.assertEqual(facts.short_rarity("Rarity Varies"), "")  # no rarity, so none is shown
+
     def test_an_item_has_its_other_names(self) -> None:
         self.assertEqual(
             index.item_keys("Stone of Good Luck (Luckstone)"), ["stone of good luck", "luckstone"]

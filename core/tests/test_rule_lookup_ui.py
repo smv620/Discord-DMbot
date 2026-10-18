@@ -678,6 +678,15 @@ class FeatureLookup(LookupTest):
         self.assertNotIn("Other classes", text)
         self.assertNotIn("[Legacy", text)
 
+    async def test_an_item_with_no_single_rarity_has_a_short_heading(self) -> None:
+        it = self.it(kind=discord.InteractionType.autocomplete)
+        (potions,) = await ui._typeahead(it, "potions of heal")
+        self.assertEqual(potions.name, "Potions of Healing (item: Potion)")
+        (ammo,) = [c for c in await ui._typeahead(it, "ammunition,") if "+1" in c.name]
+        self.assertEqual(
+            ammo.name, "Ammunition, +1, +2, or +3 (item: Weapon, uncommon to very rare)"
+        )
+
     async def test_an_item_is_found_by_its_other_name_and_a_spell_of_the_same_name_wins(
         self,
     ) -> None:

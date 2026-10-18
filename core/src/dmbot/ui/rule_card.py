@@ -435,7 +435,8 @@ def names_shown(entry: Entry) -> list[str]:
 def item_place(entry: Entry) -> str:
     """What kind of item it is and how rare: `Wondrous Item, uncommon`."""
     d = entry.details
-    return f"{d.get('category', '')}, {str(d.get('rarity', '')).lower()}".strip(", ")
+    rarity = rule_facts.short_rarity(str(d.get("rarity", "")))
+    return f"{d.get('category', '')}, {rarity}".strip(", ")
 
 
 def feature_place(entry: Entry) -> str:
