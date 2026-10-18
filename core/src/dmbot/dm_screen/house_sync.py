@@ -30,7 +30,7 @@ import discord
 
 from dmbot import fetch
 from dmbot.campaigns import Campaign
-from dmbot.discord_limits import MESSAGE_MAX
+from dmbot.discord_limits import MESSAGE_MAX, fit_message
 from dmbot.mentions import NO_PINGS
 from dmbot.rules import house_file, house_file_sync
 from dmbot.rules.house_file_sync import Applied, Item
@@ -81,10 +81,11 @@ Send = Callable[[str, discord.ui.View], Awaitable[bool]]
 
 
 def couldnt_read(why: str) -> str:
-    return (
+    return fit_message(
         f"I couldn't read your house-rules file: {why}{SHARING} The session goes on with "
-        "DMbot's copy. Nothing was changed."
-    )[:TEXT_MAX]
+        "DMbot's copy. Nothing was changed.",
+        limit=TEXT_MAX,
+    )
 
 
 def no_rules(unreadable: int) -> str:
@@ -157,7 +158,7 @@ def review_text(pending: Pending) -> str:
         f"📄 **Review {pending.index + 1} of {len(pending.items)}** "
         "(Accept = use the file's version)\n"
     )
-    return (head + _md(house_file_sync.describe(item)))[:TEXT_MAX]
+    return fit_message(head + _md(house_file_sync.describe(item)), limit=TEXT_MAX)
 
 
 def offer_view(guild_id: int, key: str, pending: Pending) -> discord.ui.View:
@@ -241,7 +242,8 @@ async def _finish(interaction: discord.Interaction, key: str, pending: Pending) 
     bot: Any = interaction.client
     bot.house_syncs.drop(key)
     result = house_file_sync.result_text(pending.applied)
-    await _show(interaction, f"📄 {pending.summary}\n{_md(result)}"[:TEXT_MAX], None)
+    text = fit_message(f"📄 {pending.summary}\n{_md(result)}", limit=TEXT_MAX)
+    await _show(interaction, text, None)
     if pending.applied.done:
         # Other offers for this campaign are out of date now.
         bot.house_syncs.drop_campaign(pending.guild_id, pending.campaign_id)
