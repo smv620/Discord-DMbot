@@ -519,6 +519,46 @@ class MagicItems(unittest.TestCase):
         self.assertIn(("rule", "Slow"), got)
         self.assertIn(("weapon", "Whip"), got)
 
+    def test_gear_and_tools_are_cited_when_asked_about(self) -> None:
+        self.assertEqual(
+            [(h.entry.kind, h.entry.name) for h in self.hits("what does a healer's kit do")],
+            [("gear", "Healer’s Kit")],
+        )
+        self.assertEqual(
+            [(h.entry.kind, h.entry.name) for h in self.hits("what are thieves' tools for")],
+            [("tool", "Thieves’ Tools")],
+        )
+        built = self.build("how much does a torch cost")
+        self.assertIn(
+            "- Torch (gear) [SRD 5.2.1 p. 100]: FACTS: Adventuring Gear, 1 CP, 1 lb.", built.prompt
+        )
+
+    def test_an_everyday_gear_word_alone_adds_nothing(self) -> None:
+        for question in (
+            "they light a torch",
+            "he throws a rope down",
+            "the oil is hot",
+            "a bell rings",
+        ):
+            gear = [h for h in self.hits(question) if h.entry.kind in ("gear", "tool")]
+            self.assertEqual(gear, [], question)
+
+    def test_a_cue_word_brings_the_one_word_gear_and_a_mount_gives_way_to_its_price(self) -> None:
+        self.assertEqual([h.entry.name for h in self.hits("how much does rope weigh")], ["Rope"])
+        self.assertEqual(
+            [(h.entry.kind, h.entry.name) for h in self.hits("how much does a camel cost")],
+            [("gear", "Camel")],
+        )
+        self.assertEqual([h.entry.kind for h in self.hits("what does a camel do")], ["monster"])
+        horse = self.hits("what does a riding horse cost")
+        self.assertEqual([(h.entry.kind, h.entry.name) for h in horse], [("gear", "Horse, Riding")])
+
+    def test_a_named_spell_is_kept_when_gear_is_named_beside_it(self) -> None:
+        got = [(h.entry.kind, h.entry.name) for h in self.hits("the healer's kit and fireball")]
+        self.assertIn(("spell", "Fireball"), got)
+        self.assertIn(("gear", "Healer’s Kit"), got)
+        self.assertEqual([h.entry.kind for h in self.hits("cast shield")], ["spell"])
+
     def test_an_item_is_no_rules_question(self) -> None:
         prompt = self.build("can you track a bag of holding?").prompt
         self.assertIn("ABOUT DMBOT", prompt)
