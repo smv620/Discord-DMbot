@@ -63,6 +63,12 @@ ALLOWED: list[tuple[str, str, str]] = [
         "the file name of a backup the DM downloads and uploads again (.dmbot.json.gz): a name to "
         "match, not a sentence to understand",
     ),
+    (
+        "features.py",
+        "model",
+        'NOT_A_SWITCH\'s note on why a setting is not listed ("which voice model, a choice"): a '
+        "reason for the developer who reads that table, never put in a message to a person",
+    ),
 ]
 
 LOG_METHODS = {"debug", "info", "warning", "error", "exception", "critical", "log"}
