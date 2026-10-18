@@ -36,6 +36,7 @@ from dmbot.devtools.srd import (
     origins,
     parse,
     parse51,
+    toolbox,
 )
 from dmbot.devtools.srd.pdf import Line, read_pages
 
@@ -84,6 +85,8 @@ CONTENTS_PAGES = 10  # the table of contents names every heading too: look after
 SPELLS_HEADING = "Spell Descriptions"
 GLOSSARY_HEADING = "Rules Glossary"
 AFTER_GLOSSARY_HEADING = "Gameplay Toolbox"
+AFTER_TOOLBOX_HEADING = "Combat Encounters"  # the encounter advice and magic item rules: left out
+TOOLBOX_SECTION = "Gameplay Toolbox"
 CLASSES_HEADING = "Classes"
 AFTER_CLASSES_HEADING = "Character Origins"
 FEATS_HEADING = "Feats"
@@ -217,6 +220,8 @@ def build_files(
     glossary = lines_between(pages, glossary_at, toolbox_at)
     conditions = parse.parse_conditions(glossary)
     rules = parse.parse_rules(glossary)
+    after_toolbox_at = first_page_of(pages, AFTER_TOOLBOX_HEADING, after=toolbox_at)
+    gameplay = toolbox.parse_toolbox(lines_between(pages, toolbox_at, after_toolbox_at))
     classes_at = first_page_of(pages, CLASSES_HEADING, after=CONTENTS_PAGES)
     origins_at = first_page_of(pages, AFTER_CLASSES_HEADING, after=classes_at)
     features = classes.parse_features(lines_between(pages, classes_at, origins_at))
@@ -266,6 +271,16 @@ def build_files(
         "rules.json": {
             **header("rule", GLOSSARY_HEADING),
             "entries": [asdict(r) | {"see_also": list(r.see_also)} for r in rules],
+        },
+        # Four kinds in one file: each entry says its own.
+        "toolbox.json": {
+            **header("toolbox", TOOLBOX_SECTION),
+            "entries": [
+                *({"kind": "rule", **asdict(r) | {"see_also": []}} for r in gameplay.rules),
+                *({"kind": "poison", **asdict(p)} for p in gameplay.poisons),
+                *({"kind": "trap", **asdict(t)} for t in gameplay.traps),
+                *({"kind": "curse", **asdict(c)} for c in gameplay.curses),
+            ],
         },
         "features.json": {
             **header("feature", CLASSES_HEADING),

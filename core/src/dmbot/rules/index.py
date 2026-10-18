@@ -70,14 +70,24 @@ WEAPON = "weapon"  # a weapon of the Weapons table ("Longsword")
 ARMOR = "armor"  # an armor of the Armor table, and the Shield ("Plate Armor")
 GEAR = "gear"  # adventuring gear, a mount or a vehicle ("Healer's Kit", "Horse, Riding", "Rowboat")
 TOOL = "tool"  # a tool ("Thieves' Tools")
-# All ten are found only when asked for: their names are everyday words ("Action", "Damage",
-# "Rope of Climbing", "Alert", "Sage", "Club"), so the name pool the live cards, the list and "did
-# you mean" read from leaves them out.
-ASKED_FOR = frozenset({RULE, FEATURE, ITEM, FEAT, SPECIES, BACKGROUND, WEAPON, ARMOR, GEAR, TOOL})
+POISON = "poison"  # a sample poison of the Gameplay Toolbox ("Purple Worm Poison")
+TRAP = "trap"  # a sample trap of the Gameplay Toolbox ("Hidden Pit")
+CURSE = "curse"  # a named curse of the Gameplay Toolbox ("Demonic Possession")
+# All thirteen are found only when asked for: their names are everyday words ("Action", "Damage",
+# "Rope of Climbing", "Alert", "Sage", "Club", "Malice", "Torpor"), so the name pool the live
+# cards, the list and "did you mean" read from leaves them out.
+ASKED_FOR = frozenset(
+    {RULE, FEATURE, ITEM, FEAT, SPECIES, BACKGROUND, WEAPON, ARMOR, GEAR, TOOL, POISON, TRAP, CURSE}
+)
 ORIGIN_KINDS = (FEAT, SPECIES, BACKGROUND)  # looked up after the features and the items
 EQUIPMENT_KINDS = (WEAPON, ARMOR, GEAR, TOOL)  # and then these (#1919, #1927)
+HAZARD_KINDS = (POISON, TRAP, CURSE)  # and the Gameplay Toolbox's own kinds (#1935)
 # The kinds a list entry says in brackets when its name is also another's: "Shield (armor)"
-NAMED_KINDS = (RULE, ITEM, *ORIGIN_KINDS, *EQUIPMENT_KINDS)
+NAMED_KINDS = (RULE, ITEM, *ORIGIN_KINDS, *EQUIPMENT_KINDS, *HAZARD_KINDS)
+# The Gameplay Toolbox is the DM's chapter (poisons, traps, curses, hazards and travel): what a
+# player's trap detection DC would spoil. Its entries go to the DM's sidebar and `/dmbot rule`,
+# never to a table question (#1935).
+DM_SECTION = "Gameplay Toolbox"
 # The SRD 5.2.1's twelve classes: a class in a question picks that class's feature (#1900).
 CLASS_NAMES = (
     *("Barbarian", "Bard", "Cleric", "Druid", "Fighter", "Monk"),
@@ -119,6 +129,17 @@ def gear_keys(name: str) -> list[str]:
     if comma:
         found.append(f"{tail} {head}")
     found += [_POSSESSIVE_S.sub("", n) for n in found]
+    own = normalize(name)
+    return [k for k in dict.fromkeys(normalize(n) for n in found) if k and k != own]
+
+
+def hazard_keys(kind: str, name: str) -> list[str]:
+    """The other names a poison, trap or curse is found by: the possessive's "s" taken off
+    ("Assassin's Blood" is "Assassin Blood"), and for a trap its name with "trap" after it ("Hidden
+    Pit Trap"), and "pit trap" for the two pits."""
+    found = [*gear_keys(name)]
+    if kind == TRAP:
+        found += [f"{name} trap"] + (["pit trap"] if name.endswith(" Pit") else [])
     own = normalize(name)
     return [k for k in dict.fromkeys(normalize(n) for n in found) if k and k != own]
 
@@ -175,6 +196,12 @@ class Entry:
     def citation(self) -> str:
         """What an alert cites: `SRD 5.2.1, Spell Descriptions, p. 131`."""
         return f"{self.source}, {self.section}, p. {self.page}"
+
+    @property
+    def dm_side(self) -> bool:
+        """Is it in the DM's chapter (the Gameplay Toolbox)? Such an entry is never sent to a
+        table question (#1935)."""
+        return self.section == DM_SECTION
 
     @property
     def facts(self) -> str:
@@ -237,6 +264,9 @@ class Index:
                     self._add(entry.edition, key, entry)
             elif entry.kind in (GEAR, TOOL):
                 for key in gear_keys(entry.name):
+                    self._add(entry.edition, key, entry)
+            elif entry.kind in HAZARD_KINDS:
+                for key in hazard_keys(entry.kind, entry.name):
                     self._add(entry.edition, key, entry)
         for older, current in alias_pairs:
             found = self._by_edition.get(alias_edition, {}).get(normalize(current))
@@ -515,6 +545,9 @@ def srd() -> Index:
         (ARMOR, "armor"),
         (GEAR, "adventuring gear, mounts and vehicles"),
         (TOOL, "tools"),
+        (POISON, "poisons"),
+        (TRAP, "traps"),
+        (CURSE, "curses"),
     ):
         if not any(e.kind == kind for e in entries):  # an older build of the data: carry on
             log.warning("The %s are not in the data; the DM sidebar will not cite them", what)

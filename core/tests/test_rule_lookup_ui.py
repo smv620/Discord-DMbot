@@ -791,6 +791,37 @@ class FeatureLookup(LookupTest):
         self.assertIn("(gear: price varies)", focus)
         self.assertNotIn("(gear: Varies)", focus)
 
+    async def test_poisons_traps_and_curses_are_found_and_the_list_says_which(self) -> None:
+        it = self.it(kind=discord.InteractionType.autocomplete)
+        labels = {
+            typed: [c.name for c in await ui._typeahead(it, typed)]
+            for typed in ("purple worm poison", "hidden pit", "demonic")
+        }
+        self.assertIn("Purple Worm Poison (poison: Injury)", labels["purple worm poison"])
+        self.assertEqual(labels["hidden pit"], ["Hidden Pit (trap)"])
+        self.assertEqual(labels["demonic"], ["Demonic Possession (curse)"])
+        poison = self.sent(await self.command("purple worm poison"))[0]
+        self.assertIn("📖 **Purple Worm Poison** (poison: Injury)", poison)
+        self.assertIn("Price: 2,000 GP a dose", poison)
+        self.assertIn("DC 21 Constitution saving throw", poison)
+        self.assertIn("SRD 5.2.1, Gameplay Toolbox, p. 198", poison)
+        trap = self.sent(await self.command("hidden pit"))[0]
+        self.assertIn("📖 **Hidden Pit** (trap)", trap)
+        self.assertIn("Nuisance Trap (Levels 1–4)", trap)
+        self.assertIn("Trigger: A creature moves onto the pit’s lid", trap)
+        self.assertIn("DC 15 Intelligence (Investigation) check", trap)
+        curse = self.sent(await self.command("demonic possession"))[0]
+        self.assertIn("📖 **Demonic Possession** (curse)", curse)
+        self.assertIn("DC 15 Charisma saving throw", curse)
+
+    async def test_a_toolbox_rule_that_shares_a_spells_name_can_be_picked_by_its_kind(self) -> None:
+        it = self.it(kind=discord.InteractionType.autocomplete)
+        values = {c.name: c.value for c in await ui._typeahead(it, "bestow curse")}
+        self.assertEqual(values["Bestow Curse (rule)"], "Bestow Curse (rule)")
+        text = self.sent(await self.command("Bestow Curse (rule)"))[0]
+        self.assertIn("📖 **Bestow Curse** (rule)", text)
+        self.assertIn("level 3 spell", text)
+
     async def test_the_gear_and_the_magic_item_of_one_name_can_both_be_picked(self) -> None:
         it = self.it(kind=discord.InteractionType.autocomplete)
         values = {c.name: c.value for c in await ui._typeahead(it, "spell scroll")}

@@ -10,6 +10,7 @@ from dmbot.devtools.srd import build, parse
 from dmbot.devtools.srd import equipment as equipment_reader
 from dmbot.devtools.srd.pdf import COLUMN_SPLIT, FOOTER_Y, Line, Piece, lines_of
 from tests.monster_fixtures import goblin
+from tests.test_srd_toolbox import chapter as toolbox_chapter
 
 TITLE, ITALIC, BODY = "GillSans-SemiBold", "Cambria-Italic", "Cambria"
 BOLD_LEAD = "Cambria-BoldItalic"
@@ -499,7 +500,9 @@ class Building(unittest.TestCase):
         glossary = [say("Rules Glossary", TITLE, 12), say("Rules Definitions", TITLE, 12),
                     say("Blinded [Condition]", TITLE, 12), say("You can’t see.", BODY, 12),
                     say("Cover", TITLE, 12), say("Cover protects a target.", BODY, 12)]  # fmt: skip
-        toolbox = [say("Gameplay Toolbox", TITLE, 13)]
+        # the chapter as the toolbox reader's own tests have it, and the heading that ends it
+        toolbox = toolbox_chapter()
+        combat = [say("Combat Encounters", TITLE, 14)]
         classes = [
             say("Classes", TITLE, 20),
             say("Barbarian", TITLE, 20),
@@ -597,8 +600,8 @@ class Building(unittest.TestCase):
         monsters = [say("Monsters", TITLE, 23)]
         creatures = [say("Monsters A–Z", TITLE, 24), *goblin()]
         return [
-            contents, *[[]] * 9, spells, glossary, toolbox, classes, origins, feats, equipment,
-            weapons, armor, tools, gear_table, mounts, items, monsters, creatures,
+            contents, *[[]] * 9, spells, glossary, toolbox, combat, classes, origins, feats,
+            equipment, weapons, armor, tools, gear_table, mounts, items, monsters, creatures,
         ]  # fmt: skip
 
     def document(self) -> dict[str, Any]:
@@ -618,6 +621,7 @@ class Building(unittest.TestCase):
                 "origins.json",
                 "items.json",
                 "monsters.json",
+                "toolbox.json",
             },
         )
         creatures = files["monsters.json"]

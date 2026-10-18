@@ -131,7 +131,7 @@ async def _homebrew(
 
 _KIND_SUFFIX = re.compile(
     r"^(?P<name>.+) \((?P<kind>"
-    r"rule|item|feat|species|background|weapon|armor|gear|tool|creature"
+    r"rule|item|feat|species|background|weapon|armor|gear|tool|poison|trap|curse|creature"
     r")\)$"
 )
 _SUFFIX_KINDS = {"creature": "monster"}  # how the list says a kind, where it differs
@@ -163,7 +163,7 @@ def _asked_for(srd: index.Index, typed: str, target: str, fallback: str) -> inde
     found = _features(srd, typed, target, fallback)
     if found:
         return found[0]
-    for kind in (index.ITEM, *index.ORIGIN_KINDS, *index.EQUIPMENT_KINDS):
+    for kind in (index.ITEM, *index.ORIGIN_KINDS, *index.EQUIPMENT_KINDS, *index.HAZARD_KINDS):
         hit = srd.lookup(typed, target, fallback, kind=kind)
         if hit is not None:
             return hit
@@ -489,6 +489,7 @@ async def _typeahead(
                 index.ITEM,
                 *index.ORIGIN_KINDS,
                 *index.EQUIPMENT_KINDS,
+                *index.HAZARD_KINDS,
             ),
             limit=NAMES_MORE,
         )
@@ -524,7 +525,7 @@ def _choice_value(srd: index.Index, entry: index.Entry) -> str:
     if entry.kind == "monster" and any(
         srd.lookup(entry.name, edition, kind=kind) is not None
         for edition in ("2024", "2014")
-        for kind in (index.ITEM, *index.ORIGIN_KINDS, *index.EQUIPMENT_KINDS)
+        for kind in (index.ITEM, *index.ORIGIN_KINDS, *index.EQUIPMENT_KINDS, *index.HAZARD_KINDS)
     ):
         return f"{entry.name} (creature)"[:BOX_MAX]  # the species or background has the name too
     if entry.kind != index.FEATURE:
