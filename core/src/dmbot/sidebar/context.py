@@ -307,6 +307,7 @@ def mentioned_rules(
         for start, hits in asked:
             if depth < len(hits) and len(found) < ENTRIES_MAX:
                 found.append((start, hits[depth]))
+    found = _widened_origins(found, words, index, target, fallback)  # (before a cue picks "Orc")
     if cued and found:  # "the acolyte background": the creature of that name gives way (#1913)
         found = _cued_origins(found, words, index, target, fallback)
     if (gear or props or shop) and found:  # "the AC of a shield": the spell gives way (#1919)
@@ -323,7 +324,6 @@ def mentioned_rules(
             for start, h in found
             if not (h.entry.kind == RULE and normalize(h.entry.name) in EQUIPMENT_CUES)
         ]
-    found = _widened_origins(found, words, index, target, fallback)
     found.sort(key=lambda pair: pair[0])
     unique: list[Hit] = []
     for _, hit in found:
@@ -341,7 +341,9 @@ def mentioned_rules(
     return unique
 
 
-ORIGIN_CUES = frozenset({"feat", "feats", "species", "race", "races", "background", "backgrounds"})
+ORIGIN_CUES = frozenset(
+    {"feat", "feats", "species", "race", "races", "background", "backgrounds", "trait", "traits"}
+)
 SPECIES_NOT_EVERYDAY = frozenset({"dragonborn", "goliath"})  # "dwarf", "elf" and "human" are not
 
 
