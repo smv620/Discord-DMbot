@@ -73,6 +73,14 @@ describe("lookup counts", () => {
     ]);
   });
 
+  it("names the hazard kinds the Gameplay Toolbox adds (#1935)", () => {
+    expect(kindNames.poison).toBe("Poisons");
+    expect(kindNames.trap).toBe("Traps");
+    expect(kindNames.curse).toBe("Curses");
+    const labels = lookupList(readFolder(dataDir("srd52"))).map((k) => k.label);
+    expect(labels).toEqual(expect.arrayContaining(["Poisons", "Traps", "Curses"]));
+  });
+
   it("lists only the kinds a SRD has", () => {
     const older = lookupList(readFolder(dataDir("srd51"))).map((k) => k.label);
     expect(older).not.toContain("Feats");
