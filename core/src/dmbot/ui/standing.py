@@ -12,6 +12,7 @@ from functools import partial
 
 import discord
 
+from dmbot.discord_limits import MESSAGE_MAX
 from dmbot.memory import standing
 from dmbot.memory.models import CONFIRMED, DM, Entity, MemoryRuleError
 from dmbot.memory.store import MemoryStore
@@ -63,7 +64,7 @@ def standing_text(
         lines.append(
             "No player characters yet. You can still set how it feels about **the party**."
         )
-    budget = 1900 - sum(len(x) + 1 for x in lines) - 40
+    budget = MESSAGE_MAX - 100 - sum(len(x) + 1 for x in lines) - 40
     for n, target in enumerate(targets):
         line = "• " + standing_line(viewer.name, target.name, index.standing(viewer.id, target.id))
         if len(line) + 1 > budget:

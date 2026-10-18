@@ -61,3 +61,7 @@ class FitMessageTest(unittest.TestCase):
 
     def test_one_over_the_limit(self) -> None:
         self.assertLessEqual(len(fit_message("x" * (MESSAGE_MAX + 1))), MESSAGE_MAX)
+
+    def test_an_escaped_marker_is_not_open(self) -> None:
+        out = fit_message("x \\` y " * 40, limit=60)
+        self.assertGreaterEqual(out.count("\\`"), 3)  # kept: a backslash-escaped one is plain text
