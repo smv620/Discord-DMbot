@@ -9,8 +9,8 @@ steps, look for the sign it worked, then tell dev1.
 **Names in the examples are made up. Use made-up names too.** Buttons are named as the Help page names
 them. If a button is not where a check says, that is a mistake in this file: tell dev1 and WebDev will fix it.
 
-**Before you start (once):** open your test server, type `/dmbot start`, pick your voice channel and press
-▶ Start listening. You are the game master. The steps are on the Help page:
+**Before you start (once):** open your test server, type `/dmbot start`, press ＋ New campaign (or ▶ Continue last campaign), pick your
+voice channel and press ▶ Start listening. You are the game master. The steps are on the Help page:
 https://getdmbot.com/help. Keep this open on your phone and work down the list. Checks 1 and 2 come first
 because they unlock the latest deploy.
 
@@ -25,7 +25,7 @@ lines on. A check that didn't work is just as useful: say what you saw.
 ### 1. The people-and-groups channel
 **You'll do:**
 1. Look in your server's channel list for one called **dmb-npcs** (it has a short name after it).
-2. Open the Names list, press ➕ Add a name, and add one made-up person, for example "Captain Rook". Confirm them.
+2. Type `/dmbot names` and pick it from the list that pops up. That is the Names list. Press ➕ Add a name and add one made-up person, for example "Captain Rook". Confirm them.
 3. Look at dmb-npcs again.
 
 **It worked if:** the channel is there, Captain Rook is listed with the other names and groups you gave them,
@@ -62,7 +62,10 @@ channel.
 
 ## Group B. Names and the story (needs a name card)
 
-Add one made-up person under Names first, for example "Captain Rook", if you haven't.
+Add one made-up person on the Names list first (type `/dmbot names`, press ➕ Add a name), for example
+"Captain Rook", if you haven't. To open a name card later, press 🔍 Find a name on the Names list and pick it.
+For Check 6 you also need a player character: press 🧑 Add a player's character on the Names list if you
+have none.
 
 ### 5. How an NPC feels about the party (Standing)
 **You'll do:** open Captain Rook's name card and press 🤝 Standing. Then press **Toward a character…** and set
@@ -73,25 +76,24 @@ can see it.
 
 ### 6. Recording a deed
 **You'll do:** open a player character's name card, press ⚔️ Record a deed, type what happened, pick Captain
-Rook and "Helped them", and press ✅ Record it.
+Rook and **Helped**, and press ✅ Record it.
 
 **It worked if:** Standing now shows the deed as a reason, for example "(session 1, helped)", and ↩ Undo that
 works for a short while.
 
 ### 7. Story threads and promises
 **You'll do:**
-1. On the Names list, press 🧵 New thread and make one, for example "Find the lost lantern".
+1. On the Names list (`/dmbot names`), press 🧵 New thread and make one, for example "Find the lost lantern".
 2. Press 🤝 Add a promise and make one, with who promised and who it was promised to.
 
 **It worked if:** both show on their cards with how far along they are, and nothing about them goes to
 players.
 
 ### 8. Homebrew by kind
-**You'll do:** press ⚙️ Settings, then 📚 Homebrew. Press a kind, then ↩ All kinds. Then add one entry and pick
-**Species**, **Subclass** or **Background** as its kind.
+**You'll do:** press ⚙️ Settings, then 📚 Homebrew. Press a kind, then ↩ All kinds. Then press ➕ Add and pick
+🧝 Species (or Subclass, or Background) as the kind, and add one made-up entry.
 
-**It worked if:** you see one button for each kind with a count, like Spells 10/12, and the new kinds are on the
-list.
+**It worked if:** you see one button for each kind with a count on it, and the new kinds are on the list.
 
 ---
 
@@ -99,7 +101,7 @@ list.
 
 ### 9. A quiet "where are we" line
 **You'll do:** set the game clock under ⚙️ Settings, then Game clock. Leave listening on and don't touch the
-clock for half an hour (15 minutes if your DM screen is on Chatty).
+clock for half an hour. It posts nothing when your DM screen is on Quiet, so keep it on Normal.
 
 **It worked if:** one short line appears on your DM screen saying where the game is, and nothing is posted to
 players.
@@ -108,8 +110,8 @@ players.
 **You'll do:**
 1. Press ⚙️ Settings, then 🧭 Shared story, and choose **Watch the story**. Read the warning and press "I have the
    right".
-2. Press 📖 Give your adventure and give DMbot a short made-up adventure file you wrote yourself. Then press
-   📖 Read it now.
+2. Press 📖 Give your adventure, then Give a file, and pick a short made-up text file you wrote yourself.
+   Then press 📖 Read it now and Yes, read it.
 3. Link one name to the adventure (open its card, press 📖 In my adventure…). Play a little.
 
 **It worked if:** DMbot posts a line on the DM screen when your table no longer fits the adventure, and only
